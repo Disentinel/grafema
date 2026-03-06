@@ -69,6 +69,10 @@ import {
   handleQueryDecisions,
   handleSupersedeFact,
   handleGetKnowledgeStats,
+  handleGitChurn,
+  handleGitCoChange,
+  handleGitOwnership,
+  handleGitArchaeology,
 } from './handlers/index.js';
 import type {
   ToolResult,
@@ -99,6 +103,10 @@ import type {
   QueryKnowledgeArgs,
   QueryDecisionsArgs,
   SupersedeFactArgs,
+  GitChurnArgs,
+  GitCoChangeArgs,
+  GitOwnershipArgs,
+  GitArchaeologyArgs,
 } from './types.js';
 
 /**
@@ -304,6 +312,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
 
       case 'get_knowledge_stats':
         result = await handleGetKnowledgeStats();
+        break;
+
+      case 'git_churn':
+        result = await handleGitChurn(asArgs<GitChurnArgs>(args));
+        break;
+
+      case 'git_cochange':
+        result = await handleGitCoChange(asArgs<GitCoChangeArgs>(args));
+        break;
+
+      case 'git_ownership':
+        result = await handleGitOwnership(asArgs<GitOwnershipArgs>(args));
+        break;
+
+      case 'git_archaeology':
+        result = await handleGitArchaeology(asArgs<GitArchaeologyArgs>(args));
         break;
 
       default:

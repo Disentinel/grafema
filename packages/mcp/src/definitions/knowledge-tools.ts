@@ -193,4 +193,100 @@ Code reference resolution requires the code graph to be analyzed — without it,
       properties: {},
     },
   },
+  {
+    name: 'git_churn',
+    description: `Identify hot spots — files ranked by change frequency.
+
+Use this to:
+- Find which files change most often (high churn = high risk or high activity)
+- Prioritize code review effort based on change frequency
+- Identify files that may need refactoring (too many changes = unstable)
+
+Returns files sorted by change count, with total lines added/removed.
+Requires git history to be ingested first (grafema git-ingest).`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        limit: {
+          type: 'number',
+          description: 'Maximum number of results (default: 20)',
+        },
+        since: {
+          type: 'string',
+          description: 'Only count changes after this date (ISO format, e.g., "2025-01-01")',
+        },
+      },
+    },
+  },
+  {
+    name: 'git_cochange',
+    description: `Find files that frequently change together with a given file.
+
+Use this to:
+- Discover hidden coupling between files (change A → usually change B too)
+- Understand the blast radius of modifying a file
+- Identify candidates for refactoring into a single module
+
+Returns files ranked by co-change frequency, with support metric (0-1).
+Requires git history to be ingested first (grafema git-ingest).`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        file: {
+          type: 'string',
+          description: 'File path to find co-changes for',
+        },
+        min_support: {
+          type: 'number',
+          description: 'Minimum support threshold (0-1, default: 0.1 = 10% of commits)',
+        },
+      },
+      required: ['file'],
+    },
+  },
+  {
+    name: 'git_ownership',
+    description: `Find who knows a file best — authors ranked by contribution.
+
+Use this to:
+- Identify domain experts for a specific file or module
+- Find the right person to review changes to a file
+- Understand team ownership distribution
+
+Returns authors sorted by commit count, with lines added/removed.
+Requires git history to be ingested first (grafema git-ingest).`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        file: {
+          type: 'string',
+          description: 'File path to check ownership for',
+        },
+      },
+      required: ['file'],
+    },
+  },
+  {
+    name: 'git_archaeology',
+    description: `Get temporal context for a file — when it was first created and last modified.
+
+Use this to:
+- Find when a file was last touched (and by whom)
+- Discover the original author of a file
+- Assess staleness (old files may need review)
+- Understand the timeline of a module's evolution
+
+Returns first/last commit date, hash, and author.
+Requires git history to be ingested first (grafema git-ingest).`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        file: {
+          type: 'string',
+          description: 'File path to investigate',
+        },
+      },
+      required: ['file'],
+    },
+  },
 ];

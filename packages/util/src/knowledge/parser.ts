@@ -197,6 +197,71 @@ export function parseEdgesFile(filePath: string): KBEdge[] {
 }
 
 /**
+ * Parse a YAML file containing an array of node objects (e.g., commits/2026-03.yaml, authors.yaml).
+ * Each entry must have at least a `type` field. ID is generated based on type:
+ * - COMMIT → kb:commit:<short-hash>
+ * - AUTHOR → kb:author:<slug>
+ * - Others → kb:<type>:<index>
+ */
+export function parseYamlArrayFile(filePath: string): KBNode[] {
+  const content = readFileSync(filePath, 'utf-8');
+  const parsed = parseYaml(content);
+
+  if (!Array.isArray(parsed)) {
+    throw new Error(`YAML array file must contain an array, got ${typeof parsed} in ${filePath}`);
+  }
+
+  return parsed.map((entry: unknown, index: number) => {
+    if (!entry || typeof entry !== 'object') {
+      throw new Error(`Entry at index ${index} is not an object in ${filePath}`);
+    }
+    const e = entry as Record<string, unknown>;
+
+    const type = e.type;
+    if (typeof type !== 'string' || !VALID_TYPES.includes(type as KBNodeType)) {
+      throw new Error(`Invalid or missing type "${type}" at index ${index} in ${filePath}. Must be one of: ${VALID_TYPES.join(', ')}`);
+    }
+
+    // Generate ID based on type
+    let id: string;
+    switch (type) {
+      case 'COMMIT':
+        id = `kb:commit:${String(e.hash ?? '').slice(0, 8)}`;
+        break;
+      case 'AUTHOR': {
+        if (typeof e.id === 'string' && e.id.startsWith('kb:author:')) {
+          id = e.id;
+        } else if (typeof e.id === 'string') {
+          id = `kb:author:${e.id}`;
+        } else {
+          const name = String(e.name ?? '');
+          id = `kb:author:${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`;
+        }
+        break;
+      }
+      default:
+        id = `kb:${type.toLowerCase()}:${index}`;
+        break;
+    }
+
+    const base: KBNode = {
+      id,
+      type: type as KBNodeType,
+      projections: Array.isArray(e.projections) ? e.projections as string[] : [],
+      created: type === 'COMMIT' ? (String(e.date ?? '').split('T')[0]) : '',
+      content: '',
+      filePath,
+      lifecycle: 'derived' as KBLifecycle,
+    };
+
+    // Spread all entry fields onto the node, preserving base fields
+    const node: KBNode = { ...e, ...base } as KBNode;
+
+    return node;
+  });
+}
+
+/**
  * Append an edge to the edges.yaml file.
  */
 export function appendEdge(filePath: string, edge: KBEdge): void {

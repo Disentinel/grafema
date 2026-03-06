@@ -27,6 +27,7 @@ import { schemaCommand } from './commands/schema.js';
 import { explainCommand } from './commands/explain.js';
 import { fileCommand } from './commands/file.js';
 import { setupSkillCommand } from './commands/setup-skill.js';
+import { gitIngestCommand } from './commands/git-ingest.js';
 
 // Read version from package.json
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -60,5 +61,6 @@ program.addCommand(schemaCommand);
 program.addCommand(explainCommand);
 program.addCommand(fileCommand);
 program.addCommand(setupSkillCommand);
+program.addCommand(gitIngestCommand);
 
 program.parse();

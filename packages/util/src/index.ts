@@ -181,7 +181,7 @@ export type {
 } from './schema/index.js';
 
 // Knowledge Base
-export { KnowledgeBase, SemanticAddressResolver, parseSemanticAddress, parseFrontmatter, parseKBNode, serializeKBNode, parseEdgesFile, appendEdge } from './knowledge/index.js';
+export { KnowledgeBase, SemanticAddressResolver, parseSemanticAddress, parseFrontmatter, parseKBNode, serializeKBNode, parseEdgesFile, appendEdge, parseYamlArrayFile, GitIngest, parseGitLog, normalizeAuthors, getChurn, getCoChanges, getOwnership, getArchaeology } from './knowledge/index.js';
 export type { ResolverBackend } from './knowledge/index.js';
 export type {
   KBNodeType,
@@ -198,6 +198,8 @@ export type {
   ResolvedAddress,
   DanglingCodeRef,
 } from './knowledge/index.js';
+export type { RawCommit, FileChange, AuthorEntry, CommitEntry, IngestResult, Meta } from './knowledge/index.js';
+export type { ChurnEntry, CoChangeEntry, OwnershipEntry, ArchaeologyEntry } from './knowledge/index.js';
 
 // Graph Query Utilities
 export { findCallsInFunction, findContainingFunction, traceValues, aggregateValues, NONDETERMINISTIC_PATTERNS, NONDETERMINISTIC_OBJECTS } from './queries/index.js';
