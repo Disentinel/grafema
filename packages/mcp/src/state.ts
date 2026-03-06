@@ -220,10 +220,14 @@ export async function waitForAnalysis(): Promise<void> {
   }
 }
 
-// === BACKEND ===
+// === RESET ===
 export function resetBackend(): void {
   backend = null;
   isAnalyzed = false;
+}
+
+export function resetKnowledgeBase(): void {
+  knowledgeBase = null;
 }
 
 export async function getOrCreateBackend(): Promise<GraphBackend> {
