@@ -55,6 +55,9 @@ pub struct GraphNode {
     pub exported: bool,
     #[serde(default)]
     pub metadata: HashMap<String, serde_json::Value>,
+    /// Extra top-level fields from analyzer output not captured by declared fields.
+    #[serde(flatten, default)]
+    pub extra: HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
@@ -975,6 +978,10 @@ pub fn to_wire_nodes(analysis: &FileAnalysis) -> Vec<WireNode> {
         .map(|node| {
             // Merge line/column/endLine/endColumn into metadata so RFDB stores position info
             let mut meta = node.metadata.clone();
+            // Merge extra top-level fields (e.g. "source", "specifiers") into metadata
+            for (k, v) in &node.extra {
+                meta.entry(k.clone()).or_insert_with(|| v.clone());
+            }
             meta.insert("line".to_string(), serde_json::json!(node.line));
             meta.insert("column".to_string(), serde_json::json!(node.column));
             meta.insert("endLine".to_string(), serde_json::json!(node.end_line));
@@ -1242,6 +1249,7 @@ mod tests {
                         m.insert("async".to_string(), serde_json::Value::Bool(true));
                         m
                     },
+                    extra: HashMap::new(),
                 },
                 GraphNode {
                     id: "src/foo.js->VARIABLE->x".to_string(),
@@ -1254,6 +1262,7 @@ mod tests {
                     end_column: 0,
                     exported: false,
                     metadata: HashMap::new(),
+                    extra: HashMap::new(),
                 },
             ],
             edges: vec![
@@ -1366,6 +1375,7 @@ mod tests {
                 end_column: 1,
                 exported: true,
                 metadata: HashMap::new(),
+                extra: HashMap::new(),
             }],
             edges: vec![GraphEdge {
                 src: "/home/user/project/src/app.ts->FUNCTION->main".to_string(),
@@ -1408,6 +1418,7 @@ mod tests {
                 end_column: 0,
                 exported: false,
                 metadata: HashMap::new(),
+                extra: HashMap::new(),
             }],
             edges: vec![GraphEdge {
                 src: "MODULE#/home/user/project/src/app.ts".to_string(),
@@ -1555,6 +1566,7 @@ mod tests {
                         end_column: 0,
                         exported: false,
                         metadata: HashMap::new(),
+                        extra: HashMap::new(),
                     },
                     GraphNode {
                         id: "test.js->FUNCTION->bar".to_string(),
@@ -1567,6 +1579,7 @@ mod tests {
                         end_column: 0,
                         exported: true,
                         metadata: HashMap::new(),
+                        extra: HashMap::new(),
                     },
                     GraphNode {
                         id: "test.js->REFERENCE->baz".to_string(),
@@ -1579,6 +1592,7 @@ mod tests {
                         end_column: 0,
                         exported: false,
                         metadata: HashMap::new(),
+                        extra: HashMap::new(),
                     },
                     GraphNode {
                         id: "test.js->CALL->qux".to_string(),
@@ -1591,6 +1605,7 @@ mod tests {
                         end_column: 0,
                         exported: false,
                         metadata: HashMap::new(),
+                        extra: HashMap::new(),
                     },
                 ],
                 edges: vec![],
@@ -1626,6 +1641,7 @@ mod tests {
                         end_column: 0,
                         exported: false,
                         metadata: HashMap::new(),
+                        extra: HashMap::new(),
                     }],
                     edges: vec![],
                     exports: vec![],
@@ -1727,6 +1743,7 @@ mod tests {
                         end_column: 0,
                         exported: true,
                         metadata: HashMap::new(),
+                        extra: HashMap::new(),
                     },
                     GraphNode {
                         id: "src/Types.hs->DATA_TYPE->Maybe".to_string(),
@@ -1739,6 +1756,7 @@ mod tests {
                         end_column: 0,
                         exported: true,
                         metadata: HashMap::new(),
+                        extra: HashMap::new(),
                     },
                     GraphNode {
                         id: "src/Types.hs->CONSTRUCTOR->Just".to_string(),
@@ -1751,6 +1769,7 @@ mod tests {
                         end_column: 0,
                         exported: true,
                         metadata: HashMap::new(),
+                        extra: HashMap::new(),
                     },
                     GraphNode {
                         id: "src/Types.hs->INSTANCE->Monad_Maybe".to_string(),
@@ -1763,6 +1782,7 @@ mod tests {
                         end_column: 0,
                         exported: false,
                         metadata: HashMap::new(),
+                        extra: HashMap::new(),
                     },
                     GraphNode {
                         id: "src/Types.hs->TYPE_SYNONYM->String".to_string(),
@@ -1775,6 +1795,7 @@ mod tests {
                         end_column: 0,
                         exported: true,
                         metadata: HashMap::new(),
+                        extra: HashMap::new(),
                     },
                     GraphNode {
                         id: "src/Types.hs->TYPE_FAMILY->Element".to_string(),
@@ -1787,6 +1808,7 @@ mod tests {
                         end_column: 0,
                         exported: true,
                         metadata: HashMap::new(),
+                        extra: HashMap::new(),
                     },
                     GraphNode {
                         id: "src/Types.hs->EXPRESSION->expr1".to_string(),
@@ -1799,6 +1821,7 @@ mod tests {
                         end_column: 0,
                         exported: false,
                         metadata: HashMap::new(),
+                        extra: HashMap::new(),
                     },
                 ],
                 edges: vec![],
@@ -1840,6 +1863,7 @@ mod tests {
                             line: 1, column: 0, end_line: 50, end_column: 0,
                             exported: false,
                             metadata: HashMap::new(),
+                            extra: HashMap::new(),
                         },
                         GraphNode {
                             id: "src/index.ts->FUNCTION->main".to_string(),
@@ -1849,6 +1873,7 @@ mod tests {
                             line: 5, column: 0, end_line: 10, end_column: 1,
                             exported: true,
                             metadata: HashMap::new(),
+                            extra: HashMap::new(),
                         },
                     ],
                     edges: vec![],
@@ -1870,6 +1895,7 @@ mod tests {
                             line: 1, column: 0, end_line: 30, end_column: 0,
                             exported: false,
                             metadata: HashMap::new(),
+                            extra: HashMap::new(),
                         },
                         GraphNode {
                             id: "src/Main.hs->DATA_TYPE->Config".to_string(),
@@ -1879,6 +1905,7 @@ mod tests {
                             line: 10, column: 0, end_line: 15, end_column: 0,
                             exported: true,
                             metadata: HashMap::new(),
+                            extra: HashMap::new(),
                         },
                     ],
                     edges: vec![],
@@ -1933,6 +1960,7 @@ mod tests {
                         line: 1, column: 0, end_line: 5, end_column: 1,
                         exported: false,
                         metadata: HashMap::new(),
+                        extra: HashMap::new(),
                     },
                     GraphNode {
                         id: "src/app.ts->EXPRESSION->bar".to_string(),
@@ -1942,6 +1970,7 @@ mod tests {
                         line: 3, column: 0, end_line: 3, end_column: 10,
                         exported: false,
                         metadata: HashMap::new(),
+                        extra: HashMap::new(),
                     },
                 ],
                 edges: vec![],
@@ -1971,6 +2000,7 @@ mod tests {
             end_column: 1,
             exported: false,
             metadata: HashMap::new(),
+            extra: HashMap::new(),
         };
         let value = serde_json::to_value(&node).unwrap();
         // Should serialize node_type as "type" due to #[serde(rename = "type")]
@@ -1992,6 +2022,7 @@ mod tests {
                     line: 1, column: 0, end_line: 5, end_column: 1,
                     exported: false,
                     metadata: HashMap::new(),
+                    extra: HashMap::new(),
                 },
                 GraphNode {
                     id: "FUNCTION#src/app.js:arrow".to_string(),
@@ -2001,6 +2032,7 @@ mod tests {
                     line: 7, column: 0, end_line: 9, end_column: 1,
                     exported: false,
                     metadata: HashMap::new(),
+                    extra: HashMap::new(),
                 },
                 GraphNode {
                     id: "VARIABLE#src/app.js:x".to_string(),
@@ -2010,6 +2042,7 @@ mod tests {
                     line: 11, column: 0, end_line: 11, end_column: 10,
                     exported: false,
                     metadata: HashMap::new(),
+                    extra: HashMap::new(),
                 },
             ],
             edges: vec![
@@ -2056,6 +2089,7 @@ mod tests {
                     line: 1, column: 0, end_line: 5, end_column: 1,
                     exported: false,
                     metadata: HashMap::new(),
+                    extra: HashMap::new(),
                 },
             ],
             edges: vec![
@@ -2090,5 +2124,65 @@ mod tests {
 
         analysis.ensure_function_contains_edges();
         assert!(analysis.edges.is_empty());
+    }
+
+    // RFD-48: GraphNode captures unknown top-level fields in `extra`
+    #[test]
+    fn graphnode_extra_fields_captured() {
+        let json = r#"{
+            "id": "app.js->IMPORT->React",
+            "type": "IMPORT",
+            "name": "React",
+            "file": "app.js",
+            "line": 1,
+            "column": 0,
+            "exported": false,
+            "metadata": {},
+            "source": "react",
+            "specifiers": ["React"]
+        }"#;
+
+        let node: GraphNode = serde_json::from_str(json).unwrap();
+        assert_eq!(node.node_type, "IMPORT");
+        assert_eq!(node.extra.get("source").and_then(|v| v.as_str()), Some("react"));
+        assert!(node.extra.contains_key("specifiers"));
+    }
+
+    // RFD-48: extra fields end up in wire metadata
+    #[test]
+    fn to_wire_nodes_merges_extra_into_metadata() {
+        let analysis = FileAnalysis {
+            file: "app.js".to_string(),
+            module_id: "app.js".to_string(),
+            nodes: vec![GraphNode {
+                id: "app.js->IMPORT->React".to_string(),
+                node_type: "IMPORT".to_string(),
+                name: "React".to_string(),
+                file: "app.js".to_string(),
+                line: 1,
+                column: 0,
+                end_line: 0,
+                end_column: 0,
+                exported: false,
+                metadata: HashMap::new(),
+                extra: {
+                    let mut m = HashMap::new();
+                    m.insert("source".to_string(), serde_json::json!("react"));
+                    m.insert("specifiers".to_string(), serde_json::json!(["React"]));
+                    m
+                },
+            }],
+            edges: vec![],
+            exports: vec![],
+        };
+
+        let wire = to_wire_nodes(&analysis);
+        assert_eq!(wire.len(), 1);
+        let meta: serde_json::Value =
+            serde_json::from_str(wire[0].metadata.as_ref().unwrap()).unwrap();
+        assert_eq!(meta["source"], "react");
+        assert_eq!(meta["specifiers"][0], "React");
+        // Standard fields also present
+        assert_eq!(meta["line"], 1);
     }
 }
