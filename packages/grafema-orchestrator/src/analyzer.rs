@@ -1383,6 +1383,412 @@ pub async fn analyze_java_files_parallel(
 }
 
 // ---------------------------------------------------------------------------
+// Kotlin single-file analysis (two-stage: kotlin-parser → kotlin-analyzer)
+// ---------------------------------------------------------------------------
+
+/// Analyze a single Kotlin file: parse with kotlin-parser, then analyze with kotlin-analyzer.
+///
+/// Same two-stage pipeline as Java:
+/// 1. Read source, send `{"file":"...","source":"..."}` to kotlin-parser
+/// 2. Extract AST from parser response
+/// 3. Send `{"file":"...","ast":{...}}` to kotlin-analyzer
+/// 4. Return FileAnalysis
+pub async fn analyze_kotlin_file(
+    file: &Path,
+    analyzers: &crate::config::AnalyzerBinaries,
+) -> Result<FileAnalysis> {
+    let file_str = file.display().to_string();
+
+    let source = tokio::fs::read_to_string(file)
+        .await
+        .with_context(|| format!("Failed to read Kotlin source file {file_str}"))?;
+
+    // Step 1: Parse with kotlin-parser
+    let parser_bin = analyzers.kotlin_parser_path();
+    let mut parser_child = tokio::process::Command::new(&parser_bin)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .with_context(|| format!("Failed to spawn kotlin-parser for {file_str}"))?;
+
+    let parser_payload = serde_json::json!({
+        "file": file_str,
+        "source": source,
+    });
+
+    {
+        let stdin = parser_child
+            .stdin
+            .as_mut()
+            .context("Failed to open stdin for kotlin-parser")?;
+        stdin
+            .write_all(parser_payload.to_string().as_bytes())
+            .await
+            .with_context(|| format!("Failed to write source to kotlin-parser stdin for {file_str}"))?;
+        stdin
+            .shutdown()
+            .await
+            .with_context(|| format!("Failed to close kotlin-parser stdin for {file_str}"))?;
+    }
+
+    let parser_output = parser_child
+        .wait_with_output()
+        .await
+        .with_context(|| format!("Failed to wait for kotlin-parser for {file_str}"))?;
+
+    if !parser_output.status.success() {
+        let stderr = String::from_utf8_lossy(&parser_output.stderr);
+        let code = parser_output
+            .status
+            .code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "signal".to_string());
+        bail!("kotlin-parser exited with code {code} for {file_str}: {stderr}");
+    }
+
+    let parser_response: serde_json::Value =
+        serde_json::from_slice(&parser_output.stdout).with_context(|| {
+            let preview =
+                String::from_utf8_lossy(&parser_output.stdout[..parser_output.stdout.len().min(200)]);
+            format!("Failed to parse kotlin-parser output for {file_str}: {preview}")
+        })?;
+
+    if parser_response.get("status").and_then(|s| s.as_str()) != Some("ok") {
+        let err = parser_response
+            .get("error")
+            .and_then(|e| e.as_str())
+            .unwrap_or("unknown error");
+        bail!("kotlin-parser error for {file_str}: {err}");
+    }
+
+    let ast = parser_response
+        .get("ast")
+        .with_context(|| format!("kotlin-parser returned ok but no ast for {file_str}"))?;
+
+    // Step 2: Analyze with kotlin-analyzer
+    let analyzer_bin = analyzers.kotlin_path();
+    let mut analyzer_child = tokio::process::Command::new(&analyzer_bin)
+        .arg(&file_str)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .with_context(|| format!("Failed to spawn kotlin-analyzer for {file_str}"))?;
+
+    let analyzer_payload = serde_json::json!({
+        "file": file_str,
+        "ast": ast,
+    });
+
+    {
+        let stdin = analyzer_child
+            .stdin
+            .as_mut()
+            .context("Failed to open stdin for kotlin-analyzer")?;
+        stdin
+            .write_all(analyzer_payload.to_string().as_bytes())
+            .await
+            .with_context(|| {
+                format!("Failed to write AST to kotlin-analyzer stdin for {file_str}")
+            })?;
+        stdin
+            .shutdown()
+            .await
+            .with_context(|| format!("Failed to close kotlin-analyzer stdin for {file_str}"))?;
+    }
+
+    let analyzer_output = analyzer_child
+        .wait_with_output()
+        .await
+        .with_context(|| format!("Failed to wait for kotlin-analyzer for {file_str}"))?;
+
+    if !analyzer_output.status.success() {
+        let stderr = String::from_utf8_lossy(&analyzer_output.stderr);
+        let code = analyzer_output
+            .status
+            .code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "signal".to_string());
+        bail!("kotlin-analyzer exited with code {code} for {file_str}: {stderr}");
+    }
+
+    let analysis: FileAnalysis =
+        serde_json::from_slice(&analyzer_output.stdout).with_context(|| {
+            let preview = String::from_utf8_lossy(
+                &analyzer_output.stdout[..analyzer_output.stdout.len().min(200)],
+            );
+            format!("Failed to parse kotlin-analyzer output for {file_str}: {preview}")
+        })?;
+
+    Ok(analysis)
+}
+
+// ---------------------------------------------------------------------------
+// Kotlin daemon-mode analysis via ProcessPool (two pools)
+// ---------------------------------------------------------------------------
+
+/// Analyze a single Kotlin file via two persistent daemon process pools.
+///
+/// 1. Read source, send to kotlin-parser pool → receive AST JSON
+/// 2. Send AST to kotlin-analyzer pool → receive FileAnalysis
+pub async fn analyze_kotlin_file_pooled(
+    parser_pool: &ProcessPool,
+    analyzer_pool: &ProcessPool,
+    file: &Path,
+) -> Result<FileAnalysis> {
+    let file_str = file.display().to_string();
+
+    let source = tokio::fs::read_to_string(file)
+        .await
+        .with_context(|| format!("Failed to read Kotlin source file {file_str}"))?;
+
+    // Step 1: Send to kotlin-parser pool
+    let escaped_file = serde_json::to_string(&file_str)
+        .with_context(|| format!("Failed to escape file path for {file_str}"))?;
+    let escaped_source = serde_json::to_string(&source)
+        .with_context(|| format!("Failed to escape source for {file_str}"))?;
+    let parser_payload = format!(
+        r#"{{"file":{},"source":{}}}"#,
+        escaped_file, escaped_source
+    );
+
+    let parser_response_bytes = parser_pool
+        .request(parser_payload.as_bytes())
+        .await
+        .with_context(|| format!("Kotlin parser pool request failed for {file_str}"))?;
+
+    // Zero-copy: parse only status/error, borrow raw AST JSON bytes
+    let parser_response: JavaParserResponse =
+        serde_json::from_slice(&parser_response_bytes)
+            .with_context(|| format!("Failed to decode kotlin-parser response for {file_str}"))?;
+
+    let ast_raw = match parser_response.status.as_str() {
+        "ok" => parser_response
+            .ast
+            .with_context(|| format!("kotlin-parser returned ok but no ast for {file_str}"))?,
+        "error" => {
+            let msg = parser_response
+                .error
+                .unwrap_or_else(|| "unknown error".to_string());
+            bail!("kotlin-parser daemon error for {file_str}: {msg}")
+        }
+        other => bail!("Unknown kotlin-parser response status '{other}' for {file_str}"),
+    };
+
+    // Step 2: Send to kotlin-analyzer pool
+    let analyzer_payload = format!(r#"{{"file":{},"ast":{}}}"#, escaped_file, ast_raw.get());
+
+    let analyzer_response_bytes = analyzer_pool
+        .request(analyzer_payload.as_bytes())
+        .await
+        .with_context(|| format!("Kotlin analyzer pool request failed for {file_str}"))?;
+
+    let response: DaemonResponse = serde_json::from_slice(&analyzer_response_bytes)
+        .with_context(|| format!("Failed to decode kotlin-analyzer response for {file_str}"))?;
+
+    match response.status.as_str() {
+        "ok" => response
+            .result
+            .with_context(|| format!("kotlin-analyzer daemon returned ok but no result for {file_str}")),
+        "error" => {
+            let msg = response.error.unwrap_or_else(|| "unknown error".to_string());
+            bail!("kotlin-analyzer daemon error for {file_str}: {msg}")
+        }
+        other => bail!("Unknown kotlin-analyzer response status '{other}' for {file_str}"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Kotlin parallel multi-file analysis
+// ---------------------------------------------------------------------------
+
+/// Analyze multiple Kotlin files in parallel using two persistent daemon pools.
+///
+/// Falls back to `analyze_kotlin_files_parallel` if pool creation fails.
+pub async fn analyze_kotlin_files_parallel_pooled(
+    files: &[PathBuf],
+    jobs: usize,
+    analyzers: &crate::config::AnalyzerBinaries,
+) -> Vec<AnalysisResult> {
+    let parser_pool_config = PoolConfig {
+        command: analyzers.kotlin_parser_path(),
+        args: vec!["--daemon".to_string()],
+        ..PoolConfig::default()
+    };
+
+    let analyzer_pool_config = PoolConfig {
+        command: analyzers.kotlin_path(),
+        args: vec!["--daemon".to_string()],
+        ..PoolConfig::default()
+    };
+
+    let parser_pool = match ProcessPool::new(parser_pool_config, jobs.max(1)) {
+        Ok(p) => Arc::new(p),
+        Err(e) => {
+            tracing::warn!(
+                "Failed to create kotlin-parser pool, falling back to spawn-per-file: {e}"
+            );
+            return analyze_kotlin_files_parallel(files, jobs, analyzers).await;
+        }
+    };
+
+    let analyzer_pool = match ProcessPool::new(analyzer_pool_config, jobs.max(1)) {
+        Ok(p) => Arc::new(p),
+        Err(e) => {
+            tracing::warn!(
+                "Failed to create kotlin-analyzer pool, falling back to spawn-per-file: {e}"
+            );
+            parser_pool.shutdown().await;
+            return analyze_kotlin_files_parallel(files, jobs, analyzers).await;
+        }
+    };
+
+    let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
+    let total = files.len();
+
+    let handles: Vec<_> = files
+        .iter()
+        .enumerate()
+        .map(|(idx, file)| {
+            let sem = Arc::clone(&semaphore);
+            let parser_pool = Arc::clone(&parser_pool);
+            let analyzer_pool = Arc::clone(&analyzer_pool);
+            let file = file.clone();
+            let file_display = file.display().to_string();
+
+            tokio::spawn(async move {
+                let _permit = sem
+                    .acquire()
+                    .await
+                    .expect("Semaphore closed unexpectedly");
+
+                tracing::info!(
+                    "[{}/{}] Analyzing Kotlin file {}",
+                    idx + 1,
+                    total,
+                    file_display
+                );
+
+                let errors = Vec::new();
+
+                match analyze_kotlin_file_pooled(&parser_pool, &analyzer_pool, &file).await {
+                    Ok(analysis) => AnalysisResult {
+                        file,
+                        analysis: Some(analysis),
+                        errors,
+                    },
+                    Err(e) => {
+                        let mut errors = errors;
+                        errors.push(format!(
+                            "Kotlin analyzer failed for {file_display}: {e}"
+                        ));
+                        AnalysisResult {
+                            file,
+                            analysis: None,
+                            errors,
+                        }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        match handle.await {
+            Ok(result) => results.push(result),
+            Err(e) => {
+                results.push(AnalysisResult {
+                    file: PathBuf::new(),
+                    analysis: None,
+                    errors: vec![format!("Kotlin analysis task failed: {e}")],
+                });
+            }
+        }
+    }
+
+    parser_pool.shutdown().await;
+    analyzer_pool.shutdown().await;
+    results
+}
+
+/// Analyze multiple Kotlin files in parallel with bounded concurrency (spawn mode).
+///
+/// Fallback when daemon pools cannot be created.
+pub async fn analyze_kotlin_files_parallel(
+    files: &[PathBuf],
+    jobs: usize,
+    analyzers: &crate::config::AnalyzerBinaries,
+) -> Vec<AnalysisResult> {
+    let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
+    let total = files.len();
+    let analyzers = analyzers.clone();
+
+    let handles: Vec<_> = files
+        .iter()
+        .enumerate()
+        .map(|(idx, file)| {
+            let sem = Arc::clone(&semaphore);
+            let file = file.clone();
+            let file_display = file.display().to_string();
+            let analyzers = analyzers.clone();
+
+            tokio::spawn(async move {
+                let _permit = sem
+                    .acquire()
+                    .await
+                    .expect("Semaphore closed unexpectedly");
+
+                tracing::info!(
+                    "[{}/{}] Analyzing Kotlin file {}",
+                    idx + 1,
+                    total,
+                    file_display
+                );
+
+                let errors = Vec::new();
+
+                match analyze_kotlin_file(&file, &analyzers).await {
+                    Ok(analysis) => AnalysisResult {
+                        file,
+                        analysis: Some(analysis),
+                        errors,
+                    },
+                    Err(e) => {
+                        let mut errors = errors;
+                        errors.push(format!(
+                            "Kotlin analyzer failed for {file_display}: {e}"
+                        ));
+                        AnalysisResult {
+                            file,
+                            analysis: None,
+                            errors,
+                        }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        match handle.await {
+            Ok(result) => results.push(result),
+            Err(e) => {
+                results.push(AnalysisResult {
+                    file: PathBuf::new(),
+                    analysis: None,
+                    errors: vec![format!("Kotlin analysis task failed: {e}")],
+                });
+            }
+        }
+    }
+
+    results
+}
+
+// ---------------------------------------------------------------------------
 // Wire-type conversion
 // ---------------------------------------------------------------------------
 
@@ -1513,6 +1919,27 @@ pub fn collect_resolve_nodes_for_lang(
         .filter_map(|r| r.analysis.as_ref())
         .filter(|a| {
             crate::config::detect_language(std::path::Path::new(&a.file)) == Some(lang)
+        })
+        .flat_map(|a| &a.nodes)
+        .filter(|n| RESOLVE_NODE_TYPES.contains(&n.node_type.as_str()))
+        .filter_map(|n| serde_json::to_value(n).ok())
+        .collect()
+}
+
+/// Like `collect_resolve_nodes_for_lang`, but collects nodes from ALL JVM
+/// languages (Java + Kotlin). Used by jvm-cross-resolve which needs nodes
+/// from both languages to resolve cross-language edges.
+pub fn collect_resolve_nodes_for_jvm(
+    results: &[AnalysisResult],
+) -> Vec<serde_json::Value> {
+    results
+        .iter()
+        .filter_map(|r| r.analysis.as_ref())
+        .filter(|a| {
+            matches!(
+                crate::config::detect_language(std::path::Path::new(&a.file)),
+                Some(crate::config::Language::Java) | Some(crate::config::Language::Kotlin)
+            )
         })
         .flat_map(|a| &a.nodes)
         .filter(|n| RESOLVE_NODE_TYPES.contains(&n.node_type.as_str()))
@@ -2412,6 +2839,140 @@ mod tests {
         // FUNCTION is in RESOLVE_NODE_TYPES, EXPRESSION is not
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0]["type"].as_str().unwrap(), "FUNCTION");
+    }
+
+    #[test]
+    fn collect_resolve_nodes_for_jvm_combines_java_and_kotlin() {
+        let results = vec![
+            AnalysisResult {
+                file: PathBuf::from("src/Foo.java"),
+                analysis: Some(FileAnalysis {
+                    file: "src/Foo.java".to_string(),
+                    module_id: "src/Foo.java".to_string(),
+                    nodes: vec![
+                        GraphNode {
+                            id: "src/Foo.java->MODULE->Foo".to_string(),
+                            node_type: "MODULE".to_string(),
+                            name: "Foo".to_string(),
+                            file: "src/Foo.java".to_string(),
+                            line: 1, column: 0, end_line: 50, end_column: 0,
+                            exported: false,
+                            metadata: HashMap::new(),
+                            extra: HashMap::new(),
+                        },
+                        GraphNode {
+                            id: "src/Foo.java->CLASS->Foo".to_string(),
+                            node_type: "CLASS".to_string(),
+                            name: "Foo".to_string(),
+                            file: "src/Foo.java".to_string(),
+                            line: 3, column: 0, end_line: 50, end_column: 0,
+                            exported: true,
+                            metadata: HashMap::new(),
+                            extra: HashMap::new(),
+                        },
+                    ],
+                    edges: vec![],
+                    exports: vec![],
+                }),
+                errors: vec![],
+            },
+            AnalysisResult {
+                file: PathBuf::from("src/Bar.kt"),
+                analysis: Some(FileAnalysis {
+                    file: "src/Bar.kt".to_string(),
+                    module_id: "src/Bar.kt".to_string(),
+                    nodes: vec![
+                        GraphNode {
+                            id: "src/Bar.kt->MODULE->Bar".to_string(),
+                            node_type: "MODULE".to_string(),
+                            name: "Bar".to_string(),
+                            file: "src/Bar.kt".to_string(),
+                            line: 1, column: 0, end_line: 30, end_column: 0,
+                            exported: false,
+                            metadata: HashMap::new(),
+                            extra: HashMap::new(),
+                        },
+                        GraphNode {
+                            id: "src/Bar.kt->IMPORT->com.example.Foo".to_string(),
+                            node_type: "IMPORT".to_string(),
+                            name: "com.example.Foo".to_string(),
+                            file: "src/Bar.kt".to_string(),
+                            line: 2, column: 0, end_line: 2, end_column: 30,
+                            exported: false,
+                            metadata: HashMap::new(),
+                            extra: HashMap::new(),
+                        },
+                    ],
+                    edges: vec![],
+                    exports: vec![],
+                }),
+                errors: vec![],
+            },
+            // JS file should be excluded
+            AnalysisResult {
+                file: PathBuf::from("src/index.ts"),
+                analysis: Some(FileAnalysis {
+                    file: "src/index.ts".to_string(),
+                    module_id: "src/index.ts".to_string(),
+                    nodes: vec![
+                        GraphNode {
+                            id: "src/index.ts->MODULE->index".to_string(),
+                            node_type: "MODULE".to_string(),
+                            name: "index".to_string(),
+                            file: "src/index.ts".to_string(),
+                            line: 1, column: 0, end_line: 10, end_column: 0,
+                            exported: false,
+                            metadata: HashMap::new(),
+                            extra: HashMap::new(),
+                        },
+                    ],
+                    edges: vec![],
+                    exports: vec![],
+                }),
+                errors: vec![],
+            },
+        ];
+
+        let jvm_nodes = collect_resolve_nodes_for_jvm(&results);
+        // Should include Java (MODULE + CLASS) and Kotlin (MODULE + IMPORT) nodes, but NOT JS
+        assert_eq!(jvm_nodes.len(), 4);
+        let files: Vec<&str> = jvm_nodes.iter().map(|n| n["file"].as_str().unwrap()).collect();
+        assert!(files.iter().all(|f| f.ends_with(".java") || f.ends_with(".kt")));
+        assert!(!files.iter().any(|f| f.ends_with(".ts")));
+    }
+
+    #[test]
+    fn collect_resolve_nodes_for_jvm_empty_results() {
+        let nodes = collect_resolve_nodes_for_jvm(&[]);
+        assert!(nodes.is_empty());
+    }
+
+    #[test]
+    fn collect_resolve_nodes_for_jvm_no_jvm_files() {
+        let results = vec![AnalysisResult {
+            file: PathBuf::from("src/index.ts"),
+            analysis: Some(FileAnalysis {
+                file: "src/index.ts".to_string(),
+                module_id: "src/index.ts".to_string(),
+                nodes: vec![
+                    GraphNode {
+                        id: "src/index.ts->MODULE->index".to_string(),
+                        node_type: "MODULE".to_string(),
+                        name: "index".to_string(),
+                        file: "src/index.ts".to_string(),
+                        line: 1, column: 0, end_line: 10, end_column: 0,
+                        exported: false,
+                        metadata: HashMap::new(),
+                        extra: HashMap::new(),
+                    },
+                ],
+                edges: vec![],
+                exports: vec![],
+            }),
+            errors: vec![],
+        }];
+        let nodes = collect_resolve_nodes_for_jvm(&results);
+        assert!(nodes.is_empty());
     }
 
     #[test]

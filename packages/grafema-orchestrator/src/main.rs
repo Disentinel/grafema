@@ -122,12 +122,13 @@ async fn main() -> Result<()> {
             }
 
             // 3b. Partition by language
-            let (js_files, hs_files, rs_files, java_files) = config::partition_by_language(&changed_files);
+            let (js_files, hs_files, rs_files, java_files, kotlin_files) = config::partition_by_language(&changed_files);
             tracing::info!(
                 js = js_files.len(),
                 haskell = hs_files.len(),
                 rust = rs_files.len(),
                 java = java_files.len(),
+                kotlin = kotlin_files.len(),
                 "Partitioned files by language"
             );
 
@@ -160,6 +161,13 @@ async fn main() -> Result<()> {
                 tracing::info!(count = java_files.len(), "Analyzing Java files");
                 let java_results = analyzer::analyze_java_files_parallel_pooled(&java_files, jobs, &cfg.analyzers).await;
                 results.extend(java_results);
+            }
+
+            // 4e. Analyze Kotlin files (kotlin-parser → kotlin-analyzer daemon pools)
+            if !kotlin_files.is_empty() {
+                tracing::info!(count = kotlin_files.len(), "Analyzing Kotlin files");
+                let kotlin_results = analyzer::analyze_kotlin_files_parallel_pooled(&kotlin_files, jobs, &cfg.analyzers).await;
+                results.extend(kotlin_results);
             }
 
             // 5. Relativize paths: convert absolute → relative (to project root)
@@ -549,7 +557,119 @@ async fn main() -> Result<()> {
                 }
             }
 
-            // 8d. Run user-defined plugins via DAG (if any non-default plugins configured)
+            // 8d. Run Kotlin resolution (imports, types, calls, annotations — single pass)
+            if !kotlin_files.is_empty() {
+                let kotlin_resolve_nodes = analyzer::collect_resolve_nodes_for_lang(&results, config::Language::Kotlin);
+                if !kotlin_resolve_nodes.is_empty() {
+                    tracing::info!(
+                        nodes = kotlin_resolve_nodes.len(),
+                        "Running Kotlin resolution"
+                    );
+
+                    let kotlin_resolve_pool_config = process_pool::PoolConfig {
+                        command: cfg.analyzers.kotlin_resolve_path(),
+                        args: vec!["--daemon".to_string()],
+                        ..process_pool::PoolConfig::default()
+                    };
+
+                    match process_pool::ProcessPool::new(kotlin_resolve_pool_config, 1) {
+                        Ok(kotlin_resolve_pool) => {
+                            let mut kotlin_resolve_output = plugin::run_resolve_with_nodes(
+                                "kotlin-all",
+                                &kotlin_resolve_nodes,
+                                &[],
+                                &kotlin_resolve_pool,
+                            )
+                            .await
+                            .context("Kotlin resolution failed")?;
+                            plugin::validate_plugin_output(&kotlin_resolve_output)?;
+                            plugin::stamp_metadata(&mut kotlin_resolve_output, "kotlin-resolution", generation);
+
+                            let kotlin_resolve_files: Vec<String> = kotlin_resolve_output
+                                .nodes
+                                .iter()
+                                .filter_map(|n| n.file.clone())
+                                .collect::<std::collections::HashSet<_>>()
+                                .into_iter()
+                                .collect();
+                            rfdb.commit_batch(&kotlin_resolve_files, &kotlin_resolve_output.nodes, &kotlin_resolve_output.edges, false)
+                                .await
+                                .context("Failed to commit Kotlin resolution output")?;
+
+                            tracing::info!(
+                                nodes = kotlin_resolve_output.nodes.len(),
+                                edges = kotlin_resolve_output.edges.len(),
+                                "Kotlin resolution complete"
+                            );
+
+                            kotlin_resolve_pool.shutdown().await;
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to create Kotlin resolve pool, skipping Kotlin resolution: {e}"
+                            );
+                        }
+                    }
+                }
+            }
+
+            // 8e. Run JVM cross-language resolution (Java <-> Kotlin, after both per-language resolvers)
+            if !java_files.is_empty() && !kotlin_files.is_empty() {
+                let jvm_resolve_nodes = analyzer::collect_resolve_nodes_for_jvm(&results);
+                if !jvm_resolve_nodes.is_empty() {
+                    tracing::info!(
+                        nodes = jvm_resolve_nodes.len(),
+                        "Running JVM cross-language resolution (Java <-> Kotlin)"
+                    );
+
+                    let jvm_cross_resolve_pool_config = process_pool::PoolConfig {
+                        command: cfg.analyzers.jvm_cross_resolve_path(),
+                        args: vec!["--daemon".to_string()],
+                        ..process_pool::PoolConfig::default()
+                    };
+
+                    match process_pool::ProcessPool::new(jvm_cross_resolve_pool_config, 1) {
+                        Ok(jvm_cross_resolve_pool) => {
+                            let mut jvm_cross_output = plugin::run_resolve_with_nodes(
+                                "jvm-cross-all",
+                                &jvm_resolve_nodes,
+                                &[],
+                                &jvm_cross_resolve_pool,
+                            )
+                            .await
+                            .context("JVM cross-language resolution failed")?;
+                            plugin::validate_plugin_output(&jvm_cross_output)?;
+                            plugin::stamp_metadata(&mut jvm_cross_output, "jvm-cross-resolution", generation);
+
+                            let jvm_cross_files: Vec<String> = jvm_cross_output
+                                .nodes
+                                .iter()
+                                .filter_map(|n| n.file.clone())
+                                .collect::<std::collections::HashSet<_>>()
+                                .into_iter()
+                                .collect();
+                            rfdb.commit_batch(&jvm_cross_files, &jvm_cross_output.nodes, &jvm_cross_output.edges, false)
+                                .await
+                                .context("Failed to commit JVM cross-language resolution output")?;
+
+                            tracing::info!(
+                                nodes = jvm_cross_output.nodes.len(),
+                                edges = jvm_cross_output.edges.len(),
+                                "JVM cross-language resolution complete"
+                            );
+
+                            jvm_cross_resolve_pool.shutdown().await;
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to create JVM cross-resolve pool, skipping cross-language resolution: {e}"
+                            );
+                        }
+                    }
+                }
+            }
+
+            // 8f. Run user-defined plugins via DAG (if any non-default plugins configured)
             let user_plugins: Vec<_> = cfg
                 .plugins
                 .iter()
@@ -597,12 +717,13 @@ async fn main() -> Result<()> {
 
             // 9. Summary
             println!(
-                "Analyzed {} files ({} JS, {} Haskell, {} Rust, {} Java, {} skipped): {} nodes, {} edges, {} errors",
+                "Analyzed {} files ({} JS, {} Haskell, {} Rust, {} Java, {} Kotlin, {} skipped): {} nodes, {} edges, {} errors",
                 changed_files.len(),
                 js_files.len(),
                 hs_files.len(),
                 rs_files.len(),
                 java_files.len(),
+                kotlin_files.len(),
                 unchanged_files.len(),
                 total_nodes,
                 total_edges,

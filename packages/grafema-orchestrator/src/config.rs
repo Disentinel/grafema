@@ -161,6 +161,22 @@ pub struct AnalyzerBinaries {
     /// Path to Java parser binary (default: "java-parser")
     #[serde(default = "default_java_parser")]
     pub java_parser: String,
+
+    /// Path to Kotlin analyzer binary (default: "grafema-kotlin-analyzer")
+    #[serde(default = "default_kotlin_analyzer")]
+    pub kotlin: String,
+
+    /// Path to Kotlin resolve binary (default: "kotlin-resolve")
+    #[serde(default = "default_kotlin_resolve")]
+    pub kotlin_resolve: String,
+
+    /// Path to Kotlin parser binary (default: "kotlin-parser")
+    #[serde(default = "default_kotlin_parser")]
+    pub kotlin_parser: String,
+
+    /// Path to JVM cross-language resolve binary (default: "jvm-cross-resolve")
+    #[serde(default = "default_jvm_cross_resolve")]
+    pub jvm_cross_resolve: String,
 }
 
 impl Default for AnalyzerBinaries {
@@ -175,6 +191,10 @@ impl Default for AnalyzerBinaries {
             java: default_java_analyzer(),
             java_resolve: default_java_resolve(),
             java_parser: default_java_parser(),
+            kotlin: default_kotlin_analyzer(),
+            kotlin_resolve: default_kotlin_resolve(),
+            kotlin_parser: default_kotlin_parser(),
+            jvm_cross_resolve: default_jvm_cross_resolve(),
         }
     }
 }
@@ -274,6 +294,26 @@ impl AnalyzerBinaries {
     /// Resolved path for the Java parser binary.
     pub fn java_parser_path(&self) -> String {
         resolve_binary(&self.java_parser)
+    }
+
+    /// Resolved path for the Kotlin analyzer binary.
+    pub fn kotlin_path(&self) -> String {
+        resolve_binary(&self.kotlin)
+    }
+
+    /// Resolved path for the Kotlin resolve binary.
+    pub fn kotlin_resolve_path(&self) -> String {
+        resolve_binary(&self.kotlin_resolve)
+    }
+
+    /// Resolved path for the Kotlin parser binary.
+    pub fn kotlin_parser_path(&self) -> String {
+        resolve_binary(&self.kotlin_parser)
+    }
+
+    /// Resolved path for the JVM cross-language resolve binary.
+    pub fn jvm_cross_resolve_path(&self) -> String {
+        resolve_binary(&self.jvm_cross_resolve)
     }
 }
 
@@ -396,6 +436,22 @@ fn default_java_parser() -> String {
     "java-parser".to_string()
 }
 
+fn default_kotlin_analyzer() -> String {
+    "grafema-kotlin-analyzer".to_string()
+}
+
+fn default_kotlin_resolve() -> String {
+    "kotlin-resolve".to_string()
+}
+
+fn default_kotlin_parser() -> String {
+    "kotlin-parser".to_string()
+}
+
+fn default_jvm_cross_resolve() -> String {
+    "jvm-cross-resolve".to_string()
+}
+
 /// Language detection based on file extension.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Language {
@@ -403,6 +459,7 @@ pub enum Language {
     Haskell,
     Rust,
     Java,
+    Kotlin,
 }
 
 /// Detect language from file extension.
@@ -414,26 +471,29 @@ pub fn detect_language(path: &Path) -> Option<Language> {
         "hs" => Some(Language::Haskell),
         "rs" => Some(Language::Rust),
         "java" => Some(Language::Java),
+        "kt" | "kts" => Some(Language::Kotlin),
         _ => None,
     }
 }
 
 /// Partition files by detected language.
-pub fn partition_by_language(files: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>) {
+pub fn partition_by_language(files: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>) {
     let mut js_files = Vec::new();
     let mut hs_files = Vec::new();
     let mut rs_files = Vec::new();
     let mut java_files = Vec::new();
+    let mut kotlin_files = Vec::new();
     for file in files {
         match detect_language(file) {
             Some(Language::JavaScript) => js_files.push(file.clone()),
             Some(Language::Haskell) => hs_files.push(file.clone()),
             Some(Language::Rust) => rs_files.push(file.clone()),
             Some(Language::Java) => java_files.push(file.clone()),
+            Some(Language::Kotlin) => kotlin_files.push(file.clone()),
             None => {} // skip unknown extensions
         }
     }
-    (js_files, hs_files, rs_files, java_files)
+    (js_files, hs_files, rs_files, java_files, kotlin_files)
 }
 
 /// Load and validate configuration from a YAML file.
@@ -788,20 +848,22 @@ plugins:
             PathBuf::from("src/App.java"),
             PathBuf::from("README.md"),
         ];
-        let (js, hs, rs, java) = partition_by_language(&files);
+        let (js, hs, rs, java, kotlin) = partition_by_language(&files);
         assert_eq!(js, vec![PathBuf::from("src/index.ts"), PathBuf::from("src/app.jsx")]);
         assert_eq!(hs, vec![PathBuf::from("src/Main.hs"), PathBuf::from("src/Lib.hs")]);
         assert_eq!(rs, vec![PathBuf::from("src/main.rs"), PathBuf::from("src/lib.rs")]);
         assert_eq!(java, vec![PathBuf::from("src/App.java")]);
+        assert!(kotlin.is_empty());
     }
 
     #[test]
     fn partition_by_language_empty_input() {
-        let (js, hs, rs, java) = partition_by_language(&[]);
+        let (js, hs, rs, java, kotlin) = partition_by_language(&[]);
         assert!(js.is_empty());
         assert!(hs.is_empty());
         assert!(rs.is_empty());
         assert!(java.is_empty());
+        assert!(kotlin.is_empty());
     }
 
     #[test]
@@ -814,6 +876,12 @@ plugins:
     fn detect_language_java() {
         let path = PathBuf::from("src/Main.java");
         assert_eq!(detect_language(&path), Some(Language::Java));
+    }
+
+    #[test]
+    fn detect_language_kotlin() {
+        assert_eq!(detect_language(Path::new("src/Main.kt")), Some(Language::Kotlin));
+        assert_eq!(detect_language(Path::new("build.gradle.kts")), Some(Language::Kotlin));
     }
 
     #[test]
@@ -859,6 +927,10 @@ analyzers:
         assert_eq!(cfg.analyzers.java, "grafema-java-analyzer");
         assert_eq!(cfg.analyzers.java_resolve, "java-resolve");
         assert_eq!(cfg.analyzers.java_parser, "java-parser");
+        assert_eq!(cfg.analyzers.kotlin, "grafema-kotlin-analyzer");
+        assert_eq!(cfg.analyzers.kotlin_resolve, "kotlin-resolve");
+        assert_eq!(cfg.analyzers.kotlin_parser, "kotlin-parser");
+        assert_eq!(cfg.analyzers.jvm_cross_resolve, "jvm-cross-resolve");
         cleanup(&dir);
     }
 
@@ -874,6 +946,10 @@ analyzers:
         assert_eq!(defaults.java, "grafema-java-analyzer");
         assert_eq!(defaults.java_resolve, "java-resolve");
         assert_eq!(defaults.java_parser, "java-parser");
+        assert_eq!(defaults.kotlin, "grafema-kotlin-analyzer");
+        assert_eq!(defaults.kotlin_resolve, "kotlin-resolve");
+        assert_eq!(defaults.kotlin_parser, "kotlin-parser");
+        assert_eq!(defaults.jvm_cross_resolve, "jvm-cross-resolve");
     }
 
     #[test]
@@ -915,6 +991,10 @@ analyzers:
             java: "/abs/grafema-java-analyzer".to_string(),
             java_resolve: "/abs/java-resolve".to_string(),
             java_parser: "/abs/java-parser".to_string(),
+            kotlin: "/abs/grafema-kotlin-analyzer".to_string(),
+            kotlin_resolve: "/abs/kotlin-resolve".to_string(),
+            kotlin_parser: "/abs/kotlin-parser".to_string(),
+            jvm_cross_resolve: "/abs/jvm-cross-resolve".to_string(),
         };
         assert_eq!(bins.js_path(), "/abs/grafema-analyzer");
         assert_eq!(bins.haskell_path(), "/abs/haskell-analyzer");
@@ -925,6 +1005,10 @@ analyzers:
         assert_eq!(bins.java_path(), "/abs/grafema-java-analyzer");
         assert_eq!(bins.java_resolve_path(), "/abs/java-resolve");
         assert_eq!(bins.java_parser_path(), "/abs/java-parser");
+        assert_eq!(bins.kotlin_path(), "/abs/grafema-kotlin-analyzer");
+        assert_eq!(bins.kotlin_resolve_path(), "/abs/kotlin-resolve");
+        assert_eq!(bins.kotlin_parser_path(), "/abs/kotlin-parser");
+        assert_eq!(bins.jvm_cross_resolve_path(), "/abs/jvm-cross-resolve");
     }
 
     #[test]
