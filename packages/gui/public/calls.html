@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Grafema - Call Graph</title>
+  <style>
+    * { margin: 0; padding: 0; }
+    body { background: #0a0a0f; overflow: hidden; font-family: 'Inter', -apple-system, sans-serif; }
+    canvas { display: block; }
+    #filter-bar {
+      position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+      z-index: 100; display: flex; gap: 8px; align-items: center;
+    }
+    #filter-bar input {
+      background: #12121a; border: 1px solid #2a2a4e; border-radius: 6px;
+      padding: 8px 16px; color: #ccc; font-size: 0.8rem; width: 300px;
+      font-family: inherit; outline: none;
+    }
+    #filter-bar input:focus { border-color: #7b2ff7; }
+    #filter-bar span { color: #555; font-size: 0.75rem; }
+  </style>
+</head>
+<body>
+<div id="filter-bar">
+  <input id="search" placeholder="Filter by function name or file..." />
+  <span id="filter-info"></span>
+</div>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.171.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import {
+  fetchGraph, computeGeographicPositions, computeNodeColors,
+  computeNodeSizes, computeEdgePositions, createHUD, showLoading,
+  NODE_COLORS, DEFAULT_COLOR,
+} from './shared.js';
+
+const hideLoading = showLoading('Loading call graph...');
+const hud = createHUD('Call Graph');
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setClearColor(0x0a0a0f);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x0a0a0f, 0.004);
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 500);
+camera.position.set(0, 80, 100);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+
+// Load functions + calls
+const data = await fetchGraph(
+  ['FUNCTION', 'METHOD', 'CLASS'],
+  ['CALLS', 'HAS_MEMBER', 'HAS_CALLBACK']
+);
+hud.setStats(`${data.nodeCount} functions · ${data.edgeCount} calls`);
+
+// Use geographic layout (directory-based) for functions too
+const positions = computeGeographicPositions(data.nodes, 160);
+
+// Lift Y slightly by node type for 3D effect
+for (let i = 0; i < data.nodes.length; i++) {
+  const t = data.nodes[i].t;
+  if (t === 'CLASS') positions[i * 3 + 1] = 5;
+  else if (t === 'METHOD') positions[i * 3 + 1] = 3;
+  else positions[i * 3 + 1] = (Math.random() - 0.5) * 2;
+}
+
+// Node shaders
+const nodeVertShader = `
+  attribute float size;
+  attribute vec3 color;
+  attribute float visible;
+  varying vec3 vColor;
+  varying float vAlpha;
+
+  void main() {
+    vColor = color;
+    vAlpha = visible;
+    vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
+    gl_PointSize = size * (200.0 / -mvPos.z);
+    gl_PointSize = clamp(gl_PointSize, 1.0, 16.0);
+    gl_Position = projectionMatrix * mvPos;
+  }
+`;
+
+const nodeFragShader = `
+  varying vec3 vColor;
+  varying float vAlpha;
+
+  void main() {
+    if (vAlpha < 0.01) discard;
+    float d = length(gl_PointCoord - 0.5);
+    if (d > 0.5) discard;
+    float a = smoothstep(0.5, 0.1, d) * vAlpha;
+    gl_FragColor = vec4(vColor, a);
+  }
+`;
+
+const colors = computeNodeColors(data.nodes);
+const sizes = computeNodeSizes(data.nodes);
+const visibility = new Float32Array(data.nodes.length).fill(1.0);
+
+const nodeGeom = new THREE.BufferGeometry();
+nodeGeom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+nodeGeom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+nodeGeom.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+nodeGeom.setAttribute('visible', new THREE.BufferAttribute(visibility, 1));
+
+const nodeMat = new THREE.ShaderMaterial({
+  vertexShader: nodeVertShader,
+  fragmentShader: nodeFragShader,
+  transparent: true,
+  depthWrite: false,
+  blending: THREE.AdditiveBlending,
+});
+const nodePoints = new THREE.Points(nodeGeom, nodeMat);
+scene.add(nodePoints);
+
+// Edges
+const edgeData = computeEdgePositions(data.edges, positions);
+const edgeGeom = new THREE.BufferGeometry();
+edgeGeom.setAttribute('position', new THREE.BufferAttribute(edgeData.positions, 3));
+edgeGeom.setAttribute('color', new THREE.BufferAttribute(edgeData.colors, 3));
+const edgeMat = new THREE.LineBasicMaterial({
+  vertexColors: true, transparent: true, opacity: 0.15,
+  blending: THREE.AdditiveBlending, depthWrite: false,
+});
+const edgeLines = new THREE.LineSegments(edgeGeom, edgeMat);
+scene.add(edgeLines);
+
+hideLoading();
+
+// ──── Search/filter ────
+const searchInput = document.getElementById('search');
+const filterInfo = document.getElementById('filter-info');
+
+searchInput.addEventListener('input', () => {
+  const query = searchInput.value.toLowerCase().trim();
+  const visAttr = nodeGeom.getAttribute('visible');
+
+  if (!query) {
+    for (let i = 0; i < data.nodes.length; i++) visAttr.setX(i, 1.0);
+    filterInfo.textContent = '';
+  } else {
+    let count = 0;
+    for (let i = 0; i < data.nodes.length; i++) {
+      const n = data.nodes[i];
+      const match = (n.n && n.n.toLowerCase().includes(query)) ||
+                    (n.f && n.f.toLowerCase().includes(query));
+      visAttr.setX(i, match ? 1.0 : 0.05);
+      if (match) count++;
+    }
+    filterInfo.textContent = `${count} matches`;
+  }
+  visAttr.needsUpdate = true;
+});
+
+// Raycaster
+const raycaster = new THREE.Raycaster();
+raycaster.params.Points.threshold = 0.8;
+const mouse = new THREE.Vector2();
+
+renderer.domElement.addEventListener('mousemove', (e) => {
+  mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+  mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+  raycaster.setFromCamera(mouse, camera);
+  const hits = raycaster.intersectObject(nodePoints);
+  if (hits.length > 0) {
+    const node = data.nodes[hits[0].index];
+    hud.tooltip.style.display = 'block';
+    hud.tooltip.innerHTML = `<div style="color:#4488ff;font-weight:600">${node.n || '(anonymous)'}</div>
+      <div style="color:#555;font-size:0.65rem;margin-top:2px">${node.f || ''}${node.l ? ':' + node.l : ''}</div>
+      <div style="color:#666;margin-top:2px">${node.t}</div>`;
+    hud.tooltip.style.left = e.clientX + 12 + 'px';
+    hud.tooltip.style.top = e.clientY + 12 + 'px';
+  } else {
+    hud.tooltip.style.display = 'none';
+  }
+});
+
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+</body>
+</html>

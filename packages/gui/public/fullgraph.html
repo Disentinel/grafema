@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Grafema - Full Graph</title>
+  <style>
+    * { margin: 0; padding: 0; }
+    body { background: #0a0a0f; overflow: hidden; font-family: 'Inter', -apple-system, sans-serif; }
+    canvas { display: block; }
+    #legend {
+      position: fixed; bottom: 16px; right: 24px; z-index: 100;
+      background: rgba(18,18,26,0.9); border: 1px solid #1a1a2e;
+      border-radius: 8px; padding: 12px 16px; font-size: 0.7rem;
+    }
+    #legend div { display: flex; align-items: center; gap: 6px; margin: 3px 0; color: #888; }
+    #legend span { display: inline-block; width: 10px; height: 10px; border-radius: 50%; }
+  </style>
+</head>
+<body>
+<div id="legend"></div>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.171.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import {
+  fetchGraph, computeGeographicPositions, computeNodeColors,
+  computeNodeSizes, computeEdgePositions, createHUD, showLoading,
+  NODE_COLORS, DEFAULT_COLOR,
+} from './shared.js';
+
+const hideLoading = showLoading('Loading full graph — this may take a moment...');
+const hud = createHUD('Full Graph');
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setClearColor(0x0a0a0f);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x0a0a0f, 0.0025);
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+camera.position.set(0, 150, 150);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.maxDistance = 500;
+
+// Full graph — all nodes, all edges
+const data = await fetchGraph();
+hud.setStats(`${data.nodeCount.toLocaleString()} nodes · ${data.edgeCount.toLocaleString()} edges`);
+
+// Geographic layout
+const positions = computeGeographicPositions(data.nodes, 250);
+
+// Layer nodes by type category on Y axis
+const typeLayer = {
+  PROJECT: 20, SERVICE: 18,
+  MODULE: 12, EXTERNAL_MODULE: 12,
+  CLASS: 8, FUNCTION: 6, METHOD: 5,
+  VARIABLE: 2, PARAMETER: 1, CONSTANT: 3,
+  CALL: -2, IMPORT: 10, EXPORT: 10,
+  SCOPE: 0, BRANCH: -1, LOOP: -1,
+  EXPRESSION: -3, LITERAL: -4,
+  EXTERNAL: 14, SIDE_EFFECT: -5,
+};
+
+for (let i = 0; i < data.nodes.length; i++) {
+  const layer = typeLayer[data.nodes[i].t] || 0;
+  positions[i * 3 + 1] = layer + (Math.random() - 0.5) * 1.5;
+}
+
+// Node rendering
+const nodeVertShader = `
+  attribute float size;
+  attribute vec3 color;
+  varying vec3 vColor;
+  varying float vDist;
+
+  void main() {
+    vColor = color;
+    vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
+    vDist = -mvPos.z;
+    gl_PointSize = size * (400.0 / vDist);
+    gl_PointSize = clamp(gl_PointSize, 0.5, 20.0);
+    gl_Position = projectionMatrix * mvPos;
+  }
+`;
+
+const nodeFragShader = `
+  varying vec3 vColor;
+  varying float vDist;
+
+  void main() {
+    vec2 c = gl_PointCoord - 0.5;
+    float d = length(c);
+    if (d > 0.5) discard;
+    float alpha = smoothstep(0.5, 0.05, d);
+    float fog = exp(-0.0025 * vDist);
+    gl_FragColor = vec4(vColor * fog, alpha * fog);
+  }
+`;
+
+const colors = computeNodeColors(data.nodes);
+const sizes = computeNodeSizes(data.nodes);
+
+const nodeGeom = new THREE.BufferGeometry();
+nodeGeom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+nodeGeom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+nodeGeom.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+
+const nodeMat = new THREE.ShaderMaterial({
+  vertexShader: nodeVertShader,
+  fragmentShader: nodeFragShader,
+  transparent: true,
+  depthWrite: false,
+  blending: THREE.AdditiveBlending,
+});
+const nodePoints = new THREE.Points(nodeGeom, nodeMat);
+scene.add(nodePoints);
+
+// Edges — only render a subset for performance (prioritize important edge types)
+const importantEdges = ['CALLS', 'IMPORTS_FROM', 'DEPENDS_ON', 'EXTENDS', 'CONTAINS',
+  'ASSIGNED_FROM', 'FLOWS_INTO', 'HANDLED_BY', 'ROUTES_TO', 'HAS_MEMBER'];
+const filteredEdges = data.edges.filter(e => importantEdges.includes(e[2]));
+
+const edgeData = computeEdgePositions(filteredEdges, positions);
+const edgeGeom = new THREE.BufferGeometry();
+edgeGeom.setAttribute('position', new THREE.BufferAttribute(edgeData.positions, 3));
+edgeGeom.setAttribute('color', new THREE.BufferAttribute(edgeData.colors, 3));
+const edgeMat = new THREE.LineBasicMaterial({
+  vertexColors: true, transparent: true, opacity: 0.08,
+  blending: THREE.AdditiveBlending, depthWrite: false,
+});
+scene.add(new THREE.LineSegments(edgeGeom, edgeMat));
+
+// Legend
+const legendEl = document.getElementById('legend');
+const legendTypes = ['MODULE', 'FUNCTION', 'CLASS', 'VARIABLE', 'CALL', 'IMPORT', 'EXTERNAL', 'SIDE_EFFECT'];
+legendEl.innerHTML = legendTypes.map(t => {
+  const hex = (NODE_COLORS[t] || DEFAULT_COLOR).toString(16).padStart(6, '0');
+  return `<div><span style="background:#${hex}"></span>${t}</div>`;
+}).join('');
+
+hideLoading();
+
+// Raycaster
+const raycaster = new THREE.Raycaster();
+raycaster.params.Points.threshold = 1.2;
+const mouse = new THREE.Vector2();
+
+renderer.domElement.addEventListener('mousemove', (e) => {
+  mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+  mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+  raycaster.setFromCamera(mouse, camera);
+  const hits = raycaster.intersectObject(nodePoints);
+  if (hits.length > 0) {
+    const node = data.nodes[hits[0].index];
+    hud.tooltip.style.display = 'block';
+    hud.tooltip.innerHTML = `<div style="color:#00d4ff;font-weight:600">${node.t}</div>
+      <div style="margin-top:2px">${node.n || '(anonymous)'}</div>
+      <div style="color:#555;font-size:0.65rem;margin-top:2px">${node.f || ''}${node.l ? ':' + node.l : ''}</div>`;
+    hud.tooltip.style.left = e.clientX + 12 + 'px';
+    hud.tooltip.style.top = e.clientY + 12 + 'px';
+  } else {
+    hud.tooltip.style.display = 'none';
+  }
+});
+
+// Slow auto-rotation
+let autoRotate = true;
+controls.addEventListener('start', () => autoRotate = false);
+
+function animate() {
+  requestAnimationFrame(animate);
+  if (autoRotate) {
+    nodePoints.rotation.y += 0.0003;
+    scene.children.forEach(c => {
+      if (c !== nodePoints && c.rotation) c.rotation.y += 0.0003;
+    });
+  }
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+</body>
+</html>

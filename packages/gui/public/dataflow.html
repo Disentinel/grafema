@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Grafema - Data Flow</title>
+  <style>
+    * { margin: 0; padding: 0; }
+    body { background: #0a0a0f; overflow: hidden; font-family: 'Inter', -apple-system, sans-serif; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.171.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import {
+  fetchGraph, computeGeographicPositions, computeNodeColors,
+  computeNodeSizes, computeEdgePositions, createHUD, showLoading,
+} from './shared.js';
+
+const hideLoading = showLoading('Loading data flow...');
+const hud = createHUD('Data Flow');
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setClearColor(0x0a0a0f);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x0a0a0f, 0.004);
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 500);
+camera.position.set(0, 80, 100);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+
+// Variables + data flow edges
+const data = await fetchGraph(
+  ['VARIABLE', 'PARAMETER', 'CONSTANT', 'FUNCTION'],
+  ['ASSIGNED_FROM', 'FLOWS_INTO', 'READS_FROM', 'WRITES_TO', 'DERIVES_FROM', 'DEFINES', 'USES']
+);
+hud.setStats(`${data.nodeCount} variables · ${data.edgeCount} flow edges`);
+
+const positions = computeGeographicPositions(data.nodes, 180);
+
+// Lift variables by type
+for (let i = 0; i < data.nodes.length; i++) {
+  const t = data.nodes[i].t;
+  if (t === 'FUNCTION') positions[i * 3 + 1] = 6;
+  else if (t === 'CONSTANT') positions[i * 3 + 1] = 3;
+  else if (t === 'PARAMETER') positions[i * 3 + 1] = -2;
+  else positions[i * 3 + 1] = (Math.random() - 0.5) * 2;
+}
+
+const colors = computeNodeColors(data.nodes);
+const sizes = computeNodeSizes(data.nodes);
+
+// Animated edge shader — data "flows" along edges
+const edgeVertShader = `
+  attribute vec3 color;
+  attribute float edgeProgress; // 0 at src, 1 at dst
+  varying vec3 vColor;
+  varying float vProgress;
+  varying float vDist;
+
+  void main() {
+    vColor = color;
+    vProgress = edgeProgress;
+    vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
+    vDist = -mvPos.z;
+    gl_Position = projectionMatrix * mvPos;
+  }
+`;
+
+const edgeFragShader = `
+  uniform float time;
+  varying vec3 vColor;
+  varying float vProgress;
+  varying float vDist;
+
+  void main() {
+    float fogFactor = exp(-0.004 * vDist);
+    // Animated pulse along edge
+    float pulse = sin((vProgress - time * 0.5) * 6.28318 * 3.0) * 0.5 + 0.5;
+    float alpha = mix(0.05, 0.3, pulse) * fogFactor;
+    gl_FragColor = vec4(vColor * (0.5 + pulse * 0.5), alpha);
+  }
+`;
+
+// Nodes
+const nodeGeom = new THREE.BufferGeometry();
+nodeGeom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+nodeGeom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+nodeGeom.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+
+const nodeMat = new THREE.ShaderMaterial({
+  vertexShader: `
+    attribute float size;
+    attribute vec3 color;
+    varying vec3 vColor;
+    void main() {
+      vColor = color;
+      vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
+      gl_PointSize = size * (200.0 / -mvPos.z);
+      gl_PointSize = clamp(gl_PointSize, 1.0, 16.0);
+      gl_Position = projectionMatrix * mvPos;
+    }
+  `,
+  fragmentShader: `
+    varying vec3 vColor;
+    void main() {
+      float d = length(gl_PointCoord - 0.5);
+      if (d > 0.5) discard;
+      float a = smoothstep(0.5, 0.1, d);
+      gl_FragColor = vec4(vColor, a);
+    }
+  `,
+  transparent: true,
+  depthWrite: false,
+  blending: THREE.AdditiveBlending,
+});
+scene.add(new THREE.Points(nodeGeom, nodeMat));
+
+// Edges with progress attribute for animation
+const edgePos = computeEdgePositions(data.edges, positions);
+const edgeProgress = new Float32Array(data.edges.length * 2);
+for (let i = 0; i < data.edges.length; i++) {
+  edgeProgress[i * 2] = 0;     // src vertex
+  edgeProgress[i * 2 + 1] = 1; // dst vertex
+}
+
+const edgeGeom = new THREE.BufferGeometry();
+edgeGeom.setAttribute('position', new THREE.BufferAttribute(edgePos.positions, 3));
+edgeGeom.setAttribute('color', new THREE.BufferAttribute(edgePos.colors, 3));
+edgeGeom.setAttribute('edgeProgress', new THREE.BufferAttribute(edgeProgress, 1));
+
+const edgeMat = new THREE.ShaderMaterial({
+  vertexShader: edgeVertShader,
+  fragmentShader: edgeFragShader,
+  transparent: true,
+  depthWrite: false,
+  blending: THREE.AdditiveBlending,
+  uniforms: { time: { value: 0 } },
+});
+scene.add(new THREE.LineSegments(edgeGeom, edgeMat));
+
+hideLoading();
+
+// Raycaster
+const raycaster = new THREE.Raycaster();
+raycaster.params.Points.threshold = 0.8;
+const mouse = new THREE.Vector2();
+
+renderer.domElement.addEventListener('mousemove', (e) => {
+  mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+  mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+  raycaster.setFromCamera(mouse, camera);
+  const hits = raycaster.intersectObjects(scene.children);
+  if (hits.length > 0 && hits[0].index !== undefined) {
+    const node = data.nodes[hits[0].index];
+    if (node) {
+      hud.tooltip.style.display = 'block';
+      hud.tooltip.innerHTML = `<div style="color:#aa66ff;font-weight:600">${node.n || '?'}</div>
+        <div style="color:#555;font-size:0.65rem;margin-top:2px">${node.f || ''}${node.l ? ':' + node.l : ''}</div>
+        <div style="color:#666;margin-top:2px">${node.t}</div>`;
+      hud.tooltip.style.left = e.clientX + 12 + 'px';
+      hud.tooltip.style.top = e.clientY + 12 + 'px';
+    }
+  } else {
+    hud.tooltip.style.display = 'none';
+  }
+});
+
+const clock = new THREE.Clock();
+function animate() {
+  requestAnimationFrame(animate);
+  edgeMat.uniforms.time.value = clock.getElapsedTime();
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+</body>
+</html>

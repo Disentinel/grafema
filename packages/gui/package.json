@@ -1,0 +1,14 @@
+{
+  "name": "@grafema/gui",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Experimental 3D graph visualization for Grafema",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "@grafema/rfdb-client": "workspace:*"
+  }
+}

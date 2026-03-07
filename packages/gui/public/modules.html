@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Grafema - Module Dependencies</title>
+  <style>
+    * { margin: 0; padding: 0; }
+    body { background: #0a0a0f; overflow: hidden; font-family: 'Inter', -apple-system, sans-serif; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.171.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import {
+  fetchGraph, computeNodeColors, computeEdgePositions,
+  createHUD, showLoading, NODE_COLORS, DEFAULT_COLOR,
+} from './shared.js';
+
+const hideLoading = showLoading('Loading modules...');
+const hud = createHUD('Module Dependencies');
+
+// Setup
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setClearColor(0x0a0a0f);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x0a0a0f, 0.006);
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 500);
+camera.position.set(0, 60, 80);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+
+// Fetch only modules + relevant edge types
+const data = await fetchGraph(
+  ['MODULE', 'EXTERNAL_MODULE'],
+  ['IMPORTS_FROM', 'DEPENDS_ON']
+);
+hud.setStats(`${data.nodeCount} modules · ${data.edgeCount} dependencies`);
+
+// ──── Force-directed layout (simple, runs in JS — module count is small) ────
+const N = data.nodes.length;
+const positions = new Float32Array(N * 3);
+const velocities = new Float32Array(N * 3);
+
+// Initialize random positions
+for (let i = 0; i < N; i++) {
+  positions[i * 3] = (Math.random() - 0.5) * 60;
+  positions[i * 3 + 1] = (Math.random() - 0.5) * 60;
+  positions[i * 3 + 2] = (Math.random() - 0.5) * 60;
+}
+
+// Build adjacency for force calculation
+const edgePairs = data.edges.map(e => [e[0], e[1]]);
+
+function simulateForce(iterations) {
+  const repulsion = 500;
+  const attraction = 0.01;
+  const damping = 0.9;
+  const dt = 0.3;
+
+  for (let iter = 0; iter < iterations; iter++) {
+    // Reset velocities (with damping)
+    for (let i = 0; i < N * 3; i++) velocities[i] *= 0.5;
+
+    // Repulsion (Barnes-Hut would be better but N is small)
+    for (let i = 0; i < N; i++) {
+      for (let j = i + 1; j < N; j++) {
+        const dx = positions[i * 3] - positions[j * 3];
+        const dy = positions[i * 3 + 1] - positions[j * 3 + 1];
+        const dz = positions[i * 3 + 2] - positions[j * 3 + 2];
+        const dist2 = dx * dx + dy * dy + dz * dz + 1;
+        const force = repulsion / dist2;
+        const fx = dx * force;
+        const fy = dy * force;
+        const fz = dz * force;
+        velocities[i * 3] += fx;
+        velocities[i * 3 + 1] += fy;
+        velocities[i * 3 + 2] += fz;
+        velocities[j * 3] -= fx;
+        velocities[j * 3 + 1] -= fy;
+        velocities[j * 3 + 2] -= fz;
+      }
+    }
+
+    // Attraction along edges
+    for (const [si, di] of edgePairs) {
+      const dx = positions[di * 3] - positions[si * 3];
+      const dy = positions[di * 3 + 1] - positions[si * 3 + 1];
+      const dz = positions[di * 3 + 2] - positions[si * 3 + 2];
+      const fx = dx * attraction;
+      const fy = dy * attraction;
+      const fz = dz * attraction;
+      velocities[si * 3] += fx;
+      velocities[si * 3 + 1] += fy;
+      velocities[si * 3 + 2] += fz;
+      velocities[di * 3] -= fx;
+      velocities[di * 3 + 1] -= fy;
+      velocities[di * 3 + 2] -= fz;
+    }
+
+    // Apply velocities
+    for (let i = 0; i < N * 3; i++) {
+      velocities[i] *= damping;
+      positions[i] += velocities[i] * dt;
+    }
+  }
+}
+
+// Run initial simulation
+simulateForce(200);
+
+// ──── Render nodes as spheres (few enough for InstancedMesh) ────
+const sphereGeo = new THREE.SphereGeometry(0.5, 12, 8);
+const sphereMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+const mesh = new THREE.InstancedMesh(sphereGeo, sphereMat, N);
+
+const dummy = new THREE.Object3D();
+const colorAttr = new THREE.InstancedBufferAttribute(new Float32Array(N * 3), 3);
+
+for (let i = 0; i < N; i++) {
+  dummy.position.set(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
+  const isExternal = data.nodes[i].t === 'EXTERNAL_MODULE';
+  const scale = isExternal ? 0.6 : 1.2;
+  dummy.scale.set(scale, scale, scale);
+  dummy.updateMatrix();
+  mesh.setMatrixAt(i, dummy.matrix);
+
+  const hex = NODE_COLORS[data.nodes[i].t] || DEFAULT_COLOR;
+  colorAttr.setXYZ(i, ((hex >> 16) & 0xff) / 255, ((hex >> 8) & 0xff) / 255, (hex & 0xff) / 255);
+}
+mesh.instanceColor = colorAttr;
+scene.add(mesh);
+
+// ──── Edges ────
+const edgeData = computeEdgePositions(data.edges, positions);
+const edgeGeom = new THREE.BufferGeometry();
+edgeGeom.setAttribute('position', new THREE.BufferAttribute(edgeData.positions, 3));
+edgeGeom.setAttribute('color', new THREE.BufferAttribute(edgeData.colors, 3));
+const edgeMat = new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.3 });
+scene.add(new THREE.LineSegments(edgeGeom, edgeMat));
+
+// ──── Labels for modules ────
+for (let i = 0; i < N; i++) {
+  const node = data.nodes[i];
+  const label = node.n || node.f?.split('/').pop() || '?';
+  if (label.length > 30) continue; // skip very long names
+
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  canvas.width = 256;
+  canvas.height = 48;
+  ctx.fillStyle = node.t === 'EXTERNAL_MODULE' ? 'rgba(255,136,68,0.6)' : 'rgba(0,212,255,0.6)';
+  ctx.font = '18px Inter, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(label.length > 25 ? label.slice(0, 22) + '...' : label, 128, 30);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
+  sprite.position.set(positions[i * 3], positions[i * 3 + 1] + 1.5, positions[i * 3 + 2]);
+  sprite.scale.set(8, 1.5, 1);
+  scene.add(sprite);
+}
+
+hideLoading();
+
+// ──── Raycaster ────
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+
+renderer.domElement.addEventListener('mousemove', (e) => {
+  mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+  mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+  raycaster.setFromCamera(mouse, camera);
+  const hit = raycaster.intersectObject(mesh);
+  if (hit.length > 0) {
+    const idx = hit[0].instanceId;
+    const node = data.nodes[idx];
+    hud.tooltip.style.display = 'block';
+    hud.tooltip.innerHTML = `<div style="color:#00d4ff;font-weight:600">${node.n || '?'}</div>
+      <div style="color:#666;font-size:0.65rem;margin-top:2px">${node.f || ''}</div>
+      <div style="color:#555;margin-top:2px">${node.t}</div>`;
+    hud.tooltip.style.left = e.clientX + 12 + 'px';
+    hud.tooltip.style.top = e.clientY + 12 + 'px';
+  } else {
+    hud.tooltip.style.display = 'none';
+  }
+});
+
+// Animation
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+</body>
+</html>

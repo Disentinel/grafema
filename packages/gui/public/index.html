@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Grafema 3D</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0a0a0f;
+      color: #e0e0e0;
+      font-family: 'Inter', -apple-system, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+    h1 {
+      font-size: 2.5rem;
+      font-weight: 200;
+      letter-spacing: 0.15em;
+      margin-bottom: 0.5rem;
+      background: linear-gradient(135deg, #00d4ff, #7b2ff7);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .subtitle {
+      font-size: 0.9rem;
+      color: #666;
+      margin-bottom: 3rem;
+      letter-spacing: 0.05em;
+    }
+    .stats {
+      font-size: 0.8rem;
+      color: #555;
+      margin-bottom: 2rem;
+      text-align: center;
+    }
+    .stats span { color: #00d4ff; font-weight: 600; }
+    .views {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1rem;
+      max-width: 900px;
+      width: 90%;
+    }
+    a.card {
+      display: block;
+      padding: 1.5rem;
+      background: #12121a;
+      border: 1px solid #1a1a2e;
+      border-radius: 12px;
+      text-decoration: none;
+      color: #e0e0e0;
+      transition: all 0.2s;
+    }
+    a.card:hover {
+      border-color: #7b2ff7;
+      background: #16162a;
+      transform: translateY(-2px);
+    }
+    .card h2 {
+      font-size: 1.1rem;
+      font-weight: 500;
+      margin-bottom: 0.5rem;
+    }
+    .card p {
+      font-size: 0.8rem;
+      color: #777;
+      line-height: 1.4;
+    }
+    .card .icon {
+      font-size: 1.8rem;
+      margin-bottom: 0.5rem;
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <h1>GRAFEMA</h1>
+  <p class="subtitle">3D Graph Visualization</p>
+  <div class="stats" id="stats">Loading graph stats...</div>
+  <div class="views">
+    <a class="card" href="/hex-topology.html">
+      <span class="icon">&#x2B21;</span>
+      <h2>Hex Topology</h2>
+      <p>Connectivity-driven hex placement. Greedy wave layout with LOD, edge toggles, region borders.</p>
+    </a>
+    <a class="card" href="/geographic-hex.html">
+      <span class="icon">&#x2B21;</span>
+      <h2>Hex Map (legacy)</h2>
+      <p>Structured hex-tile grid with LOD edges. Organic borders, connectivity-based placement.</p>
+    </a>
+    <a class="card" href="/geographic-webgpu.html">
+      <span class="icon">&#x26a1;</span>
+      <h2>Geographic (WebGPU)</h2>
+      <p>GPU physics simulation. Nodes stream in batches, animate to position. Requires WebGPU.</p>
+    </a>
+    <a class="card" href="/geographic.html">
+      <span class="icon">&#x1f30d;</span>
+      <h2>Geographic</h2>
+      <p>Directory-based layout. Nodes positioned by file path. WebGL fallback.</p>
+    </a>
+    <a class="card" href="/modules.html">
+      <span class="icon">&#x1f4e6;</span>
+      <h2>Module Dependencies</h2>
+      <p>Modules + IMPORTS_FROM edges. High-level architecture view.</p>
+    </a>
+    <a class="card" href="/calls.html">
+      <span class="icon">&#x1f4de;</span>
+      <h2>Call Graph</h2>
+      <p>Functions + CALLS edges. Who calls who. Force-directed.</p>
+    </a>
+    <a class="card" href="/dataflow.html">
+      <span class="icon">&#x1f4a7;</span>
+      <h2>Data Flow</h2>
+      <p>Variables + ASSIGNED_FROM/FLOWS_INTO. How data moves through code.</p>
+    </a>
+    <a class="card" href="/fullgraph.html">
+      <span class="icon">&#x2728;</span>
+      <h2>Full Graph</h2>
+      <p>Everything at once. Aggregated clusters by directory.</p>
+    </a>
+  </div>
+  <script>
+    fetch('/api/stats')
+      .then(r => r.json())
+      .then(s => {
+        document.getElementById('stats').innerHTML =
+          `<span>${s.nodeCount.toLocaleString()}</span> nodes &middot; <span>${s.edgeCount.toLocaleString()}</span> edges`;
+      })
+      .catch(() => {
+        document.getElementById('stats').textContent = 'RFDB not connected';
+      });
+  </script>
+</body>
+</html>

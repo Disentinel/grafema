@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Grafema - Hex Map</title>
+  <style>
+    * { margin: 0; padding: 0; }
+    body { background: #0a0a0f; overflow: hidden; font-family: 'Inter', -apple-system, sans-serif; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.171.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import {
+  fetchGraphHex, fetchHexExpand, cubeToWorld,
+  NODE_COLORS, DEFAULT_COLOR, EDGE_COLORS, DEFAULT_EDGE_COLOR,
+  colorToVec3, createHUD, showLoading,
+} from './shared.js';
+
+const loading = showLoading('Connecting to RFDB...');
+const hud = createHUD('Hex Map');
+
+// ──── Three.js setup ────
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setClearColor(0x0a0a0f);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x0a0a0f, 0.0015);
+
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2000);
+camera.position.set(0, 180, 180);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.05;
+controls.maxDistance = 800;
+controls.minDistance = 5;
+controls.maxPolarAngle = Math.PI * 0.45;
+controls.screenSpacePanning = false;
+controls.mouseButtons = {
+  LEFT: THREE.MOUSE.PAN,
+  MIDDLE: THREE.MOUSE.DOLLY,
+  RIGHT: THREE.MOUSE.ROTATE,
+};
+
+// Smooth opacity lerp state (wired after scene build)
+let _opacityArr = null, _targetOpacity = null, _opacityAttr = null;
+
+function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+
+  // Lerp opacity toward targets for smooth transitions (~200ms settle at 60fps)
+  if (_opacityArr && _targetOpacity) {
+    let changed = false;
+    for (let i = 0; i < _opacityArr.length; i++) {
+      const diff = _targetOpacity[i] - _opacityArr[i];
+      if (Math.abs(diff) > 0.001) {
+        _opacityArr[i] += diff * 0.08;
+        changed = true;
+      }
+    }
+    if (changed) _opacityAttr.needsUpdate = true;
+  }
+
+  renderer.render(scene, camera);
+}
+animate();
+
+// ──── Load data ────
+const graph = await fetchGraphHex({
+  limit: 2000,
+  structureOnly: true,
+  onProgress: (msg) => loading.update(msg),
+});
+
+const { header, nodeTypeIndices, nodeQ, nodeR, nodeDegree, nodeFlags,
+        edgeSrc, edgeDst, edgeTypeIndices,
+        aggSrcRegion, aggDstRegion, aggCount, aggTypeIdx } = graph;
+
+const N = header.nodeCount;
+const E = header.edgeCount;
+const A = header.aggEdgeCount;
+const TILE_SIZE = header.tileSize;
+
+// Containment data
+const nodeParents = header.nodeParents || null;
+const nodeChildren = new Map();
+if (nodeParents) {
+  for (let i = 0; i < N; i++) {
+    if (nodeParents[i] >= 0) {
+      if (!nodeChildren.has(nodeParents[i])) nodeChildren.set(nodeParents[i], []);
+      nodeChildren.get(nodeParents[i]).push(i);
+    }
+  }
+}
+
+hud.setStats(`${N.toLocaleString()} nodes · ${E.toLocaleString()} edges · ${header.regions.length} regions`);
+loading.update('Building scene...');
+
+// ──── Hex tile geometry ────
+function createFlatHexGeometry(size) {
+  const verts = [0, 0, 0];
+  for (let i = 0; i < 6; i++) {
+    const angle = Math.PI / 3 * i;
+    verts.push(Math.cos(angle) * size, 0, Math.sin(angle) * size);
+  }
+  const indices = [];
+  for (let i = 0; i < 6; i++) {
+    indices.push(0, i + 1, ((i + 1) % 6) + 1);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  return geo;
+}
+
+// ──── Tile InstancedMesh ────
+const hexGeo = createFlatHexGeometry(TILE_SIZE * 0.92);
+const totalReserved = header.totalReserved || 0;
+const MAX_INSTANCES = N + totalReserved;
+
+// Custom ShaderMaterial for per-instance opacity
+const tileMaterial = new THREE.ShaderMaterial({
+  vertexShader: `
+    attribute float opacity;
+    varying float vOpacity;
+    varying vec3 vNormal;
+    varying vec3 vWorldPos;
+    varying vec3 vInstanceColor;
+
+    void main() {
+      vOpacity = opacity;
+      vInstanceColor = instanceColor;
+      vNormal = normalMatrix * normal;
+      vec4 worldPos = instanceMatrix * vec4(position, 1.0);
+      vWorldPos = worldPos.xyz;
+      gl_Position = projectionMatrix * modelViewMatrix * worldPos;
+    }
+  `,
+  fragmentShader: `
+    varying float vOpacity;
+    varying vec3 vNormal;
+    varying vec3 vWorldPos;
+    varying vec3 vInstanceColor;
+
+    void main() {
+      // Slight darkening at hex edges using distance from center (fake SDF)
+      vec3 localPos = vWorldPos; // approximate
+      float edgeFade = 1.0;
+
+      // Top-down lighting
+      float light = max(dot(vNormal, vec3(0.0, 1.0, 0.0)), 0.3);
+      vec3 color = vInstanceColor * (0.7 + light * 0.3);
+
+      gl_FragColor = vec4(color, vOpacity);
+    }
+  `,
+  transparent: true,
+  depthWrite: true,
+  side: THREE.DoubleSide,
+});
+
+const tileMesh = new THREE.InstancedMesh(hexGeo, tileMaterial, MAX_INSTANCES);
+tileMesh.count = N; // only render structural nodes initially
+tileMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+
+// Per-instance opacity attribute (over-allocated for expansions)
+const opacityArray = new Float32Array(MAX_INSTANCES).fill(1.0);
+const targetOpacity = new Float32Array(MAX_INSTANCES).fill(1.0);
+const opacityAttr = new THREE.InstancedBufferAttribute(opacityArray, 1);
+hexGeo.setAttribute('opacity', opacityAttr);
+
+// Wire to animate loop lerp
+_opacityArr = opacityArray;
+_targetOpacity = targetOpacity;
+_opacityAttr = opacityAttr;
+
+const dummy = new THREE.Object3D();
+const color = new THREE.Color();
+
+// World positions cache for edge rendering (over-allocated for expansions)
+const worldX = new Float32Array(MAX_INSTANCES);
+const worldZ = new Float32Array(MAX_INSTANCES);
+
+for (let i = 0; i < N; i++) {
+  const { x, z } = cubeToWorld(nodeQ[i], nodeR[i], TILE_SIZE);
+  worldX[i] = x;
+  worldZ[i] = z;
+
+  const isContainer = nodeFlags[i] & 0x02;
+  dummy.position.set(x, 0, z);
+  dummy.updateMatrix();
+  tileMesh.setMatrixAt(i, dummy.matrix);
+
+  // Color by region with type brightness variation
+  const regionIdx = header.nodeRegions[i];
+  const hue = (regionIdx * 137.5) % 360;
+  const typeName = header.typeTable[nodeTypeIndices[i]];
+  let lightness = 35;
+  if (typeName === 'CLASS' || typeName === 'INTERFACE') lightness = 45;
+  else if (typeName === 'MODULE' || typeName === 'SERVICE') lightness = 42;
+  else if (typeName === 'VARIABLE' || typeName === 'LITERAL') lightness = 25;
+  else if (typeName === 'CALL' || typeName === 'EXPRESSION') lightness = 28;
+  if (isContainer) lightness = Math.min(lightness + 10, 55);
+  color.setHSL(hue / 360, 0.5, lightness / 100);
+  tileMesh.setColorAt(i, color);
+}
+
+tileMesh.instanceMatrix.needsUpdate = true;
+tileMesh.instanceColor.needsUpdate = true;
+scene.add(tileMesh);
+
+// ──── Region borders ────
+const borderGroup = new THREE.Group();
+for (const region of header.regions) {
+  if (!region.border || region.border.length < 3) continue;
+
+  const points = region.border.map(([x, z]) => new THREE.Vector3(x, 0.15 - region.depth * 0.02, z));
+  points.push(points[0].clone()); // close loop
+
+  const geo = new THREE.BufferGeometry().setFromPoints(points);
+  const opacity = region.depth === 0 ? 0.4 : region.depth === 1 ? 0.3 : 0.15;
+  const lineColor = region.depth === 0 ? 0x556688 : region.depth === 1 ? 0x445566 : 0x334455;
+
+  const mat = new THREE.LineBasicMaterial({
+    color: lineColor,
+    transparent: true,
+    opacity,
+    depthWrite: false,
+  });
+  borderGroup.add(new THREE.Line(geo, mat));
+}
+scene.add(borderGroup);
+
+// ──── Region labels ────
+const labelGroup = new THREE.Group();
+for (const region of header.regions) {
+  if (region.tileCount < 5 || region.path === '/') continue;
+
+  // Compute centroid from border
+  let cx = 0, cz = 0;
+  if (region.border && region.border.length > 0) {
+    for (const [x, z] of region.border) { cx += x; cz += z; }
+    cx /= region.border.length;
+    cz /= region.border.length;
+  } else {
+    continue;
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  const fontSize = Math.min(28, Math.max(12, region.tileCount * 0.8));
+  ctx.font = `${fontSize * 2}px Inter, sans-serif`;
+  ctx.fillStyle = region.depth === 0 ? '#556688' : region.depth === 1 ? '#445566' : '#334455';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const label = region.path.length > 30 ? '...' + region.path.slice(-27) : region.path;
+  ctx.fillText(label, 256, 32);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.minFilter = THREE.LinearFilter;
+  const spriteMat = new THREE.SpriteMaterial({
+    map: tex,
+    transparent: true,
+    opacity: 0.5,
+    depthWrite: false,
+    depthTest: false,
+    sizeAttenuation: true,
+  });
+  const sprite = new THREE.Sprite(spriteMat);
+  const labelWidth = Math.sqrt(region.tileCount) * TILE_SIZE * 2;
+  sprite.scale.set(labelWidth, labelWidth * 0.125, 1);
+  sprite.position.set(cx, 1.5, cz);
+  sprite.userData = { depth: region.depth, tileCount: region.tileCount };
+  labelGroup.add(sprite);
+}
+scene.add(labelGroup);
+
+// ──── LOD Edge System ────
+const LOD_FAR = 200;
+const LOD_MEDIUM = 60;
+const MAX_EDGES = 200;
+
+// Individual edges buffer
+const edgePositions = new Float32Array(MAX_EDGES * 6);
+const edgeColors = new Float32Array(MAX_EDGES * 6);
+const edgeGeo = new THREE.BufferGeometry();
+edgeGeo.setAttribute('position', new THREE.BufferAttribute(edgePositions, 3));
+edgeGeo.setAttribute('color', new THREE.BufferAttribute(edgeColors, 3));
+const edgeMat = new THREE.LineBasicMaterial({
+  vertexColors: true,
+  transparent: true,
+  opacity: 0.5,
+  depthWrite: false,
+});
+const edgeLines = new THREE.LineSegments(edgeGeo, edgeMat);
+edgeGeo.setDrawRange(0, 0);
+scene.add(edgeLines);
+
+// Aggregated inter-region edges (visible at FAR zoom)
+const aggPositions = new Float32Array(A * 6);
+const aggColors = new Float32Array(A * 6);
+
+// Precompute region centroids
+const regionCentroids = header.regions.map(r => {
+  if (r.border && r.border.length > 0) {
+    let cx = 0, cz = 0;
+    for (const [x, z] of r.border) { cx += x; cz += z; }
+    return { x: cx / r.border.length, z: cz / r.border.length };
+  }
+  return { x: 0, z: 0 };
+});
+
+for (let i = 0; i < A; i++) {
+  const src = regionCentroids[aggSrcRegion[i]] || { x: 0, z: 0 };
+  const dst = regionCentroids[aggDstRegion[i]] || { x: 0, z: 0 };
+  const off = i * 6;
+  aggPositions[off] = src.x;     aggPositions[off + 1] = 0.2; aggPositions[off + 2] = src.z;
+  aggPositions[off + 3] = dst.x; aggPositions[off + 4] = 0.2; aggPositions[off + 5] = dst.z;
+
+  // Color by dominant edge type, intensity by count
+  const etName = header.edgeTypeTable[aggTypeIdx[i]] || '';
+  const hex = EDGE_COLORS[etName] || DEFAULT_EDGE_COLOR;
+  const c = colorToVec3(hex);
+  const intensity = Math.min(1.0, 0.3 + aggCount[i] / 20);
+  aggColors[off] = c[0] * intensity;     aggColors[off + 1] = c[1] * intensity; aggColors[off + 2] = c[2] * intensity;
+  aggColors[off + 3] = c[0] * intensity; aggColors[off + 4] = c[1] * intensity; aggColors[off + 5] = c[2] * intensity;
+}
+
+const aggGeo = new THREE.BufferGeometry();
+aggGeo.setAttribute('position', new THREE.BufferAttribute(aggPositions, 3));
+aggGeo.setAttribute('color', new THREE.BufferAttribute(aggColors, 3));
+const aggMat = new THREE.LineBasicMaterial({
+  vertexColors: true,
+  transparent: true,
+  opacity: 0.6,
+  depthWrite: false,
+  linewidth: 2,
+});
+const aggLines = new THREE.LineSegments(aggGeo, aggMat);
+scene.add(aggLines);
+
+// Precompute edge weights (sum of endpoint degrees)
+const edgeWeights = new Float32Array(E);
+for (let i = 0; i < E; i++) {
+  edgeWeights[i] = nodeDegree[edgeSrc[i]] + nodeDegree[edgeDst[i]];
+}
+
+// Precompute sorted edge indices by weight
+const sortedEdgeIndices = Array.from({ length: E }, (_, i) => i);
+sortedEdgeIndices.sort((a, b) => edgeWeights[b] - edgeWeights[a]);
+
+// ──── Progressive expansion state ────
+const expandedContainers = new Set();
+const expansionData = new Map(); // containerIdx → { startIndex, count, ... }
+let currentCount = N;
+let expandPending = new Set(); // prevent duplicate fetches
+
+async function expandContainer(containerIdx) {
+  if (expandedContainers.has(containerIdx) || expandPending.has(containerIdx)) return;
+  expandPending.add(containerIdx);
+
+  try {
+    // Check if already fetched (re-expand from cache)
+    if (expansionData.has(containerIdx)) {
+      const data = expansionData.get(containerIdx);
+      for (let i = 0; i < data.count; i++) {
+        targetOpacity[data.startIndex + i] = 1.0;
+      }
+      targetOpacity[containerIdx] = 0.15;
+      expandedContainers.add(containerIdx);
+      return;
+    }
+
+    const response = await fetchHexExpand(containerIdx);
+    const expandHeader = response.header;
+    const startIndex = expandHeader.startIndex;
+    const count = expandHeader.nodeCount;
+
+    // Place children in the scene
+    for (let i = 0; i < count; i++) {
+      const globalIdx = startIndex + i;
+      const { x, z } = cubeToWorld(response.nodeQ[i], response.nodeR[i], TILE_SIZE);
+      worldX[globalIdx] = x;
+      worldZ[globalIdx] = z;
+
+      dummy.position.set(x, 0, z);
+      dummy.updateMatrix();
+      tileMesh.setMatrixAt(globalIdx, dummy.matrix);
+
+      // Color: match parent region hue
+      const regionIdx = header.nodeRegions[containerIdx];
+      const hue = (regionIdx * 137.5) % 360;
+      const typeName = expandHeader.typeTable[response.nodeTypeIndices[i]];
+      let lightness = 35;
+      if (typeName === 'CLASS' || typeName === 'INTERFACE') lightness = 45;
+      else if (typeName === 'MODULE' || typeName === 'SERVICE') lightness = 42;
+      else if (typeName === 'VARIABLE' || typeName === 'LITERAL') lightness = 25;
+      else if (typeName === 'CALL' || typeName === 'EXPRESSION') lightness = 28;
+      color.setHSL(hue / 360, 0.5, lightness / 100);
+      tileMesh.setColorAt(globalIdx, color);
+
+      // Start invisible, fade in
+      opacityArray[globalIdx] = 0;
+      targetOpacity[globalIdx] = 1.0;
+    }
+
+    // Fade container tile to ghost
+    targetOpacity[containerIdx] = 0.15;
+
+    currentCount = Math.max(currentCount, startIndex + count);
+    tileMesh.count = currentCount;
+    tileMesh.instanceMatrix.needsUpdate = true;
+    tileMesh.instanceColor.needsUpdate = true;
+
+    expandedContainers.add(containerIdx);
+    expansionData.set(containerIdx, {
+      startIndex, count,
+      edgeSrc: response.edgeSrc,
+      edgeDst: response.edgeDst,
+      edgeTypeIndices: response.edgeTypeIndices,
+      edgeCount: expandHeader.edgeCount,
+      edgeTypeTable: expandHeader.edgeTypeTable,
+    });
+  } finally {
+    expandPending.delete(containerIdx);
+  }
+}
+
+function collapseContainer(containerIdx) {
+  if (!expandedContainers.has(containerIdx)) return;
+  expandedContainers.delete(containerIdx);
+
+  const data = expansionData.get(containerIdx);
+  if (!data) return;
+
+  // Fade children out, restore container
+  for (let i = 0; i < data.count; i++) {
+    targetOpacity[data.startIndex + i] = 0.0;
+  }
+  targetOpacity[containerIdx] = 1.0;
+}
+
+function updateLODEdges() {
+  const dist = camera.position.distanceTo(controls.target);
+
+  if (dist > LOD_FAR) {
+    // FAR: only aggregated edges
+    edgeGeo.setDrawRange(0, 0);
+    tileMesh.visible = false;
+    aggLines.visible = true;
+    borderGroup.visible = true;
+    // FAR: only depth 0 labels
+    for (const sprite of labelGroup.children) {
+      sprite.visible = sprite.userData.depth === 0;
+    }
+    return;
+  }
+
+  tileMesh.visible = true;
+  aggLines.visible = false;
+
+  // Zoom-dependent label visibility (4 bands)
+  for (const sprite of labelGroup.children) {
+    const { depth, tileCount } = sprite.userData;
+    if (dist > 100) {
+      // MEDIUM-FAR: depth 0 + depth 1 with large count
+      sprite.visible = depth === 0 || (depth === 1 && tileCount > 20);
+    } else if (dist > LOD_MEDIUM) {
+      // MEDIUM-NEAR: depth 0, 1, 2
+      sprite.visible = depth <= 2;
+    } else {
+      // NEAR: all labels
+      sprite.visible = true;
+    }
+  }
+
+  // Progressive expand/collapse — zoom into a container to load its children
+  if (header.containers && hoveredIdx === -1) {
+    const EXPAND_DIST = 30;   // world units from camera target to trigger expand
+    const COLLAPSE_DIST = 60; // hysteresis to prevent flicker
+
+    for (const c of header.containers) {
+      const dx = controls.target.x - worldX[c.nodeIdx];
+      const dz = controls.target.z - worldZ[c.nodeIdx];
+      const d = Math.sqrt(dx * dx + dz * dz);
+
+      if (d < EXPAND_DIST && !expandedContainers.has(c.nodeIdx)) expandContainer(c.nodeIdx);
+      if (d > COLLAPSE_DIST && expandedContainers.has(c.nodeIdx)) collapseContainer(c.nodeIdx);
+    }
+  }
+
+  // Frustum culling
+  const frustum = new THREE.Frustum();
+  const projScreenMatrix = new THREE.Matrix4();
+  projScreenMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+  frustum.setFromProjectionMatrix(projScreenMatrix);
+
+  const visibleNodes = new Set();
+  const testPoint = new THREE.Vector3();
+  for (let i = 0; i < N; i++) {
+    testPoint.set(worldX[i], 0, worldZ[i]);
+    if (frustum.containsPoint(testPoint)) {
+      visibleNodes.add(i);
+    }
+  }
+
+  let candidates;
+  if (dist > LOD_MEDIUM) {
+    // MEDIUM: intra-region edges for visible nodes
+    candidates = [];
+    for (const ei of sortedEdgeIndices) {
+      const si = edgeSrc[ei], di = edgeDst[ei];
+      if (!visibleNodes.has(si) && !visibleNodes.has(di)) continue;
+      // Prefer intra-region + edges to neighbor regions
+      if (header.nodeRegions[si] === header.nodeRegions[di]) {
+        candidates.push(ei);
+      } else if (visibleNodes.has(si) && visibleNodes.has(di)) {
+        candidates.push(ei);
+      }
+      if (candidates.length >= MAX_EDGES) break;
+    }
+  } else {
+    // NEAR: all edges of visible nodes
+    candidates = [];
+    for (const ei of sortedEdgeIndices) {
+      if (visibleNodes.has(edgeSrc[ei]) || visibleNodes.has(edgeDst[ei])) {
+        candidates.push(ei);
+      }
+      if (candidates.length >= MAX_EDGES) break;
+    }
+  }
+
+  // Write to buffer
+  let vi = 0;
+  for (const ei of candidates) {
+    const si = edgeSrc[ei], di = edgeDst[ei];
+    edgePositions[vi] = worldX[si]; edgePositions[vi + 1] = 0.05; edgePositions[vi + 2] = worldZ[si];
+    edgePositions[vi + 3] = worldX[di]; edgePositions[vi + 4] = 0.05; edgePositions[vi + 5] = worldZ[di];
+
+    const etName = header.edgeTypeTable[edgeTypeIndices[ei]] || '';
+    const hex = EDGE_COLORS[etName] || DEFAULT_EDGE_COLOR;
+    const c = colorToVec3(hex);
+    edgeColors[vi] = c[0]; edgeColors[vi + 1] = c[1]; edgeColors[vi + 2] = c[2];
+    edgeColors[vi + 3] = c[0]; edgeColors[vi + 4] = c[1]; edgeColors[vi + 5] = c[2];
+    vi += 6;
+  }
+
+  edgeGeo.attributes.position.needsUpdate = true;
+  edgeGeo.attributes.color.needsUpdate = true;
+  edgeGeo.setDrawRange(0, candidates.length * 2);
+}
+
+// Initial LOD update
+updateLODEdges();
+
+// Debounced LOD update on camera change
+let lodTimer = null;
+controls.addEventListener('change', () => {
+  clearTimeout(lodTimer);
+  lodTimer = setTimeout(updateLODEdges, 100);
+});
+
+// ──── Hover highlighting ────
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+let hoveredIdx = -1;
+const tooltipCache = new Map();
+
+renderer.domElement.addEventListener('mousemove', async (e) => {
+  mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+  mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+
+  raycaster.setFromCamera(mouse, camera);
+  const hits = raycaster.intersectObject(tileMesh);
+  const newIdx = hits.length > 0 ? hits[0].instanceId : -1;
+
+  // Update tooltip position
+  hud.tooltip.style.left = e.clientX + 12 + 'px';
+  hud.tooltip.style.top = e.clientY + 12 + 'px';
+
+  if (newIdx === hoveredIdx) return;
+  hoveredIdx = newIdx;
+
+  if (hoveredIdx === -1) {
+    // Reset structural node opacities
+    for (let i = 0; i < N; i++) targetOpacity[i] = 1.0;
+    // Restore expand/collapse state
+    for (const [cIdx, data] of expansionData) {
+      if (expandedContainers.has(cIdx)) {
+        targetOpacity[cIdx] = 0.15;
+        for (let i = 0; i < data.count; i++) targetOpacity[data.startIndex + i] = 1.0;
+      } else {
+        for (let i = 0; i < data.count; i++) targetOpacity[data.startIndex + i] = 0.0;
+      }
+    }
+    hud.tooltip.style.display = 'none';
+    updateLODEdges();
+    return;
+  }
+
+  // Find connected nodes via structural edges
+  const connected = new Set([hoveredIdx]);
+  const hoverEdges = [];
+  for (let i = 0; i < E; i++) {
+    if (edgeSrc[i] === hoveredIdx) { connected.add(edgeDst[i]); hoverEdges.push(i); }
+    if (edgeDst[i] === hoveredIdx) { connected.add(edgeSrc[i]); hoverEdges.push(i); }
+  }
+
+  // Also search expansion edges for expanded containers
+  for (const [, data] of expansionData) {
+    for (let i = 0; i < data.edgeCount; i++) {
+      if (data.edgeSrc[i] === hoveredIdx) connected.add(data.edgeDst[i]);
+      if (data.edgeDst[i] === hoveredIdx) connected.add(data.edgeSrc[i]);
+    }
+  }
+
+  // Containment highlighting (structural nodes only)
+  if (nodeParents && hoveredIdx < N) {
+    if ((nodeFlags[hoveredIdx] & 0x02) && nodeChildren.has(hoveredIdx)) {
+      for (const child of nodeChildren.get(hoveredIdx)) connected.add(child);
+    }
+    // Also highlight expanded children of this container
+    if (expandedContainers.has(hoveredIdx)) {
+      const data = expansionData.get(hoveredIdx);
+      if (data) {
+        for (let i = 0; i < data.count; i++) connected.add(data.startIndex + i);
+      }
+    }
+    if (nodeParents[hoveredIdx] >= 0) {
+      const parent = nodeParents[hoveredIdx];
+      connected.add(parent);
+      if (nodeChildren.has(parent)) {
+        for (const sibling of nodeChildren.get(parent)) connected.add(sibling);
+      }
+    }
+  }
+
+  // Dim non-connected tiles (smooth via lerp)
+  for (let i = 0; i < currentCount; i++) {
+    targetOpacity[i] = connected.has(i) ? 1.0 : 0.35;
+  }
+
+  // Show hover edges (override LOD, up to MAX_EDGES)
+  const hoverCandidates = hoverEdges.slice(0, MAX_EDGES);
+  let vi = 0;
+  for (const ei of hoverCandidates) {
+    const si = edgeSrc[ei], di = edgeDst[ei];
+    edgePositions[vi] = worldX[si]; edgePositions[vi + 1] = 0.05; edgePositions[vi + 2] = worldZ[si];
+    edgePositions[vi + 3] = worldX[di]; edgePositions[vi + 4] = 0.05; edgePositions[vi + 5] = worldZ[di];
+
+    const etName = header.edgeTypeTable[edgeTypeIndices[ei]] || '';
+    const hex = EDGE_COLORS[etName] || DEFAULT_EDGE_COLOR;
+    const c = colorToVec3(hex);
+    edgeColors[vi] = c[0]; edgeColors[vi + 1] = c[1]; edgeColors[vi + 2] = c[2];
+    edgeColors[vi + 3] = c[0]; edgeColors[vi + 4] = c[1]; edgeColors[vi + 5] = c[2];
+    vi += 6;
+  }
+  edgeGeo.attributes.position.needsUpdate = true;
+  edgeGeo.attributes.color.needsUpdate = true;
+  edgeGeo.setDrawRange(0, hoverCandidates.length * 2);
+
+  // Show tooltip (works for both structural and expanded child nodes)
+  const typeName = hoveredIdx < N
+    ? header.typeTable[nodeTypeIndices[hoveredIdx]]
+    : '...';
+  hud.tooltip.style.display = 'block';
+  hud.tooltip.innerHTML = `<div style="color:#00d4ff;font-weight:600">${typeName}</div>
+    <div style="color:#555;font-size:0.65rem;margin-top:2px">loading...</div>`;
+
+  // Fetch full details
+  if (!tooltipCache.has(hoveredIdx)) {
+    try {
+      const r = await fetch(`/api/node?index=${hoveredIdx}`);
+      if (r.ok) tooltipCache.set(hoveredIdx, await r.json());
+    } catch {}
+  }
+  const d = tooltipCache.get(hoveredIdx);
+  if (d && hoveredIdx === newIdx) {
+    hud.tooltip.innerHTML = `<div style="color:#00d4ff;font-weight:600">${d.type}</div>
+      <div style="margin-top:2px">${d.name || '(anonymous)'}</div>
+      <div style="color:#555;font-size:0.65rem;margin-top:2px">${d.file || ''}${d.line ? ':' + d.line : ''}</div>
+      <div style="color:#444;font-size:0.6rem;margin-top:2px">degree: ${nodeDegree[hoveredIdx] || '?'} · region: ${header.regions[header.nodeRegions[hoveredIdx]]?.path || '?'}</div>
+      ${d.signature ? `<div style="color:#444;font-size:0.6rem;margin-top:4px;font-family:monospace">${d.signature}</div>` : ''}`;
+  }
+});
+
+loading.hide();
+
+// ──── Resize ────
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+</body>
+</html>

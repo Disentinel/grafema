@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Grafema - Geographic View</title>
+  <style>
+    * { margin: 0; padding: 0; }
+    body { background: #0a0a0f; overflow: hidden; font-family: 'Inter', -apple-system, sans-serif; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.171.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import {
+  fetchGraphBinary,
+  NODE_COLORS, DEFAULT_COLOR, EDGE_COLORS, DEFAULT_EDGE_COLOR,
+  createHUD, showLoading,
+} from './shared.js';
+
+const loading = showLoading('Connecting to RFDB...');
+const hud = createHUD('Geographic View');
+
+// ──── Three.js setup ────
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setClearColor(0x0a0a0f);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x0a0a0f, 0.003);
+
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+camera.position.set(0, 120, 120);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.05;
+controls.maxDistance = 400;
+controls.minDistance = 5;
+controls.screenSpacePanning = false;
+controls.mouseButtons = {
+  LEFT: THREE.MOUSE.PAN,
+  MIDDLE: THREE.MOUSE.DOLLY,
+  RIGHT: THREE.MOUSE.ROTATE,
+};
+
+// Start animation loop immediately (shows black while loading)
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+// ──── Shaders ────
+const nodeVertexShader = `
+  attribute float size;
+  attribute vec3 color;
+  varying vec3 vColor;
+  varying float vDist;
+
+  void main() {
+    vColor = color;
+    vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
+    vDist = -mvPos.z;
+    gl_PointSize = size * (500.0 / vDist);
+    gl_PointSize = clamp(gl_PointSize, 2.0, 40.0);
+    gl_Position = projectionMatrix * mvPos;
+  }
+`;
+
+const nodeFragmentShader = `
+  varying vec3 vColor;
+  varying float vDist;
+
+  void main() {
+    vec2 center = gl_PointCoord - 0.5;
+    float dist = length(center);
+    if (dist > 0.5) discard;
+
+    // Bright core + soft glow halo
+    float core = smoothstep(0.5, 0.0, dist);
+    float glow = exp(-dist * 4.0);
+    float alpha = core + glow * 0.6;
+
+    float fogFactor = exp(-0.002 * vDist);
+    vec3 finalColor = vColor * (1.0 + glow * 0.8); // bloom boost
+    gl_FragColor = vec4(finalColor * fogFactor, alpha * fogFactor);
+  }
+`;
+
+const edgeVertexShader = `
+  attribute vec3 color;
+  varying vec3 vColor;
+  varying float vDist;
+
+  void main() {
+    vColor = color;
+    vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
+    vDist = -mvPos.z;
+    gl_Position = projectionMatrix * mvPos;
+  }
+`;
+
+const edgeFragmentShader = `
+  varying vec3 vColor;
+  varying float vDist;
+
+  void main() {
+    float fogFactor = exp(-0.002 * vDist);
+    float alpha = 0.4 * fogFactor;
+    gl_FragColor = vec4(vColor * 1.5, alpha);
+  }
+`;
+
+// ──── Load binary data ────
+const graph = await fetchGraphBinary({
+  onProgress: (msg) => loading.update(msg),
+});
+
+const N = graph.header.nodeCount;
+const E = graph.header.edgeCount;
+hud.setStats(`${N.toLocaleString()} nodes · ${E.toLocaleString()} edges`);
+
+// Positions pre-computed on server
+const positions = graph.positions;
+
+// Resolve type names for coloring
+const nodeTypeNames = new Array(N);
+for (let i = 0; i < N; i++) {
+  nodeTypeNames[i] = graph.header.typeTable[graph.nodeTypeIndices[i]];
+}
+
+const colors = new Float32Array(N * 3);
+const sizes = new Float32Array(N);
+const sizeMap = {
+  PROJECT: 8, SERVICE: 6, MODULE: 4, CLASS: 3, FUNCTION: 2,
+  METHOD: 1.8, GETTER: 1.8, INTERFACE: 2.5, VARIABLE: 1,
+  CALL: 0.8, IMPORT: 0.8, EXPORT: 0.8, EXPRESSION: 0.6,
+  LITERAL: 0.5, PROPERTY_ACCESS: 0.5, TYPE_REFERENCE: 0.4,
+};
+
+for (let i = 0; i < N; i++) {
+  const t = nodeTypeNames[i];
+  const hex = NODE_COLORS[t] || DEFAULT_COLOR;
+  colors[i * 3] = ((hex >> 16) & 0xff) / 255;
+  colors[i * 3 + 1] = ((hex >> 8) & 0xff) / 255;
+  colors[i * 3 + 2] = (hex & 0xff) / 255;
+  sizes[i] = sizeMap[t] || 0.7;
+}
+
+loading.update('Building scene...');
+
+// ──── Nodes (Points) ────
+const nodeGeom = new THREE.BufferGeometry();
+nodeGeom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+nodeGeom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+nodeGeom.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+
+const nodeMaterial = new THREE.ShaderMaterial({
+  vertexShader: nodeVertexShader,
+  fragmentShader: nodeFragmentShader,
+  transparent: true,
+  depthWrite: false,
+  blending: THREE.AdditiveBlending,
+});
+
+const nodePoints = new THREE.Points(nodeGeom, nodeMaterial);
+scene.add(nodePoints);
+
+// ──── Edges (Lines) ────
+const edgePositions = new Float32Array(E * 6);
+const edgeColors = new Float32Array(E * 6);
+
+for (let i = 0; i < E; i++) {
+  const si = graph.edgeSrc[i], di = graph.edgeDst[i];
+  const type = graph.header.edgeTypeTable[graph.edgeTypeIndices[i]];
+  const off = i * 6;
+
+  edgePositions[off]     = positions[si * 3];
+  edgePositions[off + 1] = positions[si * 3 + 1];
+  edgePositions[off + 2] = positions[si * 3 + 2];
+  edgePositions[off + 3] = positions[di * 3];
+  edgePositions[off + 4] = positions[di * 3 + 1];
+  edgePositions[off + 5] = positions[di * 3 + 2];
+
+  const hex = EDGE_COLORS[type] || DEFAULT_EDGE_COLOR;
+  const r = ((hex >> 16) & 0xff) / 255;
+  const g = ((hex >> 8) & 0xff) / 255;
+  const b = (hex & 0xff) / 255;
+  edgeColors[off] = r;     edgeColors[off + 1] = g; edgeColors[off + 2] = b;
+  edgeColors[off + 3] = r; edgeColors[off + 4] = g; edgeColors[off + 5] = b;
+}
+
+const edgeGeom = new THREE.BufferGeometry();
+edgeGeom.setAttribute('position', new THREE.BufferAttribute(edgePositions, 3));
+edgeGeom.setAttribute('color', new THREE.BufferAttribute(edgeColors, 3));
+
+const edgeMaterial = new THREE.ShaderMaterial({
+  vertexShader: edgeVertexShader,
+  fragmentShader: edgeFragmentShader,
+  transparent: true,
+  depthWrite: false,
+  blending: THREE.AdditiveBlending,
+});
+
+scene.add(new THREE.LineSegments(edgeGeom, edgeMaterial));
+
+// ──── Hex zones overlay ────
+loading.update('Loading hex layout...');
+const hexRes = await fetch('/api/hex-layout');
+const hexTree = await hexRes.json();
+const Y_STEP = 4;
+
+function createHexRing(cx, cz, radius, y) {
+  const pts = [];
+  for (let i = 0; i <= 6; i++) {
+    const angle = (Math.PI / 3) * i - Math.PI / 6; // flat-top hex
+    pts.push(new THREE.Vector3(
+      cx + Math.cos(angle) * radius,
+      y,
+      cz + Math.sin(angle) * radius
+    ));
+  }
+  return pts;
+}
+
+const hexGroup = new THREE.Group();
+
+function renderHex(hex, maxDepth) {
+  const y = -hex.d * Y_STEP;
+  const alpha = Math.max(0.08, 0.35 - hex.d * 0.06);
+  const color = hex.d === 0 ? 0x334466 : hex.d === 1 ? 0x224455 : 0x1a2233;
+
+  // Hex border
+  const pts = createHexRing(hex.cx, hex.cz, hex.r, y);
+  const lineGeom = new THREE.BufferGeometry().setFromPoints(pts);
+  const lineMat = new THREE.LineBasicMaterial({
+    color, transparent: true, opacity: alpha,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+  hexGroup.add(new THREE.Line(lineGeom, lineMat));
+
+  // Label (CSS2D would be better, but simple sprite for now)
+  if (hex.r > 5 && hex.n !== '/') {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    const fontSize = Math.min(24, Math.max(10, hex.r * 0.8));
+    canvas.width = 512;
+    canvas.height = 64;
+    ctx.font = `${fontSize * 2}px Inter, sans-serif`;
+    ctx.fillStyle = hex.d === 0 ? '#556688' : hex.d === 1 ? '#445566' : '#334455';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const label = hex.n.length > 30 ? '...' + hex.n.slice(-27) : hex.n;
+    ctx.fillText(label, 256, 32);
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.minFilter = THREE.LinearFilter;
+    const spriteMat = new THREE.SpriteMaterial({
+      map: tex, transparent: true, opacity: alpha + 0.15,
+      depthWrite: false, sizeAttenuation: true,
+    });
+    const sprite = new THREE.Sprite(spriteMat);
+    const labelWidth = Math.min(hex.r * 1.8, 40);
+    sprite.scale.set(labelWidth, labelWidth * 0.125, 1);
+    sprite.position.set(hex.cx, y + 0.5, hex.cz - hex.r * 0.75);
+    hexGroup.add(sprite);
+  }
+
+  for (const child of hex.c) renderHex(child, maxDepth);
+}
+
+// Find max depth
+function maxDepth(hex) {
+  return hex.c.reduce((m, c) => Math.max(m, maxDepth(c)), hex.d);
+}
+renderHex(hexTree, maxDepth(hexTree));
+scene.add(hexGroup);
+
+loading.hide();
+
+// ──── Raycaster for hover → fetch details by index from server ────
+const raycaster = new THREE.Raycaster();
+raycaster.params.Points.threshold = 1;
+const mouse = new THREE.Vector2();
+let hoveredIdx = -1;
+const tooltipCache = new Map(); // index → details
+
+renderer.domElement.addEventListener('mousemove', async (e) => {
+  mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+  mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+
+  raycaster.setFromCamera(mouse, camera);
+  const intersects = raycaster.intersectObject(nodePoints);
+
+  if (intersects.length > 0) {
+    const idx = intersects[0].index;
+    hud.tooltip.style.left = e.clientX + 12 + 'px';
+    hud.tooltip.style.top = e.clientY + 12 + 'px';
+
+    if (idx !== hoveredIdx) {
+      hoveredIdx = idx;
+      // Show type immediately (from local data)
+      hud.tooltip.style.display = 'block';
+      hud.tooltip.innerHTML = `<div style="color:#00d4ff;font-weight:600">${nodeTypeNames[idx]}</div>
+        <div style="color:#444;font-size:0.6rem;margin-top:2px">...</div>`;
+
+      // Fetch full details from RFDB via server
+      if (!tooltipCache.has(idx)) {
+        try {
+          const r = await fetch(`/api/node?index=${idx}`);
+          if (r.ok) tooltipCache.set(idx, await r.json());
+        } catch {}
+      }
+      const d = tooltipCache.get(idx);
+      if (d && hoveredIdx === idx) {
+        hud.tooltip.innerHTML = `<div style="color:#00d4ff;font-weight:600">${d.type}</div>
+          <div style="margin-top:2px">${d.name || '(anonymous)'}</div>
+          <div style="color:#555;font-size:0.65rem;margin-top:2px">${d.file || ''}${d.line ? ':' + d.line : ''}</div>
+          ${d.signature ? `<div style="color:#444;font-size:0.6rem;margin-top:4px;font-family:monospace">${d.signature}</div>` : ''}`;
+      }
+    }
+  } else {
+    hoveredIdx = -1;
+    hud.tooltip.style.display = 'none';
+  }
+});
+
+// ──── Resize ────
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+</body>
+</html>
