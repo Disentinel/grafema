@@ -10,3 +10,11 @@ guarantees:
     check: integration-test
     test: test/integration/semantic-id-stability.test.js
     severity: error
+
+  - name: function-has-contains
+    description: >
+      Every FUNCTION node must have at least one incoming CONTAINS edge
+      from its parent MODULE or scope.
+    check: datalog
+    rule: 'violation(X) :- node(X, "FUNCTION"), \+ edge(_, X, "CONTAINS").'
+    severity: error
