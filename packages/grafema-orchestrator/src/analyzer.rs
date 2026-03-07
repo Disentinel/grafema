@@ -1363,7 +1363,7 @@ mod tests {
     fn relativize_paths_strips_root_prefix() {
         let mut analysis = FileAnalysis {
             file: "/home/user/project/src/app.ts".to_string(),
-            module_id: "/home/user/project/src/app.ts".to_string(),
+            module_id: "MODULE#/home/user/project/src/app.ts".to_string(),
             nodes: vec![GraphNode {
                 id: "/home/user/project/src/app.ts->FUNCTION->main".to_string(),
                 node_type: "FUNCTION".to_string(),
@@ -1394,7 +1394,7 @@ mod tests {
         analysis.relativize_paths("/home/user/project");
 
         assert_eq!(analysis.file, "src/app.ts");
-        assert_eq!(analysis.module_id, "src/app.ts");
+        assert_eq!(analysis.module_id, "MODULE#src/app.ts");
         assert_eq!(analysis.nodes[0].id, "src/app.ts->FUNCTION->main");
         assert_eq!(analysis.nodes[0].file, "src/app.ts");
         assert_eq!(analysis.edges[0].src, "src/app.ts->FUNCTION->main");
