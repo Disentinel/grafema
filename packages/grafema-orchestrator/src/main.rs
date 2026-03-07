@@ -122,11 +122,12 @@ async fn main() -> Result<()> {
             }
 
             // 3b. Partition by language
-            let (js_files, hs_files, rs_files) = config::partition_by_language(&changed_files);
+            let (js_files, hs_files, rs_files, java_files) = config::partition_by_language(&changed_files);
             tracing::info!(
                 js = js_files.len(),
                 haskell = hs_files.len(),
                 rust = rs_files.len(),
+                java = java_files.len(),
                 "Partitioned files by language"
             );
 
@@ -152,6 +153,13 @@ async fn main() -> Result<()> {
                 tracing::info!(count = rs_files.len(), "Analyzing Rust files");
                 let rs_results = analyzer::analyze_rust_files_parallel_pooled(&rs_files, jobs, &cfg.analyzers).await;
                 results.extend(rs_results);
+            }
+
+            // 4d. Analyze Java files (java-parser → java-analyzer daemon pools)
+            if !java_files.is_empty() {
+                tracing::info!(count = java_files.len(), "Analyzing Java files");
+                let java_results = analyzer::analyze_java_files_parallel_pooled(&java_files, jobs, &cfg.analyzers).await;
+                results.extend(java_results);
             }
 
             // 5. Relativize paths: convert absolute → relative (to project root)
@@ -485,7 +493,63 @@ async fn main() -> Result<()> {
                 }
             }
 
-            // 8c. Run user-defined plugins via DAG (if any non-default plugins configured)
+            // 8c. Run Java resolution (imports, types, calls, annotations — single pass)
+            if !java_files.is_empty() {
+                let java_resolve_nodes = analyzer::collect_resolve_nodes_for_lang(&results, config::Language::Java);
+                if !java_resolve_nodes.is_empty() {
+                    tracing::info!(
+                        nodes = java_resolve_nodes.len(),
+                        "Running Java resolution"
+                    );
+
+                    let java_resolve_pool_config = process_pool::PoolConfig {
+                        command: cfg.analyzers.java_resolve_path(),
+                        args: vec!["--daemon".to_string()],
+                        ..process_pool::PoolConfig::default()
+                    };
+
+                    match process_pool::ProcessPool::new(java_resolve_pool_config, 1) {
+                        Ok(java_resolve_pool) => {
+                            let mut java_resolve_output = plugin::run_resolve_with_nodes(
+                                "java-all",
+                                &java_resolve_nodes,
+                                &[],
+                                &java_resolve_pool,
+                            )
+                            .await
+                            .context("Java resolution failed")?;
+                            plugin::validate_plugin_output(&java_resolve_output)?;
+                            plugin::stamp_metadata(&mut java_resolve_output, "java-resolution", generation);
+
+                            let java_resolve_files: Vec<String> = java_resolve_output
+                                .nodes
+                                .iter()
+                                .filter_map(|n| n.file.clone())
+                                .collect::<std::collections::HashSet<_>>()
+                                .into_iter()
+                                .collect();
+                            rfdb.commit_batch(&java_resolve_files, &java_resolve_output.nodes, &java_resolve_output.edges, false)
+                                .await
+                                .context("Failed to commit Java resolution output")?;
+
+                            tracing::info!(
+                                nodes = java_resolve_output.nodes.len(),
+                                edges = java_resolve_output.edges.len(),
+                                "Java resolution complete"
+                            );
+
+                            java_resolve_pool.shutdown().await;
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to create Java resolve pool, skipping Java resolution: {e}"
+                            );
+                        }
+                    }
+                }
+            }
+
+            // 8d. Run user-defined plugins via DAG (if any non-default plugins configured)
             let user_plugins: Vec<_> = cfg
                 .plugins
                 .iter()
@@ -533,11 +597,12 @@ async fn main() -> Result<()> {
 
             // 9. Summary
             println!(
-                "Analyzed {} files ({} JS, {} Haskell, {} Rust, {} skipped): {} nodes, {} edges, {} errors",
+                "Analyzed {} files ({} JS, {} Haskell, {} Rust, {} Java, {} skipped): {} nodes, {} edges, {} errors",
                 changed_files.len(),
                 js_files.len(),
                 hs_files.len(),
                 rs_files.len(),
+                java_files.len(),
                 unchanged_files.len(),
                 total_nodes,
                 total_edges,

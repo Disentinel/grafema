@@ -963,6 +963,426 @@ pub async fn analyze_rust_files_parallel(
 }
 
 // ---------------------------------------------------------------------------
+// Java single-file analysis (two-step: java-parser → java-analyzer)
+// ---------------------------------------------------------------------------
+
+/// Analyze a single Java file: read source, parse with java-parser, analyze with java-analyzer.
+///
+/// Pipeline:
+/// 1. Read `.java` source from disk
+/// 2. Send `{"file":"...","source":"..."}` to java-parser → receive `{"status":"ok","ast":{...}}`
+/// 3. Send `{"file":"...","ast":...}` to java-analyzer → receive FileAnalysis
+pub async fn analyze_java_file(
+    file: &Path,
+    analyzers: &crate::config::AnalyzerBinaries,
+) -> Result<FileAnalysis> {
+    let file_str = file.display().to_string();
+
+    let source = tokio::fs::read_to_string(file)
+        .await
+        .with_context(|| format!("Failed to read Java source file {file_str}"))?;
+
+    // Step 1: Parse with java-parser
+    let parser_bin = analyzers.java_parser_path();
+    let mut parser_child = tokio::process::Command::new(&parser_bin)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .with_context(|| format!("Failed to spawn java-parser for {file_str}"))?;
+
+    let parser_payload = serde_json::json!({
+        "file": file_str,
+        "source": source,
+    });
+
+    {
+        let stdin = parser_child
+            .stdin
+            .as_mut()
+            .context("Failed to open stdin for java-parser")?;
+        stdin
+            .write_all(parser_payload.to_string().as_bytes())
+            .await
+            .with_context(|| format!("Failed to write source to java-parser stdin for {file_str}"))?;
+        stdin
+            .shutdown()
+            .await
+            .with_context(|| format!("Failed to close java-parser stdin for {file_str}"))?;
+    }
+
+    let parser_output = parser_child
+        .wait_with_output()
+        .await
+        .with_context(|| format!("Failed to wait for java-parser for {file_str}"))?;
+
+    if !parser_output.status.success() {
+        let stderr = String::from_utf8_lossy(&parser_output.stderr);
+        let code = parser_output
+            .status
+            .code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "signal".to_string());
+        bail!("java-parser exited with code {code} for {file_str}: {stderr}");
+    }
+
+    // Extract AST from parser response
+    let parser_response: serde_json::Value =
+        serde_json::from_slice(&parser_output.stdout).with_context(|| {
+            let preview =
+                String::from_utf8_lossy(&parser_output.stdout[..parser_output.stdout.len().min(200)]);
+            format!("Failed to parse java-parser output for {file_str}: {preview}")
+        })?;
+
+    if parser_response.get("status").and_then(|s| s.as_str()) != Some("ok") {
+        let err = parser_response
+            .get("error")
+            .and_then(|e| e.as_str())
+            .unwrap_or("unknown error");
+        bail!("java-parser error for {file_str}: {err}");
+    }
+
+    let ast = parser_response
+        .get("ast")
+        .with_context(|| format!("java-parser returned ok but no ast for {file_str}"))?;
+
+    // Step 2: Analyze with java-analyzer
+    let analyzer_bin = analyzers.java_path();
+    let mut analyzer_child = tokio::process::Command::new(&analyzer_bin)
+        .arg(&file_str)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .with_context(|| format!("Failed to spawn java-analyzer for {file_str}"))?;
+
+    let analyzer_payload = serde_json::json!({
+        "file": file_str,
+        "ast": ast,
+    });
+
+    {
+        let stdin = analyzer_child
+            .stdin
+            .as_mut()
+            .context("Failed to open stdin for java-analyzer")?;
+        stdin
+            .write_all(analyzer_payload.to_string().as_bytes())
+            .await
+            .with_context(|| {
+                format!("Failed to write AST to java-analyzer stdin for {file_str}")
+            })?;
+        stdin
+            .shutdown()
+            .await
+            .with_context(|| format!("Failed to close java-analyzer stdin for {file_str}"))?;
+    }
+
+    let analyzer_output = analyzer_child
+        .wait_with_output()
+        .await
+        .with_context(|| format!("Failed to wait for java-analyzer for {file_str}"))?;
+
+    if !analyzer_output.status.success() {
+        let stderr = String::from_utf8_lossy(&analyzer_output.stderr);
+        let code = analyzer_output
+            .status
+            .code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "signal".to_string());
+        bail!("java-analyzer exited with code {code} for {file_str}: {stderr}");
+    }
+
+    let analysis: FileAnalysis =
+        serde_json::from_slice(&analyzer_output.stdout).with_context(|| {
+            let preview = String::from_utf8_lossy(
+                &analyzer_output.stdout[..analyzer_output.stdout.len().min(200)],
+            );
+            format!("Failed to parse java-analyzer output for {file_str}: {preview}")
+        })?;
+
+    Ok(analysis)
+}
+
+// ---------------------------------------------------------------------------
+// Java daemon-mode analysis via ProcessPool (two pools)
+// ---------------------------------------------------------------------------
+
+/// Response from java-parser daemon.
+/// Uses RawValue for `ast` to avoid parsing + re-serializing the full AST JSON.
+#[derive(Deserialize)]
+struct JavaParserResponse<'a> {
+    status: String,
+    #[serde(borrow)]
+    ast: Option<&'a serde_json::value::RawValue>,
+    error: Option<String>,
+}
+
+/// Analyze a single Java file via two persistent daemon process pools.
+///
+/// 1. Read source, send to java-parser pool → receive AST JSON
+/// 2. Send AST to java-analyzer pool → receive FileAnalysis
+pub async fn analyze_java_file_pooled(
+    parser_pool: &ProcessPool,
+    analyzer_pool: &ProcessPool,
+    file: &Path,
+) -> Result<FileAnalysis> {
+    let file_str = file.display().to_string();
+
+    let source = tokio::fs::read_to_string(file)
+        .await
+        .with_context(|| format!("Failed to read Java source file {file_str}"))?;
+
+    // Step 1: Send to java-parser pool
+    let escaped_file = serde_json::to_string(&file_str)
+        .with_context(|| format!("Failed to escape file path for {file_str}"))?;
+    let escaped_source = serde_json::to_string(&source)
+        .with_context(|| format!("Failed to escape source for {file_str}"))?;
+    let parser_payload = format!(
+        r#"{{"file":{},"source":{}}}"#,
+        escaped_file, escaped_source
+    );
+
+    let parser_response_bytes = parser_pool
+        .request(parser_payload.as_bytes())
+        .await
+        .with_context(|| format!("Java parser pool request failed for {file_str}"))?;
+
+    // Zero-copy: parse only status/error, borrow raw AST JSON bytes
+    let parser_response: JavaParserResponse =
+        serde_json::from_slice(&parser_response_bytes)
+            .with_context(|| format!("Failed to decode java-parser response for {file_str}"))?;
+
+    let ast_raw = match parser_response.status.as_str() {
+        "ok" => parser_response
+            .ast
+            .with_context(|| format!("java-parser returned ok but no ast for {file_str}"))?,
+        "error" => {
+            let msg = parser_response
+                .error
+                .unwrap_or_else(|| "unknown error".to_string());
+            bail!("java-parser daemon error for {file_str}: {msg}")
+        }
+        other => bail!("Unknown java-parser response status '{other}' for {file_str}"),
+    };
+
+    // Step 2: Send to java-analyzer pool (raw AST bytes passed through without re-serialization)
+    let analyzer_payload = format!(r#"{{"file":{},"ast":{}}}"#, escaped_file, ast_raw.get());
+
+    let analyzer_response_bytes = analyzer_pool
+        .request(analyzer_payload.as_bytes())
+        .await
+        .with_context(|| format!("Java analyzer pool request failed for {file_str}"))?;
+
+    let response: DaemonResponse = serde_json::from_slice(&analyzer_response_bytes)
+        .with_context(|| format!("Failed to decode java-analyzer response for {file_str}"))?;
+
+    match response.status.as_str() {
+        "ok" => response
+            .result
+            .with_context(|| format!("java-analyzer daemon returned ok but no result for {file_str}")),
+        "error" => {
+            let msg = response.error.unwrap_or_else(|| "unknown error".to_string());
+            bail!("java-analyzer daemon error for {file_str}: {msg}")
+        }
+        other => bail!("Unknown java-analyzer response status '{other}' for {file_str}"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Java parallel multi-file analysis
+// ---------------------------------------------------------------------------
+
+/// Analyze multiple Java files in parallel using two persistent daemon pools.
+///
+/// Creates a java-parser pool and a java-analyzer pool. For each file:
+/// 1. Read source → send to java-parser pool → receive AST
+/// 2. Send AST to java-analyzer pool → receive FileAnalysis
+///
+/// Falls back to `analyze_java_files_parallel` if pool creation fails.
+pub async fn analyze_java_files_parallel_pooled(
+    files: &[PathBuf],
+    jobs: usize,
+    analyzers: &crate::config::AnalyzerBinaries,
+) -> Vec<AnalysisResult> {
+    let parser_pool_config = PoolConfig {
+        command: analyzers.java_parser_path(),
+        args: vec!["--daemon".to_string()],
+        ..PoolConfig::default()
+    };
+
+    let analyzer_pool_config = PoolConfig {
+        command: analyzers.java_path(),
+        args: vec!["--daemon".to_string()],
+        ..PoolConfig::default()
+    };
+
+    let parser_pool = match ProcessPool::new(parser_pool_config, jobs.max(1)) {
+        Ok(p) => Arc::new(p),
+        Err(e) => {
+            tracing::warn!(
+                "Failed to create java-parser pool, falling back to spawn-per-file: {e}"
+            );
+            return analyze_java_files_parallel(files, jobs, analyzers).await;
+        }
+    };
+
+    let analyzer_pool = match ProcessPool::new(analyzer_pool_config, jobs.max(1)) {
+        Ok(p) => Arc::new(p),
+        Err(e) => {
+            tracing::warn!(
+                "Failed to create java-analyzer pool, falling back to spawn-per-file: {e}"
+            );
+            parser_pool.shutdown().await;
+            return analyze_java_files_parallel(files, jobs, analyzers).await;
+        }
+    };
+
+    let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
+    let total = files.len();
+
+    let handles: Vec<_> = files
+        .iter()
+        .enumerate()
+        .map(|(idx, file)| {
+            let sem = Arc::clone(&semaphore);
+            let parser_pool = Arc::clone(&parser_pool);
+            let analyzer_pool = Arc::clone(&analyzer_pool);
+            let file = file.clone();
+            let file_display = file.display().to_string();
+
+            tokio::spawn(async move {
+                let _permit = sem
+                    .acquire()
+                    .await
+                    .expect("Semaphore closed unexpectedly");
+
+                tracing::info!(
+                    "[{}/{}] Analyzing Java file {}",
+                    idx + 1,
+                    total,
+                    file_display
+                );
+
+                let errors = Vec::new();
+
+                match analyze_java_file_pooled(&parser_pool, &analyzer_pool, &file).await {
+                    Ok(analysis) => AnalysisResult {
+                        file,
+                        analysis: Some(analysis),
+                        errors,
+                    },
+                    Err(e) => {
+                        let mut errors = errors;
+                        errors.push(format!(
+                            "Java analyzer failed for {file_display}: {e}"
+                        ));
+                        AnalysisResult {
+                            file,
+                            analysis: None,
+                            errors,
+                        }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        match handle.await {
+            Ok(result) => results.push(result),
+            Err(e) => {
+                results.push(AnalysisResult {
+                    file: PathBuf::new(),
+                    analysis: None,
+                    errors: vec![format!("Java analysis task failed: {e}")],
+                });
+            }
+        }
+    }
+
+    parser_pool.shutdown().await;
+    analyzer_pool.shutdown().await;
+    results
+}
+
+/// Analyze multiple Java files in parallel with bounded concurrency (spawn mode).
+///
+/// Fallback when daemon pools cannot be created. Spawns separate processes per file.
+pub async fn analyze_java_files_parallel(
+    files: &[PathBuf],
+    jobs: usize,
+    analyzers: &crate::config::AnalyzerBinaries,
+) -> Vec<AnalysisResult> {
+    let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
+    let total = files.len();
+    let analyzers = analyzers.clone();
+
+    let handles: Vec<_> = files
+        .iter()
+        .enumerate()
+        .map(|(idx, file)| {
+            let sem = Arc::clone(&semaphore);
+            let file = file.clone();
+            let file_display = file.display().to_string();
+            let analyzers = analyzers.clone();
+
+            tokio::spawn(async move {
+                let _permit = sem
+                    .acquire()
+                    .await
+                    .expect("Semaphore closed unexpectedly");
+
+                tracing::info!(
+                    "[{}/{}] Analyzing Java file {}",
+                    idx + 1,
+                    total,
+                    file_display
+                );
+
+                let errors = Vec::new();
+
+                match analyze_java_file(&file, &analyzers).await {
+                    Ok(analysis) => AnalysisResult {
+                        file,
+                        analysis: Some(analysis),
+                        errors,
+                    },
+                    Err(e) => {
+                        let mut errors = errors;
+                        errors.push(format!(
+                            "Java analyzer failed for {file_display}: {e}"
+                        ));
+                        AnalysisResult {
+                            file,
+                            analysis: None,
+                            errors,
+                        }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        match handle.await {
+            Ok(result) => results.push(result),
+            Err(e) => {
+                results.push(AnalysisResult {
+                    file: PathBuf::new(),
+                    analysis: None,
+                    errors: vec![format!("Java analysis task failed: {e}")],
+                });
+            }
+        }
+    }
+
+    results
+}
+
+// ---------------------------------------------------------------------------
 // Wire-type conversion
 // ---------------------------------------------------------------------------
 
@@ -1057,6 +1477,13 @@ const RESOLVE_NODE_TYPES: &[&str] = &[
     "TRAIT",
     "IMPL_BLOCK",
     "MODULE",
+    // Java types
+    "INTERFACE",
+    "RECORD",
+    "PARAMETER",
+    "ATTRIBUTE",
+    "CLOSURE",
+    "TYPE_PARAMETER",
 ];
 
 /// Collect nodes relevant for cross-file resolution from analysis results.

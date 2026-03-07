@@ -1,0 +1,66 @@
+cabal-version:   3.0
+name:            java-analyzer
+version:         0.1.0.0
+synopsis:        Java per-file AST analyzer for Grafema (receives JavaParser JSON AST)
+license:         MIT
+build-type:      Simple
+
+executable grafema-java-analyzer
+  main-is:          Main.hs
+  hs-source-dirs:   src
+  default-language: Haskell2010
+  ghc-options:      -Wall -Wno-name-shadowing -O2
+
+  other-modules:
+    JavaAST
+    Analysis.Types
+    Analysis.Context
+    Analysis.Walker
+    Rules.Declarations
+    Rules.Expressions
+    Rules.Imports
+    Rules.Types
+    Rules.Annotations
+    Rules.ControlFlow
+    Rules.ErrorFlow
+    Rules.Exports
+
+  build-depends:
+    base           >= 4.17  && < 5,
+    aeson          >= 2.1   && < 2.3,
+    bytestring     >= 0.11  && < 0.13,
+    text           >= 2.0   && < 2.2,
+    mtl            >= 2.3   && < 2.4,
+    containers     >= 0.6   && < 0.8,
+    grafema-common
+
+test-suite spec
+  type:             exitcode-stdio-1.0
+  main-is:          Spec.hs
+  hs-source-dirs:   test, src
+  default-language: Haskell2010
+  ghc-options:      -Wall -Wno-name-shadowing
+
+  other-modules:
+    JavaAST
+    Analysis.Types
+    Analysis.Context
+    Analysis.Walker
+    Rules.Declarations
+    Rules.Expressions
+    Rules.Imports
+    Rules.Types
+    Rules.Annotations
+    Rules.ControlFlow
+    Rules.ErrorFlow
+    Rules.Exports
+
+  build-depends:
+    base           >= 4.17  && < 5,
+    aeson          >= 2.1   && < 2.3,
+    bytestring     >= 0.11  && < 0.13,
+    text           >= 2.0   && < 2.2,
+    mtl            >= 2.3   && < 2.4,
+    containers     >= 0.6   && < 0.8,
+    grafema-common,
+    hspec          >= 2.10  && < 2.12

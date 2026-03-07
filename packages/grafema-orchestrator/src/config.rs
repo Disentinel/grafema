@@ -149,6 +149,18 @@ pub struct AnalyzerBinaries {
     /// Path to Rust resolve binary (default: "grafema-rust-resolve")
     #[serde(default = "default_rust_resolve")]
     pub rust_resolve: String,
+
+    /// Path to Java analyzer binary (default: "grafema-java-analyzer")
+    #[serde(default = "default_java_analyzer")]
+    pub java: String,
+
+    /// Path to Java resolve binary (default: "java-resolve")
+    #[serde(default = "default_java_resolve")]
+    pub java_resolve: String,
+
+    /// Path to Java parser binary (default: "java-parser")
+    #[serde(default = "default_java_parser")]
+    pub java_parser: String,
 }
 
 impl Default for AnalyzerBinaries {
@@ -160,6 +172,9 @@ impl Default for AnalyzerBinaries {
             js_resolve: default_js_resolve(),
             haskell_resolve: default_haskell_resolve(),
             rust_resolve: default_rust_resolve(),
+            java: default_java_analyzer(),
+            java_resolve: default_java_resolve(),
+            java_parser: default_java_parser(),
         }
     }
 }
@@ -244,6 +259,21 @@ impl AnalyzerBinaries {
     /// Resolved path for the Rust resolve binary.
     pub fn rust_resolve_path(&self) -> String {
         resolve_binary(&self.rust_resolve)
+    }
+
+    /// Resolved path for the Java analyzer binary.
+    pub fn java_path(&self) -> String {
+        resolve_binary(&self.java)
+    }
+
+    /// Resolved path for the Java resolve binary.
+    pub fn java_resolve_path(&self) -> String {
+        resolve_binary(&self.java_resolve)
+    }
+
+    /// Resolved path for the Java parser binary.
+    pub fn java_parser_path(&self) -> String {
+        resolve_binary(&self.java_parser)
     }
 }
 
@@ -354,12 +384,25 @@ fn default_rust_resolve() -> String {
     "grafema-rust-resolve".to_string()
 }
 
+fn default_java_analyzer() -> String {
+    "grafema-java-analyzer".to_string()
+}
+
+fn default_java_resolve() -> String {
+    "java-resolve".to_string()
+}
+
+fn default_java_parser() -> String {
+    "java-parser".to_string()
+}
+
 /// Language detection based on file extension.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Language {
     JavaScript,
     Haskell,
     Rust,
+    Java,
 }
 
 /// Detect language from file extension.
@@ -370,24 +413,27 @@ pub fn detect_language(path: &Path) -> Option<Language> {
         }
         "hs" => Some(Language::Haskell),
         "rs" => Some(Language::Rust),
+        "java" => Some(Language::Java),
         _ => None,
     }
 }
 
 /// Partition files by detected language.
-pub fn partition_by_language(files: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>) {
+pub fn partition_by_language(files: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>) {
     let mut js_files = Vec::new();
     let mut hs_files = Vec::new();
     let mut rs_files = Vec::new();
+    let mut java_files = Vec::new();
     for file in files {
         match detect_language(file) {
             Some(Language::JavaScript) => js_files.push(file.clone()),
             Some(Language::Haskell) => hs_files.push(file.clone()),
             Some(Language::Rust) => rs_files.push(file.clone()),
+            Some(Language::Java) => java_files.push(file.clone()),
             None => {} // skip unknown extensions
         }
     }
-    (js_files, hs_files, rs_files)
+    (js_files, hs_files, rs_files, java_files)
 }
 
 /// Load and validate configuration from a YAML file.
@@ -739,26 +785,35 @@ plugins:
             PathBuf::from("src/Lib.hs"),
             PathBuf::from("src/main.rs"),
             PathBuf::from("src/lib.rs"),
+            PathBuf::from("src/App.java"),
             PathBuf::from("README.md"),
         ];
-        let (js, hs, rs) = partition_by_language(&files);
+        let (js, hs, rs, java) = partition_by_language(&files);
         assert_eq!(js, vec![PathBuf::from("src/index.ts"), PathBuf::from("src/app.jsx")]);
         assert_eq!(hs, vec![PathBuf::from("src/Main.hs"), PathBuf::from("src/Lib.hs")]);
         assert_eq!(rs, vec![PathBuf::from("src/main.rs"), PathBuf::from("src/lib.rs")]);
+        assert_eq!(java, vec![PathBuf::from("src/App.java")]);
     }
 
     #[test]
     fn partition_by_language_empty_input() {
-        let (js, hs, rs) = partition_by_language(&[]);
+        let (js, hs, rs, java) = partition_by_language(&[]);
         assert!(js.is_empty());
         assert!(hs.is_empty());
         assert!(rs.is_empty());
+        assert!(java.is_empty());
     }
 
     #[test]
     fn detect_language_rust() {
         let path = PathBuf::from("src/main.rs");
         assert_eq!(detect_language(&path), Some(Language::Rust));
+    }
+
+    #[test]
+    fn detect_language_java() {
+        let path = PathBuf::from("src/Main.java");
+        assert_eq!(detect_language(&path), Some(Language::Java));
     }
 
     #[test]
@@ -801,6 +856,9 @@ analyzers:
         assert_eq!(cfg.analyzers.js_resolve, "grafema-resolve");
         assert_eq!(cfg.analyzers.haskell_resolve, "haskell-resolve");
         assert_eq!(cfg.analyzers.rust_resolve, "grafema-rust-resolve");
+        assert_eq!(cfg.analyzers.java, "grafema-java-analyzer");
+        assert_eq!(cfg.analyzers.java_resolve, "java-resolve");
+        assert_eq!(cfg.analyzers.java_parser, "java-parser");
         cleanup(&dir);
     }
 
@@ -813,6 +871,9 @@ analyzers:
         assert_eq!(defaults.js_resolve, "grafema-resolve");
         assert_eq!(defaults.haskell_resolve, "haskell-resolve");
         assert_eq!(defaults.rust_resolve, "grafema-rust-resolve");
+        assert_eq!(defaults.java, "grafema-java-analyzer");
+        assert_eq!(defaults.java_resolve, "java-resolve");
+        assert_eq!(defaults.java_parser, "java-parser");
     }
 
     #[test]
@@ -851,6 +912,9 @@ analyzers:
             js_resolve: "/abs/grafema-resolve".to_string(),
             haskell_resolve: "/abs/haskell-resolve".to_string(),
             rust_resolve: "/abs/grafema-rust-resolve".to_string(),
+            java: "/abs/grafema-java-analyzer".to_string(),
+            java_resolve: "/abs/java-resolve".to_string(),
+            java_parser: "/abs/java-parser".to_string(),
         };
         assert_eq!(bins.js_path(), "/abs/grafema-analyzer");
         assert_eq!(bins.haskell_path(), "/abs/haskell-analyzer");
@@ -858,6 +922,9 @@ analyzers:
         assert_eq!(bins.js_resolve_path(), "/abs/grafema-resolve");
         assert_eq!(bins.haskell_resolve_path(), "/abs/haskell-resolve");
         assert_eq!(bins.rust_resolve_path(), "/abs/grafema-rust-resolve");
+        assert_eq!(bins.java_path(), "/abs/grafema-java-analyzer");
+        assert_eq!(bins.java_resolve_path(), "/abs/java-resolve");
+        assert_eq!(bins.java_parser_path(), "/abs/java-parser");
     }
 
     #[test]
