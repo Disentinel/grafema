@@ -18,6 +18,17 @@
     #edge-panel label:hover { color: #ccc; }
     #edge-panel input[type=checkbox] { accent-color: #4488ff; width: 13px; height: 13px; }
     .edge-color-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+    #node-type-panel {
+      position: fixed; top: 145px; left: 24px; z-index: 200;
+      background: rgba(18,18,26,0.92); border: 1px solid #2a2a4e; border-radius: 8px;
+      padding: 10px 14px; max-height: calc(100vh - 200px); overflow-y: auto;
+      font-size: 0.7rem; color: #888; width: 200px;
+    }
+    #node-type-panel h3 { font-size: 0.72rem; color: #aaa; margin-bottom: 8px; font-weight: 500; letter-spacing: 0.05em; }
+    #node-type-panel label { display: flex; align-items: center; gap: 6px; padding: 2px 0; cursor: pointer; }
+    #node-type-panel label:hover { color: #ccc; }
+    #node-type-panel input[type=checkbox] { accent-color: #4488ff; width: 13px; height: 13px; }
+    .node-count { color: #555; font-size: 0.6rem; margin-left: auto; }
     #lod-slider {
       position: fixed; bottom: 50px; right: 16px; z-index: 200;
       background: rgba(18,18,26,0.92); border: 1px solid #2a2a4e; border-radius: 8px;
@@ -30,6 +41,35 @@
     .slider-row label { font-size: 0.65rem; color: #666; min-width: 60px; }
     .slider-row input[type=range] { flex: 1; height: 3px; }
     .slider-row .val { font-size: 0.6rem; color: #555; min-width: 24px; text-align: right; }
+    #search-box {
+      position: fixed; top: 80px; left: 24px; z-index: 300; width: 280px;
+    }
+    #search-box input {
+      width: 100%; padding: 8px 12px; background: rgba(18,18,26,0.95); border: 1px solid #2a2a4e;
+      border-radius: 6px; color: #ccc; font-size: 0.8rem; outline: none;
+      font-family: 'Inter', -apple-system, sans-serif;
+    }
+    #search-box input:focus { border-color: #4488ff; }
+    #search-box input::placeholder { color: #444; }
+    #search-results {
+      margin-top: 4px; background: rgba(18,18,26,0.95); border: 1px solid #2a2a4e;
+      border-radius: 6px; max-height: 300px; overflow-y: auto; display: none;
+    }
+    .search-item {
+      padding: 6px 12px; cursor: pointer; font-size: 0.75rem; color: #aaa;
+      border-bottom: 1px solid #1a1a2e;
+    }
+    .search-item:hover, .search-item.active { background: rgba(68,136,255,0.15); color: #ddd; }
+    .search-item .si-type { color: #555; font-size: 0.65rem; }
+    .search-item .si-file { color: #444; font-size: 0.6rem; display: block; margin-top: 1px; }
+    #active-badge {
+      position: fixed; top: 116px; left: 24px; z-index: 301;
+      background: rgba(255,34,34,0.12); border: 1px solid rgba(255,34,34,0.3);
+      border-radius: 4px; padding: 4px 10px; font-size: 0.7rem; color: #ff4444;
+      display: none; align-items: center; gap: 6px;
+    }
+    #active-badge a { color: #ff4444; text-decoration: none; font-size: 0.8rem; opacity: 0.6; }
+    #active-badge a:hover { color: #fff; opacity: 1; }
   </style>
 </head>
 <body>
@@ -252,7 +292,7 @@ for (let ri = 0; ri < meta.regions.length; ri++) {
 scene.add(labelGroup);
 
 // ──── Edges ────
-const edgeRenderer = new EdgeRenderer({ maxEdges: 500, y: 0.5, scene, opacity: 0.8, brightness: 2.0, linewidth: 2 });
+const edgeRenderer = new EdgeRenderer({ maxEdges: 500, y: 0.5, scene, opacity: 0.1, brightness: 0.5, linewidth: 1 });
 
 // Aggregated inter-region edges
 const A = meta.agg_edges.length;
@@ -339,15 +379,15 @@ function makeSlider(label, min, max, step, value, onChange) {
   return row;
 }
 
-sliderGroup.appendChild(makeSlider('Brightness', '0.5', '5', '0.1', '2.0', (v) => {
+sliderGroup.appendChild(makeSlider('Brightness', '0.5', '5', '0.1', '0.5', (v) => {
   edgeRenderer.setBrightness(v);
   updateEdges();
 }));
-sliderGroup.appendChild(makeSlider('Opacity', '0.1', '1.0', '0.05', '0.8', (v) => {
+sliderGroup.appendChild(makeSlider('Opacity', '0.1', '1.0', '0.05', '0.1', (v) => {
   edgeRenderer.setOpacity(v);
   aggLines.material.opacity = v;
 }));
-sliderGroup.appendChild(makeSlider('Thickness', '1', '8', '0.5', '2', (v) => {
+sliderGroup.appendChild(makeSlider('Thickness', '1', '8', '0.5', '1', (v) => {
   edgeRenderer.setLinewidth(v);
 }));
 sliderGroup.appendChild(makeSlider('Max edges', '500', String(E), '1000', '500', (v) => {
@@ -355,6 +395,91 @@ sliderGroup.appendChild(makeSlider('Max edges', '500', String(E), '1000', '500',
   updateEdges();
 }));
 edgePanel.appendChild(sliderGroup);
+
+// ──── Node type filter panel ────
+const nodeTypeVisibility = {};
+const nodeTypePanel = document.getElementById('node-type-panel');
+
+// Count tiles per type
+const typeCountMap = {};
+for (let i = 0; i < N; i++) {
+  const tn = typeTable[data.tileTypeIdx[i]];
+  typeCountMap[tn] = (typeCountMap[tn] || 0) + 1;
+}
+
+// Sort by count descending, build checkboxes
+const sortedTypes = Object.entries(typeCountMap).sort((a, b) => b[1] - a[1]);
+const nodeTypeCbContainer = document.createElement('div');
+for (const [tn, count] of sortedTypes) {
+  nodeTypeVisibility[tn] = true;
+  const label = document.createElement('label');
+  const cb = document.createElement('input');
+  cb.type = 'checkbox'; cb.checked = true;
+  cb.addEventListener('change', () => {
+    nodeTypeVisibility[tn] = cb.checked;
+    applyNodeTypeFilter();
+  });
+  const countSpan = document.createElement('span');
+  countSpan.className = 'node-count';
+  countSpan.textContent = count.toLocaleString();
+  label.appendChild(cb);
+  label.appendChild(document.createTextNode(tn));
+  label.appendChild(countSpan);
+  nodeTypeCbContainer.appendChild(label);
+}
+nodeTypePanel.appendChild(nodeTypeCbContainer);
+
+const ntBtnRow = document.createElement('div');
+ntBtnRow.style.cssText = 'margin-top:6px;display:flex;gap:8px;font-size:0.65rem';
+const ntBtnAll = document.createElement('a');
+ntBtnAll.href = '#'; ntBtnAll.textContent = 'All'; ntBtnAll.style.color = '#4488ff';
+ntBtnAll.onclick = (e) => { e.preventDefault(); toggleAllNodeTypes(true); };
+const ntBtnNone = document.createElement('a');
+ntBtnNone.href = '#'; ntBtnNone.textContent = 'None'; ntBtnNone.style.color = '#4488ff';
+ntBtnNone.onclick = (e) => { e.preventDefault(); toggleAllNodeTypes(false); };
+const ntBtnDefs = document.createElement('a');
+ntBtnDefs.href = '#'; ntBtnDefs.textContent = 'Definitions'; ntBtnDefs.style.color = '#4488ff';
+ntBtnDefs.onclick = (e) => {
+  e.preventDefault();
+  const defTypes = new Set(['FUNCTION','METHOD','CLASS','INTERFACE','STRUCT','ENUM','MODULE','CONSTANT','VARIABLE','PARAMETER','IMPORT_BINDING','EXPORT_BINDING','TYPE_ALIAS','LAMBDA','CONSTRUCTOR']);
+  for (const tn of Object.keys(nodeTypeVisibility)) {
+    nodeTypeVisibility[tn] = defTypes.has(tn);
+  }
+  nodeTypeCbContainer.querySelectorAll('input').forEach((cb, i) => {
+    cb.checked = defTypes.has(sortedTypes[i][0]);
+  });
+  applyNodeTypeFilter();
+};
+ntBtnRow.appendChild(ntBtnAll);
+ntBtnRow.appendChild(ntBtnNone);
+ntBtnRow.appendChild(ntBtnDefs);
+nodeTypePanel.appendChild(ntBtnRow);
+
+function toggleAllNodeTypes(state) {
+  for (const tn of Object.keys(nodeTypeVisibility)) nodeTypeVisibility[tn] = state;
+  nodeTypeCbContainer.querySelectorAll('input').forEach(cb => cb.checked = state);
+  applyNodeTypeFilter();
+}
+
+function applyNodeTypeFilter() {
+  for (let i = 0; i < N; i++) {
+    const tn = typeTable[data.tileTypeIdx[i]];
+    const visible = nodeTypeVisibility[tn];
+    tileLayer.setOpacity(i, visible ? 1.0 : 0.0);
+    fillLayer.setOpacity(i, visible ? 1.0 : 0.15);
+  }
+  // Re-apply LOD on top
+  for (let i = 0; i < N; i++) {
+    if (data.tileLodLevel[i] > lodMaxLevel) {
+      tileLayer.setOpacity(i, 0.0);
+    }
+  }
+  // Keep active tiles bright
+  for (const ai of activeTiles) {
+    tileLayer.setOpacity(ai, 1.0);
+    fillLayer.setOpacity(ai, 1.0);
+  }
+}
 
 // ──── LOD ────
 let lodMaxLevel = MAX_DEPTH;
@@ -452,6 +577,9 @@ controls.addEventListener('change', () => {
   edgeTimer = setTimeout(updateEdges, 80);
 });
 
+// ──── Active (pinned) tiles ────
+const activeTiles = new Set();
+
 // ──── Hover controller ────
 const hover = new HoverController({
   camera,
@@ -477,16 +605,328 @@ const hover = new HoverController({
   },
   meta,
   tooltip: hud.tooltip,
-  onHover: () => {},
+  onHover: (_idx, _connected) => {
+    // Keep active tiles bright during hover dimming
+    for (const ai of activeTiles) {
+      tileLayer.setOpacity(ai, 1.0);
+      fillLayer.setOpacity(ai, 1.0);
+    }
+  },
   onUnhover: () => {
     applyLOD();
     updateEdges();
+    // Restore active tile brightness after LOD reset
+    for (const ai of activeTiles) {
+      tileLayer.setOpacity(ai, 1.0);
+      fillLayer.setOpacity(ai, 1.0);
+    }
   },
 });
+
+// ── 3D Pin markers for active tiles ──
+const MAX_ACTIVE = 200;
+const PIN_HEIGHT = 4;
+const PIN_HEAD_RADIUS = 0.6;
+
+// Shared geometries for pins
+const pinNeedleGeo = new THREE.CylinderGeometry(0.08, 0.08, PIN_HEIGHT, 6);
+pinNeedleGeo.translate(0, PIN_HEIGHT / 2, 0);
+const pinHeadGeo = new THREE.SphereGeometry(PIN_HEAD_RADIUS, 12, 8);
+pinHeadGeo.translate(0, PIN_HEIGHT + PIN_HEAD_RADIUS * 0.6, 0);
+
+const pinNeedleMat = new THREE.MeshBasicMaterial({ color: 0xaa3333, transparent: true, opacity: 0.7 });
+const pinHeadMat = new THREE.MeshBasicMaterial({ color: 0xff2222, transparent: true, opacity: 0.9 });
+
+const pinGroup = new THREE.Group();
+pinGroup.position.y = 0.3;
+scene.add(pinGroup);
+
+// Pool of pin meshes
+const pinPool = [];
+function getPin() {
+  const needle = new THREE.Mesh(pinNeedleGeo, pinNeedleMat);
+  const head = new THREE.Mesh(pinHeadGeo, pinHeadMat);
+  const pin = new THREE.Group();
+  pin.add(needle);
+  pin.add(head);
+  pin.userData = { tileIdx: -1 };
+  pinGroup.add(pin);
+  return pin;
+}
+
+// ── Active region/container border outlines ──
+const activeRegions = new Set(); // indices into meta.regions
+const activeContainers = new Set(); // indices into meta.containers
+const MAX_BORDER_VERTS = 10000;
+const borderHighlightPositions = new Float32Array(MAX_BORDER_VERTS * 3);
+const borderHighlightGeo = new THREE.BufferGeometry();
+const borderHighlightAttr = new THREE.BufferAttribute(borderHighlightPositions, 3);
+borderHighlightGeo.setAttribute('position', borderHighlightAttr);
+const activeBorderLines = new THREE.LineSegments(borderHighlightGeo, new THREE.LineBasicMaterial({
+  color: 0xff4444, transparent: true, opacity: 0.9, depthWrite: false,
+}));
+activeBorderLines.position.y = 0.25;
+scene.add(activeBorderLines);
+
+const activeBadge = document.getElementById('active-badge');
+const activeCountEl = document.getElementById('active-count');
+document.getElementById('active-clear').addEventListener('click', (e) => {
+  e.preventDefault();
+  clearActive();
+});
+
+function toggleActive(idx) {
+  if (activeTiles.has(idx)) activeTiles.delete(idx);
+  else if (activeTiles.size < MAX_ACTIVE) activeTiles.add(idx);
+  refreshActive();
+}
+
+function addActive(idx) {
+  if (activeTiles.size < MAX_ACTIVE) activeTiles.add(idx);
+  refreshActive();
+}
+
+function addActiveContainer(containerIdx) {
+  if (activeContainers.has(containerIdx)) return;
+  activeContainers.add(containerIdx);
+  refreshActive();
+}
+
+function addActiveRegion(regionIdx) {
+  if (activeRegions.has(regionIdx)) return;
+  activeRegions.add(regionIdx);
+  refreshActive();
+}
+
+function clearActive() {
+  activeTiles.clear();
+  activeContainers.clear();
+  activeRegions.clear();
+  refreshActive();
+  applyLOD();
+  updateEdges();
+}
+
+function refreshActive() {
+  // ── 3D Pins ──
+  // Remove excess pins
+  while (pinPool.length > activeTiles.size) {
+    const pin = pinPool.pop();
+    pinGroup.remove(pin);
+  }
+  // Add pins if needed
+  while (pinPool.length < activeTiles.size && pinPool.length < MAX_ACTIVE) {
+    pinPool.push(getPin());
+  }
+  // Position pins
+  let pi = 0;
+  for (const idx of activeTiles) {
+    if (pi >= pinPool.length) break;
+    const pin = pinPool[pi];
+    pin.position.set(fillLayer.worldX[idx], 0, fillLayer.worldZ[idx]);
+    pin.userData.tileIdx = idx;
+    pin.visible = true;
+    pi++;
+  }
+  // Hide unused pins
+  for (; pi < pinPool.length; pi++) {
+    pinPool[pi].visible = false;
+  }
+
+  // ── Region + container borders ──
+  let bi = 0;
+  function addBorder(border) {
+    for (let i = 0; i < border.length; i++) {
+      if (bi >= MAX_BORDER_VERTS * 3 - 6) return;
+      const j = (i + 1) % border.length;
+      borderHighlightPositions[bi++] = border[i][0];
+      borderHighlightPositions[bi++] = 0;
+      borderHighlightPositions[bi++] = border[i][1];
+      borderHighlightPositions[bi++] = border[j][0];
+      borderHighlightPositions[bi++] = 0;
+      borderHighlightPositions[bi++] = border[j][1];
+    }
+  }
+  for (const regionIdx of activeRegions) {
+    const region = meta.regions[regionIdx];
+    if (region?.border?.length >= 2) addBorder(region.border);
+  }
+  for (const containerIdx of activeContainers) {
+    const cont = meta.containers[containerIdx];
+    if (cont?.border?.length >= 2) addBorder(cont.border);
+  }
+  borderHighlightGeo.setDrawRange(0, bi / 3);
+  borderHighlightAttr.needsUpdate = true;
+
+  // ── Badge ──
+  const total = activeTiles.size + activeContainers.size + activeRegions.size;
+  if (total > 0) {
+    activeBadge.style.display = 'flex';
+    activeCountEl.textContent = total;
+  } else {
+    activeBadge.style.display = 'none';
+  }
+}
+
+// Single-click on pin head → fly to that tile
+renderer.domElement.addEventListener('click', (e) => {
+  const mouse = new THREE.Vector2(
+    (e.clientX / window.innerWidth) * 2 - 1,
+    -(e.clientY / window.innerHeight) * 2 + 1,
+  );
+  const raycaster = new THREE.Raycaster();
+  raycaster.setFromCamera(mouse, camera);
+  // Raycast against pin head spheres
+  for (const pin of pinPool) {
+    if (!pin.visible) continue;
+    const head = pin.children[1]; // sphere
+    const hits = raycaster.intersectObject(head, false);
+    if (hits.length > 0) {
+      const idx = pin.userData.tileIdx;
+      flyTo(fillLayer.worldX[idx], fillLayer.worldZ[idx], idx);
+      return;
+    }
+  }
+});
+
+// Double-click to toggle active tile
+renderer.domElement.addEventListener('dblclick', (e) => {
+  const mouse = new THREE.Vector2(
+    (e.clientX / window.innerWidth) * 2 - 1,
+    -(e.clientY / window.innerHeight) * 2 + 1,
+  );
+  const raycaster = new THREE.Raycaster();
+  raycaster.setFromCamera(mouse, camera);
+  // Check pin heads first — double-click on pin = unpin
+  for (const pin of pinPool) {
+    if (!pin.visible) continue;
+    const head = pin.children[1];
+    const hits = raycaster.intersectObject(head, false);
+    if (hits.length > 0) {
+      toggleActive(pin.userData.tileIdx);
+      return;
+    }
+  }
+  for (const layer of [tileLayer, fillLayer]) {
+    const idx = layer.raycast(raycaster);
+    if (idx >= 0) { toggleActive(idx); return; }
+  }
+});
+
+// ──── Camera flythrough ────
+let flyTarget = null; // { pos: Vector3, lookAt: Vector3, t: 0 }
+
+function flyTo(worldX, worldZ, tileIdx) {
+  const lookAt = new THREE.Vector3(worldX, 0, worldZ);
+  const pos = new THREE.Vector3(worldX, 40, worldZ + 30);
+  flyTarget = {
+    startPos: camera.position.clone(),
+    startLookAt: controls.target.clone(),
+    endPos: pos,
+    endLookAt: lookAt,
+    t: 0,
+    tileIdx,
+  };
+}
+
+function easeInOut(t) {
+  return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+}
+
+// ──── Search ────
+const searchInput = document.getElementById('search-input');
+const searchResults = document.getElementById('search-results');
+let searchTimer = null;
+let searchActiveIdx = -1;
+let lastResults = [];
+
+searchInput.addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  const q = searchInput.value.trim();
+  if (q.length < 2) { searchResults.style.display = 'none'; return; }
+  searchTimer = setTimeout(async () => {
+    const res = await fetch(`/api/search?q=${encodeURIComponent(q)}&limit=15`);
+    if (!res.ok) return;
+    lastResults = await res.json();
+    searchActiveIdx = -1;
+    renderResults();
+  }, 200);
+});
+
+searchInput.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowDown') { e.preventDefault(); searchActiveIdx = Math.min(searchActiveIdx + 1, lastResults.length - 1); renderResults(); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); searchActiveIdx = Math.max(searchActiveIdx - 1, 0); renderResults(); }
+  else if (e.key === 'Enter' && searchActiveIdx >= 0) { e.preventDefault(); selectResult(lastResults[searchActiveIdx]); }
+  else if (e.key === 'Escape') { searchResults.style.display = 'none'; searchInput.blur(); }
+});
+
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); searchInput.focus(); searchInput.select(); }
+  if (e.key === 'Escape' && document.activeElement !== searchInput && (activeTiles.size > 0 || activeContainers.size > 0 || activeRegions.size > 0)) {
+    clearActive();
+  }
+});
+
+function renderResults() {
+  if (lastResults.length === 0) { searchResults.style.display = 'none'; return; }
+  searchResults.style.display = 'block';
+  searchResults.innerHTML = lastResults.map((r, i) => {
+    const file = r.file ? r.file.split('/').slice(-2).join('/') : '';
+    const isDefinition = ['FUNCTION','METHOD','CLASS','INTERFACE','STRUCT','ENUM'].includes(r.type);
+    const icon = r.isContainer ? '◆ ' : isDefinition ? 'ƒ ' : '';
+    return `<div class="search-item${i === searchActiveIdx ? ' active' : ''}" data-idx="${i}">
+      <span>${icon}${r.name}</span> <span class="si-type">${r.type}</span>
+      <span class="si-file">${file}</span>
+    </div>`;
+  }).join('');
+  searchResults.querySelectorAll('.search-item').forEach(el => {
+    el.addEventListener('click', () => selectResult(lastResults[+el.dataset.idx]));
+  });
+}
+
+function selectResult(r) {
+  searchResults.style.display = 'none';
+  searchInput.value = r.name;
+  searchInput.blur();
+  if (r.isContainer && r.containerIdx != null) {
+    addActiveContainer(r.containerIdx);
+  } else if (r.tileIndex >= 0) {
+    addActive(r.tileIndex);
+  }
+  // Highlight the region (file boundary) for any result
+  if (r.regionIdx != null) {
+    addActiveRegion(r.regionIdx);
+  }
+  flyTo(r.worldX, r.worldZ, r.tileIndex ?? -1);
+}
 
 // ──── Animate ────
 function animate() {
   requestAnimationFrame(animate);
+
+  // Camera flythrough
+  if (flyTarget) {
+    flyTarget.t += 0.015;
+    const t = easeInOut(Math.min(flyTarget.t, 1));
+    camera.position.lerpVectors(flyTarget.startPos, flyTarget.endPos, t);
+    controls.target.lerpVectors(flyTarget.startLookAt, flyTarget.endLookAt, t);
+    if (flyTarget.t >= 1) {
+      flyTarget = null;
+      updateEdges();
+    }
+  }
+
+  // Scale pins based on camera distance so they remain visible
+  if (activeTiles.size > 0) {
+    const dist = camera.position.distanceTo(controls.target);
+    const s = Math.max(0.5, Math.min(dist / 40, 8));
+    const bobY = 0.3 + Math.sin(performance.now() * 0.002) * 0.15;
+    pinGroup.position.y = bobY;
+    for (const pin of pinPool) {
+      if (pin.visible) pin.scale.setScalar(s);
+    }
+  }
+
   controls.update();
   tileLayer.animate();
   fillLayer.animate();
@@ -504,6 +944,23 @@ window.addEventListener('resize', () => {
   edgeRenderer.updateResolution(window.innerWidth, window.innerHeight);
 });
 </script>
+
+<!-- Search -->
+<div id="search-box">
+  <input type="text" id="search-input" placeholder="Search nodes... (Ctrl+K)" autocomplete="off">
+  <div id="search-results"></div>
+</div>
+
+<!-- Active tiles badge -->
+<div id="active-badge">
+  <span id="active-count">0</span> pinned
+  <a href="#" id="active-clear" title="Clear all (Esc)">✕</a>
+</div>
+
+<!-- Node type filter panel -->
+<div id="node-type-panel">
+  <h3>NODE TYPES</h3>
+</div>
 
 <!-- Edge visibility panel -->
 <div id="edge-panel">

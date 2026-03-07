@@ -80,7 +80,8 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Computing hex layout...");
     let layout = compute_layout(&mut client, args.tile_size, args.filter.as_deref())?;
     let batches = compute_batches(&layout);
-    tracing::info!("Layout ready: {} tiles, {} batches", layout.tiles.len(), batches.len());
+    tracing::info!("Layout ready: {} tiles, {} batches, {} containers",
+        layout.tiles.len(), batches.len(), layout.containers.len());
 
     // Load wire nodes for /api/node detail lookups
     let wire_nodes_vec = client.get_all_nodes()?;
@@ -106,6 +107,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/hex-stream", get(api_hex_stream))
         .route("/api/hex-batch/{batch_id}", get(api_hex_batch))
         .route("/api/node", get(api_node))
+        .route("/api/search", get(api_search))
         .fallback_service(ServeDir::new(&args.static_dir))
         .layer(CorsLayer::permissive())
         .with_state(state);
@@ -176,6 +178,96 @@ async fn api_hex_batch(
         [(header::CONTENT_TYPE, "application/octet-stream")],
         body,
     ).into_response()
+}
+
+/// Search nodes by name (substring match), returns up to 20 results with tile positions
+#[derive(Deserialize)]
+struct SearchQuery {
+    q: String,
+    #[serde(default = "default_limit")]
+    limit: usize,
+}
+fn default_limit() -> usize { 20 }
+
+async fn api_search(
+    Query(query): Query<SearchQuery>,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let q_lower = query.q.to_lowercase();
+    let mut results: Vec<serde_json::Value> = Vec::new();
+
+    // Pass 1: find all matching containers (definitions) — small set, always scan fully
+    for wn in state.wire_nodes.values() {
+        let name = wn.name.as_deref().unwrap_or("");
+        if name.is_empty() { continue; }
+        if !name.to_lowercase().contains(&q_lower) { continue; }
+
+        if let Some(&ci) = state.layout.container_node_map.get(&wn.id) {
+            let container = &state.layout.containers[ci];
+            results.push(serde_json::json!({
+                "name": name,
+                "type": wn.node_type,
+                "file": wn.file,
+                "containerIdx": ci,
+                "worldX": container.center[0],
+                "worldZ": container.center[1],
+                "isContainer": true,
+            }));
+        }
+    }
+
+    // Pass 2: fill remaining slots with tile (leaf) nodes
+    let tile_limit = query.limit * 5;
+    let mut tile_count = 0;
+    for wn in state.wire_nodes.values() {
+        if tile_count >= tile_limit { break; }
+
+        let name = wn.name.as_deref().unwrap_or("");
+        if name.is_empty() { continue; }
+        if !name.to_lowercase().contains(&q_lower) { continue; }
+
+        if let Some(&ti) = state.layout.node_to_tile.get(&wn.id) {
+            let tile = &state.layout.tiles[ti as usize];
+            let (wx, wz) = tile.coord.to_world(state.layout.tile_size);
+            results.push(serde_json::json!({
+                "name": name,
+                "type": wn.node_type,
+                "file": wn.file,
+                "tileIndex": ti,
+                "worldX": wx,
+                "worldZ": wz,
+                "regionIdx": tile.region_idx,
+            }));
+            tile_count += 1;
+        }
+    }
+
+    // Sort: containers first, then definitions (FUNCTION/METHOD/CLASS), then prefix match, then shorter names
+    fn type_priority(t: &str) -> u8 {
+        match t {
+            "FUNCTION" | "METHOD" | "CLASS" | "INTERFACE" | "STRUCT" | "ENUM" => 1,
+            "VARIABLE" | "CONSTANT" | "PARAMETER" => 2,
+            "EXPORT_BINDING" | "IMPORT_BINDING" => 3,
+            _ => 4,
+        }
+    }
+    results.sort_by(|a, b| {
+        let a_cont = a.get("isContainer").is_some();
+        let b_cont = b.get("isContainer").is_some();
+        let at = a["type"].as_str().unwrap_or("");
+        let bt = b["type"].as_str().unwrap_or("");
+        let an = a["name"].as_str().unwrap_or("");
+        let bn = b["name"].as_str().unwrap_or("");
+        let a_prefix = an.to_lowercase().starts_with(&q_lower);
+        let b_prefix = bn.to_lowercase().starts_with(&q_lower);
+        b_cont.cmp(&a_cont)
+            .then(type_priority(at).cmp(&type_priority(bt)))
+            .then(b_prefix.cmp(&a_prefix))
+            .then(an.len().cmp(&bn.len()))
+    });
+    results.truncate(query.limit);
+
+    axum::Json(results)
 }
 
 /// Fetch node details by tile index or node id

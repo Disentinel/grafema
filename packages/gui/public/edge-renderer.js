@@ -55,11 +55,14 @@ export class EdgeRenderer {
   /** Update line width in pixels */
   setLinewidth(v) { this._mat.linewidth = v; }
 
-  /** Update max visible edges (reallocates buffers) */
+  /** Update max visible edges (reallocates buffers + geometry) */
   setMaxEdges(v) {
     this.maxEdges = v;
     this._positions = new Float32Array(v * 6);
     this._colors = new Float32Array(v * 6);
+    this._geo.dispose();
+    this._geo = new LineSegmentsGeometry();
+    this.lines.geometry = this._geo;
   }
 
   /** Call on window resize */

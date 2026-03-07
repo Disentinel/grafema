@@ -88,6 +88,8 @@ pub struct HexLayout {
     pub max_depth: u8,
     /// Mapping from node_id to tile index
     pub node_to_tile: HashMap<String, u32>,
+    /// Mapping from container node_id to index in containers vec
+    pub container_node_map: HashMap<String, usize>,
 }
 
 /// An edge in the layout (indices into tiles vec)
@@ -114,6 +116,8 @@ pub struct ContainerInfo {
     pub center: [f32; 2],
     pub tile_count: u32,
     pub hue: f32,
+    #[serde(skip)]
+    pub node_id: String,
 }
 
 /// Batch type 0: region metadata (JSON)

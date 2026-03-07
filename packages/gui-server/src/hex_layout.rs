@@ -87,7 +87,7 @@ pub fn compute_layout(client: &mut RfdbClient, tile_size: f32, file_filter: Opti
     // 4. Build containment tree + collect non-structural edges
     let mut non_structural_edges: Vec<(String, String, String)> = Vec::new();
 
-    // CONTAINS and DECLARES both establish containment hierarchy
+    // CONTAINS and DECLARES establish containment hierarchy
     const CONTAINMENT_EDGES: &[&str] = &["CONTAINS", "DECLARES"];
 
     for we in &wire_edges {
@@ -113,13 +113,121 @@ pub fn compute_layout(client: &mut RfdbClient, tile_size: f32, file_filter: Opti
     tracing::info!("Containment tree built: {} with parent, {} with children, {} non-structural edges",
         contains_count, has_children, non_structural_edges.len());
 
-    // 5. Identify renderable nodes — container types are never rendered.
-    //    They exist only as grouping abstractions (regions, borders).
+    // 4b. Compact pass-through nodes (REFERENCE, PROPERTY_ACCESS) for visualization.
+    //     These nodes add positional detail but clutter the hex map.
+    //     Strategy: find their single outgoing edge target, redirect all incoming
+    //     edges to that target, then exclude them from rendering.
+    //
+    //     REFERENCE       → READS_FROM → (VARIABLE|CONSTANT|PARAMETER|FUNCTION|IMPORT_BINDING)
+    //     PROPERTY_ACCESS → WRITES_TO  → (LITERAL|PROPERTY_ACCESS|REFERENCE|CALL|...)
+    {
+        // Build: compactable node → its redirect target
+        const COMPACT_RULES: &[(&str, &str)] = &[
+            ("REFERENCE", "READS_FROM"),
+            ("PROPERTY_ACCESS", "WRITES_TO"),
+        ];
+
+        // First pass: build outgoing edge map for compactable nodes
+        let compactable_ids: HashSet<&str> = nodes_by_id.iter()
+            .filter(|(_, n)| COMPACT_RULES.iter().any(|(nt, _)| *nt == n.node_type))
+            .map(|(id, _)| id.as_str())
+            .collect();
+
+        // Map each compactable node → its redirect target via the specific edge type
+        let mut redirect: HashMap<String, String> = HashMap::new();
+        for (src, dst, etype) in &non_structural_edges {
+            if let Some(node) = nodes_by_id.get(src.as_str()) {
+                if compactable_ids.contains(src.as_str()) {
+                    for &(nt, et) in COMPACT_RULES {
+                        if node.node_type == nt && etype == et {
+                            redirect.entry(src.clone()).or_insert_with(|| dst.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Resolve chains: REFERENCE → PROPERTY_ACCESS → target
+        // (A compacted node may point to another compacted node)
+        let mut resolved = 0;
+        for _ in 0..5 {
+            let mut changed = false;
+            let snapshot: Vec<(String, String)> = redirect.iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            for (src, dst) in snapshot {
+                if let Some(further) = redirect.get(&dst) {
+                    if *further != dst {
+                        redirect.insert(src, further.clone());
+                        changed = true;
+                        resolved += 1;
+                    }
+                }
+            }
+            if !changed { break; }
+        }
+
+        // Redirect incoming edges: replace dst with redirect target
+        let compacted = redirect.len();
+        let mut redirected_edges = 0;
+        for edge in &mut non_structural_edges {
+            // If edge points TO a compacted node, redirect to its target
+            if let Some(target) = redirect.get(&edge.1) {
+                edge.1 = target.clone();
+                redirected_edges += 1;
+            }
+            // If edge comes FROM a compacted node, redirect to its target
+            if let Some(target) = redirect.get(&edge.0) {
+                edge.0 = target.clone();
+                redirected_edges += 1;
+            }
+        }
+
+        // Remove self-loops created by compaction
+        non_structural_edges.retain(|e| e.0 != e.1);
+
+        // Remove compacted nodes from children lists of their parents
+        for (cid, _) in &redirect {
+            if let Some(node) = nodes_by_id.get(cid) {
+                if let Some(ref pid) = node.parent_id {
+                    let pid = pid.clone();
+                    if let Some(parent) = nodes_by_id.get_mut(&pid) {
+                        parent.children.retain(|c| !redirect.contains_key(c));
+                    }
+                }
+            }
+        }
+
+        // Mark compacted nodes so step 5 excludes them
+        for cid in redirect.keys() {
+            if let Some(node) = nodes_by_id.get_mut(cid.as_str()) {
+                node.node_type = "COMPACTED".to_string();
+            }
+        }
+
+        tracing::info!("Compacted {} pass-through nodes ({} chains resolved, {} edges redirected)",
+            compacted, resolved, redirected_edges);
+    }
+
+    // 5. Identify renderable nodes.
+    //    - Compacted nodes are always excluded
+    //    - Container types with children are excluded (they become container borders)
+    //    - Container types without children: only definitions (FUNCTION, METHOD, CLASS,
+    //      INTERFACE, STRUCT, ENUM) are promoted to tiles; structural containers
+    //      (SCOPE, LOOP, BRANCH, etc.) are excluded even without children
+    const DEFINITION_CONTAINERS: &[&str] = &[
+        "FUNCTION", "METHOD", "CLASS", "INTERFACE",
+    ];
     let leaf_ids: HashSet<String> = nodes_by_id.iter()
-        .filter(|(_, n)| !CONTAINER_TYPES.contains(&n.node_type.as_str()))
+        .filter(|(_, n)| {
+            if n.node_type == "COMPACTED" { return false; }
+            if !CONTAINER_TYPES.contains(&n.node_type.as_str()) { return true; }
+            // Container type — render only if childless AND a definition type
+            n.children.is_empty() && DEFINITION_CONTAINERS.contains(&n.node_type.as_str())
+        })
         .map(|(id, _)| id.clone())
         .collect();
-    tracing::info!("{} renderable (non-container) nodes out of {} total", leaf_ids.len(), nodes_by_id.len());
+    tracing::info!("{} renderable nodes out of {} total", leaf_ids.len(), nodes_by_id.len());
 
     // 6. Build leaf adjacency.
     //    - Same-file affinity: renderable nodes in same file attract each other (weight 3)
@@ -629,10 +737,16 @@ pub fn compute_layout(client: &mut RfdbClient, tile_size: f32, file_filter: Opti
             center: [cx / n, cz / n],
             tile_count: descendant_coords.len() as u32,
             hue,
+            node_id: cid.clone(),
         });
     }
     // Sort by depth (shallowest first) for layered rendering
     containers.sort_by_key(|c| c.depth);
+
+    // Build container node_id → index map (after sort so indices are stable)
+    let container_node_map: HashMap<String, usize> = containers.iter().enumerate()
+        .map(|(i, c)| (c.node_id.clone(), i))
+        .collect();
 
     // 12. Aggregated inter-region edges
     let mut agg_map: HashMap<(u16, u16), HashMap<u8, u16>> = HashMap::new();
@@ -667,6 +781,7 @@ pub fn compute_layout(client: &mut RfdbClient, tile_size: f32, file_filter: Opti
         tile_size,
         max_depth,
         node_to_tile,
+        container_node_map,
     })
 }
 
