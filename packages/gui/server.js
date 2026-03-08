@@ -1515,6 +1515,190 @@ const apiRoutes = {
     });
     res.end(response);
   },
+  /**
+   * Full graph data for cosmos.gl GPU visualization.
+   * Returns JSON: { nodes, typeTable, links, linkTypes, edgeTypeTable,
+   *                  clusters, clusterNames, degree }
+   */
+  '/api/cosmos-data': async (req, res) => {
+    const db = await connectRFDB();
+    const q = parseQuery(req.url);
+    const limit = parseInt(q.limit || '25000', 10);
+
+    console.time('cosmos-data');
+
+    const nodes = [];       // [[typeIdx, name, file], ...]
+    const nodeIdToIdx = new Map();
+    const typeTable = [];
+    const typeIdx = new Map();
+    const nodesByType = await db.countNodesByType();
+
+    // Fetch in type priority order
+    const allTypes = Object.keys(nodesByType);
+    const typesToFetch = [
+      ...TYPE_PRIORITY.filter(t => allTypes.includes(t)),
+      ...allTypes.filter(t => !TYPE_PRIORITY.includes(t)),
+    ];
+
+    let idx = 0;
+    outer:
+    for (const nodeType of typesToFetch) {
+      let ti = typeIdx.get(nodeType);
+      if (ti === undefined) { ti = typeTable.length; typeTable.push(nodeType); typeIdx.set(nodeType, ti); }
+
+      for await (const node of db.queryNodes({ type: nodeType })) {
+        nodeIdToIdx.set(node.id, idx);
+        nodes.push([ti, node.name || '', node.file || '']);
+        idx++;
+        if (idx >= limit) break outer;
+      }
+    }
+
+    // Fetch all edges, filter to visible pairs
+    const allEdges = await db.getAllEdges();
+    const links = [];      // flat [src, dst, src, dst, ...]
+    const linkTypes = [];  // per-link edge type index
+    const edgeTypeTable = [];
+    const edgeTypeIdx = new Map();
+
+    for (const edge of allEdges) {
+      const si = nodeIdToIdx.get(edge.src);
+      const di = nodeIdToIdx.get(edge.dst);
+      if (si === undefined || di === undefined) continue;
+
+      const et = edge.edgeType || edge.type;
+      let eti = edgeTypeIdx.get(et);
+      if (eti === undefined) { eti = edgeTypeTable.length; edgeTypeTable.push(et); edgeTypeIdx.set(et, eti); }
+
+      links.push(si, di);
+      linkTypes.push(eti);
+    }
+
+    // Clusters by directory (top 2-3 levels)
+    const clusterMap = new Map();
+    const clusterNames = [];
+    const clusters = [];
+
+    for (const [, name, file] of nodes) {
+      const parts = file.split('/').filter(Boolean);
+      const depth = Math.min(parts.length - 1, 3);
+      const key = parts.slice(0, Math.max(depth, 1)).join('/') || name || '/';
+      if (!clusterMap.has(key)) { clusterMap.set(key, clusterNames.length); clusterNames.push(key); }
+      clusters.push(clusterMap.get(key));
+    }
+
+    // Degree per node
+    const degree = new Uint16Array(nodes.length);
+    for (let i = 0; i < links.length; i += 2) {
+      if (links[i] < degree.length) degree[links[i]]++;
+      if (links[i+1] < degree.length) degree[links[i+1]]++;
+    }
+
+    console.timeEnd('cosmos-data');
+    console.log(`cosmos-data: ${nodes.length} nodes, ${links.length / 2} edges, ${clusterNames.length} clusters`);
+
+    json(res, {
+      nodes, typeTable, links, linkTypes, edgeTypeTable,
+      clusters, clusterNames, degree: Array.from(degree),
+    });
+  },
+
+  /**
+   * File-level graph: MODULE nodes + aggregated cross-file edges.
+   * Returns JSON: { files: [{name, dir, path}], edges: [{src, dst, type, weight}],
+   *                  clusters, clusterNames }
+   */
+  '/api/file-graph': async (_req, res) => {
+    const db = await connectRFDB();
+    console.time('file-graph');
+
+    // 1. Collect MODULE nodes (one per file)
+    const fileMap = new Map(); // filePath → { id, index }
+    const files = [];
+    let idx = 0;
+
+    for await (const node of db.queryNodes({ type: 'MODULE' })) {
+      const file = node.file || node.name || '';
+      if (!file || fileMap.has(file)) continue;
+      const lastSlash = file.lastIndexOf('/');
+      fileMap.set(file, { id: node.id, index: idx });
+      files.push({
+        name: file.substring(lastSlash + 1),
+        dir: file.substring(0, lastSlash) || '/',
+        path: file,
+      });
+      idx++;
+    }
+
+    // 2. Map all child nodes to their parent file index
+    const nodeIdToFileIdx = new Map();
+    for (const [, info] of fileMap) {
+      nodeIdToFileIdx.set(info.id, info.index);
+    }
+
+    // Recursively map CONTAINS children (up to 3 levels deep)
+    async function mapChildren(parentId, fileIdx, depth) {
+      if (depth > 3) return;
+      const edges = await db.getOutgoingEdges(parentId, ['CONTAINS']);
+      for (const edge of edges) {
+        if (!nodeIdToFileIdx.has(edge.dst)) {
+          nodeIdToFileIdx.set(edge.dst, fileIdx);
+          await mapChildren(edge.dst, fileIdx, depth + 1);
+        }
+      }
+    }
+
+    for (const [, info] of fileMap) {
+      await mapChildren(info.id, info.index, 0);
+    }
+
+    console.log(`file-graph: mapped ${nodeIdToFileIdx.size} node IDs to ${files.length} files`);
+
+    // 3. Aggregate cross-file edges
+    const CROSS_FILE_TYPES = new Set(['IMPORTS_FROM', 'DEPENDS_ON', 'CALLS', 'EXTENDS', 'IMPLEMENTS']);
+    const allEdges = await db.getAllEdges();
+    const edgeAgg = new Map();
+
+    for (const edge of allEdges) {
+      const et = edge.edgeType || edge.type;
+      if (!CROSS_FILE_TYPES.has(et)) continue;
+      const si = nodeIdToFileIdx.get(edge.src);
+      const di = nodeIdToFileIdx.get(edge.dst);
+      if (si === undefined || di === undefined || si === di) continue;
+      const key = si < di ? `${si}|${di}` : `${di}|${si}`;
+      if (!edgeAgg.has(key)) edgeAgg.set(key, { src: Math.min(si, di), dst: Math.max(si, di), types: new Map() });
+      const agg = edgeAgg.get(key);
+      agg.types.set(et, (agg.types.get(et) || 0) + 1);
+    }
+
+    const edges = [];
+    for (const [, agg] of edgeAgg) {
+      let dominant = '', maxCount = 0, total = 0;
+      for (const [t, c] of agg.types) { total += c; if (c > maxCount) { maxCount = c; dominant = t; } }
+      edges.push({ src: agg.src, dst: agg.dst, type: dominant, weight: total });
+    }
+
+    // 4. Clusters by package (top 2 dir levels)
+    const clusterMap = new Map();
+    const clusterNames = [];
+    const clusters = [];
+
+    for (const f of files) {
+      const parts = f.dir.split('/').filter(Boolean);
+      const key = parts.slice(0, Math.min(parts.length, 2)).join('/') || '/';
+      if (!clusterMap.has(key)) { clusterMap.set(key, clusterNames.length); clusterNames.push(key); }
+      clusters.push(clusterMap.get(key));
+    }
+
+    // 5. Degree
+    const degree = new Array(files.length).fill(0);
+    for (const e of edges) { degree[e.src] += e.weight; degree[e.dst] += e.weight; }
+
+    console.timeEnd('file-graph');
+    console.log(`file-graph: ${files.length} files, ${edges.length} edges, ${clusterNames.length} clusters`);
+
+    json(res, { files, edges, clusters, clusterNames, degree });
+  },
 };
 
 async function serveStatic(req, res) {

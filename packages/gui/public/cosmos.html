@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Grafema – Code Map</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #080810; overflow: hidden; font-family: 'Inter', -apple-system, sans-serif; }
+    #container { width: 100vw; height: 100vh; position: relative; }
+
+    #labels {
+      position: absolute; inset: 0; pointer-events: none; z-index: 10; overflow: hidden;
+    }
+    .label {
+      position: absolute; white-space: nowrap; pointer-events: all; cursor: pointer;
+      font-size: 9px; color: #aaa; transform: translate(-50%, -50%);
+      text-shadow: 0 0 4px #080810, 0 0 8px #080810, 0 1px 2px #080810;
+      transition: color 0.15s;
+    }
+    .label:hover { color: #fff; }
+    .label.hub { font-size: 11px; font-weight: 500; color: #ccc; }
+    .label.mega { font-size: 13px; font-weight: 600; color: #eee; }
+
+    #hud {
+      position: fixed; top: 0; left: 0; right: 0; padding: 16px 24px;
+      background: linear-gradient(180deg, rgba(8,8,16,0.9) 0%, transparent 100%);
+      pointer-events: none; z-index: 100;
+    }
+    .brand { font-size: 0.65rem; letter-spacing: 0.2em; color: #444; }
+    .title { font-size: 1.3rem; font-weight: 200; color: #e0e0e0; letter-spacing: 0.05em; }
+    .stats { font-size: 0.75rem; color: #555; margin-top: 4px; }
+    .stats b { color: #00d4ff; font-weight: 500; }
+
+    #search-box {
+      position: fixed; top: 16px; right: 80px; z-index: 200; width: 240px;
+    }
+    #search-box input {
+      width: 100%; padding: 7px 12px; background: rgba(12,12,20,0.9);
+      border: 1px solid #1a1a2e; border-radius: 6px; color: #ccc;
+      font-size: 0.78rem; outline: none; font-family: inherit;
+    }
+    #search-box input:focus { border-color: #4488ff; }
+    #search-box input::placeholder { color: #333; }
+    #search-results {
+      margin-top: 4px; background: rgba(12,12,20,0.95); border: 1px solid #1a1a2e;
+      border-radius: 6px; max-height: 250px; overflow-y: auto; display: none;
+    }
+    .sr-item {
+      padding: 5px 12px; cursor: pointer; font-size: 0.72rem; color: #888;
+      border-bottom: 1px solid #111;
+    }
+    .sr-item:hover { background: rgba(68,136,255,0.12); color: #ccc; }
+    .sr-item small { color: #444; display: block; font-size: 0.6rem; }
+
+    #legend {
+      position: fixed; bottom: 16px; left: 24px; z-index: 100;
+      display: flex; gap: 14px; flex-wrap: wrap; max-width: 70vw; pointer-events: none;
+    }
+    .legend-item { display: flex; align-items: center; gap: 5px; font-size: 0.62rem; color: #444; }
+    .legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+    #tooltip {
+      position: fixed; display: none; padding: 10px 14px; z-index: 300;
+      background: rgba(12,12,20,0.95); border: 1px solid #2a2a4e;
+      border-radius: 8px; font-size: 0.75rem; color: #ccc;
+      pointer-events: none; max-width: 380px; backdrop-filter: blur(6px);
+    }
+    #tooltip b { color: #eee; }
+    #tooltip small { color: #555; display: block; margin-top: 3px; }
+    #tooltip .deps { color: #666; margin-top: 4px; font-size: 0.65rem; line-height: 1.5; }
+
+    #loading {
+      position: fixed; inset: 0; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 12px;
+      background: #080810; z-index: 1000;
+    }
+    .spinner { width: 24px; height: 24px; border: 2px solid #1a1a2e; border-top-color: #4488ff; border-radius: 50%; animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .msg { color: #444; font-size: 0.85rem; }
+
+    a.back { position: fixed; top: 16px; right: 24px; color: #333; text-decoration: none; font-size: 0.8rem; z-index: 200; }
+    a.back:hover { color: #888; }
+    .keys { position: fixed; bottom: 16px; right: 24px; font-size: 0.6rem; color: #222; pointer-events: none; z-index: 100; text-align: right; line-height: 1.6; }
+  </style>
+</head>
+<body>
+<div id="container"></div>
+<div id="labels"></div>
+
+<div id="hud">
+  <div class="brand">GRAFEMA</div>
+  <div class="title">Code Map</div>
+  <div class="stats" id="stats"></div>
+</div>
+
+<div id="search-box">
+  <input id="search-input" type="text" placeholder="Search files..." autocomplete="off" />
+  <div id="search-results"></div>
+</div>
+
+<div id="legend" id="legend"></div>
+<div id="tooltip"></div>
+<div id="loading"><div class="spinner"></div><div class="msg" id="load-msg">Loading...</div></div>
+<a class="back" href="/">&larr;</a>
+<div class="keys">Space: pause &middot; F: fit &middot; Esc: clear</div>
+
+<script type="module">
+const loadMsg = document.getElementById('load-msg');
+
+// ── Cluster colors (golden ratio hue) ──
+function clusterColor(i, total) {
+  const h = (i * 0.618033988749895) % 1.0;
+  const s = 0.55 + (i % 3) * 0.08;
+  const l = 0.45 + (i % 2) * 0.08;
+  // HSL → RGB
+  const a = s * Math.min(l, 1 - l);
+  const f = n => { const k = (n + h * 12) % 12; return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)); };
+  return [f(0), f(8), f(4), 1.0];
+}
+
+// ── Load cosmos ──
+loadMsg.textContent = 'Loading cosmos.gl...';
+let Graph;
+try {
+  const mod = await import('https://esm.sh/@cosmograph/cosmos@2.4.2');
+  Graph = mod.Graph;
+} catch (e1) {
+  try {
+    const mod = await import('https://esm.sh/@cosmos.gl/graph');
+    Graph = mod.Graph;
+  } catch (e2) {
+    loadMsg.textContent = 'Failed to load cosmos.gl — try refreshing';
+    throw e2;
+  }
+}
+
+// ── Fetch data ──
+loadMsg.textContent = 'Fetching file graph...';
+const res = await fetch('/api/file-graph');
+if (!res.ok) { loadMsg.textContent = 'API error ' + res.status; throw new Error('API'); }
+const data = await res.json();
+
+const N = data.files.length;
+const E = data.edges.length;
+loadMsg.textContent = `${N} files, ${E} connections...`;
+
+// ── Build cosmos data ──
+
+// Initial positions: golden spiral
+const positions = new Float32Array(N * 2);
+for (let i = 0; i < N; i++) {
+  const a = i * 2.399963;
+  const r = Math.sqrt(i / N) * 1500;
+  positions[i * 2] = Math.cos(a) * r;
+  positions[i * 2 + 1] = Math.sin(a) * r;
+}
+
+// Colors by cluster
+const nClusters = data.clusterNames.length;
+const clusterRGBA = data.clusterNames.map((_, i) => clusterColor(i, nClusters));
+
+const colors = new Float32Array(N * 4);
+for (let i = 0; i < N; i++) {
+  const c = clusterRGBA[data.clusters[i]] || [0.3, 0.3, 0.5, 1];
+  colors.set(c, i * 4);
+}
+
+// Sizes by degree
+const maxDeg = Math.max(...data.degree, 1);
+const sizes = new Float32Array(N);
+for (let i = 0; i < N; i++) {
+  sizes[i] = 4 + Math.sqrt(data.degree[i] / maxDeg) * 16;
+}
+
+// Links (flat Float32Array of [src, dst] pairs)
+const links = new Float32Array(E * 2);
+for (let i = 0; i < E; i++) {
+  links[i * 2] = data.edges[i].src;
+  links[i * 2 + 1] = data.edges[i].dst;
+}
+
+// Link colors — brighter for heavier edges
+const linkColors = new Float32Array(E * 4);
+for (let i = 0; i < E; i++) {
+  const w = Math.min(data.edges[i].weight / 5, 1);
+  const alpha = 0.15 + w * 0.45;
+  // Blend src/dst cluster colors
+  const sc = clusterRGBA[data.clusters[data.edges[i].src]] || [0.3, 0.3, 0.5, 1];
+  const dc = clusterRGBA[data.clusters[data.edges[i].dst]] || [0.3, 0.3, 0.5, 1];
+  linkColors[i * 4] = (sc[0] + dc[0]) / 2;
+  linkColors[i * 4 + 1] = (sc[1] + dc[1]) / 2;
+  linkColors[i * 4 + 2] = (sc[2] + dc[2]) / 2;
+  linkColors[i * 4 + 3] = alpha;
+}
+
+// Link widths by weight
+const linkWidths = new Float32Array(E);
+for (let i = 0; i < E; i++) {
+  linkWidths[i] = 0.5 + Math.sqrt(data.edges[i].weight) * 0.8;
+}
+
+// Clusters
+const clusters = new Float32Array(data.clusters);
+
+// ── Legend ──
+const legendEl = document.getElementById('legend');
+for (let ci = 0; ci < nClusters; ci++) {
+  const c = clusterRGBA[ci];
+  const name = data.clusterNames[ci];
+  const count = data.clusters.filter(x => x === ci).length;
+  const hex = `rgb(${Math.round(c[0]*255)},${Math.round(c[1]*255)},${Math.round(c[2]*255)})`;
+  const el = document.createElement('div');
+  el.className = 'legend-item';
+  el.innerHTML = `<span class="legend-dot" style="background:${hex}"></span>${name.split('/').pop()} <span style="color:#333">${count}</span>`;
+  legendEl.appendChild(el);
+}
+
+// ── Create cosmos graph ──
+const container = document.getElementById('container');
+
+// Build adjacency for tooltip
+const adj = new Map(); // fileIdx → [{idx, type, weight}]
+for (const e of data.edges) {
+  if (!adj.has(e.src)) adj.set(e.src, []);
+  if (!adj.has(e.dst)) adj.set(e.dst, []);
+  adj.get(e.src).push({ idx: e.dst, type: e.type, weight: e.weight });
+  adj.get(e.dst).push({ idx: e.src, type: e.type, weight: e.weight });
+}
+
+let hoveredIdx = -1;
+let selectedIdx = -1;
+
+const graph = new Graph(container, {
+  backgroundColor: '#080810',
+  spaceSize: 4096,
+  pointDefaultSize: 6,
+  pointSizeScale: 1,
+  pointOpacity: 0.95,
+  linkDefaultColor: '#181825',
+  linkDefaultWidth: 0.5,
+  linkOpacity: 1.0,
+  linkGreyoutOpacity: 0.03,
+  renderLinks: true,
+  curvedLinks: false,
+  linkVisibilityDistanceRange: [50, 250],
+  linkVisibilityMinTransparency: 0.15,
+  scalePointsOnZoom: true,
+  scaleLinksOnZoom: true,
+  renderHoveredPointRing: true,
+  hoveredPointRingColor: '#ffffff',
+  focusedPointRingColor: '#4488ff',
+  enableSimulation: true,
+  simulationDecay: 1500,
+  simulationGravity: 0.2,
+  simulationRepulsion: 1.0,
+  simulationRepulsionTheta: 1.15,
+  simulationLinkSpring: 1.2,
+  simulationLinkDistance: 15,
+  simulationFriction: 0.82,
+  simulationCluster: 0.6,
+  simulationRepulsionFromMouse: 2,
+  fitViewOnInit: true,
+  fitViewDelay: 300,
+  fitViewPadding: 0.12,
+  fitViewDuration: 800,
+  enableDrag: true,
+  hoveredPointCursor: 'pointer',
+
+  onPointMouseOver: (index) => {
+    if (index === undefined || index < 0 || index >= N) return;
+    hoveredIdx = index;
+    showTooltip(index);
+  },
+
+  onPointMouseOut: () => {
+    hoveredIdx = -1;
+    document.getElementById('tooltip').style.display = 'none';
+  },
+
+  onMouseMove: (_i, _p, event) => {
+    const tt = document.getElementById('tooltip');
+    if (tt.style.display !== 'none') {
+      tt.style.left = event.clientX + 16 + 'px';
+      tt.style.top = event.clientY + 16 + 'px';
+    }
+  },
+
+  onPointClick: (index) => {
+    if (index === undefined || index < 0 || index >= N) return;
+    selectedIdx = index;
+    graph.selectPointByIndex(index);
+    graph.zoomToPointByIndex(index, 2, 400);
+  },
+
+  onBackgroundClick: () => {
+    selectedIdx = -1;
+    graph.unselectPoints();
+  },
+
+  onSimulationTick: () => updateLabels(),
+  onSimulationEnd: () => updateLabels(),
+  onZoom: () => updateLabels(),
+  onZoomEnd: () => updateLabels(),
+});
+
+graph.setPointPositions(positions);
+graph.setPointColors(colors);
+graph.setPointSizes(sizes);
+graph.setLinks(links);
+graph.setLinkColors(linkColors);
+graph.setLinkWidths(linkWidths);
+graph.setPointClusters(clusters);
+
+graph.render();
+document.getElementById('loading').style.display = 'none';
+document.getElementById('stats').innerHTML =
+  `<b>${N}</b> files &middot; <b>${E}</b> dependencies &middot; <b>${nClusters}</b> packages`;
+
+// ── Tooltip ──
+function showTooltip(index) {
+  const f = data.files[index];
+  const neighbors = adj.get(index) || [];
+  const sorted = [...neighbors].sort((a, b) => b.weight - a.weight);
+  const depsList = sorted.slice(0, 8)
+    .map(n => `${data.files[n.idx].name} <span style="color:#444">(${n.type} \u00d7${n.weight})</span>`)
+    .join('<br>');
+
+  const tt = document.getElementById('tooltip');
+  tt.innerHTML = `<b>${f.name}</b><br><small>${f.dir}</small>` +
+    `<br><small style="color:#4488ff">${data.degree[index]} connections</small>` +
+    (depsList ? `<div class="deps">${depsList}</div>` : '');
+  tt.style.display = 'block';
+}
+
+// ── Labels overlay ──
+const labelsEl = document.getElementById('labels');
+const labelDivs = [];
+
+for (let i = 0; i < N; i++) {
+  const div = document.createElement('div');
+  div.className = 'label';
+  const deg = data.degree[i];
+  if (deg > maxDeg * 0.5) div.classList.add('mega');
+  else if (deg > maxDeg * 0.15) div.classList.add('hub');
+  div.textContent = data.files[i].name.replace(/\.(ts|js|tsx|jsx|rs|hs|py)$/, '');
+  div.dataset.idx = i;
+  div.addEventListener('click', () => {
+    graph.selectPointByIndex(i);
+    graph.zoomToPointByIndex(i, 2, 400);
+    selectedIdx = i;
+  });
+  labelsEl.appendChild(div);
+  labelDivs.push(div);
+}
+
+// Track all point positions
+const allIndices = Array.from({ length: N }, (_, i) => i);
+graph.trackPointPositionsByIndices(allIndices);
+
+let labelFrame = 0;
+function updateLabels() {
+  // Throttle to every 3rd call
+  if (++labelFrame % 3 !== 0) return;
+
+  const posMap = graph.getTrackedPointPositionsArray();
+  if (!posMap || posMap.length < N * 2) return;
+
+  const zoom = graph.getZoomLevel() || 1;
+  // Hide labels when zoomed out too far
+  const showLabels = zoom > 0.15;
+  const showSmall = zoom > 0.5;
+
+  for (let i = 0; i < N; i++) {
+    const div = labelDivs[i];
+    if (!showLabels || (!showSmall && !div.classList.contains('hub') && !div.classList.contains('mega'))) {
+      div.style.display = 'none';
+      continue;
+    }
+
+    const sx = posMap[i * 2];
+    const sy = posMap[i * 2 + 1];
+    if (sx === undefined || sy === undefined) { div.style.display = 'none'; continue; }
+
+    const [screenX, screenY] = graph.spaceToScreenPosition([sx, sy]);
+
+    // Cull off-screen
+    if (screenX < -100 || screenX > innerWidth + 100 || screenY < -50 || screenY > innerHeight + 50) {
+      div.style.display = 'none';
+      continue;
+    }
+
+    div.style.display = '';
+    div.style.left = screenX + 'px';
+    div.style.top = (screenY - sizes[i] * zoom * 0.6 - 8) + 'px';
+  }
+}
+
+// ── Search ──
+const searchInput = document.getElementById('search-input');
+const searchResults = document.getElementById('search-results');
+
+searchInput.addEventListener('input', () => {
+  const q = searchInput.value.toLowerCase().trim();
+  searchResults.innerHTML = '';
+  if (q.length < 2) { searchResults.style.display = 'none'; return; }
+
+  const matches = [];
+  for (let i = 0; i < N && matches.length < 20; i++) {
+    if (data.files[i].name.toLowerCase().includes(q) || data.files[i].path.toLowerCase().includes(q)) {
+      matches.push(i);
+    }
+  }
+  if (!matches.length) { searchResults.style.display = 'none'; return; }
+  searchResults.style.display = 'block';
+
+  for (const idx of matches) {
+    const f = data.files[idx];
+    const div = document.createElement('div');
+    div.className = 'sr-item';
+    div.innerHTML = `${f.name}<small>${f.dir}</small>`;
+    div.addEventListener('click', () => {
+      graph.selectPointByIndex(idx);
+      graph.zoomToPointByIndex(idx, 2.5, 400);
+      selectedIdx = idx;
+      searchResults.style.display = 'none';
+      searchInput.value = f.name;
+    });
+    searchResults.appendChild(div);
+  }
+});
+
+searchInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { searchInput.value = ''; searchResults.style.display = 'none'; searchInput.blur(); }
+});
+
+// ── Keyboard ──
+let paused = false;
+document.addEventListener('keydown', (e) => {
+  if (e.target === searchInput) return;
+  if (e.key === ' ') { e.preventDefault(); paused ? graph.start() : graph.pause(); paused = !paused; }
+  if (e.key === 'f' || e.key === 'F') graph.fitView(500);
+  if (e.key === 'Escape') { selectedIdx = -1; graph.unselectPoints(); }
+});
+
+</script>
+</body>
+</html>
