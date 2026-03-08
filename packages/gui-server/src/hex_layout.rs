@@ -339,19 +339,10 @@ pub fn compute_layout(client: &mut RfdbClient, tile_size: f32, file_filter: Opti
     let file_names: Vec<String> = by_file.keys().map(|s| s.to_string()).collect();
     let n_files = file_names.len();
 
-    let file_target_hex: HashMap<String, HexCoord> = if n_files > 1 {
-        force_sim_files(&file_names, &by_file, &inter_file_counts, tile_size)
-    } else {
-        file_names.iter().map(|f| (f.clone(), HexCoord::new(0, 0))).collect()
-    };
-
-    // File order: center-most first (by distance from origin in force sim)
-    let mut file_order: Vec<String> = file_names.clone();
-    file_order.sort_by_key(|f| {
-        let c = file_target_hex.get(f).copied().unwrap_or(HexCoord::new(0, 0));
-        c.distance(HexCoord::new(0, 0))
-    });
-    tracing::info!("Force sim complete for {} files", n_files);
+    // Hierarchical ordering: files grouped by pkg→dir, ordered by connectivity.
+    // Guarantees contiguity within directories and packages.
+    let file_order = hierarchical_file_order(&file_names, &by_file, &inter_file_counts);
+    tracing::info!("Hierarchical file ordering: {} files", n_files);
 
     // ── Sequential BFS placement — files grow touching each other ──
     // Force sim determines WHICH file neighbors WHICH (by proximity of targets).
@@ -412,25 +403,33 @@ pub fn compute_layout(client: &mut RfdbClient, tile_size: f32, file_filter: Opti
         let actual_seed = if fi == 0 {
             HexCoord::new(0, 0)
         } else {
-            let my_target = file_target_hex.get(file_key).copied().unwrap_or(HexCoord::new(0, 0));
+            let my_dir = directory_from_file(file_key);
+            let my_pkg = pkg_from_file(file_key);
 
-            // Find anchor: placed file whose force-sim target is nearest to mine
+            // Find anchor: prefer same-dir > same-pkg > most inter-file edges
             let anchor = file_order[..fi].iter()
                 .filter(|f| file_coords.contains_key(f.as_str()))
-                .min_by_key(|f| {
-                    file_target_hex.get(f.as_str()).copied()
-                        .unwrap_or(HexCoord::new(0, 0))
-                        .distance(my_target)
+                .max_by_key(|f| {
+                    let f_dir = directory_from_file(f);
+                    let f_pkg = pkg_from_file(f);
+                    let edge_key = if f.as_str() < file_key.as_str() {
+                        (f.to_string(), file_key.to_string())
+                    } else {
+                        (file_key.to_string(), f.to_string())
+                    };
+                    let edges = inter_file_counts.get(&edge_key).copied().unwrap_or(0);
+                    let dir_bonus: u32 = if f_dir == my_dir { 1_000_000 } else { 0 };
+                    let pkg_bonus: u32 = if f_pkg == my_pkg { 10_000 } else { 0 };
+                    dir_bonus + pkg_bonus + edges
                 })
                 .cloned();
 
             if let Some(ref anchor_file) = anchor {
-                // Find free hex on anchor's boundary, closest to our force-sim target
-                let best = file_coords[anchor_file].iter().rev()
+                // Seed on anchor's boundary (most recently placed coords → grow adjacent)
+                file_coords[anchor_file].iter().rev()
                     .flat_map(|c| c.neighbors())
-                    .filter(|n| !grid.contains(n))
-                    .min_by_key(|n| n.distance(my_target));
-                best.unwrap_or_else(|| find_free_adjacent_to(&file_coords[anchor_file], &grid))
+                    .find(|n| !grid.contains(n))
+                    .unwrap_or_else(|| find_free_adjacent_to(&file_coords[anchor_file], &grid))
             } else {
                 let all_coords: Vec<HexCoord> = grid.iter().copied().collect();
                 if all_coords.is_empty() { HexCoord::new(0, 0) }
@@ -606,6 +605,11 @@ pub fn compute_layout(client: &mut RfdbClient, tile_size: f32, file_filter: Opti
                 .unwrap_or(u32::MAX),
             region_idx,
             lod_level: depth,
+            pkg_idx: 0,
+            dir_idx: 0,
+            file_hier_idx: 0,
+            fn_idx: 0,
+            is_filler: false,
         });
     }
     tracing::info!("Max containment depth: {}", max_depth);
@@ -765,9 +769,98 @@ pub fn compute_layout(client: &mut RfdbClient, tile_size: f32, file_filter: Opti
         AggEdge { src_region: sr, dst_region: dr, count: total, dominant_type_idx: dominant }
     }).collect();
 
+    // 13. Connected component detection
+    let components = detect_components(&tiles, &layout_edges);
+    let component_count = components.iter().copied().max().map(|m| m + 1).unwrap_or(0);
+
+    // 14. Fill gaps between tiles of the same component
+    let fillers = fill_gaps(&mut tiles, &mut grid, &regions, &components, tile_size, &mut node_to_tile, &type_table);
+    tracing::info!("Gap fill: {} filler tiles added", fillers);
+
+    // Recompute borders for regions that got filler tiles
+    if fillers > 0 {
+        for (region_idx, region) in regions.iter_mut().enumerate() {
+            let region_tiles: Vec<HexCoord> = tiles.iter()
+                .filter(|t| t.region_idx == region_idx as u16)
+                .map(|t| t.coord)
+                .collect();
+            if region_tiles.is_empty() { continue; }
+            region.border = compute_border(&region_tiles, tile_size);
+            let (mut cx, mut cz) = (0.0f32, 0.0f32);
+            for &coord in &region_tiles {
+                let (x, z) = coord.to_world(tile_size);
+                cx += x;
+                cz += z;
+            }
+            let n = region_tiles.len() as f32;
+            region.center = [cx / n, cz / n];
+            region.tile_count = region_tiles.len() as u32;
+        }
+    }
+
+    // Extend components vec for filler tiles
+    let mut components = components;
+    while components.len() < tiles.len() {
+        components.push(0);
+    }
+
+    // 15. Build directory hierarchy
+    tracing::info!("Building directory hierarchy...");
+    let mut hierarchy = build_directory_hierarchy(&regions, &tiles, &containers, tile_size);
+    tracing::info!("Hierarchy: {} nodes, coloring...", hierarchy.len());
+    color_hierarchy(&mut hierarchy);
+
+    // 16. Assign hierarchy indices to tiles
+    {
+        let mut pkg_map: HashMap<String, u8> = HashMap::new();
+        let mut dir_map: HashMap<String, u8> = HashMap::new();
+        let mut file_map: HashMap<String, u16> = HashMap::new();
+        let mut fn_map: HashMap<String, u16> = HashMap::new();
+
+        for (hi, h) in hierarchy.iter().enumerate() {
+            match h.kind {
+                RegionKind::Package => { pkg_map.entry(h.id.clone()).or_insert(hi as u8); }
+                RegionKind::Directory => { dir_map.entry(h.id.clone()).or_insert(hi as u8); }
+                RegionKind::File => { file_map.entry(h.id.clone()).or_insert(hi as u16); }
+                RegionKind::Function => { fn_map.entry(h.id.clone()).or_insert(hi as u16); }
+                _ => {}
+            }
+        }
+
+        for tile in &mut tiles {
+            let file_path = &tile.file;
+            let parts: Vec<&str> = file_path.split('/').collect();
+
+            if parts.len() >= 2 {
+                let pkg_key = format!("{}/{}", parts[0], parts[1]);
+                tile.pkg_idx = pkg_map.get(&pkg_key).copied().unwrap_or(0);
+            }
+
+            if let Some(dir_pos) = file_path.rfind('/') {
+                let dir_key = &file_path[..dir_pos];
+                tile.dir_idx = dir_map.get(dir_key).copied().unwrap_or(0);
+            }
+
+            tile.file_hier_idx = file_map.get(file_path).copied().unwrap_or(0);
+        }
+
+        // Build container_idx → fn_hier_idx map for O(tiles) instead of O(containers × tiles)
+        let mut ci_to_fn: HashMap<u32, u16> = HashMap::new();
+        for (ci, c) in containers.iter().enumerate() {
+            let fn_hier_idx = fn_map.get(&c.node_id).copied().unwrap_or(0);
+            ci_to_fn.insert(ci as u32, fn_hier_idx);
+        }
+        for tile in &mut tiles {
+            if tile.container_idx != u32::MAX {
+                tile.fn_idx = ci_to_fn.get(&tile.container_idx).copied().unwrap_or(0);
+            }
+        }
+    }
+
     tracing::info!(
-        "Layout complete: {} tiles, {} edges, {} regions (files), {} containers, {} agg_edges, max_depth={} in {:?}",
-        tiles.len(), layout_edges.len(), regions.len(), containers.len(), agg_edges.len(), max_depth, t0.elapsed()
+        "Layout complete: {} tiles, {} edges, {} regions (files), {} containers, {} agg_edges, {} hierarchy nodes, {} components, max_depth={} in {:?}",
+        tiles.len(), layout_edges.len(), regions.len(), containers.len(), agg_edges.len(),
+        hierarchy.len(), component_count, max_depth, t0.elapsed()
     );
 
     Ok(HexLayout {
@@ -782,6 +875,8 @@ pub fn compute_layout(client: &mut RfdbClient, tile_size: f32, file_filter: Opti
         max_depth,
         node_to_tile,
         container_node_map,
+        hierarchy,
+        components,
     })
 }
 
@@ -802,91 +897,6 @@ fn find_free_adjacent_to(territory: &[HexCoord], grid: &HashSet<HexCoord>) -> He
     find_nearest_free(grid, *territory.last().unwrap_or(&HexCoord::new(0, 0)))
 }
 
-// ── Spiral generator ──────────────────────────────────────────────
-
-/// Generate hex positions in spiral order from center (compact, gap-free).
-fn generate_hex_spiral(center: HexCoord, count: usize) -> Vec<HexCoord> {
-    let dirs: [(i32, i32); 6] = [(1, 0), (0, 1), (-1, 1), (-1, 0), (0, -1), (1, -1)];
-    let mut result = Vec::with_capacity(count);
-    result.push(center);
-    let mut ring: i32 = 1;
-    while result.len() < count {
-        let mut q = center.q + ring;
-        let mut r = center.r;
-        for (dir_idx, &(dq, dr)) in dirs.iter().enumerate() {
-            let side_len = if dir_idx == 0 { ring - 1 } else { ring };
-            for _ in 0..side_len {
-                if result.len() >= count { return result; }
-                result.push(HexCoord::new(q, r));
-                q += dq;
-                r += dr;
-            }
-        }
-        if result.len() >= count { return result; }
-        result.push(HexCoord::new(q, r));
-        ring += 1;
-    }
-    result
-}
-
-// ── Placement helpers ─────────────────────────────────────────────
-
-/// Sum of weights to already-placed neighbors
-fn connectivity_to_placed(
-    node_id: &str,
-    adj: &Adjacency,
-    placement: &HashMap<String, HexCoord>,
-) -> u32 {
-    neighbors_of(adj, node_id).iter()
-        .filter(|(nid, _)| placement.contains_key(nid.as_str()))
-        .map(|(_, w)| w)
-        .sum()
-}
-
-/// Find best free hex position near placed neighbors (weighted centroid + local search)
-fn find_best_position(
-    node_id: &str,
-    adj: &Adjacency,
-    grid: &HashSet<HexCoord>,
-    placement: &HashMap<String, HexCoord>,
-    fallback: HexCoord,
-) -> HexCoord {
-    let placed: Vec<(HexCoord, u32)> = neighbors_of(adj, node_id).iter()
-        .filter_map(|(nid, w)| placement.get(nid.as_str()).map(|&c| (c, *w)))
-        .collect();
-
-    if placed.is_empty() {
-        return find_nearest_free(grid, fallback);
-    }
-
-    let total_w: f64 = placed.iter().map(|(_, w)| *w as f64).sum();
-    let avg_q = placed.iter().map(|(c, w)| c.q as f64 * *w as f64).sum::<f64>() / total_w;
-    let avg_r = placed.iter().map(|(c, w)| c.r as f64 * *w as f64).sum::<f64>() / total_w;
-    let target = HexCoord::new(avg_q.round() as i32, avg_r.round() as i32);
-
-    let mut best = find_nearest_free(grid, target);
-    let mut best_cost = placement_cost(&best, &placed);
-
-    // Check neighbors of target and placed nodes for better spots
-    let mut candidates: Vec<HexCoord> = target.neighbors().to_vec();
-    for &(pc, _) in &placed {
-        candidates.extend_from_slice(&pc.neighbors());
-    }
-
-    for nc in candidates {
-        if !grid.contains(&nc) {
-            let cost = placement_cost(&nc, &placed);
-            if cost < best_cost { best_cost = cost; best = nc; }
-        }
-    }
-
-    best
-}
-
-fn placement_cost(candidate: &HexCoord, placed: &[(HexCoord, u32)]) -> f64 {
-    placed.iter().map(|(c, w)| candidate.distance(*c) as f64 * *w as f64).sum()
-}
-
 fn find_nearest_free(grid: &HashSet<HexCoord>, target: HexCoord) -> HexCoord {
     if !grid.contains(&target) { return target; }
     let mut visited = HashSet::new();
@@ -904,52 +914,6 @@ fn find_nearest_free(grid: &HashSet<HexCoord>, target: HexCoord) -> HexCoord {
     target
 }
 
-/// Place nodes in a hex spiral pattern (O(n) total, no BFS search)
-fn place_in_spiral(
-    ids: &[String],
-    grid: &mut HashSet<HexCoord>,
-    placement: &mut HashMap<String, HexCoord>,
-    center: HexCoord,
-) {
-    if ids.is_empty() { return; }
-    let dirs: [(i32, i32); 6] = [(1, 0), (0, 1), (-1, 1), (-1, 0), (0, -1), (1, -1)];
-    let mut idx = 0;
-
-    // Place center
-    let mut coord = center;
-    if !grid.contains(&coord) {
-        grid.insert(coord);
-        placement.insert(ids[idx].clone(), coord);
-        idx += 1;
-    }
-
-    let mut ring = 1;
-    while idx < ids.len() {
-        // Move to start of ring
-        coord = HexCoord::new(center.q + ring, center.r);
-        for (dir_idx, &(dq, dr)) in dirs.iter().enumerate() {
-            let side_len = if dir_idx == 0 { ring - 1 } else { ring };
-            for _ in 0..side_len {
-                if idx >= ids.len() { return; }
-                if !grid.contains(&coord) {
-                    grid.insert(coord);
-                    placement.insert(ids[idx].clone(), coord);
-                    idx += 1;
-                }
-                coord = HexCoord::new(coord.q + dq, coord.r + dr);
-            }
-        }
-        // Last step of first direction
-        if idx >= ids.len() { return; }
-        if !grid.contains(&coord) {
-            grid.insert(coord);
-            placement.insert(ids[idx].clone(), coord);
-            idx += 1;
-        }
-        ring += 1;
-    }
-}
-
 // ── Border computation ────────────────────────────────────────────
 
 fn compute_border(tiles: &[HexCoord], tile_size: f32) -> Vec<[f32; 2]> {
@@ -957,13 +921,23 @@ fn compute_border(tiles: &[HexCoord], tile_size: f32) -> Vec<[f32; 2]> {
     let tile_set: HashSet<HexCoord> = tiles.iter().copied().collect();
     let mut segments: Vec<(f32, f32, f32, f32)> = Vec::new();
 
+    // Neighbor direction → hex edge vertex pair.
+    // neighbors() returns: (+1,0), (+1,-1), (0,-1), (-1,0), (-1,+1), (0,+1)
+    // World angles:          30°,    330°,   270°,   210°,    150°,    90°
+    // Matching edge verts:  v0-v1,  v5-v0,  v4-v5,  v3-v4,   v2-v3,  v1-v2
+    const EDGE_V1: [usize; 6] = [0, 5, 4, 3, 2, 1];
+    const EDGE_V2: [usize; 6] = [1, 0, 5, 4, 3, 2]; // (EDGE_V1 + 1) % 6, but v5→v0 wraps
+
+    let pi3 = std::f32::consts::PI / 3.0;
+    let vertex_angles: Vec<f32> = (0..6).map(|v| pi3 * v as f32).collect();
+
     for &tile in tiles {
         let (cx, cz) = tile.to_world(tile_size);
         let neighbors = tile.neighbors();
         for (i, &neighbor) in neighbors.iter().enumerate() {
             if !tile_set.contains(&neighbor) {
-                let a1 = std::f32::consts::PI / 3.0 * i as f32;
-                let a2 = std::f32::consts::PI / 3.0 * (i as f32 + 1.0);
+                let a1 = vertex_angles[EDGE_V1[i]];
+                let a2 = vertex_angles[EDGE_V2[i]];
                 segments.push((
                     cx + tile_size * a1.cos(), cz + tile_size * a1.sin(),
                     cx + tile_size * a2.cos(), cz + tile_size * a2.sin(),
@@ -976,35 +950,516 @@ fn compute_border(tiles: &[HexCoord], tile_size: f32) -> Vec<[f32; 2]> {
 }
 
 fn chain_segments(segments: &[(f32, f32, f32, f32)], epsilon: f32) -> Vec<[f32; 2]> {
-    if segments.is_empty() { return Vec::new(); }
-    let mut remaining = segments.to_vec();
-    let mut polygon: Vec<[f32; 2]> = Vec::new();
-    let first = remaining.remove(0);
-    polygon.push([first.0, first.1]);
-    polygon.push([first.2, first.3]);
-    let eps2 = epsilon * epsilon;
+    chain_segments_fast(segments, epsilon)
+}
 
-    while !remaining.is_empty() {
+fn chain_segments_fast(segments: &[(f32, f32, f32, f32)], epsilon: f32) -> Vec<[f32; 2]> {
+    if segments.is_empty() { return Vec::new(); }
+
+    let inv_eps = 1.0 / epsilon;
+    let quantize = |x: f32, y: f32| -> (i32, i32) {
+        ((x * inv_eps).round() as i32, (y * inv_eps).round() as i32)
+    };
+
+    // Index: quantized start-point → list of (segment_index)
+    let mut start_map: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+    let mut end_map: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+    for (i, s) in segments.iter().enumerate() {
+        start_map.entry(quantize(s.0, s.1)).or_default().push(i);
+        end_map.entry(quantize(s.2, s.3)).or_default().push(i);
+    }
+
+    let mut used = vec![false; segments.len()];
+    let mut polygon: Vec<[f32; 2]> = Vec::new();
+
+    used[0] = true;
+    polygon.push([segments[0].0, segments[0].1]);
+    polygon.push([segments[0].2, segments[0].3]);
+
+    loop {
         let [lx, lz] = *polygon.last().unwrap();
+        let key = quantize(lx, lz);
         let mut found = false;
-        for i in 0..remaining.len() {
-            let s = remaining[i];
-            if (s.0 - lx).powi(2) + (s.1 - lz).powi(2) < eps2 {
-                polygon.push([s.2, s.3]);
-                remaining.remove(i);
-                found = true;
-                break;
-            } else if (s.2 - lx).powi(2) + (s.3 - lz).powi(2) < eps2 {
-                polygon.push([s.0, s.1]);
-                remaining.remove(i);
-                found = true;
-                break;
+
+        // Check segments whose start matches our current endpoint
+        if let Some(indices) = start_map.get(&key) {
+            for &idx in indices {
+                if !used[idx] {
+                    used[idx] = true;
+                    polygon.push([segments[idx].2, segments[idx].3]);
+                    found = true;
+                    break;
+                }
             }
         }
+
+        if !found {
+            // Check segments whose end matches our current endpoint (reverse)
+            if let Some(indices) = end_map.get(&key) {
+                for &idx in indices {
+                    if !used[idx] {
+                        used[idx] = true;
+                        polygon.push([segments[idx].0, segments[idx].1]);
+                        found = true;
+                        break;
+                    }
+                }
+            }
+        }
+
         if !found { break; }
     }
 
     polygon
+}
+
+// ── Connected components ──────────────────────────────────────────
+
+fn detect_components(tiles: &[PlacedTile], edges: &[LayoutEdge]) -> Vec<u32> {
+    let n = tiles.len();
+    let mut comp = vec![u32::MAX; n];
+    let mut adj: HashMap<u32, Vec<u32>> = HashMap::new();
+
+    for edge in edges {
+        adj.entry(edge.src_idx).or_default().push(edge.dst_idx);
+        adj.entry(edge.dst_idx).or_default().push(edge.src_idx);
+    }
+
+    let mut component_id: u32 = 0;
+    for start in 0..n {
+        if comp[start] != u32::MAX { continue; }
+        let mut queue = VecDeque::new();
+        queue.push_back(start as u32);
+        comp[start] = component_id;
+        while let Some(cur) = queue.pop_front() {
+            if let Some(neighbors) = adj.get(&cur) {
+                for &nb in neighbors {
+                    if comp[nb as usize] == u32::MAX {
+                        comp[nb as usize] = component_id;
+                        queue.push_back(nb);
+                    }
+                }
+            }
+        }
+        component_id += 1;
+    }
+
+    comp
+}
+
+// ── Gap filling ──────────────────────────────────────────────────
+
+fn fill_gaps(
+    tiles: &mut Vec<PlacedTile>,
+    grid: &mut HashSet<HexCoord>,
+    regions: &[Region],
+    components: &[u32],
+    tile_size: f32,
+    node_to_tile: &mut HashMap<String, u32>,
+    type_table: &[String],
+) -> usize {
+    let max_fillers = tiles.len() / 5; // cap at 20%
+    let mut added = 0;
+
+    // Build coord → tile index map
+    let mut coord_to_tile: HashMap<HexCoord, u32> = HashMap::new();
+    for (i, tile) in tiles.iter().enumerate() {
+        coord_to_tile.insert(tile.coord, i as u32);
+    }
+
+    // Region centers for nearest-region assignment
+    let region_centers: Vec<HexCoord> = regions.iter().map(|r| {
+        world_to_hex(r.center[0] as f64, r.center[1] as f64, tile_size as f64)
+    }).collect();
+
+    // Find empty hexes adjacent to ≥2 occupied hexes of same component
+    let mut candidates: Vec<(HexCoord, u32, u16)> = Vec::new(); // (coord, component, region)
+
+    let all_coords: Vec<HexCoord> = grid.iter().copied().collect();
+    let mut checked: HashSet<HexCoord> = HashSet::new();
+
+    for &coord in &all_coords {
+        for neighbor in coord.neighbors() {
+            if grid.contains(&neighbor) || !checked.insert(neighbor) { continue; }
+
+            // Count adjacent occupied hexes by component
+            let mut comp_counts: HashMap<u32, Vec<u16>> = HashMap::new();
+            for adj in neighbor.neighbors() {
+                if let Some(&ti) = coord_to_tile.get(&adj) {
+                    if (ti as usize) < components.len() {
+                        let c = components[ti as usize];
+                        comp_counts.entry(c).or_default().push(tiles[ti as usize].region_idx);
+                    }
+                }
+            }
+
+            for (comp, region_indices) in &comp_counts {
+                if region_indices.len() >= 2 {
+                    // Assign to nearest region
+                    let nearest_region = region_indices.iter()
+                        .min_by_key(|&&ri| {
+                            if (ri as usize) < region_centers.len() {
+                                neighbor.distance(region_centers[ri as usize])
+                            } else {
+                                i32::MAX
+                            }
+                        })
+                        .copied()
+                        .unwrap_or(region_indices[0]);
+                    candidates.push((neighbor, *comp, nearest_region));
+                    break;
+                }
+            }
+        }
+    }
+
+    // Sort by distance to region center (closest first)
+    candidates.sort_by_key(|(coord, _, ri)| {
+        if (*ri as usize) < region_centers.len() {
+            coord.distance(region_centers[*ri as usize])
+        } else {
+            i32::MAX
+        }
+    });
+
+    for (coord, _comp, region_idx) in candidates {
+        if added >= max_fillers { break; }
+        if grid.contains(&coord) { continue; }
+
+        grid.insert(coord);
+        let filler_id = format!("__filler_{}", tiles.len());
+        let tile_idx = tiles.len() as u32;
+        node_to_tile.insert(filler_id.clone(), tile_idx);
+
+        tiles.push(PlacedTile {
+            node_id: filler_id,
+            coord,
+            node_type: type_table.first().cloned().unwrap_or_else(|| "FILLER".to_string()),
+            name: String::new(),
+            file: regions.get(region_idx as usize).map(|r| r.path.clone()).unwrap_or_default(),
+            container_idx: u32::MAX,
+            region_idx,
+            lod_level: 0,
+            pkg_idx: 0,
+            dir_idx: 0,
+            file_hier_idx: 0,
+            fn_idx: 0,
+            is_filler: true,
+        });
+
+        coord_to_tile.insert(coord, tile_idx);
+        added += 1;
+    }
+
+    added
+}
+
+// ── Directory hierarchy ──────────────────────────────────────────
+
+fn build_directory_hierarchy(
+    regions: &[Region],
+    tiles: &[PlacedTile],
+    containers: &[ContainerInfo],
+    tile_size: f32,
+) -> Vec<HierarchyNode> {
+    let mut hierarchy: Vec<HierarchyNode> = Vec::new();
+    let mut id_to_idx: HashMap<String, u32> = HashMap::new();
+
+    // Root node
+    hierarchy.push(HierarchyNode {
+        id: "/".to_string(),
+        level: 0,
+        kind: RegionKind::Root,
+        parent_idx: None,
+        children_indices: Vec::new(),
+        all_tile_count: tiles.len() as u32,
+        border: Vec::new(),
+        center: [0.0, 0.0],
+        hue: 0.0,
+        saturation: 0.0,
+        lightness: 0.0,
+    });
+    id_to_idx.insert("/".to_string(), 0);
+
+    // Collect tiles per region for coordinate lookups
+    let mut region_tile_coords: HashMap<u16, Vec<HexCoord>> = HashMap::new();
+    for tile in tiles {
+        region_tile_coords.entry(tile.region_idx).or_default().push(tile.coord);
+    }
+
+    // Parse each region (file) path to build package and directory nodes
+    let mut pkg_set: HashSet<String> = HashSet::new();
+    let mut dir_set: HashSet<String> = HashSet::new();
+
+    for region in regions {
+        let parts: Vec<&str> = region.path.split('/').collect();
+        if parts.len() < 2 { continue; }
+
+        // Package = first 2 path segments
+        let pkg_key = format!("{}/{}", parts[0], parts[1]);
+        if pkg_set.insert(pkg_key.clone()) {
+            let idx = hierarchy.len() as u32;
+            hierarchy.push(HierarchyNode {
+                id: pkg_key.clone(),
+                level: 1,
+                kind: RegionKind::Package,
+                parent_idx: Some(0),
+                children_indices: Vec::new(),
+                all_tile_count: 0,
+                border: Vec::new(),
+                center: [0.0, 0.0],
+                hue: 0.0,
+                saturation: 0.0,
+                lightness: 0.0,
+            });
+            id_to_idx.insert(pkg_key.clone(), idx);
+            hierarchy[0].children_indices.push(idx);
+        }
+
+        // Directories: build each intermediate directory level
+        for depth in 2..parts.len() {
+            let dir_key = parts[..depth].join("/");
+            if dir_set.insert(dir_key.clone()) {
+                let parent_key = if depth == 2 {
+                    pkg_key.clone()
+                } else {
+                    parts[..depth - 1].join("/")
+                };
+                let parent_idx = id_to_idx.get(&parent_key).copied();
+                let idx = hierarchy.len() as u32;
+                hierarchy.push(HierarchyNode {
+                    id: dir_key.clone(),
+                    level: depth as u8,
+                    kind: RegionKind::Directory,
+                    parent_idx,
+                    children_indices: Vec::new(),
+                    all_tile_count: 0,
+                    border: Vec::new(),
+                    center: [0.0, 0.0],
+                    hue: 0.0,
+                    saturation: 0.0,
+                    lightness: 0.0,
+                });
+                id_to_idx.insert(dir_key, idx);
+                if let Some(pi) = parent_idx {
+                    hierarchy[pi as usize].children_indices.push(idx);
+                }
+            }
+        }
+
+        // File node
+        let file_key = region.path.clone();
+        if !id_to_idx.contains_key(&file_key) {
+            let parent_key = if parts.len() >= 2 {
+                parts[..parts.len() - 1].join("/")
+            } else {
+                "/".to_string()
+            };
+            let parent_idx = id_to_idx.get(&parent_key).copied();
+            let idx = hierarchy.len() as u32;
+            hierarchy.push(HierarchyNode {
+                id: file_key.clone(),
+                level: parts.len() as u8,
+                kind: RegionKind::File,
+                parent_idx,
+                children_indices: Vec::new(),
+                all_tile_count: region.tile_count,
+                border: region.border.clone(),
+                center: region.center,
+                hue: region.hue,
+                saturation: 80.0,
+                lightness: 35.0,
+            });
+            id_to_idx.insert(file_key, idx);
+            if let Some(pi) = parent_idx {
+                hierarchy[pi as usize].children_indices.push(idx);
+            }
+        }
+    }
+
+    // Pre-build container node_id → file path map (O(containers) via ContainerInfo which has hue matching a file)
+    // ContainerInfo already tracks which file it belongs to via matching region hue, but we need
+    // to find the file directly. Use tiles: find any tile whose container matches.
+    let mut container_file_map: HashMap<&str, &str> = HashMap::new();
+    for tile in tiles {
+        if tile.container_idx != u32::MAX && tile.container_idx < containers.len() as u32 {
+            let c = &containers[tile.container_idx as usize];
+            container_file_map.entry(c.node_id.as_str()).or_insert(tile.file.as_str());
+        }
+    }
+
+    // Function/container nodes
+    for container in containers {
+        let ct = container.container_type.as_str();
+        let kind = match ct {
+            "FUNCTION" | "METHOD" | "CLASS" | "INTERFACE" => RegionKind::Function,
+            _ => RegionKind::Block,
+        };
+
+        // Find file parent for this container via pre-built map
+        let file_parent = container_file_map.get(container.node_id.as_str())
+            .and_then(|file| id_to_idx.get(*file).copied());
+
+        let idx = hierarchy.len() as u32;
+        hierarchy.push(HierarchyNode {
+            id: container.node_id.clone(),
+            level: container.depth + 3,
+            kind,
+            parent_idx: file_parent,
+            children_indices: Vec::new(),
+            all_tile_count: container.tile_count,
+            border: container.border.clone(),
+            center: container.center,
+            hue: container.hue,
+            saturation: 80.0,
+            lightness: 35.0,
+        });
+        id_to_idx.insert(container.node_id.clone(), idx);
+        if let Some(pi) = file_parent {
+            hierarchy[pi as usize].children_indices.push(idx);
+        }
+    }
+
+    // Pre-build file → coords map for fast hierarchy border computation
+    let mut file_coords_map: HashMap<&str, Vec<HexCoord>> = HashMap::new();
+    for tile in tiles.iter() {
+        file_coords_map.entry(tile.file.as_str()).or_default().push(tile.coord);
+    }
+
+    // Bottom-up: compute all_tile_count, border, center for non-leaf nodes
+    let order: Vec<usize> = {
+        let mut o: Vec<usize> = (0..hierarchy.len()).collect();
+        o.sort_by(|a, b| hierarchy[*b].level.cmp(&hierarchy[*a].level));
+        o
+    };
+
+    // Pre-collect file paths per hierarchy node for O(files) instead of O(tiles)
+    let file_paths: Vec<&str> = file_coords_map.keys().copied().collect();
+
+    for &hi in &order {
+        if hierarchy[hi].children_indices.is_empty() { continue; }
+
+        let child_indices = hierarchy[hi].children_indices.clone();
+        let mut total_tiles = 0u32;
+        let mut cx_sum = 0.0f32;
+        let mut cz_sum = 0.0f32;
+        let mut point_count = 0u32;
+
+        for &ci in &child_indices {
+            let child = &hierarchy[ci as usize];
+            total_tiles += child.all_tile_count;
+            cx_sum += child.center[0] * child.all_tile_count as f32;
+            cz_sum += child.center[1] * child.all_tile_count as f32;
+            point_count += child.all_tile_count;
+        }
+
+        hierarchy[hi].all_tile_count = total_tiles;
+        if point_count > 0 {
+            hierarchy[hi].center = [cx_sum / point_count as f32, cz_sum / point_count as f32];
+        }
+
+        // Collect coords from matching files (O(files) not O(tiles))
+        // Skip Root border — too expensive and not visually useful
+        if matches!(hierarchy[hi].kind, RegionKind::Root) { continue; }
+
+        let hier_id = &hierarchy[hi].id;
+        let prefix = format!("{}/", hier_id);
+        let mut all_coords: Vec<HexCoord> = Vec::new();
+        for &fp in &file_paths {
+            if fp.starts_with(prefix.as_str()) || fp == hier_id.as_str() {
+                if let Some(coords) = file_coords_map.get(fp) {
+                    all_coords.extend_from_slice(coords);
+                }
+            }
+        }
+
+        if !all_coords.is_empty() {
+            hierarchy[hi].border = compute_border(&all_coords, tile_size);
+        }
+    }
+
+    hierarchy
+}
+
+// ── Multi-level graph coloring ───────────────────────────────────
+
+fn color_hierarchy(hierarchy: &mut Vec<HierarchyNode>) {
+    let slot_hues: Vec<f32> = (0..12).map(|i| (i as f32 * 137.508) % 360.0).collect();
+
+    // Level 1 (packages): golden-angle hues
+    let mut pkg_idx = 0u8;
+    for h in hierarchy.iter_mut() {
+        if matches!(h.kind, RegionKind::Package) {
+            h.hue = slot_hues[(pkg_idx as usize) % 12];
+            h.saturation = 80.0;
+            h.lightness = 35.0;
+            pkg_idx += 1;
+        }
+    }
+
+    // Level 2+ (directories): variations of parent package hue
+    let len = hierarchy.len();
+    for i in 0..len {
+        if !matches!(hierarchy[i].kind, RegionKind::Directory) { continue; }
+        let parent_hue = hierarchy[i].parent_idx
+            .map(|pi| hierarchy[pi as usize].hue)
+            .unwrap_or(0.0);
+
+        let sibling_order = hierarchy[i].parent_idx
+            .map(|pi| {
+                hierarchy[pi as usize].children_indices.iter()
+                    .position(|&ci| ci == i as u32)
+                    .unwrap_or(0)
+            })
+            .unwrap_or(0);
+
+        hierarchy[i].hue = parent_hue;
+        hierarchy[i].saturation = 70.0 + (sibling_order as f32 * 3.0).min(20.0);
+        hierarchy[i].lightness = 25.0 + (sibling_order as f32 * 2.5).min(15.0);
+    }
+
+    // Level 3+ (files): slight hue shift from parent directory
+    for i in 0..len {
+        if !matches!(hierarchy[i].kind, RegionKind::File) { continue; }
+        let parent_hue = hierarchy[i].parent_idx
+            .map(|pi| hierarchy[pi as usize].hue)
+            .unwrap_or(0.0);
+        let parent_sat = hierarchy[i].parent_idx
+            .map(|pi| hierarchy[pi as usize].saturation)
+            .unwrap_or(80.0);
+        let parent_light = hierarchy[i].parent_idx
+            .map(|pi| hierarchy[pi as usize].lightness)
+            .unwrap_or(35.0);
+
+        let sibling_order = hierarchy[i].parent_idx
+            .map(|pi| {
+                hierarchy[pi as usize].children_indices.iter()
+                    .position(|&ci| ci == i as u32)
+                    .unwrap_or(0)
+            })
+            .unwrap_or(0);
+
+        hierarchy[i].hue = parent_hue + (sibling_order as f32 * 5.0 - 10.0).clamp(-15.0, 15.0);
+        hierarchy[i].saturation = parent_sat;
+        hierarchy[i].lightness = parent_light + (sibling_order as f32 * 1.5 - 3.0).clamp(-5.0, 5.0);
+    }
+
+    // Function/Block: inherit from file parent
+    for i in 0..len {
+        if !matches!(hierarchy[i].kind, RegionKind::Function | RegionKind::Block) { continue; }
+        if let Some(pi) = hierarchy[i].parent_idx {
+            hierarchy[i].hue = hierarchy[pi as usize].hue;
+            hierarchy[i].saturation = hierarchy[pi as usize].saturation;
+            hierarchy[i].lightness = hierarchy[pi as usize].lightness;
+        }
+    }
+
+    // Root
+    if !hierarchy.is_empty() {
+        hierarchy[0].hue = 0.0;
+        hierarchy[0].saturation = 0.0;
+        hierarchy[0].lightness = 50.0;
+    }
 }
 
 // ── Batch computation ─────────────────────────────────────────────
@@ -1013,6 +1468,7 @@ pub fn compute_batches(layout: &HexLayout) -> Vec<StreamBatch> {
     let mut batches = Vec::new();
 
     // Batch 0: Region metadata
+    let component_count = layout.components.iter().copied().max().map(|m| m + 1).unwrap_or(0);
     let meta = RegionMetaBatch {
         regions: layout.regions.clone(),
         containers: layout.containers.clone(),
@@ -1025,11 +1481,48 @@ pub fn compute_batches(layout: &HexLayout) -> Vec<StreamBatch> {
         agg_edges: layout.agg_edges.iter().map(|a| AggEdgeSer {
             src: a.src_region, dst: a.dst_region, count: a.count, type_idx: a.dominant_type_idx,
         }).collect(),
+        hierarchy: layout.hierarchy.clone(),
+        component_count,
     };
     batches.push(StreamBatch {
         batch_type: 0,
         payload: serde_json::to_vec(&meta).unwrap_or_default(),
     });
+
+    // Batch 2: Hierarchy metadata (binary)
+    {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&(layout.hierarchy.len() as u32).to_le_bytes());
+
+        for h in &layout.hierarchy {
+            let id_bytes = h.id.as_bytes();
+            payload.extend_from_slice(&(id_bytes.len() as u16).to_le_bytes());
+            payload.extend_from_slice(id_bytes);
+            payload.push(h.level);
+            payload.push(match h.kind {
+                RegionKind::Root => 0,
+                RegionKind::Package => 1,
+                RegionKind::Directory => 2,
+                RegionKind::File => 3,
+                RegionKind::Function => 4,
+                RegionKind::Block => 5,
+            });
+            payload.extend_from_slice(&h.parent_idx.unwrap_or(0xFFFFFFFF).to_le_bytes());
+            payload.extend_from_slice(&h.all_tile_count.to_le_bytes());
+            payload.extend_from_slice(&(h.border.len() as u16).to_le_bytes());
+            for pt in &h.border {
+                payload.extend_from_slice(&pt[0].to_le_bytes());
+                payload.extend_from_slice(&pt[1].to_le_bytes());
+            }
+            payload.extend_from_slice(&h.center[0].to_le_bytes());
+            payload.extend_from_slice(&h.center[1].to_le_bytes());
+            payload.extend_from_slice(&h.hue.to_le_bytes());
+            payload.extend_from_slice(&h.saturation.to_le_bytes());
+            payload.extend_from_slice(&h.lightness.to_le_bytes());
+        }
+
+        batches.push(StreamBatch { batch_type: 2, payload });
+    }
 
     // Sort regions by distance from center
     let mut region_order: Vec<(u16, f32)> = layout.regions.iter().enumerate()
@@ -1073,7 +1566,8 @@ pub fn compute_batches(layout: &HexLayout) -> Vec<StreamBatch> {
         payload.extend_from_slice(&region_idx.to_le_bytes());
         payload.extend_from_slice(&(tile_indices.len() as u32).to_le_bytes());
 
-        // Tile: [globalIdx:u32LE][typeIdx:u8][q:i16LE][r:i16LE][degree:u16LE][flags:u8][lodLevel:u8] = 13 bytes
+        // Tile: [globalIdx:u32LE][typeIdx:u8][q:i16LE][r:i16LE][degree:u16LE][flags:u8][lodLevel:u8]
+        //        [pkg_idx:u8][dir_idx:u8][file_hier_idx:u16LE][fn_idx:u16LE][is_filler:u8] = 20 bytes
         for &ti in tile_indices {
             let tile = &layout.tiles[ti as usize];
             let type_idx = type_to_idx.get(tile.node_type.as_str()).copied().unwrap_or(0);
@@ -1087,6 +1581,11 @@ pub fn compute_batches(layout: &HexLayout) -> Vec<StreamBatch> {
             payload.extend_from_slice(&degree.to_le_bytes());
             payload.push(flags);
             payload.push(tile.lod_level);
+            payload.push(tile.pkg_idx);
+            payload.push(tile.dir_idx);
+            payload.extend_from_slice(&tile.file_hier_idx.to_le_bytes());
+            payload.extend_from_slice(&tile.fn_idx.to_le_bytes());
+            payload.push(if tile.is_filler { 1 } else { 0 });
         }
 
         payload.extend_from_slice(&(batch_edges.len() as u32).to_le_bytes());
@@ -1108,104 +1607,209 @@ fn directory_from_file(file: &str) -> String {
     match file.rfind('/') { Some(pos) => file[..pos].to_string(), None => "/".to_string() }
 }
 
-// ── Force simulation ──────────────────────────────────────────────
+fn pkg_from_file(file: &str) -> String {
+    let parts: Vec<&str> = file.split('/').collect();
+    if parts.len() >= 2 { format!("{}/{}", parts[0], parts[1]) } else { file.to_string() }
+}
 
-/// Level 1: Force-directed file positioning.
-/// Returns ideal hex coordinates for each file based on inter-file connectivity.
-fn force_sim_files(
+// ── Adjacency-driven hierarchical ordering ───────────────────────
+
+/// Adjacency-driven hierarchical file ordering.
+///
+/// Groups files by package→directory hierarchy and orders them by
+/// inter-file/inter-dir/inter-pkg connectivity.  Guarantees:
+///   - All files of the same directory are consecutive
+///   - All directories of the same package are consecutive
+///   - First file of each group seeds near the most-connected placed territory
+///   - Cross-package high-connectivity files placed first in their dir
+///     (so they dock at the package boundary facing the connected package)
+fn hierarchical_file_order(
     file_names: &[String],
     by_file: &HashMap<&str, Vec<&str>>,
     inter_file_counts: &HashMap<(String, String), u32>,
-    tile_size: f32,
-) -> HashMap<String, HexCoord> {
-    let n = file_names.len();
-    if n == 0 { return HashMap::new(); }
+) -> Vec<String> {
+    if file_names.is_empty() { return Vec::new(); }
 
-    let file_idx: HashMap<&str, usize> = file_names.iter().enumerate()
-        .map(|(i, f)| (f.as_str(), i)).collect();
+    // ── Build hierarchy groups ──
+    let mut pkg_dirs: HashMap<String, Vec<String>> = HashMap::new();
+    let mut dir_files_map: HashMap<String, Vec<String>> = HashMap::new();
+    let mut file_to_pkg: HashMap<String, String> = HashMap::new();
 
-    let sizes: Vec<f64> = file_names.iter().map(|f| {
-        by_file.get(f.as_str()).map(|v| v.len() as f64).unwrap_or(1.0)
-    }).collect();
+    for f in file_names {
+        let pkg = pkg_from_file(f);
+        let dir = directory_from_file(f);
+        file_to_pkg.insert(f.clone(), pkg.clone());
+        dir_files_map.entry(dir.clone()).or_default().push(f.clone());
+        let dirs = pkg_dirs.entry(pkg).or_default();
+        if !dirs.contains(&dir) { dirs.push(dir); }
+    }
 
-    let total_nodes: f64 = sizes.iter().sum();
-    // Compact initial spread: files start close, sim pushes apart as needed
-    let spread = (total_nodes / std::f64::consts::PI).sqrt() * tile_size as f64 * 0.5;
+    // ── Pre-build file adjacency for fast connectivity lookups ──
+    let mut file_adj: HashMap<String, Vec<(String, u32)>> = HashMap::new();
+    for ((f1, f2), &count) in inter_file_counts {
+        file_adj.entry(f1.clone()).or_default().push((f2.clone(), count));
+        file_adj.entry(f2.clone()).or_default().push((f1.clone(), count));
+    }
 
-    // Initial positions: circular layout
-    let mut pos: Vec<[f64; 2]> = (0..n).map(|i| {
-        let angle = 2.0 * std::f64::consts::PI * i as f64 / n as f64;
-        [spread * angle.cos(), spread * angle.sin()]
-    }).collect();
-
-    let mut vel: Vec<[f64; 2]> = vec![[0.0, 0.0]; n];
-
-    // Weak repulsion, strong attraction → compact clusters
-    let k_repel = spread * spread * 0.1;
-    let k_attract = 0.01;
-    let k_gravity = 0.03;
-    let dt = 1.0;
-    let damping = 0.85;
-    let max_disp = spread * 0.05;
-
-    for _iter in 0..300 {
-        let mut forces: Vec<[f64; 2]> = vec![[0.0, 0.0]; n];
-
-        // Repulsion: all pairs (Coulomb-like)
-        for i in 0..n {
-            for j in (i + 1)..n {
-                let dx = pos[i][0] - pos[j][0];
-                let dy = pos[i][1] - pos[j][1];
-                let dist2 = (dx * dx + dy * dy).max(1.0);
-                let dist = dist2.sqrt();
-                let f = k_repel * sizes[i].sqrt() * sizes[j].sqrt() / dist2;
-                let fx = f * dx / dist;
-                let fy = f * dy / dist;
-                forces[i][0] += fx; forces[i][1] += fy;
-                forces[j][0] -= fx; forces[j][1] -= fy;
-            }
-        }
-
-        // Attraction: connected files (spring toward ideal distance)
-        for ((f1, f2), count) in inter_file_counts {
-            if let (Some(&i), Some(&j)) = (file_idx.get(f1.as_str()), file_idx.get(f2.as_str())) {
-                let dx = pos[j][0] - pos[i][0];
-                let dy = pos[j][1] - pos[i][1];
-                let dist = (dx * dx + dy * dy).sqrt().max(1.0);
-                let ideal = (sizes[i].sqrt() + sizes[j].sqrt()) * tile_size as f64 * 0.8;
-                let f = k_attract * (*count as f64).sqrt() * (dist - ideal);
-                let fx = f * dx / dist;
-                let fy = f * dy / dist;
-                forces[i][0] += fx; forces[i][1] += fy;
-                forces[j][0] -= fx; forces[j][1] -= fy;
-            }
-        }
-
-        // Center gravity
-        for i in 0..n {
-            forces[i][0] -= pos[i][0] * k_gravity;
-            forces[i][1] -= pos[i][1] * k_gravity;
-        }
-
-        // Update
-        for i in 0..n {
-            vel[i][0] = (vel[i][0] + forces[i][0] * dt) * damping;
-            vel[i][1] = (vel[i][1] + forces[i][1] * dt) * damping;
-            let v_mag = (vel[i][0] * vel[i][0] + vel[i][1] * vel[i][1]).sqrt();
-            if v_mag > max_disp {
-                vel[i][0] *= max_disp / v_mag;
-                vel[i][1] *= max_disp / v_mag;
-            }
-            pos[i][0] += vel[i][0] * dt;
-            pos[i][1] += vel[i][1] * dt;
+    // ── Inter-package connectivity ──
+    let mut inter_pkg: HashMap<(String, String), u32> = HashMap::new();
+    for ((f1, f2), &count) in inter_file_counts {
+        let p1 = file_to_pkg.get(f1).cloned().unwrap_or_default();
+        let p2 = file_to_pkg.get(f2).cloned().unwrap_or_default();
+        if !p1.is_empty() && !p2.is_empty() && p1 != p2 {
+            let key = if p1 < p2 { (p1, p2) } else { (p2, p1) };
+            *inter_pkg.entry(key).or_default() += count;
         }
     }
 
-    // Convert world coords → hex coords
-    file_names.iter().enumerate().map(|(i, f)| {
-        let coord = world_to_hex(pos[i][0], pos[i][1], tile_size as f64);
-        (f.clone(), coord)
-    }).collect()
+    // ── Inter-directory connectivity ──
+    let mut inter_dir: HashMap<(String, String), u32> = HashMap::new();
+    for ((f1, f2), &count) in inter_file_counts {
+        let d1 = directory_from_file(f1);
+        let d2 = directory_from_file(f2);
+        if d1 != d2 {
+            let key = if d1 < d2 { (d1, d2) } else { (d2, d1) };
+            *inter_dir.entry(key).or_default() += count;
+        }
+    }
+
+    // Tile count for a package
+    let pkg_tile_count = |pkg: &str| -> usize {
+        pkg_dirs.get(pkg).map(|dirs| {
+            dirs.iter().flat_map(|d| dir_files_map.get(d).into_iter().flatten())
+                .map(|f| by_file.get(f.as_str()).map(|v| v.len()).unwrap_or(1))
+                .sum()
+        }).unwrap_or(0)
+    };
+
+    // ── Order packages: BFS from largest, most-connected next ──
+    let mut pkg_order: Vec<String> = Vec::new();
+    let mut remaining_pkgs: HashSet<String> = pkg_dirs.keys().cloned().collect();
+
+    if let Some(first) = remaining_pkgs.iter()
+        .max_by_key(|p| pkg_tile_count(p))
+        .cloned()
+    {
+        pkg_order.push(first.clone());
+        remaining_pkgs.remove(&first);
+    }
+
+    while !remaining_pkgs.is_empty() {
+        let next = remaining_pkgs.iter()
+            .max_by_key(|p| {
+                let conn: u32 = pkg_order.iter().map(|placed| {
+                    let key = if p.as_str() < placed.as_str() {
+                        (p.to_string(), placed.clone())
+                    } else {
+                        (placed.clone(), p.to_string())
+                    };
+                    inter_pkg.get(&key).copied().unwrap_or(0)
+                }).sum();
+                (conn, pkg_tile_count(p))
+            })
+            .cloned()
+            .unwrap();
+        pkg_order.push(next.clone());
+        remaining_pkgs.remove(&next);
+    }
+
+    // ── Build result: pkgs → dirs → files ──
+    let mut result: Vec<String> = Vec::with_capacity(file_names.len());
+    let mut placed: HashSet<String> = HashSet::new();
+
+    for pkg in &pkg_order {
+        let dirs = match pkg_dirs.get(pkg) {
+            Some(d) => d.clone(),
+            None => continue,
+        };
+
+        // Order dirs within package: largest first, then most-connected-to-placed
+        let mut dir_order: Vec<String> = Vec::new();
+        let mut remaining_dirs: HashSet<String> = dirs.into_iter().collect();
+
+        if let Some(seed) = remaining_dirs.iter()
+            .max_by_key(|d| {
+                dir_files_map.get(d.as_str()).map(|files| {
+                    files.iter().map(|f| by_file.get(f.as_str()).map(|v| v.len()).unwrap_or(1)).sum::<usize>()
+                }).unwrap_or(0)
+            })
+            .cloned()
+        {
+            dir_order.push(seed.clone());
+            remaining_dirs.remove(&seed);
+        }
+
+        while !remaining_dirs.is_empty() {
+            let next = remaining_dirs.iter()
+                .max_by_key(|d| {
+                    let conn: u32 = dir_order.iter().map(|pd| {
+                        let key = if d.as_str() < pd.as_str() {
+                            (d.to_string(), pd.clone())
+                        } else {
+                            (pd.clone(), d.to_string())
+                        };
+                        inter_dir.get(&key).copied().unwrap_or(0)
+                    }).sum();
+                    let size = dir_files_map.get(d.as_str()).map(|v| v.len()).unwrap_or(0);
+                    (conn, size)
+                })
+                .cloned()
+                .unwrap();
+            dir_order.push(next.clone());
+            remaining_dirs.remove(&next);
+        }
+
+        // Order files within each dir by connectivity to already-placed files
+        for dir in &dir_order {
+            let files = match dir_files_map.get(dir) {
+                Some(f) => f.clone(),
+                None => continue,
+            };
+
+            let mut remaining_files: HashSet<String> = files.into_iter().collect();
+
+            // Seed: file most connected to already-placed files (docks at boundary)
+            if let Some(seed) = remaining_files.iter()
+                .max_by_key(|f| {
+                    let conn: u32 = file_adj.get(f.as_str()).map(|adj| {
+                        adj.iter().filter(|(nf, _)| placed.contains(nf)).map(|(_, c)| *c).sum()
+                    }).unwrap_or(0);
+                    let size = by_file.get(f.as_str()).map(|v| v.len()).unwrap_or(1) as u32;
+                    conn * 1000 + size
+                })
+                .cloned()
+            {
+                result.push(seed.clone());
+                remaining_files.remove(&seed);
+                placed.insert(seed);
+            }
+
+            while !remaining_files.is_empty() {
+                let next = remaining_files.iter()
+                    .max_by_key(|f| {
+                        let conn: u32 = file_adj.get(f.as_str()).map(|adj| {
+                            adj.iter().filter(|(nf, _)| placed.contains(nf)).map(|(_, c)| *c).sum()
+                        }).unwrap_or(0);
+                        let size = by_file.get(f.as_str()).map(|v| v.len()).unwrap_or(1) as u32;
+                        conn * 1000 + size
+                    })
+                    .cloned()
+                    .unwrap();
+                result.push(next.clone());
+                remaining_files.remove(&next);
+                placed.insert(next);
+            }
+        }
+    }
+
+    // Any remaining files not in hierarchy groups
+    for f in file_names {
+        if !placed.contains(f) {
+            result.push(f.clone());
+        }
+    }
+
+    result
 }
 
 /// Convert world (x, z) to nearest hex coordinate (axial flat-top)

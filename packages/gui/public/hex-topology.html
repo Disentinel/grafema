@@ -1,978 +1,163 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="utf-8">
-  <title>Grafema – Hex Topology</title>
-  <style>
+<meta charset="utf-8">
+<title>Grafema — Hex Topology Map</title>
+<style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #0a0a0f; overflow: hidden; font-family: 'Inter', -apple-system, sans-serif; }
-    canvas { display: block; }
-    #edge-panel {
-      position: fixed; top: 80px; right: 16px; z-index: 200;
-      background: rgba(18,18,26,0.92); border: 1px solid #2a2a4e; border-radius: 8px;
-      padding: 10px 14px; max-height: calc(100vh - 120px); overflow-y: auto;
-      font-size: 0.7rem; color: #888; width: 180px;
+    body { background: #0a0e14; overflow: hidden; font-family: 'SF Mono', 'Fira Code', monospace; }
+    #canvas-container { width: 100vw; height: 100vh; }
+
+    /* Loading overlay */
+    #loading {
+        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+        display: flex; align-items: center; justify-content: center;
+        background: #0a0e14; z-index: 1000; color: #00e5ff;
+        font-size: 18px;
     }
-    #edge-panel h3 { font-size: 0.72rem; color: #aaa; margin-bottom: 8px; font-weight: 500; letter-spacing: 0.05em; }
-    #edge-panel label { display: flex; align-items: center; gap: 6px; padding: 2px 0; cursor: pointer; }
-    #edge-panel label:hover { color: #ccc; }
-    #edge-panel input[type=checkbox] { accent-color: #4488ff; width: 13px; height: 13px; }
-    .edge-color-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
-    #node-type-panel {
-      position: fixed; top: 145px; left: 24px; z-index: 200;
-      background: rgba(18,18,26,0.92); border: 1px solid #2a2a4e; border-radius: 8px;
-      padding: 10px 14px; max-height: calc(100vh - 200px); overflow-y: auto;
-      font-size: 0.7rem; color: #888; width: 200px;
+
+    /* Tooltip */
+    #tooltip {
+        display: none; position: fixed; z-index: 500;
+        background: rgba(10, 14, 20, 0.95); border: 1px solid #00e5ff33;
+        color: #ccc; padding: 8px 12px; border-radius: 6px;
+        font-size: 12px; pointer-events: none;
+        max-width: 350px;
     }
-    #node-type-panel h3 { font-size: 0.72rem; color: #aaa; margin-bottom: 8px; font-weight: 500; letter-spacing: 0.05em; }
-    #node-type-panel label { display: flex; align-items: center; gap: 6px; padding: 2px 0; cursor: pointer; }
-    #node-type-panel label:hover { color: #ccc; }
-    #node-type-panel input[type=checkbox] { accent-color: #4488ff; width: 13px; height: 13px; }
-    .node-count { color: #555; font-size: 0.6rem; margin-left: auto; }
-    #lod-slider {
-      position: fixed; bottom: 50px; right: 16px; z-index: 200;
-      background: rgba(18,18,26,0.92); border: 1px solid #2a2a4e; border-radius: 8px;
-      padding: 10px 14px; font-size: 0.7rem; color: #888; width: 180px;
-    }
-    #lod-slider h3 { font-size: 0.72rem; color: #aaa; margin-bottom: 6px; font-weight: 500; }
-    #lod-slider input[type=range] { width: 100%; }
-    #lod-slider .lod-labels { display: flex; justify-content: space-between; font-size: 0.6rem; color: #555; }
-    .slider-row { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
-    .slider-row label { font-size: 0.65rem; color: #666; min-width: 60px; }
-    .slider-row input[type=range] { flex: 1; height: 3px; }
-    .slider-row .val { font-size: 0.6rem; color: #555; min-width: 24px; text-align: right; }
+    .tt-type { color: #00e5ff; font-weight: bold; }
+    .tt-name { color: #fff; margin: 2px 0; }
+    .tt-file { color: #888; font-size: 11px; }
+    .tt-degree { color: #aaa; font-size: 11px; margin-top: 4px; }
+    .tt-edges { color: #999; font-size: 10px; margin-top: 2px; line-height: 1.4; }
+
+    /* Search */
     #search-box {
-      position: fixed; top: 80px; left: 24px; z-index: 300; width: 280px;
+        position: fixed; top: 12px; left: 12px; z-index: 300;
     }
-    #search-box input {
-      width: 100%; padding: 8px 12px; background: rgba(18,18,26,0.95); border: 1px solid #2a2a4e;
-      border-radius: 6px; color: #ccc; font-size: 0.8rem; outline: none;
-      font-family: 'Inter', -apple-system, sans-serif;
+    #search-input {
+        background: rgba(10, 14, 20, 0.9); border: 1px solid #00e5ff44;
+        color: #fff; padding: 8px 12px; border-radius: 6px;
+        font-family: inherit; font-size: 13px; width: 260px;
+        outline: none;
     }
-    #search-box input:focus { border-color: #4488ff; }
-    #search-box input::placeholder { color: #444; }
+    #search-input:focus { border-color: #00e5ff; }
+    #search-input::placeholder { color: #555; }
     #search-results {
-      margin-top: 4px; background: rgba(18,18,26,0.95); border: 1px solid #2a2a4e;
-      border-radius: 6px; max-height: 300px; overflow-y: auto; display: none;
+        display: none; background: rgba(10, 14, 20, 0.95);
+        border: 1px solid #00e5ff33; border-radius: 6px;
+        margin-top: 4px; max-height: 300px; overflow-y: auto;
     }
     .search-item {
-      padding: 6px 12px; cursor: pointer; font-size: 0.75rem; color: #aaa;
-      border-bottom: 1px solid #1a1a2e;
+        padding: 6px 10px; cursor: pointer; display: flex; gap: 8px;
+        align-items: center; font-size: 12px; color: #ccc;
     }
-    .search-item:hover, .search-item.active { background: rgba(68,136,255,0.15); color: #ddd; }
-    .search-item .si-type { color: #555; font-size: 0.65rem; }
-    .search-item .si-file { color: #444; font-size: 0.6rem; display: block; margin-top: 1px; }
+    .search-item:hover, .search-item.selected { background: #00e5ff22; }
+    .search-icon { font-size: 14px; }
+    .search-name { color: #fff; flex: 1; }
+    .search-type { color: #00e5ff; font-size: 10px; }
+    .search-file { color: #666; font-size: 10px; }
+
+    /* Active badge */
     #active-badge {
-      position: fixed; top: 116px; left: 24px; z-index: 301;
-      background: rgba(255,34,34,0.12); border: 1px solid rgba(255,34,34,0.3);
-      border-radius: 4px; padding: 4px 10px; font-size: 0.7rem; color: #ff4444;
-      display: none; align-items: center; gap: 6px;
+        display: none; position: fixed; top: 52px; left: 12px; z-index: 301;
+        background: rgba(10, 14, 20, 0.9); border: 1px solid #00e5ff44;
+        padding: 4px 10px; border-radius: 6px; color: #00e5ff;
+        font-size: 12px; align-items: center; gap: 6px; cursor: pointer;
     }
-    #active-badge a { color: #ff4444; text-decoration: none; font-size: 0.8rem; opacity: 0.6; }
-    #active-badge a:hover { color: #fff; opacity: 1; }
-  </style>
+    #clear-active {
+        background: none; border: none; color: #ff6b6b; cursor: pointer;
+        font-size: 14px; padding: 0 4px;
+    }
+
+    /* Stats panel */
+    #stats-panel {
+        position: fixed; bottom: 12px; left: 12px; z-index: 200;
+        background: rgba(10, 14, 20, 0.85); border: 1px solid #ffffff11;
+        padding: 10px 14px; border-radius: 6px; color: #888;
+        font-size: 11px; min-width: 160px;
+    }
+    .stat-row { display: flex; justify-content: space-between; margin: 2px 0; }
+    .stat-row span:last-child { color: #ccc; }
+
+    /* Side panels */
+    .side-panel {
+        position: fixed; z-index: 200;
+        background: rgba(10, 14, 20, 0.9); border: 1px solid #ffffff11;
+        padding: 10px; border-radius: 6px; color: #ccc;
+        font-size: 11px; max-height: 60vh; overflow-y: auto;
+    }
+    #edge-panel { right: 12px; top: 12px; width: 220px; }
+    #type-panel { left: 12px; top: 90px; width: 200px; }
+
+    .panel-title { color: #00e5ff; font-weight: bold; margin-bottom: 6px; font-size: 12px; }
+    .panel-buttons { display: flex; gap: 4px; margin-bottom: 6px; }
+    .panel-buttons button {
+        background: #ffffff11; border: 1px solid #ffffff22; color: #ccc;
+        padding: 2px 8px; border-radius: 4px; cursor: pointer; font-size: 10px;
+    }
+    .panel-buttons button:hover { background: #00e5ff22; }
+
+    .edge-type-row, .type-row {
+        display: flex; align-items: center; gap: 6px; padding: 2px 0;
+    }
+    .edge-type-row input, .type-row input { accent-color: #00e5ff; }
+    .edge-swatch { width: 10px; height: 10px; border-radius: 2px; }
+    .edge-count, .type-count { margin-left: auto; color: #666; }
+
+    .slider-group { margin-top: 8px; border-top: 1px solid #ffffff11; padding-top: 8px; }
+    .slider-group label { display: block; margin: 4px 0; color: #888; }
+    .slider-group input[type=range] { width: 100%; accent-color: #00e5ff; }
+
+    /* LOD slider */
+    #lod-slider {
+        position: fixed; bottom: 12px; right: 12px; z-index: 200;
+        background: rgba(10, 14, 20, 0.85); border: 1px solid #ffffff11;
+        padding: 8px 14px; border-radius: 6px; color: #888; font-size: 11px;
+        min-width: 150px;
+    }
+    #lod-slider label { display: flex; flex-direction: column; gap: 4px; }
+    #lod-slider input[type=range] { width: 100%; accent-color: #00e5ff; }
+    #lod-value { color: #00e5ff; text-align: center; }
+</style>
 </head>
 <body>
+
+<div id="loading">Loading hex topology...</div>
+
+<div id="canvas-container"></div>
+
+<div id="tooltip"></div>
+
+<div id="search-box">
+    <input id="search-input" type="text" placeholder="Search nodes... (Ctrl+K)">
+    <div id="search-results"></div>
+</div>
+
+<div id="active-badge">
+    <span id="active-count">0</span> pinned
+    <button id="clear-active">&#x2715;</button>
+</div>
+
+<div id="stats-panel"></div>
+<div id="edge-panel" class="side-panel"></div>
+<div id="type-panel" class="side-panel"></div>
+<div id="lod-slider"></div>
+
 <script type="importmap">
 {
-  "imports": {
-    "three": "https://cdn.jsdelivr.net/npm/three@0.171.0/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm/"
-  }
+    "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.175.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.175.0/examples/jsm/"
+    }
 }
 </script>
+
 <script type="module">
-import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import {
-  fetchHexStream, cubeToWorld,
-  EDGE_COLORS, DEFAULT_EDGE_COLOR,
-  colorToVec3, createHUD, showLoading,
-} from './shared.js';
-import { HexLayer } from './hex-layer.js';
-import { EdgeRenderer } from './edge-renderer.js';
-import { HoverController } from './hover-controller.js';
+import { CivMap } from './civ-map/CivMap.js';
 
-// ──── HUD + loading ────
-const loading = showLoading('Connecting to server...');
-const hud = createHUD('Hex Topology');
-
-// ──── Three.js setup ────
-const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-renderer.setClearColor(0x0a0a0f);
-document.body.appendChild(renderer.domElement);
-
-const scene = new THREE.Scene();
-scene.fog = new THREE.FogExp2(0x0a0a0f, 0.0012);
-
-const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 5000);
-camera.position.set(0, 300, 300);
-
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableDamping = true;
-controls.dampingFactor = 0.05;
-controls.maxDistance = 2000;
-controls.minDistance = 5;
-controls.maxPolarAngle = Math.PI * 0.45;
-controls.screenSpacePanning = false;
-controls.mouseButtons = {
-  LEFT: THREE.MOUSE.PAN,
-  MIDDLE: THREE.MOUSE.DOLLY,
-  RIGHT: THREE.MOUSE.ROTATE,
-};
-
-// ──── Load data ────
-const data = await fetchHexStream({
-  onProgress: (msg) => loading.update(msg),
-  onBatch: (regionIdx, tiles, edges) => {
-    loading.update(`Region ${regionIdx}: ${tiles} tiles, ${edges} edges`);
-  },
-});
-
-const { meta } = data;
-const N = data.tileCount;
-const E = data.edgeCount;
-const TILE_SIZE = meta.tile_size;
-const typeTable = meta.type_table;
-const edgeTypeTable = meta.edge_type_table;
-const MAX_DEPTH = meta.max_depth || 3;
-
-hud.setStats(`${N.toLocaleString()} tiles · ${E.toLocaleString()} edges · ${meta.regions.length} files · depth ${MAX_DEPTH}`);
-loading.update('Building scene...');
-
-// ──── Index: globalIdx → sequential position ────
-const maxGlobalIdx = data.tileGlobalIdx.reduce((a, b) => Math.max(a, b), 0);
-const globalToSeq = new Int32Array(maxGlobalIdx + 1).fill(-1);
-for (let i = 0; i < N; i++) {
-  globalToSeq[data.tileGlobalIdx[i]] = i;
-}
-
-// ──── Fill layer (base: seamless region fill, always visible) ────
-const fillLayer = new HexLayer({ count: N, hexSize: TILE_SIZE, y: 0, scene });
-const color = new THREE.Color();
-
-for (let i = 0; i < N; i++) {
-  const { x, z } = cubeToWorld(data.tileQ[i], data.tileR[i], TILE_SIZE);
-  const regionIdx = data.tileRegionIdx[i];
-  const hue = meta.regions[regionIdx]?.hue ?? (regionIdx * 137.508) % 360;
-  color.setHSL(hue / 360, 0.5, 0.3);
-  fillLayer.setTile(i, x, z, color);
-}
-fillLayer.finalize();
-
-// ──── Tile layer (detail: individual nodes with type coloring, visible on zoom) ────
-const tileLayer = new HexLayer({ count: N, hexSize: TILE_SIZE * 0.92, y: 0.1, scene });
-
-for (let i = 0; i < N; i++) {
-  const regionIdx = data.tileRegionIdx[i];
-  const hue = meta.regions[regionIdx]?.hue ?? (regionIdx * 137.508) % 360;
-  const typeName = typeTable[data.tileTypeIdx[i]];
-  // Subtle lightness variation by node type (same hue as fill)
-  let lightness = 40;
-  if (typeName === 'CALL') lightness = 50;
-  else if (typeName === 'IMPORT' || typeName === 'IMPORT_BINDING') lightness = 32;
-  else if (typeName === 'LITERAL' || typeName === 'CONSTANT') lightness = 28;
-  else if (typeName === 'VARIABLE') lightness = 38;
-  else if (typeName === 'EXPRESSION') lightness = 33;
-  else if (typeName === 'PARAMETER') lightness = 42;
-  else if (typeName === 'REFERENCE') lightness = 45;
-  else if (typeName === 'PROPERTY_ACCESS') lightness = 36;
-  color.setHSL(hue / 360, 0.6, lightness / 100);
-  tileLayer.setTile(i, fillLayer.worldX[i], fillLayer.worldZ[i], color);
-}
-tileLayer.finalize();
-
-// ──── Region borders (dark lines between different-region hexes) ────
-const HEX_DIRS = [[1,0],[0,1],[-1,1],[-1,0],[0,-1],[1,-1]];
-const coordToRegion = new Map();
-for (let i = 0; i < N; i++) {
-  coordToRegion.set(`${data.tileQ[i]},${data.tileR[i]}`, data.tileRegionIdx[i]);
-}
-
-const borderVerts = [];
-for (let i = 0; i < N; i++) {
-  const q = data.tileQ[i], r = data.tileR[i];
-  const myRegion = data.tileRegionIdx[i];
-  const { x: cx, z: cz } = cubeToWorld(q, r, TILE_SIZE);
-
-  for (let d = 0; d < 6; d++) {
-    const nq = q + HEX_DIRS[d][0], nr = r + HEX_DIRS[d][1];
-    const nRegion = coordToRegion.get(`${nq},${nr}`);
-    // Border if neighbor is different region or empty (outer edge)
-    if (nRegion !== undefined && nRegion !== myRegion) {
-      const a1 = Math.PI / 3 * d;
-      const a2 = Math.PI / 3 * (d + 1);
-      borderVerts.push(
-        cx + TILE_SIZE * Math.cos(a1), 0.12, cz + TILE_SIZE * Math.sin(a1),
-        cx + TILE_SIZE * Math.cos(a2), 0.12, cz + TILE_SIZE * Math.sin(a2),
-      );
-    }
-  }
-}
-const borderGeo = new THREE.BufferGeometry();
-borderGeo.setAttribute('position', new THREE.Float32BufferAttribute(borderVerts, 3));
-const borderLines = new THREE.LineSegments(borderGeo, new THREE.LineBasicMaterial({
-  color: 0x050508, transparent: true, opacity: 0.8, depthWrite: false,
-}));
-scene.add(borderLines);
-
-// ──── Container fills (for LOD — ShapeGeometry borders) ────
-const containerMeshes = [];
-if (meta.containers) {
-  const containerGroup = new THREE.Group();
-  for (const cont of meta.containers) {
-    if (!cont.border || cont.border.length < 3) continue;
-    const shape = new THREE.Shape();
-    shape.moveTo(cont.border[0][0], -cont.border[0][1]);
-    for (let i = 1; i < cont.border.length; i++) {
-      shape.lineTo(cont.border[i][0], -cont.border[i][1]);
-    }
-    shape.closePath();
-    const shapeGeo = new THREE.ShapeGeometry(shape);
-    shapeGeo.rotateX(-Math.PI / 2);
-    const fillColor = new THREE.Color().setHSL(cont.hue / 360, 0.4, 0.2);
-    const fillMat = new THREE.MeshBasicMaterial({
-      color: fillColor, transparent: true, opacity: 0.6, depthWrite: false, side: THREE.DoubleSide,
-    });
-    const mesh = new THREE.Mesh(shapeGeo, fillMat);
-    mesh.position.y = 0.01 + cont.depth * 0.01;
-    mesh.visible = false;
-    mesh.userData = { depth: cont.depth, name: cont.name, type: cont.container_type };
-    containerGroup.add(mesh);
-    containerMeshes.push(mesh);
-
-    const outlinePoints = cont.border.map(([x, z]) => new THREE.Vector3(x, 0.02 + cont.depth * 0.01, z));
-    outlinePoints.push(outlinePoints[0].clone());
-    const outlineGeo = new THREE.BufferGeometry().setFromPoints(outlinePoints);
-    const outlineColor = new THREE.Color().setHSL(cont.hue / 360, 0.5, 0.4);
-    const outlineMat = new THREE.LineBasicMaterial({ color: outlineColor, transparent: true, opacity: 0.7, depthWrite: false });
-    const outline = new THREE.Line(outlineGeo, outlineMat);
-    outline.visible = false;
-    outline.userData = { depth: cont.depth };
-    containerGroup.add(outline);
-    containerMeshes.push(outline);
-  }
-  scene.add(containerGroup);
-}
-
-// ──── File labels ────
-const labelGroup = new THREE.Group();
-for (let ri = 0; ri < meta.regions.length; ri++) {
-  const region = meta.regions[ri];
-  if (region.tile_count < 3 || region.path === '/') continue;
-  const [cx, cz] = region.center;
-  if (cx === 0 && cz === 0 && !region.border?.length) continue;
-
-  const canvas = document.createElement('canvas');
-  canvas.width = 512; canvas.height = 64;
-  const ctx2d = canvas.getContext('2d');
-  const fontSize = Math.min(28, Math.max(14, region.tile_count * 1.2));
-  ctx2d.font = `${fontSize * 2}px Inter, sans-serif`;
-  const hue = region.hue ?? (ri * 137.508) % 360;
-  ctx2d.fillStyle = `hsl(${hue}, 50%, 55%)`;
-  ctx2d.textAlign = 'center'; ctx2d.textBaseline = 'middle';
-  const parts = region.path.split('/');
-  const label = parts[parts.length - 1] || region.path;
-  ctx2d.fillText(label, 256, 32);
-
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.minFilter = THREE.LinearFilter;
-  const spriteMat = new THREE.SpriteMaterial({
-    map: tex, transparent: true, opacity: 0.6, depthWrite: false, depthTest: false, sizeAttenuation: true,
-  });
-  const sprite = new THREE.Sprite(spriteMat);
-  const labelWidth = Math.max(8, Math.sqrt(region.tile_count) * TILE_SIZE * 2);
-  sprite.scale.set(labelWidth, labelWidth * 0.125, 1);
-  sprite.position.set(cx, 0.5, cz);
-  sprite.userData = { depth: region.depth, tileCount: region.tile_count };
-  labelGroup.add(sprite);
-}
-scene.add(labelGroup);
-
-// ──── Edges ────
-const edgeRenderer = new EdgeRenderer({ maxEdges: 500, y: 0.5, scene, opacity: 0.1, brightness: 0.5, linewidth: 1 });
-
-// Aggregated inter-region edges
-const A = meta.agg_edges.length;
-const aggPositions = new Float32Array(A * 6);
-const aggColors = new Float32Array(A * 6);
-for (let i = 0; i < A; i++) {
-  const ae = meta.agg_edges[i];
-  const srcR = meta.regions[ae.src] || { center: [0, 0] };
-  const dstR = meta.regions[ae.dst] || { center: [0, 0] };
-  const off = i * 6;
-  aggPositions[off] = srcR.center[0];     aggPositions[off+1] = 0.2; aggPositions[off+2] = srcR.center[1];
-  aggPositions[off+3] = dstR.center[0];   aggPositions[off+4] = 0.2; aggPositions[off+5] = dstR.center[1];
-
-  const etName = edgeTypeTable[ae.type] || '';
-  const hex = EDGE_COLORS[etName] || DEFAULT_EDGE_COLOR;
-  const c = colorToVec3(hex);
-  const intensity = Math.min(1.0, 0.6 + ae.count / 10);
-  aggColors[off]   = c[0]*intensity; aggColors[off+1] = c[1]*intensity; aggColors[off+2] = c[2]*intensity;
-  aggColors[off+3] = c[0]*intensity; aggColors[off+4] = c[1]*intensity; aggColors[off+5] = c[2]*intensity;
-}
-const aggGeo = new THREE.BufferGeometry();
-aggGeo.setAttribute('position', new THREE.BufferAttribute(aggPositions, 3));
-aggGeo.setAttribute('color', new THREE.BufferAttribute(aggColors, 3));
-const aggLines = new THREE.LineSegments(aggGeo, new THREE.LineBasicMaterial({
-  vertexColors: true, transparent: true, opacity: 0.8, depthWrite: false,
-}));
-scene.add(aggLines);
-
-// ──── Edge visibility panel ────
-const edgeVisibility = {};
-for (const et of edgeTypeTable) edgeVisibility[et] = true;
-
-const edgePanel = document.getElementById('edge-panel');
-const checkboxContainer = document.createElement('div');
-for (const et of edgeTypeTable) {
-  const label = document.createElement('label');
-  const cb = document.createElement('input');
-  cb.type = 'checkbox'; cb.checked = true;
-  cb.addEventListener('change', () => { edgeVisibility[et] = cb.checked; updateEdges(); });
-  const dot = document.createElement('span');
-  dot.className = 'edge-color-dot';
-  const hex = EDGE_COLORS[et] || DEFAULT_EDGE_COLOR;
-  dot.style.background = `#${hex.toString(16).padStart(6, '0')}`;
-  label.appendChild(cb);
-  label.appendChild(dot);
-  label.appendChild(document.createTextNode(et));
-  checkboxContainer.appendChild(label);
-}
-edgePanel.appendChild(checkboxContainer);
-
-const btnRow = document.createElement('div');
-btnRow.style.cssText = 'margin-top:6px;display:flex;gap:8px;font-size:0.65rem';
-const btnAll = document.createElement('a');
-btnAll.href = '#'; btnAll.textContent = 'All'; btnAll.style.color = '#4488ff';
-btnAll.onclick = (e) => { e.preventDefault(); toggleAll(true); };
-const btnNone = document.createElement('a');
-btnNone.href = '#'; btnNone.textContent = 'None'; btnNone.style.color = '#4488ff';
-btnNone.onclick = (e) => { e.preventDefault(); toggleAll(false); };
-btnRow.appendChild(btnAll);
-btnRow.appendChild(btnNone);
-edgePanel.appendChild(btnRow);
-
-function toggleAll(state) {
-  for (const et of edgeTypeTable) edgeVisibility[et] = state;
-  checkboxContainer.querySelectorAll('input').forEach(cb => cb.checked = state);
-  updateEdges();
-}
-
-// ── Edge brightness / opacity sliders ──
-const sliderGroup = document.createElement('div');
-sliderGroup.style.cssText = 'margin-top:10px;border-top:1px solid #2a2a4e;padding-top:8px';
-
-function makeSlider(label, min, max, step, value, onChange) {
-  const row = document.createElement('div');
-  row.className = 'slider-row';
-  const lbl = document.createElement('label');
-  lbl.textContent = label;
-  const input = document.createElement('input');
-  input.type = 'range'; input.min = min; input.max = max; input.step = step; input.value = value;
-  const val = document.createElement('span');
-  val.className = 'val'; val.textContent = value;
-  input.addEventListener('input', () => { val.textContent = input.value; onChange(parseFloat(input.value)); });
-  row.appendChild(lbl); row.appendChild(input); row.appendChild(val);
-  return row;
-}
-
-sliderGroup.appendChild(makeSlider('Brightness', '0.5', '5', '0.1', '0.5', (v) => {
-  edgeRenderer.setBrightness(v);
-  updateEdges();
-}));
-sliderGroup.appendChild(makeSlider('Opacity', '0.1', '1.0', '0.05', '0.1', (v) => {
-  edgeRenderer.setOpacity(v);
-  aggLines.material.opacity = v;
-}));
-sliderGroup.appendChild(makeSlider('Thickness', '1', '8', '0.5', '1', (v) => {
-  edgeRenderer.setLinewidth(v);
-}));
-sliderGroup.appendChild(makeSlider('Max edges', '500', String(E), '1000', '500', (v) => {
-  edgeRenderer.setMaxEdges(Math.round(v));
-  updateEdges();
-}));
-edgePanel.appendChild(sliderGroup);
-
-// ──── Node type filter panel ────
-const nodeTypeVisibility = {};
-const nodeTypePanel = document.getElementById('node-type-panel');
-
-// Count tiles per type
-const typeCountMap = {};
-for (let i = 0; i < N; i++) {
-  const tn = typeTable[data.tileTypeIdx[i]];
-  typeCountMap[tn] = (typeCountMap[tn] || 0) + 1;
-}
-
-// Sort by count descending, build checkboxes
-const sortedTypes = Object.entries(typeCountMap).sort((a, b) => b[1] - a[1]);
-const nodeTypeCbContainer = document.createElement('div');
-for (const [tn, count] of sortedTypes) {
-  nodeTypeVisibility[tn] = true;
-  const label = document.createElement('label');
-  const cb = document.createElement('input');
-  cb.type = 'checkbox'; cb.checked = true;
-  cb.addEventListener('change', () => {
-    nodeTypeVisibility[tn] = cb.checked;
-    applyNodeTypeFilter();
-  });
-  const countSpan = document.createElement('span');
-  countSpan.className = 'node-count';
-  countSpan.textContent = count.toLocaleString();
-  label.appendChild(cb);
-  label.appendChild(document.createTextNode(tn));
-  label.appendChild(countSpan);
-  nodeTypeCbContainer.appendChild(label);
-}
-nodeTypePanel.appendChild(nodeTypeCbContainer);
-
-const ntBtnRow = document.createElement('div');
-ntBtnRow.style.cssText = 'margin-top:6px;display:flex;gap:8px;font-size:0.65rem';
-const ntBtnAll = document.createElement('a');
-ntBtnAll.href = '#'; ntBtnAll.textContent = 'All'; ntBtnAll.style.color = '#4488ff';
-ntBtnAll.onclick = (e) => { e.preventDefault(); toggleAllNodeTypes(true); };
-const ntBtnNone = document.createElement('a');
-ntBtnNone.href = '#'; ntBtnNone.textContent = 'None'; ntBtnNone.style.color = '#4488ff';
-ntBtnNone.onclick = (e) => { e.preventDefault(); toggleAllNodeTypes(false); };
-const ntBtnDefs = document.createElement('a');
-ntBtnDefs.href = '#'; ntBtnDefs.textContent = 'Definitions'; ntBtnDefs.style.color = '#4488ff';
-ntBtnDefs.onclick = (e) => {
-  e.preventDefault();
-  const defTypes = new Set(['FUNCTION','METHOD','CLASS','INTERFACE','STRUCT','ENUM','MODULE','CONSTANT','VARIABLE','PARAMETER','IMPORT_BINDING','EXPORT_BINDING','TYPE_ALIAS','LAMBDA','CONSTRUCTOR']);
-  for (const tn of Object.keys(nodeTypeVisibility)) {
-    nodeTypeVisibility[tn] = defTypes.has(tn);
-  }
-  nodeTypeCbContainer.querySelectorAll('input').forEach((cb, i) => {
-    cb.checked = defTypes.has(sortedTypes[i][0]);
-  });
-  applyNodeTypeFilter();
-};
-ntBtnRow.appendChild(ntBtnAll);
-ntBtnRow.appendChild(ntBtnNone);
-ntBtnRow.appendChild(ntBtnDefs);
-nodeTypePanel.appendChild(ntBtnRow);
-
-function toggleAllNodeTypes(state) {
-  for (const tn of Object.keys(nodeTypeVisibility)) nodeTypeVisibility[tn] = state;
-  nodeTypeCbContainer.querySelectorAll('input').forEach(cb => cb.checked = state);
-  applyNodeTypeFilter();
-}
-
-function applyNodeTypeFilter() {
-  for (let i = 0; i < N; i++) {
-    const tn = typeTable[data.tileTypeIdx[i]];
-    const visible = nodeTypeVisibility[tn];
-    tileLayer.setOpacity(i, visible ? 1.0 : 0.0);
-    fillLayer.setOpacity(i, visible ? 1.0 : 0.15);
-  }
-  // Re-apply LOD on top
-  for (let i = 0; i < N; i++) {
-    if (data.tileLodLevel[i] > lodMaxLevel) {
-      tileLayer.setOpacity(i, 0.0);
-    }
-  }
-  // Keep active tiles bright
-  for (const ai of activeTiles) {
-    tileLayer.setOpacity(ai, 1.0);
-    fillLayer.setOpacity(ai, 1.0);
-  }
-}
-
-// ──── LOD ────
-let lodMaxLevel = MAX_DEPTH;
-const lodSliderEl = document.getElementById('lod-slider');
-const lodSlider = lodSliderEl.querySelector('input');
-lodSlider.max = MAX_DEPTH;
-lodSlider.value = MAX_DEPTH;
-
-const lodLabelsEl = lodSliderEl.querySelector('.lod-labels');
-lodLabelsEl.innerHTML = '';
-for (let d = 0; d <= MAX_DEPTH; d++) {
-  const span = document.createElement('span');
-  span.textContent = d === 0 ? 'Top' : d === MAX_DEPTH ? 'All' : `${d}`;
-  lodLabelsEl.appendChild(span);
-}
-
-lodSlider.addEventListener('input', () => {
-  lodMaxLevel = parseInt(lodSlider.value);
-  applyLOD();
-  updateEdges();
-});
-
-function applyLOD() {
-  // Fill layer always visible (base)
-  fillLayer.resetOpacity();
-  // Tile detail: show tiles at or below current LOD level
-  for (let i = 0; i < N; i++) {
-    tileLayer.setOpacity(i, data.tileLodLevel[i] <= lodMaxLevel ? 1.0 : 0.0);
-  }
-  // Container fills: show at matching depth
-  for (const mesh of containerMeshes) {
-    mesh.visible = lodMaxLevel === mesh.userData.depth;
-  }
-}
-
-// ──── Edge sorting + update ────
-const edgeWeights = new Float32Array(E);
-for (let i = 0; i < E; i++) {
-  const si = globalToSeq[data.edgeSrc[i]];
-  const di = globalToSeq[data.edgeDst[i]];
-  if (si >= 0 && di >= 0) {
-    edgeWeights[i] = data.tileDegree[si] + data.tileDegree[di];
-  }
-}
-const sortedEdgeIndices = Array.from({ length: E }, (_, i) => i);
-sortedEdgeIndices.sort((a, b) => edgeWeights[b] - edgeWeights[a]);
-
-function updateEdges() {
-  const dist = camera.position.distanceTo(controls.target);
-
-  // Fill layer always visible; tile detail fades by distance
-  tileLayer.visible = dist < 300;
-  borderLines.visible = true;
-
-  if (dist > 800) {
-    edgeRenderer.clear();
-    aggLines.visible = true;
-    for (const sprite of labelGroup.children) sprite.visible = sprite.userData.depth === 0;
-    return;
-  }
-
-  aggLines.visible = dist > 300;
-
-  for (const sprite of labelGroup.children) {
-    const { depth, tileCount } = sprite.userData;
-    if (dist > 300) sprite.visible = depth === 0 || (depth === 1 && tileCount > 20);
-    else if (dist > 150) sprite.visible = depth <= 2;
-    else sprite.visible = true;
-  }
-
-  edgeRenderer.showFiltered({
-    sortedIndices: sortedEdgeIndices,
-    camera,
-    controls,
-    lodMaxLevel,
-    tileData: { count: N, lodLevel: data.tileLodLevel },
-    ctx: {
-      edgeSrc: data.edgeSrc,
-      edgeDst: data.edgeDst,
-      edgeTypeIdx: data.edgeTypeIdx,
-      edgeTypeTable: edgeTypeTable,
-      globalToSeq,
-      worldX: fillLayer.worldX,
-      worldZ: fillLayer.worldZ,
-      visibility: edgeVisibility,
-    },
-  });
-}
-
-updateEdges();
-
-let edgeTimer = null;
-controls.addEventListener('change', () => {
-  clearTimeout(edgeTimer);
-  edgeTimer = setTimeout(updateEdges, 80);
-});
-
-// ──── Active (pinned) tiles ────
-const activeTiles = new Set();
-
-// ──── Hover controller ────
-const hover = new HoverController({
-  camera,
-  domElement: renderer.domElement,
-  layers: [tileLayer, fillLayer],
-  edgeRenderer,
-  edgeData: {
-    src: data.edgeSrc,
-    dst: data.edgeDst,
-    typeIdx: data.edgeTypeIdx,
-    typeTable: edgeTypeTable,
-    globalToSeq,
-    visibility: edgeVisibility,
-  },
-  tileData: {
-    typeIdx: data.tileTypeIdx,
-    degree: data.tileDegree,
-    lodLevel: data.tileLodLevel,
-    globalIdx: data.tileGlobalIdx,
-    regionIdx: data.tileRegionIdx,
-    worldX: fillLayer.worldX,
-    worldZ: fillLayer.worldZ,
-  },
-  meta,
-  tooltip: hud.tooltip,
-  onHover: (_idx, _connected) => {
-    // Keep active tiles bright during hover dimming
-    for (const ai of activeTiles) {
-      tileLayer.setOpacity(ai, 1.0);
-      fillLayer.setOpacity(ai, 1.0);
-    }
-  },
-  onUnhover: () => {
-    applyLOD();
-    updateEdges();
-    // Restore active tile brightness after LOD reset
-    for (const ai of activeTiles) {
-      tileLayer.setOpacity(ai, 1.0);
-      fillLayer.setOpacity(ai, 1.0);
-    }
-  },
-});
-
-// ── 3D Pin markers for active tiles ──
-const MAX_ACTIVE = 200;
-const PIN_HEIGHT = 4;
-const PIN_HEAD_RADIUS = 0.6;
-
-// Shared geometries for pins
-const pinNeedleGeo = new THREE.CylinderGeometry(0.08, 0.08, PIN_HEIGHT, 6);
-pinNeedleGeo.translate(0, PIN_HEIGHT / 2, 0);
-const pinHeadGeo = new THREE.SphereGeometry(PIN_HEAD_RADIUS, 12, 8);
-pinHeadGeo.translate(0, PIN_HEIGHT + PIN_HEAD_RADIUS * 0.6, 0);
-
-const pinNeedleMat = new THREE.MeshBasicMaterial({ color: 0xaa3333, transparent: true, opacity: 0.7 });
-const pinHeadMat = new THREE.MeshBasicMaterial({ color: 0xff2222, transparent: true, opacity: 0.9 });
-
-const pinGroup = new THREE.Group();
-pinGroup.position.y = 0.3;
-scene.add(pinGroup);
-
-// Pool of pin meshes
-const pinPool = [];
-function getPin() {
-  const needle = new THREE.Mesh(pinNeedleGeo, pinNeedleMat);
-  const head = new THREE.Mesh(pinHeadGeo, pinHeadMat);
-  const pin = new THREE.Group();
-  pin.add(needle);
-  pin.add(head);
-  pin.userData = { tileIdx: -1 };
-  pinGroup.add(pin);
-  return pin;
-}
-
-// ── Active region/container border outlines ──
-const activeRegions = new Set(); // indices into meta.regions
-const activeContainers = new Set(); // indices into meta.containers
-const MAX_BORDER_VERTS = 10000;
-const borderHighlightPositions = new Float32Array(MAX_BORDER_VERTS * 3);
-const borderHighlightGeo = new THREE.BufferGeometry();
-const borderHighlightAttr = new THREE.BufferAttribute(borderHighlightPositions, 3);
-borderHighlightGeo.setAttribute('position', borderHighlightAttr);
-const activeBorderLines = new THREE.LineSegments(borderHighlightGeo, new THREE.LineBasicMaterial({
-  color: 0xff4444, transparent: true, opacity: 0.9, depthWrite: false,
-}));
-activeBorderLines.position.y = 0.25;
-scene.add(activeBorderLines);
-
-const activeBadge = document.getElementById('active-badge');
-const activeCountEl = document.getElementById('active-count');
-document.getElementById('active-clear').addEventListener('click', (e) => {
-  e.preventDefault();
-  clearActive();
-});
-
-function toggleActive(idx) {
-  if (activeTiles.has(idx)) activeTiles.delete(idx);
-  else if (activeTiles.size < MAX_ACTIVE) activeTiles.add(idx);
-  refreshActive();
-}
-
-function addActive(idx) {
-  if (activeTiles.size < MAX_ACTIVE) activeTiles.add(idx);
-  refreshActive();
-}
-
-function addActiveContainer(containerIdx) {
-  if (activeContainers.has(containerIdx)) return;
-  activeContainers.add(containerIdx);
-  refreshActive();
-}
-
-function addActiveRegion(regionIdx) {
-  if (activeRegions.has(regionIdx)) return;
-  activeRegions.add(regionIdx);
-  refreshActive();
-}
-
-function clearActive() {
-  activeTiles.clear();
-  activeContainers.clear();
-  activeRegions.clear();
-  refreshActive();
-  applyLOD();
-  updateEdges();
-}
-
-function refreshActive() {
-  // ── 3D Pins ──
-  // Remove excess pins
-  while (pinPool.length > activeTiles.size) {
-    const pin = pinPool.pop();
-    pinGroup.remove(pin);
-  }
-  // Add pins if needed
-  while (pinPool.length < activeTiles.size && pinPool.length < MAX_ACTIVE) {
-    pinPool.push(getPin());
-  }
-  // Position pins
-  let pi = 0;
-  for (const idx of activeTiles) {
-    if (pi >= pinPool.length) break;
-    const pin = pinPool[pi];
-    pin.position.set(fillLayer.worldX[idx], 0, fillLayer.worldZ[idx]);
-    pin.userData.tileIdx = idx;
-    pin.visible = true;
-    pi++;
-  }
-  // Hide unused pins
-  for (; pi < pinPool.length; pi++) {
-    pinPool[pi].visible = false;
-  }
-
-  // ── Region + container borders ──
-  let bi = 0;
-  function addBorder(border) {
-    for (let i = 0; i < border.length; i++) {
-      if (bi >= MAX_BORDER_VERTS * 3 - 6) return;
-      const j = (i + 1) % border.length;
-      borderHighlightPositions[bi++] = border[i][0];
-      borderHighlightPositions[bi++] = 0;
-      borderHighlightPositions[bi++] = border[i][1];
-      borderHighlightPositions[bi++] = border[j][0];
-      borderHighlightPositions[bi++] = 0;
-      borderHighlightPositions[bi++] = border[j][1];
-    }
-  }
-  for (const regionIdx of activeRegions) {
-    const region = meta.regions[regionIdx];
-    if (region?.border?.length >= 2) addBorder(region.border);
-  }
-  for (const containerIdx of activeContainers) {
-    const cont = meta.containers[containerIdx];
-    if (cont?.border?.length >= 2) addBorder(cont.border);
-  }
-  borderHighlightGeo.setDrawRange(0, bi / 3);
-  borderHighlightAttr.needsUpdate = true;
-
-  // ── Badge ──
-  const total = activeTiles.size + activeContainers.size + activeRegions.size;
-  if (total > 0) {
-    activeBadge.style.display = 'flex';
-    activeCountEl.textContent = total;
-  } else {
-    activeBadge.style.display = 'none';
-  }
-}
-
-// Single-click on pin head → fly to that tile
-renderer.domElement.addEventListener('click', (e) => {
-  const mouse = new THREE.Vector2(
-    (e.clientX / window.innerWidth) * 2 - 1,
-    -(e.clientY / window.innerHeight) * 2 + 1,
-  );
-  const raycaster = new THREE.Raycaster();
-  raycaster.setFromCamera(mouse, camera);
-  // Raycast against pin head spheres
-  for (const pin of pinPool) {
-    if (!pin.visible) continue;
-    const head = pin.children[1]; // sphere
-    const hits = raycaster.intersectObject(head, false);
-    if (hits.length > 0) {
-      const idx = pin.userData.tileIdx;
-      flyTo(fillLayer.worldX[idx], fillLayer.worldZ[idx], idx);
-      return;
-    }
-  }
-});
-
-// Double-click to toggle active tile
-renderer.domElement.addEventListener('dblclick', (e) => {
-  const mouse = new THREE.Vector2(
-    (e.clientX / window.innerWidth) * 2 - 1,
-    -(e.clientY / window.innerHeight) * 2 + 1,
-  );
-  const raycaster = new THREE.Raycaster();
-  raycaster.setFromCamera(mouse, camera);
-  // Check pin heads first — double-click on pin = unpin
-  for (const pin of pinPool) {
-    if (!pin.visible) continue;
-    const head = pin.children[1];
-    const hits = raycaster.intersectObject(head, false);
-    if (hits.length > 0) {
-      toggleActive(pin.userData.tileIdx);
-      return;
-    }
-  }
-  for (const layer of [tileLayer, fillLayer]) {
-    const idx = layer.raycast(raycaster);
-    if (idx >= 0) { toggleActive(idx); return; }
-  }
-});
-
-// ──── Camera flythrough ────
-let flyTarget = null; // { pos: Vector3, lookAt: Vector3, t: 0 }
-
-function flyTo(worldX, worldZ, tileIdx) {
-  const lookAt = new THREE.Vector3(worldX, 0, worldZ);
-  const pos = new THREE.Vector3(worldX, 40, worldZ + 30);
-  flyTarget = {
-    startPos: camera.position.clone(),
-    startLookAt: controls.target.clone(),
-    endPos: pos,
-    endLookAt: lookAt,
-    t: 0,
-    tileIdx,
-  };
-}
-
-function easeInOut(t) {
-  return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
-}
-
-// ──── Search ────
-const searchInput = document.getElementById('search-input');
-const searchResults = document.getElementById('search-results');
-let searchTimer = null;
-let searchActiveIdx = -1;
-let lastResults = [];
-
-searchInput.addEventListener('input', () => {
-  clearTimeout(searchTimer);
-  const q = searchInput.value.trim();
-  if (q.length < 2) { searchResults.style.display = 'none'; return; }
-  searchTimer = setTimeout(async () => {
-    const res = await fetch(`/api/search?q=${encodeURIComponent(q)}&limit=15`);
-    if (!res.ok) return;
-    lastResults = await res.json();
-    searchActiveIdx = -1;
-    renderResults();
-  }, 200);
-});
-
-searchInput.addEventListener('keydown', (e) => {
-  if (e.key === 'ArrowDown') { e.preventDefault(); searchActiveIdx = Math.min(searchActiveIdx + 1, lastResults.length - 1); renderResults(); }
-  else if (e.key === 'ArrowUp') { e.preventDefault(); searchActiveIdx = Math.max(searchActiveIdx - 1, 0); renderResults(); }
-  else if (e.key === 'Enter' && searchActiveIdx >= 0) { e.preventDefault(); selectResult(lastResults[searchActiveIdx]); }
-  else if (e.key === 'Escape') { searchResults.style.display = 'none'; searchInput.blur(); }
-});
-
-document.addEventListener('keydown', (e) => {
-  if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); searchInput.focus(); searchInput.select(); }
-  if (e.key === 'Escape' && document.activeElement !== searchInput && (activeTiles.size > 0 || activeContainers.size > 0 || activeRegions.size > 0)) {
-    clearActive();
-  }
-});
-
-function renderResults() {
-  if (lastResults.length === 0) { searchResults.style.display = 'none'; return; }
-  searchResults.style.display = 'block';
-  searchResults.innerHTML = lastResults.map((r, i) => {
-    const file = r.file ? r.file.split('/').slice(-2).join('/') : '';
-    const isDefinition = ['FUNCTION','METHOD','CLASS','INTERFACE','STRUCT','ENUM'].includes(r.type);
-    const icon = r.isContainer ? '◆ ' : isDefinition ? 'ƒ ' : '';
-    return `<div class="search-item${i === searchActiveIdx ? ' active' : ''}" data-idx="${i}">
-      <span>${icon}${r.name}</span> <span class="si-type">${r.type}</span>
-      <span class="si-file">${file}</span>
-    </div>`;
-  }).join('');
-  searchResults.querySelectorAll('.search-item').forEach(el => {
-    el.addEventListener('click', () => selectResult(lastResults[+el.dataset.idx]));
-  });
-}
-
-function selectResult(r) {
-  searchResults.style.display = 'none';
-  searchInput.value = r.name;
-  searchInput.blur();
-  if (r.isContainer && r.containerIdx != null) {
-    addActiveContainer(r.containerIdx);
-  } else if (r.tileIndex >= 0) {
-    addActive(r.tileIndex);
-  }
-  // Highlight the region (file boundary) for any result
-  if (r.regionIdx != null) {
-    addActiveRegion(r.regionIdx);
-  }
-  flyTo(r.worldX, r.worldZ, r.tileIndex ?? -1);
-}
-
-// ──── Animate ────
-function animate() {
-  requestAnimationFrame(animate);
-
-  // Camera flythrough
-  if (flyTarget) {
-    flyTarget.t += 0.015;
-    const t = easeInOut(Math.min(flyTarget.t, 1));
-    camera.position.lerpVectors(flyTarget.startPos, flyTarget.endPos, t);
-    controls.target.lerpVectors(flyTarget.startLookAt, flyTarget.endLookAt, t);
-    if (flyTarget.t >= 1) {
-      flyTarget = null;
-      updateEdges();
-    }
-  }
-
-  // Scale pins based on camera distance so they remain visible
-  if (activeTiles.size > 0) {
-    const dist = camera.position.distanceTo(controls.target);
-    const s = Math.max(0.5, Math.min(dist / 40, 8));
-    const bobY = 0.3 + Math.sin(performance.now() * 0.002) * 0.15;
-    pinGroup.position.y = bobY;
-    for (const pin of pinPool) {
-      if (pin.visible) pin.scale.setScalar(s);
-    }
-  }
-
-  controls.update();
-  tileLayer.animate();
-  fillLayer.animate();
-  renderer.render(scene, camera);
-}
-animate();
-
-loading.hide();
-
-// ──── Resize ────
-window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  edgeRenderer.updateResolution(window.innerWidth, window.innerHeight);
-});
+const map = new CivMap({ container: document.getElementById('canvas-container') });
+await map.load('/api/hex-stream');
 </script>
-
-<!-- Search -->
-<div id="search-box">
-  <input type="text" id="search-input" placeholder="Search nodes... (Ctrl+K)" autocomplete="off">
-  <div id="search-results"></div>
-</div>
-
-<!-- Active tiles badge -->
-<div id="active-badge">
-  <span id="active-count">0</span> pinned
-  <a href="#" id="active-clear" title="Clear all (Esc)">✕</a>
-</div>
-
-<!-- Node type filter panel -->
-<div id="node-type-panel">
-  <h3>NODE TYPES</h3>
-</div>
-
-<!-- Edge visibility panel -->
-<div id="edge-panel">
-  <h3>EDGE TYPES</h3>
-</div>
-
-<!-- LOD slider -->
-<div id="lod-slider">
-  <h3>DETAIL LEVEL</h3>
-  <input type="range" min="0" max="3" value="3" step="1">
-  <div class="lod-labels"></div>
-</div>
 
 </body>
 </html>

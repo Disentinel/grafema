@@ -1,6 +1,31 @@
 use serde::Serialize;
 use std::collections::HashMap;
 
+#[derive(Debug, Clone, Copy, Serialize)]
+pub enum RegionKind {
+    Root,
+    Package,
+    Directory,
+    File,
+    Function,
+    Block,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct HierarchyNode {
+    pub id: String,
+    pub level: u8,
+    pub kind: RegionKind,
+    pub parent_idx: Option<u32>,
+    pub children_indices: Vec<u32>,
+    pub all_tile_count: u32,
+    pub border: Vec<[f32; 2]>,
+    pub center: [f32; 2],
+    pub hue: f32,
+    pub saturation: f32,
+    pub lightness: f32,
+}
+
 /// Hex cube coordinates (axial: q, r; flat-top orientation)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct HexCoord {
@@ -52,6 +77,11 @@ pub struct PlacedTile {
     pub container_idx: u32,
     pub region_idx: u16,
     pub lod_level: u8,
+    pub pkg_idx: u8,
+    pub dir_idx: u8,
+    pub file_hier_idx: u16,
+    pub fn_idx: u16,
+    pub is_filler: bool,
 }
 
 /// Region = a group of tiles sharing a common ancestor container
@@ -90,6 +120,8 @@ pub struct HexLayout {
     pub node_to_tile: HashMap<String, u32>,
     /// Mapping from container node_id to index in containers vec
     pub container_node_map: HashMap<String, usize>,
+    pub hierarchy: Vec<HierarchyNode>,
+    pub components: Vec<u32>,
 }
 
 /// An edge in the layout (indices into tiles vec)
@@ -132,6 +164,8 @@ pub struct RegionMetaBatch {
     pub total_edges: u32,
     pub max_depth: u8,
     pub agg_edges: Vec<AggEdgeSer>,
+    pub hierarchy: Vec<HierarchyNode>,
+    pub component_count: u32,
 }
 
 #[derive(Debug, Serialize)]

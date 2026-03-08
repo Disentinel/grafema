@@ -123,6 +123,15 @@ async fn main() -> anyhow::Result<()> {
 // ── API Handlers ──────────────────────────────────────────────────
 
 async fn api_stats(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let hierarchy_levels = state.layout.hierarchy.iter()
+        .map(|h| h.level)
+        .max()
+        .unwrap_or(0);
+    let component_count = state.layout.components.iter()
+        .copied()
+        .max()
+        .map(|m| m + 1)
+        .unwrap_or(0);
     let stats = serde_json::json!({
         "nodeCount": state.node_count,
         "edgeCount": state.edge_count,
@@ -131,6 +140,8 @@ async fn api_stats(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         "batchCount": state.batches.len(),
         "nodesByType": state.nodes_by_type,
         "edgesByType": state.edges_by_type,
+        "hierarchyLevels": hierarchy_levels,
+        "componentCount": component_count,
     });
 
     axum::Json(stats)
