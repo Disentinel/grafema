@@ -11,6 +11,9 @@ import qualified ImportResolution
 import qualified RuntimeGlobals
 import qualified Builtins
 import qualified CrossFileCalls
+import qualified SameFileCalls
+import qualified PropertyAccess
+import qualified JsLocalRefs
 import Grafema.Types (GraphNode)
 import Grafema.Protocol (PluginCommand(..), readFrame, writeFrame, encodeMsgpack, decodeMsgpack)
 
@@ -78,10 +81,13 @@ dispatch "imports" nodes wsPackages =
 dispatch "runtime-globals" nodes _ = return $ ResOk (RuntimeGlobals.resolveAll nodes)
 dispatch "builtins" nodes _ = return $ ResOk (Builtins.resolveAll nodes)
 dispatch "cross-file-calls" nodes _ = return $ ResOk (CrossFileCalls.resolveAll nodes)
+dispatch "same-file-calls" nodes _ = return $ ResOk (SameFileCalls.resolveAll nodes)
+dispatch "property-access" nodes _ = return $ ResOk (PropertyAccess.resolveAll nodes)
+dispatch "js-local-refs" nodes _ = return $ ResOk (JsLocalRefs.resolveAll nodes)
 dispatch cmd _ _ = return $ ResError ("unknown command: " ++ T.unpack cmd)
 
 -- | Original CLI subcommand parser.
-data Command = CmdImports | CmdRuntimeGlobals | CmdBuiltins | CmdCrossFileCalls
+data Command = CmdImports | CmdRuntimeGlobals | CmdBuiltins | CmdCrossFileCalls | CmdSameFileCalls | CmdPropertyAccess | CmdJsLocalRefs
 
 commandParser :: Parser Command
 commandParser = subparser
@@ -93,6 +99,12 @@ commandParser = subparser
     (info (pure CmdBuiltins) (progDesc "Resolve Node.js builtin module imports and calls"))
   <> command "cross-file-calls"
     (info (pure CmdCrossFileCalls) (progDesc "Create CALLS edges for cross-file invocations"))
+  <> command "same-file-calls"
+    (info (pure CmdSameFileCalls) (progDesc "Create CALLS edges for same-file function invocations"))
+  <> command "property-access"
+    (info (pure CmdPropertyAccess) (progDesc "Resolve PROPERTY_ACCESS nodes to property definitions"))
+  <> command "js-local-refs"
+    (info (pure CmdJsLocalRefs) (progDesc "Resolve JS/TS REFERENCE nodes to same-file declarations"))
   )
 
 cliOpts :: ParserInfo Command
@@ -116,3 +128,6 @@ main = do
         CmdRuntimeGlobals -> RuntimeGlobals.run
         CmdBuiltins       -> Builtins.run
         CmdCrossFileCalls -> CrossFileCalls.run
+        CmdSameFileCalls  -> SameFileCalls.run
+        CmdPropertyAccess -> PropertyAccess.run
+        CmdJsLocalRefs    -> JsLocalRefs.run

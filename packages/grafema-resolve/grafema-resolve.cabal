@@ -14,6 +14,10 @@ executable grafema-resolve
     RuntimeGlobals
     Builtins
     CrossFileCalls
+    SameFileCalls
+    PropertyAccess
+    JsLocalRefs
+    ResolveUtil
 
   build-depends:
     base                 >= 4.17 && < 5,
