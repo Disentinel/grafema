@@ -17,6 +17,7 @@ import type {
   FieldDeclaration,
   DatalogResult,
   DatalogExplainResult,
+  CypherResult,
   NodeType,
   EdgeType,
   HelloResponse,
@@ -465,6 +466,11 @@ export abstract class BaseRFDBClient extends EventEmitter implements IRFDBClient
       return this._parseExplainResponse(response);
     }
     return (response as { results?: DatalogResult[] }).results || [];
+  }
+
+  async cypherQuery(query: string): Promise<CypherResult> {
+    const response = await this._send('cypherQuery', { query });
+    return response as unknown as CypherResult;
   }
 
   async ping(): Promise<string | false> {

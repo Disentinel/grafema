@@ -22,7 +22,7 @@ import { RFDBClient, type BatchHandle } from '@grafema/rfdb-client';
 import type { ChildProcess } from 'child_process';
 import { join, dirname } from 'path';
 
-import type { WireNode, WireEdge, FieldDeclaration, CommitDelta, AttrQuery as RFDBAttrQuery, DatalogExplainResult, ServerStats } from '@grafema/types';
+import type { WireNode, WireEdge, FieldDeclaration, CommitDelta, AttrQuery as RFDBAttrQuery, DatalogExplainResult, ServerStats, CypherResult } from '@grafema/types';
 import type { NodeType, EdgeType } from '@grafema/types';
 import { startRfdbServer } from '../../utils/startRfdbServer.js';
 import { GRAFEMA_VERSION, getSchemaVersion } from '../../version.js';
@@ -759,6 +759,14 @@ export class RFDBServerBackend {
     return results.map(r => ({
       bindings: Object.entries(r.bindings).map(([name, value]) => ({ name, value }))
     }));
+  }
+
+  /**
+   * Run a Cypher query.
+   */
+  async cypherQuery(query: string): Promise<CypherResult> {
+    if (!this.client) throw new Error('Not connected');
+    return await this.client.cypherQuery(query);
   }
 
   // ===========================================================================

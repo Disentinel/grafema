@@ -218,6 +218,13 @@ pub enum Request {
         explain: bool,
     },
 
+    // Cypher queries
+    CypherQuery {
+        query: String,
+        #[serde(default)]
+        explain: bool,
+    },
+
     // Node utility
     IsEndpoint { id: String },
     GetNodeIdentifier { id: String },
@@ -394,6 +401,12 @@ pub enum Response {
     Identifier { identifier: Option<String> },
     DatalogResults { results: Vec<WireViolation> },
     ExplainResult(WireExplainResult),
+    CypherResult {
+        columns: Vec<String>,
+        rows: Vec<Vec<serde_json::Value>>,
+        #[serde(rename = "rowCount")]
+        row_count: usize,
+    },
 
     // ========================================================================
     // Protocol v3 Responses
@@ -910,6 +923,7 @@ fn get_operation_name(request: &Request) -> String {
         Request::QueryEdges { .. } => "QueryEdges".to_string(),
         Request::FindDependentFiles { .. } => "FindDependentFiles".to_string(),
         Request::CancelQuery { .. } => "CancelQuery".to_string(),
+        Request::CypherQuery { .. } => "CypherQuery".to_string(),
         _ => "Other".to_string(),
     }
 }
@@ -1308,6 +1322,22 @@ fn handle_request_with_cancel(
                     Ok(DatalogResponse::Violations(results)) => Response::DatalogResults { results },
                     Ok(DatalogResponse::Explain(result)) => Response::ExplainResult(result),
                     Err(e) => Response::Error { error: e },
+                }
+            })
+        }
+
+        Request::CypherQuery { query, explain: _ } => {
+            let cf = cancel_flag.clone();
+            with_engine_read(session, |engine| {
+                let mut limits = rfdb::datalog::EvalLimits::default();
+                limits.cancelled = Some(cf);
+                match rfdb::cypher::execute(engine, &query, limits) {
+                    Ok(result) => Response::CypherResult {
+                        columns: result.columns,
+                        rows: result.rows,
+                        row_count: result.row_count,
+                    },
+                    Err(e) => Response::Error { error: e.to_string() },
                 }
             })
         }

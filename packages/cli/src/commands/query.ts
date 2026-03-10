@@ -18,7 +18,7 @@ import { formatNodeDisplay, formatNodeInline, formatLocation } from '../utils/fo
 import { exitWithError } from '../utils/errorFormatter.js';
 import { Spinner } from '../utils/spinner.js';
 import { extractQueriedTypes, findSimilarTypes } from '../utils/queryHints.js';
-import type { DatalogExplainResult } from '@grafema/types';
+import type { DatalogExplainResult, CypherResult } from '@grafema/types';
 
 // Node type constants to avoid magic string duplication
 const HTTP_ROUTE_TYPE = 'http:route';
@@ -34,6 +34,7 @@ interface QueryOptions {
   json?: boolean;
   limit: string;
   raw?: boolean;
+  cypher?: boolean;
   explain?: boolean;
   type?: string;  // Explicit node type (bypasses type aliases)
 }
@@ -110,6 +111,16 @@ Rules (must define violation/1):
   grafema query --raw 'violation(X) :- node(X, "http:route"), attr(X, "method", "POST").'`
   )
   .option(
+    '--cypher',
+    `Execute a Cypher query instead of Datalog
+
+Cypher is a graph query language with pattern-matching syntax.
+
+Examples:
+  grafema query --cypher 'MATCH (n:FUNCTION) RETURN n.name LIMIT 10'
+  grafema query --cypher 'MATCH (a)-[:CALLS]->(b) RETURN a.name, b.name'`
+  )
+  .option(
     '--explain',
     `Show step-by-step query execution (use with --raw)
 
@@ -148,6 +159,7 @@ Examples:
   grafema query --type FUNCTION "auth"         Explicit type (no alias resolution)
   grafema query -t http:request "/api"         Search custom node types
   grafema query --raw 'type(X, "FUNCTION")'    Raw Datalog query
+  grafema query --cypher 'MATCH (n:FUNCTION) RETURN n.name'  Cypher query
 `)
   .action(async (pattern: string, options: QueryOptions) => {
     const projectPath = resolve(options.project);
@@ -175,6 +187,13 @@ Examples:
       if (options.explain && !options.raw) {
         spinner.stop();
         console.error('Note: --explain requires --raw. Ignoring --explain.');
+      }
+
+      // Cypher mode
+      if (options.cypher) {
+        spinner.stop();
+        await executeCypherQuery(backend, pattern, limit, options.json);
+        return;
       }
 
       // Raw Datalog mode
@@ -1087,6 +1106,58 @@ export function getUnknownPredicates(query: string): string[] {
   const predicates = extractPredicates(query);
   const ruleHeads = extractRuleHeads(query);
   return predicates.filter(p => !BUILTIN_PREDICATES.has(p) && !ruleHeads.has(p));
+}
+
+/**
+ * Execute Cypher query and display results in tabular format.
+ */
+async function executeCypherQuery(
+  backend: RFDBServerBackend,
+  query: string,
+  limit: number,
+  json?: boolean,
+): Promise<void> {
+  const result: CypherResult = await backend.cypherQuery(query);
+
+  if (json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  if (result.rowCount === 0) {
+    console.log('No results.');
+    return;
+  }
+
+  const limited = result.rows.slice(0, limit);
+
+  // Calculate column widths for tabular display
+  const colWidths = result.columns.map((col, i) => {
+    let maxWidth = col.length;
+    for (const row of limited) {
+      const cellLen = String(row[i] ?? '').length;
+      if (cellLen > maxWidth) maxWidth = cellLen;
+    }
+    return Math.min(maxWidth, 60); // cap at 60 chars
+  });
+
+  // Header
+  const header = result.columns.map((col, i) => col.padEnd(colWidths[i])).join('  ');
+  const separator = colWidths.map(w => '-'.repeat(w)).join('  ');
+  console.log(header);
+  console.log(separator);
+
+  // Rows
+  for (const row of limited) {
+    const line = row.map((cell, i) => {
+      const s = String(cell ?? '');
+      return s.length > colWidths[i] ? s.slice(0, colWidths[i] - 1) + '\u2026' : s.padEnd(colWidths[i]);
+    }).join('  ');
+    console.log(line);
+  }
+
+  console.log('');
+  console.log(`${limited.length}${result.rowCount > limit ? ` of ${result.rowCount}` : ''} row(s)`);
 }
 
 /**

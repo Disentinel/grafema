@@ -13,7 +13,7 @@ import {
   textResult,
   errorResult,
 } from '../utils.js';
-import type { DatalogExplainResult } from '@grafema/types';
+import type { DatalogExplainResult, CypherResult } from '@grafema/types';
 import type {
   ToolResult,
   QueryGraphArgs,
@@ -28,12 +28,68 @@ import type {
 
 export async function handleQueryGraph(args: QueryGraphArgs): Promise<ToolResult> {
   const db = await ensureAnalyzed();
-  const { query, limit: requestedLimit, offset: requestedOffset, format: _format, explain, count } = args;
+  const { query, language, limit: requestedLimit, offset: requestedOffset, format: _format, explain, count } = args;
 
   const limit = normalizeLimit(requestedLimit);
   const offset = Math.max(0, requestedOffset || 0);
 
   try {
+    // Cypher query path
+    if (language === 'cypher') {
+      if (!('cypherQuery' in db)) {
+        return errorResult('Backend does not support Cypher queries');
+      }
+      const cypherFn = (db as unknown as { cypherQuery: (q: string) => Promise<CypherResult> }).cypherQuery;
+      const result = await cypherFn.call(db, query);
+
+      if (count) {
+        return textResult(`Count: ${result.rowCount}`);
+      }
+
+      if (result.rowCount === 0) {
+        return textResult('Query returned no results.');
+      }
+
+      const paginatedRows = result.rows.slice(offset, offset + limit);
+      const hasMore = offset + limit < result.rowCount;
+
+      const paginationInfo = formatPaginationInfo({
+        limit,
+        offset,
+        returned: paginatedRows.length,
+        total: result.rowCount,
+        hasMore,
+      });
+
+      // Format as table
+      const lines: string[] = [];
+      lines.push(`Found ${result.rowCount} row(s):${paginationInfo}`);
+      lines.push('');
+
+      // Column widths
+      const colWidths = result.columns.map((col, i) => {
+        let maxWidth = col.length;
+        for (const row of paginatedRows) {
+          const cellLen = String(row[i] ?? '').length;
+          if (cellLen > maxWidth) maxWidth = cellLen;
+        }
+        return Math.min(maxWidth, 60);
+      });
+
+      lines.push(result.columns.map((col, i) => col.padEnd(colWidths[i])).join('  '));
+      lines.push(colWidths.map(w => '-'.repeat(w)).join('  '));
+
+      for (const row of paginatedRows) {
+        const line = row.map((cell, i) => {
+          const s = String(cell ?? '');
+          return s.length > colWidths[i] ? s.slice(0, colWidths[i] - 1) + '\u2026' : s.padEnd(colWidths[i]);
+        }).join('  ');
+        lines.push(line);
+      }
+
+      return textResult(guardResponseSize(lines.join('\n')));
+    }
+
     // Check if backend supports Datalog queries
     if (!('checkGuarantee' in db)) {
       return errorResult('Backend does not support Datalog queries');

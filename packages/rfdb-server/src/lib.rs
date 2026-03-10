@@ -4,7 +4,8 @@
 //!
 //! - **V2 columnar storage**: segment-based with snapshots
 //! - **Deterministic IDs**: BLAKE3(type|name|scope|path)
-//! - **Datalog query engine**: declarative graph queries
+//! - **Datalog query engine**: declarative graph queries with recursive rules
+//! - **Cypher query engine**: pull-based Volcano executor with LIMIT, COUNT, ORDER BY
 //!
 //! # Usage example
 //!
@@ -41,6 +42,7 @@ pub mod storage;
 pub mod storage_v2;
 pub mod error;
 pub mod datalog;
+pub mod cypher;
 pub mod database_manager;
 pub mod session;
 pub mod metrics;

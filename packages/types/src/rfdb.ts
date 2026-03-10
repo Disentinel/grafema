@@ -48,6 +48,8 @@ export type RFDBCommand =
   | 'datalogQuery'
   | 'checkGuarantee'
   | 'executeDatalog'
+  // Cypher
+  | 'cypherQuery'
   // Protocol v2 - Multi-Database Commands
   | 'hello'
   | 'createDatabase'
@@ -402,6 +404,13 @@ export interface DatalogExplainResult {
   warnings: string[];
 }
 
+// === CYPHER TYPES ===
+export interface CypherResult {
+  columns: string[];
+  rows: unknown[][];
+  rowCount: number;
+}
+
 // === SNAPSHOT TYPES ===
 
 /**
@@ -597,6 +606,9 @@ export interface IRFDBClient {
   executeDatalog(source: string): Promise<DatalogResult[]>;
   /** Pass literal `true` for explain -- a boolean variable won't narrow the return type. */
   executeDatalog(source: string, explain: true): Promise<DatalogExplainResult>;
+
+  // Cypher
+  cypherQuery(query: string): Promise<CypherResult>;
 
   // Batch operations
   beginBatch(): void;

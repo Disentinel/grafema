@@ -8,9 +8,12 @@ import { DEFAULT_LIMIT, MAX_LIMIT } from '../utils.js';
 export const QUERY_TOOLS: ToolDefinition[] = [
   {
     name: 'query_graph',
-    description: `Execute a Datalog query on the code graph.
+    description: `Execute a Datalog or Cypher query on the code graph.
 
-Available predicates:
+Set language to "cypher" for Cypher queries (e.g., MATCH (n:FUNCTION) RETURN n.name).
+Default is Datalog.
+
+Available Datalog predicates:
 - type(Id, Type) - match nodes by type (alias: node)
 - edge(Src, Dst, Type) - match edges
 - attr(Id, Name, Value) - match node attributes (name, file, line, etc.)
@@ -32,7 +35,12 @@ EXAMPLES:
       properties: {
         query: {
           type: 'string',
-          description: 'Datalog query. Must define violation/1 predicate for results.',
+          description: 'Datalog query (must define violation/1 predicate) or Cypher query (when language is "cypher").',
+        },
+        language: {
+          type: 'string',
+          description: 'Query language: "datalog" (default) or "cypher"',
+          enum: ['datalog', 'cypher'],
         },
         limit: {
           type: 'number',

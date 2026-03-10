@@ -42,6 +42,7 @@ export type { MCPConfig } from './config.js';
 // === TOOL ARGUMENTS ===
 export interface QueryGraphArgs {
   query: string;
+  language?: 'datalog' | 'cypher';
   limit?: number;
   offset?: number;
   format?: 'table' | 'json' | 'tree';
