@@ -1,8 +1,17 @@
 # Grafema Guarantees
 # Datalog-based guarantees are checked via `grafema check`.
 # Integration-test guarantees are verified by their corresponding test files.
+#
+# Architecture note: namespaced type guarantees are currently centralized here.
+# Future: each enricher plugin should declare its own guarantees via plugin manifest
+# (see plugin-based guarantees architecture task).
 
 guarantees:
+
+  # ============================================================
+  # INTEGRATION TEST GUARANTEES
+  # ============================================================
+
   - name: semantic-id-stability
     description: >
       Semantic IDs must be stable across re-analysis of unchanged code.
@@ -11,6 +20,15 @@ guarantees:
     test: test/integration/semantic-id-stability.test.js
     severity: error
 
+  # ============================================================
+  # TIER 1: STRUCTURAL CONTAINMENT (ERROR)
+  # Every code entity must be connected to its structural parent.
+  # A node without a parent is a data quality bug in the analysis
+  # pipeline — the node was created but never linked into the tree.
+  # ============================================================
+
+  # --- Base types: incoming CONTAINS ---
+
   - name: function-has-contains
     description: >
       Every FUNCTION node must have at least one incoming CONTAINS edge
@@ -18,3 +36,342 @@ guarantees:
     check: datalog
     rule: 'violation(X) :- node(X, "FUNCTION"), \+ edge(_, X, "CONTAINS").'
     severity: error
+
+  - name: class-has-contains
+    description: >
+      Every CLASS node must have an incoming CONTAINS edge
+      from its parent MODULE.
+    check: datalog
+    rule: 'violation(X) :- node(X, "CLASS"), \+ edge(_, X, "CONTAINS").'
+    severity: error
+
+  - name: variable-has-contains
+    description: >
+      Every VARIABLE node must have an incoming CONTAINS edge
+      from its parent MODULE, FUNCTION, or SCOPE.
+    check: datalog
+    rule: 'violation(X) :- node(X, "VARIABLE"), \+ edge(_, X, "CONTAINS").'
+    severity: error
+
+  - name: parameter-has-contains
+    description: >
+      Every PARAMETER node must have an incoming CONTAINS edge
+      from its parent FUNCTION.
+    check: datalog
+    rule: 'violation(X) :- node(X, "PARAMETER"), \+ edge(_, X, "CONTAINS").'
+    severity: error
+
+  - name: call-has-contains
+    description: >
+      Every CALL node must have an incoming CONTAINS edge
+      from its parent FUNCTION, MODULE, or SCOPE.
+    check: datalog
+    rule: 'violation(X) :- node(X, "CALL"), \+ edge(_, X, "CONTAINS").'
+    severity: error
+
+  - name: import-has-contains
+    description: >
+      Every IMPORT node must have an incoming CONTAINS edge
+      from its parent MODULE.
+    check: datalog
+    rule: 'violation(X) :- node(X, "IMPORT"), \+ edge(_, X, "CONTAINS").'
+    severity: error
+
+  - name: export-has-contains
+    description: >
+      Every EXPORT node must have an incoming CONTAINS edge
+      from its parent MODULE.
+    check: datalog
+    rule: 'violation(X) :- node(X, "EXPORT"), \+ edge(_, X, "CONTAINS").'
+    severity: error
+
+  - name: expression-has-contains
+    description: >
+      Every EXPRESSION node must have an incoming CONTAINS edge.
+      Even terminal expressions (literals in expressions, operator results)
+      are structurally contained by their parent scope or function.
+    check: datalog
+    rule: 'violation(X) :- node(X, "EXPRESSION"), \+ edge(_, X, "CONTAINS").'
+    severity: error
+
+  - name: literal-has-contains
+    description: >
+      Every LITERAL node must have an incoming CONTAINS edge.
+      Even terminal values like 42 or "hello" are contained by
+      their parent scope, function, or object literal.
+    check: datalog
+    rule: 'violation(X) :- node(X, "LITERAL"), \+ edge(_, X, "CONTAINS").'
+    severity: error
+
+  - name: loop-has-contains
+    description: >
+      Every LOOP node must have an incoming CONTAINS edge
+      from its parent FUNCTION, MODULE, or SCOPE.
+    check: datalog
+    rule: 'violation(X) :- node(X, "LOOP"), \+ edge(_, X, "CONTAINS").'
+    severity: error
+
+  - name: branch-has-contains
+    description: >
+      Every BRANCH node (if/switch/ternary) must have an incoming
+      CONTAINS edge from its parent FUNCTION, MODULE, or SCOPE.
+    check: datalog
+    rule: 'violation(X) :- node(X, "BRANCH"), \+ edge(_, X, "CONTAINS").'
+    severity: error
+
+  - name: try-has-contains
+    description: >
+      Every TRY_BLOCK node must have an incoming CONTAINS edge
+      from its parent FUNCTION or SCOPE.
+    check: datalog
+    rule: 'violation(X) :- node(X, "TRY_BLOCK"), \+ edge(_, X, "CONTAINS").'
+    severity: error
+
+  - name: property-access-has-contains
+    description: >
+      Every PROPERTY_ACCESS node must have an incoming CONTAINS edge
+      from its parent FUNCTION, MODULE, or SCOPE.
+    check: datalog
+    rule: 'violation(X) :- node(X, "PROPERTY_ACCESS"), \+ edge(_, X, "CONTAINS").'
+    severity: error
+
+  - name: property-assignment-has-contains
+    description: >
+      Every PROPERTY_ASSIGNMENT node must have an incoming CONTAINS edge
+      from its parent FUNCTION, MODULE, or SCOPE.
+    check: datalog
+    rule: 'violation(X) :- node(X, "PROPERTY_ASSIGNMENT"), \+ edge(_, X, "CONTAINS").'
+    severity: error
+
+  - name: side-effect-has-contains
+    description: >
+      Every SIDE_EFFECT node must have an incoming CONTAINS edge.
+      Side effects are always produced inside a function or module.
+    check: datalog
+    rule: 'violation(X) :- node(X, "SIDE_EFFECT"), \+ edge(_, X, "CONTAINS").'
+    severity: error
+
+  # --- Special structural links (non-CONTAINS parent edges) ---
+
+  - name: method-has-class
+    description: >
+      Every METHOD node must have an incoming HAS_MEMBER edge
+      from its parent CLASS. A METHOD without a CLASS is orphaned.
+    check: datalog
+    rule: 'violation(X) :- node(X, "METHOD"), \+ edge(_, X, "HAS_MEMBER").'
+    severity: error
+
+  - name: case-has-branch
+    description: >
+      Every CASE node must have an incoming HAS_CASE or HAS_DEFAULT
+      edge from its parent BRANCH. A CASE without a BRANCH is orphaned.
+    check: datalog
+    rule: 'violation(X) :- node(X, "CASE"), \+ edge(_, X, "HAS_CASE"), \+ edge(_, X, "HAS_DEFAULT").'
+    severity: error
+
+  - name: catch-has-try
+    description: >
+      Every CATCH_BLOCK must have an incoming HAS_CATCH edge
+      from its parent TRY_BLOCK. A catch without a try is orphaned.
+    check: datalog
+    rule: 'violation(X) :- node(X, "CATCH_BLOCK"), \+ edge(_, X, "HAS_CATCH").'
+    severity: error
+
+  - name: finally-has-try
+    description: >
+      Every FINALLY_BLOCK must have an incoming HAS_FINALLY edge
+      from its parent TRY_BLOCK. A finally without a try is orphaned.
+    check: datalog
+    rule: 'violation(X) :- node(X, "FINALLY_BLOCK"), \+ edge(_, X, "HAS_FINALLY").'
+    severity: error
+
+  - name: scope-has-parent
+    description: >
+      Every SCOPE node must have at least one incoming structural edge:
+      HAS_SCOPE (from function), HAS_BODY (from loop/try),
+      HAS_CONSEQUENT or HAS_ALTERNATE (from branch), or CONTAINS
+      (from parent scope). A SCOPE without any of these is orphaned.
+    check: datalog
+    rule: >-
+      violation(X) :- node(X, "SCOPE"),
+        \+ edge(_, X, "HAS_SCOPE"),
+        \+ edge(_, X, "HAS_BODY"),
+        \+ edge(_, X, "HAS_CONSEQUENT"),
+        \+ edge(_, X, "HAS_ALTERNATE"),
+        \+ edge(_, X, "CONTAINS").
+    severity: error
+
+  - name: module-has-children
+    description: >
+      Every MODULE node must have at least one outgoing CONTAINS edge.
+      A MODULE without children means the file was indexed but nothing
+      was extracted — either the file is empty (should not be indexed)
+      or the analysis pipeline failed to extract any entities.
+    check: datalog
+    rule: 'violation(X) :- node(X, "MODULE"), \+ edge(X, _, "CONTAINS").'
+    severity: error
+
+  # --- Namespaced types: structural containment ---
+  # Grouped by namespace. Each namespaced node must be CONTAINS'd
+  # by its parent FUNCTION or MODULE.
+
+  - name: http-nodes-orphan
+    description: >
+      Every http:route and http:request node must have an incoming
+      CONTAINS edge from its parent FUNCTION or MODULE.
+    check: datalog
+    rule: |
+      violation(X) :- node(X, "http:route"), \+ edge(_, X, "CONTAINS").
+      violation(X) :- node(X, "http:request"), \+ edge(_, X, "CONTAINS").
+    severity: error
+
+  - name: express-nodes-orphan
+    description: >
+      Every Express.js node (router, middleware, mount) must have
+      an incoming CONTAINS edge.
+    check: datalog
+    rule: |
+      violation(X) :- node(X, "express:router"), \+ edge(_, X, "CONTAINS").
+      violation(X) :- node(X, "express:middleware"), \+ edge(_, X, "CONTAINS").
+      violation(X) :- node(X, "express:mount"), \+ edge(_, X, "CONTAINS").
+    severity: error
+
+  - name: socketio-nodes-orphan
+    description: >
+      Every Socket.IO node (emit, on, namespace) must have
+      an incoming CONTAINS edge.
+    check: datalog
+    rule: |
+      violation(X) :- node(X, "socketio:emit"), \+ edge(_, X, "CONTAINS").
+      violation(X) :- node(X, "socketio:on"), \+ edge(_, X, "CONTAINS").
+      violation(X) :- node(X, "socketio:namespace"), \+ edge(_, X, "CONTAINS").
+    severity: error
+
+  - name: db-nodes-orphan
+    description: >
+      Every database node (query, connection) must have
+      an incoming CONTAINS edge.
+    check: datalog
+    rule: |
+      violation(X) :- node(X, "db:query"), \+ edge(_, X, "CONTAINS").
+      violation(X) :- node(X, "db:connection"), \+ edge(_, X, "CONTAINS").
+    severity: error
+
+  - name: redis-nodes-orphan
+    description: >
+      Every Redis operation node must have an incoming CONTAINS edge.
+    check: datalog
+    rule: |
+      violation(X) :- node(X, "redis:read"), \+ edge(_, X, "CONTAINS").
+      violation(X) :- node(X, "redis:write"), \+ edge(_, X, "CONTAINS").
+      violation(X) :- node(X, "redis:delete"), \+ edge(_, X, "CONTAINS").
+      violation(X) :- node(X, "redis:publish"), \+ edge(_, X, "CONTAINS").
+      violation(X) :- node(X, "redis:subscribe"), \+ edge(_, X, "CONTAINS").
+      violation(X) :- node(X, "redis:transaction"), \+ edge(_, X, "CONTAINS").
+      violation(X) :- node(X, "redis:connection"), \+ edge(_, X, "CONTAINS").
+    severity: error
+
+  - name: fs-nodes-orphan
+    description: >
+      Every filesystem operation node must have an incoming CONTAINS edge.
+    check: datalog
+    rule: |
+      violation(X) :- node(X, "fs:read"), \+ edge(_, X, "CONTAINS").
+      violation(X) :- node(X, "fs:write"), \+ edge(_, X, "CONTAINS").
+      violation(X) :- node(X, "fs:operation"), \+ edge(_, X, "CONTAINS").
+    severity: error
+
+  - name: net-nodes-orphan
+    description: >
+      Every network node (request, tcp, unix socket) must have
+      an incoming CONTAINS edge.
+    check: datalog
+    rule: |
+      violation(X) :- node(X, "net:request"), \+ edge(_, X, "CONTAINS").
+      violation(X) :- node(X, "net:stdio"), \+ edge(_, X, "CONTAINS").
+      violation(X) :- node(X, "net:tcp-connection"), \+ edge(_, X, "CONTAINS").
+      violation(X) :- node(X, "net:tcp-server"), \+ edge(_, X, "CONTAINS").
+      violation(X) :- node(X, "os:unix-socket"), \+ edge(_, X, "CONTAINS").
+      violation(X) :- node(X, "os:unix-server"), \+ edge(_, X, "CONTAINS").
+    severity: error
+
+  - name: event-nodes-orphan
+    description: >
+      Every event node (listener, emit) must have an incoming
+      CONTAINS edge.
+    check: datalog
+    rule: |
+      violation(X) :- node(X, "event:listener"), \+ edge(_, X, "CONTAINS").
+      violation(X) :- node(X, "event:emit"), \+ edge(_, X, "CONTAINS").
+    severity: error
+
+  # ============================================================
+  # TIER 2: SEMANTIC INTEGRITY (WARNING)
+  # Nodes that exist but miss the edge that gives them meaning.
+  # The node is structurally connected but semantically hollow —
+  # it can't fulfill its purpose without the defining edge.
+  # ============================================================
+
+  - name: import-has-source
+    description: >
+      Every IMPORT node must have an outgoing IMPORTS_FROM edge
+      to its source MODULE. Without it, dependency tracing is blind —
+      we know something is imported but not from where.
+    check: datalog
+    rule: 'violation(X) :- node(X, "IMPORT"), \+ edge(X, _, "IMPORTS_FROM").'
+    severity: warning
+
+  - name: export-has-target
+    description: >
+      Every EXPORT node must have an outgoing EXPORTS edge
+      to the entity it exports (FUNCTION, VARIABLE, CLASS, etc.).
+      Without it, the export is a dead declaration.
+    check: datalog
+    rule: 'violation(X) :- node(X, "EXPORT"), \+ edge(X, _, "EXPORTS").'
+    severity: warning
+
+  - name: loop-has-body
+    description: >
+      Every LOOP node must have an outgoing HAS_BODY edge to its
+      body SCOPE. Without it, the loop's contents are invisible
+      to control flow and data flow analysis.
+    check: datalog
+    rule: 'violation(X) :- node(X, "LOOP"), \+ edge(X, _, "HAS_BODY").'
+    severity: warning
+
+  - name: try-has-handler
+    description: >
+      Every TRY_BLOCK must have at least one outgoing HAS_CATCH
+      or HAS_FINALLY edge. A try without any error handling
+      breaks async error flow analysis.
+    check: datalog
+    rule: 'violation(X) :- node(X, "TRY_BLOCK"), \+ edge(X, _, "HAS_CATCH"), \+ edge(X, _, "HAS_FINALLY").'
+    severity: warning
+
+  - name: switch-has-cases
+    description: >
+      Every switch BRANCH must have at least one outgoing HAS_CASE
+      edge. A switch without cases is an empty control structure.
+    check: datalog
+    rule: 'violation(X) :- node(X, "BRANCH"), attr(X, "branchType", "switch"), \+ edge(X, _, "HAS_CASE").'
+    severity: warning
+
+  - name: if-has-consequent
+    description: >
+      Every if BRANCH must have an outgoing HAS_CONSEQUENT edge
+      to its then-block SCOPE. An if without a then-branch
+      means the branch body is invisible to analysis.
+    check: datalog
+    rule: 'violation(X) :- node(X, "BRANCH"), attr(X, "branchType", "if"), \+ edge(X, _, "HAS_CONSEQUENT").'
+    severity: warning
+
+  # --- Namespaced semantic integrity ---
+
+  - name: route-has-handler
+    description: >
+      Every http:route must have an outgoing ROUTES_TO or HANDLED_BY
+      edge to its handler FUNCTION. A route without a handler means
+      we know the endpoint exists but can't trace what code runs.
+    check: datalog
+    rule: 'violation(X) :- node(X, "http:route"), \+ edge(X, _, "ROUTES_TO"), \+ edge(X, _, "HANDLED_BY").'
+    severity: warning
