@@ -122,13 +122,14 @@ async fn main() -> Result<()> {
             }
 
             // 3b. Partition by language
-            let (js_files, hs_files, rs_files, java_files, kotlin_files) = config::partition_by_language(&changed_files);
+            let (js_files, hs_files, rs_files, java_files, kotlin_files, py_files) = config::partition_by_language(&changed_files);
             tracing::info!(
                 js = js_files.len(),
                 haskell = hs_files.len(),
                 rust = rs_files.len(),
                 java = java_files.len(),
                 kotlin = kotlin_files.len(),
+                python = py_files.len(),
                 "Partitioned files by language"
             );
 
@@ -168,6 +169,13 @@ async fn main() -> Result<()> {
                 tracing::info!(count = kotlin_files.len(), "Analyzing Kotlin files");
                 let kotlin_results = analyzer::analyze_kotlin_files_parallel_pooled(&kotlin_files, jobs, &cfg.analyzers).await;
                 results.extend(kotlin_results);
+            }
+
+            // 4f. Analyze Python files (rustpython-parser → python-analyzer daemon pool)
+            if !py_files.is_empty() {
+                tracing::info!(count = py_files.len(), "Analyzing Python files");
+                let py_results = analyzer::analyze_python_files_parallel_pooled(&py_files, jobs, &cfg.analyzers).await;
+                results.extend(py_results);
             }
 
             // 5. Relativize paths: convert absolute → relative (to project root)
@@ -729,7 +737,63 @@ async fn main() -> Result<()> {
                 }
             }
 
-            // 8e. Run JVM cross-language resolution (Java <-> Kotlin, after both per-language resolvers)
+            // 8e. Run Python resolution (imports, types, calls — single pass)
+            if !py_files.is_empty() {
+                let py_resolve_nodes = analyzer::collect_resolve_nodes_for_lang(&results, config::Language::Python);
+                if !py_resolve_nodes.is_empty() {
+                    tracing::info!(
+                        nodes = py_resolve_nodes.len(),
+                        "Running Python resolution"
+                    );
+
+                    let py_resolve_pool_config = process_pool::PoolConfig {
+                        command: cfg.analyzers.python_resolve_path(),
+                        args: vec!["--daemon".to_string()],
+                        ..process_pool::PoolConfig::default()
+                    };
+
+                    match process_pool::ProcessPool::new(py_resolve_pool_config, 1) {
+                        Ok(py_resolve_pool) => {
+                            let mut py_resolve_output = plugin::run_resolve_with_nodes(
+                                "python-all",
+                                &py_resolve_nodes,
+                                &[],
+                                &py_resolve_pool,
+                            )
+                            .await
+                            .context("Python resolution failed")?;
+                            plugin::validate_plugin_output(&py_resolve_output)?;
+                            plugin::stamp_metadata(&mut py_resolve_output, "python-resolution", generation);
+
+                            let py_resolve_files: Vec<String> = py_resolve_output
+                                .nodes
+                                .iter()
+                                .filter_map(|n| n.file.clone())
+                                .collect::<std::collections::HashSet<_>>()
+                                .into_iter()
+                                .collect();
+                            rfdb.commit_batch(&py_resolve_files, &py_resolve_output.nodes, &py_resolve_output.edges, false)
+                                .await
+                                .context("Failed to commit Python resolution output")?;
+
+                            tracing::info!(
+                                nodes = py_resolve_output.nodes.len(),
+                                edges = py_resolve_output.edges.len(),
+                                "Python resolution complete"
+                            );
+
+                            py_resolve_pool.shutdown().await;
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to create Python resolve pool, skipping Python resolution: {e}"
+                            );
+                        }
+                    }
+                }
+            }
+
+            // 8f. Run JVM cross-language resolution (Java <-> Kotlin, after both per-language resolvers)
             if !java_files.is_empty() && !kotlin_files.is_empty() {
                 let jvm_resolve_nodes = analyzer::collect_resolve_nodes_for_jvm(&results);
                 if !jvm_resolve_nodes.is_empty() {
@@ -785,7 +849,7 @@ async fn main() -> Result<()> {
                 }
             }
 
-            // 8f. Run user-defined plugins via DAG (if any non-default plugins configured)
+            // 8g. Run user-defined plugins via DAG (if any non-default plugins configured)
             let user_plugins: Vec<_> = cfg
                 .plugins
                 .iter()
@@ -833,13 +897,14 @@ async fn main() -> Result<()> {
 
             // 9. Summary
             println!(
-                "Analyzed {} files ({} JS, {} Haskell, {} Rust, {} Java, {} Kotlin, {} skipped): {} nodes, {} edges, {} errors",
+                "Analyzed {} files ({} JS, {} Haskell, {} Rust, {} Java, {} Kotlin, {} Python, {} skipped): {} nodes, {} edges, {} errors",
                 changed_files.len(),
                 js_files.len(),
                 hs_files.len(),
                 rs_files.len(),
                 java_files.len(),
                 kotlin_files.len(),
+                py_files.len(),
                 unchanged_files.len(),
                 total_nodes,
                 total_edges,

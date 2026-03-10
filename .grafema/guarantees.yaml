@@ -375,3 +375,12 @@ guarantees:
     check: datalog
     rule: 'violation(X) :- node(X, "http:route"), \+ edge(X, _, "ROUTES_TO"), \+ edge(X, _, "HANDLED_BY").'
     severity: warning
+
+  - name: unsafe-dynamic-has-contains
+    description: >
+      Every UNSAFE_DYNAMIC node must have an incoming CONTAINS edge.
+      This ensures unsafe dynamic constructs (eval, exec, getattr, etc.)
+      are always traceable to their containing scope.
+    check: datalog
+    rule: 'violation(X) :- node(X, "UNSAFE_DYNAMIC"), \+ edge(_, X, "CONTAINS").'
+    severity: error

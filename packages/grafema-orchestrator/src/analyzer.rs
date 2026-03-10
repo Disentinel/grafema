@@ -1895,6 +1895,15 @@ const RESOLVE_NODE_TYPES: &[&str] = &[
     "ATTRIBUTE",
     "CLOSURE",
     "TYPE_PARAMETER",
+    // Python types
+    "UNSAFE_DYNAMIC",
+    // Control flow (shared across languages)
+    "LOOP",
+    "BRANCH",
+    "TRY_BLOCK",
+    "CATCH_BLOCK",
+    "FINALLY_BLOCK",
+    "CASE",
 ];
 
 /// Collect nodes relevant for cross-file resolution from analysis results.
@@ -2072,6 +2081,250 @@ pub async fn analyze_files_parallel(
                     file: PathBuf::new(),
                     analysis: None,
                     errors: vec![format!("Analysis task failed: {e}")],
+                });
+            }
+        }
+    }
+
+    results
+}
+
+// ---------------------------------------------------------------------------
+// Python single-file analysis (spawn mode)
+// ---------------------------------------------------------------------------
+
+/// Analyze a single Python file: parse with rustpython-parser, send AST to python-analyzer daemon.
+pub async fn analyze_python_file(file: &Path, ast_json: &str, analyzer_bin: &str) -> Result<FileAnalysis> {
+    let file_str = file.display().to_string();
+
+    let mut child = tokio::process::Command::new(analyzer_bin)
+        .arg(&file_str)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .with_context(|| format!("Failed to spawn grafema-python-analyzer for {file_str}"))?;
+
+    let payload = serde_json::json!({
+        "file": file_str,
+        "ast": serde_json::from_str::<serde_json::Value>(ast_json)
+            .unwrap_or(serde_json::Value::Null),
+    });
+
+    {
+        let stdin = child.stdin.as_mut()
+            .context("Failed to open stdin for grafema-python-analyzer")?;
+        stdin.write_all(payload.to_string().as_bytes()).await
+            .with_context(|| format!("Failed to write AST to grafema-python-analyzer stdin for {file_str}"))?;
+        stdin.shutdown().await
+            .with_context(|| format!("Failed to close grafema-python-analyzer stdin for {file_str}"))?;
+    }
+
+    let output = child.wait_with_output().await
+        .with_context(|| format!("Failed to wait for grafema-python-analyzer for {file_str}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let code = output.status.code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "signal".to_string());
+        anyhow::bail!("grafema-python-analyzer exited with code {code} for {file_str}: {stderr}");
+    }
+
+    let stdout = &output.stdout;
+    let analysis: FileAnalysis = serde_json::from_slice(stdout).with_context(|| {
+        let preview = String::from_utf8_lossy(&stdout[..stdout.len().min(200)]);
+        format!("Failed to parse grafema-python-analyzer output for {file_str}: {preview}")
+    })?;
+
+    Ok(analysis)
+}
+
+// ---------------------------------------------------------------------------
+// Python daemon-mode analysis via ProcessPool
+// ---------------------------------------------------------------------------
+
+/// Analyze a single Python file via a persistent daemon process pool.
+pub async fn analyze_python_file_pooled(
+    pool: &ProcessPool,
+    file: &Path,
+    ast_json: &str,
+) -> Result<FileAnalysis> {
+    let file_str = file.display().to_string();
+
+    let escaped_file = serde_json::to_string(&file_str)
+        .with_context(|| format!("Failed to escape file path for {file_str}"))?;
+    let payload = format!(r#"{{"file":{},"ast":{}}}"#, escaped_file, ast_json);
+
+    let response_bytes = pool
+        .request(payload.as_bytes())
+        .await
+        .with_context(|| format!("Pool request failed for {file_str}"))?;
+
+    let response: DaemonResponse = serde_json::from_slice(&response_bytes)
+        .with_context(|| format!("Failed to decode response for {file_str}"))?;
+
+    match response.status.as_str() {
+        "ok" => response
+            .result
+            .with_context(|| format!("Daemon returned ok but no result for {file_str}")),
+        "error" => {
+            let msg = response.error.unwrap_or_else(|| "unknown error".to_string());
+            bail!("grafema-python-analyzer daemon error for {file_str}: {msg}")
+        }
+        other => bail!("Unknown daemon response status '{other}' for {file_str}"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Python parallel multi-file analysis
+// ---------------------------------------------------------------------------
+
+/// Analyze multiple Python files in parallel using persistent daemon processes.
+pub async fn analyze_python_files_parallel_pooled(
+    files: &[PathBuf],
+    jobs: usize,
+    analyzers: &crate::config::AnalyzerBinaries,
+) -> Vec<AnalysisResult> {
+    let pool_config = PoolConfig {
+        command: analyzers.python_path(),
+        args: vec!["--daemon".to_string()],
+        ..PoolConfig::default()
+    };
+
+    let pool = match ProcessPool::new(pool_config, jobs.max(1)) {
+        Ok(p) => Arc::new(p),
+        Err(e) => {
+            tracing::warn!(
+                "Failed to create grafema-python-analyzer pool, falling back to spawn-per-file: {e}"
+            );
+            return analyze_python_files_parallel(files, jobs, &analyzers.python_path()).await;
+        }
+    };
+
+    let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
+    let total = files.len();
+
+    let handles: Vec<_> = files
+        .iter()
+        .enumerate()
+        .map(|(idx, file)| {
+            let sem = Arc::clone(&semaphore);
+            let pool = Arc::clone(&pool);
+            let file = file.clone();
+            let file_display = file.display().to_string();
+
+            tokio::spawn(async move {
+                let _permit = sem.acquire().await.expect("Semaphore closed unexpectedly");
+                tracing::info!("[{}/{}] Analyzing Python file {}", idx + 1, total, file_display);
+
+                let mut errors = Vec::new();
+
+                // Step 1: Parse with rustpython-parser (CPU-bound -> spawn_blocking)
+                let parse_result = {
+                    let file_clone = file.clone();
+                    tokio::task::spawn_blocking(move || {
+                        crate::python_parser::parse_python_file(&file_clone)
+                    }).await
+                };
+
+                let ast_json = match parse_result {
+                    Ok(Ok(json)) => json,
+                    Ok(Err(e)) => {
+                        errors.push(format!("Python parse failed for {file_display}: {e}"));
+                        return AnalysisResult { file, analysis: None, errors };
+                    }
+                    Err(e) => {
+                        errors.push(format!("Python parse task panicked for {file_display}: {e}"));
+                        return AnalysisResult { file, analysis: None, errors };
+                    }
+                };
+
+                // Step 2: Send to daemon pool
+                match analyze_python_file_pooled(&pool, &file, &ast_json).await {
+                    Ok(analysis) => AnalysisResult { file, analysis: Some(analysis), errors },
+                    Err(e) => {
+                        errors.push(format!("Python analyzer failed for {file_display}: {e}"));
+                        AnalysisResult { file, analysis: None, errors }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        match handle.await {
+            Ok(result) => results.push(result),
+            Err(e) => {
+                results.push(AnalysisResult {
+                    file: PathBuf::new(),
+                    analysis: None,
+                    errors: vec![format!("Python analysis task failed: {e}")],
+                });
+            }
+        }
+    }
+
+    pool.shutdown().await;
+    results
+}
+
+/// Fallback: analyze Python files in parallel by spawning per-file processes.
+pub async fn analyze_python_files_parallel(
+    files: &[PathBuf],
+    jobs: usize,
+    analyzer_bin: &str,
+) -> Vec<AnalysisResult> {
+    let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
+    let total = files.len();
+    let analyzer_bin = analyzer_bin.to_string();
+
+    let handles: Vec<_> = files
+        .iter()
+        .enumerate()
+        .map(|(idx, file)| {
+            let sem = Arc::clone(&semaphore);
+            let file = file.clone();
+            let file_display = file.display().to_string();
+            let bin = analyzer_bin.clone();
+
+            tokio::spawn(async move {
+                let _permit = sem.acquire().await.expect("Semaphore closed unexpectedly");
+                tracing::info!("[{}/{}] Analyzing Python file {}", idx + 1, total, file_display);
+
+                let mut errors = Vec::new();
+
+                // Step 1: Parse with rustpython-parser
+                let ast_json = match crate::python_parser::parse_python_file(&file) {
+                    Ok(json) => json,
+                    Err(e) => {
+                        errors.push(format!("Python parse failed for {file_display}: {e}"));
+                        return AnalysisResult { file, analysis: None, errors };
+                    }
+                };
+
+                // Step 2: Spawn analyzer
+                match analyze_python_file(&file, &ast_json, &bin).await {
+                    Ok(analysis) => AnalysisResult { file, analysis: Some(analysis), errors },
+                    Err(e) => {
+                        errors.push(format!("Python analyzer failed for {file_display}: {e}"));
+                        AnalysisResult { file, analysis: None, errors }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        match handle.await {
+            Ok(result) => results.push(result),
+            Err(e) => {
+                results.push(AnalysisResult {
+                    file: PathBuf::new(),
+                    analysis: None,
+                    errors: vec![format!("Python analysis task failed: {e}")],
                 });
             }
         }
@@ -2474,11 +2727,12 @@ mod tests {
         }];
 
         let nodes = collect_resolve_nodes(&results);
-        // Should include IMPORT_BINDING, FUNCTION, and CALL; skip REFERENCE
-        assert_eq!(nodes.len(), 3);
+        // Should include IMPORT_BINDING, FUNCTION, REFERENCE, and CALL
+        assert_eq!(nodes.len(), 4);
         assert_eq!(nodes[0]["type"], "IMPORT_BINDING");
         assert_eq!(nodes[1]["type"], "FUNCTION");
-        assert_eq!(nodes[2]["type"], "CALL");
+        assert_eq!(nodes[2]["type"], "REFERENCE");
+        assert_eq!(nodes[3]["type"], "CALL");
     }
 
     #[test]
