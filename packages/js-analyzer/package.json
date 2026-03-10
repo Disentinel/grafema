@@ -1,10 +1,5 @@
 {
-  "name": "@grafema/core-v3",
+  "name": "@grafema/js-analyzer",
   "version": "0.0.1",
-  "private": true,
-  "type": "module",
-  "dependencies": {
-    "oxc-parser": "^0.96.0",
-    "@oxc-project/types": "^0.96.0"
-  }
+  "private": true
 }
