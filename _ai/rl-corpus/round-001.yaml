@@ -1,0 +1,206 @@
+# Round 001 — 2026-03-10
+# Target: Grafema own codebase (888K nodes)
+# Files: formatNode.ts, diagnostics/index.ts, grafemaClient.ts, query.ts
+
+meta:
+  date: "2026-03-10"
+  graph_nodes: 997055
+  graph_edges: 996788
+  questioner_tokens: 30205
+  answerer_tokens: 103578
+  answerer_tool_calls: 53
+  duration_ms: 174868
+
+summary:
+  total: 10
+  correct: 8
+  partial: 2
+  wrong: 0
+  impossible: 0
+  resolution_rate: 0.80
+  by_level:
+    L1: { total: 2, correct: 2, rate: 1.00 }
+    L2: { total: 3, correct: 2, partial: 1, rate: 0.67 }
+    L3: { total: 2, correct: 2, rate: 1.00 }
+    L4: { total: 3, correct: 2, partial: 1, rate: 0.67 }
+
+gaps:
+  - id: GAP-001
+    question: Q4
+    summary: "NOT A GAP — Answerer strategy failure"
+    detail: |
+      CALL-><obj>.split HAS PASSES_ARGUMENT edge to LITERAL '#'.
+      Data exists. Answerer just didn't drill into PASSES_ARGUMENT on
+      the specific CALL node. Fix: improve Answerer prompt with L4
+      drilling strategy (trace PASSES_ARGUMENT on CALL nodes).
+    severity: none
+    status: resolved-false-positive
+
+  - id: GAP-002
+    question: Q9
+    summary: "Object property key names not preserved (FIXED)"
+    detail: |
+      queryResolvers = { node: ..., bfs: ... } — graph had 15 HAS_PROPERTY
+      edges with index: 0..14 but property key names were lost. All target
+      functions named "<expression>". Answerer correctly worked around via
+      _args vs args parameter naming.
+
+      FIX: Added key extraction in ruleObjectExpression (Expressions.hs:319-336)
+      and rulePropertyDefinition (Declarations.hs:280-283). Now HAS_PROPERTY
+      edges carry "key" metadata with the property name (e.g., "key": "node").
+      Verified: all 15 queryResolvers properties correctly named.
+    severity: important
+    linear_issue: REG-573
+    status: fixed
+
+questions:
+  - id: Q1
+    level: L1
+    target_file: packages/cli/src/utils/formatNode.ts
+    question: "Does formatNode.ts handle HTTP route nodes differently from other node types?"
+    ground_truth: |
+      Yes. getNodeDisplayName (lines 50-75) has a switch on node.type with
+      'http:route' (returns 'METHOD path') and 'http:request' (returns 'METHOD url').
+      Other types fall through to node.name or semantic ID fallback.
+    answer: |
+      Yes. Switch statement on node.type with 'http:route' case (line 1423)
+      and 'http:request' case (line 1589). Default logic checks name starting
+      with '{', semantic ID length, falls back to node.name or node.id.
+    tools_used: [get_file_overview, get_context, find_nodes]
+    confidence: high
+    verdict: CORRECT
+
+  - id: Q2
+    level: L2
+    target_file: packages/util/src/diagnostics/index.ts
+    question: "What does the diagnostics index module export?"
+    ground_truth: |
+      Re-exports from 4 submodules: DiagnosticCollector, DiagnosticReporter,
+      DiagnosticWriter, + categories (DIAGNOSTIC_CATEGORIES, CODE_TO_CATEGORY,
+      getCategoryForCode, getCodesForCategory). Total 15 named exports including types.
+    answer: |
+      15 EXPORT_BINDING nodes from 4 source modules: DiagnosticCollector.js (3),
+      DiagnosticReporter.js (5), DiagnosticWriter.js (1), categories.js (7).
+      Pure barrel re-export module.
+    tools_used: [get_file_overview, find_nodes]
+    confidence: high
+    verdict: CORRECT
+
+  - id: Q3
+    level: L3
+    target_file: packages/cli/src/utils/formatNode.ts
+    question: "What function does formatNodeDisplay call to determine the display name?"
+    ground_truth: |
+      formatNodeDisplay calls getNodeDisplayName(node) at line 90.
+      Also calls formatLocation(node.file, node.line, projectPath) at line 98.
+    answer: |
+      CALLS edge from formatNodeDisplay → getNodeDisplayName at line 2585.
+      Also calls formatLocation, lines.push, lines.join.
+    tools_used: [get_file_overview, get_context]
+    confidence: high
+    verdict: CORRECT
+
+  - id: Q4
+    level: L4
+    target_file: packages/cli/src/utils/formatNode.ts
+    question: "In getNodeDisplayName, where does the fallback name come from when node.name starts with '{'?"
+    ground_truth: |
+      Splits node.id by '#'. If multiple parts, returns parts[1].
+      If single part, returns full node.id (lines 70-74).
+    answer: |
+      Knows split + fallback pattern, infers "splitting semantic ID" but
+      cannot determine split character is '#'. Says medium confidence.
+    tools_used: [get_context, get_node]
+    confidence: medium
+    verdict: PARTIAL
+    gap: GAP-001
+
+  - id: Q5
+    level: L1
+    target_file: packages/vscode/src/grafemaClient.ts
+    question: "What transport protocols does GrafemaClientManager support?"
+    ground_truth: |
+      Unix socket (default, RFDBClient) + WebSocket (RFDBWebSocketClient).
+      connect() reads 'grafema.rfdbTransport' VS Code config to choose.
+    answer: |
+      Both identified from IMPORT_BINDING nodes: RFDBClient + RFDBWebSocketClient
+      from @grafema/rfdb-client. connect() uses WebSocket path, tryConnect() for Unix.
+    tools_used: [get_file_overview, get_context, find_nodes]
+    confidence: high
+    verdict: CORRECT
+
+  - id: Q6
+    level: L2
+    target_file: packages/vscode/src/grafemaClient.ts
+    question: "What is the search order for finding the rfdb-server binary?"
+    ground_truth: |
+      (0) Explicit VS Code setting, (1) Bundled extension binary,
+      (2) GRAFEMA_RFDB_SERVER env var, (3) Monorepo dev paths (release+debug),
+      (4) @grafema/rfdb npm package, (5) null.
+    answer: |
+      7 RETURNS edges ordered by line number: (1) explicitBinaryPath,
+      (2) extensionBinary, (3) envBinary, (4) releaseBinary, (5) debugBinary,
+      (6) npmBinary, (7) null.
+    tools_used: [get_context, get_file_overview]
+    confidence: high
+    verdict: CORRECT
+    notes: "Elegant use of RETURNS edge ordering as proxy for early-return priority"
+
+  - id: Q7
+    level: L3
+    target_file: packages/vscode/src/grafemaClient.ts
+    question: "Who calls reconnect and what triggers it?"
+    ground_truth: |
+      (1) withReconnect() when operation fails (line 404, 416).
+      (2) startWatching()'s handleChange when ping fails after file change (line 462).
+    answer: |
+      3 CALL nodes for reconnect: 2 inside withReconnect (error recovery),
+      1 inside startWatching arrow callback (file-change/ping-failure).
+    tools_used: [find_nodes, get_context]
+    confidence: high
+    verdict: CORRECT
+
+  - id: Q8
+    level: L4
+    target_file: packages/api/src/resolvers/query.ts
+    question: "How does the reachability resolver determine if one node can reach another?"
+    ground_truth: |
+      BFS from source with maxDepth (default 10) via context.backend.bfs().
+      Checks reachable.includes(args.to), returns boolean.
+    answer: |
+      AWAITS→<obj>.bfs, RETURNS→reachable.includes.
+      BFS traversal then membership check.
+    tools_used: [get_context]
+    confidence: high
+    verdict: CORRECT
+
+  - id: Q9
+    level: L2
+    target_file: packages/api/src/resolvers/query.ts
+    question: "What does queryResolvers export, placeholders vs implemented?"
+    ground_truth: |
+      7 implemented: node, nodes, bfs, dfs, reachability, datalog, stats.
+      8 placeholders: analysisStatus, guarantees, guarantee, findCalls,
+      getFunctionDetails, findGuards, traceAlias, traceDataFlow.
+    answer: |
+      Correctly classified 7 implemented (indices 0-6) vs 8 placeholder (7-14)
+      by parameter naming (_args vs args) and call patterns.
+      BUT could not determine property key names.
+    tools_used: [get_neighbors, get_context]
+    confidence: high
+    verdict: PARTIAL
+    gap: GAP-002
+
+  - id: Q10
+    level: L4
+    target_file: packages/api/src/resolvers/query.ts
+    question: "In the datalog resolver, where does node data in enriched results come from?"
+    ground_truth: |
+      checkGuarantee() executes query. Searches for binding named 'X'.
+      xBinding.value used as nodeId. Loaded via context.loaders.node.load(String(nodeId)).
+    answer: |
+      checkGuarantee → bindings.map/find → <obj>.load (via Promise.all) →
+      Object.fromEntries for enriched results. Full data flow traced.
+    tools_used: [get_context]
+    confidence: high
+    verdict: CORRECT
