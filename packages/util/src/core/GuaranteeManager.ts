@@ -297,6 +297,9 @@ export class GuaranteeManager {
             file: (violatingNode as ModuleNode).file,
             line: (violatingNode as { line?: number }).line
           });
+        } else {
+          // Non-node-ID binding (e.g. attr() string value) — return raw binding as violation
+          enrichedViolations.push({ nodeId, type: 'raw_binding', name: nodeId });
         }
       }
     }

@@ -172,16 +172,23 @@ export async function handleQueryGraph(args: QueryGraphArgs): Promise<ToolResult
 
     const enrichedResults: unknown[] = [];
     for (const result of paginatedResults) {
-      const nodeId = result.bindings?.find((b: DatalogBinding) => b.name === 'X')?.value;
-      if (nodeId) {
-        const node = await db.getNode(nodeId);
+      const xBinding = result.bindings?.find((b: DatalogBinding) => b.name === 'X');
+      if (xBinding) {
+        const node = await db.getNode(xBinding.value);
         if (node) {
           enrichedResults.push({
             ...node,
-            id: nodeId,
+            id: xBinding.value,
             file: node.file,
             line: node.line,
           });
+        } else {
+          // Non-node-ID binding (e.g. attr() string value) — return raw bindings map
+          const bindingsMap: Record<string, string> = {};
+          for (const b of result.bindings!) {
+            bindingsMap[b.name] = b.value;
+          }
+          enrichedResults.push(bindingsMap);
         }
       }
     }

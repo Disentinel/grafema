@@ -164,17 +164,24 @@ export async function handleCheckInvariant(args: CheckInvariantArgs): Promise<To
 
     const enrichedViolations: unknown[] = [];
     for (const v of violations.slice(0, 20)) {
-      const nodeId = v.bindings?.find((b: any) => b.name === 'X')?.value;
-      if (nodeId) {
-        const node = await db.getNode(nodeId);
+      const xBinding = v.bindings?.find((b: { name: string; value: string }) => b.name === 'X');
+      if (xBinding) {
+        const node = await db.getNode(xBinding.value);
         if (node) {
           enrichedViolations.push({
-            id: nodeId,
+            id: xBinding.value,
             type: node.type,
             name: node.name,
             file: node.file,
             line: node.line,
           });
+        } else {
+          // Non-node-ID binding (e.g. attr() string value) — return raw bindings map
+          const bindingsMap: Record<string, string> = {};
+          for (const b of v.bindings!) {
+            bindingsMap[b.name] = b.value;
+          }
+          enrichedViolations.push(bindingsMap);
         }
       }
     }
