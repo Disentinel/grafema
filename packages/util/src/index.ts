@@ -223,5 +223,16 @@ export type {
   BuildNodeContextOptions,
 } from './queries/index.js';
 
+// Notation — DSL rendering engine
+export { EDGE_ARCHETYPE_MAP, lookupEdge, renderNotation, extractSubgraph, shortenName } from './notation/index.js';
+export type {
+  Archetype,
+  EdgeMapping,
+  DescribeOptions,
+  SubgraphData,
+  NotationBlock,
+  NotationLine,
+} from './notation/index.js';
+
 // Re-export types for convenience
 export type * from '@grafema/types';

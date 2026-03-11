@@ -14,3 +14,4 @@ export { handleGetDocumentation } from './documentation-handlers.js';
 export { handleReportIssue } from './issue-handlers.js';
 export { handleGetNode, handleGetNeighbors, handleTraverseGraph } from './graph-handlers.js';
 export { handleAddKnowledge, handleQueryKnowledge, handleQueryDecisions, handleSupersedeFact, handleGetKnowledgeStats, handleGitChurn, handleGitCoChange, handleGitOwnership, handleGitArchaeology } from './knowledge-handlers.js';
+export { handleDescribe } from './notation-handlers.js';

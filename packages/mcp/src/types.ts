@@ -402,6 +402,14 @@ export interface SupersedeFactArgs {
   new_slug?: string;
 }
 
+// === DESCRIBE ARGS (DSL notation) ===
+
+export interface DescribeArgs {
+  target: string;
+  depth?: number;
+  perspective?: string;
+}
+
 // === GIT QUERY ARGS (REG-628) ===
 
 export interface GitChurnArgs {

@@ -73,6 +73,7 @@ import {
   handleGitCoChange,
   handleGitOwnership,
   handleGitArchaeology,
+  handleDescribe,
 } from './handlers/index.js';
 import type {
   ToolResult,
@@ -107,6 +108,7 @@ import type {
   GitCoChangeArgs,
   GitOwnershipArgs,
   GitArchaeologyArgs,
+  DescribeArgs,
 } from './types.js';
 
 /**
@@ -150,6 +152,7 @@ EXPLORATION WORKFLOW:
 5. To understand full context of a node → get_context (shows surrounding code, scope chain, relationships)
 6. For complex pattern queries → query_graph with Datalog (call get_documentation topic="queries" for syntax)
 7. To query architectural decisions and facts → query_knowledge, query_decisions, get_knowledge_stats
+8. To get a compact visual summary → describe (renders DSL notation with archetype-grouped operators)
 
 KEY INSIGHT: find_nodes supports partial matching on name and file fields.
 Example: find_nodes(file="auth/") returns all nodes in files matching "auth/".
@@ -328,6 +331,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
 
       case 'git_archaeology':
         result = await handleGitArchaeology(asArgs<GitArchaeologyArgs>(args));
+        break;
+
+      case 'describe':
+        result = await handleDescribe(asArgs<DescribeArgs>(args));
         break;
 
       default:
