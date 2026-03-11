@@ -185,6 +185,18 @@ pub struct AnalyzerBinaries {
     /// Path to Python resolve binary (default: "python-resolve")
     #[serde(default = "default_python_resolve")]
     pub python_resolve: String,
+
+    /// Path to Go analyzer binary (default: "grafema-go-analyzer")
+    #[serde(default = "default_go_analyzer")]
+    pub go: String,
+
+    /// Path to Go resolve binary (default: "go-resolve")
+    #[serde(default = "default_go_resolve")]
+    pub go_resolve: String,
+
+    /// Path to Go parser binary (default: "go-parser")
+    #[serde(default = "default_go_parser")]
+    pub go_parser: String,
 }
 
 impl Default for AnalyzerBinaries {
@@ -205,6 +217,9 @@ impl Default for AnalyzerBinaries {
             jvm_cross_resolve: default_jvm_cross_resolve(),
             python: default_python_analyzer(),
             python_resolve: default_python_resolve(),
+            go: default_go_analyzer(),
+            go_resolve: default_go_resolve(),
+            go_parser: default_go_parser(),
         }
     }
 }
@@ -334,6 +349,21 @@ impl AnalyzerBinaries {
     /// Resolved path for the Python resolve binary.
     pub fn python_resolve_path(&self) -> String {
         resolve_binary(&self.python_resolve)
+    }
+
+    /// Resolved path for the Go analyzer binary.
+    pub fn go_path(&self) -> String {
+        resolve_binary(&self.go)
+    }
+
+    /// Resolved path for the Go resolve binary.
+    pub fn go_resolve_path(&self) -> String {
+        resolve_binary(&self.go_resolve)
+    }
+
+    /// Resolved path for the Go parser binary.
+    pub fn go_parser_path(&self) -> String {
+        resolve_binary(&self.go_parser)
     }
 }
 
@@ -480,6 +510,18 @@ fn default_python_resolve() -> String {
     "python-resolve".to_string()
 }
 
+fn default_go_analyzer() -> String {
+    "grafema-go-analyzer".to_string()
+}
+
+fn default_go_resolve() -> String {
+    "go-resolve".to_string()
+}
+
+fn default_go_parser() -> String {
+    "go-parser".to_string()
+}
+
 /// Language detection based on file extension.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Language {
@@ -489,6 +531,7 @@ pub enum Language {
     Java,
     Kotlin,
     Python,
+    Go,
 }
 
 /// Detect language from file extension.
@@ -502,18 +545,20 @@ pub fn detect_language(path: &Path) -> Option<Language> {
         "java" => Some(Language::Java),
         "kt" | "kts" => Some(Language::Kotlin),
         "py" | "pyi" => Some(Language::Python),
+        "go" => Some(Language::Go),
         _ => None,
     }
 }
 
 /// Partition files by detected language.
-pub fn partition_by_language(files: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>) {
+pub fn partition_by_language(files: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>) {
     let mut js_files = Vec::new();
     let mut hs_files = Vec::new();
     let mut rs_files = Vec::new();
     let mut java_files = Vec::new();
     let mut kotlin_files = Vec::new();
     let mut py_files = Vec::new();
+    let mut go_files = Vec::new();
     for file in files {
         match detect_language(file) {
             Some(Language::JavaScript) => js_files.push(file.clone()),
@@ -522,10 +567,11 @@ pub fn partition_by_language(files: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>, 
             Some(Language::Java) => java_files.push(file.clone()),
             Some(Language::Kotlin) => kotlin_files.push(file.clone()),
             Some(Language::Python) => py_files.push(file.clone()),
+            Some(Language::Go) => go_files.push(file.clone()),
             None => {} // skip unknown extensions
         }
     }
-    (js_files, hs_files, rs_files, java_files, kotlin_files, py_files)
+    (js_files, hs_files, rs_files, java_files, kotlin_files, py_files, go_files)
 }
 
 /// Load and validate configuration from a YAML file.
@@ -563,6 +609,48 @@ pub fn load(path: &Path) -> Result<AnalyzerConfig> {
     }
 
     Ok(config)
+}
+
+/// Discover the Go module path from `go.mod` in the given root directory.
+///
+/// Reads `{root}/go.mod` and looks for the first line matching `module <path>`.
+/// Returns the module path (e.g., `"github.com/user/myproject"`) or `None`
+/// if no `go.mod` exists or no module directive is found.
+pub fn discover_go_module_path(root: &Path) -> Option<String> {
+    let go_mod_path = root.join("go.mod");
+    match std::fs::read_to_string(&go_mod_path) {
+        Ok(content) => {
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if let Some(rest) = trimmed.strip_prefix("module") {
+                    // Must be followed by whitespace (not e.g. "modulefoo")
+                    if rest.starts_with(char::is_whitespace) {
+                        let module_path = rest.trim().to_string();
+                        if !module_path.is_empty() {
+                            tracing::info!(
+                                module_path = %module_path,
+                                path = %go_mod_path.display(),
+                                "Discovered Go module path"
+                            );
+                            return Some(module_path);
+                        }
+                    }
+                }
+            }
+            tracing::debug!(
+                path = %go_mod_path.display(),
+                "go.mod found but no module directive"
+            );
+            None
+        }
+        Err(_) => {
+            tracing::debug!(
+                path = %go_mod_path.display(),
+                "No go.mod found in project root"
+            );
+            None
+        }
+    }
 }
 
 #[cfg(test)]
@@ -878,26 +966,29 @@ plugins:
             PathBuf::from("src/lib.rs"),
             PathBuf::from("src/App.java"),
             PathBuf::from("src/script.py"),
+            PathBuf::from("src/main.go"),
             PathBuf::from("README.md"),
         ];
-        let (js, hs, rs, java, kotlin, py) = partition_by_language(&files);
+        let (js, hs, rs, java, kotlin, py, go) = partition_by_language(&files);
         assert_eq!(js, vec![PathBuf::from("src/index.ts"), PathBuf::from("src/app.jsx")]);
         assert_eq!(hs, vec![PathBuf::from("src/Main.hs"), PathBuf::from("src/Lib.hs")]);
         assert_eq!(rs, vec![PathBuf::from("src/main.rs"), PathBuf::from("src/lib.rs")]);
         assert_eq!(java, vec![PathBuf::from("src/App.java")]);
         assert!(kotlin.is_empty());
         assert_eq!(py, vec![PathBuf::from("src/script.py")]);
+        assert_eq!(go, vec![PathBuf::from("src/main.go")]);
     }
 
     #[test]
     fn partition_by_language_empty_input() {
-        let (js, hs, rs, java, kotlin, py) = partition_by_language(&[]);
+        let (js, hs, rs, java, kotlin, py, go) = partition_by_language(&[]);
         assert!(js.is_empty());
         assert!(hs.is_empty());
         assert!(rs.is_empty());
         assert!(java.is_empty());
         assert!(kotlin.is_empty());
         assert!(py.is_empty());
+        assert!(go.is_empty());
     }
 
     #[test]
@@ -925,12 +1016,17 @@ plugins:
     }
 
     #[test]
+    fn detect_language_go() {
+        assert_eq!(detect_language(Path::new("src/main.go")), Some(Language::Go));
+    }
+
+    #[test]
     fn partition_by_language_includes_python() {
         let files = vec![
             PathBuf::from("src/main.py"),
             PathBuf::from("src/app.js"),
         ];
-        let (js, _hs, _rs, _java, _kotlin, py) = partition_by_language(&files);
+        let (js, _hs, _rs, _java, _kotlin, py, _go) = partition_by_language(&files);
         assert_eq!(js, vec![PathBuf::from("src/app.js")]);
         assert_eq!(py, vec![PathBuf::from("src/main.py")]);
     }
@@ -984,6 +1080,9 @@ analyzers:
         assert_eq!(cfg.analyzers.jvm_cross_resolve, "jvm-cross-resolve");
         assert_eq!(cfg.analyzers.python, "grafema-python-analyzer");
         assert_eq!(cfg.analyzers.python_resolve, "python-resolve");
+        assert_eq!(cfg.analyzers.go, "grafema-go-analyzer");
+        assert_eq!(cfg.analyzers.go_resolve, "go-resolve");
+        assert_eq!(cfg.analyzers.go_parser, "go-parser");
         cleanup(&dir);
     }
 
@@ -1005,6 +1104,9 @@ analyzers:
         assert_eq!(defaults.jvm_cross_resolve, "jvm-cross-resolve");
         assert_eq!(defaults.python, "grafema-python-analyzer");
         assert_eq!(defaults.python_resolve, "python-resolve");
+        assert_eq!(defaults.go, "grafema-go-analyzer");
+        assert_eq!(defaults.go_resolve, "go-resolve");
+        assert_eq!(defaults.go_parser, "go-parser");
     }
 
     #[test]
@@ -1052,6 +1154,9 @@ analyzers:
             jvm_cross_resolve: "/abs/jvm-cross-resolve".to_string(),
             python: "/abs/grafema-python-analyzer".to_string(),
             python_resolve: "/abs/python-resolve".to_string(),
+            go: "/abs/grafema-go-analyzer".to_string(),
+            go_resolve: "/abs/go-resolve".to_string(),
+            go_parser: "/abs/go-parser".to_string(),
         };
         assert_eq!(bins.js_path(), "/abs/grafema-analyzer");
         assert_eq!(bins.haskell_path(), "/abs/haskell-analyzer");
@@ -1068,6 +1173,9 @@ analyzers:
         assert_eq!(bins.jvm_cross_resolve_path(), "/abs/jvm-cross-resolve");
         assert_eq!(bins.python_path(), "/abs/grafema-python-analyzer");
         assert_eq!(bins.python_resolve_path(), "/abs/python-resolve");
+        assert_eq!(bins.go_path(), "/abs/grafema-go-analyzer");
+        assert_eq!(bins.go_resolve_path(), "/abs/go-resolve");
+        assert_eq!(bins.go_parser_path(), "/abs/go-parser");
     }
 
     #[test]
@@ -1171,6 +1279,43 @@ services:
 
         let packages = discover_workspace_packages(&dir, &services);
         assert!(packages.is_empty());
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn discover_go_module_path_valid() {
+        let dir = test_dir();
+        fs::write(
+            dir.join("go.mod"),
+            "module github.com/user/project\n\ngo 1.21\n",
+        )
+        .unwrap();
+
+        let result = discover_go_module_path(&dir);
+        assert_eq!(result, Some("github.com/user/project".to_string()));
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn discover_go_module_path_missing() {
+        let dir = test_dir();
+        // No go.mod file created
+        let result = discover_go_module_path(&dir);
+        assert_eq!(result, None);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn discover_go_module_path_with_comments() {
+        let dir = test_dir();
+        fs::write(
+            dir.join("go.mod"),
+            "// This is a comment\n// Another comment\nmodule github.com/user/project\n\ngo 1.21\n",
+        )
+        .unwrap();
+
+        let result = discover_go_module_path(&dir);
+        assert_eq!(result, Some("github.com/user/project".to_string()));
         cleanup(&dir);
     }
 }

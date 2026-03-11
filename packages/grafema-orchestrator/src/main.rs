@@ -123,7 +123,7 @@ async fn main() -> Result<()> {
             }
 
             // 3b. Partition by language
-            let (js_files, hs_files, rs_files, java_files, kotlin_files, py_files) = config::partition_by_language(&changed_files);
+            let (js_files, hs_files, rs_files, java_files, kotlin_files, py_files, go_files) = config::partition_by_language(&changed_files);
             tracing::info!(
                 js = js_files.len(),
                 haskell = hs_files.len(),
@@ -131,6 +131,7 @@ async fn main() -> Result<()> {
                 java = java_files.len(),
                 kotlin = kotlin_files.len(),
                 python = py_files.len(),
+                go = go_files.len(),
                 "Partitioned files by language"
             );
 
@@ -156,6 +157,10 @@ async fn main() -> Result<()> {
                 if !kotlin_files.is_empty() {
                     binaries_to_check.push(cfg.analyzers.kotlin_path());
                     binaries_to_check.push(cfg.analyzers.kotlin_resolve_path());
+                }
+                if !go_files.is_empty() {
+                    binaries_to_check.push(cfg.analyzers.go_path());
+                    binaries_to_check.push(cfg.analyzers.go_resolve_path());
                 }
 
                 for binary in &binaries_to_check {
@@ -208,6 +213,13 @@ async fn main() -> Result<()> {
                 tracing::info!(count = py_files.len(), "Analyzing Python files");
                 let py_results = analyzer::analyze_python_files_parallel_pooled(&py_files, jobs, &cfg.analyzers).await;
                 results.extend(py_results);
+            }
+
+            // 4g. Analyze Go files (go-parser → go-analyzer daemon pools)
+            if !go_files.is_empty() {
+                tracing::info!(count = go_files.len(), "Analyzing Go files");
+                let go_results = analyzer::analyze_go_files_parallel_pooled(&go_files, jobs, &cfg.analyzers).await;
+                results.extend(go_results);
             }
 
             // 5. Relativize paths: convert absolute → relative (to project root)
@@ -872,7 +884,78 @@ async fn main() -> Result<()> {
                 }
             }
 
-            // 8f. Run JVM cross-language resolution (Java <-> Kotlin, after both per-language resolvers)
+            // 8f. Run Go resolution
+            if !go_files.is_empty() {
+                let go_resolve_nodes = analyzer::collect_resolve_nodes_for_lang(&results, config::Language::Go);
+                if !go_resolve_nodes.is_empty() {
+                    tracing::info!(
+                        nodes = go_resolve_nodes.len(),
+                        "Running Go resolution"
+                    );
+
+                    let go_module_path = config::discover_go_module_path(&cfg.root);
+                    let go_ws_packages: Vec<plugin::WorkspacePackageWire> = go_module_path
+                        .map(|mp| vec![plugin::WorkspacePackageWire {
+                            name: mp.clone(),
+                            entry_point: String::new(),
+                            package_dir: cfg.root.display().to_string(),
+                        }])
+                        .unwrap_or_default();
+
+                    let go_resolve_pool_config = process_pool::PoolConfig {
+                        command: cfg.analyzers.go_resolve_path(),
+                        args: vec!["--daemon".to_string()],
+                        ..process_pool::PoolConfig::default()
+                    };
+
+                    match process_pool::ProcessPool::new(go_resolve_pool_config, 1) {
+                        Ok(go_resolve_pool) => {
+                            let mut go_resolve_output = plugin::run_resolve_with_nodes(
+                                "go-all",
+                                &go_resolve_nodes,
+                                &go_ws_packages,
+                                &go_resolve_pool,
+                            )
+                            .await
+                            .context("Go resolution failed")?;
+                            plugin::validate_plugin_output(&go_resolve_output)?;
+                            plugin::stamp_metadata(&mut go_resolve_output, "go-resolution", generation);
+
+                            let go_resolve_files: Vec<String> = go_resolve_output
+                                .nodes
+                                .iter()
+                                .filter_map(|n| n.file.clone())
+                                .collect::<std::collections::HashSet<_>>()
+                                .into_iter()
+                                .collect();
+                            rfdb.commit_batch(&go_resolve_files, &go_resolve_output.nodes, &go_resolve_output.edges, false)
+                                .await
+                                .context("Failed to commit Go resolution output")?;
+
+                            for edge in &go_resolve_output.edges {
+                                if edge.edge_type == "IMPORTS_FROM" {
+                                    all_imports_from_edges.push((edge.src.clone(), edge.dst.clone()));
+                                }
+                            }
+
+                            tracing::info!(
+                                nodes = go_resolve_output.nodes.len(),
+                                edges = go_resolve_output.edges.len(),
+                                "Go resolution complete"
+                            );
+
+                            go_resolve_pool.shutdown().await;
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to create Go resolve pool, skipping Go resolution: {e}"
+                            );
+                        }
+                    }
+                }
+            }
+
+            // 8g. Run JVM cross-language resolution (Java <-> Kotlin, after both per-language resolvers)
             if !java_files.is_empty() && !kotlin_files.is_empty() {
                 let jvm_resolve_nodes = analyzer::collect_resolve_nodes_for_jvm(&results);
                 if !jvm_resolve_nodes.is_empty() {
@@ -934,7 +1017,7 @@ async fn main() -> Result<()> {
                 }
             }
 
-            // 8g. Run user-defined plugins via DAG (if any non-default plugins configured)
+            // 8h. Run user-defined plugins via DAG (if any non-default plugins configured)
             let user_plugins: Vec<_> = cfg
                 .plugins
                 .iter()
@@ -1027,7 +1110,7 @@ async fn main() -> Result<()> {
 
             // 10. Summary
             println!(
-                "Analyzed {} files ({} JS, {} Haskell, {} Rust, {} Java, {} Kotlin, {} Python, {} skipped): {} nodes, {} edges, {} errors",
+                "Analyzed {} files ({} JS, {} Haskell, {} Rust, {} Java, {} Kotlin, {} Python, {} Go, {} skipped): {} nodes, {} edges, {} errors",
                 changed_files.len(),
                 js_files.len(),
                 hs_files.len(),
@@ -1035,6 +1118,7 @@ async fn main() -> Result<()> {
                 java_files.len(),
                 kotlin_files.len(),
                 py_files.len(),
+                go_files.len(),
                 unchanged_files.len(),
                 total_nodes,
                 total_edges,
