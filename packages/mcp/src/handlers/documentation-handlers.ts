@@ -106,7 +106,8 @@ Output-only — Datalog remains the query language.
 
 - **depth=0**: Node names only — minimal overview
 - **depth=1** (default): Node + edges — shows all relationships with operators
-- **depth=2**: Node + edges + nested children — full structural expansion
+- **depth=2**: Node + edges + nested children, **folded** — repetitive siblings compressed into exemplar + summary. Ideal for large modules (e.g., 36 handler imports → 1 exemplar + fold summary)
+- **depth=3**: Node + edges + nested children, **exact** — every node expanded individually, no folding. Use when you need the precise bijective DSL output
 
 ## Perspective Presets
 

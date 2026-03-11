@@ -10,6 +10,24 @@ Grafema is a code analysis tool that lets you **trace data flow across your code
 
 **Frontend to backend. Code to data. In clicks.**
 
+## Why "Grafema"?
+
+A **grapheme** is the minimal unit of a writing system — the smallest unit of written form that distinguishes meaning. I borrowed this idea:
+
+> **A grafema is the minimal atomic record of program meaning.**
+
+Every relationship in code — a module calling a function, a variable flowing into an argument, a route binding to a handler — is one grafema:
+
+```
+module  →  calls     →  function
+variable → flows_into → argument
+route    → handles    → request
+```
+
+Source code is full of syntactic noise and implementation detail. Grafema strips it down to atoms of meaning. From these atoms, larger semantic patterns emerge — like letters forming words, then sentences.
+
+**Code compiles into a graph. Grafemas are the atomic readable form of the graph. You read grafemas, not syntax.**
+
 ## What Can You Do With It?
 
 - **Find where data comes from** - Trace any variable back to its source, across files and services
@@ -131,6 +149,7 @@ Extensible architecture with declarative dependencies:
 Currently supported:
 - JavaScript
 - TypeScript
+- Python
 - Express.js (route and handler analysis)
 
 ## Packages

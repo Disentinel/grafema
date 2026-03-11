@@ -20,21 +20,25 @@
 
 import type { Archetype, EdgeMapping } from './types.js';
 
-// Sort order by archetype (rendering order within blocks)
+// Sort order by archetype: input → process → output
+// flow_in first (receives, reads), then deps, then calls, then side effects
 const SORT: Record<Archetype, number> = {
   contains: 0,
-  depends: 1,
-  flow_out: 2,
-  flow_in: 3,
+  flow_in: 1,
+  depends: 2,
+  flow_out: 3,
   write: 4,
-  exception: 5,
-  publishes: 6,
+  publishes: 5,
+  exception: 6,
   gates: 7,
   governs: 8,
 };
 
-function m(archetype: Archetype, operator: string, verb: string): EdgeMapping {
-  return { archetype, operator, verb, sortOrder: SORT[archetype] };
+/** Sort order for "returns" verbs — output comes last */
+const RETURNS_SORT = 9;
+
+function m(archetype: Archetype, operator: string, verb: string, sortOverride?: number): EdgeMapping {
+  return { archetype, operator, verb, sortOrder: sortOverride ?? SORT[archetype] };
 }
 
 /**
@@ -81,10 +85,10 @@ export const EDGE_ARCHETYPE_MAP: Record<string, EdgeMapping> = {
   CALLS_API:          m('flow_out', '>', 'calls API'),
   INVOKES_FUNCTION:   m('flow_out', '>', 'invokes'),
   PASSES_ARGUMENT:    m('flow_out', '>', 'passes'),
-  RETURNS:            m('flow_out', '>', 'returns'),
-  CALL_RETURNS:       m('flow_out', '>', 'call returns'),
-  YIELDS:             m('flow_out', '>', 'yields'),
-  RESPONDS_WITH:      m('flow_out', '>', 'responds with'),
+  RETURNS:            m('flow_out', '>', 'returns', RETURNS_SORT),
+  CALL_RETURNS:       m('flow_out', '>', 'call returns', RETURNS_SORT),
+  YIELDS:             m('flow_out', '>', 'yields', RETURNS_SORT),
+  RESPONDS_WITH:      m('flow_out', '>', 'responds with', RETURNS_SORT),
   INTERACTS_WITH:     m('flow_out', '>', 'interacts with'),
   ITERATES_OVER:      m('flow_out', '>', 'iterates'),
   ASSIGNS_TO:         m('flow_out', '>', 'assigns to'),

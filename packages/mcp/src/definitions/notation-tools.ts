@@ -37,7 +37,8 @@ Example output:
 Use depth to control detail:
   0 = names only (children listed, no edges)
   1 = edges (default — shows all relationship lines)
-  2 = nested (expands children's children)
+  2 = nested + folded (compressed view — repetitive siblings collapsed)
+  3 = nested (exact — every node expanded, no folding)
 
 10-30 lines vs 500+ lines of raw edge data. Ideal for LLM context windows.`,
     inputSchema: {
@@ -49,7 +50,7 @@ Use depth to control detail:
         },
         depth: {
           type: 'number',
-          description: 'Level of detail: 0=names, 1=edges (default), 2=nested',
+          description: 'Level of detail: 0=names, 1=edges (default), 2=nested+folded (compressed), 3=nested (exact, no folding)',
         },
         perspective: {
           type: 'string',

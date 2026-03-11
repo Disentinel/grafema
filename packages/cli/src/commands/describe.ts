@@ -35,7 +35,7 @@ export const describeCommand = new Command('describe')
   .description('Render compact DSL notation for a graph node')
   .argument('<target>', 'Semantic ID, file path, or node name')
   .option('-p, --project <path>', 'Project path', '.')
-  .option('-d, --depth <level>', 'LOD: 0=names, 1=edges, 2=nested', '1')
+  .option('-d, --depth <level>', 'LOD: 0=names, 1=edges, 2=nested+fold, 3=nested (exact)', '1')
   .option(
     '--perspective <name>',
     `Perspective preset: ${Object.keys(PERSPECTIVES).join(', ')}`,
@@ -54,7 +54,8 @@ Perspectives:
 LOD levels:
   0  Node names only (minimal)
   1  Node + edges (default)
-  2  Node + edges + nested children
+  2  Node + edges + nested children (folded)
+  3  Node + edges + nested children (exact, no folding)
 
 Examples:
   grafema describe "src/app.ts->FUNCTION->main"
@@ -74,8 +75,8 @@ Examples:
     }
 
     const depth = parseInt(options.depth, 10);
-    if (isNaN(depth) || depth < 0 || depth > 2) {
-      exitWithError('Invalid depth', ['Use 0, 1, or 2']);
+    if (isNaN(depth) || depth < 0 || depth > 3) {
+      exitWithError('Invalid depth', ['Use 0, 1, 2, or 3']);
     }
 
     if (options.perspective && !PERSPECTIVES[options.perspective]) {
