@@ -16,6 +16,7 @@ import type { EdgeRecord, BaseNodeRecord } from '@grafema/types';
 import type { DescribeOptions, NotationBlock, NotationLine, SubgraphData } from './types.js';
 import { lookupEdge } from './archetypes.js';
 import { getNodeDisplayName } from '../queries/NodeContext.js';
+import { foldBlocks } from './fold.js';
 
 /**
  * Render a subgraph as compact DSL notation.
@@ -39,7 +40,8 @@ export function renderNotation(
   const { depth = 1, archetypeFilter, budget = 7, includeLocations = false } = options;
 
   const blocks = buildBlocks(input, depth, archetypeFilter, budget, includeLocations);
-  return serializeBlocks(blocks, 0);
+  const finalBlocks = depth === 2 ? foldBlocks(blocks) : blocks;
+  return serializeBlocks(finalBlocks, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -75,8 +77,10 @@ function buildBlocks(
   // Build set of node IDs that are descendants of LOOP nodes in containment tree
   const insideLoopNodes = buildLoopDescendants(childrenOf, nodeMap);
 
+  const resolvedNames = resolveAnonymousNames(edges, nodeMap);
+
   return rootNodes.map(node =>
-    buildBlock(node, outgoingBySource, childrenOf, nodeMap, depth, archetypeFilter, budget, includeLocations, insideLoopNodes),
+    buildBlock(node, outgoingBySource, childrenOf, nodeMap, depth, archetypeFilter, budget, includeLocations, insideLoopNodes, resolvedNames),
   );
 }
 
@@ -111,6 +115,91 @@ function buildLoopDescendants(
   return result;
 }
 
+/**
+ * Resolve meaningful names for anonymous arrow functions and expressions.
+ *
+ * Priority:
+ * 1. Assignment: `const handler = () => {}` → "handler"
+ * 2. Callback: `setRequestHandler(Schema, λ)` → "λ → setRequestHandler(Schema)"
+ * 3. Fallback: "λ"
+ */
+function resolveAnonymousNames(
+  edges: EdgeRecord[],
+  nodeMap: Map<string, BaseNodeRecord>,
+): Map<string, string> {
+  const resolved = new Map<string, string>();
+
+  // Reverse index: dstId → edges (for ASSIGNED_FROM and PASSES_ARGUMENT)
+  const incomingByDst = new Map<string, EdgeRecord[]>();
+  // Forward index: srcId → PASSES_ARGUMENT edges (for finding siblings)
+  const passArgBySrc = new Map<string, EdgeRecord[]>();
+
+  for (const edge of edges) {
+    if (edge.type === 'ASSIGNED_FROM' || edge.type === 'PASSES_ARGUMENT') {
+      if (!incomingByDst.has(edge.dst)) incomingByDst.set(edge.dst, []);
+      incomingByDst.get(edge.dst)!.push(edge);
+    }
+    if (edge.type === 'PASSES_ARGUMENT') {
+      if (!passArgBySrc.has(edge.src)) passArgBySrc.set(edge.src, []);
+      passArgBySrc.get(edge.src)!.push(edge);
+    }
+  }
+
+  for (const [nodeId, node] of nodeMap) {
+    if (node.name !== '<arrow>' && node.name !== '<expression>') continue;
+
+    const incoming = incomingByDst.get(nodeId) ?? [];
+
+    // Priority 1: Assignment — const handler = () => {}
+    const assignEdge = incoming.find(e => e.type === 'ASSIGNED_FROM');
+    if (assignEdge) {
+      const srcNode = nodeMap.get(assignEdge.src);
+      if (srcNode?.name && srcNode.name !== '<arrow>' && srcNode.name !== '<expression>') {
+        resolved.set(nodeId, srcNode.name);
+        continue;
+      }
+    }
+
+    // Priority 2: Callback — setRequestHandler(Schema, λ)
+    const passEdge = incoming.find(e => e.type === 'PASSES_ARGUMENT');
+    if (passEdge) {
+      const callNode = nodeMap.get(passEdge.src);
+      const callName = callNode ? getNodeDisplayName(callNode) : null;
+      if (callName && callName !== '<arrow>' && callName !== '<expression>' && callName !== 'λ') {
+        // Named sibling args (skip other anonymous ones)
+        const allSiblings = passArgBySrc.get(passEdge.src) ?? [];
+        const namedSiblings = allSiblings
+          .filter(e => e.dst !== nodeId)
+          .map(e => {
+            const argNode = nodeMap.get(e.dst);
+            if (!argNode?.name) return null;
+            if (argNode.name === '<arrow>' || argNode.name === '<expression>') return null;
+            return argNode.name;
+          })
+          .filter((n): n is string => n !== null);
+
+        // Multiple lambdas in same call → add index to distinguish
+        const lambdaCount = allSiblings.filter(e => {
+          const n = nodeMap.get(e.dst);
+          return n && (n.name === '<arrow>' || n.name === '<expression>');
+        }).length;
+        const indexSuffix = lambdaCount > 1
+          ? String(passEdge.metadata?.index ?? passEdge.metadata?.argIndex ?? '')
+          : '';
+
+        const argStr = namedSiblings.length > 0 ? `(${namedSiblings.join(', ')})` : '';
+        resolved.set(nodeId, `λ${indexSuffix} → ${callName}${argStr}`);
+        continue;
+      }
+    }
+
+    // Priority 3: Fallback
+    resolved.set(nodeId, 'λ');
+  }
+
+  return resolved;
+}
+
 function buildBlock(
   node: BaseNodeRecord,
   outgoingBySource: Map<string, EdgeRecord[]>,
@@ -121,8 +210,9 @@ function buildBlock(
   budget: number,
   includeLocations: boolean,
   insideLoopNodes: Set<string>,
+  resolvedNames: Map<string, string>,
 ): NotationBlock {
-  const displayName = getNodeDisplayName(node);
+  const displayName = resolvedNames.get(node.id) ?? getNodeDisplayName(node);
   const location = includeLocations && node.file
     ? `${node.file}${node.line ? ':' + node.line : ''}`
     : undefined;
@@ -134,7 +224,7 @@ function buildBlock(
 
   // LOD 1+: build edge lines
   const nodeEdges = outgoingBySource.get(node.id) ?? [];
-  const lines = buildLines(nodeEdges, nodeMap, archetypeFilter, budget);
+  const lines = buildLines(nodeEdges, nodeMap, archetypeFilter, budget, resolvedNames);
 
   // Apply [] loop modifier if this node is inside a LOOP
   // Combines with existing modifiers: [] ?? > calls foo
@@ -152,7 +242,7 @@ function buildBlock(
       .map(id => nodeMap.get(id))
       .filter((n): n is BaseNodeRecord => n != null)
       .map(child =>
-        buildBlock(child, outgoingBySource, childrenOf, nodeMap, depth - 1, archetypeFilter, budget, includeLocations, insideLoopNodes),
+        buildBlock(child, outgoingBySource, childrenOf, nodeMap, depth - 1, archetypeFilter, budget, includeLocations, insideLoopNodes, resolvedNames),
       );
   }
 
@@ -168,6 +258,7 @@ function buildLines(
   nodeMap: Map<string, BaseNodeRecord>,
   archetypeFilter: DescribeOptions['archetypeFilter'],
   budget: number,
+  resolvedNames: Map<string, string>,
 ): NotationLine[] {
   // Group by modifier+operator+verb key (modifier separates certain from uncertain)
   const groups = new Map<string, { operator: string; verb: string; targets: string[]; sortOrder: number; modifier?: string }>();
@@ -179,7 +270,7 @@ function buildLines(
     if (archetypeFilter && !archetypeFilter.includes(mapping.archetype)) continue;
 
     const targetNode = nodeMap.get(edge.dst);
-    const targetName = targetNode ? getNodeDisplayName(targetNode) : edge.dst;
+    const targetName = resolvedNames.get(edge.dst) ?? (targetNode ? getNodeDisplayName(targetNode) : edge.dst);
 
     // Detect dynamic/uncertain edges
     const modifier = isDynamicEdge(edge) ? '??' : undefined;

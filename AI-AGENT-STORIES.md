@@ -517,6 +517,57 @@ So that I can identify goroutine leaks and missing context propagation.
 
 ---
 
+## US-20: Rust Data Flow in `describe` Output
+
+**Status:** ❌ BROKEN
+**Last tested:** 2026-03-12
+
+As an AI agent exploring a Rust codebase via `describe file.rs -d 2`,
+I want to see the same flow information as for TypeScript files — calls, reads, writes, data flow —
+So that I can understand Rust module behavior without reading source code.
+
+**Acceptance criteria:**
+- `describe shard.rs -d 2` shows `> calls`, `< reads`, `=> writes` for impl methods
+- Impl blocks are nested under their struct/trait
+- Closures (`.map(|x| ...)`, `.filter(|x| ...)`) show callback context like TS arrows
+- Error handling chains (`?`, `.unwrap()`, `.expect()`) show as `>x throws` or similar
+- `match` arms appear as `?| case` branches
+
+**Test results:**
+`describe packages/rfdb-server/src/storage_v2/multi_shard.rs -d 2`:
+- ✅ Structs shown: `DatabaseConfig`, `MultiShardStore`, `ShardStats` with fields and attributes
+- ✅ Imports: `crate o- imports from lib`, `std`, `serde`
+- ❌ **Zero flow edges** — no `> calls`, `< reads`, `=> writes` for any function/method
+- ❌ **Impl methods not visible** — struct blocks show `> has field`, `> has attribute`, `> derives` but no methods
+- ❌ **`<unknown>` nodes** — unresolved structural nodes (line 1357, 2000) appear raw
+- ❌ **No closures resolved** — Rust closures not detected at all
+
+`describe packages/rfdb-server/src/storage_v2/shard.rs -d 2`:
+- Same pattern: structs + fields + attributes, **zero flow**, no impl methods, `<unknown>` nodes
+
+`describe packages/rfdb-server/src/storage_v2/writer.rs -d 2`:
+- Same pattern: `NodeSegmentWriter`, `EdgeSegmentWriter` structs only
+
+**Root cause:** Rust analyzer (grafema-orchestrator) focuses on structural analysis — `struct`, `enum`, `impl`, `use`, `mod`, `trait` declarations and their relationships. It does **not yet analyze function bodies** for:
+- CALLS edges (function/method invocations)
+- READS_FROM / WRITES_TO (variable access)
+- PASSES_ARGUMENT (function arguments, including closures)
+- Control flow (match arms, if/else, loops)
+
+This is the same gap as TypeScript circa early Grafema — structural skeleton without behavioral edges.
+
+**Impact:** Rust files in `describe` output show WHAT exists but not WHAT IT DOES. For a 2000-line `shard.rs`, the describe output is ~15 lines of struct names — vs TypeScript where a 500-line file produces rich flow notation showing calls, data flow, error handling.
+
+**Needed:**
+1. Rust function body traversal in orchestrator (syn crate already parses these)
+2. CALLS edges for `fn()` and method calls (`self.flush()`, `Shard::new()`)
+3. READS_FROM / WRITES_TO for field access (`self.shards`, `config.path`)
+4. PASSES_ARGUMENT for closures (`.map(|x| ...)`, `.filter(...)`)
+5. Control flow: `match` → BRANCH, `if let` → BRANCH, `loop`/`for` → LOOP
+6. Error propagation: `?` operator → implicit THROWS chain
+
+---
+
 ## Summary
 
 | Story | Status | Key Finding |
@@ -540,16 +591,18 @@ So that I can identify goroutine leaks and missing context propagation.
 | US-17 | ❌ BROKEN | Git tools require git-ingest, not auto-run |
 | US-18 | ✅ WORKING | Go analyzer: 100% accuracy on gorilla/mux (3 files, 711 nodes) |
 | US-19 | ✅ WORKING | Context propagation: analyzer + resolver, 23/23 tests pass |
+| US-20 | ❌ BROKEN | Rust: zero flow edges, no impl methods, no closures |
 
 \* Fixes applied in code, built successfully (314/314 tests pass). Require MCP server restart to verify via live queries.
 
-**Score: 13 ✅ / 3 🔶 / 1 ❌** (was 11/3/1 -> gained 2 via Go analyzer validation)
+**Score: 13 ✅ / 3 🔶 / 2 ❌** (was 11/3/1 -> gained 2 via Go, added US-20 Rust)
 
 ### Critical Product Gaps (Remaining)
 
 1. **US-15: attr() doesn't work for file/branchType** — RFDB Datalog only indexes a subset of node attributes. This means guarantee rules using `attr(X, "branchType", ...)` won't filter correctly. Needs RFDB-level fix (RFD-48).
 2. **US-13: className matching uses receiver, not class type** — `find_calls(className="kb")` works but `find_calls(className="KnowledgeBase")` doesn't, because CALL nodes store the variable name not the resolved type. Needs type resolution through CALLS edges. Low priority — receiver matching is a good workaround.
 3. **US-17: Git tools require manual git-ingest** — No auto-ingestion, blocking all git history queries. Either auto-ingest during analyze, or document the prerequisite clearly.
+4. **US-20: Rust analyzer lacks function body analysis** — Only structural skeleton (structs, enums, traits, use/mod). No CALLS, READS_FROM, WRITES_TO, PASSES_ARGUMENT, control flow, or error propagation for Rust. `describe` on Rust files shows 15 lines of struct names for 2000-line files. Needs syn-based function body traversal in orchestrator.
 
 ### Go Analyzer Gaps (from US-18 validation) — ALL FIXED
 

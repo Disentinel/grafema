@@ -393,4 +393,122 @@ describe('renderNotation', () => {
     const result = renderNotation(subgraph, { includeLocations: true });
     assert.ok(result.includes('src/handler.ts:42'), 'Should show location');
   });
+
+  // ---------------------------------------------------------------------------
+  // Lambda context resolution
+  // ---------------------------------------------------------------------------
+
+  it('should resolve <arrow> via assignment to variable name', () => {
+    const subgraph = makeSubgraph(
+      [{ id: 'arrow1', type: 'FUNCTION', name: '<arrow>' }],
+      [
+        { src: 'handler', dst: 'arrow1', type: 'ASSIGNED_FROM' },
+        { src: 'arrow1', dst: 'someFunc', type: 'CALLS' },
+      ],
+      [
+        { id: 'handler', type: 'VARIABLE', name: 'handler' },
+        { id: 'someFunc', type: 'FUNCTION', name: 'doSomething' },
+      ],
+    );
+
+    const result = renderNotation(subgraph);
+    assert.ok(result.includes('handler {'), `Arrow assigned to variable should display as variable name. Got:\n${result}`);
+    assert.ok(!result.includes('<arrow>'), `Should not show raw <arrow>. Got:\n${result}`);
+  });
+
+  it('should resolve <arrow> via callback context with sibling args', () => {
+    const subgraph = makeSubgraph(
+      [{ id: 'arrow1', type: 'FUNCTION', name: '<arrow>' }],
+      [
+        { src: 'callNode', dst: 'arrow1', type: 'PASSES_ARGUMENT', metadata: { index: 1 } },
+        { src: 'callNode', dst: 'schema', type: 'PASSES_ARGUMENT', metadata: { index: 0 } },
+        { src: 'arrow1', dst: 'someFunc', type: 'CALLS' },
+      ],
+      [
+        { id: 'callNode', type: 'CALL', name: 'setRequestHandler' },
+        { id: 'schema', type: 'VARIABLE', name: 'CallToolRequestSchema' },
+        { id: 'someFunc', type: 'FUNCTION', name: 'doSomething' },
+      ],
+    );
+
+    const result = renderNotation(subgraph);
+    assert.ok(
+      result.includes('λ → setRequestHandler(CallToolRequestSchema)'),
+      `Callback should show call context with sibling args. Got:\n${result}`,
+    );
+  });
+
+  it('should fall back to λ when no context available', () => {
+    const subgraph = makeSubgraph(
+      [{ id: 'arrow1', type: 'FUNCTION', name: '<arrow>' }],
+      [
+        { src: 'arrow1', dst: 'someFunc', type: 'CALLS' },
+      ],
+      [
+        { id: 'someFunc', type: 'FUNCTION', name: 'doSomething' },
+      ],
+    );
+
+    const result = renderNotation(subgraph);
+    assert.ok(result.includes('λ {'), `Unresolved arrow should show λ. Got:\n${result}`);
+    assert.ok(!result.includes('<arrow>'), `Should not show raw <arrow>. Got:\n${result}`);
+  });
+
+  it('should distinguish multiple lambdas in same call with indices', () => {
+    const subgraph = makeSubgraph(
+      [
+        { id: 'arrow1', type: 'FUNCTION', name: '<arrow>' },
+        { id: 'arrow2', type: 'FUNCTION', name: '<arrow>' },
+      ],
+      [
+        { src: 'callNode', dst: 'arrow1', type: 'PASSES_ARGUMENT', metadata: { index: 0 } },
+        { src: 'callNode', dst: 'arrow2', type: 'PASSES_ARGUMENT', metadata: { index: 1 } },
+        { src: 'arrow1', dst: 'a', type: 'CALLS' },
+        { src: 'arrow2', dst: 'b', type: 'CALLS' },
+      ],
+      [
+        { id: 'callNode', type: 'CALL', name: 'Promise.then' },
+        { id: 'a', type: 'FUNCTION', name: 'resolve' },
+        { id: 'b', type: 'FUNCTION', name: 'reject' },
+      ],
+    );
+
+    const result = renderNotation(subgraph);
+    assert.ok(result.includes('λ0'), `First lambda should have index 0. Got:\n${result}`);
+    assert.ok(result.includes('λ1'), `Second lambda should have index 1. Got:\n${result}`);
+  });
+
+  it('should resolve <expression> the same way as <arrow>', () => {
+    const subgraph = makeSubgraph(
+      [{ id: 'expr1', type: 'FUNCTION', name: '<expression>' }],
+      [
+        { src: 'myVar', dst: 'expr1', type: 'ASSIGNED_FROM' },
+        { src: 'expr1', dst: 'a', type: 'CALLS' },
+      ],
+      [
+        { id: 'myVar', type: 'VARIABLE', name: 'myCallback' },
+        { id: 'a', type: 'FUNCTION', name: 'work' },
+      ],
+    );
+
+    const result = renderNotation(subgraph);
+    assert.ok(result.includes('myCallback'), `Expression assigned to variable should use variable name. Got:\n${result}`);
+    assert.ok(!result.includes('<expression>'), `Should not show raw <expression>. Got:\n${result}`);
+  });
+
+  it('should not change named functions', () => {
+    const subgraph = makeSubgraph(
+      [{ id: 'fn1', type: 'FUNCTION', name: 'myFunction' }],
+      [
+        { src: 'fn1', dst: 'a', type: 'CALLS' },
+      ],
+      [
+        { id: 'a', type: 'FUNCTION', name: 'helper' },
+      ],
+    );
+
+    const result = renderNotation(subgraph);
+    assert.ok(result.includes('myFunction'), `Named function should keep its name. Got:\n${result}`);
+    assert.ok(!result.includes('λ'), `Should not show λ for named function. Got:\n${result}`);
+  });
 });

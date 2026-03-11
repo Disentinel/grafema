@@ -123,5 +123,55 @@ export async function extractSubgraph(
     }
   }
 
+  // Step 4: Fetch incoming PASSES_ARGUMENT edges for anonymous functions
+  // so the renderer can resolve λ names via callback context.
+  // CALL nodes are often not in the containment tree, so their outgoing
+  // PASSES_ARGUMENT edges don't get picked up by the BFS above.
+  await fetchCallbackContext(backend, allEdges, nodeMap);
+
   return { rootNodes: [root], edges: allEdges, nodeMap };
+}
+
+/**
+ * For each anonymous arrow/expression in nodeMap, fetch incoming
+ * PASSES_ARGUMENT edges and resolve the CALL source node + sibling args.
+ */
+async function fetchCallbackContext(
+  backend: GraphBackend,
+  allEdges: EdgeRecord[],
+  nodeMap: Map<string, BaseNodeRecord>,
+): Promise<void> {
+  const edgeSet = new Set(allEdges.map(e => `${e.src}|${e.dst}|${e.type}`));
+
+  for (const node of nodeMap.values()) {
+    if (node.name !== '<arrow>' && node.name !== '<expression>') continue;
+
+    const incoming = await backend.getIncomingEdges(node.id, ['PASSES_ARGUMENT']);
+    for (const edge of incoming) {
+      const key = `${edge.src}|${edge.dst}|${edge.type}`;
+      if (edgeSet.has(key)) continue;
+      edgeSet.add(key);
+      allEdges.push(edge);
+
+      // Resolve the CALL node (edge source)
+      if (!nodeMap.has(edge.src)) {
+        const callNode = await backend.getNode(edge.src);
+        if (callNode) nodeMap.set(callNode.id, callNode);
+      }
+
+      // Fetch all PASSES_ARGUMENT from same CALL to find sibling args
+      const callOutgoing = await backend.getOutgoingEdges(edge.src, ['PASSES_ARGUMENT']);
+      for (const sibEdge of callOutgoing) {
+        const sibKey = `${sibEdge.src}|${sibEdge.dst}|${sibEdge.type}`;
+        if (edgeSet.has(sibKey)) continue;
+        edgeSet.add(sibKey);
+        allEdges.push(sibEdge);
+
+        if (!nodeMap.has(sibEdge.dst)) {
+          const sibNode = await backend.getNode(sibEdge.dst);
+          if (sibNode) nodeMap.set(sibNode.id, sibNode);
+        }
+      }
+    }
+  }
 }
