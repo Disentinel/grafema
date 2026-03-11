@@ -412,6 +412,24 @@ export class GuaranteeManager {
   }
 
   /**
+   * Load guarantees from the project's YAML file (.grafema/guarantees.yaml).
+   *
+   * Reads the YAML file, skips non-datalog guarantees (e.g., integration-test),
+   * and creates GUARANTEE nodes in the graph for each datalog guarantee.
+   * Idempotent: skips guarantees that already exist in the graph.
+   * Gracefully handles missing file (no error, just returns).
+   *
+   * @returns ImportResult with counts of imported and skipped guarantees
+   */
+  async loadFromYaml(): Promise<ImportResult> {
+    if (!existsSync(this.guaranteesFile)) {
+      return { imported: 0, skipped: 0, importedIds: [], skippedIds: [] };
+    }
+
+    return this.import(this.guaranteesFile);
+  }
+
+  /**
    * Удалить гарантию
    */
   async delete(guaranteeId: string): Promise<void> {
@@ -497,6 +515,10 @@ export class GuaranteeManager {
         continue;
       }
 
+      // Default governs to all files if not specified in YAML
+      if (!g.governs) {
+        g.governs = ['**/*'];
+      }
       await this.create(g);
       imported.push(g.id);
     }

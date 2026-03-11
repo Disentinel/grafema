@@ -42,12 +42,14 @@ export async function handleGetFunctionDetails(
   const db = await ensureAnalyzed();
   const { name, file, transitive = false } = args;
 
-  // Step 1: Find the function
+  // Step 1: Find the function (search both FUNCTION and METHOD nodes)
   const candidates: GraphNode[] = [];
-  for await (const node of db.queryNodes({ type: 'FUNCTION' })) {
-    if (node.name !== name) continue;
-    if (file && !node.file?.includes(file)) continue;
-    candidates.push(node);
+  for (const nodeType of ['FUNCTION', 'METHOD']) {
+    for await (const node of db.queryNodes({ type: nodeType })) {
+      if (node.name !== name) continue;
+      if (file && !node.file?.includes(file)) continue;
+      candidates.push(node);
+    }
   }
 
   if (candidates.length === 0) {

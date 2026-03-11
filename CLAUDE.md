@@ -232,6 +232,11 @@ Project-specific skills in `.claude/skills/`. Key skills:
 **Trigger:** User says "release", "publish", "bump version"
 **Quick command:** `./scripts/release.sh patch --publish`
 
+### /gap-loop
+**Skill:** `gap-loop` — cyclical dogfooding loop for AI-AGENT-STORIES.md.
+**Trigger:** User says "/gap-loop", "dogfooding session", "test stories", "check gaps"
+**Cycle:** Load stories -> Test all against live graph -> Discover new stories -> Analyze gaps -> Fix root causes -> Re-test -> Report
+
 ### Other Skills
 See `.claude/skills/` for debugging skills: `grafema-cli-dev-workflow`, `grafema-cross-file-operations`, `pnpm-workspace-publish`
 

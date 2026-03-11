@@ -269,20 +269,31 @@ export async function getOrCreateBackend(): Promise<GraphBackend> {
   }
 
   // Initialize guarantee managers
-  initializeGuaranteeManagers(rfdbBackend);
+  await initializeGuaranteeManagers(rfdbBackend);
 
   return backend;
 }
 
 /**
- * Initialize GuaranteeManager (Datalog-based) and GuaranteeAPI (contract-based)
+ * Initialize GuaranteeManager (Datalog-based) and GuaranteeAPI (contract-based).
+ * Loads guarantees from .grafema/guarantees.yaml if the file exists.
  */
-function initializeGuaranteeManagers(rfdbBackend: RFDBServerBackend): void {
+async function initializeGuaranteeManagers(rfdbBackend: RFDBServerBackend): Promise<void> {
   // GuaranteeManager for Datalog-based guarantees
   // Cast to GuaranteeGraph interface expected by GuaranteeManager
   const guaranteeGraph = rfdbBackend as unknown as GuaranteeGraph;
   guaranteeManager = new GuaranteeManager(guaranteeGraph, projectPath);
   log(`[Grafema MCP] GuaranteeManager initialized`);
+
+  // Load guarantees from YAML (idempotent, skips existing)
+  try {
+    const result = await guaranteeManager.loadFromYaml();
+    if (result.imported > 0 || result.skipped > 0) {
+      log(`[Grafema MCP] Guarantees loaded from YAML: ${result.imported} imported, ${result.skipped} skipped`);
+    }
+  } catch (err) {
+    log(`[Grafema MCP] Warning: failed to load guarantees from YAML: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
   // GuaranteeAPI for contract-based guarantees
   const guaranteeGraphBackend = rfdbBackend as unknown as GuaranteeGraphBackend;

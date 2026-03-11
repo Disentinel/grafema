@@ -2,6 +2,7 @@ use grafema_orchestrator::{analyzer, config, discovery, gc, plugin, process_pool
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -286,6 +287,16 @@ async fn main() -> Result<()> {
             // 7. Update mtime tracker for next incremental run
             gc::update_mtimes(&mut gen_tracker, &changed_files)?;
 
+            // Collect IMPORTS_FROM edges from all import resolvers for DEPENDS_ON derivation
+            let mut all_imports_from_edges: Vec<(String, String)> = Vec::new();
+
+            // Build file → MODULE semantic ID map from analysis results
+            let file_to_module: std::collections::HashMap<String, String> = results
+                .iter()
+                .filter_map(|r| r.analysis.as_ref())
+                .map(|a| (a.file.clone(), a.module_id.clone()))
+                .collect();
+
             // 8. Run resolution plugins with in-memory node data (bypasses RFDB round-trip)
             let resolve_nodes = analyzer::collect_resolve_nodes_for_lang(&results, config::Language::JavaScript);
             if !resolve_nodes.is_empty() {
@@ -324,6 +335,13 @@ async fn main() -> Result<()> {
                         rfdb.commit_batch(&import_files, &import_output.nodes, &import_output.edges, false)
                             .await
                             .context("Failed to commit import resolution output")?;
+
+                        // Collect IMPORTS_FROM edges for DEPENDS_ON derivation
+                        for edge in &import_output.edges {
+                            if edge.edge_type == "IMPORTS_FROM" {
+                                all_imports_from_edges.push((edge.src.clone(), edge.dst.clone()));
+                            }
+                        }
 
                         tracing::info!(
                             nodes = import_output.nodes.len(),
@@ -554,6 +572,12 @@ async fn main() -> Result<()> {
                                 .await
                                 .context("Failed to commit Haskell import resolution output")?;
 
+                            for edge in &hs_import_output.edges {
+                                if edge.edge_type == "IMPORTS_FROM" {
+                                    all_imports_from_edges.push((edge.src.clone(), edge.dst.clone()));
+                                }
+                            }
+
                             tracing::info!(
                                 nodes = hs_import_output.nodes.len(),
                                 edges = hs_import_output.edges.len(),
@@ -639,6 +663,12 @@ async fn main() -> Result<()> {
                                 .await
                                 .context("Failed to commit Rust import resolution output")?;
 
+                            for edge in &rs_import_output.edges {
+                                if edge.edge_type == "IMPORTS_FROM" {
+                                    all_imports_from_edges.push((edge.src.clone(), edge.dst.clone()));
+                                }
+                            }
+
                             tracing::info!(
                                 nodes = rs_import_output.nodes.len(),
                                 edges = rs_import_output.edges.len(),
@@ -694,6 +724,12 @@ async fn main() -> Result<()> {
                             rfdb.commit_batch(&java_resolve_files, &java_resolve_output.nodes, &java_resolve_output.edges, false)
                                 .await
                                 .context("Failed to commit Java resolution output")?;
+
+                            for edge in &java_resolve_output.edges {
+                                if edge.edge_type == "IMPORTS_FROM" {
+                                    all_imports_from_edges.push((edge.src.clone(), edge.dst.clone()));
+                                }
+                            }
 
                             tracing::info!(
                                 nodes = java_resolve_output.nodes.len(),
@@ -751,6 +787,12 @@ async fn main() -> Result<()> {
                                 .await
                                 .context("Failed to commit Kotlin resolution output")?;
 
+                            for edge in &kotlin_resolve_output.edges {
+                                if edge.edge_type == "IMPORTS_FROM" {
+                                    all_imports_from_edges.push((edge.src.clone(), edge.dst.clone()));
+                                }
+                            }
+
                             tracing::info!(
                                 nodes = kotlin_resolve_output.nodes.len(),
                                 edges = kotlin_resolve_output.edges.len(),
@@ -807,6 +849,12 @@ async fn main() -> Result<()> {
                                 .await
                                 .context("Failed to commit Python resolution output")?;
 
+                            for edge in &py_resolve_output.edges {
+                                if edge.edge_type == "IMPORTS_FROM" {
+                                    all_imports_from_edges.push((edge.src.clone(), edge.dst.clone()));
+                                }
+                            }
+
                             tracing::info!(
                                 nodes = py_resolve_output.nodes.len(),
                                 edges = py_resolve_output.edges.len(),
@@ -862,6 +910,12 @@ async fn main() -> Result<()> {
                             rfdb.commit_batch(&jvm_cross_files, &jvm_cross_output.nodes, &jvm_cross_output.edges, false)
                                 .await
                                 .context("Failed to commit JVM cross-language resolution output")?;
+
+                            for edge in &jvm_cross_output.edges {
+                                if edge.edge_type == "IMPORTS_FROM" {
+                                    all_imports_from_edges.push((edge.src.clone(), edge.dst.clone()));
+                                }
+                            }
 
                             tracing::info!(
                                 nodes = jvm_cross_output.nodes.len(),
@@ -926,7 +980,52 @@ async fn main() -> Result<()> {
                 }
             }
 
-            // 9. Summary
+            // 9. Derive MODULE→MODULE DEPENDS_ON edges from IMPORTS_FROM
+            if !all_imports_from_edges.is_empty() {
+                let mut depends_on_pairs: HashSet<(String, String)> = HashSet::new();
+
+                for (src_id, dst_id) in &all_imports_from_edges {
+                    // Extract file path from semantic ID: "path/to/file.ts->TYPE->name" → "path/to/file.ts"
+                    let src_file = src_id.split("->").next().unwrap_or("");
+                    let dst_file = dst_id.split("->").next().unwrap_or("");
+
+                    if let (Some(src_mod), Some(dst_mod)) =
+                        (file_to_module.get(src_file), file_to_module.get(dst_file))
+                    {
+                        if src_mod != dst_mod {
+                            depends_on_pairs.insert((src_mod.clone(), dst_mod.clone()));
+                        }
+                    }
+                }
+
+                if !depends_on_pairs.is_empty() {
+                    let metadata_json = format!(
+                        r#"{{"_source":"module-dependencies","_generation":{generation}}}"#
+                    );
+
+                    let depends_on_wire_edges: Vec<rfdb::WireEdge> = depends_on_pairs
+                        .iter()
+                        .map(|(src, dst)| rfdb::WireEdge {
+                            src: src.clone(),
+                            dst: dst.clone(),
+                            edge_type: "DEPENDS_ON".to_string(),
+                            metadata: Some(metadata_json.clone()),
+                        })
+                        .collect();
+
+                    rfdb.commit_batch(&[], &[], &depends_on_wire_edges, false)
+                        .await
+                        .context("Failed to commit DEPENDS_ON edges")?;
+
+                    tracing::info!(
+                        edges = depends_on_wire_edges.len(),
+                        from_imports = all_imports_from_edges.len(),
+                        "Module dependency edges derived"
+                    );
+                }
+            }
+
+            // 10. Summary
             println!(
                 "Analyzed {} files ({} JS, {} Haskell, {} Rust, {} Java, {} Kotlin, {} Python, {} skipped): {} nodes, {} edges, {} errors",
                 changed_files.len(),

@@ -340,10 +340,10 @@ export class FileOverview {
       overview.extends = node.superClass as string;
     }
 
-    // Get methods via CONTAINS edges
+    // Get methods via CONTAINS or HAS_METHOD edges
     const containsEdges = await this.graph.getOutgoingEdges(
       node.id,
-      ['CONTAINS']
+      ['CONTAINS', 'HAS_METHOD']
     );
 
     for (const edge of containsEdges) {

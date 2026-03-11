@@ -219,8 +219,15 @@ export async function handleFindCalls(args: FindCallsArgs): Promise<ToolResult> 
   let totalMatched = 0;
 
   for await (const node of db.queryNodes({ type: 'CALL' })) {
-    if (node.name !== name && node['method'] !== name) continue;
-    if (className && node['object'] !== className) continue;
+    const nodeName = node.name ?? '';
+    // Method calls are stored as "receiver.method" (e.g., "kb.queryNodes", "<obj>.load").
+    // Extract the method part so find_calls("queryNodes") matches "kb.queryNodes".
+    const dotIdx = nodeName.lastIndexOf('.');
+    const methodPart = dotIdx >= 0 ? nodeName.slice(dotIdx + 1) : null;
+    const receiverPart = dotIdx >= 0 ? nodeName.slice(0, dotIdx) : null;
+
+    if (nodeName !== name && methodPart !== name) continue;
+    if (className && receiverPart !== className) continue;
 
     totalMatched++;
 
