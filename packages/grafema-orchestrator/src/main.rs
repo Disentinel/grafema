@@ -1,4 +1,4 @@
-use grafema_orchestrator::{analyzer, config, discovery, gc, plugin, process_pool, rfdb};
+use grafema_orchestrator::{analyzer, config, discovery, gc, plugin, process_pool, rfdb, source_hash};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -132,6 +132,37 @@ async fn main() -> Result<()> {
                 python = py_files.len(),
                 "Partitioned files by language"
             );
+
+            // 3c. Verify binary freshness (source hash check)
+            {
+                let mut binaries_to_check = Vec::new();
+                if !js_files.is_empty() {
+                    binaries_to_check.push(cfg.analyzers.js_path());
+                    binaries_to_check.push(cfg.analyzers.js_resolve_path());
+                }
+                if !hs_files.is_empty() {
+                    binaries_to_check.push(cfg.analyzers.haskell_path());
+                    binaries_to_check.push(cfg.analyzers.haskell_resolve_path());
+                }
+                if !rs_files.is_empty() {
+                    binaries_to_check.push(cfg.analyzers.rust_path());
+                    binaries_to_check.push(cfg.analyzers.rust_resolve_path());
+                }
+                if !java_files.is_empty() {
+                    binaries_to_check.push(cfg.analyzers.java_path());
+                    binaries_to_check.push(cfg.analyzers.java_resolve_path());
+                }
+                if !kotlin_files.is_empty() {
+                    binaries_to_check.push(cfg.analyzers.kotlin_path());
+                    binaries_to_check.push(cfg.analyzers.kotlin_resolve_path());
+                }
+
+                for binary in &binaries_to_check {
+                    if let Err(msg) = source_hash::verify_binary(binary, &cfg.root) {
+                        anyhow::bail!("{msg}");
+                    }
+                }
+            }
 
             // 4. Analyze files by language
             let mut results = Vec::new();

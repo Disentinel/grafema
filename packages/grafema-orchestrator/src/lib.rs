@@ -8,3 +8,4 @@ pub mod process_pool;
 pub mod rfdb;
 pub mod python_parser;
 pub mod rust_parser;
+pub mod source_hash;

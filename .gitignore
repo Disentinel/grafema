@@ -6,6 +6,7 @@ dist/
 *.tsbuildinfo
 target/
 dist-newstyle/
+.build-hash
 
 # IDE
 .idea/
