@@ -71,6 +71,7 @@ export interface TraceDataFlowArgs {
   direction?: 'forward' | 'backward' | 'both';
   max_depth?: number;
   limit?: number;
+  detail?: 'summary' | 'normal' | 'full';
 }
 
 export interface CheckInvariantArgs {

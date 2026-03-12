@@ -586,4 +586,149 @@ describe('findCallsInFunction', () => {
       assert.strictEqual(calls[0].name, 'outerCall');
     });
   });
+
+  // ===========================================================================
+  // TESTS: Layout B (direct edges — Rust orchestrator)
+  // ===========================================================================
+
+  describe('Layout B: direct edges from FUNCTION to CALL nodes', () => {
+    /**
+     * WHY: The Rust orchestrator emits AWAITS edges from async functions
+     * to their awaited call nodes, instead of HAS_SCOPE -> CONTAINS chains.
+     */
+    it('should find CALL nodes via AWAITS edges', async () => {
+      await backend.addNode({ id: 'func-1', type: 'FUNCTION', name: 'asyncHandler', file: 'handler.ts', line: 1 });
+      await backend.addNode({ id: 'call-1', type: 'CALL', name: 'ensureAnalyzed', file: 'handler.ts', line: 3 });
+      await backend.addNode({ id: 'call-2', type: 'CALL', name: 'db.getNode', file: 'handler.ts', line: 5 });
+
+      await backend.addEdge({ src: 'func-1', dst: 'call-1', type: 'AWAITS' });
+      await backend.addEdge({ src: 'func-1', dst: 'call-2', type: 'AWAITS' });
+
+      const calls = await findCallsInFunction(backend, 'func-1');
+
+      assert.strictEqual(calls.length, 2, 'Should find both awaited calls');
+      const callNames = calls.map((c) => c.name).sort();
+      assert.deepStrictEqual(callNames, ['db.getNode', 'ensureAnalyzed']);
+    });
+
+    /**
+     * WHY: RETURNS edges link functions to call nodes in return expressions.
+     */
+    it('should find CALL nodes via RETURNS edges', async () => {
+      await backend.addNode({ id: 'func-1', type: 'FUNCTION', name: 'getResult', file: 'util.ts', line: 1 });
+      await backend.addNode({ id: 'call-1', type: 'CALL', name: 'textResult', file: 'util.ts', line: 5 });
+
+      await backend.addEdge({ src: 'func-1', dst: 'call-1', type: 'RETURNS' });
+
+      const calls = await findCallsInFunction(backend, 'func-1');
+
+      assert.strictEqual(calls.length, 1, 'Should find call in return expression');
+      assert.strictEqual(calls[0].name, 'textResult');
+    });
+
+    /**
+     * WHY: THROWS edges link functions to call nodes in throw expressions.
+     */
+    it('should find CALL nodes via THROWS edges', async () => {
+      await backend.addNode({ id: 'func-1', type: 'FUNCTION', name: 'validate', file: 'validator.ts', line: 1 });
+      await backend.addNode({ id: 'call-1', type: 'CALL', name: 'Error', file: 'validator.ts', line: 3 });
+
+      await backend.addEdge({ src: 'func-1', dst: 'call-1', type: 'THROWS' });
+
+      const calls = await findCallsInFunction(backend, 'func-1');
+
+      assert.strictEqual(calls.length, 1, 'Should find call in throw expression');
+      assert.strictEqual(calls[0].name, 'Error');
+    });
+
+    /**
+     * WHY: Real functions have a mix of AWAITS, RETURNS, and non-call edges.
+     * Should collect calls from all edge types and ignore non-call targets.
+     */
+    it('should find calls from mixed edge types, ignoring non-call targets', async () => {
+      await backend.addNode({ id: 'func-1', type: 'FUNCTION', name: 'handler', file: 'handler.ts', line: 1 });
+      await backend.addNode({ id: 'param-1', type: 'PARAMETER', name: 'args', file: 'handler.ts', line: 1 });
+      await backend.addNode({ id: 'call-1', type: 'CALL', name: 'ensureAnalyzed', file: 'handler.ts', line: 3 });
+      await backend.addNode({ id: 'call-2', type: 'CALL', name: 'errorResult', file: 'handler.ts', line: 10 });
+      await backend.addNode({ id: 'call-3', type: 'CALL', name: 'textResult', file: 'handler.ts', line: 15 });
+
+      // Mixed edge types
+      await backend.addEdge({ src: 'func-1', dst: 'param-1', type: 'RECEIVES_ARGUMENT' });
+      await backend.addEdge({ src: 'func-1', dst: 'call-1', type: 'AWAITS' });
+      await backend.addEdge({ src: 'func-1', dst: 'call-2', type: 'RETURNS' });
+      await backend.addEdge({ src: 'func-1', dst: 'call-3', type: 'RETURNS' });
+
+      const calls = await findCallsInFunction(backend, 'func-1');
+
+      assert.strictEqual(calls.length, 3, 'Should find all call nodes, ignoring parameters');
+      const callNames = calls.map((c) => c.name).sort();
+      assert.deepStrictEqual(callNames, ['ensureAnalyzed', 'errorResult', 'textResult']);
+    });
+
+    /**
+     * WHY: Resolution status should work the same in Layout B.
+     * CALL nodes in Layout B still have CALLS edges to their targets.
+     */
+    it('should resolve targets in Layout B via CALLS edges', async () => {
+      await backend.addNode({ id: 'func-1', type: 'FUNCTION', name: 'handler', file: 'handler.ts', line: 1 });
+      await backend.addNode({ id: 'call-1', type: 'CALL', name: 'ensureAnalyzed', file: 'handler.ts', line: 3 });
+      await backend.addNode({ id: 'target-1', type: 'FUNCTION', name: 'ensureAnalyzed', file: 'analysis.ts', line: 10 });
+
+      await backend.addEdge({ src: 'func-1', dst: 'call-1', type: 'AWAITS' });
+      await backend.addEdge({ src: 'call-1', dst: 'target-1', type: 'CALLS' });
+
+      const calls = await findCallsInFunction(backend, 'func-1');
+
+      assert.strictEqual(calls.length, 1);
+      assert.strictEqual(calls[0].resolved, true, 'Call should be resolved via CALLS edge');
+      assert.ok(calls[0].target, 'Should have target info');
+      assert.strictEqual(calls[0].target!.name, 'ensureAnalyzed');
+      assert.strictEqual(calls[0].target!.file, 'analysis.ts');
+    });
+
+    /**
+     * WHY: Transitive mode should work with Layout B.
+     * Follow resolved CALLS edges from Layout B call nodes.
+     */
+    it('should support transitive mode with Layout B', async () => {
+      // Function A (Layout B) calls B, B (Layout B) calls C
+      await backend.addNode({ id: 'func-A', type: 'FUNCTION', name: 'funcA', file: 'file.ts', line: 1 });
+      await backend.addNode({ id: 'call-B', type: 'CALL', name: 'funcB', file: 'file.ts', line: 3 });
+      await backend.addNode({ id: 'func-B', type: 'FUNCTION', name: 'funcB', file: 'file.ts', line: 10 });
+      await backend.addNode({ id: 'call-C', type: 'CALL', name: 'funcC', file: 'file.ts', line: 12 });
+      await backend.addNode({ id: 'func-C', type: 'FUNCTION', name: 'funcC', file: 'file.ts', line: 20 });
+
+      await backend.addEdge({ src: 'func-A', dst: 'call-B', type: 'AWAITS' });
+      await backend.addEdge({ src: 'call-B', dst: 'func-B', type: 'CALLS' });
+      await backend.addEdge({ src: 'func-B', dst: 'call-C', type: 'AWAITS' });
+      await backend.addEdge({ src: 'call-C', dst: 'func-C', type: 'CALLS' });
+
+      const calls = await findCallsInFunction(backend, 'func-A', { transitive: true });
+
+      assert.strictEqual(calls.length, 2, 'Should find direct and transitive calls');
+      const directCall = calls.find((c) => c.name === 'funcB');
+      const transitiveCall = calls.find((c) => c.name === 'funcC');
+      assert.ok(directCall, 'Should find direct call');
+      assert.ok(transitiveCall, 'Should find transitive call');
+      assert.strictEqual(directCall!.depth, 0, 'Direct call depth=0');
+      assert.strictEqual(transitiveCall!.depth, 1, 'Transitive call depth=1');
+    });
+
+    /**
+     * WHY: METHOD_CALL nodes should also be found via direct edges.
+     */
+    it('should find METHOD_CALL nodes via direct edges', async () => {
+      await backend.addNode({ id: 'func-1', type: 'FUNCTION', name: 'handler', file: 'handler.ts', line: 1 });
+      await backend.addNode({ id: 'mcall-1', type: 'METHOD_CALL', name: 'json', file: 'handler.ts', line: 3, object: 'response' });
+
+      await backend.addEdge({ src: 'func-1', dst: 'mcall-1', type: 'AWAITS' });
+
+      const calls = await findCallsInFunction(backend, 'func-1');
+
+      assert.strictEqual(calls.length, 1, 'Should find method call via direct edge');
+      assert.strictEqual(calls[0].type, 'METHOD_CALL');
+      assert.strictEqual(calls[0].name, 'json');
+      assert.strictEqual(calls[0].object, 'response');
+    });
+  });
 });

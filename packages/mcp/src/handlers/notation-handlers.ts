@@ -3,7 +3,7 @@
  */
 
 import { ensureAnalyzed } from '../analysis.js';
-import { renderNotation, extractSubgraph, PERSPECTIVES } from '@grafema/util';
+import { renderNotation, extractSubgraph, PERSPECTIVES, generateLegend } from '@grafema/util';
 import type { DescribeOptions } from '@grafema/util';
 import { textResult, errorResult } from '../utils.js';
 import type { ToolResult, DescribeArgs } from '../types.js';
@@ -61,5 +61,10 @@ export async function handleDescribe(
     );
   }
 
-  return textResult(notation);
+  // Append legend (generated from archetypes.ts — single source of truth) + LOD hint
+  const depthHint = depth < 3
+    ? `Showing depth=${depth}. Use depth=${depth + 1} for more detail.`
+    : `Showing depth=${depth}.`;
+
+  return textResult(`${notation}\n\n${generateLegend()}\n${depthHint}`);
 }
