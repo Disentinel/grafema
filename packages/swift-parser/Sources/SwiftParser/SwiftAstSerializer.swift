@@ -573,7 +573,7 @@ class SwiftAstSerializer {
                 result["captureList"] = captureItems.items.map { item in
                     var c: [String: Any] = [:]
                     if let specifier = item.specifier {
-                        c["specifier"] = specifier.text
+                        c["specifier"] = specifier.specifier.text
                     }
                     c["expression"] = serializeExpr(item.expression)
                     return c
