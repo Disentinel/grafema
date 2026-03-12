@@ -2753,6 +2753,323 @@ pub async fn analyze_go_files_parallel(
 }
 
 // ---------------------------------------------------------------------------
+// C/C++ single-file analysis (in-process parse → cpp-analyzer daemon)
+// ---------------------------------------------------------------------------
+
+/// Analyze a single C/C++ file: parse with clang-sys, send AST to cpp-analyzer daemon.
+///
+/// Pipeline:
+/// 1. Parse source with libclang (via `crate::cpp_parser::parse_cpp_file`) -> JSON AST
+/// 2. Send `{"file":"...","ast":...}` to grafema-cpp-analyzer -> receive FileAnalysis
+pub async fn analyze_cpp_file(
+    file: &Path,
+    ast_json: &str,
+    analyzer_bin: &str,
+) -> Result<FileAnalysis> {
+    let file_str = file.display().to_string();
+
+    let mut child = tokio::process::Command::new(analyzer_bin)
+        .arg(&file_str)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .with_context(|| format!("Failed to spawn grafema-cpp-analyzer for {file_str}"))?;
+
+    let payload = serde_json::json!({
+        "file": file_str,
+        "ast": serde_json::from_str::<serde_json::Value>(ast_json)
+            .unwrap_or(serde_json::Value::Null),
+    });
+
+    {
+        let stdin = child.stdin.as_mut()
+            .context("Failed to open stdin for grafema-cpp-analyzer")?;
+        stdin.write_all(payload.to_string().as_bytes()).await
+            .with_context(|| format!("Failed to write AST to grafema-cpp-analyzer stdin for {file_str}"))?;
+        stdin.shutdown().await
+            .with_context(|| format!("Failed to close grafema-cpp-analyzer stdin for {file_str}"))?;
+    }
+
+    let output = child.wait_with_output().await
+        .with_context(|| format!("Failed to wait for grafema-cpp-analyzer for {file_str}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let code = output.status.code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "signal".to_string());
+        anyhow::bail!("grafema-cpp-analyzer exited with code {code} for {file_str}: {stderr}");
+    }
+
+    let stdout = &output.stdout;
+    let analysis: FileAnalysis = serde_json::from_slice(stdout).with_context(|| {
+        let preview = String::from_utf8_lossy(&stdout[..stdout.len().min(200)]);
+        format!("Failed to parse grafema-cpp-analyzer output for {file_str}: {preview}")
+    })?;
+
+    Ok(analysis)
+}
+
+// ---------------------------------------------------------------------------
+// C/C++ daemon-mode analysis via ProcessPool
+// ---------------------------------------------------------------------------
+
+/// Analyze a single C/C++ file via a persistent daemon process pool.
+pub async fn analyze_cpp_file_pooled(
+    pool: &ProcessPool,
+    file: &Path,
+    ast_json: &str,
+) -> Result<FileAnalysis> {
+    let file_str = file.display().to_string();
+
+    let escaped_file = serde_json::to_string(&file_str)
+        .with_context(|| format!("Failed to escape file path for {file_str}"))?;
+    let payload = format!(r#"{{"file":{},"ast":{}}}"#, escaped_file, ast_json);
+
+    let response_bytes = pool
+        .request(payload.as_bytes())
+        .await
+        .with_context(|| format!("Pool request failed for {file_str}"))?;
+
+    let response: DaemonResponse = serde_json::from_slice(&response_bytes)
+        .with_context(|| format!("Failed to decode response for {file_str}"))?;
+
+    match response.status.as_str() {
+        "ok" => response
+            .result
+            .with_context(|| format!("Daemon returned ok but no result for {file_str}")),
+        "error" => {
+            let msg = response.error.unwrap_or_else(|| "unknown error".to_string());
+            bail!("grafema-cpp-analyzer daemon error for {file_str}: {msg}")
+        }
+        other => bail!("Unknown daemon response status '{other}' for {file_str}"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// C/C++ parallel multi-file analysis
+// ---------------------------------------------------------------------------
+
+/// Analyze multiple C/C++ files in parallel using persistent daemon processes.
+///
+/// Pipeline per file:
+/// 1. Parse with libclang (via `crate::cpp_parser::parse_cpp_file`) -> JSON AST
+/// 2. Send AST to grafema-cpp-analyzer daemon pool -> receive FileAnalysis
+///
+/// Falls back to `analyze_cpp_files_parallel` if pool creation fails.
+pub async fn analyze_cpp_files_parallel_pooled(
+    files: &[PathBuf],
+    jobs: usize,
+    analyzers: &crate::config::AnalyzerBinaries,
+    compile_commands: Option<&crate::cpp_parser::CompileCommandsDb>,
+) -> Vec<AnalysisResult> {
+    let pool_config = PoolConfig {
+        command: analyzers.cpp_path(),
+        args: vec!["--daemon".to_string()],
+        ..PoolConfig::default()
+    };
+
+    let pool = match ProcessPool::new(pool_config, jobs.max(1)) {
+        Ok(p) => Arc::new(p),
+        Err(e) => {
+            tracing::warn!(
+                "Failed to create grafema-cpp-analyzer pool, falling back to spawn-per-file: {e}"
+            );
+            return analyze_cpp_files_parallel(files, jobs, &analyzers.cpp_path(), compile_commands).await;
+        }
+    };
+
+    let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
+    let total = files.len();
+
+    // Pre-compute compile args for each file (CompileCommandsDb is not Send)
+    let file_args: Vec<(PathBuf, Vec<String>)> = files.iter().map(|file| {
+        let args = compile_commands
+            .map(|db| db.get_args(file))
+            .unwrap_or_default();
+        (file.clone(), args)
+    }).collect();
+
+    let handles: Vec<_> = file_args
+        .into_iter()
+        .enumerate()
+        .map(|(idx, (file, extra_args))| {
+            let sem = Arc::clone(&semaphore);
+            let pool = Arc::clone(&pool);
+            let file_display = file.display().to_string();
+
+            tokio::spawn(async move {
+                let _permit = sem.acquire().await.expect("Semaphore closed unexpectedly");
+                tracing::info!("[{}/{}] Analyzing C/C++ file {}", idx + 1, total, file_display);
+
+                let mut errors = Vec::new();
+
+                // Step 1: Parse with libclang (CPU-bound -> spawn_blocking)
+                let parse_result = {
+                    let file_clone = file.clone();
+                    tokio::task::spawn_blocking(move || {
+                        // Build default args if no compile_commands
+                        let is_c = crate::cpp_parser::is_c_file(&file_clone);
+                        let mut args = extra_args;
+                        let has_lang_flag = args.iter().any(|a| a.starts_with("-x") || a.starts_with("-std="));
+                        if !has_lang_flag {
+                            if is_c {
+                                args.extend_from_slice(&["-std=c11".to_string(), "-xc".to_string()]);
+                            } else {
+                                args.extend_from_slice(&["-std=c++17".to_string(), "-xc++".to_string()]);
+                            }
+                        }
+
+                        let source = std::fs::read_to_string(&file_clone)
+                            .with_context(|| format!("Failed to read {}", file_clone.display()))?;
+                        let filename = file_clone.display().to_string();
+                        let ast = crate::cpp_parser::parse_cpp_source(&source, &filename, &args)?;
+                        serde_json::to_string(&ast).context("Failed to serialize C/C++ AST to JSON")
+                    }).await
+                };
+
+                let ast_json = match parse_result {
+                    Ok(Ok(json)) => json,
+                    Ok(Err(e)) => {
+                        errors.push(format!("C/C++ parse failed for {file_display}: {e}"));
+                        return AnalysisResult { file, analysis: None, errors };
+                    }
+                    Err(e) => {
+                        errors.push(format!("C/C++ parse task panicked for {file_display}: {e}"));
+                        return AnalysisResult { file, analysis: None, errors };
+                    }
+                };
+
+                // Step 2: Send to daemon pool
+                match analyze_cpp_file_pooled(&pool, &file, &ast_json).await {
+                    Ok(analysis) => AnalysisResult { file, analysis: Some(analysis), errors },
+                    Err(e) => {
+                        errors.push(format!("C/C++ analyzer failed for {file_display}: {e}"));
+                        AnalysisResult { file, analysis: None, errors }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        match handle.await {
+            Ok(result) => results.push(result),
+            Err(e) => {
+                results.push(AnalysisResult {
+                    file: PathBuf::new(),
+                    analysis: None,
+                    errors: vec![format!("C/C++ analysis task failed: {e}")],
+                });
+            }
+        }
+    }
+
+    pool.shutdown().await;
+    results
+}
+
+/// Fallback: analyze C/C++ files in parallel by spawning per-file processes.
+pub async fn analyze_cpp_files_parallel(
+    files: &[PathBuf],
+    jobs: usize,
+    analyzer_bin: &str,
+    compile_commands: Option<&crate::cpp_parser::CompileCommandsDb>,
+) -> Vec<AnalysisResult> {
+    let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
+    let total = files.len();
+    let analyzer_bin = analyzer_bin.to_string();
+
+    // Pre-compute compile args for each file
+    let file_args: Vec<(PathBuf, Vec<String>)> = files.iter().map(|file| {
+        let args = compile_commands
+            .map(|db| db.get_args(file))
+            .unwrap_or_default();
+        (file.clone(), args)
+    }).collect();
+
+    let handles: Vec<_> = file_args
+        .into_iter()
+        .enumerate()
+        .map(|(idx, (file, extra_args))| {
+            let sem = Arc::clone(&semaphore);
+            let file_display = file.display().to_string();
+            let bin = analyzer_bin.clone();
+
+            tokio::spawn(async move {
+                let _permit = sem.acquire().await.expect("Semaphore closed unexpectedly");
+                tracing::info!("[{}/{}] Analyzing C/C++ file {}", idx + 1, total, file_display);
+
+                let mut errors = Vec::new();
+
+                // Step 1: Parse with libclang
+                let is_c = crate::cpp_parser::is_c_file(&file);
+                let mut args = extra_args;
+                let has_lang_flag = args.iter().any(|a| a.starts_with("-x") || a.starts_with("-std="));
+                if !has_lang_flag {
+                    if is_c {
+                        args.extend_from_slice(&["-std=c11".to_string(), "-xc".to_string()]);
+                    } else {
+                        args.extend_from_slice(&["-std=c++17".to_string(), "-xc++".to_string()]);
+                    }
+                }
+
+                let source = match std::fs::read_to_string(&file) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        errors.push(format!("Failed to read {file_display}: {e}"));
+                        return AnalysisResult { file, analysis: None, errors };
+                    }
+                };
+
+                let ast_value = match crate::cpp_parser::parse_cpp_source(&source, &file_display, &args) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        errors.push(format!("C/C++ parse failed for {file_display}: {e}"));
+                        return AnalysisResult { file, analysis: None, errors };
+                    }
+                };
+
+                let ast_json = match serde_json::to_string(&ast_value) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        errors.push(format!("C/C++ AST serialization failed for {file_display}: {e}"));
+                        return AnalysisResult { file, analysis: None, errors };
+                    }
+                };
+
+                // Step 2: Spawn analyzer
+                match analyze_cpp_file(&file, &ast_json, &bin).await {
+                    Ok(analysis) => AnalysisResult { file, analysis: Some(analysis), errors },
+                    Err(e) => {
+                        errors.push(format!("C/C++ analyzer failed for {file_display}: {e}"));
+                        AnalysisResult { file, analysis: None, errors }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        match handle.await {
+            Ok(result) => results.push(result),
+            Err(e) => {
+                results.push(AnalysisResult {
+                    file: PathBuf::new(),
+                    analysis: None,
+                    errors: vec![format!("C/C++ analysis task failed: {e}")],
+                });
+            }
+        }
+    }
+
+    results
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 

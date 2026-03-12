@@ -123,7 +123,7 @@ async fn main() -> Result<()> {
             }
 
             // 3b. Partition by language
-            let (js_files, hs_files, rs_files, java_files, kotlin_files, py_files, go_files) = config::partition_by_language(&changed_files);
+            let (js_files, hs_files, rs_files, java_files, kotlin_files, py_files, go_files, cpp_files) = config::partition_by_language(&changed_files);
             tracing::info!(
                 js = js_files.len(),
                 haskell = hs_files.len(),
@@ -132,6 +132,7 @@ async fn main() -> Result<()> {
                 kotlin = kotlin_files.len(),
                 python = py_files.len(),
                 go = go_files.len(),
+                cpp = cpp_files.len(),
                 "Partitioned files by language"
             );
 
@@ -161,6 +162,10 @@ async fn main() -> Result<()> {
                 if !go_files.is_empty() {
                     binaries_to_check.push(cfg.analyzers.go_path());
                     binaries_to_check.push(cfg.analyzers.go_resolve_path());
+                }
+                if !cpp_files.is_empty() {
+                    binaries_to_check.push(cfg.analyzers.cpp_path());
+                    binaries_to_check.push(cfg.analyzers.cpp_resolve_path());
                 }
 
                 for binary in &binaries_to_check {
@@ -220,6 +225,54 @@ async fn main() -> Result<()> {
                 tracing::info!(count = go_files.len(), "Analyzing Go files");
                 let go_results = analyzer::analyze_go_files_parallel_pooled(&go_files, jobs, &cfg.analyzers).await;
                 results.extend(go_results);
+            }
+
+            // 4h. Analyze C/C++ files (libclang parse → cpp-analyzer daemon pool)
+            if !cpp_files.is_empty() {
+                tracing::info!(count = cpp_files.len(), "Analyzing C/C++ files");
+
+                // Search for compile_commands.json in project root and build directories
+                let compile_commands = {
+                    let search_dirs = [
+                        cfg.root.clone(),
+                        cfg.root.join("build"),
+                        cfg.root.join("cmake-build-debug"),
+                        cfg.root.join("cmake-build-release"),
+                        cfg.root.join("out"),
+                        cfg.root.join("_build"),
+                    ];
+                    let mut db = None;
+                    for dir in &search_dirs {
+                        let cc_path = dir.join("compile_commands.json");
+                        if cc_path.is_file() {
+                            match grafema_orchestrator::cpp_parser::CompileCommandsDb::load(&cc_path) {
+                                Ok(loaded) => {
+                                    tracing::info!(
+                                        path = %cc_path.display(),
+                                        "Loaded compile_commands.json"
+                                    );
+                                    db = Some(loaded);
+                                    break;
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        path = %cc_path.display(),
+                                        "Failed to load compile_commands.json: {e}"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    db
+                };
+
+                let cpp_results = analyzer::analyze_cpp_files_parallel_pooled(
+                    &cpp_files,
+                    jobs,
+                    &cfg.analyzers,
+                    compile_commands.as_ref(),
+                ).await;
+                results.extend(cpp_results);
             }
 
             // 5. Relativize paths: convert absolute → relative (to project root)
@@ -1011,6 +1064,68 @@ async fn main() -> Result<()> {
                         Err(e) => {
                             tracing::warn!(
                                 "Failed to create JVM cross-resolve pool, skipping cross-language resolution: {e}"
+                            );
+                        }
+                    }
+                }
+            }
+
+            // 8g.5. Run C/C++ resolution
+            if !cpp_files.is_empty() {
+                let cpp_resolve_nodes = analyzer::collect_resolve_nodes_for_lang(&results, config::Language::Cpp);
+                if !cpp_resolve_nodes.is_empty() {
+                    tracing::info!(
+                        nodes = cpp_resolve_nodes.len(),
+                        "Running C/C++ resolution"
+                    );
+
+                    let cpp_resolve_pool_config = process_pool::PoolConfig {
+                        command: cfg.analyzers.cpp_resolve_path(),
+                        args: vec!["--daemon".to_string()],
+                        ..process_pool::PoolConfig::default()
+                    };
+
+                    match process_pool::ProcessPool::new(cpp_resolve_pool_config, 1) {
+                        Ok(cpp_resolve_pool) => {
+                            let mut cpp_resolve_output = plugin::run_resolve_with_nodes(
+                                "cpp-all",
+                                &cpp_resolve_nodes,
+                                &[],
+                                &cpp_resolve_pool,
+                            )
+                            .await
+                            .context("C/C++ resolution failed")?;
+                            plugin::validate_plugin_output(&cpp_resolve_output)?;
+                            plugin::stamp_metadata(&mut cpp_resolve_output, "cpp-resolution", generation);
+
+                            let cpp_resolve_files: Vec<String> = cpp_resolve_output
+                                .nodes
+                                .iter()
+                                .filter_map(|n| n.file.clone())
+                                .collect::<std::collections::HashSet<_>>()
+                                .into_iter()
+                                .collect();
+                            rfdb.commit_batch(&cpp_resolve_files, &cpp_resolve_output.nodes, &cpp_resolve_output.edges, false)
+                                .await
+                                .context("Failed to commit C/C++ resolution output")?;
+
+                            for edge in &cpp_resolve_output.edges {
+                                if edge.edge_type == "IMPORTS_FROM" {
+                                    all_imports_from_edges.push((edge.src.clone(), edge.dst.clone()));
+                                }
+                            }
+
+                            tracing::info!(
+                                nodes = cpp_resolve_output.nodes.len(),
+                                edges = cpp_resolve_output.edges.len(),
+                                "C/C++ resolution complete"
+                            );
+
+                            cpp_resolve_pool.shutdown().await;
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to create C/C++ resolve pool, skipping C/C++ resolution: {e}"
                             );
                         }
                     }

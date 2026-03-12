@@ -197,6 +197,14 @@ pub struct AnalyzerBinaries {
     /// Path to Go parser binary (default: "go-parser")
     #[serde(default = "default_go_parser")]
     pub go_parser: String,
+
+    /// Path to C/C++ analyzer binary (default: "grafema-cpp-analyzer")
+    #[serde(default = "default_cpp_analyzer")]
+    pub cpp: String,
+
+    /// Path to C/C++ resolve binary (default: "cpp-resolve")
+    #[serde(default = "default_cpp_resolve")]
+    pub cpp_resolve: String,
 }
 
 impl Default for AnalyzerBinaries {
@@ -220,6 +228,8 @@ impl Default for AnalyzerBinaries {
             go: default_go_analyzer(),
             go_resolve: default_go_resolve(),
             go_parser: default_go_parser(),
+            cpp: default_cpp_analyzer(),
+            cpp_resolve: default_cpp_resolve(),
         }
     }
 }
@@ -364,6 +374,16 @@ impl AnalyzerBinaries {
     /// Resolved path for the Go parser binary.
     pub fn go_parser_path(&self) -> String {
         resolve_binary(&self.go_parser)
+    }
+
+    /// Resolved path for the C/C++ analyzer binary.
+    pub fn cpp_path(&self) -> String {
+        resolve_binary(&self.cpp)
+    }
+
+    /// Resolved path for the C/C++ resolve binary.
+    pub fn cpp_resolve_path(&self) -> String {
+        resolve_binary(&self.cpp_resolve)
     }
 }
 
@@ -522,6 +542,14 @@ fn default_go_parser() -> String {
     "go-parser".to_string()
 }
 
+fn default_cpp_analyzer() -> String {
+    "grafema-cpp-analyzer".to_string()
+}
+
+fn default_cpp_resolve() -> String {
+    "cpp-resolve".to_string()
+}
+
 /// Language detection based on file extension.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Language {
@@ -532,11 +560,13 @@ pub enum Language {
     Kotlin,
     Python,
     Go,
+    Cpp,
 }
 
 /// Detect language from file extension.
 pub fn detect_language(path: &Path) -> Option<Language> {
-    match path.extension()?.to_str()? {
+    let ext = path.extension()?.to_str()?;
+    match ext {
         "js" | "jsx" | "ts" | "tsx" | "mjs" | "cjs" | "mts" | "cts" => {
             Some(Language::JavaScript)
         }
@@ -546,12 +576,25 @@ pub fn detect_language(path: &Path) -> Option<Language> {
         "kt" | "kts" => Some(Language::Kotlin),
         "py" | "pyi" => Some(Language::Python),
         "go" => Some(Language::Go),
-        _ => None,
+        "c" | "h" | "cpp" | "hpp" | "cc" | "cxx" | "hxx" | "hh" | "inl" | "ipp" | "tpp" | "txx" => {
+            Some(Language::Cpp)
+        }
+        _ => {
+            // Handle case-sensitive extensions: .c++ .h++ .C .H
+            let file_name = path.file_name()?.to_str()?;
+            if file_name.ends_with(".c++") || file_name.ends_with(".h++") {
+                Some(Language::Cpp)
+            } else if ext == "C" || ext == "H" {
+                Some(Language::Cpp)
+            } else {
+                None
+            }
+        }
     }
 }
 
 /// Partition files by detected language.
-pub fn partition_by_language(files: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>) {
+pub fn partition_by_language(files: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>) {
     let mut js_files = Vec::new();
     let mut hs_files = Vec::new();
     let mut rs_files = Vec::new();
@@ -559,6 +602,7 @@ pub fn partition_by_language(files: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>, 
     let mut kotlin_files = Vec::new();
     let mut py_files = Vec::new();
     let mut go_files = Vec::new();
+    let mut cpp_files = Vec::new();
     for file in files {
         match detect_language(file) {
             Some(Language::JavaScript) => js_files.push(file.clone()),
@@ -568,10 +612,11 @@ pub fn partition_by_language(files: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>, 
             Some(Language::Kotlin) => kotlin_files.push(file.clone()),
             Some(Language::Python) => py_files.push(file.clone()),
             Some(Language::Go) => go_files.push(file.clone()),
+            Some(Language::Cpp) => cpp_files.push(file.clone()),
             None => {} // skip unknown extensions
         }
     }
-    (js_files, hs_files, rs_files, java_files, kotlin_files, py_files, go_files)
+    (js_files, hs_files, rs_files, java_files, kotlin_files, py_files, go_files, cpp_files)
 }
 
 /// Load and validate configuration from a YAML file.
@@ -967,9 +1012,11 @@ plugins:
             PathBuf::from("src/App.java"),
             PathBuf::from("src/script.py"),
             PathBuf::from("src/main.go"),
+            PathBuf::from("src/parser.cpp"),
+            PathBuf::from("src/parser.h"),
             PathBuf::from("README.md"),
         ];
-        let (js, hs, rs, java, kotlin, py, go) = partition_by_language(&files);
+        let (js, hs, rs, java, kotlin, py, go, cpp) = partition_by_language(&files);
         assert_eq!(js, vec![PathBuf::from("src/index.ts"), PathBuf::from("src/app.jsx")]);
         assert_eq!(hs, vec![PathBuf::from("src/Main.hs"), PathBuf::from("src/Lib.hs")]);
         assert_eq!(rs, vec![PathBuf::from("src/main.rs"), PathBuf::from("src/lib.rs")]);
@@ -977,11 +1024,12 @@ plugins:
         assert!(kotlin.is_empty());
         assert_eq!(py, vec![PathBuf::from("src/script.py")]);
         assert_eq!(go, vec![PathBuf::from("src/main.go")]);
+        assert_eq!(cpp, vec![PathBuf::from("src/parser.cpp"), PathBuf::from("src/parser.h")]);
     }
 
     #[test]
     fn partition_by_language_empty_input() {
-        let (js, hs, rs, java, kotlin, py, go) = partition_by_language(&[]);
+        let (js, hs, rs, java, kotlin, py, go, cpp) = partition_by_language(&[]);
         assert!(js.is_empty());
         assert!(hs.is_empty());
         assert!(rs.is_empty());
@@ -989,6 +1037,7 @@ plugins:
         assert!(kotlin.is_empty());
         assert!(py.is_empty());
         assert!(go.is_empty());
+        assert!(cpp.is_empty());
     }
 
     #[test]
@@ -1021,12 +1070,32 @@ plugins:
     }
 
     #[test]
+    fn detect_language_cpp() {
+        // C files
+        assert_eq!(detect_language(Path::new("src/main.c")), Some(Language::Cpp));
+        // Headers default to C++ mode
+        assert_eq!(detect_language(Path::new("src/parser.h")), Some(Language::Cpp));
+        // C++ extensions
+        assert_eq!(detect_language(Path::new("src/parser.cpp")), Some(Language::Cpp));
+        assert_eq!(detect_language(Path::new("src/parser.hpp")), Some(Language::Cpp));
+        assert_eq!(detect_language(Path::new("src/parser.cc")), Some(Language::Cpp));
+        assert_eq!(detect_language(Path::new("src/parser.cxx")), Some(Language::Cpp));
+        assert_eq!(detect_language(Path::new("src/parser.hxx")), Some(Language::Cpp));
+        assert_eq!(detect_language(Path::new("src/parser.hh")), Some(Language::Cpp));
+        // Implementation/template files
+        assert_eq!(detect_language(Path::new("src/parser.inl")), Some(Language::Cpp));
+        assert_eq!(detect_language(Path::new("src/parser.ipp")), Some(Language::Cpp));
+        assert_eq!(detect_language(Path::new("src/parser.tpp")), Some(Language::Cpp));
+        assert_eq!(detect_language(Path::new("src/parser.txx")), Some(Language::Cpp));
+    }
+
+    #[test]
     fn partition_by_language_includes_python() {
         let files = vec![
             PathBuf::from("src/main.py"),
             PathBuf::from("src/app.js"),
         ];
-        let (js, _hs, _rs, _java, _kotlin, py, _go) = partition_by_language(&files);
+        let (js, _hs, _rs, _java, _kotlin, py, _go, _cpp) = partition_by_language(&files);
         assert_eq!(js, vec![PathBuf::from("src/app.js")]);
         assert_eq!(py, vec![PathBuf::from("src/main.py")]);
     }
@@ -1083,6 +1152,8 @@ analyzers:
         assert_eq!(cfg.analyzers.go, "grafema-go-analyzer");
         assert_eq!(cfg.analyzers.go_resolve, "go-resolve");
         assert_eq!(cfg.analyzers.go_parser, "go-parser");
+        assert_eq!(cfg.analyzers.cpp, "grafema-cpp-analyzer");
+        assert_eq!(cfg.analyzers.cpp_resolve, "cpp-resolve");
         cleanup(&dir);
     }
 
@@ -1107,6 +1178,8 @@ analyzers:
         assert_eq!(defaults.go, "grafema-go-analyzer");
         assert_eq!(defaults.go_resolve, "go-resolve");
         assert_eq!(defaults.go_parser, "go-parser");
+        assert_eq!(defaults.cpp, "grafema-cpp-analyzer");
+        assert_eq!(defaults.cpp_resolve, "cpp-resolve");
     }
 
     #[test]
@@ -1157,6 +1230,8 @@ analyzers:
             go: "/abs/grafema-go-analyzer".to_string(),
             go_resolve: "/abs/go-resolve".to_string(),
             go_parser: "/abs/go-parser".to_string(),
+            cpp: "/abs/grafema-cpp-analyzer".to_string(),
+            cpp_resolve: "/abs/cpp-resolve".to_string(),
         };
         assert_eq!(bins.js_path(), "/abs/grafema-analyzer");
         assert_eq!(bins.haskell_path(), "/abs/haskell-analyzer");
@@ -1176,6 +1251,8 @@ analyzers:
         assert_eq!(bins.go_path(), "/abs/grafema-go-analyzer");
         assert_eq!(bins.go_resolve_path(), "/abs/go-resolve");
         assert_eq!(bins.go_parser_path(), "/abs/go-parser");
+        assert_eq!(bins.cpp_path(), "/abs/grafema-cpp-analyzer");
+        assert_eq!(bins.cpp_resolve_path(), "/abs/cpp-resolve");
     }
 
     #[test]

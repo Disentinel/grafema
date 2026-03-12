@@ -34,6 +34,7 @@ syn = { version = "2", features = ["full", "extra-traits", "parsing"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = "1"
 rustpython-parser = { version = "0.4", features = ["all-nodes-with-ranges"] }
+clang-sys = { version = "1", features = ["clang_17_0", "runtime"] }
 
 [dev-dependencies]
 tempfile = "3"

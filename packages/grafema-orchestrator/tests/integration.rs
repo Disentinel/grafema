@@ -345,3 +345,68 @@ mod wire_conversion {
         assert_eq!(meta["kind"], "const");
     }
 }
+
+mod cpp_parser {
+    use std::path::Path;
+
+    #[test]
+    fn parse_demo_cpp_and_output_ast() {
+        let demo = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("_tasks/REG-665/demo.cpp");
+
+        if !demo.exists() {
+            eprintln!("demo.cpp not found at {}", demo.display());
+            return;
+        }
+
+        let ast = grafema_orchestrator::cpp_parser::parse_cpp_file(&demo, None)
+            .expect("Failed to parse demo.cpp");
+
+        // Write wrapped payload to temp file for analyzer
+        let payload = serde_json::json!({
+            "file": "demo.cpp",
+            "ast": ast
+        });
+
+        let out_path = std::env::temp_dir().join("cpp_demo_ast.json");
+        std::fs::write(&out_path, serde_json::to_string_pretty(&payload).unwrap())
+            .expect("Failed to write AST JSON");
+
+        eprintln!("AST written to {}", out_path.display());
+
+        // Count top-level children
+        let children = ast.get("children")
+            .and_then(|c| c.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0);
+        eprintln!("Top-level children: {}", children);
+
+        // Count all nodes by kind
+        let mut kind_counts = std::collections::HashMap::new();
+        count_kinds(&ast, &mut kind_counts);
+        let mut sorted: Vec<_> = kind_counts.iter().collect();
+        sorted.sort_by_key(|(_, c)| std::cmp::Reverse(**c));
+        eprintln!("\nAST node kinds:");
+        for (kind, count) in &sorted {
+            eprintln!("  {}: {}", kind, count);
+        }
+        eprintln!("Total AST nodes: {}", sorted.iter().map(|(_, c)| *c).sum::<usize>());
+
+        assert!(children > 0, "Expected at least one top-level child");
+    }
+
+    fn count_kinds(node: &serde_json::Value, counts: &mut std::collections::HashMap<String, usize>) {
+        if let Some(kind) = node.get("kind").and_then(|k| k.as_str()) {
+            *counts.entry(kind.to_string()).or_insert(0) += 1;
+        }
+        if let Some(children) = node.get("children").and_then(|c| c.as_array()) {
+            for child in children {
+                count_kinds(child, counts);
+            }
+        }
+    }
+}
