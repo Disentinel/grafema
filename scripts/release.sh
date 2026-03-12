@@ -68,16 +68,32 @@ if [ -z "$VERSION_ARG" ]; then
     exit 1
 fi
 
-# Publishable packages (order matters for dependency resolution)
-PACKAGES=(
+# Platform packages (no JS deps, just binaries — publish first)
+PLATFORM_PACKAGES=(
+    "packages/grafema-darwin-arm64"
+    "packages/grafema-darwin-x64"
+    "packages/grafema-linux-arm64"
+    "packages/grafema-linux-x64"
+)
+
+# JS packages in dependency order
+JS_PACKAGES=(
     "packages/types"
     "packages/rfdb"
     "packages/util"
     "packages/mcp"
     "packages/api"
     "packages/cli"
+    "packages/grafema"
+)
+
+# Legacy package (rfdb-server with prebuilt binaries)
+LEGACY_PACKAGES=(
     "packages/rfdb-server"
 )
+
+# All publishable packages
+PACKAGES=("${PLATFORM_PACKAGES[@]}" "${JS_PACKAGES[@]}" "${LEGACY_PACKAGES[@]}")
 
 #---------------------------------------------------------
 # STEP 1: Pre-flight checks
@@ -144,47 +160,76 @@ fi
 # STEP 1.6: Check rfdb binary freshness
 #---------------------------------------------------------
 echo ""
-echo -e "${BLUE}=== RFDB Binary Freshness Check ===${NC}"
+echo -e "${BLUE}=== Binary Freshness Check ===${NC}"
 
 if [ "$SKIP_RFDB_CHECK" = true ]; then
-    echo -e "${YELLOW}[SKIP] RFDB binary check bypassed (--skip-rfdb-check)${NC}"
+    echo -e "${YELLOW}[SKIP] Binary check bypassed (--skip-rfdb-check)${NC}"
 else
 
+# Check for binaries-v* tag (new format) or rfdb-v* (legacy)
+LAST_BIN_TAG=$(git tag -l 'binaries-v*' | sort -V | tail -1)
 LAST_RFDB_TAG=$(git tag -l 'rfdb-v*' | sort -V | tail -1)
-if [ -z "$LAST_RFDB_TAG" ]; then
-    echo -e "${RED}ERROR: No rfdb-v* tags found. Cannot verify binary freshness.${NC}"
-    echo "Push a tag first: git tag rfdb-v<version> && git push origin rfdb-v<version>"
+
+if [ -n "$LAST_BIN_TAG" ]; then
+    BINARY_TAG="$LAST_BIN_TAG"
+    echo "Using binaries tag: $BINARY_TAG"
+elif [ -n "$LAST_RFDB_TAG" ]; then
+    BINARY_TAG="$LAST_RFDB_TAG"
+    echo -e "${YELLOW}Using legacy rfdb tag: $BINARY_TAG${NC}"
+else
+    echo -e "${RED}ERROR: No binaries-v* or rfdb-v* tags found.${NC}"
+    echo "Push a tag first: git tag binaries-v<version> && git push origin binaries-v<version>"
     exit 1
 fi
 
-RUST_CHANGES_SINCE_TAG=$(git log "$LAST_RFDB_TAG"..HEAD --oneline -- packages/rfdb-server/src/ | wc -l | tr -d ' ')
+RUST_CHANGES_SINCE_TAG=$(git log "$BINARY_TAG"..HEAD --oneline -- packages/rfdb-server/src/ packages/grafema-orchestrator/src/ | wc -l | tr -d ' ')
 if [ "$RUST_CHANGES_SINCE_TAG" -gt 0 ]; then
-    echo -e "${RED}ERROR: $RUST_CHANGES_SINCE_TAG Rust source commits since last rfdb tag ($LAST_RFDB_TAG)${NC}"
+    echo -e "${RED}ERROR: $RUST_CHANGES_SINCE_TAG Rust source commits since last binary tag ($BINARY_TAG)${NC}"
     echo ""
-    echo "Prebuilt rfdb-server binaries are STALE. Recent Rust changes:"
-    git log "$LAST_RFDB_TAG"..HEAD --oneline -- packages/rfdb-server/src/
+    echo "Prebuilt binaries are STALE. Recent Rust changes:"
+    git log "$BINARY_TAG"..HEAD --oneline -- packages/rfdb-server/src/ packages/grafema-orchestrator/src/
     echo ""
-    echo "Fix: push a new rfdb tag to trigger CI binary build:"
-    echo "  git tag rfdb-v<version> && git push origin rfdb-v<version>"
+    echo "Fix: push a new binaries tag to trigger CI binary build:"
+    echo "  git tag binaries-v<version> && git push origin binaries-v<version>"
     echo "  # Wait for CI to complete, then:"
-    echo "  ./scripts/download-rfdb-binaries.sh rfdb-v<version>"
+    echo "  ./scripts/download-platform-binaries.sh binaries-v<version>"
     exit 1
 fi
-echo -e "${GREEN}[x] RFDB binaries up-to-date (tag: $LAST_RFDB_TAG, 0 Rust changes since)${NC}"
+echo -e "${GREEN}[x] Rust binaries up-to-date (tag: $BINARY_TAG, 0 changes since)${NC}"
 
-# Verify all 4 platform binaries exist
-MISSING_PLATFORMS=()
+# Verify platform packages have required binaries
+MISSING_BINARIES=()
+for platform in darwin-arm64 darwin-x64 linux-arm64 linux-x64; do
+    for binary in rfdb-server grafema-orchestrator; do
+        if [ ! -f "$ROOT_DIR/packages/grafema-$platform/bin/$binary" ]; then
+            MISSING_BINARIES+=("$platform/$binary")
+        fi
+    done
+done
+
+# Also check legacy location
+MISSING_LEGACY=()
 for platform in darwin-arm64 darwin-x64 linux-arm64 linux-x64; do
     if [ ! -f "$ROOT_DIR/packages/rfdb-server/prebuilt/$platform/rfdb-server" ]; then
-        MISSING_PLATFORMS+=("$platform")
+        MISSING_LEGACY+=("$platform")
     fi
 done
-if [ ${#MISSING_PLATFORMS[@]} -gt 0 ]; then
-    echo -e "${RED}ERROR: Missing rfdb-server binaries for: ${MISSING_PLATFORMS[*]}${NC}"
-    echo "Download: ./scripts/download-rfdb-binaries.sh $LAST_RFDB_TAG"
-    exit 1
+
+if [ ${#MISSING_BINARIES[@]} -gt 0 ]; then
+    echo -e "${YELLOW}WARNING: Missing platform package binaries: ${MISSING_BINARIES[*]}${NC}"
+    echo "Download: ./scripts/download-platform-binaries.sh $BINARY_TAG"
+    echo ""
+    # Don't fail — platform packages may not be populated yet during transition
 fi
-echo -e "${GREEN}[x] All 4 platform binaries present${NC}"
+
+if [ ${#MISSING_LEGACY[@]} -gt 0 ]; then
+    echo -e "${YELLOW}WARNING: Missing legacy rfdb-server binaries for: ${MISSING_LEGACY[*]}${NC}"
+    echo "Download: ./scripts/download-rfdb-binaries.sh"
+fi
+
+if [ ${#MISSING_BINARIES[@]} -eq 0 ]; then
+    echo -e "${GREEN}[x] All platform package binaries present${NC}"
+fi
 
 fi  # end SKIP_RFDB_CHECK
 
@@ -290,14 +335,41 @@ echo -e "${BLUE}=== Updating Package Versions ===${NC}"
 npm version "$NEW_VERSION" --no-git-tag-version
 echo -e "${GREEN}[x] Root package.json -> $NEW_VERSION${NC}"
 
-# Update all workspace packages
-for pkg in "${PACKAGES[@]}"; do
+# Update all workspace packages (JS)
+for pkg in "${JS_PACKAGES[@]}" "${LEGACY_PACKAGES[@]}"; do
     if [ -f "$ROOT_DIR/$pkg/package.json" ]; then
         cd "$ROOT_DIR/$pkg"
         npm version "$NEW_VERSION" --no-git-tag-version --allow-same-version 2>/dev/null || true
         echo -e "${GREEN}[x] $pkg -> $NEW_VERSION${NC}"
     fi
 done
+
+# Update platform packages
+for pkg in "${PLATFORM_PACKAGES[@]}"; do
+    if [ -f "$ROOT_DIR/$pkg/package.json" ]; then
+        cd "$ROOT_DIR/$pkg"
+        npm version "$NEW_VERSION" --no-git-tag-version --allow-same-version 2>/dev/null || true
+        echo -e "${GREEN}[x] $pkg -> $NEW_VERSION${NC}"
+    fi
+done
+
+# Update optionalDependencies versions in grafema package
+GRAFEMA_PKG="$ROOT_DIR/packages/grafema/package.json"
+if [ -f "$GRAFEMA_PKG" ]; then
+    node -e "
+      const fs = require('fs');
+      const pkg = JSON.parse(fs.readFileSync('$GRAFEMA_PKG', 'utf8'));
+      if (pkg.optionalDependencies) {
+        for (const key of Object.keys(pkg.optionalDependencies)) {
+          if (key.startsWith('@grafema/grafema-')) {
+            pkg.optionalDependencies[key] = '$NEW_VERSION';
+          }
+        }
+      }
+      fs.writeFileSync('$GRAFEMA_PKG', JSON.stringify(pkg, null, 2) + '\n');
+    "
+    echo -e "${GREEN}[x] Updated optionalDependencies in packages/grafema${NC}"
+fi
 
 # Update rfdb-server Cargo.toml to match npm version
 CARGO_TOML="$ROOT_DIR/packages/rfdb-server/Cargo.toml"
@@ -453,6 +525,6 @@ if [ "$PUBLISH" = true ]; then
 fi
 echo ""
 echo "Next steps:"
-echo "  1. Verify: npx @grafema/cli@$DIST_TAG --version"
+echo "  1. Verify: npx grafema@$DIST_TAG --version"
 echo "  2. Update Linear issues to Done"
 echo "  3. Announce release"

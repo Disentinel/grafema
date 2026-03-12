@@ -6,11 +6,10 @@
  */
 
 import { spawn } from 'child_process';
-import { existsSync } from 'fs';
-import { join, delimiter, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import { join } from 'path';
 import type { GraphBackend } from '@grafema/types';
 import type { StaleModule } from './GraphFreshnessChecker.js';
+import { findOrchestratorBinary } from '../utils/findRfdbBinary.js';
 
 export interface ReanalysisOptions {
   skipEnrichment?: boolean;
@@ -31,39 +30,6 @@ export interface ReanalysisResult {
   edgesCreated: number;
   nodesCleared: number;
   durationMs: number;
-}
-
-/**
- * Find grafema-orchestrator binary.
- * Search order: monorepo build, PATH, ~/.local/bin
- */
-function findOrchestratorBinary(): string | null {
-  const __filename = fileURLToPath(import.meta.url);
-  const __dirname = dirname(__filename);
-
-  // Monorepo: packages/util/dist/core/ → packages/grafema-orchestrator/target/
-  const monorepoRoot = dirname(dirname(dirname(__dirname)));
-  const releasePath = join(monorepoRoot, 'packages', 'grafema-orchestrator', 'target', 'release', 'grafema-orchestrator');
-  if (existsSync(releasePath)) return releasePath;
-
-  const debugPath = join(monorepoRoot, 'packages', 'grafema-orchestrator', 'target', 'debug', 'grafema-orchestrator');
-  if (existsSync(debugPath)) return debugPath;
-
-  // System PATH
-  const pathDirs = (process.env.PATH || '').split(delimiter);
-  for (const dir of pathDirs) {
-    const candidate = join(dir, 'grafema-orchestrator');
-    if (existsSync(candidate)) return candidate;
-  }
-
-  // ~/.local/bin
-  const home = process.env.HOME || process.env.USERPROFILE || '';
-  if (home) {
-    const localBin = join(home, '.local', 'bin', 'grafema-orchestrator');
-    if (existsSync(localBin)) return localBin;
-  }
-
-  return null;
 }
 
 export class IncrementalReanalyzer {
