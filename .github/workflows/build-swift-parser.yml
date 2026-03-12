@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build arm64 (release)
-        run: swift build -c release
+        run: swift build -c release --triple arm64-apple-macosx
 
       - name: Build x86_64 (release)
         run: swift build -c release --triple x86_64-apple-macosx
@@ -24,10 +24,11 @@ jobs:
       - name: Create universal binary
         run: |
           lipo -create \
-            .build/release/swift-parser \
+            .build/arm64-apple-macosx/release/swift-parser \
             .build/x86_64-apple-macosx/release/swift-parser \
             -output swift-parser-universal
           file swift-parser-universal
+          lipo -info swift-parser-universal
 
       - name: Upload universal binary
         uses: actions/upload-artifact@v4
