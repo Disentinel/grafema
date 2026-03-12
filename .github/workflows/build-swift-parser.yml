@@ -1,0 +1,28 @@
+name: Build Swift Parser
+
+on:
+  push:
+    paths:
+      - 'packages/swift-parser/**'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: packages/swift-parser
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build (release)
+        run: swift build -c release
+
+      - name: Run tests
+        run: swift test
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: swift-parser-macos
+          path: packages/swift-parser/.build/release/swift-parser

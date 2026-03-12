@@ -205,6 +205,30 @@ pub struct AnalyzerBinaries {
     /// Path to C/C++ resolve binary (default: "cpp-resolve")
     #[serde(default = "default_cpp_resolve")]
     pub cpp_resolve: String,
+
+    /// Path to Swift analyzer binary (default: "grafema-swift-analyzer")
+    #[serde(default = "default_swift_analyzer")]
+    pub swift: String,
+
+    /// Path to Swift resolve binary (default: "swift-resolve")
+    #[serde(default = "default_swift_resolve")]
+    pub swift_resolve: String,
+
+    /// Path to Swift parser binary (default: "swift-parser")
+    #[serde(default = "default_swift_parser")]
+    pub swift_parser: String,
+
+    /// Path to Obj-C analyzer binary (default: "grafema-objc-analyzer")
+    #[serde(default = "default_objc_analyzer")]
+    pub objc: String,
+
+    /// Path to Obj-C parser binary (default: "objc-parser")
+    #[serde(default = "default_objc_parser")]
+    pub objc_parser: String,
+
+    /// Path to Apple cross-language resolve binary (default: "apple-cross-resolve")
+    #[serde(default = "default_apple_cross_resolve")]
+    pub apple_cross_resolve: String,
 }
 
 impl Default for AnalyzerBinaries {
@@ -230,6 +254,12 @@ impl Default for AnalyzerBinaries {
             go_parser: default_go_parser(),
             cpp: default_cpp_analyzer(),
             cpp_resolve: default_cpp_resolve(),
+            swift: default_swift_analyzer(),
+            swift_resolve: default_swift_resolve(),
+            swift_parser: default_swift_parser(),
+            objc: default_objc_analyzer(),
+            objc_parser: default_objc_parser(),
+            apple_cross_resolve: default_apple_cross_resolve(),
         }
     }
 }
@@ -384,6 +414,36 @@ impl AnalyzerBinaries {
     /// Resolved path for the C/C++ resolve binary.
     pub fn cpp_resolve_path(&self) -> String {
         resolve_binary(&self.cpp_resolve)
+    }
+
+    /// Resolved path for the Swift analyzer binary.
+    pub fn swift_path(&self) -> String {
+        resolve_binary(&self.swift)
+    }
+
+    /// Resolved path for the Swift resolve binary.
+    pub fn swift_resolve_path(&self) -> String {
+        resolve_binary(&self.swift_resolve)
+    }
+
+    /// Resolved path for the Swift parser binary.
+    pub fn swift_parser_path(&self) -> String {
+        resolve_binary(&self.swift_parser)
+    }
+
+    /// Resolved path for the Obj-C analyzer binary.
+    pub fn objc_path(&self) -> String {
+        resolve_binary(&self.objc)
+    }
+
+    /// Resolved path for the Obj-C parser binary.
+    pub fn objc_parser_path(&self) -> String {
+        resolve_binary(&self.objc_parser)
+    }
+
+    /// Resolved path for the Apple cross-language resolve binary.
+    pub fn apple_cross_resolve_path(&self) -> String {
+        resolve_binary(&self.apple_cross_resolve)
     }
 }
 
@@ -550,6 +610,30 @@ fn default_cpp_resolve() -> String {
     "cpp-resolve".to_string()
 }
 
+fn default_swift_analyzer() -> String {
+    "grafema-swift-analyzer".to_string()
+}
+
+fn default_swift_resolve() -> String {
+    "swift-resolve".to_string()
+}
+
+fn default_swift_parser() -> String {
+    "swift-parser".to_string()
+}
+
+fn default_objc_analyzer() -> String {
+    "grafema-objc-analyzer".to_string()
+}
+
+fn default_objc_parser() -> String {
+    "objc-parser".to_string()
+}
+
+fn default_apple_cross_resolve() -> String {
+    "apple-cross-resolve".to_string()
+}
+
 /// Language detection based on file extension.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Language {
@@ -561,6 +645,8 @@ pub enum Language {
     Python,
     Go,
     Cpp,
+    Swift,
+    ObjectiveC,
 }
 
 /// Detect language from file extension.
@@ -579,6 +665,8 @@ pub fn detect_language(path: &Path) -> Option<Language> {
         "c" | "h" | "cpp" | "hpp" | "cc" | "cxx" | "hxx" | "hh" | "inl" | "ipp" | "tpp" | "txx" => {
             Some(Language::Cpp)
         }
+        "swift" => Some(Language::Swift),
+        "m" | "mm" => Some(Language::ObjectiveC),
         _ => {
             // Handle case-sensitive extensions: .c++ .h++ .C .H
             let file_name = path.file_name()?.to_str()?;
@@ -594,7 +682,7 @@ pub fn detect_language(path: &Path) -> Option<Language> {
 }
 
 /// Partition files by detected language.
-pub fn partition_by_language(files: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>) {
+pub fn partition_by_language(files: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>) {
     let mut js_files = Vec::new();
     let mut hs_files = Vec::new();
     let mut rs_files = Vec::new();
@@ -603,6 +691,8 @@ pub fn partition_by_language(files: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>, 
     let mut py_files = Vec::new();
     let mut go_files = Vec::new();
     let mut cpp_files = Vec::new();
+    let mut swift_files = Vec::new();
+    let mut objc_files = Vec::new();
     for file in files {
         match detect_language(file) {
             Some(Language::JavaScript) => js_files.push(file.clone()),
@@ -613,10 +703,12 @@ pub fn partition_by_language(files: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>, 
             Some(Language::Python) => py_files.push(file.clone()),
             Some(Language::Go) => go_files.push(file.clone()),
             Some(Language::Cpp) => cpp_files.push(file.clone()),
+            Some(Language::Swift) => swift_files.push(file.clone()),
+            Some(Language::ObjectiveC) => objc_files.push(file.clone()),
             None => {} // skip unknown extensions
         }
     }
-    (js_files, hs_files, rs_files, java_files, kotlin_files, py_files, go_files, cpp_files)
+    (js_files, hs_files, rs_files, java_files, kotlin_files, py_files, go_files, cpp_files, swift_files, objc_files)
 }
 
 /// Load and validate configuration from a YAML file.
@@ -1014,9 +1106,12 @@ plugins:
             PathBuf::from("src/main.go"),
             PathBuf::from("src/parser.cpp"),
             PathBuf::from("src/parser.h"),
+            PathBuf::from("src/App.swift"),
+            PathBuf::from("src/Legacy.m"),
+            PathBuf::from("src/Mixed.mm"),
             PathBuf::from("README.md"),
         ];
-        let (js, hs, rs, java, kotlin, py, go, cpp) = partition_by_language(&files);
+        let (js, hs, rs, java, kotlin, py, go, cpp, swift, objc) = partition_by_language(&files);
         assert_eq!(js, vec![PathBuf::from("src/index.ts"), PathBuf::from("src/app.jsx")]);
         assert_eq!(hs, vec![PathBuf::from("src/Main.hs"), PathBuf::from("src/Lib.hs")]);
         assert_eq!(rs, vec![PathBuf::from("src/main.rs"), PathBuf::from("src/lib.rs")]);
@@ -1025,11 +1120,13 @@ plugins:
         assert_eq!(py, vec![PathBuf::from("src/script.py")]);
         assert_eq!(go, vec![PathBuf::from("src/main.go")]);
         assert_eq!(cpp, vec![PathBuf::from("src/parser.cpp"), PathBuf::from("src/parser.h")]);
+        assert_eq!(swift, vec![PathBuf::from("src/App.swift")]);
+        assert_eq!(objc, vec![PathBuf::from("src/Legacy.m"), PathBuf::from("src/Mixed.mm")]);
     }
 
     #[test]
     fn partition_by_language_empty_input() {
-        let (js, hs, rs, java, kotlin, py, go, cpp) = partition_by_language(&[]);
+        let (js, hs, rs, java, kotlin, py, go, cpp, swift, objc) = partition_by_language(&[]);
         assert!(js.is_empty());
         assert!(hs.is_empty());
         assert!(rs.is_empty());
@@ -1038,6 +1135,8 @@ plugins:
         assert!(py.is_empty());
         assert!(go.is_empty());
         assert!(cpp.is_empty());
+        assert!(swift.is_empty());
+        assert!(objc.is_empty());
     }
 
     #[test]
@@ -1090,12 +1189,23 @@ plugins:
     }
 
     #[test]
+    fn detect_language_swift() {
+        assert_eq!(detect_language(Path::new("src/App.swift")), Some(Language::Swift));
+    }
+
+    #[test]
+    fn detect_language_objc() {
+        assert_eq!(detect_language(Path::new("src/Legacy.m")), Some(Language::ObjectiveC));
+        assert_eq!(detect_language(Path::new("src/Mixed.mm")), Some(Language::ObjectiveC));
+    }
+
+    #[test]
     fn partition_by_language_includes_python() {
         let files = vec![
             PathBuf::from("src/main.py"),
             PathBuf::from("src/app.js"),
         ];
-        let (js, _hs, _rs, _java, _kotlin, py, _go, _cpp) = partition_by_language(&files);
+        let (js, _hs, _rs, _java, _kotlin, py, _go, _cpp, _swift, _objc) = partition_by_language(&files);
         assert_eq!(js, vec![PathBuf::from("src/app.js")]);
         assert_eq!(py, vec![PathBuf::from("src/main.py")]);
     }
@@ -1232,6 +1342,12 @@ analyzers:
             go_parser: "/abs/go-parser".to_string(),
             cpp: "/abs/grafema-cpp-analyzer".to_string(),
             cpp_resolve: "/abs/cpp-resolve".to_string(),
+            swift: "/abs/grafema-swift-analyzer".to_string(),
+            swift_resolve: "/abs/swift-resolve".to_string(),
+            swift_parser: "/abs/swift-parser".to_string(),
+            objc: "/abs/grafema-objc-analyzer".to_string(),
+            objc_parser: "/abs/objc-parser".to_string(),
+            apple_cross_resolve: "/abs/apple-cross-resolve".to_string(),
         };
         assert_eq!(bins.js_path(), "/abs/grafema-analyzer");
         assert_eq!(bins.haskell_path(), "/abs/haskell-analyzer");
@@ -1253,6 +1369,12 @@ analyzers:
         assert_eq!(bins.go_parser_path(), "/abs/go-parser");
         assert_eq!(bins.cpp_path(), "/abs/grafema-cpp-analyzer");
         assert_eq!(bins.cpp_resolve_path(), "/abs/cpp-resolve");
+        assert_eq!(bins.swift_path(), "/abs/grafema-swift-analyzer");
+        assert_eq!(bins.swift_resolve_path(), "/abs/swift-resolve");
+        assert_eq!(bins.swift_parser_path(), "/abs/swift-parser");
+        assert_eq!(bins.objc_path(), "/abs/grafema-objc-analyzer");
+        assert_eq!(bins.objc_parser_path(), "/abs/objc-parser");
+        assert_eq!(bins.apple_cross_resolve_path(), "/abs/apple-cross-resolve");
     }
 
     #[test]
