@@ -380,9 +380,7 @@ class SwiftAstSerializer {
         var result: [String: Any] = ["type": "OperatorDecl"]
         result["name"] = node.name.text
         result["span"] = span(of: node)
-        if let fixitySpecifier = node.fixitySpecifier {
-            result["fixity"] = fixitySpecifier.text
-        }
+        result["fixity"] = node.fixitySpecifier.text
         if let group = node.operatorPrecedenceAndTypes {
             result["precedenceGroup"] = group.description.trimmingCharacters(in: .whitespaces)
         }
@@ -574,8 +572,8 @@ class SwiftAstSerializer {
             if let captureItems = sig.capture {
                 result["captureList"] = captureItems.items.map { item in
                     var c: [String: Any] = [:]
-                    if let firstSpecifier = item.specifiers.first {
-                        c["specifier"] = firstSpecifier.description.trimmingCharacters(in: .whitespaces)
+                    if let specifier = item.specifier {
+                        c["specifier"] = specifier.text
                     }
                     c["expression"] = serializeExpr(item.expression)
                     return c
