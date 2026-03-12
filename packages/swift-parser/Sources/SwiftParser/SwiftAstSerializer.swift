@@ -356,12 +356,13 @@ class SwiftAstSerializer {
                 for param in paramClause.parameters {
                     var p: [String: Any] = [:]
                     if let firstName = param.firstName {
-                        p["label"] = firstName.text
+                        p["firstName"] = firstName.text
                     }
                     p["type"] = serializeType(param.type)
                     if let defaultValue = param.defaultValue {
                         p["defaultValue"] = serializeExpr(defaultValue.value)
                     }
+                    p["span"] = span(of: param)
                     params.append(p)
                 }
                 e["associatedValues"] = params

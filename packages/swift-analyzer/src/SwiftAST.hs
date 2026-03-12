@@ -118,7 +118,7 @@ data SwiftParam = SwiftParam
 
 instance FromJSON SwiftParam where
   parseJSON = withObject "SwiftParam" $ \v -> SwiftParam
-    <$> v .: "firstName"
+    <$> v .:? "firstName" .!= "_"
     <*> v .:? "secondName"
     <*> v .: "type"
     <*> v .:? "defaultValue"
