@@ -8,28 +8,29 @@ on:
 
 jobs:
   build:
-    strategy:
-      matrix:
-        include:
-          - runner: macos-14
-            arch: arm64
-          - runner: macos-13
-            arch: x86_64
-    runs-on: ${{ matrix.runner }}
+    runs-on: macos-14
     defaults:
       run:
         working-directory: packages/swift-parser
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build (release)
+      - name: Build arm64 (release)
         run: swift build -c release
 
-      - name: Verify binary
-        run: file .build/release/swift-parser && ls -la .build/release/swift-parser
+      - name: Build x86_64 (release)
+        run: swift build -c release --triple x86_64-apple-macosx
 
-      - name: Upload binary
+      - name: Create universal binary
+        run: |
+          lipo -create \
+            .build/release/swift-parser \
+            .build/x86_64-apple-macosx/release/swift-parser \
+            -output swift-parser-universal
+          file swift-parser-universal
+
+      - name: Upload universal binary
         uses: actions/upload-artifact@v4
         with:
-          name: swift-parser-macos-${{ matrix.arch }}
-          path: packages/swift-parser/.build/release/swift-parser
+          name: swift-parser-macos
+          path: packages/swift-parser/swift-parser-universal
