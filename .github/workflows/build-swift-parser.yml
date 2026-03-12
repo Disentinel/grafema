@@ -8,7 +8,14 @@ on:
 
 jobs:
   build:
-    runs-on: macos-14
+    strategy:
+      matrix:
+        include:
+          - runner: macos-14
+            arch: arm64
+          - runner: macos-13
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
     defaults:
       run:
         working-directory: packages/swift-parser
@@ -24,5 +31,5 @@ jobs:
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
-          name: swift-parser-macos
+          name: swift-parser-macos-${{ matrix.arch }}
           path: packages/swift-parser/.build/release/swift-parser
