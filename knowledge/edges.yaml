@@ -170,3 +170,102 @@
 - type: RELATES_TO
   from: kb:fact:kb-mcp-tools-require-rebuild
   to: packages/mcp/src/definitions/knowledge-tools.ts
+
+- type: RELATES_TO
+  from: kb:fact:call-nodes-lack-containment-edges
+  to: packages/util/src/notation/lodExtractor.ts:fetchCallbackContext:FUNCTION
+
+- type: RELATES_TO
+  from: kb:fact:assigned-from-edge-direction
+  to: packages/util/src/notation/renderer.ts:resolveAnonymousNames:FUNCTION
+
+- type: RELATES_TO
+  from: kb:fact:passes-argument-metadata-index-key
+  to: packages/util/src/queries/NodeContext.ts:formatEdgeMetadata:FUNCTION
+
+- type: RELATES_TO
+  from: kb:fact:lod-extractor-only-fetches-outgoing
+  to: packages/util/src/notation/lodExtractor.ts:extractSubgraph:FUNCTION
+
+# Session 2026-03-12: Lambda Context Resolution
+- type: PRODUCED
+  from: kb:session:2026-03-12-lambda-context-resolution
+  to: kb:decision:lambda-resolution-view-layer
+
+- type: PRODUCED
+  from: kb:session:2026-03-12-lambda-context-resolution
+  to: kb:decision:fetch-callback-context-in-extractor
+
+- type: PRODUCED
+  from: kb:session:2026-03-12-lambda-context-resolution
+  to: kb:fact:call-nodes-lack-containment-edges
+
+- type: PRODUCED
+  from: kb:session:2026-03-12-lambda-context-resolution
+  to: kb:fact:assigned-from-edge-direction
+
+- type: PRODUCED
+  from: kb:session:2026-03-12-lambda-context-resolution
+  to: kb:fact:passes-argument-metadata-index-key
+
+- type: PRODUCED
+  from: kb:session:2026-03-12-lambda-context-resolution
+  to: kb:fact:lod-extractor-only-fetches-outgoing
+
+- type: INFORMED_BY
+  from: kb:decision:fetch-callback-context-in-extractor
+  to: kb:fact:call-nodes-lack-containment-edges
+  evidence: "get_context on CALL node showed zero incoming containment edges"
+
+- type: INFORMED_BY
+  from: kb:decision:fetch-callback-context-in-extractor
+  to: kb:fact:lod-extractor-only-fetches-outgoing
+  evidence: "Debug trace showed PASSES_ARG_incoming=0 in subgraph despite edges existing in graph"
+
+- type: INFORMED_BY
+  from: kb:decision:lambda-resolution-view-layer
+  to: kb:fact:assigned-from-edge-direction
+  evidence: "Reverse index by dst gives variable name for assignment resolution"
+
+# Session 2026-03-12: Dataflow Gauntlet 100%
+- type: PRODUCED
+  from: kb:session:2026-03-12-dataflow-gauntlet-100pct
+  to: kb:decision:trace-property-write-in-algorithm-not-analyzer
+
+- type: PRODUCED
+  from: kb:session:2026-03-12-dataflow-gauntlet-100pct
+  to: kb:decision:dual-iterates-over-loop-and-variable
+
+- type: PRODUCED
+  from: kb:session:2026-03-12-dataflow-gauntlet-100pct
+  to: kb:fact:forinof-iterates-over-edge-emission
+
+- type: PRODUCED
+  from: kb:session:2026-03-12-dataflow-gauntlet-100pct
+  to: kb:fact:property-write-aliasing-requires-receiver-chain-matching
+
+- type: PRODUCED
+  from: kb:session:2026-03-12-dataflow-gauntlet-100pct
+  to: kb:fact:backward-trace-requires-six-heuristics
+
+- type: INFORMED_BY
+  from: kb:decision:dual-iterates-over-loop-and-variable
+  to: kb:fact:forinof-iterates-over-edge-emission
+  evidence: "for-of loop variable had no data flow edge to iterable, blocking backward trace"
+
+- type: INFORMED_BY
+  from: kb:decision:trace-property-write-in-algorithm-not-analyzer
+  to: kb:fact:property-write-aliasing-requires-receiver-chain-matching
+  evidence: "two distinct PA nodes for same property on same receiver require join at trace time"
+
+- type: RELATES_TO
+  from: kb:fact:forinof-iterates-over-edge-emission
+  to: packages/js-analyzer/src/Rules/Statements.hs
+
+- type: RELATES_TO
+  from: kb:fact:property-write-aliasing-requires-receiver-chain-matching
+  to: packages/js-analyzer/src/Rules/Expressions.hs
+
+- type: RELATES_TO
+  from: kb:fact:backward-trace-requires-six-heuristics
+  to: test/fixtures/dataflow-gauntlet/index.js
