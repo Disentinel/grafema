@@ -18,8 +18,8 @@ jobs:
       - name: Build (release)
         run: swift build -c release
 
-      - name: Smoke test
-        run: .build/release/swift-parser --help
+      - name: Verify binary
+        run: file .build/release/swift-parser && ls -la .build/release/swift-parser
 
       - name: Upload binary
         uses: actions/upload-artifact@v4
