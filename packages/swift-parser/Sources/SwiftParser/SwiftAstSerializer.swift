@@ -380,7 +380,9 @@ class SwiftAstSerializer {
         var result: [String: Any] = ["type": "OperatorDecl"]
         result["name"] = node.name.text
         result["span"] = span(of: node)
-        result["modifiers"] = serializeModifiers(node.modifiers)
+        if let fixitySpecifier = node.fixitySpecifier {
+            result["fixity"] = fixitySpecifier.text
+        }
         if let group = node.operatorPrecedenceAndTypes {
             result["precedenceGroup"] = group.description.trimmingCharacters(in: .whitespaces)
         }
@@ -440,7 +442,7 @@ class SwiftAstSerializer {
                 case .statements(let stmts):
                     c["statements"] = stmts.compactMap { serializeCodeBlockItem($0) }
                 case .decls(let decls):
-                    c["declarations"] = decls.compactMap { serializeDecl(DeclSyntax($0)) }
+                    c["declarations"] = decls.compactMap { serializeDecl(DeclSyntax($0.decl)) }
                 default:
                     c["raw"] = String(elements.description.prefix(200))
                 }
@@ -572,8 +574,8 @@ class SwiftAstSerializer {
             if let captureItems = sig.capture {
                 result["captureList"] = captureItems.items.map { item in
                     var c: [String: Any] = [:]
-                    if let specifier = item.specifier {
-                        c["specifier"] = specifier.specifier.text  // "weak", "unowned"
+                    if let firstSpecifier = item.specifiers.first {
+                        c["specifier"] = firstSpecifier.description.trimmingCharacters(in: .whitespaces)
                     }
                     c["expression"] = serializeExpr(item.expression)
                     return c
@@ -737,8 +739,6 @@ class SwiftAstSerializer {
                 }
             } else if comp.component.is(KeyPathOptionalComponentSyntax.self) {
                 c["kind"] = "optional"
-            } else if comp.component.is(KeyPathSelfComponentSyntax.self) {
-                c["kind"] = "self"
             }
             return c
         }
@@ -834,8 +834,8 @@ class SwiftAstSerializer {
             return ["type": "BreakStmt", "label": breakStmt.label?.text as Any, "span": span(of: breakStmt)]
         } else if let continueStmt = stmt.as(ContinueStmtSyntax.self) {
             return ["type": "ContinueStmt", "label": continueStmt.label?.text as Any, "span": span(of: continueStmt)]
-        } else if let fallthroughStmt = stmt.as(FallthroughStmtSyntax.self) {
-            return ["type": "FallthroughStmt", "span": span(of: fallthroughStmt)]
+        } else if let fallThroughStmt = stmt.as(FallThroughStmtSyntax.self) {
+            return ["type": "FallthroughStmt", "span": span(of: fallThroughStmt)]
         } else if let yieldStmt = stmt.as(YieldStmtSyntax.self) {
             return ["type": "YieldStmt", "span": span(of: yieldStmt)]
         } else if let exprStmt = stmt.as(ExpressionStmtSyntax.self) {
@@ -973,7 +973,7 @@ class SwiftAstSerializer {
             case .matchingPattern(let matching):
                 return ["kind": "matchingPattern",
                         "pattern": serializePattern(matching.pattern),
-                        "expression": serializeExpr(matching.expression)]
+                        "expression": serializeExpr(matching.initializer.value)]
             }
         }
     }
@@ -1045,8 +1045,8 @@ class SwiftAstSerializer {
                 }
             }
             if !attrs.isEmpty { result["typeAttributes"] = attrs }
-            if let specifier = attributed.specifier {
-                result["specifier"] = specifier.text
+            if let firstSpecifier = attributed.specifiers.first {
+                result["specifier"] = firstSpecifier.description.trimmingCharacters(in: .whitespaces)
             }
             return result
         } else if let member = type.as(MemberTypeSyntax.self) {
