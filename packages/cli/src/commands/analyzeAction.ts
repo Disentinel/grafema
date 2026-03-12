@@ -7,18 +7,16 @@
  * the correct args, streams output, and prints a summary.
  */
 
-import { resolve, join, delimiter, dirname } from 'path';
+import { resolve, join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { spawn } from 'child_process';
-import { fileURLToPath } from 'url';
 import {
   RFDBServerBackend,
   createLogger,
+  findOrchestratorBinary,
+  getBinaryNotFoundMessage,
 } from '@grafema/util';
 import type { LogLevel } from '@grafema/util';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 export interface NodeEdgeCountBackend {
   nodeCount: () => Promise<number>;
@@ -51,80 +49,6 @@ function getLogLevel(options: { quiet?: boolean; verbose?: boolean; logLevel?: s
   if (options.quiet) return 'silent';
   if (options.verbose) return 'info';  // --verbose shows logs instead of progress UI
   return 'silent';  // Default: silent logs, clean progress UI
-}
-
-/**
- * Find grafema-orchestrator binary.
- *
- * Search order:
- * 1. GRAFEMA_ORCHESTRATOR environment variable
- * 2. Monorepo target/release (development)
- * 3. Monorepo target/debug (development)
- * 4. System PATH lookup
- * 5. ~/.local/bin/grafema-orchestrator (user-installed)
- */
-function findOrchestratorBinary(): string | null {
-  const binaryName = 'grafema-orchestrator';
-
-  // 1. Environment variable
-  const envBinary = process.env.GRAFEMA_ORCHESTRATOR;
-  if (envBinary && existsSync(envBinary)) {
-    return envBinary;
-  }
-
-  // 2-3. Monorepo development builds
-  const monorepoRoot = findMonorepoRoot();
-  if (monorepoRoot) {
-    const releaseBinary = join(monorepoRoot, 'packages', 'grafema-orchestrator', 'target', 'release', binaryName);
-    if (existsSync(releaseBinary)) {
-      return releaseBinary;
-    }
-
-    const debugBinary = join(monorepoRoot, 'packages', 'grafema-orchestrator', 'target', 'debug', binaryName);
-    if (existsSync(debugBinary)) {
-      return debugBinary;
-    }
-  }
-
-  // 4. System PATH lookup
-  const pathDirs = (process.env.PATH || '').split(delimiter);
-  for (const dir of pathDirs) {
-    if (!dir) continue;
-    const candidate = join(dir, binaryName);
-    if (existsSync(candidate)) {
-      return candidate;
-    }
-  }
-
-  // 5. User-installed binary in ~/.local/bin
-  const homeBinary = join(process.env.HOME || '', '.local', 'bin', binaryName);
-  if (existsSync(homeBinary)) {
-    return homeBinary;
-  }
-
-  return null;
-}
-
-/**
- * Find monorepo root by looking for characteristic files.
- */
-function findMonorepoRoot(): string | null {
-  const searchPaths = [
-    // From packages/cli/dist/commands -> dist -> cli -> packages -> root
-    join(__dirname, '..', '..', '..', '..'),
-    // Environment variable override
-    process.env.GRAFEMA_ROOT,
-  ].filter(Boolean) as string[];
-
-  for (const candidate of searchPaths) {
-    const hasPackagesDir = existsSync(join(candidate, 'packages', 'core'));
-    const hasOrchestrator = existsSync(join(candidate, 'packages', 'grafema-orchestrator', 'Cargo.toml'));
-    if (hasPackagesDir && hasOrchestrator) {
-      return candidate;
-    }
-  }
-
-  return null;
 }
 
 /**
@@ -178,18 +102,7 @@ export async function analyzeAction(path: string, options: { service?: string; e
   const orchestratorBinary = findOrchestratorBinary();
   if (!orchestratorBinary) {
     console.error('');
-    console.error('grafema-orchestrator binary not found.');
-    console.error('');
-    console.error('Options:');
-    console.error('  1. Set environment variable:');
-    console.error('     export GRAFEMA_ORCHESTRATOR=/path/to/grafema-orchestrator');
-    console.error('');
-    console.error('  2. Build from source (in monorepo):');
-    console.error('     cd packages/grafema-orchestrator && cargo build --release');
-    console.error('');
-    console.error('  3. Install to PATH:');
-    console.error('     cp target/release/grafema-orchestrator ~/.local/bin/');
-    console.error('');
+    console.error(getBinaryNotFoundMessage('grafema-orchestrator'));
     process.exit(1);
   }
 

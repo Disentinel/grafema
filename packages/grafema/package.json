@@ -1,0 +1,75 @@
+{
+  "name": "grafema",
+  "version": "0.3.0-beta",
+  "description": "Graph-driven code analysis tool. AI should query the graph, not read code.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "grafema": "./dist/cli.js",
+    "grafema-mcp": "./dist/mcp-server.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./mcp": {
+      "types": "./dist/mcp/index.d.ts",
+      "import": "./dist/mcp/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "grafema",
+    "code-analysis",
+    "static-analysis",
+    "graph",
+    "ast",
+    "mcp"
+  ],
+  "license": "Apache-2.0",
+  "author": "Vadim Reshetnikov",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Disentinel/grafema.git",
+    "directory": "packages/grafema"
+  },
+  "optionalDependencies": {
+    "@grafema/grafema-darwin-arm64": "0.3.0-beta",
+    "@grafema/grafema-darwin-x64": "0.3.0-beta",
+    "@grafema/grafema-linux-arm64": "0.3.0-beta",
+    "@grafema/grafema-linux-x64": "0.3.0-beta"
+  },
+  "dependencies": {
+    "@grafema/api": "workspace:*",
+    "@grafema/util": "workspace:*",
+    "@grafema/types": "workspace:*",
+    "@grafema/rfdb-client": "workspace:*",
+    "@grafema/mcp": "workspace:*",
+    "@grafema/cli": "workspace:*",
+    "commander": "^13.0.0",
+    "yaml": "^2.8.2",
+    "@modelcontextprotocol/sdk": "^1.25.1",
+    "ajv": "^8.17.1",
+    "dataloader": "^2.2.3",
+    "graphql": "^16.10.0",
+    "graphql-scalars": "^1.24.0",
+    "graphql-yoga": "^5.10.11",
+    "@msgpack/msgpack": "^3.1.3",
+    "minimatch": "^10.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.8",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">= 18"
+  }
+}

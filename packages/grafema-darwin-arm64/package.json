@@ -1,0 +1,19 @@
+{
+  "name": "@grafema/grafema-darwin-arm64",
+  "version": "0.3.0-beta",
+  "description": "Grafema native binaries for macOS ARM64",
+  "os": ["darwin"],
+  "cpu": ["arm64"],
+  "main": "index.js",
+  "files": ["bin/", "index.js"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Disentinel/grafema.git",
+    "directory": "packages/grafema-darwin-arm64"
+  },
+  "license": "Apache-2.0",
+  "author": "Vadim Reshetnikov",
+  "engines": {
+    "node": ">= 18"
+  }
+}
