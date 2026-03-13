@@ -1,0 +1,47 @@
+cabal-version: 3.0
+name:          beam-resolve
+version:       0.1.0
+synopsis:      BEAM (Elixir/Erlang) cross-file resolution for Grafema
+
+executable beam-resolve
+  default-language: Haskell2010
+  main-is: Main.hs
+  hs-source-dirs: src
+  ghc-options: -Wall -Wno-name-shadowing
+
+  other-modules:
+    BeamImportResolution
+    BeamLocalRefs
+    BeamProtocolResolution
+    BeamBehaviourResolution
+
+  build-depends:
+    base                 >= 4.17 && < 5,
+    grafema-common       >= 0.1  && < 0.2,
+    aeson                >= 2.1  && < 2.3,
+    text                 >= 2.0  && < 2.2,
+    bytestring           >= 0.11 && < 0.13,
+    containers           >= 0.6  && < 0.8,
+    optparse-applicative >= 0.17 && < 0.19,
+    filepath             >= 1.4  && < 1.6
+
+test-suite spec
+  type:             exitcode-stdio-1.0
+  main-is:          Spec.hs
+  hs-source-dirs:   test, src
+  default-language: Haskell2010
+  ghc-options:      -Wall
+
+  other-modules:
+    BeamImportResolution
+    BeamLocalRefs
+
+  build-depends:
+    base                 >= 4.17 && < 5,
+    grafema-common       >= 0.1  && < 0.2,
+    aeson                >= 2.1  && < 2.3,
+    text                 >= 2.0  && < 2.2,
+    bytestring           >= 0.11 && < 0.13,
+    containers           >= 0.6  && < 0.8,
+    filepath             >= 1.4  && < 1.6,
+    hspec                >= 2.10 && < 2.12
