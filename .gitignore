@@ -62,5 +62,12 @@ _qa/screenshots/*
 !_qa/screenshots/.gitkeep
 !_qa/screenshots/*.cjs
 
+# Platform package binaries (downloaded from CI, not committed)
+packages/grafema-darwin-arm64/bin/*
+packages/grafema-darwin-x64/bin/*
+packages/grafema-linux-arm64/bin/*
+packages/grafema-linux-x64/bin/*
+!packages/grafema-*/bin/.gitkeep
+
 # SWE-bench artifacts
 logs/run_evaluation/

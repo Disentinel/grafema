@@ -18,6 +18,10 @@ import { traceCommand } from './commands/trace.js';
 import { impactCommand } from './commands/impact.js';
 import { contextCommand } from './commands/context.js';
 import { describeCommand } from './commands/describe.js';
+import { tldrCommand } from './commands/tldr.js';
+import { wtfCommand } from './commands/wtf.js';
+import { whoCommand } from './commands/who.js';
+import { whyCommand } from './commands/why.js';
 
 import { statsCommand } from './commands/stats.js';
 import { checkCommand } from './commands/check.js';
@@ -40,6 +44,12 @@ program
   .name('grafema')
   .description('Grafema code analysis CLI')
   .version(pkg.version);
+
+// Human-first commands
+program.addCommand(tldrCommand);
+program.addCommand(wtfCommand);
+program.addCommand(whoCommand);
+program.addCommand(whyCommand);
 
 // Commands in logical order
 program.addCommand(initCommand);
