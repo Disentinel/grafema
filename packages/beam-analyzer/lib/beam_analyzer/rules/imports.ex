@@ -35,6 +35,27 @@ defmodule BeamAnalyzer.Rules.Imports do
     add_import(ctx, parts, "require", meta)
   end
 
+  # Multi-alias: alias MyApp.{Accounts, Repo}
+  def process({kind, meta, [{{:., _, [{:__aliases__, _, base_parts}, :{}]}, _, children}]}, ctx)
+      when kind in [:alias, :import, :require] do
+    Enum.reduce(children, ctx, fn
+      {:__aliases__, _, suffix_parts}, ctx ->
+        add_import(ctx, base_parts ++ suffix_parts, Atom.to_string(kind), meta)
+      _, ctx ->
+        ctx
+    end)
+  end
+
+  # Multi-use: use MyApp.{A, B} — same structure but needs macro expansion
+  def process({:use, meta, [{{:., _, [{:__aliases__, _, base_parts}, :{}]}, _, children}]}, ctx) do
+    Enum.reduce(children, ctx, fn
+      {:__aliases__, _, suffix_parts}, ctx ->
+        process_use(ctx, base_parts ++ suffix_parts, meta)
+      _, ctx ->
+        ctx
+    end)
+  end
+
   def process(_ast, ctx), do: ctx
 
   def process_behaviour({:@, _meta, [{:behaviour, bmeta, [{:__aliases__, _, parts}]}]}, ctx) do

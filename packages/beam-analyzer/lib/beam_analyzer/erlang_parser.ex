@@ -2,6 +2,7 @@ defmodule BeamAnalyzer.ErlangParser do
   @moduledoc "Parses Erlang source using :erl_scan + :erl_parse."
 
   def parse(source) do
+    source = expand_simple_macros(source)
     charlist = String.to_charlist(source)
 
     case :erl_scan.string(charlist, 1, [:text, :return_comments]) do
@@ -20,6 +21,21 @@ defmodule BeamAnalyzer.ErlangParser do
 
       {:error, {line, _mod, reason}, _} ->
         {:error, "Scan error at line #{line}: #{inspect(reason)}"}
+    end
+  end
+
+  # Pre-expand ?MODULE and ?MODULE_STRING before scanning.
+  # Full Erlang preprocessor (epp) is not available without a compilation context,
+  # but these two macros cover the vast majority of real-world usage.
+  defp expand_simple_macros(source) do
+    case Regex.run(~r/-module\((\w+)\)/, source) do
+      [_, module_name] ->
+        source
+        |> String.replace("?MODULE_STRING", "\"#{module_name}\"")
+        |> String.replace("?MODULE", module_name)
+
+      _ ->
+        source
     end
   end
 
