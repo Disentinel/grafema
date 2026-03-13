@@ -239,9 +239,10 @@ impl Default for AnalyzerBinaries {
 /// Search order:
 /// 1. If already an absolute path → return as-is
 /// 2. Same directory as the orchestrator binary (std::env::current_exe())
-/// 3. ~/.cabal/bin/
-/// 4. ~/.local/bin/
-/// 5. Return bare name unchanged (falls back to $PATH via Command::new)
+/// 3. ~/.grafema/bin/ (lazy-downloaded by CLI)
+/// 4. ~/.cabal/bin/
+/// 5. ~/.local/bin/
+/// 6. Return bare name unchanged (falls back to $PATH via Command::new)
 pub fn resolve_binary(name: &str) -> String {
     let path = Path::new(name);
 
@@ -264,7 +265,7 @@ pub fn resolve_binary(name: &str) -> String {
 
     // Check well-known directories
     if let Some(home) = home_dir() {
-        for subdir in &["/.cabal/bin/", "/.local/bin/"] {
+        for subdir in &["/.grafema/bin/", "/.cabal/bin/", "/.local/bin/"] {
             let mut candidate = home.clone();
             candidate.push(&subdir[1..]); // strip leading /
             candidate.push(name);

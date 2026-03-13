@@ -87,8 +87,11 @@ export type { GuaranteeGraph } from './core/GuaranteeManager.js';
 export { calculateFileHash, calculateFileHashAsync, calculateContentHash } from './core/HashUtils.js';
 
 // Binary finder utilities
-export { findBinary, findRfdbBinary, findOrchestratorBinary, getBinaryNotFoundMessage, getPlatformDir, getPlatformPackageName } from './utils/findRfdbBinary.js';
+export { findBinary, findAnalyzerBinary, findRfdbBinary, findOrchestratorBinary, getBinaryNotFoundMessage, getPlatformDir, getPlatformPackageName } from './utils/findRfdbBinary.js';
 export type { FindBinaryOptions, BinaryName } from './utils/findRfdbBinary.js';
+
+// Lazy download
+export { ensureBinary, downloadBinary, isDownloadable, findInGrafemaBin, getGrafemaBinDir } from './utils/lazyDownload.js';
 
 // RFDB server lifecycle
 export { startRfdbServer, checkExistingServer } from './utils/startRfdbServer.js';

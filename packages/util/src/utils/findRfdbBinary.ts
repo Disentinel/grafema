@@ -11,7 +11,8 @@
  * 4. Monorepo target/release (development)
  * 5. Monorepo target/debug (development)
  * 6. System PATH lookup
- * 7. ~/.local/bin/ (user-installed)
+ * 7. ~/.grafema/bin/ (lazy-downloaded analyzers)
+ * 8. ~/.local/bin/ (user-installed)
  */
 
 import { existsSync } from 'fs';
@@ -171,8 +172,14 @@ export function findBinary(binaryName: BinaryName, options: FindBinaryOptions = 
     if (existsSync(p)) return p;
   }
 
-  // 7. ~/.local/bin/ (user-installed)
+  // 7. ~/.grafema/bin/ (lazy-downloaded analyzers)
   const home = process.env.HOME || process.env.USERPROFILE || '';
+  if (home) {
+    const p = join(home, '.grafema', 'bin', binaryName);
+    if (existsSync(p)) return p;
+  }
+
+  // 8. ~/.local/bin/ (user-installed)
   if (home) {
     const p = join(home, '.local', 'bin', binaryName);
     if (existsSync(p)) return p;
@@ -215,6 +222,44 @@ export function findRfdbBinary(options: FindBinaryOptions = {}): string | null {
  */
 export function findOrchestratorBinary(options: FindBinaryOptions = {}): string | null {
   return findBinary('grafema-orchestrator', options);
+}
+
+/**
+ * Find an analyzer binary by name (e.g. "grafema-analyzer", "haskell-resolve").
+ *
+ * Simpler search than findBinary() — no env var or platform package lookup.
+ * Search order: ~/.grafema/bin/, ~/.local/bin/, ~/.cabal/bin/, system PATH.
+ */
+export function findAnalyzerBinary(binaryName: string): string | null {
+  const home = process.env.HOME || process.env.USERPROFILE || '';
+
+  // ~/.grafema/bin/ (lazy-downloaded)
+  if (home) {
+    const p = join(home, '.grafema', 'bin', binaryName);
+    if (existsSync(p)) return p;
+  }
+
+  // ~/.local/bin/
+  if (home) {
+    const p = join(home, '.local', 'bin', binaryName);
+    if (existsSync(p)) return p;
+  }
+
+  // ~/.cabal/bin/ (Haskell builds)
+  if (home) {
+    const p = join(home, '.cabal', 'bin', binaryName);
+    if (existsSync(p)) return p;
+  }
+
+  // System PATH
+  const pathDirs = (process.env.PATH || '').split(delimiter);
+  for (const dir of pathDirs) {
+    if (!dir) continue;
+    const p = join(dir, binaryName);
+    if (existsSync(p)) return p;
+  }
+
+  return null;
 }
 
 /**

@@ -15,6 +15,8 @@ import {
   createLogger,
   findOrchestratorBinary,
   getBinaryNotFoundMessage,
+  findAnalyzerBinary,
+  ensureBinary,
 } from '@grafema/util';
 import type { LogLevel } from '@grafema/util';
 
@@ -107,6 +109,17 @@ export async function analyzeAction(path: string, options: { service?: string; e
   }
 
   debug(`Using orchestrator: ${orchestratorBinary}`);
+
+  // Ensure JS/TS analyzer binaries exist (lazy download if missing)
+  for (const binName of ['grafema-analyzer', 'grafema-resolve']) {
+    const existing = findAnalyzerBinary(binName);
+    if (!existing) {
+      const downloaded = await ensureBinary(binName, null, info);
+      if (downloaded) {
+        debug(`Downloaded ${binName} → ${downloaded}`);
+      }
+    }
+  }
 
   // Find config file for the orchestrator
   const configPath = findConfigFile(projectPath);
