@@ -1,236 +1,142 @@
 # Grafema Configuration Reference
 
-> **Configure Grafema to understand your codebase.** Tell it which plugins to use, which files to analyze, and which services make up your project. Most projects work with zero configuration — just run `npx @grafema/cli init` and go.
-
-This document describes the complete configuration format for Grafema.
+> **Most projects work with zero configuration** — just run `grafema init` and go. The Rust orchestrator has a built-in analysis pipeline that handles JS/TS out of the box.
 
 ## Quick Start
 
-Run `npx @grafema/cli init` to create a default configuration:
-
 ```bash
-npx @grafema/cli init
+grafema init
 ```
 
-This creates `.grafema/config.yaml` with sensible defaults.
+Creates `.grafema/config.yaml` with sensible defaults.
 
 ## Configuration File
 
-Grafema looks for configuration in `.grafema/config.yaml` (preferred) or `.grafema/config.json` (deprecated).
+Grafema looks for configuration in `.grafema/config.yaml`.
 
 ```
 your-project/
 ├── .grafema/
 │   ├── config.yaml       # Configuration (version controlled)
 │   ├── guarantees.yaml   # Invariants (version controlled)
-│   └── graph.rfdb        # Graph database (gitignore)
+│   └── graph.rfdb        # Graph database (gitignored)
 ├── src/
 └── ...
 ```
 
-## Full Configuration Schema
+## Minimal Configuration
+
+For most projects, `grafema init` generates all you need:
 
 ```yaml
 # .grafema/config.yaml
-
-# Plugin configuration by phase
-plugins:
-  discovery: []           # Service discovery plugins
-  indexing:               # Module tree building
-    - JSModuleIndexer
-  analysis:               # AST parsing and semantic node creation
-    - JSASTAnalyzer
-    - ExpressRouteAnalyzer
-    - SocketIOAnalyzer
-    - DatabaseAnalyzer
-    - FetchAnalyzer
-    - ServiceLayerAnalyzer
-  enrichment:             # Graph enrichment (resolving calls, tracking values)
-    - MethodCallResolver
-    - ArgumentParameterLinker
-    - AliasTracker
-    - ClosureCaptureEnricher
-    - ValueDomainAnalyzer
-    - MountPointResolver
-    - PrefixEvaluator
-    - ImportExportLinker
-    - HTTPConnectionEnricher
-  validation:             # Invariant checking
-    - GraphConnectivityValidator
-    - DataFlowValidator
-    - EvalBanValidator
-    - CallResolverValidator
-    - SQLInjectionValidator
-    - ShadowingDetector
-    - BrokenImportValidator
-
-# Optional: Explicit service definitions for multi-service projects
-# If specified, auto-discovery is skipped
-services:
-  - name: "backend"
-    path: "apps/backend"        # Relative to project root
-    entryPoint: "src/index.ts"  # Optional, auto-detected if omitted
-  - name: "frontend"
-    path: "apps/frontend"
-
-# File filtering patterns (optional)
-include:                  # Only analyze files matching these patterns
-  - "src/**/*.{ts,js,tsx,jsx}"
-
-exclude:                  # Skip files matching these patterns
-  - "**/*.test.ts"
+version: "0.3"
+root: ".."
+include:
+  - "src/**/*.{ts,tsx,js,jsx}"
+exclude:
+  - "**/*.test.*"
   - "**/__tests__/**"
+  - "**/node_modules/**"
+  - "**/dist/**"
 ```
 
 ## Configuration Options
 
-### plugins
+### version
 
-Plugin configuration organized by analysis phase. Each phase runs in order:
+Schema version string. Generated automatically by `grafema init`.
 
-1. **discovery** - Find services and entry points
-2. **indexing** - Build module dependency tree
-3. **analysis** - Parse AST, create semantic nodes
-4. **enrichment** - Add relationships between nodes
-5. **validation** - Check invariants, detect issues
+### root
 
-If a phase is omitted, default plugins are used. To disable a phase, set it to an empty array:
+Path to the project root, relative to the `.grafema/` directory. Usually `".."` since config lives in `.grafema/config.yaml`.
 
-```yaml
-plugins:
-  validation: []  # Skip all validation
-```
+### include
 
-### services
-
-Explicit service definitions for multi-service projects (monorepos). When specified:
-- Auto-discovery is completely skipped
-- Each service is analyzed independently
-- Paths must be relative to project root
-- Entry points are auto-detected if not specified
-
-```yaml
-services:
-  - name: "api"              # Service identifier (used in graph node IDs)
-    path: "packages/api"     # Service directory (must exist)
-    entryPoint: "src/main.ts" # Optional entry file
-```
-
-If `services` is not specified or empty, Grafema uses auto-discovery.
-
-### include / exclude
-
-Glob patterns for filtering which files are analyzed:
+Glob patterns for files to analyze. Only files matching at least one pattern are processed.
 
 ```yaml
 include:
-  - "src/**/*.ts"
+  - "src/**/*.{ts,tsx,js,jsx}"
   - "lib/**/*.js"
-
-exclude:
-  - "**/*.test.ts"
-  - "**/__mocks__/**"
-  - "**/fixtures/**"
 ```
 
-**Rules:**
-- `include` - only files matching at least one pattern are processed
-- `exclude` - files matching any pattern are skipped (takes precedence over include)
-- Uses [minimatch](https://github.com/isaacs/minimatch) syntax
-- Patterns are matched against paths relative to project root
-- `node_modules` is always excluded automatically
+### exclude
 
-If neither is specified, Grafema follows imports from entry points.
+Glob patterns for files to skip. Takes precedence over `include`.
 
-## Available Plugins
+```yaml
+exclude:
+  - "**/*.test.*"
+  - "**/__mocks__/**"
+  - "**/fixtures/**"
+  - "**/node_modules/**"
+  - "**/dist/**"
+```
 
-### Discovery Phase
+`node_modules` is always excluded automatically.
 
-Discovery plugins find services and entry points in a project.
+### services
 
-| Plugin | Description |
-|--------|-------------|
-| (none by default) | Auto-discovery via `package.json` analysis |
+Explicit service definitions for multi-service projects (monorepos). When specified, auto-discovery is skipped.
 
-### Indexing Phase
+```yaml
+services:
+  - name: "api"
+    path: "packages/api"
+    entryPoint: "src/server.ts"
+  - name: "web"
+    path: "packages/web"
+    entryPoint: "src/index.tsx"
+```
 
-Indexing plugins build the module dependency tree.
+- `name` — Service identifier (used in graph node IDs)
+- `path` — Service directory relative to project root
+- `entryPoint` — Optional entry file (auto-detected if omitted)
 
-| Plugin | Description |
-|--------|-------------|
-| **JSModuleIndexer** | Builds module dependency tree via DFS from entry points. Creates MODULE nodes and DEPENDS_ON edges. Handles ES modules, CommonJS, and TypeScript. |
-
-### Analysis Phase
-
-Analysis plugins parse AST and create semantic nodes.
-
-| Plugin | Description |
-|--------|-------------|
-| **JSASTAnalyzer** | Core AST parser. Creates FUNCTION, CLASS, METHOD, VARIABLE, CALL nodes. Handles ES6+, TypeScript, JSX. |
-| **ExpressRouteAnalyzer** | Detects Express.js/Router endpoints. Creates `http:route` nodes with method, path, middleware info. |
-| **SocketIOAnalyzer** | Detects Socket.IO events (emit/on). Creates `socketio:emit` and `socketio:on` nodes. |
-| **DatabaseAnalyzer** | Detects database queries (SQL, MongoDB, etc.). Creates `db:query` nodes. |
-| **FetchAnalyzer** | Detects HTTP client requests (fetch, axios, etc.). Creates `http:request` nodes. |
-| **ServiceLayerAnalyzer** | Detects service layer patterns (classes with @Service, repository patterns). |
-| **ReactAnalyzer** | Detects React components and hooks. Creates `react:component` and `react:hook` nodes. |
-
-### Enrichment Phase
-
-Enrichment plugins add relationships between nodes.
-
-| Plugin | Description |
-|--------|-------------|
-| **MethodCallResolver** | Resolves method calls to method definitions. Creates CALLS edges from CALL to METHOD/FUNCTION. |
-| **ArgumentParameterLinker** | Links function call arguments to parameter definitions. Creates PASSES_ARGUMENT edges. |
-| **AliasTracker** | Tracks variable aliasing (`const m = obj.method; m()`). Resolves indirect calls. |
-| **ClosureCaptureEnricher** | Detects closure variable captures. Creates CAPTURES edges. |
-| **ValueDomainAnalyzer** | Value set analysis for computed member access. Resolves `obj[method]()` when deterministic. |
-| **MountPointResolver** | Resolves Express router mount points. Computes full paths for nested routes. |
-| **PrefixEvaluator** | Evaluates string prefix expressions. Computes URL prefixes for routes. |
-| **ImportExportLinker** | Links imports to exports across modules. Creates IMPORTS_FROM edges. |
-| **HTTPConnectionEnricher** | Connects frontend HTTP requests to backend routes. Creates INTERACTS_WITH edges. |
-
-### Validation Phase
-
-Validation plugins check invariants and detect issues.
-
-| Plugin | Description |
-|--------|-------------|
-| **GraphConnectivityValidator** | Checks all nodes are reachable from SERVICE/MODULE roots. |
-| **DataFlowValidator** | Verifies variables trace to leaf nodes via ASSIGNED_FROM. |
-| **EvalBanValidator** | **Security:** Detects `eval()`, `new Function()` usage. |
-| **CallResolverValidator** | Reports unresolved function calls for debugging. |
-| **SQLInjectionValidator** | **Security:** Detects SQL injection vulnerabilities. |
-| **ShadowingDetector** | Detects variable shadowing issues. |
-| **BrokenImportValidator** | Detects broken imports (missing files, wrong exports). |
+If `services` is not specified, Grafema uses auto-discovery via `package.json`.
 
 ## Configuration Examples
 
-### Single Service (default)
-
-For most projects, no configuration is needed:
+### TypeScript project
 
 ```yaml
-# .grafema/config.yaml
-plugins:
-  indexing:
-    - JSModuleIndexer
-  analysis:
-    - JSASTAnalyzer
-    - ExpressRouteAnalyzer
-  enrichment:
-    - MethodCallResolver
-    - HTTPConnectionEnricher
-  validation:
-    - EvalBanValidator
-    - SQLInjectionValidator
+version: "0.3"
+root: ".."
+include:
+  - "src/**/*.{ts,tsx,js,jsx}"
+exclude:
+  - "**/*.test.*"
+  - "**/__tests__/**"
+  - "**/node_modules/**"
+  - "**/dist/**"
 ```
 
-### Monorepo with Multiple Services
+### JavaScript project
 
 ```yaml
-# .grafema/config.yaml
+version: "0.3"
+root: ".."
+include:
+  - "src/**/*.{js,jsx,mjs,cjs}"
+exclude:
+  - "**/*.test.*"
+  - "**/__tests__/**"
+  - "**/node_modules/**"
+  - "**/dist/**"
+```
 
+### Monorepo with multiple services
+
+```yaml
+version: "0.3"
+root: ".."
+include:
+  - "packages/*/src/**/*.{ts,tsx,js,jsx}"
+exclude:
+  - "**/*.test.*"
+  - "**/node_modules/**"
+  - "**/dist/**"
 services:
   - name: "api"
     path: "packages/api"
@@ -241,65 +147,33 @@ services:
   - name: "shared"
     path: "packages/shared"
     entryPoint: "src/index.ts"
-
-plugins:
-  analysis:
-    - JSASTAnalyzer
-    - ExpressRouteAnalyzer  # For API
-    - ReactAnalyzer         # For Web
-    - FetchAnalyzer         # For frontend requests
-  enrichment:
-    - MethodCallResolver
-    - HTTPConnectionEnricher  # Connect web requests to API routes
 ```
 
-### Security-Focused Analysis
+### Large codebase (selective analysis)
 
 ```yaml
-# .grafema/config.yaml
-
-plugins:
-  validation:
-    - EvalBanValidator       # No eval()
-    - SQLInjectionValidator  # No SQL injection
-    - CallResolverValidator  # Track unresolved calls
-```
-
-### Minimal Configuration (Performance)
-
-For large codebases, disable unused plugins:
-
-```yaml
-# .grafema/config.yaml
-
-plugins:
-  indexing:
-    - JSModuleIndexer
-  analysis:
-    - JSASTAnalyzer
-  enrichment:
-    - MethodCallResolver
-  validation: []  # Skip validation for faster analysis
-
+version: "0.3"
+root: ".."
 include:
-  - "src/**/*.ts"
-
+  - "src/api/**/*.ts"
+  - "src/core/**/*.ts"
 exclude:
-  - "**/*.test.ts"
+  - "**/*.test.*"
   - "**/__tests__/**"
+  - "**/*.generated.*"
+  - "**/node_modules/**"
+  - "**/dist/**"
 ```
 
-## Migrating from config.json
+## Overriding with `--force`
 
-If you have an existing `.grafema/config.json`:
+To regenerate config from scratch:
 
 ```bash
-npx @grafema/cli init --force
+grafema init --force
 ```
-
-This will create a new `config.yaml` while preserving your settings.
 
 ## See Also
 
-- [Project Onboarding Guide](project-onboarding.md) - Getting started with Grafema
-- [Plugin Development Guide](plugin-development.md) - Creating custom plugins
+- [Getting Started](getting-started.md) - First-time setup
+- [Known Limitations](../KNOWN_LIMITATIONS.md) - What works and what doesn't

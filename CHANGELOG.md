@@ -2,6 +2,140 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0-beta] - 2026-03-13
+
+159 commits, 37 merged PRs since v0.2.13-beta.
+
+### Highlights
+
+- **Unified `grafema` package** — `npm install grafema` gives you CLI, MCP server, and platform binaries in one install. Replaces the old `@grafema/cli` + `@grafema/mcp` split.
+- **Cypher query language** (REG-255) — Full Cypher implementation in RFDB: hand-written recursive descent parser, pull-based Volcano executor, rule-based planner, 96 tests. TypeScript client, CLI (`grafema cypher`), and MCP integration.
+- **6 new languages** — Java (REG-613), Kotlin, Python (REG-659), Go (REG-661), C/C++ (libclang FFI), PHP (resolve-only). Each with parser, analyzer, and cross-file resolver.
+- **CoreV3 engine** — Haskell-based per-file analyzers + Rust orchestrator replace the TypeScript CoreV2 engine. All languages analyzed through unified Haskell pipeline.
+- **Notation DSL** — Compact code representation with archetype operators (`o-` depends, `>` calls, `<` reads, `=>` writes, `>x` throws). 10-20x token savings vs reading source. Budget system, depth levels, fold engine.
+- **Knowledge Base** (REG-626–630) — KB schema with SESSION/DECISION/FACT nodes. Git history ingestion (churn, co-change, ownership). Semantic address rebinding for cross-DB references. MCP tools: `add_knowledge`, `query_knowledge`, `query_decisions`.
+- **Human-first CLI** — `grafema tldr` (file overview), `grafema wtf` (backward dataflow), `grafema who` (callers), `grafema why` (KB decisions).
+
+### RFDB (graph database)
+
+- **REG-255**: Cypher query language — parser, AST, Volcano executor, planner, CypherQuery protocol message
+- **RFD-44**: Hash join optimization for Datalog evaluator
+- **RFD-44**: Edge-type index in shards — `get_edges_by_type` on GraphStore trait, lazy index in Shard + MultiShardStore
+- **RFD-44**: Use edge-type index in Datalog `eval_edge` + `eval_incoming`
+- **RFD-36**: Performance — remove `count_nodes_by_type` full scan, remove mmap→Vec copy in segment readers, remove `get_all_edges()` N+1 pattern, push down bindings in Datalog `eval_derived` (P0)
+- **RFD-46**: Engine-level cursor abstraction for streaming and pipelined Datalog
+- **RFD-45**: Server-side query timeout, cancellation, and iteration limits for Datalog
+- **RFD-33**: `by_name` inverted index in L1 compaction
+- **RFD-49**: Optimize negative joins for dst-position variables
+- **RFD-48**: `attr()` finds first-class node fields and extra analyzer properties
+- Server-side substring matching for `find_by_attr` name/file fields
+- `string_contains` Datalog predicate
+- Wildcard `_` support in Datalog `edge`/`incoming`/`node` predicates
+- Per-shard lifecycle diagnostics in `GetStats`
+- Removed dead V1 engine, FFI, and storage layers
+
+### Languages
+
+- **REG-613**: Java — parser (tree-sitter), analyzer (9 rule modules), resolver, orchestrator integration
+- Kotlin — parser, analyzer (9 rule modules), resolver, cross-language resolution
+- **REG-659**: Python — in-process parser, analyzer (9 modules incl. UnsafeDynamic), resolver
+- **REG-661**: Go — parser, analyzer (5 rule modules), resolver, orchestrator integration
+- C/C++ — libclang FFI parser, Haskell analyzer (15 rule modules, 30 node types, 22 edge types), resolver
+- PHP — cross-file resolver with type inference and call resolution (no parser/analyzer)
+- **REG-653**: Haskell local refs resolver for same-file declarations
+- **REG-653**: JS/TS local refs resolver + same-file calls + property access resolver
+- **REG-618**: Cross-package import resolution (`@scope/pkg` → workspace package)
+- PROPERTY_ACCESS cross-file resolver — READS_FROM edges for namespace import accesses
+
+### Analysis Engine (CoreV2 → CoreV3)
+
+CoreV2 (TypeScript declarative walker) was intermediate — shipped these improvements before CoreV3 (Haskell analyzers + Rust orchestrator) replaced it entirely:
+
+- **#161**: CoreV2Analyzer replaces JSASTAnalyzer as sole TS analysis engine
+- Domain plugin system: `DomainPlugin` interface, `walkFile` hook, `ExpressPlugin`
+- **REG-573**: PROPERTY_ASSIGNMENT nodes for object properties and mutations
+- **REG-596**: EXTENDS/IMPLEMENTS edges for ClassExpression
+- **REG-597**: ASSIGNED_FROM edges for class property and enum member initializers
+- **REG-598**: PROPERTY_VALUE edge for non-shorthand Identifier object values
+- **REG-599**: ASSIGNED_FROM edges for TS type assertion expressions
+- **REG-595**: EXPORT(default) → exported value via EXPORTS edge
+- **REG-560**: `isAwaited` metadata on CALL nodes
+- ArgumentParameterLinker — link call arguments to function parameters
+- `argValues` metadata on CALL nodes
+- **REG-590**: Resolve callback invocations via `resolveCallbackCalls`
+
+CoreV3 (current architecture):
+
+- Haskell per-file analyzer with REFERENCE/EXPRESSION nodes
+- Rust orchestrator coordinates all language analyzers via IPC
+- Per-language Haskell analyzers (JS/TS, Rust, Java, Kotlin, Python, Go, C/C++, Haskell)
+
+### Dataflow & Tracing
+
+- **REG-576**: CALL_RETURNS edges and trace through function calls
+- **REG-574**: `traceValues` and `DataFlowValidator` follow conditional edges
+- JS analyzer dataflow improvements — gauntlet fixture 119/119
+- 6 backward trace heuristics in `trace_dataflow` MCP handler
+- Shared BFS dataflow tracing + narrative renderer (module-grouped, operator-annotated)
+- **REG-594**: ASSIGNS_TO edges for non-this object property assignments
+
+### Knowledge Base
+
+- **REG-626**: KB schema, parser, KnowledgeBase class, MCP tools
+- **REG-627**: Semantic address rebinding for cross-DB references
+- **REG-628**: Git history ingestion — churn, co-change, ownership, archaeology queries
+- **REG-629**: Subtype/scope fields on KB nodes, MCP handler tests
+- **REG-630**: Extraction runbooks, skill, KB-first exploration workflow
+
+### Notation DSL
+
+- Notation engine — render graph as compact visual notation with archetype operators
+- Lambda context resolution — replace `<arrow>` with meaningful names
+- Fold engine — compress repetitive siblings at depth 2
+- Depth 3 (exact) support, archetypes reordered input→output
+- CLI `describe` command, `get_documentation` topic for notation
+- Budget system (default 7 lines per group)
+
+### CLI & MCP
+
+- Unified `grafema` npm package with platform-specific optional dependencies
+- CLI commands: `tldr`, `wtf`, `who`, `why`, `doctor`, `overview`, `setup-skill`
+- `grafema init` generates minimal config compatible with Rust orchestrator
+- `grafema doctor` checks binary availability (4-level search: env, monorepo, PATH, ~/.local/bin)
+- MCP `describe` tool returns DSL notation
+- Agent Skill auto-installed by `grafema init`
+- 35 orphaned node Datalog guarantees for graph quality validation
+
+### Orchestrator
+
+- Source hash verification for stale binary detection
+- All resolvers mandatory, expanded resolve node types
+- C/C++ parser via libclang FFI + pipeline integration
+- Cross-package import resolution
+- Function-has-contains guarantee
+- CONTAINS edges for expression/arrow functions
+
+### Bug Fixes
+
+- **RFD-48**: Datalog `attr()` predicate works correctly for `name`, `file`, `source` attributes
+- `grafema init` config format — generates minimal config (was using old phased plugin map)
+- `grafema init` config paths — `root: ".."` for correct resolution from `.grafema/` directory
+- `find_calls` MCP handler correctly filters by function name
+- `find_nodes`/`get_file_overview` filter fixes
+- Return raw bindings for non-node-ID Datalog results instead of dropping them
+- Preserve property key names in HAS_PROPERTY edges (REG-573)
+- Remove stale npm deps from js-analyzer package.json
+- CONTAINS emission centralized in `emitNode`, star re-export resolution
+
+### Breaking Changes
+
+- **Package rename**: Install `grafema` instead of `@grafema/cli`. The old package still works but is deprecated.
+- **Engine change**: CoreV3 (Haskell analyzers + Rust orchestrator) replaces the TypeScript CoreV2 engine.
+- **Config format**: `grafema init --force` to regenerate. Old phased plugin configs are not compatible with the Rust orchestrator.
+- **Binary requirement**: Rust binaries (orchestrator + RFDB server) are now required. Included in platform packages.
+
+---
+
 ## [0.2.13-beta] - 2026-03-01
 
 ### Highlights
