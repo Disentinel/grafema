@@ -20,6 +20,7 @@ import Rules.Imports (walkImport)
 import Rules.Types (walkDeclTypeRefs)
 import Rules.Annotations (walkDeclAnnotations)
 import Rules.Exports (walkDeclExports)
+import Rules.PackageManifest (walkPackageManifest, isPackageSwift)
 
 -- | Walk a parsed Swift file AST, emitting graph nodes.
 walkFile :: SwiftFile -> Analyzer ()
@@ -57,6 +58,11 @@ walkFile swiftFile = do
 
   -- Walk exports (internal by default in Swift)
   mapM_ walkDeclExports (sfDeclarations swiftFile)
+
+  -- SPM Package.swift manifest: extract targets + dependencies
+  if isPackageSwift file
+    then walkPackageManifest swiftFile
+    else return ()
 
 -- | Extract module name from file path.
 -- "Sources/Models/User.swift" -> "User"

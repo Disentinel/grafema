@@ -22,6 +22,7 @@ import Analysis.Context
 import Grafema.SemanticId (semanticId)
 import Rules.Expressions (walkStmt)
 import Rules.Types (typeToName)
+import Rules.Concurrency (isMainActorAnnotated, isSendableAnnotated)
 
 -- Visibility helpers (duplicated from Declarations to avoid circular deps)
 
@@ -39,7 +40,7 @@ visibilityText mods
 
 -- | Walk a function declaration.
 walkFuncDecl :: SwiftDecl -> Analyzer ()
-walkFuncDecl (FuncDecl name mods _gps params retType body _attrs isAsync throws sp) = do
+walkFuncDecl (FuncDecl name mods _gps params retType body attrs isAsync throws sp) = do
   file     <- askFile
   scopeId  <- askScopeId
   parent   <- askNamedParent
@@ -55,7 +56,7 @@ walkFuncDecl (FuncDecl name mods _gps params retType body _attrs isAsync throws 
     , gnLine = posLine (spanStart sp), gnColumn = posCol (spanStart sp)
     , gnEndLine = posLine (spanEnd sp), gnEndColumn = posCol (spanEnd sp)
     , gnExported = funcExported
-    , gnMetadata = Map.fromList
+    , gnMetadata = Map.fromList $
         [ ("kind", MetaText kind)
         , ("visibility", MetaText (visibilityText mods))
         , ("isAsync", MetaBool isAsync)
@@ -67,6 +68,8 @@ walkFuncDecl (FuncDecl name mods _gps params retType body _attrs isAsync throws 
         , ("return_type", MetaText (maybe "" typeToName retType))
         , ("language", MetaText "swift")
         ]
+        ++ [("mainActor", MetaBool True) | isMainActorAnnotated attrs]
+        ++ [("sendable", MetaBool True) | isSendableAnnotated attrs]
     }
   emitEdge GraphEdge { geSource = scopeId, geTarget = nodeId, geType = "CONTAINS", geMetadata = Map.empty }
   case encClass of
@@ -81,7 +84,7 @@ walkFuncDecl _ = return ()
 
 -- | Walk an init declaration.
 walkInitDecl :: SwiftDecl -> Analyzer ()
-walkInitDecl (InitDecl mods params body _attrs isOptional isAsync throws sp) = do
+walkInitDecl (InitDecl mods params body attrs isOptional isAsync throws sp) = do
   file     <- askFile
   scopeId  <- askScopeId
   parent   <- askNamedParent
@@ -93,7 +96,7 @@ walkInitDecl (InitDecl mods params body _attrs isOptional isAsync throws sp) = d
     , gnLine = posLine (spanStart sp), gnColumn = posCol (spanStart sp)
     , gnEndLine = posLine (spanEnd sp), gnEndColumn = posCol (spanEnd sp)
     , gnExported = funcExported
-    , gnMetadata = Map.fromList
+    , gnMetadata = Map.fromList $
         [ ("kind", MetaText "init")
         , ("visibility", MetaText (visibilityText mods))
         , ("isOptionalInit", MetaBool isOptional)
@@ -102,6 +105,8 @@ walkInitDecl (InitDecl mods params body _attrs isOptional isAsync throws sp) = d
         , ("paramCount", MetaInt (length params))
         , ("language", MetaText "swift")
         ]
+        ++ [("mainActor", MetaBool True) | isMainActorAnnotated attrs]
+        ++ [("sendable", MetaBool True) | isSendableAnnotated attrs]
     }
   emitEdge GraphEdge { geSource = scopeId, geTarget = nodeId, geType = "CONTAINS", geMetadata = Map.empty }
   withEnclosingFn nodeId $ withNamedParent "init" $

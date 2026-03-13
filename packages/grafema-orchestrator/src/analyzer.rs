@@ -1895,6 +1895,11 @@ const RESOLVE_NODE_TYPES: &[&str] = &[
     "ATTRIBUTE",
     "CLOSURE",
     "TYPE_PARAMETER",
+    // Swift/Apple types
+    "EXTENSION",
+    "TYPE_ALIAS",
+    "SPM_TARGET",
+    "SPM_PACKAGE",
     // Python types
     "UNSAFE_DYNAMIC",
     // Control flow (shared across languages)
@@ -4378,6 +4383,17 @@ mod tests {
             assert!(
                 RESOLVE_NODE_TYPES.contains(hs_type),
                 "RESOLVE_NODE_TYPES should contain {hs_type}"
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_node_types_include_apple_types() {
+        let apple_types = ["EXTENSION", "TYPE_ALIAS"];
+        for apple_type in &apple_types {
+            assert!(
+                RESOLVE_NODE_TYPES.contains(apple_type),
+                "RESOLVE_NODE_TYPES should contain {apple_type}"
             );
         }
     }

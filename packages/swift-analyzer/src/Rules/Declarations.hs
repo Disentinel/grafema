@@ -35,6 +35,8 @@ import Grafema.SemanticId (semanticId, contentHash)
 import Rules.Expressions (walkExpr)
 import Rules.Methods (walkFuncDecl, walkInitDecl, walkDeinitDecl, walkSubscriptDecl)
 import Rules.Types (typeToName)
+import Rules.PropertyWrappers (findPropertyWrapper)
+import Rules.Concurrency (isMainActorAnnotated, isSendableAnnotated)
 
 -- Visibility helpers
 
@@ -55,7 +57,7 @@ isExportable mods = not ("private" `elem` mods || "fileprivate" `elem` mods)
 walkDeclaration :: SwiftDecl -> Analyzer ()
 
 -- StructDecl -> CLASS node (kind: "struct")
-walkDeclaration (StructDecl name mods _gps supers members _attrs sp) = do
+walkDeclaration (StructDecl name mods _gps supers members attrs sp) = do
   file     <- askFile
   scopeId  <- askScopeId
   parent   <- askNamedParent
@@ -67,19 +69,21 @@ walkDeclaration (StructDecl name mods _gps supers members _attrs sp) = do
     , gnLine = posLine (spanStart sp), gnColumn = posCol (spanStart sp)
     , gnEndLine = posLine (spanEnd sp), gnEndColumn = posCol (spanEnd sp)
     , gnExported = classExported
-    , gnMetadata = Map.fromList
+    , gnMetadata = Map.fromList $
         [ ("kind", MetaText "struct")
         , ("visibility", MetaText (visibilityText mods))
         , ("language", MetaText "swift")
         , ("implements", MetaText (T.intercalate "," (map typeToName supers)))
         ]
+        ++ [("mainActor", MetaBool True) | isMainActorAnnotated attrs]
+        ++ [("sendable", MetaBool True) | isSendableAnnotated attrs]
     }
   emitEdge GraphEdge { geSource = scopeId, geTarget = nodeId, geType = "CONTAINS", geMetadata = Map.empty }
   withNamedParent name $ withEnclosingClass nodeId $ withExported classExported $
     walkMembers members
 
 -- ClassDecl -> CLASS node (kind: "class")
-walkDeclaration (ClassDecl name mods _gps supers members _attrs sp) = do
+walkDeclaration (ClassDecl name mods _gps supers members attrs sp) = do
   file     <- askFile
   scopeId  <- askScopeId
   parent   <- askNamedParent
@@ -91,7 +95,7 @@ walkDeclaration (ClassDecl name mods _gps supers members _attrs sp) = do
     , gnLine = posLine (spanStart sp), gnColumn = posCol (spanStart sp)
     , gnEndLine = posLine (spanEnd sp), gnEndColumn = posCol (spanEnd sp)
     , gnExported = classExported
-    , gnMetadata = Map.fromList
+    , gnMetadata = Map.fromList $
         [ ("kind", MetaText "class")
         , ("visibility", MetaText (visibilityText mods))
         , ("open", MetaBool ("open" `elem` mods))
@@ -100,13 +104,15 @@ walkDeclaration (ClassDecl name mods _gps supers members _attrs sp) = do
         , ("extends", MetaText (maybe "" typeToName (listToMaybe supers)))
         , ("implements", MetaText (T.intercalate "," (map typeToName (drop 1 supers))))
         ]
+        ++ [("mainActor", MetaBool True) | isMainActorAnnotated attrs]
+        ++ [("sendable", MetaBool True) | isSendableAnnotated attrs]
     }
   emitEdge GraphEdge { geSource = scopeId, geTarget = nodeId, geType = "CONTAINS", geMetadata = Map.empty }
   withNamedParent name $ withEnclosingClass nodeId $ withExported classExported $
     walkMembers members
 
 -- EnumDecl -> CLASS node (kind: "enum")
-walkDeclaration (EnumDecl name mods _gps supers members _attrs sp) = do
+walkDeclaration (EnumDecl name mods _gps supers members attrs sp) = do
   file     <- askFile
   scopeId  <- askScopeId
   parent   <- askNamedParent
@@ -118,19 +124,21 @@ walkDeclaration (EnumDecl name mods _gps supers members _attrs sp) = do
     , gnLine = posLine (spanStart sp), gnColumn = posCol (spanStart sp)
     , gnEndLine = posLine (spanEnd sp), gnEndColumn = posCol (spanEnd sp)
     , gnExported = classExported
-    , gnMetadata = Map.fromList
+    , gnMetadata = Map.fromList $
         [ ("kind", MetaText "enum")
         , ("visibility", MetaText (visibilityText mods))
         , ("language", MetaText "swift")
         , ("implements", MetaText (T.intercalate "," (map typeToName supers)))
         ]
+        ++ [("mainActor", MetaBool True) | isMainActorAnnotated attrs]
+        ++ [("sendable", MetaBool True) | isSendableAnnotated attrs]
     }
   emitEdge GraphEdge { geSource = scopeId, geTarget = nodeId, geType = "CONTAINS", geMetadata = Map.empty }
   withNamedParent name $ withEnclosingClass nodeId $ withExported classExported $
     walkMembers members
 
 -- ProtocolDecl -> CLASS node (kind: "protocol")
-walkDeclaration (ProtocolDecl name mods supers members _attrs sp) = do
+walkDeclaration (ProtocolDecl name mods supers members attrs sp) = do
   file     <- askFile
   scopeId  <- askScopeId
   parent   <- askNamedParent
@@ -142,19 +150,21 @@ walkDeclaration (ProtocolDecl name mods supers members _attrs sp) = do
     , gnLine = posLine (spanStart sp), gnColumn = posCol (spanStart sp)
     , gnEndLine = posLine (spanEnd sp), gnEndColumn = posCol (spanEnd sp)
     , gnExported = classExported
-    , gnMetadata = Map.fromList
+    , gnMetadata = Map.fromList $
         [ ("kind", MetaText "protocol")
         , ("visibility", MetaText (visibilityText mods))
         , ("language", MetaText "swift")
         , ("implements", MetaText (T.intercalate "," (map typeToName supers)))
         ]
+        ++ [("mainActor", MetaBool True) | isMainActorAnnotated attrs]
+        ++ [("sendable", MetaBool True) | isSendableAnnotated attrs]
     }
   emitEdge GraphEdge { geSource = scopeId, geTarget = nodeId, geType = "CONTAINS", geMetadata = Map.empty }
   withNamedParent name $ withEnclosingClass nodeId $ withExported classExported $
     walkMembers members
 
 -- ExtensionDecl -> EXTENSION node
-walkDeclaration (ExtensionDecl extType mods supers members _attrs sp) = do
+walkDeclaration (ExtensionDecl extType mods supers members attrs sp) = do
   file     <- askFile
   scopeId  <- askScopeId
   parent   <- askNamedParent
@@ -168,19 +178,21 @@ walkDeclaration (ExtensionDecl extType mods supers members _attrs sp) = do
     , gnLine = posLine (spanStart sp), gnColumn = posCol (spanStart sp)
     , gnEndLine = posLine (spanEnd sp), gnEndColumn = posCol (spanEnd sp)
     , gnExported = classExported
-    , gnMetadata = Map.fromList
+    , gnMetadata = Map.fromList $
         [ ("extendedType", MetaText typeName)
         , ("visibility", MetaText (visibilityText mods))
         , ("language", MetaText "swift")
         , ("implements", MetaText (T.intercalate "," (map typeToName supers)))
         ]
+        ++ [("mainActor", MetaBool True) | isMainActorAnnotated attrs]
+        ++ [("sendable", MetaBool True) | isSendableAnnotated attrs]
     }
   emitEdge GraphEdge { geSource = scopeId, geTarget = nodeId, geType = "CONTAINS", geMetadata = Map.empty }
   withNamedParent typeName $ withEnclosingClass nodeId $ withExported classExported $
     walkMembers members
 
 -- ActorDecl -> CLASS node (kind: "actor", actorIsolated: true)
-walkDeclaration (ActorDecl name mods _gps supers members _attrs sp) = do
+walkDeclaration (ActorDecl name mods _gps supers members attrs sp) = do
   file     <- askFile
   scopeId  <- askScopeId
   parent   <- askNamedParent
@@ -192,13 +204,15 @@ walkDeclaration (ActorDecl name mods _gps supers members _attrs sp) = do
     , gnLine = posLine (spanStart sp), gnColumn = posCol (spanStart sp)
     , gnEndLine = posLine (spanEnd sp), gnEndColumn = posCol (spanEnd sp)
     , gnExported = classExported
-    , gnMetadata = Map.fromList
+    , gnMetadata = Map.fromList $
         [ ("kind", MetaText "actor")
         , ("actorIsolated", MetaBool True)
         , ("visibility", MetaText (visibilityText mods))
         , ("language", MetaText "swift")
         , ("implements", MetaText (T.intercalate "," (map typeToName supers)))
         ]
+        ++ [("mainActor", MetaBool True) | isMainActorAnnotated attrs]
+        ++ [("sendable", MetaBool True) | isSendableAnnotated attrs]
     }
   emitEdge GraphEdge { geSource = scopeId, geTarget = nodeId, geType = "CONTAINS", geMetadata = Map.empty }
   withNamedParent name $ withEnclosingClass nodeId $ withExported classExported $
@@ -214,13 +228,13 @@ walkDeclaration id'@InitDecl{} = walkInitDecl id'
 walkDeclaration dd@DeinitDecl{} = walkDeinitDecl dd
 
 -- VarDecl -> VARIABLE node per binding
-walkDeclaration (VarDecl mods bindSpec bindings _attrs sp) = do
+walkDeclaration (VarDecl mods bindSpec bindings attrs sp) = do
   file     <- askFile
   scopeId  <- askScopeId
   parent   <- askNamedParent
   exported <- askExported
   let varExported = exported && isExportable mods
-  mapM_ (walkBinding file scopeId parent varExported bindSpec mods sp) bindings
+  mapM_ (walkBinding file scopeId parent varExported bindSpec mods attrs sp) bindings
 
 -- SubscriptDecl -> delegates to Rules.Methods
 walkDeclaration sd@SubscriptDecl{} = walkSubscriptDecl sd
@@ -297,8 +311,8 @@ walkDeclaration OperatorDecl{} = return ()
 walkDeclaration UnknownDecl{} = return ()
 
 -- Walk variable binding
-walkBinding :: Text -> Text -> Maybe Text -> Bool -> Text -> [Text] -> Span -> SwiftBinding -> Analyzer ()
-walkBinding file scopeId parent exported bindSpec mods _declSpan binding = do
+walkBinding :: Text -> Text -> Maybe Text -> Bool -> Text -> [Text] -> [SwiftAttribute] -> Span -> SwiftBinding -> Analyzer ()
+walkBinding file scopeId parent exported bindSpec mods attrs _declSpan binding = do
   let patName = patternName (sbPattern binding)
       nodeId = semanticId file "VARIABLE" patName parent Nothing
       hasAccessors = not (null (sbAccessors binding))
@@ -322,6 +336,42 @@ walkBinding file scopeId parent exported bindSpec mods _declSpan binding = do
         ]
     }
   emitEdge GraphEdge { geSource = scopeId, geTarget = nodeId, geType = "CONTAINS", geMetadata = Map.empty }
+  -- Emit synthetic backing variables for property wrappers (@State, @Binding, etc.)
+  case findPropertyWrapper attrs of
+    Just wrapperName -> do
+      let bLine = posLine (spanStart (sbSpan binding))
+          bCol  = posCol (spanStart (sbSpan binding))
+          bEndLine = posLine (spanEnd (sbSpan binding))
+          bEndCol  = posCol (spanEnd (sbSpan binding))
+      -- _foo (wrappedValue access)
+      let underscoreId = semanticId file "VARIABLE" ("_" <> patName) parent Nothing
+      emitNode GraphNode
+        { gnId = underscoreId, gnType = "VARIABLE", gnName = "_" <> patName, gnFile = file
+        , gnLine = bLine, gnColumn = bCol, gnEndLine = bEndLine, gnEndColumn = bEndCol
+        , gnExported = exported
+        , gnMetadata = Map.fromList
+            [ ("kind", MetaText "synthetic_backing")
+            , ("propertyWrapper", MetaText wrapperName)
+            , ("syntheticFor", MetaText nodeId)
+            , ("language", MetaText "swift")
+            ]
+        }
+      emitEdge GraphEdge { geSource = scopeId, geTarget = underscoreId, geType = "CONTAINS", geMetadata = Map.empty }
+      -- $foo (projectedValue access)
+      let dollarId = semanticId file "VARIABLE" ("$" <> patName) parent Nothing
+      emitNode GraphNode
+        { gnId = dollarId, gnType = "VARIABLE", gnName = "$" <> patName, gnFile = file
+        , gnLine = bLine, gnColumn = bCol, gnEndLine = bEndLine, gnEndColumn = bEndCol
+        , gnExported = exported
+        , gnMetadata = Map.fromList
+            [ ("kind", MetaText "synthetic_projection")
+            , ("propertyWrapper", MetaText wrapperName)
+            , ("syntheticFor", MetaText nodeId)
+            , ("language", MetaText "swift")
+            ]
+        }
+      emitEdge GraphEdge { geSource = scopeId, geTarget = dollarId, geType = "CONTAINS", geMetadata = Map.empty }
+    Nothing -> return ()
   -- Walk initializer expression if present
   case sbInitializer binding of
     Just expr -> walkExpr expr
