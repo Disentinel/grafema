@@ -13,6 +13,13 @@ import Analysis.Types
 import Analysis.Context
 import Grafema.SemanticId (semanticId, contentHash)
 import {-# SOURCE #-} Rules.Declarations (walkDeclaration)
+import Rules.ControlFlow (walkControlFlowStmt)
+import Rules.ErrorFlow (walkErrorFlowStmt)
+
+-- | Check if a condition is an optional binding (if let / guard let).
+isOptBindingCond :: SwiftCondition -> Bool
+isOptBindingCond (OptionalBindingCondition _ _ _ _) = True
+isOptBindingCond _ = False
 
 -- Span helpers
 
@@ -104,39 +111,87 @@ walkExpr (DictExpr pairs _) = mapM_ (\(k, v') -> walkExpr k >> walkExpr v') pair
 walkExpr (SubscriptCallExpr callee args _) = do
   walkExpr callee
   mapM_ (\(_, e) -> walkExpr e) args
-walkExpr (IfExpr _conds body mElse _) = do
+walkExpr (IfExpr conds body mElse sp) = do
+  file <- askFile
+  scopeId <- askScopeId
+  parent <- askNamedParent
+  let line = posLine (spanStart sp)
+      col  = posCol (spanStart sp)
+      hash = posHash line col
+      nodeId = semanticId file "BRANCH" "if" parent (Just hash)
+      hasOptBinding = any isOptBindingCond conds
+  emitNode GraphNode
+    { gnId = nodeId, gnType = "BRANCH", gnName = "if", gnFile = file
+    , gnLine = line, gnColumn = col
+    , gnEndLine = posLine (spanEnd sp), gnEndColumn = posCol (spanEnd sp)
+    , gnExported = False
+    , gnMetadata = Map.fromList $
+        [ ("kind", MetaText "if")
+        , ("language", MetaText "swift")
+        ] ++ [("optionalBinding", MetaBool True) | hasOptBinding]
+    }
+  emitEdge GraphEdge { geSource = scopeId, geTarget = nodeId, geType = "CONTAINS", geMetadata = Map.empty }
   mapM_ walkStmt body
   case mElse of
     Just e -> walkStmt e
     Nothing -> return ()
-walkExpr (SwitchExpr subj cases _) = do
+walkExpr (SwitchExpr subj cases sp) = do
+  file <- askFile
+  scopeId <- askScopeId
+  parent <- askNamedParent
+  let line = posLine (spanStart sp)
+      col  = posCol (spanStart sp)
+      hash = posHash line col
+      nodeId = semanticId file "BRANCH" "switch" parent (Just hash)
+  emitNode GraphNode
+    { gnId = nodeId, gnType = "BRANCH", gnName = "switch", gnFile = file
+    , gnLine = line, gnColumn = col
+    , gnEndLine = posLine (spanEnd sp), gnEndColumn = posCol (spanEnd sp)
+    , gnExported = False
+    , gnMetadata = Map.fromList
+        [ ("kind", MetaText "switch")
+        , ("caseCount", MetaInt (length cases))
+        , ("language", MetaText "swift")
+        ]
+    }
+  emitEdge GraphEdge { geSource = scopeId, geTarget = nodeId, geType = "CONTAINS", geMetadata = Map.empty }
   walkExpr subj
   mapM_ (\c -> mapM_ walkStmt (sscBody c)) cases
 walkExpr _ = return ()  -- Literals, DeclRef, etc. -- no graph nodes
 
 -- Walk statement
 walkStmt :: SwiftStmt -> Analyzer ()
-walkStmt (IfStmt _conds body mElse _) = do
+walkStmt stmt = do
+  -- Emit control flow nodes (BRANCH, LOOP, SCOPE)
+  walkControlFlowStmt stmt
+  -- Emit error flow nodes (throw CALL, try-catch SCOPE)
+  walkErrorFlowStmt stmt
+  -- Recurse into children
+  walkStmtChildren stmt
+
+-- Recurse into child expressions and statements
+walkStmtChildren :: SwiftStmt -> Analyzer ()
+walkStmtChildren (IfStmt _conds body mElse _) = do
   mapM_ walkStmt body
   case mElse of
     Just e -> walkStmt e
     Nothing -> return ()
-walkStmt (GuardStmt _conds body _) = mapM_ walkStmt body
-walkStmt (ForInStmt _pat seq' body _ _) = walkExpr seq' >> mapM_ walkStmt body
-walkStmt (WhileStmt _conds body _) = mapM_ walkStmt body
-walkStmt (RepeatWhileStmt body cond _) = mapM_ walkStmt body >> walkExpr cond
-walkStmt (SwitchStmt subj cases _) = do
+walkStmtChildren (GuardStmt _conds body _) = mapM_ walkStmt body
+walkStmtChildren (ForInStmt _pat seq' body _ _) = walkExpr seq' >> mapM_ walkStmt body
+walkStmtChildren (WhileStmt _conds body _) = mapM_ walkStmt body
+walkStmtChildren (RepeatWhileStmt body cond _) = mapM_ walkStmt body >> walkExpr cond
+walkStmtChildren (SwitchStmt subj cases _) = do
   walkExpr subj
   mapM_ (\c -> mapM_ walkStmt (sscBody c)) cases
-walkStmt (DoStmt body catches _) = do
+walkStmtChildren (DoStmt body catches _) = do
   mapM_ walkStmt body
   mapM_ (\c -> mapM_ walkStmt (sccBody c)) catches
-walkStmt (ReturnStmt mExpr _) = case mExpr of Just e -> walkExpr e; Nothing -> return ()
-walkStmt (ThrowStmt mExpr _) = case mExpr of Just e -> walkExpr e; Nothing -> return ()
-walkStmt (DeferStmt body _) = mapM_ walkStmt body
-walkStmt (ExprStmt expr _) = walkExpr expr
-walkStmt (DeclStmt decl _) = walkDeclaration decl
-walkStmt _ = return ()
+walkStmtChildren (ReturnStmt mExpr _) = case mExpr of Just e -> walkExpr e; Nothing -> return ()
+walkStmtChildren (ThrowStmt mExpr _) = case mExpr of Just e -> walkExpr e; Nothing -> return ()
+walkStmtChildren (DeferStmt body _) = mapM_ walkStmt body
+walkStmtChildren (ExprStmt expr _) = walkExpr expr
+walkStmtChildren (DeclStmt decl _) = walkDeclaration decl
+walkStmtChildren _ = return ()
 
 -- Extract call name from callee expression
 extractCallName :: SwiftExpr -> T.Text

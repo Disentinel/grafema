@@ -2828,43 +2828,15 @@ pub async fn analyze_swift_file(
 ) -> Result<FileAnalysis> {
     let file_str = file.display().to_string();
 
-    let source = tokio::fs::read_to_string(file)
-        .await
-        .with_context(|| format!("Failed to read Swift source file {file_str}"))?;
-
-    // Step 1: Parse with swift-parser
+    // Step 1: Parse with swift-parser (single-file mode: pass file path as argument)
     let parser_bin = analyzers.swift_parser_path();
-    let mut parser_child = tokio::process::Command::new(&parser_bin)
-        .stdin(std::process::Stdio::piped())
+    let parser_output = tokio::process::Command::new(&parser_bin)
+        .arg(&file_str)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
-        .spawn()
-        .with_context(|| format!("Failed to spawn swift-parser for {file_str}"))?;
-
-    let parser_payload = serde_json::json!({
-        "file": file_str,
-        "source": source,
-    });
-
-    {
-        let stdin = parser_child
-            .stdin
-            .as_mut()
-            .context("Failed to open stdin for swift-parser")?;
-        stdin
-            .write_all(parser_payload.to_string().as_bytes())
-            .await
-            .with_context(|| format!("Failed to write source to swift-parser stdin for {file_str}"))?;
-        stdin
-            .shutdown()
-            .await
-            .with_context(|| format!("Failed to close swift-parser stdin for {file_str}"))?;
-    }
-
-    let parser_output = parser_child
-        .wait_with_output()
+        .output()
         .await
-        .with_context(|| format!("Failed to wait for swift-parser for {file_str}"))?;
+        .with_context(|| format!("Failed to run swift-parser for {file_str}"))?;
 
     if !parser_output.status.success() {
         let stderr = String::from_utf8_lossy(&parser_output.stderr);
@@ -2883,17 +2855,22 @@ pub async fn analyze_swift_file(
             format!("Failed to parse swift-parser output for {file_str}: {preview}")
         })?;
 
-    if parser_response.get("status").and_then(|s| s.as_str()) != Some("ok") {
-        let err = parser_response
-            .get("error")
-            .and_then(|e| e.as_str())
-            .unwrap_or("unknown error");
-        bail!("swift-parser error for {file_str}: {err}");
-    }
-
-    let ast = parser_response
-        .get("ast")
-        .with_context(|| format!("swift-parser returned ok but no ast for {file_str}"))?;
+    // Single-file mode returns the AST directly ({declarations, imports, file}).
+    // Daemon mode wraps it in {status: "ok", ast: {...}}.
+    let ast = if let Some(inner) = parser_response.get("ast") {
+        // Daemon-style response — check status first
+        if parser_response.get("status").and_then(|s| s.as_str()) != Some("ok") {
+            let err = parser_response
+                .get("error")
+                .and_then(|e| e.as_str())
+                .unwrap_or("unknown error");
+            bail!("swift-parser error for {file_str}: {err}");
+        }
+        inner.clone()
+    } else {
+        // Single-file mode: the response IS the AST
+        parser_response
+    };
 
     // Step 2: Analyze with swift-analyzer
     let analyzer_bin = analyzers.swift_path();
@@ -3502,43 +3479,15 @@ pub async fn analyze_objc_file(
 ) -> Result<FileAnalysis> {
     let file_str = file.display().to_string();
 
-    let source = tokio::fs::read_to_string(file)
-        .await
-        .with_context(|| format!("Failed to read Obj-C source file {file_str}"))?;
-
-    // Step 1: Parse with objc-parser
+    // Step 1: Parse with objc-parser (single-file mode: pass file path as argument)
     let parser_bin = analyzers.objc_parser_path();
-    let mut parser_child = tokio::process::Command::new(&parser_bin)
-        .stdin(std::process::Stdio::piped())
+    let parser_output = tokio::process::Command::new(&parser_bin)
+        .arg(&file_str)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
-        .spawn()
-        .with_context(|| format!("Failed to spawn objc-parser for {file_str}"))?;
-
-    let parser_payload = serde_json::json!({
-        "file": file_str,
-        "source": source,
-    });
-
-    {
-        let stdin = parser_child
-            .stdin
-            .as_mut()
-            .context("Failed to open stdin for objc-parser")?;
-        stdin
-            .write_all(parser_payload.to_string().as_bytes())
-            .await
-            .with_context(|| format!("Failed to write source to objc-parser stdin for {file_str}"))?;
-        stdin
-            .shutdown()
-            .await
-            .with_context(|| format!("Failed to close objc-parser stdin for {file_str}"))?;
-    }
-
-    let parser_output = parser_child
-        .wait_with_output()
+        .output()
         .await
-        .with_context(|| format!("Failed to wait for objc-parser for {file_str}"))?;
+        .with_context(|| format!("Failed to run objc-parser for {file_str}"))?;
 
     if !parser_output.status.success() {
         let stderr = String::from_utf8_lossy(&parser_output.stderr);
@@ -3557,17 +3506,20 @@ pub async fn analyze_objc_file(
             format!("Failed to parse objc-parser output for {file_str}: {preview}")
         })?;
 
-    if parser_response.get("status").and_then(|s| s.as_str()) != Some("ok") {
-        let err = parser_response
-            .get("error")
-            .and_then(|e| e.as_str())
-            .unwrap_or("unknown error");
-        bail!("objc-parser error for {file_str}: {err}");
-    }
-
-    let ast = parser_response
-        .get("ast")
-        .with_context(|| format!("objc-parser returned ok but no ast for {file_str}"))?;
+    // Single-file mode returns {status: "ok", ast: {...}}.
+    // Handle both wrapped and direct AST formats for robustness.
+    let ast = if let Some(inner) = parser_response.get("ast") {
+        if parser_response.get("status").and_then(|s| s.as_str()) != Some("ok") {
+            let err = parser_response
+                .get("error")
+                .and_then(|e| e.as_str())
+                .unwrap_or("unknown error");
+            bail!("objc-parser error for {file_str}: {err}");
+        }
+        inner.clone()
+    } else {
+        parser_response
+    };
 
     // Step 2: Analyze with objc-analyzer
     let analyzer_bin = analyzers.objc_path();

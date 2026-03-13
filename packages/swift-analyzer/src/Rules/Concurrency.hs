@@ -1,6 +1,19 @@
 {-# LANGUAGE OverloadedStrings #-}
--- | Concurrency rule for Swift.
+-- | Concurrency rule for Swift: actor isolation tracking.
 --
--- Stub for Phase 1 -- will handle async/await, actors, Sendable conformance
--- in Phase 2.
-module Rules.Concurrency () where
+-- Tracks @MainActor, @Sendable, Task spawns, and isolation boundaries.
+-- Phase 2: syntactic tracking of concurrency annotations.
+module Rules.Concurrency
+  ( isMainActorAnnotated
+  , isSendableAnnotated
+  ) where
+
+import SwiftAST (SwiftAttribute(..))
+
+-- | Check if a list of attributes contains @MainActor.
+isMainActorAnnotated :: [SwiftAttribute] -> Bool
+isMainActorAnnotated = any (\a -> saName a == "MainActor")
+
+-- | Check if a list of attributes contains @Sendable.
+isSendableAnnotated :: [SwiftAttribute] -> Bool
+isSendableAnnotated = any (\a -> saName a == "Sendable")

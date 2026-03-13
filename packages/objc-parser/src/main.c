@@ -5,11 +5,17 @@
 #include "daemon_protocol.h"
 #include "objc_serializer.h"
 
-// Simple JSON string extraction (find "field":"value" and return value)
+// Simple JSON string extraction (find "field":"value" or "field": "value")
 static char* json_get_string(const char* json, const char* field) {
     char pattern[256];
+    // Try compact form first: "field":"value"
     snprintf(pattern, sizeof(pattern), "\"%s\":\"", field);
     const char* start = strstr(json, pattern);
+    if (!start) {
+        // Try with space: "field": "value"
+        snprintf(pattern, sizeof(pattern), "\"%s\": \"", field);
+        start = strstr(json, pattern);
+    }
     if (!start) return NULL;
     start += strlen(pattern);
     const char* end = start;

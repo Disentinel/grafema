@@ -24,7 +24,8 @@ module SwiftAST
   ) where
 
 import Data.Text (Text)
-import Data.Aeson (FromJSON(..), withObject, (.:), (.:?), (.!=))
+import Control.Applicative ((<|>))
+import Data.Aeson (FromJSON(..), Value(..), withObject, (.:), (.:?), (.!=))
 import Data.Aeson.Types (Parser, Object)
 
 -- Position & Span
@@ -575,11 +576,15 @@ instance FromJSON SwiftStmt where
       "DeclStmt" -> DeclStmt <$> v .: "declaration" <*> v .: "span"
       "ExprStmt" -> ExprStmt <$> v .: "expression" <*> v .: "span"
       _ -> do
-        -- Try to parse as expression statement
+        -- Try to parse as expression statement (explicit ExprStmt wrapper)
         mExpr <- v .:? "expression"
         case (mExpr :: Maybe SwiftExpr) of
           Just expr -> ExprStmt expr <$> v .: "span"
-          Nothing -> UnknownStmt typ <$> v .: "span"
+          Nothing -> do
+            -- Try to parse the whole object as an expression at statement level
+            -- (e.g., SwitchExpr, IfExpr appearing directly as statements)
+            let tryExpr = ExprStmt <$> parseJSON (Object v) <*> v .: "span"
+            tryExpr <|> (UnknownStmt typ <$> v .: "span")
 
 -- Helper: parse statement body from {body: {statements: [...]}}
 parseStmtBody :: Object -> Parser [SwiftStmt]
