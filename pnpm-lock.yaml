@@ -203,6 +203,9 @@ importers:
 
   packages/mcp:
     dependencies:
+      '@grafema/api':
+        specifier: workspace:*
+        version: link:../api
       '@grafema/types':
         specifier: workspace:*
         version: link:../types

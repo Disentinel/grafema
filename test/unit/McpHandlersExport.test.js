@@ -48,17 +48,18 @@ const EXPECTED_HANDLERS = [
   'handleGitOwnership',
   'handleGitArchaeology',
   'handleDescribe',
+  'handleGraphQLQuery',
 ];
 
 describe('MCP handlers export surface', () => {
-  it('should export exactly 36 handler functions', () => {
+  it('should export exactly 37 handler functions', () => {
     const exportedKeys = Object.keys(handlers).filter(
       k => typeof handlers[k] === 'function'
     );
     assert.equal(
       exportedKeys.length,
-      36,
-      `Expected 36 function exports, got ${exportedKeys.length}: ${exportedKeys.join(', ')}`
+      37,
+      `Expected 37 function exports, got ${exportedKeys.length}: ${exportedKeys.join(', ')}`
     );
   });
 

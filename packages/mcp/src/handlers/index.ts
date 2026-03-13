@@ -17,3 +17,4 @@ export { handleAddKnowledge, handleQueryKnowledge, handleQueryDecisions, handleS
 // Disabled: requires git-ingest (US-17). See US-17 in AI-AGENT-STORIES.md
 // export { handleGitChurn, handleGitCoChange, handleGitOwnership, handleGitArchaeology } from './knowledge-handlers.js';
 export { handleDescribe } from './notation-handlers.js';
+export { handleGraphQLQuery } from './graphql-handlers.js';

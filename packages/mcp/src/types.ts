@@ -430,3 +430,11 @@ export interface GitOwnershipArgs {
 export interface GitArchaeologyArgs {
   file: string;
 }
+
+// === GRAPHQL ARGS (REG-666) ===
+
+export interface GraphQLQueryArgs {
+  query: string;
+  variables?: Record<string, unknown>;
+  operationName?: string;
+}

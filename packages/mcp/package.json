@@ -43,6 +43,7 @@
     "directory": "packages/mcp"
   },
   "dependencies": {
+    "@grafema/api": "workspace:*",
     "@grafema/util": "workspace:*",
     "@grafema/types": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.25.1",
