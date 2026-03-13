@@ -310,6 +310,84 @@ pub async fn analyze_haskell_file(file: &Path, analyzer_bin: &str) -> Result<Fil
 }
 
 // ---------------------------------------------------------------------------
+// BEAM single-file analysis
+// ---------------------------------------------------------------------------
+
+/// Analyze a single BEAM (Elixir/Erlang) file: read source, run beam-analyzer, return FileAnalysis.
+///
+/// Like Haskell analysis, there is no OXC parsing step — `beam-analyzer` parses
+/// internally. The payload sent to stdin is `{"file":"<filepath>","source":"<source_text>"}`.
+///
+/// Returns `Err` if the file cannot be read, the analyzer binary cannot be
+/// spawned, the analyzer exits non-zero, or its output is not valid
+/// `FileAnalysis` JSON.
+pub async fn analyze_beam_file(file: &Path, analyzer_bin: &str) -> Result<FileAnalysis> {
+    let file_str = file.display().to_string();
+
+    let source = tokio::fs::read_to_string(file)
+        .await
+        .with_context(|| format!("Failed to read BEAM source file {file_str}"))?;
+
+    let mut child = tokio::process::Command::new(analyzer_bin)
+        .arg(&file_str)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .with_context(|| format!("Failed to spawn beam-analyzer for {file_str}"))?;
+
+    // Build JSON payload: {"file":"...","source":"..."}
+    let payload = serde_json::json!({
+        "file": file_str,
+        "source": source,
+    });
+
+    {
+        let stdin = child
+            .stdin
+            .as_mut()
+            .context("Failed to open stdin for beam-analyzer")?;
+        stdin
+            .write_all(payload.to_string().as_bytes())
+            .await
+            .with_context(|| {
+                format!("Failed to write source to beam-analyzer stdin for {file_str}")
+            })?;
+        stdin
+            .shutdown()
+            .await
+            .with_context(|| format!("Failed to close beam-analyzer stdin for {file_str}"))?;
+    }
+
+    let output = child
+        .wait_with_output()
+        .await
+        .with_context(|| format!("Failed to wait for beam-analyzer for {file_str}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let code = output
+            .status
+            .code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "signal".to_string());
+        anyhow::bail!(
+            "beam-analyzer exited with code {code} for {file_str}: {stderr}"
+        );
+    }
+
+    let stdout = &output.stdout;
+    let analysis: FileAnalysis = serde_json::from_slice(stdout).with_context(|| {
+        let preview = String::from_utf8_lossy(&stdout[..stdout.len().min(200)]);
+        format!(
+            "Failed to parse beam-analyzer output as FileAnalysis for {file_str}: {preview}"
+        )
+    })?;
+
+    Ok(analysis)
+}
+
+// ---------------------------------------------------------------------------
 // Daemon-mode analysis via ProcessPool
 // ---------------------------------------------------------------------------
 
@@ -400,6 +478,52 @@ pub async fn analyze_haskell_file_pooled(
         "error" => {
             let msg = response.error.unwrap_or_else(|| "unknown error".to_string());
             bail!("haskell-analyzer daemon error for {file_str}: {msg}")
+        }
+        other => bail!("Unknown daemon response status '{other}' for {file_str}"),
+    }
+}
+
+/// Analyze a single BEAM (Elixir/Erlang) file via a persistent daemon process pool.
+///
+/// Reads the source file from disk, builds a `{"file":"...","source":"..."}`
+/// JSON request via string concatenation (avoids parsing the source into Value),
+/// sends it as a length-prefixed frame through the pool, and parses the JSON
+/// response.
+pub async fn analyze_beam_file_pooled(
+    pool: &ProcessPool,
+    file: &Path,
+) -> Result<FileAnalysis> {
+    let file_str = file.display().to_string();
+
+    let source = tokio::fs::read_to_string(file)
+        .await
+        .with_context(|| format!("Failed to read BEAM source file {file_str}"))?;
+
+    // Build JSON request by concatenation — both file path and source are JSON-escaped.
+    let escaped_file = serde_json::to_string(&file_str)
+        .with_context(|| format!("Failed to escape file path for {file_str}"))?;
+    let escaped_source = serde_json::to_string(&source)
+        .with_context(|| format!("Failed to escape source for {file_str}"))?;
+    let payload = format!(
+        r#"{{"file":{},"source":{}}}"#,
+        escaped_file, escaped_source
+    );
+
+    let response_bytes = pool
+        .request(payload.as_bytes())
+        .await
+        .with_context(|| format!("Pool request failed for {file_str}"))?;
+
+    let response: DaemonResponse = serde_json::from_slice(&response_bytes)
+        .with_context(|| format!("Failed to decode response for {file_str}"))?;
+
+    match response.status.as_str() {
+        "ok" => response
+            .result
+            .with_context(|| format!("Daemon returned ok but no result for {file_str}")),
+        "error" => {
+            let msg = response.error.unwrap_or_else(|| "unknown error".to_string());
+            bail!("beam-analyzer daemon error for {file_str}: {msg}")
         }
         other => bail!("Unknown daemon response status '{other}' for {file_str}"),
     }
@@ -703,6 +827,186 @@ pub async fn analyze_haskell_files_parallel(
                     file: PathBuf::new(),
                     analysis: None,
                     errors: vec![format!("Haskell analysis task failed: {e}")],
+                });
+            }
+        }
+    }
+
+    results
+}
+
+// ---------------------------------------------------------------------------
+// BEAM parallel multi-file analysis
+// ---------------------------------------------------------------------------
+
+/// Analyze multiple BEAM (Elixir/Erlang) files in parallel using persistent daemon processes.
+///
+/// Creates a `ProcessPool` with `beam-analyzer --daemon` workers, reads
+/// source files from disk, and sends them through the pool. Falls back to
+/// `analyze_beam_files_parallel` if pool creation fails.
+pub async fn analyze_beam_files_parallel_pooled(
+    files: &[PathBuf],
+    jobs: usize,
+    analyzers: &crate::config::AnalyzerBinaries,
+) -> Vec<AnalysisResult> {
+    let pool_config = PoolConfig {
+        command: analyzers.beam_path(),
+        args: vec!["--daemon".to_string()],
+        ..PoolConfig::default()
+    };
+
+    let pool = match ProcessPool::new(pool_config, jobs.max(1)) {
+        Ok(p) => Arc::new(p),
+        Err(e) => {
+            tracing::warn!(
+                "Failed to create beam-analyzer pool, falling back to spawn-per-file: {e}"
+            );
+            return analyze_beam_files_parallel(files, jobs, &analyzers.beam_path()).await;
+        }
+    };
+
+    let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
+    let total = files.len();
+
+    let handles: Vec<_> = files
+        .iter()
+        .enumerate()
+        .map(|(idx, file)| {
+            let sem = Arc::clone(&semaphore);
+            let pool = Arc::clone(&pool);
+            let file = file.clone();
+            let file_display = file.display().to_string();
+
+            tokio::spawn(async move {
+                let _permit = sem
+                    .acquire()
+                    .await
+                    .expect("Semaphore closed unexpectedly");
+
+                tracing::info!(
+                    "[{}/{}] Analyzing BEAM file {}",
+                    idx + 1,
+                    total,
+                    file_display
+                );
+
+                let errors = Vec::new();
+
+                // No OXC parsing step — send source directly to beam-analyzer
+                match analyze_beam_file_pooled(&pool, &file).await {
+                    Ok(analysis) => AnalysisResult {
+                        file,
+                        analysis: Some(analysis),
+                        errors,
+                    },
+                    Err(e) => {
+                        let mut errors = errors;
+                        errors.push(format!(
+                            "BEAM analyzer failed for {file_display}: {e}"
+                        ));
+                        AnalysisResult {
+                            file,
+                            analysis: None,
+                            errors,
+                        }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        match handle.await {
+            Ok(result) => results.push(result),
+            Err(e) => {
+                results.push(AnalysisResult {
+                    file: PathBuf::new(),
+                    analysis: None,
+                    errors: vec![format!("BEAM analysis task failed: {e}")],
+                });
+            }
+        }
+    }
+
+    pool.shutdown().await;
+    results
+}
+
+/// Analyze multiple BEAM (Elixir/Erlang) files in parallel with bounded concurrency (spawn mode).
+///
+/// For each file:
+/// 1. Read source from disk (no OXC parsing — beam-analyzer parses internally)
+/// 2. Spawn `beam-analyzer` asynchronously, pipe the source JSON
+/// 3. Collect `FileAnalysis` or error
+///
+/// `jobs` controls the maximum number of concurrent analyses. A tokio
+/// `Semaphore` enforces the bound. Failures in individual files do not stop
+/// other files from being analyzed.
+pub async fn analyze_beam_files_parallel(
+    files: &[PathBuf],
+    jobs: usize,
+    analyzer_bin: &str,
+) -> Vec<AnalysisResult> {
+    let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
+    let total = files.len();
+    let analyzer_bin = analyzer_bin.to_string();
+
+    let handles: Vec<_> = files
+        .iter()
+        .enumerate()
+        .map(|(idx, file)| {
+            let sem = Arc::clone(&semaphore);
+            let file = file.clone();
+            let file_display = file.display().to_string();
+            let bin = analyzer_bin.clone();
+
+            tokio::spawn(async move {
+                let _permit = sem
+                    .acquire()
+                    .await
+                    .expect("Semaphore closed unexpectedly");
+
+                tracing::info!(
+                    "[{}/{}] Analyzing BEAM file {}",
+                    idx + 1,
+                    total,
+                    file_display
+                );
+
+                let errors = Vec::new();
+
+                match analyze_beam_file(&file, &bin).await {
+                    Ok(analysis) => AnalysisResult {
+                        file,
+                        analysis: Some(analysis),
+                        errors,
+                    },
+                    Err(e) => {
+                        let mut errors = errors;
+                        errors.push(format!(
+                            "BEAM analyzer failed for {file_display}: {e}"
+                        ));
+                        AnalysisResult {
+                            file,
+                            analysis: None,
+                            errors,
+                        }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        match handle.await {
+            Ok(result) => results.push(result),
+            Err(e) => {
+                results.push(AnalysisResult {
+                    file: PathBuf::new(),
+                    analysis: None,
+                    errors: vec![format!("BEAM analysis task failed: {e}")],
                 });
             }
         }

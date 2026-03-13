@@ -205,6 +205,14 @@ pub struct AnalyzerBinaries {
     /// Path to C/C++ resolve binary (default: "cpp-resolve")
     #[serde(default = "default_cpp_resolve")]
     pub cpp_resolve: String,
+
+    /// Path to BEAM (Elixir/Erlang) analyzer binary (default: "beam-analyzer")
+    #[serde(default = "default_beam_analyzer")]
+    pub beam: String,
+
+    /// Path to BEAM resolve binary (default: "beam-resolve")
+    #[serde(default = "default_beam_resolve")]
+    pub beam_resolve: String,
 }
 
 impl Default for AnalyzerBinaries {
@@ -230,6 +238,8 @@ impl Default for AnalyzerBinaries {
             go_parser: default_go_parser(),
             cpp: default_cpp_analyzer(),
             cpp_resolve: default_cpp_resolve(),
+            beam: default_beam_analyzer(),
+            beam_resolve: default_beam_resolve(),
         }
     }
 }
@@ -385,6 +395,16 @@ impl AnalyzerBinaries {
     /// Resolved path for the C/C++ resolve binary.
     pub fn cpp_resolve_path(&self) -> String {
         resolve_binary(&self.cpp_resolve)
+    }
+
+    /// Resolved path for the BEAM analyzer binary.
+    pub fn beam_path(&self) -> String {
+        resolve_binary(&self.beam)
+    }
+
+    /// Resolved path for the BEAM resolve binary.
+    pub fn beam_resolve_path(&self) -> String {
+        resolve_binary(&self.beam_resolve)
     }
 }
 
@@ -551,6 +571,14 @@ fn default_cpp_resolve() -> String {
     "cpp-resolve".to_string()
 }
 
+fn default_beam_analyzer() -> String {
+    "beam-analyzer".to_string()
+}
+
+fn default_beam_resolve() -> String {
+    "beam-resolve".to_string()
+}
+
 /// Language detection based on file extension.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Language {
@@ -562,6 +590,7 @@ pub enum Language {
     Python,
     Go,
     Cpp,
+    Beam,
 }
 
 /// Detect language from file extension.
@@ -580,6 +609,7 @@ pub fn detect_language(path: &Path) -> Option<Language> {
         "c" | "h" | "cpp" | "hpp" | "cc" | "cxx" | "hxx" | "hh" | "inl" | "ipp" | "tpp" | "txx" => {
             Some(Language::Cpp)
         }
+        "ex" | "exs" | "erl" | "hrl" => Some(Language::Beam),
         _ => {
             // Handle case-sensitive extensions: .c++ .h++ .C .H
             let file_name = path.file_name()?.to_str()?;
@@ -595,7 +625,7 @@ pub fn detect_language(path: &Path) -> Option<Language> {
 }
 
 /// Partition files by detected language.
-pub fn partition_by_language(files: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>) {
+pub fn partition_by_language(files: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>) {
     let mut js_files = Vec::new();
     let mut hs_files = Vec::new();
     let mut rs_files = Vec::new();
@@ -604,6 +634,7 @@ pub fn partition_by_language(files: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>, 
     let mut py_files = Vec::new();
     let mut go_files = Vec::new();
     let mut cpp_files = Vec::new();
+    let mut beam_files = Vec::new();
     for file in files {
         match detect_language(file) {
             Some(Language::JavaScript) => js_files.push(file.clone()),
@@ -614,10 +645,11 @@ pub fn partition_by_language(files: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>, 
             Some(Language::Python) => py_files.push(file.clone()),
             Some(Language::Go) => go_files.push(file.clone()),
             Some(Language::Cpp) => cpp_files.push(file.clone()),
+            Some(Language::Beam) => beam_files.push(file.clone()),
             None => {} // skip unknown extensions
         }
     }
-    (js_files, hs_files, rs_files, java_files, kotlin_files, py_files, go_files, cpp_files)
+    (js_files, hs_files, rs_files, java_files, kotlin_files, py_files, go_files, cpp_files, beam_files)
 }
 
 /// Load and validate configuration from a YAML file.
@@ -1015,9 +1047,10 @@ plugins:
             PathBuf::from("src/main.go"),
             PathBuf::from("src/parser.cpp"),
             PathBuf::from("src/parser.h"),
+            PathBuf::from("lib/server.ex"),
             PathBuf::from("README.md"),
         ];
-        let (js, hs, rs, java, kotlin, py, go, cpp) = partition_by_language(&files);
+        let (js, hs, rs, java, kotlin, py, go, cpp, beam) = partition_by_language(&files);
         assert_eq!(js, vec![PathBuf::from("src/index.ts"), PathBuf::from("src/app.jsx")]);
         assert_eq!(hs, vec![PathBuf::from("src/Main.hs"), PathBuf::from("src/Lib.hs")]);
         assert_eq!(rs, vec![PathBuf::from("src/main.rs"), PathBuf::from("src/lib.rs")]);
@@ -1026,11 +1059,12 @@ plugins:
         assert_eq!(py, vec![PathBuf::from("src/script.py")]);
         assert_eq!(go, vec![PathBuf::from("src/main.go")]);
         assert_eq!(cpp, vec![PathBuf::from("src/parser.cpp"), PathBuf::from("src/parser.h")]);
+        assert_eq!(beam, vec![PathBuf::from("lib/server.ex")]);
     }
 
     #[test]
     fn partition_by_language_empty_input() {
-        let (js, hs, rs, java, kotlin, py, go, cpp) = partition_by_language(&[]);
+        let (js, hs, rs, java, kotlin, py, go, cpp, beam) = partition_by_language(&[]);
         assert!(js.is_empty());
         assert!(hs.is_empty());
         assert!(rs.is_empty());
@@ -1039,6 +1073,7 @@ plugins:
         assert!(py.is_empty());
         assert!(go.is_empty());
         assert!(cpp.is_empty());
+        assert!(beam.is_empty());
     }
 
     #[test]
@@ -1071,6 +1106,14 @@ plugins:
     }
 
     #[test]
+    fn detect_language_beam() {
+        assert_eq!(detect_language(Path::new("lib/app.ex")), Some(Language::Beam));
+        assert_eq!(detect_language(Path::new("test/app_test.exs")), Some(Language::Beam));
+        assert_eq!(detect_language(Path::new("src/module.erl")), Some(Language::Beam));
+        assert_eq!(detect_language(Path::new("include/header.hrl")), Some(Language::Beam));
+    }
+
+    #[test]
     fn detect_language_cpp() {
         // C files
         assert_eq!(detect_language(Path::new("src/main.c")), Some(Language::Cpp));
@@ -1096,7 +1139,7 @@ plugins:
             PathBuf::from("src/main.py"),
             PathBuf::from("src/app.js"),
         ];
-        let (js, _hs, _rs, _java, _kotlin, py, _go, _cpp) = partition_by_language(&files);
+        let (js, _hs, _rs, _java, _kotlin, py, _go, _cpp, _beam) = partition_by_language(&files);
         assert_eq!(js, vec![PathBuf::from("src/app.js")]);
         assert_eq!(py, vec![PathBuf::from("src/main.py")]);
     }
@@ -1155,6 +1198,8 @@ analyzers:
         assert_eq!(cfg.analyzers.go_parser, "go-parser");
         assert_eq!(cfg.analyzers.cpp, "grafema-cpp-analyzer");
         assert_eq!(cfg.analyzers.cpp_resolve, "cpp-resolve");
+        assert_eq!(cfg.analyzers.beam, "beam-analyzer");
+        assert_eq!(cfg.analyzers.beam_resolve, "beam-resolve");
         cleanup(&dir);
     }
 
@@ -1181,6 +1226,8 @@ analyzers:
         assert_eq!(defaults.go_parser, "go-parser");
         assert_eq!(defaults.cpp, "grafema-cpp-analyzer");
         assert_eq!(defaults.cpp_resolve, "cpp-resolve");
+        assert_eq!(defaults.beam, "beam-analyzer");
+        assert_eq!(defaults.beam_resolve, "beam-resolve");
     }
 
     #[test]
@@ -1233,6 +1280,8 @@ analyzers:
             go_parser: "/abs/go-parser".to_string(),
             cpp: "/abs/grafema-cpp-analyzer".to_string(),
             cpp_resolve: "/abs/cpp-resolve".to_string(),
+            beam: "/abs/beam-analyzer".to_string(),
+            beam_resolve: "/abs/beam-resolve".to_string(),
         };
         assert_eq!(bins.js_path(), "/abs/grafema-analyzer");
         assert_eq!(bins.haskell_path(), "/abs/haskell-analyzer");
@@ -1254,6 +1303,8 @@ analyzers:
         assert_eq!(bins.go_parser_path(), "/abs/go-parser");
         assert_eq!(bins.cpp_path(), "/abs/grafema-cpp-analyzer");
         assert_eq!(bins.cpp_resolve_path(), "/abs/cpp-resolve");
+        assert_eq!(bins.beam_path(), "/abs/beam-analyzer");
+        assert_eq!(bins.beam_resolve_path(), "/abs/beam-resolve");
     }
 
     #[test]
