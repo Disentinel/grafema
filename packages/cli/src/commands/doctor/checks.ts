@@ -2,14 +2,14 @@
  * Diagnostic check functions for `grafema doctor` command - REG-214
  *
  * Checks are organized in levels:
- * - Level 1: Prerequisites (fail-fast) - checkGrafemaInitialized, checkServerStatus
+ * - Level 1: Prerequisites (fail-fast) - checkBinaries, checkGrafemaInitialized, checkServerStatus
  * - Level 2: Configuration - checkConfigValidity, checkEntrypoints
  * - Level 3: Graph Health - checkDatabaseExists, checkGraphStats, checkConnectivity, checkFreshness
  * - Level 4: Informational - checkVersions
  */
 
 import { existsSync, readFileSync, statSync } from 'fs';
-import { join, dirname } from 'path';
+import { join, dirname, delimiter } from 'path';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 import {
@@ -44,6 +44,149 @@ const VALID_PLUGIN_NAMES = new Set([
 // =============================================================================
 // Level 1: Prerequisites (fail-fast)
 // =============================================================================
+
+/**
+ * Binary lookup config — mirrors packages/grafema/src/binaries.ts but inlined
+ * to avoid cross-package dependency (CLI does not depend on the `grafema` pkg).
+ */
+type BinaryName = 'rfdb-server' | 'grafema-orchestrator';
+
+interface BinaryLookupResult {
+  name: BinaryName;
+  path: string | null;
+  source: string | null;
+}
+
+function findBinaryForDoctor(binaryName: BinaryName): BinaryLookupResult {
+  const envVars: Record<BinaryName, string> = {
+    'rfdb-server': 'GRAFEMA_RFDB_SERVER',
+    'grafema-orchestrator': 'GRAFEMA_ORCHESTRATOR',
+  };
+  const monorepoPackages: Record<BinaryName, string> = {
+    'rfdb-server': 'rfdb-server',
+    'grafema-orchestrator': 'grafema-orchestrator',
+  };
+
+  const envVar = envVars[binaryName];
+  const monorepoPkg = monorepoPackages[binaryName];
+
+  // 1. Environment variable
+  const envPath = process.env[envVar];
+  if (envPath && existsSync(envPath)) {
+    return { name: binaryName, path: envPath, source: `$${envVar}` };
+  }
+
+  // 2. Monorepo development builds (release, then debug)
+  // Walk up from this file to find monorepo root
+  let dir = __dirname;
+  let monorepoRoot: string | null = null;
+  for (let i = 0; i < 8; i++) {
+    if (existsSync(join(dir, 'packages', 'util')) && existsSync(join(dir, 'pnpm-workspace.yaml'))) {
+      monorepoRoot = dir;
+      break;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  if (!monorepoRoot) {
+    const envRoot = process.env.GRAFEMA_ROOT;
+    if (envRoot && existsSync(join(envRoot, 'packages', 'util'))) {
+      monorepoRoot = envRoot;
+    }
+  }
+
+  if (monorepoRoot) {
+    for (const profile of ['release', 'debug'] as const) {
+      const p = join(monorepoRoot, 'packages', monorepoPkg, 'target', profile, binaryName);
+      if (existsSync(p)) {
+        return { name: binaryName, path: p, source: `monorepo (${profile})` };
+      }
+    }
+  }
+
+  // 3. System PATH
+  const pathDirs = (process.env.PATH || '').split(delimiter);
+  for (const pathDir of pathDirs) {
+    if (!pathDir) continue;
+    const p = join(pathDir, binaryName);
+    if (existsSync(p)) {
+      return { name: binaryName, path: p, source: 'PATH' };
+    }
+  }
+
+  // 4. ~/.local/bin
+  const home = process.env.HOME || process.env.USERPROFILE || '';
+  if (home) {
+    const p = join(home, '.local', 'bin', binaryName);
+    if (existsSync(p)) {
+      return { name: binaryName, path: p, source: '~/.local/bin' };
+    }
+  }
+
+  return { name: binaryName, path: null, source: null };
+}
+
+/**
+ * Check if native binaries (rfdb-server, grafema-orchestrator) are findable.
+ * FAIL if both missing, WARN if one missing, PASS if both found.
+ */
+export async function checkBinaries(): Promise<DoctorCheckResult> {
+  const rfdb = findBinaryForDoctor('rfdb-server');
+  const orchestrator = findBinaryForDoctor('grafema-orchestrator');
+
+  const found: string[] = [];
+  const missing: string[] = [];
+
+  if (rfdb.path) {
+    found.push(`rfdb-server (${rfdb.source})`);
+  } else {
+    missing.push('rfdb-server');
+  }
+
+  if (orchestrator.path) {
+    found.push(`grafema-orchestrator (${orchestrator.source})`);
+  } else {
+    missing.push('grafema-orchestrator');
+  }
+
+  if (missing.length === 0) {
+    return {
+      name: 'binaries',
+      status: 'pass',
+      message: `Binaries: ${found.join(', ')}`,
+      details: {
+        rfdbServer: rfdb.path,
+        orchestrator: orchestrator.path,
+      },
+    };
+  }
+
+  if (missing.length === 2) {
+    return {
+      name: 'binaries',
+      status: 'fail',
+      message: 'Native binaries not found: rfdb-server, grafema-orchestrator',
+      recommendation:
+        'Install: npm install grafema, or build from source: cd packages/<name> && cargo build --release, or set GRAFEMA_RFDB_SERVER / GRAFEMA_ORCHESTRATOR env vars',
+    };
+  }
+
+  // One found, one missing
+  return {
+    name: 'binaries',
+    status: 'warn',
+    message: `Missing binary: ${missing[0]} (found: ${found[0]})`,
+    recommendation:
+      missing[0] === 'rfdb-server'
+        ? 'Set GRAFEMA_RFDB_SERVER env var or build: cd packages/rfdb-server && cargo build --release'
+        : 'Set GRAFEMA_ORCHESTRATOR env var or build: cd packages/grafema-orchestrator && cargo build --release',
+    details: {
+      rfdbServer: rfdb.path,
+      orchestrator: orchestrator.path,
+    },
+  };
+}
 
 /**
  * Check if .grafema directory exists with config file.
