@@ -151,6 +151,19 @@ importers:
       yaml:
         specifier: ^2.8.2
         version: 2.8.2
+    optionalDependencies:
+      '@grafema/grafema-darwin-arm64':
+        specifier: workspace:*
+        version: link:../grafema-darwin-arm64
+      '@grafema/grafema-darwin-x64':
+        specifier: workspace:*
+        version: link:../grafema-darwin-x64
+      '@grafema/grafema-linux-arm64':
+        specifier: workspace:*
+        version: link:../grafema-linux-arm64
+      '@grafema/grafema-linux-x64':
+        specifier: workspace:*
+        version: link:../grafema-linux-x64
     devDependencies:
       '@types/node':
         specifier: ^25.0.8
