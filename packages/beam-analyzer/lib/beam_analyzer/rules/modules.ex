@@ -33,6 +33,89 @@ defmodule BeamAnalyzer.Rules.Modules do
     Context.pop_scope(ctx)
   end
 
+  def process({:defprotocol, meta, [protocol_alias | body]}, ctx) do
+    protocol_name = extract_module_name(protocol_alias)
+    line = Keyword.get(meta, :line, 0)
+    col = Keyword.get(meta, :column, 0)
+
+    ctx = Context.set_module(ctx, protocol_name)
+
+    node = %{
+      id: SemanticId.module_id(ctx.file, protocol_name),
+      type: "MODULE",
+      name: protocol_name,
+      file: ctx.file,
+      line: line,
+      column: col,
+      endLine: 0,
+      endColumn: 0,
+      exported: true,
+      metadata: %{language: "elixir", kind: "protocol"}
+    }
+
+    ctx = Context.add_node(ctx, node)
+    ctx = Context.push_scope(ctx, protocol_name)
+
+    keyword_body = List.first(body) || []
+    ctx = walk_module_body(keyword_body, ctx)
+
+    Context.pop_scope(ctx)
+  end
+
+  def process({:defimpl, meta, [protocol_alias, opts | body]}, ctx) do
+    protocol_name = extract_module_name(protocol_alias)
+    for_type = extract_for_type(opts)
+    impl_name = "#{protocol_name}.#{for_type}"
+    line = Keyword.get(meta, :line, 0)
+    col = Keyword.get(meta, :column, 0)
+
+    ctx = Context.set_module(ctx, impl_name)
+
+    node = %{
+      id: SemanticId.module_id(ctx.file, impl_name),
+      type: "MODULE",
+      name: impl_name,
+      file: ctx.file,
+      line: line,
+      column: col,
+      endLine: 0,
+      endColumn: 0,
+      exported: true,
+      metadata: %{
+        language: "elixir",
+        kind: "protocol_impl",
+        protocol: protocol_name,
+        for_type: for_type
+      }
+    }
+
+    ctx = Context.add_node(ctx, node)
+
+    # IMPORT node for the protocol dependency
+    import_id = SemanticId.import_id(ctx.file, protocol_name, impl_name)
+    import_node = %{
+      id: import_id,
+      type: "IMPORT",
+      name: protocol_name,
+      file: ctx.file,
+      line: line,
+      column: col,
+      endLine: 0,
+      endColumn: 0,
+      exported: false,
+      metadata: %{kind: "protocol_impl", language: "elixir", for_type: for_type}
+    }
+
+    ctx = Context.add_node(ctx, import_node)
+
+    ctx = Context.push_scope(ctx, impl_name)
+
+    keyword_body = List.first(body) || []
+    ctx = walk_module_body(keyword_body, ctx)
+
+    Context.pop_scope(ctx)
+  end
+
   def process(_ast, ctx), do: ctx
 
   def process_erlang({:attribute, loc, :module, module_name}, ctx) do
@@ -152,6 +235,14 @@ defmodule BeamAnalyzer.Rules.Modules do
     process(ast, ctx)
   end
 
+  defp walk_statement({:defprotocol, _meta, _args} = ast, ctx) do
+    process(ast, ctx)
+  end
+
+  defp walk_statement({:defimpl, _meta, _args} = ast, ctx) do
+    process(ast, ctx)
+  end
+
   defp walk_statement(_ast, ctx), do: ctx
 
   defp extract_module_name({:__aliases__, _, parts}) do
@@ -160,6 +251,13 @@ defmodule BeamAnalyzer.Rules.Modules do
 
   defp extract_module_name(atom) when is_atom(atom), do: Atom.to_string(atom)
   defp extract_module_name(other), do: inspect(other)
+
+  defp extract_for_type([for: {:__aliases__, _, parts}]) do
+    parts |> Enum.map(&Atom.to_string/1) |> Enum.join(".")
+  end
+
+  defp extract_for_type([for: atom]) when is_atom(atom), do: Atom.to_string(atom)
+  defp extract_for_type(_), do: "Unknown"
 
   # OTP 26+: line info is keyword list like [text: ~c"module", location: 1]
   # OTP < 26: line info is integer

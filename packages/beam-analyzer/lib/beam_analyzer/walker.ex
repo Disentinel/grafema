@@ -14,7 +14,7 @@ defmodule BeamAnalyzer.Walker do
   end
 
   defp walk_elixir({:__block__, _, statements}, ctx) do
-    # Multiple top-level statements (e.g., multiple defmodule in one file)
+    # Multiple top-level statements (e.g., multiple defmodule/defprotocol/defimpl in one file)
     Enum.reduce(statements, ctx, fn stmt, ctx ->
       Rules.Modules.process(stmt, ctx)
     end)

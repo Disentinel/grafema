@@ -24,10 +24,64 @@ defmodule BeamAnalyzer.ErlangParser do
     end
   end
 
-  # Pre-expand ?MODULE and ?MODULE_STRING before scanning.
+  # Pre-expand macros before scanning.
   # Full Erlang preprocessor (epp) is not available without a compilation context,
-  # but these two macros cover the vast majority of real-world usage.
+  # but -define() macros and ?MODULE/?MODULE_STRING cover the vast majority of
+  # real-world usage. Parameterized macros -define(NAME(X), ...) are NOT handled.
   defp expand_simple_macros(source) do
+    source
+    |> expand_define_macros()
+    |> expand_module_macros()
+  end
+
+  # Collect all -define(NAME, VALUE). and -define(NAME). directives, then
+  # replace ?NAME occurrences. Define directives are removed from the source
+  # to avoid parse errors (the scanner doesn't understand -define).
+  defp expand_define_macros(source) do
+    # Match -define(NAME, VALUE). — value is everything between the first comma
+    # and the closing "). " allowing nested parens/brackets/braces.
+    value_regex = ~r/-define\(\s*([A-Z_][A-Za-z0-9_]*)\s*,\s*((?:[^()]*|\((?:[^()]*|\([^()]*\))*\))*)\s*\)\s*\./
+
+    # Match -define(NAME). — flag macro with no value
+    flag_regex = ~r/-define\(\s*([A-Z_][A-Za-z0-9_]*)\s*\)\s*\./
+
+    # Skip parameterized macros: -define(NAME(...), ...)
+    param_regex = ~r/-define\(\s*[A-Z_][A-Za-z0-9_]*\s*\(.*?\)\s*,/
+
+    # Collect value macros
+    value_macros =
+      Regex.scan(value_regex, source)
+      |> Enum.reject(fn [full | _] ->
+        Regex.match?(param_regex, full)
+      end)
+      |> Enum.map(fn [_full, name, value] -> {name, String.trim(value)} end)
+
+    # Collect flag macros
+    flag_macros =
+      Regex.scan(flag_regex, source)
+      |> Enum.map(fn [_full, name] -> {name, "true"} end)
+
+    macros = value_macros ++ flag_macros
+
+    case macros do
+      [] ->
+        source
+
+      _ ->
+        # Remove -define() lines from source
+        source =
+          source
+          |> String.replace(value_regex, "")
+          |> String.replace(flag_regex, "")
+
+        # Replace ?NAME with VALUE for each macro
+        Enum.reduce(macros, source, fn {name, value}, acc ->
+          String.replace(acc, "?#{name}", value)
+        end)
+    end
+  end
+
+  defp expand_module_macros(source) do
     case Regex.run(~r/-module\((\w+)\)/, source) do
       [_, module_name] ->
         source
