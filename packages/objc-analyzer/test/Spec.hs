@@ -324,3 +324,144 @@ main = hspec $ do
       length (faNodes fa) `shouldBe` 8
       -- Deferred refs: 1 EXTENDS (UIResponder) + 1 IMPLEMENTS (UIApplicationDelegate)
       length (faUnresolvedRefs fa) `shouldBe` 2
+
+  -- ── Type metadata on nodes ───────────────────────────────────────
+
+  describe "Rules.Types: type metadata" $ do
+
+    it "sets return_type on instance method" $ do
+      let fa = analyzeDecls "MyClass.h"
+            [ ObjCInterfaceDecl "MyClass"
+                [ ObjCInstanceMethodDecl "init" (Just "instancetype") [] testSpan ]
+                testSpan
+            ]
+          funcs = nodesOfType "FUNCTION" fa
+      Map.lookup "return_type" (gnMetadata (head funcs)) `shouldBe` Just (MetaText "instancetype")
+
+    it "sets return_type on class method" $ do
+      let fa = analyzeDecls "MyClass.h"
+            [ ObjCInterfaceDecl "MyClass"
+                [ ObjCClassMethodDecl "sharedInstance" (Just "instancetype") [] testSpan ]
+                testSpan
+            ]
+          funcs = nodesOfType "FUNCTION" fa
+      Map.lookup "return_type" (gnMetadata (head funcs)) `shouldBe` Just (MetaText "instancetype")
+
+    it "omits return_type when not present" $ do
+      let fa = analyzeDecls "MyClass.h"
+            [ ObjCInterfaceDecl "MyClass"
+                [ ObjCInstanceMethodDecl "doSomething" Nothing [] testSpan ]
+                testSpan
+            ]
+          funcs = nodesOfType "FUNCTION" fa
+      Map.lookup "return_type" (gnMetadata (head funcs)) `shouldBe` Nothing
+
+    it "sets type on property" $ do
+      let fa = analyzeDecls "MyClass.h"
+            [ ObjCInterfaceDecl "MyClass"
+                [ ObjCPropertyDecl "name" (Just "NSString *") Nothing [] testSpan ]
+                testSpan
+            ]
+          vars = nodesOfType "VARIABLE" fa
+      Map.lookup "type" (gnMetadata (head vars)) `shouldBe` Just (MetaText "NSString *")
+
+    it "omits type when property type not present" $ do
+      let fa = analyzeDecls "MyClass.h"
+            [ ObjCInterfaceDecl "MyClass"
+                [ ObjCPropertyDecl "delegate" Nothing Nothing [] testSpan ]
+                testSpan
+            ]
+          vars = nodesOfType "VARIABLE" fa
+      Map.lookup "type" (gnMetadata (head vars)) `shouldBe` Nothing
+
+    it "sets extends metadata on interface with superclass" $ do
+      let fa = analyzeDecls "MyClass.h"
+            [ ObjCInterfaceDecl "MyClass"
+                [ ObjCSuperClassRef "NSObject" testSpan ]
+                testSpan
+            ]
+          cls = head (nodesOfType "CLASS" fa)
+      Map.lookup "extends" (gnMetadata cls) `shouldBe` Just (MetaText "NSObject")
+
+    it "sets implements metadata on interface with protocols" $ do
+      let fa = analyzeDecls "MyClass.h"
+            [ ObjCInterfaceDecl "MyClass"
+                [ ObjCProtocolRef "NSCoding" testSpan
+                , ObjCProtocolRef "NSCopying" testSpan
+                ]
+                testSpan
+            ]
+          cls = head (nodesOfType "CLASS" fa)
+      Map.lookup "implements" (gnMetadata cls) `shouldBe` Just (MetaText "NSCoding,NSCopying")
+
+    it "sets implements metadata on protocol with inherited protocols" $ do
+      let fa = analyzeDecls "MyProtocol.h"
+            [ ObjCProtocolDecl "MyProtocol"
+                [ ObjCProtocolRef "NSObject" testSpan ]
+                testSpan
+            ]
+          cls = head (nodesOfType "CLASS" fa)
+      Map.lookup "implements" (gnMetadata cls) `shouldBe` Just (MetaText "NSObject")
+
+    it "omits extends/implements metadata when no refs" $ do
+      let fa = analyzeDecls "MyClass.h"
+            [ ObjCInterfaceDecl "MyClass" [] testSpan ]
+          cls = head (nodesOfType "CLASS" fa)
+      Map.lookup "extends" (gnMetadata cls) `shouldBe` Nothing
+      Map.lookup "implements" (gnMetadata cls) `shouldBe` Nothing
+
+  -- ── Export visibility (.h vs .m) ─────────────────────────────────
+
+  describe "Rules.Exports: header vs implementation visibility" $ do
+
+    it "marks .h declarations as exported" $ do
+      let fa = analyzeDecls "MyClass.h"
+            [ ObjCInterfaceDecl "MyClass"
+                [ ObjCInstanceMethodDecl "init" (Just "instancetype") [] testSpan
+                , ObjCPropertyDecl "name" (Just "NSString *") Nothing [] testSpan
+                ]
+                testSpan
+            ]
+          nonModule = [ n | n <- faNodes fa, gnType n /= "MODULE" ]
+      all gnExported nonModule `shouldBe` True
+
+    it "marks .m declarations as not exported" $ do
+      let fa = analyzeDecls "MyClass.m"
+            [ ObjCInterfaceDecl "MyClass"
+                [ ObjCInstanceMethodDecl "init" (Just "instancetype") [] testSpan
+                , ObjCPropertyDecl "name" (Just "NSString *") Nothing [] testSpan
+                ]
+                testSpan
+            ]
+          nonModule = [ n | n <- faNodes fa, gnType n /= "MODULE" ]
+      all (not . gnExported) nonModule `shouldBe` True
+
+    it "marks .mm declarations as not exported" $ do
+      let fa = analyzeDecls "MyClass.mm"
+            [ FunctionDecl "helperFunc" [] testSpan ]
+          funcs = nodesOfType "FUNCTION" fa
+      gnExported (head funcs) `shouldBe` False
+
+    it "emits ExportInfo for .h file declarations" $ do
+      let fa = analyzeDecls "MyClass.h"
+            [ ObjCInterfaceDecl "MyClass" [] testSpan
+            , FunctionDecl "createMyClass" [] testSpan
+            , EnumDecl "MyEnum" [] testSpan
+            , TypedefDecl "MyHandler" testSpan
+            , VarDecl "kVersion" testSpan
+            ]
+      length (faExports fa) `shouldBe` 5
+      let exportNames = map eiName (faExports fa)
+      exportNames `shouldBe` ["MyClass", "createMyClass", "MyEnum", "MyHandler", "kVersion"]
+
+    it "does not emit ExportInfo for .m file declarations" $ do
+      let fa = analyzeDecls "MyClass.m"
+            [ ObjCInterfaceDecl "MyClass" [] testSpan
+            , FunctionDecl "helperFunc" [] testSpan
+            ]
+      length (faExports fa) `shouldBe` 0
+
+    it "MODULE node is always exported regardless of file type" $ do
+      let fa = analyzeDecls "MyClass.m" []
+          modNode = head (nodesOfType "MODULE" fa)
+      gnExported modNode `shouldBe` True

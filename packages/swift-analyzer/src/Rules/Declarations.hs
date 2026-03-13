@@ -26,6 +26,7 @@ module Rules.Declarations
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Map.Strict as Map
+import Data.Maybe (listToMaybe)
 
 import SwiftAST
 import Analysis.Types
@@ -33,6 +34,7 @@ import Analysis.Context
 import Grafema.SemanticId (semanticId, contentHash)
 import Rules.Expressions (walkExpr)
 import Rules.Methods (walkFuncDecl, walkInitDecl, walkDeinitDecl, walkSubscriptDecl)
+import Rules.Types (typeToName)
 
 -- Visibility helpers
 
@@ -53,7 +55,7 @@ isExportable mods = not ("private" `elem` mods || "fileprivate" `elem` mods)
 walkDeclaration :: SwiftDecl -> Analyzer ()
 
 -- StructDecl -> CLASS node (kind: "struct")
-walkDeclaration (StructDecl name mods _gps _supers members _attrs sp) = do
+walkDeclaration (StructDecl name mods _gps supers members _attrs sp) = do
   file     <- askFile
   scopeId  <- askScopeId
   parent   <- askNamedParent
@@ -69,6 +71,7 @@ walkDeclaration (StructDecl name mods _gps _supers members _attrs sp) = do
         [ ("kind", MetaText "struct")
         , ("visibility", MetaText (visibilityText mods))
         , ("language", MetaText "swift")
+        , ("implements", MetaText (T.intercalate "," (map typeToName supers)))
         ]
     }
   emitEdge GraphEdge { geSource = scopeId, geTarget = nodeId, geType = "CONTAINS", geMetadata = Map.empty }
@@ -76,7 +79,7 @@ walkDeclaration (StructDecl name mods _gps _supers members _attrs sp) = do
     walkMembers members
 
 -- ClassDecl -> CLASS node (kind: "class")
-walkDeclaration (ClassDecl name mods _gps _supers members _attrs sp) = do
+walkDeclaration (ClassDecl name mods _gps supers members _attrs sp) = do
   file     <- askFile
   scopeId  <- askScopeId
   parent   <- askNamedParent
@@ -94,6 +97,8 @@ walkDeclaration (ClassDecl name mods _gps _supers members _attrs sp) = do
         , ("open", MetaBool ("open" `elem` mods))
         , ("abstract", MetaBool ("abstract" `elem` mods))
         , ("language", MetaText "swift")
+        , ("extends", MetaText (maybe "" typeToName (listToMaybe supers)))
+        , ("implements", MetaText (T.intercalate "," (map typeToName (drop 1 supers))))
         ]
     }
   emitEdge GraphEdge { geSource = scopeId, geTarget = nodeId, geType = "CONTAINS", geMetadata = Map.empty }
@@ -101,7 +106,7 @@ walkDeclaration (ClassDecl name mods _gps _supers members _attrs sp) = do
     walkMembers members
 
 -- EnumDecl -> CLASS node (kind: "enum")
-walkDeclaration (EnumDecl name mods _gps _supers members _attrs sp) = do
+walkDeclaration (EnumDecl name mods _gps supers members _attrs sp) = do
   file     <- askFile
   scopeId  <- askScopeId
   parent   <- askNamedParent
@@ -117,6 +122,7 @@ walkDeclaration (EnumDecl name mods _gps _supers members _attrs sp) = do
         [ ("kind", MetaText "enum")
         , ("visibility", MetaText (visibilityText mods))
         , ("language", MetaText "swift")
+        , ("implements", MetaText (T.intercalate "," (map typeToName supers)))
         ]
     }
   emitEdge GraphEdge { geSource = scopeId, geTarget = nodeId, geType = "CONTAINS", geMetadata = Map.empty }
@@ -124,7 +130,7 @@ walkDeclaration (EnumDecl name mods _gps _supers members _attrs sp) = do
     walkMembers members
 
 -- ProtocolDecl -> CLASS node (kind: "protocol")
-walkDeclaration (ProtocolDecl name mods _supers members _attrs sp) = do
+walkDeclaration (ProtocolDecl name mods supers members _attrs sp) = do
   file     <- askFile
   scopeId  <- askScopeId
   parent   <- askNamedParent
@@ -140,6 +146,7 @@ walkDeclaration (ProtocolDecl name mods _supers members _attrs sp) = do
         [ ("kind", MetaText "protocol")
         , ("visibility", MetaText (visibilityText mods))
         , ("language", MetaText "swift")
+        , ("implements", MetaText (T.intercalate "," (map typeToName supers)))
         ]
     }
   emitEdge GraphEdge { geSource = scopeId, geTarget = nodeId, geType = "CONTAINS", geMetadata = Map.empty }
@@ -147,7 +154,7 @@ walkDeclaration (ProtocolDecl name mods _supers members _attrs sp) = do
     walkMembers members
 
 -- ExtensionDecl -> EXTENSION node
-walkDeclaration (ExtensionDecl extType mods _supers members _attrs sp) = do
+walkDeclaration (ExtensionDecl extType mods supers members _attrs sp) = do
   file     <- askFile
   scopeId  <- askScopeId
   parent   <- askNamedParent
@@ -165,6 +172,7 @@ walkDeclaration (ExtensionDecl extType mods _supers members _attrs sp) = do
         [ ("extendedType", MetaText typeName)
         , ("visibility", MetaText (visibilityText mods))
         , ("language", MetaText "swift")
+        , ("implements", MetaText (T.intercalate "," (map typeToName supers)))
         ]
     }
   emitEdge GraphEdge { geSource = scopeId, geTarget = nodeId, geType = "CONTAINS", geMetadata = Map.empty }
@@ -172,7 +180,7 @@ walkDeclaration (ExtensionDecl extType mods _supers members _attrs sp) = do
     walkMembers members
 
 -- ActorDecl -> CLASS node (kind: "actor", actorIsolated: true)
-walkDeclaration (ActorDecl name mods _gps _supers members _attrs sp) = do
+walkDeclaration (ActorDecl name mods _gps supers members _attrs sp) = do
   file     <- askFile
   scopeId  <- askScopeId
   parent   <- askNamedParent
@@ -189,6 +197,7 @@ walkDeclaration (ActorDecl name mods _gps _supers members _attrs sp) = do
         , ("actorIsolated", MetaBool True)
         , ("visibility", MetaText (visibilityText mods))
         , ("language", MetaText "swift")
+        , ("implements", MetaText (T.intercalate "," (map typeToName supers)))
         ]
     }
   emitEdge GraphEdge { geSource = scopeId, geTarget = nodeId, geType = "CONTAINS", geMetadata = Map.empty }
@@ -217,7 +226,7 @@ walkDeclaration (VarDecl mods bindSpec bindings _attrs sp) = do
 walkDeclaration sd@SubscriptDecl{} = walkSubscriptDecl sd
 
 -- TypeAliasDecl -> TYPE_ALIAS node
-walkDeclaration (TypeAliasDecl name mods _targetType _gps _attrs sp) = do
+walkDeclaration (TypeAliasDecl name mods targetType _gps _attrs sp) = do
   file     <- askFile
   scopeId  <- askScopeId
   parent   <- askNamedParent
@@ -232,6 +241,7 @@ walkDeclaration (TypeAliasDecl name mods _targetType _gps _attrs sp) = do
     , gnMetadata = Map.fromList
         [ ("visibility", MetaText (visibilityText mods))
         , ("language", MetaText "swift")
+        , ("aliasedType", MetaText (typeToName targetType))
         ]
     }
   emitEdge GraphEdge { geSource = scopeId, geTarget = nodeId, geType = "CONTAINS", geMetadata = Map.empty }
@@ -307,6 +317,7 @@ walkBinding file scopeId parent exported bindSpec mods _declSpan binding = do
         , ("computed", MetaBool isComputed)
         , ("lazy", MetaBool isLazy)
         , ("static", MetaBool isStatic)
+        , ("type", MetaText (maybe "" typeToName (sbType binding)))
         , ("language", MetaText "swift")
         ]
     }

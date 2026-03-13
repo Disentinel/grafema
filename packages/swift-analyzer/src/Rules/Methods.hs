@@ -21,6 +21,7 @@ import Analysis.Types
 import Analysis.Context
 import Grafema.SemanticId (semanticId)
 import Rules.Expressions (walkStmt)
+import Rules.Types (typeToName)
 
 -- Visibility helpers (duplicated from Declarations to avoid circular deps)
 
@@ -38,7 +39,7 @@ visibilityText mods
 
 -- | Walk a function declaration.
 walkFuncDecl :: SwiftDecl -> Analyzer ()
-walkFuncDecl (FuncDecl name mods _gps params _retType body _attrs isAsync throws sp) = do
+walkFuncDecl (FuncDecl name mods _gps params retType body _attrs isAsync throws sp) = do
   file     <- askFile
   scopeId  <- askScopeId
   parent   <- askNamedParent
@@ -63,6 +64,7 @@ walkFuncDecl (FuncDecl name mods _gps params _retType body _attrs isAsync throws
         , ("static", MetaBool ("static" `elem` mods || "class" `elem` mods))
         , ("override", MetaBool ("override" `elem` mods))
         , ("paramCount", MetaInt (length params))
+        , ("return_type", MetaText (maybe "" typeToName retType))
         , ("language", MetaText "swift")
         ]
     }
@@ -131,7 +133,7 @@ walkDeinitDecl _ = return ()
 
 -- | Walk a subscript declaration.
 walkSubscriptDecl :: SwiftDecl -> Analyzer ()
-walkSubscriptDecl (SubscriptDecl mods params _retType _accessors _gps _attrs sp) = do
+walkSubscriptDecl (SubscriptDecl mods params retType _accessors _gps _attrs sp) = do
   file     <- askFile
   scopeId  <- askScopeId
   parent   <- askNamedParent
@@ -147,6 +149,7 @@ walkSubscriptDecl (SubscriptDecl mods params _retType _accessors _gps _attrs sp)
         [ ("kind", MetaText "subscript")
         , ("visibility", MetaText (visibilityText mods))
         , ("paramCount", MetaInt (length params))
+        , ("return_type", MetaText (maybe "" typeToName retType))
         , ("language", MetaText "swift")
         ]
     }

@@ -10,6 +10,7 @@ import Options.Applicative
 import qualified SwiftImportResolution
 import qualified SwiftCallResolution
 import qualified SwiftTypeResolution
+import qualified SwiftAnnotationResolution
 import Grafema.Types (GraphNode)
 import Grafema.Protocol (PluginCommand(..), readFrame, writeFrame, encodeMsgpack, decodeMsgpack)
 
@@ -59,15 +60,17 @@ dispatch :: Text -> [GraphNode] -> IO DaemonResponse
 dispatch "swift-imports"  nodes = ResOk <$> SwiftImportResolution.resolveAll nodes
 dispatch "swift-calls"    nodes = ResOk <$> SwiftCallResolution.resolveAll nodes
 dispatch "swift-types"    nodes = ResOk <$> SwiftTypeResolution.resolveAll nodes
+dispatch "swift-annotations" nodes = ResOk <$> SwiftAnnotationResolution.resolveAll nodes
 dispatch "swift-all"      nodes = do
-  imports <- SwiftImportResolution.resolveAll nodes
-  types   <- SwiftTypeResolution.resolveAll nodes
-  calls   <- SwiftCallResolution.resolveAll nodes
-  return $ ResOk (imports ++ types ++ calls)
+  imports     <- SwiftImportResolution.resolveAll nodes
+  types       <- SwiftTypeResolution.resolveAll nodes
+  calls       <- SwiftCallResolution.resolveAll nodes
+  annotations <- SwiftAnnotationResolution.resolveAll nodes
+  return $ ResOk (imports ++ types ++ calls ++ annotations)
 dispatch cmd _ = return $ ResError ("unknown command: " ++ T.unpack cmd)
 
 -- | CLI subcommand parser.
-data Command = CmdImports | CmdCalls | CmdTypes
+data Command = CmdImports | CmdCalls | CmdTypes | CmdAnnotations
 
 commandParser :: Parser Command
 commandParser = subparser
@@ -77,6 +80,8 @@ commandParser = subparser
     (info (pure CmdCalls) (progDesc "Resolve cross-file function calls"))
   <> command "swift-types"
     (info (pure CmdTypes) (progDesc "Resolve type references and conformances"))
+  <> command "swift-annotations"
+    (info (pure CmdAnnotations) (progDesc "Resolve annotation references"))
   )
 
 cliOpts :: ParserInfo Command
@@ -99,3 +104,4 @@ main = do
         CmdImports -> SwiftImportResolution.run
         CmdCalls   -> SwiftCallResolution.run
         CmdTypes   -> SwiftTypeResolution.run
+        CmdAnnotations -> SwiftAnnotationResolution.run

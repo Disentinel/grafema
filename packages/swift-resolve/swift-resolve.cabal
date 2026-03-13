@@ -15,6 +15,7 @@ executable swift-resolve
     SwiftImportResolution
     SwiftCallResolution
     SwiftTypeResolution
+    SwiftAnnotationResolution
 
   build-depends:
     base               >= 4.17 && < 5,
@@ -36,6 +37,7 @@ test-suite spec
     SwiftImportResolution
     SwiftCallResolution
     SwiftTypeResolution
+    SwiftAnnotationResolution
 
   build-depends:
     base               >= 4.17 && < 5,
