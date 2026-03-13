@@ -98,9 +98,12 @@ export type { GuaranteeGraph } from './core/GuaranteeManager.js';
 // Hash utilities
 export { calculateFileHash, calculateFileHashAsync, calculateContentHash } from './core/HashUtils.js';
 
-// RFDB binary finder utilities
-export { findRfdbBinary, getBinaryNotFoundMessage, getPlatformDir } from './utils/findRfdbBinary.js';
-export type { FindBinaryOptions } from './utils/findRfdbBinary.js';
+// Binary finder utilities
+export { findBinary, findAnalyzerBinary, findRfdbBinary, findOrchestratorBinary, getBinaryNotFoundMessage, getPlatformDir, getPlatformPackageName } from './utils/findRfdbBinary.js';
+export type { FindBinaryOptions, BinaryName } from './utils/findRfdbBinary.js';
+
+// Lazy download
+export { ensureBinary, downloadBinary, isDownloadable, findInGrafemaBin, getGrafemaBinDir } from './utils/lazyDownload.js';
 
 // RFDB server lifecycle
 export { startRfdbServer, checkExistingServer } from './utils/startRfdbServer.js';
@@ -216,6 +219,7 @@ export type { ChurnEntry, CoChangeEntry, OwnershipEntry, ArchaeologyEntry } from
 
 // Graph Query Utilities
 export { findCallsInFunction, findContainingFunction, traceValues, aggregateValues, NONDETERMINISTIC_PATTERNS, NONDETERMINISTIC_OBJECTS } from './queries/index.js';
+export { traceDataflow, traceForwardBFS, traceBackwardBFS } from './queries/index.js';
 export { buildNodeContext, getNodeDisplayName, formatEdgeMetadata, STRUCTURAL_EDGE_TYPES } from './queries/index.js';
 export type {
   CallInfo,
@@ -233,10 +237,15 @@ export type {
   SourcePreview,
   NodeContext,
   BuildNodeContextOptions,
+  DataflowNode,
+  DataflowEdge,
+  DataflowBackend,
+  TraceDataflowOptions,
+  TraceDataflowResult,
 } from './queries/index.js';
 
 // Notation — DSL rendering engine
-export { EDGE_ARCHETYPE_MAP, lookupEdge, PERSPECTIVES, renderNotation, extractSubgraph, shortenName } from './notation/index.js';
+export { EDGE_ARCHETYPE_MAP, lookupEdge, generateLegend, PERSPECTIVES, renderNotation, extractSubgraph, shortenName, renderTraceNarrative } from './notation/index.js';
 export type {
   Archetype,
   EdgeMapping,
@@ -244,6 +253,8 @@ export type {
   SubgraphData,
   NotationBlock,
   NotationLine,
+  TraceDetail,
+  TraceNarrativeOptions,
 } from './notation/index.js';
 
 // Re-export types for convenience

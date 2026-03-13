@@ -10,7 +10,7 @@ license: Apache-2.0
 compatibility: Requires Grafema MCP server configured (grafema or @grafema/mcp package)
 metadata:
   author: Grafema
-  version: "0.2.5"
+  version: "0.3.0"
 ---
 
 # Grafema: Graph-Based Codebase Analysis

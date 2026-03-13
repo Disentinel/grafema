@@ -9,44 +9,42 @@ import { spawn } from 'child_process';
 import { createInterface } from 'readline';
 import { fileURLToPath } from 'url';
 import { stringify as stringifyYAML } from 'yaml';
-import { DEFAULT_CONFIG, GRAFEMA_VERSION, getSchemaVersion } from '@grafema/util';
+import { GRAFEMA_VERSION, getSchemaVersion } from '@grafema/util';
 import { installSkill } from './setup-skill.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
 /**
- * Generate config.yaml content with commented future features.
- * Only includes implemented features (plugins).
+ * Generate config.yaml content.
+ * Minimal config — the Rust orchestrator has its own built-in analysis pipeline.
+ * Only emit fields the user might want to customize (include/exclude/services).
  */
-function generateConfigYAML(): string {
-  // Start with working default config
+function generateConfigYAML(isTypeScript: boolean): string {
+  const extensions = isTypeScript ? '*.{ts,tsx,js,jsx}' : '*.{js,jsx,mjs,cjs}';
   const config = {
     version: getSchemaVersion(GRAFEMA_VERSION),
-    // Plugin list (fully implemented)
-    plugins: DEFAULT_CONFIG.plugins,
+    root: '..',
+    include: [`src/**/${extensions}`],
+    exclude: [
+      '**/*.test.*',
+      '**/__tests__/**',
+      '**/node_modules/**',
+      '**/dist/**',
+    ],
   };
 
-  // Convert to YAML
   const yaml = stringifyYAML(config, {
-    lineWidth: 0, // Don't wrap long lines
+    lineWidth: 0,
   });
 
-  // Add header comment
   return `# Grafema Configuration
 # Documentation: https://github.com/grafema/grafema#configuration
 
 ${yaml}
-# File filtering patterns (optional)
-# By default, Grafema follows imports from package.json entry points.
-# Use these patterns to control which files are analyzed:
-#
-# include:  # Only analyze files matching these patterns
-#   - "src/**/*.{ts,js,tsx,jsx}"
-#
-# exclude:  # Skip files matching these patterns (takes precedence over include)
-#   - "**/*.test.ts"
-#   - "**/__tests__/**"
-#   - "**/node_modules/**"
+# services:  # Explicit service definitions (overrides auto-discovery)
+#   - name: "api"
+#     path: "."
+#     entryPoint: "src/index.ts"
 `;
 }
 
@@ -169,7 +167,7 @@ Examples:
     }
 
     // Write config
-    const configContent = generateConfigYAML();
+    const configContent = generateConfigYAML(isTypeScript);
     writeFileSync(configPath, configContent);
     console.log('✓ Created .grafema/config.yaml');
 

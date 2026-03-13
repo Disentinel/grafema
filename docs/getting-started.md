@@ -1,186 +1,146 @@
 # Getting Started with Grafema
 
-> **Zero to insight in 5 minutes.** Grafema builds a queryable graph of your codebase, answering questions like "what calls this function?" or "where does this data flow?" without reading thousands of lines of code.
+> **Zero to insight in 5 minutes.** Grafema builds a queryable graph of your codebase, answering questions like "who calls this function?" or "where does this data flow?" without reading thousands of lines of code.
 
 ## Prerequisites
 
 - **Node.js 18+** (check with `node --version`)
 - A JavaScript or TypeScript project with a `package.json`
+- macOS (ARM or Intel) or Linux x64
 
-## Step 1: Initialize (30 seconds)
+## Step 1: Install
+
+```bash
+npm install grafema
+```
+
+## Step 2: Initialize (30 seconds)
 
 In your project directory:
 
 ```bash
-npx @grafema/cli init
+grafema init
 ```
 
-This creates `.grafema/config.yaml` with default settings. Grafema automatically detects Express routes, database queries, API calls, and more.
+This creates `.grafema/config.yaml` with default settings. Grafema automatically detects your project language (JS or TS) and configures file patterns.
 
-## Step 2: Analyze (1-2 minutes)
+## Step 3: Analyze (1-2 minutes)
 
 Build the code graph:
 
 ```bash
-npx @grafema/cli analyze
+grafema analyze
 ```
 
 Expected output:
 ```
 Analyzing project: /path/to/your-project
-Loaded 24 plugins
-Analysis complete in 4.52s
+Analysis complete
   Nodes: 2,847
   Edges: 5,123
 ```
 
-## Step 3: Explore (2 minutes)
+## Step 4: Explore
 
-### See what was found
-
-```bash
-npx @grafema/cli overview
-```
-
-Output:
-```
-Code Structure:
-- Modules: 45
-- Functions: 234
-- Classes: 12
-- Call sites: 567
-
-External Interactions:
-- HTTP routes: 18
-- Database queries: 23
-```
-
-### Find all API endpoints
+### What's in a file?
 
 ```bash
-npx @grafema/cli query "route /api"
+grafema tldr src/server.ts
 ```
 
-Output:
+Returns a compact DSL overview — 10-20x smaller than the source file:
 ```
-[http:route] GET /api/users
-  Location: src/routes/users.js:15
-
-[http:route] POST /api/users
-  Location: src/routes/users.js:42
-
-Found 2 results.
+server.ts {
+  o- imports express, cors, helmet
+  > calls app.listen, setupRoutes
+  < reads config.port
+  => writes app
+}
 ```
 
-### Search for functions
+### Who calls a function?
 
 ```bash
-npx @grafema/cli query "function authenticate"
+grafema who handleRequest
 ```
 
-Output:
-```
-[FUNCTION] authenticate
-  ID: src/auth/middleware.ts->authenticate
-  Location: src/auth/middleware.ts:12
-
-Called by (3):
-  <- loginHandler (src/routes/auth.ts:28)
-  <- protectedRoute (src/middleware/auth.ts:5)
-  <- validateToken (src/auth/token.ts:15)
-```
-
-### Trace data flow
+### Where does data come from?
 
 ```bash
-npx @grafema/cli trace "userId from authenticate"
+grafema wtf req.user
 ```
 
-Output:
-```
-[VARIABLE] userId
-  ID: src/auth/middleware.ts->authenticate->userId
-  Location: src/auth/middleware.ts:18
+Traces backward through assignments, function parameters, and imports to show where the value originates.
 
-Data sources (where value comes from):
-  <- token (PARAMETER)
-     src/auth/middleware.ts:12
-
-Possible values:
-  - <parameter token> (runtime input)
-```
-
-### Check for issues
+### Project overview
 
 ```bash
-npx @grafema/cli check connectivity
+grafema overview
 ```
 
-Output:
+Shows node/edge counts by type — modules, functions, classes, call sites.
+
+## Step 5: AI Integration (MCP)
+
+Add to `.mcp.json` in your project root:
+
+```json
+{
+  "mcpServers": {
+    "grafema": {
+      "command": "npx",
+      "args": ["grafema-mcp", "--project", "."]
+    }
+  }
+}
 ```
-Checking Graph Connectivity...
 
-No issues found
-```
+Now Claude Code (or any MCP client) can query your codebase graph instead of reading files. Available tools include `find_nodes`, `find_calls`, `trace_dataflow`, `get_file_overview`, `describe`, and 20+ more.
 
-## Step 4: VS Code Extension (optional)
-
-For visual graph exploration:
-
-1. Build the extension from this repo:
-   ```bash
-   cd packages/vscode
-   pnpm install
-   pnpm build
-   # Then in VS Code: Cmd+Shift+P > "Extensions: Install from VSIX..."
-   # Select packages/vscode/grafema-explore-*.vsix
-   ```
-
-2. Open your project in VS Code
-
-3. Press **Cmd+Shift+G** (Mac) or **Ctrl+Shift+G** (Windows/Linux) to find the graph node at your cursor
-
-4. Use the "Grafema Explore" panel in the sidebar to navigate edges and relationships
-
-## Common Queries
+## Step 6: Health Check
 
 ```bash
-# Find functions by name (partial match)
-npx @grafema/cli query "auth"
-
-# Find all HTTP routes
-npx @grafema/cli query "route"
-
-# Find variables in a specific function
-npx @grafema/cli query "config in loadSettings"
-
-# Trace where a value flows
-npx @grafema/cli trace "apiKey"
-
-# Check data flow integrity
-npx @grafema/cli check dataflow
-
-# See all available checks
-npx @grafema/cli check --list-categories
+grafema doctor
 ```
+
+Checks binary availability, RFDB server status, and common issues.
+
+## Configuration
+
+The generated `.grafema/config.yaml` uses minimal defaults:
+
+```yaml
+version: "0.3"
+root: ".."
+include:
+  - "src/**/*.{ts,tsx,js,jsx}"
+exclude:
+  - "**/*.test.*"
+  - "**/__tests__/**"
+  - "**/node_modules/**"
+  - "**/dist/**"
+```
+
+Edit `include`/`exclude` patterns to match your project layout. Paths resolve relative to the `.grafema/` directory, so `root: ".."` points to the project root.
+
+See [Configuration Reference](configuration.md) for all options.
 
 ## Next Steps
 
-- [Configuration Reference](configuration.md) - Customize plugins and file patterns
+- [Configuration Reference](configuration.md) - Customize file patterns and services
 - [Datalog Cheat Sheet](datalog-cheat-sheet.md) - Advanced graph queries
+- [Known Limitations](../KNOWN_LIMITATIONS.md) - What works and what doesn't
 
 ## Troubleshooting
 
 **"No graph database found"**
-Run `npx @grafema/cli analyze` first to build the graph.
+Run `grafema analyze` first to build the graph.
 
-**Analysis is slow**
-Add an `exclude` pattern in `.grafema/config.yaml`:
-```yaml
-exclude:
-  - "**/*.test.ts"
-  - "**/node_modules/**"
-```
+**Analysis shows 0 files**
+Check `.grafema/config.yaml` — make sure `include` patterns match your source files and `root` points to the project root (usually `".."`).
 
 **"package.json not found"**
-Grafema currently supports JavaScript/TypeScript projects. Run `npm init -y` to create a package.json.
+Grafema currently requires a `package.json`. Run `npm init -y` to create one.
+
+**Binaries not found**
+Run `grafema doctor` to check which binaries are available and where they're expected.

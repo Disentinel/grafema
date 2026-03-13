@@ -160,3 +160,30 @@ export function lookupEdge(edgeType: string): EdgeMapping {
     sortOrder: SORT.flow_out,
   };
 }
+
+/**
+ * Canonical operator → verb mapping, one entry per unique operator.
+ * Derived from the archetype table — single source of truth.
+ */
+const CANONICAL_OPERATORS: Array<{ operator: string; verb: string }> = (() => {
+  const seen = new Set<string>();
+  const result: Array<{ operator: string; verb: string }> = [];
+  const entries = Object.values(EDGE_ARCHETYPE_MAP);
+  // Sort by archetype sort order for consistent legend ordering
+  entries.sort((a, b) => a.sortOrder - b.sortOrder);
+  for (const entry of entries) {
+    if (!entry.operator || seen.has(entry.operator)) continue;
+    seen.add(entry.operator);
+    result.push({ operator: entry.operator, verb: entry.verb });
+  }
+  return result;
+})();
+
+/**
+ * Generate a legend string from the archetype table.
+ * Single source of truth for all tools (describe, trace_dataflow, CLI).
+ */
+export function generateLegend(): string {
+  const parts = CANONICAL_OPERATORS.map(({ operator, verb }) => `${operator} ${verb}`);
+  return `Legend: ${parts.join('  ')}  {} contains`;
+}

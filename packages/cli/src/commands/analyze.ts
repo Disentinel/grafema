@@ -20,7 +20,7 @@ export const analyzeCommand = new Command('analyze')
   .option('--log-level <level>', 'Set log level (silent, errors, warnings, info, debug)')
   .option('--log-file <path>', 'Write all log output to a file')
   .option('--strict', 'Enable strict mode (fail on unresolved references)')
-  .option('--auto-start', 'Auto-start RFDB server if not running')
+  .option('--no-auto-start', 'Do not auto-start RFDB server (require manual start)')
   .addHelpText('after', `
 Examples:
   grafema analyze                Analyze current project
@@ -31,8 +31,6 @@ Examples:
   grafema analyze --debug        Write diagnostics.log for debugging
   grafema analyze --log-file out.log  Write all logs to a file
   grafema analyze --strict       Fail on unresolved references (debugging)
-  grafema analyze --auto-start   Auto-start server (useful for CI)
-
-Note: Start the server first with: grafema server start
+  grafema analyze --no-auto-start  Require manual server start
 `)
   .action(analyzeAction);

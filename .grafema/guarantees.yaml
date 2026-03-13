@@ -356,7 +356,7 @@ guarantees:
       Every switch BRANCH must have at least one outgoing HAS_CASE
       edge. A switch without cases is an empty control structure.
     check: datalog
-    rule: 'violation(X) :- node(X, "BRANCH"), attr(X, "branchType", "switch"), \+ edge(X, _, "HAS_CASE").'
+    rule: 'violation(X) :- node(X, "BRANCH"), attr(X, "name", "switch"), \+ edge(X, _, "HAS_CASE").'
     severity: warning
 
   - name: if-has-consequent
@@ -365,7 +365,7 @@ guarantees:
       to its then-block SCOPE. An if without a then-branch
       means the branch body is invisible to analysis.
     check: datalog
-    rule: 'violation(X) :- node(X, "BRANCH"), attr(X, "branchType", "if"), \+ edge(X, _, "HAS_CONSEQUENT").'
+    rule: 'violation(X) :- node(X, "BRANCH"), attr(X, "name", "if"), \+ edge(X, _, "HAS_CONSEQUENT").'
     severity: warning
 
   # --- Namespaced semantic integrity ---

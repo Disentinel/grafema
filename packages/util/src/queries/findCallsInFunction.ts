@@ -1,19 +1,29 @@
 /**
  * Find all CALL and METHOD_CALL nodes inside a function.
  *
- * Graph structure:
+ * Supports two graph layouts:
+ *
+ * Layout A (scope chain — legacy JS analyzer):
  * ```
  * FUNCTION -[HAS_SCOPE]-> SCOPE -[CONTAINS]-> CALL
  *                         SCOPE -[CONTAINS]-> METHOD_CALL
  *                         SCOPE -[CONTAINS]-> SCOPE (nested blocks)
  * ```
  *
+ * Layout B (direct edges — Rust orchestrator):
+ * ```
+ * FUNCTION -[AWAITS|RETURNS|THROWS|...]--> CALL / METHOD_CALL
+ * ```
+ * The orchestrator links functions directly to their call nodes via
+ * semantic edge types (AWAITS for async calls, RETURNS for return
+ * expressions, THROWS for throw expressions, etc.).
+ *
  * Algorithm:
- * 1. Get function's scope via HAS_SCOPE edge
- * 2. BFS through CONTAINS edges, collecting CALL and METHOD_CALL nodes
- * 3. Stop at nested FUNCTION/CLASS boundaries (don't enter inner functions)
- * 4. For each call, check CALLS edge to determine if resolved
- * 5. If transitive=true, recursively follow resolved CALLS edges
+ * 1. Try HAS_SCOPE path first (Layout A)
+ * 2. If no HAS_SCOPE edges, fall back to direct edges (Layout B):
+ *    collect all outgoing edges, keep those targeting CALL/METHOD_CALL nodes
+ * 3. For each call, check CALLS edge to determine if resolved
+ * 4. If transitive=true, recursively follow resolved CALLS edges
  *
  * Performance: O(S + C) where S = scopes, C = calls
  * For functions with 100 calls, expect ~200 DB operations.
@@ -78,52 +88,76 @@ export async function findCallsInFunction(
     seenTargets.add(functionId);
   }
 
-  // Step 1: Get function's scope via HAS_SCOPE
+  // Step 1: Try HAS_SCOPE path (Layout A — scope chain)
   const hasScopeEdges = await backend.getOutgoingEdges(functionId, ['HAS_SCOPE']);
 
-  // BFS queue: { nodeId, currentDepth }
-  const queue: Array<{ id: string; depth: number }> = [];
+  if (hasScopeEdges.length > 0) {
+    // Layout A: BFS through scope chain
+    const queue: Array<{ id: string; depth: number }> = [];
 
-  for (const edge of hasScopeEdges) {
-    queue.push({ id: edge.dst, depth: 0 });
-  }
+    for (const edge of hasScopeEdges) {
+      queue.push({ id: edge.dst, depth: 0 });
+    }
 
-  // Step 2: BFS through scopes
-  while (queue.length > 0) {
-    const { id, depth } = queue.shift()!;
+    while (queue.length > 0) {
+      const { id, depth } = queue.shift()!;
 
-    if (visited.has(id) || depth > maxDepth) continue;
-    visited.add(id);
+      if (visited.has(id) || depth > maxDepth) continue;
+      visited.add(id);
 
-    const containsEdges = await backend.getOutgoingEdges(id, ['CONTAINS']);
+      const containsEdges = await backend.getOutgoingEdges(id, ['CONTAINS']);
 
-    for (const edge of containsEdges) {
+      for (const edge of containsEdges) {
+        const child = await backend.getNode(edge.dst);
+        if (!child) continue;
+
+        if (child.type === 'CALL' || child.type === 'METHOD_CALL') {
+          const callInfo = await buildCallInfo(backend, child, 0);
+          calls.push(callInfo);
+
+          if (transitive && callInfo.resolved && callInfo.target) {
+            await collectTransitiveCalls(
+              backend,
+              callInfo.target.id,
+              1,
+              transitiveDepth,
+              calls,
+              seenTargets
+            );
+          }
+        }
+
+        // Continue into nested scopes, but NOT into nested functions/classes
+        if (child.type === 'SCOPE') {
+          queue.push({ id: child.id, depth: depth + 1 });
+        }
+      }
+    }
+  } else {
+    // Layout B: Direct edges from FUNCTION to CALL/METHOD_CALL nodes
+    // The Rust orchestrator links functions to calls via semantic edge types
+    // (AWAITS, RETURNS, THROWS, etc.) instead of HAS_SCOPE -> CONTAINS.
+    const allOutgoing = await backend.getOutgoingEdges(functionId, null);
+
+    for (const edge of allOutgoing) {
       const child = await backend.getNode(edge.dst);
       if (!child) continue;
 
-      // Collect CALL and METHOD_CALL nodes
       if (child.type === 'CALL' || child.type === 'METHOD_CALL') {
         const callInfo = await buildCallInfo(backend, child, 0);
         calls.push(callInfo);
 
-        // Transitive: follow resolved calls
         if (transitive && callInfo.resolved && callInfo.target) {
           await collectTransitiveCalls(
             backend,
             callInfo.target.id,
-            1, // Starting at depth 1
+            1,
             transitiveDepth,
             calls,
             seenTargets
           );
         }
       }
-
-      // Continue into nested scopes, but NOT into nested functions/classes
-      if (child.type === 'SCOPE') {
-        queue.push({ id: child.id, depth: depth + 1 });
-      }
-      // Skip FUNCTION, CLASS - they have their own scope hierarchy
     }
   }
 

@@ -26,12 +26,11 @@ import type {
 /**
  * Get comprehensive function details including calls made and callers.
  *
- * Graph structure:
- * ```
- * FUNCTION -[HAS_SCOPE]-> SCOPE -[CONTAINS]-> CALL/METHOD_CALL
- *                         SCOPE -[CONTAINS]-> SCOPE (nested blocks)
- * CALL -[CALLS]-> FUNCTION (target)
- * ```
+ * Supports two graph layouts (see findCallsInFunction for details):
+ * - Layout A: FUNCTION -> HAS_SCOPE -> SCOPE -> CONTAINS -> CALL (legacy)
+ * - Layout B: FUNCTION -> AWAITS|RETURNS|THROWS -> CALL (Rust orchestrator)
+ *
+ * In both layouts: CALL -[CALLS]-> FUNCTION (target)
  *
  * This is the core tool for understanding function behavior.
  * Use transitive=true to follow call chains (A -> B -> C).

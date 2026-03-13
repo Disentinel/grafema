@@ -471,4 +471,84 @@ describe('findContainingFunction', () => {
       assert.strictEqual(container.name, 'handleError');
     });
   });
+
+  // ===========================================================================
+  // TESTS: Layout B (direct edges — Rust orchestrator)
+  // ===========================================================================
+
+  describe('Layout B: direct edges from FUNCTION to CALL nodes', () => {
+    /**
+     * WHY: The Rust orchestrator links functions to calls via AWAITS edges.
+     * findContainingFunction should follow incoming AWAITS to find the function.
+     */
+    it('should find FUNCTION via incoming AWAITS edge', async () => {
+      await backend.addNode({ id: 'func-1', type: 'FUNCTION', name: 'asyncHandler', file: 'handler.ts', line: 1 });
+      await backend.addNode({ id: 'call-1', type: 'CALL', name: 'ensureAnalyzed', file: 'handler.ts', line: 3 });
+
+      await backend.addEdge({ src: 'func-1', dst: 'call-1', type: 'AWAITS' });
+
+      const container = await findContainingFunction(backend, 'call-1');
+
+      assert.ok(container, 'Should find function via AWAITS edge');
+      assert.strictEqual(container.id, 'func-1');
+      assert.strictEqual(container.name, 'asyncHandler');
+      assert.strictEqual(container.type, 'FUNCTION');
+    });
+
+    /**
+     * WHY: RETURNS edges link functions to calls in return expressions.
+     */
+    it('should find FUNCTION via incoming RETURNS edge', async () => {
+      await backend.addNode({ id: 'func-1', type: 'FUNCTION', name: 'getResult', file: 'util.ts', line: 1 });
+      await backend.addNode({ id: 'call-1', type: 'CALL', name: 'textResult', file: 'util.ts', line: 5 });
+
+      await backend.addEdge({ src: 'func-1', dst: 'call-1', type: 'RETURNS' });
+
+      const container = await findContainingFunction(backend, 'call-1');
+
+      assert.ok(container, 'Should find function via RETURNS edge');
+      assert.strictEqual(container.id, 'func-1');
+      assert.strictEqual(container.name, 'getResult');
+    });
+
+    /**
+     * WHY: THROWS edges link functions to calls in throw expressions.
+     */
+    it('should find FUNCTION via incoming THROWS edge', async () => {
+      await backend.addNode({ id: 'func-1', type: 'FUNCTION', name: 'validate', file: 'validator.ts', line: 1 });
+      await backend.addNode({ id: 'call-1', type: 'CALL', name: 'Error', file: 'validator.ts', line: 3 });
+
+      await backend.addEdge({ src: 'func-1', dst: 'call-1', type: 'THROWS' });
+
+      const container = await findContainingFunction(backend, 'call-1');
+
+      assert.ok(container, 'Should find function via THROWS edge');
+      assert.strictEqual(container.id, 'func-1');
+      assert.strictEqual(container.name, 'validate');
+    });
+
+    /**
+     * WHY: When both CONTAINS (from scope) and AWAITS (from function) exist,
+     * should prefer FUNCTION over MODULE (which owns the scope).
+     * This is the real-world Rust orchestrator layout.
+     */
+    it('should prefer FUNCTION over MODULE when both paths exist', async () => {
+      await backend.addNode({ id: 'module-1', type: 'MODULE', name: 'handler.ts', file: 'handler.ts', line: 1 });
+      await backend.addNode({ id: 'scope-1', type: 'SCOPE', name: 'function', file: 'handler.ts', line: 0 });
+      await backend.addNode({ id: 'func-1', type: 'FUNCTION', name: 'handleRequest', file: 'handler.ts', line: 5 });
+      await backend.addNode({ id: 'call-1', type: 'CALL', name: 'ensureAnalyzed', file: 'handler.ts', line: 7 });
+
+      // Layout B: FUNCTION -> AWAITS -> CALL
+      await backend.addEdge({ src: 'func-1', dst: 'call-1', type: 'AWAITS' });
+      // Layout A-style: MODULE -> HAS_SCOPE -> SCOPE -> CONTAINS -> CALL
+      await backend.addEdge({ src: 'module-1', dst: 'scope-1', type: 'HAS_SCOPE' });
+      await backend.addEdge({ src: 'scope-1', dst: 'call-1', type: 'CONTAINS' });
+
+      const container = await findContainingFunction(backend, 'call-1');
+
+      assert.ok(container, 'Should find container');
+      assert.strictEqual(container.type, 'FUNCTION', 'Should prefer FUNCTION over MODULE');
+      assert.strictEqual(container.name, 'handleRequest');
+    });
+  });
 });

@@ -2,20 +2,22 @@
  * Doctor command - Diagnose Grafema setup issues
  *
  * Checks (in order):
- * 1. Initialization (.grafema directory, config file)
- * 2. Config validity (syntax, plugin names)
- * 3. Entrypoints (service paths exist)
- * 4. Server status (RFDB server running)
- * 5. Database exists and has data
- * 6. Graph statistics
- * 7. Graph connectivity
- * 8. Graph freshness
- * 9. Version information
+ * 1. Binaries (rfdb-server, grafema-orchestrator)
+ * 2. Initialization (.grafema directory, config file)
+ * 3. Config validity (syntax, plugin names)
+ * 4. Entrypoints (service paths exist)
+ * 5. Server status (RFDB server running)
+ * 6. Database exists and has data
+ * 7. Graph statistics
+ * 8. Graph connectivity
+ * 9. Graph freshness
+ * 10. Version information
  */
 
 import { Command } from 'commander';
 import { resolve } from 'path';
 import {
+  checkBinaries,
   checkGrafemaInitialized,
   checkServerStatus,
   checkConfigValidity,
@@ -47,6 +49,8 @@ Examples:
     const checks: DoctorCheckResult[] = [];
 
     // Level 1: Prerequisites (fail-fast)
+    checks.push(await checkBinaries());
+
     const initCheck = await checkGrafemaInitialized(projectPath);
     checks.push(initCheck);
 

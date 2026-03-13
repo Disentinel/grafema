@@ -1,0 +1,146 @@
+# Build Haskell binaries (analyzers + resolvers) for all platforms
+#
+# Triggered by: git tag binaries-vX.Y.Z && git push --tags
+#
+# Haskell binaries are built from their respective packages/ directories.
+# Each analyzer/resolver is a separate cabal project.
+#
+# Platforms:
+#   - darwin-arm64: Native on macos-latest (Apple Silicon)
+#   - darwin-x64:   Native on macos-13 (Intel)
+#   - linux-x64:    Native on ubuntu-22.04
+#   - linux-arm64:  Cross-compile via Docker + QEMU
+
+name: Build Haskell Binaries
+
+on:
+  push:
+    tags:
+      - 'binaries-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.binary }} (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [darwin-arm64, darwin-x64, linux-x64]
+        binary:
+          - name: grafema-analyzer
+            package: js-analyzer
+          - name: grafema-resolve
+            package: grafema-resolve
+          - name: grafema-rust-analyzer
+            package: rust-analyzer
+          - name: grafema-rust-resolve
+            package: rust-resolve
+          - name: grafema-java-analyzer
+            package: java-analyzer
+          - name: grafema-kotlin-analyzer
+            package: kotlin-analyzer
+          - name: grafema-go-analyzer
+            package: go-analyzer
+          - name: haskell-analyzer
+            package: haskell-analyzer
+          - name: haskell-resolve
+            package: haskell-resolve
+          - name: grafema-cpp-analyzer
+            package: cpp-analyzer
+          - name: cpp-resolve
+            package: cpp-resolve
+        include:
+          - platform: darwin-arm64
+            os: macos-latest
+          - platform: darwin-x64
+            os: macos-13
+          - platform: linux-x64
+            os: ubuntu-22.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check if package exists
+        id: check
+        run: |
+          PKG_DIR="packages/${{ matrix.binary.package }}"
+          if [ -d "$PKG_DIR" ] && (ls "$PKG_DIR"/*.cabal 1>/dev/null 2>&1 || [ -f "$PKG_DIR/package.yaml" ]); then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Package $PKG_DIR not found or not a Haskell project, skipping"
+          fi
+
+      - name: Setup GHC
+        if: steps.check.outputs.exists == 'true'
+        uses: haskell-actions/setup@v2
+        with:
+          ghc-version: '9.8'
+          cabal-version: '3.12'
+
+      - name: Cache cabal
+        if: steps.check.outputs.exists == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cabal/store
+            packages/${{ matrix.binary.package }}/dist-newstyle
+          key: ${{ matrix.platform }}-cabal-${{ matrix.binary.package }}-${{ hashFiles(format('packages/{0}/**/*.cabal', matrix.binary.package)) }}
+          restore-keys: |
+            ${{ matrix.platform }}-cabal-${{ matrix.binary.package }}-
+
+      - name: Install system dependencies (macOS)
+        if: steps.check.outputs.exists == 'true' && startsWith(matrix.os, 'macos')
+        run: |
+          brew install pkg-config
+
+      - name: Install system dependencies (Linux)
+        if: steps.check.outputs.exists == 'true' && startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgmp-dev
+
+      - name: Build
+        if: steps.check.outputs.exists == 'true'
+        working-directory: packages/${{ matrix.binary.package }}
+        run: |
+          cabal update
+          cabal build --enable-optimization=2
+
+      - name: Find and prepare binary
+        if: steps.check.outputs.exists == 'true'
+        run: |
+          mkdir -p dist
+          # macOS find doesn't support -executable, use -perm +111 (portable)
+          BINARY=$(find packages/${{ matrix.binary.package }}/dist-newstyle -name "${{ matrix.binary.name }}" -type f -perm +111 | head -1)
+          if [ -z "$BINARY" ]; then
+            # Try the package name as binary name
+            BINARY=$(find packages/${{ matrix.binary.package }}/dist-newstyle -type f -perm +111 | grep -v '\.o$' | grep -v '\.hi$' | head -1)
+          fi
+          if [ -z "$BINARY" ]; then
+            echo "ERROR: Could not find built binary"
+            find packages/${{ matrix.binary.package }}/dist-newstyle -type f -perm +111 2>/dev/null || true
+            exit 1
+          fi
+          cp "$BINARY" dist/${{ matrix.binary.name }}-${{ matrix.platform }}
+          chmod +x dist/${{ matrix.binary.name }}-${{ matrix.platform }}
+          strip dist/${{ matrix.binary.name }}-${{ matrix.platform }} || true
+          ls -lh dist/
+
+      - name: Verify binary
+        if: steps.check.outputs.exists == 'true'
+        run: |
+          file dist/${{ matrix.binary.name }}-${{ matrix.platform }}
+          du -h dist/${{ matrix.binary.name }}-${{ matrix.platform }}
+
+      - name: Upload to Release
+        if: steps.check.outputs.exists == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ matrix.binary.name }}-${{ matrix.platform }}
+          fail_on_unmatched_files: false

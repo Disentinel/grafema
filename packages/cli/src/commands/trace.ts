@@ -10,14 +10,15 @@
 import { Command } from 'commander';
 import { isAbsolute, resolve, join } from 'path';
 import { existsSync } from 'fs';
-import { RFDBServerBackend, parseSemanticId, parseSemanticIdV2, traceValues, type ValueSource } from '@grafema/util';
-import { formatNodeDisplay, formatNodeInline } from '../utils/formatNode.js';
+import { RFDBServerBackend, parseSemanticId, parseSemanticIdV2, traceValues, traceDataflow, renderTraceNarrative, type ValueSource, type DataflowBackend } from '@grafema/util';
+import { formatNodeDisplay } from '../utils/formatNode.js';
 import { exitWithError } from '../utils/errorFormatter.js';
 
 interface TraceOptions {
   project: string;
   json?: boolean;
   depth: string;
+  detail?: 'summary' | 'normal' | 'full';
   to?: string;
   fromRoute?: string;
 }
@@ -73,11 +74,6 @@ interface NodeInfo {
   value?: unknown;
 }
 
-interface TraceStep {
-  node: NodeInfo;
-  edgeType: string;
-  depth: number;
-}
 
 export const traceCommand = new Command('trace')
   .description('Trace data flow for a variable or to a sink point')
@@ -85,6 +81,7 @@ export const traceCommand = new Command('trace')
   .option('-p, --project <path>', 'Project path', '.')
   .option('-j, --json', 'Output as JSON')
   .option('-d, --depth <n>', 'Max trace depth', '10')
+  .option('--detail <level>', 'Level of detail: summary, normal (default), full', 'normal')
   .option('-t, --to <sink>', 'Sink point: "fn#argIndex.property" (e.g., "addNode#0.type")')
   .option('-r, --from-route <pattern>', 'Trace from route response (e.g., "GET /status" or "/status")')
   .addHelpText('after', `
@@ -92,6 +89,7 @@ Examples:
   grafema trace "userId"                     Trace all variables named "userId"
   grafema trace "userId from authenticate"   Trace userId within authenticate function
   grafema trace "config" --depth 5           Limit trace depth to 5 levels
+  grafema trace "config" --detail full       Show complete chain (no compression)
   grafema trace "apiKey" --json              Output trace as JSON
   grafema trace --to "addNode#0.type"        Trace values reaching sink point
   grafema trace --from-route "GET /status"   Trace values from route response
@@ -143,27 +141,23 @@ Examples:
         return;
       }
 
-      // Trace each variable
+      // Cast backend to DataflowBackend (runtime-compatible)
+      const dfDb = backend as unknown as DataflowBackend;
+
+      // Trace each variable using shared BFS
       for (const variable of variables) {
         console.log(formatNodeDisplay(variable, { projectPath }));
         console.log('');
 
-        // Trace backwards through ASSIGNED_FROM
-        const backwardTrace = await traceBackward(backend, variable.id, maxDepth);
+        const results = await traceDataflow(dfDb, variable.id, {
+          direction: 'both',
+          maxDepth,
+        });
 
-        if (backwardTrace.length > 0) {
-          console.log('Data sources (where value comes from):');
-          displayTrace(backwardTrace, projectPath, '  ');
-        }
-
-        // Trace forward through ASSIGNED_FROM (where this value flows to)
-        const forwardTrace = await traceForward(backend, variable.id, maxDepth);
-
-        if (forwardTrace.length > 0) {
-          console.log('');
-          console.log('Data sinks (where value flows to):');
-          displayTrace(forwardTrace, projectPath, '  ');
-        }
+        const narrative = renderTraceNarrative(results, variable.name || variable.id, {
+          detail: options.detail || 'normal',
+        });
+        console.log(narrative);
 
         // Show value domain if available
         const sources = await getValueSources(backend, variable.id);
@@ -263,121 +257,6 @@ async function findVariables(
 }
 
 /**
- * Trace backward through ASSIGNED_FROM edges
- */
-async function traceBackward(
-  backend: RFDBServerBackend,
-  startId: string,
-  maxDepth: number
-): Promise<TraceStep[]> {
-  const trace: TraceStep[] = [];
-  const visited = new Set<string>();
-  const seenNodes = new Set<string>();
-  const queue: Array<{ id: string; depth: number }> = [{ id: startId, depth: 0 }];
-
-  while (queue.length > 0) {
-    const { id, depth } = queue.shift()!;
-
-    if (visited.has(id) || depth > maxDepth) continue;
-    visited.add(id);
-
-    try {
-      const edges = await backend.getOutgoingEdges(id, ['ASSIGNED_FROM', 'DERIVES_FROM']);
-
-      for (const edge of edges) {
-        const targetNode = await backend.getNode(edge.dst);
-        if (!targetNode) continue;
-
-        if (seenNodes.has(targetNode.id)) continue;
-        seenNodes.add(targetNode.id);
-
-        const nodeInfo: NodeInfo = {
-          id: targetNode.id,
-          type: targetNode.type || 'UNKNOWN',
-          name: targetNode.name || '',
-          file: targetNode.file || '',
-          line: targetNode.line,
-          value: targetNode.value,
-        };
-
-        trace.push({
-          node: nodeInfo,
-          edgeType: edge.type,
-          depth: depth + 1,
-        });
-
-        // Continue tracing unless we hit a leaf
-        const leafTypes = ['LITERAL', 'PARAMETER', 'EXTERNAL_MODULE'];
-        if (!leafTypes.includes(nodeInfo.type)) {
-          queue.push({ id: targetNode.id, depth: depth + 1 });
-        }
-      }
-    } catch {
-      // Ignore errors
-    }
-  }
-
-  return trace;
-}
-
-/**
- * Trace forward - find what uses this variable
- */
-async function traceForward(
-  backend: RFDBServerBackend,
-  startId: string,
-  maxDepth: number
-): Promise<TraceStep[]> {
-  const trace: TraceStep[] = [];
-  const visited = new Set<string>();
-  const seenNodes = new Set<string>();
-  const queue: Array<{ id: string; depth: number }> = [{ id: startId, depth: 0 }];
-
-  while (queue.length > 0) {
-    const { id, depth } = queue.shift()!;
-
-    if (visited.has(id) || depth > maxDepth) continue;
-    visited.add(id);
-
-    try {
-      // Find nodes that get their value FROM this node
-      const edges = await backend.getIncomingEdges(id, ['ASSIGNED_FROM', 'DERIVES_FROM']);
-
-      for (const edge of edges) {
-        const sourceNode = await backend.getNode(edge.src);
-        if (!sourceNode) continue;
-
-        if (seenNodes.has(sourceNode.id)) continue;
-        seenNodes.add(sourceNode.id);
-
-        const nodeInfo: NodeInfo = {
-          id: sourceNode.id,
-          type: sourceNode.type || 'UNKNOWN',
-          name: sourceNode.name || '',
-          file: sourceNode.file || '',
-          line: sourceNode.line,
-        };
-
-        trace.push({
-          node: nodeInfo,
-          edgeType: edge.type,
-          depth: depth + 1,
-        });
-
-        // Continue forward
-        if (depth < maxDepth - 1) {
-          queue.push({ id: sourceNode.id, depth: depth + 1 });
-        }
-      }
-    } catch {
-      // Ignore errors
-    }
-  }
-
-  return trace;
-}
-
-/**
  * Get immediate value sources (for "possible values" display)
  */
 async function getValueSources(
@@ -409,27 +288,6 @@ async function getValueSources(
   return sources;
 }
 
-/**
- * Display trace results with semantic IDs
- */
-function displayTrace(trace: TraceStep[], _projectPath: string, indent: string): void {
-  // Group by depth
-  const byDepth = new Map<number, TraceStep[]>();
-  for (const step of trace) {
-    if (!byDepth.has(step.depth)) {
-      byDepth.set(step.depth, []);
-    }
-    byDepth.get(step.depth)!.push(step);
-  }
-
-  for (const [_depth, steps] of [...byDepth.entries()].sort((a, b) => a[0] - b[0])) {
-    for (const step of steps) {
-      const valueStr = step.node.value !== undefined ? ` = ${JSON.stringify(step.node.value)}` : '';
-      console.log(`${indent}<- ${step.node.name || step.node.type} (${step.node.type})${valueStr}`);
-      console.log(`${indent}   ${formatNodeInline(step.node)}`);
-    }
-  }
-}
 
 // =============================================================================
 // SINK-BASED TRACE IMPLEMENTATION (REG-230)
