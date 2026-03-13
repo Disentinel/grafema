@@ -116,14 +116,15 @@ jobs:
         if: steps.check.outputs.exists == 'true'
         run: |
           mkdir -p dist
-          BINARY=$(find packages/${{ matrix.binary.package }}/dist-newstyle -name "${{ matrix.binary.name }}" -type f -executable | head -1)
+          # macOS find doesn't support -executable, use -perm +111 (portable)
+          BINARY=$(find packages/${{ matrix.binary.package }}/dist-newstyle -name "${{ matrix.binary.name }}" -type f -perm +111 | head -1)
           if [ -z "$BINARY" ]; then
             # Try the package name as binary name
-            BINARY=$(find packages/${{ matrix.binary.package }}/dist-newstyle -type f -executable | grep -v '\.o$' | grep -v '\.hi$' | head -1)
+            BINARY=$(find packages/${{ matrix.binary.package }}/dist-newstyle -type f -perm +111 | grep -v '\.o$' | grep -v '\.hi$' | head -1)
           fi
           if [ -z "$BINARY" ]; then
             echo "ERROR: Could not find built binary"
-            find packages/${{ matrix.binary.package }}/dist-newstyle -type f -executable 2>/dev/null || true
+            find packages/${{ matrix.binary.package }}/dist-newstyle -type f -perm +111 2>/dev/null || true
             exit 1
           fi
           cp "$BINARY" dist/${{ matrix.binary.name }}-${{ matrix.platform }}
