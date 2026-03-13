@@ -68,11 +68,12 @@ jobs:
       - name: Check if package exists
         id: check
         run: |
-          if [ -d "packages/${{ matrix.binary.package }}" ] && [ -f "packages/${{ matrix.binary.package }}/grafema-common.cabal" -o -f "packages/${{ matrix.binary.package }}/*.cabal" -o -f "packages/${{ matrix.binary.package }}/package.yaml" ]; then
+          PKG_DIR="packages/${{ matrix.binary.package }}"
+          if [ -d "$PKG_DIR" ] && (ls "$PKG_DIR"/*.cabal 1>/dev/null 2>&1 || [ -f "$PKG_DIR/package.yaml" ]); then
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
-            echo "Package packages/${{ matrix.binary.package }} not found or not a Haskell project, skipping"
+            echo "Package $PKG_DIR not found or not a Haskell project, skipping"
           fi
 
       - name: Setup GHC

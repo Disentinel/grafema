@@ -30,22 +30,21 @@ grafema analyze .
 - [ ] **`grafema doctor`** — ловит stale rfdb.sock после crash
 - [ ] **`npm publish --dry-run`** для всех 9 пакетов — без ошибок
 
-### Стратегия доставки бинарников (РЕШИТЬ)
+### Стратегия доставки бинарников (РЕШЕНО)
 
-**Вопрос:** бинарники в npm package vs скачка с GitHub при первом запуске?
+**Решение:** гибрид — Rust в npm, Haskell lazy download.
 
-| Вариант | Плюсы | Минусы |
-|---------|-------|--------|
-| **Всё в npm** (текущий план) | `npm install` = готово, offline работает | 75MB platform package, npm storage cost |
-| **Orchestrator в npm, остальное с GitHub** | npm package ~12MB, нормальный размер | postinstall скачка может сломаться (proxy, air-gap), двойная инфраструктура |
-| **Всё с GitHub при первом запуске** | npm package легчайший | UX хуже, нужен интернет при `analyze`, postinstall unreliable |
+- `npm install grafema` = ~12MB (rfdb-server + grafema-orchestrator в platform package)
+- `grafema analyze .` на JS проекте → lazy download grafema-analyzer + grafema-resolve (~20MB, one-time, в `~/.grafema/bin/`)
+- Другие языки = on-demand при первом `analyze`
 
-**Рекомендация:** orchestrator + rfdb-server в npm (~12MB), Haskell-анализаторы скачиваются при первом `analyze` для конкретного языка (lazy download). Тогда:
-- `npm install grafema` = 12MB, быстро
-- `grafema analyze .` на JS проекте → скачивает grafema-analyzer + grafema-resolve (~20MB one-time)
-- Другие языки = on-demand
+**Что нужно реализовать:**
+- [ ] **Lazy downloader** — при отсутствии Haskell бинарника: скачать с GitHub Releases в `~/.grafema/bin/`
+- [ ] **Search path** — добавить `~/.grafema/bin/` в orchestrator binary search (config.rs)
+- [ ] **UX** — "Downloading JS analyzer (one-time, ~20MB)..." при первом запуске
+- [ ] **Platform packages** — убрать Haskell бинарники из `bin/`, оставить только Rust
 
-- [ ] **РЕШЕНИЕ принято** — какая стратегия доставки
+- [x] **РЕШЕНИЕ принято** — гибрид: Rust в npm, Haskell lazy download
 
 ---
 

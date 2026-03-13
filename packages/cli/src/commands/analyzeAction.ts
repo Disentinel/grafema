@@ -128,12 +128,10 @@ export async function analyzeAction(path: string, options: { service?: string; e
 
   debug(`Using config: ${configPath}`);
 
-  // Connect to RFDB server for stats (after orchestrator finishes)
-  // Default: require explicit `grafema server start`
-  // Use --auto-start for CI or backwards compatibility
+  // Connect to RFDB server — auto-start by default (zero-config UX)
   const backend = new RFDBServerBackend({
     dbPath,
-    autoStart: options.autoStart ?? false,
+    autoStart: options.autoStart ?? true,
     silent: !options.verbose,
     clientName: 'cli'
   });
@@ -141,15 +139,15 @@ export async function analyzeAction(path: string, options: { service?: string; e
   try {
     await backend.connect();
   } catch (err) {
-    if (!options.autoStart && err instanceof Error && err.message.includes('not running')) {
+    if (err instanceof Error && err.message.includes('not running')) {
       console.error('');
-      console.error('RFDB server is not running.');
+      console.error('RFDB server failed to start.');
       console.error('');
-      console.error('Start the server first:');
+      console.error('Try starting manually:');
       console.error('  grafema server start');
       console.error('');
-      console.error('Or use --auto-start flag:');
-      console.error('  grafema analyze --auto-start');
+      console.error('Or run diagnostics:');
+      console.error('  grafema doctor');
       console.error('');
       process.exit(1);
     }
