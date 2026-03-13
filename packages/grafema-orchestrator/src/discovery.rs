@@ -231,6 +231,7 @@ mod tests {
             rfdb_socket: None,
             analyzers: Default::default(),
             services: vec![],
+            authority: None,
         };
 
         let files = discover(&config).unwrap();

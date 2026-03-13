@@ -80,6 +80,18 @@ export type {
   ContentHashHints
 } from './core/SemanticId.js';
 
+// URI format
+export {
+  isGrafemaUri,
+  encodeFragment,
+  decodeFragment,
+  toGrafemaUri,
+  parseGrafemaUri,
+  toCompactSemanticId,
+  normalizeSemanticId
+} from './core/GrafemaUri.js';
+export type { ParsedGrafemaUri } from './core/GrafemaUri.js';
+
 export { GuaranteeManager } from './core/GuaranteeManager.js';
 export type { GuaranteeGraph } from './core/GuaranteeManager.js';
 

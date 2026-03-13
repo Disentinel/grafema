@@ -117,6 +117,11 @@ pub struct AnalyzerConfig {
     /// Workspace services (sub-projects) for cross-package resolution
     #[serde(default)]
     pub services: Vec<ServiceConfig>,
+
+    /// URI authority for grafema:// URIs (e.g., "github.com/owner/repo").
+    /// Auto-detected from git remote if not specified.
+    #[serde(default)]
+    pub authority: Option<String>,
 }
 
 /// Optional overrides for analyzer binary paths.

@@ -144,6 +144,89 @@ impl FileAnalysis {
 
         self.edges.extend(new_edges);
     }
+
+    /// Convert all semantic IDs in this analysis to URI format.
+    ///
+    /// URI format: grafema://{authority}/{file}#{encoded_fragment}
+    /// Virtual nodes (no file prefix): grafema://{authority}/_/{encoded_full_id}
+    /// Module IDs: grafema://{authority}/{file}#MODULE
+    pub fn to_uri_format(&mut self, authority: &str) {
+        let convert = |id: &str| -> String {
+            compact_to_uri(id, authority)
+        };
+
+        self.module_id = convert(&self.module_id);
+        self.file = self.file.clone(); // file path stays as-is
+
+        for node in &mut self.nodes {
+            node.id = convert(&node.id);
+            // node.file stays as relative path
+        }
+        for edge in &mut self.edges {
+            edge.src = convert(&edge.src);
+            edge.dst = convert(&edge.dst);
+        }
+        for export in &mut self.exports {
+            export.node_id = convert(&export.node_id);
+        }
+    }
+}
+
+/// Encode a fragment string for use in a grafema:// URI.
+/// Only 4 chars need percent-encoding in fragments: > [ ] #
+fn encode_fragment(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len() + 16);
+    for ch in raw.chars() {
+        match ch {
+            '>' => out.push_str("%3E"),
+            '[' => out.push_str("%5B"),
+            ']' => out.push_str("%5D"),
+            '#' => out.push_str("%23"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+/// Convert a compact semantic ID to a grafema:// URI.
+///
+/// Handles three formats:
+/// 1. `MODULE#file` → `grafema://{authority}/{file}#MODULE`
+/// 2. `file->TYPE->rest` → `grafema://{authority}/{file}#TYPE->{rest}` (with encoding)
+/// 3. Virtual nodes (no file prefix, e.g., `EXTERNAL_MODULE->lodash`, `net:stdio->__stdio__`) →
+///    `grafema://{authority}/_/{encoded_full_id}`
+fn compact_to_uri(id: &str, authority: &str) -> String {
+    // Case 1: MODULE#file format
+    if let Some(file) = id.strip_prefix("MODULE#") {
+        return format!("grafema://{authority}/{file}#MODULE");
+    }
+
+    // Case 2 & 3: Check for file->TYPE->rest pattern
+    // The file part is everything before the first '->'
+    if let Some(first_arrow) = id.find("->") {
+        let before_arrow = &id[..first_arrow];
+
+        // Virtual nodes have no file path — they start with uppercase type or special prefix
+        // Examples: EXTERNAL_MODULE->lodash, GLOBAL::console, net:stdio->__stdio__
+        // Heuristic: if the part before '->' contains a '/' or '.', it's a file path
+        let is_file_path = before_arrow.contains('/') || before_arrow.contains('.');
+
+        if is_file_path {
+            // Standard node: file->REST
+            let file = before_arrow;
+            let rest = &id[first_arrow + 2..]; // TYPE->name[...] part
+            let encoded = encode_fragment(rest);
+            format!("grafema://{authority}/{file}#{encoded}")
+        } else {
+            // Virtual node: encode the whole ID
+            let encoded = encode_fragment(id);
+            format!("grafema://{authority}/_/{encoded}")
+        }
+    } else {
+        // No arrow at all — treat as virtual
+        let encoded = encode_fragment(id);
+        format!("grafema://{authority}/_/{encoded}")
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -4992,5 +5075,106 @@ mod tests {
         assert_eq!(meta["specifiers"][0], "React");
         // Standard fields also present
         assert_eq!(meta["line"], 1);
+    }
+
+    #[test]
+    fn test_encode_fragment() {
+        assert_eq!(encode_fragment("FUNCTION->foo"), "FUNCTION-%3Efoo");
+        assert_eq!(encode_fragment("CALL->c.log[in:x,h:a3f2]"), "CALL-%3Ec.log%5Bin:x,h:a3f2%5D");
+        assert_eq!(encode_fragment("FN->a[in:x,h:ff00]#1"), "FN-%3Ea%5Bin:x,h:ff00%5D%231");
+        // Chars that DON'T need encoding
+        assert_eq!(encode_fragment("name:with,commas-and.dots"), "name:with,commas-and.dots");
+    }
+
+    #[test]
+    fn test_compact_to_uri_standard_node() {
+        assert_eq!(
+            compact_to_uri("src/app.js->FUNCTION->foo", "localhost/grafema"),
+            "grafema://localhost/grafema/src/app.js#FUNCTION-%3Efoo"
+        );
+    }
+
+    #[test]
+    fn test_compact_to_uri_with_brackets() {
+        assert_eq!(
+            compact_to_uri("src/app.js->FUNCTION->foo[in:bar]", "localhost/grafema"),
+            "grafema://localhost/grafema/src/app.js#FUNCTION-%3Efoo%5Bin:bar%5D"
+        );
+    }
+
+    #[test]
+    fn test_compact_to_uri_with_hash_counter() {
+        assert_eq!(
+            compact_to_uri("src/app.js->FN->a[in:x,h:ff00]#1", "localhost/grafema"),
+            "grafema://localhost/grafema/src/app.js#FN-%3Ea%5Bin:x,h:ff00%5D%231"
+        );
+    }
+
+    #[test]
+    fn test_compact_to_uri_call_with_dot_name() {
+        assert_eq!(
+            compact_to_uri("src/app.js->CALL->c.log[in:x,h:a3f2]", "localhost/grafema"),
+            "grafema://localhost/grafema/src/app.js#CALL-%3Ec.log%5Bin:x,h:a3f2%5D"
+        );
+    }
+
+    #[test]
+    fn test_compact_to_uri_module() {
+        assert_eq!(
+            compact_to_uri("MODULE#src/app.js", "localhost/grafema"),
+            "grafema://localhost/grafema/src/app.js#MODULE"
+        );
+    }
+
+    #[test]
+    fn test_compact_to_uri_external_module() {
+        assert_eq!(
+            compact_to_uri("EXTERNAL_MODULE->lodash", "localhost/grafema"),
+            "grafema://localhost/grafema/_/EXTERNAL_MODULE-%3Elodash"
+        );
+    }
+
+    #[test]
+    fn test_compact_to_uri_singleton() {
+        assert_eq!(
+            compact_to_uri("net:stdio->__stdio__", "localhost/grafema"),
+            "grafema://localhost/grafema/_/net:stdio-%3E__stdio__"
+        );
+    }
+
+    #[test]
+    fn test_to_uri_format_rewrites_all_fields() {
+        let mut analysis = FileAnalysis {
+            file: "src/app.js".to_string(),
+            module_id: "MODULE#src/app.js".to_string(),
+            nodes: vec![GraphNode {
+                id: "src/app.js->FUNCTION->foo".to_string(),
+                node_type: "FUNCTION".to_string(),
+                name: "foo".to_string(),
+                file: "src/app.js".to_string(),
+                line: 1,
+                column: 0,
+                end_line: 10,
+                end_column: 1,
+                exported: false,
+                metadata: HashMap::new(),
+                extra: HashMap::new(),
+            }],
+            edges: vec![GraphEdge {
+                src: "MODULE#src/app.js".to_string(),
+                dst: "src/app.js->FUNCTION->foo".to_string(),
+                edge_type: "CONTAINS".to_string(),
+                metadata: HashMap::new(),
+            }],
+            exports: vec![],
+        };
+
+        analysis.to_uri_format("localhost/grafema");
+
+        assert_eq!(analysis.module_id, "grafema://localhost/grafema/src/app.js#MODULE");
+        assert_eq!(analysis.nodes[0].id, "grafema://localhost/grafema/src/app.js#FUNCTION-%3Efoo");
+        assert_eq!(analysis.nodes[0].file, "src/app.js"); // file stays as-is
+        assert_eq!(analysis.edges[0].src, "grafema://localhost/grafema/src/app.js#MODULE");
+        assert_eq!(analysis.edges[0].dst, "grafema://localhost/grafema/src/app.js#FUNCTION-%3Efoo");
     }
 }

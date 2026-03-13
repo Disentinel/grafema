@@ -40,6 +40,59 @@ fn num_cpus() -> usize {
         .unwrap_or(4)
 }
 
+/// Resolve the URI authority for grafema:// URIs.
+///
+/// Priority:
+/// 1. Explicit config: cfg.authority
+/// 2. Git remote: parse `git remote get-url origin` → "github.com/owner/repo"
+/// 3. Fallback: "localhost/{basename(root)}"
+fn resolve_authority(cfg: &config::AnalyzerConfig) -> String {
+    if let Some(ref auth) = cfg.authority {
+        return auth.clone();
+    }
+
+    // Try git remote
+    if let Ok(output) = std::process::Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .current_dir(&cfg.root)
+        .output()
+    {
+        if output.status.success() {
+            let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if let Some(authority) = parse_git_remote_authority(&url) {
+                return authority;
+            }
+        }
+    }
+
+    // Fallback: localhost/basename
+    let basename = cfg.root.file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("project");
+    format!("localhost/{basename}")
+}
+
+/// Parse git remote URL to authority format.
+/// Supports: git@github.com:owner/repo.git, https://github.com/owner/repo.git
+fn parse_git_remote_authority(url: &str) -> Option<String> {
+    // SSH format: git@github.com:owner/repo.git
+    if let Some(rest) = url.strip_prefix("git@") {
+        let colon_pos = rest.find(':')?;
+        let host = &rest[..colon_pos];
+        let path = rest[colon_pos + 1..].trim_end_matches(".git");
+        return Some(format!("{host}/{path}"));
+    }
+
+    // HTTPS format: https://github.com/owner/repo.git
+    if url.starts_with("https://") || url.starts_with("http://") {
+        let without_scheme = url.split("://").nth(1)?;
+        let trimmed = without_scheme.trim_end_matches(".git").trim_end_matches('/');
+        return Some(trimmed.to_string());
+    }
+
+    None
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
@@ -307,6 +360,14 @@ async fn main() -> Result<()> {
                 if let Some(ref mut analysis) = result.analysis {
                     analysis.relativize_paths(&root_str);
                     analysis.ensure_function_contains_edges();
+                }
+            }
+
+            // 5b. Convert semantic IDs to URI format
+            let authority = resolve_authority(&cfg);
+            for result in &mut results {
+                if let Some(ref mut analysis) = result.analysis {
+                    analysis.to_uri_format(&authority);
                 }
             }
 
@@ -1390,5 +1451,39 @@ async fn main() -> Result<()> {
 
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_git_remote_ssh() {
+        assert_eq!(
+            parse_git_remote_authority("git@github.com:owner/repo.git"),
+            Some("github.com/owner/repo".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_git_remote_https() {
+        assert_eq!(
+            parse_git_remote_authority("https://github.com/owner/repo.git"),
+            Some("github.com/owner/repo".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_git_remote_https_no_git_suffix() {
+        assert_eq!(
+            parse_git_remote_authority("https://github.com/owner/repo"),
+            Some("github.com/owner/repo".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_git_remote_invalid() {
+        assert_eq!(parse_git_remote_authority("not-a-url"), None);
     }
 }

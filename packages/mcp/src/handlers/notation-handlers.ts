@@ -3,7 +3,7 @@
  */
 
 import { ensureAnalyzed } from '../analysis.js';
-import { renderNotation, extractSubgraph, PERSPECTIVES } from '@grafema/util';
+import { renderNotation, extractSubgraph, PERSPECTIVES, isGrafemaUri, toCompactSemanticId } from '@grafema/util';
 import type { DescribeOptions } from '@grafema/util';
 import { textResult, errorResult } from '../utils.js';
 import type { ToolResult, DescribeArgs } from '../types.js';
@@ -34,8 +34,9 @@ export async function handleDescribe(
   }
 
   if (!node) {
+    const displayTarget = isGrafemaUri(target) ? toCompactSemanticId(target) : target;
     return errorResult(
-      `Target not found: "${target}"\n` +
+      `Target not found: "${displayTarget}"\n` +
       `Try: semantic ID (from find_nodes), file path, or node name.`,
     );
   }

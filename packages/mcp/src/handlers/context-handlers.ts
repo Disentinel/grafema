@@ -4,7 +4,7 @@
 
 import { ensureAnalyzed } from '../analysis.js';
 import { getProjectPath } from '../state.js';
-import { findCallsInFunction, findContainingFunction, FileOverview, buildNodeContext, getNodeDisplayName, formatEdgeMetadata, STRUCTURAL_EDGE_TYPES } from '@grafema/util';
+import { findCallsInFunction, findContainingFunction, FileOverview, buildNodeContext, getNodeDisplayName, formatEdgeMetadata, STRUCTURAL_EDGE_TYPES, isGrafemaUri, toCompactSemanticId } from '@grafema/util';
 import type { CallInfo, CallerInfo, NodeContext } from '@grafema/util';
 import { existsSync, readFileSync, realpathSync } from 'fs';
 import { isAbsolute, join, relative } from 'path';
@@ -170,11 +170,14 @@ export async function handleGetContext(
   const db = await ensureAnalyzed();
   const { semanticId, contextLines: ctxLines = 3, edgeType } = args;
 
+  // Accept both grafema:// URI and compact format
+  const displayId = isGrafemaUri(semanticId) ? toCompactSemanticId(semanticId) : semanticId;
+
   // 1. Look up node
   const node = await db.getNode(semanticId);
   if (!node) {
     return errorResult(
-      `Node not found: "${semanticId}"\n` +
+      `Node not found: "${displayId}"\n` +
       `Use find_nodes or query_graph to find the correct semantic ID.`
     );
   }

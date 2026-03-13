@@ -9,6 +9,7 @@ import {
   textResult,
   errorResult,
 } from '../utils.js';
+import { isGrafemaUri, toCompactSemanticId } from '@grafema/util';
 import type {
   ToolResult,
   TraceAliasArgs,
@@ -103,7 +104,8 @@ export async function handleTraceDataFlow(args: TraceDataFlowArgs): Promise<Tool
     }
   }
   if (!sourceNode) {
-    return errorResult(`Source "${source}" not found`);
+    const displaySource = isGrafemaUri(source) ? toCompactSemanticId(source) : source;
+    return errorResult(`Source "${displaySource}" not found`);
   }
 
   // Resolve REFERENCE to its declaration before starting
