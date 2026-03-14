@@ -1,0 +1,192 @@
+{
+  "generated": "2026-03-14T01:15:32.311Z",
+  "cluster_files": 10,
+  "total_lines_parsed": 1944,
+  "parse_errors": 0,
+  "nodes_total": 764,
+  "paper_nodes": 523,
+  "concept_nodes": 241,
+  "edges_total": 1151,
+  "valid_edges": 1151,
+  "dangling_edges": 0,
+  "cross_cluster_edges": 135,
+  "relation_types": {
+    "introduces": 106,
+    "extends": 229,
+    "outperforms": 17,
+    "is_based_on": 150,
+    "supports": 71,
+    "supersedes": 6,
+    "fails_on": 4,
+    "requires": 8,
+    "implements": 47,
+    "enables": 23,
+    "formalizes": 31,
+    "uses_method": 62,
+    "competes_with": 2,
+    "evaluates": 4,
+    "contributes_to": 58,
+    "surveys": 34,
+    "uses_dataset": 1,
+    "evaluated_on": 4,
+    "foundational_for": 81,
+    "influences": 10,
+    "implemented_by": 2,
+    "connects": 1,
+    "applies": 3,
+    "alternative_to": 4,
+    "instance_of": 25,
+    "subclass_of": 4,
+    "technique_for": 4,
+    "generalizes": 1,
+    "application_of": 2,
+    "builds_on": 15,
+    "related_to": 35,
+    "cites": 15,
+    "critiques": 2,
+    "uses": 61,
+    "contemporaneous_with": 3,
+    "simplifies": 1,
+    "constrains": 1,
+    "motivates": 7,
+    "used_by": 1,
+    "empirically_validates": 6,
+    "explains_mechanism": 1,
+    "proposes_solution": 2,
+    "addresses": 1,
+    "independent_parallel": 2,
+    "operationalizes": 1,
+    "challenges": 1,
+    "parallel": 2
+  },
+  "domains": {
+    "cs.AI": 98,
+    "cs.LG": 83,
+    "cs.IR": 5,
+    "cs.CL": 119,
+    "cs.DB": 40,
+    "cs.SI": 3,
+    "cs.SE": 31,
+    "cs.NI": 17,
+    "cs.PL": 37,
+    "cs.CR": 20,
+    "cs.LO": 16,
+    "cs.CC": 3,
+    "cs.DC": 25,
+    "cs.DS": 1,
+    "cs.CV": 3,
+    "stat.ME": 4,
+    "stat.AP": 3,
+    "physics.soc-ph": 1,
+    "cs.DL": 6,
+    "econ.TH": 1,
+    "math.ST": 2,
+    "stat.TH": 1,
+    "cs.MA": 2,
+    "econ.GN": 1,
+    "cs.GT": 1
+  },
+  "top_cited_papers": [
+    {
+      "id": "arxiv:1512.03385",
+      "title": "Deep Residual Learning for Image Recognition",
+      "citations": 200000
+    },
+    {
+      "id": "arxiv:1706.03762",
+      "title": "Attention Is All You Need",
+      "citations": 173000
+    },
+    {
+      "id": "arxiv:1810.04805",
+      "title": "BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding",
+      "citations": 95000
+    },
+    {
+      "id": "arxiv:1301.3781",
+      "title": "Efficient Estimation of Word Representations in Vector Space",
+      "citations": 45000
+    },
+    {
+      "id": "arxiv:1502.03167",
+      "title": "Batch Normalization: Accelerating Deep Network Training by Reducing Internal Covariate Shift",
+      "citations": 45000
+    },
+    {
+      "id": "arxiv:2010.11929",
+      "title": "An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale",
+      "citations": 42000
+    },
+    {
+      "id": "arxiv:1409.0473",
+      "title": "Neural Machine Translation by Jointly Learning to Align and Translate",
+      "citations": 38000
+    },
+    {
+      "id": "acl:D14-1162",
+      "title": "GloVe: Global Vectors for Word Representation",
+      "citations": 32000
+    },
+    {
+      "id": "arxiv:2005.14165",
+      "title": "Language Models are Few-Shot Learners",
+      "citations": 30000
+    },
+    {
+      "id": "arxiv:1609.02907",
+      "title": "Semi-Supervised Classification with Graph Convolutional Networks",
+      "citations": 25000
+    },
+    {
+      "id": "doi:10.5555/1251254.1251264",
+      "title": "MapReduce: Simplified Data Processing on Large Clusters",
+      "citations": 25000
+    },
+    {
+      "id": "tech:bitcoin-2008",
+      "title": "Bitcoin: A Peer-to-Peer Electronic Cash System",
+      "citations": 25000
+    },
+    {
+      "id": "arxiv:2103.00020",
+      "title": "Learning Transferable Visual Models From Natural Language Supervision",
+      "citations": 25000
+    },
+    {
+      "id": "page:1999:pagerank",
+      "title": "The PageRank Citation Ranking: Bringing Order to the Web",
+      "citations": 25000
+    },
+    {
+      "id": "nakamoto:2008:bitcoin",
+      "title": "Bitcoin: A Peer-to-Peer Electronic Cash System",
+      "citations": 25000
+    },
+    {
+      "id": "arxiv:1409.3215",
+      "title": "Sequence to Sequence Learning with Neural Networks",
+      "citations": 22000
+    },
+    {
+      "id": "arxiv:1706.02216",
+      "title": "Inductive Representation Learning on Large Graphs",
+      "citations": 18000
+    },
+    {
+      "id": "arxiv:1907.11692",
+      "title": "RoBERTa: A Robustly Optimized BERT Pretraining Approach",
+      "citations": 18000
+    },
+    {
+      "id": "arxiv:1910.10683",
+      "title": "Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer",
+      "citations": 18000
+    },
+    {
+      "id": "shafer:1976:mathematical-evidence",
+      "title": "A Mathematical Theory of Evidence",
+      "citations": 18000
+    }
+  ],
+  "errors": []
+}
