@@ -75,8 +75,7 @@ echo -e "${BLUE}Downloading binaries from release: $TAG${NC}"
 echo "Repository: $REPO"
 echo ""
 
-PLATFORMS=("darwin-arm64" "darwin-x64" "linux-x64")
-# linux-arm64 excluded: Haskell cross-compilation not supported yet (c_char bug)
+PLATFORMS=("darwin-arm64" "darwin-x64" "linux-x64" "linux-arm64")
 
 # Required binaries — fail if any missing for any platform
 REQUIRED_BINARIES=("rfdb-server" "grafema-orchestrator")

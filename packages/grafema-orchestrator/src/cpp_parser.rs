@@ -15,7 +15,7 @@ use anyhow::{Context, Result};
 use clang_sys::*;
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::ffi::{CStr, CString};
+use std::ffi::{CStr, CString, c_char};
 use std::path::{Path, PathBuf};
 use std::ptr;
 
@@ -233,7 +233,7 @@ unsafe fn parse_cpp_source_unsafe(
     let c_args: Vec<CString> = args.iter()
         .map(|a| CString::new(a.as_str()).unwrap_or_else(|_| CString::new("").unwrap()))
         .collect();
-    let c_arg_ptrs: Vec<*const i8> = c_args.iter().map(|a| a.as_ptr()).collect();
+    let c_arg_ptrs: Vec<*const c_char> = c_args.iter().map(|a| a.as_ptr()).collect();
 
     // Create an unsaved file so we can parse from memory
     let c_source = CString::new(source)

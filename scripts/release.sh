@@ -199,14 +199,13 @@ echo -e "${GREEN}[x] Rust binaries up-to-date (tag: $BINARY_TAG, 0 changes since
 
 # Verify platform packages have required binaries
 MISSING_BINARIES=()
-for platform in darwin-arm64 darwin-x64 linux-x64; do
+for platform in darwin-arm64 darwin-x64 linux-x64 linux-arm64; do
     for binary in rfdb-server grafema-orchestrator; do
         if [ ! -f "$ROOT_DIR/packages/grafema-$platform/bin/$binary" ]; then
             MISSING_BINARIES+=("$platform/$binary")
         fi
     done
 done
-# linux-arm64 excluded: Haskell cross-compilation not supported yet
 
 # Also check legacy location
 MISSING_LEGACY=()
