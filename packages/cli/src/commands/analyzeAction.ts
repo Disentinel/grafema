@@ -134,7 +134,7 @@ export async function analyzeAction(path: string, options: { service?: string; e
     console.error('Create a config file with at least:');
     console.error('  root: "."');
     console.error('  include:');
-    console.error('    - "src/**/*.js"');
+    console.error('    - "**/*.js"');
     console.error('');
     process.exit(1);
   }

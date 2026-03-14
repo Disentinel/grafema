@@ -14,22 +14,48 @@ import { installSkill } from './setup-skill.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
+/** All file extensions supported by Grafema's analyzers. */
+const SUPPORTED_EXTENSIONS = [
+  // JavaScript / TypeScript
+  'js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx',
+  // Rust
+  'rs',
+  // Java / Kotlin
+  'java', 'kt', 'kts',
+  // Python
+  'py', 'pyi',
+  // Go
+  'go',
+  // Haskell
+  'hs',
+  // C / C++
+  'c', 'h', 'cpp', 'hpp', 'cc', 'cxx', 'hxx', 'hh', 'inl', 'ipp', 'tpp', 'txx',
+  // Swift / Objective-C
+  'swift', 'm', 'mm',
+  // BEAM (Elixir / Erlang)
+  'ex', 'exs', 'erl', 'hrl',
+];
+
 /**
  * Generate config.yaml content.
  * Minimal config — the Rust orchestrator has its own built-in analysis pipeline.
- * Only emit fields the user might want to customize (include/exclude/services).
+ * Includes all supported extensions; orchestrator skips languages with no matching files.
  */
-function generateConfigYAML(isTypeScript: boolean): string {
-  const extensions = isTypeScript ? '*.{ts,tsx,js,jsx}' : '*.{js,jsx,mjs,cjs}';
+function generateConfigYAML(): string {
+  const extensions = `*.{${SUPPORTED_EXTENSIONS.join(',')}}`;
   const config = {
     version: getSchemaVersion(GRAFEMA_VERSION),
     root: '..',
-    include: [`src/**/${extensions}`],
+    include: [`**/${extensions}`],
     exclude: [
       '**/*.test.*',
       '**/__tests__/**',
       '**/node_modules/**',
       '**/dist/**',
+      '**/build/**',
+      '**/target/**',
+      '**/vendor/**',
+      '**/.git/**',
     ],
   };
 
@@ -39,6 +65,7 @@ function generateConfigYAML(isTypeScript: boolean): string {
 
   return `# Grafema Configuration
 # Documentation: https://github.com/grafema/grafema#configuration
+# Supported: JS/TS, Rust, Java, Kotlin, Python, Go, Haskell, C/C++, Swift, Elixir/Erlang
 
 ${yaml}
 # services:  # Explicit service definitions (overrides auto-discovery)
@@ -127,29 +154,28 @@ Examples:
     const projectPath = resolve(path);
     const grafemaDir = join(projectPath, '.grafema');
     const configPath = join(grafemaDir, 'config.yaml');
-    const packageJsonPath = join(projectPath, 'package.json');
-    const tsconfigPath = join(projectPath, 'tsconfig.json');
-
-    // Check package.json
-    if (!existsSync(packageJsonPath)) {
-      console.error('✗ Grafema currently supports JavaScript/TypeScript projects only.');
-      console.error(`  No package.json found in ${projectPath}`);
-      console.error('');
-      console.error('  Supported: Node.js, React, Express, Next.js, Vue, Angular, etc.');
-      console.error('  Coming soon: Python, Go, Rust');
-      console.error('');
-      console.error('  If this IS a JS/TS project, create package.json first:');
-      console.error('    npm init -y');
-      process.exit(1);
-    }
-    console.log('✓ Found package.json');
-
-    // Detect TypeScript
-    const isTypeScript = existsSync(tsconfigPath);
-    if (isTypeScript) {
-      console.log('✓ Detected TypeScript project');
+    // Detect project markers
+    const markers = [
+      { file: 'package.json', lang: 'JavaScript/TypeScript' },
+      { file: 'Cargo.toml', lang: 'Rust' },
+      { file: 'go.mod', lang: 'Go' },
+      { file: 'pom.xml', lang: 'Java' },
+      { file: 'build.gradle', lang: 'Java/Kotlin' },
+      { file: 'build.gradle.kts', lang: 'Kotlin' },
+      { file: 'setup.py', lang: 'Python' },
+      { file: 'pyproject.toml', lang: 'Python' },
+      { file: 'mix.exs', lang: 'Elixir' },
+      { file: 'rebar.config', lang: 'Erlang' },
+      { file: 'stack.yaml', lang: 'Haskell' },
+      { file: 'CMakeLists.txt', lang: 'C/C++' },
+      { file: 'Package.swift', lang: 'Swift' },
+    ];
+    const detected = markers.filter(m => existsSync(join(projectPath, m.file)));
+    if (detected.length > 0) {
+      const langs = [...new Set(detected.map(m => m.lang))].join(', ');
+      console.log(`✓ Detected: ${langs}`);
     } else {
-      console.log('✓ Detected JavaScript project');
+      console.log('✓ Initializing (no project markers found — will analyze all supported files)');
     }
 
     // Check existing config
@@ -167,7 +193,7 @@ Examples:
     }
 
     // Write config
-    const configContent = generateConfigYAML(isTypeScript);
+    const configContent = generateConfigYAML();
     writeFileSync(configPath, configContent);
     console.log('✓ Created .grafema/config.yaml');
 
