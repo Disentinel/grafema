@@ -1,0 +1,37 @@
+name: Build Swift Parser
+
+on:
+  push:
+    paths:
+      - 'packages/swift-parser/**'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: packages/swift-parser
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build arm64 (release)
+        run: swift build -c release --triple arm64-apple-macosx
+
+      - name: Build x86_64 (release)
+        run: swift build -c release --triple x86_64-apple-macosx
+
+      - name: Create universal binary
+        run: |
+          lipo -create \
+            .build/arm64-apple-macosx/release/swift-parser \
+            .build/x86_64-apple-macosx/release/swift-parser \
+            -output swift-parser-universal
+          file swift-parser-universal
+          lipo -info swift-parser-universal
+
+      - name: Upload universal binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: swift-parser-macos
+          path: packages/swift-parser/swift-parser-universal

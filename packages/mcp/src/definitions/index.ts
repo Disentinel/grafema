@@ -13,6 +13,7 @@ import { PROJECT_TOOLS } from './project-tools.js';
 import { GRAPH_TOOLS } from './graph-tools.js';
 import { KNOWLEDGE_TOOLS } from './knowledge-tools.js';
 import { NOTATION_TOOLS } from './notation-tools.js';
+import { GRAPHQL_TOOLS } from './graphql-tools.js';
 
 export const TOOLS: ToolDefinition[] = [
   ...QUERY_TOOLS,
@@ -23,4 +24,5 @@ export const TOOLS: ToolDefinition[] = [
   ...GRAPH_TOOLS,
   ...KNOWLEDGE_TOOLS,
   ...NOTATION_TOOLS,
+  ...GRAPHQL_TOOLS,
 ];

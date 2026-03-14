@@ -144,6 +144,89 @@ impl FileAnalysis {
 
         self.edges.extend(new_edges);
     }
+
+    /// Convert all semantic IDs in this analysis to URI format.
+    ///
+    /// URI format: grafema://{authority}/{file}#{encoded_fragment}
+    /// Virtual nodes (no file prefix): grafema://{authority}/_/{encoded_full_id}
+    /// Module IDs: grafema://{authority}/{file}#MODULE
+    pub fn to_uri_format(&mut self, authority: &str) {
+        let convert = |id: &str| -> String {
+            compact_to_uri(id, authority)
+        };
+
+        self.module_id = convert(&self.module_id);
+        self.file = self.file.clone(); // file path stays as-is
+
+        for node in &mut self.nodes {
+            node.id = convert(&node.id);
+            // node.file stays as relative path
+        }
+        for edge in &mut self.edges {
+            edge.src = convert(&edge.src);
+            edge.dst = convert(&edge.dst);
+        }
+        for export in &mut self.exports {
+            export.node_id = convert(&export.node_id);
+        }
+    }
+}
+
+/// Encode a fragment string for use in a grafema:// URI.
+/// Only 4 chars need percent-encoding in fragments: > [ ] #
+fn encode_fragment(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len() + 16);
+    for ch in raw.chars() {
+        match ch {
+            '>' => out.push_str("%3E"),
+            '[' => out.push_str("%5B"),
+            ']' => out.push_str("%5D"),
+            '#' => out.push_str("%23"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+/// Convert a compact semantic ID to a grafema:// URI.
+///
+/// Handles three formats:
+/// 1. `MODULE#file` → `grafema://{authority}/{file}#MODULE`
+/// 2. `file->TYPE->rest` → `grafema://{authority}/{file}#TYPE->{rest}` (with encoding)
+/// 3. Virtual nodes (no file prefix, e.g., `EXTERNAL_MODULE->lodash`, `net:stdio->__stdio__`) →
+///    `grafema://{authority}/_/{encoded_full_id}`
+fn compact_to_uri(id: &str, authority: &str) -> String {
+    // Case 1: MODULE#file format
+    if let Some(file) = id.strip_prefix("MODULE#") {
+        return format!("grafema://{authority}/{file}#MODULE");
+    }
+
+    // Case 2 & 3: Check for file->TYPE->rest pattern
+    // The file part is everything before the first '->'
+    if let Some(first_arrow) = id.find("->") {
+        let before_arrow = &id[..first_arrow];
+
+        // Virtual nodes have no file path — they start with uppercase type or special prefix
+        // Examples: EXTERNAL_MODULE->lodash, GLOBAL::console, net:stdio->__stdio__
+        // Heuristic: if the part before '->' contains a '/' or '.', it's a file path
+        let is_file_path = before_arrow.contains('/') || before_arrow.contains('.');
+
+        if is_file_path {
+            // Standard node: file->REST
+            let file = before_arrow;
+            let rest = &id[first_arrow + 2..]; // TYPE->name[...] part
+            let encoded = encode_fragment(rest);
+            format!("grafema://{authority}/{file}#{encoded}")
+        } else {
+            // Virtual node: encode the whole ID
+            let encoded = encode_fragment(id);
+            format!("grafema://{authority}/_/{encoded}")
+        }
+    } else {
+        // No arrow at all — treat as virtual
+        let encoded = encode_fragment(id);
+        format!("grafema://{authority}/_/{encoded}")
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2251,6 +2334,11 @@ const RESOLVE_NODE_TYPES: &[&str] = &[
     "ATTRIBUTE",
     "CLOSURE",
     "TYPE_PARAMETER",
+    // Swift/Apple types
+    "EXTENSION",
+    "TYPE_ALIAS",
+    "SPM_TARGET",
+    "SPM_PACKAGE",
     // Python types
     "UNSAFE_DYNAMIC",
     // Control flow (shared across languages)
@@ -3168,6 +3256,125 @@ pub async fn analyze_cpp_file(
 }
 
 // ---------------------------------------------------------------------------
+// Swift single-file analysis (spawn mode)
+// ---------------------------------------------------------------------------
+
+/// Analyze a single Swift file: parse with swift-parser, analyze with swift-analyzer.
+///
+/// Same two-stage pipeline as Kotlin/Go:
+/// 1. Read source, send `{"file":"...","source":"..."}` to swift-parser
+/// 2. Extract AST from parser response
+/// 3. Send `{"file":"...","ast":{...}}` to swift-analyzer
+/// 4. Return FileAnalysis
+pub async fn analyze_swift_file(
+    file: &Path,
+    analyzers: &crate::config::AnalyzerBinaries,
+) -> Result<FileAnalysis> {
+    let file_str = file.display().to_string();
+
+    // Step 1: Parse with swift-parser (single-file mode: pass file path as argument)
+    let parser_bin = analyzers.swift_parser_path();
+    let parser_output = tokio::process::Command::new(&parser_bin)
+        .arg(&file_str)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .await
+        .with_context(|| format!("Failed to run swift-parser for {file_str}"))?;
+
+    if !parser_output.status.success() {
+        let stderr = String::from_utf8_lossy(&parser_output.stderr);
+        let code = parser_output
+            .status
+            .code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "signal".to_string());
+        bail!("swift-parser exited with code {code} for {file_str}: {stderr}");
+    }
+
+    let parser_response: serde_json::Value =
+        serde_json::from_slice(&parser_output.stdout).with_context(|| {
+            let preview =
+                String::from_utf8_lossy(&parser_output.stdout[..parser_output.stdout.len().min(200)]);
+            format!("Failed to parse swift-parser output for {file_str}: {preview}")
+        })?;
+
+    // Single-file mode returns the AST directly ({declarations, imports, file}).
+    // Daemon mode wraps it in {status: "ok", ast: {...}}.
+    let ast = if let Some(inner) = parser_response.get("ast") {
+        // Daemon-style response — check status first
+        if parser_response.get("status").and_then(|s| s.as_str()) != Some("ok") {
+            let err = parser_response
+                .get("error")
+                .and_then(|e| e.as_str())
+                .unwrap_or("unknown error");
+            bail!("swift-parser error for {file_str}: {err}");
+        }
+        inner.clone()
+    } else {
+        // Single-file mode: the response IS the AST
+        parser_response
+    };
+
+    // Step 2: Analyze with swift-analyzer
+    let analyzer_bin = analyzers.swift_path();
+    let mut analyzer_child = tokio::process::Command::new(&analyzer_bin)
+        .arg(&file_str)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .with_context(|| format!("Failed to spawn swift-analyzer for {file_str}"))?;
+
+    let analyzer_payload = serde_json::json!({
+        "file": file_str,
+        "ast": ast,
+    });
+
+    {
+        let stdin = analyzer_child
+            .stdin
+            .as_mut()
+            .context("Failed to open stdin for swift-analyzer")?;
+        stdin
+            .write_all(analyzer_payload.to_string().as_bytes())
+            .await
+            .with_context(|| {
+                format!("Failed to write AST to swift-analyzer stdin for {file_str}")
+            })?;
+        stdin
+            .shutdown()
+            .await
+            .with_context(|| format!("Failed to close swift-analyzer stdin for {file_str}"))?;
+    }
+
+    let analyzer_output = analyzer_child
+        .wait_with_output()
+        .await
+        .with_context(|| format!("Failed to wait for swift-analyzer for {file_str}"))?;
+
+    if !analyzer_output.status.success() {
+        let stderr = String::from_utf8_lossy(&analyzer_output.stderr);
+        let code = analyzer_output
+            .status
+            .code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "signal".to_string());
+        bail!("swift-analyzer exited with code {code} for {file_str}: {stderr}");
+    }
+
+    let analysis: FileAnalysis =
+        serde_json::from_slice(&analyzer_output.stdout).with_context(|| {
+            let preview = String::from_utf8_lossy(
+                &analyzer_output.stdout[..analyzer_output.stdout.len().min(200)],
+            );
+            format!("Failed to parse swift-analyzer output for {file_str}: {preview}")
+        })?;
+
+    Ok(analysis)
+}
+
+// ---------------------------------------------------------------------------
 // C/C++ daemon-mode analysis via ProcessPool
 // ---------------------------------------------------------------------------
 
@@ -3200,6 +3407,91 @@ pub async fn analyze_cpp_file_pooled(
             bail!("grafema-cpp-analyzer daemon error for {file_str}: {msg}")
         }
         other => bail!("Unknown daemon response status '{other}' for {file_str}"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Swift daemon-mode analysis via ProcessPool (two pools)
+// ---------------------------------------------------------------------------
+
+/// Response from swift-parser daemon.
+/// Uses RawValue for `ast` to avoid parsing + re-serializing the full AST JSON.
+#[derive(Deserialize)]
+struct SwiftParserResponse<'a> {
+    status: String,
+    #[serde(borrow)]
+    ast: Option<&'a serde_json::value::RawValue>,
+    error: Option<String>,
+}
+
+/// Analyze a single Swift file via two persistent daemon process pools.
+///
+/// 1. Read source, send to swift-parser pool -> receive AST JSON
+/// 2. Send AST to swift-analyzer pool -> receive FileAnalysis
+pub async fn analyze_swift_file_pooled(
+    parser_pool: &ProcessPool,
+    analyzer_pool: &ProcessPool,
+    file: &Path,
+) -> Result<FileAnalysis> {
+    let file_str = file.display().to_string();
+
+    let source = tokio::fs::read_to_string(file)
+        .await
+        .with_context(|| format!("Failed to read Swift source file {file_str}"))?;
+
+    // Step 1: Send to swift-parser pool
+    let escaped_file = serde_json::to_string(&file_str)
+        .with_context(|| format!("Failed to escape file path for {file_str}"))?;
+    let escaped_source = serde_json::to_string(&source)
+        .with_context(|| format!("Failed to escape source for {file_str}"))?;
+    let parser_payload = format!(
+        r#"{{"file":{},"source":{}}}"#,
+        escaped_file, escaped_source
+    );
+
+    let parser_response_bytes = parser_pool
+        .request(parser_payload.as_bytes())
+        .await
+        .with_context(|| format!("Swift parser pool request failed for {file_str}"))?;
+
+    // Zero-copy: parse only status/error, borrow raw AST JSON bytes
+    let parser_response: SwiftParserResponse =
+        serde_json::from_slice(&parser_response_bytes)
+            .with_context(|| format!("Failed to decode swift-parser response for {file_str}"))?;
+
+    let ast_raw = match parser_response.status.as_str() {
+        "ok" => parser_response
+            .ast
+            .with_context(|| format!("swift-parser returned ok but no ast for {file_str}"))?,
+        "error" => {
+            let msg = parser_response
+                .error
+                .unwrap_or_else(|| "unknown error".to_string());
+            bail!("swift-parser daemon error for {file_str}: {msg}")
+        }
+        other => bail!("Unknown swift-parser response status '{other}' for {file_str}"),
+    };
+
+    // Step 2: Send to swift-analyzer pool
+    let analyzer_payload = format!(r#"{{"file":{},"ast":{}}}"#, escaped_file, ast_raw.get());
+
+    let analyzer_response_bytes = analyzer_pool
+        .request(analyzer_payload.as_bytes())
+        .await
+        .with_context(|| format!("Swift analyzer pool request failed for {file_str}"))?;
+
+    let response: DaemonResponse = serde_json::from_slice(&analyzer_response_bytes)
+        .with_context(|| format!("Failed to decode swift-analyzer response for {file_str}"))?;
+
+    match response.status.as_str() {
+        "ok" => response
+            .result
+            .with_context(|| format!("swift-analyzer daemon returned ok but no result for {file_str}")),
+        "error" => {
+            let msg = response.error.unwrap_or_else(|| "unknown error".to_string());
+            bail!("swift-analyzer daemon error for {file_str}: {msg}")
+        }
+        other => bail!("Unknown swift-analyzer response status '{other}' for {file_str}"),
     }
 }
 
@@ -3423,6 +3715,611 @@ pub async fn analyze_cpp_files_parallel(
     }
 
     results
+}
+
+// ---------------------------------------------------------------------------
+// Swift parallel multi-file analysis
+// ---------------------------------------------------------------------------
+
+/// Analyze multiple Swift files in parallel using two persistent daemon pools.
+///
+/// Falls back to `analyze_swift_files_parallel` if pool creation fails.
+pub async fn analyze_swift_files_parallel_pooled(
+    files: &[PathBuf],
+    jobs: usize,
+    analyzers: &crate::config::AnalyzerBinaries,
+) -> Vec<AnalysisResult> {
+    let parser_pool_config = PoolConfig {
+        command: analyzers.swift_parser_path(),
+        args: vec!["--daemon".to_string()],
+        ..PoolConfig::default()
+    };
+
+    let analyzer_pool_config = PoolConfig {
+        command: analyzers.swift_path(),
+        args: vec!["--daemon".to_string()],
+        ..PoolConfig::default()
+    };
+
+    let parser_pool = match ProcessPool::new(parser_pool_config, jobs.max(1)) {
+        Ok(p) => Arc::new(p),
+        Err(e) => {
+            tracing::warn!(
+                "Failed to create swift-parser pool, falling back to spawn-per-file: {e}"
+            );
+            return analyze_swift_files_parallel(files, jobs, analyzers).await;
+        }
+    };
+
+    let analyzer_pool = match ProcessPool::new(analyzer_pool_config, jobs.max(1)) {
+        Ok(p) => Arc::new(p),
+        Err(e) => {
+            tracing::warn!(
+                "Failed to create swift-analyzer pool, falling back to spawn-per-file: {e}"
+            );
+            parser_pool.shutdown().await;
+            return analyze_swift_files_parallel(files, jobs, analyzers).await;
+        }
+    };
+
+    let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
+    let total = files.len();
+
+    let handles: Vec<_> = files
+        .iter()
+        .enumerate()
+        .map(|(idx, file)| {
+            let sem = Arc::clone(&semaphore);
+            let parser_pool = Arc::clone(&parser_pool);
+            let analyzer_pool = Arc::clone(&analyzer_pool);
+            let file = file.clone();
+            let file_display = file.display().to_string();
+
+            tokio::spawn(async move {
+                let _permit = sem
+                    .acquire()
+                    .await
+                    .expect("Semaphore closed unexpectedly");
+
+                tracing::info!(
+                    "[{}/{}] Analyzing Swift file {}",
+                    idx + 1,
+                    total,
+                    file_display
+                );
+
+                let errors = Vec::new();
+
+                match analyze_swift_file_pooled(&parser_pool, &analyzer_pool, &file).await {
+                    Ok(analysis) => AnalysisResult {
+                        file,
+                        analysis: Some(analysis),
+                        errors,
+                    },
+                    Err(e) => {
+                        let mut errors = errors;
+                        errors.push(format!(
+                            "Swift analyzer failed for {file_display}: {e}"
+                        ));
+                        AnalysisResult {
+                            file,
+                            analysis: None,
+                            errors,
+                        }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        match handle.await {
+            Ok(result) => results.push(result),
+            Err(e) => {
+                results.push(AnalysisResult {
+                    file: PathBuf::new(),
+                    analysis: None,
+                    errors: vec![format!("Swift analysis task failed: {e}")],
+                });
+            }
+        }
+    }
+
+    parser_pool.shutdown().await;
+    analyzer_pool.shutdown().await;
+    results
+}
+
+/// Analyze multiple Swift files in parallel with bounded concurrency (spawn mode).
+///
+/// Fallback when daemon pools cannot be created.
+pub async fn analyze_swift_files_parallel(
+    files: &[PathBuf],
+    jobs: usize,
+    analyzers: &crate::config::AnalyzerBinaries,
+) -> Vec<AnalysisResult> {
+    let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
+    let total = files.len();
+    let analyzers = analyzers.clone();
+
+    let handles: Vec<_> = files
+        .iter()
+        .enumerate()
+        .map(|(idx, file)| {
+            let sem = Arc::clone(&semaphore);
+            let file = file.clone();
+            let file_display = file.display().to_string();
+            let analyzers = analyzers.clone();
+
+            tokio::spawn(async move {
+                let _permit = sem
+                    .acquire()
+                    .await
+                    .expect("Semaphore closed unexpectedly");
+
+                tracing::info!(
+                    "[{}/{}] Analyzing Swift file {}",
+                    idx + 1,
+                    total,
+                    file_display
+                );
+
+                let errors = Vec::new();
+
+                match analyze_swift_file(&file, &analyzers).await {
+                    Ok(analysis) => AnalysisResult {
+                        file,
+                        analysis: Some(analysis),
+                        errors,
+                    },
+                    Err(e) => {
+                        let mut errors = errors;
+                        errors.push(format!(
+                            "Swift analyzer failed for {file_display}: {e}"
+                        ));
+                        AnalysisResult {
+                            file,
+                            analysis: None,
+                            errors,
+                        }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        match handle.await {
+            Ok(result) => results.push(result),
+            Err(e) => {
+                results.push(AnalysisResult {
+                    file: PathBuf::new(),
+                    analysis: None,
+                    errors: vec![format!("Swift analysis task failed: {e}")],
+                });
+            }
+        }
+    }
+
+    results
+}
+
+// ---------------------------------------------------------------------------
+// Obj-C single-file analysis (spawn mode)
+// ---------------------------------------------------------------------------
+
+/// Analyze a single Obj-C file: parse with objc-parser, analyze with objc-analyzer.
+///
+/// Same two-stage pipeline as Swift/Kotlin/Go:
+/// 1. Read source, send `{"file":"...","source":"..."}` to objc-parser
+/// 2. Extract AST from parser response
+/// 3. Send `{"file":"...","ast":{...}}` to objc-analyzer
+/// 4. Return FileAnalysis
+pub async fn analyze_objc_file(
+    file: &Path,
+    analyzers: &crate::config::AnalyzerBinaries,
+) -> Result<FileAnalysis> {
+    let file_str = file.display().to_string();
+
+    // Step 1: Parse with objc-parser (single-file mode: pass file path as argument)
+    let parser_bin = analyzers.objc_parser_path();
+    let parser_output = tokio::process::Command::new(&parser_bin)
+        .arg(&file_str)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .await
+        .with_context(|| format!("Failed to run objc-parser for {file_str}"))?;
+
+    if !parser_output.status.success() {
+        let stderr = String::from_utf8_lossy(&parser_output.stderr);
+        let code = parser_output
+            .status
+            .code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "signal".to_string());
+        bail!("objc-parser exited with code {code} for {file_str}: {stderr}");
+    }
+
+    let parser_response: serde_json::Value =
+        serde_json::from_slice(&parser_output.stdout).with_context(|| {
+            let preview =
+                String::from_utf8_lossy(&parser_output.stdout[..parser_output.stdout.len().min(200)]);
+            format!("Failed to parse objc-parser output for {file_str}: {preview}")
+        })?;
+
+    // Single-file mode returns {status: "ok", ast: {...}}.
+    // Handle both wrapped and direct AST formats for robustness.
+    let ast = if let Some(inner) = parser_response.get("ast") {
+        if parser_response.get("status").and_then(|s| s.as_str()) != Some("ok") {
+            let err = parser_response
+                .get("error")
+                .and_then(|e| e.as_str())
+                .unwrap_or("unknown error");
+            bail!("objc-parser error for {file_str}: {err}");
+        }
+        inner.clone()
+    } else {
+        parser_response
+    };
+
+    // Step 2: Analyze with objc-analyzer
+    let analyzer_bin = analyzers.objc_path();
+    let mut analyzer_child = tokio::process::Command::new(&analyzer_bin)
+        .arg(&file_str)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .with_context(|| format!("Failed to spawn objc-analyzer for {file_str}"))?;
+
+    let analyzer_payload = serde_json::json!({
+        "file": file_str,
+        "ast": ast,
+    });
+
+    {
+        let stdin = analyzer_child
+            .stdin
+            .as_mut()
+            .context("Failed to open stdin for objc-analyzer")?;
+        stdin
+            .write_all(analyzer_payload.to_string().as_bytes())
+            .await
+            .with_context(|| {
+                format!("Failed to write AST to objc-analyzer stdin for {file_str}")
+            })?;
+        stdin
+            .shutdown()
+            .await
+            .with_context(|| format!("Failed to close objc-analyzer stdin for {file_str}"))?;
+    }
+
+    let analyzer_output = analyzer_child
+        .wait_with_output()
+        .await
+        .with_context(|| format!("Failed to wait for objc-analyzer for {file_str}"))?;
+
+    if !analyzer_output.status.success() {
+        let stderr = String::from_utf8_lossy(&analyzer_output.stderr);
+        let code = analyzer_output
+            .status
+            .code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "signal".to_string());
+        bail!("objc-analyzer exited with code {code} for {file_str}: {stderr}");
+    }
+
+    let analysis: FileAnalysis =
+        serde_json::from_slice(&analyzer_output.stdout).with_context(|| {
+            let preview = String::from_utf8_lossy(
+                &analyzer_output.stdout[..analyzer_output.stdout.len().min(200)],
+            );
+            format!("Failed to parse objc-analyzer output for {file_str}: {preview}")
+        })?;
+
+    Ok(analysis)
+}
+
+// ---------------------------------------------------------------------------
+// Obj-C daemon-mode analysis via ProcessPool (two pools)
+// ---------------------------------------------------------------------------
+
+/// Response from objc-parser daemon.
+/// Uses RawValue for `ast` to avoid parsing + re-serializing the full AST JSON.
+#[derive(Deserialize)]
+struct ObjcParserResponse<'a> {
+    status: String,
+    #[serde(borrow)]
+    ast: Option<&'a serde_json::value::RawValue>,
+    error: Option<String>,
+}
+
+/// Analyze a single Obj-C file via two persistent daemon process pools.
+///
+/// 1. Read source, send to objc-parser pool -> receive AST JSON
+/// 2. Send AST to objc-analyzer pool -> receive FileAnalysis
+pub async fn analyze_objc_file_pooled(
+    parser_pool: &ProcessPool,
+    analyzer_pool: &ProcessPool,
+    file: &Path,
+) -> Result<FileAnalysis> {
+    let file_str = file.display().to_string();
+
+    let source = tokio::fs::read_to_string(file)
+        .await
+        .with_context(|| format!("Failed to read Obj-C source file {file_str}"))?;
+
+    // Step 1: Send to objc-parser pool
+    let escaped_file = serde_json::to_string(&file_str)
+        .with_context(|| format!("Failed to escape file path for {file_str}"))?;
+    let escaped_source = serde_json::to_string(&source)
+        .with_context(|| format!("Failed to escape source for {file_str}"))?;
+    let parser_payload = format!(
+        r#"{{"file":{},"source":{}}}"#,
+        escaped_file, escaped_source
+    );
+
+    let parser_response_bytes = parser_pool
+        .request(parser_payload.as_bytes())
+        .await
+        .with_context(|| format!("Obj-C parser pool request failed for {file_str}"))?;
+
+    // Zero-copy: parse only status/error, borrow raw AST JSON bytes
+    let parser_response: ObjcParserResponse =
+        serde_json::from_slice(&parser_response_bytes)
+            .with_context(|| format!("Failed to decode objc-parser response for {file_str}"))?;
+
+    let ast_raw = match parser_response.status.as_str() {
+        "ok" => parser_response
+            .ast
+            .with_context(|| format!("objc-parser returned ok but no ast for {file_str}"))?,
+        "error" => {
+            let msg = parser_response
+                .error
+                .unwrap_or_else(|| "unknown error".to_string());
+            bail!("objc-parser daemon error for {file_str}: {msg}")
+        }
+        other => bail!("Unknown objc-parser response status '{other}' for {file_str}"),
+    };
+
+    // Step 2: Send to objc-analyzer pool
+    let analyzer_payload = format!(r#"{{"file":{},"ast":{}}}"#, escaped_file, ast_raw.get());
+
+    let analyzer_response_bytes = analyzer_pool
+        .request(analyzer_payload.as_bytes())
+        .await
+        .with_context(|| format!("Obj-C analyzer pool request failed for {file_str}"))?;
+
+    let response: DaemonResponse = serde_json::from_slice(&analyzer_response_bytes)
+        .with_context(|| format!("Failed to decode objc-analyzer response for {file_str}"))?;
+
+    match response.status.as_str() {
+        "ok" => response
+            .result
+            .with_context(|| format!("objc-analyzer daemon returned ok but no result for {file_str}")),
+        "error" => {
+            let msg = response.error.unwrap_or_else(|| "unknown error".to_string());
+            bail!("objc-analyzer daemon error for {file_str}: {msg}")
+        }
+        other => bail!("Unknown objc-analyzer response status '{other}' for {file_str}"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Obj-C parallel multi-file analysis
+// ---------------------------------------------------------------------------
+
+/// Analyze multiple Obj-C files in parallel using two persistent daemon pools.
+///
+/// Falls back to `analyze_objc_files_parallel` if pool creation fails.
+pub async fn analyze_objc_files_parallel_pooled(
+    files: &[PathBuf],
+    jobs: usize,
+    analyzers: &crate::config::AnalyzerBinaries,
+) -> Vec<AnalysisResult> {
+    let parser_pool_config = PoolConfig {
+        command: analyzers.objc_parser_path(),
+        args: vec!["--daemon".to_string()],
+        ..PoolConfig::default()
+    };
+
+    let analyzer_pool_config = PoolConfig {
+        command: analyzers.objc_path(),
+        args: vec!["--daemon".to_string()],
+        ..PoolConfig::default()
+    };
+
+    let parser_pool = match ProcessPool::new(parser_pool_config, jobs.max(1)) {
+        Ok(p) => Arc::new(p),
+        Err(e) => {
+            tracing::warn!(
+                "Failed to create objc-parser pool, falling back to spawn-per-file: {e}"
+            );
+            return analyze_objc_files_parallel(files, jobs, analyzers).await;
+        }
+    };
+
+    let analyzer_pool = match ProcessPool::new(analyzer_pool_config, jobs.max(1)) {
+        Ok(p) => Arc::new(p),
+        Err(e) => {
+            tracing::warn!(
+                "Failed to create objc-analyzer pool, falling back to spawn-per-file: {e}"
+            );
+            parser_pool.shutdown().await;
+            return analyze_objc_files_parallel(files, jobs, analyzers).await;
+        }
+    };
+
+    let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
+    let total = files.len();
+
+    let handles: Vec<_> = files
+        .iter()
+        .enumerate()
+        .map(|(idx, file)| {
+            let sem = Arc::clone(&semaphore);
+            let parser_pool = Arc::clone(&parser_pool);
+            let analyzer_pool = Arc::clone(&analyzer_pool);
+            let file = file.clone();
+            let file_display = file.display().to_string();
+
+            tokio::spawn(async move {
+                let _permit = sem
+                    .acquire()
+                    .await
+                    .expect("Semaphore closed unexpectedly");
+
+                tracing::info!(
+                    "[{}/{}] Analyzing Obj-C file {}",
+                    idx + 1,
+                    total,
+                    file_display
+                );
+
+                let errors = Vec::new();
+
+                match analyze_objc_file_pooled(&parser_pool, &analyzer_pool, &file).await {
+                    Ok(analysis) => AnalysisResult {
+                        file,
+                        analysis: Some(analysis),
+                        errors,
+                    },
+                    Err(e) => {
+                        let mut errors = errors;
+                        errors.push(format!(
+                            "Obj-C analyzer failed for {file_display}: {e}"
+                        ));
+                        AnalysisResult {
+                            file,
+                            analysis: None,
+                            errors,
+                        }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        match handle.await {
+            Ok(result) => results.push(result),
+            Err(e) => {
+                results.push(AnalysisResult {
+                    file: PathBuf::new(),
+                    analysis: None,
+                    errors: vec![format!("Obj-C analysis task failed: {e}")],
+                });
+            }
+        }
+    }
+
+    parser_pool.shutdown().await;
+    analyzer_pool.shutdown().await;
+    results
+}
+
+/// Analyze multiple Obj-C files in parallel with bounded concurrency (spawn mode).
+///
+/// Fallback when daemon pools cannot be created.
+pub async fn analyze_objc_files_parallel(
+    files: &[PathBuf],
+    jobs: usize,
+    analyzers: &crate::config::AnalyzerBinaries,
+) -> Vec<AnalysisResult> {
+    let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
+    let total = files.len();
+    let analyzers = analyzers.clone();
+
+    let handles: Vec<_> = files
+        .iter()
+        .enumerate()
+        .map(|(idx, file)| {
+            let sem = Arc::clone(&semaphore);
+            let file = file.clone();
+            let file_display = file.display().to_string();
+            let analyzers = analyzers.clone();
+
+            tokio::spawn(async move {
+                let _permit = sem
+                    .acquire()
+                    .await
+                    .expect("Semaphore closed unexpectedly");
+
+                tracing::info!(
+                    "[{}/{}] Analyzing Obj-C file {}",
+                    idx + 1,
+                    total,
+                    file_display
+                );
+
+                let errors = Vec::new();
+
+                match analyze_objc_file(&file, &analyzers).await {
+                    Ok(analysis) => AnalysisResult {
+                        file,
+                        analysis: Some(analysis),
+                        errors,
+                    },
+                    Err(e) => {
+                        let mut errors = errors;
+                        errors.push(format!(
+                            "Obj-C analyzer failed for {file_display}: {e}"
+                        ));
+                        AnalysisResult {
+                            file,
+                            analysis: None,
+                            errors,
+                        }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        match handle.await {
+            Ok(result) => results.push(result),
+            Err(e) => {
+                results.push(AnalysisResult {
+                    file: PathBuf::new(),
+                    analysis: None,
+                    errors: vec![format!("Obj-C analysis task failed: {e}")],
+                });
+            }
+        }
+    }
+
+    results
+}
+
+// ---------------------------------------------------------------------------
+// Apple cross-language node collection
+// ---------------------------------------------------------------------------
+
+/// Collect resolve nodes from ALL Apple ecosystem languages (Swift + Obj-C).
+/// Used by apple-cross-resolve which needs nodes from both languages
+/// to resolve cross-language edges (e.g., Swift calling Obj-C bridged APIs).
+pub fn collect_resolve_nodes_for_apple(
+    results: &[AnalysisResult],
+) -> Vec<serde_json::Value> {
+    results
+        .iter()
+        .filter_map(|r| r.analysis.as_ref())
+        .filter(|a| {
+            matches!(
+                crate::config::detect_language(std::path::Path::new(&a.file)),
+                Some(crate::config::Language::Swift) | Some(crate::config::Language::ObjectiveC)
+            )
+        })
+        .flat_map(|a| &a.nodes)
+        .filter(|n| RESOLVE_NODE_TYPES.contains(&n.node_type.as_str()))
+        .filter_map(|n| serde_json::to_value(n).ok())
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -3925,6 +4822,17 @@ mod tests {
             assert!(
                 RESOLVE_NODE_TYPES.contains(hs_type),
                 "RESOLVE_NODE_TYPES should contain {hs_type}"
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_node_types_include_apple_types() {
+        let apple_types = ["EXTENSION", "TYPE_ALIAS"];
+        for apple_type in &apple_types {
+            assert!(
+                RESOLVE_NODE_TYPES.contains(apple_type),
+                "RESOLVE_NODE_TYPES should contain {apple_type}"
             );
         }
     }
@@ -4523,5 +5431,106 @@ mod tests {
         assert_eq!(meta["specifiers"][0], "React");
         // Standard fields also present
         assert_eq!(meta["line"], 1);
+    }
+
+    #[test]
+    fn test_encode_fragment() {
+        assert_eq!(encode_fragment("FUNCTION->foo"), "FUNCTION-%3Efoo");
+        assert_eq!(encode_fragment("CALL->c.log[in:x,h:a3f2]"), "CALL-%3Ec.log%5Bin:x,h:a3f2%5D");
+        assert_eq!(encode_fragment("FN->a[in:x,h:ff00]#1"), "FN-%3Ea%5Bin:x,h:ff00%5D%231");
+        // Chars that DON'T need encoding
+        assert_eq!(encode_fragment("name:with,commas-and.dots"), "name:with,commas-and.dots");
+    }
+
+    #[test]
+    fn test_compact_to_uri_standard_node() {
+        assert_eq!(
+            compact_to_uri("src/app.js->FUNCTION->foo", "localhost/grafema"),
+            "grafema://localhost/grafema/src/app.js#FUNCTION-%3Efoo"
+        );
+    }
+
+    #[test]
+    fn test_compact_to_uri_with_brackets() {
+        assert_eq!(
+            compact_to_uri("src/app.js->FUNCTION->foo[in:bar]", "localhost/grafema"),
+            "grafema://localhost/grafema/src/app.js#FUNCTION-%3Efoo%5Bin:bar%5D"
+        );
+    }
+
+    #[test]
+    fn test_compact_to_uri_with_hash_counter() {
+        assert_eq!(
+            compact_to_uri("src/app.js->FN->a[in:x,h:ff00]#1", "localhost/grafema"),
+            "grafema://localhost/grafema/src/app.js#FN-%3Ea%5Bin:x,h:ff00%5D%231"
+        );
+    }
+
+    #[test]
+    fn test_compact_to_uri_call_with_dot_name() {
+        assert_eq!(
+            compact_to_uri("src/app.js->CALL->c.log[in:x,h:a3f2]", "localhost/grafema"),
+            "grafema://localhost/grafema/src/app.js#CALL-%3Ec.log%5Bin:x,h:a3f2%5D"
+        );
+    }
+
+    #[test]
+    fn test_compact_to_uri_module() {
+        assert_eq!(
+            compact_to_uri("MODULE#src/app.js", "localhost/grafema"),
+            "grafema://localhost/grafema/src/app.js#MODULE"
+        );
+    }
+
+    #[test]
+    fn test_compact_to_uri_external_module() {
+        assert_eq!(
+            compact_to_uri("EXTERNAL_MODULE->lodash", "localhost/grafema"),
+            "grafema://localhost/grafema/_/EXTERNAL_MODULE-%3Elodash"
+        );
+    }
+
+    #[test]
+    fn test_compact_to_uri_singleton() {
+        assert_eq!(
+            compact_to_uri("net:stdio->__stdio__", "localhost/grafema"),
+            "grafema://localhost/grafema/_/net:stdio-%3E__stdio__"
+        );
+    }
+
+    #[test]
+    fn test_to_uri_format_rewrites_all_fields() {
+        let mut analysis = FileAnalysis {
+            file: "src/app.js".to_string(),
+            module_id: "MODULE#src/app.js".to_string(),
+            nodes: vec![GraphNode {
+                id: "src/app.js->FUNCTION->foo".to_string(),
+                node_type: "FUNCTION".to_string(),
+                name: "foo".to_string(),
+                file: "src/app.js".to_string(),
+                line: 1,
+                column: 0,
+                end_line: 10,
+                end_column: 1,
+                exported: false,
+                metadata: HashMap::new(),
+                extra: HashMap::new(),
+            }],
+            edges: vec![GraphEdge {
+                src: "MODULE#src/app.js".to_string(),
+                dst: "src/app.js->FUNCTION->foo".to_string(),
+                edge_type: "CONTAINS".to_string(),
+                metadata: HashMap::new(),
+            }],
+            exports: vec![],
+        };
+
+        analysis.to_uri_format("localhost/grafema");
+
+        assert_eq!(analysis.module_id, "grafema://localhost/grafema/src/app.js#MODULE");
+        assert_eq!(analysis.nodes[0].id, "grafema://localhost/grafema/src/app.js#FUNCTION-%3Efoo");
+        assert_eq!(analysis.nodes[0].file, "src/app.js"); // file stays as-is
+        assert_eq!(analysis.edges[0].src, "grafema://localhost/grafema/src/app.js#MODULE");
+        assert_eq!(analysis.edges[0].dst, "grafema://localhost/grafema/src/app.js#FUNCTION-%3Efoo");
     }
 }

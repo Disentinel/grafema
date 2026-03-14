@@ -112,6 +112,15 @@ export interface GrafemaConfig {
    * ```
    */
   workspace?: WorkspaceConfig;
+
+  /**
+   * URI configuration for grafema:// identifiers.
+   * Used by MCP and CLI for compact<->URI conversion.
+   */
+  uri?: {
+    /** URI authority (e.g., "github.com/owner/repo"). Auto-detected if omitted. */
+    authority?: string;
+  };
 }
 
 /**
@@ -638,5 +647,7 @@ function mergeConfig(
     routing: user.routing ?? undefined,
     // Workspace config: pass through if specified (REG-76)
     workspace: user.workspace ?? undefined,
+    // URI config: pass through if specified (REG-666)
+    uri: user.uri ?? undefined,
   };
 }

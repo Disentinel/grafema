@@ -101,6 +101,59 @@ fn num_cpus() -> usize {
         .unwrap_or(4)
 }
 
+/// Resolve the URI authority for grafema:// URIs.
+///
+/// Priority:
+/// 1. Explicit config: cfg.authority
+/// 2. Git remote: parse `git remote get-url origin` → "github.com/owner/repo"
+/// 3. Fallback: "localhost/{basename(root)}"
+fn resolve_authority(cfg: &config::AnalyzerConfig) -> String {
+    if let Some(ref auth) = cfg.authority {
+        return auth.clone();
+    }
+
+    // Try git remote
+    if let Ok(output) = std::process::Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .current_dir(&cfg.root)
+        .output()
+    {
+        if output.status.success() {
+            let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if let Some(authority) = parse_git_remote_authority(&url) {
+                return authority;
+            }
+        }
+    }
+
+    // Fallback: localhost/basename
+    let basename = cfg.root.file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("project");
+    format!("localhost/{basename}")
+}
+
+/// Parse git remote URL to authority format.
+/// Supports: git@github.com:owner/repo.git, https://github.com/owner/repo.git
+fn parse_git_remote_authority(url: &str) -> Option<String> {
+    // SSH format: git@github.com:owner/repo.git
+    if let Some(rest) = url.strip_prefix("git@") {
+        let colon_pos = rest.find(':')?;
+        let host = &rest[..colon_pos];
+        let path = rest[colon_pos + 1..].trim_end_matches(".git");
+        return Some(format!("{host}/{path}"));
+    }
+
+    // HTTPS format: https://github.com/owner/repo.git
+    if url.starts_with("https://") || url.starts_with("http://") {
+        let without_scheme = url.split("://").nth(1)?;
+        let trimmed = without_scheme.trim_end_matches(".git").trim_end_matches('/');
+        return Some(trimmed.to_string());
+    }
+
+    None
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
@@ -209,7 +262,7 @@ async fn main() -> Result<()> {
             }
 
             // 3b. Partition by language
-            let (js_files, hs_files, rs_files, java_files, kotlin_files, py_files, go_files, cpp_files, beam_files) = config::partition_by_language(&changed_files);
+            let (js_files, hs_files, rs_files, java_files, kotlin_files, py_files, go_files, cpp_files, swift_files, objc_files, beam_files) = config::partition_by_language(&changed_files);
             tracing::info!(
                 js = js_files.len(),
                 haskell = hs_files.len(),
@@ -219,6 +272,8 @@ async fn main() -> Result<()> {
                 python = py_files.len(),
                 go = go_files.len(),
                 cpp = cpp_files.len(),
+                swift = swift_files.len(),
+                objc = objc_files.len(),
                 beam = beam_files.len(),
                 "Partitioned files by language"
             );
@@ -253,6 +308,15 @@ async fn main() -> Result<()> {
                 if !cpp_files.is_empty() {
                     binaries_to_check.push(cfg.analyzers.cpp_path());
                     binaries_to_check.push(cfg.analyzers.cpp_resolve_path());
+                }
+                if !swift_files.is_empty() {
+                    binaries_to_check.push(cfg.analyzers.swift_parser_path());
+                    binaries_to_check.push(cfg.analyzers.swift_path());
+                    binaries_to_check.push(cfg.analyzers.swift_resolve_path());
+                }
+                if !objc_files.is_empty() {
+                    binaries_to_check.push(cfg.analyzers.objc_parser_path());
+                    binaries_to_check.push(cfg.analyzers.objc_path());
                 }
                 if !beam_files.is_empty() {
                     binaries_to_check.push(cfg.analyzers.beam_path());
@@ -366,7 +430,21 @@ async fn main() -> Result<()> {
                 results.extend(cpp_results);
             }
 
-            // 4i. Analyze BEAM (Elixir/Erlang) files (beam-analyzer daemon pool, no OXC)
+            // 4i. Analyze Swift files (swift-parser → swift-analyzer daemon pools)
+            if !swift_files.is_empty() {
+                tracing::info!(count = swift_files.len(), "Analyzing Swift files");
+                let swift_results = analyzer::analyze_swift_files_parallel_pooled(&swift_files, jobs, &cfg.analyzers).await;
+                results.extend(swift_results);
+            }
+
+            // 4j. Analyze Obj-C files (objc-parser → objc-analyzer daemon pools)
+            if !objc_files.is_empty() {
+                tracing::info!(count = objc_files.len(), "Analyzing Obj-C files");
+                let objc_results = analyzer::analyze_objc_files_parallel_pooled(&objc_files, jobs, &cfg.analyzers).await;
+                results.extend(objc_results);
+            }
+
+            // 4k. Analyze BEAM (Elixir/Erlang) files (beam-analyzer daemon pool, no OXC)
             if !beam_files.is_empty() {
                 tracing::info!(count = beam_files.len(), "Analyzing BEAM files");
                 let beam_results = analyzer::analyze_beam_files_parallel_pooled(&beam_files, jobs, &cfg.analyzers).await;
@@ -380,6 +458,14 @@ async fn main() -> Result<()> {
                 if let Some(ref mut analysis) = result.analysis {
                     analysis.relativize_paths(&root_str);
                     analysis.ensure_function_contains_edges();
+                }
+            }
+
+            // 5b. Convert semantic IDs to URI format
+            let authority = resolve_authority(&cfg);
+            for result in &mut results {
+                if let Some(ref mut analysis) = result.analysis {
+                    analysis.to_uri_format(&authority);
                 }
             }
 
@@ -1136,7 +1222,130 @@ async fn main() -> Result<()> {
                 }
             }
 
-            // 8g. Run JVM cross-language resolution (Java <-> Kotlin, after both per-language resolvers)
+            // 8g. Run Swift resolution (if Swift files were analyzed)
+            if !swift_files.is_empty() {
+                let swift_resolve_nodes = analyzer::collect_resolve_nodes_for_lang(&results, config::Language::Swift);
+                if !swift_resolve_nodes.is_empty() {
+                    tracing::info!(
+                        nodes = swift_resolve_nodes.len(),
+                        "Running Swift resolution"
+                    );
+
+                    let swift_resolve_pool_config = process_pool::PoolConfig {
+                        command: cfg.analyzers.swift_resolve_path(),
+                        args: vec!["--daemon".to_string()],
+                        ..process_pool::PoolConfig::default()
+                    };
+
+                    match process_pool::ProcessPool::new(swift_resolve_pool_config, 1) {
+                        Ok(swift_resolve_pool) => {
+                            let mut swift_resolve_output = plugin::run_resolve_with_nodes(
+                                "swift-all",
+                                &swift_resolve_nodes,
+                                &[],
+                                &swift_resolve_pool,
+                            )
+                            .await
+                            .context("Swift resolution failed")?;
+                            plugin::validate_plugin_output(&swift_resolve_output)?;
+                            plugin::stamp_metadata(&mut swift_resolve_output, "swift-resolution", generation);
+
+                            let swift_resolve_files: Vec<String> = swift_resolve_output
+                                .nodes
+                                .iter()
+                                .filter_map(|n| n.file.clone())
+                                .collect::<std::collections::HashSet<_>>()
+                                .into_iter()
+                                .collect();
+                            rfdb.commit_batch(&swift_resolve_files, &swift_resolve_output.nodes, &swift_resolve_output.edges, false)
+                                .await
+                                .context("Failed to commit Swift resolution output")?;
+
+                            for edge in &swift_resolve_output.edges {
+                                if edge.edge_type == "IMPORTS_FROM" {
+                                    all_imports_from_edges.push((edge.src.clone(), edge.dst.clone()));
+                                }
+                            }
+
+                            tracing::info!(
+                                nodes = swift_resolve_output.nodes.len(),
+                                edges = swift_resolve_output.edges.len(),
+                                "Swift resolution complete"
+                            );
+
+                            swift_resolve_pool.shutdown().await;
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to create Swift resolve pool, skipping Swift resolution: {e}"
+                            );
+                        }
+                    }
+                }
+            }
+
+            // 8h. Run Apple cross-language resolution (if both Swift and Obj-C files present)
+            let has_swift = !swift_files.is_empty();
+            let has_objc = !objc_files.is_empty();
+            if has_swift && has_objc {
+                let mut all_apple_nodes = Vec::new();
+                all_apple_nodes.extend(analyzer::collect_resolve_nodes_for_lang(&results, config::Language::Swift));
+                all_apple_nodes.extend(analyzer::collect_resolve_nodes_for_lang(&results, config::Language::ObjectiveC));
+
+                if !all_apple_nodes.is_empty() {
+                    tracing::info!(
+                        nodes = all_apple_nodes.len(),
+                        "Running Apple cross-language resolution (Swift <-> Obj-C)"
+                    );
+
+                    let apple_cross_pool_config = process_pool::PoolConfig {
+                        command: cfg.analyzers.apple_cross_resolve_path(),
+                        args: vec!["--daemon".to_string()],
+                        ..process_pool::PoolConfig::default()
+                    };
+
+                    match process_pool::ProcessPool::new(apple_cross_pool_config, 1) {
+                        Ok(apple_cross_pool) => {
+                            let mut apple_cross_output = plugin::run_resolve_with_nodes(
+                                "apple-cross-all",
+                                &all_apple_nodes,
+                                &[],
+                                &apple_cross_pool,
+                            )
+                            .await
+                            .context("Apple cross-language resolution failed")?;
+                            plugin::validate_plugin_output(&apple_cross_output)?;
+                            plugin::stamp_metadata(&mut apple_cross_output, "apple-cross-resolution", generation);
+
+                            let apple_cross_files: Vec<String> = apple_cross_output
+                                .nodes
+                                .iter()
+                                .filter_map(|n| n.file.clone())
+                                .collect::<std::collections::HashSet<_>>()
+                                .into_iter()
+                                .collect();
+                            rfdb.commit_batch(&apple_cross_files, &apple_cross_output.nodes, &apple_cross_output.edges, false)
+                                .await
+                                .context("Failed to commit Apple cross-language resolution output")?;
+
+                            tracing::info!(
+                                nodes = apple_cross_output.nodes.len(),
+                                edges = apple_cross_output.edges.len(),
+                                "Apple cross-language resolution complete"
+                            );
+
+                            apple_cross_pool.shutdown().await;
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to create Apple cross-resolve pool, skipping: {e}"
+                            );
+                        }
+                    }
+                }
+            }
+
+            // 8i. Run JVM cross-language resolution (Java <-> Kotlin, after both per-language resolvers)
             if !java_files.is_empty() && !kotlin_files.is_empty() {
                 let jvm_resolve_nodes = query_resolve_nodes_for_jvm(&mut rfdb).await?;
                 if !jvm_resolve_nodes.is_empty() {
@@ -1262,7 +1471,7 @@ async fn main() -> Result<()> {
                 }
             }
 
-            // 8h. Run BEAM (Elixir/Erlang) resolution
+            // 8k. Run BEAM (Elixir/Erlang) resolution
             if !beam_files.is_empty() {
                 let beam_resolve_nodes = analyzer::collect_resolve_nodes_for_lang(&results, config::Language::Beam);
                 if !beam_resolve_nodes.is_empty() {
@@ -1354,7 +1563,7 @@ async fn main() -> Result<()> {
                 }
             }
 
-            // 8i. Run user-defined plugins via DAG (if any non-default plugins configured)
+            // 8l. Run user-defined plugins via DAG (if any non-default plugins configured)
             let user_plugins: Vec<_> = cfg
                 .plugins
                 .iter()
@@ -1476,5 +1685,39 @@ async fn main() -> Result<()> {
 
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_git_remote_ssh() {
+        assert_eq!(
+            parse_git_remote_authority("git@github.com:owner/repo.git"),
+            Some("github.com/owner/repo".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_git_remote_https() {
+        assert_eq!(
+            parse_git_remote_authority("https://github.com/owner/repo.git"),
+            Some("github.com/owner/repo".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_git_remote_https_no_git_suffix() {
+        assert_eq!(
+            parse_git_remote_authority("https://github.com/owner/repo"),
+            Some("github.com/owner/repo".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_git_remote_invalid() {
+        assert_eq!(parse_git_remote_authority("not-a-url"), None);
     }
 }

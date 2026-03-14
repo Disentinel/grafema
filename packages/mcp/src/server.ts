@@ -75,6 +75,7 @@ import {
   // handleGitOwnership,
   // handleGitArchaeology,
   handleDescribe,
+  handleGraphQLQuery,
 } from './handlers/index.js';
 import type {
   ToolResult,
@@ -111,6 +112,7 @@ import type {
   // GitOwnershipArgs,
   // GitArchaeologyArgs,
   DescribeArgs,
+  GraphQLQueryArgs,
 } from './types.js';
 
 /**
@@ -339,6 +341,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
 
       case 'describe':
         result = await handleDescribe(asArgs<DescribeArgs>(args));
+        break;
+
+      case 'query_graphql':
+        result = await handleGraphQLQuery(asArgs<GraphQLQueryArgs>(args));
         break;
 
       default:
