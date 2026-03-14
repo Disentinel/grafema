@@ -125,7 +125,10 @@ ruleMemberExpression node = do
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
     , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False
-    , gnMetadata = Map.singleton "computed" (MetaBool computed)
+    , gnMetadata = Map.fromList
+        [ ("computed", MetaBool computed)
+        , ("base", MetaText objChain)
+        ]
     }
 
   -- Walk object and connect PROPERTY_ACCESS to receiver

@@ -129,8 +129,8 @@ nodeToExportEntries node
   -- EXPORT node with name "named": skip (container node, children carry info)
   | gnType node == "EXPORT" = []
 
-  -- Directly exported declarations (FUNCTION, VARIABLE, CONSTANT, CLASS)
-  | gnExported node && gnType node `elem` ["FUNCTION", "VARIABLE", "CONSTANT", "CLASS"] =
+  -- Directly exported declarations (FUNCTION, VARIABLE, CONSTANT, CLASS, INTERFACE, TYPE_ALIAS, ENUM)
+  | gnExported node && gnType node `elem` ["FUNCTION", "VARIABLE", "CONSTANT", "CLASS", "INTERFACE", "TYPE_ALIAS", "ENUM"] =
       [(gnFile node, [ExportEntry (gnName node) (gnName node) (gnId node) (gnFile node) Nothing])]
 
   | otherwise = []
@@ -334,8 +334,12 @@ resolveFromFile exportIndex wsMap visited depth node resolvedFile importedName =
           -- Try star re-exports: look for "*" exports that re-export from another module
           case findStarReExports exports of
             [] -> do
-              hPutStrLn stderr $ "Warning: no matching export '"
-                ++ T.unpack importedName ++ "' in " ++ T.unpack resolvedFile
+              -- Only warn at depth 0 (top-level). Deeper levels are star re-export
+              -- probing where misses are expected and handled by the caller.
+              if depth == 0
+                then hPutStrLn stderr $ "Warning: no matching export '"
+                  ++ T.unpack importedName ++ "' in " ++ T.unpack resolvedFile
+                else return ()
               return []
             reExports -> tryStarReExports exportIndex wsMap visited' depth node importedName reExports
 

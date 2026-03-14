@@ -2161,6 +2161,56 @@ pub fn to_wire_edges(analysis: &FileAnalysis) -> Vec<WireEdge> {
 // Resolution node collection
 // ---------------------------------------------------------------------------
 
+/// Accessor for RESOLVE_NODE_TYPES (used by main.rs for RFDB queries).
+pub fn resolve_node_types() -> &'static [&'static str] {
+    RESOLVE_NODE_TYPES
+}
+
+/// Convert an RFDB `WireNode` back to the resolver-compatible JSON format
+/// (matching the `GraphNode` serialization that resolution plugins expect).
+///
+/// Key transformations:
+/// - `nodeType` → `type`
+/// - `semantic_id` → `id` (resolver uses semantic ID strings, not u128 hashes)
+/// - metadata string → parsed, `line`/`column`/`endLine`/`endColumn` extracted as top-level fields
+pub fn wire_node_to_resolve_json(node: &crate::rfdb::WireNode) -> serde_json::Value {
+    let metadata: serde_json::Map<String, serde_json::Value> = node
+        .metadata
+        .as_deref()
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or_default();
+
+    let line = metadata.get("line").cloned().unwrap_or(serde_json::json!(0));
+    let column = metadata.get("column").cloned().unwrap_or(serde_json::json!(0));
+    let end_line = metadata.get("endLine").cloned().unwrap_or(serde_json::json!(0));
+    let end_column = metadata.get("endColumn").cloned().unwrap_or(serde_json::json!(0));
+
+    // Build clean metadata (strip position fields — they're now top-level)
+    let clean_metadata: serde_json::Map<String, serde_json::Value> = metadata
+        .into_iter()
+        .filter(|(k, _)| k != "line" && k != "column" && k != "endLine" && k != "endColumn")
+        .collect();
+
+    // Use semantic_id if available, fall back to id
+    let id = node
+        .semantic_id
+        .as_ref()
+        .unwrap_or(&node.id);
+
+    serde_json::json!({
+        "id": id,
+        "type": node.node_type,
+        "name": node.name,
+        "file": node.file,
+        "line": line,
+        "column": column,
+        "endLine": end_line,
+        "endColumn": end_column,
+        "exported": node.exported,
+        "metadata": clean_metadata,
+    })
+}
+
 /// Node types that the resolution plugin needs.
 const RESOLVE_NODE_TYPES: &[&str] = &[
     // JS/TS types
@@ -2177,6 +2227,8 @@ const RESOLVE_NODE_TYPES: &[&str] = &[
     "REFERENCE",
     "PROPERTY_ACCESS",
     "PROPERTY_ASSIGNMENT",
+    "TYPE_ALIAS",
+    "NAMESPACE",
     // Haskell types
     "TYPE_CLASS",
     "INSTANCE",

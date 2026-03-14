@@ -114,8 +114,8 @@ Examples:
       const incomingCallers: CallerInfo[] = [];
       let funcNode = null;
 
-      // Search for FUNCTION or METHOD node matching the symbol
-      for (const nodeType of ['FUNCTION', 'METHOD'] as const) {
+      // Search for FUNCTION, METHOD, CLASS, or CONSTANT node matching the symbol
+      for (const nodeType of ['FUNCTION', 'METHOD', 'CLASS', 'CONSTANT'] as const) {
         for await (const n of backend.queryNodes({ type: nodeType })) {
           const name = (n.name || '').toLowerCase();
           if (name === lowerSymbol || (methodPart && name === methodPart)) {
@@ -127,7 +127,7 @@ Examples:
       }
 
       if (funcNode) {
-        const incomingEdges = await backend.getIncomingEdges(funcNode.id, ['CALLS', 'READS_FROM']);
+        const incomingEdges = await backend.getIncomingEdges(funcNode.id, ['CALLS', 'READS_FROM', 'IMPORTS_FROM']);
         for (const edge of incomingEdges) {
           const srcNode = await backend.getNode(edge.src);
           if (!srcNode) continue;
@@ -146,10 +146,29 @@ Examples:
         }
       }
 
+      // Strategy 3: Find IMPORT_BINDING nodes that import this symbol
+      // (for classes/exports that are imported across files/repos)
+      const importers: CallerInfo[] = [];
+      for await (const n of backend.queryNodes({ type: 'IMPORT_BINDING' as any })) {
+        const bindingName = (n.name || '').toLowerCase();
+        if (bindingName !== lowerSymbol && !(methodPart && bindingName === methodPart)) continue;
+
+        // Skip if already found via Strategy 1 or 2
+        if (matchingCalls.some(c => c.file === (n.file || '') && c.line === n.line)) continue;
+        if (incomingCallers.some(c => c.file === (n.file || '') && c.line === n.line)) continue;
+
+        importers.push({
+          file: n.file || '',
+          line: n.line,
+          callerName: `imports ${n.name || symbol}`,
+          resolved: true,
+        });
+      }
+
       spinner.stop();
 
       // Merge results
-      const allCallers = [...matchingCalls, ...incomingCallers];
+      const allCallers = [...matchingCalls, ...incomingCallers, ...importers];
 
       if (options.json) {
         console.log(JSON.stringify({
