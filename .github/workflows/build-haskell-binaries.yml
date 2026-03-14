@@ -116,11 +116,16 @@ jobs:
         if: steps.check.outputs.exists == 'true'
         run: |
           mkdir -p dist
-          # macOS find doesn't support -executable, use -perm +111 (portable)
-          BINARY=$(find packages/${{ matrix.binary.package }}/dist-newstyle -name "${{ matrix.binary.name }}" -type f -perm +111 | head -1)
+          # macOS find uses -perm +111, GNU/Linux find uses -executable
+          if [[ "$OSTYPE" == "darwin"* ]]; then
+            FIND_EXEC="-perm +111"
+          else
+            FIND_EXEC="-executable"
+          fi
+          BINARY=$(find packages/${{ matrix.binary.package }}/dist-newstyle -name "${{ matrix.binary.name }}" -type f $FIND_EXEC | head -1)
           if [ -z "$BINARY" ]; then
             # Try the package name as binary name
-            BINARY=$(find packages/${{ matrix.binary.package }}/dist-newstyle -type f -perm +111 | grep -v '\.o$' | grep -v '\.hi$' | head -1)
+            BINARY=$(find packages/${{ matrix.binary.package }}/dist-newstyle -type f $FIND_EXEC | grep -v '\.o$' | grep -v '\.hi$' | head -1)
           fi
           if [ -z "$BINARY" ]; then
             echo "ERROR: Could not find built binary"
