@@ -71,3 +71,6 @@ packages/grafema-linux-x64/bin/*
 
 # SWE-bench artifacts
 logs/run_evaluation/
+enox/enox-knowledge.rfdb/
+enox/rfdb.pid
+enox/rfdb.sock
