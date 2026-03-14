@@ -9,9 +9,13 @@
     "x64"
   ],
   "main": "index.js",
+  "scripts": {
+    "postinstall": "node postinstall.js"
+  },
   "files": [
     "bin/",
-    "index.js"
+    "index.js",
+    "postinstall.js"
   ],
   "repository": {
     "type": "git",
