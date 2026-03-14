@@ -252,6 +252,14 @@ pub struct AnalyzerBinaries {
     /// Path to Apple cross-language resolve binary (default: "apple-cross-resolve")
     #[serde(default = "default_apple_cross_resolve")]
     pub apple_cross_resolve: String,
+
+    /// Path to BEAM (Elixir/Erlang) analyzer binary (default: "beam-analyzer")
+    #[serde(default = "default_beam_analyzer")]
+    pub beam: String,
+
+    /// Path to BEAM resolve binary (default: "beam-resolve")
+    #[serde(default = "default_beam_resolve")]
+    pub beam_resolve: String,
 }
 
 impl Default for AnalyzerBinaries {
@@ -283,6 +291,8 @@ impl Default for AnalyzerBinaries {
             objc: default_objc_analyzer(),
             objc_parser: default_objc_parser(),
             apple_cross_resolve: default_apple_cross_resolve(),
+            beam: default_beam_analyzer(),
+            beam_resolve: default_beam_resolve(),
         }
     }
 }
@@ -468,6 +478,16 @@ impl AnalyzerBinaries {
     /// Resolved path for the Apple cross-language resolve binary.
     pub fn apple_cross_resolve_path(&self) -> String {
         resolve_binary(&self.apple_cross_resolve)
+    }
+
+    /// Resolved path for the BEAM analyzer binary.
+    pub fn beam_path(&self) -> String {
+        resolve_binary(&self.beam)
+    }
+
+    /// Resolved path for the BEAM resolve binary.
+    pub fn beam_resolve_path(&self) -> String {
+        resolve_binary(&self.beam_resolve)
     }
 }
 
@@ -658,6 +678,14 @@ fn default_apple_cross_resolve() -> String {
     "apple-cross-resolve".to_string()
 }
 
+fn default_beam_analyzer() -> String {
+    "beam-analyzer".to_string()
+}
+
+fn default_beam_resolve() -> String {
+    "beam-resolve".to_string()
+}
+
 /// Language detection based on file extension.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Language {
@@ -671,6 +699,7 @@ pub enum Language {
     Cpp,
     Swift,
     ObjectiveC,
+    Beam,
 }
 
 /// Detect language from file extension.
@@ -691,6 +720,7 @@ pub fn detect_language(path: &Path) -> Option<Language> {
         }
         "swift" => Some(Language::Swift),
         "m" | "mm" => Some(Language::ObjectiveC),
+        "ex" | "exs" | "erl" | "hrl" => Some(Language::Beam),
         _ => {
             // Handle case-sensitive extensions: .c++ .h++ .C .H
             let file_name = path.file_name()?.to_str()?;
@@ -706,7 +736,7 @@ pub fn detect_language(path: &Path) -> Option<Language> {
 }
 
 /// Partition files by detected language.
-pub fn partition_by_language(files: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>) {
+pub fn partition_by_language(files: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>) {
     let mut js_files = Vec::new();
     let mut hs_files = Vec::new();
     let mut rs_files = Vec::new();
@@ -717,6 +747,7 @@ pub fn partition_by_language(files: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>, 
     let mut cpp_files = Vec::new();
     let mut swift_files = Vec::new();
     let mut objc_files = Vec::new();
+    let mut beam_files = Vec::new();
     for file in files {
         match detect_language(file) {
             Some(Language::JavaScript) => js_files.push(file.clone()),
@@ -729,10 +760,11 @@ pub fn partition_by_language(files: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>, 
             Some(Language::Cpp) => cpp_files.push(file.clone()),
             Some(Language::Swift) => swift_files.push(file.clone()),
             Some(Language::ObjectiveC) => objc_files.push(file.clone()),
+            Some(Language::Beam) => beam_files.push(file.clone()),
             None => {} // skip unknown extensions
         }
     }
-    (js_files, hs_files, rs_files, java_files, kotlin_files, py_files, go_files, cpp_files, swift_files, objc_files)
+    (js_files, hs_files, rs_files, java_files, kotlin_files, py_files, go_files, cpp_files, swift_files, objc_files, beam_files)
 }
 
 /// Load and validate configuration from a YAML file.
@@ -1133,9 +1165,10 @@ plugins:
             PathBuf::from("src/App.swift"),
             PathBuf::from("src/Legacy.m"),
             PathBuf::from("src/Mixed.mm"),
+            PathBuf::from("lib/server.ex"),
             PathBuf::from("README.md"),
         ];
-        let (js, hs, rs, java, kotlin, py, go, cpp, swift, objc) = partition_by_language(&files);
+        let (js, hs, rs, java, kotlin, py, go, cpp, swift, objc, beam) = partition_by_language(&files);
         assert_eq!(js, vec![PathBuf::from("src/index.ts"), PathBuf::from("src/app.jsx")]);
         assert_eq!(hs, vec![PathBuf::from("src/Main.hs"), PathBuf::from("src/Lib.hs")]);
         assert_eq!(rs, vec![PathBuf::from("src/main.rs"), PathBuf::from("src/lib.rs")]);
@@ -1146,11 +1179,12 @@ plugins:
         assert_eq!(cpp, vec![PathBuf::from("src/parser.cpp"), PathBuf::from("src/parser.h")]);
         assert_eq!(swift, vec![PathBuf::from("src/App.swift")]);
         assert_eq!(objc, vec![PathBuf::from("src/Legacy.m"), PathBuf::from("src/Mixed.mm")]);
+        assert_eq!(beam, vec![PathBuf::from("lib/server.ex")]);
     }
 
     #[test]
     fn partition_by_language_empty_input() {
-        let (js, hs, rs, java, kotlin, py, go, cpp, swift, objc) = partition_by_language(&[]);
+        let (js, hs, rs, java, kotlin, py, go, cpp, swift, objc, beam) = partition_by_language(&[]);
         assert!(js.is_empty());
         assert!(hs.is_empty());
         assert!(rs.is_empty());
@@ -1161,6 +1195,7 @@ plugins:
         assert!(cpp.is_empty());
         assert!(swift.is_empty());
         assert!(objc.is_empty());
+        assert!(beam.is_empty());
     }
 
     #[test]
@@ -1190,6 +1225,14 @@ plugins:
     #[test]
     fn detect_language_go() {
         assert_eq!(detect_language(Path::new("src/main.go")), Some(Language::Go));
+    }
+
+    #[test]
+    fn detect_language_beam() {
+        assert_eq!(detect_language(Path::new("lib/app.ex")), Some(Language::Beam));
+        assert_eq!(detect_language(Path::new("test/app_test.exs")), Some(Language::Beam));
+        assert_eq!(detect_language(Path::new("src/module.erl")), Some(Language::Beam));
+        assert_eq!(detect_language(Path::new("include/header.hrl")), Some(Language::Beam));
     }
 
     #[test]
@@ -1229,7 +1272,7 @@ plugins:
             PathBuf::from("src/main.py"),
             PathBuf::from("src/app.js"),
         ];
-        let (js, _hs, _rs, _java, _kotlin, py, _go, _cpp, _swift, _objc) = partition_by_language(&files);
+        let (js, _hs, _rs, _java, _kotlin, py, _go, _cpp, _swift, _objc, _beam) = partition_by_language(&files);
         assert_eq!(js, vec![PathBuf::from("src/app.js")]);
         assert_eq!(py, vec![PathBuf::from("src/main.py")]);
     }
@@ -1288,6 +1331,8 @@ analyzers:
         assert_eq!(cfg.analyzers.go_parser, "go-parser");
         assert_eq!(cfg.analyzers.cpp, "grafema-cpp-analyzer");
         assert_eq!(cfg.analyzers.cpp_resolve, "cpp-resolve");
+        assert_eq!(cfg.analyzers.beam, "beam-analyzer");
+        assert_eq!(cfg.analyzers.beam_resolve, "beam-resolve");
         cleanup(&dir);
     }
 
@@ -1314,6 +1359,8 @@ analyzers:
         assert_eq!(defaults.go_parser, "go-parser");
         assert_eq!(defaults.cpp, "grafema-cpp-analyzer");
         assert_eq!(defaults.cpp_resolve, "cpp-resolve");
+        assert_eq!(defaults.beam, "beam-analyzer");
+        assert_eq!(defaults.beam_resolve, "beam-resolve");
     }
 
     #[test]
@@ -1372,6 +1419,8 @@ analyzers:
             objc: "/abs/grafema-objc-analyzer".to_string(),
             objc_parser: "/abs/objc-parser".to_string(),
             apple_cross_resolve: "/abs/apple-cross-resolve".to_string(),
+            beam: "/abs/beam-analyzer".to_string(),
+            beam_resolve: "/abs/beam-resolve".to_string(),
         };
         assert_eq!(bins.js_path(), "/abs/grafema-analyzer");
         assert_eq!(bins.haskell_path(), "/abs/haskell-analyzer");
@@ -1399,6 +1448,8 @@ analyzers:
         assert_eq!(bins.objc_path(), "/abs/grafema-objc-analyzer");
         assert_eq!(bins.objc_parser_path(), "/abs/objc-parser");
         assert_eq!(bins.apple_cross_resolve_path(), "/abs/apple-cross-resolve");
+        assert_eq!(bins.beam_path(), "/abs/beam-analyzer");
+        assert_eq!(bins.beam_resolve_path(), "/abs/beam-resolve");
     }
 
     #[test]

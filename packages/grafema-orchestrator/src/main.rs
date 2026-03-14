@@ -262,7 +262,7 @@ async fn main() -> Result<()> {
             }
 
             // 3b. Partition by language
-            let (js_files, hs_files, rs_files, java_files, kotlin_files, py_files, go_files, cpp_files, swift_files, objc_files) = config::partition_by_language(&changed_files);
+            let (js_files, hs_files, rs_files, java_files, kotlin_files, py_files, go_files, cpp_files, swift_files, objc_files, beam_files) = config::partition_by_language(&changed_files);
             tracing::info!(
                 js = js_files.len(),
                 haskell = hs_files.len(),
@@ -274,6 +274,7 @@ async fn main() -> Result<()> {
                 cpp = cpp_files.len(),
                 swift = swift_files.len(),
                 objc = objc_files.len(),
+                beam = beam_files.len(),
                 "Partitioned files by language"
             );
 
@@ -316,6 +317,10 @@ async fn main() -> Result<()> {
                 if !objc_files.is_empty() {
                     binaries_to_check.push(cfg.analyzers.objc_parser_path());
                     binaries_to_check.push(cfg.analyzers.objc_path());
+                }
+                if !beam_files.is_empty() {
+                    binaries_to_check.push(cfg.analyzers.beam_path());
+                    binaries_to_check.push(cfg.analyzers.beam_resolve_path());
                 }
 
                 for binary in &binaries_to_check {
@@ -437,6 +442,13 @@ async fn main() -> Result<()> {
                 tracing::info!(count = objc_files.len(), "Analyzing Obj-C files");
                 let objc_results = analyzer::analyze_objc_files_parallel_pooled(&objc_files, jobs, &cfg.analyzers).await;
                 results.extend(objc_results);
+            }
+
+            // 4k. Analyze BEAM (Elixir/Erlang) files (beam-analyzer daemon pool, no OXC)
+            if !beam_files.is_empty() {
+                tracing::info!(count = beam_files.len(), "Analyzing BEAM files");
+                let beam_results = analyzer::analyze_beam_files_parallel_pooled(&beam_files, jobs, &cfg.analyzers).await;
+                results.extend(beam_results);
             }
 
             // 5. Relativize paths: convert absolute → relative (to project root)
@@ -1459,7 +1471,99 @@ async fn main() -> Result<()> {
                 }
             }
 
-            // 8k. Run user-defined plugins via DAG (if any non-default plugins configured)
+            // 8k. Run BEAM (Elixir/Erlang) resolution
+            if !beam_files.is_empty() {
+                let beam_resolve_nodes = analyzer::collect_resolve_nodes_for_lang(&results, config::Language::Beam);
+                if !beam_resolve_nodes.is_empty() {
+                    tracing::info!(
+                        nodes = beam_resolve_nodes.len(),
+                        "Running BEAM resolution"
+                    );
+
+                    let beam_resolve_pool_config = process_pool::PoolConfig {
+                        command: cfg.analyzers.beam_resolve_path(),
+                        args: vec!["--daemon".to_string()],
+                        ..process_pool::PoolConfig::default()
+                    };
+
+                    match process_pool::ProcessPool::new(beam_resolve_pool_config, 1) {
+                        Ok(beam_resolve_pool) => {
+                            // Step 1: BEAM import resolution (alias/import/use/require → IMPORTS_FROM)
+                            let mut beam_import_output = plugin::run_resolve_with_nodes(
+                                "beam-imports",
+                                &beam_resolve_nodes,
+                                &[],
+                                &beam_resolve_pool,
+                            )
+                            .await
+                            .context("BEAM import resolution failed")?;
+                            plugin::validate_plugin_output(&beam_import_output)?;
+                            plugin::stamp_metadata(&mut beam_import_output, "beam-import-resolution", generation);
+
+                            let beam_import_files: Vec<String> = beam_import_output
+                                .nodes
+                                .iter()
+                                .filter_map(|n| n.file.clone())
+                                .collect::<std::collections::HashSet<_>>()
+                                .into_iter()
+                                .collect();
+                            rfdb.commit_batch(&beam_import_files, &beam_import_output.nodes, &beam_import_output.edges, false)
+                                .await
+                                .context("Failed to commit BEAM import resolution output")?;
+
+                            for edge in &beam_import_output.edges {
+                                if edge.edge_type == "IMPORTS_FROM" {
+                                    all_imports_from_edges.push((edge.src.clone(), edge.dst.clone()));
+                                }
+                            }
+
+                            tracing::info!(
+                                nodes = beam_import_output.nodes.len(),
+                                edges = beam_import_output.edges.len(),
+                                "BEAM import resolution complete"
+                            );
+
+                            // Step 2: BEAM local refs resolution
+                            let mut beam_local_output = plugin::run_resolve_with_nodes(
+                                "beam-local-refs",
+                                &beam_resolve_nodes,
+                                &[],
+                                &beam_resolve_pool,
+                            )
+                            .await
+                            .context("BEAM local refs resolution failed")?;
+                            plugin::validate_plugin_output(&beam_local_output)?;
+                            plugin::stamp_metadata(&mut beam_local_output, "beam-local-refs", generation);
+
+                            let beam_local_files: Vec<String> = beam_local_output
+                                .nodes
+                                .iter()
+                                .filter_map(|n| n.file.clone())
+                                .collect::<std::collections::HashSet<_>>()
+                                .into_iter()
+                                .collect();
+                            rfdb.commit_batch(&beam_local_files, &beam_local_output.nodes, &beam_local_output.edges, false)
+                                .await
+                                .context("Failed to commit BEAM local refs output")?;
+
+                            tracing::info!(
+                                nodes = beam_local_output.nodes.len(),
+                                edges = beam_local_output.edges.len(),
+                                "BEAM local refs resolution complete"
+                            );
+
+                            beam_resolve_pool.shutdown().await;
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to create BEAM resolve pool, skipping BEAM resolution: {e}"
+                            );
+                        }
+                    }
+                }
+            }
+
+            // 8l. Run user-defined plugins via DAG (if any non-default plugins configured)
             let user_plugins: Vec<_> = cfg
                 .plugins
                 .iter()
@@ -1562,7 +1666,7 @@ async fn main() -> Result<()> {
 
             // 10. Summary
             println!(
-                "Analyzed {} files ({} JS, {} Haskell, {} Rust, {} Java, {} Kotlin, {} Python, {} Go, {} skipped): {} nodes, {} edges, {} errors",
+                "Analyzed {} files ({} JS, {} Haskell, {} Rust, {} Java, {} Kotlin, {} Python, {} Go, {} C/C++, {} BEAM, {} skipped): {} nodes, {} edges, {} errors",
                 changed_files.len(),
                 js_files.len(),
                 hs_files.len(),
@@ -1571,6 +1675,8 @@ async fn main() -> Result<()> {
                 kotlin_files.len(),
                 py_files.len(),
                 go_files.len(),
+                cpp_files.len(),
+                beam_files.len(),
                 unchanged_files.len(),
                 total_nodes,
                 total_edges,
