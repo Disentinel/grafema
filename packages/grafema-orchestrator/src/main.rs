@@ -5,6 +5,67 @@ use clap::{Parser, Subcommand};
 use std::collections::HashSet;
 use std::path::PathBuf;
 
+/// Query ALL resolve-type nodes from RFDB for a given language.
+///
+/// Unlike `collect_resolve_nodes_for_lang` which only sees nodes from changed
+/// files (via `results`), this queries the full graph — ensuring cross-file
+/// resolution works correctly in incremental mode.
+async fn query_resolve_nodes_for_lang(
+    rfdb_client: &mut rfdb::RfdbClient,
+    lang: config::Language,
+) -> Result<Vec<serde_json::Value>> {
+    let mut all_nodes = Vec::new();
+
+    for node_type in analyzer::resolve_node_types() {
+        let nodes = rfdb_client.query_nodes_by_type(node_type).await?;
+        for node in &nodes {
+            if let Some(ref file) = node.file {
+                if config::detect_language(std::path::Path::new(file)) == Some(lang) {
+                    all_nodes.push(analyzer::wire_node_to_resolve_json(node));
+                }
+            }
+        }
+    }
+
+    Ok(all_nodes)
+}
+
+/// Query ALL resolve-type nodes from RFDB for JVM languages (Java + Kotlin).
+async fn query_resolve_nodes_for_jvm(
+    rfdb_client: &mut rfdb::RfdbClient,
+) -> Result<Vec<serde_json::Value>> {
+    let mut all_nodes = Vec::new();
+
+    for node_type in analyzer::resolve_node_types() {
+        let nodes = rfdb_client.query_nodes_by_type(node_type).await?;
+        for node in &nodes {
+            if let Some(ref file) = node.file {
+                let lang = config::detect_language(std::path::Path::new(file));
+                if matches!(lang, Some(config::Language::Java) | Some(config::Language::Kotlin)) {
+                    all_nodes.push(analyzer::wire_node_to_resolve_json(node));
+                }
+            }
+        }
+    }
+
+    Ok(all_nodes)
+}
+
+/// Tag virtual resolution output nodes with a synthetic file for cleanup.
+///
+/// Resolution plugins create virtual nodes (GLOBAL::*, BUILTIN::*) with no file.
+/// Without a synthetic file, `commit_batch` can't clean them up (file-based deletion).
+/// This assigns a per-plugin synthetic file so old virtual nodes are properly
+/// tombstoned before new ones are added.
+fn tag_virtual_nodes(output: &mut plugin::PluginOutput, plugin_name: &str) {
+    let synthetic_file = format!("__grafema_virtual/{}", plugin_name);
+    for node in &mut output.nodes {
+        if node.file.is_none() || node.file.as_deref() == Some("") {
+            node.file = Some(synthetic_file.clone());
+        }
+    }
+}
+
 #[derive(Parser)]
 #[command(name = "grafema-orchestrator", version, about = "Grafema analysis pipeline orchestrator")]
 struct Cli {
@@ -115,7 +176,7 @@ async fn main() -> Result<()> {
 
             // Discover workspace packages from services config
             let ws_packages_raw = config::discover_workspace_packages(&cfg.root, &cfg.services);
-            let ws_packages: Vec<plugin::WorkspacePackageWire> = ws_packages_raw
+            let mut ws_packages: Vec<plugin::WorkspacePackageWire> = ws_packages_raw
                 .iter()
                 .map(|p| plugin::WorkspacePackageWire {
                     name: p.name.clone(),
@@ -123,10 +184,35 @@ async fn main() -> Result<()> {
                     package_dir: p.package_dir.clone(),
                 })
                 .collect();
+
+            // Expand aliases into virtual workspace packages.
+            // E.g., alias "jodit/esm" → "jodit/src" creates a virtual package
+            // so `import from 'jodit/esm/config'` resolves to `jodit/src/config.ts`.
+            for (alias_prefix, target_dir) in &cfg.aliases {
+                let index_candidates = ["index.ts", "index.tsx", "index.js"];
+                let entry = index_candidates
+                    .iter()
+                    .map(|f| format!("{}/{}", target_dir, f))
+                    .find(|p| cfg.root.join(p).exists())
+                    .unwrap_or_else(|| format!("{}/index.ts", target_dir));
+
+                tracing::info!(
+                    alias = %alias_prefix,
+                    target = %target_dir,
+                    entry = %entry,
+                    "Alias expanded to virtual workspace package"
+                );
+                ws_packages.push(plugin::WorkspacePackageWire {
+                    name: alias_prefix.clone(),
+                    entry_point: entry,
+                    package_dir: target_dir.clone(),
+                });
+            }
+
             if !ws_packages.is_empty() {
                 tracing::info!(
                     count = ws_packages.len(),
-                    "Discovered workspace packages for cross-package resolution"
+                    "Workspace packages for cross-package resolution (including aliases)"
                 );
             }
 
@@ -409,8 +495,12 @@ async fn main() -> Result<()> {
                 }
             }
 
-            // Rebuild indexes once after all deferred commits
-            rfdb.rebuild_indexes().await.context("Failed to rebuild indexes")?;
+            // NOTE: Do NOT flush/rebuild_indexes here. Analysis commits
+            // tombstone resolution edges (via delete_node cascading to edges).
+            // If we flush now, tombstones get persisted to the store before
+            // resolution can clear them via add_edges. Resolution edges would
+            // then be removed by compaction. Let compact() handle the flush.
+            // V2 engine write buffers are queryable without flushing.
 
             tracing::info!(
                 nodes = total_nodes,
@@ -441,19 +531,31 @@ async fn main() -> Result<()> {
             // Collect IMPORTS_FROM edges from all import resolvers for DEPENDS_ON derivation
             let mut all_imports_from_edges: Vec<(String, String)> = Vec::new();
 
-            // Build file → MODULE semantic ID map from analysis results
-            let file_to_module: std::collections::HashMap<String, String> = results
-                .iter()
-                .filter_map(|r| r.analysis.as_ref())
-                .map(|a| (a.file.clone(), a.module_id.clone()))
-                .collect();
+            // Build file → MODULE semantic ID map from RFDB (full graph)
+            let file_to_module: std::collections::HashMap<String, String> = {
+                let module_nodes = rfdb.query_nodes_by_type("MODULE").await
+                    .unwrap_or_default();
+                module_nodes
+                    .into_iter()
+                    .filter_map(|n| {
+                        let file = n.file?;
+                        let sid = n.semantic_id.or(Some(n.id))?;
+                        Some((file, sid))
+                    })
+                    .collect()
+            };
 
-            // 8. Run resolution plugins with in-memory node data (bypasses RFDB round-trip)
-            let resolve_nodes = analyzer::collect_resolve_nodes_for_lang(&results, config::Language::JavaScript);
+            // 8. Run resolution plugins with FULL graph from RFDB
+            //    (queries all nodes, not just changed files — fixes incremental resolution)
+            let resolve_nodes = if !js_files.is_empty() {
+                query_resolve_nodes_for_lang(&mut rfdb, config::Language::JavaScript).await?
+            } else {
+                Vec::new()
+            };
             if !resolve_nodes.is_empty() {
                 tracing::info!(
                     nodes = resolve_nodes.len(),
-                    "Running built-in resolution with in-memory nodes"
+                    "Running built-in resolution with full graph nodes"
                 );
 
                 let resolve_pool_config = process_pool::PoolConfig {
@@ -475,6 +577,7 @@ async fn main() -> Result<()> {
                         .context("Import resolution failed")?;
                         plugin::validate_plugin_output(&import_output)?;
                         plugin::stamp_metadata(&mut import_output, "js-import-resolution", generation);
+                        tag_virtual_nodes(&mut import_output, "js-import-resolution");
 
                         let import_files: Vec<String> = import_output
                             .nodes
@@ -483,7 +586,7 @@ async fn main() -> Result<()> {
                             .collect::<std::collections::HashSet<_>>()
                             .into_iter()
                             .collect();
-                        rfdb.commit_batch(&import_files, &import_output.nodes, &import_output.edges, false)
+                        rfdb.commit_batch(&import_files, &import_output.nodes, &import_output.edges, true)
                             .await
                             .context("Failed to commit import resolution output")?;
 
@@ -511,6 +614,7 @@ async fn main() -> Result<()> {
                         .context("Runtime globals resolution failed")?;
                         plugin::validate_plugin_output(&globals_output)?;
                         plugin::stamp_metadata(&mut globals_output, "runtime-globals", generation);
+                        tag_virtual_nodes(&mut globals_output, "runtime-globals");
 
                         let globals_files: Vec<String> = globals_output
                             .nodes
@@ -519,7 +623,7 @@ async fn main() -> Result<()> {
                             .collect::<std::collections::HashSet<_>>()
                             .into_iter()
                             .collect();
-                        rfdb.commit_batch(&globals_files, &globals_output.nodes, &globals_output.edges, false)
+                        rfdb.commit_batch(&globals_files, &globals_output.nodes, &globals_output.edges, true)
                             .await
                             .context("Failed to commit runtime globals output")?;
 
@@ -540,6 +644,7 @@ async fn main() -> Result<()> {
                         .context("Builtins resolution failed")?;
                         plugin::validate_plugin_output(&builtins_output)?;
                         plugin::stamp_metadata(&mut builtins_output, "builtins", generation);
+                        tag_virtual_nodes(&mut builtins_output, "builtins");
 
                         let builtins_files: Vec<String> = builtins_output
                             .nodes
@@ -548,7 +653,7 @@ async fn main() -> Result<()> {
                             .collect::<std::collections::HashSet<_>>()
                             .into_iter()
                             .collect();
-                        rfdb.commit_batch(&builtins_files, &builtins_output.nodes, &builtins_output.edges, false)
+                        rfdb.commit_batch(&builtins_files, &builtins_output.nodes, &builtins_output.edges, true)
                             .await
                             .context("Failed to commit builtins resolution output")?;
 
@@ -569,6 +674,7 @@ async fn main() -> Result<()> {
                         .context("Cross-file CALLS resolution failed")?;
                         plugin::validate_plugin_output(&cross_file_output)?;
                         plugin::stamp_metadata(&mut cross_file_output, "cross-file-calls", generation);
+                        tag_virtual_nodes(&mut cross_file_output, "cross-file-calls");
 
                         let cross_file_files: Vec<String> = cross_file_output
                             .nodes
@@ -577,7 +683,7 @@ async fn main() -> Result<()> {
                             .collect::<std::collections::HashSet<_>>()
                             .into_iter()
                             .collect();
-                        rfdb.commit_batch(&cross_file_files, &cross_file_output.nodes, &cross_file_output.edges, false)
+                        rfdb.commit_batch(&cross_file_files, &cross_file_output.nodes, &cross_file_output.edges, true)
                             .await
                             .context("Failed to commit cross-file CALLS output")?;
 
@@ -598,6 +704,7 @@ async fn main() -> Result<()> {
                         .context("Same-file CALLS resolution failed")?;
                         plugin::validate_plugin_output(&same_file_output)?;
                         plugin::stamp_metadata(&mut same_file_output, "same-file-calls", generation);
+                        tag_virtual_nodes(&mut same_file_output, "same-file-calls");
 
                         let same_file_files: Vec<String> = same_file_output
                             .nodes
@@ -606,7 +713,7 @@ async fn main() -> Result<()> {
                             .collect::<std::collections::HashSet<_>>()
                             .into_iter()
                             .collect();
-                        rfdb.commit_batch(&same_file_files, &same_file_output.nodes, &same_file_output.edges, false)
+                        rfdb.commit_batch(&same_file_files, &same_file_output.nodes, &same_file_output.edges, true)
                             .await
                             .context("Failed to commit same-file CALLS output")?;
 
@@ -627,6 +734,7 @@ async fn main() -> Result<()> {
                         .context("Property access resolution failed")?;
                         plugin::validate_plugin_output(&prop_access_output)?;
                         plugin::stamp_metadata(&mut prop_access_output, "property-access", generation);
+                        tag_virtual_nodes(&mut prop_access_output, "property-access");
 
                         let prop_access_files: Vec<String> = prop_access_output
                             .nodes
@@ -635,7 +743,7 @@ async fn main() -> Result<()> {
                             .collect::<std::collections::HashSet<_>>()
                             .into_iter()
                             .collect();
-                        rfdb.commit_batch(&prop_access_files, &prop_access_output.nodes, &prop_access_output.edges, false)
+                        rfdb.commit_batch(&prop_access_files, &prop_access_output.nodes, &prop_access_output.edges, true)
                             .await
                             .context("Failed to commit property access output")?;
 
@@ -656,6 +764,7 @@ async fn main() -> Result<()> {
                         .context("JS local refs resolution failed")?;
                         plugin::validate_plugin_output(&js_local_refs_output)?;
                         plugin::stamp_metadata(&mut js_local_refs_output, "js-local-refs", generation);
+                        tag_virtual_nodes(&mut js_local_refs_output, "js-local-refs");
 
                         let js_local_refs_files: Vec<String> = js_local_refs_output
                             .nodes
@@ -664,7 +773,7 @@ async fn main() -> Result<()> {
                             .collect::<std::collections::HashSet<_>>()
                             .into_iter()
                             .collect();
-                        rfdb.commit_batch(&js_local_refs_files, &js_local_refs_output.nodes, &js_local_refs_output.edges, false)
+                        rfdb.commit_batch(&js_local_refs_files, &js_local_refs_output.nodes, &js_local_refs_output.edges, true)
                             .await
                             .context("Failed to commit JS local refs output")?;
 
@@ -686,7 +795,7 @@ async fn main() -> Result<()> {
 
             // 8a. Run Haskell import resolution (if Haskell files were analyzed)
             if !hs_files.is_empty() {
-                let hs_resolve_nodes = analyzer::collect_resolve_nodes_for_lang(&results, config::Language::Haskell);
+                let hs_resolve_nodes = query_resolve_nodes_for_lang(&mut rfdb, config::Language::Haskell).await?;
                 if !hs_resolve_nodes.is_empty() {
                     tracing::info!(
                         nodes = hs_resolve_nodes.len(),
@@ -711,6 +820,7 @@ async fn main() -> Result<()> {
                             .context("Haskell import resolution failed")?;
                             plugin::validate_plugin_output(&hs_import_output)?;
                             plugin::stamp_metadata(&mut hs_import_output, "haskell-import-resolution", generation);
+                            tag_virtual_nodes(&mut hs_import_output, "haskell-import-resolution");
 
                             let hs_import_files: Vec<String> = hs_import_output
                                 .nodes
@@ -719,7 +829,7 @@ async fn main() -> Result<()> {
                                 .collect::<std::collections::HashSet<_>>()
                                 .into_iter()
                                 .collect();
-                            rfdb.commit_batch(&hs_import_files, &hs_import_output.nodes, &hs_import_output.edges, false)
+                            rfdb.commit_batch(&hs_import_files, &hs_import_output.nodes, &hs_import_output.edges, true)
                                 .await
                                 .context("Failed to commit Haskell import resolution output")?;
 
@@ -746,6 +856,7 @@ async fn main() -> Result<()> {
                             .context("Haskell local refs resolution failed")?;
                             plugin::validate_plugin_output(&hs_local_output)?;
                             plugin::stamp_metadata(&mut hs_local_output, "haskell-local-refs", generation);
+                            tag_virtual_nodes(&mut hs_local_output, "haskell-local-refs");
 
                             let hs_local_files: Vec<String> = hs_local_output
                                 .nodes
@@ -754,7 +865,7 @@ async fn main() -> Result<()> {
                                 .collect::<std::collections::HashSet<_>>()
                                 .into_iter()
                                 .collect();
-                            rfdb.commit_batch(&hs_local_files, &hs_local_output.nodes, &hs_local_output.edges, false)
+                            rfdb.commit_batch(&hs_local_files, &hs_local_output.nodes, &hs_local_output.edges, true)
                                 .await
                                 .context("Failed to commit Haskell local refs output")?;
 
@@ -777,7 +888,7 @@ async fn main() -> Result<()> {
 
             // 8b. Run Rust import resolution (if Rust files were analyzed)
             if !rs_files.is_empty() {
-                let rs_resolve_nodes = analyzer::collect_resolve_nodes_for_lang(&results, config::Language::Rust);
+                let rs_resolve_nodes = query_resolve_nodes_for_lang(&mut rfdb, config::Language::Rust).await?;
                 if !rs_resolve_nodes.is_empty() {
                     tracing::info!(
                         nodes = rs_resolve_nodes.len(),
@@ -802,6 +913,7 @@ async fn main() -> Result<()> {
                             .context("Rust import resolution failed")?;
                             plugin::validate_plugin_output(&rs_import_output)?;
                             plugin::stamp_metadata(&mut rs_import_output, "rust-import-resolution", generation);
+                            tag_virtual_nodes(&mut rs_import_output, "rust-import-resolution");
 
                             let rs_import_files: Vec<String> = rs_import_output
                                 .nodes
@@ -810,7 +922,7 @@ async fn main() -> Result<()> {
                                 .collect::<std::collections::HashSet<_>>()
                                 .into_iter()
                                 .collect();
-                            rfdb.commit_batch(&rs_import_files, &rs_import_output.nodes, &rs_import_output.edges, false)
+                            rfdb.commit_batch(&rs_import_files, &rs_import_output.nodes, &rs_import_output.edges, true)
                                 .await
                                 .context("Failed to commit Rust import resolution output")?;
 
@@ -839,7 +951,7 @@ async fn main() -> Result<()> {
 
             // 8c. Run Java resolution (imports, types, calls, annotations — single pass)
             if !java_files.is_empty() {
-                let java_resolve_nodes = analyzer::collect_resolve_nodes_for_lang(&results, config::Language::Java);
+                let java_resolve_nodes = query_resolve_nodes_for_lang(&mut rfdb, config::Language::Java).await?;
                 if !java_resolve_nodes.is_empty() {
                     tracing::info!(
                         nodes = java_resolve_nodes.len(),
@@ -864,6 +976,7 @@ async fn main() -> Result<()> {
                             .context("Java resolution failed")?;
                             plugin::validate_plugin_output(&java_resolve_output)?;
                             plugin::stamp_metadata(&mut java_resolve_output, "java-resolution", generation);
+                            tag_virtual_nodes(&mut java_resolve_output, "java-resolution");
 
                             let java_resolve_files: Vec<String> = java_resolve_output
                                 .nodes
@@ -872,7 +985,7 @@ async fn main() -> Result<()> {
                                 .collect::<std::collections::HashSet<_>>()
                                 .into_iter()
                                 .collect();
-                            rfdb.commit_batch(&java_resolve_files, &java_resolve_output.nodes, &java_resolve_output.edges, false)
+                            rfdb.commit_batch(&java_resolve_files, &java_resolve_output.nodes, &java_resolve_output.edges, true)
                                 .await
                                 .context("Failed to commit Java resolution output")?;
 
@@ -901,7 +1014,7 @@ async fn main() -> Result<()> {
 
             // 8d. Run Kotlin resolution (imports, types, calls, annotations — single pass)
             if !kotlin_files.is_empty() {
-                let kotlin_resolve_nodes = analyzer::collect_resolve_nodes_for_lang(&results, config::Language::Kotlin);
+                let kotlin_resolve_nodes = query_resolve_nodes_for_lang(&mut rfdb, config::Language::Kotlin).await?;
                 if !kotlin_resolve_nodes.is_empty() {
                     tracing::info!(
                         nodes = kotlin_resolve_nodes.len(),
@@ -926,6 +1039,7 @@ async fn main() -> Result<()> {
                             .context("Kotlin resolution failed")?;
                             plugin::validate_plugin_output(&kotlin_resolve_output)?;
                             plugin::stamp_metadata(&mut kotlin_resolve_output, "kotlin-resolution", generation);
+                            tag_virtual_nodes(&mut kotlin_resolve_output, "kotlin-resolution");
 
                             let kotlin_resolve_files: Vec<String> = kotlin_resolve_output
                                 .nodes
@@ -934,7 +1048,7 @@ async fn main() -> Result<()> {
                                 .collect::<std::collections::HashSet<_>>()
                                 .into_iter()
                                 .collect();
-                            rfdb.commit_batch(&kotlin_resolve_files, &kotlin_resolve_output.nodes, &kotlin_resolve_output.edges, false)
+                            rfdb.commit_batch(&kotlin_resolve_files, &kotlin_resolve_output.nodes, &kotlin_resolve_output.edges, true)
                                 .await
                                 .context("Failed to commit Kotlin resolution output")?;
 
@@ -963,7 +1077,7 @@ async fn main() -> Result<()> {
 
             // 8e. Run Python resolution (imports, types, calls — single pass)
             if !py_files.is_empty() {
-                let py_resolve_nodes = analyzer::collect_resolve_nodes_for_lang(&results, config::Language::Python);
+                let py_resolve_nodes = query_resolve_nodes_for_lang(&mut rfdb, config::Language::Python).await?;
                 if !py_resolve_nodes.is_empty() {
                     tracing::info!(
                         nodes = py_resolve_nodes.len(),
@@ -988,6 +1102,7 @@ async fn main() -> Result<()> {
                             .context("Python resolution failed")?;
                             plugin::validate_plugin_output(&py_resolve_output)?;
                             plugin::stamp_metadata(&mut py_resolve_output, "python-resolution", generation);
+                            tag_virtual_nodes(&mut py_resolve_output, "python-resolution");
 
                             let py_resolve_files: Vec<String> = py_resolve_output
                                 .nodes
@@ -996,7 +1111,7 @@ async fn main() -> Result<()> {
                                 .collect::<std::collections::HashSet<_>>()
                                 .into_iter()
                                 .collect();
-                            rfdb.commit_batch(&py_resolve_files, &py_resolve_output.nodes, &py_resolve_output.edges, false)
+                            rfdb.commit_batch(&py_resolve_files, &py_resolve_output.nodes, &py_resolve_output.edges, true)
                                 .await
                                 .context("Failed to commit Python resolution output")?;
 
@@ -1025,7 +1140,7 @@ async fn main() -> Result<()> {
 
             // 8f. Run Go resolution
             if !go_files.is_empty() {
-                let go_resolve_nodes = analyzer::collect_resolve_nodes_for_lang(&results, config::Language::Go);
+                let go_resolve_nodes = query_resolve_nodes_for_lang(&mut rfdb, config::Language::Go).await?;
                 if !go_resolve_nodes.is_empty() {
                     tracing::info!(
                         nodes = go_resolve_nodes.len(),
@@ -1059,6 +1174,7 @@ async fn main() -> Result<()> {
                             .context("Go resolution failed")?;
                             plugin::validate_plugin_output(&go_resolve_output)?;
                             plugin::stamp_metadata(&mut go_resolve_output, "go-resolution", generation);
+                            tag_virtual_nodes(&mut go_resolve_output, "go-resolution");
 
                             let go_resolve_files: Vec<String> = go_resolve_output
                                 .nodes
@@ -1067,7 +1183,7 @@ async fn main() -> Result<()> {
                                 .collect::<std::collections::HashSet<_>>()
                                 .into_iter()
                                 .collect();
-                            rfdb.commit_batch(&go_resolve_files, &go_resolve_output.nodes, &go_resolve_output.edges, false)
+                            rfdb.commit_batch(&go_resolve_files, &go_resolve_output.nodes, &go_resolve_output.edges, true)
                                 .await
                                 .context("Failed to commit Go resolution output")?;
 
@@ -1219,7 +1335,7 @@ async fn main() -> Result<()> {
 
             // 8i. Run JVM cross-language resolution (Java <-> Kotlin, after both per-language resolvers)
             if !java_files.is_empty() && !kotlin_files.is_empty() {
-                let jvm_resolve_nodes = analyzer::collect_resolve_nodes_for_jvm(&results);
+                let jvm_resolve_nodes = query_resolve_nodes_for_jvm(&mut rfdb).await?;
                 if !jvm_resolve_nodes.is_empty() {
                     tracing::info!(
                         nodes = jvm_resolve_nodes.len(),
@@ -1244,6 +1360,7 @@ async fn main() -> Result<()> {
                             .context("JVM cross-language resolution failed")?;
                             plugin::validate_plugin_output(&jvm_cross_output)?;
                             plugin::stamp_metadata(&mut jvm_cross_output, "jvm-cross-resolution", generation);
+                            tag_virtual_nodes(&mut jvm_cross_output, "jvm-cross-resolution");
 
                             let jvm_cross_files: Vec<String> = jvm_cross_output
                                 .nodes
@@ -1252,7 +1369,7 @@ async fn main() -> Result<()> {
                                 .collect::<std::collections::HashSet<_>>()
                                 .into_iter()
                                 .collect();
-                            rfdb.commit_batch(&jvm_cross_files, &jvm_cross_output.nodes, &jvm_cross_output.edges, false)
+                            rfdb.commit_batch(&jvm_cross_files, &jvm_cross_output.nodes, &jvm_cross_output.edges, true)
                                 .await
                                 .context("Failed to commit JVM cross-language resolution output")?;
 
@@ -1281,7 +1398,7 @@ async fn main() -> Result<()> {
 
             // 8g.5. Run C/C++ resolution
             if !cpp_files.is_empty() {
-                let cpp_resolve_nodes = analyzer::collect_resolve_nodes_for_lang(&results, config::Language::Cpp);
+                let cpp_resolve_nodes = query_resolve_nodes_for_lang(&mut rfdb, config::Language::Cpp).await?;
                 if !cpp_resolve_nodes.is_empty() {
                     tracing::info!(
                         nodes = cpp_resolve_nodes.len(),
@@ -1306,6 +1423,7 @@ async fn main() -> Result<()> {
                             .context("C/C++ resolution failed")?;
                             plugin::validate_plugin_output(&cpp_resolve_output)?;
                             plugin::stamp_metadata(&mut cpp_resolve_output, "cpp-resolution", generation);
+                            tag_virtual_nodes(&mut cpp_resolve_output, "cpp-resolution");
 
                             let cpp_resolve_files: Vec<String> = cpp_resolve_output
                                 .nodes
@@ -1314,7 +1432,7 @@ async fn main() -> Result<()> {
                                 .collect::<std::collections::HashSet<_>>()
                                 .into_iter()
                                 .collect();
-                            rfdb.commit_batch(&cpp_resolve_files, &cpp_resolve_output.nodes, &cpp_resolve_output.edges, false)
+                            rfdb.commit_batch(&cpp_resolve_files, &cpp_resolve_output.nodes, &cpp_resolve_output.edges, true)
                                 .await
                                 .context("Failed to commit C/C++ resolution output")?;
 
@@ -1420,7 +1538,7 @@ async fn main() -> Result<()> {
                         })
                         .collect();
 
-                    rfdb.commit_batch(&[], &[], &depends_on_wire_edges, false)
+                    rfdb.commit_batch(&[], &[], &depends_on_wire_edges, true)
                         .await
                         .context("Failed to commit DEPENDS_ON edges")?;
 
@@ -1431,6 +1549,16 @@ async fn main() -> Result<()> {
                     );
                 }
             }
+
+            // Compact to deduplicate segments after all commits.
+            // This is needed because:
+            // 1. Re-analyzed files create new segment versions alongside old ones.
+            //    The superseded_node/edge_count in the engine corrects node_count()
+            //    for edges that go through the delete+readd path.
+            // 2. DEPENDS_ON and other derived edges are committed with empty
+            //    changed_files (no deletion phase), so old segment versions
+            //    accumulate. Compaction deduplicates these by (src,dst,type) key.
+            rfdb.compact().await.context("Failed to compact")?;
 
             // 10. Summary
             println!(

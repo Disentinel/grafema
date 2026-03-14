@@ -160,6 +160,12 @@ pub struct GraphEngineV2 {
     pending_tombstone_nodes: HashSet<u128>,
     /// Edge keys marked for deletion but not yet flushed.
     pending_tombstone_edges: HashSet<(u128, u128, String)>,
+    /// Count of nodes deleted then re-added (old segment version persists
+    /// alongside new write buffer version). Used to correct node_count().
+    /// Reset on compact() when segment dedup removes old versions.
+    superseded_node_count: usize,
+    /// Count of edges deleted then re-added. Same purpose as above.
+    superseded_edge_count: usize,
     /// Declared metadata fields for indexing (v1 compat).
     declared_fields: Vec<FieldDecl>,
     /// Cached tuning profile — avoids re-probing sysinfo on every write.
@@ -189,6 +195,8 @@ impl GraphEngineV2 {
             ephemeral: false,
             pending_tombstone_nodes: HashSet::new(),
             pending_tombstone_edges: HashSet::new(),
+            superseded_node_count: 0,
+            superseded_edge_count: 0,
             declared_fields: Vec::new(),
             cached_profile: profile,
             last_resource_check: Instant::now(),
@@ -204,6 +212,8 @@ impl GraphEngineV2 {
             ephemeral: true,
             pending_tombstone_nodes: HashSet::new(),
             pending_tombstone_edges: HashSet::new(),
+            superseded_node_count: 0,
+            superseded_edge_count: 0,
             declared_fields: Vec::new(),
             cached_profile: TuningProfile::default(),
             last_resource_check: Instant::now(),
@@ -232,6 +242,8 @@ impl GraphEngineV2 {
             ephemeral: false,
             pending_tombstone_nodes,
             pending_tombstone_edges,
+            superseded_node_count: 0,
+            superseded_edge_count: 0,
             declared_fields: Vec::new(),
             cached_profile: profile,
             last_resource_check: Instant::now(),
@@ -270,7 +282,12 @@ impl GraphStore for GraphEngineV2 {
         // Re-adding a node in the same session must resurrect it immediately.
         // Without this, delete->add keeps the node hidden until flush.
         for node in &v2_nodes {
-            self.pending_tombstone_nodes.remove(&node.id);
+            if self.pending_tombstone_nodes.remove(&node.id) {
+                // Node was deleted then re-added. The old version persists in
+                // a flushed segment alongside the new write-buffer version.
+                // Track this so node_count() subtracts the stale segment copy.
+                self.superseded_node_count += 1;
+            }
         }
         self.store.add_nodes(v2_nodes);
 
@@ -425,11 +442,11 @@ impl GraphStore for GraphEngineV2 {
         // Re-adding an edge in the same session must clear any pending tombstone
         // for the same (src, dst, type) triple.
         for edge in &v2_edges {
-            self.pending_tombstone_edges.remove(&(
-                edge.src,
-                edge.dst,
-                edge.edge_type.clone(),
-            ));
+            let key = (edge.src, edge.dst, edge.edge_type.clone());
+            if self.pending_tombstone_edges.remove(&key) {
+                // Edge was deleted then re-added. Old segment version persists.
+                self.superseded_edge_count += 1;
+            }
         }
         let result = self.store.upsert_edges(v2_edges);
         if !skip_validation {
@@ -598,8 +615,18 @@ impl GraphStore for GraphEngineV2 {
     }
 
     fn compact(&mut self) -> Result<()> {
-        let config = CompactionConfig::default();
+        // Flush write buffers to L0 segments first — resolution and derived
+        // edge commits use flush_data_only() (no-op in V2), so data may
+        // still be in write buffers at compact time.
+        self.flush()?;
+        // Force-compact all shards with any L0 segments (threshold=1).
+        // The default threshold (4) skips shards with few L0 segments,
+        // leaving old L1 + new L0 = double-counted nodes/edges.
+        let config = CompactionConfig { segment_threshold: 1 };
         self.store.compact(&mut self.manifest, &config)?;
+        // Compaction deduplicates segments — old superseded versions are removed.
+        self.superseded_node_count = 0;
+        self.superseded_edge_count = 0;
         Ok(())
     }
 
@@ -612,11 +639,13 @@ impl GraphStore for GraphEngineV2 {
     fn node_count(&self) -> usize {
         let total = self.store.node_count();
         total.saturating_sub(self.pending_tombstone_nodes.len())
+             .saturating_sub(self.superseded_node_count)
     }
 
     fn edge_count(&self) -> usize {
         let total = self.store.edge_count();
         total.saturating_sub(self.pending_tombstone_edges.len())
+             .saturating_sub(self.superseded_edge_count)
     }
 
     fn clear(&mut self) {
@@ -624,6 +653,8 @@ impl GraphStore for GraphEngineV2 {
         self.manifest = ManifestStore::ephemeral();
         self.pending_tombstone_nodes.clear();
         self.pending_tombstone_edges.clear();
+        self.superseded_node_count = 0;
+        self.superseded_edge_count = 0;
         self.declared_fields.clear();
     }
 
@@ -735,8 +766,13 @@ impl GraphEngineV2 {
     /// exposes the full `CompactionResult` including nodes_merged, edges_merged,
     /// tombstones_removed, and duration_ms.
     pub fn compact_with_stats(&mut self) -> Result<CompactionResult> {
-        let config = CompactionConfig::default();
-        self.store.compact(&mut self.manifest, &config)
+        // Flush write buffers to L0 first (same reason as compact()).
+        self.flush()?;
+        let config = CompactionConfig { segment_threshold: 1 };
+        let result = self.store.compact(&mut self.manifest, &config)?;
+        self.superseded_node_count = 0;
+        self.superseded_edge_count = 0;
+        Ok(result)
     }
 
     /// Tag an existing snapshot.

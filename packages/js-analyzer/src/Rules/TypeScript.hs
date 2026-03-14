@@ -28,6 +28,7 @@ ruleTSInterfaceDeclaration :: ASTNode -> Analyzer (Maybe Text)
 ruleTSInterfaceDeclaration node = do
   file <- askFile
   parent <- askNamedParent
+  isExported <- askExported
   let sp   = astNodeSpan node
       name = case getChildrenMaybe "id" node of
                Just idNode -> getTextFieldOr "name" "<interface>" idNode
@@ -38,7 +39,7 @@ ruleTSInterfaceDeclaration node = do
     { gnId = nodeId, gnType = "INTERFACE", gnName = name
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
     , gnEndLine = spanEnd sp, gnEndColumn = 0
-    , gnExported = False, gnMetadata = Map.empty
+    , gnExported = isExported, gnMetadata = Map.empty
     }
 
   -- Walk body
@@ -54,6 +55,7 @@ ruleTSTypeAliasDeclaration :: ASTNode -> Analyzer (Maybe Text)
 ruleTSTypeAliasDeclaration node = do
   file <- askFile
   parent <- askNamedParent
+  isExported <- askExported
   let sp   = astNodeSpan node
       name = case getChildrenMaybe "id" node of
                Just idNode -> getTextFieldOr "name" "<type>" idNode
@@ -64,7 +66,7 @@ ruleTSTypeAliasDeclaration node = do
     { gnId = nodeId, gnType = "TYPE_ALIAS", gnName = name
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
     , gnEndLine = spanEnd sp, gnEndColumn = 0
-    , gnExported = False, gnMetadata = Map.empty
+    , gnExported = isExported, gnMetadata = Map.empty
     }
 
   return (Just nodeId)
@@ -75,6 +77,7 @@ ruleTSEnumDeclaration :: ASTNode -> Analyzer (Maybe Text)
 ruleTSEnumDeclaration node = do
   file <- askFile
   parent <- askNamedParent
+  isExported <- askExported
   let sp   = astNodeSpan node
       name = case getChildrenMaybe "id" node of
                Just idNode -> getTextFieldOr "name" "<enum>" idNode
@@ -85,7 +88,7 @@ ruleTSEnumDeclaration node = do
     { gnId = nodeId, gnType = "ENUM", gnName = name
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
     , gnEndLine = spanEnd sp, gnEndColumn = 0
-    , gnExported = False, gnMetadata = Map.empty
+    , gnExported = isExported, gnMetadata = Map.empty
     }
 
   -- Walk body/members in class-like scope so members can find parent
@@ -102,6 +105,7 @@ ruleTSModuleDeclaration :: ASTNode -> Analyzer (Maybe Text)
 ruleTSModuleDeclaration node = do
   file <- askFile
   parent <- askNamedParent
+  isExported <- askExported
   let sp   = astNodeSpan node
       name = case getChildrenMaybe "id" node of
                Just idNode -> getTextFieldOr "name" "<namespace>" idNode
@@ -112,7 +116,7 @@ ruleTSModuleDeclaration node = do
     { gnId = nodeId, gnType = "NAMESPACE", gnName = name
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
     , gnEndLine = spanEnd sp, gnEndColumn = 0
-    , gnExported = False, gnMetadata = Map.empty
+    , gnExported = isExported, gnMetadata = Map.empty
     }
 
   case getChildrenMaybe "body" node of

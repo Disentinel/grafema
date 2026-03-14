@@ -43,10 +43,11 @@ const EXPECTED_HANDLERS = [
   'handleQueryDecisions',
   'handleSupersedeFact',
   'handleGetKnowledgeStats',
-  'handleGitChurn',
-  'handleGitCoChange',
-  'handleGitOwnership',
-  'handleGitArchaeology',
+  // git-ingest handlers disabled (US-17), see handlers/index.ts
+  // 'handleGitChurn',
+  // 'handleGitCoChange',
+  // 'handleGitOwnership',
+  // 'handleGitArchaeology',
   'handleDescribe',
   'handleGraphQLQuery',
 ];

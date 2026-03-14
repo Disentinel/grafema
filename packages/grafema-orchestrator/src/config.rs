@@ -122,6 +122,24 @@ pub struct AnalyzerConfig {
     /// Auto-detected from git remote if not specified.
     #[serde(default)]
     pub authority: Option<String>,
+
+    /// Import path aliases for resolving build-artifact paths to source.
+    ///
+    /// Maps import prefixes to source directories. Useful when packages
+    /// are imported via build-output paths (e.g., `jodit/esm/config`)
+    /// that don't exist in the source tree.
+    ///
+    /// Example:
+    /// ```yaml
+    /// aliases:
+    ///   "jodit/esm": "jodit/src"
+    ///   "jodit/es2021": "jodit/src"
+    /// ```
+    ///
+    /// Internally, each alias creates a virtual workspace package so the
+    /// existing sub-path resolution handles `jodit/esm/config` → `jodit/src/config.ts`.
+    #[serde(default)]
+    pub aliases: std::collections::HashMap<String, String>,
 }
 
 /// Optional overrides for analyzer binary paths.
