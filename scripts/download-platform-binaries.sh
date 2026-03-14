@@ -75,7 +75,8 @@ echo -e "${BLUE}Downloading binaries from release: $TAG${NC}"
 echo "Repository: $REPO"
 echo ""
 
-PLATFORMS=("darwin-arm64" "darwin-x64" "linux-arm64" "linux-x64")
+PLATFORMS=("darwin-arm64" "darwin-x64" "linux-x64")
+# linux-arm64 excluded: Haskell cross-compilation not supported yet (c_char bug)
 
 # Required binaries — fail if any missing for any platform
 REQUIRED_BINARIES=("rfdb-server" "grafema-orchestrator")
@@ -99,8 +100,6 @@ OPTIONAL_BINARIES=(
   "go-parser"
 )
 
-ALL_BINARIES=("${REQUIRED_BINARIES[@]}" "${OPTIONAL_BINARIES[@]}")
-
 TOTAL_DOWNLOADED=0
 TOTAL_FAILED=0
 REQUIRED_MISSING=()
@@ -111,11 +110,13 @@ for PLATFORM in "${PLATFORMS[@]}"; do
 
   echo -e "${BLUE}=== $PLATFORM ===${NC}"
 
-  for BINARY in "${ALL_BINARIES[@]}"; do
+  # Download ONLY required binaries into platform packages (shipped via npm)
+  # Optional binaries (Haskell analyzers, language-specific tools) are NOT included —
+  # they are lazy-downloaded to ~/.grafema/bin/ on first use via ensureBinary()
+  for BINARY in "${REQUIRED_BINARIES[@]}"; do
     ASSET_NAME="${BINARY}-${PLATFORM}"
     TARGET_FILE="${TARGET_DIR}/${BINARY}"
 
-    # Try to download
     if gh release download "$TAG" --repo "$REPO" --pattern "$ASSET_NAME" --dir "$TARGET_DIR" --clobber 2>/dev/null; then
       mv "$TARGET_DIR/$ASSET_NAME" "$TARGET_FILE"
       chmod +x "$TARGET_FILE"
@@ -124,22 +125,17 @@ for PLATFORM in "${PLATFORMS[@]}"; do
       echo -e "  ${GREEN}OK${NC} $BINARY ($SIZE)"
       ((TOTAL_DOWNLOADED++))
     else
-      # Check if required
-      IS_REQUIRED=false
-      for REQ in "${REQUIRED_BINARIES[@]}"; do
-        if [ "$BINARY" = "$REQ" ]; then
-          IS_REQUIRED=true
-          break
-        fi
-      done
+      echo -e "  ${RED}MISSING${NC} $BINARY (REQUIRED)"
+      REQUIRED_MISSING+=("${BINARY}-${PLATFORM}")
+      ((TOTAL_FAILED++))
+    fi
+  done
 
-      if [ "$IS_REQUIRED" = true ]; then
-        echo -e "  ${RED}MISSING${NC} $BINARY (REQUIRED)"
-        REQUIRED_MISSING+=("${BINARY}-${PLATFORM}")
-        ((TOTAL_FAILED++))
-      else
-        echo -e "  ${YELLOW}skip${NC} $BINARY (not in release)"
-      fi
+  # Clean up any stale optional binaries from previous runs
+  for BINARY in "${OPTIONAL_BINARIES[@]}"; do
+    if [ -f "${TARGET_DIR}/${BINARY}" ]; then
+      rm -f "${TARGET_DIR}/${BINARY}"
+      echo -e "  ${YELLOW}removed${NC} $BINARY (not shipped in npm — lazy download)"
     fi
   done
 
