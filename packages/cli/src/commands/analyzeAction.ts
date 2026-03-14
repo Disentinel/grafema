@@ -197,7 +197,7 @@ export async function analyzeAction(path: string, options: { service?: string; e
         env: {
           ...process.env,
           // Pass RUST_LOG for tracing verbosity
-          RUST_LOG: options.verbose ? 'info' : (options.debug ? 'debug' : 'warn'),
+          RUST_LOG: options.debug ? 'debug' : (options.quiet ? 'warn' : 'info'),
         },
       });
 

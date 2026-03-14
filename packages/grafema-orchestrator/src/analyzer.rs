@@ -654,7 +654,12 @@ pub async fn analyze_files_parallel_pooled(
                     .await
                     .expect("Semaphore closed unexpectedly");
 
-                tracing::info!("[{}/{}] Analyzing {}", idx + 1, total, file_display);
+                // Log milestones (every 100 files), or every file for small batches
+                if total <= 100 || (idx + 1) % 100 == 0 || idx + 1 == total {
+                    tracing::info!("[{}/{}] Analyzing {}", idx + 1, total, file_display);
+                } else {
+                    tracing::debug!("[{}/{}] Analyzing {}", idx + 1, total, file_display);
+                }
 
                 let mut errors = Vec::new();
 
@@ -2448,7 +2453,12 @@ pub async fn analyze_files_parallel(
                     .await
                     .expect("Semaphore closed unexpectedly");
 
-                tracing::info!("[{}/{}] Analyzing {}", idx + 1, total, file_display);
+                // Log milestones (every 100 files), or every file for small batches
+                if total <= 100 || (idx + 1) % 100 == 0 || idx + 1 == total {
+                    tracing::info!("[{}/{}] Analyzing {}", idx + 1, total, file_display);
+                } else {
+                    tracing::debug!("[{}/{}] Analyzing {}", idx + 1, total, file_display);
+                }
 
                 let mut errors = Vec::new();
 
