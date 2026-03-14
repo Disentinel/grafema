@@ -217,6 +217,10 @@ struct RawResponse {
     // DatalogQuery results
     #[serde(default)]
     results: Option<Vec<DatalogResult>>,
+
+    // QueryNodes results
+    #[serde(default)]
+    nodes: Option<Vec<WireNode>>,
 }
 
 impl RawResponse {
@@ -571,6 +575,16 @@ impl RfdbClient {
         Ok(())
     }
 
+    /// Compact the graph storage, merging segments and deduplicating nodes/edges.
+    ///
+    /// Should be called after `rebuild_indexes` to ensure that re-analyzed files
+    /// don't cause duplicate counts (old segment + new segment for same node ID).
+    pub async fn compact(&mut self) -> Result<()> {
+        self.send_command("compact", serde_json::json!({}))
+            .await?;
+        Ok(())
+    }
+
     /// Send a single CommitBatch chunk to the server.
     async fn send_commit_batch_chunk(
         &mut self,
@@ -604,6 +618,20 @@ impl RfdbClient {
         let resp = self.send_command("executeDatalog", params).await?;
 
         Ok(resp.results.unwrap_or_default())
+    }
+
+    /// Query nodes by type from RFDB.
+    ///
+    /// Returns all nodes matching the given `node_type` string.
+    /// Uses the QueryNodes wire command with a type filter.
+    pub async fn query_nodes_by_type(&mut self, node_type: &str) -> Result<Vec<WireNode>> {
+        let params = serde_json::json!({
+            "query": {
+                "nodeType": node_type
+            }
+        });
+        let resp = self.send_command("queryNodes", params).await?;
+        Ok(resp.nodes.unwrap_or_default())
     }
 
     /// Health-check ping. Returns `Ok(true)` if the server responds with `pong`.
@@ -790,6 +818,7 @@ mod tests {
             edge_count: None,
             delta: None,
             results: None,
+            nodes: None,
         };
         assert!(resp.check_error().is_ok());
     }
@@ -811,6 +840,7 @@ mod tests {
             edge_count: None,
             delta: None,
             results: None,
+            nodes: None,
         };
         let err = resp.check_error().unwrap_err();
         let msg = err.to_string();
