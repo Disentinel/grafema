@@ -14,6 +14,7 @@ import type { GrafemaClientManager } from './grafemaClient';
 import { findNodeAtCursor } from './nodeLocator';
 import { traceBackward } from './traceEngine';
 import type { TraceNode } from './types';
+import { isCodeDocument } from './utils';
 
 /** Depth for hover backward trace — 3 levels is sufficient for hover context */
 const HOVER_DEPTH = 3;
@@ -26,7 +27,7 @@ export class GrafemaHoverProvider implements vscode.HoverProvider {
     position: vscode.Position,
     token: vscode.CancellationToken
   ): Promise<vscode.Hover | null> {
-    if (document.uri.scheme !== 'file') return null;
+    if (!isCodeDocument(document.uri)) return null;
     if (!this.clientManager.isConnected()) return null;
 
     try {

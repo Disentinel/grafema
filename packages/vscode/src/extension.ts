@@ -13,7 +13,7 @@ import { StatusProvider } from './statusProvider';
 import { DebugProvider } from './debugProvider';
 import { findNodeAtCursor } from './nodeLocator';
 import type { GraphTreeItem } from './types';
-import { debounce, getIconName } from './utils';
+import { debounce, getIconName, isCodeDocument } from './utils';
 import { buildTreeState } from './treeStateExporter';
 import { findAndSetRoot, updateStatusBar } from './cursorTracker';
 import { ValueTraceProvider } from './valueTraceProvider';
@@ -191,7 +191,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   }
 
   // Initial load for already-open file
-  if (vscode.window.activeTextEditor?.document.uri.scheme === 'file') {
+  if (vscode.window.activeTextEditor && isCodeDocument(vscode.window.activeTextEditor.document.uri)) {
     const absPath = vscode.window.activeTextEditor.document.uri.fsPath;
     const relPath = workspaceRoot && absPath.startsWith(workspaceRoot)
       ? absPath.slice(workspaceRoot.length + 1)
@@ -543,7 +543,7 @@ function registerCommands(): vscode.Disposable[] {
   // Update Nodes in File panel when active editor changes
   disposables.push(vscode.window.onDidChangeActiveTextEditor(async (editor) => {
     if (!nodesInFileProvider) return;
-    if (editor?.document.uri.scheme === 'file') {
+    if (editor && isCodeDocument(editor.document.uri)) {
       const absPath = editor.document.uri.fsPath;
       const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
       const relPath = wsRoot && absPath.startsWith(wsRoot)
@@ -598,7 +598,7 @@ async function resolveNodeAtCursor(): Promise<WireNode | null> {
 
   const editor = vscode.window.activeTextEditor;
   if (!editor) return null;
-  if (editor.document.uri.scheme !== 'file') return null;
+  if (!isCodeDocument(editor.document.uri)) return null;
 
   const position = editor.selection.active;
   const absPath = editor.document.uri.fsPath;
