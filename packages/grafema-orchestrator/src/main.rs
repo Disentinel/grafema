@@ -470,9 +470,13 @@ async fn main() -> Result<()> {
             }
 
             // 6. Ingest results into RFDB (deferred indexing for performance)
+            //    Batch all results into a single commit to avoid N round-trips.
             let mut total_nodes = 0usize;
             let mut total_edges = 0usize;
             let mut total_errors = 0usize;
+            let mut all_wire_nodes: Vec<rfdb::WireNode> = Vec::new();
+            let mut all_wire_edges: Vec<rfdb::WireEdge> = Vec::new();
+            let mut all_changed_files: Vec<String> = Vec::new();
 
             for result in &results {
                 if !result.errors.is_empty() {
@@ -497,14 +501,23 @@ async fn main() -> Result<()> {
                     total_nodes += wire_nodes.len();
                     total_edges += wire_edges.len();
 
-                    // Use relativized path for commit_batch file key
-                    let file_str = &analysis.file;
-                    rfdb.commit_batch(&[file_str.clone()], &wire_nodes, &wire_edges, true)
-                        .await
-                        .with_context(|| {
-                            format!("Failed to commit batch for {}", result.file.display())
-                        })?;
+                    all_changed_files.push(analysis.file.clone());
+                    all_wire_nodes.extend(wire_nodes);
+                    all_wire_edges.extend(wire_edges);
                 }
+            }
+
+            // Single batched commit (internally chunked by commit_batch if >10k)
+            if !all_wire_nodes.is_empty() || !all_wire_edges.is_empty() {
+                tracing::info!(
+                    files = all_changed_files.len(),
+                    nodes = all_wire_nodes.len(),
+                    edges = all_wire_edges.len(),
+                    "Committing analysis batch to RFDB"
+                );
+                rfdb.commit_batch(&all_changed_files, &all_wire_nodes, &all_wire_edges, true)
+                    .await
+                    .context("Failed to commit analysis batch")?;
             }
 
             // NOTE: Do NOT flush/rebuild_indexes here. Analysis commits
