@@ -42,10 +42,10 @@
     "directory": "packages/grafema"
   },
   "optionalDependencies": {
-    "@grafema/grafema-darwin-arm64": "workspace:*",
-    "@grafema/grafema-darwin-x64": "workspace:*",
-    "@grafema/grafema-linux-arm64": "workspace:*",
-    "@grafema/grafema-linux-x64": "workspace:*"
+    "@grafema/grafema-darwin-arm64": "0.3.0-beta",
+    "@grafema/grafema-darwin-x64": "0.3.0-beta",
+    "@grafema/grafema-linux-arm64": "0.3.0-beta",
+    "@grafema/grafema-linux-x64": "0.3.0-beta"
   },
   "dependencies": {
     "@grafema/api": "workspace:*",
