@@ -1,0 +1,30 @@
+# minimatch (v10.x) — Glob matching
+# Generated: 2026-03-15
+# Method: Grafema graph analysis + Claude inference, cross-validated
+# Taxonomy version: 1
+# purl: pkg:npm/minimatch
+#
+# Graph validation findings (10720 nodes, 26436 edges):
+#   - console.error (2 calls) → IO in debug/warning paths
+#   - process in GLOBAL_DEFINITION → platform detection
+#   - assertValidPattern (4 calls) → THROW on invalid patterns
+#   - NOT fully PURE as initially annotated
+
+minimatch:
+  minimatch: [THROW]            # calls assertValidPattern → throws on invalid pattern
+  filter: [THROW]               # returns a filter function, validates pattern
+  match: [THROW]                # filter array of paths, validates pattern
+  makeRe: [THROW]               # compile pattern to RegExp, validates
+  braceExpand: [PURE]           # expand brace patterns
+  escape: [PURE]                # escape special chars
+  unescape: [PURE]              # unescape special chars
+
+  # Minimatch class
+  Minimatch.new: [THROW]        # constructor validates pattern via assertValidPattern
+  Minimatch.match: [PURE]
+  Minimatch.matchOne: [PURE]
+  Minimatch.makeRe: [PURE]
+  Minimatch.hasMagic: [PURE]
+
+  # FOUND BY GRAFEMA — debug output
+  _internal.debug: [IO]         # console.error calls for debug output (2 call sites)

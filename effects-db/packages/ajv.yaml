@@ -1,0 +1,52 @@
+# ajv (v8.x) — JSON Schema Validator
+# Generated: 2026-03-15
+# Method: Grafema graph analysis + Claude source-code inference, cross-validated
+# Taxonomy version: 1
+# purl: pkg:npm/ajv
+#
+# Graph validation findings (31277 nodes, 76576 edges):
+#   - console in GLOBAL_DEFINITION but no CALL to console → not invoked directly
+#   - No external IO calls (no fetch, fs, http) — confirmed PURE core
+#   - resolver.resolve/parse are internal URI resolvers, not IO
+#
+# Source-code analysis corrections (batch 2 subagent):
+#   - compile/validate MUTATE: they cache schemas and set .errors property
+#   - compile/validate THROW: invalid schemas throw errors
+#   - compileAsync is IO: fetches remote $ref schemas via loadSchema callback
+
+ajv:
+  # Constructor — creates mutable instance with caches
+  Ajv.new: [MUTATION]
+
+  # Schema compilation — MUTATION (caches) + THROW (invalid schemas)
+  Ajv.compile: [MUTATION, THROW]
+  Ajv.compileAsync: [MUTATION, ASYNC, IO, THROW]  # fetches remote $ref schemas
+  Ajv.validate: [MUTATION, THROW]                  # compile + validate, sets .errors
+  Ajv.validateSchema: [MUTATION]
+  Ajv.addSchema: [MUTATION, THROW]
+  Ajv.addMetaSchema: [MUTATION]
+  Ajv.removeSchema: [MUTATION]
+  Ajv.getSchema: [PURE]
+
+  # Keywords & formats
+  Ajv.addKeyword: [MUTATION]
+  Ajv.removeKeyword: [MUTATION]
+  Ajv.addFormat: [MUTATION]
+  Ajv.addVocabulary: [MUTATION]
+
+  # Compiled validate function (result of compile())
+  # MUTATION because it sets validate.errors on each call
+  ValidateFunction: [MUTATION]
+
+  # Error formatting
+  Ajv.errorsText: [PURE]
+
+  # Standalone code generation
+  standaloneCode: [PURE]
+
+  # Error classes
+  ValidationError.new: [PURE]
+  MissingRefError.new: [PURE]
+
+  # ajv-formats plugin (commonly used with ajv)
+  addFormats: [MUTATION]

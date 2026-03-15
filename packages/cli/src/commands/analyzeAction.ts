@@ -7,8 +7,9 @@
  * the correct args, streams output, and prints a summary.
  */
 
-import { resolve, join } from 'path';
-import { existsSync, mkdirSync } from 'fs';
+import { resolve, join, dirname } from 'path';
+import { fileURLToPath } from 'url';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { spawn } from 'child_process';
 import {
   RFDBServerBackend,
@@ -17,6 +18,7 @@ import {
   getBinaryNotFoundMessage,
   findAnalyzerBinary,
   ensureBinary,
+  ManifestGenerator,
 } from '@grafema/util';
 import type { LogLevel } from '@grafema/util';
 
@@ -218,6 +220,16 @@ export async function analyzeAction(path: string, options: { service?: string; e
       info(`Analysis complete in ${elapsedSeconds.toFixed(2)}s`);
       info(`  Nodes: ${stats.nodeCount}`);
       info(`  Edges: ${stats.edgeCount}`);
+
+      // Generate manifest after successful analysis
+      try {
+        const manifestPath = await generateManifest(backend, projectPath, grafemaDir, debug);
+        if (manifestPath) {
+          info(`  Manifest: ${manifestPath}`);
+        }
+      } catch (err) {
+        debug(`Manifest generation skipped: ${err instanceof Error ? err.message : String(err)}`);
+      }
     } else {
       console.error('');
       console.error(`Analysis failed with exit code ${exitCode}`);
@@ -235,4 +247,92 @@ export async function analyzeAction(path: string, options: { service?: string; e
     // Exit with appropriate code
     exitWithCode(exitCode);
   }
+}
+
+/**
+ * Generate manifest.yaml after successful analysis.
+ * Reads package.json to determine package name and entry point,
+ * then runs ManifestGenerator against the graph.
+ *
+ * Returns the manifest file path, or null if generation was skipped.
+ */
+async function generateManifest(
+  backend: RFDBServerBackend,
+  projectPath: string,
+  grafemaDir: string,
+  debug: (...args: unknown[]) => void,
+): Promise<string | null> {
+  const pkgJsonPath = join(projectPath, 'package.json');
+  if (!existsSync(pkgJsonPath)) {
+    debug('No package.json found, skipping manifest generation');
+    return null;
+  }
+
+  const pkgJson = JSON.parse(readFileSync(pkgJsonPath, 'utf-8')) as {
+    name?: string;
+    version?: string;
+    main?: string;
+    exports?: Record<string, unknown>;
+  };
+
+  if (!pkgJson.name) {
+    debug('No package name in package.json, skipping manifest generation');
+    return null;
+  }
+
+  // Determine entry file: prefer exports["."] or main field
+  let entryFile: string | undefined;
+  if (pkgJson.exports) {
+    const dotExport = pkgJson.exports['.'];
+    if (typeof dotExport === 'string') {
+      entryFile = dotExport;
+    } else if (dotExport && typeof dotExport === 'object') {
+      const importField = (dotExport as Record<string, string>).import ?? (dotExport as Record<string, string>).default;
+      if (importField) entryFile = importField;
+    }
+  }
+  if (!entryFile && pkgJson.main) {
+    entryFile = pkgJson.main;
+  }
+
+  // Convert dist entry to src (e.g., "dist/index.js" → "src/index.ts")
+  if (entryFile) {
+    entryFile = entryFile
+      .replace(/^\.\//, '')
+      .replace(/^dist\//, 'src/')
+      .replace(/\.js$/, '.ts');
+  }
+
+  const purl = `pkg:npm/${pkgJson.name}${pkgJson.version ? `@${pkgJson.version}` : ''}`;
+
+  // Look for effects-db relative to CLI package
+  const cliDir = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+  const effectsDbCandidates = [
+    join(cliDir, 'effects-db'),
+    join(projectPath, 'effects-db'),
+  ];
+  const effectsDbPath = effectsDbCandidates.find(p => existsSync(p));
+
+  debug(`Generating manifest for ${pkgJson.name}`);
+  debug(`  purl: ${purl}`);
+  debug(`  entryFile: ${entryFile ?? '(none)'}`);
+  debug(`  effectsDb: ${effectsDbPath ?? '(none)'}`);
+
+  const gen = new ManifestGenerator(backend, {
+    purl,
+    effectsDbPath,
+    grafemaDir,
+    sourceType: 'source',
+    entryFile,
+  });
+
+  const manifest = await gen.generate();
+  const yaml = ManifestGenerator.toYaml(manifest);
+
+  const manifestPath = join(projectPath, 'manifest.yaml');
+  writeFileSync(manifestPath, yaml, 'utf-8');
+
+  debug(`  exports: ${manifest.exports.length}, imports: ${manifest.imports.length}`);
+
+  return manifestPath;
 }

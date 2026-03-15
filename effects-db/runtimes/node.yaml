@@ -1,0 +1,697 @@
+# Node.js Built-in Functions Effects Database
+# Generated: 2026-03-15
+# Method: 3 independent Claude subagent passes, cross-validated
+# Taxonomy version: 1
+#
+# Format: module.function: [EFFECT, ...]
+# For class methods: module.ClassName.method: [EFFECT, ...]
+# PURE means no other effects apply.
+
+# ============================================================
+# node:fs — Filesystem
+# ============================================================
+node:fs:
+  # Read operations
+  readFile: [IO, ASYNC]
+  readFileSync: [IO]
+  readdir: [IO, ASYNC]
+  readdirSync: [IO]
+  readlink: [IO, ASYNC]
+  readlinkSync: [IO]
+  read: [IO, ASYNC]
+  readSync: [IO]
+  readv: [IO, ASYNC]
+  readvSync: [IO]
+
+  # Write operations
+  writeFile: [IO, ASYNC, MUTATION]
+  writeFileSync: [IO, MUTATION]
+  write: [IO, ASYNC, MUTATION]
+  writeSync: [IO, MUTATION]
+  writev: [IO, ASYNC, MUTATION]
+  writevSync: [IO, MUTATION]
+  appendFile: [IO, ASYNC, MUTATION]
+  appendFileSync: [IO, MUTATION]
+
+  # Directory operations
+  mkdir: [IO, ASYNC, MUTATION]
+  mkdirSync: [IO, MUTATION]
+  mkdtemp: [IO, ASYNC, MUTATION]
+  mkdtempSync: [IO, MUTATION]
+  rmdir: [IO, ASYNC, MUTATION]
+  rmdirSync: [IO, MUTATION]
+  rm: [IO, ASYNC, MUTATION]
+  rmSync: [IO, MUTATION]
+
+  # Stat / metadata
+  stat: [IO, ASYNC]
+  statSync: [IO]
+  lstat: [IO, ASYNC]
+  lstatSync: [IO]
+  fstat: [IO, ASYNC]
+  fstatSync: [IO]
+  statfs: [IO, ASYNC]
+  statfsSync: [IO]
+
+  # Access / permissions
+  access: [IO, ASYNC]
+  accessSync: [IO]
+  chmod: [IO, ASYNC, MUTATION]
+  chmodSync: [IO, MUTATION]
+  fchmod: [IO, ASYNC, MUTATION]
+  fchmodSync: [IO, MUTATION]
+  lchmod: [IO, ASYNC, MUTATION]
+  lchmodSync: [IO, MUTATION]
+  chown: [IO, ASYNC, MUTATION]
+  chownSync: [IO, MUTATION]
+  fchown: [IO, ASYNC, MUTATION]
+  fchownSync: [IO, MUTATION]
+  lchown: [IO, ASYNC, MUTATION]
+  lchownSync: [IO, MUTATION]
+
+  # Links
+  link: [IO, ASYNC, MUTATION]
+  linkSync: [IO, MUTATION]
+  symlink: [IO, ASYNC, MUTATION]
+  symlinkSync: [IO, MUTATION]
+  unlink: [IO, ASYNC, MUTATION]
+  unlinkSync: [IO, MUTATION]
+
+  # Rename / copy
+  rename: [IO, ASYNC, MUTATION]
+  renameSync: [IO, MUTATION]
+  copyFile: [IO, ASYNC, MUTATION]
+  copyFileSync: [IO, MUTATION]
+  cp: [IO, ASYNC, MUTATION]
+  cpSync: [IO, MUTATION]
+
+  # Open / close
+  open: [IO, ASYNC]
+  openSync: [IO]
+  close: [IO, ASYNC]
+  closeSync: [IO]
+  opendir: [IO, ASYNC]
+  opendirSync: [IO]
+
+  # Watch
+  watch: [IO, NONDETERMINISTIC]
+  watchFile: [IO, NONDETERMINISTIC]
+  unwatchFile: [IO, MUTATION]
+
+  # Truncate / flush
+  truncate: [IO, ASYNC, MUTATION]
+  truncateSync: [IO, MUTATION]
+  ftruncate: [IO, ASYNC, MUTATION]
+  ftruncateSync: [IO, MUTATION]
+  fsync: [IO, ASYNC]
+  fsyncSync: [IO]
+  fdatasync: [IO, ASYNC]
+  fdatasyncSync: [IO]
+
+  # Misc
+  realpath: [IO, ASYNC]
+  realpathSync: [IO]
+  exists: [IO, ASYNC]
+  existsSync: [IO]
+  utimes: [IO, ASYNC, MUTATION]
+  utimesSync: [IO, MUTATION]
+  futimes: [IO, ASYNC, MUTATION]
+  futimesSync: [IO, MUTATION]
+  lutimes: [IO, ASYNC, MUTATION]
+  lutimesSync: [IO, MUTATION]
+  glob: [IO, ASYNC]
+  globSync: [IO]
+
+  # Streams
+  createReadStream: [IO]
+  createWriteStream: [IO, MUTATION]
+
+# ============================================================
+# node:fs/promises — Filesystem (Promise API)
+# ============================================================
+node:fs/promises:
+  readFile: [IO, ASYNC]
+  writeFile: [IO, ASYNC, MUTATION]
+  appendFile: [IO, ASYNC, MUTATION]
+  readdir: [IO, ASYNC]
+  readlink: [IO, ASYNC]
+  mkdir: [IO, ASYNC, MUTATION]
+  mkdtemp: [IO, ASYNC, MUTATION]
+  rmdir: [IO, ASYNC, MUTATION]
+  rm: [IO, ASYNC, MUTATION]
+  stat: [IO, ASYNC]
+  lstat: [IO, ASYNC]
+  statfs: [IO, ASYNC]
+  access: [IO, ASYNC]
+  chmod: [IO, ASYNC, MUTATION]
+  lchmod: [IO, ASYNC, MUTATION]
+  chown: [IO, ASYNC, MUTATION]
+  lchown: [IO, ASYNC, MUTATION]
+  link: [IO, ASYNC, MUTATION]
+  symlink: [IO, ASYNC, MUTATION]
+  unlink: [IO, ASYNC, MUTATION]
+  rename: [IO, ASYNC, MUTATION]
+  copyFile: [IO, ASYNC, MUTATION]
+  cp: [IO, ASYNC, MUTATION]
+  open: [IO, ASYNC]
+  opendir: [IO, ASYNC]
+  truncate: [IO, ASYNC, MUTATION]
+  realpath: [IO, ASYNC]
+  utimes: [IO, ASYNC, MUTATION]
+  lutimes: [IO, ASYNC, MUTATION]
+  watch: [IO, ASYNC, NONDETERMINISTIC]
+  glob: [IO, ASYNC]
+
+# ============================================================
+# node:path — Path manipulation
+# ============================================================
+node:path:
+  join: [PURE]
+  resolve: [PURE]
+  normalize: [PURE]
+  parse: [PURE]
+  format: [PURE]
+  basename: [PURE]
+  dirname: [PURE]
+  extname: [PURE]
+  relative: [PURE]
+  isAbsolute: [PURE]
+  toNamespacedPath: [PURE]
+  sep: [PURE]
+  delimiter: [PURE]
+
+# ============================================================
+# node:url — URL parsing
+# ============================================================
+node:url:
+  URL: [PURE]
+  URLSearchParams: [PURE]
+  parse: [PURE]
+  format: [PURE]
+  resolve: [PURE]
+  fileURLToPath: [PURE]
+  pathToFileURL: [PURE]
+  domainToASCII: [PURE]
+  domainToUnicode: [PURE]
+  urlToHttpOptions: [PURE]
+
+# ============================================================
+# node:querystring — Query string parsing
+# ============================================================
+node:querystring:
+  parse: [PURE]
+  decode: [PURE]
+  stringify: [PURE]
+  encode: [PURE]
+  escape: [PURE]
+  unescape: [PURE]
+
+# ============================================================
+# node:crypto — Cryptography
+# ============================================================
+node:crypto:
+  createHash: [PURE]
+  createHmac: [PURE]
+  createCipheriv: [PURE]
+  createDecipheriv: [PURE]
+  randomBytes: [NONDETERMINISTIC, ASYNC]
+  randomBytesSync: [NONDETERMINISTIC]
+  randomInt: [NONDETERMINISTIC, ASYNC]
+  randomUUID: [NONDETERMINISTIC]
+  randomFillSync: [NONDETERMINISTIC, MUTATION]
+  randomFill: [NONDETERMINISTIC, MUTATION, ASYNC]
+  scrypt: [ASYNC]
+  scryptSync: [PURE]
+  pbkdf2: [ASYNC]
+  pbkdf2Sync: [PURE]
+  generateKeyPair: [NONDETERMINISTIC, ASYNC]
+  generateKeyPairSync: [NONDETERMINISTIC]
+  sign: [PURE]
+  verify: [PURE]
+  createSign: [PURE]
+  createVerify: [PURE]
+  createDiffieHellman: [NONDETERMINISTIC]
+  createECDH: [PURE]
+  getHashes: [PURE]
+  getCiphers: [PURE]
+  getCurves: [PURE]
+  constants: [PURE]
+  Hash.update: [MUTATION]
+  Hash.digest: [MUTATION]
+  Hash.copy: [PURE]
+  Hmac.update: [MUTATION]
+  Hmac.digest: [MUTATION]
+  Cipher.update: [MUTATION]
+  Cipher.final: [MUTATION]
+  Cipher.setAAD: [MUTATION]
+  Cipher.getAuthTag: [PURE]
+  Decipher.update: [MUTATION]
+  Decipher.final: [MUTATION, THROW]
+  Decipher.setAAD: [MUTATION]
+
+# ============================================================
+# node:child_process — Child processes
+# ============================================================
+node:child_process:
+  exec: [IO, ASYNC, THROW]
+  execSync: [IO, THROW]
+  execFile: [IO, ASYNC, THROW]
+  execFileSync: [IO, THROW]
+  spawn: [IO, THROW]
+  spawnSync: [IO, THROW]
+  fork: [IO, THROW]
+
+# ============================================================
+# node:net — TCP networking
+# ============================================================
+node:net:
+  createServer: [IO]
+  connect: [IO, ASYNC]
+  createConnection: [IO, ASYNC]
+  isIP: [PURE]
+  isIPv4: [PURE]
+  isIPv6: [PURE]
+  Socket.connect: [IO, ASYNC]
+  Socket.write: [IO, ASYNC]
+  Socket.end: [IO, ASYNC]
+  Socket.destroy: [IO, MUTATION]
+  Socket.pause: [IO, MUTATION]
+  Socket.resume: [IO, MUTATION]
+  Socket.setTimeout: [MUTATION]
+  Socket.setNoDelay: [IO, MUTATION]
+  Socket.setKeepAlive: [IO, MUTATION]
+  Socket.address: [IO]
+  Socket.ref: [MUTATION]
+  Socket.unref: [MUTATION]
+  Server.listen: [IO, ASYNC]
+  Server.close: [IO, ASYNC]
+  Server.address: [IO]
+  Server.getConnections: [IO, ASYNC]
+  Server.ref: [MUTATION]
+  Server.unref: [MUTATION]
+
+# ============================================================
+# node:http — HTTP
+# ============================================================
+node:http:
+  createServer: [IO]
+  request: [IO, ASYNC]
+  get: [IO, ASYNC]
+  METHODS: [PURE]
+  STATUS_CODES: [PURE]
+  maxHeaderSize: [PURE]
+  validateHeaderName: [THROW]
+  validateHeaderValue: [THROW]
+  ServerResponse.writeHead: [MUTATION]
+  ServerResponse.write: [IO, ASYNC]
+  ServerResponse.end: [IO, ASYNC]
+  ServerResponse.setHeader: [MUTATION]
+  ServerResponse.getHeader: [PURE]
+  ServerResponse.removeHeader: [MUTATION]
+  ServerResponse.flushHeaders: [IO]
+  Server.listen: [IO, ASYNC]
+  Server.close: [IO, ASYNC]
+  Server.closeAllConnections: [IO, MUTATION]
+  Server.address: [IO]
+
+# ============================================================
+# node:https — HTTPS
+# ============================================================
+node:https:
+  createServer: [IO]
+  request: [IO, ASYNC]
+  get: [IO, ASYNC]
+
+# ============================================================
+# node:http2 — HTTP/2
+# ============================================================
+node:http2:
+  createServer: [IO]
+  createSecureServer: [IO]
+  connect: [IO, ASYNC]
+  getDefaultSettings: [PURE]
+  getPackedSettings: [PURE]
+  getUnpackedSettings: [PURE]
+  constants: [PURE]
+
+# ============================================================
+# node:dns — DNS resolution
+# ============================================================
+node:dns:
+  lookup: [IO, ASYNC]
+  lookupService: [IO, ASYNC]
+  resolve: [IO, ASYNC]
+  resolve4: [IO, ASYNC]
+  resolve6: [IO, ASYNC]
+  resolveAny: [IO, ASYNC]
+  resolveCname: [IO, ASYNC]
+  resolveMx: [IO, ASYNC]
+  resolveNs: [IO, ASYNC]
+  resolvePtr: [IO, ASYNC]
+  resolveSrv: [IO, ASYNC]
+  resolveTxt: [IO, ASYNC]
+  reverse: [IO, ASYNC]
+  setServers: [MUTATION]
+  getServers: [PURE]
+  getDefaultResultOrder: [PURE]
+  setDefaultResultOrder: [MUTATION]
+
+# ============================================================
+# node:tls — TLS/SSL
+# ============================================================
+node:tls:
+  createServer: [IO]
+  connect: [IO, ASYNC]
+  createSecureContext: [PURE]
+  getCiphers: [PURE]
+  rootCertificates: [PURE]
+
+# ============================================================
+# node:dgram — UDP
+# ============================================================
+node:dgram:
+  createSocket: [IO]
+  Socket.send: [IO, ASYNC]
+  Socket.bind: [IO, ASYNC]
+  Socket.close: [IO, ASYNC]
+  Socket.connect: [IO, ASYNC]
+  Socket.address: [IO]
+  Socket.setBroadcast: [IO, MUTATION]
+  Socket.setMulticastLoopback: [IO, MUTATION]
+  Socket.setMulticastTTL: [IO, MUTATION]
+  Socket.setTTL: [IO, MUTATION]
+
+# ============================================================
+# node:stream — Streams
+# ============================================================
+node:stream:
+  Readable.read: [MUTATION]
+  Readable.pipe: [MUTATION]
+  Readable.unpipe: [MUTATION]
+  Readable.pause: [MUTATION]
+  Readable.resume: [MUTATION]
+  Readable.destroy: [MUTATION]
+  Readable.push: [MUTATION]
+  Readable.unshift: [MUTATION]
+  Writable.write: [MUTATION, ASYNC]
+  Writable.end: [MUTATION, ASYNC]
+  Writable.destroy: [MUTATION]
+  Writable.cork: [MUTATION]
+  Writable.uncork: [MUTATION]
+  pipeline: [MUTATION, ASYNC, THROW]
+  finished: [MUTATION, ASYNC]
+  compose: [PURE]
+
+# ============================================================
+# node:buffer — Binary data
+# ============================================================
+node:buffer:
+  Buffer.alloc: [PURE]
+  Buffer.allocUnsafe: [NONDETERMINISTIC]
+  Buffer.allocUnsafeSlow: [NONDETERMINISTIC]
+  Buffer.from: [PURE]
+  Buffer.concat: [PURE]
+  Buffer.compare: [PURE]
+  Buffer.isBuffer: [PURE]
+  Buffer.isEncoding: [PURE]
+  Buffer.byteLength: [PURE]
+  Buffer.prototype.write: [MUTATION]
+  Buffer.prototype.toString: [PURE]
+  Buffer.prototype.toJSON: [PURE]
+  Buffer.prototype.slice: [PURE]
+  Buffer.prototype.copy: [MUTATION]
+  Buffer.prototype.fill: [MUTATION]
+  Buffer.prototype.indexOf: [PURE]
+  Buffer.prototype.includes: [PURE]
+  Buffer.prototype.equals: [PURE]
+  Buffer.prototype.compare: [PURE]
+  Blob: [PURE]
+  Blob.prototype.text: [ASYNC]
+  Blob.prototype.arrayBuffer: [ASYNC]
+  Blob.prototype.slice: [PURE]
+
+# ============================================================
+# node:events — Event emitter
+# ============================================================
+node:events:
+  EventEmitter.on: [MUTATION]
+  EventEmitter.once: [MUTATION]
+  EventEmitter.emit: [MUTATION]
+  EventEmitter.addListener: [MUTATION]
+  EventEmitter.removeListener: [MUTATION]
+  EventEmitter.removeAllListeners: [MUTATION]
+  EventEmitter.listeners: [PURE]
+  EventEmitter.listenerCount: [PURE]
+  EventEmitter.setMaxListeners: [MUTATION]
+  EventEmitter.getMaxListeners: [PURE]
+  EventEmitter.prependListener: [MUTATION]
+  EventEmitter.prependOnceListener: [MUTATION]
+  EventEmitter.eventNames: [PURE]
+  EventEmitter.off: [MUTATION]
+  once: [ASYNC]
+  on: [PURE]
+  getEventListeners: [PURE]
+  setMaxListeners: [MUTATION]
+
+# ============================================================
+# node:process — Process
+# ============================================================
+node:process:
+  exit: [IO, THROW]
+  abort: [IO, THROW]
+  cwd: [IO]
+  chdir: [IO, MUTATION, THROW]
+  env: [IO, NONDETERMINISTIC]
+  argv: [PURE]
+  pid: [IO, NONDETERMINISTIC]
+  ppid: [IO, NONDETERMINISTIC]
+  platform: [PURE]
+  arch: [PURE]
+  version: [PURE]
+  versions: [PURE]
+  memoryUsage: [IO, NONDETERMINISTIC]
+  cpuUsage: [IO, NONDETERMINISTIC]
+  hrtime: [IO, NONDETERMINISTIC]
+  hrtime.bigint: [IO, NONDETERMINISTIC]
+  nextTick: [MUTATION, ASYNC]
+  stdout: [IO]
+  stderr: [IO]
+  stdin: [IO]
+  kill: [IO, THROW]
+  umask: [IO, MUTATION]
+  uptime: [IO, NONDETERMINISTIC]
+  title: [IO]
+  send: [IO, THROW]
+  disconnect: [IO]
+  emitWarning: [IO]
+  on: [MUTATION]
+  once: [MUTATION]
+
+# ============================================================
+# node:console — Console output
+# ============================================================
+node:console:
+  log: [IO]
+  info: [IO]
+  warn: [IO]
+  error: [IO]
+  debug: [IO]
+  dir: [IO]
+  dirxml: [IO]
+  table: [IO]
+  time: [IO, MUTATION]
+  timeEnd: [IO, MUTATION]
+  timeLog: [IO]
+  trace: [IO]
+  assert: [IO, THROW]
+  count: [IO, MUTATION]
+  countReset: [MUTATION]
+  clear: [IO]
+  group: [IO, MUTATION]
+  groupEnd: [IO, MUTATION]
+  groupCollapsed: [IO, MUTATION]
+
+# ============================================================
+# node:timers — Timers
+# ============================================================
+node:timers:
+  setTimeout: [ASYNC, NONDETERMINISTIC]
+  setInterval: [ASYNC, NONDETERMINISTIC]
+  setImmediate: [ASYNC]
+  clearTimeout: [MUTATION]
+  clearInterval: [MUTATION]
+  clearImmediate: [MUTATION]
+
+# ============================================================
+# node:timers/promises — Timers (Promise API)
+# ============================================================
+node:timers/promises:
+  setTimeout: [ASYNC, NONDETERMINISTIC]
+  setInterval: [ASYNC, NONDETERMINISTIC]
+  setImmediate: [ASYNC]
+  scheduler.wait: [ASYNC, NONDETERMINISTIC]
+  scheduler.yield: [ASYNC]
+
+# ============================================================
+# node:os — Operating system
+# ============================================================
+node:os:
+  cpus: [IO, NONDETERMINISTIC]
+  hostname: [IO, NONDETERMINISTIC]
+  platform: [IO]
+  arch: [IO]
+  freemem: [IO, NONDETERMINISTIC]
+  totalmem: [IO]
+  homedir: [IO]
+  tmpdir: [IO]
+  type: [IO]
+  release: [IO]
+  networkInterfaces: [IO, NONDETERMINISTIC]
+  userInfo: [IO]
+  uptime: [IO, NONDETERMINISTIC]
+  loadavg: [IO, NONDETERMINISTIC]
+  EOL: [PURE]
+  endianness: [IO]
+  machine: [IO]
+  version: [IO]
+  availableParallelism: [IO, NONDETERMINISTIC]
+  devNull: [PURE]
+  constants: [PURE]
+  getPriority: [IO]
+  setPriority: [IO, MUTATION]
+
+# ============================================================
+# node:util — Utilities
+# ============================================================
+node:util:
+  promisify: [PURE]
+  callbackify: [PURE]
+  inspect: [PURE]
+  format: [PURE]
+  formatWithOptions: [PURE]
+  deprecate: [MUTATION]
+  isDeepStrictEqual: [PURE]
+  debuglog: [IO]
+  debug: [IO]
+  getSystemErrorName: [PURE]
+  getSystemErrorMap: [PURE]
+  inherits: [MUTATION]
+  stripVTControlCharacters: [PURE]
+  styleText: [PURE]
+  parseArgs: [PURE]
+  parseEnv: [PURE]
+  TextDecoder: [PURE]
+  TextEncoder: [PURE]
+  MIMEType: [PURE]
+  types.isAnyArrayBuffer: [PURE]
+  types.isArrayBuffer: [PURE]
+  types.isDate: [PURE]
+  types.isRegExp: [PURE]
+  types.isPromise: [PURE]
+  types.isMap: [PURE]
+  types.isSet: [PURE]
+  types.isTypedArray: [PURE]
+  types.isNativeError: [PURE]
+
+# ============================================================
+# node:assert — Assertions
+# ============================================================
+node:assert:
+  ok: [THROW]
+  equal: [THROW]
+  notEqual: [THROW]
+  deepEqual: [THROW]
+  deepStrictEqual: [THROW]
+  notDeepEqual: [THROW]
+  notDeepStrictEqual: [THROW]
+  strictEqual: [THROW]
+  notStrictEqual: [THROW]
+  throws: [THROW]
+  doesNotThrow: [THROW]
+  rejects: [ASYNC, THROW]
+  doesNotReject: [ASYNC, THROW]
+  ifError: [THROW]
+  match: [THROW]
+  doesNotMatch: [THROW]
+  fail: [THROW]
+  strict: [THROW]
+
+# ============================================================
+# node:zlib — Compression
+# ============================================================
+node:zlib:
+  createGzip: [PURE]
+  createGunzip: [PURE]
+  createDeflate: [PURE]
+  createInflate: [PURE]
+  createBrotliCompress: [PURE]
+  createBrotliDecompress: [PURE]
+  gzip: [ASYNC]
+  gunzip: [ASYNC]
+  deflate: [ASYNC]
+  inflate: [ASYNC]
+  brotliCompress: [ASYNC]
+  brotliDecompress: [ASYNC]
+  gzipSync: [PURE]
+  gunzipSync: [PURE]
+  deflateSync: [PURE]
+  inflateSync: [PURE]
+  brotliCompressSync: [PURE]
+  brotliDecompressSync: [PURE]
+  constants: [PURE]
+
+# ============================================================
+# node:worker_threads — Worker threads
+# ============================================================
+node:worker_threads:
+  Worker: [IO, THROW]
+  parentPort: [PURE]
+  workerData: [PURE]
+  isMainThread: [PURE]
+  threadId: [PURE]
+  MessageChannel: [PURE]
+  MessagePort.postMessage: [MUTATION]
+  MessagePort.on: [MUTATION]
+  MessagePort.once: [MUTATION]
+  MessagePort.close: [MUTATION]
+
+# ============================================================
+# node:cluster — Cluster
+# ============================================================
+node:cluster:
+  fork: [IO, THROW]
+  setupMaster: [MUTATION, IO]
+  setupPrimary: [MUTATION, IO]
+  disconnect: [IO, MUTATION]
+  isPrimary: [PURE]
+  isWorker: [PURE]
+  workers: [PURE]
+
+# ============================================================
+# node:readline — Line-by-line input
+# ============================================================
+node:readline:
+  createInterface: [IO]
+  Interface.question: [IO, ASYNC]
+  Interface.close: [IO, MUTATION]
+  Interface.pause: [MUTATION]
+  Interface.resume: [MUTATION]
+  Interface.write: [IO]
+  Interface.on: [MUTATION]
+
+# ============================================================
+# node:module — Module system
+# ============================================================
+node:module:
+  createRequire: [PURE]
+  builtinModules: [PURE]
+  isBuiltin: [PURE]
+  register: [MUTATION]
+
+# ============================================================
+# node:string_decoder — String decoding
+# ============================================================
+node:string_decoder:
+  StringDecoder: [PURE]
+  StringDecoder.write: [MUTATION]
+  StringDecoder.end: [MUTATION]

@@ -1,0 +1,2362 @@
+schema_version: 1
+analyzer_version: 0.2.12-beta
+authored: false
+confidence: 1
+generated: 2026-03-15T22:15:55.292Z
+package:
+  purl: pkg:npm/@grafema/util
+  source_type: source
+exports:
+  - name: AbstractResource
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/infrastructure.ts#INTERFACE-%3EAbstractResource
+    effects:
+      - PURE
+  - name: AbstractResourceType
+    kind: TYPE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/infrastructure.ts#TYPE_ALIAS-%3EAbstractResourceType
+    effects:
+      - PURE
+  - name: AddEdgesRequest
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3EAddEdgesRequest
+    effects:
+      - PURE
+  - name: AddEdgesResponse
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3EAddEdgesResponse
+    effects:
+      - PURE
+  - name: AddNodesRequest
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3EAddNodesRequest
+    effects:
+      - PURE
+  - name: AddNodesResponse
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3EAddNodesResponse
+    effects:
+      - PURE
+  - name: aggregateValues
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/queries/traceValues.ts#FUNCTION-%3EaggregateValues
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: AnalysisError
+    kind: CLASS
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/errors/GrafemaError.ts#CLASS-%3EAnalysisError
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: AnyBrandedNode
+    kind: TYPE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/index.ts#EXPORT_BINDING-%3EAnyBrandedNode%5Bin:./branded.js%5D
+    effects:
+      - PURE
+  - name: appendEdge
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/knowledge/parser.ts#FUNCTION-%3EappendEdge
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: ArchaeologyEntry
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/knowledge/git-queries.ts#INTERFACE-%3EArchaeologyEntry
+    effects:
+      - PURE
+  - name: Archetype
+    kind: TYPE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/index.ts#EXPORT_BINDING-%3EArchetype%5Bin:./notation/index.js%5D
+    effects:
+      - PURE
+  - name: AttrQuery
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3EAttrQuery
+    effects:
+      - PURE
+  - name: AuthorEntry
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/knowledge/git-ingest.ts#INTERFACE-%3EAuthorEntry
+    effects:
+      - PURE
+  - name: BaseNodeRecord
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#INTERFACE-%3EBaseNodeRecord
+    effects:
+      - PURE
+  - name: BaseNodeType
+    kind: TYPE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#TYPE_ALIAS-%3EBaseNodeType
+    effects:
+      - PURE
+  - name: BfsRequest
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3EBfsRequest
+    effects:
+      - PURE
+  - name: BfsResponse
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3EBfsResponse
+    effects:
+      - PURE
+  - name: BinaryName
+    kind: TYPE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/index.ts#EXPORT_BINDING-%3EBinaryName%5Bin:./utils/findRfdbBinary.js%5D
+    effects:
+      - PURE
+  - name: BranchNodeRecord
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#INTERFACE-%3EBranchNodeRecord
+    effects:
+      - PURE
+  - name: BrandedNode
+    kind: TYPE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/index.ts#EXPORT_BINDING-%3EBrandedNode%5Bin:./branded.js%5D
+    effects:
+      - PURE
+  - name: buildNodeContext
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/queries/NodeContext.ts#FUNCTION-%3EbuildNodeContext
+    effects:
+      - ASYNC
+    returns:
+      flow: OUT
+  - name: BuildNodeContextOptions
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/queries/NodeContext.ts#INTERFACE-%3EBuildNodeContextOptions
+    effects:
+      - PURE
+  - name: calculateContentHash
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/HashUtils.ts#FUNCTION-%3EcalculateContentHash
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: calculateFileHash
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/HashUtils.ts#FUNCTION-%3EcalculateFileHash
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: calculateFileHashAsync
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/HashUtils.ts#FUNCTION-%3EcalculateFileHashAsync
+    effects:
+      - ASYNC
+    returns:
+      flow: OUT
+  - name: CallerInfo
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/queries/types.ts#INTERFACE-%3ECallerInfo
+    effects:
+      - PURE
+  - name: CallInfo
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/queries/types.ts#INTERFACE-%3ECallInfo
+    effects:
+      - PURE
+  - name: CallNodeRecord
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#INTERFACE-%3ECallNodeRecord
+    effects:
+      - PURE
+  - name: CallsEdge
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/edges.ts#INTERFACE-%3ECallsEdge
+    effects:
+      - PURE
+  - name: CaseNodeRecord
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#INTERFACE-%3ECaseNodeRecord
+    effects:
+      - PURE
+  - name: CatchBlockNodeRecord
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#INTERFACE-%3ECatchBlockNodeRecord
+    effects:
+      - PURE
+  - name: ChangesSummary
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/VersionManager.ts#INTERFACE-%3EChangesSummary
+    effects:
+      - PURE
+  - name: checkExistingServer
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/utils/startRfdbServer.ts#FUNCTION-%3EcheckExistingServer
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: checkTypoAgainstKnownTypes
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/storage/backends/typeValidation.ts#FUNCTION-%3EcheckTypoAgainstKnownTypes
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: ChurnEntry
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/knowledge/git-queries.ts#INTERFACE-%3EChurnEntry
+    effects:
+      - PURE
+  - name: ClassifyChangesResult
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/VersionManager.ts#INTERFACE-%3EClassifyChangesResult
+    effects:
+      - PURE
+  - name: ClassNodeRecord
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#INTERFACE-%3EClassNodeRecord
+    effects:
+      - PURE
+  - name: ClassOverview
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/FileOverview.ts#INTERFACE-%3EClassOverview
+    effects:
+      - PURE
+  - name: CoChangeEntry
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/knowledge/git-queries.ts#INTERFACE-%3ECoChangeEntry
+    effects:
+      - PURE
+  - name: CODE_TO_CATEGORY
+    kind: CONSTANT
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/diagnostics/categories.ts#CONSTANT-%3ECODE_TO_CATEGORY
+    effects:
+      - PURE
+  - name: CodeCategoryInfo
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/diagnostics/categories.ts#INTERFACE-%3ECodeCategoryInfo
+    effects:
+      - PURE
+  - name: CommitBatchRequest
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3ECommitBatchRequest
+    effects:
+      - PURE
+  - name: CommitBatchResponse
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3ECommitBatchResponse
+    effects:
+      - PURE
+  - name: CommitDelta
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3ECommitDelta
+    effects:
+      - PURE
+  - name: CommitEntry
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/knowledge/git-ingest.ts#INTERFACE-%3ECommitEntry
+    effects:
+      - PURE
+  - name: computeContentHash
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/SemanticId.ts#FUNCTION-%3EcomputeContentHash
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: computeDiscriminator
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/SemanticId.ts#FUNCTION-%3EcomputeDiscriminator
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: computeSemanticId
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/SemanticId.ts#FUNCTION-%3EcomputeSemanticId
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: computeSemanticIdV2
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/SemanticId.ts#FUNCTION-%3EcomputeSemanticIdV2
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: ConcreteResourceRef
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/infrastructure.ts#INTERFACE-%3EConcreteResourceRef
+    effects:
+      - PURE
+  - name: ConfigError
+    kind: CLASS
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/errors/GrafemaError.ts#CLASS-%3EConfigError
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: ConsoleLogger
+    kind: CLASS
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/logging/Logger.ts#CLASS-%3EConsoleLogger
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: ContainsEdge
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/edges.ts#INTERFACE-%3EContainsEdge
+    effects:
+      - PURE
+  - name: ContentHashHints
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/SemanticId.ts#INTERFACE-%3EContentHashHints
+    effects:
+      - PURE
+  - name: CountEdgesByTypeRequest
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3ECountEdgesByTypeRequest
+    effects:
+      - PURE
+  - name: CountNodesByTypeRequest
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3ECountNodesByTypeRequest
+    effects:
+      - PURE
+  - name: CountResponse
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3ECountResponse
+    effects:
+      - PURE
+  - name: CountsByTypeResponse
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3ECountsByTypeResponse
+    effects:
+      - PURE
+  - name: CoverageAnalyzer
+    kind: CLASS
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/CoverageAnalyzer.ts#CLASS-%3ECoverageAnalyzer
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: CoverageResult
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/CoverageAnalyzer.ts#INTERFACE-%3ECoverageResult
+    effects:
+      - PURE
+  - name: CreateDatabaseResponse
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3ECreateDatabaseResponse
+    effects:
+      - PURE
+  - name: createErrorResult
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/plugins.ts#FUNCTION-%3EcreateErrorResult
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: createLogger
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/logging/Logger.ts#FUNCTION-%3EcreateLogger
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: createSuccessResult
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/plugins.ts#FUNCTION-%3EcreateSuccessResult
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: CrossLayerLink
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/infrastructure.ts#INTERFACE-%3ECrossLayerLink
+    effects:
+      - PURE
+  - name: CurrentDatabaseResponse
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3ECurrentDatabaseResponse
+    effects:
+      - PURE
+  - name: CustomAnalyzerConfig
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/infrastructure.ts#INTERFACE-%3ECustomAnalyzerConfig
+    effects:
+      - PURE
+  - name: CypherResult
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3ECypherResult
+    effects:
+      - PURE
+  - name: DanglingCodeRef
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/knowledge/types.ts#INTERFACE-%3EDanglingCodeRef
+    effects:
+      - PURE
+  - name: DatabaseError
+    kind: CLASS
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/errors/GrafemaError.ts#CLASS-%3EDatabaseError
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: DatabaseInfo
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3EDatabaseInfo
+    effects:
+      - PURE
+  - name: DataflowBackend
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/queries/traceDataflow.ts#INTERFACE-%3EDataflowBackend
+    effects:
+      - PURE
+  - name: DataflowEdge
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/queries/traceDataflow.ts#INTERFACE-%3EDataflowEdge
+    effects:
+      - PURE
+  - name: DataFlowEdge
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/edges.ts#INTERFACE-%3EDataFlowEdge
+    effects:
+      - PURE
+  - name: DataflowNode
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/queries/traceDataflow.ts#INTERFACE-%3EDataflowNode
+    effects:
+      - PURE
+  - name: DatalogBinding
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3EDatalogBinding
+    effects:
+      - PURE
+  - name: DatalogExplainResult
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3EDatalogExplainResult
+    effects:
+      - PURE
+  - name: DatalogResult
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3EDatalogResult
+    effects:
+      - PURE
+  - name: DbQueryNodeRecord
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#INTERFACE-%3EDbQueryNodeRecord
+    effects:
+      - PURE
+  - name: decodeFragment
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/GrafemaUri.ts#FUNCTION-%3EdecodeFragment
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: DEFAULT_CONFIG
+    kind: CONSTANT
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/config/ConfigLoader.ts#CONSTANT-%3EDEFAULT_CONFIG
+    effects:
+      - PURE
+  - name: DEFAULT_EXTENSIONS
+    kind: CONSTANT
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/utils/moduleResolution.ts#CONSTANT-%3EDEFAULT_EXTENSIONS
+    effects:
+      - PURE
+  - name: DEFAULT_INDEX_FILES
+    kind: CONSTANT
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/utils/moduleResolution.ts#CONSTANT-%3EDEFAULT_INDEX_FILES
+    effects:
+      - PURE
+  - name: DeleteEdgeRequest
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3EDeleteEdgeRequest
+    effects:
+      - PURE
+  - name: DeleteNodeRequest
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3EDeleteNodeRequest
+    effects:
+      - PURE
+  - name: DescribeOptions
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/notation/types.ts#INTERFACE-%3EDescribeOptions
+    effects:
+      - PURE
+  - name: Diagnostic
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/diagnostics/DiagnosticCollector.ts#INTERFACE-%3EDiagnostic
+    effects:
+      - PURE
+  - name: DIAGNOSTIC_CATEGORIES
+    kind: CONSTANT
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/diagnostics/categories.ts#CONSTANT-%3EDIAGNOSTIC_CATEGORIES
+    effects:
+      - PURE
+  - name: DiagnosticCategory
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/diagnostics/categories.ts#INTERFACE-%3EDiagnosticCategory
+    effects:
+      - PURE
+  - name: DiagnosticCategoryKey
+    kind: TYPE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/index.ts#EXPORT_BINDING-%3EDiagnosticCategoryKey%5Bin:./diagnostics/index.js%5D
+    effects:
+      - PURE
+  - name: DiagnosticCollector
+    kind: CLASS
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/diagnostics/DiagnosticCollector.ts#CLASS-%3EDiagnosticCollector
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: DiagnosticInput
+    kind: TYPE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/index.ts#EXPORT_BINDING-%3EDiagnosticInput%5Bin:./diagnostics/index.js%5D
+    effects:
+      - PURE
+  - name: DiagnosticReporter
+    kind: CLASS
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/diagnostics/DiagnosticReporter.ts#CLASS-%3EDiagnosticReporter
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: DiagnosticWriter
+    kind: CLASS
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/diagnostics/DiagnosticWriter.ts#CLASS-%3EDiagnosticWriter
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: DiffSnapshotsResponse
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3EDiffSnapshotsResponse
+    effects:
+      - PURE
+  - name: downloadBinary
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/utils/lazyDownload.ts#FUNCTION-%3EdownloadBinary
+    effects:
+      - ASYNC
+    returns:
+      flow: OUT
+  - name: Edge
+    kind: TYPE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/index.ts#EXPORT_BINDING-%3EEdge%5Bin:./core/GraphBackend.js%5D
+    effects:
+      - PURE
+  - name: EDGE_ARCHETYPE_MAP
+    kind: CONSTANT
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/notation/archetypes.ts#CONSTANT-%3EEDGE_ARCHETYPE_MAP
+    effects:
+      - PURE
+  - name: EDGE_TYPE
+    kind: CONSTANT
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/edges.ts#CONSTANT-%3EEDGE_TYPE
+    effects:
+      - PURE
+  - name: EdgeGroup
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/queries/NodeContext.ts#INTERFACE-%3EEdgeGroup
+    effects:
+      - PURE
+  - name: EdgeMapping
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/notation/types.ts#INTERFACE-%3EEdgeMapping
+    effects:
+      - PURE
+  - name: EdgeRecord
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/edges.ts#INTERFACE-%3EEdgeRecord
+    effects:
+      - PURE
+  - name: EdgeType
+    kind: TYPE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/edges.ts#TYPE_ALIAS-%3EEdgeType
+    effects:
+      - PURE
+  - name: EdgeTypeSchema
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/schema/GraphSchemaExtractor.ts#INTERFACE-%3EEdgeTypeSchema
+    effects:
+      - PURE
+  - name: edgeTypeToNumber
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/GraphBackend.ts#FUNCTION-%3EedgeTypeToNumber
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: EdgeWithNode
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/queries/NodeContext.ts#INTERFACE-%3EEdgeWithNode
+    effects:
+      - PURE
+  - name: ElementOfEdge
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/edges.ts#INTERFACE-%3EElementOfEdge
+    effects:
+      - PURE
+  - name: encodeFragment
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/GrafemaUri.ts#FUNCTION-%3EencodeFragment
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: EndpointDiff
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/validation/PathValidator.ts#INTERFACE-%3EEndpointDiff
+    effects:
+      - PURE
+  - name: EnhancedNode
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/FileExplainer.ts#INTERFACE-%3EEnhancedNode
+    effects:
+      - PURE
+  - name: EnrichOptions
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/VersionManager.ts#INTERFACE-%3EEnrichOptions
+    effects:
+      - PURE
+  - name: ensureBinary
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/utils/lazyDownload.ts#FUNCTION-%3EensureBinary
+    effects:
+      - ASYNC
+    returns:
+      flow: OUT
+  - name: ErrorContext
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/errors/GrafemaError.ts#INTERFACE-%3EErrorContext
+    effects:
+      - PURE
+  - name: EventListenerNodeRecord
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#INTERFACE-%3EEventListenerNodeRecord
+    effects:
+      - PURE
+  - name: ExplainStep
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3EExplainStep
+    effects:
+      - PURE
+  - name: ExportInfo
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/FileOverview.ts#INTERFACE-%3EExportInfo
+    effects:
+      - PURE
+  - name: ExportNodeRecord
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#INTERFACE-%3EExportNodeRecord
+    effects:
+      - PURE
+  - name: ExportsEdge
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/edges.ts#INTERFACE-%3EExportsEdge
+    effects:
+      - PURE
+  - name: ExtractOptions
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/schema/InterfaceSchemaExtractor.ts#INTERFACE-%3EExtractOptions
+    effects:
+      - PURE
+  - name: extractSubgraph
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/notation/lodExtractor.ts#FUNCTION-%3EextractSubgraph
+    effects:
+      - ASYNC
+    returns:
+      flow: OUT
+  - name: FieldDeclaration
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3EFieldDeclaration
+    effects:
+      - PURE
+  - name: FileAccessError
+    kind: CLASS
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/errors/GrafemaError.ts#CLASS-%3EFileAccessError
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: FileChange
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/knowledge/git-ingest.ts#INTERFACE-%3EFileChange
+    effects:
+      - PURE
+  - name: FileExplainer
+    kind: CLASS
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/FileExplainer.ts#CLASS-%3EFileExplainer
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: FileExplainResult
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/FileExplainer.ts#INTERFACE-%3EFileExplainResult
+    effects:
+      - PURE
+  - name: FileLogger
+    kind: CLASS
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/logging/Logger.ts#CLASS-%3EFileLogger
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: FileOverview
+    kind: CLASS
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/FileOverview.ts#CLASS-%3EFileOverview
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: FileOverviewResult
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/FileOverview.ts#INTERFACE-%3EFileOverviewResult
+    effects:
+      - PURE
+  - name: FinallyBlockNodeRecord
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#INTERFACE-%3EFinallyBlockNodeRecord
+    effects:
+      - PURE
+  - name: findAnalyzerBinary
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/utils/findRfdbBinary.ts#FUNCTION-%3EfindAnalyzerBinary
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: findBinary
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/utils/findRfdbBinary.ts#FUNCTION-%3EfindBinary
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: FindBinaryOptions
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/utils/findRfdbBinary.ts#INTERFACE-%3EFindBinaryOptions
+    effects:
+      - PURE
+  - name: FindByAttrRequest
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3EFindByAttrRequest
+    effects:
+      - PURE
+  - name: FindByAttrResponse
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3EFindByAttrResponse
+    effects:
+      - PURE
+  - name: FindByTypeRequest
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3EFindByTypeRequest
+    effects:
+      - PURE
+  - name: FindByTypeResponse
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3EFindByTypeResponse
+    effects:
+      - PURE
+  - name: findCallsInFunction
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/queries/findCallsInFunction.ts#FUNCTION-%3EfindCallsInFunction
+    effects:
+      - ASYNC
+    returns:
+      flow: OUT
+  - name: FindCallsOptions
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/queries/types.ts#INTERFACE-%3EFindCallsOptions
+    effects:
+      - PURE
+  - name: findContainingFunction
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/queries/findContainingFunction.ts#FUNCTION-%3EfindContainingFunction
+    effects:
+      - ASYNC
+    returns:
+      flow: OUT
+  - name: findInGrafemaBin
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/utils/lazyDownload.ts#FUNCTION-%3EfindInGrafemaBin
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: findOrchestratorBinary
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/utils/findRfdbBinary.ts#FUNCTION-%3EfindOrchestratorBinary
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: findRfdbBinary
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/utils/findRfdbBinary.ts#FUNCTION-%3EfindRfdbBinary
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: FindSnapshotResponse
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3EFindSnapshotResponse
+    effects:
+      - PURE
+  - name: FlowsIntoEdge
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/edges.ts#INTERFACE-%3EFlowsIntoEdge
+    effects:
+      - PURE
+  - name: formatEdgeMetadata
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/queries/NodeContext.ts#FUNCTION-%3EformatEdgeMetadata
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: FreshnessGraph
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/GraphFreshnessChecker.ts#INTERFACE-%3EFreshnessGraph
+    effects:
+      - PURE
+  - name: FreshnessResult
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/GraphFreshnessChecker.ts#INTERFACE-%3EFreshnessResult
+    effects:
+      - PURE
+  - name: FunctionNodeRecord
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#INTERFACE-%3EFunctionNodeRecord
+    effects:
+      - PURE
+  - name: FunctionOverview
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/FileOverview.ts#INTERFACE-%3EFunctionOverview
+    effects:
+      - PURE
+  - name: generateLegend
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/notation/archetypes.ts#FUNCTION-%3EgenerateLegend
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: getArchaeology
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/knowledge/git-queries.ts#FUNCTION-%3EgetArchaeology
+    effects:
+      - ASYNC
+    returns:
+      flow: OUT
+  - name: getBaseName
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#FUNCTION-%3EgetBaseName
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: getBinaryNotFoundMessage
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/utils/findRfdbBinary.ts#FUNCTION-%3EgetBinaryNotFoundMessage
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: getCategoryForCode
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/diagnostics/categories.ts#FUNCTION-%3EgetCategoryForCode
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: getChurn
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/knowledge/git-queries.ts#FUNCTION-%3EgetChurn
+    effects:
+      - ASYNC
+    returns:
+      flow: OUT
+  - name: getCoChanges
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/knowledge/git-queries.ts#FUNCTION-%3EgetCoChanges
+    effects:
+      - ASYNC
+    returns:
+      flow: OUT
+  - name: getCodesForCategory
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/diagnostics/categories.ts#FUNCTION-%3EgetCodesForCategory
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: GetEdgesResponse
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3EGetEdgesResponse
+    effects:
+      - PURE
+  - name: getGrafemaBinDir
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/utils/lazyDownload.ts#FUNCTION-%3EgetGrafemaBinDir
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: GetIncomingEdgesRequest
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3EGetIncomingEdgesRequest
+    effects:
+      - PURE
+  - name: getKnownNodeTypes
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/storage/backends/typeValidation.ts#FUNCTION-%3EgetKnownNodeTypes
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: getNamespace
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#FUNCTION-%3EgetNamespace
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: getNodeDisplayName
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/queries/NodeContext.ts#FUNCTION-%3EgetNodeDisplayName
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: GetNodeRequest
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3EGetNodeRequest
+    effects:
+      - PURE
+  - name: GetNodeResponse
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3EGetNodeResponse
+    effects:
+      - PURE
+  - name: getOnboardingInstruction
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/instructions/index.ts#FUNCTION-%3EgetOnboardingInstruction
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: GetOutgoingEdgesRequest
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3EGetOutgoingEdgesRequest
+    effects:
+      - PURE
+  - name: getOwnership
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/knowledge/git-queries.ts#FUNCTION-%3EgetOwnership
+    effects:
+      - ASYNC
+    returns:
+      flow: OUT
+  - name: getPlatformDir
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/utils/findRfdbBinary.ts#FUNCTION-%3EgetPlatformDir
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: getPlatformPackageName
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/utils/findRfdbBinary.ts#FUNCTION-%3EgetPlatformPackageName
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: getSchemaVersion
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/version.ts#FUNCTION-%3EgetSchemaVersion
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: GitIngest
+    kind: CLASS
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/knowledge/git-ingest.ts#CLASS-%3EGitIngest
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: GRAFEMA_VERSION
+    kind: CONSTANT
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/version.ts#CONSTANT-%3EGRAFEMA_VERSION
+    effects:
+      - PURE
+  - name: GrafemaConfig
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/config/ConfigLoader.ts#INTERFACE-%3EGrafemaConfig
+    effects:
+      - PURE
+  - name: GrafemaError
+    kind: CLASS
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/errors/GrafemaError.ts#CLASS-%3EGrafemaError
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: GrafemaErrorJSON
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/errors/GrafemaError.ts#INTERFACE-%3EGrafemaErrorJSON
+    effects:
+      - PURE
+  - name: GraphAPI
+    kind: CLASS
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/api/GraphAPI.ts#CLASS-%3EGraphAPI
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: GraphBackend
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/plugins.ts#INTERFACE-%3EGraphBackend
+    effects:
+      - PURE
+  - name: GraphExport
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/GraphBackend.ts#INTERFACE-%3EGraphExport
+    effects:
+      - PURE
+  - name: GraphExtractOptions
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/schema/GraphSchemaExtractor.ts#INTERFACE-%3EGraphExtractOptions
+    effects:
+      - PURE
+  - name: GraphFreshnessChecker
+    kind: CLASS
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/GraphFreshnessChecker.ts#CLASS-%3EGraphFreshnessChecker
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: GraphSchema
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/schema/GraphSchemaExtractor.ts#INTERFACE-%3EGraphSchema
+    effects:
+      - PURE
+  - name: GraphSchemaExtractor
+    kind: CLASS
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/schema/GraphSchemaExtractor.ts#CLASS-%3EGraphSchemaExtractor
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: GraphStats
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/GraphBackend.ts#INTERFACE-%3EGraphStats
+    effects:
+      - PURE
+  - name: GuaranteeAPI
+    kind: CLASS
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/api/GuaranteeAPI.ts#CLASS-%3EGuaranteeAPI
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: GuaranteeGraph
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/GuaranteeManager.ts#INTERFACE-%3EGuaranteeGraph
+    effects:
+      - PURE
+  - name: GuaranteeGraphBackend
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/api/GuaranteeAPI.ts#INTERFACE-%3EGuaranteeGraphBackend
+    effects:
+      - PURE
+  - name: GuaranteeManager
+    kind: CLASS
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/GuaranteeManager.ts#CLASS-%3EGuaranteeManager
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: GuaranteeNode
+    kind: CLASS
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/nodes/GuaranteeNode.ts#CLASS-%3EGuaranteeNode
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: GuaranteeNodeOptions
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/nodes/GuaranteeNode.ts#INTERFACE-%3EGuaranteeNodeOptions
+    effects:
+      - PURE
+  - name: GuaranteeNodeRecord
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#INTERFACE-%3EGuaranteeNodeRecord
+    effects:
+      - PURE
+  - name: GuaranteePriority
+    kind: TYPE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#TYPE_ALIAS-%3EGuaranteePriority
+    effects:
+      - PURE
+  - name: GuaranteeStatus
+    kind: TYPE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#TYPE_ALIAS-%3EGuaranteeStatus
+    effects:
+      - PURE
+  - name: GuaranteeType
+    kind: TYPE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/index.ts#EXPORT_BINDING-%3EGuaranteeType%5Bin:./core/nodes/GuaranteeNode.js%5D
+    effects:
+      - PURE
+  - name: HelloResponse
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3EHelloResponse
+    effects:
+      - PURE
+  - name: HttpRouteNodeRecord
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#INTERFACE-%3EHttpRouteNodeRecord
+    effects:
+      - PURE
+  - name: ImportInfo
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/FileOverview.ts#INTERFACE-%3EImportInfo
+    effects:
+      - PURE
+  - name: ImportNodeRecord
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#INTERFACE-%3EImportNodeRecord
+    effects:
+      - PURE
+  - name: ImportsEdge
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/edges.ts#INTERFACE-%3EImportsEdge
+    effects:
+      - PURE
+  - name: ImportSpecifier
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#INTERFACE-%3EImportSpecifier
+    effects:
+      - PURE
+  - name: IncrementalReanalyzer
+    kind: CLASS
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/IncrementalReanalyzer.ts#CLASS-%3EIncrementalReanalyzer
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: INFRA_RESOURCE_MAP_ID
+    kind: CONSTANT
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/infrastructure.ts#CONSTANT-%3EINFRA_RESOURCE_MAP_ID
+    effects:
+      - PURE
+  - name: InfraResource
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/infrastructure.ts#INTERFACE-%3EInfraResource
+    effects:
+      - PURE
+  - name: InfraResourceMap
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/infrastructure.ts#INTERFACE-%3EInfraResourceMap
+    effects:
+      - PURE
+  - name: InfrastructureConfig
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/infrastructure.ts#INTERFACE-%3EInfrastructureConfig
+    effects:
+      - PURE
+  - name: InfraToolConfig
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/infrastructure.ts#INTERFACE-%3EInfraToolConfig
+    effects:
+      - PURE
+  - name: IngestResult
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/knowledge/git-ingest.ts#INTERFACE-%3EIngestResult
+    effects:
+      - PURE
+  - name: InputEdge
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/plugins.ts#INTERFACE-%3EInputEdge
+    effects:
+      - PURE
+  - name: InterfaceSchema
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/schema/InterfaceSchemaExtractor.ts#INTERFACE-%3EInterfaceSchema
+    effects:
+      - PURE
+  - name: InterfaceSchemaExtractor
+    kind: CLASS
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/schema/InterfaceSchemaExtractor.ts#CLASS-%3EInterfaceSchemaExtractor
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: IPlugin
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/plugins.ts#INTERFACE-%3EIPlugin
+    effects:
+      - PURE
+  - name: IRFDBClient
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3EIRFDBClient
+    effects:
+      - PURE
+  - name: isBrandedNode
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/branded.ts#FUNCTION-%3EisBrandedNode
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: isDownloadable
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/utils/lazyDownload.ts#FUNCTION-%3EisDownloadable
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: isEndpointType
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#FUNCTION-%3EisEndpointType
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: isGrafemaType
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/nodes/NodeKind.ts#FUNCTION-%3EisGrafemaType
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: isGrafemaUri
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/GrafemaUri.ts#FUNCTION-%3EisGrafemaUri
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: isGuaranteeType
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/nodes/NodeKind.ts#FUNCTION-%3EisGuaranteeType
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: isNamespacedType
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#FUNCTION-%3EisNamespacedType
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: isRelativeImport
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/utils/moduleResolution.ts#FUNCTION-%3EisRelativeImport
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: isSideEffectType
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#FUNCTION-%3EisSideEffectType
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: IssueNode
+    kind: CLASS
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/nodes/IssueNode.ts#CLASS-%3EIssueNode
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: IssueNodeRecord
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/nodes/IssueNode.ts#INTERFACE-%3EIssueNodeRecord
+    effects:
+      - PURE
+  - name: IssueSeverity
+    kind: TYPE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/index.ts#EXPORT_BINDING-%3EIssueSeverity%5Bin:./core/nodes/IssueNode.js%5D
+    effects:
+      - PURE
+  - name: IssueSpec
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/plugins.ts#INTERFACE-%3EIssueSpec
+    effects:
+      - PURE
+  - name: IssueType
+    kind: TYPE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/index.ts#EXPORT_BINDING-%3EIssueType%5Bin:./core/nodes/IssueNode.js%5D
+    effects:
+      - PURE
+  - name: IteratesOverEdge
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/edges.ts#INTERFACE-%3EIteratesOverEdge
+    effects:
+      - PURE
+  - name: KBDecision
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/knowledge/types.ts#INTERFACE-%3EKBDecision
+    effects:
+      - PURE
+  - name: KBEdge
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/knowledge/types.ts#INTERFACE-%3EKBEdge
+    effects:
+      - PURE
+  - name: KBFact
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/knowledge/types.ts#INTERFACE-%3EKBFact
+    effects:
+      - PURE
+  - name: KBLifecycle
+    kind: TYPE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/index.ts#EXPORT_BINDING-%3EKBLifecycle%5Bin:./knowledge/index.js%5D
+    effects:
+      - PURE
+  - name: KBNode
+    kind: TYPE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/index.ts#EXPORT_BINDING-%3EKBNode%5Bin:./knowledge/index.js%5D
+    effects:
+      - PURE
+  - name: KBNodeBase
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/knowledge/types.ts#INTERFACE-%3EKBNodeBase
+    effects:
+      - PURE
+  - name: KBNodeType
+    kind: TYPE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/index.ts#EXPORT_BINDING-%3EKBNodeType%5Bin:./knowledge/index.js%5D
+    effects:
+      - PURE
+  - name: KBQueryFilter
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/knowledge/types.ts#INTERFACE-%3EKBQueryFilter
+    effects:
+      - PURE
+  - name: KBScope
+    kind: TYPE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/index.ts#EXPORT_BINDING-%3EKBScope%5Bin:./knowledge/index.js%5D
+    effects:
+      - PURE
+  - name: KBSession
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/knowledge/types.ts#INTERFACE-%3EKBSession
+    effects:
+      - PURE
+  - name: KBStats
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/knowledge/types.ts#INTERFACE-%3EKBStats
+    effects:
+      - PURE
+  - name: KeyOfEdge
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/edges.ts#INTERFACE-%3EKeyOfEdge
+    effects:
+      - PURE
+  - name: KnowledgeBase
+    kind: CLASS
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/knowledge/KnowledgeBase.ts#CLASS-%3EKnowledgeBase
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: LanguageError
+    kind: CLASS
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/errors/GrafemaError.ts#CLASS-%3ELanguageError
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: levenshtein
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/storage/backends/typeValidation.ts#FUNCTION-%3Elevenshtein
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: ListDatabasesResponse
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3EListDatabasesResponse
+    effects:
+      - PURE
+  - name: ListSnapshotsResponse
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3EListSnapshotsResponse
+    effects:
+      - PURE
+  - name: loadConfig
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/config/ConfigLoader.ts#FUNCTION-%3EloadConfig
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: LocatedItem
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/SemanticId.ts#INTERFACE-%3ELocatedItem
+    effects:
+      - PURE
+  - name: Location
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/SemanticId.ts#INTERFACE-%3ELocation
+    effects:
+      - PURE
+  - name: Logger
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/plugins.ts#INTERFACE-%3ELogger
+    effects:
+      - PURE
+  - name: LogLevel
+    kind: TYPE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/plugins.ts#TYPE_ALIAS-%3ELogLevel
+    effects:
+      - PURE
+  - name: lookupEdge
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/notation/archetypes.ts#FUNCTION-%3ElookupEdge
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: LoopNodeRecord
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#INTERFACE-%3ELoopNodeRecord
+    effects:
+      - PURE
+  - name: Manifest
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/plugins.ts#INTERFACE-%3EManifest
+    effects:
+      - PURE
+  - name: ManifestEntrypoint
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/plugins.ts#INTERFACE-%3EManifestEntrypoint
+    effects:
+      - PURE
+  - name: ManifestService
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/plugins.ts#INTERFACE-%3EManifestService
+    effects:
+      - PURE
+  - name: MatchContext
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/routing.ts#INTERFACE-%3EMatchContext
+    effects:
+      - PURE
+  - name: MatchResult
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/routing.ts#INTERFACE-%3EMatchResult
+    effects:
+      - PURE
+  - name: Meta
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/knowledge/git-ingest.ts#INTERFACE-%3EMeta
+    effects:
+      - PURE
+  - name: MethodNodeRecord
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#INTERFACE-%3EMethodNodeRecord
+    effects:
+      - PURE
+  - name: ModifiedNodeInfo
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/VersionManager.ts#INTERFACE-%3EModifiedNodeInfo
+    effects:
+      - PURE
+  - name: ModuleNodeRecord
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#INTERFACE-%3EModuleNodeRecord
+    effects:
+      - PURE
+  - name: ModuleResolutionOptions
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/utils/moduleResolution.ts#INTERFACE-%3EModuleResolutionOptions
+    effects:
+      - PURE
+  - name: MultiLogger
+    kind: CLASS
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/logging/Logger.ts#CLASS-%3EMultiLogger
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: NAMESPACED_TYPE
+    kind: CONSTANT
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#CONSTANT-%3ENAMESPACED_TYPE
+    effects:
+      - PURE
+  - name: NamespacedNodeType
+    kind: TYPE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#TYPE_ALIAS-%3ENamespacedNodeType
+    effects:
+      - PURE
+  - name: NeighborsRequest
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3ENeighborsRequest
+    effects:
+      - PURE
+  - name: NeighborsResponse
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3ENeighborsResponse
+    effects:
+      - PURE
+  - name: NetTcpConnectionNodeRecord
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#INTERFACE-%3ENetTcpConnectionNodeRecord
+    effects:
+      - PURE
+  - name: NetTcpServerNodeRecord
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#INTERFACE-%3ENetTcpServerNodeRecord
+    effects:
+      - PURE
+  - name: Node
+    kind: TYPE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/index.ts#EXPORT_BINDING-%3ENode%5Bin:./core/GraphBackend.js%5D
+    effects:
+      - PURE
+  - name: NODE_TYPE
+    kind: CONSTANT
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#CONSTANT-%3ENODE_TYPE
+    effects:
+      - PURE
+  - name: NodeContext
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/queries/NodeContext.ts#INTERFACE-%3ENodeContext
+    effects:
+      - PURE
+  - name: NodeExistsRequest
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3ENodeExistsRequest
+    effects:
+      - PURE
+  - name: NodeExistsResponse
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3ENodeExistsResponse
+    effects:
+      - PURE
+  - name: NodeFilter
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/plugins.ts#INTERFACE-%3ENodeFilter
+    effects:
+      - PURE
+  - name: NodeRecord
+    kind: TYPE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#TYPE_ALIAS-%3ENodeRecord
+    effects:
+      - PURE
+  - name: NodesChunkResponse
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3ENodesChunkResponse
+    effects:
+      - PURE
+  - name: NodeType
+    kind: TYPE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#TYPE_ALIAS-%3ENodeType
+    effects:
+      - PURE
+  - name: NodeTypeSchema
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/schema/GraphSchemaExtractor.ts#INTERFACE-%3ENodeTypeSchema
+    effects:
+      - PURE
+  - name: NONDETERMINISTIC_OBJECTS
+    kind: CONSTANT
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/queries/traceValues.ts#CONSTANT-%3ENONDETERMINISTIC_OBJECTS
+    effects:
+      - PURE
+  - name: NONDETERMINISTIC_PATTERNS
+    kind: CONSTANT
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/queries/traceValues.ts#CONSTANT-%3ENONDETERMINISTIC_PATTERNS
+    effects:
+      - PURE
+  - name: NondeterministicPattern
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/queries/types.ts#INTERFACE-%3ENondeterministicPattern
+    effects:
+      - PURE
+  - name: normalizeAuthors
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/knowledge/git-ingest.ts#FUNCTION-%3EnormalizeAuthors
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: normalizeSemanticId
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/GrafemaUri.ts#FUNCTION-%3EnormalizeSemanticId
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: NotationBlock
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/notation/types.ts#INTERFACE-%3ENotationBlock
+    effects:
+      - PURE
+  - name: NotationLine
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/notation/types.ts#INTERFACE-%3ENotationLine
+    effects:
+      - PURE
+  - name: ObjectStructureEdge
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/edges.ts#INTERFACE-%3EObjectStructureEdge
+    effects:
+      - PURE
+  - name: OpenDatabaseResponse
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3EOpenDatabaseResponse
+    effects:
+      - PURE
+  - name: OrchestratorConfig
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/plugins.ts#INTERFACE-%3EOrchestratorConfig
+    effects:
+      - PURE
+  - name: OsUnixServerNodeRecord
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#INTERFACE-%3EOsUnixServerNodeRecord
+    effects:
+      - PURE
+  - name: OsUnixSocketNodeRecord
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#INTERFACE-%3EOsUnixSocketNodeRecord
+    effects:
+      - PURE
+  - name: OwnershipEntry
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/knowledge/git-queries.ts#INTERFACE-%3EOwnershipEntry
+    effects:
+      - PURE
+  - name: ParsedGrafemaUri
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/GrafemaUri.ts#INTERFACE-%3EParsedGrafemaUri
+    effects:
+      - PURE
+  - name: ParsedSemanticAddress
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/knowledge/types.ts#INTERFACE-%3EParsedSemanticAddress
+    effects:
+      - PURE
+  - name: ParsedSemanticId
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/SemanticId.ts#INTERFACE-%3EParsedSemanticId
+    effects:
+      - PURE
+  - name: ParsedSemanticIdV2
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/SemanticId.ts#INTERFACE-%3EParsedSemanticIdV2
+    effects:
+      - PURE
+  - name: parseEdgesFile
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/knowledge/parser.ts#FUNCTION-%3EparseEdgesFile
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: parseFrontmatter
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/knowledge/parser.ts#FUNCTION-%3EparseFrontmatter
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: parseGitLog
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/knowledge/git-ingest.ts#FUNCTION-%3EparseGitLog
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: parseGrafemaUri
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/GrafemaUri.ts#FUNCTION-%3EparseGrafemaUri
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: parseKBNode
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/knowledge/parser.ts#FUNCTION-%3EparseKBNode
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: parseSemanticAddress
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/knowledge/SemanticAddressResolver.ts#FUNCTION-%3EparseSemanticAddress
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: parseSemanticId
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/SemanticId.ts#FUNCTION-%3EparseSemanticId
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: parseSemanticIdV2
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/SemanticId.ts#FUNCTION-%3EparseSemanticIdV2
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: parseYamlArrayFile
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/knowledge/parser.ts#FUNCTION-%3EparseYamlArrayFile
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: PathValidationResult
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/validation/PathValidator.ts#INTERFACE-%3EPathValidationResult
+    effects:
+      - PURE
+  - name: PathValidator
+    kind: CLASS
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/validation/PathValidator.ts#CLASS-%3EPathValidator
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: PERSPECTIVES
+    kind: CONSTANT
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/notation/perspectives.ts#CONSTANT-%3EPERSPECTIVES
+    effects:
+      - PURE
+  - name: PingResponse
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3EPingResponse
+    effects:
+      - PURE
+  - name: PLUGIN_PHASE
+    kind: CONSTANT
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/plugins.ts#CONSTANT-%3EPLUGIN_PHASE
+    effects:
+      - PURE
+  - name: PluginContext
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/plugins.ts#INTERFACE-%3EPluginContext
+    effects:
+      - PURE
+  - name: PluginError
+    kind: CLASS
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/errors/GrafemaError.ts#CLASS-%3EPluginError
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: PluginMetadata
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/plugins.ts#INTERFACE-%3EPluginMetadata
+    effects:
+      - PURE
+  - name: PluginNodeRecord
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#INTERFACE-%3EPluginNodeRecord
+    effects:
+      - PURE
+  - name: PluginPhase
+    kind: TYPE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/plugins.ts#TYPE_ALIAS-%3EPluginPhase
+    effects:
+      - PURE
+  - name: PluginResult
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/plugins.ts#INTERFACE-%3EPluginResult
+    effects:
+      - PURE
+  - name: PropertyAccessNodeRecord
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#INTERFACE-%3EPropertyAccessNodeRecord
+    effects:
+      - PURE
+  - name: PropertyAssignmentNodeRecord
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#INTERFACE-%3EPropertyAssignmentNodeRecord
+    effects:
+      - PURE
+  - name: PropertySchema
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/schema/InterfaceSchemaExtractor.ts#INTERFACE-%3EPropertySchema
+    effects:
+      - PURE
+  - name: QueryProfile
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3EQueryProfile
+    effects:
+      - PURE
+  - name: QueryStats
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3EQueryStats
+    effects:
+      - PURE
+  - name: RawCommit
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/knowledge/git-ingest.ts#INTERFACE-%3ERawCommit
+    effects:
+      - PURE
+  - name: ReachabilityRequest
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3EReachabilityRequest
+    effects:
+      - PURE
+  - name: ReachabilityResponse
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3EReachabilityResponse
+    effects:
+      - PURE
+  - name: ReanalysisOptions
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/IncrementalReanalyzer.ts#INTERFACE-%3EReanalysisOptions
+    effects:
+      - PURE
+  - name: ReanalysisProgress
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/IncrementalReanalyzer.ts#INTERFACE-%3EReanalysisProgress
+    effects:
+      - PURE
+  - name: ReanalysisResult
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/IncrementalReanalyzer.ts#INTERFACE-%3EReanalysisResult
+    effects:
+      - PURE
+  - name: RedisOperationNodeRecord
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#INTERFACE-%3ERedisOperationNodeRecord
+    effects:
+      - PURE
+  - name: renderNotation
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/notation/renderer.ts#FUNCTION-%3ErenderNotation
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: renderTraceNarrative
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/notation/traceRenderer.ts#FUNCTION-%3ErenderTraceNarrative
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: ReportOptions
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/diagnostics/DiagnosticReporter.ts#INTERFACE-%3EReportOptions
+    effects:
+      - PURE
+  - name: resetKnownNodeTypes
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/storage/backends/typeValidation.ts#FUNCTION-%3EresetKnownNodeTypes
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: ResolutionFailureReason
+    kind: TYPE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/index.ts#EXPORT_BINDING-%3EResolutionFailureReason%5Bin:./errors/GrafemaError.js%5D
+    effects:
+      - PURE
+  - name: ResolutionStep
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/errors/GrafemaError.ts#INTERFACE-%3EResolutionStep
+    effects:
+      - PURE
+  - name: ResolvedAddress
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/knowledge/types.ts#INTERFACE-%3EResolvedAddress
+    effects:
+      - PURE
+  - name: resolveModulePath
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/utils/moduleResolution.ts#FUNCTION-%3EresolveModulePath
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: resolveNodeFile
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/utils/resolveNodeFile.ts#FUNCTION-%3EresolveNodeFile
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: ResolverBackend
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/knowledge/SemanticAddressResolver.ts#INTERFACE-%3EResolverBackend
+    effects:
+      - PURE
+  - name: resolveRelativeSpecifier
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/utils/moduleResolution.ts#FUNCTION-%3EresolveRelativeSpecifier
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: Resource
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/resources.ts#INTERFACE-%3EResource
+    effects:
+      - PURE
+  - name: ResourceId
+    kind: TYPE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/resources.ts#TYPE_ALIAS-%3EResourceId
+    effects:
+      - PURE
+  - name: ResourceMapping
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/infrastructure.ts#INTERFACE-%3EResourceMapping
+    effects:
+      - PURE
+  - name: ResourceRegistry
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/resources.ts#INTERFACE-%3EResourceRegistry
+    effects:
+      - PURE
+  - name: ResourceRegistryImpl
+    kind: CLASS
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/ResourceRegistry.ts#CLASS-%3EResourceRegistryImpl
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: RFDBClient
+    kind: TYPE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/index.ts#EXPORT_BINDING-%3ERFDBClient%5Bin:@grafema/rfdb-client%5D
+    effects:
+      - PURE
+  - name: RFDBCommand
+    kind: TYPE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#TYPE_ALIAS-%3ERFDBCommand
+    effects:
+      - PURE
+  - name: RFDBRequest
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3ERFDBRequest
+    effects:
+      - PURE
+  - name: RFDBResponse
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3ERFDBResponse
+    effects:
+      - PURE
+  - name: RFDBServerBackend
+    kind: CLASS
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/storage/backends/RFDBServerBackend.ts#CLASS-%3ERFDBServerBackend
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: RouteEdge
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/edges.ts#INTERFACE-%3ERouteEdge
+    effects:
+      - PURE
+  - name: ROUTING_MAP_RESOURCE_ID
+    kind: CONSTANT
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/routing.ts#CONSTANT-%3EROUTING_MAP_RESOURCE_ID
+    effects:
+      - PURE
+  - name: RoutingMap
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/routing.ts#INTERFACE-%3ERoutingMap
+    effects:
+      - PURE
+  - name: RoutingRule
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/routing.ts#INTERFACE-%3ERoutingRule
+    effects:
+      - PURE
+  - name: ScopeContext
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/SemanticId.ts#INTERFACE-%3EScopeContext
+    effects:
+      - PURE
+  - name: ScopeNodeRecord
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#INTERFACE-%3EScopeNodeRecord
+    effects:
+      - PURE
+  - name: SegmentInfo
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3ESegmentInfo
+    effects:
+      - PURE
+  - name: SemanticAddressResolver
+    kind: CLASS
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/knowledge/SemanticAddressResolver.ts#CLASS-%3ESemanticAddressResolver
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: SemanticIdOptions
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/SemanticId.ts#INTERFACE-%3ESemanticIdOptions
+    effects:
+      - PURE
+  - name: serializeKBNode
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/knowledge/parser.ts#FUNCTION-%3EserializeKBNode
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: ServerStats
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3EServerStats
+    effects:
+      - PURE
+  - name: ServiceDefinition
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/plugins.ts#INTERFACE-%3EServiceDefinition
+    effects:
+      - PURE
+  - name: ServiceNodeRecord
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#INTERFACE-%3EServiceNodeRecord
+    effects:
+      - PURE
+  - name: ShardDiagnostics
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3EShardDiagnostics
+    effects:
+      - PURE
+  - name: shortenName
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/notation/nameShortener.ts#FUNCTION-%3EshortenName
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: SnapshotDiff
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3ESnapshotDiff
+    effects:
+      - PURE
+  - name: SnapshotInfo
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3ESnapshotInfo
+    effects:
+      - PURE
+  - name: SnapshotRef
+    kind: TYPE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#TYPE_ALIAS-%3ESnapshotRef
+    effects:
+      - PURE
+  - name: SnapshotStats
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3ESnapshotStats
+    effects:
+      - PURE
+  - name: SourcePreview
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/queries/NodeContext.ts#INTERFACE-%3ESourcePreview
+    effects:
+      - PURE
+  - name: StaleModule
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/GraphFreshnessChecker.ts#INTERFACE-%3EStaleModule
+    effects:
+      - PURE
+  - name: startRfdbServer
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/utils/startRfdbServer.ts#FUNCTION-%3EstartRfdbServer
+    effects:
+      - ASYNC
+    returns:
+      flow: OUT
+  - name: StartRfdbServerOptions
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/utils/startRfdbServer.ts#INTERFACE-%3EStartRfdbServerOptions
+    effects:
+      - PURE
+  - name: StrictModeError
+    kind: CLASS
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/errors/GrafemaError.ts#CLASS-%3EStrictModeError
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: StrictModeFailure
+    kind: CLASS
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/errors/GrafemaError.ts#CLASS-%3EStrictModeFailure
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: STRUCTURAL_EDGE_TYPES
+    kind: CONSTANT
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/queries/NodeContext.ts#CONSTANT-%3ESTRUCTURAL_EDGE_TYPES
+    effects:
+      - PURE
+  - name: SubgraphData
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/notation/types.ts#INTERFACE-%3ESubgraphData
+    effects:
+      - PURE
+  - name: SummaryStats
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/diagnostics/DiagnosticReporter.ts#INTERFACE-%3ESummaryStats
+    effects:
+      - PURE
+  - name: toCompactSemanticId
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/GrafemaUri.ts#FUNCTION-%3EtoCompactSemanticId
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: toGrafemaUri
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/GrafemaUri.ts#FUNCTION-%3EtoGrafemaUri
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: traceBackwardBFS
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/queries/traceDataflow.ts#FUNCTION-%3EtraceBackwardBFS
+    effects:
+      - ASYNC
+    returns:
+      flow: OUT
+  - name: traceDataflow
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/queries/traceDataflow.ts#FUNCTION-%3EtraceDataflow
+    effects:
+      - ASYNC
+    returns:
+      flow: OUT
+  - name: TraceDataflowOptions
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/queries/traceDataflow.ts#INTERFACE-%3ETraceDataflowOptions
+    effects:
+      - PURE
+  - name: TraceDataflowResult
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/queries/traceDataflow.ts#INTERFACE-%3ETraceDataflowResult
+    effects:
+      - PURE
+  - name: TraceDetail
+    kind: TYPE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/index.ts#EXPORT_BINDING-%3ETraceDetail%5Bin:./notation/index.js%5D
+    effects:
+      - PURE
+  - name: TracedValue
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/queries/types.ts#INTERFACE-%3ETracedValue
+    effects:
+      - PURE
+  - name: traceForwardBFS
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/queries/traceDataflow.ts#FUNCTION-%3EtraceForwardBFS
+    effects:
+      - ASYNC
+    returns:
+      flow: OUT
+  - name: TraceNarrativeOptions
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/notation/traceRenderer.ts#INTERFACE-%3ETraceNarrativeOptions
+    effects:
+      - PURE
+  - name: traceValues
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/queries/traceValues.ts#FUNCTION-%3EtraceValues
+    effects:
+      - ASYNC
+    returns:
+      flow: OUT
+  - name: TraceValuesGraphBackend
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/queries/types.ts#INTERFACE-%3ETraceValuesGraphBackend
+    effects:
+      - PURE
+  - name: TraceValuesOptions
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/queries/types.ts#INTERFACE-%3ETraceValuesOptions
+    effects:
+      - PURE
+  - name: TryBlockNodeRecord
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#INTERFACE-%3ETryBlockNodeRecord
+    effects:
+      - PURE
+  - name: typeToKind
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/GraphBackend.ts#FUNCTION-%3EtypeToKind
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: UnbrandedNode
+    kind: TYPE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/index.ts#EXPORT_BINDING-%3EUnbrandedNode%5Bin:./branded.js%5D
+    effects:
+      - PURE
+  - name: UnknownReason
+    kind: TYPE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/index.ts#EXPORT_BINDING-%3EUnknownReason%5Bin:./queries/index.js%5D
+    effects:
+      - PURE
+  - name: validatePatterns
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/config/ConfigLoader.ts#FUNCTION-%3EvalidatePatterns
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: validateRouting
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/config/ConfigLoader.ts#FUNCTION-%3EvalidateRouting
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: validateServices
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/config/ConfigLoader.ts#FUNCTION-%3EvalidateServices
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: validateVersion
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/config/ConfigLoader.ts#FUNCTION-%3EvalidateVersion
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: validateWorkspace
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/config/ConfigLoader.ts#FUNCTION-%3EvalidateWorkspace
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: ValidationError
+    kind: CLASS
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/errors/GrafemaError.ts#CLASS-%3EValidationError
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: ValueSetResult
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/queries/types.ts#INTERFACE-%3EValueSetResult
+    effects:
+      - PURE
+  - name: ValueSource
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/queries/types.ts#INTERFACE-%3EValueSource
+    effects:
+      - PURE
+  - name: VariableNodeRecord
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/nodes.ts#INTERFACE-%3EVariableNodeRecord
+    effects:
+      - PURE
+  - name: VariableOverview
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/FileOverview.ts#INTERFACE-%3EVariableOverview
+    effects:
+      - PURE
+  - name: VersionConstants
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/VersionManager.ts#INTERFACE-%3EVersionConstants
+    effects:
+      - PURE
+  - name: VersionedNode
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/VersionManager.ts#INTERFACE-%3EVersionedNode
+    effects:
+      - PURE
+  - name: versionManager
+    kind: CONSTANT
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/VersionManager.ts#CONSTANT-%3EversionManager
+    effects:
+      - PURE
+  - name: VersionManager
+    kind: CLASS
+    semanticId: grafema://github.com/Disentinel/grafema/packages/util/src/core/VersionManager.ts#CLASS-%3EVersionManager
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: WireEdge
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3EWireEdge
+    effects:
+      - PURE
+  - name: WireNode
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/types/src/rfdb.ts#INTERFACE-%3EWireNode
+    effects:
+      - PURE
+imports:
+  - purl: pkg:npm/@grafema/rfdb-client
+    symbols:
+      - "@grafema/rfdb-client"
+  - purl: pkg:npm/@grafema/types
+    symbols:
+      - "@grafema/types"
+  - purl: pkg:npm/ajv
+    symbols:
+      - ajv
+  - purl: pkg:npm/child_process
+    symbols:
+      - child_process
+  - purl: pkg:npm/crypto
+    symbols:
+      - crypto
+  - purl: pkg:npm/fs
+    symbols:
+      - fs
+      - fs/promises
+  - purl: pkg:npm/http
+    symbols:
+      - http
+  - purl: pkg:npm/https
+    symbols:
+      - https
+  - purl: pkg:npm/minimatch
+    symbols:
+      - minimatch
+  - purl: pkg:npm/module
+    symbols:
+      - module
+  - purl: pkg:npm/path
+    symbols:
+      - path
+  - purl: pkg:npm/timers
+    symbols:
+      - timers/promises
+  - purl: pkg:npm/url
+    symbols:
+      - url
+  - purl: pkg:npm/yaml
+    symbols:
+      - yaml
+capabilities:
+  total_exports: 410
+  total_internal_symbols: 2228
+  has_graph: true
+access:
+  local: ./graph.rfdb
+language: typescript
+language_specific:
+  module_system: esm

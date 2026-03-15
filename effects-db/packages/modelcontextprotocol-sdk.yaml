@@ -1,0 +1,88 @@
+# @modelcontextprotocol/sdk (v1.x) — MCP protocol SDK
+# Generated: 2026-03-15
+# Method: Claude inference only (Grafema analysis FAILED — orchestrator hangs on 58 CJS files)
+# Taxonomy version: 1
+# purl: pkg:npm/@modelcontextprotocol/sdk
+#
+# ⚠ GRAFEMA VALIDATION FAILED: Orchestrator hangs (0% CPU, 66MB RSS) analyzing
+# this package. Both ESM and CJS distributions cause the same issue.
+# This is a product gap — filed for investigation.
+#
+# Protocol SDK for MCP servers/clients. Transport layer is IO + ASYNC,
+# protocol handling is mostly PURE schema/type work.
+
+"@modelcontextprotocol/sdk":
+  # Server
+  Server.new: [PURE]
+  Server.connect: [IO, ASYNC]
+  Server.close: [IO, ASYNC]
+  Server.setRequestHandler: [MUTATION]
+  Server.removeRequestHandler: [MUTATION]
+  Server.setNotificationHandler: [MUTATION]
+  Server.removeNotificationHandler: [MUTATION]
+  Server.sendNotification: [IO, ASYNC]
+  Server.sendRequest: [IO, ASYNC]
+  Server.sendLoggingMessage: [IO, ASYNC]
+  Server.sendResourceUpdated: [IO, ASYNC]
+  Server.sendResourceListChanged: [IO, ASYNC]
+  Server.sendToolListChanged: [IO, ASYNC]
+  Server.sendPromptListChanged: [IO, ASYNC]
+
+  # Client
+  Client.new: [PURE]
+  Client.connect: [IO, ASYNC]
+  Client.close: [IO, ASYNC]
+  Client.listTools: [IO, ASYNC]
+  Client.callTool: [IO, ASYNC]
+  Client.listResources: [IO, ASYNC]
+  Client.readResource: [IO, ASYNC]
+  Client.listPrompts: [IO, ASYNC]
+  Client.getPrompt: [IO, ASYNC]
+  Client.listResourceTemplates: [IO, ASYNC]
+  Client.subscribe: [IO, ASYNC]
+  Client.unsubscribe: [IO, ASYNC]
+  Client.setNotificationHandler: [MUTATION]
+  Client.ping: [IO, ASYNC]
+  Client.complete: [IO, ASYNC]
+
+  # Transports — IO (stdio, HTTP)
+  StdioServerTransport.new: [IO]
+  StdioServerTransport.start: [IO, ASYNC]
+  StdioServerTransport.close: [IO, ASYNC]
+  StdioServerTransport.send: [IO, ASYNC]
+
+  StdioClientTransport.new: [IO]
+  StdioClientTransport.start: [IO, ASYNC]
+  StdioClientTransport.close: [IO, ASYNC]
+  StdioClientTransport.send: [IO, ASYNC]
+
+  SSEServerTransport.new: [PURE]
+  SSEServerTransport.start: [IO, ASYNC]
+  SSEServerTransport.close: [IO, ASYNC]
+  SSEServerTransport.send: [IO, ASYNC]
+  SSEServerTransport.handlePostMessage: [IO, ASYNC]
+
+  SSEClientTransport.new: [PURE]
+  SSEClientTransport.start: [IO, ASYNC]
+  SSEClientTransport.close: [IO, ASYNC]
+  SSEClientTransport.send: [IO, ASYNC]
+
+  StreamableHTTPServerTransport.new: [PURE]
+  StreamableHTTPServerTransport.handleRequest: [IO, ASYNC]
+  StreamableHTTPServerTransport.close: [IO, ASYNC]
+
+  StreamableHTTPClientTransport.new: [PURE]
+  StreamableHTTPClientTransport.start: [IO, ASYNC]
+  StreamableHTTPClientTransport.close: [IO, ASYNC]
+  StreamableHTTPClientTransport.send: [IO, ASYNC]
+
+  # Schema/types — PURE (Zod schemas for validation)
+  CallToolRequestSchema: [PURE]
+  ListToolsRequestSchema: [PURE]
+  ListResourcesRequestSchema: [PURE]
+  ReadResourceRequestSchema: [PURE]
+  ListPromptsRequestSchema: [PURE]
+  GetPromptRequestSchema: [PURE]
+  CompleteRequestSchema: [PURE]
+  InitializeRequestSchema: [PURE]
+  PingRequestSchema: [PURE]
