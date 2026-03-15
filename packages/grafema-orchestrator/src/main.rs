@@ -526,7 +526,9 @@ async fn main() -> Result<()> {
                     batch_edges.clear();
                 }
             }
-            // Note: results are still needed for resolution phase (resolve node collection)
+            // All results are now ingested — free AST memory before resolution phase.
+            // Resolution queries RFDB directly (query_resolve_nodes_for_lang).
+            drop(results);
 
             // NOTE: Do NOT flush/rebuild_indexes here. Analysis commits
             // tombstone resolution edges (via delete_node cascading to edges).
@@ -1245,7 +1247,7 @@ async fn main() -> Result<()> {
 
             // 8g. Run Swift resolution (if Swift files were analyzed)
             if !swift_files.is_empty() {
-                let swift_resolve_nodes = analyzer::collect_resolve_nodes_for_lang(&results, config::Language::Swift);
+                let swift_resolve_nodes = query_resolve_nodes_for_lang(&mut rfdb, config::Language::Swift).await?;
                 if !swift_resolve_nodes.is_empty() {
                     tracing::info!(
                         nodes = swift_resolve_nodes.len(),
@@ -1310,8 +1312,8 @@ async fn main() -> Result<()> {
             let has_objc = !objc_files.is_empty();
             if has_swift && has_objc {
                 let mut all_apple_nodes = Vec::new();
-                all_apple_nodes.extend(analyzer::collect_resolve_nodes_for_lang(&results, config::Language::Swift));
-                all_apple_nodes.extend(analyzer::collect_resolve_nodes_for_lang(&results, config::Language::ObjectiveC));
+                all_apple_nodes.extend(query_resolve_nodes_for_lang(&mut rfdb, config::Language::Swift).await?);
+                all_apple_nodes.extend(query_resolve_nodes_for_lang(&mut rfdb, config::Language::ObjectiveC).await?);
 
                 if !all_apple_nodes.is_empty() {
                     tracing::info!(
@@ -1494,7 +1496,7 @@ async fn main() -> Result<()> {
 
             // 8k. Run BEAM (Elixir/Erlang) resolution
             if !beam_files.is_empty() {
-                let beam_resolve_nodes = analyzer::collect_resolve_nodes_for_lang(&results, config::Language::Beam);
+                let beam_resolve_nodes = query_resolve_nodes_for_lang(&mut rfdb, config::Language::Beam).await?;
                 if !beam_resolve_nodes.is_empty() {
                     tracing::info!(
                         nodes = beam_resolve_nodes.len(),
