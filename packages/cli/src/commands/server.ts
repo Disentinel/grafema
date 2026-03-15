@@ -138,9 +138,8 @@ serverCommand
   .description('Start the RFDB server')
   .option('-p, --project <path>', 'Project path', '.')
   .option('-b, --binary <path>', 'Path to rfdb-server binary')
-  .option('-f, --foreground', 'Run in foreground with logs visible (Ctrl+C to stop)')
-  .option('-l, --log-level <level>', 'RUST_LOG level for foreground mode (default: info)', 'info')
-  .action(async (options: { project: string; binary?: string; foreground?: boolean; logLevel: string }) => {
+  .option('-f, --foreground', 'Run in foreground with request logging (Ctrl+C to stop)')
+  .action(async (options: { project: string; binary?: string; foreground?: boolean }) => {
     const projectPath = resolve(options.project);
     const { grafemaDir, socketPath, dbPath, pidPath } = getProjectPaths(projectPath);
 
@@ -191,12 +190,11 @@ serverCommand
       console.log(`  Binary: ${binaryPath}`);
       console.log(`  Database: ${dbPath}`);
       console.log(`  Socket: ${socketPath}`);
-      console.log(`  Log level: ${options.logLevel}`);
       console.log(`  Press Ctrl+C to stop\n`);
 
       const child = spawn(binaryPath, [dbPath, '--socket', socketPath, '--data-dir', dataDir], {
         stdio: ['ignore', 'inherit', 'inherit'],
-        env: { ...process.env, RUST_LOG: options.logLevel },
+        env: { ...process.env, RFDB_VERBOSE: '1' },
       });
 
       const shutdown = () => {

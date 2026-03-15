@@ -48,6 +48,13 @@ use rfdb::metrics::{Metrics, MetricsSnapshot, SLOW_QUERY_THRESHOLD_MS};
 // Global client ID counter
 static NEXT_CLIENT_ID: AtomicUsize = AtomicUsize::new(1);
 
+/// Verbose logging: set RFDB_VERBOSE=1 to log every request with timing.
+/// Useful with `grafema server start --foreground`.
+fn is_verbose() -> bool {
+    static VERBOSE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *VERBOSE.get_or_init(|| std::env::var("RFDB_VERBOSE").map(|v| v == "1" || v == "true").unwrap_or(false))
+}
+
 /// Streaming threshold: queries returning more than this many nodes
 /// will use chunked streaming instead of a single Response::Nodes.
 /// Only active when the client negotiated protocol version >= 3.
@@ -2312,9 +2319,15 @@ fn handle_client_unix(
             }
         };
 
+        let duration_ms = start.elapsed().as_millis() as u64;
+
+        // Verbose logging: every request with timing (RFDB_VERBOSE=1)
+        if is_verbose() {
+            eprintln!("[rfdb] {} {}ms (client {})", op_name, duration_ms, client_id);
+        }
+
         // Record metrics if enabled
         if let Some(ref m) = metrics {
-            let duration_ms = start.elapsed().as_millis() as u64;
             m.record_query(&op_name, duration_ms);
 
             // Track timeout/cancelled queries
