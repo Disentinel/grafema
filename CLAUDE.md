@@ -248,22 +248,62 @@ Do NOT delegate exploration to Explore subagents — they don't know about Grafe
 
 MCP tools are deferred — load them via `ToolSearch` before first use (e.g., `ToolSearch("+grafema find")`).
 
+### Keep graph fresh: `reload` after code changes
+
+The MCP server caches the graph in memory. In long-lived sessions, code changes (commits, branch switches, `pnpm build`) make the cache stale. **After any `grafema analyze`, `git checkout`, or `git pull` — call `reload()` before querying the graph.** Otherwise you're querying an outdated snapshot and results will be wrong or incomplete.
+
+Rule of thumb: if you changed code and more than ~10 minutes passed since last `reload` — reload.
+
 ### Exploration priority: KB → Graph → Files
 
 1. **Knowledge Base first** — `query_knowledge(text="<area>")`, `query_decisions(module="<module>")`. Existing decisions, facts, and session notes may already answer your question.
-2. **Code graph second** — `find_nodes`, `find_calls`, `get_file_overview`, `query_graph`. Structural understanding of current code.
+2. **Code graph second** — tools below. Structural understanding of current code.
 3. **File reads last** — only when KB and graph don't have what you need.
 
-| Instead of... | Try KB first | Then Graph |
-|---------------|-------------|------------|
-| Understanding a module's purpose | `query_knowledge(text="<module>")` | `get_file_overview` |
-| Why code is structured this way | `query_decisions(module="<semantic-addr>")` | `get_context` |
-| Known issues / gotchas | `query_knowledge(type="FACT", text="<area>")` | `find_nodes` |
-| `Glob **/*.ts` + Read files | — | `find_nodes` by type/name/file |
-| `Grep "functionName"` | — | `find_calls --name functionName` |
-| Read file to understand deps | — | `trace_dataflow` or `get_file_overview` |
-| Multiple Reads to understand impact | — | `query_graph` with Datalog |
-| Find cross-package imports | — | `query_graph` with `attr(X, "source", "@grafema/util")` |
+### Tool routing by task
+
+**Load tools via `ToolSearch("+grafema <keyword>")` before first use.** They are deferred.
+
+#### "What's in this file/function?" → `describe`
+Compact DSL notation view (= `grafema tldr`). Shows structure, calls, deps, data flow in a few lines. **Use instead of Read for orientation** — saves tokens, gives relationships Read can't show.
+```
+describe(nodeId="<semantic-id>", depth=2)  # depth 0=names, 1=edges, 2=nested+folded
+```
+Operators in output: `o-` import, `>` calls, `<` reads, `=>` writes, `>x` throws, `~>>` emits, `?|` guard
+
+#### "Who calls this? Is it dead code?" → `find_calls`
+All callsites of a function/method across the codebase. **Use instead of `Grep "functionName"`** — finds calls even through aliases, gives file+line+resolved status.
+```
+find_calls(name="getUserById")                    # global function
+find_calls(name="get", className="redis")         # method call
+```
+
+#### "Where does this value go?" / "Where does it come from?" → `trace_dataflow`
+Follows assignments, arguments, returns across function boundaries. **Use for impact analysis, taint tracking, understanding data pipelines.**
+```
+trace_dataflow(source="userInput", file="src/api.ts", direction="forward")   # where does it flow?
+trace_dataflow(source="response", file="src/api.ts", direction="backward")   # what feeds it?
+trace_dataflow(source="config", file="src/app.ts", direction="both")         # full lineage
+```
+Start with max_depth=5, increase if chain is longer.
+
+#### "What's the real target behind this alias?" → `trace_alias`
+Resolves `const alias = obj.method; alias()` back to `obj.method`. **Use when variable name doesn't match the function being called** — re-exports, destructured imports, callback assignments.
+```
+trace_alias(variableName="handler", file="src/routes.ts")
+```
+
+#### Other routing
+
+| Task | Tool |
+|------|------|
+| Find all functions/classes/nodes matching criteria | `find_nodes(type="FUNCTION", name="parse*", file="src/")` |
+| Understand a node with code snippet + relationships | `get_context(nodeId="<id>")` |
+| Full file structure (all exports, classes, functions) | `get_file_overview(file="src/auth.ts")` |
+| Complex structural patterns (Datalog) | `query_graph(query="...")` |
+| Cross-package imports | `query_graph` with `attr(X, "source", "@grafema/util")` |
+| Why code is structured this way | `query_decisions(module="<semantic-addr>")` |
+| Known issues / gotchas for an area | `query_knowledge(type="FACT", text="<area>")` |
 
 **Fallback to file reads ONLY when:**
 1. KB and graph returned 0 results AND you verified the queries were correct
