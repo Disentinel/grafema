@@ -31,28 +31,63 @@ jobs:
       matrix:
         platform: [darwin-arm64, darwin-x64, linux-x64, linux-arm64]
         binary:
+          # JS/TS
           - name: grafema-analyzer
             package: js-analyzer
           - name: grafema-resolve
             package: grafema-resolve
-          - name: grafema-rust-analyzer
-            package: rust-analyzer
-          - name: grafema-rust-resolve
-            package: rust-resolve
-          - name: grafema-java-analyzer
-            package: java-analyzer
-          - name: grafema-kotlin-analyzer
-            package: kotlin-analyzer
-          - name: grafema-go-analyzer
-            package: go-analyzer
+          # Haskell
           - name: haskell-analyzer
             package: haskell-analyzer
           - name: haskell-resolve
             package: haskell-resolve
+          # Rust
+          - name: grafema-rust-analyzer
+            package: rust-analyzer
+          - name: grafema-rust-resolve
+            package: rust-resolve
+          # Java
+          - name: grafema-java-analyzer
+            package: java-analyzer
+          - name: java-resolve
+            package: java-resolve
+          # Kotlin
+          - name: grafema-kotlin-analyzer
+            package: kotlin-analyzer
+          - name: kotlin-resolve
+            package: kotlin-resolve
+          # JVM cross-language
+          - name: jvm-cross-resolve
+            package: jvm-cross-resolve
+          # Python
+          - name: grafema-python-analyzer
+            package: python-analyzer
+          - name: python-resolve
+            package: python-resolve
+          # Go
+          - name: grafema-go-analyzer
+            package: go-analyzer
+          - name: go-resolve
+            package: go-resolve
+          # C/C++
           - name: grafema-cpp-analyzer
             package: cpp-analyzer
           - name: cpp-resolve
             package: cpp-resolve
+          # Swift
+          - name: grafema-swift-analyzer
+            package: swift-analyzer
+          - name: swift-resolve
+            package: swift-resolve
+          # Obj-C
+          - name: grafema-objc-analyzer
+            package: objc-analyzer
+          # Apple cross-language
+          - name: apple-cross-resolve
+            package: apple-cross-resolve
+          # BEAM (Elixir/Erlang)
+          - name: beam-resolve
+            package: beam-resolve
         include:
           - platform: darwin-arm64
             os: macos-latest
