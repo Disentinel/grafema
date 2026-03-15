@@ -1,5 +1,5 @@
 # Grafema Configuration — self-analysis (dogfooding)
-# Covers all production source code: TypeScript, Rust, Haskell
+# Covers all production source code: TypeScript, Rust, Haskell, Elixir/Erlang
 
 root: ".."
 
@@ -10,6 +10,9 @@ include:
   - "packages/*/src/**/*.rs"
   # Haskell packages (grafema-common, grafema-resolve, haskell-analyzer, haskell-resolve, rust-analyzer, rust-resolve)
   - "packages/*/src/**/*.hs"
+  # Elixir/Erlang packages (beam-analyzer)
+  - "packages/*/lib/**/*.ex"
+  - "packages/*/src/**/*.erl"
 
 # Explicit services: monorepo packages with entry points
 services:
