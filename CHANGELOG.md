@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.5-beta] - 2026-03-15
+
+### Highlights
+
+- **Streaming analysis pipeline** — AST results are now freed after RFDB ingestion instead of being held through the entire resolution phase. On 16k-file projects this eliminates swap thrashing that caused analysis to hang.
+- **Batched RFDB ingestion** — Files are committed in batches of 500, balancing round-trip overhead vs memory usage.
+- **linux-arm64 support** — Full binary support across all platforms including native ARM64 Linux.
+- **Multi-language init** — `grafema init` now configures all 11 supported languages by default, not just JS/TS.
+
+### Bug Fixes
+
+- fix(orchestrator): `c_char` type portability for ARM Linux (`i8` on x86 vs `u8` on ARM)
+- fix(orchestrator): streaming pipeline — drop AST results after RFDB ingestion
+- fix(orchestrator): batched ingestion with `INGEST_BATCH_SIZE=500` and deferred indexing
+- fix(init): support all 11 languages, remove `src/` prefix assumption
+- fix(ci): Haskell build for linux-arm64 (native `ubuntu-24.04-arm` runner)
+- fix(ci): macOS x64 runner deprecation (`macos-13` → `macos-13-large`)
+- fix(npm): `postinstall.js` chmod for platform binaries (EACCES on Linux)
+- fix: sync pnpm-lock.yaml with platform package versions
+
 ## [0.3.0-beta] - 2026-03-13
 
 159 commits, 37 merged PRs since v0.2.13-beta.
