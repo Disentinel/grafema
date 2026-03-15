@@ -35,7 +35,7 @@ function sleep(ms: number): Promise<void> {
  * - DB exists, server running: Connect directly
  */
 export class GrafemaClientManager extends EventEmitter {
-  private workspaceRoot: string;
+  readonly workspaceRoot: string;
   private explicitBinaryPath: string | null;
   private explicitSocketPath: string | null;
   private client: RFDBClient | RFDBWebSocketClient | null = null;
@@ -55,7 +55,10 @@ export class GrafemaClientManager extends EventEmitter {
     return this._state;
   }
 
-  private setState(state: ConnectionState): void {
+  /**
+   * Set connection state. Public so analyze/init commands can update state.
+   */
+  setState(state: ConnectionState): void {
     this._state = state;
     this.emit('stateChange', state);
   }
@@ -293,9 +296,10 @@ export class GrafemaClientManager extends EventEmitter {
   }
 
   /**
-   * Start RFDB server process
+   * Start RFDB server process.
+   * Public so analyze command can ensure server is running before analysis.
    */
-  private async startServer(): Promise<void> {
+  async startServer(): Promise<void> {
     const binaryPath = this.findServerBinary();
     if (!binaryPath) {
       throw new Error(

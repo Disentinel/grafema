@@ -17,7 +17,9 @@
     "onView:grafemaCallers",
     "onView:grafemaIssues",
     "onView:grafemaBlastRadius",
-    "onView:grafemaNodesInFile"
+    "onView:grafemaNodesInFile",
+    "workspaceContains:.grafema/config.yaml",
+    "workspaceContains:grafema.config.yaml"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -182,6 +184,21 @@
         "command": "grafema.nodesInFile.refresh",
         "title": "Refresh",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "grafema.analyze",
+        "title": "Grafema: Analyze Project",
+        "icon": "$(play)"
+      },
+      {
+        "command": "grafema.init",
+        "title": "Grafema: Initialize Project",
+        "icon": "$(new-file)"
+      },
+      {
+        "command": "grafema.reanalyze",
+        "title": "Grafema: Re-analyze (Force)",
+        "icon": "$(debug-restart)"
       }
     ],
     "menus": {
@@ -225,6 +242,11 @@
           "command": "grafema.copyTreeState",
           "when": "view == grafemaExplore",
           "group": "navigation@7"
+        },
+        {
+          "command": "grafema.analyze",
+          "when": "view == grafemaStatus",
+          "group": "navigation@0"
         },
         {
           "command": "grafema.clearDebugLog",
@@ -368,6 +390,11 @@
           "type": "string",
           "default": "ws://localhost:7474",
           "description": "RFDB WebSocket URL (when transport is 'websocket')"
+        },
+        "grafema.orchestratorPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to grafema-orchestrator binary. If empty, auto-detect."
         },
         "grafema.codeLens.enabled": {
           "type": "boolean",
