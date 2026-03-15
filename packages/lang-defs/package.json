@@ -21,7 +21,7 @@
     "build": "tsc",
     "clean": "rm -rf dist"
   },
-  "license": "Apache-2.0",
+  "license": "FSL-1.1-Apache-2.0",
   "author": "Vadim Reshetnikov",
   "devDependencies": {
     "typescript": "^5.9.3"

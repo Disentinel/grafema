@@ -22,7 +22,7 @@
     "url": "https://github.com/Disentinel/grafema.git",
     "directory": "packages/grafema-darwin-x64"
   },
-  "license": "Apache-2.0",
+  "license": "FSL-1.1-Apache-2.0",
   "author": "Vadim Reshetnikov",
   "engines": {
     "node": ">= 18"
