@@ -1,6 +1,6 @@
 [package]
 name = "rfdb"
-version = "0.3.4-beta"
+version = "0.3.5-beta"
 edition = "2021"
 authors = ["Vadim Reshetnikov"]
 description = "RFDB (Rega Flow Database) — high-performance disk-backed graph engine for semantic code analysis"

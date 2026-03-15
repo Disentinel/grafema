@@ -1,6 +1,6 @@
 {
   "name": "grafema",
-  "version": "0.3.4-beta",
+  "version": "0.3.5-beta",
   "description": "Graph-driven code analysis tool. AI should query the graph, not read code.",
   "type": "module",
   "main": "./dist/index.js",
@@ -42,10 +42,10 @@
     "directory": "packages/grafema"
   },
   "optionalDependencies": {
-    "@grafema/grafema-darwin-arm64": "0.3.4-beta",
-    "@grafema/grafema-darwin-x64": "0.3.4-beta",
-    "@grafema/grafema-linux-arm64": "0.3.4-beta",
-    "@grafema/grafema-linux-x64": "0.3.4-beta"
+    "@grafema/grafema-darwin-arm64": "0.3.5-beta",
+    "@grafema/grafema-darwin-x64": "0.3.5-beta",
+    "@grafema/grafema-linux-arm64": "0.3.5-beta",
+    "@grafema/grafema-linux-x64": "0.3.5-beta"
   },
   "dependencies": {
     "@grafema/api": "workspace:*",
