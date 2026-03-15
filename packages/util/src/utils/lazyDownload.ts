@@ -18,6 +18,7 @@ const GITHUB_REPO = 'Disentinel/grafema';
 
 /** All analyzer binaries that can be lazy-downloaded. */
 const DOWNLOADABLE_BINARIES = [
+  'grafema-orchestrator',
   'grafema-analyzer',
   'grafema-resolve',
   'haskell-analyzer',
@@ -192,7 +193,7 @@ export async function ensureBinary(
   const cached = findInGrafemaBin(binaryName);
   if (cached) return cached;
 
-  // Not downloadable (e.g. rfdb-server, grafema-orchestrator — these must be in npm package)
+  // Not downloadable (e.g. rfdb-server — must be in npm package)
   if (!isDownloadable(binaryName)) return null;
 
   // Download

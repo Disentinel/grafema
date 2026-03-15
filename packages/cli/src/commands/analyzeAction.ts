@@ -100,8 +100,15 @@ export async function analyzeAction(path: string, options: { service?: string; e
   }
   debug(`Analyzing project: ${projectPath}`);
 
-  // Find grafema-orchestrator binary
-  const orchestratorBinary = findOrchestratorBinary();
+  // Find grafema-orchestrator binary (lazy download if missing)
+  let orchestratorBinary = findOrchestratorBinary();
+  if (!orchestratorBinary) {
+    const downloaded = await ensureBinary('grafema-orchestrator', null, info);
+    if (downloaded) {
+      debug(`Downloaded grafema-orchestrator → ${downloaded}`);
+      orchestratorBinary = downloaded;
+    }
+  }
   if (!orchestratorBinary) {
     console.error('');
     console.error(getBinaryNotFoundMessage('grafema-orchestrator'));
