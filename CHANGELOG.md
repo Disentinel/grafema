@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.6-beta] - 2026-03-15
+
+### Bug Fixes
+
+- fix(rfdb): remove O(N×E) `get_incoming_edges` loop in `handle_commit_batch` — orphaned incoming edges now filtered at query time by tombstone checks, cleaned up by compaction
+- fix(orchestrator): streaming protocol mismatch — `query_nodes_by_type` now reads all streaming frames until `done=true`, preventing deadlock on large codebases (>100 nodes per query)
+- feat(cli): lazy-download orchestrator binary if missing (matches existing analyzer pattern)
+- chore(config): include Elixir/Erlang sources in self-analysis (511 files, was 490)
+
 ## [0.3.5-beta] - 2026-03-15
 
 ### Highlights
