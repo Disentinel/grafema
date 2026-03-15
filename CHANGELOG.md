@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.8-beta] - 2026-03-15
+
+### Features
+
+- feat(rfdb): `RFDB_VERBOSE=1` request logging — every request logged with operation name and timing (`[rfdb] CommitBatch 42ms`)
+- feat(rfdb): internal process logging for commitBatch (node/edge add/remove counts, file count, flush mode) and queryNodes (node count or chunk count for streamed responses)
+- feat(rfdb): exhaustive operation name coverage — all 50+ Request variants now have proper names instead of falling through to "Other"
+- feat(cli): `grafema server start --foreground` now uses `RFDB_VERBOSE=1` instead of useless `RUST_LOG` (rfdb-server has no tracing/env_logger)
+
 ## [0.3.6-beta] - 2026-03-15
 
 ### Bug Fixes
