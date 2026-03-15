@@ -81,22 +81,49 @@ PLATFORMS=("darwin-arm64" "darwin-x64" "linux-x64" "linux-arm64")
 REQUIRED_BINARIES=("rfdb-server" "grafema-orchestrator")
 
 # Optional binaries — download if available, warn if missing
+# Must match DOWNLOADABLE_BINARIES in packages/util/src/utils/lazyDownload.ts
 OPTIONAL_BINARIES=(
+  # JS/TS
   "grafema-analyzer"
   "grafema-resolve"
-  "grafema-rust-analyzer"
-  "grafema-rust-resolve"
-  "grafema-java-analyzer"
-  "java-resolve"
-  "grafema-kotlin-analyzer"
-  "grafema-go-analyzer"
+  # Haskell
   "haskell-analyzer"
   "haskell-resolve"
+  # Rust
+  "grafema-rust-analyzer"
+  "grafema-rust-resolve"
+  # Java
+  "grafema-java-analyzer"
+  "java-resolve"
+  "java-parser"
+  # Kotlin
+  "grafema-kotlin-analyzer"
+  "kotlin-resolve"
+  "kotlin-parser"
+  # JVM cross-language
+  "jvm-cross-resolve"
+  # Python
+  "grafema-python-analyzer"
+  "python-resolve"
+  # Go
+  "grafema-go-analyzer"
+  "go-resolve"
+  "go-parser"
+  # C/C++
   "grafema-cpp-analyzer"
   "cpp-resolve"
-  "java-parser"
-  "kotlin-parser"
-  "go-parser"
+  # Swift
+  "grafema-swift-analyzer"
+  "swift-resolve"
+  "swift-parser"
+  # Obj-C
+  "grafema-objc-analyzer"
+  "objc-parser"
+  # Apple cross-language
+  "apple-cross-resolve"
+  # BEAM (Elixir/Erlang)
+  "beam-analyzer"
+  "beam-resolve"
 )
 
 TOTAL_DOWNLOADED=0

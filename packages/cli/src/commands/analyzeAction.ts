@@ -8,7 +8,7 @@
  */
 
 import { resolve, join } from 'path';
-import { existsSync, mkdirSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync } from 'fs';
 import { spawn } from 'child_process';
 import {
   RFDBServerBackend,
@@ -16,6 +16,7 @@ import {
   findOrchestratorBinary,
   getBinaryNotFoundMessage,
   findAnalyzerBinary,
+  findInGrafemaBin,
   ensureBinary,
 } from '@grafema/util';
 import type { LogLevel } from '@grafema/util';
@@ -75,6 +76,75 @@ function findConfigFile(projectPath: string): string | null {
   return null;
 }
 
+/** Map of file extensions to required analyzer binaries. */
+const EXT_TO_BINARIES: Record<string, string[]> = {
+  // JS/TS — always needed (core)
+  js: ['grafema-analyzer', 'grafema-resolve'],
+  ts: ['grafema-analyzer', 'grafema-resolve'],
+  jsx: ['grafema-analyzer', 'grafema-resolve'],
+  tsx: ['grafema-analyzer', 'grafema-resolve'],
+  mjs: ['grafema-analyzer', 'grafema-resolve'],
+  cjs: ['grafema-analyzer', 'grafema-resolve'],
+  // Python
+  py: ['grafema-python-analyzer', 'python-resolve'],
+  pyi: ['grafema-python-analyzer', 'python-resolve'],
+  // Haskell
+  hs: ['haskell-analyzer', 'haskell-resolve'],
+  // Rust
+  rs: ['grafema-rust-analyzer', 'grafema-rust-resolve'],
+  // Java
+  java: ['grafema-java-analyzer', 'java-resolve', 'java-parser'],
+  // Kotlin
+  kt: ['grafema-kotlin-analyzer', 'kotlin-resolve', 'kotlin-parser'],
+  kts: ['grafema-kotlin-analyzer', 'kotlin-resolve', 'kotlin-parser'],
+  // Go
+  go: ['grafema-go-analyzer', 'go-resolve', 'go-parser'],
+  // C/C++
+  c: ['grafema-cpp-analyzer', 'cpp-resolve'],
+  cpp: ['grafema-cpp-analyzer', 'cpp-resolve'],
+  h: ['grafema-cpp-analyzer', 'cpp-resolve'],
+  hpp: ['grafema-cpp-analyzer', 'cpp-resolve'],
+  // Swift
+  swift: ['grafema-swift-analyzer', 'swift-resolve', 'swift-parser'],
+  // Obj-C
+  m: ['grafema-objc-analyzer', 'objc-parser'],
+  mm: ['grafema-objc-analyzer', 'objc-parser'],
+  // BEAM (Elixir/Erlang)
+  ex: ['beam-analyzer', 'beam-resolve'],
+  exs: ['beam-analyzer', 'beam-resolve'],
+  erl: ['beam-analyzer', 'beam-resolve'],
+};
+
+/**
+ * Detect languages from config include patterns and ensure their analyzer binaries exist.
+ * Reads the config file as text, extracts file extensions from include globs,
+ * and pre-downloads missing binaries before the orchestrator needs them.
+ */
+async function ensureLanguageBinaries(configPath: string, log: (...args: unknown[]) => void): Promise<void> {
+  const configText = readFileSync(configPath, 'utf-8');
+
+  // Extract extensions from include patterns like "**/*.py", '**/*.ts', etc.
+  const neededBinaries = new Set<string>();
+  for (const match of configText.matchAll(/\*\.(\w+)/g)) {
+    const ext = match[1];
+    const bins = EXT_TO_BINARIES[ext];
+    if (bins) bins.forEach(b => neededBinaries.add(b));
+  }
+
+  // Always ensure JS/TS binaries (most common, default language)
+  for (const b of ['grafema-analyzer', 'grafema-resolve']) {
+    neededBinaries.add(b);
+  }
+
+  for (const binName of neededBinaries) {
+    if (findAnalyzerBinary(binName) || findInGrafemaBin(binName)) continue;
+    const downloaded = await ensureBinary(binName, null, log);
+    if (downloaded) {
+      log(`Downloaded ${binName} → ${downloaded}`);
+    }
+  }
+}
+
 export async function analyzeAction(path: string, options: { service?: string; entrypoint?: string; clear?: boolean; quiet?: boolean; verbose?: boolean; debug?: boolean; logLevel?: string; logFile?: string; strict?: boolean; autoStart?: boolean }): Promise<void> {
   const projectPath = resolve(path);
   const grafemaDir = join(projectPath, '.grafema');
@@ -117,17 +187,6 @@ export async function analyzeAction(path: string, options: { service?: string; e
 
   debug(`Using orchestrator: ${orchestratorBinary}`);
 
-  // Ensure JS/TS analyzer binaries exist (lazy download if missing)
-  for (const binName of ['grafema-analyzer', 'grafema-resolve']) {
-    const existing = findAnalyzerBinary(binName);
-    if (!existing) {
-      const downloaded = await ensureBinary(binName, null, info);
-      if (downloaded) {
-        debug(`Downloaded ${binName} → ${downloaded}`);
-      }
-    }
-  }
-
   // Find config file for the orchestrator
   const configPath = findConfigFile(projectPath);
   if (!configPath) {
@@ -147,6 +206,9 @@ export async function analyzeAction(path: string, options: { service?: string; e
   }
 
   debug(`Using config: ${configPath}`);
+
+  // Ensure analyzer binaries exist for detected languages (lazy download if missing)
+  await ensureLanguageBinaries(configPath, debug);
 
   // Connect to RFDB server — auto-start by default (zero-config UX)
   const backend = new RFDBServerBackend({

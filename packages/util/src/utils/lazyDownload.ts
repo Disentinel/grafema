@@ -19,26 +19,47 @@ const GITHUB_REPO = 'Disentinel/grafema';
 /** All analyzer binaries that can be lazy-downloaded. */
 const DOWNLOADABLE_BINARIES = [
   'grafema-orchestrator',
+  // JS/TS
   'grafema-analyzer',
   'grafema-resolve',
+  // Haskell
   'haskell-analyzer',
   'haskell-resolve',
+  // Rust
   'grafema-rust-analyzer',
   'grafema-rust-resolve',
+  // Java
   'grafema-java-analyzer',
   'java-resolve',
   'java-parser',
+  // Kotlin
   'grafema-kotlin-analyzer',
   'kotlin-resolve',
   'kotlin-parser',
+  // JVM cross-language
   'jvm-cross-resolve',
+  // Python
   'grafema-python-analyzer',
   'python-resolve',
+  // Go
   'grafema-go-analyzer',
   'go-resolve',
   'go-parser',
+  // C/C++
   'grafema-cpp-analyzer',
   'cpp-resolve',
+  // Swift
+  'grafema-swift-analyzer',
+  'swift-resolve',
+  'swift-parser',
+  // Obj-C
+  'grafema-objc-analyzer',
+  'objc-parser',
+  // Apple cross-language
+  'apple-cross-resolve',
+  // BEAM (Elixir/Erlang)
+  'beam-analyzer',
+  'beam-resolve',
 ];
 
 /**
