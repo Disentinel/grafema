@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.9-beta] - 2026-03-15
+
+### Bug Fixes
+
+- fix(orchestrator): 120s per-file timeout — daemon worker killed and respawned if stuck, pipeline no longer hangs indefinitely
+- fix(orchestrator): per-file progress logging — `[N/M] Done Xms`, `SLOW` warnings for files >5s, parse failures with timing
+- fix(ci): 11 missing Haskell analyzer binaries now built in CI (Python, Swift, Obj-C, Apple, BEAM, Go/Java/Kotlin resolvers)
+- fix(cli): detect languages from config and pre-download matching analyzer binaries before spawning orchestrator
+
 ## [0.3.8-beta] - 2026-03-15
 
 ### Features
