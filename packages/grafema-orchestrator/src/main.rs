@@ -602,6 +602,7 @@ async fn main() -> Result<()> {
                 match process_pool::ProcessPool::new(resolve_pool_config, 1) {
                     Ok(resolve_pool) => {
                         // Step 1: Import resolution (with workspace packages for cross-package imports)
+                        tracing::info!("Sending imports request to resolve daemon...");
                         let mut import_output = plugin::run_resolve_with_nodes(
                             "imports",
                             &resolve_nodes,
@@ -610,6 +611,11 @@ async fn main() -> Result<()> {
                         )
                         .await
                         .context("Import resolution failed")?;
+                        tracing::info!(
+                            nodes = import_output.nodes.len(),
+                            edges = import_output.edges.len(),
+                            "Received import resolution response"
+                        );
                         plugin::validate_plugin_output(&import_output)?;
                         plugin::stamp_metadata(&mut import_output, "js-import-resolution", generation);
                         tag_virtual_nodes(&mut import_output, "js-import-resolution");
@@ -621,9 +627,11 @@ async fn main() -> Result<()> {
                             .collect::<std::collections::HashSet<_>>()
                             .into_iter()
                             .collect();
+                        tracing::info!(files = import_files.len(), "Committing import resolution to RFDB...");
                         rfdb.commit_batch(&import_files, &import_output.nodes, &import_output.edges, true)
                             .await
                             .context("Failed to commit import resolution output")?;
+                        tracing::info!("Import resolution committed to RFDB");
 
                         // Collect IMPORTS_FROM edges for DEPENDS_ON derivation
                         for edge in &import_output.edges {

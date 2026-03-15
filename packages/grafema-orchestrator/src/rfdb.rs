@@ -221,6 +221,12 @@ struct RawResponse {
     // QueryNodes results
     #[serde(default)]
     nodes: Option<Vec<WireNode>>,
+
+    // Streaming fields (queryNodes protocol v3+)
+    #[serde(default)]
+    done: Option<bool>,
+    #[serde(default)]
+    chunk_index: Option<u32>,
 }
 
 impl RawResponse {
@@ -624,14 +630,42 @@ impl RfdbClient {
     ///
     /// Returns all nodes matching the given `node_type` string.
     /// Uses the QueryNodes wire command with a type filter.
+    /// Handles streaming responses (protocol v3+): reads frames until done=true.
     pub async fn query_nodes_by_type(&mut self, node_type: &str) -> Result<Vec<WireNode>> {
         let params = serde_json::json!({
             "query": {
                 "nodeType": node_type
             }
         });
-        let resp = self.send_command("queryNodes", params).await?;
-        Ok(resp.nodes.unwrap_or_default())
+        let envelope = RequestEnvelope {
+            request_id: self.next_request_id(),
+            cmd: "queryNodes".to_string(),
+            params,
+        };
+        let payload = rmp_serde::to_vec_named(&envelope)?;
+        self.send_raw(&payload).await?;
+
+        // Read first frame
+        let first = self.recv_raw().await?;
+        first.check_error()?;
+
+        let mut all_nodes = first.nodes.unwrap_or_default();
+
+        // If this is a streaming response (has done field), read until done=true
+        if let Some(false) = first.done {
+            loop {
+                let chunk = self.recv_raw().await?;
+                chunk.check_error()?;
+                if let Some(nodes) = chunk.nodes {
+                    all_nodes.extend(nodes);
+                }
+                if chunk.done.unwrap_or(true) {
+                    break;
+                }
+            }
+        }
+
+        Ok(all_nodes)
     }
 
     /// Health-check ping. Returns `Ok(true)` if the server responds with `pong`.

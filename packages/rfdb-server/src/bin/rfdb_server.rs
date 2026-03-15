@@ -1666,14 +1666,18 @@ fn handle_request_with_cancel(
 /// Handle CommitBatch: atomically replace nodes/edges for changed files.
 ///
 /// Uses GraphStore trait methods (delete-then-add) which works correctly
-/// for both v1 and v2 engines. The v2-native commit_batch path will be
-/// activated when clients negotiate protocol v3 with semantic IDs.
+/// for both v1 and v2 engines.
 ///
 /// When `file_context` is provided, the batch operates in enrichment mode:
 /// - The file_context is added to `changed_files` so old enrichment edges
 ///   for that virtual file are tombstoned during deletion phase
 /// - Each edge gets `__file_context` injected into its metadata via
 ///   `enrichment_edge_metadata()`
+///
+/// Deletion only tombstones OUTGOING edges from deleted nodes (by src).
+/// Incoming edges (from other nodes) become orphaned but are filtered
+/// out at query time by node tombstone checks (neighbors/reverse_neighbors).
+/// Compaction cleans them up permanently.
 fn handle_commit_batch(
     engine: &mut dyn GraphStore,
     mut changed_files: Vec<String>,
@@ -1728,18 +1732,10 @@ fn handle_commit_batch(
                 }
             }
 
+            // Only delete outgoing edges (indexed by src → efficient).
+            // Incoming edges become orphaned but are filtered at query time
+            // by node tombstone checks. Compaction cleans them up permanently.
             for edge in engine.get_outgoing_edges(*id, None) {
-                let edge_key = (edge.src, edge.dst, edge.edge_type.clone().unwrap_or_default());
-                if deleted_edge_keys.insert(edge_key) {
-                    if let Some(ref et) = edge.edge_type {
-                        changed_edge_types.insert(et.clone());
-                    }
-                    engine.delete_edge(edge.src, edge.dst, edge.edge_type.as_deref().unwrap_or(""));
-                    edges_removed += 1;
-                }
-            }
-
-            for edge in engine.get_incoming_edges(*id, None) {
                 let edge_key = (edge.src, edge.dst, edge.edge_type.clone().unwrap_or_default());
                 if deleted_edge_keys.insert(edge_key) {
                     if let Some(ref et) = edge.edge_type {
