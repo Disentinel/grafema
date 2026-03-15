@@ -654,6 +654,8 @@ pub async fn analyze_files_parallel_pooled(
                     .await
                     .expect("Semaphore closed unexpectedly");
 
+                let file_start = std::time::Instant::now();
+
                 // Log milestones (every 100 files), or every file for small batches
                 if total <= 100 || (idx + 1) % 100 == 0 || idx + 1 == total {
                     tracing::info!("[{}/{}] Analyzing {}", idx + 1, total, file_display);
@@ -668,6 +670,8 @@ pub async fn analyze_files_parallel_pooled(
                     let file_clone = file.clone();
                     tokio::task::spawn_blocking(move || parser::parse_file(&file_clone)).await
                 };
+
+                let parse_ms = file_start.elapsed().as_millis();
 
                 let ast_json = match parse_result {
                     Ok(Ok(result)) => {
@@ -685,6 +689,7 @@ pub async fn analyze_files_parallel_pooled(
                     }
                     Ok(Err(e)) => {
                         errors.push(format!("Parse failed for {file_display}: {e}"));
+                        tracing::warn!("[{}/{}] FAILED parse {}ms {}", idx + 1, total, parse_ms, file_display);
                         return AnalysisResult {
                             file,
                             analysis: None,
@@ -695,6 +700,7 @@ pub async fn analyze_files_parallel_pooled(
                         errors.push(format!(
                             "Parse task panicked for {file_display}: {e}"
                         ));
+                        tracing::error!("[{}/{}] PANIC parse {}ms {}", idx + 1, total, parse_ms, file_display);
                         return AnalysisResult {
                             file,
                             analysis: None,
@@ -703,8 +709,10 @@ pub async fn analyze_files_parallel_pooled(
                     }
                 };
 
+                let ast_size = ast_json.len();
+
                 // Step 2: Send to daemon pool
-                match analyze_file_pooled(&pool, &file, &ast_json).await {
+                let result = match analyze_file_pooled(&pool, &file, &ast_json).await {
                     Ok(analysis) => AnalysisResult {
                         file,
                         analysis: Some(analysis),
@@ -720,7 +728,30 @@ pub async fn analyze_files_parallel_pooled(
                             errors,
                         }
                     }
+                };
+
+                let total_ms = file_start.elapsed().as_millis();
+
+                // Log slow files (>5s) at info level, rest at debug
+                if total_ms > 5000 {
+                    tracing::warn!(
+                        "[{}/{}] SLOW {}ms (parse={}ms, ast={}KB) {}",
+                        idx + 1, total, total_ms, parse_ms,
+                        ast_size / 1024, file_display
+                    );
+                } else if total <= 100 || (idx + 1) % 100 == 0 || idx + 1 == total {
+                    tracing::info!(
+                        "[{}/{}] Done {}ms {}",
+                        idx + 1, total, total_ms, file_display
+                    );
+                } else {
+                    tracing::debug!(
+                        "[{}/{}] Done {}ms {}",
+                        idx + 1, total, total_ms, file_display
+                    );
                 }
+
+                result
             })
         })
         .collect();
