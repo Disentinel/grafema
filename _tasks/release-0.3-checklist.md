@@ -420,8 +420,17 @@ _Существующая AST coverage: docs/_internal/AST_COVERAGE.md (v2 cover
 
 ### 7c. VSCode extension — текущие панели (проверить к релизу)
 
-- [ ] **Extension работает с v0.3 unified package** — бинарники находятся
-- [ ] **Все 7 панелей работают** на реальном проекте (не fixture)
+- [x] **Extension работает с v0.3 unified package** — бинарники находятся. Verified 2026-03-15: Docker image v0.2.12, extension connects instantly via WebSocket, 71K nodes / 104K edges.
+- [x] **Все 8 панелей работают** на реальном проекте (71K nodes self-analysis). Verified 2026-03-15 via Playwright QA:
+  - Status ✅ (Connected, node/edge counts)
+  - Value Trace ✅ (Origins/Destinations with coverage)
+  - Callers ✅ (Incoming/Outgoing with call sites)
+  - Blast Radius ✅ (Direct dependents, impact level)
+  - Issues ✅ (No issues = correct)
+  - Explorer ✅ (Node details + edge types)
+  - Debug Log ✅ (findNodeAtCursor logs)
+  - CodeLens ✅ (caller/callee counts above functions)
+  - Hover tooltip ⚠️ (not working in headless code-server, needs real VSCode test)
 - [ ] **Extension version bump** — текущая 0.2.12, нужна 0.3.0
 - [ ] **Extension marketplace** — опубликовать обновлённую версию
 

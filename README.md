@@ -4,11 +4,13 @@
 [![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/Disentinel/fb8ae29db701dd788e1beaffb159ffef/raw/grafema-coverage.json)](https://github.com/Disentinel/grafema/actions/workflows/ci.yml)
 [![Benchmark](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/Disentinel/fb8ae29db701dd788e1beaffb159ffef/raw/rfdb-benchmark.json)](https://github.com/Disentinel/grafema/actions/workflows/benchmark.yml)
 
-> **v0.3.0-beta** — Early access. Expect rough edges. [Known limitations](./KNOWN_LIMITATIONS.md).
+> **v0.3.5-beta** — Early access. [Changelog](./CHANGELOG.md) | [Known limitations](./KNOWN_LIMITATIONS.md)
 
 Graph-driven code analysis. AI should query the graph, not read code.
 
 Grafema builds a queryable graph from your codebase via static analysis. Instead of reading thousands of files, ask questions: "who calls this?", "where does this data come from?", "what does this file do?" — and get structured answers.
+
+**Self-analysis:** Grafema analyzes its own 490-file polyglot codebase (TypeScript + Haskell + Rust) into 175k nodes and 297k edges in ~25 seconds.
 
 ## Quick Start
 
@@ -17,6 +19,8 @@ npm install grafema
 grafema init
 grafema analyze
 ```
+
+`grafema init` auto-detects your project languages and creates a config covering all supported file types. No manual configuration needed for most projects.
 
 ### Explore your code
 
@@ -82,11 +86,13 @@ For Claude Desktop (`~/Library/Application Support/Claude/claude_desktop_config.
 | Java | full | full | full | partial | Beta |
 | Kotlin | full | full | full | partial | Beta |
 | Python | full | full | full | partial | Beta |
+| Go | full | full | full | partial | Beta |
 | C/C++ | full | full | full | partial | Beta |
-| Go | full | full | full | partial | Alpha |
-| PHP | - | - | resolve-only | - | Stub |
+| Swift | full | full | full | - | Alpha |
+| Objective-C | full | full | full | - | Alpha |
+| Elixir/Erlang | full | full | full | - | Alpha |
 
-JS/TS is the primary language with full dataflow support. Other languages have parsers, analyzers, and resolvers via Haskell-based analysis pipeline. See [Known Limitations](./KNOWN_LIMITATIONS.md) for details.
+JS/TS is the primary language with full dataflow support. Other languages have parsers, analyzers, and cross-file resolvers via Haskell-based analysis pipeline. `grafema init` includes all languages by default — analyzers for absent languages are simply skipped.
 
 ## CLI Commands
 
@@ -117,18 +123,22 @@ cd packages/vscode && pnpm install && pnpm build
 
 ## Architecture
 
-Grafema uses a Rust-based analysis pipeline with a custom graph database (RFDB):
+Grafema uses a Rust orchestrator, Haskell per-language analyzers, and a custom columnar graph database (RFDB):
 
 ```
-grafema analyze → Rust orchestrator → Haskell analyzers → RFDB graph database
+grafema analyze → Rust orchestrator → per-language analyzers → RFDB (graph DB)
+                       │                                            ↓
+                       │ batched ingestion (500 files)       unix socket
+                       │ streaming (ASTs freed after ingest)        ↓
+                       └──────── resolution plugins ←── query layer
                                                               ↓
-grafema tldr / MCP query ← @grafema/util query layer ← unix socket
+                            grafema tldr / MCP / CLI ← @grafema/util
 ```
 
-- **RFDB** — columnar graph database optimized for code analysis workloads
-- **Orchestrator** — Rust binary that coordinates analysis across languages
-- **Analyzers** — Haskell binaries per language (JS/TS, Rust, Java, etc.)
-- **MCP Server** — 24+ tools for AI agent integration
+- **RFDB** — columnar graph database optimized for code analysis workloads. Deferred indexing, L1 compaction, edge-type and by-name indexes.
+- **Orchestrator** — Rust binary that coordinates discovery, parsing, RFDB ingestion, and resolution across languages. Streaming pipeline frees AST memory after ingestion.
+- **Analyzers** — Haskell binaries per language (JS/TS, Rust, Java, Kotlin, Python, Go, C/C++, Swift, Elixir/Erlang). Run as daemon pools with JSON-over-stdio protocol.
+- **MCP Server** — 24+ tools for AI agent integration (find_nodes, find_calls, trace_dataflow, describe, query_graph, etc.)
 
 ## Environment Variables
 
@@ -146,7 +156,7 @@ Normally not needed — binaries are included in the npm package. Use these when
 | macOS ARM (Apple Silicon) | Full support |
 | macOS Intel (x64) | Full support |
 | Linux x64 | Full support |
-| Linux ARM64 | Planned (v0.4) |
+| Linux ARM64 | Full support |
 | Windows | Not planned |
 
 ## Packages
@@ -171,7 +181,7 @@ Normally not needed — binaries are included in the npm package. Use these when
 ## Requirements
 
 - Node.js >= 18
-- macOS (ARM or Intel) or Linux x64
+- macOS (ARM or Intel) or Linux (x64 or ARM64)
 
 ## License
 

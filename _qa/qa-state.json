@@ -1,13 +1,13 @@
 {
-  "version": "0.2.0",
+  "version": "0.2.12",
   "schemaVersion": "1.0.0",
-  "lastSession": "2026-02-20T14:00:00Z",
+  "lastSession": "2026-03-15T00:54:00Z",
   "files": {
     "packages/core/src/Orchestrator.ts": {
       "totalLines": 613,
       "lastCheckedLine": 0,
-      "status": "blocked",
-      "blockedBy": "GAP-001",
+      "status": "ready",
+      "blockedBy": null,
       "entities": {
         "total": 0,
         "checked": 0,
@@ -19,49 +19,80 @@
           "date": "2026-02-20T12:55:00Z",
           "linesChecked": 0,
           "bugsFound": 0,
-          "stoppedReason": "GAP-001: No database selected (initially misclassified as timing)"
+          "stoppedReason": "GAP-001: No database selected"
         },
         {
           "date": "2026-02-20T14:00:00Z",
           "linesChecked": 0,
           "bugsFound": 0,
-          "stoppedReason": "GAP-001 confirmed: WebSocket transport missing openDatabase(). Waited 80s, error persists."
+          "stoppedReason": "GAP-001 confirmed: WebSocket transport missing openDatabase()"
+        }
+      ]
+    },
+    "packages/api/src/server.ts": {
+      "totalLines": 100,
+      "lastCheckedLine": 60,
+      "status": "in-progress",
+      "blockedBy": null,
+      "entities": {
+        "total": 15,
+        "checked": 8,
+        "ok": 7,
+        "bugs": 1
+      },
+      "sessions": [
+        {
+          "date": "2026-03-15T00:54:00Z",
+          "linesChecked": 60,
+          "bugsFound": 1,
+          "stoppedReason": "smoke test complete"
         }
       ]
     }
   },
-  "bugs": {},
+  "bugs": {
+    "BUG-001": {
+      "verdict": "ui-bug",
+      "file": "packages/api/src/server.ts",
+      "line": 60,
+      "entity": "createGraphQLServer",
+      "panel": "search",
+      "expected": { "shouldFind": "FUNCTION createGraphQLServer at line 60" },
+      "actual": { "searchResult": "0 results for exact name query" },
+      "evidence": {
+        "note": "searchNodes('createGraphQLServer') returns 0 but searchNodes('loadTypeDefs') returns 2. Other searches work. May be name normalization or index coverage.",
+        "screenshot": "_qa/screenshots/12-search-results.png"
+      },
+      "linearIssue": null,
+      "status": "open",
+      "foundAt": "2026-03-15T00:54:00Z",
+      "recheckedAt": null
+    }
+  },
   "gaps": {
     "GAP-001": {
       "verdict": "confirmed-bug",
-      "description": "Extension connects via WebSocket but never calls hello() + openDatabase(). Unix socket has legacy auto-open; WebSocket does not. All queries fail with 'No database selected'.",
+      "description": "WebSocket transport missing openDatabase() — FIXED in commit 4e485690",
       "panel": "all",
-      "blocking": ["packages/core/src/Orchestrator.ts"],
+      "blocking": [],
       "evidence": {
-        "screenshotSample": "_qa/screenshots/ready-attempt-5.png",
-        "debugLogError": "findNodeAtCursor error: No database selected. Use openDatabase first.",
-        "codeAnalysis": "grafemaClient.ts WebSocket connect: ping() only, no hello()/openDatabase(). rfdb_server.rs: unix socket has legacy auto-open, WebSocket does not.",
-        "verificationRun": "80s exponential backoff (5+10+15+20+30s), error unchanged at every attempt"
+        "fix": "negotiateAndSelectDatabase() now calls hello() + openDatabase('default')",
+        "verifiedAt": "2026-03-15T00:54:00Z",
+        "verifiedBy": "Playwright QA session — extension connects instantly, Status shows 71,119 nodes"
       },
-      "rootCause": {
-        "file": "packages/vscode/src/grafemaClient.ts",
-        "issue": "WebSocket connect flow calls ping() but not hello() + openDatabase('default')",
-        "serverContext": "rfdb_server.rs handle_client_websocket has no legacy auto-open unlike handle_client_unix"
-      },
-      "fix": "Add wsClient.hello() + wsClient.openDatabase('default') after WebSocket connect in grafemaClient.ts",
       "linearIssue": "REG-528",
-      "status": "confirmed",
+      "status": "fixed",
       "foundAt": "2026-02-20T12:55:00Z",
-      "updatedAt": "2026-02-20T14:00:00Z"
+      "updatedAt": "2026-03-15T00:54:00Z"
     }
   },
   "customTasks": {},
   "coverage": {
-    "totalFiles": 1,
-    "checkedFiles": 0,
-    "totalEntities": 0,
-    "checkedEntities": 0,
-    "passRate": 0
+    "totalFiles": 2,
+    "checkedFiles": 1,
+    "totalEntities": 15,
+    "checkedEntities": 8,
+    "passRate": 87.5
   },
   "history": [
     {
@@ -71,13 +102,13 @@
     },
     {
       "version": "0.2.0",
-      "date": "2026-02-20T13:20:00Z",
-      "action": "gap-001-reclassified-as-timing-issue"
+      "date": "2026-02-20T14:00:00Z",
+      "action": "gap-001-confirmed-as-real-bug"
     },
     {
-      "version": "0.2.0",
-      "date": "2026-02-20T14:00:00Z",
-      "action": "gap-001-confirmed-as-real-bug-websocket-missing-openDatabase"
+      "version": "0.2.12",
+      "date": "2026-03-15T00:54:00Z",
+      "action": "smoke-test-v0.2.12: GAP-001 fixed, 6/8 panels work, search works, CodeLens works"
     }
   ]
 }

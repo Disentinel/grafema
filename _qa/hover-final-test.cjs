@@ -10,165 +10,162 @@ const { chromium } = require('playwright');
 
   console.log('1. Loading code-server...');
   await page.goto('http://localhost:8080', { waitUntil: 'networkidle', timeout: 60000 });
-  await page.waitForTimeout(8000);
 
-  // Robust trust dialog dismissal with retries
-  console.log('2. Dismissing trust dialog...');
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const dismissed = await page.evaluate(() => {
-      // Try multiple selectors for the trust dialog
-      const box = document.querySelector('.monaco-dialog-box');
-      if (!box) return 'no-dialog';
+  // Wait for trust dialog and click "Yes, I trust the authors"
+  console.log('2. Handling trust dialog...');
+  for (let attempt = 0; attempt < 15; attempt++) {
+    await page.waitForTimeout(2000);
 
-      // Find the trust button
-      const allElements = box.querySelectorAll('a, button, .monaco-button, .dialog-button');
-      for (const el of allElements) {
-        const text = (el.textContent || '').toLowerCase();
-        if ((text.includes('yes') && text.includes('trust')) ||
-            text.includes('trust the authors') ||
-            text.includes('i trust')) {
-          el.click();
-          return 'clicked: ' + el.textContent.trim().substring(0, 50);
+    const result = await page.evaluate(() => {
+      // Look specifically for "Yes, I trust" button
+      const allButtons = document.querySelectorAll('button, a.monaco-button');
+      for (const btn of allButtons) {
+        const text = btn.textContent || '';
+        // MUST contain "Yes" — don't click the "No" button!
+        if (text.includes('Yes') && text.includes('trust')) {
+          btn.click();
+          return 'YES-clicked: ' + text.trim().substring(0, 60);
         }
       }
 
-      // Fallback: click any positive action button
-      for (const el of allElements) {
-        const text = (el.textContent || '').toLowerCase();
-        if (text.includes('yes') || text.includes('ok') || text.includes('allow')) {
-          el.click();
-          return 'fallback-clicked: ' + el.textContent.trim().substring(0, 50);
-        }
-      }
+      // Check for dialog presence
+      const modal = document.querySelector('.monaco-dialog-modal-block');
+      if (modal) return 'modal-waiting';
 
-      return 'dialog-found-but-no-button: ' + box.textContent.substring(0, 100);
+      // Check restricted mode
+      const sb = document.querySelector('.statusbar');
+      if (sb && sb.textContent.includes('Restricted')) return 'restricted';
+
+      return 'no-dialog';
     });
-    console.log(`   Attempt ${attempt + 1}: ${dismissed}`);
 
-    if (dismissed === 'no-dialog') break;
-    if (dismissed.startsWith('clicked') || dismissed.startsWith('fallback')) {
-      await page.waitForTimeout(2000);
+    console.log(`   Attempt ${attempt + 1}: ${result}`);
+
+    if (result.startsWith('YES-clicked')) {
+      await page.waitForTimeout(3000);
       break;
     }
-    await page.waitForTimeout(2000);
+    if (result === 'no-dialog' && attempt >= 5) break;
   }
 
-  // Verify modal block is gone
-  const hasModal = await page.evaluate(() => {
-    const modal = document.querySelector('.monaco-dialog-modal-block');
-    return modal ? 'yes: ' + modal.className : 'no';
+  // Verify not in restricted mode
+  const restricted = await page.evaluate(() => {
+    const sb = document.querySelector('.statusbar');
+    return sb ? sb.textContent.includes('Restricted') : false;
   });
-  console.log('   Modal block present: ' + hasModal);
+  console.log('   Restricted mode: ' + restricted);
 
-  if (hasModal.startsWith('yes')) {
-    console.log('   Forcing modal removal...');
-    await page.evaluate(() => {
-      const modal = document.querySelector('.monaco-dialog-modal-block');
-      if (modal) modal.remove();
-      const dialog = document.querySelector('.monaco-dialog-box');
-      if (dialog) dialog.closest('.dialog-container')?.remove();
-    });
+  if (restricted) {
+    // Grant trust via command palette
+    console.log('   Granting trust via command palette...');
+    await page.keyboard.press('Meta+Shift+p');
+    await page.waitForTimeout(800);
+    await page.keyboard.type('Workspaces: Manage Workspace Trust', { delay: 20 });
     await page.waitForTimeout(1000);
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(3000);
+
+    // Find and click the Trust button on the trust management page
+    await page.evaluate(() => {
+      const buttons = document.querySelectorAll('button');
+      for (const btn of buttons) {
+        const text = btn.textContent || '';
+        if (text.includes('Trust') && !text.includes('Don')) {
+          btn.click();
+          return;
+        }
+      }
+    });
+    await page.waitForTimeout(3000);
+
+    // Close the trust management tab
+    await page.keyboard.press('Meta+w');
+    await page.waitForTimeout(500);
   }
 
-  await page.screenshot({ path: `${sessionDir}/00-after-trust.png` });
+  await page.screenshot({ path: `${sessionDir}/00-ready.png` });
 
-  // Close Welcome/Getting Started tabs
-  console.log('3. Closing Welcome tabs...');
-  await page.keyboard.press('Meta+w');
-  await page.waitForTimeout(300);
-  await page.keyboard.press('Meta+w');
-  await page.waitForTimeout(300);
+  // Close all tabs
+  for (let i = 0; i < 5; i++) {
+    await page.keyboard.press('Meta+w');
+    await page.waitForTimeout(200);
+  }
   await page.keyboard.press('Escape');
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(500);
 
-  // Open file
-  console.log('4. Opening Orchestrator.ts...');
+  // Open Orchestrator.ts
+  console.log('3. Opening Orchestrator.ts...');
   await page.keyboard.press('Meta+p');
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(1200);
   await page.keyboard.type('Orchestrator.ts', { delay: 40 });
   await page.waitForTimeout(2000);
-
-  await page.screenshot({ path: `${sessionDir}/01-quick-open.png` });
-
   await page.keyboard.press('Enter');
   await page.waitForTimeout(5000);
 
   // Verify file opened
-  const fileOpened = await page.evaluate(() => {
-    const tabs = document.querySelectorAll('.tab .label-name');
-    for (const tab of tabs) {
-      if (tab.textContent.includes('Orchestrator')) return tab.textContent;
-    }
-    // Check status bar for file info
-    const statusItems = document.querySelectorAll('.statusbar-item');
-    for (const item of statusItems) {
-      if (item.textContent.includes('Ln') || item.textContent.includes('Col')) {
-        return 'status: ' + item.textContent;
-      }
-    }
-    return null;
+  const fileInfo = await page.evaluate(() => {
+    const items = document.querySelectorAll('.statusbar-item');
+    const statusText = Array.from(items).map(el => el.textContent.trim()).filter(Boolean).join(' | ');
+    const tabs = Array.from(document.querySelectorAll('.tab')).map(t => t.textContent.trim()).filter(Boolean);
+    return { statusText: statusText.substring(0, 200), tabs, hasLn: statusText.includes('Ln') };
   });
-  console.log('   File: ' + fileOpened);
+  console.log('   Status: ' + fileInfo.statusText);
+  console.log('   Tabs: ' + fileInfo.tabs.join(', '));
 
-  const statusBar = await page.evaluate(() => {
-    return Array.from(document.querySelectorAll('.statusbar-item'))
-      .map(el => el.textContent.trim())
-      .filter(Boolean)
-      .join(' | ');
-  });
-  console.log('   Status bar: ' + statusBar.substring(0, 200));
+  if (!fileInfo.hasLn) {
+    console.log('ERROR: File not opened');
+    await page.screenshot({ path: `${sessionDir}/error.png` });
+    await browser.close();
+    return;
+  }
 
-  await page.screenshot({ path: `${sessionDir}/02-file-view.png` });
+  await page.screenshot({ path: `${sessionDir}/01-file.png` });
 
   // Activate Grafema sidebar
-  console.log('5. Activating Grafema sidebar...');
+  console.log('4. Activating Grafema sidebar...');
   const grafemaLink = await page.$('a[class*="view-extension-grafema"]');
   if (grafemaLink) {
-    await grafemaLink.click({ timeout: 5000 }).catch(() => {
-      console.log('   Click failed, trying force click...');
-    });
+    await grafemaLink.click({ timeout: 5000 }).catch(() => console.log('   Click failed'));
     await page.waitForTimeout(2000);
   }
 
-  // Expand Debug Log
-  const paneHeaders = await page.$$('.pane-header');
-  for (const h of paneHeaders) {
-    const label = await h.getAttribute('aria-label');
-    const expanded = await h.getAttribute('aria-expanded');
-    if (label && label.includes('Debug Log') && expanded === 'false') {
-      await h.click({ timeout: 3000 }).catch(() => {});
+  // Expand all panels
+  const panes = await page.$$('.pane-header');
+  for (const p of panes) {
+    const expanded = await p.getAttribute('aria-expanded');
+    if (expanded === 'false') {
+      await p.click({ timeout: 2000 }).catch(() => {});
       await page.waitForTimeout(300);
     }
   }
 
   // Focus editor
-  console.log('6. Focusing editor...');
+  console.log('5. Focusing editor...');
   await page.keyboard.press('Meta+1');
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(500);
 
-  // Navigate to line 83
+  // Go to line 83
   await page.keyboard.press('Control+g');
   await page.waitForTimeout(600);
   await page.keyboard.type('83');
   await page.keyboard.press('Enter');
   await page.waitForTimeout(2000);
 
-  await page.screenshot({ path: `${sessionDir}/03-line-83.png` });
-
   // Move cursor with arrow keys
-  console.log('7. Moving cursor...');
+  console.log('6. Cursor movement...');
   await page.keyboard.press('Home');
   await page.waitForTimeout(200);
   for (let i = 0; i < 14; i++) {
     await page.keyboard.press('ArrowRight');
     await page.waitForTimeout(30);
   }
-  // Wait for debounce (150ms) + network round-trip + render
+  // Wait for debounce + graph query
   await page.waitForTimeout(10000);
 
+  await page.screenshot({ path: `${sessionDir}/02-cursor.png` });
+
   // Read Debug Log
-  let debugContent = await page.evaluate(() => {
+  let debugText = await page.evaluate(() => {
     const headers = document.querySelectorAll('.pane-header');
     for (const h of headers) {
       if ((h.getAttribute('aria-label') || '').includes('Debug Log')) {
@@ -178,21 +175,32 @@ const { chromium } = require('playwright');
     }
     return 'panel not found';
   });
-  console.log('   Debug Log: ' + debugContent.substring(0, 250));
+  console.log('   Debug Log: ' + debugText.substring(0, 250));
 
-  await page.screenshot({ path: `${sessionDir}/04-after-cursor.png` });
+  // Check Explorer panel
+  let explorerText = await page.evaluate(() => {
+    const headers = document.querySelectorAll('.pane-header');
+    for (const h of headers) {
+      if ((h.getAttribute('aria-label') || '').includes('Explorer Section')) {
+        const body = h.closest('.pane')?.querySelector('.pane-body');
+        return body ? body.textContent.substring(0, 300) : 'no body';
+      }
+    }
+    return 'panel not found';
+  });
+  console.log('   Explorer: ' + explorerText.substring(0, 100));
 
   // Test hover
-  console.log('8. Hover test...');
-  const viewLines = await page.$('.monaco-editor .view-lines');
+  console.log('7. Hover test on line 83...');
+  let viewLines = await page.$('.monaco-editor .view-lines');
   if (viewLines) {
-    const box = await viewLines.boundingBox();
+    let box = await viewLines.boundingBox();
     if (box) {
-      // Hover on the word at cursor position
+      // Hover over "graph" area
       await page.mouse.move(box.x + 16 * 7.7, box.y + 2 * 19 + 9.5);
       await page.waitForTimeout(5000);
 
-      const tooltip = await page.evaluate(() => {
+      let tooltip = await page.evaluate(() => {
         const hc = document.querySelector('.monaco-hover-content');
         if (!hc) return { found: false };
         return {
@@ -206,39 +214,74 @@ const { chromium } = require('playwright');
         console.log(`   TOOLTIP: GRAFEMA=${tooltip.hasGrafema}`);
         console.log(`   Text: ${tooltip.text.substring(0, 200)}`);
       } else {
-        console.log('   No tooltip');
+        console.log('   No tooltip on line 83');
       }
+      await page.screenshot({ path: `${sessionDir}/03-hover-83.png` });
 
-      await page.screenshot({ path: `${sessionDir}/05-hover.png` });
-    } else {
-      console.log('   No bounding box for view-lines');
+      // Try another line: 161 (run method)
+      console.log('8. Hover test on line 161...');
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(300);
+      await page.keyboard.press('Control+g');
+      await page.waitForTimeout(600);
+      await page.keyboard.type('161');
+      await page.keyboard.press('Enter');
+      await page.waitForTimeout(2000);
+
+      // Move to "run"
+      await page.keyboard.press('Home');
+      for (let i = 0; i < 12; i++) {
+        await page.keyboard.press('ArrowRight');
+        await page.waitForTimeout(30);
+      }
+      await page.waitForTimeout(5000);
+
+      viewLines = await page.$('.monaco-editor .view-lines');
+      box = await viewLines.boundingBox();
+
+      await page.mouse.move(box.x + 14 * 7.7, box.y + 2 * 19 + 9.5);
+      await page.waitForTimeout(5000);
+
+      tooltip = await page.evaluate(() => {
+        const hc = document.querySelector('.monaco-hover-content');
+        if (!hc) return { found: false };
+        return {
+          found: true,
+          text: hc.textContent.substring(0, 500),
+          hasGrafema: hc.textContent.includes('GRAFEMA'),
+        };
+      });
+
+      if (tooltip.found) {
+        console.log(`   TOOLTIP: GRAFEMA=${tooltip.hasGrafema}`);
+        console.log(`   Text: ${tooltip.text.substring(0, 200)}`);
+      } else {
+        console.log('   No tooltip on line 161');
+      }
+      await page.screenshot({ path: `${sessionDir}/04-hover-161.png` });
     }
-  } else {
-    console.log('   No .monaco-editor .view-lines found');
   }
 
-  // Check all panels
-  console.log('9. Panel contents:');
-  const panels = await page.evaluate(() => {
+  // Final panel state
+  console.log('9. Final panel state:');
+  const panelState = await page.evaluate(() => {
     const result = {};
     const names = {
       'status': 'Status Section',
       'value-trace': 'Value Trace Section',
       'callers': 'Callers Section',
-      'blast-radius': 'Blast Radius Section',
       'explorer': 'Explorer Section',
       'debug-log': 'Debug Log Section',
     };
     for (const [key, ariaLabel] of Object.entries(names)) {
-      const header = document.querySelector(`[aria-label="${ariaLabel}"]`);
-      if (!header) { result[key] = 'NOT FOUND'; continue; }
-      const body = header.closest('.pane')?.querySelector('.pane-body');
-      if (!body || body.offsetHeight < 5) { result[key] = 'collapsed'; continue; }
-      result[key] = body.textContent.substring(0, 150).trim();
+      const h = document.querySelector(`[aria-label="${ariaLabel}"]`);
+      if (!h) { result[key] = 'NOT FOUND'; continue; }
+      const body = h.closest('.pane')?.querySelector('.pane-body');
+      result[key] = body && body.offsetHeight > 5 ? body.textContent.substring(0, 150).trim() : 'collapsed';
     }
     return result;
   });
-  for (const [k, v] of Object.entries(panels)) {
+  for (const [k, v] of Object.entries(panelState)) {
     console.log(`  [${k}] ${v.substring(0, 100)}`);
   }
 

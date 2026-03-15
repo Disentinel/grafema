@@ -40,6 +40,11 @@ COPY packages/api/package.json packages/api/
 COPY packages/mcp/package.json packages/mcp/
 COPY packages/vscode/package.json packages/vscode/
 COPY packages/rfdb/package.json packages/rfdb/
+COPY packages/util/package.json packages/util/
+COPY packages/js-analyzer/package.json packages/js-analyzer/
+COPY packages/lang-spec/package.json packages/lang-spec/
+COPY packages/lang-defs/package.json packages/lang-defs/
+COPY packages/grafema/package.json packages/grafema/
 
 # Install all dependencies
 RUN pnpm install --frozen-lockfile
@@ -47,8 +52,8 @@ RUN pnpm install --frozen-lockfile
 # Copy full source
 COPY . .
 
-# Build all JS/TS packages (skip @grafema/rfdb which needs Cargo — we use prebuilt binary)
-RUN pnpm -r --filter '!@grafema/rfdb' build
+# Build all JS/TS packages (skip @grafema/rfdb which needs Cargo, @grafema/lang-spec which needs @types/node)
+RUN pnpm -r --filter '!@grafema/rfdb' --filter '!@grafema/lang-spec' build
 
 # Package VS Code extension (.vsix) — universal build for code-server
 RUN cd packages/vscode && vsce package --no-dependencies
@@ -60,7 +65,10 @@ RUN cd packages/vscode && vsce package --no-dependencies
 # Fresh build has no existing DB, so --clear is unnecessary anyway.
 COPY --from=rust-builder /rfdb/target/release/rfdb-server /usr/local/bin/rfdb-server
 ENV GRAFEMA_RFDB_SERVER=/usr/local/bin/rfdb-server
-RUN node packages/cli/dist/cli.js analyze /build --auto-start
+# Remove .build-hash files to skip stale binary check (downloaded binaries
+# won't match source hash of HEAD which may be ahead of last release)
+RUN find /build/packages -name '.build-hash' -delete
+RUN node packages/cli/dist/cli.js analyze /build
 
 # Prepare a clean source tree for the demo workspace (no node_modules, dist)
 RUN mkdir -p /demo-source && \
