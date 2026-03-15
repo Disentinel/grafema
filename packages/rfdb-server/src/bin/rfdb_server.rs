@@ -931,7 +931,32 @@ fn get_operation_name(request: &Request) -> String {
         Request::FindDependentFiles { .. } => "FindDependentFiles".to_string(),
         Request::CancelQuery { .. } => "CancelQuery".to_string(),
         Request::CypherQuery { .. } => "CypherQuery".to_string(),
-        _ => "Other".to_string(),
+        Request::Hello { .. } => "Hello".to_string(),
+        Request::Ping => "Ping".to_string(),
+        Request::Shutdown => "Shutdown".to_string(),
+        Request::OpenDatabase { .. } => "OpenDatabase".to_string(),
+        Request::CreateDatabase { .. } => "CreateDatabase".to_string(),
+        Request::ListDatabases => "ListDatabases".to_string(),
+        Request::CloseDatabase => "CloseDatabase".to_string(),
+        Request::DropDatabase { .. } => "DropDatabase".to_string(),
+        Request::CurrentDatabase => "CurrentDatabase".to_string(),
+        Request::QueryNodes { .. } => "QueryNodes".to_string(),
+        Request::BeginBatch => "BeginBatch".to_string(),
+        Request::AbortBatch => "AbortBatch".to_string(),
+        Request::Clear => "Clear".to_string(),
+        Request::DeleteNode { .. } => "DeleteNode".to_string(),
+        Request::DeleteEdge { .. } => "DeleteEdge".to_string(),
+        Request::NodeExists { .. } => "NodeExists".to_string(),
+        Request::CountNodesByType { .. } => "CountNodesByType".to_string(),
+        Request::CountEdgesByType { .. } => "CountEdgesByType".to_string(),
+        Request::GetAllEdges => "GetAllEdges".to_string(),
+        Request::DatalogLoadRules { .. } => "DatalogLoadRules".to_string(),
+        Request::DatalogClearRules => "DatalogClearRules".to_string(),
+        Request::ExecuteDatalog { .. } => "ExecuteDatalog".to_string(),
+        Request::IsEndpoint { .. } => "IsEndpoint".to_string(),
+        Request::GetNodeIdentifier { .. } => "GetNodeIdentifier".to_string(),
+        Request::UpdateNodeVersion { .. } => "UpdateNodeVersion".to_string(),
+        Request::DeclareFields { .. } => "DeclareFields".to_string(),
     }
 }
 
@@ -1799,6 +1824,13 @@ fn handle_commit_batch(
         return Response::Error { error: format!("Flush failed during commit: {}", e) };
     }
 
+    if is_verbose() {
+        eprintln!("[rfdb]   commitBatch: +{}n -{}n +{}e -{}e, files={}, flush={}",
+            nodes_added, nodes_removed, edges_added, edges_removed,
+            changed_files.len(),
+            if defer_index { "data-only" } else { "full" });
+    }
+
     let delta = WireCommitDelta {
         changed_files,
         nodes_added,
@@ -2207,6 +2239,9 @@ fn handle_query_nodes_streaming(
             .filter_map(|id| engine_ref.get_node(id))
             .map(|r| record_to_wire_node(&r))
             .collect();
+        if is_verbose() {
+            eprintln!("[rfdb]   queryNodes: {} nodes (single frame)", nodes.len());
+        }
         return HandleResult::Single(Response::Nodes { nodes });
     }
 
@@ -2215,6 +2250,11 @@ fn handle_query_nodes_streaming(
         if !send_chunk(last, true, chunk_index, request_id, stream) {
             return HandleResult::Streamed;
         }
+        chunk_index += 1;
+    }
+
+    if is_verbose() {
+        eprintln!("[rfdb]   queryNodes: streamed {} chunks", chunk_index);
     }
 
     HandleResult::Streamed
