@@ -470,15 +470,18 @@ async fn main() -> Result<()> {
             }
 
             // 6. Ingest results into RFDB (deferred indexing for performance)
-            //    Batch all results into a single commit to avoid N round-trips.
+            //    Group results into batches of INGEST_BATCH_SIZE files to balance
+            //    round-trip overhead vs memory usage on large projects.
+            const INGEST_BATCH_SIZE: usize = 500;
             let mut total_nodes = 0usize;
             let mut total_edges = 0usize;
             let mut total_errors = 0usize;
-            let mut all_wire_nodes: Vec<rfdb::WireNode> = Vec::new();
-            let mut all_wire_edges: Vec<rfdb::WireEdge> = Vec::new();
-            let mut all_changed_files: Vec<String> = Vec::new();
+            let mut batch_nodes: Vec<rfdb::WireNode> = Vec::new();
+            let mut batch_edges: Vec<rfdb::WireEdge> = Vec::new();
+            let mut batch_files: Vec<String> = Vec::new();
+            let results_len = results.len();
 
-            for result in &results {
+            for (i, result) in results.iter().enumerate() {
                 if !result.errors.is_empty() {
                     total_errors += result.errors.len();
                     for err in &result.errors {
@@ -490,7 +493,6 @@ async fn main() -> Result<()> {
                     let mut wire_nodes = analyzer::to_wire_nodes(analysis);
                     let mut wire_edges = analyzer::to_wire_edges(analysis);
 
-                    // Stamp generation metadata on all nodes/edges
                     for node in &mut wire_nodes {
                         gc::stamp_node_metadata(&mut node.metadata, generation, "analyzer");
                     }
@@ -501,24 +503,30 @@ async fn main() -> Result<()> {
                     total_nodes += wire_nodes.len();
                     total_edges += wire_edges.len();
 
-                    all_changed_files.push(analysis.file.clone());
-                    all_wire_nodes.extend(wire_nodes);
-                    all_wire_edges.extend(wire_edges);
+                    batch_files.push(analysis.file.clone());
+                    batch_nodes.extend(wire_nodes);
+                    batch_edges.extend(wire_edges);
+                }
+
+                // Flush batch every INGEST_BATCH_SIZE files or at the end
+                let is_last = i + 1 == results_len;
+                if batch_files.len() >= INGEST_BATCH_SIZE || (is_last && !batch_files.is_empty()) {
+                    tracing::info!(
+                        progress = format!("{}/{}", i + 1, results_len),
+                        files = batch_files.len(),
+                        nodes = batch_nodes.len(),
+                        edges = batch_edges.len(),
+                        "Committing batch to RFDB"
+                    );
+                    rfdb.commit_batch(&batch_files, &batch_nodes, &batch_edges, true)
+                        .await
+                        .context("Failed to commit analysis batch")?;
+                    batch_files.clear();
+                    batch_nodes.clear();
+                    batch_edges.clear();
                 }
             }
-
-            // Single batched commit (internally chunked by commit_batch if >10k)
-            if !all_wire_nodes.is_empty() || !all_wire_edges.is_empty() {
-                tracing::info!(
-                    files = all_changed_files.len(),
-                    nodes = all_wire_nodes.len(),
-                    edges = all_wire_edges.len(),
-                    "Committing analysis batch to RFDB"
-                );
-                rfdb.commit_batch(&all_changed_files, &all_wire_nodes, &all_wire_edges, true)
-                    .await
-                    .context("Failed to commit analysis batch")?;
-            }
+            // Note: results are still needed for resolution phase (resolve node collection)
 
             // NOTE: Do NOT flush/rebuild_indexes here. Analysis commits
             // tombstone resolution edges (via delete_node cascading to edges).
