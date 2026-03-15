@@ -10,6 +10,8 @@ All notable changes to this project will be documented in this file.
 - fix(orchestrator): streaming protocol mismatch — `query_nodes_by_type` now reads all streaming frames until `done=true`, preventing deadlock on large codebases (>100 nodes per query)
 - feat(cli): lazy-download orchestrator binary if missing (matches existing analyzer pattern)
 - chore(config): include Elixir/Erlang sources in self-analysis (511 files, was 490)
+- feat(cli): `grafema server start --foreground` for debug logging during analysis
+- chore: switch license from Apache-2.0 to FSL-1.1-Apache-2.0
 
 ## [0.3.5-beta] - 2026-03-15
 
