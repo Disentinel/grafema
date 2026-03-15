@@ -46,12 +46,16 @@ jobs:
         include:
           - platform: darwin-arm64
             binary_name: rfdb-server-darwin-arm64
+            orchestrator_name: grafema-orchestrator-darwin-arm64
           - platform: darwin-x64
             binary_name: rfdb-server-darwin-x64
+            orchestrator_name: grafema-orchestrator-darwin-x64
           - platform: linux-x64
             binary_name: rfdb-server-linux-x64
+            orchestrator_name: grafema-orchestrator-linux-x64
           - platform: linux-arm64
             binary_name: rfdb-server-linux-arm64
+            orchestrator_name: grafema-orchestrator-linux-arm64
 
     steps:
       - name: Checkout code
@@ -93,10 +97,28 @@ jobs:
           chmod +x packages/vscode/binaries/rfdb-server
           ls -lh packages/vscode/binaries/
 
-      - name: Verify binary
+      - name: Download grafema-orchestrator binary
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RFDB_TAG="${{ inputs.rfdb_version }}"
+          if [ -z "$RFDB_TAG" ]; then
+            RFDB_TAG="${{ env.RFDB_VERSION }}"
+          fi
+          # Orchestrator is in the same release as rfdb-server
+          gh release download "$RFDB_TAG" \
+            --pattern "${{ matrix.orchestrator_name }}" \
+            --dir packages/vscode/binaries
+          mv packages/vscode/binaries/${{ matrix.orchestrator_name }} packages/vscode/binaries/grafema-orchestrator
+          chmod +x packages/vscode/binaries/grafema-orchestrator
+          ls -lh packages/vscode/binaries/
+
+      - name: Verify binaries
         run: |
           file packages/vscode/binaries/rfdb-server
           du -h packages/vscode/binaries/rfdb-server
+          file packages/vscode/binaries/grafema-orchestrator
+          du -h packages/vscode/binaries/grafema-orchestrator
 
       - name: Install vsce
         run: npm install -g @vscode/vsce

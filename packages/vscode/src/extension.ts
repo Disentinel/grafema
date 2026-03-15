@@ -23,6 +23,8 @@ import { IssuesProvider } from './issuesProvider';
 import { BlastRadiusProvider } from './blastRadiusProvider';
 import { GrafemaCodeLensProvider } from './codeLensProvider';
 import { NodesInFileProvider } from './nodesInFileProvider';
+import { findConfigFile, runAnalyze } from './analyzeRunner';
+import { runInit } from './initRunner';
 
 let clientManager: GrafemaClientManager | null = null;
 let edgesProvider: EdgesProvider | null = null;
@@ -531,6 +533,160 @@ function registerCommands(): vscode.Disposable[] {
   // Clear all bookmarks
   disposables.push(vscode.commands.registerCommand('grafema.clearBookmarks', () => {
     edgesProvider?.clearBookmarks();
+  }));
+
+  // Shared output channel for analyze/init
+  const outputChannel = vscode.window.createOutputChannel('Grafema');
+  disposables.push(outputChannel);
+
+  // grafema.analyze — run orchestrator analysis
+  disposables.push(vscode.commands.registerCommand('grafema.analyze', async () => {
+    if (!clientManager) return;
+    const root = clientManager.workspaceRoot;
+
+    // Check config exists, if not suggest init
+    if (!findConfigFile(root)) {
+      const choice = await vscode.window.showWarningMessage(
+        'No Grafema config found. Initialize first?',
+        'Initialize', 'Cancel'
+      );
+      if (choice === 'Initialize') {
+        await vscode.commands.executeCommand('grafema.init');
+      }
+      return;
+    }
+
+    // Ensure server is running
+    try {
+      await clientManager.startServer();
+    } catch {
+      // Server may already be running — that's fine
+    }
+
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: 'Grafema: Analyzing...', cancellable: true },
+      async (progress, token) => {
+        clientManager!.setState({ status: 'analyzing' });
+
+        try {
+          const result = await runAnalyze({
+            workspaceRoot: root,
+            socketPath: clientManager!.socketPath,
+            outputChannel,
+            token,
+            onProgress: (msg) => {
+              progress.report({ message: msg });
+              clientManager!.setState({ status: 'analyzing', message: msg });
+            },
+          });
+
+          if (result.exitCode === 0) {
+            vscode.window.showInformationMessage(
+              `Analysis complete in ${result.elapsed.toFixed(1)}s`
+            );
+            // Reconnect to pick up new graph data — reconnect() closes old client,
+            // creates fresh connection, and emits 'reconnected' event for stats refresh
+            await clientManager!.reconnect();
+          } else {
+            outputChannel.show(true);
+            vscode.window.showErrorMessage('Analysis failed. See output for details.');
+            clientManager!.setState({ status: 'error', message: 'Analysis failed' });
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          outputChannel.appendLine(`\n[grafema] Error: ${message}`);
+          outputChannel.show(true);
+          vscode.window.showErrorMessage(`Analysis failed: ${message}`);
+          clientManager!.setState({ status: 'error', message });
+        }
+      }
+    );
+  }));
+
+  // grafema.init — initialize project config
+  disposables.push(vscode.commands.registerCommand('grafema.init', async () => {
+    if (!clientManager) return;
+    const root = clientManager.workspaceRoot;
+
+    try {
+      const result = await runInit(root);
+      if (result.created) {
+        const langs = result.detected.length > 0
+          ? `Detected: ${result.detected.join(', ')}`
+          : 'Initialized';
+        const choice = await vscode.window.showInformationMessage(
+          `${langs}. Config created at ${result.configPath}. Run analysis now?`,
+          'Analyze', 'Later'
+        );
+        if (choice === 'Analyze') {
+          await vscode.commands.executeCommand('grafema.analyze');
+        }
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      vscode.window.showErrorMessage(`Init failed: ${message}`);
+    }
+  }));
+
+  // grafema.reanalyze — force re-analysis (clears existing DB)
+  disposables.push(vscode.commands.registerCommand('grafema.reanalyze', async () => {
+    if (!clientManager) return;
+    const root = clientManager.workspaceRoot;
+
+    if (!findConfigFile(root)) {
+      const choice = await vscode.window.showWarningMessage(
+        'No Grafema config found. Initialize first?',
+        'Initialize', 'Cancel'
+      );
+      if (choice === 'Initialize') {
+        await vscode.commands.executeCommand('grafema.init');
+      }
+      return;
+    }
+
+    try {
+      await clientManager.startServer();
+    } catch {
+      // Server may already be running
+    }
+
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: 'Grafema: Re-analyzing (force)...', cancellable: true },
+      async (progress, token) => {
+        clientManager!.setState({ status: 'analyzing' });
+
+        try {
+          const result = await runAnalyze({
+            workspaceRoot: root,
+            socketPath: clientManager!.socketPath,
+            force: true,
+            outputChannel,
+            token,
+            onProgress: (msg) => {
+              progress.report({ message: msg });
+              clientManager!.setState({ status: 'analyzing', message: msg });
+            },
+          });
+
+          if (result.exitCode === 0) {
+            vscode.window.showInformationMessage(
+              `Re-analysis complete in ${result.elapsed.toFixed(1)}s`
+            );
+            await clientManager!.reconnect();
+          } else {
+            outputChannel.show(true);
+            vscode.window.showErrorMessage('Re-analysis failed. See output for details.');
+            clientManager!.setState({ status: 'error', message: 'Re-analysis failed' });
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          outputChannel.appendLine(`\n[grafema] Error: ${message}`);
+          outputChannel.show(true);
+          vscode.window.showErrorMessage(`Re-analysis failed: ${message}`);
+          clientManager!.setState({ status: 'error', message });
+        }
+      }
+    );
   }));
 
   // Status bar — click focuses STATUS view
