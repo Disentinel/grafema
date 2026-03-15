@@ -157,47 +157,63 @@ if [ "$SKIP_CI_CHECK" != "true" ]; then
 fi
 
 #---------------------------------------------------------
-# STEP 1.6: Check rfdb binary freshness
+# STEP 1.6: Selective binary check — skip CI if no Rust changes
 #---------------------------------------------------------
 echo ""
-echo -e "${BLUE}=== Binary Freshness Check ===${NC}"
+echo -e "${BLUE}=== Binary Check ===${NC}"
+
+RUST_CHANGED=false
 
 if [ "$SKIP_RFDB_CHECK" = true ]; then
     echo -e "${YELLOW}[SKIP] Binary check bypassed (--skip-rfdb-check)${NC}"
 else
 
-# Check for binaries-v* tag (new format) or rfdb-v* (legacy)
-LAST_BIN_TAG=$(git tag -l 'binaries-v*' | sort -V | tail -1)
-LAST_RFDB_TAG=$(git tag -l 'rfdb-v*' | sort -V | tail -1)
-
-if [ -n "$LAST_BIN_TAG" ]; then
-    BINARY_TAG="$LAST_BIN_TAG"
-    echo "Using binaries tag: $BINARY_TAG"
-elif [ -n "$LAST_RFDB_TAG" ]; then
-    BINARY_TAG="$LAST_RFDB_TAG"
-    echo -e "${YELLOW}Using legacy rfdb tag: $BINARY_TAG${NC}"
+# Find last release tag to compare against
+LAST_RELEASE_TAG=$(git tag -l 'v*' | sort -V | tail -1)
+if [ -z "$LAST_RELEASE_TAG" ]; then
+    echo -e "${YELLOW}No previous release tag found, assuming Rust changed${NC}"
+    RUST_CHANGED=true
 else
-    echo -e "${RED}ERROR: No binaries-v* or rfdb-v* tags found.${NC}"
-    echo "Push a tag first: git tag binaries-v<version> && git push origin binaries-v<version>"
-    exit 1
+    # Check if Rust sources changed since last release
+    RUST_CHANGES=$(git log "$LAST_RELEASE_TAG"..HEAD --oneline -- packages/rfdb-server/src/ packages/grafema-orchestrator/src/ | wc -l | tr -d ' ')
+
+    if [ "$RUST_CHANGES" -gt 0 ]; then
+        RUST_CHANGED=true
+        echo "Rust changes detected since $LAST_RELEASE_TAG ($RUST_CHANGES commits):"
+        git log "$LAST_RELEASE_TAG"..HEAD --oneline -- packages/rfdb-server/src/ packages/grafema-orchestrator/src/
+        echo ""
+
+        # Verify binaries tag exists and is fresh
+        LAST_BIN_TAG=$(git tag -l 'binaries-v*' | sort -V | tail -1)
+        LAST_RFDB_TAG=$(git tag -l 'rfdb-v*' | sort -V | tail -1)
+        BINARY_TAG="${LAST_BIN_TAG:-$LAST_RFDB_TAG}"
+
+        if [ -z "$BINARY_TAG" ]; then
+            echo -e "${RED}ERROR: Rust changed but no binaries tag found.${NC}"
+            echo "Build binaries first:"
+            echo "  git tag binaries-v<version> && git push origin binaries-v<version>"
+            echo "  # Wait for CI, then:"
+            echo "  ./scripts/download-platform-binaries.sh binaries-v<version>"
+            exit 1
+        fi
+
+        # Check binaries are fresh relative to the tag
+        STALE_CHANGES=$(git log "$BINARY_TAG"..HEAD --oneline -- packages/rfdb-server/src/ packages/grafema-orchestrator/src/ | wc -l | tr -d ' ')
+        if [ "$STALE_CHANGES" -gt 0 ]; then
+            echo -e "${RED}ERROR: Binaries are stale ($STALE_CHANGES Rust commits after $BINARY_TAG)${NC}"
+            echo ""
+            echo "Rebuild binaries:"
+            echo "  git tag binaries-v<version> && git push origin binaries-v<version>"
+            echo "  ./scripts/download-platform-binaries.sh binaries-v<version>"
+            exit 1
+        fi
+        echo -e "${GREEN}[x] Rust changed — binaries rebuilt (tag: $BINARY_TAG)${NC}"
+    else
+        echo -e "${GREEN}[x] No Rust changes since $LAST_RELEASE_TAG — reusing existing binaries${NC}"
+    fi
 fi
 
-RUST_CHANGES_SINCE_TAG=$(git log "$BINARY_TAG"..HEAD --oneline -- packages/rfdb-server/src/ packages/grafema-orchestrator/src/ | wc -l | tr -d ' ')
-if [ "$RUST_CHANGES_SINCE_TAG" -gt 0 ]; then
-    echo -e "${RED}ERROR: $RUST_CHANGES_SINCE_TAG Rust source commits since last binary tag ($BINARY_TAG)${NC}"
-    echo ""
-    echo "Prebuilt binaries are STALE. Recent Rust changes:"
-    git log "$BINARY_TAG"..HEAD --oneline -- packages/rfdb-server/src/ packages/grafema-orchestrator/src/
-    echo ""
-    echo "Fix: push a new binaries tag to trigger CI binary build:"
-    echo "  git tag binaries-v<version> && git push origin binaries-v<version>"
-    echo "  # Wait for CI to complete, then:"
-    echo "  ./scripts/download-platform-binaries.sh binaries-v<version>"
-    exit 1
-fi
-echo -e "${GREEN}[x] Rust binaries up-to-date (tag: $BINARY_TAG, 0 changes since)${NC}"
-
-# Verify platform packages have required binaries
+# Verify platform packages have required binaries (always check)
 MISSING_BINARIES=()
 for platform in darwin-arm64 darwin-x64 linux-x64 linux-arm64; do
     for binary in rfdb-server grafema-orchestrator; do
@@ -216,19 +232,26 @@ for platform in darwin-arm64 darwin-x64 linux-arm64 linux-x64; do
 done
 
 if [ ${#MISSING_BINARIES[@]} -gt 0 ]; then
-    echo -e "${YELLOW}WARNING: Missing platform package binaries: ${MISSING_BINARIES[*]}${NC}"
-    echo "Download: ./scripts/download-platform-binaries.sh $BINARY_TAG"
-    echo ""
-    # Don't fail — platform packages may not be populated yet during transition
+    if [ "$RUST_CHANGED" = true ]; then
+        echo -e "${RED}ERROR: Rust changed but platform binaries missing: ${MISSING_BINARIES[*]}${NC}"
+        echo "Download: ./scripts/download-platform-binaries.sh <binaries-tag>"
+        exit 1
+    else
+        echo -e "${YELLOW}WARNING: Missing platform binaries: ${MISSING_BINARIES[*]}${NC}"
+        echo "These haven't changed — will be published from previous version."
+    fi
 fi
 
 if [ ${#MISSING_LEGACY[@]} -gt 0 ]; then
-    echo -e "${YELLOW}WARNING: Missing legacy rfdb-server binaries for: ${MISSING_LEGACY[*]}${NC}"
-    echo "Download: ./scripts/download-rfdb-binaries.sh"
+    if [ "$RUST_CHANGED" = true ]; then
+        echo -e "${RED}ERROR: Rust changed but legacy rfdb-server binaries missing for: ${MISSING_LEGACY[*]}${NC}"
+        echo "Download: ./scripts/download-rfdb-binaries.sh"
+        exit 1
+    fi
 fi
 
 if [ ${#MISSING_BINARIES[@]} -eq 0 ]; then
-    echo -e "${GREEN}[x] All platform package binaries present${NC}"
+    echo -e "${GREEN}[x] All platform binaries present${NC}"
 fi
 
 fi  # end SKIP_RFDB_CHECK
