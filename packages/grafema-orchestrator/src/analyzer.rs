@@ -18,7 +18,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
-use tokio::sync::Semaphore;
+use tokio::sync::{mpsc, Semaphore};
 
 use crate::parser;
 use crate::process_pool::{PoolConfig, ProcessPool};
@@ -612,6 +612,117 @@ pub async fn analyze_beam_file_pooled(
     }
 }
 
+/// Analyze a single JS/TS file: OXC parse → daemon pool request → AnalysisResult.
+///
+/// Extracted from `analyze_files_parallel_pooled` so both the Vec-collecting and
+/// channel-streaming variants can reuse the same per-file logic.
+async fn analyze_single_js_file(
+    pool: Arc<ProcessPool>,
+    file: PathBuf,
+    idx: usize,
+    total: usize,
+) -> AnalysisResult {
+    let file_display = file.display().to_string();
+    let file_start = std::time::Instant::now();
+
+    // Log milestones (every 100 files), or every file for small batches
+    if total <= 100 || (idx + 1) % 100 == 0 || idx + 1 == total {
+        tracing::info!("[{}/{}] Analyzing {}", idx + 1, total, file_display);
+    } else {
+        tracing::debug!("[{}/{}] Analyzing {}", idx + 1, total, file_display);
+    }
+
+    let mut errors = Vec::new();
+
+    // Step 1: Parse with OXC (CPU-bound -> spawn_blocking)
+    let parse_result = {
+        let file_clone = file.clone();
+        tokio::task::spawn_blocking(move || parser::parse_file(&file_clone)).await
+    };
+
+    let parse_ms = file_start.elapsed().as_millis();
+
+    let ast_json = match parse_result {
+        Ok(Ok(result)) => {
+            if !result.errors.is_empty() {
+                for e in &result.errors {
+                    errors.push(format!("Parse warning in {file_display}: {e}"));
+                }
+                tracing::warn!(
+                    file = %file_display,
+                    count = result.errors.len(),
+                    "Parse errors (continuing with partial AST)"
+                );
+            }
+            result.json
+        }
+        Ok(Err(e)) => {
+            errors.push(format!("Parse failed for {file_display}: {e}"));
+            tracing::warn!("[{}/{}] FAILED parse {}ms {}", idx + 1, total, parse_ms, file_display);
+            return AnalysisResult {
+                file,
+                analysis: None,
+                errors,
+            };
+        }
+        Err(e) => {
+            errors.push(format!(
+                "Parse task panicked for {file_display}: {e}"
+            ));
+            tracing::error!("[{}/{}] PANIC parse {}ms {}", idx + 1, total, parse_ms, file_display);
+            return AnalysisResult {
+                file,
+                analysis: None,
+                errors,
+            };
+        }
+    };
+
+    let ast_size = ast_json.len();
+
+    // Step 2: Send to daemon pool
+    let result = match analyze_file_pooled(&pool, &file, &ast_json).await {
+        Ok(analysis) => AnalysisResult {
+            file,
+            analysis: Some(analysis),
+            errors,
+        },
+        Err(e) => {
+            errors.push(format!(
+                "Analyzer failed for {file_display}: {e}"
+            ));
+            AnalysisResult {
+                file,
+                analysis: None,
+                errors,
+            }
+        }
+    };
+
+    let total_ms = file_start.elapsed().as_millis();
+
+    // Log slow files (>5s) at info level, rest at debug
+    if total_ms > 5000 {
+        tracing::warn!(
+            "[{}/{}] SLOW {}ms (parse={}ms, ast={}KB) {}",
+            idx + 1, total, total_ms, parse_ms,
+            ast_size / 1024, file_display
+        );
+    } else if total <= 100 || (idx + 1) % 100 == 0 || idx + 1 == total {
+        tracing::info!(
+            "[{}/{}] Done {}ms {}",
+            idx + 1, total, total_ms, file_display
+        );
+    } else {
+        tracing::debug!(
+            "[{}/{}] Done {}ms {}",
+            idx + 1, total, total_ms, file_display
+        );
+    }
+
+    result
+}
+
 /// Analyze multiple files in parallel using persistent daemon processes.
 ///
 /// Creates a `ProcessPool` with `grafema-analyzer --daemon` workers, parses
@@ -646,112 +757,13 @@ pub async fn analyze_files_parallel_pooled(
             let sem = Arc::clone(&semaphore);
             let pool = Arc::clone(&pool);
             let file = file.clone();
-            let file_display = file.display().to_string();
 
             tokio::spawn(async move {
                 let _permit = sem
                     .acquire()
                     .await
                     .expect("Semaphore closed unexpectedly");
-
-                let file_start = std::time::Instant::now();
-
-                // Log milestones (every 100 files), or every file for small batches
-                if total <= 100 || (idx + 1) % 100 == 0 || idx + 1 == total {
-                    tracing::info!("[{}/{}] Analyzing {}", idx + 1, total, file_display);
-                } else {
-                    tracing::debug!("[{}/{}] Analyzing {}", idx + 1, total, file_display);
-                }
-
-                let mut errors = Vec::new();
-
-                // Step 1: Parse with OXC (CPU-bound -> spawn_blocking)
-                let parse_result = {
-                    let file_clone = file.clone();
-                    tokio::task::spawn_blocking(move || parser::parse_file(&file_clone)).await
-                };
-
-                let parse_ms = file_start.elapsed().as_millis();
-
-                let ast_json = match parse_result {
-                    Ok(Ok(result)) => {
-                        if !result.errors.is_empty() {
-                            for e in &result.errors {
-                                errors.push(format!("Parse warning in {file_display}: {e}"));
-                            }
-                            tracing::warn!(
-                                file = %file_display,
-                                count = result.errors.len(),
-                                "Parse errors (continuing with partial AST)"
-                            );
-                        }
-                        result.json
-                    }
-                    Ok(Err(e)) => {
-                        errors.push(format!("Parse failed for {file_display}: {e}"));
-                        tracing::warn!("[{}/{}] FAILED parse {}ms {}", idx + 1, total, parse_ms, file_display);
-                        return AnalysisResult {
-                            file,
-                            analysis: None,
-                            errors,
-                        };
-                    }
-                    Err(e) => {
-                        errors.push(format!(
-                            "Parse task panicked for {file_display}: {e}"
-                        ));
-                        tracing::error!("[{}/{}] PANIC parse {}ms {}", idx + 1, total, parse_ms, file_display);
-                        return AnalysisResult {
-                            file,
-                            analysis: None,
-                            errors,
-                        };
-                    }
-                };
-
-                let ast_size = ast_json.len();
-
-                // Step 2: Send to daemon pool
-                let result = match analyze_file_pooled(&pool, &file, &ast_json).await {
-                    Ok(analysis) => AnalysisResult {
-                        file,
-                        analysis: Some(analysis),
-                        errors,
-                    },
-                    Err(e) => {
-                        errors.push(format!(
-                            "Analyzer failed for {file_display}: {e}"
-                        ));
-                        AnalysisResult {
-                            file,
-                            analysis: None,
-                            errors,
-                        }
-                    }
-                };
-
-                let total_ms = file_start.elapsed().as_millis();
-
-                // Log slow files (>5s) at info level, rest at debug
-                if total_ms > 5000 {
-                    tracing::warn!(
-                        "[{}/{}] SLOW {}ms (parse={}ms, ast={}KB) {}",
-                        idx + 1, total, total_ms, parse_ms,
-                        ast_size / 1024, file_display
-                    );
-                } else if total <= 100 || (idx + 1) % 100 == 0 || idx + 1 == total {
-                    tracing::info!(
-                        "[{}/{}] Done {}ms {}",
-                        idx + 1, total, total_ms, file_display
-                    );
-                } else {
-                    tracing::debug!(
-                        "[{}/{}] Done {}ms {}",
-                        idx + 1, total, total_ms, file_display
-                    );
-                }
-
-                result
+                analyze_single_js_file(pool, file, idx, total).await
             })
         })
         .collect();
@@ -772,6 +784,64 @@ pub async fn analyze_files_parallel_pooled(
 
     pool.shutdown().await;
     results
+}
+
+/// Analyze JS/TS files with streaming output: results are sent through a channel
+/// as each file completes, enabling double-buffered ingestion.
+///
+/// Analysis and RFDB ingestion run in parallel: while the receiver batches and
+/// commits results to RFDB, analysis continues filling the channel. The bounded
+/// channel provides backpressure — if ingestion is slow, analysis pauses.
+///
+/// Takes ownership of `files` because this function is designed to be spawned
+/// into a `tokio::spawn` task.
+pub async fn analyze_js_files_streaming(
+    files: Vec<PathBuf>,
+    jobs: usize,
+    analyzer_path: String,
+    tx: mpsc::Sender<AnalysisResult>,
+) {
+    let pool_config = PoolConfig {
+        command: analyzer_path,
+        args: vec!["--daemon".to_string()],
+        ..PoolConfig::default()
+    };
+
+    let pool = match ProcessPool::new(pool_config, jobs.max(1)) {
+        Ok(p) => Arc::new(p),
+        Err(e) => {
+            tracing::error!("Failed to create JS analyzer pool for streaming: {e}");
+            return;
+        }
+    };
+
+    let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
+    let total = files.len();
+
+    let mut handles = Vec::with_capacity(total);
+    for (idx, file) in files.into_iter().enumerate() {
+        let tx = tx.clone();
+        let sem = Arc::clone(&semaphore);
+        let pool = Arc::clone(&pool);
+
+        handles.push(tokio::spawn(async move {
+            let _permit = sem
+                .acquire()
+                .await
+                .expect("Semaphore closed unexpectedly");
+            let result = analyze_single_js_file(pool, file, idx, total).await;
+            let _ = tx.send(result).await;
+        }));
+    }
+
+    // Drop the original sender so the channel closes when all task clones are dropped
+    drop(tx);
+
+    for handle in handles {
+        let _ = handle.await;
+    }
+
+    pool.shutdown().await;
 }
 
 // ---------------------------------------------------------------------------

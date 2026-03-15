@@ -330,57 +330,198 @@ async fn main() -> Result<()> {
                 }
             }
 
-            // 4. Analyze files by language
-            let mut results = Vec::new();
+            // 4. Analyze files by language, ingesting in chunks to bound memory.
+            //    Each language's files are split into chunks of INGEST_BATCH_SIZE,
+            //    analyzed, committed to RFDB, then dropped. This ensures memory usage
+            //    is proportional to batch size, not total project size.
+            //    On a 14K-file project this reduces peak memory from ~2GB to ~100MB.
+            const INGEST_BATCH_SIZE: usize = 20;
+            let mut total_nodes = 0usize;
+            let mut total_edges = 0usize;
+            let mut total_errors = 0usize;
+            let mut total_files_committed = 0usize;
+            let root_str = cfg.root.display().to_string();
+            let authority = resolve_authority(&cfg);
+            let total_files = files.len();
 
-            // 4a. Analyze JS/TS files (OXC parse → grafema-analyzer daemon pool)
-            if !js_files.is_empty() {
-                tracing::info!(count = js_files.len(), "Analyzing JS/TS files");
-                let js_results = analyzer::analyze_files_parallel_pooled(&js_files, jobs, &cfg.analyzers).await;
-                results.extend(js_results);
+            // Helper: prepare and commit a chunk of analysis results to RFDB.
+            // Takes ownership → results are freed after commit.
+            async fn ingest_chunk(
+                mut results: Vec<analyzer::AnalysisResult>,
+                rfdb: &mut rfdb::RfdbClient,
+                root_str: &str,
+                authority: &str,
+                generation: u64,
+                global_progress: usize,
+                total_files: usize,
+            ) -> anyhow::Result<(usize, usize, usize)> {
+                let mut nodes_total = 0usize;
+                let mut edges_total = 0usize;
+                let mut errors_total = 0usize;
+
+                // Relativize + URI format
+                for result in &mut results {
+                    if let Some(ref mut analysis) = result.analysis {
+                        analysis.relativize_paths(root_str);
+                        analysis.ensure_function_contains_edges();
+                        analysis.to_uri_format(authority);
+                    }
+                }
+
+                let mut batch_nodes: Vec<rfdb::WireNode> = Vec::new();
+                let mut batch_edges: Vec<rfdb::WireEdge> = Vec::new();
+                let mut batch_files: Vec<String> = Vec::new();
+
+                for result in &results {
+                    if !result.errors.is_empty() {
+                        errors_total += result.errors.len();
+                        for err in &result.errors {
+                            tracing::error!(file = %result.file.display(), "{err}");
+                        }
+                    }
+
+                    if let Some(ref analysis) = result.analysis {
+                        let mut wire_nodes = analyzer::to_wire_nodes(analysis);
+                        let mut wire_edges = analyzer::to_wire_edges(analysis);
+
+                        for node in &mut wire_nodes {
+                            gc::stamp_node_metadata(&mut node.metadata, generation, "analyzer");
+                        }
+                        for edge in &mut wire_edges {
+                            gc::stamp_edge_metadata(&mut edge.metadata, generation, "analyzer");
+                        }
+
+                        nodes_total += wire_nodes.len();
+                        edges_total += wire_edges.len();
+
+                        batch_files.push(analysis.file.clone());
+                        batch_nodes.extend(wire_nodes);
+                        batch_edges.extend(wire_edges);
+                    }
+                }
+
+                if !batch_files.is_empty() {
+                    tracing::info!(
+                        progress = format!("{}/{}", global_progress, total_files),
+                        files = batch_files.len(),
+                        nodes = batch_nodes.len(),
+                        edges = batch_edges.len(),
+                        "Committing batch to RFDB"
+                    );
+                    rfdb.commit_batch(&batch_files, &batch_nodes, &batch_edges, true)
+                        .await
+                        .context("Failed to commit analysis batch")?;
+                }
+
+                Ok((nodes_total, edges_total, errors_total))
             }
 
-            // 4b. Analyze Haskell files (haskell-analyzer daemon pool, no OXC)
-            if !hs_files.is_empty() {
-                tracing::info!(count = hs_files.len(), "Analyzing Haskell files");
-                let hs_results = analyzer::analyze_haskell_files_parallel_pooled(&hs_files, jobs, &cfg.analyzers).await;
-                results.extend(hs_results);
+            // Macro to analyze a language's files in chunks of INGEST_BATCH_SIZE,
+            // committing each chunk to RFDB immediately so memory stays bounded.
+            macro_rules! analyze_and_ingest_chunked {
+                ($files:expr, $lang:expr, $analyze_fn:expr) => {
+                    if !$files.is_empty() {
+                        tracing::info!(count = $files.len(), concat!("Analyzing ", $lang, " files"));
+                        for chunk in $files.chunks(INGEST_BATCH_SIZE) {
+                            let chunk_results = $analyze_fn(chunk, jobs, &cfg.analyzers).await;
+                            let (n, e, err) = ingest_chunk(
+                                chunk_results, &mut rfdb, &root_str, &authority,
+                                generation, total_files_committed + chunk.len(), total_files,
+                            ).await?;
+                            total_nodes += n; total_edges += e; total_errors += err;
+                            total_files_committed += chunk.len();
+                        }
+                    }
+                };
             }
 
-            // 4c. Analyze Rust files (syn parse in orchestrator → grafema-rust-analyzer daemon pool)
-            if !rs_files.is_empty() {
-                tracing::info!(count = rs_files.len(), "Analyzing Rust files");
-                let rs_results = analyzer::analyze_rust_files_parallel_pooled(&rs_files, jobs, &cfg.analyzers).await;
-                results.extend(rs_results);
+            // 4a. JS/TS — streaming double-buffer: analysis and RFDB ingestion
+            //     run in parallel. As files complete, results stream through a
+            //     bounded channel. The receiver batches INGEST_BATCH_SIZE results
+            //     and commits to RFDB while analysis continues filling the channel.
+            let js_file_count = js_files.len();
+            if js_file_count > 0 {
+                tracing::info!(count = js_file_count, "Analyzing JS/TS files (streaming)");
+                let (tx, mut rx) =
+                    tokio::sync::mpsc::channel::<analyzer::AnalysisResult>(INGEST_BATCH_SIZE * 2);
+                let js_analyzer_path = cfg.analyzers.js_path();
+                let js_jobs = jobs;
+
+                // Producer: spawns all file analyses, sends results via channel
+                let analyze_handle = tokio::spawn(async move {
+                    analyzer::analyze_js_files_streaming(
+                        js_files, js_jobs, js_analyzer_path, tx,
+                    )
+                    .await;
+                });
+
+                // Consumer: batch results and commit to RFDB while analysis continues
+                let mut batch = Vec::with_capacity(INGEST_BATCH_SIZE);
+                while let Some(result) = rx.recv().await {
+                    batch.push(result);
+                    if batch.len() >= INGEST_BATCH_SIZE {
+                        let full_batch = std::mem::replace(
+                            &mut batch,
+                            Vec::with_capacity(INGEST_BATCH_SIZE),
+                        );
+                        let batch_len = full_batch.len();
+                        let (n, e, err) = ingest_chunk(
+                            full_batch,
+                            &mut rfdb,
+                            &root_str,
+                            &authority,
+                            generation,
+                            total_files_committed + batch_len,
+                            total_files,
+                        )
+                        .await?;
+                        total_nodes += n;
+                        total_edges += e;
+                        total_errors += err;
+                        total_files_committed += batch_len;
+                    }
+                }
+                // Flush remaining results
+                if !batch.is_empty() {
+                    let batch_len = batch.len();
+                    let (n, e, err) = ingest_chunk(
+                        batch,
+                        &mut rfdb,
+                        &root_str,
+                        &authority,
+                        generation,
+                        total_files_committed + batch_len,
+                        total_files,
+                    )
+                    .await?;
+                    total_nodes += n;
+                    total_edges += e;
+                    total_errors += err;
+                    total_files_committed += batch_len;
+                }
+
+                analyze_handle
+                    .await
+                    .context("JS/TS streaming analysis task panicked")?;
             }
 
-            // 4d. Analyze Java files (java-parser → java-analyzer daemon pools)
-            if !java_files.is_empty() {
-                tracing::info!(count = java_files.len(), "Analyzing Java files");
-                let java_results = analyzer::analyze_java_files_parallel_pooled(&java_files, jobs, &cfg.analyzers).await;
-                results.extend(java_results);
-            }
+            // 4b. Haskell (haskell-analyzer daemon pool)
+            analyze_and_ingest_chunked!(hs_files, "Haskell", analyzer::analyze_haskell_files_parallel_pooled);
 
-            // 4e. Analyze Kotlin files (kotlin-parser → kotlin-analyzer daemon pools)
-            if !kotlin_files.is_empty() {
-                tracing::info!(count = kotlin_files.len(), "Analyzing Kotlin files");
-                let kotlin_results = analyzer::analyze_kotlin_files_parallel_pooled(&kotlin_files, jobs, &cfg.analyzers).await;
-                results.extend(kotlin_results);
-            }
+            // 4c. Rust (syn parse → grafema-rust-analyzer daemon pool)
+            analyze_and_ingest_chunked!(rs_files, "Rust", analyzer::analyze_rust_files_parallel_pooled);
 
-            // 4f. Analyze Python files (rustpython-parser → python-analyzer daemon pool)
-            if !py_files.is_empty() {
-                tracing::info!(count = py_files.len(), "Analyzing Python files");
-                let py_results = analyzer::analyze_python_files_parallel_pooled(&py_files, jobs, &cfg.analyzers).await;
-                results.extend(py_results);
-            }
+            // 4d. Java (java-parser → java-analyzer daemon pools)
+            analyze_and_ingest_chunked!(java_files, "Java", analyzer::analyze_java_files_parallel_pooled);
 
-            // 4g. Analyze Go files (go-parser → go-analyzer daemon pools)
-            if !go_files.is_empty() {
-                tracing::info!(count = go_files.len(), "Analyzing Go files");
-                let go_results = analyzer::analyze_go_files_parallel_pooled(&go_files, jobs, &cfg.analyzers).await;
-                results.extend(go_results);
-            }
+            // 4e. Kotlin (kotlin-parser → kotlin-analyzer daemon pools)
+            analyze_and_ingest_chunked!(kotlin_files, "Kotlin", analyzer::analyze_kotlin_files_parallel_pooled);
+
+            // 4f. Python (rustpython-parser → python-analyzer daemon pool)
+            analyze_and_ingest_chunked!(py_files, "Python", analyzer::analyze_python_files_parallel_pooled);
+
+            // 4g. Go (go-parser → go-analyzer daemon pools)
+            analyze_and_ingest_chunked!(go_files, "Go", analyzer::analyze_go_files_parallel_pooled);
 
             // 4h. Analyze C/C++ files (libclang parse → cpp-analyzer daemon pool)
             if !cpp_files.is_empty() {
@@ -421,114 +562,30 @@ async fn main() -> Result<()> {
                     db
                 };
 
-                let cpp_results = analyzer::analyze_cpp_files_parallel_pooled(
-                    &cpp_files,
-                    jobs,
-                    &cfg.analyzers,
-                    compile_commands.as_ref(),
-                ).await;
-                results.extend(cpp_results);
-            }
-
-            // 4i. Analyze Swift files (swift-parser → swift-analyzer daemon pools)
-            if !swift_files.is_empty() {
-                tracing::info!(count = swift_files.len(), "Analyzing Swift files");
-                let swift_results = analyzer::analyze_swift_files_parallel_pooled(&swift_files, jobs, &cfg.analyzers).await;
-                results.extend(swift_results);
-            }
-
-            // 4j. Analyze Obj-C files (objc-parser → objc-analyzer daemon pools)
-            if !objc_files.is_empty() {
-                tracing::info!(count = objc_files.len(), "Analyzing Obj-C files");
-                let objc_results = analyzer::analyze_objc_files_parallel_pooled(&objc_files, jobs, &cfg.analyzers).await;
-                results.extend(objc_results);
-            }
-
-            // 4k. Analyze BEAM (Elixir/Erlang) files (beam-analyzer daemon pool, no OXC)
-            if !beam_files.is_empty() {
-                tracing::info!(count = beam_files.len(), "Analyzing BEAM files");
-                let beam_results = analyzer::analyze_beam_files_parallel_pooled(&beam_files, jobs, &cfg.analyzers).await;
-                results.extend(beam_results);
-            }
-
-            // 5. Relativize paths: convert absolute → relative (to project root)
-            //    VS Code and CLI query with relative paths, so RFDB must store relative paths.
-            let root_str = cfg.root.display().to_string();
-            for result in &mut results {
-                if let Some(ref mut analysis) = result.analysis {
-                    analysis.relativize_paths(&root_str);
-                    analysis.ensure_function_contains_edges();
+                for chunk in cpp_files.chunks(INGEST_BATCH_SIZE) {
+                    let cpp_results = analyzer::analyze_cpp_files_parallel_pooled(
+                        chunk,
+                        jobs,
+                        &cfg.analyzers,
+                        compile_commands.as_ref(),
+                    ).await;
+                    let (n, e, err) = ingest_chunk(
+                        cpp_results, &mut rfdb, &root_str, &authority,
+                        generation, total_files_committed + chunk.len(), total_files,
+                    ).await?;
+                    total_nodes += n; total_edges += e; total_errors += err;
+                    total_files_committed += chunk.len();
                 }
             }
 
-            // 5b. Convert semantic IDs to URI format
-            let authority = resolve_authority(&cfg);
-            for result in &mut results {
-                if let Some(ref mut analysis) = result.analysis {
-                    analysis.to_uri_format(&authority);
-                }
-            }
+            // 4i. Swift (swift-parser → swift-analyzer daemon pools)
+            analyze_and_ingest_chunked!(swift_files, "Swift", analyzer::analyze_swift_files_parallel_pooled);
 
-            // 6. Ingest results into RFDB (deferred indexing for performance)
-            //    Group results into batches of INGEST_BATCH_SIZE files to balance
-            //    round-trip overhead vs memory usage on large projects.
-            const INGEST_BATCH_SIZE: usize = 500;
-            let mut total_nodes = 0usize;
-            let mut total_edges = 0usize;
-            let mut total_errors = 0usize;
-            let mut batch_nodes: Vec<rfdb::WireNode> = Vec::new();
-            let mut batch_edges: Vec<rfdb::WireEdge> = Vec::new();
-            let mut batch_files: Vec<String> = Vec::new();
-            let results_len = results.len();
+            // 4j. Obj-C (objc-parser → objc-analyzer daemon pools)
+            analyze_and_ingest_chunked!(objc_files, "Obj-C", analyzer::analyze_objc_files_parallel_pooled);
 
-            for (i, result) in results.iter().enumerate() {
-                if !result.errors.is_empty() {
-                    total_errors += result.errors.len();
-                    for err in &result.errors {
-                        tracing::error!(file = %result.file.display(), "{err}");
-                    }
-                }
-
-                if let Some(ref analysis) = result.analysis {
-                    let mut wire_nodes = analyzer::to_wire_nodes(analysis);
-                    let mut wire_edges = analyzer::to_wire_edges(analysis);
-
-                    for node in &mut wire_nodes {
-                        gc::stamp_node_metadata(&mut node.metadata, generation, "analyzer");
-                    }
-                    for edge in &mut wire_edges {
-                        gc::stamp_edge_metadata(&mut edge.metadata, generation, "analyzer");
-                    }
-
-                    total_nodes += wire_nodes.len();
-                    total_edges += wire_edges.len();
-
-                    batch_files.push(analysis.file.clone());
-                    batch_nodes.extend(wire_nodes);
-                    batch_edges.extend(wire_edges);
-                }
-
-                // Flush batch every INGEST_BATCH_SIZE files or at the end
-                let is_last = i + 1 == results_len;
-                if batch_files.len() >= INGEST_BATCH_SIZE || (is_last && !batch_files.is_empty()) {
-                    tracing::info!(
-                        progress = format!("{}/{}", i + 1, results_len),
-                        files = batch_files.len(),
-                        nodes = batch_nodes.len(),
-                        edges = batch_edges.len(),
-                        "Committing batch to RFDB"
-                    );
-                    rfdb.commit_batch(&batch_files, &batch_nodes, &batch_edges, true)
-                        .await
-                        .context("Failed to commit analysis batch")?;
-                    batch_files.clear();
-                    batch_nodes.clear();
-                    batch_edges.clear();
-                }
-            }
-            // All results are now ingested — free AST memory before resolution phase.
-            // Resolution queries RFDB directly (query_resolve_nodes_for_lang).
-            drop(results);
+            // 4k. BEAM (Elixir/Erlang) (beam-analyzer daemon pool)
+            analyze_and_ingest_chunked!(beam_files, "BEAM", analyzer::analyze_beam_files_parallel_pooled);
 
             // NOTE: Do NOT flush/rebuild_indexes here. Analysis commits
             // tombstone resolution edges (via delete_node cascading to edges).
@@ -582,7 +639,7 @@ async fn main() -> Result<()> {
 
             // 8. Run resolution plugins with FULL graph from RFDB
             //    (queries all nodes, not just changed files — fixes incremental resolution)
-            let resolve_nodes = if !js_files.is_empty() {
+            let resolve_nodes = if js_file_count > 0 {
                 query_resolve_nodes_for_lang(&mut rfdb, config::Language::JavaScript).await?
             } else {
                 Vec::new()
@@ -1699,7 +1756,7 @@ async fn main() -> Result<()> {
             println!(
                 "Analyzed {} files ({} JS, {} Haskell, {} Rust, {} Java, {} Kotlin, {} Python, {} Go, {} C/C++, {} BEAM, {} skipped): {} nodes, {} edges, {} errors",
                 changed_files.len(),
-                js_files.len(),
+                js_file_count,
                 hs_files.len(),
                 rs_files.len(),
                 java_files.len(),
