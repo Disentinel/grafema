@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.10-beta] - 2026-03-15
+
+### Features
+
+- feat(orchestrator): unified streaming double-buffer for ALL languages — analysis and RFDB ingestion run in parallel via bounded mpsc channel (batch size 20). All languages share one channel, producing results concurrently while consumer batches and commits to RFDB. Eliminates OOM on 14K+ file codebases.
+- refactor(orchestrator): extract `analyze_single_js_file()` for shared per-file logic; JS/TS streams per-file, other languages stream per-pool-batch
+
 ## [0.3.9-beta] - 2026-03-15
 
 ### Bug Fixes

@@ -330,11 +330,15 @@ async fn main() -> Result<()> {
                 }
             }
 
-            // 4. Analyze files by language, ingesting in chunks to bound memory.
-            //    Each language's files are split into chunks of INGEST_BATCH_SIZE,
-            //    analyzed, committed to RFDB, then dropped. This ensures memory usage
-            //    is proportional to batch size, not total project size.
-            //    On a 14K-file project this reduces peak memory from ~2GB to ~100MB.
+            // 4. Streaming double-buffer analysis pipeline.
+            //
+            //    ALL languages analyze in parallel, sending results through ONE
+            //    bounded mpsc channel. A single receiver batches INGEST_BATCH_SIZE
+            //    results and commits to RFDB while analysis continues filling the
+            //    channel. Memory stays proportional to batch size, not project size.
+            //
+            //    JS/TS: per-file streaming (results sent as each file completes)
+            //    Other: per-language streaming (results forwarded after pool completes)
             const INGEST_BATCH_SIZE: usize = 20;
             let mut total_nodes = 0usize;
             let mut total_edges = 0usize;
@@ -416,118 +420,64 @@ async fn main() -> Result<()> {
                 Ok((nodes_total, edges_total, errors_total))
             }
 
-            // Macro to analyze a language's files in chunks of INGEST_BATCH_SIZE,
-            // committing each chunk to RFDB immediately so memory stays bounded.
-            macro_rules! analyze_and_ingest_chunked {
+            // Shared channel for all languages. Bounded = backpressure when
+            // ingestion is slower than analysis.
+            let (tx, mut rx) =
+                tokio::sync::mpsc::channel::<analyzer::AnalysisResult>(INGEST_BATCH_SIZE * 2);
+
+            // Save JS file count before moving into streaming task
+            let js_file_count = js_files.len();
+
+            // Macro: spawn a language's analysis in background, forward results
+            // through the shared channel. Clones the file list (fine for non-JS
+            // languages which typically have <1K files).
+            macro_rules! spawn_analysis {
                 ($files:expr, $lang:expr, $analyze_fn:expr) => {
                     if !$files.is_empty() {
                         tracing::info!(count = $files.len(), concat!("Analyzing ", $lang, " files"));
-                        for chunk in $files.chunks(INGEST_BATCH_SIZE) {
-                            let chunk_results = $analyze_fn(chunk, jobs, &cfg.analyzers).await;
-                            let (n, e, err) = ingest_chunk(
-                                chunk_results, &mut rfdb, &root_str, &authority,
-                                generation, total_files_committed + chunk.len(), total_files,
-                            ).await?;
-                            total_nodes += n; total_edges += e; total_errors += err;
-                            total_files_committed += chunk.len();
-                        }
+                        let tx = tx.clone();
+                        let files_vec: Vec<std::path::PathBuf> = $files.to_vec();
+                        let analyzers = cfg.analyzers.clone();
+                        let jobs = jobs;
+                        tokio::spawn(async move {
+                            let results = $analyze_fn(&files_vec, jobs, &analyzers).await;
+                            for r in results {
+                                if tx.send(r).await.is_err() { break; }
+                            }
+                        });
                     }
                 };
             }
 
-            // 4a. JS/TS — streaming double-buffer: analysis and RFDB ingestion
-            //     run in parallel. As files complete, results stream through a
-            //     bounded channel. The receiver batches INGEST_BATCH_SIZE results
-            //     and commits to RFDB while analysis continues filling the channel.
-            let js_file_count = js_files.len();
+            // 4a. JS/TS — per-file streaming (most critical for 14K+ file projects)
             if js_file_count > 0 {
-                tracing::info!(count = js_file_count, "Analyzing JS/TS files (streaming)");
-                let (tx, mut rx) =
-                    tokio::sync::mpsc::channel::<analyzer::AnalysisResult>(INGEST_BATCH_SIZE * 2);
+                tracing::info!(count = js_file_count, "Analyzing JS/TS files");
+                let tx_js = tx.clone();
                 let js_analyzer_path = cfg.analyzers.js_path();
                 let js_jobs = jobs;
-
-                // Producer: spawns all file analyses, sends results via channel
-                let analyze_handle = tokio::spawn(async move {
+                tokio::spawn(async move {
                     analyzer::analyze_js_files_streaming(
-                        js_files, js_jobs, js_analyzer_path, tx,
+                        js_files, js_jobs, js_analyzer_path, tx_js,
                     )
                     .await;
                 });
-
-                // Consumer: batch results and commit to RFDB while analysis continues
-                let mut batch = Vec::with_capacity(INGEST_BATCH_SIZE);
-                while let Some(result) = rx.recv().await {
-                    batch.push(result);
-                    if batch.len() >= INGEST_BATCH_SIZE {
-                        let full_batch = std::mem::replace(
-                            &mut batch,
-                            Vec::with_capacity(INGEST_BATCH_SIZE),
-                        );
-                        let batch_len = full_batch.len();
-                        let (n, e, err) = ingest_chunk(
-                            full_batch,
-                            &mut rfdb,
-                            &root_str,
-                            &authority,
-                            generation,
-                            total_files_committed + batch_len,
-                            total_files,
-                        )
-                        .await?;
-                        total_nodes += n;
-                        total_edges += e;
-                        total_errors += err;
-                        total_files_committed += batch_len;
-                    }
-                }
-                // Flush remaining results
-                if !batch.is_empty() {
-                    let batch_len = batch.len();
-                    let (n, e, err) = ingest_chunk(
-                        batch,
-                        &mut rfdb,
-                        &root_str,
-                        &authority,
-                        generation,
-                        total_files_committed + batch_len,
-                        total_files,
-                    )
-                    .await?;
-                    total_nodes += n;
-                    total_edges += e;
-                    total_errors += err;
-                    total_files_committed += batch_len;
-                }
-
-                analyze_handle
-                    .await
-                    .context("JS/TS streaming analysis task panicked")?;
             }
 
-            // 4b. Haskell (haskell-analyzer daemon pool)
-            analyze_and_ingest_chunked!(hs_files, "Haskell", analyzer::analyze_haskell_files_parallel_pooled);
+            // 4b–4k. All other languages — pool-based analysis, results forwarded
+            spawn_analysis!(hs_files, "Haskell", analyzer::analyze_haskell_files_parallel_pooled);
+            spawn_analysis!(rs_files, "Rust", analyzer::analyze_rust_files_parallel_pooled);
+            spawn_analysis!(java_files, "Java", analyzer::analyze_java_files_parallel_pooled);
+            spawn_analysis!(kotlin_files, "Kotlin", analyzer::analyze_kotlin_files_parallel_pooled);
+            spawn_analysis!(py_files, "Python", analyzer::analyze_python_files_parallel_pooled);
+            spawn_analysis!(go_files, "Go", analyzer::analyze_go_files_parallel_pooled);
+            spawn_analysis!(swift_files, "Swift", analyzer::analyze_swift_files_parallel_pooled);
+            spawn_analysis!(objc_files, "Obj-C", analyzer::analyze_objc_files_parallel_pooled);
+            spawn_analysis!(beam_files, "BEAM", analyzer::analyze_beam_files_parallel_pooled);
 
-            // 4c. Rust (syn parse → grafema-rust-analyzer daemon pool)
-            analyze_and_ingest_chunked!(rs_files, "Rust", analyzer::analyze_rust_files_parallel_pooled);
-
-            // 4d. Java (java-parser → java-analyzer daemon pools)
-            analyze_and_ingest_chunked!(java_files, "Java", analyzer::analyze_java_files_parallel_pooled);
-
-            // 4e. Kotlin (kotlin-parser → kotlin-analyzer daemon pools)
-            analyze_and_ingest_chunked!(kotlin_files, "Kotlin", analyzer::analyze_kotlin_files_parallel_pooled);
-
-            // 4f. Python (rustpython-parser → python-analyzer daemon pool)
-            analyze_and_ingest_chunked!(py_files, "Python", analyzer::analyze_python_files_parallel_pooled);
-
-            // 4g. Go (go-parser → go-analyzer daemon pools)
-            analyze_and_ingest_chunked!(go_files, "Go", analyzer::analyze_go_files_parallel_pooled);
-
-            // 4h. Analyze C/C++ files (libclang parse → cpp-analyzer daemon pool)
+            // C++ needs compile_commands — handle separately
             if !cpp_files.is_empty() {
                 tracing::info!(count = cpp_files.len(), "Analyzing C/C++ files");
 
-                // Search for compile_commands.json in project root and build directories
                 let compile_commands = {
                     let search_dirs = [
                         cfg.root.clone(),
@@ -562,30 +512,72 @@ async fn main() -> Result<()> {
                     db
                 };
 
-                for chunk in cpp_files.chunks(INGEST_BATCH_SIZE) {
-                    let cpp_results = analyzer::analyze_cpp_files_parallel_pooled(
-                        chunk,
-                        jobs,
-                        &cfg.analyzers,
+                let tx_cpp = tx.clone();
+                let cpp_files_vec: Vec<PathBuf> = cpp_files.to_vec();
+                let cpp_analyzers = cfg.analyzers.clone();
+                let cpp_jobs = jobs;
+                tokio::spawn(async move {
+                    let results = analyzer::analyze_cpp_files_parallel_pooled(
+                        &cpp_files_vec,
+                        cpp_jobs,
+                        &cpp_analyzers,
                         compile_commands.as_ref(),
-                    ).await;
-                    let (n, e, err) = ingest_chunk(
-                        cpp_results, &mut rfdb, &root_str, &authority,
-                        generation, total_files_committed + chunk.len(), total_files,
-                    ).await?;
-                    total_nodes += n; total_edges += e; total_errors += err;
-                    total_files_committed += chunk.len();
-                }
+                    )
+                    .await;
+                    for r in results {
+                        if tx_cpp.send(r).await.is_err() { break; }
+                    }
+                });
             }
 
-            // 4i. Swift (swift-parser → swift-analyzer daemon pools)
-            analyze_and_ingest_chunked!(swift_files, "Swift", analyzer::analyze_swift_files_parallel_pooled);
+            // Drop the original sender — channel closes when ALL language tasks complete
+            drop(tx);
 
-            // 4j. Obj-C (objc-parser → objc-analyzer daemon pools)
-            analyze_and_ingest_chunked!(objc_files, "Obj-C", analyzer::analyze_objc_files_parallel_pooled);
-
-            // 4k. BEAM (Elixir/Erlang) (beam-analyzer daemon pool)
-            analyze_and_ingest_chunked!(beam_files, "BEAM", analyzer::analyze_beam_files_parallel_pooled);
+            // Single receiver: batch results from all languages and commit to RFDB.
+            // Analysis and ingestion run in parallel (double-buffer).
+            let mut batch = Vec::with_capacity(INGEST_BATCH_SIZE);
+            while let Some(result) = rx.recv().await {
+                batch.push(result);
+                if batch.len() >= INGEST_BATCH_SIZE {
+                    let full_batch = std::mem::replace(
+                        &mut batch,
+                        Vec::with_capacity(INGEST_BATCH_SIZE),
+                    );
+                    let batch_len = full_batch.len();
+                    let (n, e, err) = ingest_chunk(
+                        full_batch,
+                        &mut rfdb,
+                        &root_str,
+                        &authority,
+                        generation,
+                        total_files_committed + batch_len,
+                        total_files,
+                    )
+                    .await?;
+                    total_nodes += n;
+                    total_edges += e;
+                    total_errors += err;
+                    total_files_committed += batch_len;
+                }
+            }
+            // Flush remaining results
+            if !batch.is_empty() {
+                let batch_len = batch.len();
+                let (n, e, err) = ingest_chunk(
+                    batch,
+                    &mut rfdb,
+                    &root_str,
+                    &authority,
+                    generation,
+                    total_files_committed + batch_len,
+                    total_files,
+                )
+                .await?;
+                total_nodes += n;
+                total_edges += e;
+                total_errors += err;
+                total_files_committed += batch_len;
+            }
 
             // NOTE: Do NOT flush/rebuild_indexes here. Analysis commits
             // tombstone resolution edges (via delete_node cascading to edges).

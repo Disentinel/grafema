@@ -69,5 +69,15 @@ packages/grafema-linux-arm64/bin/*
 packages/grafema-linux-x64/bin/*
 !packages/grafema-*/bin/.gitkeep
 
+# QA automation (non-screenshot files)
+_qa/*.cjs
+
+# Enox experiment (local data, not shipped)
+enox/data/
+enox/server/
+enox/*.rfdb/
+enox/rfdb.pid
+enox/fetch-*.js
+
 # SWE-bench artifacts
 logs/run_evaluation/
