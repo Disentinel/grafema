@@ -153,17 +153,17 @@ importers:
         version: 2.8.2
     optionalDependencies:
       '@grafema/grafema-darwin-arm64':
-        specifier: 0.3.8-beta
-        version: 0.3.8-beta
+        specifier: 0.3.9-beta
+        version: 0.3.9-beta
       '@grafema/grafema-darwin-x64':
-        specifier: 0.3.8-beta
-        version: 0.3.8-beta
+        specifier: 0.3.9-beta
+        version: 0.3.9-beta
       '@grafema/grafema-linux-arm64':
-        specifier: 0.3.8-beta
-        version: 0.3.8-beta
+        specifier: 0.3.9-beta
+        version: 0.3.9-beta
       '@grafema/grafema-linux-x64':
-        specifier: 0.3.8-beta
-        version: 0.3.8-beta
+        specifier: 0.3.9-beta
+        version: 0.3.9-beta
     devDependencies:
       '@types/node':
         specifier: ^25.0.8
@@ -696,26 +696,26 @@ packages:
   '@fastify/busboy@3.2.0':
     resolution: {integrity: sha512-m9FVDXU3GT2ITSe0UaMA5rU3QkfC/UXtCU8y0gSN/GugTqtVldOBWIB5V6V3sbmenVZUIpU6f+mPEO2+m5iTaA==}
 
-  '@grafema/grafema-darwin-arm64@0.3.8-beta':
-    resolution: {integrity: sha512-qcfVktx2mWvFgUsO6YQmlYhySFGS+USUQXYXTTb6vCL1sjQ7gy5uJ+9Q4K24TBDKtkdlvCXr114Sigi+bCymkw==}
+  '@grafema/grafema-darwin-arm64@0.3.9-beta':
+    resolution: {integrity: sha512-DnwYqPYtnc+BA12pzeiDTQ17JKFVBU8pqIl7KL5ulpS5Iin6DABRlpULCDr68v6ZpyLfrN6XhyLEOXnyHWO2tg==}
     engines: {node: '>= 18'}
     cpu: [arm64]
     os: [darwin]
 
-  '@grafema/grafema-darwin-x64@0.3.8-beta':
-    resolution: {integrity: sha512-7sRAU7FjPxCKp9JgSZ3N1tP4Fy8zbS/BD3dXuX9r+wXciIzvZPYJuocwGVy5e3rWCpBheK2iYgODVXo4KxWNDQ==}
+  '@grafema/grafema-darwin-x64@0.3.9-beta':
+    resolution: {integrity: sha512-cM2CROnCN5zj2X4/DErxHX/JkNTkKAoixeB0KREosQzgmyx9WmkdtMtQaarD5HafHLvzqfjzealZsnNcfj0w6Q==}
     engines: {node: '>= 18'}
     cpu: [x64]
     os: [darwin]
 
-  '@grafema/grafema-linux-arm64@0.3.8-beta':
-    resolution: {integrity: sha512-BctT3f700cd3HQ97KvBwp1RSjdqxuBDz5Yszm7HRI2qBQy5qnkw6gX+FcEQBI7fGg9iiXIul80VPzPr13f0guQ==}
+  '@grafema/grafema-linux-arm64@0.3.9-beta':
+    resolution: {integrity: sha512-JPJlPvFNqzqsc6ZE4k9RB2UbJvPX9VesIW/vSrTtrMRqIolbAmZhn0i5jh7ajV/pOvxoDYR5J6ulEMQY9Dqi6w==}
     engines: {node: '>= 18'}
     cpu: [arm64]
     os: [linux]
 
-  '@grafema/grafema-linux-x64@0.3.8-beta':
-    resolution: {integrity: sha512-8SqXjJRgVVKFRd5BML/xl9RsGdIlUL/GodI+A7ZtQ07kjyuONUtyBs6ixX9q1vQk6C/rK88fDPe9k2twQFWI8w==}
+  '@grafema/grafema-linux-x64@0.3.9-beta':
+    resolution: {integrity: sha512-SOJZUtGbhvt0gbSJ3oi5yodqmvuIK4+VAxn+FiXSGumruecQLkvuDk9tYPqCMrQr5pgtYjxdAHPR7wq7gGj8AA==}
     engines: {node: '>= 18'}
     cpu: [x64]
     os: [linux]
@@ -2180,16 +2180,16 @@ snapshots:
 
   '@fastify/busboy@3.2.0': {}
 
-  '@grafema/grafema-darwin-arm64@0.3.8-beta':
+  '@grafema/grafema-darwin-arm64@0.3.9-beta':
     optional: true
 
-  '@grafema/grafema-darwin-x64@0.3.8-beta':
+  '@grafema/grafema-darwin-x64@0.3.9-beta':
     optional: true
 
-  '@grafema/grafema-linux-arm64@0.3.8-beta':
+  '@grafema/grafema-linux-arm64@0.3.9-beta':
     optional: true
 
-  '@grafema/grafema-linux-x64@0.3.8-beta':
+  '@grafema/grafema-linux-x64@0.3.9-beta':
     optional: true
 
   '@graphql-tools/executor@1.5.1(graphql@16.12.0)':
