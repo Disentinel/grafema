@@ -783,7 +783,8 @@ async fn flush_to_worker(
     workspace_packages: &[WorkspacePackageWire],
 ) -> Result<()> {
     let payload = build_load_context_payload(nodes, workspace_packages)?;
-    handle.request(&payload).await?;
+    let response_bytes = handle.request(&payload).await?;
+    validate_load_context_response(&response_bytes, nodes.len())?;
     Ok(())
 }
 
@@ -795,7 +796,22 @@ async fn flush_to_all_workers(
 ) -> Result<()> {
     let payload = build_load_context_payload(nodes, workspace_packages)?;
     let futs: Vec<_> = handles.iter().map(|h| h.request(&payload)).collect();
-    futures::future::try_join_all(futs).await?;
+    let responses = futures::future::try_join_all(futs).await?;
+    for response_bytes in &responses {
+        validate_load_context_response(response_bytes, nodes.len())?;
+    }
+    Ok(())
+}
+
+/// Validate that a load-context response is successful.
+/// The daemon returns {"status": "ok"} on success or {"status": "error", "error": "..."} on failure.
+fn validate_load_context_response(response_bytes: &[u8], node_count: usize) -> Result<()> {
+    let response: ResolveResponse = rmp_serde::from_slice(response_bytes)
+        .context("Failed to decode load-context response")?;
+    if response.status != "ok" {
+        let msg = response.error.unwrap_or_else(|| "unknown error".to_string());
+        bail!("load-context failed ({node_count} nodes): {msg}");
+    }
     Ok(())
 }
 
