@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.11] - 2026-03-16
+
+### Highlights
+
+- Parallel sharded resolution — fixes crash on 14K-file JS projects where 6.7M resolve nodes exceeded the 100MB frame limit
+
+### Features
+
+- feat(orchestrator): two-phase parallel sharded resolution for JS/TS — per-file resolvers (same-file-calls, js-local-refs, runtime-globals, builtins) run in parallel via tokio::join!, each sharded across N workers; global resolvers (imports, cross-file-calls, property-access) share export context loaded once into all workers
+- feat(orchestrator): automatic worker pool sizing — min(7, available_cpus - 1) with 200MB frame limit and 300s timeout
+- feat(resolve): stateful context protocol — Haskell daemon supports load-context/clear-context commands for accumulating declaration/export nodes across multiple chunks, enabling sharded resolution without sending 2GB in one frame
+- feat(orchestrator): WorkerHandle acquire/release API and send_to_all for broadcasting context to all pool workers
+
 ## [0.3.10-beta] - 2026-03-15
 
 ### Features
