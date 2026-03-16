@@ -1,55 +1,10 @@
-use grafema_orchestrator::{analyzer, config, discovery, gc, plugin, process_pool, rfdb, source_hash};
+use grafema_orchestrator::{analyzer, config, discovery, gc, plugin, process_pool, profiler, rfdb, source_hash};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-/// Query ALL resolve-type nodes from RFDB for a given language.
-///
-/// Unlike `collect_resolve_nodes_for_lang` which only sees nodes from changed
-/// files (via `results`), this queries the full graph — ensuring cross-file
-/// resolution works correctly in incremental mode.
-async fn query_resolve_nodes_for_lang(
-    rfdb_client: &mut rfdb::RfdbClient,
-    lang: config::Language,
-) -> Result<Vec<serde_json::Value>> {
-    let mut all_nodes = Vec::new();
-
-    for node_type in analyzer::resolve_node_types() {
-        let nodes = rfdb_client.query_nodes_by_type(node_type).await?;
-        for node in &nodes {
-            if let Some(ref file) = node.file {
-                if config::detect_language(std::path::Path::new(file)) == Some(lang) {
-                    all_nodes.push(analyzer::wire_node_to_resolve_json(node));
-                }
-            }
-        }
-    }
-
-    Ok(all_nodes)
-}
-
-/// Query ALL resolve-type nodes from RFDB for JVM languages (Java + Kotlin).
-async fn query_resolve_nodes_for_jvm(
-    rfdb_client: &mut rfdb::RfdbClient,
-) -> Result<Vec<serde_json::Value>> {
-    let mut all_nodes = Vec::new();
-
-    for node_type in analyzer::resolve_node_types() {
-        let nodes = rfdb_client.query_nodes_by_type(node_type).await?;
-        for node in &nodes {
-            if let Some(ref file) = node.file {
-                let lang = config::detect_language(std::path::Path::new(file));
-                if matches!(lang, Some(config::Language::Java) | Some(config::Language::Kotlin)) {
-                    all_nodes.push(analyzer::wire_node_to_resolve_json(node));
-                }
-            }
-        }
-    }
-
-    Ok(all_nodes)
-}
 
 /// Tag virtual resolution output nodes with a synthetic file for cleanup.
 ///
@@ -233,9 +188,22 @@ async fn main() -> Result<()> {
                 "Starting analysis"
             );
 
+            // 0. Create profiler
+            let profile_path = cfg.root.join(".grafema").join("analysis-profile.jsonl");
+            let prof = profiler::Profiler::new(&profile_path).ok();
+            macro_rules! profile {
+                ($event:expr $(, $k:expr => $v:expr)*) => {
+                    if let Some(ref p) = prof {
+                        p.event($event, &[$(($k, &$v.to_string())),*]);
+                    }
+                };
+            }
+            profile!("analysis_start", "config" => config_path.display());
+
             // 1. Discover files
             let files = discovery::discover(&cfg)?;
             tracing::info!(count = files.len(), "Discovered files");
+            profile!("files_discovered", "count" => files.len());
 
             if files.is_empty() {
                 tracing::warn!("No files matched include patterns");
@@ -601,6 +569,8 @@ async fn main() -> Result<()> {
                 errors = total_errors,
                 "Analysis complete"
             );
+            profile!("analysis_complete",
+                "nodes" => total_nodes, "edges" => total_edges, "errors" => total_errors);
 
             // 7. Handle deleted files
             let deleted = gc::detect_deleted_files(&gen_tracker, &files);
@@ -638,20 +608,43 @@ async fn main() -> Result<()> {
                     .collect()
             };
 
-            // 8. Run resolution plugins with FULL graph from RFDB
-            //    (queries all nodes, not just changed files — fixes incremental resolution)
-            let resolve_nodes = if js_file_count > 0 {
-                query_resolve_nodes_for_lang(&mut rfdb, config::Language::JavaScript).await?
-            } else {
-                Vec::new()
-            };
-            if !resolve_nodes.is_empty() {
+            // Helper: validate, stamp, tag, commit a resolution output
+            async fn commit_resolve_output(
+                output: &mut plugin::PluginOutput,
+                name: &str,
+                generation: u64,
+                rfdb: &mut rfdb::RfdbClient,
+            ) -> anyhow::Result<()> {
+                plugin::validate_plugin_output(output)?;
+                plugin::stamp_metadata(output, name, generation);
+                tag_virtual_nodes(output, name);
+                let files: Vec<String> = output
+                    .nodes
+                    .iter()
+                    .filter_map(|n| n.file.clone())
+                    .collect::<std::collections::HashSet<_>>()
+                    .into_iter()
+                    .collect();
+                rfdb.commit_batch(&files, &output.nodes, &output.edges, true)
+                    .await
+                    .context(format!("Failed to commit {name} output"))?;
+                tracing::info!(
+                    plugin = name,
+                    nodes = output.nodes.len(),
+                    edges = output.edges.len(),
+                    "Resolution step complete"
+                );
+                Ok(())
+            }
+
+            // 8. Run JS resolution with streaming double-buffer
+            if js_file_count > 0 {
                 let pool_size = resolve_worker_count();
                 tracing::info!(
-                    nodes = resolve_nodes.len(),
                     workers = pool_size,
-                    "Running built-in resolution with full graph nodes (sharded)"
+                    "Running JS streaming resolution"
                 );
+                profile!("js_resolve_start", "workers" => pool_size);
 
                 let resolve_pool_config = process_pool::PoolConfig {
                     command: cfg.analyzers.js_resolve_path(),
@@ -662,156 +655,54 @@ async fn main() -> Result<()> {
 
                 match process_pool::ProcessPool::new(resolve_pool_config, pool_size) {
                     Ok(resolve_pool) => {
-                        // Helper: validate, stamp, tag, commit a resolution output
-                        async fn commit_resolve_output(
-                            output: &mut plugin::PluginOutput,
-                            name: &str,
-                            generation: u64,
-                            rfdb: &mut rfdb::RfdbClient,
-                        ) -> anyhow::Result<()> {
-                            plugin::validate_plugin_output(output)?;
-                            plugin::stamp_metadata(output, name, generation);
-                            tag_virtual_nodes(output, name);
-                            let files: Vec<String> = output
-                                .nodes
-                                .iter()
-                                .filter_map(|n| n.file.clone())
-                                .collect::<std::collections::HashSet<_>>()
-                                .into_iter()
-                                .collect();
-                            rfdb.commit_batch(&files, &output.nodes, &output.edges, true)
-                                .await
-                                .context(format!("Failed to commit {name} output"))?;
-                            tracing::info!(
-                                plugin = name,
-                                nodes = output.nodes.len(),
-                                edges = output.edges.len(),
-                                "Resolution step complete"
-                            );
-                            Ok(())
-                        }
+                        let handles = resolve_pool.acquire_all().await?;
 
-                        // ── Phase A: per-file resolvers (no context needed) ──
-                        // These resolvers only need nodes from the same file.
-                        // All 4 run in parallel, each sharded across workers.
-                        tracing::info!("Phase A: per-file resolvers (parallel, sharded)");
-
-                        let (
-                            same_file_result,
-                            js_local_refs_result,
-                            globals_result,
-                            builtins_result,
-                        ) = tokio::join!(
-                            plugin::run_resolve_sharded(
-                                "same-file-calls",
-                                &resolve_nodes,
-                                &[],
-                                &resolve_pool,
-                                plugin::ResolveKind::PerFile,
-                            ),
-                            plugin::run_resolve_sharded(
-                                "js-local-refs",
-                                &resolve_nodes,
-                                &[],
-                                &resolve_pool,
-                                plugin::ResolveKind::PerFile,
-                            ),
-                            plugin::run_resolve_sharded(
-                                "runtime-globals",
-                                &resolve_nodes,
-                                &[],
-                                &resolve_pool,
-                                plugin::ResolveKind::PerFile,
-                            ),
-                            plugin::run_resolve_sharded(
-                                "builtins",
-                                &resolve_nodes,
-                                &[],
-                                &resolve_pool,
-                                plugin::ResolveKind::PerFile,
-                            ),
-                        );
-
-                        let mut same_file_output = same_file_result
-                            .context("Same-file CALLS resolution failed")?;
-                        commit_resolve_output(&mut same_file_output, "same-file-calls", generation, &mut rfdb).await?;
-
-                        let mut js_local_refs_output = js_local_refs_result
-                            .context("JS local refs resolution failed")?;
-                        commit_resolve_output(&mut js_local_refs_output, "js-local-refs", generation, &mut rfdb).await?;
-
-                        let mut globals_output = globals_result
-                            .context("Runtime globals resolution failed")?;
-                        commit_resolve_output(&mut globals_output, "runtime-globals", generation, &mut rfdb).await?;
-
-                        let mut builtins_output = builtins_result
-                            .context("Builtins resolution failed")?;
-                        commit_resolve_output(&mut builtins_output, "builtins", generation, &mut rfdb).await?;
-
-                        // ── Phase B: global resolvers (need export context) ──
-                        // These resolvers need to see all exports/declarations
-                        // to build their resolution indexes.
-                        tracing::info!("Phase B: global resolvers (parallel, sharded with context)");
-
-                        let (context_nodes, _work) = plugin::classify_context_vs_work(&resolve_nodes);
-                        plugin::load_context_into_pool(
-                            &resolve_pool,
-                            &context_nodes,
+                        let total_streamed = plugin::stream_resolve_nodes_to_workers(
+                            &mut rfdb,
+                            config::Language::JavaScript,
+                            &handles,
                             &ws_packages,
-                        )
-                        .await
-                        .context("Failed to load context into resolve workers")?;
+                        ).await?;
+                        profile!("js_stream_complete", "nodes" => total_streamed);
 
-                        let (
-                            imports_result,
-                            cross_file_result,
-                            prop_access_result,
-                        ) = tokio::join!(
-                            plugin::run_resolve_sharded(
-                                "imports",
-                                &resolve_nodes,
-                                &ws_packages,
-                                &resolve_pool,
-                                plugin::ResolveKind::Global,
-                            ),
-                            plugin::run_resolve_sharded(
-                                "cross-file-calls",
-                                &resolve_nodes,
-                                &[],
-                                &resolve_pool,
-                                plugin::ResolveKind::Global,
-                            ),
-                            plugin::run_resolve_sharded(
-                                "property-access",
-                                &resolve_nodes,
-                                &[],
-                                &resolve_pool,
-                                plugin::ResolveKind::Global,
-                            ),
-                        );
+                        if total_streamed > 0 {
+                            let empty_ws: &[plugin::WorkspacePackageWire] = &[];
+                            // (daemon_cmd, commit_name, workspace_packages)
+                            let js_commands: Vec<(&str, &str, &[plugin::WorkspacePackageWire])> = vec![
+                                ("same-file-calls", "same-file-calls", empty_ws),
+                                ("js-local-refs", "js-local-refs", empty_ws),
+                                ("runtime-globals", "runtime-globals", empty_ws),
+                                ("builtins", "builtins", empty_ws),
+                                ("imports", "js-import-resolution", &ws_packages),
+                                ("cross-file-calls", "cross-file-calls", empty_ws),
+                                ("property-access", "property-access", empty_ws),
+                            ];
 
-                        let mut import_output = imports_result
-                            .context("Import resolution failed")?;
-                        // Collect IMPORTS_FROM edges for DEPENDS_ON derivation
-                        for edge in &import_output.edges {
-                            if edge.edge_type == "IMPORTS_FROM" {
-                                all_imports_from_edges.push((edge.src.clone(), edge.dst.clone()));
+                            for (cmd, commit_name, ws) in js_commands {
+                                profile!("js_resolve_cmd_start", "cmd" => cmd);
+                                let mut output = plugin::run_resolve_on_workers(cmd, &handles, ws)
+                                    .await
+                                    .with_context(|| format!("{commit_name} resolution failed"))?;
+
+                                if cmd == "imports" {
+                                    for edge in &output.edges {
+                                        if edge.edge_type == "IMPORTS_FROM" {
+                                            all_imports_from_edges.push((edge.src.clone(), edge.dst.clone()));
+                                        }
+                                    }
+                                }
+
+                                commit_resolve_output(&mut output, commit_name, generation, &mut rfdb).await?;
+                                profile!("js_resolve_cmd_complete", "cmd" => cmd,
+                                    "nodes" => output.nodes.len(), "edges" => output.edges.len());
                             }
                         }
-                        commit_resolve_output(&mut import_output, "js-import-resolution", generation, &mut rfdb).await?;
 
-                        let mut cross_file_output = cross_file_result
-                            .context("Cross-file CALLS resolution failed")?;
-                        commit_resolve_output(&mut cross_file_output, "cross-file-calls", generation, &mut rfdb).await?;
-
-                        let mut prop_access_output = prop_access_result
-                            .context("Property access resolution failed")?;
-                        commit_resolve_output(&mut prop_access_output, "property-access", generation, &mut rfdb).await?;
-
-                        plugin::clear_context(&resolve_pool).await
+                        plugin::clear_context_on_workers(&handles).await
                             .context("Failed to clear context from resolve workers")?;
-
+                        drop(handles);
                         resolve_pool.shutdown().await;
+                        profile!("js_resolve_complete");
                     }
                     Err(e) => {
                         tracing::warn!(
@@ -821,761 +712,340 @@ async fn main() -> Result<()> {
                 }
             }
 
-            // 8a. Run Haskell import resolution (if Haskell files were analyzed)
+            // 8a. Run Haskell resolution (streaming)
             if !hs_files.is_empty() {
-                let hs_resolve_nodes = query_resolve_nodes_for_lang(&mut rfdb, config::Language::Haskell).await?;
-                if !hs_resolve_nodes.is_empty() {
-                    tracing::info!(
-                        nodes = hs_resolve_nodes.len(),
-                        "Running Haskell import resolution"
-                    );
-
-                    let hs_resolve_pool_config = process_pool::PoolConfig {
-                        command: cfg.analyzers.haskell_resolve_path(),
-                        args: vec!["--daemon".to_string()],
-                        ..process_pool::PoolConfig::default()
-                    };
-
-                    match process_pool::ProcessPool::new(hs_resolve_pool_config, 1) {
-                        Ok(hs_resolve_pool) => {
-                            let mut hs_import_output = plugin::run_resolve_with_nodes(
-                                "haskell-imports",
-                                &hs_resolve_nodes,
-                                &[],
-                                &hs_resolve_pool,
-                            )
-                            .await
-                            .context("Haskell import resolution failed")?;
-                            plugin::validate_plugin_output(&hs_import_output)?;
-                            plugin::stamp_metadata(&mut hs_import_output, "haskell-import-resolution", generation);
-                            tag_virtual_nodes(&mut hs_import_output, "haskell-import-resolution");
-
-                            let hs_import_files: Vec<String> = hs_import_output
-                                .nodes
-                                .iter()
-                                .filter_map(|n| n.file.clone())
-                                .collect::<std::collections::HashSet<_>>()
-                                .into_iter()
-                                .collect();
-                            rfdb.commit_batch(&hs_import_files, &hs_import_output.nodes, &hs_import_output.edges, true)
-                                .await
-                                .context("Failed to commit Haskell import resolution output")?;
-
-                            for edge in &hs_import_output.edges {
+                profile!("haskell_resolve_start");
+                let hs_pool_config = process_pool::PoolConfig {
+                    command: cfg.analyzers.haskell_resolve_path(),
+                    args: vec!["--daemon".to_string()],
+                    ..process_pool::PoolConfig::default()
+                };
+                match process_pool::ProcessPool::new(hs_pool_config, 1) {
+                    Ok(hs_pool) => {
+                        let results = plugin::stream_and_resolve_single_worker(
+                            &mut rfdb,
+                            &[config::Language::Haskell],
+                            &[("haskell-imports", &[]), ("haskell-local-refs", &[])],
+                            &hs_pool,
+                        ).await?;
+                        for (cmd, mut output) in results {
+                            let commit_name = match cmd.as_str() {
+                                "haskell-imports" => "haskell-import-resolution",
+                                _ => &cmd,
+                            };
+                            for edge in &output.edges {
                                 if edge.edge_type == "IMPORTS_FROM" {
                                     all_imports_from_edges.push((edge.src.clone(), edge.dst.clone()));
                                 }
                             }
-
-                            tracing::info!(
-                                nodes = hs_import_output.nodes.len(),
-                                edges = hs_import_output.edges.len(),
-                                "Haskell import resolution complete"
-                            );
-
-                            // Step 8b: Haskell local refs resolution
-                            let mut hs_local_output = plugin::run_resolve_with_nodes(
-                                "haskell-local-refs",
-                                &hs_resolve_nodes,
-                                &[],
-                                &hs_resolve_pool,
-                            )
-                            .await
-                            .context("Haskell local refs resolution failed")?;
-                            plugin::validate_plugin_output(&hs_local_output)?;
-                            plugin::stamp_metadata(&mut hs_local_output, "haskell-local-refs", generation);
-                            tag_virtual_nodes(&mut hs_local_output, "haskell-local-refs");
-
-                            let hs_local_files: Vec<String> = hs_local_output
-                                .nodes
-                                .iter()
-                                .filter_map(|n| n.file.clone())
-                                .collect::<std::collections::HashSet<_>>()
-                                .into_iter()
-                                .collect();
-                            rfdb.commit_batch(&hs_local_files, &hs_local_output.nodes, &hs_local_output.edges, true)
-                                .await
-                                .context("Failed to commit Haskell local refs output")?;
-
-                            tracing::info!(
-                                nodes = hs_local_output.nodes.len(),
-                                edges = hs_local_output.edges.len(),
-                                "Haskell local refs resolution complete"
-                            );
-
-                            hs_resolve_pool.shutdown().await;
+                            commit_resolve_output(&mut output, commit_name, generation, &mut rfdb).await?;
                         }
-                        Err(e) => {
-                            tracing::warn!(
-                                "Failed to create Haskell resolve pool, skipping Haskell import resolution: {e}"
-                            );
-                        }
+                        hs_pool.shutdown().await;
+                        profile!("haskell_resolve_complete");
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to create Haskell resolve pool: {e}");
                     }
                 }
             }
 
-            // 8b. Run Rust import resolution (if Rust files were analyzed)
+            // 8b. Run Rust resolution (streaming)
             if !rs_files.is_empty() {
-                let rs_resolve_nodes = query_resolve_nodes_for_lang(&mut rfdb, config::Language::Rust).await?;
-                if !rs_resolve_nodes.is_empty() {
-                    tracing::info!(
-                        nodes = rs_resolve_nodes.len(),
-                        "Running Rust import resolution"
-                    );
-
-                    let rs_resolve_pool_config = process_pool::PoolConfig {
-                        command: cfg.analyzers.rust_resolve_path(),
-                        args: vec!["--daemon".to_string()],
-                        ..process_pool::PoolConfig::default()
-                    };
-
-                    match process_pool::ProcessPool::new(rs_resolve_pool_config, 1) {
-                        Ok(rs_resolve_pool) => {
-                            let mut rs_import_output = plugin::run_resolve_with_nodes(
-                                "rust-imports",
-                                &rs_resolve_nodes,
-                                &[],
-                                &rs_resolve_pool,
-                            )
-                            .await
-                            .context("Rust import resolution failed")?;
-                            plugin::validate_plugin_output(&rs_import_output)?;
-                            plugin::stamp_metadata(&mut rs_import_output, "rust-import-resolution", generation);
-                            tag_virtual_nodes(&mut rs_import_output, "rust-import-resolution");
-
-                            let rs_import_files: Vec<String> = rs_import_output
-                                .nodes
-                                .iter()
-                                .filter_map(|n| n.file.clone())
-                                .collect::<std::collections::HashSet<_>>()
-                                .into_iter()
-                                .collect();
-                            rfdb.commit_batch(&rs_import_files, &rs_import_output.nodes, &rs_import_output.edges, true)
-                                .await
-                                .context("Failed to commit Rust import resolution output")?;
-
-                            for edge in &rs_import_output.edges {
+                profile!("rust_resolve_start");
+                let rs_pool_config = process_pool::PoolConfig {
+                    command: cfg.analyzers.rust_resolve_path(),
+                    args: vec!["--daemon".to_string()],
+                    ..process_pool::PoolConfig::default()
+                };
+                match process_pool::ProcessPool::new(rs_pool_config, 1) {
+                    Ok(rs_pool) => {
+                        let results = plugin::stream_and_resolve_single_worker(
+                            &mut rfdb,
+                            &[config::Language::Rust],
+                            &[("rust-imports", &[])],
+                            &rs_pool,
+                        ).await?;
+                        for (cmd, mut output) in results {
+                            let commit_name = match cmd.as_str() {
+                                "rust-imports" => "rust-import-resolution",
+                                _ => &cmd,
+                            };
+                            for edge in &output.edges {
                                 if edge.edge_type == "IMPORTS_FROM" {
                                     all_imports_from_edges.push((edge.src.clone(), edge.dst.clone()));
                                 }
                             }
-
-                            tracing::info!(
-                                nodes = rs_import_output.nodes.len(),
-                                edges = rs_import_output.edges.len(),
-                                "Rust import resolution complete"
-                            );
-
-                            rs_resolve_pool.shutdown().await;
+                            commit_resolve_output(&mut output, commit_name, generation, &mut rfdb).await?;
                         }
-                        Err(e) => {
-                            tracing::warn!(
-                                "Failed to create Rust resolve pool, skipping Rust import resolution: {e}"
-                            );
-                        }
+                        rs_pool.shutdown().await;
+                        profile!("rust_resolve_complete");
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to create Rust resolve pool: {e}");
                     }
                 }
             }
 
-            // 8c. Run Java resolution (imports, types, calls, annotations — single pass)
+            // 8c. Run Java resolution (streaming)
             if !java_files.is_empty() {
-                let java_resolve_nodes = query_resolve_nodes_for_lang(&mut rfdb, config::Language::Java).await?;
-                if !java_resolve_nodes.is_empty() {
-                    tracing::info!(
-                        nodes = java_resolve_nodes.len(),
-                        "Running Java resolution"
-                    );
-
-                    let java_resolve_pool_config = process_pool::PoolConfig {
-                        command: cfg.analyzers.java_resolve_path(),
-                        args: vec!["--daemon".to_string()],
-                        ..process_pool::PoolConfig::default()
-                    };
-
-                    match process_pool::ProcessPool::new(java_resolve_pool_config, 1) {
-                        Ok(java_resolve_pool) => {
-                            let mut java_resolve_output = plugin::run_resolve_with_nodes(
-                                "java-all",
-                                &java_resolve_nodes,
-                                &[],
-                                &java_resolve_pool,
-                            )
-                            .await
-                            .context("Java resolution failed")?;
-                            plugin::validate_plugin_output(&java_resolve_output)?;
-                            plugin::stamp_metadata(&mut java_resolve_output, "java-resolution", generation);
-                            tag_virtual_nodes(&mut java_resolve_output, "java-resolution");
-
-                            let java_resolve_files: Vec<String> = java_resolve_output
-                                .nodes
-                                .iter()
-                                .filter_map(|n| n.file.clone())
-                                .collect::<std::collections::HashSet<_>>()
-                                .into_iter()
-                                .collect();
-                            rfdb.commit_batch(&java_resolve_files, &java_resolve_output.nodes, &java_resolve_output.edges, true)
-                                .await
-                                .context("Failed to commit Java resolution output")?;
-
-                            for edge in &java_resolve_output.edges {
+                profile!("java_resolve_start");
+                let pool_cfg = process_pool::PoolConfig {
+                    command: cfg.analyzers.java_resolve_path(),
+                    args: vec!["--daemon".to_string()],
+                    ..process_pool::PoolConfig::default()
+                };
+                match process_pool::ProcessPool::new(pool_cfg, 1) {
+                    Ok(pool) => {
+                        let results = plugin::stream_and_resolve_single_worker(
+                            &mut rfdb, &[config::Language::Java], &[("java-all", &[])], &pool,
+                        ).await?;
+                        for (_cmd, mut output) in results {
+                            for edge in &output.edges {
                                 if edge.edge_type == "IMPORTS_FROM" {
                                     all_imports_from_edges.push((edge.src.clone(), edge.dst.clone()));
                                 }
                             }
-
-                            tracing::info!(
-                                nodes = java_resolve_output.nodes.len(),
-                                edges = java_resolve_output.edges.len(),
-                                "Java resolution complete"
-                            );
-
-                            java_resolve_pool.shutdown().await;
+                            commit_resolve_output(&mut output, "java-resolution", generation, &mut rfdb).await?;
                         }
-                        Err(e) => {
-                            tracing::warn!(
-                                "Failed to create Java resolve pool, skipping Java resolution: {e}"
-                            );
-                        }
+                        pool.shutdown().await;
+                        profile!("java_resolve_complete");
                     }
+                    Err(e) => tracing::warn!("Failed to create Java resolve pool: {e}"),
                 }
             }
 
-            // 8d. Run Kotlin resolution (imports, types, calls, annotations — single pass)
+            // 8d. Run Kotlin resolution (streaming)
             if !kotlin_files.is_empty() {
-                let kotlin_resolve_nodes = query_resolve_nodes_for_lang(&mut rfdb, config::Language::Kotlin).await?;
-                if !kotlin_resolve_nodes.is_empty() {
-                    tracing::info!(
-                        nodes = kotlin_resolve_nodes.len(),
-                        "Running Kotlin resolution"
-                    );
-
-                    let kotlin_resolve_pool_config = process_pool::PoolConfig {
-                        command: cfg.analyzers.kotlin_resolve_path(),
-                        args: vec!["--daemon".to_string()],
-                        ..process_pool::PoolConfig::default()
-                    };
-
-                    match process_pool::ProcessPool::new(kotlin_resolve_pool_config, 1) {
-                        Ok(kotlin_resolve_pool) => {
-                            let mut kotlin_resolve_output = plugin::run_resolve_with_nodes(
-                                "kotlin-all",
-                                &kotlin_resolve_nodes,
-                                &[],
-                                &kotlin_resolve_pool,
-                            )
-                            .await
-                            .context("Kotlin resolution failed")?;
-                            plugin::validate_plugin_output(&kotlin_resolve_output)?;
-                            plugin::stamp_metadata(&mut kotlin_resolve_output, "kotlin-resolution", generation);
-                            tag_virtual_nodes(&mut kotlin_resolve_output, "kotlin-resolution");
-
-                            let kotlin_resolve_files: Vec<String> = kotlin_resolve_output
-                                .nodes
-                                .iter()
-                                .filter_map(|n| n.file.clone())
-                                .collect::<std::collections::HashSet<_>>()
-                                .into_iter()
-                                .collect();
-                            rfdb.commit_batch(&kotlin_resolve_files, &kotlin_resolve_output.nodes, &kotlin_resolve_output.edges, true)
-                                .await
-                                .context("Failed to commit Kotlin resolution output")?;
-
-                            for edge in &kotlin_resolve_output.edges {
+                profile!("kotlin_resolve_start");
+                let pool_cfg = process_pool::PoolConfig {
+                    command: cfg.analyzers.kotlin_resolve_path(),
+                    args: vec!["--daemon".to_string()],
+                    ..process_pool::PoolConfig::default()
+                };
+                match process_pool::ProcessPool::new(pool_cfg, 1) {
+                    Ok(pool) => {
+                        let results = plugin::stream_and_resolve_single_worker(
+                            &mut rfdb, &[config::Language::Kotlin], &[("kotlin-all", &[])], &pool,
+                        ).await?;
+                        for (_cmd, mut output) in results {
+                            for edge in &output.edges {
                                 if edge.edge_type == "IMPORTS_FROM" {
                                     all_imports_from_edges.push((edge.src.clone(), edge.dst.clone()));
                                 }
                             }
-
-                            tracing::info!(
-                                nodes = kotlin_resolve_output.nodes.len(),
-                                edges = kotlin_resolve_output.edges.len(),
-                                "Kotlin resolution complete"
-                            );
-
-                            kotlin_resolve_pool.shutdown().await;
+                            commit_resolve_output(&mut output, "kotlin-resolution", generation, &mut rfdb).await?;
                         }
-                        Err(e) => {
-                            tracing::warn!(
-                                "Failed to create Kotlin resolve pool, skipping Kotlin resolution: {e}"
-                            );
-                        }
+                        pool.shutdown().await;
+                        profile!("kotlin_resolve_complete");
                     }
+                    Err(e) => tracing::warn!("Failed to create Kotlin resolve pool: {e}"),
                 }
             }
 
-            // 8e. Run Python resolution (imports, types, calls — single pass)
+            // 8e. Run Python resolution (streaming)
             if !py_files.is_empty() {
-                let py_resolve_nodes = query_resolve_nodes_for_lang(&mut rfdb, config::Language::Python).await?;
-                if !py_resolve_nodes.is_empty() {
-                    tracing::info!(
-                        nodes = py_resolve_nodes.len(),
-                        "Running Python resolution"
-                    );
-
-                    let py_resolve_pool_config = process_pool::PoolConfig {
-                        command: cfg.analyzers.python_resolve_path(),
-                        args: vec!["--daemon".to_string()],
-                        ..process_pool::PoolConfig::default()
-                    };
-
-                    match process_pool::ProcessPool::new(py_resolve_pool_config, 1) {
-                        Ok(py_resolve_pool) => {
-                            let mut py_resolve_output = plugin::run_resolve_with_nodes(
-                                "python-all",
-                                &py_resolve_nodes,
-                                &[],
-                                &py_resolve_pool,
-                            )
-                            .await
-                            .context("Python resolution failed")?;
-                            plugin::validate_plugin_output(&py_resolve_output)?;
-                            plugin::stamp_metadata(&mut py_resolve_output, "python-resolution", generation);
-                            tag_virtual_nodes(&mut py_resolve_output, "python-resolution");
-
-                            let py_resolve_files: Vec<String> = py_resolve_output
-                                .nodes
-                                .iter()
-                                .filter_map(|n| n.file.clone())
-                                .collect::<std::collections::HashSet<_>>()
-                                .into_iter()
-                                .collect();
-                            rfdb.commit_batch(&py_resolve_files, &py_resolve_output.nodes, &py_resolve_output.edges, true)
-                                .await
-                                .context("Failed to commit Python resolution output")?;
-
-                            for edge in &py_resolve_output.edges {
+                profile!("python_resolve_start");
+                let pool_cfg = process_pool::PoolConfig {
+                    command: cfg.analyzers.python_resolve_path(),
+                    args: vec!["--daemon".to_string()],
+                    ..process_pool::PoolConfig::default()
+                };
+                match process_pool::ProcessPool::new(pool_cfg, 1) {
+                    Ok(pool) => {
+                        let results = plugin::stream_and_resolve_single_worker(
+                            &mut rfdb, &[config::Language::Python], &[("python-all", &[])], &pool,
+                        ).await?;
+                        for (_cmd, mut output) in results {
+                            for edge in &output.edges {
                                 if edge.edge_type == "IMPORTS_FROM" {
                                     all_imports_from_edges.push((edge.src.clone(), edge.dst.clone()));
                                 }
                             }
-
-                            tracing::info!(
-                                nodes = py_resolve_output.nodes.len(),
-                                edges = py_resolve_output.edges.len(),
-                                "Python resolution complete"
-                            );
-
-                            py_resolve_pool.shutdown().await;
+                            commit_resolve_output(&mut output, "python-resolution", generation, &mut rfdb).await?;
                         }
-                        Err(e) => {
-                            tracing::warn!(
-                                "Failed to create Python resolve pool, skipping Python resolution: {e}"
-                            );
-                        }
+                        pool.shutdown().await;
+                        profile!("python_resolve_complete");
                     }
+                    Err(e) => tracing::warn!("Failed to create Python resolve pool: {e}"),
                 }
             }
 
-            // 8f. Run Go resolution
+            // 8f. Run Go resolution (streaming)
             if !go_files.is_empty() {
-                let go_resolve_nodes = query_resolve_nodes_for_lang(&mut rfdb, config::Language::Go).await?;
-                if !go_resolve_nodes.is_empty() {
-                    tracing::info!(
-                        nodes = go_resolve_nodes.len(),
-                        "Running Go resolution"
-                    );
+                profile!("go_resolve_start");
+                let go_module_path = config::discover_go_module_path(&cfg.root);
+                let go_ws_packages: Vec<plugin::WorkspacePackageWire> = go_module_path
+                    .map(|mp| vec![plugin::WorkspacePackageWire {
+                        name: mp.clone(),
+                        entry_point: String::new(),
+                        package_dir: cfg.root.display().to_string(),
+                    }])
+                    .unwrap_or_default();
 
-                    let go_module_path = config::discover_go_module_path(&cfg.root);
-                    let go_ws_packages: Vec<plugin::WorkspacePackageWire> = go_module_path
-                        .map(|mp| vec![plugin::WorkspacePackageWire {
-                            name: mp.clone(),
-                            entry_point: String::new(),
-                            package_dir: cfg.root.display().to_string(),
-                        }])
-                        .unwrap_or_default();
-
-                    let go_resolve_pool_config = process_pool::PoolConfig {
-                        command: cfg.analyzers.go_resolve_path(),
-                        args: vec!["--daemon".to_string()],
-                        ..process_pool::PoolConfig::default()
-                    };
-
-                    match process_pool::ProcessPool::new(go_resolve_pool_config, 1) {
-                        Ok(go_resolve_pool) => {
-                            let mut go_resolve_output = plugin::run_resolve_with_nodes(
-                                "go-all",
-                                &go_resolve_nodes,
-                                &go_ws_packages,
-                                &go_resolve_pool,
-                            )
-                            .await
-                            .context("Go resolution failed")?;
-                            plugin::validate_plugin_output(&go_resolve_output)?;
-                            plugin::stamp_metadata(&mut go_resolve_output, "go-resolution", generation);
-                            tag_virtual_nodes(&mut go_resolve_output, "go-resolution");
-
-                            let go_resolve_files: Vec<String> = go_resolve_output
-                                .nodes
-                                .iter()
-                                .filter_map(|n| n.file.clone())
-                                .collect::<std::collections::HashSet<_>>()
-                                .into_iter()
-                                .collect();
-                            rfdb.commit_batch(&go_resolve_files, &go_resolve_output.nodes, &go_resolve_output.edges, true)
-                                .await
-                                .context("Failed to commit Go resolution output")?;
-
-                            for edge in &go_resolve_output.edges {
+                let pool_cfg = process_pool::PoolConfig {
+                    command: cfg.analyzers.go_resolve_path(),
+                    args: vec!["--daemon".to_string()],
+                    ..process_pool::PoolConfig::default()
+                };
+                match process_pool::ProcessPool::new(pool_cfg, 1) {
+                    Ok(pool) => {
+                        let results = plugin::stream_and_resolve_single_worker(
+                            &mut rfdb, &[config::Language::Go], &[("go-all", &go_ws_packages)], &pool,
+                        ).await?;
+                        for (_cmd, mut output) in results {
+                            for edge in &output.edges {
                                 if edge.edge_type == "IMPORTS_FROM" {
                                     all_imports_from_edges.push((edge.src.clone(), edge.dst.clone()));
                                 }
                             }
-
-                            tracing::info!(
-                                nodes = go_resolve_output.nodes.len(),
-                                edges = go_resolve_output.edges.len(),
-                                "Go resolution complete"
-                            );
-
-                            go_resolve_pool.shutdown().await;
+                            commit_resolve_output(&mut output, "go-resolution", generation, &mut rfdb).await?;
                         }
-                        Err(e) => {
-                            tracing::warn!(
-                                "Failed to create Go resolve pool, skipping Go resolution: {e}"
-                            );
-                        }
+                        pool.shutdown().await;
+                        profile!("go_resolve_complete");
                     }
+                    Err(e) => tracing::warn!("Failed to create Go resolve pool: {e}"),
                 }
             }
 
-            // 8g. Run Swift resolution (if Swift files were analyzed)
+            // 8g. Run Swift resolution (streaming)
             if !swift_files.is_empty() {
-                let swift_resolve_nodes = query_resolve_nodes_for_lang(&mut rfdb, config::Language::Swift).await?;
-                if !swift_resolve_nodes.is_empty() {
-                    tracing::info!(
-                        nodes = swift_resolve_nodes.len(),
-                        "Running Swift resolution"
-                    );
-
-                    let swift_resolve_pool_config = process_pool::PoolConfig {
-                        command: cfg.analyzers.swift_resolve_path(),
-                        args: vec!["--daemon".to_string()],
-                        ..process_pool::PoolConfig::default()
-                    };
-
-                    match process_pool::ProcessPool::new(swift_resolve_pool_config, 1) {
-                        Ok(swift_resolve_pool) => {
-                            let mut swift_resolve_output = plugin::run_resolve_with_nodes(
-                                "swift-all",
-                                &swift_resolve_nodes,
-                                &[],
-                                &swift_resolve_pool,
-                            )
-                            .await
-                            .context("Swift resolution failed")?;
-                            plugin::validate_plugin_output(&swift_resolve_output)?;
-                            plugin::stamp_metadata(&mut swift_resolve_output, "swift-resolution", generation);
-
-                            let swift_resolve_files: Vec<String> = swift_resolve_output
-                                .nodes
-                                .iter()
-                                .filter_map(|n| n.file.clone())
-                                .collect::<std::collections::HashSet<_>>()
-                                .into_iter()
-                                .collect();
-                            rfdb.commit_batch(&swift_resolve_files, &swift_resolve_output.nodes, &swift_resolve_output.edges, false)
-                                .await
-                                .context("Failed to commit Swift resolution output")?;
-
-                            for edge in &swift_resolve_output.edges {
+                profile!("swift_resolve_start");
+                let pool_cfg = process_pool::PoolConfig {
+                    command: cfg.analyzers.swift_resolve_path(),
+                    args: vec!["--daemon".to_string()],
+                    ..process_pool::PoolConfig::default()
+                };
+                match process_pool::ProcessPool::new(pool_cfg, 1) {
+                    Ok(pool) => {
+                        let results = plugin::stream_and_resolve_single_worker(
+                            &mut rfdb, &[config::Language::Swift], &[("swift-all", &[])], &pool,
+                        ).await?;
+                        for (_cmd, mut output) in results {
+                            for edge in &output.edges {
                                 if edge.edge_type == "IMPORTS_FROM" {
                                     all_imports_from_edges.push((edge.src.clone(), edge.dst.clone()));
                                 }
                             }
-
-                            tracing::info!(
-                                nodes = swift_resolve_output.nodes.len(),
-                                edges = swift_resolve_output.edges.len(),
-                                "Swift resolution complete"
-                            );
-
-                            swift_resolve_pool.shutdown().await;
+                            commit_resolve_output(&mut output, "swift-resolution", generation, &mut rfdb).await?;
                         }
-                        Err(e) => {
-                            tracing::warn!(
-                                "Failed to create Swift resolve pool, skipping Swift resolution: {e}"
-                            );
-                        }
+                        pool.shutdown().await;
+                        profile!("swift_resolve_complete");
                     }
+                    Err(e) => tracing::warn!("Failed to create Swift resolve pool: {e}"),
                 }
             }
 
-            // 8h. Run Apple cross-language resolution (if both Swift and Obj-C files present)
-            let has_swift = !swift_files.is_empty();
-            let has_objc = !objc_files.is_empty();
-            if has_swift && has_objc {
-                let mut all_apple_nodes = Vec::new();
-                all_apple_nodes.extend(query_resolve_nodes_for_lang(&mut rfdb, config::Language::Swift).await?);
-                all_apple_nodes.extend(query_resolve_nodes_for_lang(&mut rfdb, config::Language::ObjectiveC).await?);
-
-                if !all_apple_nodes.is_empty() {
-                    tracing::info!(
-                        nodes = all_apple_nodes.len(),
-                        "Running Apple cross-language resolution (Swift <-> Obj-C)"
-                    );
-
-                    let apple_cross_pool_config = process_pool::PoolConfig {
-                        command: cfg.analyzers.apple_cross_resolve_path(),
-                        args: vec!["--daemon".to_string()],
-                        ..process_pool::PoolConfig::default()
-                    };
-
-                    match process_pool::ProcessPool::new(apple_cross_pool_config, 1) {
-                        Ok(apple_cross_pool) => {
-                            let mut apple_cross_output = plugin::run_resolve_with_nodes(
-                                "apple-cross-all",
-                                &all_apple_nodes,
-                                &[],
-                                &apple_cross_pool,
-                            )
-                            .await
-                            .context("Apple cross-language resolution failed")?;
-                            plugin::validate_plugin_output(&apple_cross_output)?;
-                            plugin::stamp_metadata(&mut apple_cross_output, "apple-cross-resolution", generation);
-
-                            let apple_cross_files: Vec<String> = apple_cross_output
-                                .nodes
-                                .iter()
-                                .filter_map(|n| n.file.clone())
-                                .collect::<std::collections::HashSet<_>>()
-                                .into_iter()
-                                .collect();
-                            rfdb.commit_batch(&apple_cross_files, &apple_cross_output.nodes, &apple_cross_output.edges, false)
-                                .await
-                                .context("Failed to commit Apple cross-language resolution output")?;
-
-                            tracing::info!(
-                                nodes = apple_cross_output.nodes.len(),
-                                edges = apple_cross_output.edges.len(),
-                                "Apple cross-language resolution complete"
-                            );
-
-                            apple_cross_pool.shutdown().await;
+            // 8h. Run Apple cross-language resolution (streaming, Swift + Obj-C)
+            if !swift_files.is_empty() && !objc_files.is_empty() {
+                let pool_cfg = process_pool::PoolConfig {
+                    command: cfg.analyzers.apple_cross_resolve_path(),
+                    args: vec!["--daemon".to_string()],
+                    ..process_pool::PoolConfig::default()
+                };
+                match process_pool::ProcessPool::new(pool_cfg, 1) {
+                    Ok(pool) => {
+                        let results = plugin::stream_and_resolve_single_worker(
+                            &mut rfdb,
+                            &[config::Language::Swift, config::Language::ObjectiveC],
+                            &[("apple-cross-all", &[])],
+                            &pool,
+                        ).await?;
+                        for (_cmd, mut output) in results {
+                            commit_resolve_output(&mut output, "apple-cross-resolution", generation, &mut rfdb).await?;
                         }
-                        Err(e) => {
-                            tracing::warn!(
-                                "Failed to create Apple cross-resolve pool, skipping: {e}"
-                            );
-                        }
+                        pool.shutdown().await;
                     }
+                    Err(e) => tracing::warn!("Failed to create Apple cross-resolve pool: {e}"),
                 }
             }
 
-            // 8i. Run JVM cross-language resolution (Java <-> Kotlin, after both per-language resolvers)
+            // 8i. Run JVM cross-language resolution (streaming, Java + Kotlin)
             if !java_files.is_empty() && !kotlin_files.is_empty() {
-                let jvm_resolve_nodes = query_resolve_nodes_for_jvm(&mut rfdb).await?;
-                if !jvm_resolve_nodes.is_empty() {
-                    tracing::info!(
-                        nodes = jvm_resolve_nodes.len(),
-                        "Running JVM cross-language resolution (Java <-> Kotlin)"
-                    );
-
-                    let jvm_cross_resolve_pool_config = process_pool::PoolConfig {
-                        command: cfg.analyzers.jvm_cross_resolve_path(),
-                        args: vec!["--daemon".to_string()],
-                        ..process_pool::PoolConfig::default()
-                    };
-
-                    match process_pool::ProcessPool::new(jvm_cross_resolve_pool_config, 1) {
-                        Ok(jvm_cross_resolve_pool) => {
-                            let mut jvm_cross_output = plugin::run_resolve_with_nodes(
-                                "jvm-cross-all",
-                                &jvm_resolve_nodes,
-                                &[],
-                                &jvm_cross_resolve_pool,
-                            )
-                            .await
-                            .context("JVM cross-language resolution failed")?;
-                            plugin::validate_plugin_output(&jvm_cross_output)?;
-                            plugin::stamp_metadata(&mut jvm_cross_output, "jvm-cross-resolution", generation);
-                            tag_virtual_nodes(&mut jvm_cross_output, "jvm-cross-resolution");
-
-                            let jvm_cross_files: Vec<String> = jvm_cross_output
-                                .nodes
-                                .iter()
-                                .filter_map(|n| n.file.clone())
-                                .collect::<std::collections::HashSet<_>>()
-                                .into_iter()
-                                .collect();
-                            rfdb.commit_batch(&jvm_cross_files, &jvm_cross_output.nodes, &jvm_cross_output.edges, true)
-                                .await
-                                .context("Failed to commit JVM cross-language resolution output")?;
-
-                            for edge in &jvm_cross_output.edges {
+                let pool_cfg = process_pool::PoolConfig {
+                    command: cfg.analyzers.jvm_cross_resolve_path(),
+                    args: vec!["--daemon".to_string()],
+                    ..process_pool::PoolConfig::default()
+                };
+                match process_pool::ProcessPool::new(pool_cfg, 1) {
+                    Ok(pool) => {
+                        let results = plugin::stream_and_resolve_single_worker(
+                            &mut rfdb,
+                            &[config::Language::Java, config::Language::Kotlin],
+                            &[("jvm-cross-all", &[])],
+                            &pool,
+                        ).await?;
+                        for (_cmd, mut output) in results {
+                            for edge in &output.edges {
                                 if edge.edge_type == "IMPORTS_FROM" {
                                     all_imports_from_edges.push((edge.src.clone(), edge.dst.clone()));
                                 }
                             }
-
-                            tracing::info!(
-                                nodes = jvm_cross_output.nodes.len(),
-                                edges = jvm_cross_output.edges.len(),
-                                "JVM cross-language resolution complete"
-                            );
-
-                            jvm_cross_resolve_pool.shutdown().await;
+                            commit_resolve_output(&mut output, "jvm-cross-resolution", generation, &mut rfdb).await?;
                         }
-                        Err(e) => {
-                            tracing::warn!(
-                                "Failed to create JVM cross-resolve pool, skipping cross-language resolution: {e}"
-                            );
-                        }
+                        pool.shutdown().await;
                     }
+                    Err(e) => tracing::warn!("Failed to create JVM cross-resolve pool: {e}"),
                 }
             }
 
-            // 8g.5. Run C/C++ resolution
+            // 8j. Run C/C++ resolution (streaming)
             if !cpp_files.is_empty() {
-                let cpp_resolve_nodes = query_resolve_nodes_for_lang(&mut rfdb, config::Language::Cpp).await?;
-                if !cpp_resolve_nodes.is_empty() {
-                    tracing::info!(
-                        nodes = cpp_resolve_nodes.len(),
-                        "Running C/C++ resolution"
-                    );
-
-                    let cpp_resolve_pool_config = process_pool::PoolConfig {
-                        command: cfg.analyzers.cpp_resolve_path(),
-                        args: vec!["--daemon".to_string()],
-                        ..process_pool::PoolConfig::default()
-                    };
-
-                    match process_pool::ProcessPool::new(cpp_resolve_pool_config, 1) {
-                        Ok(cpp_resolve_pool) => {
-                            let mut cpp_resolve_output = plugin::run_resolve_with_nodes(
-                                "cpp-all",
-                                &cpp_resolve_nodes,
-                                &[],
-                                &cpp_resolve_pool,
-                            )
-                            .await
-                            .context("C/C++ resolution failed")?;
-                            plugin::validate_plugin_output(&cpp_resolve_output)?;
-                            plugin::stamp_metadata(&mut cpp_resolve_output, "cpp-resolution", generation);
-                            tag_virtual_nodes(&mut cpp_resolve_output, "cpp-resolution");
-
-                            let cpp_resolve_files: Vec<String> = cpp_resolve_output
-                                .nodes
-                                .iter()
-                                .filter_map(|n| n.file.clone())
-                                .collect::<std::collections::HashSet<_>>()
-                                .into_iter()
-                                .collect();
-                            rfdb.commit_batch(&cpp_resolve_files, &cpp_resolve_output.nodes, &cpp_resolve_output.edges, true)
-                                .await
-                                .context("Failed to commit C/C++ resolution output")?;
-
-                            for edge in &cpp_resolve_output.edges {
+                let pool_cfg = process_pool::PoolConfig {
+                    command: cfg.analyzers.cpp_resolve_path(),
+                    args: vec!["--daemon".to_string()],
+                    ..process_pool::PoolConfig::default()
+                };
+                match process_pool::ProcessPool::new(pool_cfg, 1) {
+                    Ok(pool) => {
+                        let results = plugin::stream_and_resolve_single_worker(
+                            &mut rfdb, &[config::Language::Cpp], &[("cpp-all", &[])], &pool,
+                        ).await?;
+                        for (_cmd, mut output) in results {
+                            for edge in &output.edges {
                                 if edge.edge_type == "IMPORTS_FROM" {
                                     all_imports_from_edges.push((edge.src.clone(), edge.dst.clone()));
                                 }
                             }
-
-                            tracing::info!(
-                                nodes = cpp_resolve_output.nodes.len(),
-                                edges = cpp_resolve_output.edges.len(),
-                                "C/C++ resolution complete"
-                            );
-
-                            cpp_resolve_pool.shutdown().await;
+                            commit_resolve_output(&mut output, "cpp-resolution", generation, &mut rfdb).await?;
                         }
-                        Err(e) => {
-                            tracing::warn!(
-                                "Failed to create C/C++ resolve pool, skipping C/C++ resolution: {e}"
-                            );
-                        }
+                        pool.shutdown().await;
                     }
+                    Err(e) => tracing::warn!("Failed to create C/C++ resolve pool: {e}"),
                 }
             }
 
-            // 8k. Run BEAM (Elixir/Erlang) resolution
+            // 8k. Run BEAM resolution (streaming)
             if !beam_files.is_empty() {
-                let beam_resolve_nodes = query_resolve_nodes_for_lang(&mut rfdb, config::Language::Beam).await?;
-                if !beam_resolve_nodes.is_empty() {
-                    tracing::info!(
-                        nodes = beam_resolve_nodes.len(),
-                        "Running BEAM resolution"
-                    );
-
-                    let beam_resolve_pool_config = process_pool::PoolConfig {
-                        command: cfg.analyzers.beam_resolve_path(),
-                        args: vec!["--daemon".to_string()],
-                        ..process_pool::PoolConfig::default()
-                    };
-
-                    match process_pool::ProcessPool::new(beam_resolve_pool_config, 1) {
-                        Ok(beam_resolve_pool) => {
-                            // Step 1: BEAM import resolution (alias/import/use/require → IMPORTS_FROM)
-                            let mut beam_import_output = plugin::run_resolve_with_nodes(
-                                "beam-imports",
-                                &beam_resolve_nodes,
-                                &[],
-                                &beam_resolve_pool,
-                            )
-                            .await
-                            .context("BEAM import resolution failed")?;
-                            plugin::validate_plugin_output(&beam_import_output)?;
-                            plugin::stamp_metadata(&mut beam_import_output, "beam-import-resolution", generation);
-
-                            let beam_import_files: Vec<String> = beam_import_output
-                                .nodes
-                                .iter()
-                                .filter_map(|n| n.file.clone())
-                                .collect::<std::collections::HashSet<_>>()
-                                .into_iter()
-                                .collect();
-                            rfdb.commit_batch(&beam_import_files, &beam_import_output.nodes, &beam_import_output.edges, false)
-                                .await
-                                .context("Failed to commit BEAM import resolution output")?;
-
-                            for edge in &beam_import_output.edges {
+                profile!("beam_resolve_start");
+                let pool_cfg = process_pool::PoolConfig {
+                    command: cfg.analyzers.beam_resolve_path(),
+                    args: vec!["--daemon".to_string()],
+                    ..process_pool::PoolConfig::default()
+                };
+                match process_pool::ProcessPool::new(pool_cfg, 1) {
+                    Ok(pool) => {
+                        let results = plugin::stream_and_resolve_single_worker(
+                            &mut rfdb,
+                            &[config::Language::Beam],
+                            &[("beam-imports", &[]), ("beam-local-refs", &[])],
+                            &pool,
+                        ).await?;
+                        for (cmd, mut output) in results {
+                            let commit_name = match cmd.as_str() {
+                                "beam-imports" => "beam-import-resolution",
+                                _ => &cmd,
+                            };
+                            for edge in &output.edges {
                                 if edge.edge_type == "IMPORTS_FROM" {
                                     all_imports_from_edges.push((edge.src.clone(), edge.dst.clone()));
                                 }
                             }
-
-                            tracing::info!(
-                                nodes = beam_import_output.nodes.len(),
-                                edges = beam_import_output.edges.len(),
-                                "BEAM import resolution complete"
-                            );
-
-                            // Step 2: BEAM local refs resolution
-                            let mut beam_local_output = plugin::run_resolve_with_nodes(
-                                "beam-local-refs",
-                                &beam_resolve_nodes,
-                                &[],
-                                &beam_resolve_pool,
-                            )
-                            .await
-                            .context("BEAM local refs resolution failed")?;
-                            plugin::validate_plugin_output(&beam_local_output)?;
-                            plugin::stamp_metadata(&mut beam_local_output, "beam-local-refs", generation);
-
-                            let beam_local_files: Vec<String> = beam_local_output
-                                .nodes
-                                .iter()
-                                .filter_map(|n| n.file.clone())
-                                .collect::<std::collections::HashSet<_>>()
-                                .into_iter()
-                                .collect();
-                            rfdb.commit_batch(&beam_local_files, &beam_local_output.nodes, &beam_local_output.edges, false)
-                                .await
-                                .context("Failed to commit BEAM local refs output")?;
-
-                            tracing::info!(
-                                nodes = beam_local_output.nodes.len(),
-                                edges = beam_local_output.edges.len(),
-                                "BEAM local refs resolution complete"
-                            );
-
-                            beam_resolve_pool.shutdown().await;
+                            commit_resolve_output(&mut output, commit_name, generation, &mut rfdb).await?;
                         }
-                        Err(e) => {
-                            tracing::warn!(
-                                "Failed to create BEAM resolve pool, skipping BEAM resolution: {e}"
-                            );
-                        }
+                        pool.shutdown().await;
+                        profile!("beam_resolve_complete");
                     }
+                    Err(e) => tracing::warn!("Failed to create BEAM resolve pool: {e}"),
                 }
             }
 
@@ -1626,13 +1096,27 @@ async fn main() -> Result<()> {
             }
 
             // 9. Derive MODULE→MODULE DEPENDS_ON edges from IMPORTS_FROM
+            profile!("depends_on_start", "imports_from_edges" => all_imports_from_edges.len());
             if !all_imports_from_edges.is_empty() {
                 let mut depends_on_pairs: HashSet<(String, String)> = HashSet::new();
 
+                // Pre-compute URI prefix for extracting file paths from grafema:// URIs
+                let uri_prefix = format!("grafema://{authority}/");
+
                 for (src_id, dst_id) in &all_imports_from_edges {
-                    // Extract file path from semantic ID: "path/to/file.ts->TYPE->name" → "path/to/file.ts"
-                    let src_file = src_id.split("->").next().unwrap_or("");
-                    let dst_file = dst_id.split("->").next().unwrap_or("");
+                    // Extract file path from semantic ID.
+                    // URI format: "grafema://authority/path/to/file.ts#FRAGMENT" → "path/to/file.ts"
+                    // Legacy format: "path/to/file.ts->TYPE->name" → "path/to/file.ts"
+                    let src_file = if let Some(rest) = src_id.strip_prefix(&uri_prefix) {
+                        rest.split('#').next().unwrap_or("")
+                    } else {
+                        src_id.split("->").next().unwrap_or("")
+                    };
+                    let dst_file = if let Some(rest) = dst_id.strip_prefix(&uri_prefix) {
+                        rest.split('#').next().unwrap_or("")
+                    } else {
+                        dst_id.split("->").next().unwrap_or("")
+                    };
 
                     if let (Some(src_mod), Some(dst_mod)) =
                         (file_to_module.get(src_file), file_to_module.get(dst_file))
@@ -1667,6 +1151,9 @@ async fn main() -> Result<()> {
                         from_imports = all_imports_from_edges.len(),
                         "Module dependency edges derived"
                     );
+                    profile!("depends_on_complete",
+                        "edges" => depends_on_wire_edges.len(),
+                        "from_imports" => all_imports_from_edges.len());
                 }
             }
 
@@ -1678,7 +1165,9 @@ async fn main() -> Result<()> {
             // 2. DEPENDS_ON and other derived edges are committed with empty
             //    changed_files (no deletion phase), so old segment versions
             //    accumulate. Compaction deduplicates these by (src,dst,type) key.
+            profile!("compact_start");
             rfdb.compact().await.context("Failed to compact")?;
+            profile!("compact_complete");
 
             // 10. Summary
             println!(
@@ -1698,6 +1187,9 @@ async fn main() -> Result<()> {
                 total_edges,
                 total_errors
             );
+            profile!("analysis_complete_final",
+                "files" => changed_files.len(), "nodes" => total_nodes,
+                "edges" => total_edges, "errors" => total_errors);
 
             Ok(())
         }

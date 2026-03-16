@@ -303,6 +303,18 @@ impl ProcessPool {
         Ok(WorkerHandle { pool: self, idx, returned: false })
     }
 
+    /// Acquire ALL workers from the pool at once.
+    ///
+    /// Returns handles to every worker, allowing directed communication with
+    /// each one. All handles must be dropped to return workers to the pool.
+    pub async fn acquire_all(&self) -> Result<Vec<WorkerHandle<'_>>> {
+        let mut handles = Vec::with_capacity(self.workers.len());
+        for _ in 0..self.workers.len() {
+            handles.push(self.acquire().await?);
+        }
+        Ok(handles)
+    }
+
     /// Send a payload to ALL workers in the pool (for context loading).
     ///
     /// Acquires all workers, sends the payload to each one, collects responses,
