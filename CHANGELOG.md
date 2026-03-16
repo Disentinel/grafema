@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.12] - 2026-03-16
+
+### Highlights
+
+- Streaming resolution pipeline — streams nodes from RFDB to resolve workers incrementally instead of collecting all 6.7M nodes into a single Vec (~1.67GB). Orchestrator peak memory drops ~4x.
+- JSONL profiler for analysis pipeline observability — writes timestamped events with RSS/CPU metrics to `.grafema/analysis-profile.jsonl` for crash/hang diagnosis and bottleneck identification.
+- Fix DEPENDS_ON derivation — MODULE→MODULE dependency edges now correctly derived from IMPORTS_FROM edges (was 0 due to URI format parsing bug).
+
+### Features
+
+- feat(orchestrator): streaming double-buffer resolution — query RFDB one node type at a time, route context nodes (broadcast to all workers) vs work nodes (sharded by file hash), flush at 50K threshold
+- feat(orchestrator): JSONL profiler with cross-platform process stats (macOS mach_task_info, Linux /proc) — 29 events covering discovery, analysis, each resolve command, DEPENDS_ON derivation, compaction
+- feat(orchestrator): `acquire_all()` helper on ProcessPool for directed streaming to all workers
+
+### Bug Fixes
+
+- fix(orchestrator): DEPENDS_ON derivation produces 0 edges — semantic IDs in RFDB use `grafema://` URI format with `#` fragments, but code was splitting by `->` (legacy compact format). Now correctly parses URI to extract file paths.
+- fix(orchestrator): non-JS resolvers (Haskell, Rust, etc.) silently producing 0 edges — `load-context` protocol not supported by these daemons. Now passes nodes directly in resolve commands.
+- fix(profiler): numeric values in JSONL had trailing stray quote due to raw string formatting bug
+
 ## [0.3.11] - 2026-03-16
 
 ### Highlights
