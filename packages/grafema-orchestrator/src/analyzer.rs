@@ -233,6 +233,20 @@ fn compact_to_uri(id: &str, authority: &str) -> String {
 // AnalysisResult — per-file outcome
 // ---------------------------------------------------------------------------
 
+/// A structured issue discovered during analysis (oversized file, parse error, etc.).
+/// Converted to ISSUE nodes in the graph via `issues_to_wire()`.
+#[derive(Debug, Clone)]
+pub struct AnalysisIssue {
+    /// Category: `oversized_source`, `oversized_ast`, `parse_error`, `analysis_error`
+    pub category: String,
+    /// `warning` (size guards) or `error` (parse/analysis failures)
+    pub severity: String,
+    /// Human-readable description
+    pub message: String,
+    /// Source file (relative or absolute — relativized later in ingest_chunk)
+    pub file: String,
+}
+
 /// Result of analyzing a single file. Contains either a successful `FileAnalysis`
 /// or collected error messages (parse errors, analyzer failures, etc.).
 /// Both fields may be populated: parse errors are collected even when a partial
@@ -241,6 +255,130 @@ pub struct AnalysisResult {
     pub file: PathBuf,
     pub analysis: Option<FileAnalysis>,
     pub errors: Vec<String>,
+    /// Structured issues to persist as ISSUE nodes in the graph.
+    pub issues: Vec<AnalysisIssue>,
+}
+
+// ---------------------------------------------------------------------------
+// Size guards
+// ---------------------------------------------------------------------------
+
+use crate::config::SizeLimits;
+
+/// Check source file size against the configured limit.
+/// Returns `Some(issue)` if the file exceeds `limits.max_file_bytes` (and the limit is non-zero).
+pub fn check_file_size(file: &Path, limits: SizeLimits) -> Option<AnalysisIssue> {
+    if limits.max_file_bytes == 0 {
+        return None;
+    }
+    let size = match std::fs::metadata(file) {
+        Ok(m) => m.len(),
+        Err(_) => return None, // let downstream handle missing files
+    };
+    if size > limits.max_file_bytes {
+        Some(AnalysisIssue {
+            category: "oversized_source".to_string(),
+            severity: "warning".to_string(),
+            message: format!(
+                "Source file too large: {} KB (limit: {} KB)",
+                size / 1024,
+                limits.max_file_bytes / 1024
+            ),
+            file: file.display().to_string(),
+        })
+    } else {
+        None
+    }
+}
+
+/// Check AST JSON size against the configured limit.
+/// Returns `Some(issue)` if the AST exceeds `limits.max_ast_bytes` (and the limit is non-zero).
+pub fn check_ast_size(file_display: &str, ast_size: usize, limits: SizeLimits) -> Option<AnalysisIssue> {
+    if limits.max_ast_bytes == 0 {
+        return None;
+    }
+    if ast_size as u64 > limits.max_ast_bytes {
+        Some(AnalysisIssue {
+            category: "oversized_ast".to_string(),
+            severity: "warning".to_string(),
+            message: format!(
+                "AST too large: {} KB (limit: {} KB)",
+                ast_size / 1024,
+                limits.max_ast_bytes / 1024
+            ),
+            file: file_display.to_string(),
+        })
+    } else {
+        None
+    }
+}
+
+/// Convert analysis issues into RFDB wire nodes and edges.
+///
+/// For each issue, creates:
+/// - An ISSUE node with category/severity/message metadata
+/// - A CONTAINS edge from the MODULE stub to the ISSUE node
+///
+/// If `include_module_stub` is true (analysis failed completely), also creates
+/// a MODULE stub so the file appears in graph queries and file-scoped GC works.
+pub fn issues_to_wire(
+    issues: &[AnalysisIssue],
+    file: &str,
+    authority: &str,
+    include_module_stub: bool,
+) -> (Vec<WireNode>, Vec<WireEdge>) {
+    let mut nodes = Vec::new();
+    let mut edges = Vec::new();
+
+    if issues.is_empty() {
+        return (nodes, edges);
+    }
+
+    let module_id = compact_to_uri(&format!("MODULE#{file}"), authority);
+
+    if include_module_stub {
+        nodes.push(WireNode {
+            id: module_id.clone(),
+            semantic_id: Some(module_id.clone()),
+            node_type: Some("MODULE".to_string()),
+            name: Some(file.to_string()),
+            file: Some(file.to_string()),
+            exported: false,
+            metadata: None,
+        });
+    }
+
+    for issue in issues {
+        // Hash first 8 hex chars of blake3(message) for uniqueness
+        let hash = blake3::hash(issue.message.as_bytes());
+        let hash8 = &hash.to_hex()[..8];
+        let compact_id = format!("{file}->ISSUE->{category}::{hash8}", category = issue.category);
+        let issue_id = compact_to_uri(&compact_id, authority);
+
+        let mut meta = HashMap::new();
+        meta.insert("category".to_string(), serde_json::json!(issue.category));
+        meta.insert("severity".to_string(), serde_json::json!(issue.severity));
+        meta.insert("message".to_string(), serde_json::json!(issue.message));
+
+        nodes.push(WireNode {
+            id: issue_id.clone(),
+            semantic_id: Some(issue_id.clone()),
+            node_type: Some("ISSUE".to_string()),
+            name: Some(format!("{}: {}", issue.category, issue.severity)),
+            file: Some(file.to_string()),
+            exported: false,
+            metadata: Some(serde_json::to_string(&meta).unwrap()),
+        });
+
+        edges.push(WireEdge {
+            src: module_id.clone(),
+            dst: issue_id,
+            edge_type: "CONTAINS".to_string(),
+            metadata: None,
+        });
+    }
+
+    (nodes, edges)
 }
 
 // ---------------------------------------------------------------------------
@@ -621,6 +759,7 @@ async fn analyze_single_js_file(
     file: PathBuf,
     idx: usize,
     total: usize,
+    limits: SizeLimits,
 ) -> AnalysisResult {
     let file_display = file.display().to_string();
     let file_start = std::time::Instant::now();
@@ -633,6 +772,23 @@ async fn analyze_single_js_file(
     }
 
     let mut errors = Vec::new();
+    let mut issues = Vec::new();
+
+    // Size guard: check source file size before parsing
+    if let Some(issue) = check_file_size(&file, limits) {
+        tracing::warn!(
+            file = %file_display,
+            "Skipping oversized source file: {}",
+            issue.message
+        );
+        issues.push(issue);
+        return AnalysisResult {
+            file,
+            analysis: None,
+            errors,
+            issues,
+        };
+    }
 
     // Step 1: Parse with OXC (CPU-bound -> spawn_blocking)
     let parse_result = {
@@ -657,28 +813,58 @@ async fn analyze_single_js_file(
             result.json
         }
         Ok(Err(e)) => {
-            errors.push(format!("Parse failed for {file_display}: {e}"));
+            let msg = format!("Parse failed for {file_display}: {e}");
+            errors.push(msg.clone());
+            issues.push(AnalysisIssue {
+                category: "parse_error".to_string(),
+                severity: "error".to_string(),
+                message: msg,
+                file: file_display.clone(),
+            });
             tracing::warn!("[{}/{}] FAILED parse {}ms {}", idx + 1, total, parse_ms, file_display);
             return AnalysisResult {
                 file,
                 analysis: None,
                 errors,
+                issues,
             };
         }
         Err(e) => {
-            errors.push(format!(
-                "Parse task panicked for {file_display}: {e}"
-            ));
+            let msg = format!("Parse task panicked for {file_display}: {e}");
+            errors.push(msg.clone());
+            issues.push(AnalysisIssue {
+                category: "parse_error".to_string(),
+                severity: "error".to_string(),
+                message: msg,
+                file: file_display.clone(),
+            });
             tracing::error!("[{}/{}] PANIC parse {}ms {}", idx + 1, total, parse_ms, file_display);
             return AnalysisResult {
                 file,
                 analysis: None,
                 errors,
+                issues,
             };
         }
     };
 
     let ast_size = ast_json.len();
+
+    // Size guard: check AST size before sending to daemon
+    if let Some(issue) = check_ast_size(&file_display, ast_size, limits) {
+        tracing::warn!(
+            file = %file_display,
+            ast_kb = ast_size / 1024,
+            "Skipping oversized AST"
+        );
+        issues.push(issue);
+        return AnalysisResult {
+            file,
+            analysis: None,
+            errors,
+            issues,
+        };
+    }
 
     // Step 2: Send to daemon pool
     let result = match analyze_file_pooled(&pool, &file, &ast_json).await {
@@ -686,15 +872,22 @@ async fn analyze_single_js_file(
             file,
             analysis: Some(analysis),
             errors,
+            issues,
         },
         Err(e) => {
-            errors.push(format!(
-                "Analyzer failed for {file_display}: {e}"
-            ));
+            let msg = format!("Analyzer failed for {file_display}: {e}");
+            errors.push(msg.clone());
+            issues.push(AnalysisIssue {
+                category: "analysis_error".to_string(),
+                severity: "error".to_string(),
+                message: msg,
+                file: file_display.clone(),
+            });
             AnalysisResult {
                 file,
                 analysis: None,
                 errors,
+                issues,
             }
         }
     };
@@ -732,6 +925,7 @@ pub async fn analyze_files_parallel_pooled(
     files: &[PathBuf],
     jobs: usize,
     analyzers: &crate::config::AnalyzerBinaries,
+    limits: SizeLimits,
 ) -> Vec<AnalysisResult> {
     let pool_config = PoolConfig {
         command: analyzers.js_path(),
@@ -763,7 +957,7 @@ pub async fn analyze_files_parallel_pooled(
                     .acquire()
                     .await
                     .expect("Semaphore closed unexpectedly");
-                analyze_single_js_file(pool, file, idx, total).await
+                analyze_single_js_file(pool, file, idx, total, limits).await
             })
         })
         .collect();
@@ -777,6 +971,7 @@ pub async fn analyze_files_parallel_pooled(
                     file: PathBuf::new(),
                     analysis: None,
                     errors: vec![format!("Analysis task failed: {e}")],
+                    issues: vec![],
                 });
             }
         }
@@ -800,6 +995,7 @@ pub async fn analyze_js_files_streaming(
     jobs: usize,
     analyzer_path: String,
     tx: mpsc::Sender<AnalysisResult>,
+    limits: SizeLimits,
 ) {
     let pool_config = PoolConfig {
         command: analyzer_path,
@@ -829,7 +1025,7 @@ pub async fn analyze_js_files_streaming(
                 .acquire()
                 .await
                 .expect("Semaphore closed unexpectedly");
-            let result = analyze_single_js_file(pool, file, idx, total).await;
+            let result = analyze_single_js_file(pool, file, idx, total, limits).await;
             let _ = tx.send(result).await;
         }));
     }
@@ -857,6 +1053,7 @@ pub async fn analyze_haskell_files_parallel_pooled(
     files: &[PathBuf],
     jobs: usize,
     analyzers: &crate::config::AnalyzerBinaries,
+    limits: SizeLimits,
 ) -> Vec<AnalysisResult> {
     let pool_config = PoolConfig {
         command: analyzers.haskell_path(),
@@ -901,12 +1098,24 @@ pub async fn analyze_haskell_files_parallel_pooled(
 
                 let errors = Vec::new();
 
+                // Size guard
+                if let Some(issue) = check_file_size(&file, limits) {
+                    tracing::warn!(file = %file.display(), "Skipping oversized source file: {}", issue.message);
+                    return AnalysisResult {
+                        file,
+                        analysis: None,
+                        errors,
+                        issues: vec![issue],
+                    };
+                }
+
                 // No OXC parsing step — send source directly to haskell-analyzer
                 match analyze_haskell_file_pooled(&pool, &file).await {
                     Ok(analysis) => AnalysisResult {
                         file,
                         analysis: Some(analysis),
                         errors,
+                        issues: vec![],
                     },
                     Err(e) => {
                         let mut errors = errors;
@@ -917,6 +1126,7 @@ pub async fn analyze_haskell_files_parallel_pooled(
                             file,
                             analysis: None,
                             errors,
+                            issues: vec![],
                         }
                     }
                 }
@@ -933,6 +1143,7 @@ pub async fn analyze_haskell_files_parallel_pooled(
                     file: PathBuf::new(),
                     analysis: None,
                     errors: vec![format!("Haskell analysis task failed: {e}")],
+                    issues: vec![],
                 });
             }
         }
@@ -990,6 +1201,7 @@ pub async fn analyze_haskell_files_parallel(
                         file,
                         analysis: Some(analysis),
                         errors,
+                        issues: vec![],
                     },
                     Err(e) => {
                         let mut errors = errors;
@@ -1000,6 +1212,7 @@ pub async fn analyze_haskell_files_parallel(
                             file,
                             analysis: None,
                             errors,
+                            issues: vec![],
                         }
                     }
                 }
@@ -1016,6 +1229,7 @@ pub async fn analyze_haskell_files_parallel(
                     file: PathBuf::new(),
                     analysis: None,
                     errors: vec![format!("Haskell analysis task failed: {e}")],
+                    issues: vec![],
                 });
             }
         }
@@ -1037,6 +1251,7 @@ pub async fn analyze_beam_files_parallel_pooled(
     files: &[PathBuf],
     jobs: usize,
     analyzers: &crate::config::AnalyzerBinaries,
+    limits: SizeLimits,
 ) -> Vec<AnalysisResult> {
     let pool_config = PoolConfig {
         command: analyzers.beam_path(),
@@ -1081,12 +1296,24 @@ pub async fn analyze_beam_files_parallel_pooled(
 
                 let errors = Vec::new();
 
+                // Size guard
+                if let Some(issue) = check_file_size(&file, limits) {
+                    tracing::warn!(file = %file.display(), "Skipping oversized source file: {}", issue.message);
+                    return AnalysisResult {
+                        file,
+                        analysis: None,
+                        errors,
+                        issues: vec![issue],
+                    };
+                }
+
                 // No OXC parsing step — send source directly to beam-analyzer
                 match analyze_beam_file_pooled(&pool, &file).await {
                     Ok(analysis) => AnalysisResult {
                         file,
                         analysis: Some(analysis),
                         errors,
+                        issues: vec![],
                     },
                     Err(e) => {
                         let mut errors = errors;
@@ -1097,6 +1324,7 @@ pub async fn analyze_beam_files_parallel_pooled(
                             file,
                             analysis: None,
                             errors,
+                            issues: vec![],
                         }
                     }
                 }
@@ -1113,6 +1341,7 @@ pub async fn analyze_beam_files_parallel_pooled(
                     file: PathBuf::new(),
                     analysis: None,
                     errors: vec![format!("BEAM analysis task failed: {e}")],
+                    issues: vec![],
                 });
             }
         }
@@ -1170,6 +1399,7 @@ pub async fn analyze_beam_files_parallel(
                         file,
                         analysis: Some(analysis),
                         errors,
+                        issues: vec![],
                     },
                     Err(e) => {
                         let mut errors = errors;
@@ -1180,6 +1410,7 @@ pub async fn analyze_beam_files_parallel(
                             file,
                             analysis: None,
                             errors,
+                            issues: vec![],
                         }
                     }
                 }
@@ -1196,6 +1427,7 @@ pub async fn analyze_beam_files_parallel(
                     file: PathBuf::new(),
                     analysis: None,
                     errors: vec![format!("BEAM analysis task failed: {e}")],
+                    issues: vec![],
                 });
             }
         }
@@ -1307,6 +1539,7 @@ pub async fn analyze_rust_files_parallel_pooled(
     files: &[PathBuf],
     jobs: usize,
     analyzers: &crate::config::AnalyzerBinaries,
+    limits: SizeLimits,
 ) -> Vec<AnalysisResult> {
     let pool_config = PoolConfig {
         command: analyzers.rust_path(),
@@ -1342,6 +1575,17 @@ pub async fn analyze_rust_files_parallel_pooled(
 
                 let mut errors = Vec::new();
 
+                // Size guard
+                if let Some(issue) = check_file_size(&file, limits) {
+                    tracing::warn!(file = %file.display(), "Skipping oversized source file: {}", issue.message);
+                    return AnalysisResult {
+                        file,
+                        analysis: None,
+                        errors,
+                        issues: vec![issue],
+                    };
+                }
+
                 // Step 1: Parse with syn (CPU-bound -> spawn_blocking)
                 let parse_result = {
                     let file_clone = file.clone();
@@ -1354,20 +1598,20 @@ pub async fn analyze_rust_files_parallel_pooled(
                     Ok(Ok(json)) => json,
                     Ok(Err(e)) => {
                         errors.push(format!("Rust parse failed for {file_display}: {e}"));
-                        return AnalysisResult { file, analysis: None, errors };
+                        return AnalysisResult { file, analysis: None, errors, issues: vec![] };
                     }
                     Err(e) => {
                         errors.push(format!("Rust parse task panicked for {file_display}: {e}"));
-                        return AnalysisResult { file, analysis: None, errors };
+                        return AnalysisResult { file, analysis: None, errors, issues: vec![] };
                     }
                 };
 
                 // Step 2: Send to daemon pool
                 match analyze_rust_file_pooled(&pool, &file, &ast_json).await {
-                    Ok(analysis) => AnalysisResult { file, analysis: Some(analysis), errors },
+                    Ok(analysis) => AnalysisResult { file, analysis: Some(analysis), errors, issues: vec![] },
                     Err(e) => {
                         errors.push(format!("Rust analyzer failed for {file_display}: {e}"));
-                        AnalysisResult { file, analysis: None, errors }
+                        AnalysisResult { file, analysis: None, errors, issues: vec![] }
                     }
                 }
             })
@@ -1383,6 +1627,7 @@ pub async fn analyze_rust_files_parallel_pooled(
                     file: PathBuf::new(),
                     analysis: None,
                     errors: vec![format!("Rust analysis task failed: {e}")],
+                    issues: vec![],
                 });
             }
         }
@@ -1422,16 +1667,16 @@ pub async fn analyze_rust_files_parallel(
                     Ok(json) => json,
                     Err(e) => {
                         errors.push(format!("Rust parse failed for {file_display}: {e}"));
-                        return AnalysisResult { file, analysis: None, errors };
+                        return AnalysisResult { file, analysis: None, errors, issues: vec![] };
                     }
                 };
 
                 // Step 2: Spawn analyzer
                 match analyze_rust_file(&file, &ast_json, &bin).await {
-                    Ok(analysis) => AnalysisResult { file, analysis: Some(analysis), errors },
+                    Ok(analysis) => AnalysisResult { file, analysis: Some(analysis), errors, issues: vec![] },
                     Err(e) => {
                         errors.push(format!("Rust analyzer failed for {file_display}: {e}"));
-                        AnalysisResult { file, analysis: None, errors }
+                        AnalysisResult { file, analysis: None, errors, issues: vec![] }
                     }
                 }
             })
@@ -1447,6 +1692,7 @@ pub async fn analyze_rust_files_parallel(
                     file: PathBuf::new(),
                     analysis: None,
                     errors: vec![format!("Rust analysis task failed: {e}")],
+                    issues: vec![],
                 });
             }
         }
@@ -1697,6 +1943,7 @@ pub async fn analyze_java_files_parallel_pooled(
     files: &[PathBuf],
     jobs: usize,
     analyzers: &crate::config::AnalyzerBinaries,
+    limits: SizeLimits,
 ) -> Vec<AnalysisResult> {
     let parser_pool_config = PoolConfig {
         command: analyzers.java_parser_path(),
@@ -1759,11 +2006,23 @@ pub async fn analyze_java_files_parallel_pooled(
 
                 let errors = Vec::new();
 
+                // Size guard
+                if let Some(issue) = check_file_size(&file, limits) {
+                    tracing::warn!(file = %file.display(), "Skipping oversized source file: {}", issue.message);
+                    return AnalysisResult {
+                        file,
+                        analysis: None,
+                        errors,
+                        issues: vec![issue],
+                    };
+                }
+
                 match analyze_java_file_pooled(&parser_pool, &analyzer_pool, &file).await {
                     Ok(analysis) => AnalysisResult {
                         file,
                         analysis: Some(analysis),
                         errors,
+                        issues: vec![],
                     },
                     Err(e) => {
                         let mut errors = errors;
@@ -1774,6 +2033,7 @@ pub async fn analyze_java_files_parallel_pooled(
                             file,
                             analysis: None,
                             errors,
+                            issues: vec![],
                         }
                     }
                 }
@@ -1790,6 +2050,7 @@ pub async fn analyze_java_files_parallel_pooled(
                     file: PathBuf::new(),
                     analysis: None,
                     errors: vec![format!("Java analysis task failed: {e}")],
+                    issues: vec![],
                 });
             }
         }
@@ -1841,6 +2102,7 @@ pub async fn analyze_java_files_parallel(
                         file,
                         analysis: Some(analysis),
                         errors,
+                        issues: vec![],
                     },
                     Err(e) => {
                         let mut errors = errors;
@@ -1851,6 +2113,7 @@ pub async fn analyze_java_files_parallel(
                             file,
                             analysis: None,
                             errors,
+                            issues: vec![],
                         }
                     }
                 }
@@ -1867,6 +2130,7 @@ pub async fn analyze_java_files_parallel(
                     file: PathBuf::new(),
                     analysis: None,
                     errors: vec![format!("Java analysis task failed: {e}")],
+                    issues: vec![],
                 });
             }
         }
@@ -2103,6 +2367,7 @@ pub async fn analyze_kotlin_files_parallel_pooled(
     files: &[PathBuf],
     jobs: usize,
     analyzers: &crate::config::AnalyzerBinaries,
+    limits: SizeLimits,
 ) -> Vec<AnalysisResult> {
     let parser_pool_config = PoolConfig {
         command: analyzers.kotlin_parser_path(),
@@ -2165,11 +2430,23 @@ pub async fn analyze_kotlin_files_parallel_pooled(
 
                 let errors = Vec::new();
 
+                // Size guard
+                if let Some(issue) = check_file_size(&file, limits) {
+                    tracing::warn!(file = %file.display(), "Skipping oversized source file: {}", issue.message);
+                    return AnalysisResult {
+                        file,
+                        analysis: None,
+                        errors,
+                        issues: vec![issue],
+                    };
+                }
+
                 match analyze_kotlin_file_pooled(&parser_pool, &analyzer_pool, &file).await {
                     Ok(analysis) => AnalysisResult {
                         file,
                         analysis: Some(analysis),
                         errors,
+                        issues: vec![],
                     },
                     Err(e) => {
                         let mut errors = errors;
@@ -2180,6 +2457,7 @@ pub async fn analyze_kotlin_files_parallel_pooled(
                             file,
                             analysis: None,
                             errors,
+                            issues: vec![],
                         }
                     }
                 }
@@ -2196,6 +2474,7 @@ pub async fn analyze_kotlin_files_parallel_pooled(
                     file: PathBuf::new(),
                     analysis: None,
                     errors: vec![format!("Kotlin analysis task failed: {e}")],
+                    issues: vec![],
                 });
             }
         }
@@ -2247,6 +2526,7 @@ pub async fn analyze_kotlin_files_parallel(
                         file,
                         analysis: Some(analysis),
                         errors,
+                        issues: vec![],
                     },
                     Err(e) => {
                         let mut errors = errors;
@@ -2257,6 +2537,7 @@ pub async fn analyze_kotlin_files_parallel(
                             file,
                             analysis: None,
                             errors,
+                            issues: vec![],
                         }
                     }
                 }
@@ -2273,6 +2554,7 @@ pub async fn analyze_kotlin_files_parallel(
                     file: PathBuf::new(),
                     analysis: None,
                     errors: vec![format!("Kotlin analysis task failed: {e}")],
+                    issues: vec![],
                 });
             }
         }
@@ -2589,6 +2871,7 @@ pub async fn analyze_files_parallel(
                             file,
                             analysis: None,
                             errors,
+                            issues: vec![],
                         };
                     }
                     Err(e) => {
@@ -2599,6 +2882,7 @@ pub async fn analyze_files_parallel(
                             file,
                             analysis: None,
                             errors,
+                            issues: vec![],
                         };
                     }
                 };
@@ -2609,6 +2893,7 @@ pub async fn analyze_files_parallel(
                         file,
                         analysis: Some(analysis),
                         errors,
+                        issues: vec![],
                     },
                     Err(e) => {
                         errors.push(format!(
@@ -2618,6 +2903,7 @@ pub async fn analyze_files_parallel(
                             file,
                             analysis: None,
                             errors,
+                            issues: vec![],
                         }
                     }
                 }
@@ -2636,6 +2922,7 @@ pub async fn analyze_files_parallel(
                     file: PathBuf::new(),
                     analysis: None,
                     errors: vec![format!("Analysis task failed: {e}")],
+                    issues: vec![],
                 });
             }
         }
@@ -2740,6 +3027,7 @@ pub async fn analyze_python_files_parallel_pooled(
     files: &[PathBuf],
     jobs: usize,
     analyzers: &crate::config::AnalyzerBinaries,
+    limits: SizeLimits,
 ) -> Vec<AnalysisResult> {
     let pool_config = PoolConfig {
         command: analyzers.python_path(),
@@ -2775,6 +3063,17 @@ pub async fn analyze_python_files_parallel_pooled(
 
                 let mut errors = Vec::new();
 
+                // Size guard
+                if let Some(issue) = check_file_size(&file, limits) {
+                    tracing::warn!(file = %file.display(), "Skipping oversized source file: {}", issue.message);
+                    return AnalysisResult {
+                        file,
+                        analysis: None,
+                        errors,
+                        issues: vec![issue],
+                    };
+                }
+
                 // Step 1: Parse with rustpython-parser (CPU-bound -> spawn_blocking)
                 let parse_result = {
                     let file_clone = file.clone();
@@ -2787,20 +3086,20 @@ pub async fn analyze_python_files_parallel_pooled(
                     Ok(Ok(json)) => json,
                     Ok(Err(e)) => {
                         errors.push(format!("Python parse failed for {file_display}: {e}"));
-                        return AnalysisResult { file, analysis: None, errors };
+                        return AnalysisResult { file, analysis: None, errors, issues: vec![] };
                     }
                     Err(e) => {
                         errors.push(format!("Python parse task panicked for {file_display}: {e}"));
-                        return AnalysisResult { file, analysis: None, errors };
+                        return AnalysisResult { file, analysis: None, errors, issues: vec![] };
                     }
                 };
 
                 // Step 2: Send to daemon pool
                 match analyze_python_file_pooled(&pool, &file, &ast_json).await {
-                    Ok(analysis) => AnalysisResult { file, analysis: Some(analysis), errors },
+                    Ok(analysis) => AnalysisResult { file, analysis: Some(analysis), errors, issues: vec![] },
                     Err(e) => {
                         errors.push(format!("Python analyzer failed for {file_display}: {e}"));
-                        AnalysisResult { file, analysis: None, errors }
+                        AnalysisResult { file, analysis: None, errors, issues: vec![] }
                     }
                 }
             })
@@ -2816,6 +3115,7 @@ pub async fn analyze_python_files_parallel_pooled(
                     file: PathBuf::new(),
                     analysis: None,
                     errors: vec![format!("Python analysis task failed: {e}")],
+                    issues: vec![],
                 });
             }
         }
@@ -2855,16 +3155,16 @@ pub async fn analyze_python_files_parallel(
                     Ok(json) => json,
                     Err(e) => {
                         errors.push(format!("Python parse failed for {file_display}: {e}"));
-                        return AnalysisResult { file, analysis: None, errors };
+                        return AnalysisResult { file, analysis: None, errors, issues: vec![] };
                     }
                 };
 
                 // Step 2: Spawn analyzer
                 match analyze_python_file(&file, &ast_json, &bin).await {
-                    Ok(analysis) => AnalysisResult { file, analysis: Some(analysis), errors },
+                    Ok(analysis) => AnalysisResult { file, analysis: Some(analysis), errors, issues: vec![] },
                     Err(e) => {
                         errors.push(format!("Python analyzer failed for {file_display}: {e}"));
-                        AnalysisResult { file, analysis: None, errors }
+                        AnalysisResult { file, analysis: None, errors, issues: vec![] }
                     }
                 }
             })
@@ -2880,6 +3180,7 @@ pub async fn analyze_python_files_parallel(
                     file: PathBuf::new(),
                     analysis: None,
                     errors: vec![format!("Python analysis task failed: {e}")],
+                    issues: vec![],
                 });
             }
         }
@@ -3129,6 +3430,7 @@ pub async fn analyze_go_files_parallel_pooled(
     files: &[PathBuf],
     jobs: usize,
     analyzers: &crate::config::AnalyzerBinaries,
+    limits: SizeLimits,
 ) -> Vec<AnalysisResult> {
     let parser_pool_config = PoolConfig {
         command: analyzers.go_parser_path(),
@@ -3191,11 +3493,23 @@ pub async fn analyze_go_files_parallel_pooled(
 
                 let errors = Vec::new();
 
+                // Size guard
+                if let Some(issue) = check_file_size(&file, limits) {
+                    tracing::warn!(file = %file.display(), "Skipping oversized source file: {}", issue.message);
+                    return AnalysisResult {
+                        file,
+                        analysis: None,
+                        errors,
+                        issues: vec![issue],
+                    };
+                }
+
                 match analyze_go_file_pooled(&parser_pool, &analyzer_pool, &file).await {
                     Ok(analysis) => AnalysisResult {
                         file,
                         analysis: Some(analysis),
                         errors,
+                        issues: vec![],
                     },
                     Err(e) => {
                         let mut errors = errors;
@@ -3206,6 +3520,7 @@ pub async fn analyze_go_files_parallel_pooled(
                             file,
                             analysis: None,
                             errors,
+                            issues: vec![],
                         }
                     }
                 }
@@ -3222,6 +3537,7 @@ pub async fn analyze_go_files_parallel_pooled(
                     file: PathBuf::new(),
                     analysis: None,
                     errors: vec![format!("Go analysis task failed: {e}")],
+                    issues: vec![],
                 });
             }
         }
@@ -3273,6 +3589,7 @@ pub async fn analyze_go_files_parallel(
                         file,
                         analysis: Some(analysis),
                         errors,
+                        issues: vec![],
                     },
                     Err(e) => {
                         let mut errors = errors;
@@ -3283,6 +3600,7 @@ pub async fn analyze_go_files_parallel(
                             file,
                             analysis: None,
                             errors,
+                            issues: vec![],
                         }
                     }
                 }
@@ -3299,6 +3617,7 @@ pub async fn analyze_go_files_parallel(
                     file: PathBuf::new(),
                     analysis: None,
                     errors: vec![format!("Go analysis task failed: {e}")],
+                    issues: vec![],
                 });
             }
         }
@@ -3622,6 +3941,7 @@ pub async fn analyze_cpp_files_parallel_pooled(
     jobs: usize,
     analyzers: &crate::config::AnalyzerBinaries,
     compile_commands: Option<&crate::cpp_parser::CompileCommandsDb>,
+    limits: SizeLimits,
 ) -> Vec<AnalysisResult> {
     let pool_config = PoolConfig {
         command: analyzers.cpp_path(),
@@ -3664,6 +3984,17 @@ pub async fn analyze_cpp_files_parallel_pooled(
 
                 let mut errors = Vec::new();
 
+                // Size guard
+                if let Some(issue) = check_file_size(&file, limits) {
+                    tracing::warn!(file = %file.display(), "Skipping oversized source file: {}", issue.message);
+                    return AnalysisResult {
+                        file,
+                        analysis: None,
+                        errors,
+                        issues: vec![issue],
+                    };
+                }
+
                 // Step 1: Parse with libclang (CPU-bound -> spawn_blocking)
                 let parse_result = {
                     let file_clone = file.clone();
@@ -3692,20 +4023,20 @@ pub async fn analyze_cpp_files_parallel_pooled(
                     Ok(Ok(json)) => json,
                     Ok(Err(e)) => {
                         errors.push(format!("C/C++ parse failed for {file_display}: {e}"));
-                        return AnalysisResult { file, analysis: None, errors };
+                        return AnalysisResult { file, analysis: None, errors, issues: vec![] };
                     }
                     Err(e) => {
                         errors.push(format!("C/C++ parse task panicked for {file_display}: {e}"));
-                        return AnalysisResult { file, analysis: None, errors };
+                        return AnalysisResult { file, analysis: None, errors, issues: vec![] };
                     }
                 };
 
                 // Step 2: Send to daemon pool
                 match analyze_cpp_file_pooled(&pool, &file, &ast_json).await {
-                    Ok(analysis) => AnalysisResult { file, analysis: Some(analysis), errors },
+                    Ok(analysis) => AnalysisResult { file, analysis: Some(analysis), errors, issues: vec![] },
                     Err(e) => {
                         errors.push(format!("C/C++ analyzer failed for {file_display}: {e}"));
-                        AnalysisResult { file, analysis: None, errors }
+                        AnalysisResult { file, analysis: None, errors, issues: vec![] }
                     }
                 }
             })
@@ -3721,6 +4052,7 @@ pub async fn analyze_cpp_files_parallel_pooled(
                     file: PathBuf::new(),
                     analysis: None,
                     errors: vec![format!("C/C++ analysis task failed: {e}")],
+                    issues: vec![],
                 });
             }
         }
@@ -3779,7 +4111,7 @@ pub async fn analyze_cpp_files_parallel(
                     Ok(s) => s,
                     Err(e) => {
                         errors.push(format!("Failed to read {file_display}: {e}"));
-                        return AnalysisResult { file, analysis: None, errors };
+                        return AnalysisResult { file, analysis: None, errors, issues: vec![] };
                     }
                 };
 
@@ -3787,7 +4119,7 @@ pub async fn analyze_cpp_files_parallel(
                     Ok(v) => v,
                     Err(e) => {
                         errors.push(format!("C/C++ parse failed for {file_display}: {e}"));
-                        return AnalysisResult { file, analysis: None, errors };
+                        return AnalysisResult { file, analysis: None, errors, issues: vec![] };
                     }
                 };
 
@@ -3795,16 +4127,16 @@ pub async fn analyze_cpp_files_parallel(
                     Ok(s) => s,
                     Err(e) => {
                         errors.push(format!("C/C++ AST serialization failed for {file_display}: {e}"));
-                        return AnalysisResult { file, analysis: None, errors };
+                        return AnalysisResult { file, analysis: None, errors, issues: vec![] };
                     }
                 };
 
                 // Step 2: Spawn analyzer
                 match analyze_cpp_file(&file, &ast_json, &bin).await {
-                    Ok(analysis) => AnalysisResult { file, analysis: Some(analysis), errors },
+                    Ok(analysis) => AnalysisResult { file, analysis: Some(analysis), errors, issues: vec![] },
                     Err(e) => {
                         errors.push(format!("C/C++ analyzer failed for {file_display}: {e}"));
-                        AnalysisResult { file, analysis: None, errors }
+                        AnalysisResult { file, analysis: None, errors, issues: vec![] }
                     }
                 }
             })
@@ -3820,6 +4152,7 @@ pub async fn analyze_cpp_files_parallel(
                     file: PathBuf::new(),
                     analysis: None,
                     errors: vec![format!("C/C++ analysis task failed: {e}")],
+                    issues: vec![],
                 });
             }
         }
@@ -3839,6 +4172,7 @@ pub async fn analyze_swift_files_parallel_pooled(
     files: &[PathBuf],
     jobs: usize,
     analyzers: &crate::config::AnalyzerBinaries,
+    limits: SizeLimits,
 ) -> Vec<AnalysisResult> {
     let parser_pool_config = PoolConfig {
         command: analyzers.swift_parser_path(),
@@ -3901,11 +4235,23 @@ pub async fn analyze_swift_files_parallel_pooled(
 
                 let errors = Vec::new();
 
+                // Size guard
+                if let Some(issue) = check_file_size(&file, limits) {
+                    tracing::warn!(file = %file.display(), "Skipping oversized source file: {}", issue.message);
+                    return AnalysisResult {
+                        file,
+                        analysis: None,
+                        errors,
+                        issues: vec![issue],
+                    };
+                }
+
                 match analyze_swift_file_pooled(&parser_pool, &analyzer_pool, &file).await {
                     Ok(analysis) => AnalysisResult {
                         file,
                         analysis: Some(analysis),
                         errors,
+                        issues: vec![],
                     },
                     Err(e) => {
                         let mut errors = errors;
@@ -3916,6 +4262,7 @@ pub async fn analyze_swift_files_parallel_pooled(
                             file,
                             analysis: None,
                             errors,
+                            issues: vec![],
                         }
                     }
                 }
@@ -3932,6 +4279,7 @@ pub async fn analyze_swift_files_parallel_pooled(
                     file: PathBuf::new(),
                     analysis: None,
                     errors: vec![format!("Swift analysis task failed: {e}")],
+                    issues: vec![],
                 });
             }
         }
@@ -3983,6 +4331,7 @@ pub async fn analyze_swift_files_parallel(
                         file,
                         analysis: Some(analysis),
                         errors,
+                        issues: vec![],
                     },
                     Err(e) => {
                         let mut errors = errors;
@@ -3993,6 +4342,7 @@ pub async fn analyze_swift_files_parallel(
                             file,
                             analysis: None,
                             errors,
+                            issues: vec![],
                         }
                     }
                 }
@@ -4009,6 +4359,7 @@ pub async fn analyze_swift_files_parallel(
                     file: PathBuf::new(),
                     analysis: None,
                     errors: vec![format!("Swift analysis task failed: {e}")],
+                    issues: vec![],
                 });
             }
         }
@@ -4230,6 +4581,7 @@ pub async fn analyze_objc_files_parallel_pooled(
     files: &[PathBuf],
     jobs: usize,
     analyzers: &crate::config::AnalyzerBinaries,
+    limits: SizeLimits,
 ) -> Vec<AnalysisResult> {
     let parser_pool_config = PoolConfig {
         command: analyzers.objc_parser_path(),
@@ -4292,11 +4644,23 @@ pub async fn analyze_objc_files_parallel_pooled(
 
                 let errors = Vec::new();
 
+                // Size guard
+                if let Some(issue) = check_file_size(&file, limits) {
+                    tracing::warn!(file = %file.display(), "Skipping oversized source file: {}", issue.message);
+                    return AnalysisResult {
+                        file,
+                        analysis: None,
+                        errors,
+                        issues: vec![issue],
+                    };
+                }
+
                 match analyze_objc_file_pooled(&parser_pool, &analyzer_pool, &file).await {
                     Ok(analysis) => AnalysisResult {
                         file,
                         analysis: Some(analysis),
                         errors,
+                        issues: vec![],
                     },
                     Err(e) => {
                         let mut errors = errors;
@@ -4307,6 +4671,7 @@ pub async fn analyze_objc_files_parallel_pooled(
                             file,
                             analysis: None,
                             errors,
+                            issues: vec![],
                         }
                     }
                 }
@@ -4323,6 +4688,7 @@ pub async fn analyze_objc_files_parallel_pooled(
                     file: PathBuf::new(),
                     analysis: None,
                     errors: vec![format!("Obj-C analysis task failed: {e}")],
+                    issues: vec![],
                 });
             }
         }
@@ -4374,6 +4740,7 @@ pub async fn analyze_objc_files_parallel(
                         file,
                         analysis: Some(analysis),
                         errors,
+                        issues: vec![],
                     },
                     Err(e) => {
                         let mut errors = errors;
@@ -4384,6 +4751,7 @@ pub async fn analyze_objc_files_parallel(
                             file,
                             analysis: None,
                             errors,
+                            issues: vec![],
                         }
                     }
                 }
@@ -4400,6 +4768,7 @@ pub async fn analyze_objc_files_parallel(
                     file: PathBuf::new(),
                     analysis: None,
                     errors: vec![format!("Obj-C analysis task failed: {e}")],
+                    issues: vec![],
                 });
             }
         }
@@ -4824,6 +5193,7 @@ mod tests {
                 exports: vec![],
             }),
             errors: vec![],
+            issues: vec![],
         }];
 
         let nodes = collect_resolve_nodes(&results);
@@ -4860,11 +5230,13 @@ mod tests {
                     exports: vec![],
                 }),
                 errors: vec![],
+                issues: vec![],
             },
             AnalysisResult {
                 file: PathBuf::from("fail.js"),
                 analysis: None,
                 errors: vec!["parse failed".to_string()],
+                issues: vec![],
             },
         ];
 
@@ -5052,6 +5424,7 @@ mod tests {
                 exports: vec![],
             }),
             errors: vec![],
+            issues: vec![],
         }];
 
         let nodes = collect_resolve_nodes(&results);
@@ -5104,6 +5477,7 @@ mod tests {
                     exports: vec![],
                 }),
                 errors: vec![],
+                issues: vec![],
             },
             AnalysisResult {
                 file: PathBuf::from("src/Main.hs"),
@@ -5136,6 +5510,7 @@ mod tests {
                     exports: vec![],
                 }),
                 errors: vec![],
+                issues: vec![],
             },
         ];
 
@@ -5201,6 +5576,7 @@ mod tests {
                 exports: vec![],
             }),
             errors: vec![],
+            issues: vec![],
         }];
 
         let nodes = collect_resolve_nodes_for_lang(
@@ -5245,6 +5621,7 @@ mod tests {
                     exports: vec![],
                 }),
                 errors: vec![],
+                issues: vec![],
             },
             AnalysisResult {
                 file: PathBuf::from("src/Bar.kt"),
@@ -5277,6 +5654,7 @@ mod tests {
                     exports: vec![],
                 }),
                 errors: vec![],
+                issues: vec![],
             },
             // JS file should be excluded
             AnalysisResult {
@@ -5300,6 +5678,7 @@ mod tests {
                     exports: vec![],
                 }),
                 errors: vec![],
+                issues: vec![],
             },
         ];
 
@@ -5340,6 +5719,7 @@ mod tests {
                 exports: vec![],
             }),
             errors: vec![],
+            issues: vec![],
         }];
         let nodes = collect_resolve_nodes_for_jvm(&results);
         assert!(nodes.is_empty());
@@ -5643,5 +6023,190 @@ mod tests {
         assert_eq!(analysis.nodes[0].file, "src/app.js"); // file stays as-is
         assert_eq!(analysis.edges[0].src, "grafema://localhost/grafema/src/app.js#MODULE");
         assert_eq!(analysis.edges[0].dst, "grafema://localhost/grafema/src/app.js#FUNCTION-%3Efoo");
+    }
+
+    // -----------------------------------------------------------------------
+    // Size guard tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn check_file_size_passes_when_under_limit() {
+        // Use Cargo.toml as a small test file (well under 1MB)
+        let file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+        let limits = SizeLimits { max_file_bytes: 1024 * 1024, max_ast_bytes: 0 };
+        assert!(check_file_size(&file, limits).is_none());
+    }
+
+    #[test]
+    fn check_file_size_skips_when_over_limit() {
+        // Use Cargo.toml but with a very low limit (1 byte)
+        let file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+        let limits = SizeLimits { max_file_bytes: 1, max_ast_bytes: 0 };
+        let issue = check_file_size(&file, limits);
+        assert!(issue.is_some());
+        let issue = issue.unwrap();
+        assert_eq!(issue.category, "oversized_source");
+        assert_eq!(issue.severity, "warning");
+        assert!(issue.message.contains("Source file too large"));
+    }
+
+    #[test]
+    fn check_file_size_disabled_when_zero() {
+        let file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+        let limits = SizeLimits { max_file_bytes: 0, max_ast_bytes: 0 };
+        assert!(check_file_size(&file, limits).is_none());
+    }
+
+    #[test]
+    fn check_file_size_missing_file_returns_none() {
+        let file = PathBuf::from("/nonexistent/file.js");
+        let limits = SizeLimits { max_file_bytes: 100, max_ast_bytes: 0 };
+        assert!(check_file_size(&file, limits).is_none());
+    }
+
+    #[test]
+    fn check_ast_size_passes_when_under_limit() {
+        let limits = SizeLimits { max_file_bytes: 0, max_ast_bytes: 1024 * 1024 };
+        assert!(check_ast_size("test.js", 500, limits).is_none());
+    }
+
+    #[test]
+    fn check_ast_size_skips_when_over_limit() {
+        let limits = SizeLimits { max_file_bytes: 0, max_ast_bytes: 100 };
+        let issue = check_ast_size("test.js", 200, limits);
+        assert!(issue.is_some());
+        let issue = issue.unwrap();
+        assert_eq!(issue.category, "oversized_ast");
+        assert_eq!(issue.severity, "warning");
+        assert!(issue.message.contains("AST too large"));
+    }
+
+    #[test]
+    fn check_ast_size_disabled_when_zero() {
+        let limits = SizeLimits { max_file_bytes: 0, max_ast_bytes: 0 };
+        assert!(check_ast_size("test.js", 999_999_999, limits).is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // issues_to_wire tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn issues_to_wire_empty_returns_empty() {
+        let (nodes, edges) = issues_to_wire(&[], "src/app.js", "example.com/repo", true);
+        assert!(nodes.is_empty());
+        assert!(edges.is_empty());
+    }
+
+    #[test]
+    fn issues_to_wire_with_module_stub() {
+        let issues = vec![AnalysisIssue {
+            category: "oversized_source".to_string(),
+            severity: "warning".to_string(),
+            message: "Source file too large: 2048 KB (limit: 1024 KB)".to_string(),
+            file: "src/big.js".to_string(),
+        }];
+        let (nodes, edges) = issues_to_wire(&issues, "src/big.js", "example.com/repo", true);
+
+        // MODULE stub + ISSUE node
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(edges.len(), 1);
+
+        // MODULE stub
+        assert_eq!(nodes[0].node_type.as_deref(), Some("MODULE"));
+        assert_eq!(nodes[0].file.as_deref(), Some("src/big.js"));
+
+        // ISSUE node
+        assert_eq!(nodes[1].node_type.as_deref(), Some("ISSUE"));
+        assert_eq!(nodes[1].file.as_deref(), Some("src/big.js"));
+        let meta: HashMap<String, serde_json::Value> =
+            serde_json::from_str(nodes[1].metadata.as_ref().unwrap()).unwrap();
+        assert_eq!(meta["category"], "oversized_source");
+        assert_eq!(meta["severity"], "warning");
+
+        // CONTAINS edge: MODULE → ISSUE
+        assert_eq!(edges[0].edge_type, "CONTAINS");
+        assert_eq!(edges[0].src, nodes[0].id);
+        assert_eq!(edges[0].dst, nodes[1].id);
+    }
+
+    #[test]
+    fn issues_to_wire_without_module_stub() {
+        let issues = vec![AnalysisIssue {
+            category: "parse_error".to_string(),
+            severity: "error".to_string(),
+            message: "Parse failed".to_string(),
+            file: "src/bad.js".to_string(),
+        }];
+        let (nodes, edges) = issues_to_wire(&issues, "src/bad.js", "example.com/repo", false);
+
+        // No MODULE stub, just ISSUE node
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(edges.len(), 1);
+        assert_eq!(nodes[0].node_type.as_deref(), Some("ISSUE"));
+    }
+
+    #[test]
+    fn issues_to_wire_multiple_issues() {
+        let issues = vec![
+            AnalysisIssue {
+                category: "oversized_source".to_string(),
+                severity: "warning".to_string(),
+                message: "File too large".to_string(),
+                file: "src/huge.js".to_string(),
+            },
+            AnalysisIssue {
+                category: "parse_error".to_string(),
+                severity: "error".to_string(),
+                message: "Unexpected token".to_string(),
+                file: "src/huge.js".to_string(),
+            },
+        ];
+        let (nodes, edges) = issues_to_wire(&issues, "src/huge.js", "example.com/repo", true);
+
+        // MODULE stub + 2 ISSUE nodes
+        assert_eq!(nodes.len(), 3);
+        // 2 CONTAINS edges
+        assert_eq!(edges.len(), 2);
+    }
+
+    #[test]
+    fn size_limits_from_config_converts_kb_to_bytes() {
+        let cfg = crate::config::AnalyzerConfig {
+            root: PathBuf::from("."),
+            include: vec![],
+            exclude: vec![],
+            plugins: vec![],
+            rfdb_socket: None,
+            analyzers: Default::default(),
+            services: vec![],
+            authority: None,
+            aliases: Default::default(),
+            max_file_size_kb: 512,
+            max_ast_size_kb: 2048,
+        };
+        let limits = SizeLimits::from_config(&cfg);
+        assert_eq!(limits.max_file_bytes, 512 * 1024);
+        assert_eq!(limits.max_ast_bytes, 2048 * 1024);
+    }
+
+    #[test]
+    fn size_limits_zero_means_unlimited() {
+        let cfg = crate::config::AnalyzerConfig {
+            root: PathBuf::from("."),
+            include: vec![],
+            exclude: vec![],
+            plugins: vec![],
+            rfdb_socket: None,
+            analyzers: Default::default(),
+            services: vec![],
+            authority: None,
+            aliases: Default::default(),
+            max_file_size_kb: 0,
+            max_ast_size_kb: 0,
+        };
+        let limits = SizeLimits::from_config(&cfg);
+        assert_eq!(limits.max_file_bytes, 0);
+        assert_eq!(limits.max_ast_bytes, 0);
     }
 }

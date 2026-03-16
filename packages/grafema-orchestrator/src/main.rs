@@ -316,6 +316,7 @@ async fn main() -> Result<()> {
             //
             //    JS/TS: per-file streaming (results sent as each file completes)
             //    Other: per-language streaming (results forwarded after pool completes)
+            let size_limits = config::SizeLimits::from_config(&cfg);
             const INGEST_BATCH_SIZE: usize = 20;
             let mut total_nodes = 0usize;
             let mut total_edges = 0usize;
@@ -379,6 +380,39 @@ async fn main() -> Result<()> {
                         batch_nodes.extend(wire_nodes);
                         batch_edges.extend(wire_edges);
                     }
+
+                    // Persist ISSUE nodes for analysis problems (oversized files, parse errors, etc.)
+                    if !result.issues.is_empty() {
+                        let abs_file = result.file.display().to_string();
+                        let root_prefix = if root_str.ends_with('/') {
+                            root_str.to_string()
+                        } else {
+                            format!("{root_str}/")
+                        };
+                        let rel_file = abs_file.strip_prefix(&root_prefix)
+                            .unwrap_or(&abs_file);
+
+                        let include_module_stub = result.analysis.is_none();
+                        let (mut issue_nodes, mut issue_edges) =
+                            analyzer::issues_to_wire(&result.issues, rel_file, authority, include_module_stub);
+
+                        for node in &mut issue_nodes {
+                            gc::stamp_node_metadata(&mut node.metadata, generation, "analyzer");
+                        }
+                        for edge in &mut issue_edges {
+                            gc::stamp_edge_metadata(&mut edge.metadata, generation, "analyzer");
+                        }
+
+                        nodes_total += issue_nodes.len();
+                        edges_total += issue_edges.len();
+
+                        // Ensure file is in batch for RFDB file-scoped deletion
+                        if result.analysis.is_none() {
+                            batch_files.push(rel_file.to_string());
+                        }
+                        batch_nodes.extend(issue_nodes);
+                        batch_edges.extend(issue_edges);
+                    }
                 }
 
                 if !batch_files.is_empty() {
@@ -416,8 +450,9 @@ async fn main() -> Result<()> {
                         let files_vec: Vec<std::path::PathBuf> = $files.to_vec();
                         let analyzers = cfg.analyzers.clone();
                         let jobs = jobs;
+                        let limits = size_limits;
                         tokio::spawn(async move {
-                            let results = $analyze_fn(&files_vec, jobs, &analyzers).await;
+                            let results = $analyze_fn(&files_vec, jobs, &analyzers, limits).await;
                             for r in results {
                                 if tx.send(r).await.is_err() { break; }
                             }
@@ -432,9 +467,10 @@ async fn main() -> Result<()> {
                 let tx_js = tx.clone();
                 let js_analyzer_path = cfg.analyzers.js_path();
                 let js_jobs = jobs;
+                let js_limits = size_limits;
                 tokio::spawn(async move {
                     analyzer::analyze_js_files_streaming(
-                        js_files, js_jobs, js_analyzer_path, tx_js,
+                        js_files, js_jobs, js_analyzer_path, tx_js, js_limits,
                     )
                     .await;
                 });
@@ -493,12 +529,14 @@ async fn main() -> Result<()> {
                 let cpp_files_vec: Vec<PathBuf> = cpp_files.to_vec();
                 let cpp_analyzers = cfg.analyzers.clone();
                 let cpp_jobs = jobs;
+                let cpp_limits = size_limits;
                 tokio::spawn(async move {
                     let results = analyzer::analyze_cpp_files_parallel_pooled(
                         &cpp_files_vec,
                         cpp_jobs,
                         &cpp_analyzers,
                         compile_commands.as_ref(),
+                        cpp_limits,
                     )
                     .await;
                     for r in results {

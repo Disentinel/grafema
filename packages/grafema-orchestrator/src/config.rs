@@ -140,6 +140,42 @@ pub struct AnalyzerConfig {
     /// existing sub-path resolution handles `jodit/esm/config` → `jodit/src/config.ts`.
     #[serde(default)]
     pub aliases: std::collections::HashMap<String, String>,
+
+    /// Maximum source file size in KB. Files larger than this are skipped with an ISSUE node.
+    /// Set to 0 to disable the file size guard. Default: 1024 (1 MB).
+    #[serde(default = "default_max_file_size_kb", alias = "maxFileSizeKb")]
+    pub max_file_size_kb: u64,
+
+    /// Maximum AST JSON size in KB. Files producing ASTs larger than this are skipped.
+    /// Set to 0 to disable the AST size guard. Default: 51200 (50 MB).
+    #[serde(default = "default_max_ast_size_kb", alias = "maxAstSizeKb")]
+    pub max_ast_size_kb: u64,
+}
+
+/// Lightweight copy-friendly wrapper that converts KB config values to byte thresholds.
+/// A threshold of 0 means "no limit" (the guard is disabled).
+#[derive(Debug, Clone, Copy)]
+pub struct SizeLimits {
+    pub max_file_bytes: u64,
+    pub max_ast_bytes: u64,
+}
+
+impl SizeLimits {
+    /// Create from config values (KB → bytes). Zero means unlimited.
+    pub fn from_config(cfg: &AnalyzerConfig) -> Self {
+        Self {
+            max_file_bytes: if cfg.max_file_size_kb == 0 { 0 } else { cfg.max_file_size_kb * 1024 },
+            max_ast_bytes: if cfg.max_ast_size_kb == 0 { 0 } else { cfg.max_ast_size_kb * 1024 },
+        }
+    }
+
+    /// No size limits — all files pass.
+    pub fn unlimited() -> Self {
+        Self {
+            max_file_bytes: 0,
+            max_ast_bytes: 0,
+        }
+    }
 }
 
 /// Optional overrides for analyzer binary paths.
@@ -572,6 +608,14 @@ fn default_root() -> PathBuf {
 
 fn default_rfdb_socket() -> Option<PathBuf> {
     Some(PathBuf::from("/tmp/rfdb.sock"))
+}
+
+fn default_max_file_size_kb() -> u64 {
+    1024
+}
+
+fn default_max_ast_size_kb() -> u64 {
+    51200
 }
 
 fn default_js_analyzer() -> String {

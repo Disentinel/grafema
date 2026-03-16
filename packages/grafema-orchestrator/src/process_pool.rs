@@ -446,6 +446,7 @@ mod tests {
             command: "cat".to_string(),
             args: vec![],
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
+            request_timeout: DEFAULT_REQUEST_TIMEOUT,
         };
         let result = ProcessPool::new(config, 0);
         match result {
@@ -482,6 +483,7 @@ while True:
             command: "python3".to_string(),
             args: vec!["-c".to_string(), python_script.to_string()],
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
+            request_timeout: DEFAULT_REQUEST_TIMEOUT,
         };
 
         let pool = match ProcessPool::new(config, 2) {
@@ -528,6 +530,7 @@ while True:
             command: "python3".to_string(),
             args: vec!["-c".to_string(), python_script.to_string()],
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
+            request_timeout: DEFAULT_REQUEST_TIMEOUT,
         };
 
         let pool = match ProcessPool::new(config, 3) {
@@ -576,6 +579,7 @@ if len(hdr) == 4:
             command: "python3".to_string(),
             args: vec!["-c".to_string(), python_script.to_string()],
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
+            request_timeout: DEFAULT_REQUEST_TIMEOUT,
         };
 
         let pool = match ProcessPool::new(config, 1) {
@@ -620,6 +624,7 @@ while True:
             command: "python3".to_string(),
             args: vec!["-c".to_string(), python_script.to_string()],
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
+            request_timeout: DEFAULT_REQUEST_TIMEOUT,
         };
 
         let pool = match ProcessPool::new(config, 1) {

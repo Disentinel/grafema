@@ -853,6 +853,8 @@ mod tests {
             delta: None,
             results: None,
             nodes: None,
+            done: None,
+            chunk_index: None,
         };
         assert!(resp.check_error().is_ok());
     }
@@ -875,6 +877,8 @@ mod tests {
             delta: None,
             results: None,
             nodes: None,
+            done: None,
+            chunk_index: None,
         };
         let err = resp.check_error().unwrap_err();
         let msg = err.to_string();
