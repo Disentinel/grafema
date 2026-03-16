@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.14] - 2026-03-17
+
+### Highlights
+
+- **Large file resilience** — Minified bundles and generated files (100KB+ source, multi-MB AST) no longer choke the analysis pipeline. Configurable size guards skip oversized files before parsing and persist ISSUE nodes in the graph for queryability via MCP tools.
+
+### Features
+
+- feat(orchestrator): `maxFileSizeKb` config option (default: 1024 = 1MB) — files larger than this are skipped before parsing
+- feat(orchestrator): `maxAstSizeKb` config option (default: 51200 = 50MB) — ASTs larger than this are skipped before sending to daemon
+- feat(orchestrator): ISSUE nodes persisted in graph for oversized files, parse errors, and analysis failures — queryable via `find_nodes(type="ISSUE")`
+- feat(orchestrator): MODULE stub nodes created for failed files so they appear in graph queries and file-scoped GC works
+- feat(orchestrator): Set either limit to 0 to disable the corresponding guard
+
 ## [0.3.13] - 2026-03-16
 
 ### Highlights
