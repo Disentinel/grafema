@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.13] - 2026-03-16
+
+### Highlights
+
+- **Critical fix: data loss on server restart** — `flush_data_only()` was a no-op in V2 engine. Since the orchestrator sends all `commitBatch` with `deferIndex=true`, data lived only in write buffers and was lost if analysis failed before `compact()` or if server stopped. Now flushes to disk when write buffers exceed 100K nodes/shard.
+- **Shutdown flush** — `grafema server stop` (Shutdown command) now flushes all databases before exit, matching signal handler behavior.
+- **`diskBytes` in GetStats** — RFDB server now reports database size on disk.
+
+### Bug Fixes
+
+- fix(rfdb): `flush_data_only()` was no-op — all `commitBatch(deferIndex=true)` data stayed in RAM. If analysis crashed before `compact()`, all nodes/edges were lost on restart. Now periodically flushes when write buffers exceed 100K nodes or 256MB per shard.
+- fix(rfdb): Shutdown wire command exited without flushing databases. Signal handler (SIGINT/SIGTERM) flushed correctly, but `grafema server stop` sent Shutdown command which called `process::exit(0)` directly. Both Unix socket and WebSocket handlers now flush before exit.
+
+### Features
+
+- feat(rfdb): `diskBytes` field in GetStats response — reports total database size on disk via recursive directory traversal. Returns 0 for ephemeral databases.
+- feat(rfdb): `disk_size_bytes()` method on GraphStore trait
+
 ## [0.3.12] - 2026-03-16
 
 ### Highlights

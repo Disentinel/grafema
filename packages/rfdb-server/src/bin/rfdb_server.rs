@@ -455,6 +455,8 @@ pub enum Response {
         edge_count: u64,
         #[serde(rename = "deltaSize")]
         delta_size: u64,
+        #[serde(rename = "diskBytes")]
+        disk_bytes: u64,
 
         // Memory (system)
         #[serde(rename = "memoryPercent")]
@@ -1426,9 +1428,10 @@ fn handle_request_with_cancel(
             };
 
             // Get graph stats from current database (if any)
-            let (node_count, edge_count, delta_size, shard_diags) = if let Some(ref db) = session.current_db {
+            let (node_count, edge_count, delta_size, disk_bytes, shard_diags) = if let Some(ref db) = session.current_db {
                 let engine = db.engine.read().unwrap();
                 let ops = 0u64;
+                let disk = engine.disk_size_bytes();
                 let diags: Vec<WireShardDiagnostics> = engine.shard_diagnostics()
                     .into_iter()
                     .map(|d| WireShardDiagnostics {
@@ -1457,11 +1460,12 @@ fn handle_request_with_cancel(
                     engine.node_count() as u64,
                     engine.edge_count() as u64,
                     ops,
+                    disk,
                     diags,
                 )
             } else {
                 // No database selected - return zeros
-                (0, 0, 0, vec![])
+                (0, 0, 0, 0, vec![])
             };
 
             // Get system memory
@@ -1471,6 +1475,7 @@ fn handle_request_with_cancel(
                 node_count,
                 edge_count,
                 delta_size,
+                disk_bytes,
                 memory_percent,
                 query_count: metrics_snapshot.query_count,
                 slow_query_count: metrics_snapshot.slow_query_count,
@@ -2411,7 +2416,19 @@ fn handle_client_unix(
         }
 
         if is_shutdown {
-            eprintln!("[rfdb-server] Shutdown requested by client {}", client_id);
+            eprintln!("[rfdb-server] Shutdown requested by client {}, flushing...", client_id);
+            // Flush all databases before exit (same as signal handler)
+            for db_info in manager.list_databases() {
+                if let Ok(db) = manager.get_database(&db_info.name) {
+                    if let Ok(mut engine) = db.engine.write() {
+                        match engine.flush() {
+                            Ok(()) => eprintln!("[rfdb-server] Flushed database '{}'", db_info.name),
+                            Err(e) => eprintln!("[rfdb-server] Flush failed for '{}': {}", db_info.name, e),
+                        }
+                    }
+                }
+            }
+            eprintln!("[rfdb-server] Exiting");
             std::process::exit(0);
         }
     }
@@ -2632,7 +2649,18 @@ async fn handle_client_websocket(
         }
 
         if is_shutdown {
-            eprintln!("[rfdb-server] Shutdown requested by WebSocket client {}", client_id);
+            eprintln!("[rfdb-server] Shutdown requested by WebSocket client {}, flushing...", client_id);
+            for db_info in manager.list_databases() {
+                if let Ok(db) = manager.get_database(&db_info.name) {
+                    if let Ok(mut engine) = db.engine.write() {
+                        match engine.flush() {
+                            Ok(()) => eprintln!("[rfdb-server] Flushed database '{}'", db_info.name),
+                            Err(e) => eprintln!("[rfdb-server] Flush failed for '{}': {}", db_info.name, e),
+                        }
+                    }
+                }
+            }
+            eprintln!("[rfdb-server] Exiting");
             std::process::exit(0);
         }
     }

@@ -524,6 +524,7 @@ export interface ServerStats {
   nodeCount: number;
   edgeCount: number;
   deltaSize: number;
+  diskBytes: number;
   memoryPercent: number;
   queryCount: number;
   slowQueryCount: number;

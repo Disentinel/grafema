@@ -589,13 +589,16 @@ impl GraphStore for GraphEngineV2 {
     }
 
     fn flush_data_only(&mut self) -> Result<()> {
-        // V2 uses in-memory write buffers with adaptive auto-flush
-        // (triggered by add_nodes via maybe_auto_flush).
-        // During bulk load (deferIndex=true), skip explicit flush —
-        // data is readable from write buffers, and auto-flush
-        // persists to disk when buffer limits are exceeded.
-        // The final rebuild_indexes() → flush() ensures all data
-        // is persisted at the end of the bulk load.
+        // Flush to disk when write buffers exceed safe limits.
+        // Previously this was a no-op, relying on compact() at the end
+        // of analysis to persist everything. But if analysis fails before
+        // compact (OOM, timeout, resolver error), ALL data was lost.
+        //
+        // Threshold: flush when any shard has >100K nodes or >256MB in buffers.
+        // This bounds memory usage while avoiding thousands of tiny flushes.
+        if self.store.any_shard_needs_flush(100_000, 256 * 1024 * 1024) {
+            self.store.flush_all(&mut self.manifest)?;
+        }
         Ok(())
     }
 
@@ -666,8 +669,34 @@ impl GraphStore for GraphEngineV2 {
         self.store.shard_diagnostics()
     }
 
+    fn disk_size_bytes(&self) -> u64 {
+        match &self.path {
+            Some(p) => dir_size_bytes(p),
+            None => 0,
+        }
+    }
+
     fn as_any(&self) -> &dyn std::any::Any { self }
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any { self }
+}
+
+/// Recursively compute total size of a directory in bytes.
+fn dir_size_bytes(path: &Path) -> u64 {
+    let mut total = 0u64;
+    if let Ok(entries) = std::fs::read_dir(path) {
+        for entry in entries.flatten() {
+            let meta = match entry.metadata() {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            if meta.is_dir() {
+                total += dir_size_bytes(&entry.path());
+            } else {
+                total += meta.len();
+            }
+        }
+    }
+    total
 }
 
 // ── Engine-specific Methods (NOT on GraphStore trait) ────────────────
