@@ -345,3 +345,39 @@ This is not a minor note. A gap means the product is failing its core thesis. Pr
 ```
 
 Full dogfooding guide: `_ai/dogfooding.md`
+
+## First Principles Framework (FPF)
+
+**Spec:** `_ai/FPF-Spec.md` (56k lines, by Anatoly Levenchuk). Domain-agnostic pattern language for structured reasoning about systems, knowledge, and organizations.
+
+**When to use:** Before diving into implementation — when reasoning about architecture, evaluating options, assessing trust in decisions, or structuring creative search. Load the relevant section from the spec into context.
+
+**Quick reference — situation → FPF section:**
+
+| Situation | Section | Key idea |
+|-----------|---------|----------|
+| Anomaly / "why doesn't this work?" | B.5 | Abduction → Deduction → Induction. Start with L0 hypothesis, don't jump to testing |
+| Hypothesis formed — what next? | B.5.1 | Explore → Shape → Evidence → Operate. Don't skip Shape before tests |
+| Multiple architectural options | B.5.2.1 | NQD: keep Pareto front, don't scalarize into single ranking. Record rationale for rejected options |
+| Analysis paralysis / endless refactoring | B.5 | Anti-pattern "Ready, Fire, Aim": can't test before deductive analysis. What exactly are you verifying? |
+| How much to trust a claim/decision? | B.3 | Trust = ⟨F, G, R⟩. Formality (how rigorous?), Scope (where applicable?), Reliability (what evidence?) |
+| Old ADR — still valid? | B.3.4 | Epistemic Debt: knowledge has TTL. Check: context changed? Evidence stale? |
+| Designing decision registry / knowledge model | B.3 + B.3.4 | F-G-R as schema + lifecycle: active / superseded / abandoned. Evidence decay as explicit TTL field |
+| Designing ontology / new projections | A.1 | Holonic foundation: System vs Episteme. Part and whole simultaneously. Strict separation of roles and entities |
+| Isolating semantics across contexts | A.1.1 | BoundedContext: local Glossary + Invariants + explicit Bridges with declared translation loss |
+| Mixing "what it can do" / "what it does" / "who's responsible" | A.7 + A.2 | Strict distinction: Role ≠ Method ≠ Work |
+| Versioning evolving models | A.4 | Temporal Duality: design-time vs run-time always separated. DRR for each decision |
+| Brainstorm stuck in loop / old ideas dominate | C.18 | NQD-CAL: explicitly measure Novelty + Diversity. Don't let one "favorite" idea dominate without competitors |
+| How much exploration before exploitation? | C.19 | E/E-LOG: explicit explore-exploit policy. Default without it is premature exploitation |
+| Is this idea actually novel? | C.17 | Creativity-CHR: Novelty@context (novel relative to what?), Use-Value, Surprise, ConstraintFit |
+| Harvesting literature / arxiv | G.2 + G.4 | TraditionCards (schools of thought) + OperatorCards (their operators). SoTA Pack as selector portfolio |
+| SoTA going stale — how to track freshness | G.11 | Telemetry-Driven Refresh: decay orchestrator, edition pins, Bridge Sentinels |
+| Comparing competing approaches without scalarizing | G.5 | Multi-Method Dispatcher: Pareto portfolio (Archive + Pareto front), no single "winner" |
+
+**How to load a section:**
+```bash
+# Find section boundaries
+grep -n "^## B.3" _ai/FPF-Spec.md
+# Then read the range
+sed -n '${start},${end}p' _ai/FPF-Spec.md
+```
