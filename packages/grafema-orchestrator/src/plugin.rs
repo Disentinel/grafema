@@ -702,6 +702,319 @@ pub async fn run_resolve_with_nodes(
 }
 
 // ---------------------------------------------------------------------------
+// Sharded parallel resolution
+// ---------------------------------------------------------------------------
+
+/// Whether a resolution step operates per-file or needs global context.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResolveKind {
+    /// Per-file resolver: each shard gets complete file data, no shared context needed.
+    PerFile,
+    /// Global resolver: needs export/declaration context loaded into workers first.
+    Global,
+}
+
+/// Context chunk size for loading context into workers.
+const CONTEXT_CHUNK_SIZE: usize = 10_000;
+
+/// Shard nodes by file, distributing files round-robin into N shards.
+///
+/// Groups nodes by their `file` field, then distributes file groups
+/// round-robin across `shard_count` shards. Nodes without a file field
+/// go into shard 0.
+pub fn shard_nodes_by_file(
+    nodes: &[serde_json::Value],
+    shard_count: usize,
+) -> Vec<Vec<serde_json::Value>> {
+    if shard_count <= 1 {
+        return vec![nodes.to_vec()];
+    }
+
+    // Group nodes by file
+    let mut by_file: HashMap<String, Vec<serde_json::Value>> = HashMap::new();
+    let mut no_file: Vec<serde_json::Value> = Vec::new();
+
+    for node in nodes {
+        if let Some(file) = node.get("file").and_then(|f| f.as_str()) {
+            by_file.entry(file.to_string()).or_default().push(node.clone());
+        } else {
+            no_file.push(node.clone());
+        }
+    }
+
+    let mut shards: Vec<Vec<serde_json::Value>> = (0..shard_count).map(|_| Vec::new()).collect();
+
+    // Nodes without a file go to shard 0
+    shards[0].extend(no_file);
+
+    // Round-robin distribute file groups
+    for (i, (_file, file_nodes)) in by_file.into_iter().enumerate() {
+        shards[i % shard_count].extend(file_nodes);
+    }
+
+    shards
+}
+
+/// Node types that form the "context" for global resolvers.
+///
+/// These are declarations/exports needed for building resolution indexes.
+/// Work items (CALL, REFERENCE, IMPORT_BINDING, etc.) are sharded across workers.
+const CONTEXT_NODE_TYPES: &[&str] = &[
+    "EXPORT",
+    "EXPORT_BINDING",
+    "FUNCTION",
+    "CLASS",
+    "VARIABLE",
+    "CONSTANT",
+    "INTERFACE",
+    "ENUM",
+    "TYPE_ALIAS",
+    "METHOD",
+    "PARAMETER",
+    "MODULE",
+];
+
+/// Split nodes into context (declarations/exports) and work items for global resolvers.
+///
+/// Context nodes are loaded into all workers once. Work nodes are sharded
+/// and processed in parallel.
+pub fn classify_context_vs_work(
+    nodes: &[serde_json::Value],
+) -> (Vec<serde_json::Value>, Vec<serde_json::Value>) {
+    let mut context = Vec::new();
+    let mut work = Vec::new();
+
+    for node in nodes {
+        let node_type = node
+            .get("type")
+            .and_then(|t| t.as_str())
+            .or_else(|| node.get("nodeType").and_then(|t| t.as_str()))
+            .unwrap_or("");
+
+        if CONTEXT_NODE_TYPES.contains(&node_type) {
+            context.push(node.clone());
+        } else {
+            work.push(node.clone());
+        }
+    }
+
+    (context, work)
+}
+
+/// Load context nodes into all workers in the pool.
+///
+/// Sends context in chunks of [`CONTEXT_CHUNK_SIZE`] nodes via the
+/// `"load-context"` daemon command. Each worker accumulates all chunks.
+pub async fn load_context_into_pool(
+    pool: &ProcessPool,
+    context_nodes: &[serde_json::Value],
+    workspace_packages: &[WorkspacePackageWire],
+) -> Result<()> {
+    if context_nodes.is_empty() {
+        return Ok(());
+    }
+
+    tracing::info!(
+        context_nodes = context_nodes.len(),
+        workers = pool.size(),
+        chunk_size = CONTEXT_CHUNK_SIZE,
+        "Loading context into resolve workers"
+    );
+
+    for chunk in context_nodes.chunks(CONTEXT_CHUNK_SIZE) {
+        let request = ResolveRequest {
+            cmd: "load-context".to_string(),
+            nodes: chunk.to_vec(),
+            workspace_packages: workspace_packages.to_vec(),
+        };
+        let payload = rmp_serde::to_vec_named(&request)
+            .context("Failed to encode load-context request")?;
+
+        pool.send_to_all(&payload).await
+            .context("Failed to load context into workers")?;
+    }
+
+    tracing::info!("Context loaded into all workers");
+    Ok(())
+}
+
+/// Clear context from all workers in the pool.
+pub async fn clear_context(pool: &ProcessPool) -> Result<()> {
+    let request = ResolveRequest {
+        cmd: "clear-context".to_string(),
+        nodes: vec![],
+        workspace_packages: vec![],
+    };
+    let payload = rmp_serde::to_vec_named(&request)
+        .context("Failed to encode clear-context request")?;
+
+    pool.send_to_all(&payload).await
+        .context("Failed to clear context from workers")?;
+
+    Ok(())
+}
+
+/// Parse a resolve daemon response into a PluginOutput.
+fn parse_resolve_response(response_bytes: &[u8], cmd: &str) -> Result<PluginOutput> {
+    let response: ResolveResponse = rmp_serde::from_slice(response_bytes)
+        .context(format!("Failed to decode resolve response for cmd '{cmd}'"))?;
+
+    if response.status != "ok" {
+        let msg = response.error.unwrap_or_else(|| "unknown error".to_string());
+        bail!("Resolve daemon error for cmd '{cmd}': {msg}");
+    }
+
+    let mut output = PluginOutput::default();
+    if let Some(commands) = response.commands {
+        for command in commands {
+            match command {
+                ResolveCommand::EmitNode(n) => {
+                    output.nodes.push(WireNode {
+                        id: n.id,
+                        semantic_id: n.semantic_id,
+                        node_type: n.node_type,
+                        name: n.name,
+                        file: n.file,
+                        exported: n.exported,
+                        metadata: n.metadata,
+                    });
+                }
+                ResolveCommand::EmitEdge(e) => {
+                    output.edges.push(WireEdge {
+                        src: e.src,
+                        dst: e.dst,
+                        edge_type: e.edge_type,
+                        metadata: e.metadata,
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(output)
+}
+
+/// Run a single shard through the pool and return the output.
+async fn run_shard(
+    cmd: &str,
+    shard_nodes: Vec<serde_json::Value>,
+    workspace_packages: &[WorkspacePackageWire],
+    pool: &ProcessPool,
+) -> Result<PluginOutput> {
+    if shard_nodes.is_empty() {
+        return Ok(PluginOutput::default());
+    }
+
+    let request = ResolveRequest {
+        cmd: cmd.to_string(),
+        nodes: shard_nodes,
+        workspace_packages: workspace_packages.to_vec(),
+    };
+
+    let payload = rmp_serde::to_vec_named(&request)
+        .context("Failed to encode shard request")?;
+
+    let response_bytes = pool
+        .request(&payload)
+        .await
+        .context(format!("Pool request failed for shard of cmd '{cmd}'"))?;
+
+    parse_resolve_response(&response_bytes, cmd)
+}
+
+/// Merge multiple PluginOutputs into one.
+fn merge_outputs(outputs: Vec<PluginOutput>) -> PluginOutput {
+    let mut merged = PluginOutput::default();
+    for output in outputs {
+        merged.nodes.extend(output.nodes);
+        merged.edges.extend(output.edges);
+    }
+    merged
+}
+
+/// Deduplicate virtual nodes (nodes without a real file) by semantic_id.
+///
+/// When sharded, resolvers like runtime-globals and builtins may create
+/// duplicate virtual nodes (e.g., `GLOBAL::console`) across shards.
+pub fn deduplicate_virtual_nodes(output: &mut PluginOutput) {
+    let mut seen_semantic_ids: HashSet<String> = HashSet::new();
+    output.nodes.retain(|node| {
+        // Only dedup file-less nodes (virtual nodes)
+        let is_virtual = node.file.is_none()
+            || node.file.as_deref() == Some("")
+            || node.file.as_deref().map_or(false, |f| f.starts_with("__grafema_virtual/"));
+
+        if !is_virtual {
+            return true; // Keep all real-file nodes
+        }
+
+        if let Some(ref sid) = node.semantic_id {
+            seen_semantic_ids.insert(sid.clone())
+        } else {
+            // No semantic_id — keep it (can't dedup)
+            true
+        }
+    });
+}
+
+/// Run a resolution command with sharding across the pool.
+///
+/// For `PerFile` resolvers: all nodes are sharded by file and processed in parallel.
+/// For `Global` resolvers: context must already be loaded into workers via
+/// [`load_context_into_pool`]. Only work nodes are sharded.
+pub async fn run_resolve_sharded(
+    cmd: &str,
+    nodes: &[serde_json::Value],
+    workspace_packages: &[WorkspacePackageWire],
+    resolve_pool: &ProcessPool,
+    kind: ResolveKind,
+) -> Result<PluginOutput> {
+    let shard_count = resolve_pool.size();
+
+    let work_nodes = match kind {
+        ResolveKind::PerFile => nodes.to_vec(),
+        ResolveKind::Global => {
+            // For global resolvers, context is already loaded.
+            // Only shard the work items (non-context nodes).
+            let (_context, work) = classify_context_vs_work(nodes);
+            work
+        }
+    };
+
+    if work_nodes.is_empty() {
+        return Ok(PluginOutput::default());
+    }
+
+    let shards = shard_nodes_by_file(&work_nodes, shard_count);
+
+    tracing::info!(
+        cmd = cmd,
+        total_nodes = work_nodes.len(),
+        shards = shards.len(),
+        shard_sizes = ?shards.iter().map(|s| s.len()).collect::<Vec<_>>(),
+        "Running sharded resolution"
+    );
+
+    // Fire all shards concurrently through the pool
+    let mut handles = Vec::with_capacity(shards.len());
+    for shard in shards {
+        let cmd = cmd.to_string();
+        let ws = workspace_packages.to_vec();
+        handles.push(async move {
+            run_shard(&cmd, shard, &ws, resolve_pool).await
+        });
+    }
+
+    let results = futures::future::try_join_all(handles).await?;
+    let mut output = merge_outputs(results);
+
+    // Deduplicate virtual nodes that may appear in multiple shards
+    deduplicate_virtual_nodes(&mut output);
+
+    Ok(output)
+}
+
+// ---------------------------------------------------------------------------
 // Full DAG execution
 // ---------------------------------------------------------------------------
 

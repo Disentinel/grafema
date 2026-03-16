@@ -287,6 +287,70 @@ impl ProcessPool {
     pub fn size(&self) -> usize {
         self.workers.len()
     }
+
+    /// Acquire a specific worker from the pool for directed communication.
+    ///
+    /// Returns a [`WorkerHandle`] that allows sending multiple requests to the
+    /// same worker. The worker is returned to the pool when the handle is dropped.
+    pub async fn acquire(&self) -> Result<WorkerHandle<'_>> {
+        let idx = self
+            .available_rx
+            .lock()
+            .await
+            .recv()
+            .await
+            .context("pool is shut down")?;
+        Ok(WorkerHandle { pool: self, idx, returned: false })
+    }
+
+    /// Send a payload to ALL workers in the pool (for context loading).
+    ///
+    /// Acquires all workers, sends the payload to each one, collects responses,
+    /// then releases all workers back to the pool.
+    pub async fn send_to_all(&self, payload: &[u8]) -> Result<Vec<Vec<u8>>> {
+        let mut handles = Vec::with_capacity(self.workers.len());
+        for _ in 0..self.workers.len() {
+            handles.push(self.acquire().await?);
+        }
+        let mut responses = Vec::with_capacity(handles.len());
+        for handle in &handles {
+            responses.push(handle.request(payload).await?);
+        }
+        Ok(responses)
+    }
+}
+
+/// A handle to a specific worker in the pool, acquired via [`ProcessPool::acquire`].
+///
+/// While held, the worker is exclusively owned by this handle. Requests can be
+/// sent directly to this specific worker via [`WorkerHandle::request`].
+/// The worker is returned to the pool when the handle is dropped.
+pub struct WorkerHandle<'a> {
+    pool: &'a ProcessPool,
+    idx: usize,
+    returned: bool,
+}
+
+impl WorkerHandle<'_> {
+    /// Send a request to this specific worker and return the response.
+    pub async fn request(&self, payload: &[u8]) -> Result<Vec<u8>> {
+        let timeout = self.pool.config.request_timeout;
+        match tokio::time::timeout(timeout, self.pool.do_request(self.idx, payload)).await {
+            Ok(result) => result,
+            Err(_) => {
+                bail!("worker {} timed out after {}s", self.idx, timeout.as_secs());
+            }
+        }
+    }
+}
+
+impl Drop for WorkerHandle<'_> {
+    fn drop(&mut self) {
+        if !self.returned {
+            self.returned = true;
+            let _ = self.pool.return_tx.try_send(self.idx);
+        }
+    }
 }
 
 impl Drop for ProcessPool {

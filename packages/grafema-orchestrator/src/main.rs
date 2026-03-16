@@ -101,6 +101,15 @@ fn num_cpus() -> usize {
         .unwrap_or(4)
 }
 
+/// Number of CPU cores available for resolve workers.
+/// Reserves 1 core for the main thread / RFDB / OS.
+fn resolve_worker_count() -> usize {
+    let cpus = num_cpus();
+    let available = if cpus > 1 { cpus - 1 } else { 1 };
+    // Cap at 7 (number of JS resolution steps — more workers than steps wastes memory)
+    std::cmp::min(7, std::cmp::max(1, available))
+}
+
 /// Resolve the URI authority for grafema:// URIs.
 ///
 /// Priority:
@@ -637,243 +646,170 @@ async fn main() -> Result<()> {
                 Vec::new()
             };
             if !resolve_nodes.is_empty() {
+                let pool_size = resolve_worker_count();
                 tracing::info!(
                     nodes = resolve_nodes.len(),
-                    "Running built-in resolution with full graph nodes"
+                    workers = pool_size,
+                    "Running built-in resolution with full graph nodes (sharded)"
                 );
 
                 let resolve_pool_config = process_pool::PoolConfig {
                     command: cfg.analyzers.js_resolve_path(),
                     args: vec!["--daemon".to_string()],
-                    ..process_pool::PoolConfig::default()
+                    max_message_size: 200 * 1024 * 1024, // 200MB for large shards
+                    request_timeout: std::time::Duration::from_secs(300),
                 };
 
-                match process_pool::ProcessPool::new(resolve_pool_config, 1) {
+                match process_pool::ProcessPool::new(resolve_pool_config, pool_size) {
                     Ok(resolve_pool) => {
-                        // Step 1: Import resolution (with workspace packages for cross-package imports)
-                        tracing::info!("Sending imports request to resolve daemon...");
-                        let mut import_output = plugin::run_resolve_with_nodes(
-                            "imports",
-                            &resolve_nodes,
-                            &ws_packages,
+                        // Helper: validate, stamp, tag, commit a resolution output
+                        async fn commit_resolve_output(
+                            output: &mut plugin::PluginOutput,
+                            name: &str,
+                            generation: u64,
+                            rfdb: &mut rfdb::RfdbClient,
+                        ) -> anyhow::Result<()> {
+                            plugin::validate_plugin_output(output)?;
+                            plugin::stamp_metadata(output, name, generation);
+                            tag_virtual_nodes(output, name);
+                            let files: Vec<String> = output
+                                .nodes
+                                .iter()
+                                .filter_map(|n| n.file.clone())
+                                .collect::<std::collections::HashSet<_>>()
+                                .into_iter()
+                                .collect();
+                            rfdb.commit_batch(&files, &output.nodes, &output.edges, true)
+                                .await
+                                .context(format!("Failed to commit {name} output"))?;
+                            tracing::info!(
+                                plugin = name,
+                                nodes = output.nodes.len(),
+                                edges = output.edges.len(),
+                                "Resolution step complete"
+                            );
+                            Ok(())
+                        }
+
+                        // ── Phase A: per-file resolvers (no context needed) ──
+                        // These resolvers only need nodes from the same file.
+                        // All 4 run in parallel, each sharded across workers.
+                        tracing::info!("Phase A: per-file resolvers (parallel, sharded)");
+
+                        let (
+                            same_file_result,
+                            js_local_refs_result,
+                            globals_result,
+                            builtins_result,
+                        ) = tokio::join!(
+                            plugin::run_resolve_sharded(
+                                "same-file-calls",
+                                &resolve_nodes,
+                                &[],
+                                &resolve_pool,
+                                plugin::ResolveKind::PerFile,
+                            ),
+                            plugin::run_resolve_sharded(
+                                "js-local-refs",
+                                &resolve_nodes,
+                                &[],
+                                &resolve_pool,
+                                plugin::ResolveKind::PerFile,
+                            ),
+                            plugin::run_resolve_sharded(
+                                "runtime-globals",
+                                &resolve_nodes,
+                                &[],
+                                &resolve_pool,
+                                plugin::ResolveKind::PerFile,
+                            ),
+                            plugin::run_resolve_sharded(
+                                "builtins",
+                                &resolve_nodes,
+                                &[],
+                                &resolve_pool,
+                                plugin::ResolveKind::PerFile,
+                            ),
+                        );
+
+                        let mut same_file_output = same_file_result
+                            .context("Same-file CALLS resolution failed")?;
+                        commit_resolve_output(&mut same_file_output, "same-file-calls", generation, &mut rfdb).await?;
+
+                        let mut js_local_refs_output = js_local_refs_result
+                            .context("JS local refs resolution failed")?;
+                        commit_resolve_output(&mut js_local_refs_output, "js-local-refs", generation, &mut rfdb).await?;
+
+                        let mut globals_output = globals_result
+                            .context("Runtime globals resolution failed")?;
+                        commit_resolve_output(&mut globals_output, "runtime-globals", generation, &mut rfdb).await?;
+
+                        let mut builtins_output = builtins_result
+                            .context("Builtins resolution failed")?;
+                        commit_resolve_output(&mut builtins_output, "builtins", generation, &mut rfdb).await?;
+
+                        // ── Phase B: global resolvers (need export context) ──
+                        // These resolvers need to see all exports/declarations
+                        // to build their resolution indexes.
+                        tracing::info!("Phase B: global resolvers (parallel, sharded with context)");
+
+                        let (context_nodes, _work) = plugin::classify_context_vs_work(&resolve_nodes);
+                        plugin::load_context_into_pool(
                             &resolve_pool,
+                            &context_nodes,
+                            &ws_packages,
                         )
                         .await
-                        .context("Import resolution failed")?;
-                        tracing::info!(
-                            nodes = import_output.nodes.len(),
-                            edges = import_output.edges.len(),
-                            "Received import resolution response"
+                        .context("Failed to load context into resolve workers")?;
+
+                        let (
+                            imports_result,
+                            cross_file_result,
+                            prop_access_result,
+                        ) = tokio::join!(
+                            plugin::run_resolve_sharded(
+                                "imports",
+                                &resolve_nodes,
+                                &ws_packages,
+                                &resolve_pool,
+                                plugin::ResolveKind::Global,
+                            ),
+                            plugin::run_resolve_sharded(
+                                "cross-file-calls",
+                                &resolve_nodes,
+                                &[],
+                                &resolve_pool,
+                                plugin::ResolveKind::Global,
+                            ),
+                            plugin::run_resolve_sharded(
+                                "property-access",
+                                &resolve_nodes,
+                                &[],
+                                &resolve_pool,
+                                plugin::ResolveKind::Global,
+                            ),
                         );
-                        plugin::validate_plugin_output(&import_output)?;
-                        plugin::stamp_metadata(&mut import_output, "js-import-resolution", generation);
-                        tag_virtual_nodes(&mut import_output, "js-import-resolution");
 
-                        let import_files: Vec<String> = import_output
-                            .nodes
-                            .iter()
-                            .filter_map(|n| n.file.clone())
-                            .collect::<std::collections::HashSet<_>>()
-                            .into_iter()
-                            .collect();
-                        tracing::info!(files = import_files.len(), "Committing import resolution to RFDB...");
-                        rfdb.commit_batch(&import_files, &import_output.nodes, &import_output.edges, true)
-                            .await
-                            .context("Failed to commit import resolution output")?;
-                        tracing::info!("Import resolution committed to RFDB");
-
+                        let mut import_output = imports_result
+                            .context("Import resolution failed")?;
                         // Collect IMPORTS_FROM edges for DEPENDS_ON derivation
                         for edge in &import_output.edges {
                             if edge.edge_type == "IMPORTS_FROM" {
                                 all_imports_from_edges.push((edge.src.clone(), edge.dst.clone()));
                             }
                         }
+                        commit_resolve_output(&mut import_output, "js-import-resolution", generation, &mut rfdb).await?;
 
-                        tracing::info!(
-                            nodes = import_output.nodes.len(),
-                            edges = import_output.edges.len(),
-                            "Import resolution complete"
-                        );
+                        let mut cross_file_output = cross_file_result
+                            .context("Cross-file CALLS resolution failed")?;
+                        commit_resolve_output(&mut cross_file_output, "cross-file-calls", generation, &mut rfdb).await?;
 
-                        // Step 2: Runtime globals (uses updated graph)
-                        let mut globals_output = plugin::run_resolve_with_nodes(
-                            "runtime-globals",
-                            &resolve_nodes,
-                            &[],
-                            &resolve_pool,
-                        )
-                        .await
-                        .context("Runtime globals resolution failed")?;
-                        plugin::validate_plugin_output(&globals_output)?;
-                        plugin::stamp_metadata(&mut globals_output, "runtime-globals", generation);
-                        tag_virtual_nodes(&mut globals_output, "runtime-globals");
+                        let mut prop_access_output = prop_access_result
+                            .context("Property access resolution failed")?;
+                        commit_resolve_output(&mut prop_access_output, "property-access", generation, &mut rfdb).await?;
 
-                        let globals_files: Vec<String> = globals_output
-                            .nodes
-                            .iter()
-                            .filter_map(|n| n.file.clone())
-                            .collect::<std::collections::HashSet<_>>()
-                            .into_iter()
-                            .collect();
-                        rfdb.commit_batch(&globals_files, &globals_output.nodes, &globals_output.edges, true)
-                            .await
-                            .context("Failed to commit runtime globals output")?;
-
-                        tracing::info!(
-                            nodes = globals_output.nodes.len(),
-                            edges = globals_output.edges.len(),
-                            "Runtime globals resolution complete"
-                        );
-
-                        // Step 3: Builtins resolution (Node.js builtin modules)
-                        let mut builtins_output = plugin::run_resolve_with_nodes(
-                            "builtins",
-                            &resolve_nodes,
-                            &[],
-                            &resolve_pool,
-                        )
-                        .await
-                        .context("Builtins resolution failed")?;
-                        plugin::validate_plugin_output(&builtins_output)?;
-                        plugin::stamp_metadata(&mut builtins_output, "builtins", generation);
-                        tag_virtual_nodes(&mut builtins_output, "builtins");
-
-                        let builtins_files: Vec<String> = builtins_output
-                            .nodes
-                            .iter()
-                            .filter_map(|n| n.file.clone())
-                            .collect::<std::collections::HashSet<_>>()
-                            .into_iter()
-                            .collect();
-                        rfdb.commit_batch(&builtins_files, &builtins_output.nodes, &builtins_output.edges, true)
-                            .await
-                            .context("Failed to commit builtins resolution output")?;
-
-                        tracing::info!(
-                            nodes = builtins_output.nodes.len(),
-                            edges = builtins_output.edges.len(),
-                            "Builtins resolution complete"
-                        );
-
-                        // Step 4: Cross-file CALLS resolution
-                        let mut cross_file_output = plugin::run_resolve_with_nodes(
-                            "cross-file-calls",
-                            &resolve_nodes,
-                            &[],
-                            &resolve_pool,
-                        )
-                        .await
-                        .context("Cross-file CALLS resolution failed")?;
-                        plugin::validate_plugin_output(&cross_file_output)?;
-                        plugin::stamp_metadata(&mut cross_file_output, "cross-file-calls", generation);
-                        tag_virtual_nodes(&mut cross_file_output, "cross-file-calls");
-
-                        let cross_file_files: Vec<String> = cross_file_output
-                            .nodes
-                            .iter()
-                            .filter_map(|n| n.file.clone())
-                            .collect::<std::collections::HashSet<_>>()
-                            .into_iter()
-                            .collect();
-                        rfdb.commit_batch(&cross_file_files, &cross_file_output.nodes, &cross_file_output.edges, true)
-                            .await
-                            .context("Failed to commit cross-file CALLS output")?;
-
-                        tracing::info!(
-                            nodes = cross_file_output.nodes.len(),
-                            edges = cross_file_output.edges.len(),
-                            "Cross-file CALLS resolution complete"
-                        );
-
-                        // Step 5: Same-file CALLS resolution
-                        let mut same_file_output = plugin::run_resolve_with_nodes(
-                            "same-file-calls",
-                            &resolve_nodes,
-                            &[],
-                            &resolve_pool,
-                        )
-                        .await
-                        .context("Same-file CALLS resolution failed")?;
-                        plugin::validate_plugin_output(&same_file_output)?;
-                        plugin::stamp_metadata(&mut same_file_output, "same-file-calls", generation);
-                        tag_virtual_nodes(&mut same_file_output, "same-file-calls");
-
-                        let same_file_files: Vec<String> = same_file_output
-                            .nodes
-                            .iter()
-                            .filter_map(|n| n.file.clone())
-                            .collect::<std::collections::HashSet<_>>()
-                            .into_iter()
-                            .collect();
-                        rfdb.commit_batch(&same_file_files, &same_file_output.nodes, &same_file_output.edges, true)
-                            .await
-                            .context("Failed to commit same-file CALLS output")?;
-
-                        tracing::info!(
-                            nodes = same_file_output.nodes.len(),
-                            edges = same_file_output.edges.len(),
-                            "Same-file CALLS resolution complete"
-                        );
-
-                        // Step 6: Property access resolution
-                        let mut prop_access_output = plugin::run_resolve_with_nodes(
-                            "property-access",
-                            &resolve_nodes,
-                            &[],
-                            &resolve_pool,
-                        )
-                        .await
-                        .context("Property access resolution failed")?;
-                        plugin::validate_plugin_output(&prop_access_output)?;
-                        plugin::stamp_metadata(&mut prop_access_output, "property-access", generation);
-                        tag_virtual_nodes(&mut prop_access_output, "property-access");
-
-                        let prop_access_files: Vec<String> = prop_access_output
-                            .nodes
-                            .iter()
-                            .filter_map(|n| n.file.clone())
-                            .collect::<std::collections::HashSet<_>>()
-                            .into_iter()
-                            .collect();
-                        rfdb.commit_batch(&prop_access_files, &prop_access_output.nodes, &prop_access_output.edges, true)
-                            .await
-                            .context("Failed to commit property access output")?;
-
-                        tracing::info!(
-                            nodes = prop_access_output.nodes.len(),
-                            edges = prop_access_output.edges.len(),
-                            "Property access resolution complete"
-                        );
-
-                        // Step 7: JS/TS local refs resolution
-                        let mut js_local_refs_output = plugin::run_resolve_with_nodes(
-                            "js-local-refs",
-                            &resolve_nodes,
-                            &[],
-                            &resolve_pool,
-                        )
-                        .await
-                        .context("JS local refs resolution failed")?;
-                        plugin::validate_plugin_output(&js_local_refs_output)?;
-                        plugin::stamp_metadata(&mut js_local_refs_output, "js-local-refs", generation);
-                        tag_virtual_nodes(&mut js_local_refs_output, "js-local-refs");
-
-                        let js_local_refs_files: Vec<String> = js_local_refs_output
-                            .nodes
-                            .iter()
-                            .filter_map(|n| n.file.clone())
-                            .collect::<std::collections::HashSet<_>>()
-                            .into_iter()
-                            .collect();
-                        rfdb.commit_batch(&js_local_refs_files, &js_local_refs_output.nodes, &js_local_refs_output.edges, true)
-                            .await
-                            .context("Failed to commit JS local refs output")?;
-
-                        tracing::info!(
-                            nodes = js_local_refs_output.nodes.len(),
-                            edges = js_local_refs_output.edges.len(),
-                            "JS local refs resolution complete"
-                        );
+                        plugin::clear_context(&resolve_pool).await
+                            .context("Failed to clear context from resolve workers")?;
 
                         resolve_pool.shutdown().await;
                     }

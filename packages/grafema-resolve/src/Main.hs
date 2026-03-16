@@ -6,6 +6,7 @@ import qualified Data.Text as T
 import Data.Text (Text)
 import System.Environment (getArgs)
 import System.IO (stdin, stdout, hSetBinaryMode)
+import Data.IORef
 import Options.Applicative
 import qualified ImportResolution
 import qualified RuntimeGlobals
@@ -59,8 +60,9 @@ instance ToJSON DaemonResponse where
     ]
 
 -- | Daemon loop: read frames from stdin, dispatch, write responses.
-daemonLoop :: IO ()
-daemonLoop = do
+--   Maintains an IORef of context chunks that accumulate across load-context calls.
+daemonLoop :: IORef [[GraphNode]] -> IO ()
+daemonLoop contextRef = do
   mFrame <- readFrame stdin
   case mFrame of
     Nothing -> return ()  -- EOF
@@ -69,9 +71,19 @@ daemonLoop = do
         Left err -> do
           writeFrame stdout (encodeMsgpack (ResError ("decode error: " ++ err)))
         Right req -> do
-          result <- dispatch (drCmd req) (drNodes req) (drWorkspacePackages req)
-          writeFrame stdout (encodeMsgpack result)
-      daemonLoop
+          case drCmd req of
+            "load-context" -> do
+              modifyIORef' contextRef (++ [drNodes req])
+              writeFrame stdout (encodeMsgpack (ResOk []))
+            "clear-context" -> do
+              writeIORef contextRef []
+              writeFrame stdout (encodeMsgpack (ResOk []))
+            _ -> do
+              contextChunks <- readIORef contextRef
+              let allNodes = concat contextChunks ++ drNodes req
+              result <- dispatch (drCmd req) allNodes (drWorkspacePackages req)
+              writeFrame stdout (encodeMsgpack result)
+      daemonLoop contextRef
 
 -- | Dispatch a request to the appropriate resolver.
 dispatch :: Text -> [GraphNode] -> [WorkspacePackage] -> IO DaemonResponse
@@ -120,7 +132,9 @@ main = do
   hSetBinaryMode stdout True
   args <- getArgs
   if "--daemon" `elem` args
-    then daemonLoop
+    then do
+      contextRef <- newIORef []
+      daemonLoop contextRef
     else do
       cmd <- execParser cliOpts
       case cmd of
