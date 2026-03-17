@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.16] - 2026-03-17
+
+### Bug Fixes
+
+- fix: lazy-downloaded binaries use latest `binaries-v*` release tag instead of hardcoded `binaries-v{version}`. Fixes download failure when npm version is ahead of binary build tag (e.g. JS-only releases).
+
 ## [0.3.15] - 2026-03-17
 
 ### Bug Fixes

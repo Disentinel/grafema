@@ -196,15 +196,37 @@ export async function downloadBinary(
 }
 
 /**
- * Check if a cached binary in ~/.grafema/bin/ is from the current release.
- * Returns true if the binary's .version file matches `binaries-v{GRAFEMA_VERSION}`.
+ * Extract semver from a binaries tag: "binaries-v0.3.14" → "0.3.14"
+ */
+function versionFromTag(tag: string): string {
+  return tag.replace(/^binaries-v/, '');
+}
+
+/**
+ * Compare two semver strings. Returns true if a >= b.
+ * Simple numeric comparison of major.minor.patch.
+ */
+function semverGte(a: string, b: string): boolean {
+  const pa = a.split('-')[0].split('.').map(Number);
+  const pb = b.split('-')[0].split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] || 0) > (pb[i] || 0)) return true;
+    if ((pa[i] || 0) < (pb[i] || 0)) return false;
+  }
+  return true; // equal
+}
+
+/**
+ * Check if a cached binary in ~/.grafema/bin/ is from a release >= current version.
+ * The .version file stores the release tag used for download (e.g. "binaries-v0.3.14").
  */
 function isBinaryCurrentVersion(binaryPath: string): boolean {
   const versionFile = `${binaryPath}.version`;
   if (!existsSync(versionFile)) return false;
   try {
     const storedTag = readFileSync(versionFile, 'utf-8').trim();
-    return storedTag === `binaries-v${GRAFEMA_VERSION}`;
+    const storedVersion = versionFromTag(storedTag);
+    return semverGte(storedVersion, GRAFEMA_VERSION);
   } catch {
     return false;
   }
@@ -243,14 +265,14 @@ export async function ensureBinary(
     return null;
   }
 
-  // Download (missing or stale)
+  // Download (missing or stale) — auto-detect latest binaries-v* release tag
   const log = onProgress || (() => {});
   if (cached) {
-    log(`Updating ${binaryName} to binaries-v${GRAFEMA_VERSION}...`);
+    log(`Updating ${binaryName} (stale binary detected)...`);
   }
 
   try {
-    return await downloadBinary(binaryName, `binaries-v${GRAFEMA_VERSION}`, onProgress);
+    return await downloadBinary(binaryName, undefined, onProgress);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     (onProgress || console.error)(`Failed to download ${binaryName}: ${msg}`);

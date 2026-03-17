@@ -1,6 +1,6 @@
 {
   "name": "@grafema/api",
-  "version": "0.3.14",
+  "version": "0.3.16",
   "description": "GraphQL API server for Grafema code analysis toolkit",
   "type": "module",
   "main": "./dist/index.js",
