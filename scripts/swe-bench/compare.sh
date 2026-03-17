@@ -98,11 +98,19 @@ get_turns() {
 
 has_grafema_usage() {
   local dir="$1"
-  if [[ -f "$dir/result.json" ]]; then
-    # Check if any tool calls reference grafema MCP tools
-    local count
-    count=$(jq '[.. | .tool_name? // empty | select(startswith("mcp__grafema") or startswith("grafema"))] | length' "$dir/result.json" 2>/dev/null || echo "0")
-    echo "$count"
+  if [[ -f "$dir/session.jsonl" ]]; then
+    python3 -c "
+import json
+count = 0
+for line in open('$dir/session.jsonl'):
+    try: ev = json.loads(line)
+    except: continue
+    if ev.get('type') == 'assistant':
+        for b in ev.get('message',{}).get('content',[]):
+            if b.get('type') == 'tool_use' and b.get('name','').startswith('mcp__grafema'):
+                count += 1
+print(count)
+" 2>/dev/null || echo "-"
   else
     echo "-"
   fi

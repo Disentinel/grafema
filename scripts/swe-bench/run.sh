@@ -280,13 +280,23 @@ docker exec -u solver -w /testbed -e CLAUDE_MODEL="$MODEL" \
   ${CLAUDE_CODE_OAUTH_TOKEN:+-e CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN"} \
   ${ANTHROPIC_API_KEY:+-e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"} \
   "$CONTAINER" bash -c '
-  # stream-json gives per-turn JSONL (full session trace); requires --verbose
-  claude -p "$(cat /tmp/prompt.txt)" \
-    --output-format stream-json \
-    --verbose \
-    --max-turns 75 \
-    --model "$CLAUDE_MODEL" \
-    --dangerously-skip-permissions \
+  # Build claude args
+  CLAUDE_ARGS=(
+    -p "$(cat /tmp/prompt.txt)"
+    --output-format stream-json
+    --verbose
+    --max-turns 75
+    --model "$CLAUDE_MODEL"
+    --dangerously-skip-permissions
+    --no-session-persistence
+  )
+
+  # Load MCP config only in grafema mode
+  if [ -f /testbed/.mcp.json ]; then
+    CLAUDE_ARGS+=(--mcp-config /testbed/.mcp.json)
+  fi
+
+  claude "${CLAUDE_ARGS[@]}" \
     > /tmp/session.jsonl 2>/tmp/claude-stderr.log
   EXIT_CODE=$?
   # Extract final result line (type=result) for summary
@@ -352,29 +362,31 @@ fi
 # Count tokens and tool calls from session JSONL
 if [[ -f "$TASK_RESULTS/session.jsonl" ]]; then
   python3 -c "
-import json, sys
+import json
 in_tok = out_tok = 0
 tools = {}
+grafema_tools = 0
 for line in open('$TASK_RESULTS/session.jsonl'):
-    try:
-        ev = json.loads(line)
+    try: ev = json.loads(line)
     except: continue
-    # Count tokens from usage in result message
     u = ev.get('usage', {})
     in_tok += u.get('input_tokens', 0) + u.get('cache_read_input_tokens', 0)
     out_tok += u.get('output_tokens', 0)
-    # Count tool calls
-    if ev.get('type') == 'tool_use':
-        name = ev.get('tool', {}).get('name', ev.get('name', 'unknown'))
-        tools[name] = tools.get(name, 0) + 1
-print(f'Tokens:   in={in_tok} out={out_tok} total={in_tok+out_tok}')
-if tools:
-    print(f'Tools:    {sum(tools.values())} calls')
-    for name, count in sorted(tools.items(), key=lambda x: -x[1]):
-        print(f'  {name}: {count}')
-else:
-    print('Tools:    0 calls')
-print(f'Session:  {sum(1 for _ in open(\"$TASK_RESULTS/session.jsonl\"))} events')
+    # Tool calls are inside assistant message content blocks
+    if ev.get('type') == 'assistant':
+        for block in ev.get('message',{}).get('content',[]):
+            if block.get('type') == 'tool_use':
+                name = block.get('name','?')
+                tools[name] = tools.get(name, 0) + 1
+                if name.startswith('mcp__grafema'):
+                    grafema_tools += 1
+print(f'Tokens:   in={in_tok:,} out={out_tok:,} total={in_tok+out_tok:,}')
+total_tools = sum(tools.values())
+print(f'Tools:    {total_tools} calls (grafema MCP: {grafema_tools})')
+for name, count in sorted(tools.items(), key=lambda x: -x[1])[:10]:
+    print(f'  {name}: {count}')
+events = sum(1 for _ in open('$TASK_RESULTS/session.jsonl'))
+print(f'Session:  {events} events')
 " 2>/dev/null || echo "  (could not parse session.jsonl)"
 fi
 
