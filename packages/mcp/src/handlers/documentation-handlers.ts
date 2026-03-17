@@ -185,8 +185,10 @@ Files that fail analysis get ISSUE nodes (instead of being silently skipped):
 - oversized_ast — AST larger than maxAstSizeKb config (default: 50MB)
 - parse_error — parser failed
 - analysis_error — analyzer daemon failed
+- unresolved_external — call/import target likely outside analyzed root (info)
+- unresolved_internal — target file exists in graph but symbol not resolved (warning)
 
-Each ISSUE node has metadata: category, severity (warning/error), message.
+Each ISSUE node has metadata: category, severity (warning/error/info), message.
 MODULE → ISSUE via CONTAINS edge. A MODULE stub is created for failed files.
 
 Find issues: find_nodes(type="ISSUE")

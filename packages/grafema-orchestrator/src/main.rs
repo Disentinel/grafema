@@ -1215,6 +1215,61 @@ async fn main() -> Result<()> {
 
             let resolve_ms = resolve_timer.elapsed().as_millis() as u64;
 
+            // 8m. Generate unresolved diagnostics
+            {
+                // Query for unresolved CALL nodes (no outgoing CALLS edge)
+                let unresolved_calls_query = r#"violation(X, Name, File) :- node(X, "CALL"), attr(X, "name", Name), attr(X, "file", File), \+ edge(X, _, "CALLS")."#;
+
+                // Query for unresolved IMPORT_BINDING nodes (no outgoing IMPORTS_FROM edge)
+                let unresolved_imports_query = r#"violation(X, Name, File) :- node(X, "IMPORT_BINDING"), attr(X, "name", Name), attr(X, "file", File), \+ edge(X, _, "IMPORTS_FROM")."#;
+
+                let mut unresolved: Vec<(String, String, String)> = Vec::new();
+
+                for query in [unresolved_calls_query, unresolved_imports_query] {
+                    match rfdb.datalog_query(query).await {
+                        Ok(results) => {
+                            for r in results {
+                                let x = r.bindings.get("X").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                let name = r.bindings.get("Name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                let file = r.bindings.get("File").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                if !x.is_empty() {
+                                    unresolved.push((x, name, file));
+                                }
+                            }
+                        }
+                        Err(e) => tracing::warn!("Unresolved diagnostics query failed: {e}"),
+                    }
+                }
+
+                if !unresolved.is_empty() {
+                    let file_set: HashSet<String> = file_to_module.keys().cloned().collect();
+                    let (diag_nodes, diag_edges) = analyzer::unresolved_diagnostics_to_wire(
+                        &unresolved, &file_set, &authority,
+                    );
+
+                    if !diag_nodes.is_empty() {
+                        let diag_files = vec!["__grafema_virtual/unresolved-diagnostics".to_string()];
+                        rfdb.commit_batch(&diag_files, &diag_nodes, &diag_edges, true)
+                            .await
+                            .context("Failed to commit unresolved diagnostics")?;
+
+                        let external = diag_nodes.iter().filter(|n| {
+                            n.metadata.as_ref().is_some_and(|m| m.contains("unresolved_external"))
+                        }).count();
+                        let internal = diag_nodes.iter().filter(|n| {
+                            n.metadata.as_ref().is_some_and(|m| m.contains("unresolved_internal"))
+                        }).count();
+
+                        tracing::info!(
+                            total = unresolved.len(),
+                            external = external,
+                            internal = internal,
+                            "Unresolved diagnostics generated"
+                        );
+                    }
+                }
+            }
+
             // 9. Derive MODULE→MODULE DEPENDS_ON edges from IMPORTS_FROM
             profile!("depends_on_start", "imports_from_edges" => all_imports_from_edges.len());
             if !all_imports_from_edges.is_empty() {
