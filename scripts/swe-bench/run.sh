@@ -8,7 +8,7 @@
 # Requirements:
 #   - Docker running
 #   - tasks.json generated (see generate-tasks.py)
-#   - ~/.claude/ directory with valid auth
+#   - ANTHROPIC_API_KEY env var set (macOS Keychain auth doesn't work in Docker)
 #   - SWE-bench Docker images pulled (sweb.eval.x86_64.<repo>:<instance_id>)
 #
 # Examples:
@@ -26,7 +26,7 @@ TEMPLATES_DIR="$SCRIPT_DIR/templates"
 # --- Defaults ---
 MODE="baseline"
 RESULTS_DIR="$SCRIPT_DIR/results"
-MODEL="claude-sonnet-4-6-20250514"
+MODEL="sonnet"
 
 # --- Parse args ---
 TASK_ID=""
@@ -68,6 +68,12 @@ fi
 
 if [[ "$MODE" != "baseline" && "$MODE" != "grafema" ]]; then
   echo "Error: --mode must be 'baseline' or 'grafema'" >&2
+  exit 1
+fi
+
+# --- Check API key ---
+if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
+  echo "Error: ANTHROPIC_API_KEY env var required (macOS Keychain auth doesn't work in Docker)" >&2
   exit 1
 fi
 
@@ -144,7 +150,7 @@ START_TIME=$(date +%s)
 echo ""
 echo "--- Starting container ---"
 docker run -d --name "$CONTAINER" \
-  -v "$HOME/.claude:/root/.claude:ro" \
+  -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
   "$IMAGE" sleep 2h >/dev/null
 
 echo "Container: $CONTAINER"
@@ -225,10 +231,17 @@ else
   TEMPLATE="$TEMPLATES_DIR/prompt-baseline.md"
 fi
 
-PROMPT=$(sed "s|{{problem_statement}}|$PROBLEM_STATEMENT|" "$TEMPLATE")
+# Build prompt: replace {{problem_statement}} with actual problem text
+# Use Python to avoid shell escaping issues with special characters
+PROMPT=$(python3 -c "
+import sys
+template = open('$TEMPLATE').read()
+problem = sys.stdin.read()
+print(template.replace('{{problem_statement}}', problem))
+" <<< "$PROBLEM_STATEMENT")
 
 # Write prompt to a file inside the container (avoids shell escaping issues)
-docker exec "$CONTAINER" bash -c "cat > /tmp/prompt.txt" <<< "$PROMPT"
+echo "$PROMPT" | docker exec -i "$CONTAINER" bash -c "cat > /tmp/prompt.txt"
 
 # --- Run Claude Code agent ---
 echo ""
@@ -240,7 +253,7 @@ docker exec -w /testbed -e CLAUDE_MODEL="$MODEL" "$CONTAINER" bash -c '
     --output-format json \
     --max-turns 75 \
     --model "$CLAUDE_MODEL" \
-    --verbose \
+    --dangerously-skip-permissions \
     > /tmp/result.json 2>/tmp/claude-stderr.log
   EXIT_CODE=$?
   echo "Agent exit code: $EXIT_CODE"
