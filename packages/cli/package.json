@@ -46,6 +46,12 @@
     "commander": "^13.0.0",
     "yaml": "^2.8.2"
   },
+  "optionalDependencies": {
+    "@grafema/grafema-darwin-arm64": "0.3.16",
+    "@grafema/grafema-darwin-x64": "0.3.16",
+    "@grafema/grafema-linux-arm64": "0.3.16",
+    "@grafema/grafema-linux-x64": "0.3.16"
+  },
   "devDependencies": {
     "@types/node": "^25.0.8",
     "typescript": "^5.9.3"
