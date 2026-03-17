@@ -30,9 +30,43 @@ Grafema is NOT competing with TypeScript or static type checkers. It's for codeb
 
 - **Plugin-based, modular architecture**
 - Modules: `types`, `util`, `cli`, `mcp`, `gui`
-- `packages/util/` (`@grafema/util`) — query layer, config, diagnostics, guarantees, RFDB lifecycle
+- `packages/util/` (`@grafema/util`) — query layer, config, diagnostics, guarantees, RFDB lifecycle, manifest generation
 - `packages/grafema-orchestrator/` — Rust analysis binary (replaces old JS analysis pipeline)
 - RFDB server (`packages/rfdb-server/`) — Rust graph database, client-server architecture via unix-socket
+- `effects-db/` — curated side-effect annotations for npm packages and Node.js builtins
+
+### Manifests & Effects (API Surface Analysis)
+
+`grafema analyze` automatically generates `manifest.yaml` — a description of the package's exported API with side-effect annotations.
+
+**Manifest contents:**
+- `exports[]` — each exported symbol with `name`, `kind`, `semanticId`, `effects[]`, `params[]`
+- `imports[]` — dependencies as Package URLs (`pkg:npm/@scope/name`)
+- `capabilities` — summary stats (total_exports, total_internal_symbols, has_graph)
+- `confidence` — 0.0–1.0 score; lower when many exports have `UNKNOWN` effects
+
+**Effects taxonomy** (`effects-db/taxonomy.yaml`): PURE, MUTATION, IO, THROW, ASYNC, NONDETERMINISTIC, UNKNOWN. Effects propagate transitively through the call graph — if function A calls function B with IO, A inherits IO.
+
+**Effects-DB** (`effects-db/packages/*.yaml`, `effects-db/runtimes/node.yaml`): pre-built effect annotations for npm packages (commander, graphql, ajv, etc.) and Node.js builtins (fs, crypto, process, etc.). Used by ManifestGenerator for transitive effect computation.
+
+**ManifestResolver** (`@grafema/util`): load manifests from files/node_modules, resolve `import { foo } from 'pkg'` → effects + metadata.
+
+### METRIC and ISSUE Nodes
+
+The graph contains diagnostic node types beyond code structure:
+
+- **METRIC nodes** — per-file performance data (parse_ms, analyze_ms, file_size_bytes, ast_size_bytes, node_count, edge_count, total_ms). Linked to MODULE via OBSERVES edges. Query with `find_nodes(type="METRIC")` or Datalog.
+- **ISSUE nodes** — analysis problems (oversized files, parse errors, analysis failures). Linked to MODULE via CONTAINS edges. Query with `find_nodes(type="ISSUE")`.
+- **Phase METRIC nodes** — pipeline-level metrics (analysis/resolve/compact duration_ms). Synthetic file `__grafema_perf/{phase}`.
+
+Example Datalog: find files where parsing took > 500ms:
+```datalog
+slow(File, Val) :- node(M, "METRIC"), attr(M, "name", "parse_ms"), attr(M, "value", Val), gte(Val, 500), edge(M, Mod, "OBSERVES"), attr(Mod, "file", File).
+```
+
+### Datalog Numeric Predicates
+
+RFDB supports numeric comparison in Datalog rules: `gt(Val, Threshold)`, `lt(Val, Threshold)`, `gte(Val, Threshold)`, `lte(Val, Threshold)`. Values are parsed as f64. Use with `attr()` to filter by metadata values.
 
 ## Core Principles
 
@@ -314,6 +348,9 @@ trace_alias(variableName="handler", file="src/routes.ts")
 | Full file structure (all exports, classes, functions) | `get_file_overview(file="src/auth.ts")` |
 | Complex structural patterns (Datalog) | `query_graph(query="...")` |
 | Cross-package imports | `query_graph` with `attr(X, "source", "@grafema/util")` |
+| Analysis issues (oversized files, parse errors) | `find_nodes(type="ISSUE")` |
+| Per-file performance metrics | `find_nodes(type="METRIC", file="src/heavy.ts")` |
+| Slow files (Datalog + numeric compare) | `query_graph` with `gte(Val, 500)` on METRIC nodes |
 | Why code is structured this way | `query_decisions(module="<semantic-addr>")` |
 | Known issues / gotchas for an area | `query_knowledge(type="FACT", text="<area>")` |
 

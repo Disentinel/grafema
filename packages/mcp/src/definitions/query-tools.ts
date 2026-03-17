@@ -14,14 +14,17 @@ Set language to "cypher" for Cypher queries (e.g., MATCH (n:FUNCTION) RETURN n.n
 Default is Datalog.
 
 Available Datalog predicates:
-- type(Id, Type) - match nodes by type (alias: node)
+- type(Id, Type) / node(Id, Type) - match nodes by type
 - edge(Src, Dst, Type) - match edges
 - attr(Id, Name, Value) - match node attributes (name, file, line, etc.)
+- gt(Val, N), lt(Val, N), gte(Val, N), lte(Val, N) - numeric comparisons
+- \\+ - negation (not)
 
 NODE TYPES:
 - MODULE, FUNCTION, METHOD, CLASS, VARIABLE, PARAMETER
 - CALL, PROPERTY_ACCESS, METHOD_CALL, CALL_SITE
 - METRIC (performance metrics: value/unit/source in metadata, OBSERVES → MODULE)
+- ISSUE (analysis problems: category/severity/message in metadata, CONTAINS ← MODULE)
 - http:route, http:request, db:query, socketio:emit, socketio:on
 
 EDGE TYPES:
@@ -31,7 +34,8 @@ EDGE TYPES:
 EXAMPLES:
   violation(X) :- node(X, "MODULE").
   violation(X) :- node(X, "FUNCTION"), attr(X, "file", "src/api.js").
-  violation(X) :- node(X, "CALL"), \\+ edge(X, _, "CALLS").`,
+  violation(X) :- node(X, "CALL"), \\+ edge(X, _, "CALLS").
+  violation(F, Ms) :- node(M, "METRIC"), attr(M, "name", "parse_ms"), attr(M, "value", Ms), gte(Ms, 500), edge(M, Mod, "OBSERVES"), attr(Mod, "file", F).`,
     inputSchema: {
       type: 'object',
       properties: {
