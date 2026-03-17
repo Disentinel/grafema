@@ -777,8 +777,23 @@ impl GraphEngineV2 {
         changed_files: &[String],
         tags: HashMap<String, String>,
     ) -> Result<CommitDelta> {
+        self.commit_batch_ext(nodes, edges, changed_files, tags, &[])
+    }
+
+    /// Atomic batch commit with protected types.
+    ///
+    /// Nodes whose `node_type` is in `protected_types` are excluded from
+    /// tombstoning during re-analysis of their file.
+    pub fn commit_batch_ext(
+        &mut self,
+        nodes: Vec<NodeRecordV2>,
+        edges: Vec<EdgeRecordV2>,
+        changed_files: &[String],
+        tags: HashMap<String, String>,
+        protected_types: &[String],
+    ) -> Result<CommitDelta> {
         let delta = self.store
-            .commit_batch(nodes, edges, changed_files, tags, &mut self.manifest)?;
+            .commit_batch_ext(nodes, edges, changed_files, tags, &mut self.manifest, protected_types)?;
 
         // Reload tombstones from manifest so node_count()/edge_count()
         // and tombstone filtering stay correct within the same session.
