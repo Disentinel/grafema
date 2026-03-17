@@ -128,6 +128,20 @@ struct RequestEnvelope {
     params: serde_json::Value,
 }
 
+/// Direct-serialization envelope for commitBatch.
+/// Avoids intermediate serde_json::Value heap allocations (~70K+ objects
+/// for large batches) by serializing typed Rust structs straight to msgpack.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CommitBatchEnvelope<'a> {
+    request_id: String,
+    cmd: &'static str,
+    changed_files: &'a [String],
+    nodes: &'a [WireNode],
+    edges: &'a [WireEdge],
+    defer_index: bool,
+}
+
 // ---------------------------------------------------------------------------
 // Wire types — node & edge
 // ---------------------------------------------------------------------------
@@ -592,6 +606,9 @@ impl RfdbClient {
     }
 
     /// Send a single CommitBatch chunk to the server.
+    ///
+    /// Uses [`CommitBatchEnvelope`] for direct struct→msgpack serialization,
+    /// bypassing the `serde_json::Value` intermediate that `send_command` uses.
     async fn send_commit_batch_chunk(
         &mut self,
         changed_files: &[String],
@@ -599,13 +616,30 @@ impl RfdbClient {
         edges: &[WireEdge],
         defer_index: bool,
     ) -> Result<CommitDelta> {
-        let params = serde_json::json!({
-            "changedFiles": changed_files,
-            "nodes": nodes,
-            "edges": edges,
-            "deferIndex": defer_index,
-        });
-        let resp = self.send_command("commitBatch", params).await?;
+        let t0 = std::time::Instant::now();
+        let envelope = CommitBatchEnvelope {
+            request_id: self.next_request_id(),
+            cmd: "commitBatch",
+            changed_files,
+            nodes,
+            edges,
+            defer_index,
+        };
+        let payload = rmp_serde::to_vec_named(&envelope)?;
+        let serialize_ms = t0.elapsed().as_millis();
+        self.send_raw(&payload).await?;
+        let resp = self.recv_raw().await?;
+        resp.check_error()?;
+        let total_ms = t0.elapsed().as_millis();
+        tracing::info!(
+            serialize_ms,
+            server_ms = total_ms - serialize_ms,
+            total_ms,
+            nodes = nodes.len(),
+            edges = edges.len(),
+            files = changed_files.len(),
+            "commitBatch timing"
+        );
 
         Ok(resp.delta.unwrap_or_default())
     }
@@ -952,5 +986,83 @@ mod tests {
     #[test]
     fn test_commit_chunk_size_constant() {
         assert_eq!(COMMIT_CHUNK_SIZE, 10_000);
+    }
+
+    /// Verify that CommitBatchEnvelope produces identical msgpack to the old
+    /// RequestEnvelope + serde_json::Value approach.
+    #[test]
+    fn test_commit_batch_envelope_wire_compat() {
+        let files = vec!["src/main.js".to_string()];
+        let nodes = vec![WireNode {
+            id: "FUNCTION:foo:src/main.js".to_string(),
+            semantic_id: None,
+            node_type: Some("FUNCTION".to_string()),
+            name: Some("foo".to_string()),
+            file: Some("src/main.js".to_string()),
+            exported: false,
+            metadata: None,
+        }];
+        let edges = vec![WireEdge {
+            src: "a".to_string(),
+            dst: "b".to_string(),
+            edge_type: "CALLS".to_string(),
+            metadata: None,
+        }];
+
+        // New typed envelope
+        let new_envelope = CommitBatchEnvelope {
+            request_id: "r0".to_string(),
+            cmd: "commitBatch",
+            changed_files: &files,
+            nodes: &nodes,
+            edges: &edges,
+            defer_index: true,
+        };
+        let new_bytes = rmp_serde::to_vec_named(&new_envelope).unwrap();
+
+        // Old approach: serde_json::Value + RequestEnvelope with flatten
+        let old_envelope = RequestEnvelope {
+            request_id: "r0".to_string(),
+            cmd: "commitBatch".to_string(),
+            params: serde_json::json!({
+                "changedFiles": files,
+                "nodes": nodes,
+                "edges": edges,
+                "deferIndex": true,
+            }),
+        };
+        let old_bytes = rmp_serde::to_vec_named(&old_envelope).unwrap();
+
+        // Decode both to a generic Value to compare semantically
+        // (field order in msgpack maps may differ between the two approaches)
+        let new_decoded: serde_json::Value = rmp_serde::from_slice(&new_bytes).unwrap();
+        let old_decoded: serde_json::Value = rmp_serde::from_slice(&old_bytes).unwrap();
+
+        assert_eq!(new_decoded["requestId"], old_decoded["requestId"]);
+        assert_eq!(new_decoded["cmd"], old_decoded["cmd"]);
+        assert_eq!(new_decoded["changedFiles"], old_decoded["changedFiles"]);
+        assert_eq!(new_decoded["nodes"], old_decoded["nodes"]);
+        assert_eq!(new_decoded["edges"], old_decoded["edges"]);
+        assert_eq!(new_decoded["deferIndex"], old_decoded["deferIndex"]);
+    }
+
+    /// Verify CommitBatchEnvelope with empty collections serializes correctly.
+    #[test]
+    fn test_commit_batch_envelope_empty() {
+        let envelope = CommitBatchEnvelope {
+            request_id: "r5".to_string(),
+            cmd: "commitBatch",
+            changed_files: &[],
+            nodes: &[],
+            edges: &[],
+            defer_index: false,
+        };
+        let bytes = rmp_serde::to_vec_named(&envelope).unwrap();
+        let decoded: serde_json::Value = rmp_serde::from_slice(&bytes).unwrap();
+        assert_eq!(decoded["cmd"], "commitBatch");
+        assert_eq!(decoded["changedFiles"].as_array().unwrap().len(), 0);
+        assert_eq!(decoded["nodes"].as_array().unwrap().len(), 0);
+        assert_eq!(decoded["edges"].as_array().unwrap().len(), 0);
+        assert_eq!(decoded["deferIndex"], false);
     }
 }
