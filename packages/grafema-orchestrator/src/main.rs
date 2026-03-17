@@ -551,7 +551,21 @@ async fn main() -> Result<()> {
             // Single receiver: batch results from all languages and commit to RFDB.
             // Analysis and ingestion run in parallel (double-buffer).
             let mut batch = Vec::with_capacity(INGEST_BATCH_SIZE);
+            let mut batch_idx: usize = 0;
             while let Some(result) = rx.recv().await {
+                // Emit per-file profiler event
+                let m = &result.metrics;
+                let file_str = result.file.display().to_string();
+                profile!("file_analyzed",
+                    "file" => file_str,
+                    "file_size_bytes" => m.file_size_bytes,
+                    "ast_size_bytes" => m.ast_size_bytes,
+                    "parse_ms" => m.parse_ms,
+                    "analyze_ms" => m.analyze_ms,
+                    "total_ms" => m.total_ms,
+                    "node_count" => m.node_count,
+                    "edge_count" => m.edge_count
+                );
                 batch.push(result);
                 if batch.len() >= INGEST_BATCH_SIZE {
                     let full_batch = std::mem::replace(
@@ -559,6 +573,7 @@ async fn main() -> Result<()> {
                         Vec::with_capacity(INGEST_BATCH_SIZE),
                     );
                     let batch_len = full_batch.len();
+                    let commit_start = std::time::Instant::now();
                     let (n, e, err) = ingest_chunk(
                         full_batch,
                         &mut rfdb,
@@ -569,15 +584,31 @@ async fn main() -> Result<()> {
                         total_files,
                     )
                     .await?;
+                    let commit_ms = commit_start.elapsed().as_millis();
+                    profile!("batch_committed",
+                        "batch_index" => batch_idx,
+                        "files" => batch_len,
+                        "nodes" => n,
+                        "edges" => e,
+                        "commit_ms" => commit_ms
+                    );
                     total_nodes += n;
                     total_edges += e;
                     total_errors += err;
                     total_files_committed += batch_len;
+                    if batch_idx % 10 == 0 {
+                        let bp = analyzer::read_backpressure_count();
+                        if bp > 0 {
+                            profile!("channel_backpressure", "blocked_count" => bp);
+                        }
+                    }
+                    batch_idx += 1;
                 }
             }
             // Flush remaining results
             if !batch.is_empty() {
                 let batch_len = batch.len();
+                let commit_start = std::time::Instant::now();
                 let (n, e, err) = ingest_chunk(
                     batch,
                     &mut rfdb,
@@ -588,10 +619,22 @@ async fn main() -> Result<()> {
                     total_files,
                 )
                 .await?;
+                let commit_ms = commit_start.elapsed().as_millis();
+                profile!("batch_committed",
+                    "batch_index" => batch_idx,
+                    "files" => batch_len,
+                    "nodes" => n,
+                    "edges" => e,
+                    "commit_ms" => commit_ms
+                );
                 total_nodes += n;
                 total_edges += e;
                 total_errors += err;
                 total_files_committed += batch_len;
+                let bp = analyzer::read_backpressure_count();
+                if bp > 0 {
+                    profile!("channel_backpressure", "blocked_count" => bp);
+                }
             }
 
             // NOTE: Do NOT flush/rebuild_indexes here. Analysis commits
@@ -695,13 +738,15 @@ async fn main() -> Result<()> {
                     Ok(resolve_pool) => {
                         let handles = resolve_pool.acquire_all().await?;
 
+                        let stream_start = std::time::Instant::now();
                         let total_streamed = plugin::stream_resolve_nodes_to_workers(
                             &mut rfdb,
                             config::Language::JavaScript,
                             &handles,
                             &ws_packages,
                         ).await?;
-                        profile!("js_stream_complete", "nodes" => total_streamed);
+                        let stream_ms = stream_start.elapsed().as_millis();
+                        profile!("js_stream_complete", "nodes" => total_streamed, "duration_ms" => stream_ms);
 
                         if total_streamed > 0 {
                             let empty_ws: &[plugin::WorkspacePackageWire] = &[];
@@ -718,6 +763,7 @@ async fn main() -> Result<()> {
 
                             for (cmd, commit_name, ws) in js_commands {
                                 profile!("js_resolve_cmd_start", "cmd" => cmd);
+                                let cmd_start = std::time::Instant::now();
                                 let mut output = plugin::run_resolve_on_workers(cmd, &handles, ws)
                                     .await
                                     .with_context(|| format!("{commit_name} resolution failed"))?;
@@ -731,8 +777,10 @@ async fn main() -> Result<()> {
                                 }
 
                                 commit_resolve_output(&mut output, commit_name, generation, &mut rfdb).await?;
+                                let cmd_ms = cmd_start.elapsed().as_millis();
                                 profile!("js_resolve_cmd_complete", "cmd" => cmd,
-                                    "nodes" => output.nodes.len(), "edges" => output.edges.len());
+                                    "nodes" => output.nodes.len(), "edges" => output.edges.len(),
+                                    "duration_ms" => cmd_ms);
                             }
                         }
 
@@ -1203,9 +1251,11 @@ async fn main() -> Result<()> {
             // 2. DEPENDS_ON and other derived edges are committed with empty
             //    changed_files (no deletion phase), so old segment versions
             //    accumulate. Compaction deduplicates these by (src,dst,type) key.
-            profile!("compact_start");
+            let compact_start = std::time::Instant::now();
+            profile!("compact_start", "analysis_nodes" => total_nodes, "analysis_edges" => total_edges);
             rfdb.compact().await.context("Failed to compact")?;
-            profile!("compact_complete");
+            let compact_ms = compact_start.elapsed().as_millis();
+            profile!("compact_complete", "duration_ms" => compact_ms);
 
             // 10. Summary
             println!(

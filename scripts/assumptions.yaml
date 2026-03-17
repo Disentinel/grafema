@@ -1,0 +1,49 @@
+# Performance assumptions for Grafema analysis pipeline.
+# Used by profile-analyze.mjs for scaling predictions and calibration.
+#
+# Each assumption has an interval [lo, hi] representing the expected range.
+# When profiler data is available, the tool compares observed values against
+# these intervals and flags violations.
+
+assumptions:
+  - id: A1
+    name: parse_time_per_kb
+    interval: [0.5, 5.0]
+    unit: ms/KB
+    evidence: "OXC benchmarks ~1GB/s; observed median ~2ms/KB on typical TS files"
+
+  - id: A2
+    name: analyze_time_per_file
+    interval: [10, 200]
+    unit: ms
+    evidence: "Haskell daemon IPC round-trip. Small files ~15ms, complex files up to 200ms"
+
+  - id: A3
+    name: rfdb_commit_per_batch
+    interval: [10, 500]
+    unit: ms
+    evidence: "Batch of 20 files. Includes deletion O(F*shards*segs) + MessagePack serialize + unix socket"
+
+  - id: A4
+    name: memory_per_file
+    interval: [50, 5000]
+    unit: KB
+    evidence: "RSS growth per file in analysis batch. Wide range — depends on AST complexity"
+
+  - id: A5
+    name: ast_expansion_ratio
+    interval: [5, 50]
+    unit: ratio
+    evidence: "AST JSON bytes / source bytes. Small files expand more. 100KB AST = ~50x on tiny files"
+
+  - id: A6
+    name: resolve_time_per_node
+    interval: [0.01, 1.0]
+    unit: ms/node
+    evidence: "Time per node streamed through resolution pipeline. Depends on command type"
+
+  - id: A7
+    name: compact_time_per_1k_nodes
+    interval: [10, 300]
+    unit: ms
+    evidence: "Compaction time scales with total graph size. O(N log N) on segments"
