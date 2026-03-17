@@ -6,13 +6,13 @@
 [![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/Disentinel/fb8ae29db701dd788e1beaffb159ffef/raw/grafema-coverage.json)](https://github.com/Disentinel/grafema/actions/workflows/ci.yml)
 [![Benchmark](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/Disentinel/fb8ae29db701dd788e1beaffb159ffef/raw/rfdb-benchmark.json)](https://github.com/Disentinel/grafema/actions/workflows/benchmark.yml)
 
-> **v0.3.5-beta** — Early access. [Changelog](./CHANGELOG.md) | [Known limitations](./KNOWN_LIMITATIONS.md)
+> **v0.3.17** — Early access. [Changelog](./CHANGELOG.md) | [Known limitations](./KNOWN_LIMITATIONS.md)
 
 Graph-driven code analysis. AI should query the graph, not read code.
 
 Grafema builds a queryable graph from your codebase via static analysis. Instead of reading thousands of files, ask questions: "who calls this?", "where does this data come from?", "what does this file do?" — and get structured answers.
 
-**Self-analysis:** Grafema analyzes its own 490-file polyglot codebase (TypeScript + Haskell + Rust) into 175k nodes and 297k edges in ~25 seconds.
+**Self-analysis:** Grafema analyzes its own 500+ file polyglot codebase (TypeScript + Haskell + Rust + Elixir) in ~25 seconds.
 
 ## Quick Start
 
@@ -68,7 +68,7 @@ For Claude Desktop (`~/Library/Application Support/Claude/claude_desktop_config.
 }
 ```
 
-24+ MCP tools available: `find_nodes`, `find_calls`, `trace_dataflow`, `get_file_overview`, `describe`, `query_graph`, and more. The AI agent queries the graph instead of reading files — faster, cheaper, more complete.
+30+ MCP tools available: `find_nodes`, `find_calls`, `trace_dataflow`, `get_file_overview`, `describe`, `query_graph`, and more. The AI agent queries the graph instead of reading files — faster, cheaper, more complete.
 
 ## Why Grafema?
 
@@ -140,7 +140,7 @@ grafema analyze → Rust orchestrator → per-language analyzers → RFDB (graph
 - **RFDB** — columnar graph database optimized for code analysis workloads. Deferred indexing, L1 compaction, edge-type and by-name indexes.
 - **Orchestrator** — Rust binary that coordinates discovery, parsing, RFDB ingestion, and resolution across languages. Streaming pipeline frees AST memory after ingestion.
 - **Analyzers** — Haskell binaries per language (JS/TS, Rust, Java, Kotlin, Python, Go, C/C++, Swift, Elixir/Erlang). Run as daemon pools with JSON-over-stdio protocol.
-- **MCP Server** — 24+ tools for AI agent integration (find_nodes, find_calls, trace_dataflow, describe, query_graph, etc.)
+- **MCP Server** — 30+ tools for AI agent integration (find_nodes, find_calls, trace_dataflow, describe, query_graph, etc.)
 
 ## Environment Variables
 
