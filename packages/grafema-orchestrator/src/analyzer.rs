@@ -281,6 +281,30 @@ pub struct FileMetrics {
     pub total_ms: u64,
     pub node_count: usize,
     pub edge_count: usize,
+    // Semantic density metrics
+    pub decl_count: usize,
+    pub ref_count: usize,
+    pub call_count: usize,
+    pub prop_count: usize,
+}
+
+impl FileMetrics {
+    /// Populate semantic density counts from the analysis result's nodes.
+    /// Counts declarations (FUNCTION, METHOD, CLASS, VARIABLE, CONSTANT),
+    /// references (REFERENCE), calls (CALL), and property accesses (PROPERTY_ACCESS).
+    pub fn fill_density(&mut self, analysis: &Option<FileAnalysis>) {
+        if let Some(a) = analysis {
+            for node in &a.nodes {
+                match node.node_type.as_str() {
+                    "FUNCTION" | "METHOD" | "CLASS" | "VARIABLE" | "CONSTANT" => self.decl_count += 1,
+                    "REFERENCE" => self.ref_count += 1,
+                    "CALL" => self.call_count += 1,
+                    "PROPERTY_ACCESS" => self.prop_count += 1,
+                    _ => {}
+                }
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -528,6 +552,10 @@ const FILE_METRIC_DEFS: &[MetricDef] = &[
     MetricDef { name: "ast_size_bytes",  unit: "bytes", extract: |m| m.ast_size_bytes },
     MetricDef { name: "node_count",      unit: "count", extract: |m| m.node_count as u64 },
     MetricDef { name: "edge_count",      unit: "count", extract: |m| m.edge_count as u64 },
+    MetricDef { name: "decl_count",      unit: "count", extract: |m| m.decl_count as u64 },
+    MetricDef { name: "ref_count",       unit: "count", extract: |m| m.ref_count as u64 },
+    MetricDef { name: "call_count",      unit: "count", extract: |m| m.call_count as u64 },
+    MetricDef { name: "prop_count",      unit: "count", extract: |m| m.prop_count as u64 },
 ];
 
 /// Convert per-file performance metrics into RFDB wire nodes and edges.
@@ -1177,6 +1205,7 @@ async fn analyze_single_js_file(
         total_ms: total_ms as u64,
         node_count,
         edge_count,
+        ..Default::default()
     };
 
     // Log slow files (>5s) at info level, rest at debug
@@ -1428,6 +1457,7 @@ pub async fn analyze_haskell_files_parallel_pooled(
                                 total_ms,
                                 node_count,
                                 edge_count,
+                                ..Default::default()
                             },
                         }
                     },
@@ -1537,6 +1567,7 @@ pub async fn analyze_haskell_files_parallel(
                                 total_ms,
                                 node_count,
                                 edge_count,
+                                ..Default::default()
                             },
                         }
                     },
@@ -1676,6 +1707,7 @@ pub async fn analyze_beam_files_parallel_pooled(
                                 total_ms,
                                 node_count,
                                 edge_count,
+                                ..Default::default()
                             },
                         }
                     },
@@ -1785,6 +1817,7 @@ pub async fn analyze_beam_files_parallel(
                                 total_ms,
                                 node_count,
                                 edge_count,
+                                ..Default::default()
                             },
                         }
                     },
@@ -2018,6 +2051,7 @@ pub async fn analyze_rust_files_parallel_pooled(
                         let edge_count = analysis.edges.len();
                         AnalysisResult { file, analysis: Some(analysis), errors, issues: vec![], metrics: FileMetrics {
                             file_size_bytes, ast_size_bytes: 0, parse_ms, analyze_ms, total_ms, node_count, edge_count,
+                            ..Default::default()
                         } }
                     },
                     Err(e) => {
@@ -2098,6 +2132,7 @@ pub async fn analyze_rust_files_parallel(
                         let edge_count = analysis.edges.len();
                         AnalysisResult { file, analysis: Some(analysis), errors, issues: vec![], metrics: FileMetrics {
                             file_size_bytes, ast_size_bytes: 0, parse_ms, analyze_ms, total_ms, node_count, edge_count,
+                            ..Default::default()
                         } }
                     },
                     Err(e) => {
@@ -2469,6 +2504,7 @@ pub async fn analyze_java_files_parallel_pooled(
                                 total_ms,
                                 node_count,
                                 edge_count,
+                                ..Default::default()
                             },
                         }
                     },
@@ -2572,6 +2608,7 @@ pub async fn analyze_java_files_parallel(
                                 total_ms,
                                 node_count,
                                 edge_count,
+                                ..Default::default()
                             },
                         }
                     },
@@ -2943,6 +2980,7 @@ pub async fn analyze_kotlin_files_parallel_pooled(
                                 total_ms,
                                 node_count,
                                 edge_count,
+                                ..Default::default()
                             },
                         }
                     },
@@ -3046,6 +3084,7 @@ pub async fn analyze_kotlin_files_parallel(
                                 total_ms,
                                 node_count,
                                 edge_count,
+                                ..Default::default()
                             },
                         }
                     },
@@ -3451,6 +3490,7 @@ pub async fn analyze_files_parallel(
                                 total_ms,
                                 node_count,
                                 edge_count,
+                                ..Default::default()
                             },
                         }
                     },
@@ -3679,6 +3719,7 @@ pub async fn analyze_python_files_parallel_pooled(
                         let edge_count = analysis.edges.len();
                         AnalysisResult { file, analysis: Some(analysis), errors, issues: vec![], metrics: FileMetrics {
                             file_size_bytes, ast_size_bytes: 0, parse_ms, analyze_ms, total_ms, node_count, edge_count,
+                            ..Default::default()
                         } }
                     },
                     Err(e) => {
@@ -3759,6 +3800,7 @@ pub async fn analyze_python_files_parallel(
                         let edge_count = analysis.edges.len();
                         AnalysisResult { file, analysis: Some(analysis), errors, issues: vec![], metrics: FileMetrics {
                             file_size_bytes, ast_size_bytes: 0, parse_ms, analyze_ms, total_ms, node_count, edge_count,
+                            ..Default::default()
                         } }
                     },
                     Err(e) => {
@@ -4129,6 +4171,7 @@ pub async fn analyze_go_files_parallel_pooled(
                                 total_ms,
                                 node_count,
                                 edge_count,
+                                ..Default::default()
                             },
                         }
                     },
@@ -4232,6 +4275,7 @@ pub async fn analyze_go_files_parallel(
                                 total_ms,
                                 node_count,
                                 edge_count,
+                                ..Default::default()
                             },
                         }
                     },
@@ -4700,6 +4744,7 @@ pub async fn analyze_cpp_files_parallel_pooled(
                         let edge_count = analysis.edges.len();
                         AnalysisResult { file, analysis: Some(analysis), errors, issues: vec![], metrics: FileMetrics {
                             file_size_bytes, ast_size_bytes: 0, parse_ms, analyze_ms, total_ms, node_count, edge_count,
+                            ..Default::default()
                         } }
                     },
                     Err(e) => {
@@ -4815,6 +4860,7 @@ pub async fn analyze_cpp_files_parallel(
                         let edge_count = analysis.edges.len();
                         AnalysisResult { file, analysis: Some(analysis), errors, issues: vec![], metrics: FileMetrics {
                             file_size_bytes, ast_size_bytes: 0, parse_ms, analyze_ms, total_ms, node_count, edge_count,
+                            ..Default::default()
                         } }
                     },
                     Err(e) => {
@@ -4955,6 +5001,7 @@ pub async fn analyze_swift_files_parallel_pooled(
                                 total_ms,
                                 node_count,
                                 edge_count,
+                                ..Default::default()
                             },
                         }
                     },
@@ -5058,6 +5105,7 @@ pub async fn analyze_swift_files_parallel(
                                 total_ms,
                                 node_count,
                                 edge_count,
+                                ..Default::default()
                             },
                         }
                     },
@@ -5414,6 +5462,7 @@ pub async fn analyze_objc_files_parallel_pooled(
                                 total_ms,
                                 node_count,
                                 edge_count,
+                                ..Default::default()
                             },
                         }
                     },
@@ -5517,6 +5566,7 @@ pub async fn analyze_objc_files_parallel(
                                 total_ms,
                                 node_count,
                                 edge_count,
+                                ..Default::default()
                             },
                         }
                     },
@@ -7129,6 +7179,7 @@ mod tests {
             ast_size_bytes: 0,
             node_count: 0,
             edge_count: 0,
+            ..Default::default()
         };
         let (nodes, edges) = metrics_to_wire(&metrics, "src/app.js", "example.com/repo");
         assert_eq!(nodes.len(), 1);
@@ -7146,6 +7197,7 @@ mod tests {
             ast_size_bytes: 2048,
             node_count: 5,
             edge_count: 3,
+            ..Default::default()
         };
         let (nodes, edges) = metrics_to_wire(&metrics, "src/app.js", "example.com/repo");
 
