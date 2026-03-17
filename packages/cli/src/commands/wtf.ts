@@ -23,6 +23,7 @@ import { Spinner } from '../utils/spinner.js';
 interface WtfCommandOptions {
   project: string;
   depth: string;
+  detail: 'summary' | 'normal' | 'full';
   json?: boolean;
 }
 
@@ -31,12 +32,14 @@ export const wtfCommand = new Command('wtf')
   .argument('<symbol>', 'Variable, constant, or parameter name to trace')
   .option('-p, --project <path>', 'Project path', '.')
   .option('-d, --depth <n>', 'Max trace depth', '10')
+  .option('--detail <level>', 'Level of detail: summary, normal (default), full', 'normal')
   .option('-j, --json', 'Output as JSON')
   .addHelpText('after', `
 Examples:
   grafema wtf req.user              Trace where req.user comes from
   grafema wtf config.apiKey         Where does this value originate?
   grafema wtf userId --depth 5      Limit trace depth
+  grafema wtf token --detail full   Show complete chain (no compression)
   grafema wtf token --json          Output as JSON
 `)
   .action(async (symbol: string, options: WtfCommandOptions) => {
@@ -130,7 +133,7 @@ Examples:
       } else {
         console.log(`${found.name} (${found.type}) — ${found.file}${found.line ? ':' + found.line : ''}`);
         console.log('');
-        const narrative = renderTraceNarrative(results, found.name, { detail: 'normal' });
+        const narrative = renderTraceNarrative(results, found.name, { detail: options.detail || 'normal', hintStyle: 'cli' });
         console.log(narrative);
       }
     } finally {

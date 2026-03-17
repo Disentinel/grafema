@@ -156,6 +156,7 @@ Examples:
 
         const narrative = renderTraceNarrative(results, variable.name || variable.id, {
           detail: options.detail || 'normal',
+          hintStyle: 'cli',
         });
         console.log(narrative);
 
