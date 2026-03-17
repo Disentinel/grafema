@@ -22,6 +22,7 @@ import {
   ManifestResolver,
 } from '@grafema/util';
 import type { LogLevel } from '@grafema/util';
+import { scanExtensions, generateSmartConfig, writeConfig, updateGitignore, formatDetected } from '../utils/quickstart.js';
 
 export interface NodeEdgeCountBackend {
   nodeCount: () => Promise<number>;
@@ -149,7 +150,7 @@ async function ensureLanguageBinaries(configPath: string, log: (...args: unknown
   }
 }
 
-export async function analyzeAction(path: string, options: { service?: string; entrypoint?: string; clear?: boolean; quiet?: boolean; verbose?: boolean; debug?: boolean; logLevel?: string; logFile?: string; strict?: boolean; autoStart?: boolean }): Promise<void> {
+export async function analyzeAction(path: string, options: { service?: string; entrypoint?: string; clear?: boolean; quiet?: boolean; verbose?: boolean; debug?: boolean; logLevel?: string; logFile?: string; strict?: boolean; autoStart?: boolean; quickstart?: boolean }): Promise<void> {
   const projectPath = resolve(path);
   const grafemaDir = join(projectPath, '.grafema');
   const dbPath = join(grafemaDir, 'graph.rfdb');
@@ -192,7 +193,24 @@ export async function analyzeAction(path: string, options: { service?: string; e
   debug(`Using orchestrator: ${orchestratorBinary}`);
 
   // Find config file for the orchestrator
-  const configPath = findConfigFile(projectPath);
+  let configPath = findConfigFile(projectPath);
+  if (!configPath && options.quickstart) {
+    // Quickstart: auto-generate config by scanning the project
+    const detected = scanExtensions(projectPath);
+    const configContent = generateSmartConfig(detected);
+    writeConfig(projectPath, configContent);
+    updateGitignore(projectPath);
+
+    if (detected.size > 0) {
+      info(`Quickstart: detected ${formatDetected(detected)}`);
+    } else {
+      info('Quickstart: no supported files detected, using all extensions');
+    }
+    info('Created .grafema/config.yaml');
+    info('');
+
+    configPath = findConfigFile(projectPath);
+  }
   if (!configPath) {
     console.error('');
     console.error('No grafema config file found.');
@@ -201,7 +219,7 @@ export async function analyzeAction(path: string, options: { service?: string; e
     console.error(`  ${join(projectPath, 'grafema.config.yaml')}`);
     console.error(`  ${join(projectPath, '.grafema', 'config.yaml')}`);
     console.error('');
-    console.error('Create a config file with at least:');
+    console.error('Run with --quickstart to auto-generate, or create manually:');
     console.error('  root: "."');
     console.error('  include:');
     console.error('    - "**/*.js"');

@@ -4,76 +4,14 @@
 
 import { Command } from 'commander';
 import { resolve, join } from 'path';
-import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
+import { existsSync } from 'fs';
 import { spawn } from 'child_process';
 import { createInterface } from 'readline';
 import { fileURLToPath } from 'url';
-import { stringify as stringifyYAML } from 'yaml';
-import { GRAFEMA_VERSION, getSchemaVersion } from '@grafema/util';
 import { installSkill } from './setup-skill.js';
+import { generateSmartConfig, writeConfig, updateGitignore } from '../utils/quickstart.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
-
-/** All file extensions supported by Grafema's analyzers. */
-const SUPPORTED_EXTENSIONS = [
-  // JavaScript / TypeScript
-  'js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx',
-  // Rust
-  'rs',
-  // Java / Kotlin
-  'java', 'kt', 'kts',
-  // Python
-  'py', 'pyi',
-  // Go
-  'go',
-  // Haskell
-  'hs',
-  // C / C++
-  'c', 'h', 'cpp', 'hpp', 'cc', 'cxx', 'hxx', 'hh', 'inl', 'ipp', 'tpp', 'txx',
-  // Swift / Objective-C
-  'swift', 'm', 'mm',
-  // BEAM (Elixir / Erlang)
-  'ex', 'exs', 'erl', 'hrl',
-];
-
-/**
- * Generate config.yaml content.
- * Minimal config — the Rust orchestrator has its own built-in analysis pipeline.
- * Includes all supported extensions; orchestrator skips languages with no matching files.
- */
-function generateConfigYAML(): string {
-  const extensions = `*.{${SUPPORTED_EXTENSIONS.join(',')}}`;
-  const config = {
-    version: getSchemaVersion(GRAFEMA_VERSION),
-    root: '..',
-    include: [`**/${extensions}`],
-    exclude: [
-      '**/*.test.*',
-      '**/__tests__/**',
-      '**/node_modules/**',
-      '**/dist/**',
-      '**/build/**',
-      '**/target/**',
-      '**/vendor/**',
-      '**/.git/**',
-    ],
-  };
-
-  const yaml = stringifyYAML(config, {
-    lineWidth: 0,
-  });
-
-  return `# Grafema Configuration
-# Documentation: https://github.com/grafema/grafema#configuration
-# Supported: JS/TS, Rust, Java, Kotlin, Python, Go, Haskell, C/C++, Swift, Elixir/Erlang
-
-${yaml}
-# services:  # Explicit service definitions (overrides auto-discovery)
-#   - name: "api"
-#     path: "."
-#     entryPoint: "src/index.ts"
-`;
-}
 
 /**
  * Ask user a yes/no question. Returns true for yes (default), false for no.
@@ -187,27 +125,14 @@ Examples:
       return;
     }
 
-    // Create .grafema directory
-    if (!existsSync(grafemaDir)) {
-      mkdirSync(grafemaDir, { recursive: true });
-    }
-
-    // Write config
-    const configContent = generateConfigYAML();
-    writeFileSync(configPath, configContent);
+    // Write config (generateSmartConfig with no args = all extensions, same as before)
+    const configContent = generateSmartConfig();
+    writeConfig(projectPath, configContent);
     console.log('✓ Created .grafema/config.yaml');
 
     // Add to .gitignore if exists
-    const gitignorePath = join(projectPath, '.gitignore');
-    if (existsSync(gitignorePath)) {
-      const gitignore = readFileSync(gitignorePath, 'utf-8');
-      if (!gitignore.includes('.grafema/graph.rfdb')) {
-        writeFileSync(
-          gitignorePath,
-          gitignore + '\n# Grafema\n.grafema/graph.rfdb\n.grafema/rfdb.sock\n'
-        );
-        console.log('✓ Updated .gitignore');
-      }
+    if (updateGitignore(projectPath)) {
+      console.log('✓ Updated .gitignore');
     }
 
     // Auto-install Agent Skill for AI-assisted development

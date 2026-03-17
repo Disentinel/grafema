@@ -21,6 +21,7 @@ export const analyzeCommand = new Command('analyze')
   .option('--log-file <path>', 'Write all log output to a file')
   .option('--strict', 'Enable strict mode (fail on unresolved references)')
   .option('--no-auto-start', 'Do not auto-start RFDB server (require manual start)')
+  .option('--quickstart', 'Auto-initialize if no config exists (scan project, generate config)')
   .addHelpText('after', `
 Examples:
   grafema analyze                Analyze current project
@@ -32,5 +33,6 @@ Examples:
   grafema analyze --log-file out.log  Write all logs to a file
   grafema analyze --strict       Fail on unresolved references (debugging)
   grafema analyze --no-auto-start  Require manual server start
+  grafema analyze --quickstart   Auto-init and analyze (no grafema init needed)
 `)
   .action(analyzeAction);
