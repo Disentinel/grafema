@@ -16,6 +16,7 @@ use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{mpsc, Semaphore};
@@ -23,6 +24,13 @@ use tokio::sync::{mpsc, Semaphore};
 use crate::parser;
 use crate::process_pool::{PoolConfig, ProcessPool};
 use crate::rfdb::{WireEdge, WireNode};
+
+static BACKPRESSURE_COUNT: AtomicU64 = AtomicU64::new(0);
+
+/// Read and reset the backpressure counter (number of times channel was full).
+pub fn read_backpressure_count() -> u64 {
+    BACKPRESSURE_COUNT.swap(0, Ordering::Relaxed)
+}
 
 // ---------------------------------------------------------------------------
 // Deserialization types — FileAnalysis from grafema-analyzer stdout
@@ -257,6 +265,22 @@ pub struct AnalysisResult {
     pub errors: Vec<String>,
     /// Structured issues to persist as ISSUE nodes in the graph.
     pub issues: Vec<AnalysisIssue>,
+    /// Performance metrics for this file's analysis.
+    pub metrics: FileMetrics,
+}
+
+/// Per-file performance metrics captured during analysis.
+/// Carried in-band via `AnalysisResult` so main.rs can emit profiler events
+/// without passing the profiler into inner functions.
+#[derive(Debug, Default)]
+pub struct FileMetrics {
+    pub file_size_bytes: u64,
+    pub ast_size_bytes: u64,
+    pub parse_ms: u64,
+    pub analyze_ms: u64,
+    pub total_ms: u64,
+    pub node_count: usize,
+    pub edge_count: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -379,6 +403,117 @@ pub fn issues_to_wire(
     }
 
     (nodes, edges)
+}
+
+// ---------------------------------------------------------------------------
+// Metrics → wire nodes
+// ---------------------------------------------------------------------------
+
+/// Metric definition: name, unit, and extractor from `FileMetrics`.
+struct MetricDef {
+    name: &'static str,
+    unit: &'static str,
+    extract: fn(&FileMetrics) -> u64,
+}
+
+const FILE_METRIC_DEFS: &[MetricDef] = &[
+    MetricDef { name: "parse_ms",        unit: "ms",    extract: |m| m.parse_ms },
+    MetricDef { name: "analyze_ms",      unit: "ms",    extract: |m| m.analyze_ms },
+    MetricDef { name: "total_ms",        unit: "ms",    extract: |m| m.total_ms },
+    MetricDef { name: "file_size_bytes", unit: "bytes", extract: |m| m.file_size_bytes },
+    MetricDef { name: "ast_size_bytes",  unit: "bytes", extract: |m| m.ast_size_bytes },
+    MetricDef { name: "node_count",      unit: "count", extract: |m| m.node_count as u64 },
+    MetricDef { name: "edge_count",      unit: "count", extract: |m| m.edge_count as u64 },
+];
+
+/// Convert per-file performance metrics into RFDB wire nodes and edges.
+///
+/// For each non-zero metric in `FileMetrics`, creates:
+/// - A METRIC node with value/unit/source metadata
+/// - An OBSERVES edge from the METRIC node to the file's MODULE node
+pub fn metrics_to_wire(
+    metrics: &FileMetrics,
+    file: &str,
+    authority: &str,
+) -> (Vec<WireNode>, Vec<WireEdge>) {
+    let mut nodes = Vec::new();
+    let mut edges = Vec::new();
+
+    let module_id = compact_to_uri(&format!("MODULE#{file}"), authority);
+
+    for def in FILE_METRIC_DEFS {
+        let value = (def.extract)(metrics);
+        if value == 0 {
+            continue;
+        }
+
+        let compact_id = format!("{file}->METRIC->{}", def.name);
+        let metric_id = compact_to_uri(&compact_id, authority);
+
+        let mut meta = HashMap::new();
+        meta.insert("value".to_string(), serde_json::json!(value));
+        meta.insert("unit".to_string(), serde_json::json!(def.unit));
+        meta.insert("source".to_string(), serde_json::json!("orchestrator"));
+
+        nodes.push(WireNode {
+            id: metric_id.clone(),
+            semantic_id: Some(metric_id.clone()),
+            node_type: Some("METRIC".to_string()),
+            name: Some(def.name.to_string()),
+            file: Some(file.to_string()),
+            exported: false,
+            metadata: Some(serde_json::to_string(&meta).unwrap()),
+        });
+
+        edges.push(WireEdge {
+            src: metric_id,
+            dst: module_id.clone(),
+            edge_type: "OBSERVES".to_string(),
+            metadata: None,
+        });
+    }
+
+    (nodes, edges)
+}
+
+/// Convert pipeline-level phase metrics into RFDB wire nodes.
+///
+/// Phase metrics use synthetic file `__grafema_perf/{phase}` for proper
+/// GC tombstoning. No OBSERVES edges — phase metrics observe the pipeline,
+/// not a specific module.
+pub fn phase_metrics_to_wire(
+    phase_metrics: &[(&str, &str, u64, &str)], // (phase, metric_name, value, unit)
+    authority: &str,
+) -> (Vec<WireNode>, Vec<WireEdge>) {
+    let mut nodes = Vec::new();
+
+    for &(phase, metric_name, value, unit) in phase_metrics {
+        if value == 0 {
+            continue;
+        }
+
+        let synthetic_file = format!("__grafema_perf/{phase}");
+        let compact_id = format!("{synthetic_file}->METRIC->{metric_name}");
+        let metric_id = compact_to_uri(&compact_id, authority);
+
+        let mut meta = HashMap::new();
+        meta.insert("value".to_string(), serde_json::json!(value));
+        meta.insert("unit".to_string(), serde_json::json!(unit));
+        meta.insert("source".to_string(), serde_json::json!("orchestrator"));
+        meta.insert("phase".to_string(), serde_json::json!(phase));
+
+        nodes.push(WireNode {
+            id: metric_id.clone(),
+            semantic_id: Some(metric_id.clone()),
+            node_type: Some("METRIC".to_string()),
+            name: Some(metric_name.to_string()),
+            file: Some(synthetic_file),
+            exported: false,
+            metadata: Some(serde_json::to_string(&meta).unwrap()),
+        });
+    }
+
+    (nodes, Vec::new())
 }
 
 // ---------------------------------------------------------------------------
@@ -764,6 +899,9 @@ async fn analyze_single_js_file(
     let file_display = file.display().to_string();
     let file_start = std::time::Instant::now();
 
+    // Get file size for metrics
+    let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
     // Log milestones (every 100 files), or every file for small batches
     if total <= 100 || (idx + 1) % 100 == 0 || idx + 1 == total {
         tracing::info!("[{}/{}] Analyzing {}", idx + 1, total, file_display);
@@ -787,6 +925,11 @@ async fn analyze_single_js_file(
             analysis: None,
             errors,
             issues,
+            metrics: FileMetrics {
+                file_size_bytes,
+                total_ms: file_start.elapsed().as_millis() as u64,
+                ..FileMetrics::default()
+            },
         };
     }
 
@@ -827,6 +970,12 @@ async fn analyze_single_js_file(
                 analysis: None,
                 errors,
                 issues,
+                metrics: FileMetrics {
+                    file_size_bytes,
+                    parse_ms: parse_ms as u64,
+                    total_ms: file_start.elapsed().as_millis() as u64,
+                    ..FileMetrics::default()
+                },
             };
         }
         Err(e) => {
@@ -844,6 +993,12 @@ async fn analyze_single_js_file(
                 analysis: None,
                 errors,
                 issues,
+                metrics: FileMetrics {
+                    file_size_bytes,
+                    parse_ms: parse_ms as u64,
+                    total_ms: file_start.elapsed().as_millis() as u64,
+                    ..FileMetrics::default()
+                },
             };
         }
     };
@@ -863,16 +1018,25 @@ async fn analyze_single_js_file(
             analysis: None,
             errors,
             issues,
+            metrics: FileMetrics {
+                file_size_bytes,
+                ast_size_bytes: ast_size as u64,
+                parse_ms: parse_ms as u64,
+                total_ms: file_start.elapsed().as_millis() as u64,
+                ..FileMetrics::default()
+            },
         };
     }
 
     // Step 2: Send to daemon pool
-    let result = match analyze_file_pooled(&pool, &file, &ast_json).await {
+    let analyze_start = std::time::Instant::now();
+    let mut result = match analyze_file_pooled(&pool, &file, &ast_json).await {
         Ok(analysis) => AnalysisResult {
             file,
             analysis: Some(analysis),
             errors,
             issues,
+            metrics: FileMetrics::default(),
         },
         Err(e) => {
             let msg = format!("Analyzer failed for {file_display}: {e}");
@@ -888,11 +1052,28 @@ async fn analyze_single_js_file(
                 analysis: None,
                 errors,
                 issues,
+                metrics: FileMetrics::default(),
             }
         }
     };
 
+    let analyze_ms = analyze_start.elapsed().as_millis() as u64;
     let total_ms = file_start.elapsed().as_millis();
+
+    let (node_count, edge_count) = match &result.analysis {
+        Some(a) => (a.nodes.len(), a.edges.len()),
+        None => (0, 0),
+    };
+
+    result.metrics = FileMetrics {
+        file_size_bytes,
+        ast_size_bytes: ast_size as u64,
+        parse_ms: parse_ms as u64,
+        analyze_ms,
+        total_ms: total_ms as u64,
+        node_count,
+        edge_count,
+    };
 
     // Log slow files (>5s) at info level, rest at debug
     if total_ms > 5000 {
@@ -972,6 +1153,7 @@ pub async fn analyze_files_parallel_pooled(
                     analysis: None,
                     errors: vec![format!("Analysis task failed: {e}")],
                     issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
                 });
             }
         }
@@ -1026,7 +1208,14 @@ pub async fn analyze_js_files_streaming(
                 .await
                 .expect("Semaphore closed unexpectedly");
             let result = analyze_single_js_file(pool, file, idx, total, limits).await;
-            let _ = tx.send(result).await;
+            match tx.try_send(result) {
+                Ok(()) => {}
+                Err(mpsc::error::TrySendError::Full(result)) => {
+                    BACKPRESSURE_COUNT.fetch_add(1, Ordering::Relaxed);
+                    let _ = tx.send(result).await;
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => return,
+            }
         }));
     }
 
@@ -1089,6 +1278,9 @@ pub async fn analyze_haskell_files_parallel_pooled(
                     .await
                     .expect("Semaphore closed unexpectedly");
 
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
                 tracing::info!(
                     "[{}/{}] Analyzing Haskell file {}",
                     idx + 1,
@@ -1106,16 +1298,34 @@ pub async fn analyze_haskell_files_parallel_pooled(
                         analysis: None,
                         errors,
                         issues: vec![issue],
+                        metrics: FileMetrics {
+                            file_size_bytes,
+                            ..FileMetrics::default()
+                        },
                     };
                 }
 
                 // No OXC parsing step — send source directly to haskell-analyzer
                 match analyze_haskell_file_pooled(&pool, &file).await {
-                    Ok(analysis) => AnalysisResult {
-                        file,
-                        analysis: Some(analysis),
-                        errors,
-                        issues: vec![],
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult {
+                            file,
+                            analysis: Some(analysis),
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                ast_size_bytes: 0,
+                                parse_ms: 0,
+                                analyze_ms: total_ms,
+                                total_ms,
+                                node_count,
+                                edge_count,
+                            },
+                        }
                     },
                     Err(e) => {
                         let mut errors = errors;
@@ -1127,6 +1337,11 @@ pub async fn analyze_haskell_files_parallel_pooled(
                             analysis: None,
                             errors,
                             issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                total_ms: file_start.elapsed().as_millis() as u64,
+                                ..FileMetrics::default()
+                            },
                         }
                     }
                 }
@@ -1144,6 +1359,7 @@ pub async fn analyze_haskell_files_parallel_pooled(
                     analysis: None,
                     errors: vec![format!("Haskell analysis task failed: {e}")],
                     issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
                 });
             }
         }
@@ -1187,6 +1403,9 @@ pub async fn analyze_haskell_files_parallel(
                     .await
                     .expect("Semaphore closed unexpectedly");
 
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
                 tracing::info!(
                     "[{}/{}] Analyzing Haskell file {}",
                     idx + 1,
@@ -1197,11 +1416,25 @@ pub async fn analyze_haskell_files_parallel(
                 let errors = Vec::new();
 
                 match analyze_haskell_file(&file, &bin).await {
-                    Ok(analysis) => AnalysisResult {
-                        file,
-                        analysis: Some(analysis),
-                        errors,
-                        issues: vec![],
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult {
+                            file,
+                            analysis: Some(analysis),
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                ast_size_bytes: 0,
+                                parse_ms: 0,
+                                analyze_ms: total_ms,
+                                total_ms,
+                                node_count,
+                                edge_count,
+                            },
+                        }
                     },
                     Err(e) => {
                         let mut errors = errors;
@@ -1213,6 +1446,11 @@ pub async fn analyze_haskell_files_parallel(
                             analysis: None,
                             errors,
                             issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                total_ms: file_start.elapsed().as_millis() as u64,
+                                ..FileMetrics::default()
+                            },
                         }
                     }
                 }
@@ -1230,6 +1468,7 @@ pub async fn analyze_haskell_files_parallel(
                     analysis: None,
                     errors: vec![format!("Haskell analysis task failed: {e}")],
                     issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
                 });
             }
         }
@@ -1287,6 +1526,9 @@ pub async fn analyze_beam_files_parallel_pooled(
                     .await
                     .expect("Semaphore closed unexpectedly");
 
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
                 tracing::info!(
                     "[{}/{}] Analyzing BEAM file {}",
                     idx + 1,
@@ -1304,16 +1546,34 @@ pub async fn analyze_beam_files_parallel_pooled(
                         analysis: None,
                         errors,
                         issues: vec![issue],
+                        metrics: FileMetrics {
+                            file_size_bytes,
+                            ..FileMetrics::default()
+                        },
                     };
                 }
 
                 // No OXC parsing step — send source directly to beam-analyzer
                 match analyze_beam_file_pooled(&pool, &file).await {
-                    Ok(analysis) => AnalysisResult {
-                        file,
-                        analysis: Some(analysis),
-                        errors,
-                        issues: vec![],
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult {
+                            file,
+                            analysis: Some(analysis),
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                ast_size_bytes: 0,
+                                parse_ms: 0,
+                                analyze_ms: total_ms,
+                                total_ms,
+                                node_count,
+                                edge_count,
+                            },
+                        }
                     },
                     Err(e) => {
                         let mut errors = errors;
@@ -1325,6 +1585,11 @@ pub async fn analyze_beam_files_parallel_pooled(
                             analysis: None,
                             errors,
                             issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                total_ms: file_start.elapsed().as_millis() as u64,
+                                ..FileMetrics::default()
+                            },
                         }
                     }
                 }
@@ -1342,6 +1607,7 @@ pub async fn analyze_beam_files_parallel_pooled(
                     analysis: None,
                     errors: vec![format!("BEAM analysis task failed: {e}")],
                     issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
                 });
             }
         }
@@ -1385,6 +1651,9 @@ pub async fn analyze_beam_files_parallel(
                     .await
                     .expect("Semaphore closed unexpectedly");
 
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
                 tracing::info!(
                     "[{}/{}] Analyzing BEAM file {}",
                     idx + 1,
@@ -1395,11 +1664,25 @@ pub async fn analyze_beam_files_parallel(
                 let errors = Vec::new();
 
                 match analyze_beam_file(&file, &bin).await {
-                    Ok(analysis) => AnalysisResult {
-                        file,
-                        analysis: Some(analysis),
-                        errors,
-                        issues: vec![],
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult {
+                            file,
+                            analysis: Some(analysis),
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                ast_size_bytes: 0,
+                                parse_ms: 0,
+                                analyze_ms: total_ms,
+                                total_ms,
+                                node_count,
+                                edge_count,
+                            },
+                        }
                     },
                     Err(e) => {
                         let mut errors = errors;
@@ -1411,6 +1694,11 @@ pub async fn analyze_beam_files_parallel(
                             analysis: None,
                             errors,
                             issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                total_ms: file_start.elapsed().as_millis() as u64,
+                                ..FileMetrics::default()
+                            },
                         }
                     }
                 }
@@ -1428,6 +1716,7 @@ pub async fn analyze_beam_files_parallel(
                     analysis: None,
                     errors: vec![format!("BEAM analysis task failed: {e}")],
                     issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
                 });
             }
         }
@@ -1571,6 +1860,10 @@ pub async fn analyze_rust_files_parallel_pooled(
 
             tokio::spawn(async move {
                 let _permit = sem.acquire().await.expect("Semaphore closed unexpectedly");
+
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
                 tracing::info!("[{}/{}] Analyzing Rust file {}", idx + 1, total, file_display);
 
                 let mut errors = Vec::new();
@@ -1583,6 +1876,10 @@ pub async fn analyze_rust_files_parallel_pooled(
                         analysis: None,
                         errors,
                         issues: vec![issue],
+                        metrics: FileMetrics {
+                            file_size_bytes,
+                            ..FileMetrics::default()
+                        },
                     };
                 }
 
@@ -1594,24 +1891,34 @@ pub async fn analyze_rust_files_parallel_pooled(
                     }).await
                 };
 
+                let parse_ms = file_start.elapsed().as_millis() as u64;
+
                 let ast_json = match parse_result {
                     Ok(Ok(json)) => json,
                     Ok(Err(e)) => {
                         errors.push(format!("Rust parse failed for {file_display}: {e}"));
-                        return AnalysisResult { file, analysis: None, errors, issues: vec![] };
+                        return AnalysisResult { file, analysis: None, errors, issues: vec![], metrics: FileMetrics { file_size_bytes, parse_ms, total_ms: file_start.elapsed().as_millis() as u64, ..FileMetrics::default() } };
                     }
                     Err(e) => {
                         errors.push(format!("Rust parse task panicked for {file_display}: {e}"));
-                        return AnalysisResult { file, analysis: None, errors, issues: vec![] };
+                        return AnalysisResult { file, analysis: None, errors, issues: vec![], metrics: FileMetrics { file_size_bytes, parse_ms, total_ms: file_start.elapsed().as_millis() as u64, ..FileMetrics::default() } };
                     }
                 };
 
                 // Step 2: Send to daemon pool
                 match analyze_rust_file_pooled(&pool, &file, &ast_json).await {
-                    Ok(analysis) => AnalysisResult { file, analysis: Some(analysis), errors, issues: vec![] },
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let analyze_ms = total_ms.saturating_sub(parse_ms);
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult { file, analysis: Some(analysis), errors, issues: vec![], metrics: FileMetrics {
+                            file_size_bytes, ast_size_bytes: 0, parse_ms, analyze_ms, total_ms, node_count, edge_count,
+                        } }
+                    },
                     Err(e) => {
                         errors.push(format!("Rust analyzer failed for {file_display}: {e}"));
-                        AnalysisResult { file, analysis: None, errors, issues: vec![] }
+                        AnalysisResult { file, analysis: None, errors, issues: vec![], metrics: FileMetrics { file_size_bytes, parse_ms, total_ms: file_start.elapsed().as_millis() as u64, ..FileMetrics::default() } }
                     }
                 }
             })
@@ -1628,6 +1935,7 @@ pub async fn analyze_rust_files_parallel_pooled(
                     analysis: None,
                     errors: vec![format!("Rust analysis task failed: {e}")],
                     issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
                 });
             }
         }
@@ -1658,6 +1966,10 @@ pub async fn analyze_rust_files_parallel(
 
             tokio::spawn(async move {
                 let _permit = sem.acquire().await.expect("Semaphore closed unexpectedly");
+
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
                 tracing::info!("[{}/{}] Analyzing Rust file {}", idx + 1, total, file_display);
 
                 let mut errors = Vec::new();
@@ -1667,16 +1979,26 @@ pub async fn analyze_rust_files_parallel(
                     Ok(json) => json,
                     Err(e) => {
                         errors.push(format!("Rust parse failed for {file_display}: {e}"));
-                        return AnalysisResult { file, analysis: None, errors, issues: vec![] };
+                        return AnalysisResult { file, analysis: None, errors, issues: vec![], metrics: FileMetrics { file_size_bytes, total_ms: file_start.elapsed().as_millis() as u64, ..FileMetrics::default() } };
                     }
                 };
 
+                let parse_ms = file_start.elapsed().as_millis() as u64;
+
                 // Step 2: Spawn analyzer
                 match analyze_rust_file(&file, &ast_json, &bin).await {
-                    Ok(analysis) => AnalysisResult { file, analysis: Some(analysis), errors, issues: vec![] },
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let analyze_ms = total_ms.saturating_sub(parse_ms);
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult { file, analysis: Some(analysis), errors, issues: vec![], metrics: FileMetrics {
+                            file_size_bytes, ast_size_bytes: 0, parse_ms, analyze_ms, total_ms, node_count, edge_count,
+                        } }
+                    },
                     Err(e) => {
                         errors.push(format!("Rust analyzer failed for {file_display}: {e}"));
-                        AnalysisResult { file, analysis: None, errors, issues: vec![] }
+                        AnalysisResult { file, analysis: None, errors, issues: vec![], metrics: FileMetrics { file_size_bytes, parse_ms, total_ms: file_start.elapsed().as_millis() as u64, ..FileMetrics::default() } }
                     }
                 }
             })
@@ -1693,6 +2015,7 @@ pub async fn analyze_rust_files_parallel(
                     analysis: None,
                     errors: vec![format!("Rust analysis task failed: {e}")],
                     issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
                 });
             }
         }
@@ -1997,6 +2320,9 @@ pub async fn analyze_java_files_parallel_pooled(
                     .await
                     .expect("Semaphore closed unexpectedly");
 
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
                 tracing::info!(
                     "[{}/{}] Analyzing Java file {}",
                     idx + 1,
@@ -2014,15 +2340,33 @@ pub async fn analyze_java_files_parallel_pooled(
                         analysis: None,
                         errors,
                         issues: vec![issue],
+                        metrics: FileMetrics {
+                            file_size_bytes,
+                            ..FileMetrics::default()
+                        },
                     };
                 }
 
                 match analyze_java_file_pooled(&parser_pool, &analyzer_pool, &file).await {
-                    Ok(analysis) => AnalysisResult {
-                        file,
-                        analysis: Some(analysis),
-                        errors,
-                        issues: vec![],
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult {
+                            file,
+                            analysis: Some(analysis),
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                ast_size_bytes: 0,
+                                parse_ms: 0,
+                                analyze_ms: total_ms,
+                                total_ms,
+                                node_count,
+                                edge_count,
+                            },
+                        }
                     },
                     Err(e) => {
                         let mut errors = errors;
@@ -2034,6 +2378,11 @@ pub async fn analyze_java_files_parallel_pooled(
                             analysis: None,
                             errors,
                             issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                total_ms: file_start.elapsed().as_millis() as u64,
+                                ..FileMetrics::default()
+                            },
                         }
                     }
                 }
@@ -2051,6 +2400,7 @@ pub async fn analyze_java_files_parallel_pooled(
                     analysis: None,
                     errors: vec![format!("Java analysis task failed: {e}")],
                     issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
                 });
             }
         }
@@ -2088,6 +2438,9 @@ pub async fn analyze_java_files_parallel(
                     .await
                     .expect("Semaphore closed unexpectedly");
 
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
                 tracing::info!(
                     "[{}/{}] Analyzing Java file {}",
                     idx + 1,
@@ -2098,11 +2451,25 @@ pub async fn analyze_java_files_parallel(
                 let errors = Vec::new();
 
                 match analyze_java_file(&file, &analyzers).await {
-                    Ok(analysis) => AnalysisResult {
-                        file,
-                        analysis: Some(analysis),
-                        errors,
-                        issues: vec![],
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult {
+                            file,
+                            analysis: Some(analysis),
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                ast_size_bytes: 0,
+                                parse_ms: 0,
+                                analyze_ms: total_ms,
+                                total_ms,
+                                node_count,
+                                edge_count,
+                            },
+                        }
                     },
                     Err(e) => {
                         let mut errors = errors;
@@ -2114,6 +2481,11 @@ pub async fn analyze_java_files_parallel(
                             analysis: None,
                             errors,
                             issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                total_ms: file_start.elapsed().as_millis() as u64,
+                                ..FileMetrics::default()
+                            },
                         }
                     }
                 }
@@ -2131,6 +2503,7 @@ pub async fn analyze_java_files_parallel(
                     analysis: None,
                     errors: vec![format!("Java analysis task failed: {e}")],
                     issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
                 });
             }
         }
@@ -2421,6 +2794,9 @@ pub async fn analyze_kotlin_files_parallel_pooled(
                     .await
                     .expect("Semaphore closed unexpectedly");
 
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
                 tracing::info!(
                     "[{}/{}] Analyzing Kotlin file {}",
                     idx + 1,
@@ -2438,15 +2814,33 @@ pub async fn analyze_kotlin_files_parallel_pooled(
                         analysis: None,
                         errors,
                         issues: vec![issue],
+                        metrics: FileMetrics {
+                            file_size_bytes,
+                            ..FileMetrics::default()
+                        },
                     };
                 }
 
                 match analyze_kotlin_file_pooled(&parser_pool, &analyzer_pool, &file).await {
-                    Ok(analysis) => AnalysisResult {
-                        file,
-                        analysis: Some(analysis),
-                        errors,
-                        issues: vec![],
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult {
+                            file,
+                            analysis: Some(analysis),
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                ast_size_bytes: 0,
+                                parse_ms: 0,
+                                analyze_ms: total_ms,
+                                total_ms,
+                                node_count,
+                                edge_count,
+                            },
+                        }
                     },
                     Err(e) => {
                         let mut errors = errors;
@@ -2458,6 +2852,11 @@ pub async fn analyze_kotlin_files_parallel_pooled(
                             analysis: None,
                             errors,
                             issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                total_ms: file_start.elapsed().as_millis() as u64,
+                                ..FileMetrics::default()
+                            },
                         }
                     }
                 }
@@ -2475,6 +2874,7 @@ pub async fn analyze_kotlin_files_parallel_pooled(
                     analysis: None,
                     errors: vec![format!("Kotlin analysis task failed: {e}")],
                     issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
                 });
             }
         }
@@ -2512,6 +2912,9 @@ pub async fn analyze_kotlin_files_parallel(
                     .await
                     .expect("Semaphore closed unexpectedly");
 
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
                 tracing::info!(
                     "[{}/{}] Analyzing Kotlin file {}",
                     idx + 1,
@@ -2522,11 +2925,25 @@ pub async fn analyze_kotlin_files_parallel(
                 let errors = Vec::new();
 
                 match analyze_kotlin_file(&file, &analyzers).await {
-                    Ok(analysis) => AnalysisResult {
-                        file,
-                        analysis: Some(analysis),
-                        errors,
-                        issues: vec![],
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult {
+                            file,
+                            analysis: Some(analysis),
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                ast_size_bytes: 0,
+                                parse_ms: 0,
+                                analyze_ms: total_ms,
+                                total_ms,
+                                node_count,
+                                edge_count,
+                            },
+                        }
                     },
                     Err(e) => {
                         let mut errors = errors;
@@ -2538,6 +2955,11 @@ pub async fn analyze_kotlin_files_parallel(
                             analysis: None,
                             errors,
                             issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                total_ms: file_start.elapsed().as_millis() as u64,
+                                ..FileMetrics::default()
+                            },
                         }
                     }
                 }
@@ -2555,6 +2977,7 @@ pub async fn analyze_kotlin_files_parallel(
                     analysis: None,
                     errors: vec![format!("Kotlin analysis task failed: {e}")],
                     issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
                 });
             }
         }
@@ -2836,6 +3259,9 @@ pub async fn analyze_files_parallel(
                     .await
                     .expect("Semaphore closed unexpectedly");
 
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
                 // Log milestones (every 100 files), or every file for small batches
                 if total <= 100 || (idx + 1) % 100 == 0 || idx + 1 == total {
                     tracing::info!("[{}/{}] Analyzing {}", idx + 1, total, file_display);
@@ -2850,6 +3276,8 @@ pub async fn analyze_files_parallel(
                     let file_clone = file.clone();
                     tokio::task::spawn_blocking(move || parser::parse_file(&file_clone)).await
                 };
+
+                let parse_ms = file_start.elapsed().as_millis() as u64;
 
                 let ast_json = match parse_result {
                     Ok(Ok(result)) => {
@@ -2872,6 +3300,12 @@ pub async fn analyze_files_parallel(
                             analysis: None,
                             errors,
                             issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                parse_ms,
+                                total_ms: file_start.elapsed().as_millis() as u64,
+                                ..FileMetrics::default()
+                            },
                         };
                     }
                     Err(e) => {
@@ -2883,17 +3317,38 @@ pub async fn analyze_files_parallel(
                             analysis: None,
                             errors,
                             issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                parse_ms,
+                                total_ms: file_start.elapsed().as_millis() as u64,
+                                ..FileMetrics::default()
+                            },
                         };
                     }
                 };
 
                 // Step 2: Spawn grafema-analyzer
                 match analyze_file(&file, &ast_json, &bin).await {
-                    Ok(analysis) => AnalysisResult {
-                        file,
-                        analysis: Some(analysis),
-                        errors,
-                        issues: vec![],
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let analyze_ms = total_ms.saturating_sub(parse_ms);
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult {
+                            file,
+                            analysis: Some(analysis),
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                ast_size_bytes: 0,
+                                parse_ms,
+                                analyze_ms,
+                                total_ms,
+                                node_count,
+                                edge_count,
+                            },
+                        }
                     },
                     Err(e) => {
                         errors.push(format!(
@@ -2904,6 +3359,12 @@ pub async fn analyze_files_parallel(
                             analysis: None,
                             errors,
                             issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                parse_ms,
+                                total_ms: file_start.elapsed().as_millis() as u64,
+                                ..FileMetrics::default()
+                            },
                         }
                     }
                 }
@@ -2923,6 +3384,7 @@ pub async fn analyze_files_parallel(
                     analysis: None,
                     errors: vec![format!("Analysis task failed: {e}")],
                     issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
                 });
             }
         }
@@ -3059,6 +3521,10 @@ pub async fn analyze_python_files_parallel_pooled(
 
             tokio::spawn(async move {
                 let _permit = sem.acquire().await.expect("Semaphore closed unexpectedly");
+
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
                 tracing::info!("[{}/{}] Analyzing Python file {}", idx + 1, total, file_display);
 
                 let mut errors = Vec::new();
@@ -3071,6 +3537,10 @@ pub async fn analyze_python_files_parallel_pooled(
                         analysis: None,
                         errors,
                         issues: vec![issue],
+                        metrics: FileMetrics {
+                            file_size_bytes,
+                            ..FileMetrics::default()
+                        },
                     };
                 }
 
@@ -3082,24 +3552,34 @@ pub async fn analyze_python_files_parallel_pooled(
                     }).await
                 };
 
+                let parse_ms = file_start.elapsed().as_millis() as u64;
+
                 let ast_json = match parse_result {
                     Ok(Ok(json)) => json,
                     Ok(Err(e)) => {
                         errors.push(format!("Python parse failed for {file_display}: {e}"));
-                        return AnalysisResult { file, analysis: None, errors, issues: vec![] };
+                        return AnalysisResult { file, analysis: None, errors, issues: vec![], metrics: FileMetrics { file_size_bytes, parse_ms, total_ms: file_start.elapsed().as_millis() as u64, ..FileMetrics::default() } };
                     }
                     Err(e) => {
                         errors.push(format!("Python parse task panicked for {file_display}: {e}"));
-                        return AnalysisResult { file, analysis: None, errors, issues: vec![] };
+                        return AnalysisResult { file, analysis: None, errors, issues: vec![], metrics: FileMetrics { file_size_bytes, parse_ms, total_ms: file_start.elapsed().as_millis() as u64, ..FileMetrics::default() } };
                     }
                 };
 
                 // Step 2: Send to daemon pool
                 match analyze_python_file_pooled(&pool, &file, &ast_json).await {
-                    Ok(analysis) => AnalysisResult { file, analysis: Some(analysis), errors, issues: vec![] },
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let analyze_ms = total_ms.saturating_sub(parse_ms);
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult { file, analysis: Some(analysis), errors, issues: vec![], metrics: FileMetrics {
+                            file_size_bytes, ast_size_bytes: 0, parse_ms, analyze_ms, total_ms, node_count, edge_count,
+                        } }
+                    },
                     Err(e) => {
                         errors.push(format!("Python analyzer failed for {file_display}: {e}"));
-                        AnalysisResult { file, analysis: None, errors, issues: vec![] }
+                        AnalysisResult { file, analysis: None, errors, issues: vec![], metrics: FileMetrics { file_size_bytes, parse_ms, total_ms: file_start.elapsed().as_millis() as u64, ..FileMetrics::default() } }
                     }
                 }
             })
@@ -3116,6 +3596,7 @@ pub async fn analyze_python_files_parallel_pooled(
                     analysis: None,
                     errors: vec![format!("Python analysis task failed: {e}")],
                     issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
                 });
             }
         }
@@ -3146,6 +3627,10 @@ pub async fn analyze_python_files_parallel(
 
             tokio::spawn(async move {
                 let _permit = sem.acquire().await.expect("Semaphore closed unexpectedly");
+
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
                 tracing::info!("[{}/{}] Analyzing Python file {}", idx + 1, total, file_display);
 
                 let mut errors = Vec::new();
@@ -3155,16 +3640,26 @@ pub async fn analyze_python_files_parallel(
                     Ok(json) => json,
                     Err(e) => {
                         errors.push(format!("Python parse failed for {file_display}: {e}"));
-                        return AnalysisResult { file, analysis: None, errors, issues: vec![] };
+                        return AnalysisResult { file, analysis: None, errors, issues: vec![], metrics: FileMetrics { file_size_bytes, total_ms: file_start.elapsed().as_millis() as u64, ..FileMetrics::default() } };
                     }
                 };
 
+                let parse_ms = file_start.elapsed().as_millis() as u64;
+
                 // Step 2: Spawn analyzer
                 match analyze_python_file(&file, &ast_json, &bin).await {
-                    Ok(analysis) => AnalysisResult { file, analysis: Some(analysis), errors, issues: vec![] },
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let analyze_ms = total_ms.saturating_sub(parse_ms);
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult { file, analysis: Some(analysis), errors, issues: vec![], metrics: FileMetrics {
+                            file_size_bytes, ast_size_bytes: 0, parse_ms, analyze_ms, total_ms, node_count, edge_count,
+                        } }
+                    },
                     Err(e) => {
                         errors.push(format!("Python analyzer failed for {file_display}: {e}"));
-                        AnalysisResult { file, analysis: None, errors, issues: vec![] }
+                        AnalysisResult { file, analysis: None, errors, issues: vec![], metrics: FileMetrics { file_size_bytes, parse_ms, total_ms: file_start.elapsed().as_millis() as u64, ..FileMetrics::default() } }
                     }
                 }
             })
@@ -3181,6 +3676,7 @@ pub async fn analyze_python_files_parallel(
                     analysis: None,
                     errors: vec![format!("Python analysis task failed: {e}")],
                     issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
                 });
             }
         }
@@ -3484,6 +3980,9 @@ pub async fn analyze_go_files_parallel_pooled(
                     .await
                     .expect("Semaphore closed unexpectedly");
 
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
                 tracing::info!(
                     "[{}/{}] Analyzing Go file {}",
                     idx + 1,
@@ -3501,15 +4000,33 @@ pub async fn analyze_go_files_parallel_pooled(
                         analysis: None,
                         errors,
                         issues: vec![issue],
+                        metrics: FileMetrics {
+                            file_size_bytes,
+                            ..FileMetrics::default()
+                        },
                     };
                 }
 
                 match analyze_go_file_pooled(&parser_pool, &analyzer_pool, &file).await {
-                    Ok(analysis) => AnalysisResult {
-                        file,
-                        analysis: Some(analysis),
-                        errors,
-                        issues: vec![],
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult {
+                            file,
+                            analysis: Some(analysis),
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                ast_size_bytes: 0,
+                                parse_ms: 0,
+                                analyze_ms: total_ms,
+                                total_ms,
+                                node_count,
+                                edge_count,
+                            },
+                        }
                     },
                     Err(e) => {
                         let mut errors = errors;
@@ -3521,6 +4038,11 @@ pub async fn analyze_go_files_parallel_pooled(
                             analysis: None,
                             errors,
                             issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                total_ms: file_start.elapsed().as_millis() as u64,
+                                ..FileMetrics::default()
+                            },
                         }
                     }
                 }
@@ -3538,6 +4060,7 @@ pub async fn analyze_go_files_parallel_pooled(
                     analysis: None,
                     errors: vec![format!("Go analysis task failed: {e}")],
                     issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
                 });
             }
         }
@@ -3575,6 +4098,9 @@ pub async fn analyze_go_files_parallel(
                     .await
                     .expect("Semaphore closed unexpectedly");
 
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
                 tracing::info!(
                     "[{}/{}] Analyzing Go file {}",
                     idx + 1,
@@ -3585,11 +4111,25 @@ pub async fn analyze_go_files_parallel(
                 let errors = Vec::new();
 
                 match analyze_go_file(&file, &analyzers).await {
-                    Ok(analysis) => AnalysisResult {
-                        file,
-                        analysis: Some(analysis),
-                        errors,
-                        issues: vec![],
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult {
+                            file,
+                            analysis: Some(analysis),
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                ast_size_bytes: 0,
+                                parse_ms: 0,
+                                analyze_ms: total_ms,
+                                total_ms,
+                                node_count,
+                                edge_count,
+                            },
+                        }
                     },
                     Err(e) => {
                         let mut errors = errors;
@@ -3601,6 +4141,11 @@ pub async fn analyze_go_files_parallel(
                             analysis: None,
                             errors,
                             issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                total_ms: file_start.elapsed().as_millis() as u64,
+                                ..FileMetrics::default()
+                            },
                         }
                     }
                 }
@@ -3618,6 +4163,7 @@ pub async fn analyze_go_files_parallel(
                     analysis: None,
                     errors: vec![format!("Go analysis task failed: {e}")],
                     issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
                 });
             }
         }
@@ -3980,6 +4526,10 @@ pub async fn analyze_cpp_files_parallel_pooled(
 
             tokio::spawn(async move {
                 let _permit = sem.acquire().await.expect("Semaphore closed unexpectedly");
+
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
                 tracing::info!("[{}/{}] Analyzing C/C++ file {}", idx + 1, total, file_display);
 
                 let mut errors = Vec::new();
@@ -3992,6 +4542,10 @@ pub async fn analyze_cpp_files_parallel_pooled(
                         analysis: None,
                         errors,
                         issues: vec![issue],
+                        metrics: FileMetrics {
+                            file_size_bytes,
+                            ..FileMetrics::default()
+                        },
                     };
                 }
 
@@ -4019,24 +4573,34 @@ pub async fn analyze_cpp_files_parallel_pooled(
                     }).await
                 };
 
+                let parse_ms = file_start.elapsed().as_millis() as u64;
+
                 let ast_json = match parse_result {
                     Ok(Ok(json)) => json,
                     Ok(Err(e)) => {
                         errors.push(format!("C/C++ parse failed for {file_display}: {e}"));
-                        return AnalysisResult { file, analysis: None, errors, issues: vec![] };
+                        return AnalysisResult { file, analysis: None, errors, issues: vec![], metrics: FileMetrics { file_size_bytes, parse_ms, total_ms: file_start.elapsed().as_millis() as u64, ..FileMetrics::default() } };
                     }
                     Err(e) => {
                         errors.push(format!("C/C++ parse task panicked for {file_display}: {e}"));
-                        return AnalysisResult { file, analysis: None, errors, issues: vec![] };
+                        return AnalysisResult { file, analysis: None, errors, issues: vec![], metrics: FileMetrics { file_size_bytes, parse_ms, total_ms: file_start.elapsed().as_millis() as u64, ..FileMetrics::default() } };
                     }
                 };
 
                 // Step 2: Send to daemon pool
                 match analyze_cpp_file_pooled(&pool, &file, &ast_json).await {
-                    Ok(analysis) => AnalysisResult { file, analysis: Some(analysis), errors, issues: vec![] },
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let analyze_ms = total_ms.saturating_sub(parse_ms);
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult { file, analysis: Some(analysis), errors, issues: vec![], metrics: FileMetrics {
+                            file_size_bytes, ast_size_bytes: 0, parse_ms, analyze_ms, total_ms, node_count, edge_count,
+                        } }
+                    },
                     Err(e) => {
                         errors.push(format!("C/C++ analyzer failed for {file_display}: {e}"));
-                        AnalysisResult { file, analysis: None, errors, issues: vec![] }
+                        AnalysisResult { file, analysis: None, errors, issues: vec![], metrics: FileMetrics { file_size_bytes, parse_ms, total_ms: file_start.elapsed().as_millis() as u64, ..FileMetrics::default() } }
                     }
                 }
             })
@@ -4053,6 +4617,7 @@ pub async fn analyze_cpp_files_parallel_pooled(
                     analysis: None,
                     errors: vec![format!("C/C++ analysis task failed: {e}")],
                     issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
                 });
             }
         }
@@ -4091,6 +4656,10 @@ pub async fn analyze_cpp_files_parallel(
 
             tokio::spawn(async move {
                 let _permit = sem.acquire().await.expect("Semaphore closed unexpectedly");
+
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
                 tracing::info!("[{}/{}] Analyzing C/C++ file {}", idx + 1, total, file_display);
 
                 let mut errors = Vec::new();
@@ -4111,7 +4680,7 @@ pub async fn analyze_cpp_files_parallel(
                     Ok(s) => s,
                     Err(e) => {
                         errors.push(format!("Failed to read {file_display}: {e}"));
-                        return AnalysisResult { file, analysis: None, errors, issues: vec![] };
+                        return AnalysisResult { file, analysis: None, errors, issues: vec![], metrics: FileMetrics { file_size_bytes, total_ms: file_start.elapsed().as_millis() as u64, ..FileMetrics::default() } };
                     }
                 };
 
@@ -4119,7 +4688,7 @@ pub async fn analyze_cpp_files_parallel(
                     Ok(v) => v,
                     Err(e) => {
                         errors.push(format!("C/C++ parse failed for {file_display}: {e}"));
-                        return AnalysisResult { file, analysis: None, errors, issues: vec![] };
+                        return AnalysisResult { file, analysis: None, errors, issues: vec![], metrics: FileMetrics { file_size_bytes, total_ms: file_start.elapsed().as_millis() as u64, ..FileMetrics::default() } };
                     }
                 };
 
@@ -4127,16 +4696,26 @@ pub async fn analyze_cpp_files_parallel(
                     Ok(s) => s,
                     Err(e) => {
                         errors.push(format!("C/C++ AST serialization failed for {file_display}: {e}"));
-                        return AnalysisResult { file, analysis: None, errors, issues: vec![] };
+                        return AnalysisResult { file, analysis: None, errors, issues: vec![], metrics: FileMetrics { file_size_bytes, total_ms: file_start.elapsed().as_millis() as u64, ..FileMetrics::default() } };
                     }
                 };
 
+                let parse_ms = file_start.elapsed().as_millis() as u64;
+
                 // Step 2: Spawn analyzer
                 match analyze_cpp_file(&file, &ast_json, &bin).await {
-                    Ok(analysis) => AnalysisResult { file, analysis: Some(analysis), errors, issues: vec![] },
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let analyze_ms = total_ms.saturating_sub(parse_ms);
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult { file, analysis: Some(analysis), errors, issues: vec![], metrics: FileMetrics {
+                            file_size_bytes, ast_size_bytes: 0, parse_ms, analyze_ms, total_ms, node_count, edge_count,
+                        } }
+                    },
                     Err(e) => {
                         errors.push(format!("C/C++ analyzer failed for {file_display}: {e}"));
-                        AnalysisResult { file, analysis: None, errors, issues: vec![] }
+                        AnalysisResult { file, analysis: None, errors, issues: vec![], metrics: FileMetrics { file_size_bytes, parse_ms, total_ms: file_start.elapsed().as_millis() as u64, ..FileMetrics::default() } }
                     }
                 }
             })
@@ -4153,6 +4732,7 @@ pub async fn analyze_cpp_files_parallel(
                     analysis: None,
                     errors: vec![format!("C/C++ analysis task failed: {e}")],
                     issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
                 });
             }
         }
@@ -4226,6 +4806,9 @@ pub async fn analyze_swift_files_parallel_pooled(
                     .await
                     .expect("Semaphore closed unexpectedly");
 
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
                 tracing::info!(
                     "[{}/{}] Analyzing Swift file {}",
                     idx + 1,
@@ -4243,15 +4826,33 @@ pub async fn analyze_swift_files_parallel_pooled(
                         analysis: None,
                         errors,
                         issues: vec![issue],
+                        metrics: FileMetrics {
+                            file_size_bytes,
+                            ..FileMetrics::default()
+                        },
                     };
                 }
 
                 match analyze_swift_file_pooled(&parser_pool, &analyzer_pool, &file).await {
-                    Ok(analysis) => AnalysisResult {
-                        file,
-                        analysis: Some(analysis),
-                        errors,
-                        issues: vec![],
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult {
+                            file,
+                            analysis: Some(analysis),
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                ast_size_bytes: 0,
+                                parse_ms: 0,
+                                analyze_ms: total_ms,
+                                total_ms,
+                                node_count,
+                                edge_count,
+                            },
+                        }
                     },
                     Err(e) => {
                         let mut errors = errors;
@@ -4263,6 +4864,11 @@ pub async fn analyze_swift_files_parallel_pooled(
                             analysis: None,
                             errors,
                             issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                total_ms: file_start.elapsed().as_millis() as u64,
+                                ..FileMetrics::default()
+                            },
                         }
                     }
                 }
@@ -4280,6 +4886,7 @@ pub async fn analyze_swift_files_parallel_pooled(
                     analysis: None,
                     errors: vec![format!("Swift analysis task failed: {e}")],
                     issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
                 });
             }
         }
@@ -4317,6 +4924,9 @@ pub async fn analyze_swift_files_parallel(
                     .await
                     .expect("Semaphore closed unexpectedly");
 
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
                 tracing::info!(
                     "[{}/{}] Analyzing Swift file {}",
                     idx + 1,
@@ -4327,11 +4937,25 @@ pub async fn analyze_swift_files_parallel(
                 let errors = Vec::new();
 
                 match analyze_swift_file(&file, &analyzers).await {
-                    Ok(analysis) => AnalysisResult {
-                        file,
-                        analysis: Some(analysis),
-                        errors,
-                        issues: vec![],
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult {
+                            file,
+                            analysis: Some(analysis),
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                ast_size_bytes: 0,
+                                parse_ms: 0,
+                                analyze_ms: total_ms,
+                                total_ms,
+                                node_count,
+                                edge_count,
+                            },
+                        }
                     },
                     Err(e) => {
                         let mut errors = errors;
@@ -4343,6 +4967,11 @@ pub async fn analyze_swift_files_parallel(
                             analysis: None,
                             errors,
                             issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                total_ms: file_start.elapsed().as_millis() as u64,
+                                ..FileMetrics::default()
+                            },
                         }
                     }
                 }
@@ -4360,6 +4989,7 @@ pub async fn analyze_swift_files_parallel(
                     analysis: None,
                     errors: vec![format!("Swift analysis task failed: {e}")],
                     issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
                 });
             }
         }
@@ -4635,6 +5265,9 @@ pub async fn analyze_objc_files_parallel_pooled(
                     .await
                     .expect("Semaphore closed unexpectedly");
 
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
                 tracing::info!(
                     "[{}/{}] Analyzing Obj-C file {}",
                     idx + 1,
@@ -4652,15 +5285,33 @@ pub async fn analyze_objc_files_parallel_pooled(
                         analysis: None,
                         errors,
                         issues: vec![issue],
+                        metrics: FileMetrics {
+                            file_size_bytes,
+                            ..FileMetrics::default()
+                        },
                     };
                 }
 
                 match analyze_objc_file_pooled(&parser_pool, &analyzer_pool, &file).await {
-                    Ok(analysis) => AnalysisResult {
-                        file,
-                        analysis: Some(analysis),
-                        errors,
-                        issues: vec![],
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult {
+                            file,
+                            analysis: Some(analysis),
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                ast_size_bytes: 0,
+                                parse_ms: 0,
+                                analyze_ms: total_ms,
+                                total_ms,
+                                node_count,
+                                edge_count,
+                            },
+                        }
                     },
                     Err(e) => {
                         let mut errors = errors;
@@ -4672,6 +5323,11 @@ pub async fn analyze_objc_files_parallel_pooled(
                             analysis: None,
                             errors,
                             issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                total_ms: file_start.elapsed().as_millis() as u64,
+                                ..FileMetrics::default()
+                            },
                         }
                     }
                 }
@@ -4689,6 +5345,7 @@ pub async fn analyze_objc_files_parallel_pooled(
                     analysis: None,
                     errors: vec![format!("Obj-C analysis task failed: {e}")],
                     issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
                 });
             }
         }
@@ -4726,6 +5383,9 @@ pub async fn analyze_objc_files_parallel(
                     .await
                     .expect("Semaphore closed unexpectedly");
 
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
                 tracing::info!(
                     "[{}/{}] Analyzing Obj-C file {}",
                     idx + 1,
@@ -4736,11 +5396,25 @@ pub async fn analyze_objc_files_parallel(
                 let errors = Vec::new();
 
                 match analyze_objc_file(&file, &analyzers).await {
-                    Ok(analysis) => AnalysisResult {
-                        file,
-                        analysis: Some(analysis),
-                        errors,
-                        issues: vec![],
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult {
+                            file,
+                            analysis: Some(analysis),
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                ast_size_bytes: 0,
+                                parse_ms: 0,
+                                analyze_ms: total_ms,
+                                total_ms,
+                                node_count,
+                                edge_count,
+                            },
+                        }
                     },
                     Err(e) => {
                         let mut errors = errors;
@@ -4752,6 +5426,11 @@ pub async fn analyze_objc_files_parallel(
                             analysis: None,
                             errors,
                             issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                total_ms: file_start.elapsed().as_millis() as u64,
+                                ..FileMetrics::default()
+                            },
                         }
                     }
                 }
@@ -4769,6 +5448,7 @@ pub async fn analyze_objc_files_parallel(
                     analysis: None,
                     errors: vec![format!("Obj-C analysis task failed: {e}")],
                     issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
                 });
             }
         }
@@ -5194,6 +5874,7 @@ mod tests {
             }),
             errors: vec![],
             issues: vec![],
+            metrics: FileMetrics::default(),
         }];
 
         let nodes = collect_resolve_nodes(&results);
@@ -5231,12 +5912,14 @@ mod tests {
                 }),
                 errors: vec![],
                 issues: vec![],
+                metrics: FileMetrics::default(),
             },
             AnalysisResult {
                 file: PathBuf::from("fail.js"),
                 analysis: None,
                 errors: vec!["parse failed".to_string()],
                 issues: vec![],
+                metrics: FileMetrics::default(),
             },
         ];
 
@@ -5425,6 +6108,7 @@ mod tests {
             }),
             errors: vec![],
             issues: vec![],
+            metrics: FileMetrics::default(),
         }];
 
         let nodes = collect_resolve_nodes(&results);
@@ -5478,6 +6162,7 @@ mod tests {
                 }),
                 errors: vec![],
                 issues: vec![],
+                metrics: FileMetrics::default(),
             },
             AnalysisResult {
                 file: PathBuf::from("src/Main.hs"),
@@ -5511,6 +6196,7 @@ mod tests {
                 }),
                 errors: vec![],
                 issues: vec![],
+                metrics: FileMetrics::default(),
             },
         ];
 
@@ -5577,6 +6263,7 @@ mod tests {
             }),
             errors: vec![],
             issues: vec![],
+            metrics: FileMetrics::default(),
         }];
 
         let nodes = collect_resolve_nodes_for_lang(
@@ -5622,6 +6309,7 @@ mod tests {
                 }),
                 errors: vec![],
                 issues: vec![],
+                metrics: FileMetrics::default(),
             },
             AnalysisResult {
                 file: PathBuf::from("src/Bar.kt"),
@@ -5655,6 +6343,7 @@ mod tests {
                 }),
                 errors: vec![],
                 issues: vec![],
+                metrics: FileMetrics::default(),
             },
             // JS file should be excluded
             AnalysisResult {
@@ -5679,6 +6368,7 @@ mod tests {
                 }),
                 errors: vec![],
                 issues: vec![],
+                metrics: FileMetrics::default(),
             },
         ];
 
@@ -5720,6 +6410,7 @@ mod tests {
             }),
             errors: vec![],
             issues: vec![],
+            metrics: FileMetrics::default(),
         }];
         let nodes = collect_resolve_nodes_for_jvm(&results);
         assert!(nodes.is_empty());
@@ -6168,6 +6859,127 @@ mod tests {
         assert_eq!(nodes.len(), 3);
         // 2 CONTAINS edges
         assert_eq!(edges.len(), 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // metrics_to_wire tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn metrics_to_wire_default_returns_empty() {
+        let metrics = FileMetrics::default();
+        let (nodes, edges) = metrics_to_wire(&metrics, "src/app.js", "example.com/repo");
+        assert!(nodes.is_empty());
+        assert!(edges.is_empty());
+    }
+
+    #[test]
+    fn metrics_to_wire_skips_zero_values() {
+        let metrics = FileMetrics {
+            parse_ms: 42,
+            analyze_ms: 0,
+            total_ms: 0,
+            file_size_bytes: 0,
+            ast_size_bytes: 0,
+            node_count: 0,
+            edge_count: 0,
+        };
+        let (nodes, edges) = metrics_to_wire(&metrics, "src/app.js", "example.com/repo");
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(edges.len(), 1);
+        assert_eq!(nodes[0].name.as_deref(), Some("parse_ms"));
+    }
+
+    #[test]
+    fn metrics_to_wire_all_fields() {
+        let metrics = FileMetrics {
+            parse_ms: 10,
+            analyze_ms: 20,
+            total_ms: 30,
+            file_size_bytes: 1024,
+            ast_size_bytes: 2048,
+            node_count: 5,
+            edge_count: 3,
+        };
+        let (nodes, edges) = metrics_to_wire(&metrics, "src/app.js", "example.com/repo");
+
+        // 7 non-zero metrics → 7 nodes + 7 OBSERVES edges
+        assert_eq!(nodes.len(), 7);
+        assert_eq!(edges.len(), 7);
+
+        // All nodes are METRIC type
+        for node in &nodes {
+            assert_eq!(node.node_type.as_deref(), Some("METRIC"));
+            assert_eq!(node.file.as_deref(), Some("src/app.js"));
+        }
+
+        // All edges are OBSERVES pointing to MODULE
+        let module_id = compact_to_uri("MODULE#src/app.js", "example.com/repo");
+        for edge in &edges {
+            assert_eq!(edge.edge_type, "OBSERVES");
+            assert_eq!(edge.dst, module_id);
+        }
+
+        // Check first metric metadata
+        let meta: HashMap<String, serde_json::Value> =
+            serde_json::from_str(nodes[0].metadata.as_ref().unwrap()).unwrap();
+        assert_eq!(meta["value"], 10);
+        assert_eq!(meta["unit"], "ms");
+        assert_eq!(meta["source"], "orchestrator");
+    }
+
+    #[test]
+    fn metrics_to_wire_uri_format() {
+        let metrics = FileMetrics {
+            total_ms: 100,
+            ..Default::default()
+        };
+        let (nodes, _) = metrics_to_wire(&metrics, "src/app.js", "example.com/repo");
+        assert_eq!(nodes.len(), 1);
+        // ID should be a grafema:// URI
+        assert!(nodes[0].id.starts_with("grafema://example.com/repo/src/app.js#"));
+    }
+
+    // -----------------------------------------------------------------------
+    // phase_metrics_to_wire tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn phase_metrics_to_wire_empty() {
+        let (nodes, edges) = phase_metrics_to_wire(&[], "example.com/repo");
+        assert!(nodes.is_empty());
+        assert!(edges.is_empty());
+    }
+
+    #[test]
+    fn phase_metrics_to_wire_skips_zero() {
+        let metrics = vec![
+            ("analysis", "duration_ms", 0u64, "ms"),
+            ("analysis", "total_nodes", 500u64, "count"),
+        ];
+        let (nodes, edges) = phase_metrics_to_wire(&metrics, "example.com/repo");
+        assert_eq!(nodes.len(), 1);
+        assert!(edges.is_empty());
+        assert_eq!(nodes[0].name.as_deref(), Some("total_nodes"));
+    }
+
+    #[test]
+    fn phase_metrics_to_wire_synthetic_file() {
+        let metrics = vec![
+            ("analysis", "duration_ms", 5000u64, "ms"),
+            ("compact", "duration_ms", 200u64, "ms"),
+        ];
+        let (nodes, _) = phase_metrics_to_wire(&metrics, "example.com/repo");
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(nodes[0].file.as_deref(), Some("__grafema_perf/analysis"));
+        assert_eq!(nodes[1].file.as_deref(), Some("__grafema_perf/compact"));
+
+        // Check phase metadata
+        let meta: HashMap<String, serde_json::Value> =
+            serde_json::from_str(nodes[0].metadata.as_ref().unwrap()).unwrap();
+        assert_eq!(meta["phase"], "analysis");
+        assert_eq!(meta["value"], 5000);
+        assert_eq!(meta["unit"], "ms");
     }
 
     #[test]

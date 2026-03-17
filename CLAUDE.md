@@ -223,6 +223,18 @@ node --test test/unit/specific-file.test.js             # Run single test file
 
 **CRITICAL: Tests run against `dist/`, not `src/`.** Always `pnpm build` before running tests after any TypeScript changes.
 
+## Performance Profiling
+
+Full guide: `_ai/profiling-guide.md`
+
+```bash
+grafema analyze                                                          # Produces .grafema/analysis-profile.jsonl
+node scripts/profile-analyze.mjs .grafema/analysis-profile.jsonl         # Report
+node scripts/profile-analyze.mjs ... --predict 14000 --assumptions scripts/assumptions.yaml  # Scaling predictions
+```
+
+Key files: `profiler.rs` (JSONL emitter), `analyzer.rs` (`FileMetrics`), `scripts/profile-analyze.mjs` (analysis tool), `scripts/assumptions.yaml` (interval bounds).
+
 ## Skills
 
 Project-specific skills in `.claude/skills/`. Key skills:

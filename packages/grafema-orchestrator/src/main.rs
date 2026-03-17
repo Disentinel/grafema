@@ -318,6 +318,7 @@ async fn main() -> Result<()> {
             //    Other: per-language streaming (results forwarded after pool completes)
             let size_limits = config::SizeLimits::from_config(&cfg);
             const INGEST_BATCH_SIZE: usize = 20;
+            let analysis_timer = std::time::Instant::now();
             let mut total_nodes = 0usize;
             let mut total_edges = 0usize;
             let mut total_errors = 0usize;
@@ -379,6 +380,34 @@ async fn main() -> Result<()> {
                         batch_files.push(analysis.file.clone());
                         batch_nodes.extend(wire_nodes);
                         batch_edges.extend(wire_edges);
+                    }
+
+                    // Persist METRIC nodes for per-file performance data
+                    {
+                        let abs_file = result.file.display().to_string();
+                        let root_prefix = if root_str.ends_with('/') {
+                            root_str.to_string()
+                        } else {
+                            format!("{root_str}/")
+                        };
+                        let rel_file = abs_file.strip_prefix(&root_prefix)
+                            .unwrap_or(&abs_file);
+
+                        let (mut metric_nodes, mut metric_edges) =
+                            analyzer::metrics_to_wire(&result.metrics, rel_file, authority);
+
+                        for node in &mut metric_nodes {
+                            gc::stamp_node_metadata(&mut node.metadata, generation, "orchestrator-metrics");
+                        }
+                        for edge in &mut metric_edges {
+                            gc::stamp_edge_metadata(&mut edge.metadata, generation, "orchestrator-metrics");
+                        }
+
+                        nodes_total += metric_nodes.len();
+                        edges_total += metric_edges.len();
+
+                        batch_nodes.extend(metric_nodes);
+                        batch_edges.extend(metric_edges);
                     }
 
                     // Persist ISSUE nodes for analysis problems (oversized files, parse errors, etc.)
@@ -551,7 +580,21 @@ async fn main() -> Result<()> {
             // Single receiver: batch results from all languages and commit to RFDB.
             // Analysis and ingestion run in parallel (double-buffer).
             let mut batch = Vec::with_capacity(INGEST_BATCH_SIZE);
+            let mut batch_idx: usize = 0;
             while let Some(result) = rx.recv().await {
+                // Emit per-file profiler event
+                let m = &result.metrics;
+                let file_str = result.file.display().to_string();
+                profile!("file_analyzed",
+                    "file" => file_str,
+                    "file_size_bytes" => m.file_size_bytes,
+                    "ast_size_bytes" => m.ast_size_bytes,
+                    "parse_ms" => m.parse_ms,
+                    "analyze_ms" => m.analyze_ms,
+                    "total_ms" => m.total_ms,
+                    "node_count" => m.node_count,
+                    "edge_count" => m.edge_count
+                );
                 batch.push(result);
                 if batch.len() >= INGEST_BATCH_SIZE {
                     let full_batch = std::mem::replace(
@@ -559,6 +602,7 @@ async fn main() -> Result<()> {
                         Vec::with_capacity(INGEST_BATCH_SIZE),
                     );
                     let batch_len = full_batch.len();
+                    let commit_start = std::time::Instant::now();
                     let (n, e, err) = ingest_chunk(
                         full_batch,
                         &mut rfdb,
@@ -569,15 +613,31 @@ async fn main() -> Result<()> {
                         total_files,
                     )
                     .await?;
+                    let commit_ms = commit_start.elapsed().as_millis();
+                    profile!("batch_committed",
+                        "batch_index" => batch_idx,
+                        "files" => batch_len,
+                        "nodes" => n,
+                        "edges" => e,
+                        "commit_ms" => commit_ms
+                    );
                     total_nodes += n;
                     total_edges += e;
                     total_errors += err;
                     total_files_committed += batch_len;
+                    if batch_idx % 10 == 0 {
+                        let bp = analyzer::read_backpressure_count();
+                        if bp > 0 {
+                            profile!("channel_backpressure", "blocked_count" => bp);
+                        }
+                    }
+                    batch_idx += 1;
                 }
             }
             // Flush remaining results
             if !batch.is_empty() {
                 let batch_len = batch.len();
+                let commit_start = std::time::Instant::now();
                 let (n, e, err) = ingest_chunk(
                     batch,
                     &mut rfdb,
@@ -588,10 +648,22 @@ async fn main() -> Result<()> {
                     total_files,
                 )
                 .await?;
+                let commit_ms = commit_start.elapsed().as_millis();
+                profile!("batch_committed",
+                    "batch_index" => batch_idx,
+                    "files" => batch_len,
+                    "nodes" => n,
+                    "edges" => e,
+                    "commit_ms" => commit_ms
+                );
                 total_nodes += n;
                 total_edges += e;
                 total_errors += err;
                 total_files_committed += batch_len;
+                let bp = analyzer::read_backpressure_count();
+                if bp > 0 {
+                    profile!("channel_backpressure", "blocked_count" => bp);
+                }
             }
 
             // NOTE: Do NOT flush/rebuild_indexes here. Analysis commits
@@ -629,7 +701,10 @@ async fn main() -> Result<()> {
             // 7. Update mtime tracker for next incremental run
             gc::update_mtimes(&mut gen_tracker, &changed_files)?;
 
+            let analysis_ms = analysis_timer.elapsed().as_millis() as u64;
+
             // Collect IMPORTS_FROM edges from all import resolvers for DEPENDS_ON derivation
+            let resolve_timer = std::time::Instant::now();
             let mut all_imports_from_edges: Vec<(String, String)> = Vec::new();
 
             // Build file → MODULE semantic ID map from RFDB (full graph)
@@ -695,13 +770,15 @@ async fn main() -> Result<()> {
                     Ok(resolve_pool) => {
                         let handles = resolve_pool.acquire_all().await?;
 
+                        let stream_start = std::time::Instant::now();
                         let total_streamed = plugin::stream_resolve_nodes_to_workers(
                             &mut rfdb,
                             config::Language::JavaScript,
                             &handles,
                             &ws_packages,
                         ).await?;
-                        profile!("js_stream_complete", "nodes" => total_streamed);
+                        let stream_ms = stream_start.elapsed().as_millis();
+                        profile!("js_stream_complete", "nodes" => total_streamed, "duration_ms" => stream_ms);
 
                         if total_streamed > 0 {
                             let empty_ws: &[plugin::WorkspacePackageWire] = &[];
@@ -718,6 +795,7 @@ async fn main() -> Result<()> {
 
                             for (cmd, commit_name, ws) in js_commands {
                                 profile!("js_resolve_cmd_start", "cmd" => cmd);
+                                let cmd_start = std::time::Instant::now();
                                 let mut output = plugin::run_resolve_on_workers(cmd, &handles, ws)
                                     .await
                                     .with_context(|| format!("{commit_name} resolution failed"))?;
@@ -731,8 +809,10 @@ async fn main() -> Result<()> {
                                 }
 
                                 commit_resolve_output(&mut output, commit_name, generation, &mut rfdb).await?;
+                                let cmd_ms = cmd_start.elapsed().as_millis();
                                 profile!("js_resolve_cmd_complete", "cmd" => cmd,
-                                    "nodes" => output.nodes.len(), "edges" => output.edges.len());
+                                    "nodes" => output.nodes.len(), "edges" => output.edges.len(),
+                                    "duration_ms" => cmd_ms);
                             }
                         }
 
@@ -1133,6 +1213,8 @@ async fn main() -> Result<()> {
                 }
             }
 
+            let resolve_ms = resolve_timer.elapsed().as_millis() as u64;
+
             // 9. Derive MODULE→MODULE DEPENDS_ON edges from IMPORTS_FROM
             profile!("depends_on_start", "imports_from_edges" => all_imports_from_edges.len());
             if !all_imports_from_edges.is_empty() {
@@ -1203,11 +1285,49 @@ async fn main() -> Result<()> {
             // 2. DEPENDS_ON and other derived edges are committed with empty
             //    changed_files (no deletion phase), so old segment versions
             //    accumulate. Compaction deduplicates these by (src,dst,type) key.
-            profile!("compact_start");
+            let compact_start = std::time::Instant::now();
+            profile!("compact_start", "analysis_nodes" => total_nodes, "analysis_edges" => total_edges);
             rfdb.compact().await.context("Failed to compact")?;
-            profile!("compact_complete");
+            let compact_ms = compact_start.elapsed().as_millis();
+            profile!("compact_complete", "duration_ms" => compact_ms);
 
-            // 10. Summary
+            // 10. Emit pipeline-level phase metrics as METRIC nodes
+            {
+                let phase_metrics: Vec<(&str, &str, u64, &str)> = vec![
+                    ("analysis", "duration_ms",  analysis_ms,                "ms"),
+                    ("analysis", "total_nodes",  total_nodes as u64,         "count"),
+                    ("analysis", "total_edges",  total_edges as u64,         "count"),
+                    ("analysis", "total_files",  changed_files.len() as u64, "count"),
+                    ("resolve",  "duration_ms",  resolve_ms,                 "ms"),
+                    ("compact",  "duration_ms",  compact_ms as u64,          "ms"),
+                ];
+
+                let (mut phase_nodes, phase_edges) =
+                    analyzer::phase_metrics_to_wire(&phase_metrics, &authority);
+
+                for node in &mut phase_nodes {
+                    gc::stamp_node_metadata(&mut node.metadata, generation, "orchestrator-metrics");
+                }
+
+                if !phase_nodes.is_empty() {
+                    // Synthetic files for tombstoning on re-analysis
+                    let phase_files: Vec<String> = phase_nodes
+                        .iter()
+                        .filter_map(|n| n.file.clone())
+                        .collect::<HashSet<_>>()
+                        .into_iter()
+                        .collect();
+                    rfdb.commit_batch(&phase_files, &phase_nodes, &phase_edges, true)
+                        .await
+                        .context("Failed to commit phase metrics")?;
+                    tracing::info!(
+                        nodes = phase_nodes.len(),
+                        "Phase metrics committed"
+                    );
+                }
+            }
+
+            // 11. Summary
             println!(
                 "Analyzed {} files ({} JS, {} Haskell, {} Rust, {} Java, {} Kotlin, {} Python, {} Go, {} C/C++, {} BEAM, {} skipped): {} nodes, {} edges, {} errors",
                 changed_files.len(),
