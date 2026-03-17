@@ -32,6 +32,7 @@ module Rules.Expressions
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Map.Strict as Map
+import Control.Monad (forM)
 import Data.Foldable (forM_)
 import Analysis.Types
 import Analysis.Context
@@ -76,7 +77,7 @@ ruleCallExpression node = do
     }
 
   -- Walk arguments, emit PASSES_ARGUMENT edges using child IDs
-  mapM_ (\(idx, arg) -> do
+  walkedArgIds <- forM (zip [0..] args) $ \(idx, arg) -> do
     mArgId <- withAncestor node (walkNode arg)
     forM_ mArgId $ \argId ->
       emitEdge GraphEdge
@@ -84,10 +85,10 @@ ruleCallExpression node = do
         , geType = "PASSES_ARGUMENT"
         , geMetadata = Map.singleton "index" (MetaInt idx)
         }
-    ) (zip [0..] args)
+    return (idx :: Int, mArgId)
 
   -- Match against library definitions (domain-specific nodes)
-  matchCallSite callee nodeId node
+  matchCallSite callee nodeId node walkedArgIds
 
   -- Walk callee and connect CALL to its callee expression
   case getChildrenMaybe "callee" node of
@@ -559,7 +560,7 @@ ruleNewExpression node = do
     }
 
   -- Walk arguments, emit PASSES_ARGUMENT edges using child IDs
-  mapM_ (\(idx, arg) -> do
+  walkedArgIds <- forM (zip [0..] args) $ \(idx, arg) -> do
     mArgId <- withAncestor node (walkNode arg)
     forM_ mArgId $ \argId ->
       emitEdge GraphEdge
@@ -567,10 +568,10 @@ ruleNewExpression node = do
         , geType = "PASSES_ARGUMENT"
         , geMetadata = Map.singleton "index" (MetaInt idx)
         }
-    ) (zip [0..] args)
+    return (idx :: Int, mArgId)
 
   -- Match against library definitions (domain-specific nodes)
-  matchCallSite callee nodeId node
+  matchCallSite callee nodeId node walkedArgIds
 
   -- Walk callee (discard result)
   case getChildrenMaybe "callee" node of
