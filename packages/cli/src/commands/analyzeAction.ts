@@ -16,7 +16,6 @@ import {
   findOrchestratorBinary,
   getBinaryNotFoundMessage,
   findAnalyzerBinary,
-  findInGrafemaBin,
   ensureBinary,
 } from '@grafema/util';
 import type { LogLevel } from '@grafema/util';
@@ -137,7 +136,9 @@ async function ensureLanguageBinaries(configPath: string, log: (...args: unknown
   }
 
   for (const binName of neededBinaries) {
-    if (findAnalyzerBinary(binName) || findInGrafemaBin(binName)) continue;
+    // findAnalyzerBinary checks platform npm package + PATH (always current)
+    if (findAnalyzerBinary(binName)) continue;
+    // ensureBinary handles ~/.grafema/bin/ with version check + lazy download
     const downloaded = await ensureBinary(binName, null, log);
     if (downloaded) {
       log(`Downloaded ${binName} → ${downloaded}`);

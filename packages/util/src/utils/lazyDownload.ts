@@ -8,11 +8,12 @@
  * Example: grafema-analyzer-darwin-arm64
  */
 
-import { existsSync, mkdirSync, chmodSync, renameSync, unlinkSync, createWriteStream } from 'fs';
+import { existsSync, mkdirSync, chmodSync, renameSync, unlinkSync, createWriteStream, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { get as httpsGet } from 'https';
 import type { IncomingMessage } from 'http';
 import { getPlatformDir } from './findRfdbBinary.js';
+import { GRAFEMA_VERSION } from '../version.js';
 
 const GITHUB_REPO = 'Disentinel/grafema';
 
@@ -187,16 +188,37 @@ export async function downloadBinary(
   renameSync(tmpPath, targetPath);
   chmodSync(targetPath, 0o755);
 
+  // Record which version was downloaded so we can detect stale binaries
+  writeFileSync(`${targetPath}.version`, releaseTag, 'utf-8');
+
   log(`  Installed to ${targetPath}`);
   return targetPath;
 }
 
 /**
- * Ensure a binary exists, downloading it if missing and eligible.
+ * Check if a cached binary in ~/.grafema/bin/ is from the current release.
+ * Returns true if the binary's .version file matches `binaries-v{GRAFEMA_VERSION}`.
+ */
+function isBinaryCurrentVersion(binaryPath: string): boolean {
+  const versionFile = `${binaryPath}.version`;
+  if (!existsSync(versionFile)) return false;
+  try {
+    const storedTag = readFileSync(versionFile, 'utf-8').trim();
+    return storedTag === `binaries-v${GRAFEMA_VERSION}`;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Ensure a binary exists and is current, downloading it if missing or stale.
  *
  * This is the main entry point for lazy downloading. Call it before
  * spawning an analyzer binary. Returns the path if found or downloaded,
  * null if the binary can't be obtained.
+ *
+ * Staleness check: if a binary exists in ~/.grafema/bin/ but its .version
+ * file doesn't match the current Grafema release, it is re-downloaded.
  *
  * @param binaryName - e.g. "grafema-analyzer"
  * @param existingPath - path from findBinary() (null = not found locally)
@@ -207,22 +229,33 @@ export async function ensureBinary(
   existingPath: string | null,
   onProgress?: (msg: string) => void,
 ): Promise<string | null> {
-  // Already found locally
+  // Already found locally (e.g. in platform npm package or PATH)
   if (existingPath) return existingPath;
 
   // Check ~/.grafema/bin/ first (may have been downloaded previously)
   const cached = findInGrafemaBin(binaryName);
-  if (cached) return cached;
+  if (cached && isBinaryCurrentVersion(cached)) return cached;
 
   // Not downloadable (e.g. rfdb-server — must be in npm package)
-  if (!isDownloadable(binaryName)) return null;
+  if (!isDownloadable(binaryName)) {
+    // If cached exists but is stale and not downloadable, return it anyway
+    if (cached) return cached;
+    return null;
+  }
 
-  // Download
+  // Download (missing or stale)
+  const log = onProgress || (() => {});
+  if (cached) {
+    log(`Updating ${binaryName} to binaries-v${GRAFEMA_VERSION}...`);
+  }
+
   try {
-    return await downloadBinary(binaryName, undefined, onProgress);
+    return await downloadBinary(binaryName, `binaries-v${GRAFEMA_VERSION}`, onProgress);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     (onProgress || console.error)(`Failed to download ${binaryName}: ${msg}`);
+    // Fall back to stale binary if download fails
+    if (cached) return cached;
     return null;
   }
 }
