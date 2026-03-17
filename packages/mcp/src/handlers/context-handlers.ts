@@ -51,6 +51,27 @@ export async function handleGetFunctionDetails(
     }
   }
 
+  // Fallback: search for const-bound arrow functions
+  // Pattern: CONSTANT("create_search_handler") -[ASSIGNED_FROM]-> FUNCTION("<arrow>")
+  if (candidates.length === 0) {
+    for (const nodeType of ['CONSTANT', 'VARIABLE']) {
+      for await (const node of db.queryNodes({ type: nodeType })) {
+        if (node.name !== name) continue;
+        if (file && !node.file?.includes(file)) continue;
+        // Check if this variable/constant is assigned from a function
+        const assignedEdges = await db.getOutgoingEdges(node.id, ['ASSIGNED_FROM']);
+        for (const edge of assignedEdges) {
+          const target = await db.getNode(edge.dst);
+          if (target && (target.type === 'FUNCTION' || target.type === 'METHOD')) {
+            // Use the function node but keep the const name for display
+            const fnNode = { ...target, name: node.name } as GraphNode;
+            candidates.push(fnNode);
+          }
+        }
+      }
+    }
+  }
+
   if (candidates.length === 0) {
     return errorResult(
       `Function "${name}" not found.` +
