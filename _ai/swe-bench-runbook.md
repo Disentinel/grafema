@@ -10,7 +10,7 @@ SWE-bench Docker image
   + npm install -g @anthropic-ai/claude-code  (both conditions)
   + npm install -g grafema                     (grafema condition only)
   + grafema init && grafema analyze            (grafema condition only)
-  + ~/.claude/ auth mounted from host
+  + CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token`
   → claude -p "$prompt" --output-format json
   → git diff → patch
   → swebench evaluation
@@ -21,25 +21,29 @@ The ONLY difference between conditions: grafema is/isn't installed.
 ## Prerequisites
 
 1. **Docker** running
-2. **Claude Code auth** in `~/.claude/` (login on host first)
+2. **Auth token**: run `claude setup-token` on host → set `CLAUDE_CODE_OAUTH_TOKEN` env var
 3. **SWE-bench Docker images** built for target tasks
 4. **tasks.json** generated from HuggingFace (one-time)
 
 ## Quick Start
 
 ```bash
-# 1. Generate tasks (one-time, requires `pip install datasets`)
+# 1. Setup auth (one-time)
+claude setup-token
+export CLAUDE_CODE_OAUTH_TOKEN="sk-..."  # token from step above
+
+# 2. Generate tasks (one-time, requires `pip install datasets`)
 python scripts/swe-bench/generate-tasks.py > scripts/swe-bench/tasks.json
 
-# 2. Build SWE-bench images for target tasks
+# 3. Build SWE-bench images for target tasks
 python -m swebench.harness.prepare_images \
   --dataset_name swe-bench/SWE-Bench_Multilingual \
   --instance_ids axios__axios-4731
 
-# 3. Run baseline
+# 4. Run baseline
 ./scripts/swe-bench/run.sh axios__axios-4731 --mode baseline
 
-# 4. Run grafema
+# 5. Run grafema
 ./scripts/swe-bench/run.sh axios__axios-4731 --mode grafema
 
 # 5. Compare

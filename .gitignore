@@ -81,3 +81,4 @@ enox/fetch-*.js
 
 # SWE-bench artifacts
 logs/run_evaluation/
+scripts/swe-bench/results/

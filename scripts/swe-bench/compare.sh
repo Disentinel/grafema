@@ -78,6 +78,24 @@ get_tool_count() {
   fi
 }
 
+get_cost() {
+  local dir="$1"
+  if [[ -f "$dir/result.json" ]]; then
+    jq -r '.total_cost_usd // "-"' "$dir/result.json" 2>/dev/null || echo "-"
+  else
+    echo "-"
+  fi
+}
+
+get_turns() {
+  local dir="$1"
+  if [[ -f "$dir/result.json" ]]; then
+    jq -r '.num_turns // "-"' "$dir/result.json" 2>/dev/null || echo "-"
+  else
+    echo "-"
+  fi
+}
+
 has_grafema_usage() {
   local dir="$1"
   if [[ -f "$dir/result.json" ]]; then
@@ -105,74 +123,36 @@ echo ""
 echo "Results: $RESULTS_DIR"
 echo "Date: $(date +%Y-%m-%d)"
 echo ""
-echo "| Task | B.Tokens (in/out) | G.Tokens (in/out) | B.Tools | G.Tools | G.Grafema | B.Patch | G.Patch | Delta |"
-echo "|------|-------------------|-------------------|---------|---------|-----------|---------|---------|-------|"
+echo "| Task | B.Cost | G.Cost | B.Turns | G.Turns | G.Grafema | B.Patch | G.Patch |"
+echo "|------|--------|--------|---------|---------|-----------|---------|---------|"
 
-TOTAL_B_IN=0
-TOTAL_B_OUT=0
-TOTAL_G_IN=0
-TOTAL_G_OUT=0
 TASK_COUNT=0
 
 for TASK_ID in "${SORTED_TASKS[@]}"; do
   B_DIR="$BASELINE_DIR/$TASK_ID"
   G_DIR="$GRAFEMA_DIR/$TASK_ID"
 
-  B_IN=$(get_tokens "$B_DIR" "input_tokens")
-  B_OUT=$(get_tokens "$B_DIR" "output_tokens")
-  G_IN=$(get_tokens "$G_DIR" "input_tokens")
-  G_OUT=$(get_tokens "$G_DIR" "output_tokens")
-
-  B_TOOLS=$(get_tool_count "$B_DIR")
-  G_TOOLS=$(get_tool_count "$G_DIR")
+  B_COST=$(get_cost "$B_DIR")
+  G_COST=$(get_cost "$G_DIR")
+  B_TURNS=$(get_turns "$B_DIR")
+  G_TURNS=$(get_turns "$G_DIR")
   G_GRAFEMA=$(has_grafema_usage "$G_DIR")
 
   B_PATCH=$(get_patch_lines "$B_DIR")
   G_PATCH=$(get_patch_lines "$G_DIR")
 
-  # Calculate token delta
-  DELTA="-"
-  if [[ "$B_IN" != "-" && "$G_IN" != "-" && "$B_IN" != "N/A" && "$G_IN" != "N/A" ]]; then
-    B_TOTAL=$((B_IN + B_OUT))
-    G_TOTAL=$((G_IN + G_OUT))
-    if [[ "$B_TOTAL" -gt 0 ]]; then
-      DELTA_PCT=$(( (G_TOTAL - B_TOTAL) * 100 / B_TOTAL ))
-      if [[ "$DELTA_PCT" -gt 0 ]]; then
-        DELTA="+${DELTA_PCT}%"
-      else
-        DELTA="${DELTA_PCT}%"
-      fi
-    fi
+  # Format cost
+  B_COST_FMT=$(python3 -c "print(f'\${float(\"${B_COST}\"):.2f}')" 2>/dev/null || echo "-")
+  G_COST_FMT=$(python3 -c "print(f'\${float(\"${G_COST}\"):.2f}')" 2>/dev/null || echo "-")
 
-    TOTAL_B_IN=$((TOTAL_B_IN + B_IN))
-    TOTAL_B_OUT=$((TOTAL_B_OUT + B_OUT))
-    TOTAL_G_IN=$((TOTAL_G_IN + G_IN))
-    TOTAL_G_OUT=$((TOTAL_G_OUT + G_OUT))
-    TASK_COUNT=$((TASK_COUNT + 1))
-  fi
+  TASK_COUNT=$((TASK_COUNT + 1))
 
-  echo "| $TASK_ID | ${B_IN}/${B_OUT} | ${G_IN}/${G_OUT} | $B_TOOLS | $G_TOOLS | $G_GRAFEMA | $B_PATCH | $G_PATCH | $DELTA |"
+  echo "| $TASK_ID | $B_COST_FMT | $G_COST_FMT | $B_TURNS | $G_TURNS | $G_GRAFEMA | $B_PATCH | $G_PATCH |"
 done
 
 # --- Totals ---
 echo ""
-echo "## Totals ($TASK_COUNT tasks with data)"
-echo ""
-
-if [[ "$TASK_COUNT" -gt 0 ]]; then
-  B_TOTAL=$((TOTAL_B_IN + TOTAL_B_OUT))
-  G_TOTAL=$((TOTAL_G_IN + TOTAL_G_OUT))
-
-  echo "| Metric | Baseline | Grafema | Delta |"
-  echo "|--------|----------|---------|-------|"
-  echo "| Input tokens | $TOTAL_B_IN | $TOTAL_G_IN | |"
-  echo "| Output tokens | $TOTAL_B_OUT | $TOTAL_G_OUT | |"
-
-  if [[ "$B_TOTAL" -gt 0 ]]; then
-    TOTAL_DELTA=$(( (G_TOTAL - B_TOTAL) * 100 / B_TOTAL ))
-    echo "| Total tokens | $B_TOTAL | $G_TOTAL | ${TOTAL_DELTA}% |"
-  fi
-fi
+echo "## Summary ($TASK_COUNT tasks)"
 
 echo ""
 echo "---"

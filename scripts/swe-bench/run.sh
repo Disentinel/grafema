@@ -8,7 +8,7 @@
 # Requirements:
 #   - Docker running
 #   - tasks.json generated (see generate-tasks.py)
-#   - ANTHROPIC_API_KEY env var set (macOS Keychain auth doesn't work in Docker)
+#   - Auth: CLAUDE_CODE_OAUTH_TOKEN (subscription) or ANTHROPIC_API_KEY (API billing)
 #   - SWE-bench Docker images pulled (sweb.eval.x86_64.<repo>:<instance_id>)
 #
 # Examples:
@@ -22,6 +22,15 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TASKS_FILE="$SCRIPT_DIR/tasks.json"
 TEMPLATES_DIR="$SCRIPT_DIR/templates"
+
+# Load .env if present (won't override existing env vars)
+if [[ -f "$SCRIPT_DIR/.env" ]]; then
+  while IFS='=' read -r key value; do
+    [[ -z "$key" || "$key" =~ ^# ]] && continue
+    value="${value%\"}" && value="${value#\"}"
+    [[ -z "${!key:-}" && -n "$value" ]] && export "$key=$value"
+  done < "$SCRIPT_DIR/.env"
+fi
 
 # --- Defaults ---
 MODE="baseline"
@@ -71,9 +80,13 @@ if [[ "$MODE" != "baseline" && "$MODE" != "grafema" ]]; then
   exit 1
 fi
 
-# --- Check API key ---
-if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
-  echo "Error: ANTHROPIC_API_KEY env var required (macOS Keychain auth doesn't work in Docker)" >&2
+# --- Check auth ---
+# Subscription (Max/Pro): CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token`
+# API key: ANTHROPIC_API_KEY (separate billing from subscription!)
+if [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" && -z "${ANTHROPIC_API_KEY:-}" ]]; then
+  echo "Error: auth required. Set one of:" >&2
+  echo "  CLAUDE_CODE_OAUTH_TOKEN  — subscription token (run 'claude setup-token' on host)" >&2
+  echo "  ANTHROPIC_API_KEY        — API key (separate billing!)" >&2
   exit 1
 fi
 
@@ -103,7 +116,7 @@ echo ""
 
 # --- Find Docker image ---
 # SWE-bench image naming convention
-REPO_SLUG=$(echo "$REPO" | tr '/' '__' | tr '[:upper:]' '[:lower:]')
+REPO_SLUG=$(echo "$REPO" | sed 's|/|__|g' | tr '[:upper:]' '[:lower:]')
 # Try common naming patterns
 IMAGE=""
 for candidate in \
@@ -149,8 +162,13 @@ START_TIME=$(date +%s)
 # --- Start container ---
 echo ""
 echo "--- Starting container ---"
+# Pass whichever auth env var is set
+AUTH_ARGS=()
+[[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]] && AUTH_ARGS+=(-e "CLAUDE_CODE_OAUTH_TOKEN=$CLAUDE_CODE_OAUTH_TOKEN")
+[[ -n "${ANTHROPIC_API_KEY:-}" ]] && AUTH_ARGS+=(-e "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY")
+
 docker run -d --name "$CONTAINER" \
-  -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
+  "${AUTH_ARGS[@]}" \
   "$IMAGE" sleep 2h >/dev/null
 
 echo "Container: $CONTAINER"
@@ -188,7 +206,7 @@ if [[ "$MODE" == "grafema" ]]; then
     npm install -g grafema 2>&1 | tail -1 &&
     cd /testbed &&
     grafema init &&
-    grafema analyze --auto-start 2>&1 | tail -5 &&
+    grafema analyze 2>&1 | tail -5 &&
     echo "" &&
     echo "Setting up MCP config..." &&
     cat > /testbed/.mcp.json << MCPEOF
@@ -241,14 +259,24 @@ print(template.replace('{{problem_statement}}', problem))
 " <<< "$PROBLEM_STATEMENT")
 
 # Write prompt to a file inside the container (avoids shell escaping issues)
-echo "$PROMPT" | docker exec -i "$CONTAINER" bash -c "cat > /tmp/prompt.txt"
+echo "$PROMPT" | docker exec -i "$CONTAINER" bash -c "cat > /tmp/prompt.txt && chmod 644 /tmp/prompt.txt"
 
 # --- Run Claude Code agent ---
 echo ""
 echo "--- Running Claude Code agent ($MODE) ---"
 echo "This may take several minutes..."
 
-docker exec -w /testbed -e CLAUDE_MODEL="$MODEL" "$CONTAINER" bash -c '
+# Create non-root user (--dangerously-skip-permissions requires non-root)
+docker exec "$CONTAINER" bash -c '
+  useradd -m -s /bin/bash solver 2>/dev/null || true
+  cp -r /root/.npm /home/solver/.npm 2>/dev/null || true
+  chown -R solver:solver /testbed /home/solver 2>/dev/null || true
+' || true
+
+docker exec -u solver -w /testbed -e CLAUDE_MODEL="$MODEL" \
+  ${CLAUDE_CODE_OAUTH_TOKEN:+-e CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN"} \
+  ${ANTHROPIC_API_KEY:+-e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"} \
+  "$CONTAINER" bash -c '
   claude -p "$(cat /tmp/prompt.txt)" \
     --output-format json \
     --max-turns 75 \
@@ -265,7 +293,7 @@ echo ""
 echo "--- Capturing results ---"
 
 # Patch (git diff)
-docker exec -w /testbed "$CONTAINER" git diff > "$TASK_RESULTS/patch.diff" 2>/dev/null || true
+docker exec -u solver -w /testbed "$CONTAINER" git diff > "$TASK_RESULTS/patch.diff" 2>/dev/null || true
 
 # Agent output JSON
 docker cp "$CONTAINER:/tmp/result.json" "$TASK_RESULTS/result.json" 2>/dev/null || true
