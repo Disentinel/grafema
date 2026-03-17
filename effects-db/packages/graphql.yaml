@@ -1,0 +1,124 @@
+# graphql (v16.x) — GraphQL reference implementation
+# Generated: 2026-03-15
+# Method: Grafema graph analysis (83K nodes, 206K edges) + Claude source-code inference
+# Taxonomy version: 1
+# purl: pkg:npm/graphql
+#
+# Graph validation findings (83011 nodes, 205668 edges):
+#   - devAssert (multiple calls) → THROW (internal assertion helper)
+#   - assertValidExecutionArguments, assertValidSDLExtension → THROW
+#   - process in GLOBAL_DEFINITION (platform detection for inspect)
+#   - document in GLOBAL_DEFINITION (browser detection)
+#   - No console/fetch/fs/setTimeout calls → no IO confirmed
+#
+# Source-code analysis corrections (batch 2 subagent):
+#   - parse/parseValue/parseType THROW on invalid syntax (GraphQLError)
+#   - execute/subscribe THROW on invalid arguments
+#   - buildSchema/buildASTSchema/buildClientSchema THROW on invalid SDL
+#   - Schema/type constructors THROW on validation (config validation)
+
+graphql:
+  # Core execution
+  graphql: [ASYNC, THROW]             # full pipeline: parse + validate + execute
+  graphqlSync: [THROW]                # synchronous execution (resolvers must be sync)
+
+  # Parsing — THROW on invalid syntax (GraphQLError)
+  parse: [THROW]
+  parseValue: [THROW]
+  parseType: [THROW]
+  parseConstValue: [THROW]
+
+  # Validation — PURE (AST + schema → errors)
+  validate: [PURE]
+  specifiedRules: [PURE]
+
+  # Execution
+  execute: [ASYNC, THROW]             # may call async resolvers, throws on invalid args
+  executeSync: [THROW]                # all resolvers must be sync, throws on invalid args
+  subscribe: [ASYNC, THROW]           # returns AsyncIterator, throws on invalid args
+  createSourceEventStream: [ASYNC, THROW]
+
+  # Schema building — THROW on invalid SDL/schema
+  buildSchema: [THROW]
+  buildASTSchema: [THROW]
+  buildClientSchema: [THROW]
+  extendSchema: [THROW]
+
+  # Printing — PURE (AST/schema → string)
+  print: [PURE]
+  printSchema: [PURE]
+  printType: [PURE]
+  printIntrospectionSchema: [PURE]
+
+  # Introspection
+  introspectionFromSchema: [PURE]
+  getIntrospectionQuery: [PURE]
+
+  # Type system constructors — THROW on invalid config
+  GraphQLSchema.new: [THROW]
+  GraphQLObjectType.new: [THROW]
+  GraphQLInterfaceType.new: [THROW]
+  GraphQLUnionType.new: [THROW]
+  GraphQLEnumType.new: [THROW]
+  GraphQLInputObjectType.new: [THROW]
+  GraphQLScalarType.new: [THROW]
+  GraphQLList.new: [PURE]
+  GraphQLNonNull.new: [PURE]
+  GraphQLDirective.new: [THROW]
+
+  # Type predicates — PURE
+  isType: [PURE]
+  isScalarType: [PURE]
+  isObjectType: [PURE]
+  isInterfaceType: [PURE]
+  isUnionType: [PURE]
+  isEnumType: [PURE]
+  isInputObjectType: [PURE]
+  isListType: [PURE]
+  isNonNullType: [PURE]
+  isNamedType: [PURE]
+  isAbstractType: [PURE]
+  isWrappingType: [PURE]
+  isOutputType: [PURE]
+  isInputType: [PURE]
+  isLeafType: [PURE]
+  isCompositeType: [PURE]
+  isSpecifiedScalarType: [PURE]
+  isSpecifiedDirective: [PURE]
+
+  # Utilities
+  assertValidSchema: [THROW]
+  assertValidName: [THROW]
+  typeFromAST: [PURE]
+  valueFromAST: [PURE]
+  valueFromASTUntyped: [PURE]
+  astFromValue: [PURE]
+  coerceInputValue: [PURE]
+  concatAST: [PURE]
+  separateOperations: [PURE]
+  stripIgnoredCharacters: [PURE]
+  isEqualType: [PURE]
+  isTypeSubTypeOf: [PURE]
+  doTypesOverlap: [PURE]
+
+  # Visitor
+  visit: [PURE]
+  visitInParallel: [PURE]
+  getVisitFn: [PURE]
+  getEnterLeaveForKind: [PURE]
+  BREAK: [PURE]
+
+  # Location/source
+  Source.new: [PURE]
+  getLocation: [PURE]
+
+  # Lexer
+  Lexer.new: [PURE]
+  Lexer.advance: [MUTATION]
+  Lexer.lookahead: [PURE]
+
+  # Error
+  GraphQLError.new: [PURE]
+  syntaxError: [PURE]
+  locatedError: [PURE]
+  formatError: [PURE]

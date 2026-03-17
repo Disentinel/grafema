@@ -257,5 +257,19 @@ export type {
   TraceNarrativeOptions,
 } from './notation/index.js';
 
+// Manifest generation & resolution (federation)
+export { ManifestGenerator, ManifestResolver } from './manifest/index.js';
+export type {
+  Manifest,
+  ManifestExport,
+  ManifestImport,
+  ManifestParam,
+  EffectType,
+  FlowType,
+  ExportKind,
+  ResolveResult,
+  ManifestSummary,
+} from './manifest/index.js';
+
 // Re-export types for convenience
 export type * from '@grafema/types';

@@ -1,0 +1,49 @@
+# graphql-yoga (v5.x) — GraphQL HTTP server
+# Generated: 2026-03-15
+# Method: Grafema graph analysis + Claude inference, cross-validated
+# Taxonomy version: 1
+# purl: pkg:npm/graphql-yoga
+#
+# Graph validation findings (6400 nodes, 14416 edges):
+#   - fetchAPI.Response (5x), fetchAPI.ReadableStream (2x), fetchAPI.TextEncoder (2x) → IO
+#   - setInterval/clearInterval in GLOBAL_DEFINITION → IO, ASYNC (health checks)
+#   - assertMutationViaGet, assertInvalidParams → THROW
+#   - console in GLOBAL_DEFINITION → logging
+#   - Proxy, WeakSet, WeakMap → internal plugin system
+
+graphql-yoga:
+  # Server creation — THROW on invalid config
+  createYoga: [THROW]             # validates config, may throw
+  createSchema: [THROW]           # delegates to GraphQL schema building, may throw
+
+  # YogaServer (returned by createYoga)
+  YogaServer.handle: [IO, ASYNC, THROW]    # handles HTTP request → response
+  YogaServer.handleRequest: [IO, ASYNC, THROW]
+  YogaServer.fetch: [IO, ASYNC, THROW]     # Web Fetch API compatible handler
+  YogaServer.start: [IO, ASYNC]            # starts HTTP server (standalone mode)
+  YogaServer.stop: [IO, ASYNC]             # stops HTTP server
+  YogaServer.getEnveloped: [PURE]          # returns Envelop instance
+
+  # Plugin system — PURE (returns config objects)
+  useReadinessCheck: [PURE]
+  useDeferStream: [PURE]
+  useDisableIntrospection: [PURE]
+  useErrorHandler: [PURE]
+  useHealthCheck: [PURE]
+  useGraphQLSSE: [PURE]
+  useAPQ: [PURE]
+  useResponseCache: [PURE]
+  useCSRFPrevention: [PURE]
+
+  # SSE / Subscriptions
+  YogaServer.subscribe: [IO, ASYNC, THROW]
+
+  # Envelop integration
+  useEnvelop: [PURE]
+
+  # Utilities
+  maskError: [PURE]
+  createGraphQLError: [PURE]
+
+  # Request/Response helpers
+  getYogaContext: [PURE]

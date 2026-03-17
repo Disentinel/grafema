@@ -1,0 +1,51 @@
+schema_version: 1
+analyzer_version: 0.2.12-beta
+authored: false
+confidence: 0
+generated: 2026-03-15T22:16:06.068Z
+package:
+  purl: pkg:npm/@grafema/mcp
+  source_type: source
+exports: []
+imports:
+  - purl: pkg:npm/@grafema/types
+    symbols:
+      - "@grafema/types"
+  - purl: pkg:npm/@grafema/util
+    symbols:
+      - "@grafema/util"
+  - purl: pkg:npm/@modelcontextprotocol/sdk
+    symbols:
+      - "@modelcontextprotocol/sdk/server/index.js"
+      - "@modelcontextprotocol/sdk/server/stdio.js"
+      - "@modelcontextprotocol/sdk/types.js"
+  - purl: pkg:npm/child_process
+    symbols:
+      - child_process
+  - purl: pkg:npm/fs
+    symbols:
+      - fs
+  - purl: pkg:npm/node@*#child_process
+    symbols:
+      - node:child_process
+  - purl: pkg:npm/node@*#path
+    symbols:
+      - node:path
+  - purl: pkg:npm/node@*#url
+    symbols:
+      - node:url
+  - purl: pkg:npm/path
+    symbols:
+      - path
+  - purl: pkg:npm/yaml
+    symbols:
+      - yaml
+capabilities:
+  total_exports: 0
+  total_internal_symbols: 812
+  has_graph: true
+access:
+  local: ./graph.rfdb
+language: typescript
+language_specific:
+  module_system: esm

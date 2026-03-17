@@ -1,0 +1,85 @@
+# graphql-scalars (v1.x) — Custom GraphQL scalar types
+# Generated: 2026-03-15
+# Method: Grafema graph analysis + Claude inference, cross-validated
+# Taxonomy version: 1
+# purl: pkg:npm/graphql-scalars
+#
+# Graph validation findings (21202 nodes, 46905 edges):
+#   - console.warn (1 call) → IO (deprecation warning)
+#   - Date in GLOBAL_DEFINITION → timestamp scalar types use Date
+#   - No fetch/fs/process calls → mostly PURE confirmed
+#
+# Note: Scalar resolvers' parse/serialize throw GraphQLError on invalid values.
+# This is standard GraphQL behavior, not a library-specific effect.
+# The THROW is inherited from GraphQLScalarType, not from these definitions.
+
+graphql-scalars:
+  # Individual scalar type definitions (each is a GraphQLScalarType instance)
+  # Scalar parse/serialize may THROW GraphQLError on invalid values (standard behavior)
+  DateTimeResolver: [THROW]
+  DateResolver: [THROW]
+  TimeResolver: [THROW]
+  TimestampResolver: [THROW, NONDETERMINISTIC]  # uses Date for validation
+  UtcOffsetResolver: [THROW]
+  LocalDateResolver: [THROW]
+  LocalTimeResolver: [THROW]
+  LocalEndTimeResolver: [THROW]
+  DurationResolver: [THROW]
+  EmailAddressResolver: [THROW]
+  NegativeFloatResolver: [THROW]
+  NegativeIntResolver: [THROW]
+  NonEmptyStringResolver: [THROW]
+  NonNegativeFloatResolver: [THROW]
+  NonNegativeIntResolver: [THROW]
+  NonPositiveFloatResolver: [THROW]
+  NonPositiveIntResolver: [THROW]
+  PhoneNumberResolver: [THROW]
+  PositiveFloatResolver: [THROW]
+  PositiveIntResolver: [THROW]
+  PostalCodeResolver: [THROW]
+  UnsignedFloatResolver: [THROW]
+  UnsignedIntResolver: [THROW]
+  URLResolver: [THROW]
+  BigIntResolver: [THROW]
+  LongResolver: [THROW]
+  SafeIntResolver: [THROW]
+  UUIDResolver: [THROW]
+  GUIDResolver: [THROW]
+  HexColorCodeResolver: [THROW]
+  HSLResolver: [THROW]
+  HSLAResolver: [THROW]
+  IPv4Resolver: [THROW]
+  IPv6Resolver: [THROW]
+  ISBNResolver: [THROW]
+  JWTResolver: [THROW]
+  LatitudeResolver: [THROW]
+  LongitudeResolver: [THROW]
+  MACResolver: [THROW]
+  PortResolver: [THROW]
+  RGBResolver: [THROW]
+  RGBAResolver: [THROW]
+  USCurrencyResolver: [THROW]
+  CurrencyResolver: [THROW]
+  JSONResolver: [THROW]
+  JSONObjectResolver: [THROW]
+  ByteResolver: [THROW]
+  VoidResolver: [PURE]
+  CountryCodeResolver: [THROW]
+  LocaleResolver: [THROW]
+  RoutingNumberResolver: [THROW]
+  AccountNumberResolver: [THROW]
+  CUIDResolver: [THROW]
+  SemVerResolver: [THROW]
+  IPResolver: [THROW]
+  IPCPatentResolver: [THROW]
+  DeweyDecimalResolver: [THROW]
+  ObjectIDResolver: [THROW]
+
+  # FOUND BY GRAFEMA — deprecation warning
+  _internal.deprecationWarning: [IO]  # console.warn call
+
+  # TypeDefs (SDL strings)
+  typeDefs: [PURE]
+
+  # Resolver map (for schema stitching)
+  resolvers: [PURE]

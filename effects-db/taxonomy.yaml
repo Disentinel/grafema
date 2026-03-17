@@ -1,0 +1,46 @@
+# Grafema Effects Taxonomy v1
+# Defines the vocabulary for annotating function side effects.
+# Used in manifests and effects-db to describe what a function does
+# beyond its return value.
+
+version: 1
+
+types:
+  PURE:
+    description: "Deterministic, no side effects. Same input → same output, always."
+    examples: ["Math.abs", "String.prototype.trim", "path.join"]
+
+  MUTATION:
+    description: "Mutates its arguments, receiver (this), or shared state."
+    examples: ["Array.prototype.push", "Object.assign", "Buffer.fill"]
+
+  IO:
+    description: "Interacts with external world: filesystem, network, database, device, environment."
+    examples: ["fs.readFileSync", "fetch", "console.log", "process.env"]
+
+  THROW:
+    description: "May throw an exception or cause abnormal termination."
+    examples: ["JSON.parse (on invalid input)", "assert", "process.exit"]
+
+  ASYNC:
+    description: "Returns a Promise, accepts a callback, or produces values over time."
+    examples: ["fs.readFile", "setTimeout", "fetch"]
+
+  NONDETERMINISTIC:
+    description: "Output varies between calls even with same input. Not IO — internal randomness or time."
+    examples: ["Math.random", "Date.now", "crypto.randomUUID", "performance.now"]
+
+  UNKNOWN:
+    description: "Analysis could not determine effects. MUST propagate transitively as a warning."
+    examples: ["FFI calls", "eval", "dynamic require", "minified code"]
+
+# Propagation rules:
+#   - If A calls B, A inherits ALL of B's effects (union)
+#   - UNKNOWN propagates: if B is UNKNOWN, A is also UNKNOWN
+#   - PURE is the absence of all other effects (not explicitly propagated)
+#   - A function is PURE only if ALL its callees are PURE and it has no direct effects
+
+# Future extensions (schema_version 2, backwards compatible):
+#   IO subtypes: FILE_IO, NETWORK_IO, DB_IO, DEVICE_IO, ENV_IO
+#   MUTATION subtypes: MUTATES_ARG, MUTATES_THIS, MUTATES_GLOBAL
+#   New types: BLOCKING (sync IO in async context), IDEMPOTENT, UNSAFE_CAST
