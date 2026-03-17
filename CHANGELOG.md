@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.15] - 2026-03-17
+
+### Bug Fixes
+
+- fix: lazy-downloaded binaries (`~/.grafema/bin/`) are now version-checked on every run. If the cached binary is from a previous release, it is automatically re-downloaded from the matching `binaries-v{version}` tag. Fixes `unknown command: load-context` when upgrading Grafema versions.
+
 ## [0.3.14] - 2026-03-17
 
 ### Highlights
