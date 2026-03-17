@@ -1,0 +1,28 @@
+# dataloader (v2.x) — Batching and caching utility
+# Generated: 2026-03-15
+# Method: Grafema graph analysis + Claude inference, cross-validated
+# Taxonomy version: 1
+# purl: pkg:npm/dataloader
+#
+# Graph validation findings (823 nodes, 2063 edges):
+#   - process.nextTick → scheduling (IO by taxonomy — interacts with event loop)
+#   - setTimeout → IO, ASYNC (fallback scheduler)
+#   - setImmediate in GLOBAL_DEFINITION → another scheduling mechanism
+#   - Note: DataLoader's scheduling is "benign IO" — no filesystem/network,
+#     just event loop scheduling. But by our taxonomy it IS IO.
+
+dataloader:
+  # Constructor
+  DataLoader.new: [PURE]
+
+  # Loading — ASYNC + IO (schedules batch via process.nextTick/setTimeout)
+  DataLoader.load: [ASYNC, IO]
+  DataLoader.loadMany: [ASYNC, IO]
+
+  # Cache management — mutates internal cache
+  DataLoader.clear: [MUTATION]
+  DataLoader.clearAll: [MUTATION]
+  DataLoader.prime: [MUTATION]
+
+  # Name (readonly property)
+  DataLoader.name: [PURE]

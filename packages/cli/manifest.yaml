@@ -1,0 +1,52 @@
+schema_version: 1
+analyzer_version: 0.2.12-beta
+authored: false
+confidence: 0
+generated: 2026-03-15T22:16:10.803Z
+package:
+  purl: pkg:npm/@grafema/cli
+  source_type: source
+exports: []
+imports:
+  - purl: pkg:npm/@grafema/types
+    symbols:
+      - "@grafema/types"
+  - purl: pkg:npm/@grafema/util
+    symbols:
+      - "@grafema/util"
+  - purl: pkg:npm/child_process
+    symbols:
+      - child_process
+  - purl: pkg:npm/commander
+    symbols:
+      - commander
+  - purl: pkg:npm/fs
+    symbols:
+      - fs
+  - purl: pkg:npm/module
+    symbols:
+      - module
+  - purl: pkg:npm/path
+    symbols:
+      - path
+  - purl: pkg:npm/readline
+    symbols:
+      - readline
+  - purl: pkg:npm/timers
+    symbols:
+      - timers/promises
+  - purl: pkg:npm/url
+    symbols:
+      - url
+  - purl: pkg:npm/yaml
+    symbols:
+      - yaml
+capabilities:
+  total_exports: 0
+  total_internal_symbols: 1300
+  has_graph: true
+access:
+  local: ./graph.rfdb
+language: typescript
+language_specific:
+  module_system: esm

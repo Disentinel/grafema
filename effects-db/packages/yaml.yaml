@@ -1,0 +1,79 @@
+# yaml (v2.x) — YAML parser/serializer
+# Generated: 2026-03-15
+# Method: Grafema graph analysis + Claude inference, cross-validated
+# Taxonomy version: 1
+# purl: pkg:npm/yaml
+#
+# Graph validation findings (26426 nodes, 65985 edges):
+#   - 4 console calls (console.log, console.warn, console.dir) → IO in debug/warn fns
+#   - 2 Date calls (Date(), Date.UTC()) → NONDETERMINISTIC in timestamp resolver
+#   - 10+ require() calls → IO (CJS dynamic require, internal modules only)
+#   - JSON.stringify calls → PURE (confirmed)
+#   - No external module dependencies (zero EXTERNAL_MODULE nodes)
+
+yaml:
+  # Parsing
+  parse: [PURE]
+  parseDocument: [PURE]
+  parseAllDocuments: [PURE]
+
+  # Serialization
+  stringify: [PURE]
+
+  # Document class
+  Document.new: [PURE]
+  Document.toString: [PURE]
+  Document.toJSON: [PURE]
+  Document.toJS: [PURE]
+  Document.clone: [PURE]
+  Document.createNode: [PURE]
+  Document.createPair: [PURE]
+  Document.setSchema: [MUTATION]
+  Document.get: [PURE]
+  Document.getIn: [PURE]
+  Document.set: [MUTATION]
+  Document.setIn: [MUTATION]
+  Document.has: [PURE]
+  Document.hasIn: [PURE]
+  Document.add: [MUTATION]
+  Document.addIn: [MUTATION]
+  Document.delete: [MUTATION]
+  Document.deleteIn: [MUTATION]
+
+  # Visitor
+  visit: [PURE]
+  visitAsync: [ASYNC]
+
+  # Collection types (YAMLMap, YAMLSeq)
+  YAMLMap.get: [PURE]
+  YAMLMap.set: [MUTATION]
+  YAMLMap.has: [PURE]
+  YAMLMap.delete: [MUTATION]
+  YAMLMap.toJSON: [PURE]
+  YAMLSeq.get: [PURE]
+  YAMLSeq.set: [MUTATION]
+  YAMLSeq.has: [PURE]
+  YAMLSeq.delete: [MUTATION]
+  YAMLSeq.toJSON: [PURE]
+
+  # Schema
+  Schema.new: [PURE]
+
+  # Scalar/Pair
+  Scalar.new: [PURE]
+  Pair.new: [PURE]
+
+  # Logging (FOUND BY GRAFEMA — console calls in debug/warn functions)
+  warn: [IO]                # calls console.warn (log.js:383)
+  debug: [IO]               # calls console.log (log.js:133)
+
+  # YAML 1.1 timestamp (FOUND BY GRAFEMA — Date() constructor)
+  # schema/yaml-1.1/timestamp resolver uses new Date() and Date.UTC()
+  # These are NONDETERMINISTIC when creating "now" timestamps,
+  # but PURE when parsing existing timestamp strings.
+  # Marking as NONDETERMINISTIC to be safe (propagation rule).
+  _internal.timestampResolve: [NONDETERMINISTIC]
+
+  # Error types
+  YAMLParseError.new: [PURE]
+  YAMLWarning.new: [PURE]
