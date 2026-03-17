@@ -21,10 +21,12 @@ Available Datalog predicates:
 NODE TYPES:
 - MODULE, FUNCTION, METHOD, CLASS, VARIABLE, PARAMETER
 - CALL, PROPERTY_ACCESS, METHOD_CALL, CALL_SITE
+- METRIC (performance metrics: value/unit/source in metadata, OBSERVES → MODULE)
 - http:route, http:request, db:query, socketio:emit, socketio:on
 
 EDGE TYPES:
 - CONTAINS, CALLS, DEPENDS_ON, ASSIGNED_FROM, INSTANCE_OF, PASSES_ARGUMENT
+- OBSERVES (METRIC → MODULE, links performance metric to observed file)
 
 EXAMPLES:
   violation(X) :- node(X, "MODULE").

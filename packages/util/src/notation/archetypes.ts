@@ -142,6 +142,7 @@ export const EDGE_ARCHETYPE_MAP: Record<string, EdgeMapping> = {
   AFFECTS:            m('governs', '|=', 'affects'),
   MONITORED_BY:       m('governs', '|=', 'monitored by'),
   MEASURED_BY:        m('governs', '|=', 'measured by'),
+  OBSERVES:           m('governs', '|=', 'observes'),
   PROVISIONED_BY:     m('governs', '|=', 'provisioned by'),
   REGISTERS_VIEW:     m('governs', '|=', 'registers view'),
 
