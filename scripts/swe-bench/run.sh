@@ -203,10 +203,13 @@ if [[ "$MODE" == "grafema" ]]; then
   echo ""
   echo "--- Installing Grafema ---"
   docker exec "$CONTAINER" bash -c '
+    # Save pristine state for clean diff later
+    cd /testbed && git stash 2>/dev/null || true &&
     npm install -g grafema 2>&1 | tail -1 &&
-    cd /testbed &&
     grafema init &&
     grafema analyze 2>&1 | tail -5 &&
+    # Revert grafema init side-effects (.gitignore, .mcp.json, .claude/)
+    git checkout -- .gitignore 2>/dev/null || true &&
     echo "" &&
     echo "Setting up MCP config..." &&
     cat > /testbed/.mcp.json << MCPEOF
@@ -277,13 +280,17 @@ docker exec -u solver -w /testbed -e CLAUDE_MODEL="$MODEL" \
   ${CLAUDE_CODE_OAUTH_TOKEN:+-e CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN"} \
   ${ANTHROPIC_API_KEY:+-e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"} \
   "$CONTAINER" bash -c '
+  # stream-json gives per-turn JSONL (full session trace); requires --verbose
   claude -p "$(cat /tmp/prompt.txt)" \
-    --output-format json \
+    --output-format stream-json \
+    --verbose \
     --max-turns 75 \
     --model "$CLAUDE_MODEL" \
     --dangerously-skip-permissions \
-    > /tmp/result.json 2>/tmp/claude-stderr.log
+    > /tmp/session.jsonl 2>/tmp/claude-stderr.log
   EXIT_CODE=$?
+  # Extract final result line (type=result) for summary
+  grep "\"type\":\"result\"" /tmp/session.jsonl | tail -1 > /tmp/result.json 2>/dev/null
   echo "Agent exit code: $EXIT_CODE"
   exit $EXIT_CODE
 ' || true
@@ -292,10 +299,14 @@ docker exec -u solver -w /testbed -e CLAUDE_MODEL="$MODEL" \
 echo ""
 echo "--- Capturing results ---"
 
-# Patch (git diff)
-docker exec -u solver -w /testbed "$CONTAINER" git diff > "$TASK_RESULTS/patch.diff" 2>/dev/null || true
+# Patch (git diff, excluding grafema artifacts)
+docker exec -u solver -w /testbed "$CONTAINER" \
+  git diff -- . ':!.grafema' ':!.mcp.json' ':!.claude' > "$TASK_RESULTS/patch.diff" 2>/dev/null || true
 
-# Agent output JSON
+# Session JSONL (full turn-by-turn trace)
+docker cp "$CONTAINER:/tmp/session.jsonl" "$TASK_RESULTS/session.jsonl" 2>/dev/null || true
+
+# Agent result JSON (last line of session = summary)
 docker cp "$CONTAINER:/tmp/result.json" "$TASK_RESULTS/result.json" 2>/dev/null || true
 
 # Agent stderr log
@@ -332,14 +343,39 @@ PATCH_LINES=$(wc -l < "$TASK_RESULTS/patch.diff" 2>/dev/null || echo "0")
 echo "Patch:    $PATCH_LINES lines"
 
 if [[ -f "$TASK_RESULTS/result.json" ]]; then
-  # Try to extract token counts from Claude's JSON output
-  INPUT_TOKENS=$(jq -r '.usage.input_tokens // .result.input_tokens // "N/A"' "$TASK_RESULTS/result.json" 2>/dev/null || echo "N/A")
-  OUTPUT_TOKENS=$(jq -r '.usage.output_tokens // .result.output_tokens // "N/A"' "$TASK_RESULTS/result.json" 2>/dev/null || echo "N/A")
-  echo "Tokens:   in=$INPUT_TOKENS out=$OUTPUT_TOKENS"
+  COST=$(jq -r '.total_cost_usd // "N/A"' "$TASK_RESULTS/result.json" 2>/dev/null || echo "N/A")
+  TURNS=$(jq -r '.num_turns // "N/A"' "$TASK_RESULTS/result.json" 2>/dev/null || echo "N/A")
+  echo "Cost:     \$$COST"
+  echo "Turns:    $TURNS"
+fi
 
-  # Count tool calls if available
-  TOOL_CALLS=$(jq '[.. | .tool_name? // empty] | length' "$TASK_RESULTS/result.json" 2>/dev/null || echo "N/A")
-  echo "Tools:    $TOOL_CALLS calls"
+# Count tokens and tool calls from session JSONL
+if [[ -f "$TASK_RESULTS/session.jsonl" ]]; then
+  python3 -c "
+import json, sys
+in_tok = out_tok = 0
+tools = {}
+for line in open('$TASK_RESULTS/session.jsonl'):
+    try:
+        ev = json.loads(line)
+    except: continue
+    # Count tokens from usage in result message
+    u = ev.get('usage', {})
+    in_tok += u.get('input_tokens', 0) + u.get('cache_read_input_tokens', 0)
+    out_tok += u.get('output_tokens', 0)
+    # Count tool calls
+    if ev.get('type') == 'tool_use':
+        name = ev.get('tool', {}).get('name', ev.get('name', 'unknown'))
+        tools[name] = tools.get(name, 0) + 1
+print(f'Tokens:   in={in_tok} out={out_tok} total={in_tok+out_tok}')
+if tools:
+    print(f'Tools:    {sum(tools.values())} calls')
+    for name, count in sorted(tools.items(), key=lambda x: -x[1]):
+        print(f'  {name}: {count}')
+else:
+    print('Tools:    0 calls')
+print(f'Session:  {sum(1 for _ in open(\"$TASK_RESULTS/session.jsonl\"))} events')
+" 2>/dev/null || echo "  (could not parse session.jsonl)"
 fi
 
 echo "Results:  $TASK_RESULTS/"
