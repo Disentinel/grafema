@@ -24,10 +24,11 @@ allLibraryDefs =
 -- | Check if a call expression matches any library definition.
 -- If it does, emit domain-specific nodes and edges.
 -- Called from ruleCallExpression after the normal CALL node is emitted.
-matchCallSite :: Text -> Text -> ASTNode -> Analyzer ()
-matchCallSite callee callNodeId node = do
+-- walkedArgIds: [(index, Maybe nodeId)] from walking arguments in Expressions.hs
+matchCallSite :: Text -> Text -> ASTNode -> [(Int, Maybe Text)] -> Analyzer ()
+matchCallSite callee callNodeId node walkedArgIds = do
   let (receiver, method) = splitCallee callee
-  mapM_ (\lib -> matchLib lib receiver method callNodeId node) allLibraryDefs
+  mapM_ (\lib -> matchLib lib receiver method callNodeId node walkedArgIds) allLibraryDefs
 
 -- | Split "obj.method" into ("obj", "method"). If no dot, receiver is "".
 splitCallee :: Text -> (Text, Text)
@@ -37,14 +38,14 @@ splitCallee t =
     (pre, m) -> (T.dropEnd 1 pre, m)  -- drop trailing dot from prefix
 
 -- | Try to match a single library definition
-matchLib :: LibraryDef -> Text -> Text -> Text -> ASTNode -> Analyzer ()
-matchLib lib receiver method callNodeId node =
+matchLib :: LibraryDef -> Text -> Text -> Text -> ASTNode -> [(Int, Maybe Text)] -> Analyzer ()
+matchLib lib receiver method callNodeId node walkedArgIds =
   -- For now, match if receiver matches any detect pattern name AND method matches
   -- Full import tracking would require cross-file resolution (Datalog phase)
   if receiverMatchesLib lib receiver
     then mapM_ (\rule ->
            if mrMethod rule == method
-             then applyMethodRule lib rule callNodeId node
+             then applyMethodRule lib rule callNodeId node walkedArgIds
              else return ()
          ) (libMethods lib)
     else return ()
@@ -58,8 +59,8 @@ receiverMatchesLib lib receiver =
   receiver == "router"  -- express convention: const router = express.Router()
 
 -- | Apply a matched method rule: emit domain nodes + edges
-applyMethodRule :: LibraryDef -> MethodRule -> Text -> ASTNode -> Analyzer ()
-applyMethodRule _lib rule callNodeId node = do
+applyMethodRule :: LibraryDef -> MethodRule -> Text -> ASTNode -> [(Int, Maybe Text)] -> Analyzer ()
+applyMethodRule _lib rule callNodeId node walkedArgIds = do
   file <- askFile
   parent <- askNamedParent
   let sp     = astNodeSpan node
@@ -92,13 +93,13 @@ applyMethodRule _lib rule callNodeId node = do
   mapM_ (\argRule ->
     let idx = arIndex argRule
     in if idx < length args
-       then applyArgRule argRule (args !! idx) nodeId file
+       then applyArgRule argRule (args !! idx) nodeId file walkedArgIds
        else return ()
     ) (mrArgRules rule)
 
 -- | Apply a single argument rule
-applyArgRule :: ArgRule -> ASTNode -> Text -> Text -> Analyzer ()
-applyArgRule argRule argNode parentNodeId file = do
+applyArgRule :: ArgRule -> ASTNode -> Text -> Text -> [(Int, Maybe Text)] -> Analyzer ()
+applyArgRule argRule argNode parentNodeId file walkedArgIds = do
   let sp = astNodeSpan argNode
   case arAction argRule of
     ArgBecomesNode nodeType -> do
@@ -123,10 +124,16 @@ applyArgRule argRule argNode parentNodeId file = do
         , geMetadata = Map.empty
         }
     ArgBecomesEdge edgeType -> do
-      let argId = semanticId file "ARG" (T.pack (show (arIndex argRule))) Nothing Nothing
+      -- Use the real walked argument ID instead of a synthetic ARG node.
+      -- lookup returns Maybe (Maybe Text); flatten with (>>= id).
+      let idx = arIndex argRule
+          realArgId = lookup idx walkedArgIds >>= id
+          targetId = case realArgId of
+            Just argId -> argId
+            Nothing    -> semanticId file "ARG" (T.pack (show idx)) Nothing Nothing
       emitEdge GraphEdge
         { geSource = parentNodeId
-        , geTarget = argId
+        , geTarget = targetId
         , geType   = edgeType
         , geMetadata = Map.empty
         }
