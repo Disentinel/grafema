@@ -689,6 +689,7 @@ impl<'a> Evaluator<'a> {
             "attr" => self.eval_attr(atom),
             "attr_edge" => self.eval_attr_edge(atom),
             "neq" => self.eval_neq(atom),
+            "gt" | "lt" | "gte" | "lte" => self.eval_numeric_cmp(atom),
             "starts_with" => self.eval_starts_with(atom),
             "not_starts_with" => self.eval_not_starts_with(atom),
             "string_contains" => self.eval_string_contains(atom),
@@ -1431,6 +1432,50 @@ impl<'a> Evaluator<'a> {
 
         // Return success (empty bindings) if not equal, fail otherwise
         if left_val != right_val {
+            vec![Bindings::new()]
+        } else {
+            vec![]
+        }
+    }
+
+    /// Evaluate gt/lt/gte/lte(X, Y) - numeric comparison constraints
+    /// Both arguments must be bound (either constants or bound variables).
+    /// Values are parsed as f64; non-numeric strings produce empty result (graceful failure).
+    fn eval_numeric_cmp(&self, atom: &Atom) -> Vec<Bindings> {
+        let args = atom.args();
+        if args.len() < 2 {
+            return vec![];
+        }
+
+        let left_str = match &args[0] {
+            Term::Const(s) => s.as_str(),
+            _ => return vec![],
+        };
+
+        let right_str = match &args[1] {
+            Term::Const(s) => s.as_str(),
+            _ => return vec![],
+        };
+
+        let left: f64 = match left_str.parse() {
+            Ok(v) => v,
+            Err(_) => return vec![],
+        };
+
+        let right: f64 = match right_str.parse() {
+            Ok(v) => v,
+            Err(_) => return vec![],
+        };
+
+        let pass = match atom.predicate() {
+            "gt" => left > right,
+            "lt" => left < right,
+            "gte" => left >= right,
+            "lte" => left <= right,
+            _ => return vec![],
+        };
+
+        if pass {
             vec![Bindings::new()]
         } else {
             vec![]
