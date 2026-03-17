@@ -835,7 +835,7 @@ pub struct WireShardDiagnostics {
     pub l1_by_type_keys: usize,
     pub l1_by_file_keys: usize,
     pub l1_by_name_keys: usize,
-    pub has_edge_type_index: bool,
+    pub has_l1_edge_type_index: bool,
 }
 
 // ============================================================================
@@ -1543,7 +1543,7 @@ fn handle_request_with_cancel(
                         l1_by_type_keys: d.l1_by_type_keys,
                         l1_by_file_keys: d.l1_by_file_keys,
                         l1_by_name_keys: d.l1_by_name_keys,
-                        has_edge_type_index: d.has_edge_type_index,
+                        has_l1_edge_type_index: d.has_l1_edge_type_index,
                     })
                     .collect();
                 (
