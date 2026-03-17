@@ -785,6 +785,7 @@ export interface FrontierEdge {
   src: string;
   dst: string;
   edgeType: string;
+  metadata?: string;
 }
 
 export interface SubgraphExtractionResult {

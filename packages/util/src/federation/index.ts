@@ -31,4 +31,5 @@ export type {
   FederatedTraceHop,
   FrontierEdge,
   SubgraphResponse,
+  ManifestResolvedNode,
 } from './FederatedRouter.js';

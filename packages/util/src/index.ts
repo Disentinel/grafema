@@ -265,6 +265,7 @@ export type {
   FederatedTraceHop,
   FrontierEdge,
   SubgraphResponse,
+  ManifestResolvedNode,
 } from './federation/index.js';
 
 // Manifest generation & resolution (federation)

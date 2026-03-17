@@ -86,8 +86,8 @@ pub struct SubgraphResult {
     pub edges: Vec<(u128, u128, String)>,
     /// Frontier: edges whose target node doesn't exist in the store.
     /// These are potential cross-shard references.
-    /// Format: (source_id, target_id, edge_type)
-    pub frontier: Vec<(u128, u128, String)>,
+    /// Format: (source_id, target_id, edge_type, metadata)
+    pub frontier: Vec<(u128, u128, String, String)>,
 }
 
 /// Extract a reachable subgraph from entry points, collecting nodes, edges, and frontier.
@@ -96,7 +96,7 @@ pub struct SubgraphResult {
 /// and identifies dangling edges (frontier) — edges pointing to nodes that don't exist
 /// in the local store. These are candidates for cross-shard resolution in federation mode.
 ///
-/// - `get_edges`: returns (neighbor_id, edge_type) pairs for a node (directional)
+/// - `get_edges`: returns (neighbor_id, edge_type, metadata) tuples for a node (directional)
 /// - `node_exists`: checks if a node ID exists in the local store
 pub fn subgraph<F, E>(
     start: &[u128],
@@ -105,7 +105,7 @@ pub fn subgraph<F, E>(
     mut node_exists: E,
 ) -> SubgraphResult
 where
-    F: FnMut(u128) -> Vec<(u128, String)>,  // (neighbor_id, edge_type)
+    F: FnMut(u128) -> Vec<(u128, String, String)>,  // (neighbor_id, edge_type, metadata)
     E: FnMut(u128) -> bool,
 {
     let mut visited = HashSet::new();
@@ -127,7 +127,7 @@ where
             continue;
         }
 
-        for (neighbor_id, edge_type) in get_edges(node_id) {
+        for (neighbor_id, edge_type, metadata) in get_edges(node_id) {
             if node_exists(neighbor_id) {
                 // Local node — collect edge and continue traversal
                 result_edges.push((node_id, neighbor_id, edge_type));
@@ -137,7 +137,7 @@ where
                 }
             } else {
                 // Dangling edge — target doesn't exist locally → frontier
-                frontier.push((node_id, neighbor_id, edge_type));
+                frontier.push((node_id, neighbor_id, edge_type, metadata));
             }
         }
     }
@@ -207,14 +207,17 @@ mod tests {
         // Node 99 does NOT exist locally (dangling / cross-shard)
         //
         // Graph: 1 --CALLS--> 2 --CALLS--> 3
-        //        1 --IMPORTS_FROM--> 99 (dangling)
+        //        1 --IMPORTS_FROM--> 99 (dangling, with metadata)
         //        3 --CALLS--> 99 (dangling)
         let local_nodes: HashSet<u128> = [1, 2, 3].iter().copied().collect();
 
-        let edges: HashMap<u128, Vec<(u128, String)>> = [
-            (1, vec![(2, "CALLS".to_string()), (99, "IMPORTS_FROM".to_string())]),
-            (2, vec![(3, "CALLS".to_string())]),
-            (3, vec![(99, "CALLS".to_string())]),
+        let edges: HashMap<u128, Vec<(u128, String, String)>> = [
+            (1, vec![
+                (2, "CALLS".to_string(), String::new()),
+                (99, "IMPORTS_FROM".to_string(), r#"{"source":"@pkg/api"}"#.to_string()),
+            ]),
+            (2, vec![(3, "CALLS".to_string(), String::new())]),
+            (3, vec![(99, "CALLS".to_string(), String::new())]),
         ].iter().cloned().collect();
 
         let result = subgraph(
@@ -235,24 +238,25 @@ mod tests {
 
         // 2 frontier edges (both point to node 99)
         assert_eq!(result.frontier.len(), 2);
-        assert!(result.frontier.iter().all(|(_, dst, _)| *dst == 99));
+        assert!(result.frontier.iter().all(|(_, dst, _, _)| *dst == 99));
         // Check edge types
-        let frontier_types: HashSet<&str> = result.frontier.iter().map(|(_, _, t)| t.as_str()).collect();
+        let frontier_types: HashSet<&str> = result.frontier.iter().map(|(_, _, t, _)| t.as_str()).collect();
         assert!(frontier_types.contains("IMPORTS_FROM"));
         assert!(frontier_types.contains("CALLS"));
+        // Check metadata preserved on frontier
+        let imports_edge = result.frontier.iter().find(|(_, _, t, _)| t == "IMPORTS_FROM").unwrap();
+        assert!(imports_edge.3.contains("@pkg/api"));
     }
 
     #[test]
     fn test_subgraph_fan_in_dedup() {
-        // Nodes 1, 2, 3 all point to node 10
-        // Ensure node 10 is visited once, not three times
         let local_nodes: HashSet<u128> = [1, 2, 3, 10, 20].iter().copied().collect();
 
-        let edges: HashMap<u128, Vec<(u128, String)>> = [
-            (1, vec![(10, "CALLS".to_string())]),
-            (2, vec![(10, "CALLS".to_string())]),
-            (3, vec![(10, "CALLS".to_string())]),
-            (10, vec![(20, "CALLS".to_string())]),
+        let edges: HashMap<u128, Vec<(u128, String, String)>> = [
+            (1, vec![(10, "CALLS".to_string(), String::new())]),
+            (2, vec![(10, "CALLS".to_string(), String::new())]),
+            (3, vec![(10, "CALLS".to_string(), String::new())]),
+            (10, vec![(20, "CALLS".to_string(), String::new())]),
             (20, vec![]),
         ].iter().cloned().collect();
 
@@ -263,23 +267,19 @@ mod tests {
             |id| local_nodes.contains(&id),
         );
 
-        // 5 unique nodes
         assert_eq!(result.node_ids.len(), 5);
-        // Node 10 appears exactly once
         assert_eq!(result.node_ids.iter().filter(|&&id| id == 10).count(), 1);
     }
 
     #[test]
     fn test_subgraph_depth_limit() {
-        // Chain: 1 -> 2 -> 3 -> 4 -> 5
-        // With max_depth=2, should reach 1,2,3 but not 4,5
         let local_nodes: HashSet<u128> = [1, 2, 3, 4, 5].iter().copied().collect();
 
-        let edges: HashMap<u128, Vec<(u128, String)>> = [
-            (1, vec![(2, "CALLS".to_string())]),
-            (2, vec![(3, "CALLS".to_string())]),
-            (3, vec![(4, "CALLS".to_string())]),
-            (4, vec![(5, "CALLS".to_string())]),
+        let edges: HashMap<u128, Vec<(u128, String, String)>> = [
+            (1, vec![(2, "CALLS".to_string(), String::new())]),
+            (2, vec![(3, "CALLS".to_string(), String::new())]),
+            (3, vec![(4, "CALLS".to_string(), String::new())]),
+            (4, vec![(5, "CALLS".to_string(), String::new())]),
         ].iter().cloned().collect();
 
         let result = subgraph(
@@ -289,7 +289,7 @@ mod tests {
             |id| local_nodes.contains(&id),
         );
 
-        assert_eq!(result.node_ids.len(), 3); // 1, 2, 3
+        assert_eq!(result.node_ids.len(), 3);
         assert!(!result.node_ids.contains(&4));
         assert!(!result.node_ids.contains(&5));
     }

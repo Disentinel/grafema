@@ -18,6 +18,8 @@
 
 import type { WireNode, WireEdge } from '@grafema/types';
 import type { ShardDiscovery, ShardRegistration } from './ShardDiscovery.js';
+import type { ManifestResolver } from '../manifest/index.js';
+import type { ResolveResult } from '../manifest/resolver.js';
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -28,8 +30,12 @@ export interface FrontierEdge {
   dst: string;
   /** Edge type */
   edgeType: string;
+  /** Edge metadata (JSON string, may contain "source" for IMPORTS_FROM) */
+  metadata?: string;
   /** Absolute file path of the target (extracted from semantic ID) */
   targetFile?: string;
+  /** How this edge was resolved: "graph" | "manifest" | "unresolved" */
+  resolvedVia?: 'graph' | 'manifest' | 'unresolved';
 }
 
 export interface SubgraphResponse {
@@ -50,6 +56,20 @@ export interface FederatedTraceHop {
   unresolvedFrontier: FrontierEdge[];
 }
 
+/** Node resolved from manifest (no full graph, just export surface) */
+export interface ManifestResolvedNode {
+  /** Package name (e.g., "@grafema/util") */
+  packageName: string;
+  /** Symbol name */
+  symbolName: string;
+  /** Export kind: FUNCTION, CLASS, etc. */
+  kind: string;
+  /** Known effects */
+  effects: string[];
+  /** Semantic ID from manifest (if available) */
+  semanticId?: string;
+}
+
 export interface FederatedTraceResult {
   /** All nodes from all hops, merged */
   nodes: WireNode[];
@@ -57,6 +77,8 @@ export interface FederatedTraceResult {
   edges: WireEdge[];
   /** Individual hops for debugging/visualization */
   hops: FederatedTraceHop[];
+  /** Nodes resolved via manifest (partial info, no subgraph) */
+  manifestNodes: ManifestResolvedNode[];
   /** Unresolved frontier across all hops */
   unresolvedFrontier: FrontierEdge[];
   /** Whether the traversal was cut short by cost budget */
@@ -86,15 +108,18 @@ type SubgraphSender = (
 export class FederatedRouter {
   private discovery: ShardDiscovery;
   private sendSubgraph: SubgraphSender;
+  private manifestResolver: ManifestResolver | null;
   private options: Required<FederatedRouterOptions>;
 
   constructor(
     discovery: ShardDiscovery,
     sendSubgraph: SubgraphSender,
     options: FederatedRouterOptions = {},
+    manifestResolver?: ManifestResolver,
   ) {
     this.discovery = discovery;
     this.sendSubgraph = sendSubgraph;
+    this.manifestResolver = manifestResolver ?? null;
     this.options = {
       maxNodes: options.maxNodes ?? 10_000,
       maxShardsPerRound: options.maxShardsPerRound ?? 10,
@@ -119,6 +144,7 @@ export class FederatedRouter {
     const allNodes: WireNode[] = [];
     const allEdges: WireEdge[] = [];
     const allHops: FederatedTraceHop[] = [];
+    const manifestNodes: ManifestResolvedNode[] = [];
     const globalVisited = new Set<string>(); // INV-3: global across all hops
     let unresolvedFrontier: FrontierEdge[] = [];
     let truncated = false;
@@ -239,7 +265,17 @@ export class FederatedRouter {
             entries: group.edges.map(e => e.dst),
           });
         } else {
-          newUnresolved.push(...group.edges);
+          // No shard found — try manifest fallback
+          for (const edge of group.edges) {
+            const resolved = this.tryManifestFallback(edge);
+            if (resolved) {
+              manifestNodes.push(resolved);
+              edge.resolvedVia = 'manifest';
+            } else {
+              edge.resolvedVia = 'unresolved';
+              newUnresolved.push(edge);
+            }
+          }
         }
       }
 
@@ -251,6 +287,7 @@ export class FederatedRouter {
       nodes: allNodes,
       edges: allEdges,
       hops: allHops,
+      manifestNodes,
       unresolvedFrontier,
       truncated,
     };
@@ -286,6 +323,47 @@ export class FederatedRouter {
   // ── Private ────────────────────────────────────────────────────
 
   /**
+   * Try to resolve a frontier edge via ManifestResolver.
+   * Works for IMPORTS_FROM edges that carry "source" in metadata.
+   * Returns ManifestResolvedNode if found, null otherwise.
+   */
+  private tryManifestFallback(edge: FrontierEdge): ManifestResolvedNode | null {
+    if (!this.manifestResolver) return null;
+    if (edge.edgeType !== 'IMPORTS_FROM') return null;
+
+    // Extract package source and symbol from edge metadata
+    const meta = parseEdgeMetadata(edge.metadata);
+    if (!meta.source) return null;
+
+    // Try to find the symbol in the manifest
+    // Symbol name might be in metadata or extractable from src semantic ID
+    const symbolName = meta.specifier || meta.localName || extractSymbolFromId(edge.src);
+    if (!symbolName) {
+      // No specific symbol — check if package exists in manifests at all
+      if (this.manifestResolver.has(meta.source)) {
+        return {
+          packageName: meta.source,
+          symbolName: '*',
+          kind: 'VARIABLE',
+          effects: ['UNKNOWN'],
+        };
+      }
+      return null;
+    }
+
+    const result: ResolveResult | null = this.manifestResolver.resolve(meta.source, symbolName);
+    if (!result) return null;
+
+    return {
+      packageName: meta.source,
+      symbolName,
+      kind: result.export.kind,
+      effects: result.export.effects,
+      semanticId: result.export.semanticId,
+    };
+  }
+
+  /**
    * Group frontier edges by target shard using ShardDiscovery.
    * Edges whose target shard can't be found go into a null group.
    */
@@ -310,6 +388,24 @@ export class FederatedRouter {
 
     return groups;
   }
+}
+
+/** Parse JSON edge metadata, returning an object with known fields. */
+function parseEdgeMetadata(metadata?: string): Record<string, string> {
+  if (!metadata) return {};
+  try {
+    return JSON.parse(metadata);
+  } catch {
+    return {};
+  }
+}
+
+/** Extract symbol name from the last segment of a semantic ID. */
+function extractSymbolFromId(semanticId: string): string | null {
+  if (!semanticId) return null;
+  // "file.ts->FUNCTION->myFunc" → "myFunc"
+  const parts = semanticId.split('->');
+  return parts.length >= 3 ? parts[parts.length - 1] : null;
 }
 
 /**

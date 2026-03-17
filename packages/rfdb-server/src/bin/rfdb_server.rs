@@ -729,6 +729,9 @@ pub struct WireFrontierEdge {
     pub dst: String,
     /// Edge type
     pub edge_type: String,
+    /// Edge metadata (JSON string, may contain "source" for IMPORTS_FROM edges)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<String>,
 }
 
 /// Attribute query for wire protocol.
@@ -1831,7 +1834,7 @@ fn handle_request_with_cancel(
                 let edge_types_owned: Vec<String> = edge_types.iter().cloned().collect();
 
                 // Build edge getter based on direction
-                let get_edges = |node_id: u128| -> Vec<(u128, String)> {
+                let get_edges = |node_id: u128| -> Vec<(u128, String, String)> {
                     let types_refs: Vec<&str> = edge_types_owned.iter().map(|s| s.as_str()).collect();
                     let types_opt = if types_refs.is_empty() { None } else { Some(types_refs.as_slice()) };
 
@@ -1840,13 +1843,15 @@ fn handle_request_with_cancel(
                     if direction == "forward" || direction == "both" {
                         for edge in engine.get_outgoing_edges(node_id, types_opt) {
                             let etype = edge.edge_type.unwrap_or_default();
-                            result.push((edge.dst, etype));
+                            let meta = edge.metadata.unwrap_or_default();
+                            result.push((edge.dst, etype, meta));
                         }
                     }
                     if direction == "backward" || direction == "both" {
                         for edge in engine.get_incoming_edges(node_id, types_opt) {
                             let etype = edge.edge_type.unwrap_or_default();
-                            result.push((edge.src, etype));
+                            let meta = edge.metadata.unwrap_or_default();
+                            result.push((edge.src, etype, meta));
                         }
                     }
 
@@ -1886,7 +1891,7 @@ fn handle_request_with_cancel(
 
                 // Build frontier with semantic IDs where possible
                 let frontier: Vec<WireFrontierEdge> = sub.frontier.iter()
-                    .map(|(src, dst, etype)| {
+                    .map(|(src, dst, etype, meta)| {
                         let src_id = if protocol >= 3 {
                             engine.get_node(*src)
                                 .and_then(|n| n.semantic_id)
@@ -1900,6 +1905,7 @@ fn handle_request_with_cancel(
                             src: src_id,
                             dst: dst_id,
                             edge_type: etype.clone(),
+                            metadata: if meta.is_empty() { None } else { Some(meta.clone()) },
                         }
                     })
                     .collect();
