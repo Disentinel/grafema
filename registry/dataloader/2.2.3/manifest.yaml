@@ -1,0 +1,26 @@
+schema_version: 1
+analyzer_version: 0.3.16
+authored: false
+confidence: 1
+generated: 2026-03-17T16:55:01.741Z
+package:
+  purl: pkg:npm/dataloader@2.2.3
+  source_type: compiled_js
+exports:
+  - name: DataLoader
+    kind: FUNCTION
+    semanticId: index.js->FUNCTION->DataLoader[in:<expression>]
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+imports: []
+capabilities:
+  total_exports: 1
+  total_internal_symbols: 57
+  has_graph: true
+access:
+  local: ./graph.rfdb
+language: typescript
+language_specific:
+  module_system: esm

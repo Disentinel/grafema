@@ -1,0 +1,44 @@
+schema_version: 1
+analyzer_version: 0.3.16
+authored: false
+confidence: 1
+generated: 2026-03-17T14:50:43.121Z
+package:
+  purl: pkg:npm/@babel/traverse@7.28.6
+  source_type: compiled_js
+exports:
+  - name: __esModule
+    kind: TYPE
+    semanticId: lib/index.js->EXPORT_BINDING->__esModule
+    effects:
+      - PURE
+  - name: Hub
+    kind: TYPE
+    semanticId: lib/index.js->EXPORT_BINDING->Hub
+    effects:
+      - PURE
+  - name: NodePath
+    kind: TYPE
+    semanticId: lib/index.js->EXPORT_BINDING->NodePath
+    effects:
+      - PURE
+  - name: Scope
+    kind: TYPE
+    semanticId: lib/index.js->EXPORT_BINDING->Scope
+    effects:
+      - PURE
+  - name: visitors
+    kind: TYPE
+    semanticId: lib/index.js->EXPORT_BINDING->visitors
+    effects:
+      - PURE
+imports: []
+capabilities:
+  total_exports: 5
+  total_internal_symbols: 1438
+  has_graph: true
+access:
+  local: ./graph.rfdb
+language: typescript
+language_specific:
+  module_system: esm

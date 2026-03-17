@@ -33,6 +33,7 @@ import { explainCommand } from './commands/explain.js';
 import { fileCommand } from './commands/file.js';
 import { setupSkillCommand } from './commands/setup-skill.js';
 import { gitIngestCommand } from './commands/git-ingest.js';
+import { registryCommand } from './commands/registry.js';
 
 // Read version from package.json
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -74,5 +75,6 @@ program.addCommand(explainCommand);
 program.addCommand(fileCommand);
 program.addCommand(setupSkillCommand);
 program.addCommand(gitIngestCommand);
+program.addCommand(registryCommand);
 
 program.parse();

@@ -1,0 +1,81 @@
+schema_version: 1
+analyzer_version: 0.3.16
+authored: false
+confidence: 1
+generated: 2026-03-17T15:02:35.213Z
+package:
+  purl: pkg:npm/ajv@8.17.1
+  source_type: compiled_js
+exports:
+  - name: _
+    kind: TYPE
+    semanticId: dist/ajv.js->EXPORT_BINDING->_
+    effects:
+      - PURE
+  - name: __esModule
+    kind: TYPE
+    semanticId: dist/ajv.js->EXPORT_BINDING->__esModule
+    effects:
+      - PURE
+  - name: Ajv
+    kind: CLASS
+    semanticId: dist/ajv.js->CLASS->Ajv
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: CodeGen
+    kind: TYPE
+    semanticId: dist/ajv.js->EXPORT_BINDING->CodeGen
+    effects:
+      - PURE
+  - name: default
+    kind: TYPE
+    semanticId: dist/ajv.js->EXPORT_BINDING->default
+    effects:
+      - PURE
+  - name: KeywordCxt
+    kind: TYPE
+    semanticId: dist/ajv.js->EXPORT_BINDING->KeywordCxt
+    effects:
+      - PURE
+  - name: MissingRefError
+    kind: TYPE
+    semanticId: dist/ajv.js->EXPORT_BINDING->MissingRefError
+    effects:
+      - PURE
+  - name: Name
+    kind: TYPE
+    semanticId: dist/ajv.js->EXPORT_BINDING->Name
+    effects:
+      - PURE
+  - name: nil
+    kind: TYPE
+    semanticId: dist/ajv.js->EXPORT_BINDING->nil
+    effects:
+      - PURE
+  - name: str
+    kind: TYPE
+    semanticId: dist/ajv.js->EXPORT_BINDING->str
+    effects:
+      - PURE
+  - name: stringify
+    kind: TYPE
+    semanticId: dist/ajv.js->EXPORT_BINDING->stringify
+    effects:
+      - PURE
+  - name: ValidationError
+    kind: TYPE
+    semanticId: dist/ajv.js->EXPORT_BINDING->ValidationError
+    effects:
+      - PURE
+imports: []
+capabilities:
+  total_exports: 12
+  total_internal_symbols: 2472
+  has_graph: true
+access:
+  local: ./graph.rfdb
+language: typescript
+language_specific:
+  module_system: esm

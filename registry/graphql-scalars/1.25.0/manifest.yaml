@@ -1,0 +1,754 @@
+schema_version: 1
+analyzer_version: 0.3.16
+authored: false
+confidence: 1
+generated: 2026-03-17T15:04:08.214Z
+package:
+  purl: pkg:npm/graphql-scalars@1.25.0
+  source_type: compiled_js
+exports:
+  - name: AccountNumber
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->AccountNumber
+    effects:
+      - PURE
+  - name: BigInt
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->BigInt
+    effects:
+      - PURE
+  - name: Byte
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->Byte
+    effects:
+      - PURE
+  - name: CountryCode
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->CountryCode
+    effects:
+      - PURE
+  - name: CountryName
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->CountryName
+    effects:
+      - PURE
+  - name: Cuid
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->Cuid
+    effects:
+      - PURE
+  - name: Cuid2
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->Cuid2
+    effects:
+      - PURE
+  - name: Currency
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->Currency
+    effects:
+      - PURE
+  - name: Date
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->Date
+    effects:
+      - PURE
+  - name: DateTime
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->DateTime
+    effects:
+      - PURE
+  - name: DateTimeISO
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->DateTimeISO
+    effects:
+      - PURE
+  - name: DeweyDecimal
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->DeweyDecimal
+    effects:
+      - PURE
+  - name: DID
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->DID
+    effects:
+      - PURE
+  - name: Duration
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->Duration
+    effects:
+      - PURE
+  - name: EmailAddress
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->EmailAddress
+    effects:
+      - PURE
+  - name: GeoJSON
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->GeoJSON
+    effects:
+      - PURE
+  - name: GraphQLAccountNumber
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLAccountNumber
+    effects:
+      - PURE
+  - name: GraphQLBigInt
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLBigInt
+    effects:
+      - PURE
+  - name: GraphQLByte
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLByte
+    effects:
+      - PURE
+  - name: GraphQLCountryCode
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLCountryCode
+    effects:
+      - PURE
+  - name: GraphQLCountryName
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLCountryName
+    effects:
+      - PURE
+  - name: GraphQLCuid
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLCuid
+    effects:
+      - PURE
+  - name: GraphQLCuid2
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLCuid2
+    effects:
+      - PURE
+  - name: GraphQLCurrency
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLCurrency
+    effects:
+      - PURE
+  - name: GraphQLDate
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLDate
+    effects:
+      - PURE
+  - name: GraphQLDateTime
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLDateTime
+    effects:
+      - PURE
+  - name: GraphQLDateTimeISO
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLDateTimeISO
+    effects:
+      - PURE
+  - name: GraphQLDeweyDecimal
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLDeweyDecimal
+    effects:
+      - PURE
+  - name: GraphQLDID
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLDID
+    effects:
+      - PURE
+  - name: GraphQLDuration
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLDuration
+    effects:
+      - PURE
+  - name: GraphQLEmailAddress
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLEmailAddress
+    effects:
+      - PURE
+  - name: GraphQLGeoJSON
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLGeoJSON
+    effects:
+      - PURE
+  - name: GraphQLGUID
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLGUID
+    effects:
+      - PURE
+  - name: GraphQLHexadecimal
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLHexadecimal
+    effects:
+      - PURE
+  - name: GraphQLHexColorCode
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLHexColorCode
+    effects:
+      - PURE
+  - name: GraphQLHSL
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLHSL
+    effects:
+      - PURE
+  - name: GraphQLHSLA
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLHSLA
+    effects:
+      - PURE
+  - name: GraphQLIBAN
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLIBAN
+    effects:
+      - PURE
+  - name: GraphQLIP
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLIP
+    effects:
+      - PURE
+  - name: GraphQLIPCPatent
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLIPCPatent
+    effects:
+      - PURE
+  - name: GraphQLIPv4
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLIPv4
+    effects:
+      - PURE
+  - name: GraphQLIPv6
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLIPv6
+    effects:
+      - PURE
+  - name: GraphQLISBN
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLISBN
+    effects:
+      - PURE
+  - name: GraphQLISO8601Duration
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLISO8601Duration
+    effects:
+      - PURE
+  - name: GraphQLJSON
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLJSON
+    effects:
+      - PURE
+  - name: GraphQLJSONObject
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLJSONObject
+    effects:
+      - PURE
+  - name: GraphQLJWT
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLJWT
+    effects:
+      - PURE
+  - name: GraphQLLatitude
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLLatitude
+    effects:
+      - PURE
+  - name: GraphQLLCCSubclass
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLLCCSubclass
+    effects:
+      - PURE
+  - name: GraphQLLocalDate
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLLocalDate
+    effects:
+      - PURE
+  - name: GraphQLLocalDateTime
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLLocalDateTime
+    effects:
+      - PURE
+  - name: GraphQLLocale
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLLocale
+    effects:
+      - PURE
+  - name: GraphQLLocalEndTime
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLLocalEndTime
+    effects:
+      - PURE
+  - name: GraphQLLocalTime
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLLocalTime
+    effects:
+      - PURE
+  - name: GraphQLLong
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLLong
+    effects:
+      - PURE
+  - name: GraphQLLongitude
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLLongitude
+    effects:
+      - PURE
+  - name: GraphQLMAC
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLMAC
+    effects:
+      - PURE
+  - name: GraphQLNegativeFloat
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLNegativeFloat
+    effects:
+      - PURE
+  - name: GraphQLNegativeInt
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLNegativeInt
+    effects:
+      - PURE
+  - name: GraphQLNonEmptyString
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLNonEmptyString
+    effects:
+      - PURE
+  - name: GraphQLNonNegativeFloat
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLNonNegativeFloat
+    effects:
+      - PURE
+  - name: GraphQLNonNegativeInt
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLNonNegativeInt
+    effects:
+      - PURE
+  - name: GraphQLNonPositiveFloat
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLNonPositiveFloat
+    effects:
+      - PURE
+  - name: GraphQLNonPositiveInt
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLNonPositiveInt
+    effects:
+      - PURE
+  - name: GraphQLObjectID
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLObjectID
+    effects:
+      - PURE
+  - name: GraphQLPhoneNumber
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLPhoneNumber
+    effects:
+      - PURE
+  - name: GraphQLPort
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLPort
+    effects:
+      - PURE
+  - name: GraphQLPositiveFloat
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLPositiveFloat
+    effects:
+      - PURE
+  - name: GraphQLPositiveInt
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLPositiveInt
+    effects:
+      - PURE
+  - name: GraphQLPostalCode
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLPostalCode
+    effects:
+      - PURE
+  - name: GraphQLRGB
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLRGB
+    effects:
+      - PURE
+  - name: GraphQLRGBA
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLRGBA
+    effects:
+      - PURE
+  - name: GraphQLRoutingNumber
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLRoutingNumber
+    effects:
+      - PURE
+  - name: GraphQLSafeInt
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLSafeInt
+    effects:
+      - PURE
+  - name: GraphQLSemVer
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLSemVer
+    effects:
+      - PURE
+  - name: GraphQLSESSN
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLSESSN
+    effects:
+      - PURE
+  - name: GraphQLTime
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLTime
+    effects:
+      - PURE
+  - name: GraphQLTimestamp
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLTimestamp
+    effects:
+      - PURE
+  - name: GraphQLTimeZone
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLTimeZone
+    effects:
+      - PURE
+  - name: GraphQLULID
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLULID
+    effects:
+      - PURE
+  - name: GraphQLUnsignedFloat
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLUnsignedFloat
+    effects:
+      - PURE
+  - name: GraphQLUnsignedInt
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLUnsignedInt
+    effects:
+      - PURE
+  - name: GraphQLURL
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLURL
+    effects:
+      - PURE
+  - name: GraphQLUSCurrency
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLUSCurrency
+    effects:
+      - PURE
+  - name: GraphQLUtcOffset
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLUtcOffset
+    effects:
+      - PURE
+  - name: GraphQLUUID
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLUUID
+    effects:
+      - PURE
+  - name: GraphQLVoid
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->GraphQLVoid
+    effects:
+      - PURE
+  - name: GUID
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->GUID
+    effects:
+      - PURE
+  - name: Hexadecimal
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->Hexadecimal
+    effects:
+      - PURE
+  - name: HexColorCode
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->HexColorCode
+    effects:
+      - PURE
+  - name: HSL
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->HSL
+    effects:
+      - PURE
+  - name: HSLA
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->HSLA
+    effects:
+      - PURE
+  - name: IBAN
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->IBAN
+    effects:
+      - PURE
+  - name: IP
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->IP
+    effects:
+      - PURE
+  - name: IPCPatent
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->IPCPatent
+    effects:
+      - PURE
+  - name: IPv4
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->IPv4
+    effects:
+      - PURE
+  - name: IPv6
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->IPv6
+    effects:
+      - PURE
+  - name: ISBN
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->ISBN
+    effects:
+      - PURE
+  - name: ISO8601Duration
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->ISO8601Duration[in:./mocks.js]
+    effects:
+      - PURE
+  - name: JSON
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->JSON
+    effects:
+      - PURE
+  - name: JSONObject
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->JSONObject
+    effects:
+      - PURE
+  - name: JWT
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->JWT
+    effects:
+      - PURE
+  - name: Latitude
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->Latitude
+    effects:
+      - PURE
+  - name: LCCSubclass
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->LCCSubclass
+    effects:
+      - PURE
+  - name: LocalDate
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->LocalDate
+    effects:
+      - PURE
+  - name: LocalDateTime
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->LocalDateTime
+    effects:
+      - PURE
+  - name: Locale
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->Locale
+    effects:
+      - PURE
+  - name: LocalEndTime
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->LocalEndTime
+    effects:
+      - PURE
+  - name: LocalTime
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->LocalTime
+    effects:
+      - PURE
+  - name: Long
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->Long
+    effects:
+      - PURE
+  - name: Longitude
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->Longitude
+    effects:
+      - PURE
+  - name: MAC
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->MAC
+    effects:
+      - PURE
+  - name: mocks
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->mocks
+    effects:
+      - PURE
+  - name: NegativeFloat
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->NegativeFloat
+    effects:
+      - PURE
+  - name: NegativeInt
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->NegativeInt
+    effects:
+      - PURE
+  - name: NonEmptyString
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->NonEmptyString
+    effects:
+      - PURE
+  - name: NonNegativeFloat
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->NonNegativeFloat
+    effects:
+      - PURE
+  - name: NonNegativeInt
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->NonNegativeInt
+    effects:
+      - PURE
+  - name: NonPositiveFloat
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->NonPositiveFloat
+    effects:
+      - PURE
+  - name: NonPositiveInt
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->NonPositiveInt
+    effects:
+      - PURE
+  - name: ObjectID
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->ObjectID
+    effects:
+      - PURE
+  - name: PhoneNumber
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->PhoneNumber
+    effects:
+      - PURE
+  - name: Port
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->Port
+    effects:
+      - PURE
+  - name: PositiveFloat
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->PositiveFloat
+    effects:
+      - PURE
+  - name: PositiveInt
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->PositiveInt
+    effects:
+      - PURE
+  - name: PostalCode
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->PostalCode
+    effects:
+      - PURE
+  - name: RegularExpression
+    kind: CLASS
+    semanticId: esm/RegularExpression.js->CLASS->RegularExpression
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: resolvers
+    kind: CONSTANT
+    semanticId: esm/index.js->CONSTANT->resolvers
+    effects:
+      - PURE
+  - name: RGB
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->RGB
+    effects:
+      - PURE
+  - name: RGBA
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->RGBA
+    effects:
+      - PURE
+  - name: RoutingNumber
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->RoutingNumber
+    effects:
+      - PURE
+  - name: SafeInt
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->SafeInt
+    effects:
+      - PURE
+  - name: SemVer
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->SemVer
+    effects:
+      - PURE
+  - name: SESSN
+    kind: CONSTANT
+    semanticId: esm/mocks.js->CONSTANT->SESSN
+    effects:
+      - PURE
+  - name: Time
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->Time
+    effects:
+      - PURE
+  - name: Timestamp
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->Timestamp
+    effects:
+      - PURE
+  - name: TimeZone
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->TimeZone
+    effects:
+      - PURE
+  - name: typeDefs
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->typeDefs
+    effects:
+      - PURE
+  - name: ULID
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->ULID
+    effects:
+      - PURE
+  - name: UnsignedFloat
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->UnsignedFloat
+    effects:
+      - PURE
+  - name: UnsignedInt
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->UnsignedInt
+    effects:
+      - PURE
+  - name: URL
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->URL
+    effects:
+      - PURE
+  - name: USCurrency
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->USCurrency
+    effects:
+      - PURE
+  - name: UtcOffset
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->UtcOffset
+    effects:
+      - PURE
+  - name: UUID
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->UUID
+    effects:
+      - PURE
+  - name: Void
+    kind: CONSTANT
+    semanticId: esm/typeDefs.js->CONSTANT->Void
+    effects:
+      - PURE
+imports:
+  - purl: pkg:npm/graphql
+    symbols:
+      - graphql
+capabilities:
+  total_exports: 146
+  total_internal_symbols: 1794
+  has_graph: true
+access:
+  local: ./graph.rfdb
+language: typescript
+language_specific:
+  module_system: esm

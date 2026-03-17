@@ -258,7 +258,7 @@ export type {
 } from './notation/index.js';
 
 // Manifest generation & resolution (federation)
-export { ManifestGenerator, ManifestResolver } from './manifest/index.js';
+export { ManifestGenerator, ManifestResolver, RegistryBuilder, resolvePackageDir, detectSourceType, resolveEntryPoint } from './manifest/index.js';
 export type {
   Manifest,
   ManifestExport,
@@ -269,6 +269,10 @@ export type {
   ExportKind,
   ResolveResult,
   ManifestSummary,
+  RegistryEntry,
+  RegistryIndex,
+  RegistryBuilderOptions,
+  BuildResult,
 } from './manifest/index.js';
 
 // Re-export types for convenience

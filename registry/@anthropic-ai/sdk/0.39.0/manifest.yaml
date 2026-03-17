@@ -1,0 +1,148 @@
+schema_version: 1
+analyzer_version: 0.3.16
+authored: false
+confidence: 1
+generated: 2026-03-17T15:07:24.088Z
+package:
+  purl: pkg:npm/@anthropic-ai/sdk@0.39.0
+  source_type: source
+exports:
+  - name: __esModule
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->__esModule
+    effects:
+      - PURE
+  - name: Anthropic
+    kind: CLASS
+    semanticId: index.js->CLASS->Anthropic
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: AnthropicError
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->AnthropicError
+    effects:
+      - PURE
+  - name: APIConnectionError
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->APIConnectionError
+    effects:
+      - PURE
+  - name: APIConnectionTimeoutError
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->APIConnectionTimeoutError
+    effects:
+      - PURE
+  - name: APIError
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->APIError
+    effects:
+      - PURE
+  - name: APIUserAbortError
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->APIUserAbortError
+    effects:
+      - PURE
+  - name: AuthenticationError
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->AuthenticationError
+    effects:
+      - PURE
+  - name: BadRequestError
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->BadRequestError
+    effects:
+      - PURE
+  - name: ConflictError
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->ConflictError
+    effects:
+      - PURE
+  - name: default
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->default
+    effects:
+      - PURE
+  - name: fileFromPath
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->fileFromPath
+    effects:
+      - PURE
+  - name: InternalServerError
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->InternalServerError
+    effects:
+      - PURE
+  - name: NotFoundError
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->NotFoundError
+    effects:
+      - PURE
+  - name: PermissionDeniedError
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->PermissionDeniedError
+    effects:
+      - PURE
+  - name: RateLimitError
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->RateLimitError
+    effects:
+      - PURE
+  - name: toFile
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->toFile
+    effects:
+      - PURE
+  - name: UnprocessableEntityError
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->UnprocessableEntityError
+    effects:
+      - PURE
+imports:
+  - purl: pkg:npm/@anthropic-ai/sdk
+    symbols:
+      - "@anthropic-ai/sdk/_shims/auto/runtime"
+      - "@anthropic-ai/sdk/_shims/auto/types"
+      - "@anthropic-ai/sdk/_shims/index"
+      - "@anthropic-ai/sdk/core"
+      - "@anthropic-ai/sdk/error"
+      - "@anthropic-ai/sdk/resources/beta/messages/messages"
+      - "@anthropic-ai/sdk/resources/messages"
+      - "@anthropic-ai/sdk/streaming"
+  - purl: pkg:npm/abort-controller
+    symbols:
+      - abort-controller
+  - purl: pkg:npm/agentkeepalive
+    symbols:
+      - agentkeepalive
+  - purl: pkg:npm/form-data-encoder
+    symbols:
+      - form-data-encoder
+  - purl: pkg:npm/formdata-node
+    symbols:
+      - formdata-node
+  - purl: pkg:npm/node-fetch
+    symbols:
+      - node-fetch
+  - purl: pkg:npm/node@*#fs
+    symbols:
+      - node:fs
+  - purl: pkg:npm/node@*#http
+    symbols:
+      - node:http
+  - purl: pkg:npm/node@*#stream
+    symbols:
+      - node:stream
+  - purl: pkg:npm/node@*#stream/web
+    symbols:
+      - node:stream/web
+capabilities:
+  total_exports: 18
+  total_internal_symbols: 2882
+  has_graph: true
+access:
+  local: ./graph.rfdb
+language: typescript
+language_specific:
+  module_system: esm
