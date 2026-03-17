@@ -48,6 +48,19 @@ use rfdb::metrics::{Metrics, MetricsSnapshot, SLOW_QUERY_THRESHOLD_MS};
 // Global client ID counter
 static NEXT_CLIENT_ID: AtomicUsize = AtomicUsize::new(1);
 
+/// Server-wide configuration set once at startup.
+/// Uses OnceLock so handle_request can read it without parameter changes.
+#[derive(Debug)]
+struct ServerConfig {
+    /// Whether federation mode is active (--federate flag)
+    federate: bool,
+    /// Absolute path of the project root this shard covers.
+    /// In federation mode, this defines the shard's "territory".
+    root: Option<PathBuf>,
+}
+
+static SERVER_CONFIG: std::sync::OnceLock<ServerConfig> = std::sync::OnceLock::new();
+
 /// Verbose logging: set RFDB_VERBOSE=1 to log every request with timing.
 /// Useful with `grafema server start --foreground`.
 fn is_verbose() -> bool {
@@ -324,6 +337,31 @@ pub enum Request {
         #[serde(rename = "requestId")]
         request_id: String,
     },
+
+    // ========================================================================
+    // Federation Commands (Protocol v4)
+    // ========================================================================
+
+    /// Identify this shard: what territory it covers, how fresh the data is.
+    /// Used by federation router to validate that a discovered shard
+    /// actually covers the expected file paths.
+    WhoAreYou,
+
+    /// Extract a reachable subgraph from entry points.
+    /// Returns visited nodes, traversed edges, and frontier (dangling edges
+    /// whose target doesn't exist in this shard — candidates for cross-shard resolution).
+    Subgraph {
+        /// Semantic IDs of entry point nodes
+        entries: Vec<String>,
+        /// "forward", "backward", or "both"
+        direction: String,
+        /// Edge types to traverse (empty = all)
+        #[serde(default, rename = "edgeTypes")]
+        edge_types: Vec<String>,
+        /// Maximum traversal depth
+        #[serde(rename = "maxDepth")]
+        max_depth: u32,
+    },
 }
 
 fn default_rw_mode() -> String { "rw".to_string() }
@@ -444,6 +482,40 @@ pub enum Response {
     /// Response for FindDependentFiles
     Files {
         files: Vec<String>,
+    },
+
+    /// Federation: subgraph extraction result
+    SubgraphResult {
+        ok: bool,
+        nodes: Vec<WireNode>,
+        edges: Vec<WireEdge>,
+        /// Dangling edges: target node doesn't exist in this shard.
+        /// Each entry has src (semantic ID), dst (semantic ID), edgeType.
+        frontier: Vec<WireFrontierEdge>,
+    },
+
+    /// Federation: shard identity response
+    ShardIdentity {
+        ok: bool,
+        /// Absolute path of the analysis root this shard covers
+        root: String,
+        /// Number of analyzed files in this shard
+        #[serde(rename = "fileCount")]
+        file_count: u64,
+        /// Total nodes in the graph
+        #[serde(rename = "nodeCount")]
+        node_count: u64,
+        /// Total edges in the graph
+        #[serde(rename = "edgeCount")]
+        edge_count: u64,
+        /// Analyzer version that produced this graph
+        #[serde(rename = "analyzerVersion")]
+        analyzer_version: String,
+        /// Server version
+        #[serde(rename = "serverVersion")]
+        server_version: String,
+        /// Whether federation mode is active
+        federated: bool,
     },
 
     /// Performance statistics response
@@ -642,6 +714,22 @@ pub struct WireEdge {
     pub dst: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub edge_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<String>,
+}
+
+/// Frontier edge: a dangling edge whose target doesn't exist in this shard.
+/// Used by federation router for cross-shard resolution.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WireFrontierEdge {
+    /// Source node semantic ID (in this shard)
+    pub src: String,
+    /// Target node ID (hash, not resolved — target doesn't exist locally)
+    pub dst: String,
+    /// Edge type
+    pub edge_type: String,
+    /// Edge metadata (JSON string, may contain "source" for IMPORTS_FROM edges)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<String>,
 }
@@ -933,6 +1021,8 @@ fn get_operation_name(request: &Request) -> String {
         Request::FindDependentFiles { .. } => "FindDependentFiles".to_string(),
         Request::CancelQuery { .. } => "CancelQuery".to_string(),
         Request::CypherQuery { .. } => "CypherQuery".to_string(),
+        Request::WhoAreYou => "WhoAreYou".to_string(),
+        Request::Subgraph { .. } => "Subgraph".to_string(),
         Request::Hello { .. } => "Hello".to_string(),
         Request::Ping => "Ping".to_string(),
         Request::Shutdown => "Shutdown".to_string(),
@@ -1697,6 +1787,135 @@ fn handle_request_with_cancel(
                 files_vec.sort();
 
                 Response::Files { files: files_vec }
+            })
+        }
+
+        Request::WhoAreYou => {
+            let config = SERVER_CONFIG.get();
+            let federated = config.map(|c| c.federate).unwrap_or(false);
+            let root = config
+                .and_then(|c| c.root.as_ref())
+                .map(|p| p.display().to_string())
+                .unwrap_or_default();
+
+            // Get counts from default database
+            let (node_count, edge_count, file_count) = if let Ok(db) = manager.get_database("default") {
+                let engine = db.engine.read().unwrap();
+                let nc = engine.node_count() as u64;
+                let ec = engine.edge_count() as u64;
+                // Count unique files: query nodes with type MODULE
+                let file_nodes = engine.find_by_type("MODULE");
+                let fc = file_nodes.len() as u64;
+                (nc, ec, fc)
+            } else {
+                (0, 0, 0)
+            };
+
+            Response::ShardIdentity {
+                ok: true,
+                root,
+                file_count,
+                node_count,
+                edge_count,
+                analyzer_version: String::new(), // populated by orchestrator metadata later
+                server_version: env!("CARGO_PKG_VERSION").to_string(),
+                federated,
+            }
+        }
+
+        Request::Subgraph { entries, direction, edge_types, max_depth } => {
+            let protocol = session.protocol_version;
+            with_engine_read(session, |engine| {
+                // Resolve entry point semantic IDs to u128
+                let start_ids: Vec<u128> = entries.iter()
+                    .map(|s| string_to_id(s))
+                    .collect();
+
+                let edge_types_owned: Vec<String> = edge_types.iter().cloned().collect();
+
+                // Build edge getter based on direction
+                let get_edges = |node_id: u128| -> Vec<(u128, String, String)> {
+                    let types_refs: Vec<&str> = edge_types_owned.iter().map(|s| s.as_str()).collect();
+                    let types_opt = if types_refs.is_empty() { None } else { Some(types_refs.as_slice()) };
+
+                    let mut result = Vec::new();
+
+                    if direction == "forward" || direction == "both" {
+                        for edge in engine.get_outgoing_edges(node_id, types_opt) {
+                            let etype = edge.edge_type.unwrap_or_default();
+                            let meta = edge.metadata.unwrap_or_default();
+                            result.push((edge.dst, etype, meta));
+                        }
+                    }
+                    if direction == "backward" || direction == "both" {
+                        for edge in engine.get_incoming_edges(node_id, types_opt) {
+                            let etype = edge.edge_type.unwrap_or_default();
+                            let meta = edge.metadata.unwrap_or_default();
+                            result.push((edge.src, etype, meta));
+                        }
+                    }
+
+                    result
+                };
+
+                let node_exists = |id: u128| -> bool {
+                    engine.node_exists(id)
+                };
+
+                let sub = rfdb::graph::traversal::subgraph(
+                    &start_ids,
+                    max_depth as usize,
+                    get_edges,
+                    node_exists,
+                );
+
+                // Convert node IDs to full WireNodes
+                let nodes: Vec<WireNode> = sub.node_ids.iter()
+                    .filter_map(|&id| engine.get_node(id).map(|n| record_to_wire_node(&n)))
+                    .collect();
+
+                // Convert edges to WireEdges
+                let mut edges: Vec<WireEdge> = sub.edges.iter()
+                    .map(|(src, dst, etype)| WireEdge {
+                        src: id_to_string(*src),
+                        dst: id_to_string(*dst),
+                        edge_type: Some(etype.clone()),
+                        metadata: None,
+                    })
+                    .collect();
+
+                // Resolve semantic IDs on edges for protocol v3+
+                if protocol >= 3 {
+                    resolve_edge_semantic_ids(&mut edges, engine);
+                }
+
+                // Build frontier with semantic IDs where possible
+                let frontier: Vec<WireFrontierEdge> = sub.frontier.iter()
+                    .map(|(src, dst, etype, meta)| {
+                        let src_id = if protocol >= 3 {
+                            engine.get_node(*src)
+                                .and_then(|n| n.semantic_id)
+                                .unwrap_or_else(|| id_to_string(*src))
+                        } else {
+                            id_to_string(*src)
+                        };
+                        // dst doesn't exist locally, so just use hash string
+                        let dst_id = id_to_string(*dst);
+                        WireFrontierEdge {
+                            src: src_id,
+                            dst: dst_id,
+                            edge_type: etype.clone(),
+                            metadata: if meta.is_empty() { None } else { Some(meta.clone()) },
+                        }
+                    })
+                    .collect();
+
+                Response::SubgraphResult {
+                    ok: true,
+                    nodes,
+                    edges,
+                    frontier,
+                }
             })
         }
 
@@ -2812,6 +3031,8 @@ async fn main() {
         println!("  -V, --version  Print version information");
         println!("  -h, --help     Print this help message");
         println!("  --metrics      Enable performance metrics collection");
+        println!("  --federate     Enable federation mode (shard discovery + registration)");
+        println!("  --root <path>  Project root this shard covers (default: parent of db-path)");
         std::process::exit(0);
     }
 
@@ -2880,6 +3101,71 @@ async fn main() {
         None
     };
 
+    // Parse federation flags
+    let federate = args.iter().any(|a| a == "--federate");
+    let federation_root: PathBuf = args.iter()
+        .position(|a| a == "--root")
+        .and_then(|i| args.get(i + 1))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            // Default root: grandparent of db_path (db_path is typically .grafema/graph.rfdb)
+            db_path.parent()
+                .and_then(|p| p.parent())
+                .unwrap_or(&db_path)
+                .to_path_buf()
+        });
+
+    // Canonicalize root path for consistent shard discovery
+    let federation_root = std::fs::canonicalize(&federation_root).unwrap_or(federation_root);
+
+    SERVER_CONFIG.set(ServerConfig {
+        federate,
+        root: Some(federation_root.clone()),
+    }).expect("ServerConfig already set");
+
+    // Federation: register shard in /tmp/rfdb-shards/
+    let shard_registration_path: Option<PathBuf> = if federate {
+        let shards_dir = PathBuf::from("/tmp/rfdb-shards");
+        if let Err(e) = std::fs::create_dir_all(&shards_dir) {
+            eprintln!("[rfdb-server] WARNING: Cannot create shard registry dir: {}", e);
+            None
+        } else {
+            // Hash root path to create unique filename
+            let hash = {
+                use std::hash::{Hash, Hasher};
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                federation_root.hash(&mut hasher);
+                format!("{:016x}", hasher.finish())
+            };
+            let reg_path = shards_dir.join(format!("{}.json", hash));
+            let started_epoch = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let registration = serde_json::json!({
+                "root": federation_root.display().to_string(),
+                "socket": socket_path,
+                "wsPort": ws_port,
+                "pid": std::process::id(),
+                "started": started_epoch,
+                "serverVersion": env!("CARGO_PKG_VERSION"),
+            });
+            match std::fs::write(&reg_path, serde_json::to_string_pretty(&registration).unwrap()) {
+                Ok(()) => {
+                    eprintln!("[rfdb-server] Federation: registered shard at {:?}", reg_path);
+                    eprintln!("[rfdb-server] Federation: territory = {:?}", federation_root);
+                    Some(reg_path)
+                }
+                Err(e) => {
+                    eprintln!("[rfdb-server] WARNING: Cannot write shard registration: {}", e);
+                    None
+                }
+            }
+        }
+    } else {
+        None
+    };
+
     // Remove stale socket file
     let _ = std::fs::remove_file(socket_path);
 
@@ -2917,6 +3203,7 @@ async fn main() {
     // Set up signal handler for graceful shutdown
     let manager_for_signal = Arc::clone(&manager);
     let socket_path_for_signal = socket_path.to_string();
+    let shard_reg_for_signal = shard_registration_path.clone();
     let mut signals = signal_hook::iterator::Signals::new(&[
         signal_hook::consts::SIGINT,
         signal_hook::consts::SIGTERM,
@@ -2939,6 +3226,13 @@ async fn main() {
             }
 
             let _ = std::fs::remove_file(&socket_path_for_signal);
+
+            // Federation: remove shard registration
+            if let Some(ref reg_path) = shard_reg_for_signal {
+                let _ = std::fs::remove_file(reg_path);
+                eprintln!("[rfdb-server] Federation: unregistered shard");
+            }
+
             eprintln!("[rfdb-server] Exiting");
             std::process::exit(0);
         }
@@ -3568,6 +3862,34 @@ mod protocol_tests {
                 assert_eq!(query_count, 0);
             }
             _ => panic!("Expected Stats response"),
+        }
+    }
+
+    // ============================================================================
+    // Federation: WhoAreYou
+    // ============================================================================
+
+    #[test]
+    fn test_who_are_you_returns_shard_identity() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+
+        // Initialize ServerConfig if not yet set (tests may race, ignore error)
+        let _ = SERVER_CONFIG.set(ServerConfig {
+            federate: false,
+            root: Some(PathBuf::from("/test/project")),
+        });
+
+        let response = handle_request(&manager, &mut session, Request::WhoAreYou, &None);
+
+        match response {
+            Response::ShardIdentity { ok, server_version, federated, .. } => {
+                assert!(ok);
+                assert!(!server_version.is_empty());
+                // federated depends on which test runs first (OnceLock)
+                let _ = federated;
+            }
+            other => panic!("Expected ShardIdentity, got {:?}", other),
         }
     }
 

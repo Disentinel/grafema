@@ -734,4 +734,63 @@ export abstract class BaseRFDBClient extends EventEmitter implements IRFDBClient
     }
     await this.close();
   }
+
+  // ===========================================================================
+  // Federation Commands (Protocol v4)
+  // ===========================================================================
+
+  /**
+   * Identify this shard: what territory it covers, how fresh the data is.
+   */
+  async whoAreYou(): Promise<ShardIdentity> {
+    const response = await this._send('whoAreYou' as RFDBCommand);
+    return response as unknown as ShardIdentity;
+  }
+
+  /**
+   * Extract a reachable subgraph from entry points.
+   * Returns visited nodes, traversed edges, and frontier (dangling edges
+   * whose target doesn't exist in this shard).
+   */
+  async subgraph(
+    entries: string[],
+    direction: 'forward' | 'backward' | 'both',
+    edgeTypes: string[] = [],
+    maxDepth: number = 5,
+  ): Promise<SubgraphExtractionResult> {
+    const response = await this._send('subgraph' as RFDBCommand, {
+      entries,
+      direction,
+      edgeTypes,
+      maxDepth,
+    });
+    return response as unknown as SubgraphExtractionResult;
+  }
+}
+
+// ── Federation types ──────────────────────────────────────────
+
+export interface ShardIdentity {
+  ok: boolean;
+  root: string;
+  fileCount: number;
+  nodeCount: number;
+  edgeCount: number;
+  analyzerVersion: string;
+  serverVersion: string;
+  federated: boolean;
+}
+
+export interface FrontierEdge {
+  src: string;
+  dst: string;
+  edgeType: string;
+  metadata?: string;
+}
+
+export interface SubgraphExtractionResult {
+  ok: boolean;
+  nodes: WireNode[];
+  edges: WireEdge[];
+  frontier: FrontierEdge[];
 }

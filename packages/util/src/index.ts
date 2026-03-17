@@ -257,6 +257,17 @@ export type {
   TraceNarrativeOptions,
 } from './notation/index.js';
 
+// Federation — cross-shard query routing
+export { ShardDiscovery, FederatedRouter } from './federation/index.js';
+export type {
+  ShardRegistration,
+  FederatedTraceResult,
+  FederatedTraceHop,
+  FrontierEdge,
+  SubgraphResponse,
+  ManifestResolvedNode,
+} from './federation/index.js';
+
 // Manifest generation & resolution (federation)
 export { ManifestGenerator, ManifestResolver } from './manifest/index.js';
 export type {
