@@ -327,6 +327,9 @@ pub struct CommitDelta {
     /// Node types affected (from both added and removed nodes).
     pub changed_node_types: HashSet<String>,
 
+    /// Number of edges removed (tombstoned from previous snapshot).
+    pub edges_removed: u64,
+
     /// Edge types affected (from both added and tombstoned edges).
     pub changed_edge_types: HashSet<String>,
 
@@ -562,6 +565,7 @@ mod tests {
             nodes_removed: 3,
             nodes_modified: 2,
             removed_node_ids: vec![100, 200, 300],
+            edges_removed: 5,
             changed_node_types: HashSet::from(["FUNCTION".into(), "CLASS".into()]),
             changed_edge_types: HashSet::from(["CALLS".into()]),
             manifest_version: 5,
@@ -581,6 +585,7 @@ mod tests {
             nodes_removed: 0,
             nodes_modified: 0,
             removed_node_ids: vec![],
+            edges_removed: 0,
             changed_node_types: HashSet::new(),
             changed_edge_types: HashSet::new(),
             manifest_version: 0,

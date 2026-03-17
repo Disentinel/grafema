@@ -173,7 +173,7 @@ pub fn build_l1_descriptor(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage_v2::shard::Shard;
+    use crate::storage_v2::shard::{Shard, TombstoneSet};
     use crate::storage_v2::types::{EdgeRecordV2, NodeRecordV2};
 
     fn make_node(semantic_id: &str, node_type: &str, name: &str, file: &str) -> NodeRecordV2 {
@@ -293,7 +293,9 @@ mod tests {
         shard.flush_with_ids(Some(1), None).unwrap();
 
         // Add tombstone for n2
-        shard.tombstones_mut().add_nodes(vec![n2.id]);
+        let mut ts = TombstoneSet::new();
+        ts.add_nodes(vec![n2.id]);
+        shard.set_tombstones(ts);
 
         let result = compact_shard(&shard).unwrap();
 

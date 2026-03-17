@@ -12,7 +12,7 @@
 //! concern (T3.x). Shard receives segment descriptors and returns flush
 //! results; the caller updates the manifest.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufWriter, Cursor};
@@ -196,7 +196,8 @@ pub struct Shard {
     edge_descriptors: Vec<SegmentDescriptor>,
 
     /// Tombstone state (loaded from manifest on open).
-    tombstones: TombstoneSet,
+    /// Arc-wrapped for zero-cost sharing across shards in commit_batch.
+    tombstones: Arc<TombstoneSet>,
 
     /// L1 (compacted) node segment — sorted, deduplicated, tombstones removed.
     /// None if shard has never been compacted.
@@ -241,7 +242,7 @@ impl Shard {
             edge_segments: Vec::new(),
             node_descriptors: Vec::new(),
             edge_descriptors: Vec::new(),
-            tombstones: TombstoneSet::new(),
+            tombstones: Arc::new(TombstoneSet::new()),
             l1_node_segment: None,
             l1_node_descriptor: None,
             l1_edge_segment: None,
@@ -289,7 +290,7 @@ impl Shard {
             edge_segments,
             node_descriptors,
             edge_descriptors,
-            tombstones: TombstoneSet::new(),
+            tombstones: Arc::new(TombstoneSet::new()),
             l1_node_segment: None,
             l1_node_descriptor: None,
             l1_edge_segment: None,
@@ -312,7 +313,7 @@ impl Shard {
             edge_segments: Vec::new(),
             node_descriptors: Vec::new(),
             edge_descriptors: Vec::new(),
-            tombstones: TombstoneSet::new(),
+            tombstones: Arc::new(TombstoneSet::new()),
             l1_node_segment: None,
             l1_node_descriptor: None,
             l1_edge_segment: None,
@@ -338,7 +339,7 @@ impl Shard {
             edge_segments: Vec::new(),
             node_descriptors: Vec::new(),
             edge_descriptors: Vec::new(),
-            tombstones: TombstoneSet::new(),
+            tombstones: Arc::new(TombstoneSet::new()),
             l1_node_segment: None,
             l1_node_descriptor: None,
             l1_edge_segment: None,
@@ -387,7 +388,7 @@ impl Shard {
             edge_segments,
             node_descriptors,
             edge_descriptors,
-            tombstones: TombstoneSet::new(),
+            tombstones: Arc::new(TombstoneSet::new()),
             l1_node_segment: None,
             l1_node_descriptor: None,
             l1_edge_segment: None,
@@ -426,17 +427,20 @@ impl Shard {
     ///
     /// Complexity: O(1) (pointer swap)
     pub fn set_tombstones(&mut self, tombstones: TombstoneSet) {
+        self.tombstones = Arc::new(tombstones);
+    }
+
+    /// Set tombstone state from a pre-wrapped Arc (zero-copy sharing).
+    ///
+    /// Used by commit_batch to share the same tombstone set across all shards
+    /// without cloning. Each shard gets Arc::clone (refcount bump only).
+    pub fn set_tombstones_shared(&mut self, tombstones: Arc<TombstoneSet>) {
         self.tombstones = tombstones;
     }
 
     /// Get reference to current tombstone set (for reading).
     pub fn tombstones(&self) -> &TombstoneSet {
         &self.tombstones
-    }
-
-    /// Get mutable reference to tombstone set.
-    pub fn tombstones_mut(&mut self) -> &mut TombstoneSet {
-        &mut self.tombstones
     }
 
     /// Find edge keys (src, dst, edge_type) where src is in the given ID set.
@@ -726,7 +730,7 @@ impl Shard {
         self.node_descriptors.clear();
         self.edge_segments.clear();
         self.edge_descriptors.clear();
-        self.tombstones = TombstoneSet::new();
+        self.tombstones = Arc::new(TombstoneSet::new());
     }
 }
 
@@ -2112,6 +2116,56 @@ impl Shard {
         }
 
         ids
+    }
+
+    /// Return all live node IDs with their file paths.
+    ///
+    /// Same scan as `all_node_ids()` but also reads the file column
+    /// for building the `file_to_node_ids` index in MultiShardStore.
+    pub fn all_node_ids_with_file(&self) -> Vec<(u128, String)> {
+        let mut results = Vec::new();
+        let mut seen = HashSet::new();
+
+        // Write buffer (authoritative, newest)
+        for node in self.write_buffer.iter_nodes() {
+            seen.insert(node.id);
+            if self.tombstones.contains_node(node.id) {
+                continue;
+            }
+            results.push((node.id, node.file.clone()));
+        }
+
+        // L0 segments
+        for seg in &self.node_segments {
+            for j in 0..seg.record_count() {
+                let id = seg.get_id(j);
+                if seen.contains(&id) {
+                    continue;
+                }
+                seen.insert(id);
+                if self.tombstones.contains_node(id) {
+                    continue;
+                }
+                results.push((id, seg.get_file(j).to_string()));
+            }
+        }
+
+        // L1 segment (oldest, compacted)
+        if let Some(l1_seg) = &self.l1_node_segment {
+            for j in 0..l1_seg.record_count() {
+                let id = l1_seg.get_id(j);
+                if seen.contains(&id) {
+                    continue;
+                }
+                seen.insert(id);
+                if self.tombstones.contains_node(id) {
+                    continue;
+                }
+                results.push((id, l1_seg.get_file(j).to_string()));
+            }
+        }
+
+        results
     }
 
     /// Count nodes by type without loading full records.
