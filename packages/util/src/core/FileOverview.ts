@@ -144,10 +144,43 @@ export class FileOverview {
           functions.push(await this.buildFunctionOverview(child, includeEdges));
           break;
         case 'VARIABLE':
-        case 'CONSTANT':
-          variables.push(await this.buildVariableOverview(child, includeEdges));
+        case 'CONSTANT': {
+          // Check if this is a const-bound function (const foo = () => {})
+          if (includeEdges) {
+            const assignedEdges = await this.graph.getOutgoingEdges(child.id, ['ASSIGNED_FROM']);
+            let isFunctionBinding = false;
+            for (const edge of assignedEdges) {
+              const target = await this.graph.getNode(edge.dst);
+              if (target && (target.type === 'FUNCTION' || target.type === 'METHOD')) {
+                // Build function overview using the target function but with the const name
+                const fnOverview = await this.buildFunctionOverview(target, includeEdges);
+                fnOverview.name = child.name ?? '<anonymous>';
+                fnOverview.line = child.line as number | undefined;
+                fnOverview.id = child.id;
+                functions.push(fnOverview);
+                isFunctionBinding = true;
+                break;
+              }
+            }
+            if (!isFunctionBinding) {
+              variables.push(await this.buildVariableOverview(child, includeEdges));
+            }
+          } else {
+            variables.push(await this.buildVariableOverview(child, includeEdges));
+          }
           break;
+        }
       }
+    }
+
+    // CJS fallback: if no ESM imports/exports found, try CommonJS patterns
+    if (imports.length === 0) {
+      const cjsImports = await this.detectCjsImports(moduleNode.id);
+      imports.push(...cjsImports);
+    }
+    if (exports.length === 0) {
+      const cjsExports = await this.detectCjsExports(moduleNode.id);
+      exports.push(...cjsExports);
     }
 
     const byLine = (a: { line?: number }, b: { line?: number }) =>
@@ -362,6 +395,75 @@ export class FileOverview {
     overview.methods.sort((a, b) => (a.line ?? 0) - (b.line ?? 0));
 
     return overview;
+  }
+
+  /**
+   * Detect CommonJS require() calls as imports.
+   * Pattern: CALL(name="require") with PASSES_ARGUMENT -> LITERAL(value="module-path")
+   * Complexity: O(C * A) where C = CONTAINS edges, A = PASSES_ARGUMENT edges per CALL
+   */
+  private async detectCjsImports(moduleId: string): Promise<ImportInfo[]> {
+    const imports: ImportInfo[] = [];
+    const containsEdges = await this.graph.getOutgoingEdges(moduleId, ['CONTAINS']);
+
+    for (const edge of containsEdges) {
+      const child = await this.graph.getNode(edge.dst);
+      if (!child || child.type !== 'CALL') continue;
+      if (child.name !== 'require' && !child.name?.endsWith('.require')) continue;
+
+      // Find the first argument (module path)
+      const argEdges = await this.graph.getOutgoingEdges(child.id, ['PASSES_ARGUMENT']);
+      let source = '<unknown>';
+      for (const argEdge of argEdges) {
+        // Check metadata for index=0
+        const meta = argEdge.metadata;
+        const idx = typeof meta === 'object' && meta !== null ? (meta as Record<string, unknown>).index : undefined;
+        if (idx !== undefined && idx !== 0) continue;
+
+        const argNode = await this.graph.getNode(argEdge.dst);
+        if (argNode) {
+          source = (argNode.value as string) ?? argNode.name ?? '<unknown>';
+          break;
+        }
+      }
+
+      imports.push({ id: child.id, source, specifiers: [] });
+    }
+
+    return imports;
+  }
+
+  /**
+   * Detect CommonJS module.exports/exports assignments as exports.
+   * Pattern: PROPERTY_ACCESS with name containing "exports"
+   * Complexity: O(C) where C = CONTAINS edges from MODULE
+   */
+  private async detectCjsExports(moduleId: string): Promise<ExportInfo[]> {
+    const exports: ExportInfo[] = [];
+    const containsEdges = await this.graph.getOutgoingEdges(moduleId, ['CONTAINS']);
+
+    for (const edge of containsEdges) {
+      const child = await this.graph.getNode(edge.dst);
+      if (!child) continue;
+
+      if (child.type === 'PROPERTY_ACCESS') {
+        const name = child.name ?? '';
+        // Match patterns like "module.exports", "exports.foo"
+        if (name === 'module.exports' || name === 'exports' ||
+            name.startsWith('exports.') || name.startsWith('module.exports.')) {
+          const exportName = name.includes('.exports.')
+            ? name.split('.exports.').pop() ?? 'default'
+            : 'default';
+          exports.push({
+            id: child.id,
+            name: exportName,
+            isDefault: exportName === 'default',
+          });
+        }
+      }
+    }
+
+    return exports;
   }
 
   /**

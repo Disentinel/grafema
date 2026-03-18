@@ -281,6 +281,30 @@ pub struct FileMetrics {
     pub total_ms: u64,
     pub node_count: usize,
     pub edge_count: usize,
+    // Semantic density metrics
+    pub decl_count: usize,
+    pub ref_count: usize,
+    pub call_count: usize,
+    pub prop_count: usize,
+}
+
+impl FileMetrics {
+    /// Populate semantic density counts from the analysis result's nodes.
+    /// Counts declarations (FUNCTION, METHOD, CLASS, VARIABLE, CONSTANT),
+    /// references (REFERENCE), calls (CALL), and property accesses (PROPERTY_ACCESS).
+    pub fn fill_density(&mut self, analysis: &Option<FileAnalysis>) {
+        if let Some(a) = analysis {
+            for node in &a.nodes {
+                match node.node_type.as_str() {
+                    "FUNCTION" | "METHOD" | "CLASS" | "VARIABLE" | "CONSTANT" => self.decl_count += 1,
+                    "REFERENCE" => self.ref_count += 1,
+                    "CALL" => self.call_count += 1,
+                    "PROPERTY_ACCESS" => self.prop_count += 1,
+                    _ => {}
+                }
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -406,6 +430,110 @@ pub fn issues_to_wire(
 }
 
 // ---------------------------------------------------------------------------
+// Unresolved diagnostics → ISSUE wire nodes
+// ---------------------------------------------------------------------------
+
+/// Generate ISSUE nodes for unresolved calls and imports.
+///
+/// Each unresolved node is categorized:
+/// - `unresolved_external` (severity=info): target likely outside analyzed root
+/// - `unresolved_internal` (severity=warning): target file exists but symbol not resolved
+///
+/// Returns wire nodes and edges on synthetic file `__grafema_virtual/unresolved-diagnostics`.
+pub fn unresolved_diagnostics_to_wire(
+    unresolved: &[(String, String, String)], // (node_id, name, file)
+    file_set: &HashSet<String>,
+    authority: &str,
+) -> (Vec<WireNode>, Vec<WireEdge>) {
+    let mut nodes = Vec::new();
+    let mut edges = Vec::new();
+
+    if unresolved.is_empty() {
+        return (nodes, edges);
+    }
+
+    let synthetic_file = "__grafema_virtual/unresolved-diagnostics";
+    let module_id = compact_to_uri(&format!("MODULE#{synthetic_file}"), authority);
+
+    // Create MODULE stub for the synthetic file
+    nodes.push(WireNode {
+        id: module_id.clone(),
+        semantic_id: Some(module_id.clone()),
+        node_type: Some("MODULE".to_string()),
+        name: Some(synthetic_file.to_string()),
+        file: Some(synthetic_file.to_string()),
+        exported: false,
+        metadata: None,
+    });
+
+    for (node_id, name, file) in unresolved {
+        // Extract a plausible target path from the name field.
+        // Patterns: "./billing_endpoint", "../utils/helper", "express", "lodash/get"
+        let target = name
+            .trim_start_matches("./")
+            .trim_start_matches("../");
+
+        // Check if any file in the analyzed set matches the target.
+        // A match means the target file is in the graph but symbol resolution failed.
+        let is_internal = file_set.iter().any(|f| {
+            f.ends_with(target) || f.contains(target)
+        });
+
+        let (category, severity, message) = if is_internal {
+            (
+                "unresolved_internal",
+                "warning",
+                format!(
+                    "Unresolved symbol '{}' in file '{}': target file exists in graph but symbol not resolved (node: {})",
+                    name, file, node_id
+                ),
+            )
+        } else {
+            (
+                "unresolved_external",
+                "info",
+                format!(
+                    "Unresolved symbol '{}' in file '{}': target likely outside analyzed root (node: {})",
+                    name, file, node_id
+                ),
+            )
+        };
+
+        let hash = blake3::hash(message.as_bytes());
+        let hash8 = &hash.to_hex()[..8];
+        let compact_id = format!("{synthetic_file}->ISSUE->{category}::{hash8}");
+        let issue_id = compact_to_uri(&compact_id, authority);
+
+        let mut meta = HashMap::new();
+        meta.insert("category".to_string(), serde_json::json!(category));
+        meta.insert("severity".to_string(), serde_json::json!(severity));
+        meta.insert("message".to_string(), serde_json::json!(message));
+        meta.insert("source_node".to_string(), serde_json::json!(node_id));
+        meta.insert("source_file".to_string(), serde_json::json!(file));
+        meta.insert("symbol_name".to_string(), serde_json::json!(name));
+
+        nodes.push(WireNode {
+            id: issue_id.clone(),
+            semantic_id: Some(issue_id.clone()),
+            node_type: Some("ISSUE".to_string()),
+            name: Some(format!("{category}: {severity}")),
+            file: Some(synthetic_file.to_string()),
+            exported: false,
+            metadata: Some(serde_json::to_string(&meta).unwrap()),
+        });
+
+        edges.push(WireEdge {
+            src: module_id.clone(),
+            dst: issue_id,
+            edge_type: "CONTAINS".to_string(),
+            metadata: None,
+        });
+    }
+
+    (nodes, edges)
+}
+
+// ---------------------------------------------------------------------------
 // Metrics → wire nodes
 // ---------------------------------------------------------------------------
 
@@ -424,6 +552,10 @@ const FILE_METRIC_DEFS: &[MetricDef] = &[
     MetricDef { name: "ast_size_bytes",  unit: "bytes", extract: |m| m.ast_size_bytes },
     MetricDef { name: "node_count",      unit: "count", extract: |m| m.node_count as u64 },
     MetricDef { name: "edge_count",      unit: "count", extract: |m| m.edge_count as u64 },
+    MetricDef { name: "decl_count",      unit: "count", extract: |m| m.decl_count as u64 },
+    MetricDef { name: "ref_count",       unit: "count", extract: |m| m.ref_count as u64 },
+    MetricDef { name: "call_count",      unit: "count", extract: |m| m.call_count as u64 },
+    MetricDef { name: "prop_count",      unit: "count", extract: |m| m.prop_count as u64 },
 ];
 
 /// Convert per-file performance metrics into RFDB wire nodes and edges.
@@ -1073,6 +1205,7 @@ async fn analyze_single_js_file(
         total_ms: total_ms as u64,
         node_count,
         edge_count,
+        ..Default::default()
     };
 
     // Log slow files (>5s) at info level, rest at debug
@@ -1324,6 +1457,7 @@ pub async fn analyze_haskell_files_parallel_pooled(
                                 total_ms,
                                 node_count,
                                 edge_count,
+                                ..Default::default()
                             },
                         }
                     },
@@ -1433,6 +1567,7 @@ pub async fn analyze_haskell_files_parallel(
                                 total_ms,
                                 node_count,
                                 edge_count,
+                                ..Default::default()
                             },
                         }
                     },
@@ -1572,6 +1707,7 @@ pub async fn analyze_beam_files_parallel_pooled(
                                 total_ms,
                                 node_count,
                                 edge_count,
+                                ..Default::default()
                             },
                         }
                     },
@@ -1681,6 +1817,7 @@ pub async fn analyze_beam_files_parallel(
                                 total_ms,
                                 node_count,
                                 edge_count,
+                                ..Default::default()
                             },
                         }
                     },
@@ -1914,6 +2051,7 @@ pub async fn analyze_rust_files_parallel_pooled(
                         let edge_count = analysis.edges.len();
                         AnalysisResult { file, analysis: Some(analysis), errors, issues: vec![], metrics: FileMetrics {
                             file_size_bytes, ast_size_bytes: 0, parse_ms, analyze_ms, total_ms, node_count, edge_count,
+                            ..Default::default()
                         } }
                     },
                     Err(e) => {
@@ -1994,6 +2132,7 @@ pub async fn analyze_rust_files_parallel(
                         let edge_count = analysis.edges.len();
                         AnalysisResult { file, analysis: Some(analysis), errors, issues: vec![], metrics: FileMetrics {
                             file_size_bytes, ast_size_bytes: 0, parse_ms, analyze_ms, total_ms, node_count, edge_count,
+                            ..Default::default()
                         } }
                     },
                     Err(e) => {
@@ -2365,6 +2504,7 @@ pub async fn analyze_java_files_parallel_pooled(
                                 total_ms,
                                 node_count,
                                 edge_count,
+                                ..Default::default()
                             },
                         }
                     },
@@ -2468,6 +2608,7 @@ pub async fn analyze_java_files_parallel(
                                 total_ms,
                                 node_count,
                                 edge_count,
+                                ..Default::default()
                             },
                         }
                     },
@@ -2839,6 +2980,7 @@ pub async fn analyze_kotlin_files_parallel_pooled(
                                 total_ms,
                                 node_count,
                                 edge_count,
+                                ..Default::default()
                             },
                         }
                     },
@@ -2942,6 +3084,7 @@ pub async fn analyze_kotlin_files_parallel(
                                 total_ms,
                                 node_count,
                                 edge_count,
+                                ..Default::default()
                             },
                         }
                     },
@@ -3347,6 +3490,7 @@ pub async fn analyze_files_parallel(
                                 total_ms,
                                 node_count,
                                 edge_count,
+                                ..Default::default()
                             },
                         }
                     },
@@ -3575,6 +3719,7 @@ pub async fn analyze_python_files_parallel_pooled(
                         let edge_count = analysis.edges.len();
                         AnalysisResult { file, analysis: Some(analysis), errors, issues: vec![], metrics: FileMetrics {
                             file_size_bytes, ast_size_bytes: 0, parse_ms, analyze_ms, total_ms, node_count, edge_count,
+                            ..Default::default()
                         } }
                     },
                     Err(e) => {
@@ -3655,6 +3800,7 @@ pub async fn analyze_python_files_parallel(
                         let edge_count = analysis.edges.len();
                         AnalysisResult { file, analysis: Some(analysis), errors, issues: vec![], metrics: FileMetrics {
                             file_size_bytes, ast_size_bytes: 0, parse_ms, analyze_ms, total_ms, node_count, edge_count,
+                            ..Default::default()
                         } }
                     },
                     Err(e) => {
@@ -4025,6 +4171,7 @@ pub async fn analyze_go_files_parallel_pooled(
                                 total_ms,
                                 node_count,
                                 edge_count,
+                                ..Default::default()
                             },
                         }
                     },
@@ -4128,6 +4275,7 @@ pub async fn analyze_go_files_parallel(
                                 total_ms,
                                 node_count,
                                 edge_count,
+                                ..Default::default()
                             },
                         }
                     },
@@ -4596,6 +4744,7 @@ pub async fn analyze_cpp_files_parallel_pooled(
                         let edge_count = analysis.edges.len();
                         AnalysisResult { file, analysis: Some(analysis), errors, issues: vec![], metrics: FileMetrics {
                             file_size_bytes, ast_size_bytes: 0, parse_ms, analyze_ms, total_ms, node_count, edge_count,
+                            ..Default::default()
                         } }
                     },
                     Err(e) => {
@@ -4711,6 +4860,7 @@ pub async fn analyze_cpp_files_parallel(
                         let edge_count = analysis.edges.len();
                         AnalysisResult { file, analysis: Some(analysis), errors, issues: vec![], metrics: FileMetrics {
                             file_size_bytes, ast_size_bytes: 0, parse_ms, analyze_ms, total_ms, node_count, edge_count,
+                            ..Default::default()
                         } }
                     },
                     Err(e) => {
@@ -4851,6 +5001,7 @@ pub async fn analyze_swift_files_parallel_pooled(
                                 total_ms,
                                 node_count,
                                 edge_count,
+                                ..Default::default()
                             },
                         }
                     },
@@ -4954,6 +5105,7 @@ pub async fn analyze_swift_files_parallel(
                                 total_ms,
                                 node_count,
                                 edge_count,
+                                ..Default::default()
                             },
                         }
                     },
@@ -5310,6 +5462,7 @@ pub async fn analyze_objc_files_parallel_pooled(
                                 total_ms,
                                 node_count,
                                 edge_count,
+                                ..Default::default()
                             },
                         }
                     },
@@ -5413,6 +5566,7 @@ pub async fn analyze_objc_files_parallel(
                                 total_ms,
                                 node_count,
                                 edge_count,
+                                ..Default::default()
                             },
                         }
                     },
@@ -6862,6 +7016,148 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // unresolved_diagnostics_to_wire tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn unresolved_diagnostics_empty_returns_empty() {
+        let file_set = HashSet::new();
+        let (nodes, edges) = unresolved_diagnostics_to_wire(&[], &file_set, "example.com/repo");
+        assert!(nodes.is_empty());
+        assert!(edges.is_empty());
+    }
+
+    #[test]
+    fn unresolved_diagnostics_external_when_file_not_in_set() {
+        let file_set: HashSet<String> = ["src/app.ts", "src/utils.ts"]
+            .iter().map(|s| s.to_string()).collect();
+
+        let unresolved = vec![(
+            "node-1".to_string(),
+            "express".to_string(),
+            "src/app.ts".to_string(),
+        )];
+
+        let (nodes, edges) = unresolved_diagnostics_to_wire(
+            &unresolved, &file_set, "example.com/repo",
+        );
+
+        // MODULE stub + 1 ISSUE node
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(edges.len(), 1);
+
+        // MODULE stub
+        assert_eq!(nodes[0].node_type.as_deref(), Some("MODULE"));
+        assert_eq!(
+            nodes[0].file.as_deref(),
+            Some("__grafema_virtual/unresolved-diagnostics")
+        );
+
+        // ISSUE node — external
+        assert_eq!(nodes[1].node_type.as_deref(), Some("ISSUE"));
+        let meta: HashMap<String, serde_json::Value> =
+            serde_json::from_str(nodes[1].metadata.as_ref().unwrap()).unwrap();
+        assert_eq!(meta["category"], "unresolved_external");
+        assert_eq!(meta["severity"], "info");
+        assert_eq!(meta["symbol_name"], "express");
+        assert_eq!(meta["source_file"], "src/app.ts");
+
+        // CONTAINS edge: MODULE → ISSUE
+        assert_eq!(edges[0].edge_type, "CONTAINS");
+        assert_eq!(edges[0].src, nodes[0].id);
+        assert_eq!(edges[0].dst, nodes[1].id);
+    }
+
+    #[test]
+    fn unresolved_diagnostics_internal_when_file_in_set() {
+        let file_set: HashSet<String> = [
+            "src/app.ts",
+            "src/utils/helper.ts",
+        ].iter().map(|s| s.to_string()).collect();
+
+        let unresolved = vec![(
+            "node-2".to_string(),
+            "./utils/helper".to_string(),
+            "src/app.ts".to_string(),
+        )];
+
+        let (nodes, _edges) = unresolved_diagnostics_to_wire(
+            &unresolved, &file_set, "example.com/repo",
+        );
+
+        // MODULE stub + 1 ISSUE node
+        assert_eq!(nodes.len(), 2);
+
+        let meta: HashMap<String, serde_json::Value> =
+            serde_json::from_str(nodes[1].metadata.as_ref().unwrap()).unwrap();
+        assert_eq!(meta["category"], "unresolved_internal");
+        assert_eq!(meta["severity"], "warning");
+    }
+
+    #[test]
+    fn unresolved_diagnostics_multiple_mixed() {
+        let file_set: HashSet<String> = [
+            "src/app.ts",
+            "src/billing/endpoint.ts",
+        ].iter().map(|s| s.to_string()).collect();
+
+        let unresolved = vec![
+            (
+                "node-a".to_string(),
+                "lodash".to_string(),
+                "src/app.ts".to_string(),
+            ),
+            (
+                "node-b".to_string(),
+                "./billing/endpoint".to_string(),
+                "src/app.ts".to_string(),
+            ),
+        ];
+
+        let (nodes, edges) = unresolved_diagnostics_to_wire(
+            &unresolved, &file_set, "example.com/repo",
+        );
+
+        // MODULE stub + 2 ISSUE nodes
+        assert_eq!(nodes.len(), 3);
+        // 2 CONTAINS edges
+        assert_eq!(edges.len(), 2);
+
+        // First: external (lodash not in file_set)
+        let meta0: HashMap<String, serde_json::Value> =
+            serde_json::from_str(nodes[1].metadata.as_ref().unwrap()).unwrap();
+        assert_eq!(meta0["category"], "unresolved_external");
+
+        // Second: internal (billing/endpoint matches a file in set)
+        let meta1: HashMap<String, serde_json::Value> =
+            serde_json::from_str(nodes[2].metadata.as_ref().unwrap()).unwrap();
+        assert_eq!(meta1["category"], "unresolved_internal");
+    }
+
+    #[test]
+    fn unresolved_diagnostics_uri_format() {
+        let file_set = HashSet::new();
+        let unresolved = vec![(
+            "node-1".to_string(),
+            "foo".to_string(),
+            "src/bar.ts".to_string(),
+        )];
+
+        let (nodes, _) = unresolved_diagnostics_to_wire(
+            &unresolved, &file_set, "example.com/repo",
+        );
+
+        // All IDs should be grafema:// URIs
+        for node in &nodes {
+            assert!(
+                node.id.starts_with("grafema://example.com/repo/"),
+                "Expected grafema URI, got: {}",
+                node.id
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // metrics_to_wire tests
     // -----------------------------------------------------------------------
 
@@ -6883,6 +7179,7 @@ mod tests {
             ast_size_bytes: 0,
             node_count: 0,
             edge_count: 0,
+            ..Default::default()
         };
         let (nodes, edges) = metrics_to_wire(&metrics, "src/app.js", "example.com/repo");
         assert_eq!(nodes.len(), 1);
@@ -6900,6 +7197,7 @@ mod tests {
             ast_size_bytes: 2048,
             node_count: 5,
             edge_count: 3,
+            ..Default::default()
         };
         let (nodes, edges) = metrics_to_wire(&metrics, "src/app.js", "example.com/repo");
 

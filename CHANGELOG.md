@@ -2,6 +2,38 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.18] - 2026-03-17
+
+### Highlights
+
+- **Comprehensive analysis telemetry** — Phase timers (discovery, analysis, resolve, compact), per-plugin resolution timing, RFDB commit stats (p50/p95/p99 latency, throughput), per-file semantic density (decl/ref/call/prop counts). All persisted as queryable METRIC nodes.
+- **Unresolved diagnostics** — After resolution, Datalog negation queries find unresolved CALL and IMPORT_BINDING nodes. Categorized as `unresolved_external` (outside analyzed root) or `unresolved_internal` (file exists, symbol not found). Persisted as ISSUE nodes.
+- **Per-file performance metrics** — METRIC nodes in the graph with OBSERVES edges to MODULE. 7 metrics per file: parse_ms, analyze_ms, total_ms, file_size_bytes, ast_size_bytes, node_count, edge_count.
+- **Datalog numeric operators** — `gt()`, `lt()`, `gte()`, `lte()` for metric-based queries and guarantees.
+- **RFDB O(N²) elimination** — commit_batch 15x faster on large codebases via file-to-node index, shard-targeted edge lookup, Arc tombstones.
+- **Manifests & Effects** — `grafema analyze` generates `manifest.yaml` with exported API surface and side-effect annotations. Effects-DB ships pre-built annotations for npm packages and Node.js builtins.
+- **MCP documentation** — new `metrics` and `effects` topics in `get_documentation`, numeric predicates documented in query syntax.
+
+### Features
+
+- feat(orchestrator): comprehensive analysis telemetry — phase timers, per-plugin resolve timing, RFDB commit stats (p50/p95/p99), per-file semantic density metrics
+- feat(orchestrator): unresolved diagnostics as ISSUE nodes — Datalog negation finds unresolved CALLs and IMPORT_BINDINGs, categorized by severity
+- feat(orchestrator): METRIC nodes as first-class observability layer (parse_ms, analyze_ms, file_size_bytes, etc.)
+- feat(rfdb): numeric comparison operators `gt`, `lt`, `gte`, `lte` in Datalog engine
+- feat(orchestrator): per-file performance profiling and `scripts/profile-analyze.mjs` bottleneck analysis tool
+- feat(cli): auto-generate `manifest.yaml` with exports, imports, and transitive effects after analysis
+- feat: effects-db — curated side-effect annotations for npm packages and Node.js builtins
+- docs(mcp): `get_documentation` topics for metrics, effects, numeric predicates
+
+### Bug Fixes
+
+- fix(analyzer): HANDLES edge now resolves to actual handler function instead of synthetic ARG node — passes walked argument IDs through matchCallSite → applyArgRule
+- fix(mcp): `get_function_details` finds const-bound arrow functions by following ASSIGNED_FROM edges from CONSTANT/VARIABLE nodes
+- fix(mcp): `get_file_overview` reclassifies const-bound functions as Functions instead of Variables
+- fix(rfdb): eliminate commit_batch O(N²) degradation via file index, shard-targeted edges, Arc tombstones (15x speedup)
+- fix: lazy-downloaded binaries version-checked and re-downloaded when stale
+- fix: lazy download uses latest `binaries-v*` tag instead of hardcoded version
+
 ## [0.3.16] - 2026-03-17
 
 ### Bug Fixes
