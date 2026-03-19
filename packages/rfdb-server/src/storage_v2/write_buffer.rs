@@ -47,6 +47,11 @@ pub struct WriteBuffer {
     /// Edge dedup key: (src, dst, edge_type). Matches v1 engine's
     /// `edge_keys: HashSet<(u128, u128, String)>` pattern.
     edge_keys: HashSet<(u128, u128, String)>,
+
+    /// Incremental edge-type index: edge_type → indices into `self.edges`.
+    /// Maintained on every `upsert_edge()` call so reads are O(1) by type.
+    /// Uses Vec<usize> (indices) instead of Vec<(u128,u128)> to save memory.
+    edge_type_index: HashMap<String, Vec<usize>>,
 }
 
 impl WriteBuffer {
@@ -58,6 +63,7 @@ impl WriteBuffer {
             nodes: HashMap::new(),
             edges: Vec::new(),
             edge_keys: HashSet::new(),
+            edge_type_index: HashMap::new(),
         }
     }
 
@@ -85,9 +91,15 @@ impl WriteBuffer {
     pub fn upsert_edge(&mut self, record: EdgeRecordV2) -> EdgeWriteOp {
         let key = (record.src, record.dst, record.edge_type.clone());
         if self.edge_keys.insert(key) {
+            let idx = self.edges.len();
+            self.edge_type_index
+                .entry(record.edge_type.clone())
+                .or_default()
+                .push(idx);
             self.edges.push(record);
             EdgeWriteOp::Inserted
         } else {
+            // Update in place — same Vec position, same edge_type, no index change needed.
             if let Some(existing) = self.edges.iter_mut().find(|edge| {
                 edge.src == record.src &&
                 edge.dst == record.dst &&
@@ -155,12 +167,25 @@ impl WriteBuffer {
         self.edges.iter().filter(|e| e.dst == dst).collect()
     }
 
-    /// Find all edges with matching edge_type. O(E_buf).
+    /// Find all edges with matching edge_type.
+    /// O(1) lookup via incremental edge_type_index, then O(K) to collect K matches.
     pub fn find_edges_by_type(&self, edge_type: &str) -> Vec<&EdgeRecordV2> {
-        self.edges
-            .iter()
-            .filter(|e| e.edge_type == edge_type)
-            .collect()
+        match self.edge_type_index.get(edge_type) {
+            Some(indices) => indices.iter().map(|&i| &self.edges[i]).collect(),
+            None => Vec::new(),
+        }
+    }
+
+    /// Iterator over edges matching a given edge_type.
+    /// O(1) index lookup + O(K) iteration over K matching edges.
+    /// Used by per-level read path in Shard::get_edges_by_type().
+    pub fn edges_by_type(&self, edge_type: &str) -> impl Iterator<Item = &EdgeRecordV2> {
+        let indices = self.edge_type_index.get(edge_type);
+        let edges = &self.edges;
+        indices
+            .into_iter()
+            .flat_map(|idx_vec| idx_vec.iter())
+            .map(move |&i| &edges[i])
     }
 
     // -- Buffer Management ----------------------------------------------------
@@ -181,14 +206,17 @@ impl WriteBuffer {
     /// - Node: ~120 bytes (100 data + 20 HashMap overhead)
     /// - Edge: ~50 bytes (40 data + 10 Vec overhead)
     /// - Edge key: ~48 bytes (dedup HashSet entry)
+    /// - Edge type index entry: ~24 bytes (String key amortized + usize)
     pub fn estimated_memory_bytes(&self) -> usize {
         const NODE_BYTES: usize = 120;
         const EDGE_BYTES: usize = 50;
         const EDGE_KEY_BYTES: usize = 48;
+        const EDGE_TYPE_INDEX_ENTRY_BYTES: usize = 24;
 
         self.nodes.len() * NODE_BYTES
             + self.edges.len() * EDGE_BYTES
             + self.edge_keys.len() * EDGE_KEY_BYTES
+            + self.edges.len() * EDGE_TYPE_INDEX_ENTRY_BYTES
     }
 
     /// Check if buffer exceeds the given adaptive limits.
@@ -211,9 +239,10 @@ impl WriteBuffer {
     }
 
     /// Remove and return all edges, leaving buffer empty for edges.
-    /// Also clears the edge_keys HashSet.
+    /// Also clears the edge_keys HashSet and edge_type_index.
     pub fn drain_edges(&mut self) -> Vec<EdgeRecordV2> {
         self.edge_keys.clear();
+        self.edge_type_index.clear();
         std::mem::take(&mut self.edges)
     }
 }
@@ -467,8 +496,8 @@ mod tests {
         buf.add_node(make_node("id1", "FUNCTION", "fn1", "file.rs"));
         buf.upsert_edge(make_edge("id1", "id2", "CALLS"));
 
-        // 1 node * 120 + 1 edge * 50 + 1 edge_key * 48 = 218
-        assert_eq!(buf.estimated_memory_bytes(), 218);
+        // 1 node * 120 + 1 edge * (50 + 24) + 1 edge_key * 48 = 242
+        assert_eq!(buf.estimated_memory_bytes(), 242);
     }
 
     #[test]
@@ -493,5 +522,70 @@ mod tests {
 
         // Memory should roughly double (exactly double for nodes-only case)
         assert_eq!(mem_20, mem_10 * 2);
+    }
+
+    // ── Edge Type Index ─────────────────────────────────────────────
+
+    #[test]
+    fn test_edges_by_type_after_inserts() {
+        let mut buf = WriteBuffer::new();
+        buf.upsert_edge(make_edge("s1", "d1", "CALLS"));
+        buf.upsert_edge(make_edge("s2", "d2", "IMPORTS_FROM"));
+        buf.upsert_edge(make_edge("s3", "d3", "CALLS"));
+
+        let calls: Vec<_> = buf.edges_by_type("CALLS").collect();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].edge_type, "CALLS");
+        assert_eq!(calls[1].edge_type, "CALLS");
+
+        let imports: Vec<_> = buf.edges_by_type("IMPORTS_FROM").collect();
+        assert_eq!(imports.len(), 1);
+
+        let none: Vec<_> = buf.edges_by_type("NONEXISTENT").collect();
+        assert_eq!(none.len(), 0);
+    }
+
+    #[test]
+    fn test_edges_by_type_after_update() {
+        let mut buf = WriteBuffer::new();
+        let mut e1 = make_edge("s1", "d1", "CALLS");
+        e1.metadata = "v1".to_string();
+        buf.upsert_edge(e1);
+
+        let mut e2 = make_edge("s1", "d1", "CALLS"); // same key, update
+        e2.metadata = "v2".to_string();
+        assert_eq!(buf.upsert_edge(e2), EdgeWriteOp::Updated);
+
+        // Index should still have exactly 1 entry
+        let calls: Vec<_> = buf.edges_by_type("CALLS").collect();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].metadata, "v2");
+    }
+
+    #[test]
+    fn test_edges_by_type_cleared_on_drain() {
+        let mut buf = WriteBuffer::new();
+        buf.upsert_edge(make_edge("s1", "d1", "CALLS"));
+        buf.upsert_edge(make_edge("s2", "d2", "CALLS"));
+
+        assert_eq!(buf.edges_by_type("CALLS").count(), 2);
+
+        let drained = buf.drain_edges();
+        assert_eq!(drained.len(), 2);
+
+        assert_eq!(buf.edges_by_type("CALLS").count(), 0);
+    }
+
+    #[test]
+    fn test_edges_by_type_mixed_types() {
+        let mut buf = WriteBuffer::new();
+        buf.upsert_edge(make_edge("s1", "d1", "CALLS"));
+        buf.upsert_edge(make_edge("s1", "d1", "IMPORTS_FROM")); // same endpoints, different type
+        buf.upsert_edge(make_edge("s2", "d2", "CALLS"));
+        buf.upsert_edge(make_edge("s3", "d3", "READS_FROM"));
+
+        assert_eq!(buf.edges_by_type("CALLS").count(), 2);
+        assert_eq!(buf.edges_by_type("IMPORTS_FROM").count(), 1);
+        assert_eq!(buf.edges_by_type("READS_FROM").count(), 1);
     }
 }
