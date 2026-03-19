@@ -2,7 +2,7 @@
   "name": "grafema-explore",
   "displayName": "Grafema Explore",
   "description": "Interactive graph navigation for Grafema code analysis",
-  "version": "0.3.18",
+  "version": "0.3.19",
   "private": true,
   "publisher": "GrafemaLabs",
   "repository": {
@@ -41,14 +41,46 @@
     },
     "views": {
       "grafema": [
-        { "id": "grafemaStatus", "name": "Status", "visibility": "visible" },
-        { "id": "grafemaValueTrace", "name": "Value Trace", "visibility": "collapsed" },
-        { "id": "grafemaCallers", "name": "Callers", "visibility": "collapsed" },
-        { "id": "grafemaBlastRadius", "name": "Blast Radius", "visibility": "collapsed" },
-        { "id": "grafemaIssues", "name": "Issues", "visibility": "collapsed" },
-        { "id": "grafemaNodesInFile", "name": "Nodes in File", "visibility": "collapsed" },
-        { "id": "grafemaExplore", "name": "Explorer", "visibility": "collapsed" },
-        { "id": "grafemaDebug", "name": "Debug Log", "visibility": "collapsed" }
+        {
+          "id": "grafemaStatus",
+          "name": "Status",
+          "visibility": "visible"
+        },
+        {
+          "id": "grafemaValueTrace",
+          "name": "Value Trace",
+          "visibility": "collapsed"
+        },
+        {
+          "id": "grafemaCallers",
+          "name": "Callers",
+          "visibility": "collapsed"
+        },
+        {
+          "id": "grafemaBlastRadius",
+          "name": "Blast Radius",
+          "visibility": "collapsed"
+        },
+        {
+          "id": "grafemaIssues",
+          "name": "Issues",
+          "visibility": "collapsed"
+        },
+        {
+          "id": "grafemaNodesInFile",
+          "name": "Nodes in File",
+          "visibility": "collapsed"
+        },
+        {
+          "id": "grafemaExplore",
+          "name": "Explorer",
+          "visibility": "collapsed"
+        },
+        {
+          "id": "grafemaDebug",
+          "name": "Debug Log",
+          "visibility": "collapsed"
+        }
       ]
     },
     "commands": [
@@ -385,7 +417,10 @@
         },
         "grafema.rfdbTransport": {
           "type": "string",
-          "enum": ["unix", "websocket"],
+          "enum": [
+            "unix",
+            "websocket"
+          ],
           "default": "unix",
           "description": "RFDB transport protocol (unix socket or WebSocket)",
           "enumDescriptions": [

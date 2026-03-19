@@ -1,6 +1,6 @@
 {
   "name": "grafema",
-  "version": "0.3.18",
+  "version": "0.3.19",
   "private": true,
   "description": "Grafema code analysis toolkit - monorepo",
   "type": "module",
