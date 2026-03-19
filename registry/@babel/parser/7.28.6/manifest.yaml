@@ -1,0 +1,43 @@
+schema_version: 1
+analyzer_version: 0.3.16
+authored: false
+confidence: 1
+generated: 2026-03-17T15:01:41.448Z
+package:
+  purl: pkg:npm/@babel/parser@7.28.6
+  source_type: compiled_js
+exports:
+  - name: __esModule
+    kind: TYPE
+    semanticId: lib/index.js->EXPORT_BINDING->__esModule
+    effects:
+      - PURE
+  - name: parse
+    kind: FUNCTION
+    semanticId: lib/index.js->FUNCTION->parse
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: parseExpression
+    kind: FUNCTION
+    semanticId: lib/index.js->FUNCTION->parseExpression
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: tokTypes
+    kind: CONSTANT
+    semanticId: lib/index.js->CONSTANT->tokTypes
+    effects:
+      - PURE
+imports: []
+capabilities:
+  total_exports: 4
+  total_internal_symbols: 2054
+  has_graph: true
+access:
+  local: ./graph.rfdb
+language: typescript
+language_specific:
+  module_system: esm

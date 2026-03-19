@@ -174,9 +174,13 @@ export class ManifestGenerator {
       // Graph-based approach:
       // EXPORT(named) --EXPORTS--> EXPORT_BINDING(name, source) --> definition in source file
       await this.collectExportsViaBindings(entryFile, exports, seen, new Set());
-    } else {
-      // Fallback: all exported definitions from the package
+    }
+
+    // Fallback: if entry-file mode found 0 exports (e.g., CJS barrel,
+    // broken re-export chain in compiled_js), scan all exported definitions
+    if (exports.length === 0) {
       const prefix = this.options.packagePrefix ?? '';
+      // Check standard definition types (FUNCTION, CLASS, CONSTANT, INTERFACE)
       for (const type of ManifestGenerator.DEF_TYPES) {
         for await (const node of this.backend.queryNodes({ type: type as never })) {
           if (prefix && !node.file?.startsWith(prefix)) continue;
@@ -185,6 +189,21 @@ export class ManifestGenerator {
           if (seen.has(node.name)) continue;
           seen.add(node.name);
           await this.addExportFromDefinition(node, exports);
+        }
+      }
+      // Also check EXPORT_BINDING nodes (from CJS exports.foo = ...)
+      if (exports.length === 0) {
+        for await (const node of this.backend.queryNodes({ type: 'EXPORT_BINDING' as never })) {
+          if (prefix && !node.file?.startsWith(prefix)) continue;
+          if (!node.name || node.name === 'named' || node.name === 'default') continue;
+          if (seen.has(node.name)) continue;
+          seen.add(node.name);
+          exports.push({
+            name: node.name,
+            kind: 'VARIABLE',
+            semanticId: node.id,
+            effects: ['UNKNOWN'],
+          });
         }
       }
     }
@@ -276,7 +295,8 @@ export class ManifestGenerator {
     const dir = fromFile.substring(0, fromFile.lastIndexOf('/'));
     let resolved = source.startsWith('.') ? `${dir}/${source}` : source;
     resolved = resolved.replace(/\/\.\//g, '/');
-    if (resolved.endsWith('.js')) {
+    // Only replace .js → .ts for source TypeScript code, not compiled_js
+    if (this.options.sourceType !== 'compiled_js' && resolved.endsWith('.js')) {
       resolved = resolved.replace(/\.js$/, '.ts');
     }
     return resolved;
@@ -330,7 +350,8 @@ export class ManifestGenerator {
   /** Enrich all exports with computed effects (transitive call graph analysis) */
   private async enrichEffects(exports: ManifestExport[]): Promise<void> {
     for (const entry of exports) {
-      if (entry.kind !== 'FUNCTION' && entry.kind !== 'CLASS') continue;
+      // Enrich FUNCTION, CLASS, and VARIABLE (CJS exports may be VARIABLE kind)
+      if (entry.kind !== 'FUNCTION' && entry.kind !== 'CLASS' && entry.kind !== 'VARIABLE') continue;
 
       const effects = new Set<EffectType>();
       const visited = new Set<string>();

@@ -438,3 +438,8 @@ export interface GraphQLQueryArgs {
   variables?: Record<string, unknown>;
   operationName?: string;
 }
+
+export interface QueryRegistryArgs {
+  package?: string;
+  symbol?: string;
+}

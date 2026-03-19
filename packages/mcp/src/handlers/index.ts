@@ -18,3 +18,4 @@ export { handleAddKnowledge, handleQueryKnowledge, handleQueryDecisions, handleS
 // export { handleGitChurn, handleGitCoChange, handleGitOwnership, handleGitArchaeology } from './knowledge-handlers.js';
 export { handleDescribe } from './notation-handlers.js';
 export { handleGraphQLQuery } from './graphql-handlers.js';
+export { handleQueryRegistry } from './registry-handlers.js';

@@ -1,0 +1,105 @@
+schema_version: 1
+analyzer_version: 0.3.16
+authored: false
+confidence: 1
+generated: 2026-03-17T14:58:27.995Z
+package:
+  purl: pkg:npm/tsx@4.21.0
+  source_type: compiled_js
+exports:
+  - name: A
+    kind: TYPE
+    semanticId: dist/loader.mjs->EXPORT_BINDING->A
+    effects:
+      - PURE
+  - name: B
+    kind: TYPE
+    semanticId: dist/loader.mjs->EXPORT_BINDING->B
+    effects:
+      - PURE
+  - name: w
+    kind: TYPE
+    semanticId: dist/loader.mjs->EXPORT_BINDING->w
+    effects:
+      - PURE
+  - name: y
+    kind: TYPE
+    semanticId: dist/loader.mjs->EXPORT_BINDING->y
+    effects:
+      - PURE
+imports:
+  - purl: pkg:npm/child_process
+    symbols:
+      - child_process
+  - purl: pkg:npm/esbuild
+    symbols:
+      - esbuild
+  - purl: pkg:npm/events
+    symbols:
+      - events
+  - purl: pkg:npm/fs
+    symbols:
+      - fs
+  - purl: pkg:npm/get-tsconfig
+    symbols:
+      - get-tsconfig
+  - purl: pkg:npm/module
+    symbols:
+      - module
+  - purl: pkg:npm/node@*#crypto
+    symbols:
+      - node:crypto
+  - purl: pkg:npm/node@*#fs
+    symbols:
+      - node:fs
+  - purl: pkg:npm/node@*#fs/promises
+    symbols:
+      - node:fs/promises
+  - purl: pkg:npm/node@*#module
+    symbols:
+      - node:module
+  - purl: pkg:npm/node@*#net
+    symbols:
+      - node:net
+  - purl: pkg:npm/node@*#os
+    symbols:
+      - node:os
+  - purl: pkg:npm/node@*#path
+    symbols:
+      - node:path
+  - purl: pkg:npm/node@*#repl
+    symbols:
+      - node:repl
+  - purl: pkg:npm/node@*#url
+    symbols:
+      - node:url
+  - purl: pkg:npm/node@*#util
+    symbols:
+      - node:util
+  - purl: pkg:npm/node@*#worker_threads
+    symbols:
+      - node:worker_threads
+  - purl: pkg:npm/os
+    symbols:
+      - os
+  - purl: pkg:npm/path
+    symbols:
+      - path
+  - purl: pkg:npm/stream
+    symbols:
+      - stream
+  - purl: pkg:npm/tty
+    symbols:
+      - tty
+  - purl: pkg:npm/util
+    symbols:
+      - util
+capabilities:
+  total_exports: 4
+  total_internal_symbols: 4676
+  has_graph: true
+access:
+  local: ./graph.rfdb
+language: typescript
+language_specific:
+  module_system: esm

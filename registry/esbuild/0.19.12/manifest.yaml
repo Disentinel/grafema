@@ -1,0 +1,14 @@
+schema_version: 1
+analyzer_version: 0.3.16
+authored: false
+confidence: 0
+generated: 2026-03-17T17:23:18.816Z
+package:
+  purl: pkg:npm/esbuild@0.19.12
+  source_type: minified
+exports: []
+imports: []
+capabilities:
+  total_exports: 0
+  total_internal_symbols: 0
+  has_graph: false

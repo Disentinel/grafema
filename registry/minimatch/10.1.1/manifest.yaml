@@ -1,0 +1,86 @@
+schema_version: 1
+analyzer_version: 0.3.16
+authored: false
+confidence: 1
+generated: 2026-03-17T14:57:11.299Z
+package:
+  purl: pkg:npm/minimatch@10.1.1
+  source_type: compiled_js
+exports:
+  - name: AST
+    kind: CLASS
+    semanticId: dist/esm/ast.js->CLASS->AST
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: braceExpand
+    kind: CONSTANT
+    semanticId: dist/esm/index.js->CONSTANT->braceExpand
+    effects:
+      - PURE
+  - name: defaults
+    kind: CONSTANT
+    semanticId: dist/esm/index.js->CONSTANT->defaults
+    effects:
+      - PURE
+  - name: escape
+    kind: CONSTANT
+    semanticId: dist/esm/escape.js->CONSTANT->escape
+    effects:
+      - PURE
+  - name: filter
+    kind: CONSTANT
+    semanticId: dist/esm/index.js->CONSTANT->filter
+    effects:
+      - PURE
+  - name: GLOBSTAR
+    kind: CONSTANT
+    semanticId: dist/esm/index.js->CONSTANT->GLOBSTAR
+    effects:
+      - PURE
+  - name: makeRe
+    kind: CONSTANT
+    semanticId: dist/esm/index.js->CONSTANT->makeRe
+    effects:
+      - PURE
+  - name: match
+    kind: CONSTANT
+    semanticId: dist/esm/index.js->CONSTANT->match
+    effects:
+      - PURE
+  - name: minimatch
+    kind: CONSTANT
+    semanticId: dist/esm/index.js->CONSTANT->minimatch
+    effects:
+      - PURE
+  - name: Minimatch
+    kind: CLASS
+    semanticId: dist/esm/index.js->CLASS->Minimatch
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: sep
+    kind: CONSTANT
+    semanticId: dist/esm/index.js->CONSTANT->sep
+    effects:
+      - PURE
+  - name: unescape
+    kind: CONSTANT
+    semanticId: dist/esm/unescape.js->CONSTANT->unescape
+    effects:
+      - PURE
+imports:
+  - purl: pkg:npm/@isaacs/brace-expansion
+    symbols:
+      - "@isaacs/brace-expansion"
+capabilities:
+  total_exports: 12
+  total_internal_symbols: 648
+  has_graph: true
+access:
+  local: ./graph.rfdb
+language: typescript
+language_specific:
+  module_system: esm

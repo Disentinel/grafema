@@ -19,6 +19,7 @@ import {
   findAnalyzerBinary,
   ensureBinary,
   ManifestGenerator,
+  ManifestResolver,
 } from '@grafema/util';
 import type { LogLevel } from '@grafema/util';
 
@@ -299,6 +300,20 @@ export async function analyzeAction(path: string, options: { service?: string; e
         }
       } catch (err) {
         debug(`Manifest generation skipped: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      // Auto-load registry manifests for cross-package resolution
+      const registryDir = join(projectPath, 'registry');
+      if (existsSync(registryDir)) {
+        try {
+          const resolver = new ManifestResolver();
+          const loaded = resolver.loadFromRegistry(registryDir);
+          if (loaded > 0) {
+            info(`  Registry: ${loaded} package manifests loaded`);
+          }
+        } catch (err) {
+          debug(`Registry loading skipped: ${err instanceof Error ? err.message : String(err)}`);
+        }
       }
     } else {
       console.error('');

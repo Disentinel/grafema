@@ -1,0 +1,257 @@
+schema_version: 1
+analyzer_version: 0.3.16
+authored: false
+confidence: 1
+generated: 2026-03-17T14:57:03.387Z
+package:
+  purl: pkg:npm/graphql-yoga@5.18.0
+  source_type: compiled_js
+exports:
+  - name: _createLRUCache
+    kind: FUNCTION
+    semanticId: esm/utils/create-lru-cache.js->FUNCTION->_createLRUCache
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: chain
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->chain[in:@envelop/instrumentation]
+    effects:
+      - PURE
+  - name: composeInstrumentation
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->composeInstrumentation[in:@envelop/instrumentation]
+    effects:
+      - PURE
+  - name: createGraphQLError
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->createGraphQLError[in:@graphql-tools/utils]
+    effects:
+      - PURE
+  - name: createLRUCache
+    kind: CONSTANT
+    semanticId: esm/utils/create-lru-cache.js->CONSTANT->createLRUCache
+    effects:
+      - PURE
+  - name: createSchema
+    kind: FUNCTION
+    semanticId: esm/schema.js->FUNCTION->createSchema
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: createYoga
+    kind: FUNCTION
+    semanticId: esm/server.js->FUNCTION->createYoga
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: DisposableSymbols
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->DisposableSymbols[in:@whatwg-node/server]
+    effects:
+      - PURE
+  - name: envelop
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->envelop[in:@envelop/core]
+    effects:
+      - PURE
+  - name: errorAsyncIterator
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->errorAsyncIterator[in:@envelop/core]
+    effects:
+      - PURE
+  - name: finalAsyncIterator
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->finalAsyncIterator[in:@envelop/core]
+    effects:
+      - PURE
+  - name: getInstrumentationAndPlugin
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->getInstrumentationAndPlugin[in:@envelop/instrumentation]
+    effects:
+      - PURE
+  - name: getSSEProcessor
+    kind: FUNCTION
+    semanticId: esm/plugins/result-processor/sse.js->FUNCTION->getSSEProcessor
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: handleStreamOrSingleExecutionResult
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->handleStreamOrSingleExecutionResult[in:@envelop/core]
+    effects:
+      - PURE
+  - name: isAsyncIterable
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->isAsyncIterable[in:@envelop/core]
+    effects:
+      - PURE
+  - name: isIntrospectionOperationString
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->isIntrospectionOperationString[in:@envelop/core]
+    effects:
+      - PURE
+  - name: isPromise
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->isPromise[in:@graphql-tools/utils]
+    effects:
+      - PURE
+  - name: makeExecute
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->makeExecute[in:@envelop/core]
+    effects:
+      - PURE
+  - name: makeSubscribe
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->makeSubscribe[in:@envelop/core]
+    effects:
+      - PURE
+  - name: mapAsyncIterator
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->mapAsyncIterator[in:@envelop/core]
+    effects:
+      - PURE
+  - name: mapMaybePromise
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->mapMaybePromise[in:@graphql-tools/utils]
+    effects:
+      - PURE
+  - name: maskError
+    kind: CONSTANT
+    semanticId: esm/utils/mask-error.js->CONSTANT->maskError
+    effects:
+      - PURE
+  - name: mergeSchemas
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->mergeSchemas[in:@graphql-tools/schema]
+    effects:
+      - PURE
+  - name: processRegularResult
+    kind: FUNCTION
+    semanticId: esm/plugins/result-processor/regular.js->FUNCTION->processRegularResult
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: renderGraphiQL
+    kind: CONSTANT
+    semanticId: esm/plugins/use-graphiql.js->CONSTANT->renderGraphiQL
+    effects:
+      - PURE
+  - name: shouldRenderGraphiQL
+    kind: FUNCTION
+    semanticId: esm/plugins/use-graphiql.js->FUNCTION->shouldRenderGraphiQL
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: useEnvelop
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->useEnvelop[in:@envelop/core]
+    effects:
+      - PURE
+  - name: useErrorCoordinate
+    kind: FUNCTION
+    semanticId: esm/plugins/use-error-coordinate.js->FUNCTION->useErrorCoordinate
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: useErrorHandler
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->useErrorHandler[in:@envelop/core]
+    effects:
+      - PURE
+  - name: useExecutionCancellation
+    kind: FUNCTION
+    semanticId: esm/plugins/use-execution-cancellation.js->FUNCTION->useExecutionCancellation
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: useExtendContext
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->useExtendContext[in:@envelop/core]
+    effects:
+      - PURE
+  - name: useLogger
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->useLogger[in:@envelop/core]
+    effects:
+      - PURE
+  - name: usePayloadFormatter
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->usePayloadFormatter[in:@envelop/core]
+    effects:
+      - PURE
+  - name: useReadinessCheck
+    kind: FUNCTION
+    semanticId: esm/plugins/use-readiness-check.js->FUNCTION->useReadinessCheck
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: useSchema
+    kind: CONSTANT
+    semanticId: esm/plugins/use-schema.js->CONSTANT->useSchema
+    effects:
+      - PURE
+  - name: withState
+    kind: TYPE
+    semanticId: esm/index.js->EXPORT_BINDING->withState[in:@envelop/core]
+    effects:
+      - PURE
+  - name: YogaServer
+    kind: CLASS
+    semanticId: esm/server.js->CLASS->YogaServer
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+imports:
+  - purl: pkg:npm/@envelop/core
+    symbols:
+      - "@envelop/core"
+  - purl: pkg:npm/@envelop/instrumentation
+    symbols:
+      - "@envelop/instrumentation"
+  - purl: pkg:npm/@graphql-tools/executor
+    symbols:
+      - "@graphql-tools/executor"
+  - purl: pkg:npm/@graphql-tools/schema
+    symbols:
+      - "@graphql-tools/schema"
+  - purl: pkg:npm/@graphql-tools/utils
+    symbols:
+      - "@graphql-tools/utils"
+  - purl: pkg:npm/@graphql-yoga/logger
+    symbols:
+      - "@graphql-yoga/logger"
+  - purl: pkg:npm/@whatwg-node/fetch
+    symbols:
+      - "@whatwg-node/fetch"
+  - purl: pkg:npm/@whatwg-node/promise-helpers
+    symbols:
+      - "@whatwg-node/promise-helpers"
+  - purl: pkg:npm/@whatwg-node/server
+    symbols:
+      - "@whatwg-node/server"
+  - purl: pkg:npm/graphql
+    symbols:
+      - graphql
+  - purl: pkg:npm/lru-cache
+    symbols:
+      - lru-cache
+capabilities:
+  total_exports: 37
+  total_internal_symbols: 833
+  has_graph: true
+access:
+  local: ./graph.rfdb
+language: typescript
+language_specific:
+  module_system: esm

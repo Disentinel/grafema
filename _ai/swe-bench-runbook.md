@@ -1,251 +1,165 @@
-# SWE-bench Benchmark Runbook
+# SWE-bench Pipeline Runbook
 
-Полная методология A/B тестирования Grafema на SWE-bench.
-Используется для измерения влияния graph context на качество AI-агента.
+Measure whether Grafema helps AI agents solve SWE-bench tasks.
+Uses `claude -p` inside Docker containers — same subscription, same agent, two conditions.
 
-## Гипотеза
+## Architecture
 
-> AI-агент с graph context (Grafema) решает больше задач, тратит меньше токенов
-> и делает меньше шагов, чем тот же агент без graph context.
+```
+SWE-bench Docker image
+  + npm install -g @anthropic-ai/claude-code  (both conditions)
+  + npm install -g grafema                     (grafema condition only)
+  + grafema init && grafema analyze            (grafema condition only)
+  + CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token`
+  → claude -p "$prompt" --output-format json
+  → git diff → patch
+  → swebench evaluation
+```
 
-## Инфраструктура
+The ONLY difference between conditions: grafema is/isn't installed.
 
-### Компоненты
+## Prerequisites
 
-| Компонент | Версия | Расположение |
-|-----------|--------|-------------|
-| mini-SWE-agent | 2.0.0a3 | `/Users/vadimr/swe-bench-research/mini-swe-agent/` |
-| swebench | 4.1.0 | установлен в venv mini-SWE-agent |
-| Python | 3.12 (brew) | venv: `mini-swe-agent/.venv/` |
-| Docker | 28.x | Docker Desktop |
-| API key | `.env` | `~/Library/Application Support/mini-swe-agent/.env` |
-| Budget config | yaml | `/Users/vadimr/swe-bench-research/config/swebench-research.yaml` |
+1. **Docker** running
+2. **Auth token**: run `claude setup-token` on host → set `CLAUDE_CODE_OAUTH_TOKEN` env var
+3. **SWE-bench Docker images** built for target tasks
+4. **tasks.json** generated from HuggingFace (one-time)
 
-### Активация окружения
+## Quick Start
 
 ```bash
-cd /Users/vadimr/swe-bench-research
-source mini-swe-agent/.venv/bin/activate
+# 1. Setup auth (one-time)
+claude setup-token
+export CLAUDE_CODE_OAUTH_TOKEN="sk-..."  # token from step above
+
+# 2. Generate tasks (one-time, requires `pip install datasets`)
+python scripts/swe-bench/generate-tasks.py > scripts/swe-bench/tasks.json
+
+# 3. Build SWE-bench images for target tasks
+python -m swebench.harness.prepare_images \
+  --dataset_name swe-bench/SWE-Bench_Multilingual \
+  --instance_ids axios__axios-4731
+
+# 4. Run baseline
+./scripts/swe-bench/run.sh axios__axios-4731 --mode baseline
+
+# 5. Run grafema
+./scripts/swe-bench/run.sh axios__axios-4731 --mode grafema
+
+# 5. Compare
+./scripts/swe-bench/compare.sh
 ```
 
-### Budget config (`config/swebench-research.yaml`)
+## Scripts
 
-```yaml
-agent:
-  step_limit: 75
-  cost_limit: 3.0
-model:
-  model_name: "anthropic/claude-sonnet-4-5-20250929"
-  model_kwargs:
-    drop_params: true
-    temperature: 0.0
-```
+| Script | Purpose |
+|--------|---------|
+| `scripts/swe-bench/run.sh` | Main pipeline: setup container, run agent, capture results |
+| `scripts/swe-bench/compare.sh` | Markdown table comparing baseline vs grafema metrics |
+| `scripts/swe-bench/generate-tasks.py` | Generate tasks.json from HuggingFace dataset |
+| `scripts/swe-bench/templates/prompt-baseline.md` | Prompt without Grafema tool docs |
+| `scripts/swe-bench/templates/prompt-grafema.md` | Prompt with Grafema tool docs |
 
-## Dataset
-
-**SWE-bench Multilingual** — 43 JS/TS задачи из 300.
-
-| Repo | Tasks |
-|------|-------|
-| preactjs/preact | 17 |
-| axios/axios | 6 |
-| babel/babel | 5 |
-| facebook/docusaurus | 5 |
-| vuejs/core | 5 |
-| mrdoob/three.js | 3 |
-| immutable-js/immutable-js | 2 |
-
-Доступен через HuggingFace: `swe-bench/SWE-Bench_Multilingual`
-
-## Эксперимент: 4 условия
-
-| Condition | Model | Grafema | Цель |
-|-----------|-------|---------|------|
-| A | Sonnet 4.5 | No | Baseline (сильная модель) |
-| B | Sonnet 4.5 | Yes | Grafema boost на сильной модели |
-| C | Haiku 4.5 | No | Baseline (дешёвая модель) |
-| D | Haiku 4.5 | Yes | Grafema boost на дешёвой модели |
-
-Ожидаемая стоимость: 43 задачи x 4 условия x ~$0.50 avg = **~$86**
-
-## Команды
-
-### 1. Запуск агента (baseline, все 43 JS/TS задачи)
+## run.sh Usage
 
 ```bash
-cd /Users/vadimr/swe-bench-research && source mini-swe-agent/.venv/bin/activate
-
-# Фильтр для JS/TS задач
-MSWEA_SILENT_STARTUP=1 python -m minisweagent.run.benchmarks.swebench \
-    --subset multilingual --split test \
-    --filter "^(axios|preact|babel|docusaurus|vuejs|three|immutable)" \
-    -c mini-swe-agent/src/minisweagent/config/benchmarks/swebench.yaml \
-    -c config/swebench-research.yaml \
-    -o results/baseline \
-    -m "anthropic/claude-sonnet-4-5-20250929"
+./scripts/swe-bench/run.sh <task_id> [--mode baseline|grafema] [--results-dir ./results]
 ```
 
-### 2. Одна задача (для теста)
+What it does:
+1. Reads task from `tasks.json`
+2. Finds SWE-bench Docker image
+3. Starts container with `~/.claude` mounted
+4. Installs Claude Code (`npm install -g @anthropic-ai/claude-code`)
+5. **(grafema only)** Installs Grafema, runs `grafema init && grafema analyze`, writes `.mcp.json`, starts rfdb-server
+6. Generates prompt from template + problem_statement
+7. Runs `claude -p "$prompt" --output-format json`
+8. Captures: `git diff` → patch, agent JSON output, stderr log
+9. Writes swebench prediction to `preds.jsonl`
+10. Cleans up container
+
+## Evaluation
 
 ```bash
-MSWEA_SILENT_STARTUP=1 python -m minisweagent.run.benchmarks.swebench \
-    --subset multilingual --split test \
-    --filter "axios__axios" --slice "0:1" \
-    -c mini-swe-agent/src/minisweagent/config/benchmarks/swebench.yaml \
-    -c config/swebench-research.yaml \
-    -o results/baseline \
-    -m "anthropic/claude-sonnet-4-5-20250929"
-```
+# Activate swebench venv
+source /Users/vadimr/swe-bench-research/mini-swe-agent/.venv/bin/activate
 
-### 3. Конвертация preds.json → JSONL (для evaluation)
-
-```python
-import json
-with open('results/baseline/preds.json') as f:
-    data = json.load(f)
-with open('results/baseline/preds.jsonl', 'w') as f:
-    for instance_id, pred in data.items():
-        f.write(json.dumps(pred) + '\n')
-```
-
-### 4. Evaluation (проверка патчей)
-
-```bash
+# Run evaluation
 python -m swebench.harness.run_evaluation \
     --dataset_name swe-bench/SWE-Bench_Multilingual \
-    --predictions_path results/baseline/preds.jsonl \
-    --max_workers 1 \
-    --run_id baseline_sonnet
+    --predictions_path scripts/swe-bench/results/baseline/preds.jsonl \
+    --max_workers 1 --run_id baseline
 ```
 
-### 5. Мониторинг прогресса
+## Docker Image Naming
 
+SWE-bench images: `sweb.eval.x86_64.<repo_slug>:<instance_id>`
+- repo_slug: `axios/axios` → `axios__axios`
+- Example: `sweb.eval.x86_64.axios__axios:axios__axios-4731`
+
+Build missing images:
 ```bash
-# Rich.Live перехватывает stdout — смотреть лог:
-tail -f results/baseline/minisweagent.log
-
-# Docker контейнеры:
-docker ps --format '{{.Names}} {{.Status}}' | grep minisweagent
-
-# Процесс жив?
-ps aux | grep minisweagent | grep -v grep
+python -m swebench.harness.prepare_images \
+  --dataset_name swe-bench/SWE-Bench_Multilingual \
+  --instance_ids <instance_id>
 ```
 
-## Gotchas (подводные камни)
+## Results Structure
 
-### Пропуск задач
-mini-SWE-agent пропускает задачи на основании `preds.json`, НЕ trajectory файлов.
-Для перезапуска: удалить `preds.json` или использовать `--redo-existing`.
+```
+scripts/swe-bench/results/
+├── baseline/
+│   ├── preds.jsonl                    # All predictions (for swebench eval)
+│   └── <task_id>/
+│       ├── result.json                # Claude agent JSON output
+│       ├── patch.diff                 # git diff
+│       └── claude-stderr.log          # Agent stderr
+└── grafema/
+    ├── preds.jsonl
+    └── <task_id>/
+        ├── result.json
+        ├── patch.diff
+        └── claude-stderr.log
+```
 
-### Кэширование
-Удаляй и `preds.json` И директорию результата:
+## Known Issues
+
+### Claude Code auth in Docker
+`~/.claude/` is mounted read-only. If auth doesn't work, check:
+- Host has valid auth: `claude --version` on host
+- Mount is correct: `docker exec <c> ls /root/.claude/`
+
+### Node version in containers
+Some repos use Node 16. `npm install -g @anthropic-ai/claude-code` may fail.
+If so, install Node 20 alongside:
 ```bash
-rm results/baseline/preds.json
-rm -rf results/baseline/axios__axios-4731/
+docker exec <c> bash -c '
+  curl -fsSL https://nodejs.org/dist/v20.11.1/node-v20.11.1-linux-x64.tar.xz | tar xJ -C /opt &&
+  export PATH=/opt/node-v20.11.1-linux-x64/bin:$PATH &&
+  npm install -g @anthropic-ai/claude-code grafema
+'
 ```
 
-### step_limit
-50 шагов — недостаточно. Агент тратит ~49 шагов и не успевает сделать `git diff`.
-75 шагов — работает, агент использует ~49 шагов при стоимости ~$0.51.
+### Previous approach (mini-SWE-agent)
+The old pipeline used mini-SWE-agent + Anthropic API with pnpm pack/tarball dance.
+Results from that approach are documented in prior experiment results (see skill).
+The new `claude -p` approach is simpler: uses subscription, same agent, metrics built-in.
 
-### JSONL формат
-`preds.json` (dict) нужно конвертировать в JSONL для swebench evaluation.
-mini-SWE-agent сохраняет dict, swebench ожидает JSONL.
+## Metrics
 
-### API key
-Загружается из `~/Library/Application Support/mini-swe-agent/.env` через `dotenv.load_dotenv()`.
-Не из shell env, не из .zshrc.
+From `claude -p --output-format json`:
+- `input_tokens`, `output_tokens` — total cost
+- Tool call counts by type
+- Whether Grafema MCP tools were used
+- Wall clock time (captured by run.sh)
 
-## Grafema Gap Analysis (текущее состояние)
+## Historical Results (mini-SWE-agent era)
 
-### Подтверждённые gaps
+| Task | Baseline | Grafema | File ops delta |
+|------|----------|---------|----------------|
+| axios__axios-4731 | PASS | PASS | -25% steps |
+| preactjs__preact-4436 | FAIL | FAIL | -100% file ops |
+| preactjs__preact-2757 | FAIL | FAIL | -48% file ops |
+| preactjs__preact-2927 | FAIL | FAIL | -39% file ops |
 
-| Issue | Проблема | Статус |
-|-------|----------|--------|
-| REG-393 | Directory index resolution (`require('./dir')` → EISDIR error) | В работе |
-| REG-395 | `grafema grep` — text search с graph context | Backlog |
-
-### Закрытые (false positive)
-
-| Issue | Проблема | Почему ложный |
-|-------|----------|---------------|
-| ~~REG-394~~ | Conditional requires | `node-source-walk` обходит все ноды AST |
-
-### Методика проверки coverage
-
-```bash
-# Клонировать repo на base_commit
-git clone https://github.com/axios/axios.git /tmp/axios-test
-cd /tmp/axios-test && git checkout <base_commit>
-npm install
-
-# Анализ Grafema
-grafema analyze --auto-start
-
-# Проверка coverage
-grafema coverage
-
-# Debug: найти реальные ошибки
-grafema analyze --auto-start --log-level debug 2>&1 | grep -E "(ERROR|WARN|Parse error|EISDIR)"
-```
-
-### Правило: Debug log BEFORE diagnosis
-
-При неожиданном поведении Grafema:
-1. `grafema analyze --log-level debug` ПЕРВЫМ ДЕЛОМ
-2. Найти ФАКТИЧЕСКУЮ ошибку в логах
-3. Один симптом → одна причина → проверить что объясняет всё
-4. НЕ заводить несколько багов без независимого подтверждения
-
-## Метрики
-
-| Метрика | Что измеряет | Как считать |
-|---------|-------------|-------------|
-| Resolve rate | % решённых задач | `resolved / submitted` из eval report |
-| Cost per task | Стоимость одной задачи | `instance_cost` из trajectory |
-| Steps | Количество bash команд | `api_calls` из trajectory |
-| Grafema adoption | Использовал ли агент grafema | grep trajectory на `grafema` commands |
-| Navigation ratio | Доля навигационных шагов | Ручной анализ trajectory |
-
-## Результаты
-
-### Pilot (2026-02-09): axios__axios-4731
-
-| Metric | Value |
-|--------|-------|
-| Model | Sonnet 4.5 |
-| Steps | 49 / 75 |
-| Cost | $0.51 |
-| Exit status | Submitted |
-| Resolved | Yes (1/1 = 100%) |
-| Navigation steps | ~30 / 49 (61%) |
-| Fix/test steps | ~19 / 49 (39%) |
-
-## Файловая структура
-
-```
-/Users/vadimr/swe-bench-research/
-├── mini-swe-agent/           # Agent framework
-│   ├── .venv/                # Python 3.12 venv
-│   └── src/minisweagent/     # Source code
-├── multi-swe-bench/          # Alternative dataset (580 JS/TS tasks)
-├── config/
-│   └── swebench-research.yaml  # Budget config
-└── results/
-    ├── baseline/             # Condition A: Sonnet, no Grafema
-    │   ├── preds.json        # Predictions (dict format)
-    │   ├── preds.jsonl       # Predictions (JSONL for eval)
-    │   ├── minisweagent.log  # Agent log
-    │   └── <instance_id>/    # Per-task trajectories
-    ├── grafema/              # Condition B: Sonnet + Grafema
-    ├── haiku-baseline/       # Condition C: Haiku, no Grafema
-    └── haiku-grafema/        # Condition D: Haiku + Grafema
-```
-
-## Ссылки
-
-- `_tasks/swe-bench-research/001-research-plan.md` — исходный план
-- `_tasks/swe-bench-research/002-phase0-report.md` — research инфраструктуры
-- `_tasks/swe-bench-research/003-phase0-setup-progress.md` — прогресс setup
-- `_tasks/swe-bench-research/004-mcp-integration-plan.md` — как интегрировать Grafema
-- `_tasks/swe-bench-research/005-grafema-gap-analysis.md` — gap analysis + post-mortem REG-394
+Key finding: Grafema consistently reduces file operations but doesn't change fix correctness.

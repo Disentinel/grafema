@@ -20,7 +20,7 @@ import Data.Foldable (forM_)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Analysis.Types
-import Analysis.Context (Analyzer, askFile, askEnclosingFn, askNamedParent, askScopeId, emitNode, emitEdge, withAncestor)
+import Analysis.Context (Analyzer, askFile, askEnclosingFn, askNamedParent, askScopeId, emitNode, emitEdge, emitExport, withAncestor, withExported)
 import {-# SOURCE #-} Analysis.Walker (walkNode)
 import Analysis.Scope (withScope, declareInScope)
 import Analysis.SemanticId (semanticId, contentHash)
@@ -358,8 +358,165 @@ ruleBlockStatement node = do
 ruleExpressionStatement :: ASTNode -> Analyzer (Maybe Text)
 ruleExpressionStatement node = do
   case getChildrenMaybe "expression" node of
-    Just expr -> withAncestor node (walkNode expr)
+    Just expr -> do
+      -- Try CJS export patterns before generic walk
+      handled <- handleCjsExport expr
+      if handled
+        then return Nothing
+        else withAncestor node (walkNode expr)
     Nothing   -> return Nothing
+
+-- ── CJS Export Recognition ──────────────────────────────────────────
+
+-- | Detect and handle CommonJS export patterns:
+--   1. exports.foo = expr
+--   2. module.exports.foo = expr
+--   3. module.exports = expr
+--   4. Object.defineProperty(exports, 'name', { get: ... })
+handleCjsExport :: ASTNode -> Analyzer Bool
+
+-- Pattern 4: Object.defineProperty(exports, 'name', descriptor)
+handleCjsExport node@(CallExpressionNode _ _) = do
+  case getChildrenMaybe "callee" node of
+    Just callee -> do
+      let obj  = maybe "" (getTextFieldOr "name" "") (getChildrenMaybe "object" callee)
+          prop = maybe "" (getTextFieldOr "name" "") (getChildrenMaybe "property" callee)
+      if obj == "Object" && prop == "defineProperty"
+        then do
+          let args = getChildren "arguments" node
+          case args of
+            (target:nameArg:_rest) -> do
+              let targetName = getTextFieldOr "name" "" target
+              if targetName == "exports" || isModuleExports target
+                then do
+                  let exportName = getTextFieldOr "value" "" nameArg
+                  if T.null exportName
+                    then return False
+                    else do
+                      emitCjsNamedExport node exportName
+                      return True
+                else return False
+            _ -> return False
+        else return False
+    Nothing -> return False
+
+-- Patterns 1-3: assignment to exports/module.exports
+handleCjsExport node@(AssignmentExpressionNode _ _) = do
+  case getChildrenMaybe "left" node of
+    Just left -> case classifyCjsTarget left of
+      CjsNamedExport name -> do
+        -- exports.foo = expr  OR  module.exports.foo = expr
+        emitCjsNamedExport node name
+        -- Also walk the right side with exported context
+        case getChildrenMaybe "right" node of
+          Just right -> withExported $ withAncestor node (walkNode right) >> return ()
+          Nothing -> return ()
+        return True
+      CjsDefaultExport -> do
+        -- module.exports = expr — walk RHS with exported flag
+        case getChildrenMaybe "right" node of
+          Just right -> do
+            -- If RHS is a simple identifier (module.exports = ClassName),
+            -- emit it as a named export binding so ManifestGenerator finds it
+            let rhsName = case right of
+                  IdentifierNode _ _ -> getTextFieldOr "name" "" right
+                  _                  -> ""
+            if not (T.null rhsName)
+              then emitCjsNamedExport node rhsName
+              else emitCjsDefaultExport node
+            withExported $ withAncestor node (walkNode right) >> return ()
+          Nothing -> emitCjsDefaultExport node
+        return True
+      NotCjs -> return False
+    Nothing -> return False
+
+handleCjsExport _ = return False
+
+-- | Classification of CJS assignment target
+data CjsTarget = CjsNamedExport Text | CjsDefaultExport | NotCjs
+
+-- | Classify a member expression as a CJS export target
+classifyCjsTarget :: ASTNode -> CjsTarget
+classifyCjsTarget node@(MemberExpressionNode _ _) =
+  let obj  = getChildrenMaybe "object" node
+      prop = getChildrenMaybe "property" node
+      propName = maybe "" (getTextFieldOr "name" "") prop
+  in
+    -- module.exports = expr (bare, no further property)
+    if isModuleExports node then CjsDefaultExport
+    else case obj of
+      -- exports.foo
+      Just objNode@(IdentifierNode _ _) ->
+        let objName = getTextFieldOr "name" "" objNode
+        in if objName == "exports" && not (T.null propName)
+           then CjsNamedExport propName
+           else NotCjs
+      -- module.exports.foo
+      Just objNode@(MemberExpressionNode _ _) ->
+        if isModuleExports objNode && not (T.null propName)
+          then CjsNamedExport propName
+          else NotCjs
+      _ -> NotCjs
+classifyCjsTarget _ = NotCjs
+
+-- | Check if a node is `module.exports`
+isModuleExports :: ASTNode -> Bool
+isModuleExports node@(MemberExpressionNode _ _) =
+  let obj  = maybe "" (getTextFieldOr "name" "") (getChildrenMaybe "object" node)
+      prop = maybe "" (getTextFieldOr "name" "") (getChildrenMaybe "property" node)
+  in obj == "module" && prop == "exports"
+isModuleExports _ = False
+
+-- | Emit nodes/edges for a CJS named export (exports.foo = ...)
+emitCjsNamedExport :: ASTNode -> Text -> Analyzer ()
+emitCjsNamedExport node exportName = do
+  file <- askFile
+  let sp = astNodeSpan node
+      exportId = semanticId file "EXPORT" "named" Nothing Nothing
+      bindingId = semanticId file "EXPORT_BINDING" exportName Nothing Nothing
+
+  emitNode GraphNode
+    { gnId = exportId, gnType = "EXPORT", gnName = "named"
+    , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
+    , gnExported = True, gnMetadata = Map.fromList [("cjs", MetaBool True)]
+    }
+
+  emitNode GraphNode
+    { gnId = bindingId, gnType = "EXPORT_BINDING", gnName = exportName
+    , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
+    , gnExported = True, gnMetadata = Map.empty
+    }
+
+  emitEdge GraphEdge
+    { geSource = exportId, geTarget = bindingId
+    , geType = "EXPORTS", geMetadata = Map.empty
+    }
+
+  emitExport ExportInfo
+    { eiName = exportName, eiNodeId = bindingId
+    , eiKind = NamedExport, eiSource = Nothing
+    }
+
+-- | Emit nodes/edges for module.exports = expr (CJS default export)
+emitCjsDefaultExport :: ASTNode -> Analyzer ()
+emitCjsDefaultExport node = do
+  file <- askFile
+  let sp = astNodeSpan node
+      exportId = semanticId file "EXPORT" "default" Nothing Nothing
+
+  emitNode GraphNode
+    { gnId = exportId, gnType = "EXPORT", gnName = "default"
+    , gnFile = file, gnLine = spanStart sp, gnColumn = 0
+    , gnEndLine = spanEnd sp, gnEndColumn = 0
+    , gnExported = True, gnMetadata = Map.fromList [("cjs", MetaBool True)]
+    }
+
+  emitExport ExportInfo
+    { eiName = "default", eiNodeId = exportId
+    , eiKind = DefaultExport, eiSource = Nothing
+    }
 
 -- ── Catch Clause ──────────────────────────────────────────────────────
 

@@ -76,6 +76,7 @@ import {
   // handleGitArchaeology,
   handleDescribe,
   handleGraphQLQuery,
+  handleQueryRegistry,
 } from './handlers/index.js';
 import type {
   ToolResult,
@@ -113,6 +114,7 @@ import type {
   // GitArchaeologyArgs,
   DescribeArgs,
   GraphQLQueryArgs,
+  QueryRegistryArgs,
 } from './types.js';
 
 /**
@@ -345,6 +347,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
 
       case 'query_graphql':
         result = await handleGraphQLQuery(asArgs<GraphQLQueryArgs>(args));
+        break;
+
+      case 'query_registry':
+        result = await handleQueryRegistry(asArgs<QueryRegistryArgs>(args));
         break;
 
       default:

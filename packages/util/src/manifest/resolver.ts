@@ -20,6 +20,7 @@ import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { parse as parseYaml } from 'yaml';
 import type { Manifest, ManifestExport } from './types.js';
+import type { RegistryIndex } from './registry.js';
 
 export interface ResolveResult {
   /** The matched export entry */
@@ -102,6 +103,38 @@ export class ManifestResolver {
         if (this.loadFromFile(manifestPath)) loaded++;
       }
     }
+    return loaded;
+  }
+
+  /**
+   * Load manifests from a registry directory (registry/index.yaml).
+   * Reads index.yaml to discover available packages, then loads each manifest.
+   *
+   * @param registryDir Path to the registry directory containing index.yaml
+   * @param packageNames Optional filter — only load these packages
+   * @returns Number of manifests loaded
+   */
+  loadFromRegistry(registryDir: string, packageNames?: string[]): number {
+    const indexPath = join(registryDir, 'index.yaml');
+    if (!existsSync(indexPath)) return 0;
+
+    let index: RegistryIndex;
+    try {
+      index = parseYaml(readFileSync(indexPath, 'utf-8')) as RegistryIndex;
+    } catch {
+      return 0;
+    }
+
+    if (!index?.entries) return 0;
+
+    let loaded = 0;
+    for (const entry of index.entries) {
+      if (packageNames && !packageNames.includes(entry.name)) continue;
+
+      const manifestPath = join(registryDir, entry.name, entry.version, 'manifest.yaml');
+      if (this.loadFromFile(manifestPath)) loaded++;
+    }
+
     return loaded;
   }
 
