@@ -153,6 +153,36 @@ impl FileAnalysis {
         self.edges.extend(new_edges);
     }
 
+    /// Convert byte-offset positions to line:column for all nodes.
+    ///
+    /// The JS/TS analyzer (Haskell `js-analyzer`) outputs byte offsets in the
+    /// `line` and `endLine` fields, with `column` and `endColumn` always 0.
+    /// This method reads the source file to build a line index and converts
+    /// each node's positions to 1-based line and 0-based column.
+    ///
+    /// Must be called BEFORE `relativize_paths()` since it needs the absolute
+    /// file path to read the source.
+    pub fn convert_byte_offsets_to_lines(&mut self, file_path: &Path) {
+        let content = match std::fs::read(file_path) {
+            Ok(c) => c,
+            Err(_) => return, // Can't read file, skip conversion
+        };
+        let line_index = build_line_index(&content);
+
+        for node in &mut self.nodes {
+            if node.line > 0 {
+                let (line, col) = byte_offset_to_line_col(&line_index, node.line as usize);
+                node.line = line;
+                node.column = col;
+            }
+            if node.end_line > 0 {
+                let (line, col) = byte_offset_to_line_col(&line_index, node.end_line as usize);
+                node.end_line = line;
+                node.end_column = col;
+            }
+        }
+    }
+
     /// Convert all semantic IDs in this analysis to URI format.
     ///
     /// URI format: grafema://{authority}/{file}#{encoded_fragment}
@@ -178,6 +208,54 @@ impl FileAnalysis {
             export.node_id = convert(&export.node_id);
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Byte-offset → line:column conversion
+// ---------------------------------------------------------------------------
+
+/// Build an index of byte offsets for each line start.
+///
+/// `index[0] = 0` (first line starts at byte 0),
+/// `index[1]` = position after first newline, etc.
+fn build_line_index(content: &[u8]) -> Vec<usize> {
+    let mut index = vec![0usize];
+    for (i, &byte) in content.iter().enumerate() {
+        if byte == b'\n' {
+            index.push(i + 1);
+        }
+    }
+    index
+}
+
+/// Convert a byte offset to 1-based line and 0-based column.
+///
+/// Uses binary search on the line index. Returns `(1, 0)` if the offset
+/// is out of bounds (beyond end of file).
+fn byte_offset_to_line_col(line_index: &[usize], offset: usize) -> (i64, i64) {
+    match line_index.binary_search(&offset) {
+        // Exact match: offset is at the start of a line
+        Ok(line) => ((line + 1) as i64, 0),
+        // Between two line starts: offset falls within line (insertion_point - 1)
+        Err(insertion_point) => {
+            if insertion_point == 0 {
+                // Shouldn't happen since index[0] = 0, but handle gracefully
+                (1, offset as i64)
+            } else {
+                let line_start = line_index[insertion_point - 1];
+                (insertion_point as i64, (offset - line_start) as i64)
+            }
+        }
+    }
+}
+
+/// Check whether a file path has a JS/TS extension (analyzed by Haskell js-analyzer
+/// which outputs byte offsets instead of line:column).
+pub fn is_js_ts_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| matches!(ext, "js" | "jsx" | "ts" | "tsx" | "mjs" | "cjs" | "mts" | "cts"))
+        .unwrap_or(false)
 }
 
 /// Encode a fragment string for use in a grafema:// URI.
@@ -7318,5 +7396,238 @@ mod tests {
         let limits = SizeLimits::from_config(&cfg);
         assert_eq!(limits.max_file_bytes, 0);
         assert_eq!(limits.max_ast_bytes, 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Byte-offset → line:column conversion tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn build_line_index_empty() {
+        let idx = build_line_index(b"");
+        assert_eq!(idx, vec![0]);
+    }
+
+    #[test]
+    fn build_line_index_single_line() {
+        let idx = build_line_index(b"hello");
+        assert_eq!(idx, vec![0]);
+    }
+
+    #[test]
+    fn build_line_index_multiple_lines() {
+        // "ab\ncd\nef"
+        // Line 1: bytes 0..2 ("ab")
+        // Line 2: bytes 3..4 ("cd")
+        // Line 3: bytes 6..7 ("ef")
+        let idx = build_line_index(b"ab\ncd\nef");
+        assert_eq!(idx, vec![0, 3, 6]);
+    }
+
+    #[test]
+    fn build_line_index_trailing_newline() {
+        let idx = build_line_index(b"ab\n");
+        assert_eq!(idx, vec![0, 3]);
+    }
+
+    #[test]
+    fn byte_offset_to_line_col_start_of_file() {
+        let idx = build_line_index(b"ab\ncd\nef");
+        // Offset 0 = start of line 1
+        assert_eq!(byte_offset_to_line_col(&idx, 0), (1, 0));
+    }
+
+    #[test]
+    fn byte_offset_to_line_col_middle_of_first_line() {
+        let idx = build_line_index(b"abcdef\ngh");
+        // Offset 3 = 4th byte on line 1, column 3
+        assert_eq!(byte_offset_to_line_col(&idx, 3), (1, 3));
+    }
+
+    #[test]
+    fn byte_offset_to_line_col_start_of_second_line() {
+        let idx = build_line_index(b"ab\ncd\nef");
+        // Offset 3 = start of line 2
+        assert_eq!(byte_offset_to_line_col(&idx, 3), (2, 0));
+    }
+
+    #[test]
+    fn byte_offset_to_line_col_middle_of_second_line() {
+        let idx = build_line_index(b"ab\ncd\nef");
+        // Offset 4 = "d" on line 2, column 1
+        assert_eq!(byte_offset_to_line_col(&idx, 4), (2, 1));
+    }
+
+    #[test]
+    fn byte_offset_to_line_col_start_of_third_line() {
+        let idx = build_line_index(b"ab\ncd\nef");
+        // Offset 6 = start of line 3
+        assert_eq!(byte_offset_to_line_col(&idx, 6), (3, 0));
+    }
+
+    #[test]
+    fn byte_offset_to_line_col_beyond_eof() {
+        let idx = build_line_index(b"ab\ncd");
+        // Offset 100 = beyond end of file, should land on last line
+        let (line, col) = byte_offset_to_line_col(&idx, 100);
+        assert_eq!(line, 2);
+        assert_eq!(col, 97); // 100 - 3 (start of line 2)
+    }
+
+    #[test]
+    fn byte_offset_to_line_col_at_newline_char() {
+        let idx = build_line_index(b"ab\ncd\nef");
+        // Offset 2 = the '\n' character on line 1, column 2
+        assert_eq!(byte_offset_to_line_col(&idx, 2), (1, 2));
+    }
+
+    #[test]
+    fn is_js_ts_file_js_extensions() {
+        for ext in &["js", "jsx", "ts", "tsx", "mjs", "cjs", "mts", "cts"] {
+            let path = PathBuf::from(format!("src/app.{ext}"));
+            assert!(is_js_ts_file(&path), "expected true for .{ext}");
+        }
+    }
+
+    #[test]
+    fn is_js_ts_file_non_js_extensions() {
+        for ext in &["rs", "py", "hs", "java", "go", "cpp"] {
+            let path = PathBuf::from(format!("src/app.{ext}"));
+            assert!(!is_js_ts_file(&path), "expected false for .{ext}");
+        }
+    }
+
+    #[test]
+    fn convert_byte_offsets_to_lines_with_real_file() {
+        use std::io::Write;
+        // Create a temporary file with known content
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("test.js");
+        {
+            let mut f = std::fs::File::create(&file_path).unwrap();
+            // Line 1: "const x = 1;\n"   (13 bytes: 0..12, newline at 12)
+            // Line 2: "const y = 2;\n"   (13 bytes: 13..25, newline at 25)
+            // Line 3: "function foo() {\n" (17 bytes: 26..42, newline at 42)
+            // line_index = [0, 13, 26, 43]
+            write!(f, "const x = 1;\nconst y = 2;\nfunction foo() {{\n").unwrap();
+        }
+
+        let mut analysis = FileAnalysis {
+            file: file_path.display().to_string(),
+            module_id: file_path.display().to_string(),
+            nodes: vec![
+                GraphNode {
+                    id: "test.js->VARIABLE->x".to_string(),
+                    node_type: "VARIABLE".to_string(),
+                    name: "x".to_string(),
+                    file: file_path.display().to_string(),
+                    line: 6,    // byte offset of 'x' in "const x"
+                    column: 0,
+                    end_line: 12, // byte offset of '\n' at end of line 1
+                    end_column: 0,
+                    exported: false,
+                    metadata: HashMap::new(),
+                    extra: HashMap::new(),
+                },
+                GraphNode {
+                    id: "test.js->FUNCTION->foo".to_string(),
+                    node_type: "FUNCTION".to_string(),
+                    name: "foo".to_string(),
+                    file: file_path.display().to_string(),
+                    line: 26,   // byte offset of "function" on line 3
+                    column: 0,
+                    end_line: 42, // byte offset of '\n' at end of line 3
+                    end_column: 0,
+                    exported: false,
+                    metadata: HashMap::new(),
+                    extra: HashMap::new(),
+                },
+            ],
+            edges: vec![],
+            exports: vec![],
+        };
+
+        analysis.convert_byte_offsets_to_lines(&file_path);
+
+        // Node 0: byte 6 → line 1, col 6; byte 12 → line 1, col 12
+        assert_eq!(analysis.nodes[0].line, 1);
+        assert_eq!(analysis.nodes[0].column, 6);
+        assert_eq!(analysis.nodes[0].end_line, 1);
+        assert_eq!(analysis.nodes[0].end_column, 12);
+
+        // Node 1: byte 26 → line 3, col 0; byte 42 → line 3, col 16
+        assert_eq!(analysis.nodes[1].line, 3);
+        assert_eq!(analysis.nodes[1].column, 0);
+        assert_eq!(analysis.nodes[1].end_line, 3);
+        assert_eq!(analysis.nodes[1].end_column, 16);
+    }
+
+    #[test]
+    fn convert_byte_offsets_skips_zero_positions() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("test.js");
+        {
+            let mut f = std::fs::File::create(&file_path).unwrap();
+            write!(f, "const x = 1;\n").unwrap();
+        }
+
+        let mut analysis = FileAnalysis {
+            file: file_path.display().to_string(),
+            module_id: file_path.display().to_string(),
+            nodes: vec![GraphNode {
+                id: "test.js->MODULE".to_string(),
+                node_type: "MODULE".to_string(),
+                name: "test.js".to_string(),
+                file: file_path.display().to_string(),
+                line: 0,     // 0 means "no position" — should NOT be converted
+                column: 0,
+                end_line: 0,
+                end_column: 0,
+                exported: false,
+                metadata: HashMap::new(),
+                extra: HashMap::new(),
+            }],
+            edges: vec![],
+            exports: vec![],
+        };
+
+        analysis.convert_byte_offsets_to_lines(&file_path);
+
+        // Zero positions should remain unchanged
+        assert_eq!(analysis.nodes[0].line, 0);
+        assert_eq!(analysis.nodes[0].column, 0);
+        assert_eq!(analysis.nodes[0].end_line, 0);
+        assert_eq!(analysis.nodes[0].end_column, 0);
+    }
+
+    #[test]
+    fn convert_byte_offsets_missing_file_is_noop() {
+        let missing_path = PathBuf::from("/nonexistent/file.js");
+        let mut analysis = FileAnalysis {
+            file: missing_path.display().to_string(),
+            module_id: missing_path.display().to_string(),
+            nodes: vec![GraphNode {
+                id: "file.js->FUNCTION->foo".to_string(),
+                node_type: "FUNCTION".to_string(),
+                name: "foo".to_string(),
+                file: missing_path.display().to_string(),
+                line: 100,
+                column: 0,
+                end_line: 200,
+                end_column: 0,
+                exported: false,
+                metadata: HashMap::new(),
+                extra: HashMap::new(),
+            }],
+            edges: vec![],
+            exports: vec![],
+        };
+
+        analysis.convert_byte_offsets_to_lines(&missing_path);
+
+        // Should be unchanged — file couldn't be read
+        assert_eq!(analysis.nodes[0].line, 100);
+        assert_eq!(analysis.nodes[0].end_line, 200);
     }
 }
