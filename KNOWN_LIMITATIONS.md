@@ -1,4 +1,4 @@
-# Known Limitations — Grafema v0.3.0-beta
+# Known Limitations — Grafema v0.3.x
 
 Honest list of what works, what doesn't, and when we plan to fix it.
 
@@ -9,10 +9,8 @@ Honest list of what works, what doesn't, and when we plan to fix it.
 | macOS ARM (Apple Silicon) | ✅ CI builds | ✅ CI builds | Full support |
 | macOS Intel (x64) | ✅ CI builds | ✅ CI builds | Full support |
 | Linux x64 | ✅ CI builds | ✅ CI builds | Full support |
-| Linux ARM64 | ❌ cross-compile bug | ❌ not in CI | Planned v0.4 |
+| Linux ARM64 | ✅ CI builds | ✅ CI builds | Full support |
 | Windows | ❌ | ❌ | Not planned |
-
-**Linux ARM64 issue:** Rust cross-compile fails due to `c_char` type mismatch (`u8` vs `i8` on aarch64). Fixable but not blocking beta.
 
 ## Language Support
 
@@ -51,8 +49,7 @@ Honest list of what works, what doesn't, and when we plan to fix it.
 
 ## Binary Delivery
 
-- **Haskell analyzers** — not included in `npm install`. Will be lazy-downloaded on first use (not yet implemented in v0.3.0-beta)
-- **`~/.grafema/bin/`** — not yet in orchestrator's binary search path
+- **Haskell analyzers** — not included in `npm install`. Lazy-downloaded on first use to `~/.grafema/bin/`. Version-checked and re-downloaded when stale (since v0.3.15).
 
 ## MCP Server
 
@@ -66,4 +63,4 @@ Honest list of what works, what doesn't, and when we plan to fix it.
 - **REG-625: JS/TS MODULE names have absolute paths** — MODULE node `name` field contains absolute paths instead of relative. The `file` field is correct. Cosmetic issue.
 - **REG-652: MCP not workspace-aware** — MCP server connects to default `.grafema/rfdb.sock`. If RFDB server uses a different socket path (multi-workspace, worktrees), MCP tools fail. Workaround: use `--project` flag.
 - **RFDB stale socket** — `grafema doctor` detects stale `rfdb.sock` after crash, but doesn't auto-clean. Run `grafema analyze` to restart.
-- **`grafema init` config** — fixed in v0.3.0-beta: generated config previously used phased plugin map that orchestrator couldn't parse.
+- **`grafema init` config** — fixed in v0.3.0: generated config previously used phased plugin map that orchestrator couldn't parse.

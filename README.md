@@ -18,11 +18,12 @@ Grafema builds a queryable graph from your codebase via static analysis. Instead
 
 ```bash
 npm install grafema
-grafema init
-grafema analyze
+grafema analyze --quickstart
 ```
 
-`grafema init` auto-detects your project languages and creates a config covering all supported file types. No manual configuration needed for most projects.
+That's it. `--quickstart` auto-detects your project languages, generates config, and builds the graph in one command.
+
+For more control, use the two-step flow: `grafema init` (review config) → `grafema analyze`.
 
 ### Explore your code
 
@@ -105,7 +106,7 @@ JS/TS is the primary language with full dataflow support. Other languages have p
 | `grafema who <symbol>` | "Who uses this?" | Find all callers/references |
 | `grafema why <symbol>` | "Why is it this way?" | Knowledge base decisions |
 | `grafema init` | | Initialize Grafema in a project |
-| `grafema analyze` | | Build/rebuild the code graph |
+| `grafema analyze` | | Build/rebuild the code graph (`--quickstart` for zero-config) |
 | `grafema doctor` | | Check system health |
 | `grafema overview` | | High-level project stats |
 

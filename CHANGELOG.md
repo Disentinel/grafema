@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.19] - 2026-03-19
+
+### Highlights
+
+- **Zero-config quickstart** — `grafema analyze --quickstart` scans the project for supported languages, generates config, and runs analysis in one command. No separate `grafema init` step needed.
+- **Correct source positions for JS/TS** — The Haskell js-analyzer outputs byte offsets, not line numbers. The orchestrator now converts them to proper line:column positions, fixing VS Code extension panels (Value Trace, Callers, Blast Radius, Nodes in File).
+- **RFDB read path optimization (RFD-55)** — Per-level read path with L1 edge-type index and WriteBuffer incremental index for O(1) type lookups. Typed CommitBatch envelope eliminates ~70K+ heap allocations per batch, cutting p99 commit latency from 4918ms to 2512ms.
+
+### Features
+
+- feat(cli): `--quickstart` flag for `grafema analyze` — auto-initializes project if no config exists (scan extensions, generate config, update .gitignore)
+- feat(cli): `--detail` flag for `grafema wtf` — control output verbosity (`summary`, `normal`, `full`); CLI hint text now context-aware
+
+### Performance
+
+- perf(rfdb): per-level read path — immutable L1 edge-type index built at shard open, incremental WriteBuffer edge_type_index for O(1) lookups (RFD-55)
+- perf(orchestrator): typed CommitBatch envelope replaces `serde_json::Value` intermediate tree — eliminates heap allocations, serialize_ms drops to 0ms, total rfdb_commit_ms 39.8s → 28.6s (1.39x speedup) (RFD-55)
+
+### Bug Fixes
+
+- fix(orchestrator): convert byte offsets to line:column in JS/TS analysis — Haskell analyzer outputs byte offsets in line/endLine fields, now properly converted via line index. Fixes VS Code extension findNodeAtCursor matching.
+- fix(cli): `wtf` command hint text said `detail="full"` (MCP syntax) instead of `--detail full` (CLI syntax)
+
 ## [0.3.18] - 2026-03-17
 
 ### Highlights
