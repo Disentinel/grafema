@@ -6,7 +6,7 @@
 [![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/Disentinel/fb8ae29db701dd788e1beaffb159ffef/raw/grafema-coverage.json)](https://github.com/Disentinel/grafema/actions/workflows/ci.yml)
 [![Benchmark](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/Disentinel/fb8ae29db701dd788e1beaffb159ffef/raw/rfdb-benchmark.json)](https://github.com/Disentinel/grafema/actions/workflows/benchmark.yml)
 
-> **v0.3.17** — Early access. [Changelog](./CHANGELOG.md) | [Known limitations](./KNOWN_LIMITATIONS.md)
+> **v0.3.18** — Early access. [Changelog](./CHANGELOG.md) | [Known limitations](./KNOWN_LIMITATIONS.md)
 
 Graph-driven code analysis. AI should query the graph, not read code.
 
@@ -111,17 +111,16 @@ JS/TS is the primary language with full dataflow support. Other languages have p
 
 ## VS Code Extension
 
-Interactive graph navigation with 7 tree-based panels.
+[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/GrafemaLabs.grafema-explore)](https://marketplace.visualstudio.com/items?itemName=GrafemaLabs.grafema-explore)
 
-```bash
-# Install from source
-cd packages/vscode && pnpm install && pnpm build
-# VS Code: Cmd+Shift+P > "Extensions: Install from VSIX..."
-```
+Interactive graph navigation directly in your editor. Install from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=GrafemaLabs.grafema-explore) or search "Grafema Explore" in Extensions.
 
 - **Cmd+Shift+G** — Find graph node at cursor
-- Explore incoming/outgoing edges
-- Click nodes to jump to source
+- **Value Trace** — See where data comes from and flows to
+- **Callers** — All call sites for the function under cursor
+- **Blast Radius** — Impact analysis: what breaks if you change this?
+- **Nodes in File** — All graph nodes in current file with positions
+- **Explorer** — Navigate edges (incoming/outgoing) interactively
 
 ## Architecture
 
