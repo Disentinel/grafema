@@ -2,8 +2,15 @@
   "name": "grafema-explore",
   "displayName": "Grafema Explore",
   "description": "Interactive graph navigation for Grafema code analysis",
-  "version": "0.2.12",
-  "publisher": "grafema",
+  "version": "0.3.18",
+  "private": true,
+  "publisher": "GrafemaLabs",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Disentinel/grafema",
+    "directory": "packages/vscode"
+  },
+  "license": "SEE LICENSE IN LICENSE.md",
   "engines": {
     "vscode": "^1.74.0"
   },

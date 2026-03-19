@@ -348,9 +348,14 @@ async fn main() -> Result<()> {
                 let mut edges_total = 0usize;
                 let mut errors_total = 0usize;
 
-                // Relativize + URI format
+                // Convert byte offsets → line:column for JS/TS files (Haskell
+                // js-analyzer outputs byte offsets, not line numbers).
+                // Must happen BEFORE relativize_paths since we need absolute paths.
                 for result in &mut results {
                     if let Some(ref mut analysis) = result.analysis {
+                        if analyzer::is_js_ts_file(&result.file) {
+                            analysis.convert_byte_offsets_to_lines(&result.file);
+                        }
                         analysis.relativize_paths(root_str);
                         analysis.ensure_function_contains_edges();
                         analysis.to_uri_format(authority);

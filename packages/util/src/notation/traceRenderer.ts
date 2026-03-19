@@ -28,6 +28,8 @@ export type TraceDetail = 'summary' | 'normal' | 'full';
 export interface TraceNarrativeOptions {
   /** Level of detail: summary, normal (default), full */
   detail?: TraceDetail;
+  /** Format hints for CLI (--detail full) vs MCP (detail="full") */
+  hintStyle?: 'cli' | 'mcp';
 }
 
 // === CONSTANTS ===
@@ -40,14 +42,15 @@ const MAX_LINES = 35;
 
 // === LEGEND (from single source of truth) ===
 
-function lodHint(currentDetail: TraceDetail): string {
+function lodHint(currentDetail: TraceDetail, style: 'cli' | 'mcp' = 'mcp'): string {
+  const fmt = (level: string) => style === 'cli' ? `--detail ${level}` : `detail="${level}"`;
   switch (currentDetail) {
     case 'summary':
-      return 'Use detail="normal" for node list, detail="full" for complete chain';
+      return `Use ${fmt('normal')} for node list, ${fmt('full')} for complete chain`;
     case 'normal':
-      return 'Use detail="full" for complete chain, detail="summary" for overview';
+      return `Use ${fmt('full')} for complete chain, ${fmt('summary')} for overview`;
     case 'full':
-      return 'Use detail="summary" for overview, detail="normal" for compressed view';
+      return `Use ${fmt('summary')} for overview, ${fmt('normal')} for compressed view`;
   }
 }
 
@@ -452,7 +455,7 @@ export function renderTraceNarrative(
   // Append legend (from archetypes.ts — single source of truth) + LOD hint
   output.push('');
   output.push(generateLegend());
-  output.push(lodHint(detail));
+  output.push(lodHint(detail, options.hintStyle));
 
   return output.join('\n');
 }

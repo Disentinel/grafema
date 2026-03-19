@@ -85,6 +85,7 @@ JS_PACKAGES=(
     "packages/api"
     "packages/cli"
     "packages/grafema"
+    "packages/vscode"
 )
 
 # Legacy package (rfdb-server with prebuilt binaries)

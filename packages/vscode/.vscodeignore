@@ -9,4 +9,6 @@ esbuild.config.mjs
 # Include bundled binaries (downloaded during CI)
 !binaries/
 !binaries/**
+test/**
+scripts/**
 .grafema/**
