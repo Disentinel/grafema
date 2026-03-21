@@ -121,7 +121,7 @@ describe('walkFile domain plugin hook (REG-591)', () => {
         column: 0,
       };
       const extraEdge = {
-        src: 'MODULE#test.ts',
+        src: 'test.ts->global->MODULE->module',
         dst: extraNode.id,
         type: 'EXPOSES',
       };
@@ -136,7 +136,7 @@ describe('walkFile domain plugin hook (REG-591)', () => {
       const result = await walkWithPlugins("app.get('/foo', handler);", [plugin]);
 
       const found = result.edges.find(
-        e => e.src === 'MODULE#test.ts' && e.dst === extraNode.id && e.type === 'EXPOSES'
+        e => e.src === 'test.ts->global->MODULE->module' && e.dst === extraNode.id && e.type === 'EXPOSES'
       );
       assert.ok(found, 'Plugin edge should appear in result.edges');
     });

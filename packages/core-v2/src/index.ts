@@ -1,4 +1,4 @@
-export { walkFile, parseFile } from './walk.js';
+export { walkFile, parseFile, computeModuleId } from './walk.js';
 export type { WalkOptions } from './walk.js';
 export { resolveFileRefs, resolveProject, ProjectIndex } from './resolve.js';
 export type { ResolveResult } from './resolve.js';

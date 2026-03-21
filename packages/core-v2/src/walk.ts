@@ -37,6 +37,15 @@ import {
 } from './scope.js';
 import { EDGE_MAP } from './edge-map.js';
 
+/**
+ * Compute semantic ID for a MODULE node.
+ * Must match the format produced by JSModuleIndexer's ModuleNode.createWithContext().
+ * Format: {file}->global->MODULE->module
+ */
+export function computeModuleId(file: string): string {
+  return `${file}->global->MODULE->module`;
+}
+
 // Well-known JS globals that should be resolvable via scope_lookup
 const JS_GLOBALS: readonly string[] = [
   // Fundamental objects
@@ -248,7 +257,7 @@ export async function walkFile(
   await ensureVisitorKeys();
 
   const ast = parseFile(code, file);
-  const moduleId = `MODULE#${file}`;
+  const moduleId = computeModuleId(file);
   const ctx = createWalkContext(file, moduleId, strict);
 
   const allNodes: GraphNode[] = [];
