@@ -1,1 +1,2 @@
 pnpm lint
+node --import tsx --test packages/mcp/test/regressions.test.ts

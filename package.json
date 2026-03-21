@@ -13,6 +13,8 @@
     "test": "./scripts/test.sh",
     "test:coverage": "c8 node --test --test-concurrency=1 'test/unit/*.test.js'",
     "test:scenarios": "node --test test/scenarios/",
+    "test:regression": "node --import tsx --test packages/mcp/test/regressions.test.ts",
+    "test:vscode": "node --import tsx --test 'packages/vscode/test/unit/*.test.ts'",
     "snapshots:update": "UPDATE_SNAPSHOTS=true node --test --test-concurrency=1 test/unit/snapshots/GraphSnapshot.test.js",
     "release": "./scripts/release.sh",
     "rfdb:start": "node packages/cli/dist/cli.js server start",

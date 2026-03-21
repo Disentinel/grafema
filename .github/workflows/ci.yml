@@ -43,7 +43,12 @@ jobs:
           cache: 'pnpm'
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            pnpm install --frozen-lockfile
+          else
+            pnpm install --no-frozen-lockfile
+          fi
 
       - name: Build (required for tests)
         run: pnpm build
@@ -52,6 +57,16 @@ jobs:
         run: |
           set -o pipefail
           pnpm test:coverage 2>&1 | tee /tmp/pnpm-test-coverage.log
+
+      - name: Run regression tests (REG-655 / REG-656 / REG-652)
+        run: |
+          set -o pipefail
+          node --import tsx --test packages/mcp/test/regressions.test.ts 2>&1 | tee /tmp/regression-test.log
+
+      - name: Run VSCode extension unit tests
+        run: |
+          set -o pipefail
+          node --import tsx --test 'packages/vscode/test/unit/*.test.ts' 2>&1 | tee /tmp/vscode-test.log
 
       - name: Summarize failed tests
         if: failure()
@@ -113,7 +128,7 @@ jobs:
       - name: Check for .only in test files
         run: |
           echo "Checking for .only() in test files..."
-          if grep -rE '\.only\s*\(' test/ --include="*.test.js" --include="*.test.ts" 2>/dev/null; then
+          if grep -rE '\.only\s*\(' test/ packages/mcp/test/ packages/vscode/test/ --include="*.test.js" --include="*.test.ts" 2>/dev/null; then
             echo "::error::Found .only() in test files. Remove before merging."
             exit 1
           fi
@@ -123,7 +138,7 @@ jobs:
         if: github.ref == 'refs/heads/stable'
         run: |
           echo "Checking for .skip() in test files (stable branch)..."
-          if grep -rE '\.skip\s*\(' test/ --include="*.test.js" --include="*.test.ts" 2>/dev/null; then
+          if grep -rE '\.skip\s*\(' test/ packages/mcp/test/ packages/vscode/test/ --include="*.test.js" --include="*.test.ts" 2>/dev/null; then
             echo "::error::Found .skip() in test files. All tests must pass on stable."
             exit 1
           fi
@@ -149,7 +164,12 @@ jobs:
           cache: 'pnpm'
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            pnpm install --frozen-lockfile
+          else
+            pnpm install --no-frozen-lockfile
+          fi
 
       - name: Build all packages (required for cross-package typecheck)
         run: pnpm build
@@ -180,7 +200,12 @@ jobs:
           cache: 'pnpm'
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            pnpm install --frozen-lockfile
+          else
+            pnpm install --no-frozen-lockfile
+          fi
 
       - name: Build all packages
         run: pnpm build
