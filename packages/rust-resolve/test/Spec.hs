@@ -17,6 +17,7 @@ import Data.Text (Text)
 import qualified Data.Map.Strict as Map
 
 import RustImportResolution (resolveAll)
+import qualified RustCallResolution
 import Grafema.Types (GraphNode(..), GraphEdge(..), MetaValue(..))
 import Grafema.Protocol (PluginCommand(..))
 
@@ -110,6 +111,22 @@ mkImportNode modulePath file nodeId = GraphNode
   , gnEndColumn = 20
   , gnExported  = False
   , gnMetadata  = Map.empty
+  }
+
+-- | Create a CALL node (function or method call site).
+-- name: call target name (may be path-qualified, e.g. "utils::helper")
+mkCallNode :: Text -> Text -> Text -> GraphNode
+mkCallNode name file nodeId = GraphNode
+  { gnId        = nodeId
+  , gnType      = "CALL"
+  , gnName      = name
+  , gnFile      = file
+  , gnLine      = 5
+  , gnColumn    = 4
+  , gnEndLine   = 0
+  , gnEndColumn = 0
+  , gnExported  = False
+  , gnMetadata  = Map.fromList [("method", MetaBool False)]
   }
 
 -- | Create an IMPORT_BINDING node with source metadata.
@@ -463,3 +480,133 @@ main = hspec $ do
       let edges = extractEdges commands
       let bindingEdges = filter (\e -> geSource e == "src/main.rs->IMPORT_BINDING->Foo") edges
       length bindingEdges `shouldBe` 0
+
+  -- ── RustCallResolution tests ─────────────────────────────────────
+  describe "RustCallResolution — intra-file CALLS" $ do
+
+    it "resolves simple call: CALL name matches FUNCTION name exactly" $ do
+      let nodes =
+            [ mkFunctionNode "main"     "src/main.rs" "src/main.rs->FUNCTION->main"     False
+            , mkFunctionNode "foo"      "src/main.rs" "src/main.rs->FUNCTION->foo"      False
+            , mkCallNode     "foo"      "src/main.rs" "src/main.rs->CALL->foo@5:4"
+            ]
+      cmds <- RustCallResolution.resolveAll nodes
+      let edges = extractEdges cmds
+      length edges `shouldBe` 1
+      case edges of
+        [e] -> do
+          geType   e `shouldBe` "CALLS"
+          geSource e `shouldBe` "src/main.rs->CALL->foo@5:4"
+          geTarget e `shouldBe` "src/main.rs->FUNCTION->foo"
+        _ -> expectationFailure "Expected 1 CALLS edge"
+
+    it "resolves path-qualified call via last :: segment" $ do
+      -- CALL name "utils::helper" -> lastSegment = "helper" -> FUNCTION "helper"
+      let nodes =
+            [ mkFunctionNode "helper"        "src/main.rs" "src/main.rs->FUNCTION->helper" False
+            , mkCallNode     "utils::helper" "src/main.rs" "src/main.rs->CALL->utils::helper@5:4"
+            ]
+      cmds <- RustCallResolution.resolveAll nodes
+      let edges = extractEdges cmds
+      length edges `shouldBe` 1
+      case edges of
+        [e] -> do
+          geType   e `shouldBe` "CALLS"
+          geSource e `shouldBe` "src/main.rs->CALL->utils::helper@5:4"
+          geTarget e `shouldBe` "src/main.rs->FUNCTION->helper"
+        _ -> expectationFailure "Expected 1 CALLS edge via suffix match"
+
+    it "resolves deeply path-qualified call via last :: segment" $ do
+      -- "crate::module::submod::process" -> lastSegment = "process"
+      let nodes =
+            [ mkFunctionNode "process" "src/lib.rs" "src/lib.rs->FUNCTION->process" False
+            , mkCallNode "crate::module::submod::process" "src/lib.rs"
+                "src/lib.rs->CALL->process@5:4"
+            ]
+      cmds <- RustCallResolution.resolveAll nodes
+      let edges = extractEdges cmds
+      length edges `shouldBe` 1
+      case edges of
+        [e] -> geTarget e `shouldBe` "src/lib.rs->FUNCTION->process"
+        _ -> expectationFailure "Expected 1 CALLS edge"
+
+    it "does NOT resolve call across files" $ do
+      -- CALL in main.rs, FUNCTION in lib.rs → no edge
+      let nodes =
+            [ mkFunctionNode "foo" "src/lib.rs"  "src/lib.rs->FUNCTION->foo"  False
+            , mkCallNode     "foo" "src/main.rs" "src/main.rs->CALL->foo@5:4"
+            ]
+      cmds <- RustCallResolution.resolveAll nodes
+      let edges = extractEdges cmds
+      length edges `shouldBe` 0
+
+    it "produces no edge when no FUNCTION matches the call name" $ do
+      let nodes =
+            [ mkFunctionNode "bar"     "src/main.rs" "src/main.rs->FUNCTION->bar" False
+            , mkCallNode     "unknown" "src/main.rs" "src/main.rs->CALL->unknown@5:4"
+            ]
+      cmds <- RustCallResolution.resolveAll nodes
+      let edges = extractEdges cmds
+      length edges `shouldBe` 0
+
+    it "resolves multiple calls in the same file" $ do
+      let nodes =
+            [ mkFunctionNode "alpha" "src/main.rs" "src/main.rs->FUNCTION->alpha" False
+            , mkFunctionNode "beta"  "src/main.rs" "src/main.rs->FUNCTION->beta"  False
+            , mkCallNode     "alpha" "src/main.rs" "src/main.rs->CALL->alpha@3:4"
+            , mkCallNode     "beta"  "src/main.rs" "src/main.rs->CALL->beta@7:4"
+            ]
+      cmds <- RustCallResolution.resolveAll nodes
+      let edges = extractEdges cmds
+      length edges `shouldBe` 2
+      let targets = map geTarget edges
+      targets `shouldContain` ["src/main.rs->FUNCTION->alpha"]
+      targets `shouldContain` ["src/main.rs->FUNCTION->beta"]
+
+    it "returns 0 edges for empty input" $ do
+      cmds <- RustCallResolution.resolveAll []
+      let edges = extractEdges cmds
+      length edges `shouldBe` 0
+
+    it "resolves method call (method=True) by name" $ do
+      -- ExprMethodCall emits CALL with gnName = method name directly
+      -- RustCallResolution treats method calls identically to function calls
+      let methodCall = GraphNode
+            { gnId        = "src/lib.rs->CALL->process@10:8"
+            , gnType      = "CALL"
+            , gnName      = "process"
+            , gnFile      = "src/lib.rs"
+            , gnLine      = 10
+            , gnColumn    = 8
+            , gnEndLine   = 0
+            , gnEndColumn = 0
+            , gnExported  = False
+            , gnMetadata  = Map.fromList
+                [ ("method",   MetaBool True)
+                , ("receiver", MetaText "self")
+                ]
+            }
+          nodes =
+            [ mkFunctionNode "process" "src/lib.rs" "src/lib.rs->FUNCTION->process" False
+            , methodCall
+            ]
+      cmds <- RustCallResolution.resolveAll nodes
+      let edges = extractEdges cmds
+      length edges `shouldBe` 1
+      case edges of
+        [e] -> do
+          geType   e `shouldBe` "CALLS"
+          geTarget e `shouldBe` "src/lib.rs->FUNCTION->process"
+        _ -> expectationFailure "Expected 1 CALLS edge for method call"
+
+    it "emits edges with resolvedVia=rust-calls metadata" $ do
+      let nodes =
+            [ mkFunctionNode "foo" "src/main.rs" "src/main.rs->FUNCTION->foo" False
+            , mkCallNode     "foo" "src/main.rs" "src/main.rs->CALL->foo@5:4"
+            ]
+      cmds <- RustCallResolution.resolveAll nodes
+      let edges = extractEdges cmds
+      case edges of
+        [e] ->
+          Map.lookup "resolvedVia" (geMetadata e) `shouldBe` Just (MetaText "rust-calls")
+        _ -> expectationFailure "Expected 1 edge with metadata"

@@ -949,13 +949,14 @@ async fn main() -> Result<()> {
                         let results = plugin::stream_and_resolve_single_worker(
                             &mut rfdb,
                             &[config::Language::Rust],
-                            &[("rust-imports", &[])],
+                            &[("rust-imports", &[]), ("rust-calls", &[])],
                             &rs_pool,
                         ).await?;
                         for (cmd, mut output) in results {
                             let cmd_start = std::time::Instant::now();
                             let commit_name = match cmd.as_str() {
                                 "rust-imports" => "rust-import-resolution",
+                                "rust-calls"   => "rust-call-resolution",
                                 _ => &cmd,
                             };
                             for edge in &output.edges {
