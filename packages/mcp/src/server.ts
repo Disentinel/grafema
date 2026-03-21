@@ -36,6 +36,7 @@ import { PROMPTS, getPrompt } from './prompts.js';
 import { TOOLS } from './definitions/index.js';
 import { initializeFromArgs, setupLogging, getProjectPath } from './state.js';
 import { textResult, errorResult, log } from './utils.js';
+import { getSocketPathOverride } from './state.js';
 import { discoverServices } from './analysis.js';
 import {
   handleQueryGraph,
@@ -131,7 +132,8 @@ initializeFromArgs();
 setupLogging();
 
 const projectPath = getProjectPath();
-log(`[Grafema MCP] Starting server for project: ${projectPath}`);
+const socketOverride = getSocketPathOverride();
+log(`[Grafema MCP] Starting server for project: ${projectPath}${socketOverride ? ` socket=${socketOverride}` : ''}`);
 
 // Create MCP server
 const server = new Server(
