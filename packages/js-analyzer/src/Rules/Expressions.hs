@@ -64,7 +64,7 @@ ruleCallExpression node = do
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
     , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False
-    , gnMetadata = Map.empty
+    , gnMetadata = Map.singleton "argCount" (MetaInt arity)
     }
 
   curScopeId <- askScopeId
@@ -547,7 +547,10 @@ ruleNewExpression node = do
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
     , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False
-    , gnMetadata = Map.singleton "kind" (MetaText "new")
+    , gnMetadata = Map.fromList
+        [ ("kind", MetaText "new")
+        , ("argCount", MetaInt arity)
+        ]
     }
 
   curScopeId <- askScopeId
@@ -703,6 +706,9 @@ ruleTaggedTemplateExpression node = do
       tagName = case getChildrenMaybe "tag" node of
                   Just t  -> getTextFieldOr "name" "<tag>" t
                   Nothing -> "<tag>"
+      exprs = case getChildrenMaybe "quasi" node of
+                Just quasi -> getChildren "expressions" quasi
+                Nothing    -> []
       hash = contentHash [("t", tagName), ("line", T.pack (show (spanStart sp)))]
       nodeId = semanticId file "CALL" tagName parent (Just hash)
 
@@ -711,7 +717,10 @@ ruleTaggedTemplateExpression node = do
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
     , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False
-    , gnMetadata = Map.singleton "kind" (MetaText "tagged_template")
+    , gnMetadata = Map.fromList
+        [ ("kind", MetaText "tagged_template")
+        , ("argCount", MetaInt (length exprs))
+        ]
     }
 
   -- Emit deferred ref for call resolution (same as ruleCallExpression)
@@ -729,7 +738,6 @@ ruleTaggedTemplateExpression node = do
   -- strings is implicit (index 0), expressions start at index 1
   case getChildrenMaybe "quasi" node of
     Just quasi -> do
-      let exprs = getChildren "expressions" quasi
       mapM_ (\(idx, expr) -> do
         mExprId <- withAncestor node (walkNode expr)
         forM_ mExprId $ \exprId ->
@@ -777,7 +785,10 @@ ruleImportExpression node = do
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
     , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False
-    , gnMetadata = Map.singleton "kind" (MetaText "dynamic_import")
+    , gnMetadata = Map.fromList
+        [ ("kind", MetaText "dynamic_import")
+        , ("argCount", MetaInt 1)
+        ]
     }
 
   -- Walk source argument

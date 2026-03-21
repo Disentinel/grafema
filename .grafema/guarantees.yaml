@@ -368,6 +368,21 @@ guarantees:
     rule: 'violation(X) :- node(X, "BRANCH"), attr(X, "name", "if"), \+ edge(X, _, "HAS_CONSEQUENT").'
     severity: warning
 
+  - name: call-with-args-has-passes-argument
+    description: >
+      Every CALL node with argCount > 0 and a resolved CALLS edge
+      must have at least one PASSES_ARGUMENT edge. A call that has
+      arguments but lacks argument edges means the argument-walking
+      code failed to connect them.
+    check: datalog
+    rule: >-
+      violation(X) :- node(X, "CALL"),
+        edge(X, _, "CALLS"),
+        attr(X, "argCount", A),
+        gt(A, 0),
+        \+ edge(X, _, "PASSES_ARGUMENT").
+    severity: warning
+
   # --- Namespaced semantic integrity ---
 
   - name: route-has-handler
