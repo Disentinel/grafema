@@ -1,6 +1,6 @@
 schema_version: 1
-generated: 2026-03-17T17:23:18.915Z
-analyzer_version: 0.3.16
+generated: 2026-03-20T18:46:40.102Z
+analyzer_version: 0.3.20
 entries:
   - name: "@anthropic-ai/sdk"
     version: 0.39.0
@@ -78,8 +78,8 @@ entries:
     version: 4.21.0
     purl: pkg:npm/tsx@4.21.0
     source_type: compiled_js
-    confidence: 1
-    total_exports: 4
+    confidence: 0
+    total_exports: 0
   - name: yaml
     version: 2.8.2
     purl: pkg:npm/yaml@2.8.2

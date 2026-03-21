@@ -209,7 +209,10 @@ export class ManifestGenerator {
     }
 
     exports.sort((a, b) => a.name.localeCompare(b.name));
-    return exports;
+
+    // Filter minified single-character exports (signal of internal bundler code)
+    const filtered = exports.filter(e => e.name.length > 1);
+    return filtered;
   }
 
   /** Collect exports by traversing EXPORT → EXPORT_BINDING graph edges from entry file */
@@ -276,6 +279,14 @@ export class ManifestGenerator {
     // Direct definition in resolved file
     const def = await this.findDefinitionInFile(name, resolved);
     if (def) return def;
+
+    // Try common extensions if no match found (compiled_js often omits extensions in source fields)
+    for (const ext of ['.js', '.mjs', '.cjs', '/index.js', '/index.mjs']) {
+      const withExt = resolved.endsWith(ext) ? null : resolved + ext;
+      if (!withExt) continue;
+      const defWithExt = await this.findDefinitionInFile(name, withExt);
+      if (defWithExt) return defWithExt;
+    }
 
     // Follow barrel re-export chain via EXPORT_BINDING
     for await (const binding of this.backend.queryNodes({

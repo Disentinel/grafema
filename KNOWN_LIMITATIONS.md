@@ -58,9 +58,9 @@ Honest list of what works, what doesn't, and when we plan to fix it.
 
 ## Known Bugs
 
-- **REG-655: `get_file_overview` shows empty calls** — TS method bodies show `calls: []` because the tool expects CALLS edges on METHOD nodes, but CoreV3 emits CALLS edges on CALL nodes. Workaround: use `find_calls` instead.
-- **REG-656: Rust intra-file CALLS missing** — Rust analyzer creates FUNCTION nodes but `rust-resolve` doesn't create CALLS edges between functions in the same file. Cross-file calls work.
+- ~~**REG-655: `get_file_overview` shows empty calls**~~ — Fixed: line-range fallback in `FileOverview.buildFunctionOverview()` now queries both `CALL` and `METHOD_CALL` nodes by file+line range when `findCallsInFunction` returns empty. TS class methods now report calls correctly.
+- ~~**REG-656: Rust intra-file CALLS missing**~~ — Fixed: `rust-resolve` now runs `rust-calls` command that matches CALL nodes to same-file FUNCTION nodes by name (exact or last `::` segment).
 - **REG-625: JS/TS MODULE names have absolute paths** — MODULE node `name` field contains absolute paths instead of relative. The `file` field is correct. Cosmetic issue.
-- **REG-652: MCP not workspace-aware** — MCP server connects to default `.grafema/rfdb.sock`. If RFDB server uses a different socket path (multi-workspace, worktrees), MCP tools fail. Workaround: use `--project` flag.
+- ~~**REG-652: MCP not workspace-aware**~~ — Fixed: MCP server auto-detects project root by walking up from `process.cwd()` looking for `grafema.yaml` or `.grafema/`. `--project` flag still works as an explicit override. MCP clients (Claude Code, Cursor) set CWD = workspace root when spawning the server, so no config is needed.
 - **RFDB stale socket** — `grafema doctor` detects stale `rfdb.sock` after crash, but doesn't auto-clean. Run `grafema analyze` to restart.
 - **`grafema init` config** — fixed in v0.3.0: generated config previously used phased plugin map that orchestrator couldn't parse.

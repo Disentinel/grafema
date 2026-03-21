@@ -1,102 +1,102 @@
 schema_version: 1
-analyzer_version: 0.3.16
+analyzer_version: 0.3.20
 authored: false
 confidence: 1
-generated: 2026-03-17T15:07:24.088Z
+generated: 2026-03-20T18:45:01.422Z
 package:
   purl: pkg:npm/@anthropic-ai/sdk@0.39.0
   source_type: source
 exports:
   - name: __esModule
     kind: TYPE
-    semanticId: index.js->EXPORT_BINDING->__esModule
+    semanticId: grafema://localhost/pkg/index.js#EXPORT_BINDING-%3E__esModule
     effects:
       - PURE
   - name: Anthropic
     kind: CLASS
-    semanticId: index.js->CLASS->Anthropic
+    semanticId: grafema://localhost/pkg/index.js#CLASS-%3EAnthropic
     effects:
       - PURE
     returns:
       flow: OUT
   - name: AnthropicError
     kind: TYPE
-    semanticId: index.js->EXPORT_BINDING->AnthropicError
+    semanticId: grafema://localhost/pkg/index.js#EXPORT_BINDING-%3EAnthropicError
     effects:
       - PURE
   - name: APIConnectionError
     kind: TYPE
-    semanticId: index.js->EXPORT_BINDING->APIConnectionError
+    semanticId: grafema://localhost/pkg/index.js#EXPORT_BINDING-%3EAPIConnectionError
     effects:
       - PURE
   - name: APIConnectionTimeoutError
     kind: TYPE
-    semanticId: index.js->EXPORT_BINDING->APIConnectionTimeoutError
+    semanticId: grafema://localhost/pkg/index.js#EXPORT_BINDING-%3EAPIConnectionTimeoutError
     effects:
       - PURE
   - name: APIError
     kind: TYPE
-    semanticId: index.js->EXPORT_BINDING->APIError
+    semanticId: grafema://localhost/pkg/index.js#EXPORT_BINDING-%3EAPIError
     effects:
       - PURE
   - name: APIUserAbortError
     kind: TYPE
-    semanticId: index.js->EXPORT_BINDING->APIUserAbortError
+    semanticId: grafema://localhost/pkg/index.js#EXPORT_BINDING-%3EAPIUserAbortError
     effects:
       - PURE
   - name: AuthenticationError
     kind: TYPE
-    semanticId: index.js->EXPORT_BINDING->AuthenticationError
+    semanticId: grafema://localhost/pkg/index.js#EXPORT_BINDING-%3EAuthenticationError
     effects:
       - PURE
   - name: BadRequestError
     kind: TYPE
-    semanticId: index.js->EXPORT_BINDING->BadRequestError
+    semanticId: grafema://localhost/pkg/index.js#EXPORT_BINDING-%3EBadRequestError
     effects:
       - PURE
   - name: ConflictError
     kind: TYPE
-    semanticId: index.js->EXPORT_BINDING->ConflictError
+    semanticId: grafema://localhost/pkg/index.js#EXPORT_BINDING-%3EConflictError
     effects:
       - PURE
   - name: default
     kind: TYPE
-    semanticId: index.js->EXPORT_BINDING->default
+    semanticId: grafema://localhost/pkg/index.js#EXPORT_BINDING-%3Edefault
     effects:
       - PURE
   - name: fileFromPath
     kind: TYPE
-    semanticId: index.js->EXPORT_BINDING->fileFromPath
+    semanticId: grafema://localhost/pkg/index.js#EXPORT_BINDING-%3EfileFromPath
     effects:
       - PURE
   - name: InternalServerError
     kind: TYPE
-    semanticId: index.js->EXPORT_BINDING->InternalServerError
+    semanticId: grafema://localhost/pkg/index.js#EXPORT_BINDING-%3EInternalServerError
     effects:
       - PURE
   - name: NotFoundError
     kind: TYPE
-    semanticId: index.js->EXPORT_BINDING->NotFoundError
+    semanticId: grafema://localhost/pkg/index.js#EXPORT_BINDING-%3ENotFoundError
     effects:
       - PURE
   - name: PermissionDeniedError
     kind: TYPE
-    semanticId: index.js->EXPORT_BINDING->PermissionDeniedError
+    semanticId: grafema://localhost/pkg/index.js#EXPORT_BINDING-%3EPermissionDeniedError
     effects:
       - PURE
   - name: RateLimitError
     kind: TYPE
-    semanticId: index.js->EXPORT_BINDING->RateLimitError
+    semanticId: grafema://localhost/pkg/index.js#EXPORT_BINDING-%3ERateLimitError
     effects:
       - PURE
   - name: toFile
     kind: TYPE
-    semanticId: index.js->EXPORT_BINDING->toFile
+    semanticId: grafema://localhost/pkg/index.js#EXPORT_BINDING-%3EtoFile
     effects:
       - PURE
   - name: UnprocessableEntityError
     kind: TYPE
-    semanticId: index.js->EXPORT_BINDING->UnprocessableEntityError
+    semanticId: grafema://localhost/pkg/index.js#EXPORT_BINDING-%3EUnprocessableEntityError
     effects:
       - PURE
 imports:

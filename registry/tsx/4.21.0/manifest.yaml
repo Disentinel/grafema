@@ -1,32 +1,12 @@
 schema_version: 1
-analyzer_version: 0.3.16
+analyzer_version: 0.3.20
 authored: false
-confidence: 1
-generated: 2026-03-17T14:58:27.995Z
+confidence: 0
+generated: 2026-03-20T18:46:39.937Z
 package:
   purl: pkg:npm/tsx@4.21.0
   source_type: compiled_js
-exports:
-  - name: A
-    kind: TYPE
-    semanticId: dist/loader.mjs->EXPORT_BINDING->A
-    effects:
-      - PURE
-  - name: B
-    kind: TYPE
-    semanticId: dist/loader.mjs->EXPORT_BINDING->B
-    effects:
-      - PURE
-  - name: w
-    kind: TYPE
-    semanticId: dist/loader.mjs->EXPORT_BINDING->w
-    effects:
-      - PURE
-  - name: y
-    kind: TYPE
-    semanticId: dist/loader.mjs->EXPORT_BINDING->y
-    effects:
-      - PURE
+exports: []
 imports:
   - purl: pkg:npm/child_process
     symbols:
@@ -95,7 +75,7 @@ imports:
     symbols:
       - util
 capabilities:
-  total_exports: 4
+  total_exports: 0
   total_internal_symbols: 4676
   has_graph: true
 access:

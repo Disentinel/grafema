@@ -75,8 +75,8 @@ if [[ -z "$TASK_ID" ]]; then
   exit 1
 fi
 
-if [[ "$MODE" != "baseline" && "$MODE" != "grafema" ]]; then
-  echo "Error: --mode must be 'baseline' or 'grafema'" >&2
+if [[ "$MODE" != "baseline" && "$MODE" != "grafema" && "$MODE" != "grafema-explicit" ]]; then
+  echo "Error: --mode must be 'baseline', 'grafema', or 'grafema-explicit'" >&2
   exit 1
 fi
 
@@ -198,8 +198,8 @@ docker exec "$CONTAINER" bash -c '
   exit 1
 }
 
-# --- Grafema setup (if grafema mode) ---
-if [[ "$MODE" == "grafema" ]]; then
+# --- Grafema setup (if grafema or grafema-explicit mode) ---
+if [[ "$MODE" == "grafema" || "$MODE" == "grafema-explicit" ]]; then
   echo ""
   echo "--- Installing Grafema ---"
   docker exec "$CONTAINER" bash -c '
@@ -246,7 +246,9 @@ fi
 echo ""
 echo "--- Generating prompt ---"
 
-if [[ "$MODE" == "grafema" ]]; then
+if [[ "$MODE" == "grafema-explicit" ]]; then
+  TEMPLATE="$TEMPLATES_DIR/prompt-grafema-explicit.md"
+elif [[ "$MODE" == "grafema" ]]; then
   TEMPLATE="$TEMPLATES_DIR/prompt-grafema.md"
 else
   TEMPLATE="$TEMPLATES_DIR/prompt-baseline.md"

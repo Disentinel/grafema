@@ -472,6 +472,7 @@
     "build": "node esbuild.config.mjs",
     "watch": "node esbuild.config.mjs --watch",
     "clean": "rm -rf dist binaries",
+    "test": "node --import tsx --test 'test/unit/*.test.ts'",
     "vscode:prepublish": "npm run build",
     "package": "vsce package",
     "package:darwin-arm64": "vsce package --target darwin-arm64",

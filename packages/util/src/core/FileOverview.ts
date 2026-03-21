@@ -317,18 +317,23 @@ export class FileOverview {
       if (callNames.size === 0 && node.file && node.line != null) {
         const endLine = (node.endLine as number | undefined) ?? (node.line as number) + 100000;
         const nodeLine = node.line as number;
-        const filter: NodeFilter = { file: node.file, type: 'CALL' };
-        for await (const callNode of this.graph.queryNodes(filter)) {
-          const callLine = callNode.line as number | undefined;
-          if (callLine != null && callLine >= nodeLine && callLine <= endLine) {
-            const callsEdges = await this.graph.getOutgoingEdges(callNode.id, ['CALLS']);
-            if (callsEdges.length > 0) {
-              const target = await this.graph.getNode(callsEdges[0].dst);
-              if (target) {
-                callNames.add(target.name ?? callNode.name ?? '<unknown>');
+
+        // Query both CALL and METHOD_CALL — TS method invocations (this.x.y()) are
+        // stored as METHOD_CALL nodes, plain function calls as CALL nodes.
+        for (const callType of ['CALL', 'METHOD_CALL'] as const) {
+          const filter: NodeFilter = { file: node.file, type: callType };
+          for await (const callNode of this.graph.queryNodes(filter)) {
+            const callLine = callNode.line as number | undefined;
+            if (callLine != null && callLine >= nodeLine && callLine <= endLine) {
+              const callsEdges = await this.graph.getOutgoingEdges(callNode.id, ['CALLS']);
+              if (callsEdges.length > 0) {
+                const target = await this.graph.getNode(callsEdges[0].dst);
+                if (target) {
+                  callNames.add(target.name ?? callNode.name ?? '<unknown>');
+                }
+              } else {
+                callNames.add(callNode.name ?? '<unknown>');
               }
-            } else {
-              callNames.add(callNode.name ?? '<unknown>');
             }
           }
         }

@@ -596,9 +596,9 @@ export class RegistryBuilder {
     }});
 
     // Determine include patterns based on source type.
-    // For compiled_js: prefer .js only (avoid analyzing both .js and .mjs copies)
+    // For compiled_js: include .mjs alongside .js/.cjs (e.g., tsx's loader.mjs as entrypoint)
     const includePatterns = sourceType === 'compiled_js'
-      ? ['**/*.js', '**/*.cjs']
+      ? ['**/*.js', '**/*.cjs', '**/*.mjs']
       : ['**/*.ts', '**/*.js', '**/*.mjs'];
 
     const excludePatterns = [
