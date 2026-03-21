@@ -42,10 +42,11 @@ ruleTSInterfaceDeclaration node = do
     , gnExported = isExported, gnMetadata = Map.empty
     }
 
-  -- Walk body
-  case getChildrenMaybe "body" node of
-    Just body -> withAncestor node (walkNode body) >> return ()
-    Nothing   -> return ()
+  -- Walk body in class-like scope so members can find parent
+  withEnclosingClass nodeId $ withNamedParent name $
+    case getChildrenMaybe "body" node of
+      Just body -> withAncestor node (walkNode body) >> return ()
+      Nothing   -> return ()
 
   return (Just nodeId)
 
@@ -186,6 +187,7 @@ ruleTSEnumMember node = do
 ruleTSPropertySignature :: ASTNode -> Analyzer (Maybe Text)
 ruleTSPropertySignature node = do
   file <- askFile
+  encClass <- askEnclosingClass
   parent <- askNamedParent
   let sp   = astNodeSpan node
       name = case getChildrenMaybe "key" node of
@@ -198,6 +200,13 @@ ruleTSPropertySignature node = do
     , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False, gnMetadata = Map.empty
     }
+  case encClass of
+    Just ifaceId -> emitEdge GraphEdge
+      { geSource = ifaceId, geTarget = nodeId
+      , geType = "HAS_PROPERTY"
+      , geMetadata = Map.singleton "key" (MetaText name)
+      }
+    Nothing -> return ()
   -- Walk type annotation if present
   case getChildrenMaybe "typeAnnotation" node of
     Just ta -> withAncestor node (walkNode ta) >> return ()
@@ -210,6 +219,7 @@ ruleTSPropertySignature node = do
 ruleTSMethodSignature :: ASTNode -> Analyzer (Maybe Text)
 ruleTSMethodSignature node = do
   file <- askFile
+  encClass <- askEnclosingClass
   parent <- askNamedParent
   let sp   = astNodeSpan node
       name = case getChildrenMaybe "key" node of
@@ -222,6 +232,13 @@ ruleTSMethodSignature node = do
     , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False, gnMetadata = Map.empty
     }
+  case encClass of
+    Just ifaceId -> emitEdge GraphEdge
+      { geSource = ifaceId, geTarget = nodeId
+      , geType = "HAS_PROPERTY"
+      , geMetadata = Map.singleton "key" (MetaText name)
+      }
+    Nothing -> return ()
   -- Walk params
   let params = getChildren "params" node
   mapM_ (\p -> withAncestor node (walkNode p) >> return ()) params

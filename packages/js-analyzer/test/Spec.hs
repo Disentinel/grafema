@@ -4,6 +4,7 @@ module Main (main) where
 import Test.Hspec
 import qualified Data.ByteString.Lazy as BL
 import Data.Aeson (eitherDecode)
+import qualified Data.Text
 import Data.Text (Text)
 import qualified Data.Map.Strict as Map
 
@@ -73,6 +74,8 @@ main = hspec $ do
     edgeCaseTests
   describe "Import Resolution Data"
     importResolutionTests
+  describe "TypeScript Interfaces"
+    interfaceTests
 
 
 scopeResolutionTests :: Spec
@@ -341,3 +344,66 @@ importResolutionTests = do
     Map.lookup "source" (gnMetadata ibNode) `shouldBe` Just (MetaText "./all")
     Map.lookup "importedName" (gnMetadata ibNode) `shouldBe` Just (MetaText "*")
     gnId ibNode `shouldBe` "test.js->IMPORT_BINDING->ns[in:./all]"
+
+
+interfaceTests :: Spec
+interfaceTests = do
+
+  -- interface Foo { bar: string; baz: number; }
+  it "creates INTERFACE node and PROPERTY_SIGNATURE children with HAS_PROPERTY edges" $ do
+    let fa = analyzeAST $ BL.concat
+          [ "{\"type\":\"Program\",\"start\":0,\"end\":46,\"body\":["
+          , "{\"type\":\"TSInterfaceDeclaration\",\"start\":0,\"end\":46,"
+          , "\"id\":{\"type\":\"Identifier\",\"start\":10,\"end\":13,\"name\":\"Foo\"},"
+          , "\"body\":{\"type\":\"TSInterfaceBody\",\"start\":14,\"end\":46,\"body\":["
+          , "{\"type\":\"TSPropertySignature\",\"start\":16,\"end\":28,"
+          , "\"key\":{\"type\":\"Identifier\",\"start\":16,\"end\":19,\"name\":\"bar\"},"
+          , "\"computed\":false,"
+          , "\"typeAnnotation\":{\"type\":\"TSTypeAnnotation\",\"start\":19,\"end\":27,"
+          , "\"typeAnnotation\":{\"type\":\"TSStringKeyword\",\"start\":21,\"end\":27}}},"
+          , "{\"type\":\"TSPropertySignature\",\"start\":29,\"end\":41,"
+          , "\"key\":{\"type\":\"Identifier\",\"start\":29,\"end\":32,\"name\":\"baz\"},"
+          , "\"computed\":false,"
+          , "\"typeAnnotation\":{\"type\":\"TSTypeAnnotation\",\"start\":32,\"end\":40,"
+          , "\"typeAnnotation\":{\"type\":\"TSNumberKeyword\",\"start\":34,\"end\":40}}}"
+          , "]}}"
+          , "]}"
+          ]
+    -- INTERFACE node exists
+    hasNode "INTERFACE" "Foo" fa `shouldBe` True
+    -- PROPERTY_SIGNATURE nodes exist
+    hasNode "PROPERTY_SIGNATURE" "bar" fa `shouldBe` True
+    hasNode "PROPERTY_SIGNATURE" "baz" fa `shouldBe` True
+    -- Semantic IDs include interface name via withNamedParent
+    barNode <- requireNode "PROPERTY_SIGNATURE" "bar" fa
+    gnId barNode `shouldSatisfy` \nid -> "Foo" `Data.Text.isInfixOf` nid
+    -- HAS_PROPERTY edges from INTERFACE to PROPERTY_SIGNATURE
+    ifaceNode <- requireNode "INTERFACE" "Foo" fa
+    let iid = gnId ifaceNode
+    hasEdge "HAS_PROPERTY" iid (gnId barNode) fa `shouldBe` True
+    bazNode <- requireNode "PROPERTY_SIGNATURE" "baz" fa
+    hasEdge "HAS_PROPERTY" iid (gnId bazNode) fa `shouldBe` True
+
+  -- interface Bar { greet(): void; }
+  it "creates METHOD_SIGNATURE with HAS_PROPERTY edge from interface" $ do
+    let fa = analyzeAST $ BL.concat
+          [ "{\"type\":\"Program\",\"start\":0,\"end\":35,\"body\":["
+          , "{\"type\":\"TSInterfaceDeclaration\",\"start\":0,\"end\":35,"
+          , "\"id\":{\"type\":\"Identifier\",\"start\":10,\"end\":13,\"name\":\"Bar\"},"
+          , "\"body\":{\"type\":\"TSInterfaceBody\",\"start\":14,\"end\":35,\"body\":["
+          , "{\"type\":\"TSMethodSignature\",\"start\":16,\"end\":33,"
+          , "\"key\":{\"type\":\"Identifier\",\"start\":16,\"end\":21,\"name\":\"greet\"},"
+          , "\"computed\":false,\"kind\":\"method\","
+          , "\"params\":[],"
+          , "\"returnType\":{\"type\":\"TSTypeAnnotation\",\"start\":23,\"end\":29,"
+          , "\"typeAnnotation\":{\"type\":\"TSVoidKeyword\",\"start\":25,\"end\":29}}}"
+          , "]}}"
+          , "]}"
+          ]
+    hasNode "INTERFACE" "Bar" fa `shouldBe` True
+    hasNode "METHOD_SIGNATURE" "greet" fa `shouldBe` True
+    -- HAS_PROPERTY edge from interface to method signature
+    ifaceNode <- requireNode "INTERFACE" "Bar" fa
+    let iid = gnId ifaceNode
+    methodNode <- requireNode "METHOD_SIGNATURE" "greet" fa
+    hasEdge "HAS_PROPERTY" iid (gnId methodNode) fa `shouldBe` True
