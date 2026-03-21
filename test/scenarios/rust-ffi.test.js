@@ -309,4 +309,37 @@ describe('Rust FFI Analysis', () => {
     assert.ok(safeFunc, 'Should find compute_hash function');
     assert.strictEqual(safeFunc.unsafeBlocks, 0, 'compute_hash should have 0 unsafe blocks');
   });
+
+  it('should detect Rust constants with value source edges (REG-686)', async () => {
+    await orchestrator.run(FIXTURE_PATH);
+
+    const constants = [];
+    for await (const node of backend.queryNodes({ nodeType: 'CONSTANT' })) {
+      constants.push(node);
+    }
+
+    // Should find at least 4 constants (MAX_NODES, MAGIC_HEADER, VERSION, DOUBLE_MAX)
+    assert.ok(constants.length >= 4, `Expected >= 4 CONSTANT nodes, got ${constants.length}`);
+
+    // Literal constants get ASSIGNED_FROM -> LITERAL
+    for (const name of ['MAX_NODES', 'MAGIC_HEADER', 'VERSION']) {
+      const node = constants.find(c => c.name === name);
+      assert.ok(node, `CONSTANT "${name}" not found in graph`);
+
+      const outgoing = await backend.getOutgoingEdges(node.id, ['ASSIGNED_FROM']);
+      assert.ok(
+        outgoing.length > 0,
+        `Literal CONSTANT "${name}" (${node.id}) has no ASSIGNED_FROM edge`
+      );
+    }
+
+    // Non-literal constants get DERIVES_FROM -> EXPRESSION
+    const doubleMax = constants.find(c => c.name === 'DOUBLE_MAX');
+    assert.ok(doubleMax, 'CONSTANT "DOUBLE_MAX" not found');
+    const derivesFrom = await backend.getOutgoingEdges(doubleMax.id, ['DERIVES_FROM']);
+    assert.ok(
+      derivesFrom.length > 0,
+      `Non-literal CONSTANT "DOUBLE_MAX" (${doubleMax.id}) has no DERIVES_FROM edge`
+    );
+  });
 });

@@ -106,6 +106,19 @@ interface RustCall {
 }
 
 /**
+ * Rust constant from parser
+ */
+interface RustConstant {
+  name: string;
+  line: number;
+  column: number;
+  isPub: boolean;
+  isLiteral: boolean;
+  typeStr?: string;
+  valueStr?: string;
+}
+
+/**
  * Parse result from native binding
  */
 interface RustParseResult {
@@ -113,6 +126,7 @@ interface RustParseResult {
   structs: RustStruct[];
   impls: RustImpl[];
   traits: RustTrait[];
+  constants: RustConstant[];
 }
 
 /**
@@ -124,6 +138,7 @@ interface AnalysisStats {
   impls: number;
   methods: number;
   traits: number;
+  constants: number;
   calls: number;
   edges: number;
 }
@@ -182,9 +197,12 @@ export class RustAnalyzer extends Plugin {
           'RUST_IMPL',
           'RUST_METHOD',
           'RUST_TRAIT',
-          'RUST_CALL'
+          'RUST_CALL',
+          'CONSTANT',
+          'LITERAL',
+          'EXPRESSION'
         ],
-        edges: ['CONTAINS', 'IMPLEMENTS']
+        edges: ['CONTAINS', 'IMPLEMENTS', 'ASSIGNED_FROM', 'DERIVES_FROM']
       },
       dependencies: ['RustModuleIndexer']
     };
@@ -226,6 +244,7 @@ export class RustAnalyzer extends Plugin {
       impls: 0,
       methods: 0,
       traits: 0,
+      constants: 0,
       calls: 0,
       edges: 0
     };
@@ -243,6 +262,7 @@ export class RustAnalyzer extends Plugin {
         stats.impls += result.impls;
         stats.methods += result.methods;
         stats.traits += result.traits;
+        stats.constants += result.constants;
         stats.calls += result.calls;
         stats.edges += result.edges;
 
@@ -271,7 +291,7 @@ export class RustAnalyzer extends Plugin {
 
     logger.info('Analysis complete', { ...stats });
     return createSuccessResult(
-      { nodes: stats.functions + stats.structs + stats.impls + stats.methods + stats.traits + stats.calls, edges: stats.edges },
+      { nodes: stats.functions + stats.structs + stats.impls + stats.methods + stats.traits + stats.constants + stats.calls, edges: stats.edges },
       { ...stats, errors: errors.length }
     );
   }
@@ -438,7 +458,35 @@ export class RustAnalyzer extends Plugin {
       edges.push({ src: module.id, dst: traitNode.id, type: 'CONTAINS' });
     }
 
-    // 5. Write all nodes and edges in batch
+    // 5. Process constants
+    let constCount = 0;
+    for (const c of parseResult.constants) {
+      const constNode = NodeFactory.createConstant(
+        c.name, module.file!, c.line, c.column,
+        { value: c.valueStr },
+      );
+      nodes.push(constNode);
+      edges.push({ src: module.id, dst: constNode.id, type: 'CONTAINS' });
+
+      if (c.isLiteral) {
+        // Simple literal initializer: create LITERAL node + ASSIGNED_FROM
+        const litNode = NodeFactory.createLiteral(
+          c.valueStr ?? c.name, module.file!, c.line, c.column,
+        );
+        nodes.push(litNode);
+        edges.push({ src: constNode.id, dst: litNode.id, type: 'ASSIGNED_FROM' });
+      } else {
+        // Complex expression initializer: create EXPRESSION node + DERIVES_FROM
+        const exprNode = NodeFactory.createExpression(
+          c.valueStr ?? c.name, module.file!, c.line, c.column,
+        );
+        nodes.push(exprNode);
+        edges.push({ src: constNode.id, dst: exprNode.id, type: 'DERIVES_FROM' });
+      }
+      constCount++;
+    }
+
+    // 6. Write all nodes and edges in batch
     await factory!.storeMany(nodes);
     await factory!.linkMany(edges);
 
@@ -448,6 +496,7 @@ export class RustAnalyzer extends Plugin {
       impls: parseResult.impls.length,
       methods: methodCount,
       traits: parseResult.traits.length,
+      constants: constCount,
       calls: callCount,
       edges: edges.length
     };

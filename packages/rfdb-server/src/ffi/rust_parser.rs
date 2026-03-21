@@ -6,7 +6,7 @@ use napi_derive::napi;
 use proc_macro2::Span;
 use syn::{
     parse_file, Attribute, Block, Expr, ExprCall, ExprMethodCall, Fields, FnArg, ImplItem, Item,
-    ItemFn, ItemImpl, ItemStruct, ItemTrait, Meta, Pat, TraitItem, Visibility,
+    ItemConst, ItemFn, ItemImpl, ItemStruct, ItemTrait, Meta, Pat, TraitItem, Visibility,
 };
 use syn::visit::{self, Visit};
 use quote::ToTokens;
@@ -116,6 +116,18 @@ pub struct RustUseInfo {
 }
 
 #[napi(object)]
+#[derive(Debug, Clone)]
+pub struct RustConstInfo {
+    pub name: String,
+    pub line: u32,
+    pub column: u32,
+    pub is_pub: bool,
+    pub is_literal: bool,
+    pub type_str: Option<String>,
+    pub value_str: Option<String>,
+}
+
+#[napi(object)]
 #[derive(Debug, Clone, Default)]
 pub struct RustParseResult {
     pub functions: Vec<RustFunctionInfo>,
@@ -124,6 +136,7 @@ pub struct RustParseResult {
     pub traits: Vec<RustTraitInfo>,
     pub mods: Vec<RustModInfo>,
     pub uses: Vec<RustUseInfo>,
+    pub constants: Vec<RustConstInfo>,
 }
 
 // ============ Main Parse Function ============
@@ -162,6 +175,17 @@ pub fn parse_rust_file(content: String) -> napi::Result<RustParseResult> {
                     path: format!("{}", quote::quote!(#u)),
                     line: span_to_line(u.use_token.span),
                     is_pub: is_pub(&u.vis),
+                });
+            }
+            Item::Const(c) => {
+                result.constants.push(RustConstInfo {
+                    name: c.ident.to_string(),
+                    line: span_to_line(c.ident.span()),
+                    column: span_to_column(c.ident.span()),
+                    is_pub: is_pub(&c.vis),
+                    is_literal: matches!(*c.expr, Expr::Lit(_)),
+                    type_str: Some(c.ty.to_token_stream().to_string()),
+                    value_str: Some(c.expr.to_token_stream().to_string()),
                 });
             }
             _ => {}
