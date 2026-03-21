@@ -42,6 +42,8 @@ test-suite grafema-resolve-test
   other-modules:
     PropertyAccess
     ImportResolution
+    SameFileCalls
+    ResolveUtil
 
   build-depends:
     base                 >= 4.17 && < 5,

@@ -116,7 +116,10 @@ ruleMemberExpression node = do
                    Nothing -> "<computed>"
       computed = getBoolFieldOr "computed" False node
       objChain = case getChildrenMaybe "object" node of
-                   Just o  -> getTextFieldOr "name" "<obj>" o
+                   Just o  -> case o of
+                     ThisExpressionNode _ _ -> "this"
+                     SuperNode _ _          -> "super"
+                     _                      -> getTextFieldOr "name" "<obj>" o
                    Nothing -> ""
       hash     = contentHash [("o", objChain), ("line", T.pack (show (spanStart sp)))]
       nodeId   = semanticId file "PROPERTY_ACCESS" propName parent (Just hash)
@@ -844,7 +847,10 @@ getCallName node =
       IdentifierNode _ _      -> getTextFieldOr "name" "<call>" callee
       MemberExpressionNode _ _ ->
         let obj  = case getChildrenMaybe "object" callee of
-                     Just o  -> getTextFieldOr "name" "<obj>" o
+                     Just o  -> case o of
+                       ThisExpressionNode _ _ -> "this"
+                       SuperNode _ _          -> "super"
+                       _                      -> getTextFieldOr "name" "<obj>" o
                      Nothing -> "<obj>"
             prop = case getChildrenMaybe "property" callee of
                      Just p  -> getTextFieldOr "name" "<prop>" p

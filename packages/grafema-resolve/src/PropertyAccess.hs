@@ -12,7 +12,7 @@ module PropertyAccess (run, resolveAll, resolveFileWithIndex) where
 
 import Grafema.Types (GraphNode(..), GraphEdge(..), MetaValue(..))
 import Grafema.Protocol (PluginCommand(..), readNodesFromStdin, writeCommandsToStdout)
-import ResolveUtil (extractClassFromId, lookupMetaText)
+import ResolveUtil (extractClassFromId, lookupMetaText, ClassRangeIndex, buildClassRangeIndex, findEnclosingClass)
 import ImportResolution
   ( ExportIndex, ExportEntry(..)
   , buildExportIndex, resolveModulePath, isRelativeSpecifier
@@ -99,22 +99,23 @@ resolveAll nodes =
   let propDefIndex      = buildPropertyDefIndex nodes
       exportIndex       = buildExportIndex nodes
       importBindingIndex = buildImportBindingIndex nodes
+      classRangeIdx     = buildClassRangeIndex nodes
       propAccessNodes   = filter (\n -> gnType n == "PROPERTY_ACCESS") nodes
-  in concatMap (resolvePropAccess propDefIndex exportIndex importBindingIndex) propAccessNodes
+  in concatMap (resolvePropAccess propDefIndex exportIndex importBindingIndex classRangeIdx) propAccessNodes
 
 -- | Resolve a single PROPERTY_ACCESS node.
 -- Priority: same-file class members → cross-file namespace imports.
-resolvePropAccess :: PropertyDefIndex -> ExportIndex -> ImportBindingIndex -> GraphNode -> [PluginCommand]
-resolvePropAccess propDefIndex exportIndex importBindingIndex node =
+resolvePropAccess :: PropertyDefIndex -> ExportIndex -> ImportBindingIndex -> ClassRangeIndex -> GraphNode -> [PluginCommand]
+resolvePropAccess propDefIndex exportIndex importBindingIndex classRangeIdx node =
   let file     = gnFile node
       propName = gnName node
       mObjectName = lookupMetaText "base" (gnMetadata node)
   in case mObjectName of
     Nothing -> tryCrossFile exportIndex importBindingIndex node
     Just objectName
-      -- "this.prop" or "super.prop" -> resolve in enclosing class
-      | objectName == "this" || objectName == "super" ->
-          case extractClassFromId (gnId node) of
+      -- "this.prop", "super.prop", or "<obj>.prop" -> use line containment to find enclosing class
+      | objectName == "this" || objectName == "super" || objectName == "<obj>" ->
+          case findEnclosingClass classRangeIdx file (gnLine node) of
             Just className ->
               case tryResolveClass propDefIndex file className propName node of
                 [] -> tryCrossFile exportIndex importBindingIndex node

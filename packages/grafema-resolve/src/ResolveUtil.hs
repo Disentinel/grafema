@@ -4,8 +4,12 @@
 -- Extracted from SameFileCalls and PropertyAccess to eliminate duplication.
 module ResolveUtil
   ( extractClassFromId
+  , decodeSemIdChars
   , lookupMetaText
   , buildImportIndex
+  , ClassRangeIndex
+  , buildClassRangeIndex
+  , findEnclosingClass
   ) where
 
 import Grafema.Types (GraphNode(..), MetaValue(..))
@@ -17,13 +21,24 @@ import Data.Map.Strict (Map)
 import qualified Data.Set as Set
 import Data.Set (Set)
 
+-- | Decode percent-encoded characters commonly found in Grafema URI-format semantic IDs.
+-- Only decodes the three characters that appear in scope markers: @[@ @]@ @>@
+decodeSemIdChars :: Text -> Text
+decodeSemIdChars = T.replace "%5B" "[" . T.replace "%5b" "["
+                 . T.replace "%5D" "]" . T.replace "%5d" "]"
+                 . T.replace "%3E" ">" . T.replace "%3e" ">"
+
 -- | Extract class name from a semantic ID with @[in:ClassName]@ suffix.
+--
+-- Handles both legacy arrow format (@file.js->FUNCTION->render[in:App]@)
+-- and URI format (@grafema://...#FUNCTION-%3Erender%5Bin:App%5D@).
 --
 -- Example: @"file.js->FUNCTION->render[in:App]"@ -> @Just "App"@
 -- Example: @"file.js->FUNCTION->foo"@ -> @Nothing@
 extractClassFromId :: Text -> Maybe Text
 extractClassFromId sid =
-  case T.breakOn "[in:" sid of
+  let decoded = decodeSemIdChars sid
+  in case T.breakOn "[in:" decoded of
     (_, rest)
       | T.null rest -> Nothing
       | otherwise ->
@@ -48,3 +63,27 @@ buildImportIndex nodes =
     | n <- nodes
     , gnType n == "IMPORT_BINDING"
     ]
+
+-- | Class range index for line containment: file -> [(className, startLine, endLine)]
+type ClassRangeIndex = Map Text [(Text, Int, Int)]
+
+-- | Build class range index from CLASS nodes for line containment lookup.
+buildClassRangeIndex :: [GraphNode] -> ClassRangeIndex
+buildClassRangeIndex nodes =
+  Map.fromListWith (++)
+    [ (gnFile n, [(gnName n, gnLine n, gnEndLine n)])
+    | n <- nodes
+    , gnType n == "CLASS"
+    , not (T.null (gnName n))
+    , gnEndLine n > 0
+    ]
+
+-- | Find the class that contains a given line position in a file.
+findEnclosingClass :: ClassRangeIndex -> Text -> Int -> Maybe Text
+findEnclosingClass classRanges file line =
+  case Map.lookup file classRanges of
+    Nothing -> Nothing
+    Just ranges ->
+      case filter (\(_, start, end) -> line >= start && line <= end) ranges of
+        [(className, _, _)] -> Just className
+        _                   -> Nothing  -- ambiguous (multiple matches) or none

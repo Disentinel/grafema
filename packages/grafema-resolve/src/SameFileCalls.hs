@@ -13,7 +13,7 @@ module SameFileCalls (run, resolveAll) where
 
 import Grafema.Types (GraphNode(..), GraphEdge(..), MetaValue(..))
 import Grafema.Protocol (PluginCommand(..), readNodesFromStdin, writeCommandsToStdout)
-import ResolveUtil (extractClassFromId, buildImportIndex)
+import ResolveUtil (extractClassFromId, buildImportIndex, ClassRangeIndex, buildClassRangeIndex, findEnclosingClass)
 
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -94,16 +94,17 @@ buildClassIndex nodes =
 -- | Core same-file CALLS resolution logic.
 resolveAll :: [GraphNode] -> [PluginCommand]
 resolveAll nodes =
-  let funcIndex   = buildFunctionIndex nodes
-      methodIndex = buildMethodIndex nodes
-      classIndex  = buildClassIndex nodes
-      importIndex = buildImportIndex nodes
-      callNodes   = filter (\n -> gnType n == "CALL") nodes
-  in concatMap (resolveCallNode funcIndex methodIndex classIndex importIndex) callNodes
+  let funcIndex      = buildFunctionIndex nodes
+      methodIndex    = buildMethodIndex nodes
+      classIndex     = buildClassIndex nodes
+      classRangeIdx  = buildClassRangeIndex nodes
+      importIndex    = buildImportIndex nodes
+      callNodes      = filter (\n -> gnType n == "CALL") nodes
+  in concatMap (resolveCallNode funcIndex methodIndex classIndex classRangeIdx importIndex) callNodes
 
 -- | Resolve a single CALL node.
-resolveCallNode :: FunctionIndex -> MethodIndex -> ClassIndex -> ImportIndex -> GraphNode -> [PluginCommand]
-resolveCallNode funcIndex methodIndex classIndex importIndex callNode =
+resolveCallNode :: FunctionIndex -> MethodIndex -> ClassIndex -> ClassRangeIndex -> ImportIndex -> GraphNode -> [PluginCommand]
+resolveCallNode funcIndex methodIndex classIndex classRangeIdx importIndex callNode =
   let file   = gnFile callNode
       callee = gnName callNode
   in case T.breakOn "." callee of
@@ -111,7 +112,7 @@ resolveCallNode funcIndex methodIndex classIndex importIndex callNode =
     (objectName, rest)
       | not (T.null rest) ->
           let methodName = T.drop 1 rest
-          in resolveMethodCall funcIndex methodIndex classIndex file objectName methodName callNode
+          in resolveMethodCall funcIndex methodIndex classIndex classRangeIdx file objectName methodName callNode
     -- Direct call: "foo"
       | otherwise ->
           -- Skip if this name is an import binding (handled by CrossFileCalls/Builtins)
@@ -134,11 +135,11 @@ resolveDirectCall funcIndex classIndex file callee callNode =
         else []
 
 -- | Resolve a method call: obj.method()
-resolveMethodCall :: FunctionIndex -> MethodIndex -> ClassIndex -> Text -> Text -> Text -> GraphNode -> [PluginCommand]
-resolveMethodCall _funcIndex methodIndex _classIndex file objectName methodName callNode
-  -- "this.method()" or "super.method()" -> look up in enclosing class
-  | objectName == "this" || objectName == "super" =
-      case extractClassFromId (gnId callNode) of
+resolveMethodCall :: FunctionIndex -> MethodIndex -> ClassIndex -> ClassRangeIndex -> Text -> Text -> Text -> GraphNode -> [PluginCommand]
+resolveMethodCall _funcIndex methodIndex _classIndex classRangeIdx file objectName methodName callNode
+  -- "this.method()", "super.method()", or "<obj>.method()" -> use line containment to find enclosing class
+  | objectName == "this" || objectName == "super" || objectName == "<obj>" =
+      case findEnclosingClass classRangeIdx file (gnLine callNode) of
         Just className ->
           case Map.lookup (file, className, methodName) methodIndex of
             Just targetId -> [mkCallsEdge callNode targetId]
