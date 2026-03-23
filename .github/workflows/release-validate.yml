@@ -68,7 +68,9 @@ jobs:
           cache: 'pnpm'
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        # --no-frozen-lockfile: release commit injects optionalDependencies
+        # for native platform packages not present in lockfile
+        run: pnpm install --no-frozen-lockfile
 
       - name: Build all packages
         run: pnpm build
