@@ -830,6 +830,7 @@ async fn main() -> Result<()> {
                     Ok(resolve_pool) => {
                         let handles = resolve_pool.acquire_all().await?;
 
+                        eprintln!("  Resolution: streaming nodes to {} workers...", pool_size);
                         let stream_start = std::time::Instant::now();
                         let total_streamed = plugin::stream_resolve_nodes_to_workers(
                             &mut rfdb,
@@ -839,41 +840,31 @@ async fn main() -> Result<()> {
                         ).await?;
                         let stream_ms = stream_start.elapsed().as_millis();
                         profile!("js_stream_complete", "nodes" => total_streamed, "duration_ms" => stream_ms);
+                        eprintln!("  Resolution: {} nodes streamed in {:.1}s, running resolvers...",
+                            total_streamed, stream_ms as f64 / 1000.0);
 
                         if total_streamed > 0 {
-                            let empty_ws: &[plugin::WorkspacePackageWire] = &[];
-                            // (daemon_cmd, commit_name, workspace_packages)
-                            let js_commands: Vec<(&str, &str, &[plugin::WorkspacePackageWire])> = vec![
-                                ("same-file-calls", "same-file-calls", empty_ws),
-                                ("js-local-refs", "js-local-refs", empty_ws),
-                                ("runtime-globals", "runtime-globals", empty_ws),
-                                ("builtins", "builtins", empty_ws),
-                                ("imports", "js-import-resolution", &ws_packages),
-                                ("cross-file-calls", "cross-file-calls", empty_ws),
-                                ("property-access", "property-access", empty_ws),
-                            ];
+                            // Single batch resolve — all 7 resolvers run in one daemon call
+                            profile!("js_resolve_cmd_start", "cmd" => "resolve-all");
+                            let cmd_start = std::time::Instant::now();
+                            let mut output = plugin::run_resolve_on_workers(
+                                "resolve-all", &handles, &ws_packages
+                            ).await.context("resolve-all resolution failed")?;
 
-                            for (cmd, commit_name, ws) in js_commands {
-                                profile!("js_resolve_cmd_start", "cmd" => cmd);
-                                let cmd_start = std::time::Instant::now();
-                                let mut output = plugin::run_resolve_on_workers(cmd, &handles, ws)
-                                    .await
-                                    .with_context(|| format!("{commit_name} resolution failed"))?;
-
-                                if cmd == "imports" {
-                                    for edge in &output.edges {
-                                        if edge.edge_type == "IMPORTS_FROM" {
-                                            all_imports_from_edges.push((edge.src.clone(), edge.dst.clone()));
-                                        }
-                                    }
+                            // Extract IMPORTS_FROM edges for DEPENDS_ON derivation
+                            for edge in &output.edges {
+                                if edge.edge_type == "IMPORTS_FROM" {
+                                    all_imports_from_edges.push((edge.src.clone(), edge.dst.clone()));
                                 }
-
-                                commit_resolve_output(&mut output, commit_name, generation, &mut rfdb).await?;
-                                let cmd_ms = cmd_start.elapsed().as_millis();
-                                profile!("js_resolve_cmd_complete", "cmd" => cmd,
-                                    "nodes" => output.nodes.len(), "edges" => output.edges.len(),
-                                    "duration_ms" => cmd_ms);
                             }
+
+                            commit_resolve_output(&mut output, "js-resolution", generation, &mut rfdb).await?;
+                            let cmd_ms = cmd_start.elapsed().as_millis();
+                            profile!("js_resolve_cmd_complete", "cmd" => "resolve-all",
+                                "nodes" => output.nodes.len(), "edges" => output.edges.len(),
+                                "duration_ms" => cmd_ms);
+                            eprintln!("  Resolution: complete ({} edges, {:.1}s)",
+                                output.edges.len(), cmd_ms as f64 / 1000.0);
                         }
 
                         plugin::clear_context_on_workers(&handles).await

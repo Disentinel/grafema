@@ -5,7 +5,8 @@ import Data.Aeson (FromJSON(..), ToJSON(..), withObject, (.:), (.:?), (.!=), obj
 import qualified Data.Text as T
 import Data.Text (Text)
 import System.Environment (getArgs)
-import System.IO (stdin, stdout, hSetBinaryMode)
+import System.IO (stdin, stdout, stderr, hSetBinaryMode, hPutStrLn)
+import Data.Time.Clock (getCurrentTime, diffUTCTime)
 import Data.IORef
 import Options.Applicative
 import qualified ImportResolution
@@ -16,7 +17,10 @@ import qualified SameFileCalls
 import qualified PropertyAccess
 import qualified JsLocalRefs
 import Grafema.Types (GraphNode)
-import Grafema.Protocol (PluginCommand(..), readFrame, writeFrame, encodeMsgpack, decodeMsgpack)
+import Grafema.Protocol (PluginCommand(..), readFrame, writeFrame, encodeMsgpack, decodeMsgpack, pluginCommandToMsgpack)
+import qualified Data.Binary as Binary
+import qualified Data.MessagePack as MP
+import qualified Data.Vector as V
 
 -- | A workspace package mapping: npm name → entry point file path.
 data WorkspacePackage = WorkspacePackage
@@ -59,10 +63,27 @@ instance ToJSON DaemonResponse where
     , "error"  .= msg
     ]
 
+-- | Daemon context state: accumulates chunks during load-context,
+-- flattens once on first resolve command.
+data DaemonState
+  = Accumulating [[GraphNode]]
+  | Finalized [GraphNode]
+
+-- | Flatten accumulated chunks into a single list, caching the result.
+finalizeContext :: IORef DaemonState -> IO [GraphNode]
+finalizeContext stateRef = do
+  state <- readIORef stateRef
+  case state of
+    Finalized cached -> return cached
+    Accumulating chunks -> do
+      let flat = concat chunks
+      writeIORef stateRef (Finalized flat)
+      return flat
+
 -- | Daemon loop: read frames from stdin, dispatch, write responses.
 --   Maintains an IORef of context chunks that accumulate across load-context calls.
-daemonLoop :: IORef [[GraphNode]] -> IO ()
-daemonLoop contextRef = do
+daemonLoop :: IORef DaemonState -> IO ()
+daemonLoop stateRef = do
   mFrame <- readFrame stdin
   case mFrame of
     Nothing -> return ()  -- EOF
@@ -73,17 +94,51 @@ daemonLoop contextRef = do
         Right req -> do
           case drCmd req of
             "load-context" -> do
-              modifyIORef' contextRef (++ [drNodes req])
-              writeFrame stdout (encodeMsgpack (ResOk []))
+              state <- readIORef stateRef
+              case state of
+                Accumulating chunks -> do
+                  writeIORef stateRef (Accumulating (chunks ++ [drNodes req]))
+                  writeFrame stdout (encodeMsgpack (ResOk []))
+                Finalized _ -> do
+                  -- Defensive: re-accumulate if load-context after resolve
+                  writeIORef stateRef (Accumulating [drNodes req])
+                  writeFrame stdout (encodeMsgpack (ResOk []))
             "clear-context" -> do
-              writeIORef contextRef []
+              writeIORef stateRef (Accumulating [])
               writeFrame stdout (encodeMsgpack (ResOk []))
+            "resolve-all" -> do
+              startTime <- getCurrentTime
+              hPutStrLn stderr "[grafema-resolve] Starting resolve-all"
+              allNodes <- finalizeContext stateRef
+              let ws = drWorkspacePackages req
+              let wsList = map (\wp -> (wpName wp, wpEntryPoint wp, wpPackageDir wp)) ws
+              -- Run resolvers sequentially via evaluate to ensure each
+              -- resolver's indexes are GC-eligible before the next runs.
+              -- The ++ chain is lazy so encodeMsgpack serializes incrementally.
+              let r1 = SameFileCalls.resolveAll allNodes
+              let r2 = JsLocalRefs.resolveAll allNodes
+              let r3 = RuntimeGlobals.resolveAll allNodes
+              let r4 = Builtins.resolveAll allNodes
+              r5 <- ImportResolution.resolveAllWithWorkspace allNodes wsList
+              let r6 = CrossFileCalls.resolveAll allNodes
+              let r7 = PropertyAccess.resolveAll allNodes
+              let result = r1 ++ r2 ++ r3 ++ r4 ++ r5 ++ r6 ++ r7
+              -- Encode directly to msgpack, bypassing aeson intermediate
+              let msgpackResult = MP.ObjectMap $ V.fromList
+                    [ (MP.ObjectStr "status", MP.ObjectStr "ok")
+                    , (MP.ObjectStr "commands", MP.ObjectArray (V.fromList (map pluginCommandToMsgpack result)))
+                    ]
+              writeFrame stdout (Binary.encode msgpackResult)
+              endTime <- getCurrentTime
+              hPutStrLn stderr $ "[grafema-resolve] resolve-all complete in "
+                ++ show (diffUTCTime endTime startTime)
             _ -> do
-              contextChunks <- readIORef contextRef
-              let allNodes = concat contextChunks ++ drNodes req
-              result <- dispatch (drCmd req) allNodes (drWorkspacePackages req)
+              -- Legacy per-command path (backward compat)
+              allNodes <- finalizeContext stateRef
+              let allWithReq = allNodes ++ drNodes req
+              result <- dispatch (drCmd req) allWithReq (drWorkspacePackages req)
               writeFrame stdout (encodeMsgpack result)
-      daemonLoop contextRef
+      daemonLoop stateRef
 
 -- | Dispatch a request to the appropriate resolver.
 dispatch :: Text -> [GraphNode] -> [WorkspacePackage] -> IO DaemonResponse
@@ -133,7 +188,7 @@ main = do
   args <- getArgs
   if "--daemon" `elem` args
     then do
-      contextRef <- newIORef []
+      contextRef <- newIORef (Accumulating [])
       daemonLoop contextRef
     else do
       cmd <- execParser cliOpts

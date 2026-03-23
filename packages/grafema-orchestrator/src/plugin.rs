@@ -817,54 +817,92 @@ fn validate_load_context_response(response_bytes: &[u8], node_count: usize) -> R
 
 /// Stream resolve nodes from RFDB to workers incrementally.
 ///
-/// Queries one node type at a time from RFDB, filters by language, then routes:
+/// Queries one node type at a time from RFDB using streaming consumption,
+/// filters by language, then routes:
 /// - Context types (FUNCTION, EXPORT, CLASS, etc.) → broadcast to ALL workers
 /// - Work types (CALL, IMPORT_BINDING, REFERENCE, etc.) → targeted to specific shard
 ///
-/// Buffers are flushed at `FLUSH_SIZE` threshold. Peak orchestrator memory is
-/// bounded to one RFDB query result + flush buffers (~625MB for 6.7M nodes).
+/// Buffers are flushed at `FLUSH_SIZE` threshold. Streaming means the full
+/// per-type result is never materialized — only the current chunk + flush
+/// buffers are in memory at any time.
 pub async fn stream_resolve_nodes_to_workers(
     rfdb: &mut RfdbClient,
     lang: crate::config::Language,
     handles: &[WorkerHandle<'_>],
     workspace_packages: &[WorkspacePackageWire],
 ) -> Result<usize> {
-    let shard_count = handles.len();
-    let mut context_buffer: Vec<WireNode> = Vec::new();
-    let mut shard_buffers: Vec<Vec<WireNode>> = (0..shard_count).map(|_| Vec::new()).collect();
-    let mut total = 0usize;
-
-    for node_type in crate::analyzer::resolve_node_types() {
-        let nodes = rfdb.query_nodes_by_type(node_type).await?;
-        for node in nodes {
+    /// Process a single node: filter by language, route to context or shard
+    /// buffer, flush if full. Defined as a macro because the body contains
+    /// `continue` (to skip to the next node in the caller's `for` loop) and
+    /// `.await` (which closures cannot use without boxing).
+    macro_rules! route_node {
+        ($node:expr, $lang:expr, $context_buffer:expr, $shard_buffers:expr,
+         $total:expr, $handles:expr, $workspace_packages:expr, $shard_count:expr) => {{
+            let node: WireNode = $node;
             if let Some(ref file) = node.file {
-                if crate::config::detect_language(std::path::Path::new(file)) != Some(lang) {
+                if crate::config::detect_language(std::path::Path::new(file)) != Some($lang) {
                     continue;
                 }
             } else {
                 continue;
             }
 
-            total += 1;
+            $total += 1;
+            if $total % 500_000 == 0 {
+                eprintln!("    {} nodes streamed...", $total);
+            }
 
             if is_context_node_type(node.node_type.as_deref().unwrap_or("")) {
-                context_buffer.push(node);
-                if context_buffer.len() >= FLUSH_SIZE {
-                    flush_to_all_workers(handles, &context_buffer, workspace_packages).await?;
-                    context_buffer.clear();
+                $context_buffer.push(node);
+                if $context_buffer.len() >= FLUSH_SIZE {
+                    flush_to_all_workers($handles, &$context_buffer, $workspace_packages).await?;
+                    $context_buffer.clear();
                 }
             } else {
                 let file = node.file.as_deref().unwrap_or("");
-                let shard = shard_for_file(file, shard_count);
-                shard_buffers[shard].push(node);
-                if shard_buffers[shard].len() >= FLUSH_SIZE {
-                    flush_to_worker(&handles[shard], &shard_buffers[shard], workspace_packages)
+                let shard = shard_for_file(file, $shard_count);
+                $shard_buffers[shard].push(node);
+                if $shard_buffers[shard].len() >= FLUSH_SIZE {
+                    flush_to_worker(&$handles[shard], &$shard_buffers[shard], $workspace_packages)
                         .await?;
-                    shard_buffers[shard].clear();
+                    $shard_buffers[shard].clear();
                 }
             }
+        }};
+    }
+
+    let shard_count = handles.len();
+    let mut context_buffer: Vec<WireNode> = Vec::new();
+    let mut shard_buffers: Vec<Vec<WireNode>> = (0..shard_count).map(|_| Vec::new()).collect();
+    let mut total = 0usize;
+
+    // NOTE: If `route_node!` (flush_to_all_workers / flush_to_worker) fails
+    // mid-stream, `?` propagates the error and abandons the RFDB stream with
+    // unread frames. This is safe because the caller drops the RfdbClient on
+    // error, closing the socket. If we ever want to RECOVER from a worker
+    // failure and continue with the next node type, use
+    // `rfdb.drain_query_stream()` before continuing.
+    for node_type in crate::analyzer::resolve_node_types() {
+        let (first_chunk, is_streaming) =
+            rfdb.start_query_nodes_by_type(node_type).await?;
+
+        // Process first chunk
+        for node in first_chunk {
+            route_node!(node, lang, context_buffer, shard_buffers,
+                        total, handles, workspace_packages, shard_count);
         }
-        // Per-type Vec is dropped here, freeing memory
+
+        // Process remaining streaming chunks
+        if is_streaming {
+            loop {
+                let (chunk_nodes, done) = rfdb.recv_query_frame().await?;
+                for node in chunk_nodes {
+                    route_node!(node, lang, context_buffer, shard_buffers,
+                                total, handles, workspace_packages, shard_count);
+                }
+                if done { break; }
+            }
+        }
     }
 
     // Flush remaining buffers
