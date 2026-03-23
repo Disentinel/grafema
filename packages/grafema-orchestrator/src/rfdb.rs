@@ -660,12 +660,18 @@ impl RfdbClient {
         Ok(resp.results.unwrap_or_default())
     }
 
-    /// Query nodes by type from RFDB.
+    /// Start a streaming queryNodes request. Returns (first_chunk, is_streaming).
     ///
-    /// Returns all nodes matching the given `node_type` string.
-    /// Uses the QueryNodes wire command with a type filter.
-    /// Handles streaming responses (protocol v3+): reads frames until done=true.
-    pub async fn query_nodes_by_type(&mut self, node_type: &str) -> Result<Vec<WireNode>> {
+    /// If `is_streaming` is true, call [`recv_query_frame`](Self::recv_query_frame)
+    /// in a loop to get remaining chunks. If false, `first_chunk` contains all
+    /// results.
+    ///
+    /// This avoids materializing the full result set in memory — for large
+    /// node types (CALL, REFERENCE) this can save hundreds of MB.
+    pub async fn start_query_nodes_by_type(
+        &mut self,
+        node_type: &str,
+    ) -> Result<(Vec<WireNode>, bool)> {
         let params = serde_json::json!({
             "query": {
                 "nodeType": node_type
@@ -679,27 +685,73 @@ impl RfdbClient {
         let payload = rmp_serde::to_vec_named(&envelope)?;
         self.send_raw(&payload).await?;
 
-        // Read first frame
         let first = self.recv_raw().await?;
         first.check_error()?;
 
-        let mut all_nodes = first.nodes.unwrap_or_default();
+        let nodes = first.nodes.unwrap_or_default();
+        let is_streaming = first.done == Some(false);
+        Ok((nodes, is_streaming))
+    }
 
-        // If this is a streaming response (has done field), read until done=true
-        if let Some(false) = first.done {
-            loop {
-                let chunk = self.recv_raw().await?;
-                chunk.check_error()?;
-                if let Some(nodes) = chunk.nodes {
-                    all_nodes.extend(nodes);
+    /// Read the next frame of a streaming queryNodes response.
+    ///
+    /// Returns `(nodes_in_this_frame, is_stream_complete)`. Keep calling in a
+    /// loop until `is_stream_complete` is `true`. The final frame may still
+    /// contain nodes — process them before stopping.
+    ///
+    /// MUST only be called after [`start_query_nodes_by_type`](Self::start_query_nodes_by_type)
+    /// returned `is_streaming = true`. Do NOT call again after receiving
+    /// `is_stream_complete = true`.
+    pub async fn recv_query_frame(&mut self) -> Result<(Vec<WireNode>, bool)> {
+        let chunk = self.recv_raw().await?;
+        chunk.check_error()?;
+        let nodes = chunk.nodes.unwrap_or_default();
+        let done = chunk.done.unwrap_or(true);
+        Ok((nodes, done))
+    }
+
+    /// Drain remaining frames of a streaming query to keep the socket clean.
+    ///
+    /// Call this when abandoning a query mid-stream (e.g., after a flush error)
+    /// to prevent protocol state corruption. Reads and discards frames until
+    /// the `done=true` frame is received.
+    ///
+    /// If draining itself fails (e.g., connection lost), the error is logged
+    /// but not propagated — the caller already has an error to handle.
+    pub async fn drain_query_stream(&mut self) {
+        loop {
+            match self.recv_raw().await {
+                Ok(chunk) => {
+                    if chunk.done.unwrap_or(true) {
+                        break;
+                    }
                 }
-                if chunk.done.unwrap_or(true) {
+                Err(e) => {
+                    tracing::warn!("Failed to drain RFDB query stream: {e}");
                     break;
                 }
             }
         }
+    }
 
-        Ok(all_nodes)
+    /// Query nodes by type from RFDB.
+    ///
+    /// Returns all nodes matching the given `node_type` string.
+    /// Convenience wrapper that collects all streaming chunks into a Vec.
+    /// For memory-sensitive code, use [`start_query_nodes_by_type`](Self::start_query_nodes_by_type)
+    /// + [`recv_query_frame`](Self::recv_query_frame) instead.
+    pub async fn query_nodes_by_type(&mut self, node_type: &str) -> Result<Vec<WireNode>> {
+        let (mut all, is_streaming) = self.start_query_nodes_by_type(node_type).await?;
+        if is_streaming {
+            loop {
+                let (nodes, done) = self.recv_query_frame().await?;
+                all.extend(nodes);
+                if done {
+                    break;
+                }
+            }
+        }
+        Ok(all)
     }
 
     /// Health-check ping. Returns `Ok(true)` if the server responds with `pong`.

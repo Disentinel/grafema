@@ -23,10 +23,14 @@ executable grafema-resolve
     base                 >= 4.17 && < 5,
     grafema-common       >= 0.1  && < 0.2,
     aeson                >= 2.1  && < 2.3,
+    binary               >= 0.8  && < 0.9,
     text                 >= 2.0  && < 2.2,
     bytestring           >= 0.11 && < 0.13,
     containers           >= 0.6  && < 0.8,
-    optparse-applicative >= 0.17 && < 0.19
+    msgpack              >= 1.0  && < 1.1,
+    optparse-applicative >= 0.17 && < 0.19,
+    time                 >= 1.11 && < 1.15,
+    vector               >= 0.13 && < 0.14
 
 test-suite grafema-resolve-test
   type: exitcode-stdio-1.0
