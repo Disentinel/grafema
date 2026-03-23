@@ -174,6 +174,8 @@ Run `/extract-knowledge` (skill) which follows `_ai/runbooks/02-claude-sessions.
 - Validate: IDs, collisions, edge targets, code ref resolution
 - Check for newly dangling refs in existing KB
 
+**Skill files (`.claude/skills/`) MUST be created BEFORE `git commit`, not after.** Skills are tracked in git — if created after the commit/push, they won't be in the PR and require a separate commit. The correct order: implement → extract skills → commit all together.
+
 **Skip conditions:** trivial sessions (typo, single-line fix, no decisions), sessions that only read code.
 
 **Runbooks for other sources:** `_ai/runbooks/` — git history, existing docs.
