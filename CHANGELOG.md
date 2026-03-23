@@ -2,6 +2,40 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.21] - 2026-03-23
+
+### Highlights
+
+- **Resolution phase OOM fix (REG-781)** — Batch-resolve combines 7 sequential daemon calls into 1, eliminating 7× context concat and 6× redundant index rebuilds per worker. Streaming RFDB queries reduce orchestrator peak memory from ~500MB to ~12MB. Expected total peak: ~3.5-4.5GB (was 23GB on 14k-file repos).
+- **Rust intra-file call resolution (REG-688)** — Rust functions calling other functions in the same file now get CALLS edges resolved.
+- **Interface HAS_PROPERTY edges (REG-676)** — TypeScript interfaces now emit HAS_PROPERTY edges to property and method signatures.
+
+### Performance
+
+- perf(resolve): batch `resolve-all` daemon command — 7 sequential IPC round-trips → 1, 7× concat → 1, 6× index rebuild eliminated (REG-781)
+- perf(resolve): streaming RFDB queries in orchestrator — `query_nodes_by_type` no longer materializes full Vec per type, chunks processed incrementally (REG-781)
+- perf(resolve): direct msgpack serialization bypassing aeson intermediate in Haskell daemon hot path (REG-781)
+- perf(resolve): `DaemonState` finalize-context — cache flattened node list after first resolve, avoid repeated concat (REG-781)
+
+### Features
+
+- feat(rust-resolve): Rust intra-file call resolution — CALLS edges for same-file function invocations (REG-688)
+- feat(js-analyzer): HAS_PROPERTY edges from INTERFACE to property/method signatures (REG-676)
+- feat(mcp): `findProjectRoot` auto-detection + socket path override (REG-652)
+
+### Bug Fixes
+
+- fix(resolve): OOM on 14k-file repos — 23GB memory, 100% single-core CPU, 300s timeout crash (REG-781)
+- fix(ci): remove cross-platform optionalDeps from workspace package.json — fixes frozen-lockfile CI failures
+- fix(ci): remove deleted benchmark target from workflow
+- fix(util): METHOD_CALL support in FileOverview, manifest URI updates
+
+### Infrastructure
+
+- Resolution phase now shows progress on stderr: streaming counter, per-command timing
+- `drain_query_stream` method for RFDB socket safety on mid-stream errors
+- New skill: `haskell-batch-laziness-memory-trap`
+
 ## [0.3.20] - 2026-03-19
 
 ### Highlights
