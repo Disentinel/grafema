@@ -127,7 +127,11 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        # --no-frozen-lockfile because release commit injects optionalDependencies
+        # for native platform packages into packages/grafema/package.json.
+        # These are not in the lockfile (cross-platform optional deps can't be
+        # recorded from a single platform). This is safe: we're on a tagged commit.
+        run: pnpm install --no-frozen-lockfile
 
       - name: Build all packages
         run: pnpm build
