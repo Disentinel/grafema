@@ -74,7 +74,7 @@ describe('HashUtils (REG-97)', () => {
   describe('calculateContentHash()', () => {
     it('should return consistent hash for same content', async (t) => {
       if (!implementationAvailable) {
-        t.skip('HashUtils not yet implemented');
+        t.todo('HashUtils not yet implemented');
         return;
       }
 
@@ -88,7 +88,7 @@ describe('HashUtils (REG-97)', () => {
 
     it('should return different hash for different content', async (t) => {
       if (!implementationAvailable) {
-        t.skip('HashUtils not yet implemented');
+        t.todo('HashUtils not yet implemented');
         return;
       }
 
@@ -103,7 +103,7 @@ describe('HashUtils (REG-97)', () => {
 
     it('should return a 64-character hex string (SHA-256)', async (t) => {
       if (!implementationAvailable) {
-        t.skip('HashUtils not yet implemented');
+        t.todo('HashUtils not yet implemented');
         return;
       }
 
@@ -118,7 +118,7 @@ describe('HashUtils (REG-97)', () => {
 
     it('should handle empty string', async (t) => {
       if (!implementationAvailable) {
-        t.skip('HashUtils not yet implemented');
+        t.todo('HashUtils not yet implemented');
         return;
       }
 
@@ -130,7 +130,7 @@ describe('HashUtils (REG-97)', () => {
 
     it('should handle unicode content', async (t) => {
       if (!implementationAvailable) {
-        t.skip('HashUtils not yet implemented');
+        t.todo('HashUtils not yet implemented');
         return;
       }
 
@@ -143,7 +143,7 @@ describe('HashUtils (REG-97)', () => {
 
     it('should handle multiline content', async (t) => {
       if (!implementationAvailable) {
-        t.skip('HashUtils not yet implemented');
+        t.todo('HashUtils not yet implemented');
         return;
       }
 
@@ -164,7 +164,7 @@ describe('HashUtils (REG-97)', () => {
   describe('calculateFileHash()', () => {
     it('should return hash for existing file', async (t) => {
       if (!implementationAvailable) {
-        t.skip('HashUtils not yet implemented');
+        t.todo('HashUtils not yet implemented');
         return;
       }
 
@@ -186,7 +186,7 @@ describe('HashUtils (REG-97)', () => {
 
     it('should return null for non-existing file', async (t) => {
       if (!implementationAvailable) {
-        t.skip('HashUtils not yet implemented');
+        t.todo('HashUtils not yet implemented');
         return;
       }
 
@@ -199,7 +199,7 @@ describe('HashUtils (REG-97)', () => {
 
     it('should return null for unreadable file', async (t) => {
       if (!implementationAvailable) {
-        t.skip('HashUtils not yet implemented');
+        t.todo('HashUtils not yet implemented');
         return;
       }
 
@@ -214,7 +214,7 @@ describe('HashUtils (REG-97)', () => {
 
     it('should handle empty file', async (t) => {
       if (!implementationAvailable) {
-        t.skip('HashUtils not yet implemented');
+        t.todo('HashUtils not yet implemented');
         return;
       }
 
@@ -232,7 +232,7 @@ describe('HashUtils (REG-97)', () => {
   describe('calculateFileHashAsync()', () => {
     it('should return same hash as sync version', async (t) => {
       if (!implementationAvailable) {
-        t.skip('HashUtils not yet implemented');
+        t.todo('HashUtils not yet implemented');
         return;
       }
 
@@ -249,7 +249,7 @@ describe('HashUtils (REG-97)', () => {
 
     it('should return null for non-existing file', async (t) => {
       if (!implementationAvailable) {
-        t.skip('HashUtils not yet implemented');
+        t.todo('HashUtils not yet implemented');
         return;
       }
 
@@ -262,7 +262,7 @@ describe('HashUtils (REG-97)', () => {
 
     it('should handle concurrent reads of same file', async (t) => {
       if (!implementationAvailable) {
-        t.skip('HashUtils not yet implemented');
+        t.todo('HashUtils not yet implemented');
         return;
       }
 
@@ -284,7 +284,7 @@ describe('HashUtils (REG-97)', () => {
 
     it('should handle concurrent reads of different files', async (t) => {
       if (!implementationAvailable) {
-        t.skip('HashUtils not yet implemented');
+        t.todo('HashUtils not yet implemented');
         return;
       }
 
@@ -318,7 +318,7 @@ describe('HashUtils (REG-97)', () => {
   describe('Edge cases', () => {
     it('should handle file with special characters in name', async (t) => {
       if (!implementationAvailable) {
-        t.skip('HashUtils not yet implemented');
+        t.todo('HashUtils not yet implemented');
         return;
       }
 
@@ -334,7 +334,7 @@ describe('HashUtils (REG-97)', () => {
 
     it('should handle very large content', async (t) => {
       if (!implementationAvailable) {
-        t.skip('HashUtils not yet implemented');
+        t.todo('HashUtils not yet implemented');
         return;
       }
 
@@ -348,7 +348,7 @@ describe('HashUtils (REG-97)', () => {
 
     it('should detect whitespace-only changes', async (t) => {
       if (!implementationAvailable) {
-        t.skip('HashUtils not yet implemented');
+        t.todo('HashUtils not yet implemented');
         return;
       }
 
