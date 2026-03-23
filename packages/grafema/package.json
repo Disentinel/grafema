@@ -41,12 +41,6 @@
     "url": "https://github.com/Disentinel/grafema.git",
     "directory": "packages/grafema"
   },
-  "optionalDependencies": {
-    "@grafema/grafema-darwin-arm64": "0.3.20",
-    "@grafema/grafema-darwin-x64": "0.3.20",
-    "@grafema/grafema-linux-arm64": "0.3.20",
-    "@grafema/grafema-linux-x64": "0.3.20"
-  },
   "dependencies": {
     "@grafema/api": "workspace:*",
     "@grafema/util": "workspace:*",

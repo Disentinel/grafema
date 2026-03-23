@@ -377,22 +377,24 @@ for pkg in "${PLATFORM_PACKAGES[@]}"; do
     fi
 done
 
-# Update optionalDependencies versions in grafema package
+# Inject optionalDependencies into grafema package for publish.
+# These are NOT in the workspace package.json (they cause cross-platform
+# lockfile conflicts with --frozen-lockfile on CI). They are injected
+# here at release time so npm users get the correct native binaries.
 GRAFEMA_PKG="$ROOT_DIR/packages/grafema/package.json"
 if [ -f "$GRAFEMA_PKG" ]; then
     node -e "
       const fs = require('fs');
       const pkg = JSON.parse(fs.readFileSync('$GRAFEMA_PKG', 'utf8'));
-      if (pkg.optionalDependencies) {
-        for (const key of Object.keys(pkg.optionalDependencies)) {
-          if (key.startsWith('@grafema/grafema-')) {
-            pkg.optionalDependencies[key] = '$NEW_VERSION';
-          }
-        }
-      }
+      pkg.optionalDependencies = {
+        '@grafema/grafema-darwin-arm64': '$NEW_VERSION',
+        '@grafema/grafema-darwin-x64': '$NEW_VERSION',
+        '@grafema/grafema-linux-arm64': '$NEW_VERSION',
+        '@grafema/grafema-linux-x64': '$NEW_VERSION',
+      };
       fs.writeFileSync('$GRAFEMA_PKG', JSON.stringify(pkg, null, 2) + '\n');
     "
-    echo -e "${GREEN}[x] Updated optionalDependencies in packages/grafema${NC}"
+    echo -e "${GREEN}[x] Injected optionalDependencies in packages/grafema${NC}"
 fi
 
 # Update rfdb-server Cargo.toml to match npm version
