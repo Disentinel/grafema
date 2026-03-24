@@ -1,0 +1,148 @@
+# Autoresearch Hard Questions (v2)
+#
+# Real developer questions when working with an UNFAMILIAR codebase.
+# Source: Sillito et al. + LaToza & Myers + Ko et al. developer studies.
+# NOT biased toward graph tools — biased toward what developers actually ask.
+#
+# Target: baseline accuracy ≤50% (questions that require deep context understanding)
+
+questions:
+  # ============================================================================
+  # ONBOARDING — "I just joined this project, help me understand it"
+  # ============================================================================
+
+  - id: H01
+    category: 3
+    question: "I'm new to this codebase. What are the main components, how do they communicate, and where should I start reading to understand the system?"
+    eval_type: judge
+    reference_answer: "Main components: CLI (packages/cli), MCP server (packages/mcp), utility layer (packages/util), RFDB storage (packages/rfdb + rfdb-server in Rust), analysis orchestrator (Rust binary). Communication: CLI/MCP → RFDBServerBackend → RFDBClient → Unix socket → RFDB server. Start reading: packages/cli/src/commands/analyzeAction.ts for the core pipeline, packages/mcp/src/server.ts for the MCP interface, packages/util/src/storage/backends/RFDBServerBackend.ts for the database layer."
+    difficulty: hard
+    tags: [onboarding, architecture, where-to-start]
+
+  - id: H02
+    category: 4
+    question: "Why does this project use a custom graph database (RFDB) instead of an existing one like Neo4j or DGraph? What design constraints led to this decision?"
+    eval_type: judge
+    reference_answer: "This is a design rationale question — the answer must be inferred from code structure, not stated explicitly. Clues: RFDB is embedded (Unix socket, no separate install), uses LSM-tree storage (fast writes for batch analysis), supports Datalog queries (declarative graph patterns), has streaming protocol for large result sets, stores MessagePack-encoded data. Likely reasons: low-latency local operation (no network hop), Datalog for guarantee rules, tight integration with analysis pipeline, control over wire protocol. But the actual WHY may not be recoverable from code alone."
+    difficulty: hard
+    tags: [design-rationale, why, architecture]
+
+  - id: H03
+    category: 3
+    question: "What's the testing strategy of this project? What kinds of tests exist, what's covered, and what's conspicuously NOT tested?"
+    eval_type: judge
+    reference_answer: "Test directory: test/unit/ with Node.js test runner. Tests cover: MCP handlers (FileOverview, query parsing), graph operations (node/edge creation), specific bug regressions (REG-* prefixed). What's tested well: core graph operations, specific bug fixes. What's NOT tested: integration tests (full pipeline CLI→analyze→query), RFDB server directly, MCP server end-to-end, the Rust orchestrator, cross-file resolution chains. No CI-visible test coverage reports."
+    difficulty: medium
+    tags: [testing, coverage-gaps, quality]
+
+  # ============================================================================
+  # DEBUGGING — "Something is wrong, help me find the cause"
+  # ============================================================================
+
+  - id: H04
+    category: 3
+    question: "Users report that after running 'grafema analyze', some functions are missing from the graph. What are the possible causes? Walk through the pipeline and identify every point where a function could be lost."
+    eval_type: judge
+    reference_answer: "Possible loss points: 1) File not matched by include/exclude patterns in config. 2) OXC parser fails silently on syntax errors (file skipped). 3) grafema-analyzer binary doesn't handle certain function syntax (e.g., class static methods, computed property functions). 4) commitBatch with deferIndex=true — if compact() doesn't run, nodes not persisted to disk. 5) RFDB V2 ephemeral store after clear() — data written to memory only. 6) Node type classification: const arrow functions stored as CONSTANT not FUNCTION. 7) Resolution plugin error silently caught by orchestrator, partial results committed."
+    difficulty: hard
+    tags: [debugging, data-loss, pipeline]
+
+  - id: H05
+    category: 3
+    question: "The MCP tool find_calls('authenticate') returns 0 results, but I can see authenticate() being called in the code. What could be wrong? List all possible causes."
+    eval_type: judge
+    reference_answer: "Possible causes: 1) Graph not analyzed (nodeCount=0). 2) Function called as method (obj.authenticate()) — stored as 'obj.authenticate', not 'authenticate'. 3) Function called through alias (const auth = authenticate; auth()). 4) Call is in a file excluded from analysis. 5) CALL node created but resolution failed — no CALLS edge, just unresolved CALL node with different name. 6) Function is in a dependency (node_modules) not included in analysis scope. 7) Analysis failed for that specific file (syntax error, timeout). 8) The function is invoked dynamically (e.g., obj[methodName]())."
+    difficulty: hard
+    tags: [debugging, tool-failure, find-calls]
+
+  - id: H06
+    category: 3
+    question: "After a git merge, the CLI command 'grafema stats' shows node count dropped by 30%. What happened and how would you investigate?"
+    eval_type: judge
+    reference_answer: "Investigation steps: 1) Check if files were deleted in the merge (git diff --stat). 2) Re-run grafema analyze --clear to rule out stale data. 3) Check analysis logs/stderr for parse errors on merged files. 4) Compare file count before/after: ls -R src/ | wc vs grafema stats module count. 5) Check if include/exclude patterns in config.yaml changed. 6) Check if the merge introduced syntax errors that cause OXC parser to skip files. 7) RFDB LSM issue: tombstones from --clear may shadow new data if compaction hasn't run. 8) Check if analysis completed or was interrupted."
+    difficulty: hard
+    tags: [debugging, investigation, node-count]
+
+  # ============================================================================
+  # PLANNING CHANGES — "I need to modify this, what should I know?"
+  # ============================================================================
+
+  - id: H07
+    category: 4
+    question: "I need to add support for Python files to this analyzer. Based on the existing architecture, what components would I need to create or modify? Outline the implementation plan."
+    eval_type: judge
+    reference_answer: "1) Parser: either embed a Python parser in the orchestrator (like OXC for JS) or create a grafema-python-analyzer binary (like grafema-analyzer for JS). 2) Orchestrator: add Python to file discovery patterns, add parser dispatch by file extension in analyzer.rs. 3) AST → Graph mapping: define which Python AST nodes map to which graph node types (def → FUNCTION, import → IMPORT_BINDING, class → CLASS, etc.). 4) Resolution plugins: Python import resolution differs from JS (different module system). 5) No changes needed to: RFDB, MCP tools, CLI, @grafema/types (graph schema is language-agnostic). 6) Testing: new test fixtures with Python files."
+    difficulty: hard
+    tags: [planning, extensibility, architecture]
+
+  - id: H08
+    category: 4
+    question: "I want to make the MCP server support multiple concurrent projects (not just one). What parts of the codebase assume a single project, and what would need to change?"
+    eval_type: judge
+    reference_answer: "Single-project assumptions: 1) state.ts has global singleton: projectPath, backend, analysisLock — all assume one project. 2) RFDB connection is one socket to one database. 3) MCP tool handlers get backend from getOrCreateBackend() which returns the single instance. 4) Config loading assumes one grafema.yaml. Changes needed: per-project state map (projectPath → {backend, lock, config}), MCP tools need a 'project' parameter, routing layer to dispatch to correct backend, multiple RFDB connections or multi-database support."
+    difficulty: hard
+    tags: [planning, multi-tenancy, architecture]
+
+  - id: H09
+    category: 3
+    question: "I need to add a pre-commit hook that validates Datalog guarantee rules. What existing infrastructure can I reuse, and what's the minimal new code needed?"
+    eval_type: judge
+    reference_answer: "Reuse: 1) GuaranteeManager (packages/util) already loads guarantees.yaml and evaluates rules. 2) CLI check command already runs guarantees. 3) RFDBServerBackend.executeDatalog() handles query execution. New code needed: 1) A shell script or JS script that runs grafema check and exits non-zero on violations. 2) May need grafema server start if RFDB not running. 3) Hook registration in .husky/pre-commit or similar. Minimal: literally 'grafema check || exit 1' as pre-commit hook, assuming server is running."
+    difficulty: medium
+    tags: [planning, reuse, guarantees]
+
+  # ============================================================================
+  # "WHY" QUESTIONS — Design rationale, historical context
+  # ============================================================================
+
+  - id: H10
+    category: 4
+    question: "Why does the analysis pipeline use a separate Rust binary (grafema-orchestrator) instead of doing everything in TypeScript? What are the trade-offs?"
+    eval_type: judge
+    reference_answer: "Must be inferred from code: the orchestrator handles CPU-intensive tasks (file parsing, parallel analysis), while TypeScript handles I/O-bound tasks (MCP server, CLI, RFDB client). The Rust binary uses OXC (a Rust-native JS parser — much faster than Babel). Trade-offs: faster analysis (10-100x for large codebases), but harder to modify (Rust vs TS), binary distribution complexity (platform-specific packages), IPC overhead (CLI↔orchestrator communication). Historical: the project migrated from an all-JS pipeline (packages/core/, now mostly unused) to Rust for performance."
+    difficulty: hard
+    tags: [design-rationale, why, performance]
+
+  - id: H11
+    category: 4
+    question: "The codebase has both packages/core/ and packages/grafema-orchestrator/. They seem to do similar things. What's the relationship? Is packages/core/ dead code?"
+    eval_type: judge
+    reference_answer: "packages/core/ is the OLD JavaScript analysis pipeline (JSASTAnalyzer, visitors, builders, enrichment plugins). packages/grafema-orchestrator/ is the NEW Rust replacement. The migration happened incrementally — some old code is still referenced by tests. packages/core/ is mostly dead code for analysis purposes — the CLI uses the orchestrator. However, some utilities in core may still be imported by packages/util or tests. Evidence: old JS plugins have corresponding Rust implementations in the orchestrator."
+    difficulty: medium
+    tags: [dead-code, migration, history]
+
+  - id: H12
+    category: 3
+    question: "Why does the RFDB client have both synchronous-style methods (getNode, addNode) AND batch methods (beginBatch, commitBatch)? When would you use which?"
+    eval_type: judge
+    reference_answer: "Single methods (addNode, getNode) send one request-response per call — simple but high IPC overhead for bulk operations. Batch methods buffer operations client-side and send them atomically in one commitBatch — much faster for analysis (thousands of nodes). Use single methods for: interactive queries, single lookups, MCP tool handlers. Use batch for: analysis pipeline (orchestrator commits thousands of nodes per file), bulk imports. The batch API also provides atomicity — all-or-nothing commit."
+    difficulty: medium
+    tags: [design-rationale, api-design, performance]
+
+  # ============================================================================
+  # SAFETY & EDGE CASES — "What could go wrong?"
+  # ============================================================================
+
+  - id: H13
+    category: 3
+    question: "What happens to in-progress MCP queries if the RFDB server runs out of disk space during analysis? Trace the failure mode."
+    eval_type: judge
+    reference_answer: "RFDB server (Rust) writes segments to .grafema/graph.rfdb/segments/. On disk full: write() returns ENOSPC error. The server would likely crash or return an error on commitBatch. RFDBClient receives error response, rejects pending promises. Orchestrator detects exit code, CLI shows error. In-progress MCP queries: if server crashed, RFDBClient socket closes, all pending queries rejected with 'Connection closed'. If server handles gracefully, queries return errors. Data already committed to earlier segments may be intact. No automatic recovery — user must free disk space and re-analyze."
+    difficulty: hard
+    tags: [edge-cases, failure-modes, disk-space]
+
+  - id: H14
+    category: 3
+    question: "Is there any risk of the graph containing stale or incorrect data? What scenarios could lead to the graph not matching the actual source code?"
+    eval_type: judge
+    reference_answer: "Stale data scenarios: 1) Code changed after last analyze — graph reflects old state. 2) Incremental analysis didn't reprocess changed files (if implemented). 3) --clear flag + analysis interrupted — partial graph. 4) RFDB LSM compaction not run — tombstones may shadow valid data. 5) File rename without re-analysis — old nodes persist, new nodes added, graph has both. 6) Branch switch without re-analysis — graph reflects wrong branch. 7) Build artifacts (dist/) analyzed instead of source (src/) if include patterns wrong. Mitigation: always grafema analyze --clear after significant changes."
+    difficulty: medium
+    tags: [data-integrity, staleness, trust]
+
+  - id: H15
+    category: 4
+    question: "If this project were to handle a codebase 100x larger (millions of lines), what would break first? What are the architectural scaling limits?"
+    eval_type: judge
+    reference_answer: "Scaling limits: 1) RFDB single-server — all nodes/edges in one process's memory for indexing. 2) Orchestrator serial file analysis — even with parallel resolution, files are parsed sequentially per-language. 3) Unix socket throughput — MessagePack encoding/decoding becomes bottleneck at millions of nodes. 4) Datalog evaluation — joins on large edge sets time out (already documented: MODULE→MODULE DEPENDS_ON moved out of Datalog for this reason). 5) CLI output — stats/query commands that iterate all nodes. 6) MCP find_calls — iterates ALL CALL nodes. First to break: Datalog queries with large joins, then RFDB memory, then analysis time."
+    difficulty: hard
+    tags: [scaling, limits, architecture]
