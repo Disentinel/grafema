@@ -65,6 +65,59 @@ Added LLM judge (Haiku) for category 3 and 4 questions.
 2. Fix find_calls completeness (H004) — product bug
 3. Each change → re-run benchmark → compare
 
+## 2026-03-24: Hypothesis experiments (remote, parallel)
+
+### Setup
+5 experiments run on Hetzner dev VM (204.168.176.164) via tmux + claude --dangerously-skip-permissions. Each in separate git branch. 3 completed, 2 failed (H001A npm error, H001C still running).
+
+### Results: Cost vs Accuracy
+
+| Condition | Accuracy | Cost (30q) | Cost/Q | MCP calls |
+|-----------|----------|------------|--------|-----------|
+| Baseline (no MCP) | **93%** | $7.03 | $0.23 | 0 |
+| Grafema-v1 (30 tools) | 87% | $7.57 | $0.25 | 29 |
+| **H001B** (single tool) | **93.3%** | **$2.37** | **$0.08** | 0 |
+| **H004** (fixed find_calls) | **93.3%** | $3.56 | $0.12 | some |
+| H005 (no get_stats) | 89.5% | ~$3.13 | $0.10 | 0 |
+
+### Key findings
+
+**1. MCP overhead costs $4-5 per 30 questions (3x markup)**
+Grafema-v1 ($7.57) vs H001B ($2.37). Same accuracy (93.3%), 3x cheaper. The overhead comes from: 30 tool schemas in context, ToolSearch calls (34), get_stats ritual (19), verbose MCP server instructions.
+
+**2. H004 (fix find_calls) restores accuracy to baseline level**
+Q06 fixed (0.5→1.0). Reverse CALLS edge lookup catches aliased/indirect calls. Overall 93.3% = baseline parity. Cost $3.56 — still 2x cheaper than grafema-v1.
+
+**3. H005 reveals get_stats as MCP bootstrap mechanism**
+Removing "START HERE: call get_stats" killed ALL MCP adoption (70%→0%). get_stats wasn't just overhead — it was the forcing function that made agents enter the MCP context. Without it, agents default to Grep/Read exclusively.
+
+**4. Does MCP actually help? Nuanced answer.**
+- Cat 3 judge scores: H005 (no MCP) = 4.2/5 (n=4) vs Grafema-v1 = 4.3/5 vs Baseline = 3.7/5
+- H005 and Grafema-v1 are close → MCP may not be the cause of cat 3 improvement
+- BUT: the MCP server instructions (describing the codebase architecture) are present in all grafema runs, even H005. The graph context in the system prompt may be doing the heavy lifting, not the MCP tool calls themselves.
+- The hardest questions (Q17 baseline=0, grafema=5, H005=4) still show grafema advantage.
+
+**5. The real value might be in context, not tools**
+MCP server instructions describe the architecture (what handlers exist, how RFDB works, etc.). This context is injected regardless of whether MCP tools are called. H005 benefits from this context without calling any MCP tools. The tools are secondary to the architectural knowledge the server provides.
+
+### Hypothesis status update
+
+| ID | Status | Key evidence |
+|----|--------|-------------|
+| H001A | incomplete | npm build error on remote |
+| H001B | **partially confirmed** | Tokens -20.8%, cost -69%, accuracy same. But MCP=0 in both conditions |
+| H001C | incomplete | still running |
+| H002 | **confirmed** (prev) | Q06 session data |
+| H003 | **confirmed** (prev) | Cat 3: 4.3 vs 3.7 |
+| H004 | **confirmed** | Q06 fixed, accuracy = baseline |
+| H005 | **confirmed + surprise** | get_stats=0, but MCP adoption also=0 |
+
+### New hypotheses
+
+- **H006**: MCP value comes from server instructions (architecture context), not tool calls. Test: strip all tools but keep instructions → accuracy should hold.
+- **H007**: Combining H004 (fix find_calls) + minimal tool surface → best of both worlds: accuracy + low cost.
+- **H008**: For SWE-bench tasks (bug fixes), the context injection matters more than tools. Re-run SWE-bench pilot with good context but no MCP tools.
+
 ### Evaluator fixes during this iteration
 
 - Q01 changed from eval_type `set` to `superset` (multiple files produce the error)
