@@ -79,6 +79,9 @@ enox/*.rfdb/
 enox/rfdb.pid
 enox/fetch-*.js
 
+# Autoresearch results (regenerable, potentially large)
+autoresearch/results/
+
 # SWE-bench artifacts
 logs/run_evaluation/
 scripts/swe-bench/results/
