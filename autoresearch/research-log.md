@@ -118,6 +118,27 @@ MCP server instructions describe the architecture (what handlers exist, how RFDB
 - **H007**: Combining H004 (fix find_calls) + minimal tool surface → best of both worlds: accuracy + low cost.
 - **H008**: For SWE-bench tasks (bug fixes), the context injection matters more than tools. Re-run SWE-bench pilot with good context but no MCP tools.
 
+## 2026-03-24: External codebase experiments
+
+### h3 smoke test (N=1, not significant)
+
+| Metric | Baseline | Grafema |
+|--------|----------|---------|
+| Accuracy | 10/10 | 10/10 |
+| Avg judge | **4.4/5** | 4.1/5 |
+
+**h3 is too small (7k LOC).** Sonnet reads the entire project in a few calls.
+Graph adds no value and slight overhead. Confirms: need 15k+ files to test the thesis.
+
+### VS Code analysis
+
+Analyzing microsoft/vscode on remote: 5747 files, **4M+ nodes, 8.3M+ edges**.
+This is 200x the scale of h3. Resolution phase pending.
+
+### Pre-registration results
+
+H-PR1 predicted baseline ≤60% on tracing. Actual: 100%. **Falsified** — questions too easy for this scale project. VS Code should provide the actual challenge.
+
 ### Evaluator fixes during this iteration
 
 - Q01 changed from eval_type `set` to `superset` (multiple files produce the error)
