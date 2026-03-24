@@ -217,6 +217,8 @@ pub enum Request {
     // Bulk operations
     GetAllEdges,
     QueryNodes { query: WireAttrQuery },
+    /// Query all nodes belonging to a specific file path (exact match).
+    QueryNodesByFile { file: String },
 
     // Datalog queries
     CheckGuarantee {
@@ -1033,6 +1035,7 @@ fn get_operation_name(request: &Request) -> String {
         Request::DropDatabase { .. } => "DropDatabase".to_string(),
         Request::CurrentDatabase => "CurrentDatabase".to_string(),
         Request::QueryNodes { .. } => "QueryNodes".to_string(),
+        Request::QueryNodesByFile { .. } => "QueryNodesByFile".to_string(),
         Request::BeginBatch => "BeginBatch".to_string(),
         Request::AbortBatch => "AbortBatch".to_string(),
         Request::Clear => "Clear".to_string(),
@@ -1395,6 +1398,21 @@ fn handle_request_with_cancel(
         Request::QueryNodes { query } => {
             with_engine_read(session, |engine| {
                 let attr_query = wire_to_attr_query(query);
+                let ids = engine.find_by_attr(&attr_query);
+                let nodes: Vec<WireNode> = ids.into_iter()
+                    .filter_map(|id| engine.get_node(id))
+                    .map(|r| record_to_wire_node(&r))
+                    .collect();
+                Response::Nodes { nodes }
+            })
+        }
+
+        Request::QueryNodesByFile { file } => {
+            with_engine_read(session, |engine| {
+                let attr_query = AttrQuery {
+                    file: Some(file),
+                    ..AttrQuery::default()
+                };
                 let ids = engine.find_by_attr(&attr_query);
                 let nodes: Vec<WireNode> = ids.into_iter()
                     .filter_map(|id| engine.get_node(id))

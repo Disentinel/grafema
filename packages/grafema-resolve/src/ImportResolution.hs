@@ -8,6 +8,10 @@
 -- EXPORT, EXPORT_BINDING, and exported declarations (FUNCTION, VARIABLE, etc.).
 module ImportResolution
   ( run, resolveAll, resolveAllWithWorkspace
+  -- * Per-file streaming resolution
+  , resolveFileWithIndex
+  , buildModuleIndex
+  , ModuleIndex
   -- * Shared helpers for other resolvers
   , ExportIndex, ExportEntry(..)
   , WorkspaceMap
@@ -464,6 +468,38 @@ resolveAllWithWorkspace nodes wsPackages = do
   let moduleEdges = resolveModuleImports nodes exportIndex wsMap
   starReExportEdges <- resolveStarReExports nodes exportIndex wsMap
   return (bindingEdges ++ moduleEdges ++ starReExportEdges)
+
+-- ---------------------------------------------------------------------------
+-- Per-file streaming resolution (uses pre-built indexes)
+-- ---------------------------------------------------------------------------
+
+-- | Resolve imports for a single file's nodes using pre-built indexes.
+--
+-- Unlike 'resolveAllWithWorkspace' which builds ExportIndex from all nodes,
+-- this function takes pre-built indexes (from 'build-index' phase) and only
+-- processes the given file's nodes. After response, file nodes can be GC'd.
+resolveFileWithIndex :: ExportIndex -> WorkspaceMap -> ModuleIndex -> [GraphNode] -> IO [PluginCommand]
+resolveFileWithIndex exportIndex wsMap moduleIndex fileNodes = do
+  let importBindings = filter (\n -> gnType n == "IMPORT_BINDING") fileNodes
+  bindingEdges <- concat <$> mapM (resolveImport exportIndex wsMap Set.empty 0) importBindings
+  let moduleEdges = resolveModuleImportsWithIndex fileNodes exportIndex wsMap moduleIndex
+  starReExportEdges <- resolveStarReExportsForFile fileNodes exportIndex wsMap moduleIndex
+  return (bindingEdges ++ moduleEdges ++ starReExportEdges)
+
+-- | Like 'resolveModuleImports' but takes a pre-built ModuleIndex instead of
+-- building one from the node list (which in per-file mode only has one file).
+resolveModuleImportsWithIndex :: [GraphNode] -> ExportIndex -> WorkspaceMap -> ModuleIndex -> [PluginCommand]
+resolveModuleImportsWithIndex fileNodes exportIndex wsMap moduleIndex =
+  let importNodes = filter (\n -> gnType n == "IMPORT") fileNodes
+      uniqueImports = Map.elems $ Map.fromList
+        [ (gnId n, n) | n <- importNodes ]
+  in concatMap (resolveModuleImport moduleIndex exportIndex wsMap) uniqueImports
+
+-- | Like 'resolveStarReExports' but for a single file's nodes, using pre-built ModuleIndex.
+resolveStarReExportsForFile :: [GraphNode] -> ExportIndex -> WorkspaceMap -> ModuleIndex -> IO [PluginCommand]
+resolveStarReExportsForFile fileNodes exportIndex wsMap moduleIndex = do
+  let starExports = filter isStarExport fileNodes
+  concat <$> mapM (resolveStarReExport moduleIndex exportIndex wsMap) starExports
 
 -- ---------------------------------------------------------------------------
 -- Module-level import resolution (IMPORT → MODULE)

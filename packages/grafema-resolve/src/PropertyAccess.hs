@@ -8,7 +8,7 @@
 --   3. @nsImport.prop@ → exported declaration via namespace import
 --
 -- Does NOT handle dynamic property access or type-inferred resolution.
-module PropertyAccess (run, resolveAll) where
+module PropertyAccess (run, resolveAll, resolveFileWithIndex) where
 
 import Grafema.Types (GraphNode(..), GraphEdge(..), MetaValue(..))
 import Grafema.Protocol (PluginCommand(..), readNodesFromStdin, writeCommandsToStdout)
@@ -184,6 +184,22 @@ resolveInModule exportIndex importerFile source importedName =
           case findMatchingExport importedName exports of
             Nothing    -> Nothing
             Just entry -> Just (eeNodeId entry)
+
+-- ---------------------------------------------------------------------------
+-- Per-file streaming resolution (uses pre-built ExportIndex)
+-- ---------------------------------------------------------------------------
+
+-- | Resolve property accesses for a single file's nodes using a pre-built ExportIndex.
+--
+-- Unlike 'resolveAll' which builds all indexes from all nodes, this function
+-- takes a pre-built ExportIndex (from 'build-index' phase) and builds the
+-- PropertyDefIndex and ImportBindingIndex from the file's own nodes only.
+resolveFileWithIndex :: ExportIndex -> [GraphNode] -> [PluginCommand]
+resolveFileWithIndex exportIndex fileNodes =
+  let propDefIndex       = buildPropertyDefIndex fileNodes
+      importBindingIndex = buildImportBindingIndex fileNodes
+      propAccessNodes    = filter (\n -> gnType n == "PROPERTY_ACCESS") fileNodes
+  in concatMap (resolvePropAccess propDefIndex exportIndex importBindingIndex) propAccessNodes
 
 -- ---------------------------------------------------------------------------
 -- CLI entry point

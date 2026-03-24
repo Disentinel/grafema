@@ -79,6 +79,10 @@ fn num_cpus() -> usize {
 /// (context nodes like SCOPE, PARAM, CLASS are broadcast to ALL workers).
 /// On memory-constrained VMs (e.g., 16GB with RFDB using 3GB), this
 /// limits to 1-2 workers to prevent OOM.
+///
+/// NOTE: Currently unused — JS resolution uses per-file streaming (1 worker).
+/// Kept for potential multi-worker use by other languages.
+#[allow(dead_code)]
 fn resolve_worker_count() -> usize {
     let cpus = num_cpus();
     let cpu_based = std::cmp::min(7, if cpus > 1 { cpus - 1 } else { 1 });
@@ -109,6 +113,7 @@ fn resolve_worker_count() -> usize {
 /// Linux: reads MemAvailable from /proc/meminfo (accounts for caches/buffers).
 /// macOS: reads total physical memory via sysctl hw.memsize.
 /// Fallback: 16GB (conservative default).
+#[allow(dead_code)]
 fn available_memory_gb() -> u64 {
     // Linux: /proc/meminfo MemAvailable (available, not total)
     if let Ok(content) = std::fs::read_to_string("/proc/meminfo") {
@@ -263,7 +268,7 @@ async fn main() -> Result<()> {
             socket,
             jobs,
             force,
-            resolve_jobs,
+            resolve_jobs: _resolve_jobs,
         } => {
             let cfg = config::load(&config_path)?.with_defaults();
 
@@ -903,73 +908,47 @@ async fn main() -> Result<()> {
             // Build file → MODULE semantic ID map from RFDB (full graph)
             let file_to_module = build_file_to_module_map(&mut rfdb).await;
 
-            // 8. Run JS resolution with streaming double-buffer
+            // 8. Run JS resolution with per-file streaming (build-index + resolve-file)
             if js_file_count > 0 {
                 let lang_start = std::time::Instant::now();
-                let pool_size = resolve_jobs.unwrap_or_else(resolve_worker_count);
-                tracing::info!(
-                    workers = pool_size,
-                    "Running JS streaming resolution"
-                );
-                profile!("js_resolve_start", "workers" => pool_size);
+                eprintln!("  Resolution: JS/TS (per-file streaming, 1 worker)...");
+                profile!("js_resolve_start", "workers" => 1);
 
-                // Scale max_message_size: fewer workers = larger output per worker.
-                // 7 workers ≈ 200MB each; 1 worker ≈ 1400MB total output.
-                let max_msg = (200 * 1024 * 1024_usize) * 7 / pool_size.max(1);
                 let resolve_pool_config = process_pool::PoolConfig {
                     command: cfg.analyzers.js_resolve_path(),
                     args: vec!["--daemon".to_string()],
-                    max_message_size: max_msg,
+                    max_message_size: 200 * 1024 * 1024,
                     request_timeout: std::time::Duration::from_secs(300),
                 };
 
-                match process_pool::ProcessPool::new(resolve_pool_config, pool_size) {
+                match process_pool::ProcessPool::new(resolve_pool_config, 1) {
                     Ok(resolve_pool) => {
                         let handles = resolve_pool.acquire_all().await?;
 
-                        eprintln!("  Resolution: streaming nodes to {} workers...", pool_size);
-                        let stream_start = std::time::Instant::now();
-                        let total_streamed = plugin::stream_resolve_nodes_to_workers(
+                        let mut output = plugin::resolve_per_file(
                             &mut rfdb,
                             config::Language::JavaScript,
-                            &handles,
+                            &handles[0],
                             &ws_packages,
                         ).await?;
-                        let stream_ms = stream_start.elapsed().as_millis();
-                        profile!("js_stream_complete", "nodes" => total_streamed, "duration_ms" => stream_ms);
-                        eprintln!("  Resolution: {} nodes streamed in {:.1}s, running resolvers...",
-                            total_streamed, stream_ms as f64 / 1000.0);
 
-                        if total_streamed > 0 {
-                            // Single batch resolve — all 7 resolvers run in one daemon call
-                            profile!("js_resolve_cmd_start", "cmd" => "resolve-all");
-                            let cmd_start = std::time::Instant::now();
-                            let mut output = plugin::run_resolve_on_workers(
-                                "resolve-all", &handles, &ws_packages
-                            ).await.context("resolve-all resolution failed")?;
-
-                            // Extract IMPORTS_FROM edges for DEPENDS_ON derivation
-                            for edge in &output.edges {
-                                if edge.edge_type == "IMPORTS_FROM" {
-                                    all_imports_from_edges.push((edge.src.clone(), edge.dst.clone()));
-                                }
+                        // Extract IMPORTS_FROM edges for DEPENDS_ON derivation
+                        for edge in &output.edges {
+                            if edge.edge_type == "IMPORTS_FROM" {
+                                all_imports_from_edges.push((edge.src.clone(), edge.dst.clone()));
                             }
-
-                            commit_resolve_output(&mut output, "js-resolution", generation, &mut rfdb).await?;
-                            let cmd_ms = cmd_start.elapsed().as_millis();
-                            profile!("js_resolve_cmd_complete", "cmd" => "resolve-all",
-                                "nodes" => output.nodes.len(), "edges" => output.edges.len(),
-                                "duration_ms" => cmd_ms);
-                            eprintln!("  Resolution: complete ({} edges, {:.1}s)",
-                                output.edges.len(), cmd_ms as f64 / 1000.0);
                         }
 
-                        plugin::clear_context_on_workers(&handles).await
-                            .context("Failed to clear context from resolve workers")?;
+                        commit_resolve_output(&mut output, "js-resolution", generation, &mut rfdb).await?;
+                        let lang_ms = lang_start.elapsed().as_millis();
+                        profile!("js_resolve_complete",
+                            "nodes" => output.nodes.len(), "edges" => output.edges.len(),
+                            "duration_ms" => lang_ms);
+                        eprintln!("  Resolution: JS complete ({} edges, {:.1}s)",
+                            output.edges.len(), lang_ms as f64 / 1000.0);
+
                         drop(handles);
                         resolve_pool.shutdown().await;
-                        let lang_ms = lang_start.elapsed().as_millis();
-                        profile!("js_resolve_complete", "duration_ms" => lang_ms);
                     }
                     Err(e) => {
                         tracing::warn!(
@@ -1671,7 +1650,7 @@ async fn main() -> Result<()> {
         Commands::Resolve {
             config: config_path,
             socket,
-            jobs,
+            jobs: _jobs,
         } => {
             let cfg = config::load(&config_path)?.with_defaults();
 
@@ -1751,61 +1730,44 @@ async fn main() -> Result<()> {
             let resolve_timer = std::time::Instant::now();
             let mut all_imports_from_edges: Vec<(String, String)> = Vec::new();
 
-            // --- JS resolution ---
+            // --- JS resolution (per-file streaming) ---
             if detected_langs.contains(&config::Language::JavaScript) {
                 let lang_start = std::time::Instant::now();
-                let pool_size = jobs.unwrap_or_else(resolve_worker_count);
-                eprintln!("  Resolve: JS/TS ({} workers)...", pool_size);
+                eprintln!("  Resolve: JS/TS (per-file streaming, 1 worker)...");
 
-                // Scale max_message_size: fewer workers = larger output per worker.
-                // 7 workers ≈ 200MB each; 1 worker ≈ 1400MB total output.
-                let max_msg = (200 * 1024 * 1024_usize) * 7 / pool_size.max(1);
                 let resolve_pool_config = process_pool::PoolConfig {
                     command: cfg.analyzers.js_resolve_path(),
                     args: vec!["--daemon".to_string()],
-                    max_message_size: max_msg,
-                    request_timeout: std::time::Duration::from_secs(600),
+                    max_message_size: 200 * 1024 * 1024,
+                    request_timeout: std::time::Duration::from_secs(300),
                 };
 
-                match process_pool::ProcessPool::new(resolve_pool_config, pool_size) {
+                match process_pool::ProcessPool::new(resolve_pool_config, 1) {
                     Ok(resolve_pool) => {
                         let handles = resolve_pool.acquire_all().await?;
 
-                        let stream_start = std::time::Instant::now();
-                        let total_streamed = plugin::stream_resolve_nodes_to_workers(
+                        let mut output = plugin::resolve_per_file(
                             &mut rfdb,
                             config::Language::JavaScript,
-                            &handles,
+                            &handles[0],
                             &ws_packages,
                         ).await?;
-                        let stream_ms = stream_start.elapsed().as_millis();
-                        eprintln!("  Resolve: {} nodes streamed in {:.1}s, running resolvers...",
-                            total_streamed, stream_ms as f64 / 1000.0);
 
-                        if total_streamed > 0 {
-                            let cmd_start = std::time::Instant::now();
-                            let mut output = plugin::run_resolve_on_workers(
-                                "resolve-all", &handles, &ws_packages
-                            ).await.context("resolve-all resolution failed")?;
-
-                            for edge in &output.edges {
-                                if edge.edge_type == "IMPORTS_FROM" {
-                                    all_imports_from_edges.push((edge.src.clone(), edge.dst.clone()));
-                                }
+                        // Extract IMPORTS_FROM edges for DEPENDS_ON derivation
+                        for edge in &output.edges {
+                            if edge.edge_type == "IMPORTS_FROM" {
+                                all_imports_from_edges.push((edge.src.clone(), edge.dst.clone()));
                             }
-
-                            commit_resolve_output(&mut output, "js-resolution", generation, &mut rfdb).await?;
-                            let cmd_ms = cmd_start.elapsed().as_millis();
-                            eprintln!("  Resolve: JS complete ({} edges, {:.1}s)",
-                                output.edges.len(), cmd_ms as f64 / 1000.0);
                         }
 
-                        plugin::clear_context_on_workers(&handles).await
-                            .context("Failed to clear context from resolve workers")?;
+                        commit_resolve_output(&mut output, "js-resolution", generation, &mut rfdb).await?;
+                        let lang_ms = lang_start.elapsed().as_millis();
+                        eprintln!("  Resolve: JS complete ({} edges, {:.1}s)",
+                            output.edges.len(), lang_ms as f64 / 1000.0);
+                        tracing::info!(duration_ms = lang_ms, "JS resolve complete");
+
                         drop(handles);
                         resolve_pool.shutdown().await;
-                        let lang_ms = lang_start.elapsed().as_millis();
-                        tracing::info!(duration_ms = lang_ms, "JS resolve complete");
                     }
                     Err(e) => {
                         tracing::warn!("Failed to create JS resolve pool: {e}");

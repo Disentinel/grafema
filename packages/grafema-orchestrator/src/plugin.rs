@@ -970,6 +970,127 @@ pub async fn clear_context_on_workers(
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Per-file resolution (build-index + resolve-file)
+// ---------------------------------------------------------------------------
+
+/// Index-worthy node types: these form the export index for cross-file resolution.
+const INDEX_NODE_TYPES: &[&str] = &[
+    "EXPORT_BINDING", "EXPORT", "MODULE",
+    "FUNCTION", "VARIABLE", "CONSTANT", "CLASS", "INTERFACE", "TYPE_ALIAS", "ENUM",
+];
+
+/// Per-file resolve: builds an export index on the worker, then resolves each
+/// file individually by querying RFDB for that file's nodes.
+///
+/// This avoids loading the entire graph into worker memory — only one file's
+/// nodes are in flight at a time. The index (build-index) is compact: only
+/// exported symbols and module metadata.
+///
+/// Protocol:
+/// 1. Query MODULE nodes → discover files for the given language
+/// 2. Query index-worthy nodes (exports, modules) → send `build-index` to worker
+/// 3. For each file: `query_nodes_by_file` → send `resolve-file` → accumulate edges
+/// 4. Return accumulated PluginOutput (caller commits to RFDB)
+pub async fn resolve_per_file(
+    rfdb: &mut RfdbClient,
+    lang: crate::config::Language,
+    handle: &WorkerHandle<'_>,
+    workspace_packages: &[WorkspacePackageWire],
+) -> Result<PluginOutput> {
+    // Step 1: Get all MODULE nodes to find files for this language
+    let module_nodes = rfdb.query_nodes_by_type("MODULE").await?;
+    let files: Vec<String> = module_nodes.iter()
+        .filter(|n| {
+            n.file.as_ref().map_or(false, |f| {
+                crate::config::detect_language(std::path::Path::new(f)) == Some(lang)
+            })
+        })
+        .filter_map(|n| n.file.clone())
+        .collect();
+
+    tracing::info!(files = files.len(), "Per-file resolve: discovered files");
+
+    // Step 2: Collect index-worthy nodes and send build-index
+    let mut index_json_nodes: Vec<serde_json::Value> = Vec::new();
+    for node_type in INDEX_NODE_TYPES {
+        let nodes = rfdb.query_nodes_by_type(node_type).await?;
+        for node in nodes {
+            // Filter by language
+            if let Some(ref file) = node.file {
+                if crate::config::detect_language(std::path::Path::new(file)) != Some(lang) {
+                    continue;
+                }
+            } else {
+                continue;
+            }
+            // For declarations (FUNCTION etc.), only include exported ones
+            if matches!(*node_type, "FUNCTION" | "VARIABLE" | "CONSTANT" | "CLASS" | "INTERFACE" | "TYPE_ALIAS" | "ENUM") {
+                if !node.exported {
+                    continue;
+                }
+            }
+            index_json_nodes.push(crate::analyzer::wire_node_to_resolve_json(&node));
+        }
+    }
+
+    tracing::info!(nodes = index_json_nodes.len(), "Per-file resolve: sending build-index");
+
+    let build_index_request = ResolveRequest {
+        cmd: "build-index".to_string(),
+        nodes: index_json_nodes,
+        workspace_packages: workspace_packages.to_vec(),
+    };
+    let payload = rmp_serde::to_vec_named(&build_index_request)
+        .context("Failed to encode build-index request")?;
+    let response_bytes = handle.request(&payload).await
+        .context("build-index request failed")?;
+    let response: ResolveResponse = rmp_serde::from_slice(&response_bytes)
+        .context("Failed to decode build-index response")?;
+    if response.status != "ok" {
+        let msg = response.error.unwrap_or_else(|| "unknown error".to_string());
+        bail!("build-index failed: {msg}");
+    }
+    drop(build_index_request); // Free memory
+
+    // Step 3: For each file, query nodes and send resolve-file
+    let mut all_output = PluginOutput::default();
+    let total_files = files.len();
+
+    for (i, file) in files.iter().enumerate() {
+        let file_nodes = rfdb.query_nodes_by_file(file).await?;
+        if file_nodes.is_empty() { continue; }
+
+        let json_nodes: Vec<serde_json::Value> = file_nodes
+            .iter()
+            .map(|n| crate::analyzer::wire_node_to_resolve_json(n))
+            .collect();
+
+        let request = ResolveRequest {
+            cmd: "resolve-file".to_string(),
+            nodes: json_nodes,
+            workspace_packages: workspace_packages.to_vec(),
+        };
+        let payload = rmp_serde::to_vec_named(&request)
+            .context("Failed to encode resolve-file request")?;
+        let response_bytes = handle.request(&payload).await
+            .with_context(|| format!("resolve-file failed for '{file}'"))?;
+        let output = parse_resolve_response(&response_bytes, "resolve-file")?;
+
+        all_output.nodes.extend(output.nodes);
+        all_output.edges.extend(output.edges);
+
+        if (i + 1) % 500 == 0 || i + 1 == total_files {
+            eprintln!("    Per-file resolve: {}/{} files ({} edges so far)",
+                i + 1, total_files, all_output.edges.len());
+        }
+    }
+
+    deduplicate_virtual_nodes(&mut all_output);
+
+    Ok(all_output)
+}
+
 /// Collect nodes and run resolve commands on a single worker.
 ///
 /// For single-worker languages (Haskell, Rust, Java, etc.) whose daemons
