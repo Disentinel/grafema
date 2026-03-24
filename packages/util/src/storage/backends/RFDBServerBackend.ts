@@ -326,6 +326,23 @@ export class RFDBServerBackend {
     if (!this.client) throw new Error('Not connected');
     if (!nodes.length) return;
 
+    // Validate required fields
+    for (let i = 0; i < nodes.length; i++) {
+      const n = nodes[i];
+      if (!n.id) {
+        throw new Error(
+          `addNodes: node at index ${i} is missing required 'id' field. ` +
+          `Got keys: [${Object.keys(n).join(', ')}]`
+        );
+      }
+      if (!n.type && !n.nodeType && !n.node_type) {
+        throw new Error(
+          `addNodes: node '${n.id}' is missing type. ` +
+          `Provide one of: type, nodeType, or node_type`
+        );
+      }
+    }
+
     const useV3 = this.protocolVersion >= 3;
     const wireNodes: WireNode[] = nodes.map(n => {
       // Extract metadata from node
@@ -364,9 +381,43 @@ export class RFDBServerBackend {
     if (!this.client) throw new Error('Not connected');
     if (!edges.length) return;
 
+    // Validate required fields
+    if (!skipValidation) {
+      for (let i = 0; i < edges.length; i++) {
+        const e = edges[i];
+        // Check for src/dst (required)
+        if (!e.src) {
+          // Common mistake: using 'source'/'target' instead of 'src'/'dst'
+          const hint = (e as Record<string, unknown>).source
+            ? ` Did you mean 'src'? Found 'source' = '${(e as Record<string, unknown>).source}'`
+            : '';
+          throw new Error(
+            `addEdges: edge at index ${i} is missing required 'src' field.${hint} ` +
+            `Got keys: [${Object.keys(e).join(', ')}]`
+          );
+        }
+        if (!e.dst) {
+          const hint = (e as Record<string, unknown>).target
+            ? ` Did you mean 'dst'? Found 'target' = '${(e as Record<string, unknown>).target}'`
+            : '';
+          throw new Error(
+            `addEdges: edge at index ${i} is missing required 'dst' field.${hint} ` +
+            `Got keys: [${Object.keys(e).join(', ')}]`
+          );
+        }
+        // Check for edge type
+        if (!e.edgeType && !e.edge_type && !(e as Record<string, unknown>).etype && !e.type) {
+          throw new Error(
+            `addEdges: edge ${e.src} → ${e.dst} is missing edge type. ` +
+            `Provide one of: edgeType, edge_type, etype, or type`
+          );
+        }
+      }
+    }
+
     // Track edge types
     for (const e of edges) {
-      const edgeType = e.edgeType || e.edge_type || e.etype || e.type;
+      const edgeType = e.edgeType || e.edge_type || (e as Record<string, unknown>).etype as string || e.type;
       if (typeof edgeType === 'string') this.edgeTypes.add(edgeType);
     }
 
