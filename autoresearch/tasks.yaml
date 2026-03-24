@@ -1,0 +1,147 @@
+# Autoresearch Phase 3: End-to-End Tasks
+#
+# Real bug fixes from Grafema git history.
+# Each task: checkout base_commit, give agent the problem, verify fix works.
+#
+# Evaluation: NOT "does patch match gold?" but "does patch fix the bug?"
+# The gold patch is a REFERENCE, not ground truth — our historical fix
+# might have been suboptimal or even wrong.
+#
+# acceptance_check: command that returns 0 if the bug is fixed
+# gold_commit: the commit with our historical fix (for comparison, not scoring)
+#
+# Difficulty: easy (1 file, small diff) | medium (2-3 files) | hard (complex logic)
+
+tasks:
+  - id: T01
+    difficulty: easy
+    commit: d73eba52
+    base_commit: 580b01d2146a0c85978fbf367e4aa146d30f863d
+    title: "Fix streaming desync and semanticId stripping in RFDB client"
+    problem_statement: |
+      Two bugs in the RFDB client cause data loss during analysis:
+      1. queryNodes() uses single-response _send() but v3 protocol sends streaming
+         NodesChunk frames for results >100. Subsequent chunks hit "unknown requestId" errors.
+      2. addNodes() destructuring puts semanticId into ...rest (metadata) instead of
+         extracting it as a named field.
+      Fix both issues in packages/rfdb/ts/client.ts.
+    files_touched:
+      - "packages/rfdb/ts/client.ts"
+    tags: [rfdb, streaming, data-loss]
+
+  - id: T02
+    difficulty: easy
+    commit: fbe02f5d
+    base_commit: de2f9762c49f511d30f9130fdb386cefc20a67e6
+    title: "Use full relative path in CoreBuilder READS_FROM lookup (REG-557)"
+    problem_statement: |
+      CoreBuilder uses basename() when looking up class declarations for READS_FROM edges,
+      but classDeclarations store the full relative path (module.file). This causes
+      READS_FROM edges to be missing for files in subdirectories when two files share
+      the same basename. Fix the lookup to use full relative path.
+    files_touched:
+      - "packages/core/src/plugins/analysis/ast/builders/CoreBuilder.ts"
+    tags: [analysis, path-mismatch, edges]
+
+  - id: T03
+    difficulty: medium
+    commit: c27df25f
+    base_commit: ed4f6093a7d3323d3efe9fbb764be7033a02108a
+    title: "RETURNS edge missing for nested arrow functions (REG-336)"
+    problem_statement: |
+      RETURNS edges are not created for nested arrow functions that return method calls.
+      Two bugs:
+      1. FunctionVisitor: ArrowFunctionExpression handler doesn't call path.skip() after
+         analyzeFunctionBody(), causing duplicate FUNCTION nodes
+      2. JSASTAnalyzer: ReturnStatement handler's nested function check walks the parent
+         chain incorrectly
+      Fix both issues. The result should be that arrow functions inside class methods
+      correctly get RETURNS edges.
+    files_touched:
+      - "packages/core/src/plugins/analysis/JSASTAnalyzer.ts"
+      - "packages/core/src/plugins/analysis/ast/visitors/FunctionVisitor.ts"
+    tags: [analysis, edges, nested-functions]
+
+  - id: T04
+    difficulty: medium
+    commit: 36dac944
+    base_commit: 78a8622ccfaeadb6a5e184e7c4fddfb872f5de12
+    title: "Find const-bound arrow functions in get_function_details"
+    problem_statement: |
+      The MCP tool get_function_details fails to find functions defined as
+      `const foo = () => {}` because it only searches FUNCTION/METHOD nodes.
+      These const-bound arrows are stored as CONSTANT or VARIABLE nodes with
+      an ASSIGNED_FROM edge pointing to the actual function.
+      Fix get_function_details to fall back to searching CONSTANT/VARIABLE
+      nodes and following ASSIGNED_FROM edges. Also fix get_file_overview to
+      classify const-bound functions as Functions, not Variables.
+    files_touched:
+      - "packages/mcp/src/handlers/context-handlers.ts"
+      - "packages/util/src/core/FileOverview.ts"
+    tags: [mcp, const-functions, tool-quality]
+
+  - id: T05
+    difficulty: hard
+    commit: c21bbeb0
+    base_commit: c4c1f48bf862a97b219cd7cf0251bc450dd8c067
+    title: "DataFlowValidator — include DERIVES_FROM edges, fix type filter, remove O(n²) (REG-498)"
+    problem_statement: |
+      DataFlowValidator has three bugs:
+      1. Only traverses ASSIGNED_FROM edges, missing DERIVES_FROM (causes false positives
+         for for-of/for-in loop variables)
+      2. Uses getAllNodes() + getAllEdges() which is O(n²) — should use queryNodes() +
+         getOutgoingEdges()
+      3. Type filter uses wrong value: VARIABLE_DECLARATION instead of VARIABLE
+      Fix all three issues in packages/core/src/plugins/validation/DataFlowValidator.ts.
+    files_touched:
+      - "packages/core/src/plugins/validation/DataFlowValidator.ts"
+    tags: [validation, perf, data-flow]
+
+  - id: T06
+    difficulty: medium
+    commit: 050a13f2
+    base_commit: a1770a989df568cafaad3af996e12e37a1414328
+    title: "METHOD_CALL support in FileOverview (REG-655)"
+    problem_statement: |
+      FileOverview only queries CALL nodes for function call discovery, but method
+      calls are stored as METHOD_CALL nodes. This means methods called within a
+      function are not listed in the calls field of FileOverview results.
+      Fix FileOverview.ts to query both CALL and METHOD_CALL node types.
+    files_touched:
+      - "packages/util/src/core/FileOverview.ts"
+    tags: [util, node-types, file-overview]
+
+  - id: T07
+    difficulty: hard
+    commit: 0fd64cdf
+    base_commit: b7dfea3ac4a040c9f53617f64fdba6f543a63ded
+    title: "Restore query functionality broken by RFDB v3 semantic ID format (REG-445)"
+    problem_statement: |
+      After RFDB v3 migration, query/scope matching is broken because:
+      1. _parseNode() uses server-rewritten v3 semantic ID format instead of original v1
+      2. file/explain commands pass absolute paths but MODULE nodes store relative paths
+      3. Query doesn't search INTERFACE/TYPE/ENUM node types
+      4. matchesScope() doesn't return true when no constraints given
+      Fix all issues. The CLI query, explain, and file commands should work correctly
+      with the v3 semantic ID format.
+    files_touched:
+      - "packages/cli/src/commands/explain.ts"
+      - "packages/cli/src/commands/file.ts"
+      - "packages/cli/src/commands/query.ts"
+      - "packages/core/src/storage/backends/RFDBServerBackend.ts"
+    tags: [cli, semantic-id, migration]
+
+  - id: T08
+    difficulty: medium
+    commit: b6cd1ad0
+    base_commit: 6cf82c0dcace96b2ad4b2c3986d9074ff41e4ce2
+    title: "Convert byte offsets to line:column in JS/TS analysis"
+    problem_statement: |
+      The Haskell js-analyzer outputs byte offsets in line/endLine fields (column/endColumn
+      always 0). The orchestrator stores these raw byte offsets, causing VS Code extension
+      panels to fail: findNodeAtCursor can't match cursor position to graph nodes.
+      Add a post-processing step in the orchestrator that reads source files, builds a
+      line index, and converts byte offsets to proper 1-based line numbers and column numbers.
+    files_touched:
+      - "packages/grafema-orchestrator/src/analyzer.rs"
+    tags: [orchestrator, positions, vscode]
