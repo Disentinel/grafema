@@ -731,7 +731,7 @@ fn default_beam_resolve() -> String {
 }
 
 /// Language detection based on file extension.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Language {
     JavaScript,
     Haskell,

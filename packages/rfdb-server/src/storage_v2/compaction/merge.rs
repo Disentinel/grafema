@@ -83,6 +83,7 @@ pub fn merge_edge_segments(
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;
+    use std::sync::Arc;
 
     use super::*;
     use crate::storage_v2::segment::{EdgeSegmentV2, NodeSegmentV2};
@@ -262,7 +263,7 @@ mod tests {
         let seg = make_test_edge_segment(vec![e1.clone(), e2.clone()]);
 
         let mut tombstones = TombstoneSet::new();
-        tombstones.add_edges(vec![(e1.src, e1.dst, "CALLS".to_string())]);
+        tombstones.add_edges(vec![(e1.src, e1.dst, Arc::from("CALLS"))]);
 
         let result = merge_edge_segments(&[&seg], &tombstones);
 

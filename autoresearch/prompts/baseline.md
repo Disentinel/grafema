@@ -1,5 +1,5 @@
-You are analyzing the Grafema codebase at /Users/vadimr/grafema.
-You have access to standard file tools (Read, Grep, Glob, Bash).
+You are analyzing an unfamiliar codebase located at {{project_root}}.
+You have no prior knowledge of this project. You have access to standard file tools (Read, Grep, Glob, Bash).
 
 Answer this question about the codebase:
 

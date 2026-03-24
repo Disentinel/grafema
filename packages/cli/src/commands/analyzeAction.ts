@@ -150,7 +150,7 @@ async function ensureLanguageBinaries(configPath: string, log: (...args: unknown
   }
 }
 
-export async function analyzeAction(path: string, options: { service?: string; entrypoint?: string; clear?: boolean; quiet?: boolean; verbose?: boolean; debug?: boolean; logLevel?: string; logFile?: string; strict?: boolean; autoStart?: boolean; quickstart?: boolean }): Promise<void> {
+export async function analyzeAction(path: string, options: { service?: string; entrypoint?: string; clear?: boolean; quiet?: boolean; verbose?: boolean; debug?: boolean; logLevel?: string; logFile?: string; strict?: boolean; resolveJobs?: string; autoStart?: boolean; quickstart?: boolean }): Promise<void> {
   const projectPath = resolve(path);
   const grafemaDir = join(projectPath, '.grafema');
   const dbPath = join(grafemaDir, 'graph.rfdb');
@@ -270,6 +270,10 @@ export async function analyzeAction(path: string, options: { service?: string; e
 
   if (options.clear) {
     args.push('--force');
+  }
+
+  if (options.resolveJobs) {
+    args.push('--resolve-jobs', options.resolveJobs);
   }
 
   debug(`Spawning: ${orchestratorBinary} ${args.join(' ')}`);

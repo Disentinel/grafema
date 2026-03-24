@@ -9,6 +9,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { initCommand } from './commands/init.js';
 import { analyzeCommand } from './commands/analyze.js';
+import { resolveCommand } from './commands/resolve.js';
 import { overviewCommand } from './commands/overview.js';
 import { queryCommand } from './commands/query.js';
 import { typesCommand } from './commands/types.js';
@@ -55,6 +56,7 @@ program.addCommand(whyCommand);
 // Commands in logical order
 program.addCommand(initCommand);
 program.addCommand(analyzeCommand);
+program.addCommand(resolveCommand);
 program.addCommand(overviewCommand);
 program.addCommand(queryCommand);
 program.addCommand(contextCommand);

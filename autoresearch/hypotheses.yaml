@@ -1,84 +1,118 @@
 # Autoresearch Hypotheses
 # Status: untested | confirmed | rejected | inconclusive
-# Axis: prompt | graph | tools | model
+# Axis: prompt | graph | tools | model | product
 
 hypotheses:
+  # === ROUND 1 (confirmed/partially confirmed) ===
+
   - id: H001A
     date: "2026-03-24"
     axis: tools
     statement: "Reducing MCP tool count from 30 to 4-5 core tools improves accuracy and reduces token overhead"
     prediction: "Accuracy >= baseline (93%), avg tokens decrease 10%+, MCP adoption stays >= 50%"
-    metric: accuracy + avg_tokens + mcp_adoption
-    status: untested
-    evidence: "grafema-v1 used only 3 distinct MCP tools out of 30. ToolSearch called 34 times = token waste."
-    change: "Remove non-core tools from MCP server, keep: find_calls, trace_dataflow, describe, query_graph, get_file_overview"
+    status: incomplete
+    evidence: "Remote experiment failed with npm build error. Needs retry."
     branch: "experiment/h001a-reduce-tools"
-    runs: []
 
   - id: H001B
     date: "2026-03-24"
     axis: tools
-    statement: "Single swiss-army tool (grafema action=X) reduces context overhead vs 30 separate tools"
-    prediction: "ToolSearch calls drop to 0-1, avg tokens decrease 15%+, accuracy unchanged"
-    metric: toolsearch_calls + avg_tokens + accuracy
-    status: untested
-    evidence: "34 ToolSearch calls in grafema-v1, each loading tool schemas into context."
-    change: "Replace all MCP tools with single grafema(action, ...) tool"
+    statement: "Single swiss-army tool reduces context overhead vs 30 separate tools"
+    prediction: "ToolSearch calls drop to 0, tokens decrease 15%+, accuracy unchanged"
+    status: partially_confirmed
+    evidence: "93.3% accuracy (=baseline), cost $2.37 vs $7.57 (-69%), tokens -20.8%. But MCP=0 in both conditions — agent didn't use MCP at all, so single-tool UX untested."
     branch: "experiment/h001b-single-tool"
-    runs: []
 
   - id: H001C
     date: "2026-03-24"
     axis: tools
-    statement: "Pre-loading tool schemas (non-deferred) eliminates ToolSearch overhead without reducing tool count"
-    prediction: "ToolSearch calls = 0, latency decrease 5-10%, accuracy unchanged"
-    metric: toolsearch_calls + latency + accuracy
-    status: untested
-    evidence: "ToolSearch is deferred tool loading mechanism. If tools pre-loaded, no ToolSearch needed."
-    change: "Configure MCP to load all tool schemas upfront instead of deferred"
+    statement: "Pre-loading tool schemas eliminates ToolSearch overhead"
+    status: incomplete
+    evidence: "Remote experiment still running or incomplete."
     branch: "experiment/h001c-preload-tools"
-    runs: []
 
   - id: H002
     date: "2026-03-24"
     axis: tools
-    statement: "Agent prefers Grep over find_calls for 'who calls X' because find_calls returns incomplete/insufficient results"
-    prediction: "In grafema sessions, Grep is used before or after find_calls for call-analysis questions. find_calls results are supplemented by Grep."
-    metric: tool_usage_sequence
+    statement: "Agent prefers Grep over find_calls for call-analysis questions"
     status: confirmed
-    evidence: "Q06 grafema: find_calls called 1x then Grep 6x + Read 3x. find_calls returned partial results, agent supplemented with file tools but still missed 1/2 expected files (score 0.5 vs baseline 1.0)."
-    runs: ["grafema-v1"]
+    evidence: "Q06: find_calls 1x then Grep 6x. Agent supplements MCP with file tools."
 
   - id: H003
     date: "2026-03-24"
     axis: tools
-    statement: "Graph advantage appears on category 3 questions (tracing, cross-service) not category 1-2 (feature location, structure)"
-    prediction: "Judge-evaluated cat 3 questions show grafema scoring higher than baseline"
-    metric: judge_scores_cat3
+    statement: "Graph advantage on cat 3 (tracing), not cat 1-2 (structure)"
     status: confirmed
-    evidence: "Cat 3 avg: baseline 3.7/5 vs grafema 4.3/5 (+16%). Grafema wins Q17(0→5), Q21(3→4), Q23(4→5). Baseline wins Q19(5→4). Cat 1-2: baseline 93% vs grafema 87%."
-    runs: ["baseline-v1", "grafema-v1"]
+    evidence: "Cat 3: grafema 4.3/5 vs baseline 3.7/5 (+16%). Cat 1-2: baseline 93% vs grafema 87%."
 
   - id: H004
     date: "2026-03-24"
     axis: graph
-    statement: "find_calls returns incomplete results because it only searches CALL node names, missing method calls and aliased calls"
-    prediction: "Fixing find_calls to search through CALLS edges and aliases increases Q06-type accuracy to match baseline"
-    metric: accuracy_call_questions
-    status: untested
-    evidence: "Q06: find_calls('commitBatch') missed packages/rfdb/ts/base-client.ts despite it being a primary caller."
-    change: "Improve find_calls handler to cover more call patterns"
+    statement: "find_calls returns incomplete results — fixing it restores accuracy"
+    status: confirmed
+    evidence: "Q06 fixed (0.5→1.0). Reverse CALLS edge lookup. Overall 93.3% = baseline. Cost $3.56."
     branch: "experiment/h004-fix-find-calls"
-    runs: []
 
   - id: H005
     date: "2026-03-24"
     axis: tools
-    statement: "get_stats called 19 times is pure overhead — agent checks 'is graph loaded?' before every MCP call"
-    prediction: "Removing get_stats from MCP (or auto-returning status in every tool response) reduces MCP calls by 40%+"
-    metric: get_stats_calls + total_mcp_calls
-    status: untested
-    evidence: "19 get_stats calls across 30 questions in grafema-v1. MCP server instructions say 'START HERE: call get_stats'. Agent follows this literally."
-    change: "Remove get_stats or include status in every tool response header"
+    statement: "get_stats is overhead — removing it saves tokens"
+    status: confirmed_with_surprise
+    evidence: "get_stats=0 as predicted. BUT MCP adoption dropped 70%→0%. get_stats was bootstrap mechanism. Accuracy 89.5% (held). Cost ~$3.13 (cheaper)."
     branch: "experiment/h005-remove-get-stats"
-    runs: []
+
+  # === ROUND 2 (new hypotheses from experiment analysis) ===
+
+  - id: H006
+    date: "2026-03-24"
+    axis: product
+    statement: "MCP value comes from context injection (server instructions describing architecture), not from tool calls"
+    prediction: "Context-only mode (MCP with instructions but no tools) achieves accuracy >= grafema-v1 at cost <= baseline"
+    metric: accuracy + cost
+    status: untested
+    evidence: "H005: 0 MCP calls but 89.5% accuracy. H001B: 0 MCP calls but 93.3%. Server instructions present in both. Baseline without instructions: 93%. If context-only matches these → tools are unnecessary."
+    change: "MCP config with empty tool list, keep server instructions"
+    test: "Critical test. If confirmed → product pivot from 'graph DB for AI' to 'graph-generated AI context'."
+
+  - id: H007
+    date: "2026-03-24"
+    axis: prompt
+    statement: "Explicit tool routing rules ('for call analysis use find_calls, for text search use Grep') improves MCP effectiveness"
+    prediction: "MCP usage becomes targeted (only on appropriate questions), accuracy on cat 2 call-analysis questions improves"
+    status: untested
+    change: "Add routing rules to grafema.md prompt template"
+
+  - id: H008
+    date: "2026-03-24"
+    axis: tools
+    statement: "describe() as pre-reader saves 30%+ tokens on complex questions"
+    prediction: "Instruction 'call describe() before reading any file' reduces avg tokens on cat 3 by 30%+"
+    status: untested
+    change: "Add describe-first instruction to prompt"
+
+  - id: H009
+    date: "2026-03-24"
+    axis: product
+    statement: "Graph-generated codebase profile document (injected as context) beats MCP tools for comprehension tasks"
+    prediction: "A 2000-token 'codebase profile' generated by grafema gives accuracy >= MCP tools at near-zero marginal cost"
+    status: untested
+    evidence: "Server instructions (~500 tokens) already carry most of the value. A richer auto-generated profile should do even better."
+    change: "Generate codebase-profile.md from graph analysis, inject into baseline prompt"
+    test: "If confirmed → Grafema's product is 'graph analysis → AI-optimized docs', not 'graph DB + MCP tools'."
+
+  - id: H010
+    date: "2026-03-24"
+    axis: tools
+    statement: "Combined H004+H001B+routing instructions beats all individual experiments"
+    prediction: "Accuracy > 93%, cost < $3, MCP used on appropriate questions only"
+    status: untested
+    change: "Merge find_calls fix + single tool + routing instructions"
+
+  - id: H011
+    date: "2026-03-24"
+    axis: product
+    statement: "For SWE-bench bug fixes, context injection matters more than MCP tools"
+    prediction: "SWE-bench with codebase profile but no MCP matches grafema-explicit condition (78% resolve, -28% cost)"
+    status: untested
+    evidence: "Pilot showed grafema-explicit = 78% resolve, -28% cost. If context alone replicates this → tools are overhead for bug-fix tasks too."
+    test: "Re-run SWE-bench pilot: baseline vs context-only vs grafema-explicit"

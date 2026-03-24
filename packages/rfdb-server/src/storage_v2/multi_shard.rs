@@ -120,6 +120,10 @@ pub struct MultiShardStore {
     /// in that file. Used by commit_batch Phase 1 for O(batch_size) lookups
     /// instead of O(total_nodes) find_nodes scans.
     file_to_node_ids: HashMap<String, HashSet<u128>>,
+
+    /// Intern pool for edge type strings. Edge types have ~15 distinct values,
+    /// so interning saves ~40 bytes per tombstone entry (4M+ entries on large graphs).
+    edge_type_intern: HashMap<String, Arc<str>>,
 }
 
 // ── Constructors ───────────────────────────────────────────────────
@@ -152,6 +156,7 @@ impl MultiShardStore {
             global_index: None,
             enrichment_edge_to_shard: HashMap::new(),
             file_to_node_ids: HashMap::new(),
+            edge_type_intern: HashMap::new(),
         })
     }
 
@@ -276,6 +281,7 @@ impl MultiShardStore {
             global_index: None,
             enrichment_edge_to_shard,
             file_to_node_ids,
+            edge_type_intern: HashMap::new(),
         })
     }
 
@@ -295,6 +301,26 @@ impl MultiShardStore {
             global_index: None,
             enrichment_edge_to_shard: HashMap::new(),
             file_to_node_ids: HashMap::new(),
+            edge_type_intern: HashMap::new(),
+        }
+    }
+}
+
+// ── Edge Type Interning ────────────────────────────────────────────
+
+impl MultiShardStore {
+    /// Intern an edge type string. Returns a shared Arc<str> for deduplication.
+    ///
+    /// Edge types have ~15 distinct values ("CALLS", "IMPORTS_FROM", etc.).
+    /// Interning avoids storing millions of individual String allocations
+    /// in tombstone sets — each entry shares the same Arc<str>.
+    fn intern_edge_type(&mut self, edge_type: &str) -> Arc<str> {
+        if let Some(interned) = self.edge_type_intern.get(edge_type) {
+            Arc::clone(interned)
+        } else {
+            let interned: Arc<str> = Arc::from(edge_type);
+            self.edge_type_intern.insert(edge_type.to_string(), Arc::clone(&interned));
+            interned
         }
     }
 }
@@ -384,22 +410,44 @@ impl MultiShardStore {
     pub fn set_tombstones(
         &mut self,
         node_ids: &HashSet<u128>,
-        edge_keys: &HashSet<(u128, u128, String)>,
+        edge_keys: &HashSet<(u128, u128, Arc<str>)>,
     ) {
+        let tombstones = TombstoneSet {
+            node_ids: node_ids.clone(),
+            edge_keys: edge_keys.clone(),
+        };
+        let shared = Arc::new(tombstones);
         for shard in &mut self.shards {
-            let mut merged_nodes: HashSet<u128> =
-                shard.tombstones().node_ids.iter().copied().collect();
-            merged_nodes.extend(node_ids.iter().copied());
-
-            let mut merged_edges: HashSet<(u128, u128, String)> =
-                shard.tombstones().edge_keys.iter().cloned().collect();
-            merged_edges.extend(edge_keys.iter().cloned());
-
-            shard.set_tombstones(TombstoneSet {
-                node_ids: merged_nodes,
-                edge_keys: merged_edges,
-            });
+            shard.set_tombstones_shared(Arc::clone(&shared));
         }
+    }
+
+    /// Check if a node is tombstoned in the shard TombstoneSet.
+    ///
+    /// All shards share the same Arc<TombstoneSet>, so checking shard 0 is sufficient.
+    pub fn is_node_tombstoned(&self, id: u128) -> bool {
+        if self.shards.is_empty() { return false; }
+        self.shards[0].tombstones().contains_node(id)
+    }
+
+    /// Check if an edge is tombstoned in the shard TombstoneSet.
+    ///
+    /// All shards share the same Arc<TombstoneSet>, so checking shard 0 is sufficient.
+    pub fn is_edge_tombstoned(&self, src: u128, dst: u128, edge_type: &str) -> bool {
+        if self.shards.is_empty() { return false; }
+        self.shards[0].tombstones().contains_edge(src, dst, edge_type)
+    }
+
+    /// Count of tombstoned nodes in the shard TombstoneSet.
+    pub fn tombstone_node_count(&self) -> usize {
+        if self.shards.is_empty() { return 0; }
+        self.shards[0].tombstones().node_count()
+    }
+
+    /// Count of tombstoned edges in the shard TombstoneSet.
+    pub fn tombstone_edge_count(&self) -> usize {
+        if self.shards.is_empty() { return 0; }
+        self.shards[0].tombstones().edge_count()
     }
 }
 
@@ -967,18 +1015,27 @@ impl MultiShardStore {
             .map(|(id, _)| *id)
             .collect();
 
-        let mut tombstone_edge_keys: Vec<(u128, u128, String)> =
+        let mut raw_tombstone_edge_keys: Vec<(u128, u128, String)> =
             self.find_non_enrichment_edge_keys_by_src_ids(&normal_file_node_ids);
 
         if !enrichment_file_node_ids.is_empty() {
-            tombstone_edge_keys.extend(
+            raw_tombstone_edge_keys.extend(
                 self.find_edge_keys_by_src_ids(&enrichment_file_node_ids),
             );
         }
         for ctx in &enrichment_contexts {
-            tombstone_edge_keys.extend(self.find_edge_keys_by_file_context(ctx));
+            raw_tombstone_edge_keys.extend(self.find_edge_keys_by_file_context(ctx));
         }
-        let edges_removed = tombstone_edge_keys.len() as u64;
+        let edges_removed = raw_tombstone_edge_keys.len() as u64;
+
+        // Intern edge type strings for tombstone deduplication
+        let tombstone_edge_keys: Vec<(u128, u128, Arc<str>)> = raw_tombstone_edge_keys
+            .into_iter()
+            .map(|(s, d, t)| {
+                let interned = self.intern_edge_type(&t);
+                (s, d, interned)
+            })
+            .collect();
 
         tracing::debug!(
             "commit_batch phase2_tombstones: {}ms, {} node_tombs, {} edge_tombs",
@@ -996,7 +1053,7 @@ impl MultiShardStore {
             changed_node_types.insert(node.node_type.clone());
         }
         for (_, _, et) in &tombstone_edge_keys {
-            changed_edge_types.insert(et.clone());
+            changed_edge_types.insert(et.to_string());
         }
 
         // From new nodes/edges
@@ -1010,14 +1067,21 @@ impl MultiShardStore {
         // ── Phase 4: Apply tombstones to shards ──
         let t_phase4 = Instant::now();
 
-        // Build combined tombstone set (existing manifest + new)
-        let current = manifest_store.current();
-        let mut all_tomb_nodes: HashSet<u128> =
-            current.tombstoned_node_ids.iter().copied().collect();
+        // Build combined tombstone set (existing shard tombstones + new).
+        // Read from shard TombstoneSet (single source of truth), not manifest.
+        // Manifest tombstone Vecs may be cleared after commit to save memory.
+        let mut all_tomb_nodes: HashSet<u128> = if !self.shards.is_empty() {
+            self.shards[0].tombstones().node_ids.clone()
+        } else {
+            HashSet::new()
+        };
         all_tomb_nodes.extend(&tombstone_node_ids);
 
-        let mut all_tomb_edges: HashSet<(u128, u128, String)> =
-            current.tombstoned_edge_keys.iter().cloned().collect();
+        let mut all_tomb_edges: HashSet<(u128, u128, Arc<str>)> = if !self.shards.is_empty() {
+            self.shards[0].tombstones().edge_keys.clone()
+        } else {
+            HashSet::new()
+        };
         all_tomb_edges.extend(tombstone_edge_keys.iter().cloned());
 
         // Arc-share tombstones across shards (O(1) per shard instead of O(N) clone)
@@ -1062,7 +1126,8 @@ impl MultiShardStore {
             all_tomb_nodes.remove(&node.id);
         }
         for edge in &edges_clone {
-            all_tomb_edges.remove(&(edge.src, edge.dst, edge.edge_type.clone()));
+            let interned_type = self.intern_edge_type(&edge.edge_type);
+            all_tomb_edges.remove(&(edge.src, edge.dst, interned_type));
         }
 
         // Re-apply updated tombstones to shards (Arc-shared)
@@ -1159,7 +1224,10 @@ impl MultiShardStore {
 
         // Inject tombstones into manifest before commit
         manifest.tombstoned_node_ids = all_tomb_nodes.into_iter().collect();
-        manifest.tombstoned_edge_keys = all_tomb_edges.into_iter().collect();
+        manifest.tombstoned_edge_keys = all_tomb_edges
+            .into_iter()
+            .map(|(s, d, t)| (s, d, t.to_string()))
+            .collect();
 
         let manifest_version = manifest.version;
         manifest_store.commit(manifest)?;
@@ -2030,7 +2098,7 @@ mod tests {
         // Tombstone 2 nodes — set_tombstones broadcasts to all shards,
         // so each shard gets both tombstone IDs.
         let tombstone_ids: std::collections::HashSet<u128> = ids[..2].iter().copied().collect();
-        let tombstone_edges: std::collections::HashSet<(u128, u128, String)> = std::collections::HashSet::new();
+        let tombstone_edges: std::collections::HashSet<(u128, u128, Arc<str>)> = std::collections::HashSet::new();
         store.set_tombstones(&tombstone_ids, &tombstone_edges);
 
         let diags = store.shard_diagnostics();
@@ -2722,21 +2790,24 @@ mod tests {
             &mut manifest_store,
         ).unwrap();
 
-        // Manifest should contain tombstones for old nodes
+        // Manifest tombstone Vecs are cleared after commit to save memory.
+        // Tombstones now live in the shard TombstoneSet (single source of truth).
         let manifest = manifest_store.current();
-        let tomb_nodes: HashSet<u128> =
-            manifest.tombstoned_node_ids.iter().copied().collect();
-        assert!(tomb_nodes.contains(&a.id));
-        assert!(tomb_nodes.contains(&b.id));
-
-        // Manifest should contain tombstones for old edges
         assert!(
-            !manifest.tombstoned_edge_keys.is_empty(),
-            "Expected tombstoned edge keys in manifest"
+            manifest.tombstoned_node_ids.is_empty(),
+            "Manifest tombstone Vecs should be cleared after commit"
         );
-        let tomb_edges: HashSet<(u128, u128, String)> =
-            manifest.tombstoned_edge_keys.iter().cloned().collect();
-        assert!(tomb_edges.contains(&(edge.src, edge.dst, edge.edge_type.clone())));
+        assert!(
+            manifest.tombstoned_edge_keys.is_empty(),
+            "Manifest tombstone Vecs should be cleared after commit"
+        );
+
+        // Shard TombstoneSet should contain tombstones for old nodes
+        assert!(store.is_node_tombstoned(a.id));
+        assert!(store.is_node_tombstoned(b.id));
+
+        // Shard TombstoneSet should contain tombstones for old edges
+        assert!(store.is_edge_tombstoned(edge.src, edge.dst, &edge.edge_type));
     }
 
     // -- Validation + Integration Tests (RFD-8 T3.1 Commit 5) --------------------
@@ -2883,26 +2954,24 @@ mod tests {
             &mut manifest_store,
         ).unwrap();
 
-        // Manifest should contain tombstones for A and B
-        let manifest = manifest_store.current();
-        let tomb_nodes: HashSet<u128> =
-            manifest.tombstoned_node_ids.iter().copied().collect();
+        // Shard TombstoneSet should contain tombstones for A and B
+        // (manifest Vecs are cleared after commit to save memory)
         assert!(
-            tomb_nodes.contains(&a.id),
-            "Tombstone for node A missing from manifest"
+            store.is_node_tombstoned(a.id),
+            "Tombstone for node A missing from shard TombstoneSet"
         );
         assert!(
-            tomb_nodes.contains(&b.id),
-            "Tombstone for node B missing from manifest"
+            store.is_node_tombstoned(b.id),
+            "Tombstone for node B missing from shard TombstoneSet"
         );
 
         // Nodes C, D (from file b) should NOT be tombstoned
         assert!(
-            !tomb_nodes.contains(&c.id),
+            !store.is_node_tombstoned(c.id),
             "Node C should not be tombstoned"
         );
         assert!(
-            !tomb_nodes.contains(&d.id),
+            !store.is_node_tombstoned(d.id),
             "Node D should not be tombstoned"
         );
 

@@ -160,26 +160,30 @@ describe('Deferred Indexing (REG-487)', () => {
 
   describe('Multiple deferred commits then rebuild', () => {
     it('should handle multiple deferred commits followed by single rebuild', async () => {
-      // Commit 1: modules
+      // Each commit uses DIFFERENT files so that commit 2 doesn't tombstone commit 1's data.
+      // Note: commitBatch(tags, deferIndex) — first arg is tags, NOT changedFiles.
+      // changedFiles is auto-collected from node.file fields.
+
+      // Commit 1: modules in mod-a.js, mod-b.js
       backend.client.beginBatch();
       await backend.client.addNodes([
-        { id: 'mod-a', nodeType: 'MODULE', name: 'moduleA', file: 'a.js', exported: false, metadata: '{}' },
-        { id: 'mod-b', nodeType: 'MODULE', name: 'moduleB', file: 'b.js', exported: false, metadata: '{}' },
+        { id: 'mod-a', nodeType: 'MODULE', name: 'moduleA', file: 'mod-a.js', exported: false, metadata: '{}' },
+        { id: 'mod-b', nodeType: 'MODULE', name: 'moduleB', file: 'mod-b.js', exported: false, metadata: '{}' },
       ]);
       await backend.client.commitBatch(['indexing-1'], true);
 
-      // Commit 2: functions
+      // Commit 2: functions in fn-x.js, fn-y.js (different files!)
       backend.client.beginBatch();
       await backend.client.addNodes([
-        { id: 'fn-x', nodeType: 'FUNCTION', name: 'fnX', file: 'a.js', exported: true, metadata: '{}' },
-        { id: 'fn-y', nodeType: 'FUNCTION', name: 'fnY', file: 'b.js', exported: false, metadata: '{}' },
+        { id: 'fn-x', nodeType: 'FUNCTION', name: 'fnX', file: 'fn-x.js', exported: true, metadata: '{}' },
+        { id: 'fn-y', nodeType: 'FUNCTION', name: 'fnY', file: 'fn-y.js', exported: false, metadata: '{}' },
       ]);
       await backend.client.addEdges([
         { src: 'fn-x', dst: 'fn-y', edgeType: 'CALLS', metadata: '{}' },
       ]);
       await backend.client.commitBatch(['analysis-1'], true);
 
-      // Commit 3: more edges
+      // Commit 3: more edges (edge-only commit, no file overlap)
       backend.client.beginBatch();
       await backend.client.addEdges([
         { src: 'mod-a', dst: 'fn-x', edgeType: 'CONTAINS', metadata: '{}' },

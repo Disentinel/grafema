@@ -51,6 +51,8 @@ function parseArgs(argv) {
     questions: DEFAULT_QUESTIONS,
     questionId: null,
     runId: null,
+    repeats: 1,
+    projectRoot: PROJECT_ROOT,
   };
   let i = 2; // skip node + script
   while (i < argv.length) {
@@ -70,9 +72,15 @@ function parseArgs(argv) {
       case '--run-id':
         args.runId = argv[++i];
         break;
+      case '--repeats':
+        args.repeats = parseInt(argv[++i], 10);
+        break;
+      case '--project-root':
+        args.projectRoot = resolve(argv[++i]);
+        break;
       case '--help':
       case '-h':
-        console.error('Usage: node run.mjs --mode baseline|grafema --model sonnet [--questions path] [--question-id Q03] [--run-id name]');
+        console.error('Usage: node run.mjs --mode baseline|grafema --model sonnet [--questions path] [--question-id Q03] [--run-id name] [--repeats 3] [--project-root /path]');
         process.exit(0);
         break;
       default:
@@ -194,8 +202,10 @@ function extractAnswer(text) {
 // Run claude for a single question
 // ---------------------------------------------------------------------------
 
-async function runQuestion(question, mode, modelId, promptTemplate) {
-  const prompt = promptTemplate.replace('{{question}}', question.question);
+async function runQuestion(question, mode, modelId, promptTemplate, projectRoot) {
+  const prompt = promptTemplate
+    .replace('{{question}}', question.question)
+    .replace(/\{\{project_root\}\}/g, projectRoot);
 
   // Write prompt to temp file (avoid shell escaping)
   const tmpFile = join(tmpdir(), `autoresearch-prompt-${process.pid}-${Date.now()}.txt`);
@@ -219,8 +229,13 @@ async function runQuestion(question, mode, modelId, promptTemplate) {
       directArgs.push('--mcp-config', MCP_CONFIG);
     }
 
+    // Run from temp dir to avoid loading CLAUDE.md from project root.
+    // Agent accesses code via explicit path in the prompt.
+    const cleanCwd = join(tmpdir(), `autoresearch-clean-${process.pid}`);
+    mkdirSync(cleanCwd, { recursive: true });
+
     const child = spawn('claude', directArgs, {
-      cwd: PROJECT_ROOT,
+      cwd: cleanCwd,
       env: { ...process.env },
       stdio: ['ignore', 'pipe', 'pipe'],
       shell: false,
@@ -340,7 +355,7 @@ async function main() {
     const q = questions[i];
     console.error(`[${i + 1}/${questions.length}] ${q.id}: ${q.question.slice(0, 80)}...`);
 
-    const result = await runQuestion(q, args.mode, modelId, promptTemplate);
+    const result = await runQuestion(q, args.mode, modelId, promptTemplate, args.projectRoot);
 
     if (result.error) {
       console.error(`  ${q.id}: ERROR — ${result.error}`);
