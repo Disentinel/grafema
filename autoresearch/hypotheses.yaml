@@ -55,11 +55,9 @@ hypotheses:
     statement: "Graph advantage appears on category 3 questions (tracing, cross-service) not category 1-2 (feature location, structure)"
     prediction: "Judge-evaluated cat 3 questions show grafema scoring higher than baseline"
     metric: judge_scores_cat3
-    status: untested
-    evidence: "Cat 1-2 baseline won 93% vs 87%. Cat 3 needs judge eval to compare."
-    change: "Add LLM judge eval for Q16-Q25"
-    branch: null
-    runs: []
+    status: confirmed
+    evidence: "Cat 3 avg: baseline 3.7/5 vs grafema 4.3/5 (+16%). Grafema wins Q17(0→5), Q21(3→4), Q23(4→5). Baseline wins Q19(5→4). Cat 1-2: baseline 93% vs grafema 87%."
+    runs: ["baseline-v1", "grafema-v1"]
 
   - id: H004
     date: "2026-03-24"

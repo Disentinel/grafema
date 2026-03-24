@@ -44,12 +44,26 @@ Research journal for Grafema evaluation experiments.
 - **H004**: find_calls returns incomplete results → specific bug to fix
 - **H005**: get_stats called 19 times = overhead → remove or auto-include
 
+### Judge results (Q16-Q30)
+
+Added LLM judge (Haiku) for category 3 and 4 questions.
+
+**Cat 3 (tracing, Q16-Q25) — avg score:**
+- Baseline: 3.7/5
+- Grafema: **4.3/5** (+16%)
+- Grafema wins: Q17 (0→5), Q21 (3→4), Q23 (4→5)
+- Baseline wins: Q19 (5→4)
+
+**Cat 4 (adversarial, Q26-Q30):**
+- Mostly tied (4/5 both), except Q30 (test coverage): baseline 3/5, grafema **5/5**
+
+**H003: CONFIRMED.** Grafema advantage appears on category 3 (cross-service tracing, concurrency, error propagation). Baseline better on category 1-2 (simple structure/location). The overhead of MCP tools hurts on simple questions but pays off on complex ones.
+
 ### Next steps
 
-1. Test H001A/B/C in separate worktree branches on remote server
-2. Fix find_calls completeness (H004) — this is a product bug, not just a hypothesis
-3. Add LLM judge for cat 3 questions to test H003
-4. Each change → re-run benchmark → compare
+1. Test H001A/B/C in separate branches on remote server
+2. Fix find_calls completeness (H004) — product bug
+3. Each change → re-run benchmark → compare
 
 ### Evaluator fixes during this iteration
 

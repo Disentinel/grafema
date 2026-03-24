@@ -11,6 +11,8 @@
 
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join, resolve, basename } from 'path';
+import { execFileSync } from 'child_process';
+import { tmpdir } from 'os';
 import { createRequire } from 'module';
 
 const _require = createRequire(join(resolve(new URL('../../', import.meta.url).pathname), 'packages', 'util', 'package.json'));
@@ -31,6 +33,8 @@ function parseArgs(argv) {
   const args = {
     run: null,
     questions: DEFAULT_QUESTIONS,
+    judge: false,
+    judgeModel: 'haiku',
   };
   let i = 2;
   while (i < argv.length) {
@@ -41,9 +45,15 @@ function parseArgs(argv) {
       case '--questions':
         args.questions = resolve(argv[++i]);
         break;
+      case '--judge':
+        args.judge = true;
+        break;
+      case '--judge-model':
+        args.judgeModel = argv[++i];
+        break;
       case '--help':
       case '-h':
-        console.error('Usage: node evaluate.mjs --run autoresearch/results/{run-id} [--questions path]');
+        console.error('Usage: node evaluate.mjs --run autoresearch/results/{run-id} [--questions path] [--judge] [--judge-model haiku]');
         process.exit(0);
         break;
       default:
@@ -198,6 +208,80 @@ function evalSuperset(expected, actual) {
   return { score, correct: score === 1.0 };
 }
 
+// ---------------------------------------------------------------------------
+// LLM Judge
+// ---------------------------------------------------------------------------
+
+const JUDGE_MODEL_MAP = {
+  haiku: 'claude-haiku-4-5-20251001',
+  sonnet: 'claude-sonnet-4-6',
+};
+
+/**
+ * Use an LLM to judge answer quality on a 0-5 scale.
+ * Spawns `claude -p` with a judging prompt.
+ * Returns { score: 0-5, reasoning: string }.
+ */
+function evalJudge(question, referenceAnswer, actualAnswer, modelAlias) {
+  const modelId = JUDGE_MODEL_MAP[modelAlias] || modelAlias;
+
+  const prompt = `You are an expert code reviewer evaluating answers about a codebase.
+
+QUESTION:
+${question}
+
+REFERENCE ANSWER (ground truth):
+${referenceAnswer}
+
+ACTUAL ANSWER (to evaluate):
+${actualAnswer}
+
+Score the actual answer on a 0-5 scale:
+- 5: Perfect — all key points from reference covered accurately
+- 4: Very good — minor omissions or imprecisions, core is correct
+- 3: Adequate — covers main idea but misses important details
+- 2: Partial — some correct elements but significant gaps or errors
+- 1: Poor — mostly incorrect or irrelevant
+- 0: Wrong — completely incorrect or empty
+
+Respond in exactly this format (no other text):
+SCORE: <number>
+REASONING: <one sentence>`;
+
+  const tmpFile = join(tmpdir(), `judge-prompt-${process.pid}-${Date.now()}.txt`);
+  writeFileSync(tmpFile, prompt, 'utf8');
+
+  try {
+    const result = execFileSync('claude', [
+      '-p', prompt,
+      '--output-format', 'text',
+      '--max-turns', '1',
+      '--model', modelId,
+      '--dangerously-skip-permissions',
+      '--no-session-persistence',
+    ], {
+      cwd: PROJECT_ROOT,
+      encoding: 'utf8',
+      timeout: 60000,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    // Parse response
+    const scoreMatch = result.match(/SCORE:\s*(\d)/);
+    const reasonMatch = result.match(/REASONING:\s*(.+)/);
+
+    const score = scoreMatch ? parseInt(scoreMatch[1], 10) : null;
+    const reasoning = reasonMatch ? reasonMatch[1].trim() : result.trim().slice(0, 200);
+
+    return { score, reasoning };
+  } catch (err) {
+    console.error(`  Judge error: ${err.message?.slice(0, 100)}`);
+    return { score: null, reasoning: `error: ${err.message?.slice(0, 100)}` };
+  } finally {
+    try { require('fs').unlinkSync(tmpFile); } catch {}
+  }
+}
+
 function evalText(expected, answerText) {
   // expected is a list of keywords that should all be present
   const text = (answerText || '').toLowerCase();
@@ -262,18 +346,47 @@ function main() {
     const expected = q.expected || [];
 
     if (evalType === 'judge') {
-      judgeSkipped++;
+      if (!args.judge) {
+        judgeSkipped++;
+        const entry = {
+          question_id: q.id,
+          eval_type: 'judge',
+          score: null,
+          expected,
+          actual: answer.answer_text,
+          correct: null,
+          status: 'needs_judge',
+        };
+        results.push(entry);
+        writeFileSync(evalPath, JSON.stringify(entry) + '\n', { flag: 'a' });
+        continue;
+      }
+
+      // Run LLM judge
+      const refAnswer = q.reference_answer || '';
+      console.error(`  ${q.id}: judging...`);
+      // Use raw_text as fallback when answer_text is empty (agent didn't use <answer> tags)
+      const textToJudge = answer.answer_text || answer.raw_text || '';
+      const judgeResult = evalJudge(q.question, refAnswer, textToJudge, args.judgeModel);
+      const normalizedScore = judgeResult.score !== null ? judgeResult.score / 5.0 : null;
       const entry = {
         question_id: q.id,
         eval_type: 'judge',
-        score: null,
-        expected,
-        actual: answer.answer_text,
-        correct: null,
-        status: 'needs_judge',
+        score: normalizedScore,
+        judge_raw_score: judgeResult.score,
+        reasoning: judgeResult.reasoning,
+        expected: refAnswer.slice(0, 200) + '...',
+        actual: answer.answer_text.slice(0, 200) + '...',
+        correct: judgeResult.score !== null ? judgeResult.score >= 3 : null,
+        status: 'judged',
       };
       results.push(entry);
       writeFileSync(evalPath, JSON.stringify(entry) + '\n', { flag: 'a' });
+
+      const mark = entry.correct ? 'PASS' : (entry.correct === false ? 'FAIL' : '?');
+      console.error(`  ${q.id}: ${mark} (${judgeResult.score}/5) — ${judgeResult.reasoning?.slice(0, 80)}`);
+      if (entry.correct) correct++;
+      deterministic++;
       continue;
     }
 
