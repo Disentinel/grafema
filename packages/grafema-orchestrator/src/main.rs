@@ -47,6 +47,10 @@ enum Commands {
         /// Force re-analysis of all files (ignore mtime)
         #[arg(long)]
         force: bool,
+
+        /// Number of parallel resolve workers (overrides auto-detection)
+        #[arg(long)]
+        resolve_jobs: Option<usize>,
     },
     /// Re-run resolution phase on an already-analyzed database
     Resolve {
@@ -70,11 +74,69 @@ fn num_cpus() -> usize {
 
 /// Number of CPU cores available for resolve workers.
 /// Reserves 1 core for the main thread / RFDB / OS.
+///
+/// Memory-aware: each resolve worker uses ~2GB RSS. On memory-constrained
+/// VMs (e.g., 16GB with RFDB using 3GB), CPU-based count would OOM.
 fn resolve_worker_count() -> usize {
     let cpus = num_cpus();
-    let available = if cpus > 1 { cpus - 1 } else { 1 };
-    // Cap at 7 (number of JS resolution steps — more workers than steps wastes memory)
-    std::cmp::min(7, std::cmp::max(1, available))
+    let cpu_based = std::cmp::min(7, if cpus > 1 { cpus - 1 } else { 1 });
+
+    // Memory-aware: each resolve worker uses ~2GB, RFDB ~3GB, OS+orchestrator ~1GB
+    let available_gb = available_memory_gb();
+    let mem_based = if available_gb > 4 {
+        ((available_gb - 4) / 2) as usize // 4GB reserved (3 RFDB + 1 OS)
+    } else {
+        1
+    };
+
+    let count = cpu_based.min(mem_based).max(1);
+    if count < cpu_based {
+        tracing::info!(
+            cpu_workers = cpu_based,
+            mem_workers = count,
+            available_gb = available_gb,
+            "Worker count limited by available memory"
+        );
+    }
+    count
+}
+
+/// Detect available system memory in GB.
+///
+/// Linux: reads MemAvailable from /proc/meminfo (accounts for caches/buffers).
+/// macOS: reads total physical memory via sysctl hw.memsize.
+/// Fallback: 16GB (conservative default).
+fn available_memory_gb() -> u64 {
+    // Linux: /proc/meminfo MemAvailable (available, not total)
+    if let Ok(content) = std::fs::read_to_string("/proc/meminfo") {
+        for line in content.lines() {
+            if line.starts_with("MemAvailable:") {
+                if let Some(kb_str) = line.split_whitespace().nth(1) {
+                    if let Ok(kb) = kb_str.parse::<u64>() {
+                        return kb / 1024 / 1024; // KB → GB
+                    }
+                }
+            }
+        }
+    }
+
+    // macOS: sysctl hw.memsize (total physical memory)
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(output) = std::process::Command::new("sysctl")
+            .args(["-n", "hw.memsize"])
+            .output()
+        {
+            if let Ok(bytes_str) = std::str::from_utf8(&output.stdout) {
+                if let Ok(bytes) = bytes_str.trim().parse::<u64>() {
+                    return bytes / 1024 / 1024 / 1024;
+                }
+            }
+        }
+    }
+
+    // Default: assume 16GB
+    16
 }
 
 /// Resolve the URI authority for grafema:// URIs.
@@ -198,6 +260,7 @@ async fn main() -> Result<()> {
             socket,
             jobs,
             force,
+            resolve_jobs,
         } => {
             let cfg = config::load(&config_path)?.with_defaults();
 
@@ -840,17 +903,20 @@ async fn main() -> Result<()> {
             // 8. Run JS resolution with streaming double-buffer
             if js_file_count > 0 {
                 let lang_start = std::time::Instant::now();
-                let pool_size = resolve_worker_count();
+                let pool_size = resolve_jobs.unwrap_or_else(resolve_worker_count);
                 tracing::info!(
                     workers = pool_size,
                     "Running JS streaming resolution"
                 );
                 profile!("js_resolve_start", "workers" => pool_size);
 
+                // Scale max_message_size: fewer workers = larger output per worker.
+                // 7 workers ≈ 200MB each; 1 worker ≈ 1400MB total output.
+                let max_msg = (200 * 1024 * 1024_usize) * 7 / pool_size.max(1);
                 let resolve_pool_config = process_pool::PoolConfig {
                     command: cfg.analyzers.js_resolve_path(),
                     args: vec!["--daemon".to_string()],
-                    max_message_size: 200 * 1024 * 1024, // 200MB for large shards
+                    max_message_size: max_msg,
                     request_timeout: std::time::Duration::from_secs(300),
                 };
 
@@ -2267,9 +2333,12 @@ async fn main() -> Result<()> {
             }
             let depends_on_ms = depends_on_start.elapsed().as_millis() as u64;
 
-            // Compact
+            // Skip compact during resolve to avoid OOM on memory-constrained VMs.
+            // Resolution adds edges via virtual files — no segment dedup strictly
+            // needed. Compact runs at the end of the next `grafema analyze`.
+            // Instead, just flush write buffers so data is persisted to disk.
             let compact_start = std::time::Instant::now();
-            rfdb.compact().await.context("Failed to compact")?;
+            rfdb.rebuild_indexes().await.context("Failed to flush after resolve")?;
             let compact_ms = compact_start.elapsed().as_millis();
 
             // Phase metrics (resolve-only subset)
@@ -2278,7 +2347,7 @@ async fn main() -> Result<()> {
                     ("resolve",      "duration_ms",  resolve_ms,                 "ms"),
                     ("diagnostics",  "duration_ms",  diagnostics_ms,             "ms"),
                     ("depends_on",   "duration_ms",  depends_on_ms,              "ms"),
-                    ("compact",      "duration_ms",  compact_ms as u64,          "ms"),
+                    ("flush",        "duration_ms",  compact_ms as u64,          "ms"),
                 ];
 
                 let (mut phase_nodes, phase_edges) =
@@ -2303,7 +2372,7 @@ async fn main() -> Result<()> {
 
             let total_ms = pipeline_start.elapsed().as_millis() as u64;
             println!(
-                "Resolve complete: resolve {resolve_ms}ms, diagnostics {diagnostics_ms}ms, depends_on {depends_on_ms}ms, compact {compact_ms}ms, total {total_ms}ms"
+                "Resolve complete: resolve {resolve_ms}ms, diagnostics {diagnostics_ms}ms, depends_on {depends_on_ms}ms, flush {compact_ms}ms, total {total_ms}ms"
             );
 
             Ok(())

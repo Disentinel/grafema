@@ -20,6 +20,7 @@ export const analyzeCommand = new Command('analyze')
   .option('--log-level <level>', 'Set log level (silent, errors, warnings, info, debug)')
   .option('--log-file <path>', 'Write all log output to a file')
   .option('--strict', 'Enable strict mode (fail on unresolved references)')
+  .option('--resolve-jobs <number>', 'Number of parallel resolve workers (default: auto based on CPU and memory)')
   .option('--no-auto-start', 'Do not auto-start RFDB server (require manual start)')
   .option('--quickstart', 'Auto-initialize if no config exists (scan project, generate config)')
   .addHelpText('after', `
