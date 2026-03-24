@@ -8,6 +8,82 @@
 # - Spans multiple files/services
 # - Answer is verifiable from source code
 
+# === Sillito L1: Finding Initial Focus Points ===
+# "Where is X implemented?" — baseline questions, should be easy for Grafema
+
+- id: L1-01
+  question: "Where is the command palette quick pick implemented? What file contains the main class?"
+  type: finding_focus
+  sillito_level: 1
+  source: "Sillito Q1 'Where in the code is the functionality X implemented?'"
+  golden_answer_hint: "src/vs/workbench/browser/parts/quickinput/quickInput.ts, QuickInputController"
+
+- id: L1-02
+  question: "What class handles file drag and drop in the explorer tree?"
+  type: finding_focus
+  sillito_level: 1
+  source: "Sillito Q2 'Where is the interface for X?'"
+  golden_answer_hint: "src/vs/workbench/contrib/files/browser/views/explorerViewer.ts, FileDragAndDrop"
+
+- id: L1-03
+  question: "Where is the diff editor implemented? What is the entry point class?"
+  type: finding_focus
+  sillito_level: 1
+  source: "Sillito Q1 variant"
+  golden_answer_hint: "src/vs/editor/browser/widget/diffEditor/diffEditorWidget.ts, DiffEditorWidget"
+
+- id: L1-04
+  question: "What file defines the INotificationService interface and where is it implemented?"
+  type: finding_focus
+  sillito_level: 1
+  source: "Sillito Q3 'Where is X created/instantiated?'"
+  golden_answer_hint: "src/vs/platform/notification/common/notification.ts (interface), src/vs/workbench/services/notification/common/notificationService.ts (impl)"
+
+- id: L1-05
+  question: "Where is the minimap rendering code? What class draws it?"
+  type: finding_focus
+  sillito_level: 1
+  source: "Sillito Q1 variant"
+  golden_answer_hint: "src/vs/editor/browser/viewParts/minimap/minimap.ts, Minimap class"
+
+# === Sillito L4: Understanding Architecture / Big Picture ===
+# "What is the overall design?" — hardest questions, need structural understanding
+
+- id: L4-01
+  question: "What is the layering architecture of VS Code? Which directories correspond to which layers and what are the dependency rules between them?"
+  type: architecture
+  sillito_level: 4
+  source: "Sillito Q39 'What is the overall architecture?', issue #87492"
+  golden_answer_hint: "base (no deps) → platform (base) → editor (platform) → workbench (editor+platform). src/vs/base, src/vs/platform, src/vs/editor, src/vs/workbench. Layering enforced by ESLint rules."
+
+- id: L4-02
+  question: "What are all the different process types in VS Code and what runs in each? How do they communicate?"
+  type: architecture
+  sillito_level: 4
+  source: "Sillito Q40 'What are the boundaries/interfaces between subsystems?', issues #113410 #23976"
+  golden_answer_hint: "Main/renderer (Electron), extension host (Node.js fork), shared process (utility), pty host (terminal), file watcher. IPC via RPCProtocol (msgpack over MessagePort/socket)."
+
+- id: L4-03
+  question: "How is the workbench shell composed? What are the main Parts and how does layout work?"
+  type: architecture
+  sillito_level: 4
+  source: "Sillito Q41 'What is the overall structure of system X?', PR #304447"
+  golden_answer_hint: "Layout: WorkbenchLayout orchestrates Parts (ActivitybarPart, SidebarPart, EditorPart, PanelPart, StatusbarPart). Each Part extends Component. Grid-based layout in workbench.ts."
+
+- id: L4-04
+  question: "What is the extension activation model? How does VS Code decide when to activate an extension and what lifecycle hooks exist?"
+  type: architecture
+  sillito_level: 4
+  source: "Sillito Q42 'What design patterns are used?', issue #58226 (doc feedback)"
+  golden_answer_hint: "activationEvents in package.json, ExtensionActivationManager, activate/deactivate exports, lazy activation via onCommand/onLanguage/onFileSystem/workspaceContains/*"
+
+- id: L4-05
+  question: "How does the editor contribution system work? How do features like bracket matching, folding, and hover get registered on the editor?"
+  type: architecture
+  sillito_level: 4
+  source: "Sillito Q44 'What are the extension/plugin points?'"
+  golden_answer_hint: "registerEditorContribution in editorExtensions.ts, IEditorContribution interface, lifecycle tied to CodeEditorWidget creation/disposal"
+
 # === From GitHub Issues — People struggling with architecture ===
 
 - id: Q01
