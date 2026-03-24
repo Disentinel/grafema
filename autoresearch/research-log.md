@@ -68,7 +68,7 @@ Added LLM judge (Haiku) for category 3 and 4 questions.
 ## 2026-03-24: Hypothesis experiments (remote, parallel)
 
 ### Setup
-5 experiments run on Hetzner dev VM (204.168.176.164) via tmux + claude --dangerously-skip-permissions. Each in separate git branch. 3 completed, 2 failed (H001A npm error, H001C still running).
+5 experiments run on remote dev VM via tmux + claude --dangerously-skip-permissions. Each in separate git branch. 3 completed, 2 failed (H001A npm error, H001C still running).
 
 ### Results: Cost vs Accuracy
 
@@ -135,9 +135,23 @@ Graph adds no value and slight overhead. Confirms: need 15k+ files to test the t
 Analyzing microsoft/vscode on remote: 5747 files, **4M+ nodes, 8.3M+ edges**.
 This is 200x the scale of h3. Resolution phase pending.
 
+### VS Code OOM during resolution
+
+Analysis phase completed: 5747 files → 4.15M nodes, 8.44M edges, 104 errors, ~13 min.
+Resolution phase started (7 streaming workers) but **RFDB server OOM-killed** at ~3GB RSS.
+VM has 16GB RAM. Resolution on 4M nodes requires more memory than available.
+
+**Impact:** Graph has all per-file nodes/edges but NO cross-file edges (IMPORTS_FROM, CALLS, etc.). MCP tools like find_calls and trace_dataflow would return empty results. The graph is structurally incomplete.
+
+**Root cause:** RFDB server loads indexes into memory during resolution. At 4M nodes, index size exceeds available RAM. This is a known scaling limit — needs fix (REG-XXX to be created).
+
+**VS Code is ideal benchmark target:** 5.6k TS files, public, comparable to large private codebases. Once OOM is fixed, this becomes the primary benchmark.
+
+**Actionable:** Need separate resolution phase CLI command (`grafema resolve`) to allow retry without re-analyzing all files.
+
 ### Pre-registration results
 
-H-PR1 predicted baseline ≤60% on tracing. Actual: 100%. **Falsified** — questions too easy for this scale project. VS Code should provide the actual challenge.
+H-PR1 predicted baseline ≤60% on tracing. Actual: 100%. **Falsified** — questions too easy for this scale project. VS Code should provide the actual challenge once resolution works.
 
 ### Evaluator fixes during this iteration
 
