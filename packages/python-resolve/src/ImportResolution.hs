@@ -12,11 +12,14 @@
 --     Built from MODULE nodes, converting file paths to dotted module paths.
 --   - Name index:   (module_path, exported_name) -> (file path, node ID)
 --     Built from FUNCTION, CLASS, VARIABLE nodes using their file's module path.
+--     IMPORT_BINDING nodes are also included as re-exports (lower priority).
 --
 -- Phase 2: Resolve IMPORT_BINDING nodes to declarations (IMPORTS_FROM edges).
+--   - Relative imports (leading dots) are resolved to absolute module paths.
 --   - "from foo import bar" → look up (foo, bar) in name index
 --   - "from foo import bar" where bar is a submodule → look up "foo.bar" in module index
 --   - "import foo" → look up "foo" in module index
+--   - "from foo import *" → IMPORTS_FROM to the MODULE node
 module ImportResolution (run, resolveAll) where
 
 import Grafema.Types (GraphNode(..), GraphEdge(..), MetaValue(..))
@@ -71,6 +74,9 @@ stripSrcPrefix t =
        []    -> t
 
 -- | Build name index: maps (module, name) to declarations.
+-- Includes FUNCTION, CLASS, VARIABLE nodes directly, plus IMPORT_BINDING
+-- nodes as re-exports (so "from .models import BaseModel" where BaseModel
+-- is itself imported into models.py still resolves).
 buildNameIndex :: [GraphNode] -> ModuleIndex -> NameIndex
 buildNameIndex nodes modIdx = foldl' go Map.empty nodes
   where
@@ -79,6 +85,17 @@ buildNameIndex nodes modIdx = foldl' go Map.empty nodes
           case Map.lookup (gnFile n) modIdx of
             Just (_, modPath) ->
               Map.insert (modPath, gnName n) (gnFile n, gnId n) acc
+            Nothing -> acc
+      -- IMPORT_BINDING acts as a re-export: if module A imports X from
+      -- external, and module B does "from A import X", we should resolve
+      -- B's binding to A's binding node.
+      | gnType n == "IMPORT_BINDING" =
+          case Map.lookup (gnFile n) modIdx of
+            Just (_, modPath) ->
+              -- Only insert if not already present (declarations take priority)
+              case Map.lookup (modPath, gnName n) acc of
+                Just _  -> acc  -- declaration already registered, skip
+                Nothing -> Map.insert (modPath, gnName n) (gnFile n, gnId n) acc
             Nothing -> acc
       | otherwise = acc
 
@@ -89,19 +106,84 @@ getMetaText key node =
     Just (MetaText t) | not (T.null t) -> Just t
     _                                  -> Nothing
 
--- | Resolve all IMPORT_BINDING nodes.
+-- | Resolve a relative import path to an absolute module path.
+--
+-- Python relative imports use leading dots:
+--   "from ..base import StageBase" in file "pkg/stages/mod_a.py"
+--   -> source_module = "..base", relative_level = 2
+--   -> importer module = "pkg.stages.mod_a"
+--   -> go up 2 levels from "pkg.stages" (parent package) -> "pkg"
+--   -> append "base" -> "pkg.base"
+--
+-- For "from .foo import bar" (1 dot):
+--   -> go up 1 level from parent package -> same package
+resolveRelativeImport :: ModuleIndex -> Text -> Text -> Text
+resolveRelativeImport modIdx importerFile rawSource =
+  let (dots, rest) = T.span (== '.') rawSource
+      level = T.length dots
+  in if level == 0
+     then rawSource  -- absolute import, return as-is
+     else
+       let importerMod = case Map.lookup importerFile modIdx of
+             Just (_, mp) -> mp
+             Nothing      -> fileToModulePath importerFile
+           -- Split importer module path into components
+           parts = T.splitOn "." importerMod
+           -- Go up from the parent package:
+           -- level=1 means current package (drop module name = 1 component)
+           -- level=2 means parent package (drop 2 components)
+           -- etc.
+           dropCount = level
+           base = T.intercalate "." (take (max 0 (length parts - dropCount)) parts)
+       in if T.null rest
+          then base
+          else if T.null base
+               then rest
+               else base <> "." <> rest
+
+-- | Resolve all IMPORT_BINDING nodes and glob IMPORT nodes.
 resolveAll :: [GraphNode] -> IO [PluginCommand]
 resolveAll nodes = do
   let modIdx  = buildModuleIndex nodes
       nameIdx = buildNameIndex nodes modIdx
       importBindings = filter (\n -> gnType n == "IMPORT_BINDING") nodes
+      globImports = filter isGlobImport nodes
 
-  let edges = concatMap (resolveBinding modIdx nameIdx) importBindings
+  let bindingEdges = concatMap (resolveBinding modIdx nameIdx) importBindings
+      globEdges    = concatMap (resolveGlobImport modIdx) globImports
+      edges = bindingEdges ++ globEdges
 
   hPutStrLn stderr $
     "python-resolve: " ++ show (length edges) ++ " import edges"
 
   return edges
+
+-- | Check if a node is a glob import (from foo import *).
+isGlobImport :: GraphNode -> Bool
+isGlobImport n =
+  gnType n == "IMPORT" &&
+  case Map.lookup "glob" (gnMetadata n) of
+    Just (MetaBool True) -> True
+    _                    -> False
+
+-- | Resolve a glob import to its target module.
+-- "from .models import *" -> IMPORTS_FROM edge to the models MODULE node.
+resolveGlobImport :: ModuleIndex -> GraphNode -> [PluginCommand]
+resolveGlobImport modIdx node =
+  let rawPath = gnName node  -- e.g., ".models" or "..utils"
+      importerFile = gnFile node
+      modPath = resolveRelativeImport modIdx importerFile rawPath
+      modMatch = [ (f, mid) | (f, (mid, mp)) <- Map.toList modIdx, mp == modPath ]
+  in case modMatch of
+       ((_, mid):_) ->
+         [ EmitEdge GraphEdge
+             { geSource   = gnId node
+             , geTarget   = mid
+             , geType     = "IMPORTS_FROM"
+             , geMetadata = Map.fromList [("glob", MetaBool True)]
+             }
+         ]
+       [] -> []
 
 resolveBinding :: ModuleIndex -> NameIndex -> GraphNode -> [PluginCommand]
 resolveBinding modIdx nameIdx binding =
@@ -109,10 +191,13 @@ resolveBinding modIdx nameIdx binding =
         Just n  -> n
         Nothing -> gnName binding
       sourcePath = getMetaText "source_module" binding
+      importerFile = gnFile binding
   in case sourcePath of
-       Just modPath ->
+       Just rawModPath ->
+         -- Resolve relative imports (leading dots) to absolute module paths
+         let modPath = resolveRelativeImport modIdx importerFile rawModPath
          -- from foo import bar -> look up (foo, bar) in name index
-         case Map.lookup (modPath, importedName) nameIdx of
+         in case Map.lookup (modPath, importedName) nameIdx of
            Just (_file, targetId) ->
              [ EmitEdge GraphEdge
                  { geSource   = gnId binding
