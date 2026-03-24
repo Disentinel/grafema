@@ -117,6 +117,7 @@ export async function resolveAction(path: string, options: {
   debug?: boolean;
   logLevel?: string;
   logFile?: string;
+  jobs?: string;
   autoStart?: boolean;
 }): Promise<void> {
   const projectPath = resolve(path);
@@ -210,6 +211,10 @@ export async function resolveAction(path: string, options: {
 
   // Build orchestrator args — resolve subcommand
   const args: string[] = ['resolve', '--config', configPath, '--socket', backend.socketPath];
+
+  if (options.jobs) {
+    args.push('--jobs', options.jobs);
+  }
 
   debug(`Spawning: ${orchestratorBinary} ${args.join(' ')}`);
 

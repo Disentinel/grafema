@@ -56,6 +56,9 @@ enum Commands {
         /// Path to RFDB unix socket
         #[arg(short, long)]
         socket: Option<PathBuf>,
+        /// Number of parallel resolve workers (default: auto based on CPU count)
+        #[arg(short, long)]
+        jobs: Option<usize>,
     },
 }
 
@@ -1599,6 +1602,7 @@ async fn main() -> Result<()> {
         Commands::Resolve {
             config: config_path,
             socket,
+            jobs,
         } => {
             let cfg = config::load(&config_path)?.with_defaults();
 
@@ -1681,7 +1685,7 @@ async fn main() -> Result<()> {
             // --- JS resolution ---
             if detected_langs.contains(&config::Language::JavaScript) {
                 let lang_start = std::time::Instant::now();
-                let pool_size = resolve_worker_count();
+                let pool_size = jobs.unwrap_or_else(resolve_worker_count);
                 eprintln!("  Resolve: JS/TS ({} workers)...", pool_size);
 
                 let resolve_pool_config = process_pool::PoolConfig {
