@@ -1688,11 +1688,14 @@ async fn main() -> Result<()> {
                 let pool_size = jobs.unwrap_or_else(resolve_worker_count);
                 eprintln!("  Resolve: JS/TS ({} workers)...", pool_size);
 
+                // Scale max_message_size: fewer workers = larger output per worker.
+                // 7 workers ≈ 200MB each; 1 worker ≈ 1400MB total output.
+                let max_msg = (200 * 1024 * 1024_usize) * 7 / pool_size.max(1);
                 let resolve_pool_config = process_pool::PoolConfig {
                     command: cfg.analyzers.js_resolve_path(),
                     args: vec!["--daemon".to_string()],
-                    max_message_size: 200 * 1024 * 1024,
-                    request_timeout: std::time::Duration::from_secs(300),
+                    max_message_size: max_msg,
+                    request_timeout: std::time::Duration::from_secs(600),
                 };
 
                 match process_pool::ProcessPool::new(resolve_pool_config, pool_size) {
