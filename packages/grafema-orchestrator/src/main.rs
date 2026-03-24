@@ -75,16 +75,19 @@ fn num_cpus() -> usize {
 /// Number of CPU cores available for resolve workers.
 /// Reserves 1 core for the main thread / RFDB / OS.
 ///
-/// Memory-aware: each resolve worker uses ~2GB RSS. On memory-constrained
-/// VMs (e.g., 16GB with RFDB using 3GB), CPU-based count would OOM.
+/// Memory-aware: each resolve worker uses ~5GB RSS on large graphs
+/// (context nodes like SCOPE, PARAM, CLASS are broadcast to ALL workers).
+/// On memory-constrained VMs (e.g., 16GB with RFDB using 3GB), this
+/// limits to 1-2 workers to prevent OOM.
 fn resolve_worker_count() -> usize {
     let cpus = num_cpus();
     let cpu_based = std::cmp::min(7, if cpus > 1 { cpus - 1 } else { 1 });
 
-    // Memory-aware: each resolve worker uses ~2GB, RFDB ~3GB, OS+orchestrator ~1GB
+    // Memory-aware: each resolve worker uses ~5GB (context nodes broadcast),
+    // RFDB ~3GB, OS+orchestrator ~1GB headroom
     let available_gb = available_memory_gb();
     let mem_based = if available_gb > 4 {
-        ((available_gb - 4) / 2) as usize // 4GB reserved (3 RFDB + 1 OS)
+        ((available_gb - 4) / 5) as usize // 4GB reserved, 5GB per worker
     } else {
         1
     };
