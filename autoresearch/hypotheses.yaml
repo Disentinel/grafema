@@ -2,4 +2,85 @@
 # Status: untested | confirmed | rejected | inconclusive
 # Axis: prompt | graph | tools | model
 
-hypotheses: []
+hypotheses:
+  - id: H001A
+    date: "2026-03-24"
+    axis: tools
+    statement: "Reducing MCP tool count from 30 to 4-5 core tools improves accuracy and reduces token overhead"
+    prediction: "Accuracy >= baseline (93%), avg tokens decrease 10%+, MCP adoption stays >= 50%"
+    metric: accuracy + avg_tokens + mcp_adoption
+    status: untested
+    evidence: "grafema-v1 used only 3 distinct MCP tools out of 30. ToolSearch called 34 times = token waste."
+    change: "Remove non-core tools from MCP server, keep: find_calls, trace_dataflow, describe, query_graph, get_file_overview"
+    branch: "experiment/h001a-reduce-tools"
+    runs: []
+
+  - id: H001B
+    date: "2026-03-24"
+    axis: tools
+    statement: "Single swiss-army tool (grafema action=X) reduces context overhead vs 30 separate tools"
+    prediction: "ToolSearch calls drop to 0-1, avg tokens decrease 15%+, accuracy unchanged"
+    metric: toolsearch_calls + avg_tokens + accuracy
+    status: untested
+    evidence: "34 ToolSearch calls in grafema-v1, each loading tool schemas into context."
+    change: "Replace all MCP tools with single grafema(action, ...) tool"
+    branch: "experiment/h001b-single-tool"
+    runs: []
+
+  - id: H001C
+    date: "2026-03-24"
+    axis: tools
+    statement: "Pre-loading tool schemas (non-deferred) eliminates ToolSearch overhead without reducing tool count"
+    prediction: "ToolSearch calls = 0, latency decrease 5-10%, accuracy unchanged"
+    metric: toolsearch_calls + latency + accuracy
+    status: untested
+    evidence: "ToolSearch is deferred tool loading mechanism. If tools pre-loaded, no ToolSearch needed."
+    change: "Configure MCP to load all tool schemas upfront instead of deferred"
+    branch: "experiment/h001c-preload-tools"
+    runs: []
+
+  - id: H002
+    date: "2026-03-24"
+    axis: tools
+    statement: "Agent prefers Grep over find_calls for 'who calls X' because find_calls returns incomplete/insufficient results"
+    prediction: "In grafema sessions, Grep is used before or after find_calls for call-analysis questions. find_calls results are supplemented by Grep."
+    metric: tool_usage_sequence
+    status: confirmed
+    evidence: "Q06 grafema: find_calls called 1x then Grep 6x + Read 3x. find_calls returned partial results, agent supplemented with file tools but still missed 1/2 expected files (score 0.5 vs baseline 1.0)."
+    runs: ["grafema-v1"]
+
+  - id: H003
+    date: "2026-03-24"
+    axis: tools
+    statement: "Graph advantage appears on category 3 questions (tracing, cross-service) not category 1-2 (feature location, structure)"
+    prediction: "Judge-evaluated cat 3 questions show grafema scoring higher than baseline"
+    metric: judge_scores_cat3
+    status: untested
+    evidence: "Cat 1-2 baseline won 93% vs 87%. Cat 3 needs judge eval to compare."
+    change: "Add LLM judge eval for Q16-Q25"
+    branch: null
+    runs: []
+
+  - id: H004
+    date: "2026-03-24"
+    axis: graph
+    statement: "find_calls returns incomplete results because it only searches CALL node names, missing method calls and aliased calls"
+    prediction: "Fixing find_calls to search through CALLS edges and aliases increases Q06-type accuracy to match baseline"
+    metric: accuracy_call_questions
+    status: untested
+    evidence: "Q06: find_calls('commitBatch') missed packages/rfdb/ts/base-client.ts despite it being a primary caller."
+    change: "Improve find_calls handler to cover more call patterns"
+    branch: "experiment/h004-fix-find-calls"
+    runs: []
+
+  - id: H005
+    date: "2026-03-24"
+    axis: tools
+    statement: "get_stats called 19 times is pure overhead — agent checks 'is graph loaded?' before every MCP call"
+    prediction: "Removing get_stats from MCP (or auto-returning status in every tool response) reduces MCP calls by 40%+"
+    metric: get_stats_calls + total_mcp_calls
+    status: untested
+    evidence: "19 get_stats calls across 30 questions in grafema-v1. MCP server instructions say 'START HERE: call get_stats'. Agent follows this literally."
+    change: "Remove get_stats or include status in every tool response header"
+    branch: "experiment/h005-remove-get-stats"
+    runs: []

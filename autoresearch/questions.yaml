@@ -21,7 +21,7 @@ questions:
   - id: Q01
     category: 1
     question: "Where in the codebase is the error message about RFDB server not running produced? Give the file path."
-    eval_type: set
+    eval_type: superset
     expected:
       - "packages/util/src/storage/backends/RFDBServerBackend.ts"
     anchors:

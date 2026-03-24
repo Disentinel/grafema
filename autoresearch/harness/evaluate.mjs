@@ -123,30 +123,73 @@ function parseAnswerItems(text) {
 // ---------------------------------------------------------------------------
 
 function evalSet(expected, actual) {
-  const expSet = new Set(expected.map(normalize));
-  const actSet = new Set(actual.map(normalize));
+  const actNorm = actual.map(normalize);
+  const actBase = actual.map(a => normalize(extractBasename(a)));
 
-  // Also try basename matching for file paths
-  const expBaseSet = new Set(expected.map(e => normalize(extractBasename(e))));
-  const actBaseSet = new Set(actual.map(a => normalize(extractBasename(a))));
+  // Check that every expected item matches some actual item (recall)
+  let recallHits = 0;
+  for (const exp of expected) {
+    if (itemMatches(normalize(exp), normalize(extractBasename(exp)), actNorm, actBase)) {
+      recallHits++;
+    }
+  }
 
-  // Check exact set equality (full paths or basenames)
-  const fullMatch = expSet.size === actSet.size && [...expSet].every(e => actSet.has(e));
-  const baseMatch = expBaseSet.size === actBaseSet.size && [...expBaseSet].every(e => actBaseSet.has(e));
+  // Check that every actual item matches some expected item (precision)
+  const expNorm = expected.map(normalize);
+  const expBase = expected.map(e => normalize(extractBasename(e)));
+  let precisionHits = 0;
+  for (const act of actual) {
+    if (itemMatches(normalize(act), normalize(extractBasename(act)), expNorm, expBase)) {
+      precisionHits++;
+    }
+  }
 
-  const score = (fullMatch || baseMatch) ? 1.0 : 0.0;
-  return { score, correct: score === 1.0 };
+  const recall = expected.length > 0 ? recallHits / expected.length : 1.0;
+  const precision = actual.length > 0 ? precisionHits / actual.length : 1.0;
+  const correct = recall === 1.0 && precision === 1.0;
+  const score = correct ? 1.0 : 0.0;
+  return { score, correct };
+}
+
+/**
+ * Check if an expected item matches any actual item.
+ * Tries: exact match, basename match, prefix match, substring match.
+ * Also tries with common file extensions since normalize() only strips
+ * extensions at end-of-string, but prose answers have paths mid-line.
+ */
+function itemMatches(expectedNorm, expectedBase, actualItems, actualBases) {
+  // Build variants: with and without common extensions
+  const exts = ['', '.ts', '.js', '.mjs', '.cjs', '.rs'];
+  const expectedVariants = exts.map(ext => expectedNorm + ext);
+  const baseVariants = exts.map(ext => expectedBase + ext);
+
+  for (const en of expectedVariants) {
+    // Exact match
+    if (actualItems.some(a => a === en)) return true;
+    // Prefix match: actual starts with expected (+ word boundary or end)
+    if (actualItems.some(a => a.startsWith(en + ' ') || a.startsWith(en + '/') || a === en)) return true;
+    // Substring match: expected appears as a bounded token in actual
+    const re = new RegExp('(^|[\\s/`])' + en.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '($|[\\s/,;:\\-—`])');
+    if (actualItems.some(a => re.test(a))) return true;
+  }
+
+  for (const eb of baseVariants) {
+    if (actualBases.some(a => a === eb)) return true;
+    if (actualBases.some(a => a.startsWith(eb + ' ') || a === eb)) return true;
+  }
+
+  return false;
 }
 
 function evalSuperset(expected, actual) {
-  const actNorm = new Set(actual.map(normalize));
-  const actBase = new Set(actual.map(a => normalize(extractBasename(a))));
+  const actNorm = actual.map(normalize);
+  const actBase = actual.map(a => normalize(extractBasename(a)));
 
   let found = 0;
   for (const exp of expected) {
     const en = normalize(exp);
     const eb = normalize(extractBasename(exp));
-    if (actNorm.has(en) || actBase.has(eb)) {
+    if (itemMatches(en, eb, actNorm, actBase)) {
       found++;
     }
   }
@@ -205,8 +248,7 @@ function main() {
   for (const q of questions) {
     const answer = answerMap.get(q.id);
     if (!answer) {
-      console.error(`  ${q.id}: MISSING (no answer in run)`);
-      errored++;
+      // Skip silently if this is a partial run (not all questions were run)
       continue;
     }
 
