@@ -18,9 +18,11 @@ import qualified PropertyAccess
 import qualified JsLocalRefs
 import Grafema.Types (GraphNode)
 import Grafema.Protocol (PluginCommand(..), readFrame, writeFrame, encodeMsgpack, decodeMsgpack, pluginCommandToMsgpack)
+import ImportResolution (ExportIndex, WorkspaceMap, ModuleIndex)
 import qualified Data.Binary as Binary
 import qualified Data.MessagePack as MP
 import qualified Data.Vector as V
+import qualified Data.Map.Strict as Map
 
 -- | A workspace package mapping: npm name → entry point file path.
 data WorkspacePackage = WorkspacePackage
@@ -69,6 +71,14 @@ data DaemonState
   = Accumulating [[GraphNode]]
   | Finalized [GraphNode]
 
+-- | Pre-built indexes for per-file streaming resolution.
+-- Built once by 'build-index', then reused for each 'resolve-file' call.
+data ResolveIndexes = ResolveIndexes
+  { riExportIndex  :: !ExportIndex
+  , riWorkspaceMap :: !WorkspaceMap
+  , riModuleIndex  :: !ModuleIndex
+  }
+
 -- | Flatten accumulated chunks into a single list, caching the result.
 finalizeContext :: IORef DaemonState -> IO [GraphNode]
 finalizeContext stateRef = do
@@ -82,8 +92,9 @@ finalizeContext stateRef = do
 
 -- | Daemon loop: read frames from stdin, dispatch, write responses.
 --   Maintains an IORef of context chunks that accumulate across load-context calls.
-daemonLoop :: IORef DaemonState -> IO ()
-daemonLoop stateRef = do
+--   Also maintains an IORef of pre-built indexes for per-file streaming resolution.
+daemonLoop :: IORef DaemonState -> IORef (Maybe ResolveIndexes) -> IO ()
+daemonLoop stateRef indexRef = do
   mFrame <- readFrame stdin
   case mFrame of
     Nothing -> return ()  -- EOF
@@ -132,13 +143,51 @@ daemonLoop stateRef = do
               endTime <- getCurrentTime
               hPutStrLn stderr $ "[grafema-resolve] resolve-all complete in "
                 ++ show (diffUTCTime endTime startTime)
+            "build-index" -> do
+              startTime <- getCurrentTime
+              let nodes = drNodes req
+              let ws = drWorkspacePackages req
+              let wsList = map (\wp -> (wpName wp, wpEntryPoint wp, wpPackageDir wp)) ws
+              let exportIndex = ImportResolution.buildExportIndex nodes
+              let wsMap = ImportResolution.buildWorkspaceMap wsList
+              let moduleIndex = ImportResolution.buildModuleIndex nodes
+              writeIORef indexRef (Just (ResolveIndexes exportIndex wsMap moduleIndex))
+              endTime <- getCurrentTime
+              hPutStrLn stderr $ "[grafema-resolve] build-index complete: "
+                ++ show (Map.size exportIndex) ++ " files in export index, "
+                ++ show (Map.size moduleIndex) ++ " modules, "
+                ++ show (diffUTCTime endTime startTime)
+              writeFrame stdout (encodeMsgpack (ResOk []))
+            "resolve-file" -> do
+              mIndexes <- readIORef indexRef
+              case mIndexes of
+                Nothing -> writeFrame stdout (encodeMsgpack (ResError "No index built. Send build-index first."))
+                Just indexes -> do
+                  let fileNodes = drNodes req
+                  -- Run all 7 resolvers on just this file's nodes
+                  let r1 = SameFileCalls.resolveAll fileNodes
+                  let r2 = JsLocalRefs.resolveAll fileNodes
+                  let r3 = RuntimeGlobals.resolveAll fileNodes
+                  let r4 = Builtins.resolveAll fileNodes
+                  -- For import resolution: use pre-built export index + workspace map + module index
+                  r5 <- ImportResolution.resolveFileWithIndex (riExportIndex indexes) (riWorkspaceMap indexes) (riModuleIndex indexes) fileNodes
+                  -- For cross-file calls: use pre-built export index
+                  let r6 = CrossFileCalls.resolveFileWithIndex (riExportIndex indexes) fileNodes
+                  let r7 = PropertyAccess.resolveFileWithIndex (riExportIndex indexes) fileNodes
+                  let result = r1 ++ r2 ++ r3 ++ r4 ++ r5 ++ r6 ++ r7
+                  -- Encode directly to msgpack, bypassing aeson intermediate
+                  let msgpackResult = MP.ObjectMap $ V.fromList
+                        [ (MP.ObjectStr "status", MP.ObjectStr "ok")
+                        , (MP.ObjectStr "commands", MP.ObjectArray (V.fromList (map pluginCommandToMsgpack result)))
+                        ]
+                  writeFrame stdout (Binary.encode msgpackResult)
             _ -> do
               -- Legacy per-command path (backward compat)
               allNodes <- finalizeContext stateRef
               let allWithReq = allNodes ++ drNodes req
               result <- dispatch (drCmd req) allWithReq (drWorkspacePackages req)
               writeFrame stdout (encodeMsgpack result)
-      daemonLoop stateRef
+      daemonLoop stateRef indexRef
 
 -- | Dispatch a request to the appropriate resolver.
 dispatch :: Text -> [GraphNode] -> [WorkspacePackage] -> IO DaemonResponse
@@ -189,7 +238,8 @@ main = do
   if "--daemon" `elem` args
     then do
       contextRef <- newIORef (Accumulating [])
-      daemonLoop contextRef
+      indexRef <- newIORef Nothing
+      daemonLoop contextRef indexRef
     else do
       cmd <- execParser cliOpts
       case cmd of

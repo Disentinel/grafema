@@ -754,6 +754,18 @@ impl RfdbClient {
         Ok(all)
     }
 
+    /// Query all nodes for a specific file path (exact match).
+    ///
+    /// Returns all nodes whose `file` field equals the given path.
+    /// Uses the `queryNodesByFile` server command which is not streamed
+    /// (per-file result sets are small enough for a single response).
+    pub async fn query_nodes_by_file(&mut self, file: &str) -> Result<Vec<WireNode>> {
+        let params = serde_json::json!({ "file": file });
+        let resp = self.send_command("queryNodesByFile", params).await?;
+        resp.check_error()?;
+        Ok(resp.nodes.unwrap_or_default())
+    }
+
     /// Health-check ping. Returns `Ok(true)` if the server responds with `pong`.
     pub async fn ping(&mut self) -> Result<bool> {
         let resp = self.send_command("ping", serde_json::json!({})).await?;
