@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.22] - 2026-03-25
+
+### Highlights
+
+- **Python import resolution** — Relative imports (`from ..base import X`), glob imports (`from .models import *`), and re-export chains now fully resolved. Validated at 100% recall on syntactic imports against the [ToCS benchmark](https://arxiv.org/abs/2603.00601).
+- **Virtual dispatch for Python** — Method calls on typed variables (e.g., `stage.process()` where `stage: StageBase`) resolve to all subclass implementations via class hierarchy and type annotations.
+- **Per-file streaming resolution (RFD-61)** — Resolution plugins receive nodes one file at a time instead of the entire graph, reducing memory pressure for large repos.
+- **RFDB input validation** — `addEdges`/`addNodes` now throw on missing required fields (`src`/`dst`/`id`) with helpful hints (e.g., "Did you mean 'src'? Found 'source'"), preventing silent data loss.
+
+### Features
+
+- feat(python-resolve): resolve relative imports — `..base` → `pkg.base` via file-to-module-path mapping
+- feat(python-resolve): glob import handling — `from .models import *` → IMPORTS_FROM to MODULE node
+- feat(python-resolve): re-export support — IMPORT_BINDING nodes in name index as fallback for re-exported symbols
+- feat(python-resolve): virtual dispatch — type-aware call resolution via EXTENDS edges + annotation metadata
+- feat(python-resolve): class hierarchy index from `bases` metadata, transitive subclass expansion
+- feat(resolve): per-file streaming resolution — orchestrator streams nodes per-file to resolve plugins (RFD-61)
+- feat(resolve): batch plugin framework improvements — batch-mode plugins write directly to RFDB
+
+### Bug Fixes
+
+- fix(rfdb): input validation for addEdges/addNodes — throw on missing `src`/`dst`/`id` with actionable error messages
+- fix(rfdb): detect common field name mistakes (`source`→`src`, `target`→`dst`) and include in error hint
+
+### Documentation
+
+- docs: add Grafema for ToCS benchmark results (`docs/GRAFEMA_FOR_TOCS.md`)
+
 ## [0.3.21] - 2026-03-23
 
 ### Highlights

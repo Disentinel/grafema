@@ -6,7 +6,7 @@
 [![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/Disentinel/fb8ae29db701dd788e1beaffb159ffef/raw/grafema-coverage.json)](https://github.com/Disentinel/grafema/actions/workflows/ci.yml)
 [![Benchmark](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/Disentinel/fb8ae29db701dd788e1beaffb159ffef/raw/rfdb-benchmark.json)](https://github.com/Disentinel/grafema/actions/workflows/benchmark.yml)
 
-> **v0.3.20** — Early access. [Changelog](./CHANGELOG.md) | [Known limitations](./KNOWN_LIMITATIONS.md)
+> **v0.3.22** — Early access. [Changelog](./CHANGELOG.md) | [Known limitations](./KNOWN_LIMITATIONS.md)
 
 Graph-driven code analysis. AI should query the graph, not read code.
 
@@ -88,7 +88,7 @@ For Claude Desktop (`~/Library/Application Support/Claude/claude_desktop_config.
 | Haskell | full | full | full | partial | Beta |
 | Java | full | full | full | partial | Beta |
 | Kotlin | full | full | full | partial | Beta |
-| Python | full | full | full | partial | Beta |
+| Python | full | full | full | full | Beta |
 | Go | full | full | full | partial | Beta |
 | C/C++ | full | full | full | partial | Beta |
 | Swift | full | full | full | - | Alpha |
