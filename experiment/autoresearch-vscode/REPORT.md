@@ -87,9 +87,31 @@ MCP server starts a Node.js process per `claude -p` invocation. For a 10s questi
 ### H4: Deferred tool loading (ToolSearch) wastes tokens
 Claude spends tokens on `ToolSearch("+grafema find")` before every MCP call. If tools were pre-loaded, this overhead disappears.
 
+## Aggressive Prompt Experiment (partial — 7/30 questions)
+
+Tested "DO NOT use Grep, MUST use find_nodes/find_calls" prompt.
+
+Result: **0.9 MCP calls/question** — LOWER than soft prompt (2.8/q).
+
+**Conclusion:** Prompt engineering does not control Claude Sonnet's tool selection. The model's training distribution dominates — Grep is the default codebase exploration tool regardless of instructions. "DO NOT use Grep" is ignored.
+
+## Revised Hypotheses
+
+### H1 (REJECTED): Prompt engineering is the bottleneck
+Aggressive prompt performed WORSE than soft prompt. Model behavior > prompt instructions for tool selection.
+
+### H2 (CONFIRMED): Graph most valuable for complex structural questions
+Q16 (terminal lifecycle, 53 MCP calls, -37% tokens) is the standout. When Claude naturally reaches for graph tools on complex questions, they help.
+
+### H3: The real bottleneck is tool discovery UX
+MCP tools are "deferred" — Claude must call ToolSearch before using them. This adds friction. If graph tools were native (like Grep/Glob), adoption would be higher.
+
+### H4: Graph-as-context, not graph-as-tool
+Instead of waiting for Claude to call graph tools, inject graph context into the prompt. E.g., `describe` output for the question's likely scope. Claude reads context naturally; it doesn't naturally choose unfamiliar tools.
+
 ## Next Steps
 
-1. **Aggressive prompt** — force graph-first exploration
-2. **Quality judge** — LLM-based scoring against golden_answer_hint
-3. **Pre-loaded MCP** — avoid ToolSearch overhead
-4. **Focus on L3-L4** — graph adds most value on complex structural questions
+1. **Quality judge** — LLM-based scoring against golden_answer_hint (quality may differ even if token count is similar)
+2. **Graph-as-context injection** — pre-compute `describe`/`get_file_overview` for each question, inject into prompt
+3. **Native tool integration** — make graph tools appear as built-in tools, not MCP
+4. **Question filtering** — focus benchmark on L3-L4 questions where graph has structural advantage
