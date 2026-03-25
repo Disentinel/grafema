@@ -147,6 +147,38 @@ If user provides just a task ID without further context, the Linear issue descri
 
 **3-Review:** Steve ∥ Вадим auto ∥ Uncle Bob (single parallel batch, all Opus). ANY REJECT → fix + re-run ALL 3. ALL approve → present to user.
 
+## Enox Long-Term Memory (MANDATORY for experiments and decisions)
+
+Enox Smart Node (`mcp__enox__*` tools) is persistent knowledge graph shared across all sessions. It survives session boundaries — use it to avoid repeating failed approaches.
+
+**MCP tools are deferred — load via `ToolSearch("+enox recall")` before first use.**
+
+### Session Start
+- `recent_activity(since="<last_session_date>")` — see what changed since your last session
+- `recall(query="<today's task topic>")` — check for prior findings, rejected alternatives, confirmed hypotheses
+
+### Before Experiments / Architectural Decisions
+- `recall(query="<approach you're about to try>")` — **STOP if it returns `fails_on` or `rejected_alternative`**
+- `semantic_search(query="<what you're trying to achieve>")` — find related prior work
+
+### After Completing Experiments
+- `remember(subject="<topic>", fact="<finding with numbers and dates>")` — quick save
+- `add_assertion(source, target, relation, context)` — precise structured finding
+- Record rejected approaches as `fails_on` with `source_type: rejected_alternative`
+- Record confirmed hypotheses as `supports` or `outperforms`
+
+### Key Relations for Memory
+| Relation | When to use |
+|----------|------------|
+| `outperforms` | A is better than B (include metrics in context) |
+| `fails_on` | Approach X doesn't work for Y (include why) |
+| `supersedes` | New finding replaces old one |
+| `contradicts` | Conflicting evidence found |
+| `triggered_by` | This experiment was caused by that finding |
+| `references` | Links to artifact (PR, commit, file path) |
+
+**Why this exists:** We wasted hours repeating a disproven experiment (aggressive prompt for MCP adoption) because prior session findings (H005, H006) weren't in context. Enox prevents this.
+
 ## Plan Mode (Mandatory)
 
 **Mandatory for all non-trivial tasks.** Trivial tasks (typo, single-line fix) may skip.
