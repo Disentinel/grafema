@@ -80,7 +80,7 @@ function parseArgs(argv) {
         break;
       case '--help':
       case '-h':
-        console.error('Usage: node run.mjs --mode baseline|grafema --model sonnet [--questions path] [--question-id Q03] [--run-id name] [--repeats 3] [--project-root /path]');
+        console.error('Usage: node run.mjs --mode <mode> --model sonnet [--questions path] [--question-id Q03] [--run-id name] [--repeats 3] [--project-root /path]');
         process.exit(0);
         break;
       default:
@@ -89,9 +89,18 @@ function parseArgs(argv) {
     }
     i++;
   }
-  if (!args.mode || !['baseline', 'grafema'].includes(args.mode)) {
-    console.error('Error: --mode must be "baseline" or "grafema"');
+  if (!args.mode) {
+    console.error('Error: --mode is required');
     process.exit(1);
+  }
+  // Validate: must be baseline, grafema, or have a matching prompt file
+  const knownModes = ['baseline', 'grafema'];
+  if (!knownModes.includes(args.mode)) {
+    const promptPath = join(PROMPTS_DIR, `${args.mode}.md`);
+    if (!existsSync(promptPath)) {
+      console.error(`Error: --mode "${args.mode}" has no prompt template at ${promptPath}`);
+      process.exit(1);
+    }
   }
   if (!MODEL_MAP[args.model]) {
     console.error(`Error: --model must be one of: ${Object.keys(MODEL_MAP).join(', ')}`);
@@ -225,7 +234,8 @@ async function runQuestion(question, mode, modelId, promptTemplate, projectRoot)
       '--no-session-persistence',
     ];
 
-    if (mode === 'grafema' && existsSync(MCP_CONFIG)) {
+    // Attach MCP for grafema and ablation modes (any non-baseline mode)
+    if (mode !== 'baseline' && existsSync(MCP_CONFIG)) {
       directArgs.push('--mcp-config', MCP_CONFIG);
     }
 
