@@ -163,6 +163,20 @@ EXPLORATION WORKFLOW:
 8. To get a compact visual summary → describe (renders DSL notation with archetype-grouped operators)
 9. For DSL syntax reference → get_documentation topic="notation"
 
+IMPORTANT: for structural questions about code (who calls what, where is something defined,
+how does data flow, what is the architecture), avoid using Grep — it only does text matching
+and misses calls through aliases, re-exports, and dynamic dispatch. Use the graph tools instead,
+they understand code structure and relationships that text search cannot find.
+
+TOOL ROUTING:
+- "Where is X defined?" → find_nodes(name="X")
+- "Who calls function X?" → find_calls(name="X")
+- "What does file X contain?" → get_file_overview(file="X")
+- "How does data flow from A to B?" → trace_dataflow(source="A", direction="forward")
+- "What's the structure of class X?" → describe(nodeId="X")
+- For text search in comments or strings → Grep
+- For reading exact source code → Read
+
 KEY INSIGHT: find_nodes supports partial matching on name and file fields.
 Example: find_nodes(file="auth/") returns all nodes in files matching "auth/".
 Example: find_nodes(name="redis", type="CALL") finds all calls containing "redis".`,
