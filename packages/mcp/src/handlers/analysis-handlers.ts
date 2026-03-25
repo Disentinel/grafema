@@ -99,13 +99,19 @@ export async function handleGetStats(): Promise<ToolResult> {
     }
   }
 
+  const actionHint =
+    nodeCount > 0
+      ? `\n\nGraph is ready — use find_nodes, find_calls, trace_dataflow to query it.`
+      : `\n\nGraph is empty — call analyze_project to build the graph first.`;
+
   return textResult(
     `Graph Statistics:\n\n` +
       `Total nodes: ${nodeCount.toLocaleString()}\n` +
       `Total edges: ${edgeCount.toLocaleString()}\n\n` +
       `Nodes by type:\n${JSON.stringify(nodesByType, null, 2)}\n\n` +
       `Edges by type:\n${JSON.stringify(edgesByType, null, 2)}` +
-      shardSection
+      shardSection +
+      actionHint
   );
 }
 
