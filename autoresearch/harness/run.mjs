@@ -361,6 +361,30 @@ async function main() {
   console.error(`Results:   ${runDir}`);
   console.error('');
 
+  // Preflight: verify Grafema MCP is working for non-baseline modes
+  if (args.mode !== 'baseline' && existsSync(MCP_CONFIG)) {
+    console.error('Preflight: checking Grafema MCP...');
+    const preflightResult = await runQuestion(
+      { id: 'PREFLIGHT', question: 'Call get_stats and report the nodeCount. Reply with ONLY the number.' },
+      args.mode, modelId,
+      'You have access to a code graph via MCP tools. {{question}}\nPut your answer inside <answer></answer> tags.',
+      args.projectRoot
+    );
+    const answer = (preflightResult.answer_text || '').trim();
+    const nodeCount = parseInt(answer.replace(/[^0-9]/g, ''), 10);
+    if (preflightResult.error || preflightResult.mcp_calls === 0) {
+      console.error(`Preflight FAILED: MCP not reachable (mcp_calls=${preflightResult.mcp_calls}, error=${preflightResult.error || 'none'})`);
+      console.error('Fix: ensure rfdb-server is running and .mcp.json points to correct grafema MCP');
+      process.exit(1);
+    }
+    if (!isNaN(nodeCount) && nodeCount === 0) {
+      console.error(`Preflight FAILED: graph is empty (nodeCount=0). Run 'grafema analyze' first.`);
+      process.exit(1);
+    }
+    console.error(`Preflight OK: MCP reachable, ${preflightResult.mcp_calls} MCP calls, answer="${answer.slice(0, 50)}"`);
+    console.error('');
+  }
+
   for (let i = 0; i < questions.length; i++) {
     const q = questions[i];
     console.error(`[${i + 1}/${questions.length}] ${q.id}: ${q.question.slice(0, 80)}...`);
