@@ -139,6 +139,11 @@ function parseSessionOutput(raw) {
   let cacheReadTokens = 0;
   let cacheCreationTokens = 0;
 
+  // Ordered trace: reasoning → tool call → tool result → reasoning → ...
+  const trace = [];
+  // Pending tool calls waiting for results (keyed by tool_use id)
+  const pendingTools = {};
+
   for (const line of lines) {
     let ev;
     try {
@@ -160,20 +165,67 @@ function parseSessionOutput(raw) {
       for (const block of content) {
         if (block.type === 'text') {
           textParts.push(block.text);
+          const text = block.text.trim();
+          if (text) {
+            trace.push({ step: 'reasoning', text: text.slice(0, 500) });
+          }
         } else if (block.type === 'tool_use') {
           const name = block.name || '?';
           toolCounts[name] = (toolCounts[name] || 0) + 1;
+          const entry = {
+            step: 'tool_call',
+            name,
+            input: truncateToolInput(block.input),
+            id: block.id,
+          };
+          trace.push(entry);
+          if (block.id) {
+            pendingTools[block.id] = entry;
+          }
+        } else if (block.type === 'tool_result') {
+          const resultText = extractToolResultText(block.content);
+          const resultEntry = {
+            step: 'tool_result',
+            tool_use_id: block.tool_use_id,
+            result: resultText.slice(0, 1000),
+            is_error: block.is_error || false,
+          };
+          trace.push(resultEntry);
+          // Link result back to the call
+          if (block.tool_use_id && pendingTools[block.tool_use_id]) {
+            pendingTools[block.tool_use_id].result_preview = resultText.slice(0, 300);
+            pendingTools[block.tool_use_id].is_error = block.is_error || false;
+            delete pendingTools[block.tool_use_id];
+          }
         }
       }
     }
 
-    // Result event may also carry usage
+    // Tool results come as "user" events with tool_result content blocks
+    if (ev.type === 'user') {
+      const content = ev.message?.content || [];
+      for (const block of content) {
+        if (block.type === 'tool_result') {
+          const resultText = extractToolResultText(block.content);
+          const resultEntry = {
+            step: 'tool_result',
+            tool_use_id: block.tool_use_id,
+            result: resultText.slice(0, 1000),
+            is_error: block.is_error || false,
+          };
+          trace.push(resultEntry);
+          if (block.tool_use_id && pendingTools[block.tool_use_id]) {
+            pendingTools[block.tool_use_id].result_preview = resultText.slice(0, 300);
+            pendingTools[block.tool_use_id].is_error = block.is_error || false;
+            delete pendingTools[block.tool_use_id];
+          }
+        }
+      }
+    }
+
+    // Result event may also carry usage (already counted above)
     if (ev.type === 'result') {
-      const ru = ev.result?.usage || ev.usage || {};
-      // Only add if not already counted via top-level usage
-      // The result event's usage is typically already included above,
-      // but in some formats it's the only place. We rely on the
-      // top-level usage fields which appear on every event.
+      // noop — usage already captured
     }
   }
 
@@ -187,6 +239,15 @@ function parseSessionOutput(raw) {
 
   const rawText = textParts.join('\n');
 
+  // Build grafema-specific trace (only MCP tool calls with their results)
+  const grafemaTrace = trace.filter(t =>
+    (t.step === 'tool_call' && t.name?.startsWith('mcp__grafema')) ||
+    (t.step === 'tool_result' && pendingTools[t.tool_use_id] === undefined)
+  );
+
+  // Build fallback chain: find patterns where MCP returned empty → agent used Grep/Read
+  const fallbacks = detectFallbacks(trace);
+
   return {
     rawText,
     inputTokens,
@@ -195,7 +256,81 @@ function parseSessionOutput(raw) {
     cacheCreationTokens,
     toolCalls: toolCallsList,
     mcpCalls,
+    trace,
+    fallbacks,
   };
+}
+
+/** Truncate tool input for logging — keep args readable but bounded */
+function truncateToolInput(input) {
+  if (!input) return {};
+  const s = JSON.stringify(input);
+  if (s.length <= 300) return input;
+  // Keep first-level keys with truncated values
+  const result = {};
+  for (const [k, v] of Object.entries(input)) {
+    const vs = typeof v === 'string' ? v.slice(0, 100) : v;
+    result[k] = vs;
+  }
+  return result;
+}
+
+/** Extract text from tool_result content (may be string, array of blocks, or object) */
+function extractToolResultText(content) {
+  if (!content) return '';
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map(b => (typeof b === 'string' ? b : b.text || b.content || JSON.stringify(b)))
+      .join('\n');
+  }
+  return content.text || content.content || JSON.stringify(content);
+}
+
+/**
+ * Detect fallback patterns: MCP tool → empty/error → file tool on same topic.
+ * Returns array of { mcp_call, mcp_result, fallback_tool, reasoning }.
+ */
+function detectFallbacks(trace) {
+  const fallbacks = [];
+  for (let i = 0; i < trace.length - 2; i++) {
+    const step = trace[i];
+    if (step.step !== 'tool_call' || !step.name?.startsWith('mcp__grafema')) continue;
+
+    // Look for result
+    const resultIdx = trace.findIndex((t, j) => j > i && t.step === 'tool_result' && t.tool_use_id === step.id);
+    if (resultIdx === -1) continue;
+
+    const result = trace[resultIdx];
+    const resultText = result.result || '';
+    const isEmpty = resultText.includes('No nodes found') || resultText.includes('0 node') ||
+                    resultText.includes('No calls found') || resultText.includes('0 call') ||
+                    result.is_error;
+
+    if (!isEmpty) continue;
+
+    // Look for file tool fallback within next 3 steps
+    for (let j = resultIdx + 1; j < Math.min(resultIdx + 4, trace.length); j++) {
+      const next = trace[j];
+      if (next.step === 'tool_call' && ['Grep', 'Read', 'Glob', 'Bash'].includes(next.name)) {
+        // Found fallback: reasoning between result and fallback
+        const reasoning = trace.slice(resultIdx + 1, j)
+          .filter(t => t.step === 'reasoning')
+          .map(t => t.text)
+          .join(' ');
+        fallbacks.push({
+          mcp_tool: step.name.replace('mcp__grafema__', ''),
+          mcp_input: step.input,
+          mcp_result_preview: resultText.slice(0, 200),
+          fallback_tool: next.name,
+          fallback_input: next.input,
+          reasoning: reasoning.slice(0, 200),
+        });
+        break;
+      }
+    }
+  }
+  return fallbacks;
 }
 
 // ---------------------------------------------------------------------------
@@ -287,6 +422,8 @@ async function runQuestion(question, mode, modelId, promptTemplate, projectRoot)
         cache_creation_tokens: parsed.cacheCreationTokens,
         tool_calls: parsed.toolCalls,
         mcp_calls: parsed.mcpCalls,
+        trace: parsed.trace,
+        fallbacks: parsed.fallbacks,
         latency_ms: latencyMs,
         model: modelId,
       });
