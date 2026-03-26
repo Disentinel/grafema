@@ -20,6 +20,8 @@ import {
   ensureBinary,
   ManifestGenerator,
   ManifestResolver,
+  GRAFEMA_VERSION,
+  getSchemaVersion,
 } from '@grafema/util';
 import type { LogLevel } from '@grafema/util';
 import { scanExtensions, generateSmartConfig, writeConfig, updateGitignore, formatDetected } from '../utils/quickstart.js';
@@ -322,6 +324,23 @@ export async function analyzeAction(path: string, options: { service?: string; e
         }
       } catch (err) {
         debug(`Manifest generation skipped: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      // Auto-update config version if it differs (prevents patch mismatch warnings)
+      try {
+        const currentSchema = getSchemaVersion(GRAFEMA_VERSION);
+        const configContent = readFileSync(configPath, 'utf-8');
+        const versionMatch = configContent.match(/^version:\s*["']?([^"'\s]+)["']?/m);
+        if (versionMatch && versionMatch[1] !== currentSchema) {
+          const updated = configContent.replace(
+            /^version:\s*["']?[^"'\s]+["']?/m,
+            `version: ${currentSchema}`
+          );
+          writeFileSync(configPath, updated);
+          debug(`Config version updated: ${versionMatch[1]} → ${currentSchema}`);
+        }
+      } catch {
+        debug('Config version auto-update skipped');
       }
 
       // Auto-load registry manifests for cross-package resolution

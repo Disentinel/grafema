@@ -644,6 +644,16 @@ impl GraphStore for GraphEngineV2 {
         // leaving old L1 + new L0 = double-counted nodes/edges.
         let config = CompactionConfig { segment_threshold: 1 };
         self.store.compact(&mut self.manifest, &config)?;
+        // GC: collect orphaned segments after compaction
+        let moved = self.manifest.gc_collect()?;
+        if !moved.is_empty() {
+            tracing::info!("GC: moved {} orphaned segment(s) to gc/", moved.len());
+        }
+        // Purge: permanently delete collected segments
+        let purged = self.manifest.gc_purge()?;
+        if purged > 0 {
+            tracing::info!("GC: purged {} segment file(s)", purged);
+        }
         // Compaction deduplicates segments — old superseded versions are removed.
         self.superseded_node_count = 0;
         self.superseded_edge_count = 0;

@@ -48,7 +48,8 @@ export {
 export type { GrafemaConfig } from './config/index.js';
 
 // Version
-export { GRAFEMA_VERSION, getSchemaVersion } from './version.js';
+export { GRAFEMA_VERSION, getSchemaVersion, parseVersion, isCompatibleVersion } from './version.js';
+export type { ParsedVersion } from './version.js';
 
 // Instructions (for AI agents)
 export { getOnboardingInstruction } from './instructions/index.js';

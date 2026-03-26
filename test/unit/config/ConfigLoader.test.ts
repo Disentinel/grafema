@@ -17,7 +17,7 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import { mkdirSync, writeFileSync, rmSync, existsSync } from 'fs';
 import { join } from 'path';
-import { loadConfig, DEFAULT_CONFIG, validateVersion, validateRouting, GRAFEMA_VERSION, getSchemaVersion } from '@grafema/util';
+import { loadConfig, DEFAULT_CONFIG, validateVersion, validateRouting, GRAFEMA_VERSION, getSchemaVersion, parseVersion, isCompatibleVersion } from '@grafema/util';
 
 // =============================================================================
 // Test Helpers
@@ -1228,11 +1228,18 @@ exclude:
       assert.doesNotThrow(() => validateVersion('0.2.5', '0.2.5-alpha.1'));
     });
 
-    it('should throw on version mismatch', () => {
-      assert.throws(
-        () => validateVersion('0.2.4', '0.2.5'),
-        /config version "0.2.4" is not compatible with Grafema 0.2.5/
-      );
+    it('should warn but not throw on patch version mismatch', () => {
+      const logger = createLoggerMock();
+      assert.doesNotThrow(() => validateVersion('0.2.4', '0.2.5', logger));
+      assert.strictEqual(logger.warnings.length, 1);
+      assert.match(logger.warnings[0], /patch mismatch/);
+      assert.match(logger.warnings[0], /grafema init --force/);
+    });
+
+    it('should not warn on exact version match', () => {
+      const logger = createLoggerMock();
+      assert.doesNotThrow(() => validateVersion('0.2.5', '0.2.5', logger));
+      assert.strictEqual(logger.warnings.length, 0);
     });
 
     it('should throw on major version mismatch', () => {
@@ -1254,6 +1261,55 @@ exclude:
         () => validateVersion('0.1.0', '0.2.5'),
         /grafema init --force/
       );
+    });
+
+    // -------------------------------------------------------------------------
+    // parseVersion function
+    // -------------------------------------------------------------------------
+
+    it('parseVersion should parse valid version strings', () => {
+      const v = parseVersion('1.2.3');
+      assert.deepStrictEqual(v, { major: 1, minor: 2, patch: 3 });
+    });
+
+    it('parseVersion should strip pre-release tags', () => {
+      const v = parseVersion('0.2.5-beta');
+      assert.deepStrictEqual(v, { major: 0, minor: 2, patch: 5 });
+    });
+
+    it('parseVersion should handle two-part version', () => {
+      const v = parseVersion('1.0');
+      assert.deepStrictEqual(v, { major: 1, minor: 0, patch: 0 });
+    });
+
+    it('parseVersion should return null for invalid version', () => {
+      assert.strictEqual(parseVersion('abc'), null);
+      assert.strictEqual(parseVersion(''), null);
+    });
+
+    // -------------------------------------------------------------------------
+    // isCompatibleVersion function
+    // -------------------------------------------------------------------------
+
+    it('isCompatibleVersion should return true for same major.minor', () => {
+      assert.strictEqual(isCompatibleVersion('0.2.4', '0.2.5'), true);
+      assert.strictEqual(isCompatibleVersion('0.2.0', '0.2.99'), true);
+    });
+
+    it('isCompatibleVersion should return false for different minor', () => {
+      assert.strictEqual(isCompatibleVersion('0.3.0', '0.2.5'), false);
+    });
+
+    it('isCompatibleVersion should return false for different major', () => {
+      assert.strictEqual(isCompatibleVersion('1.2.0', '0.2.5'), false);
+    });
+
+    it('isCompatibleVersion should return true for exact match', () => {
+      assert.strictEqual(isCompatibleVersion('0.2.5', '0.2.5'), true);
+    });
+
+    it('isCompatibleVersion should handle pre-release tags', () => {
+      assert.strictEqual(isCompatibleVersion('0.2.5-beta', '0.2.5-alpha'), true);
     });
 
     it('should throw when version is not a string', () => {
