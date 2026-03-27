@@ -138,6 +138,7 @@ export async function runAnalyze(options: AnalyzeOptions): Promise<AnalyzeResult
 
     try {
       child = spawn(orchestratorPath, args, {
+        cwd: workspaceRoot,
         stdio: ['ignore', 'pipe', 'pipe'],
         env: {
           ...process.env,
