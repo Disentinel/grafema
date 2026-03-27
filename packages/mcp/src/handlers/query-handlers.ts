@@ -355,7 +355,7 @@ export async function handleFindNodes(args: FindNodesArgs): Promise<ToolResult> 
   if (name) filter.name = name;
   if (file) filter.file = file;
   filter.substringMatch = true;
-  filter.fuzzyNameFallback = true;  // Auto-fallback to fuzzy matching when 0 exact results
+  filter.fuzzyNameFallback = true;
 
   const nodes: GraphNode[] = [];
   let skipped = 0;
@@ -363,62 +363,170 @@ export async function handleFindNodes(args: FindNodesArgs): Promise<ToolResult> 
 
   for await (const node of db.queryNodes(filter)) {
     totalMatched++;
-
-    if (skipped < offset) {
-      skipped++;
-      continue;
-    }
-
-    if (nodes.length < limit) {
-      nodes.push(node);
-    }
+    if (skipped < offset) { skipped++; continue; }
+    if (nodes.length < limit) nodes.push(node);
   }
 
-  // If 0 results with type filter, retry without type as "did you mean?" suggestion
+  // === Progressive fallback chain ===
+  let fallbackLevel = 'exact';
+
+  // Level 2: type relaxation ("did you mean?")
   if (totalMatched === 0 && type && name) {
+    fallbackLevel = 'type_relaxed';
     const relaxedFilter: Record<string, unknown> = {};
     if (name) relaxedFilter.name = name;
     if (file) relaxedFilter.file = file;
     relaxedFilter.substringMatch = true;
     relaxedFilter.fuzzyNameFallback = true;
 
-    const suggestions: GraphNode[] = [];
     for await (const node of db.queryNodes(relaxedFilter)) {
-      if (suggestions.length < 5) suggestions.push(node);
-      else break;
+      totalMatched++;
+      if (nodes.length < 5) nodes.push(node);
     }
+  }
 
-    if (suggestions.length > 0) {
-      const typeList = [...new Set(suggestions.map(n => n.type))].join(', ');
+  // Level 3: grep fallback — search source files, enrich with nearest graph nodes
+  if (totalMatched === 0 && name) {
+    fallbackLevel = 'grep_enriched';
+    const grepResults = await grepAndEnrich(db, name, file);
+    if (grepResults.length > 0) {
+      const typeList = [...new Set(grepResults.map(r => r.type).filter(Boolean))].join(', ');
       return textResult(
-        `No ${type} nodes found matching "${name}". Did you mean one of these (${typeList})?\n\n${JSON.stringify(
-          serializeBigInt(suggestions),
-          null,
-          2
-        )}`
+        `No graph nodes matched "${name}"${type ? ` (type: ${type})` : ''}. ` +
+        `Found ${grepResults.length} match(es) via text search, enriched with graph context (${typeList || 'unresolved'}):\n\n` +
+        JSON.stringify(serializeBigInt(grepResults), null, 2)
       );
     }
-    return textResult('No nodes found matching criteria');
   }
 
   if (totalMatched === 0) {
     return textResult('No nodes found matching criteria');
   }
 
+  // === Rich context enrichment ===
+  // For each found node, add structural context (methods, calls, imports)
+  // Only enrich when result set is small enough (≤10 nodes) to avoid latency
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const enriched = nodes.length <= 10
+    ? await enrichNodes(db as any, nodes)
+    : nodes;
+
   const hasMore = offset + nodes.length < totalMatched;
   const paginationInfo = formatPaginationInfo({
-    limit,
-    offset,
-    returned: nodes.length,
-    total: totalMatched,
-    hasMore,
+    limit, offset, returned: nodes.length, total: totalMatched, hasMore,
   });
 
+  const fallbackNote = fallbackLevel === 'type_relaxed'
+    ? `No ${type} nodes found matching "${name}". Showing results without type filter:\n`
+    : '';
+
   return textResult(
-    `Found ${totalMatched} node(s):${paginationInfo}\n\n${JSON.stringify(
-      serializeBigInt(nodes),
-      null,
-      2
+    `${fallbackNote}Found ${totalMatched} node(s):${paginationInfo}\n\n${JSON.stringify(
+      serializeBigInt(enriched), null, 2
     )}`
   );
+}
+
+/** Enrich nodes with structural context from graph edges */
+async function enrichNodes(
+  db: { getOutgoingEdges(id: string, types?: string[] | null): Promise<Array<Record<string, unknown>>>; getIncomingEdges(id: string, types?: string[] | null): Promise<Array<Record<string, unknown>>> },
+  nodes: GraphNode[]
+): Promise<Array<GraphNode & { _context?: Record<string, unknown> }>> {
+  const result = [];
+  for (const node of nodes) {
+    const nodeId = node.id;
+    if (!nodeId) { result.push(node); continue; }
+
+    const context: Record<string, unknown> = {};
+    try {
+      // Get key outgoing edges (what this node uses/calls/contains)
+      const outEdges = await db.getOutgoingEdges(nodeId, null);
+      const edgeType = (e: Record<string, unknown>) => String(e.type || '');
+      const edgeSrc = (e: Record<string, unknown>) => String(e.src || '');
+
+      const containsCount = outEdges.filter(e => edgeType(e) === 'CONTAINS').length;
+      const callsOut = outEdges.filter(e => edgeType(e) === 'CALLS');
+      const imports = outEdges.filter(e => edgeType(e) === 'IMPORTS_FROM');
+
+      const inEdges = await db.getIncomingEdges(nodeId, null);
+      const callsIn = inEdges.filter(e => edgeType(e) === 'CALLS');
+      const containedBy = inEdges.filter(e => edgeType(e) === 'CONTAINS');
+
+      if (containsCount > 0) context.contains = containsCount;
+      if (callsOut.length > 0) context.calls_out = callsOut.length;
+      if (callsIn.length > 0) {
+        context.called_by = callsIn.length;
+        context.callers = callsIn.slice(0, 3).map(e => edgeSrc(e).split('#').pop() || '?');
+      }
+      if (imports.length > 0) context.imports = imports.length;
+      if (containedBy.length > 0) {
+        context.parent = edgeSrc(containedBy[0]).split('#').pop() || undefined;
+      }
+    } catch {
+      // Edge queries may fail for some node types — skip enrichment silently
+    }
+
+    if (Object.keys(context).length > 0) {
+      result.push({ ...node, _context: context });
+    } else {
+      result.push(node);
+    }
+  }
+  return result;
+}
+
+/** Grep source files for a name, then find nearest graph nodes for each match */
+async function grepAndEnrich(
+  db: { queryNodes(filter: Record<string, unknown>): AsyncIterable<GraphNode> },
+  name: string,
+  filePattern?: string
+): Promise<Array<{ file: string; line: number; match: string; type?: string; node_name?: string; node_id?: string }>> {
+  const { execFileSync } = await import('child_process');
+  const { getProjectPath } = await import('../state.js');
+  const projectRoot = getProjectPath();
+  if (!projectRoot) return [];
+
+  try {
+    const args = ['-rn', '--include=*.ts', '--include=*.js', '--include=*.tsx', '-l', name];
+    if (filePattern) args.push(filePattern);
+    else args.push(projectRoot);
+
+    const output = execFileSync('grep', args, {
+      timeout: 5000,
+      maxBuffer: 50000,
+      encoding: 'utf-8',
+    }).trim();
+    if (!output) return [];
+
+    const files = output.split('\n').slice(0, 5);
+    const results = [];
+
+    for (const matchFile of files) {
+      // Find graph nodes in this file
+      const relPath = matchFile.replace(projectRoot + '/', '');
+      const fileNodes: GraphNode[] = [];
+      for await (const node of db.queryNodes({ file: relPath, substringMatch: true })) {
+        if (fileNodes.length < 3) fileNodes.push(node);
+        else break;
+      }
+
+      if (fileNodes.length > 0) {
+        for (const n of fileNodes) {
+          results.push({
+            file: relPath,
+            line: n.line || 0,
+            match: name,
+            type: n.type,
+            node_name: n.name,
+            node_id: n.id,
+          });
+        }
+      } else {
+        results.push({ file: relPath, line: 0, match: name });
+      }
+    }
+    return results;
+  } catch {
+    return [];
+  }
 }
