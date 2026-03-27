@@ -229,4 +229,9 @@ Normally not needed — binaries are included in the npm package. Use these when
 
 ## Author
 
-Vadim Reshetnikov
+**Vadim Reshetnikov** — Senior R&D Engineer with 6+ years working in massive legacy untyped codebases with high-load, high-performance backends. Building Grafema to fight the cognitive complexity of software development and maintenance.
+
+Grafema was born from a real pain: spending 58% of engineering time on code comprehension (per research), with no tools that actually understand code structure at scale. Type systems help — but only for typed languages. Grafema fills the gap for everything else.
+
+- LinkedIn: [linkedin.com/in/disentinel](https://linkedin.com/in/disentinel)
+- Telegram: [@vadresh](https://t.me/vadresh) — dev log, research notes, behind-the-scenes
