@@ -363,7 +363,7 @@ function main() {
       }
 
       // Run LLM judge
-      const refAnswer = q.reference_answer || '';
+      const refAnswer = q.reference_answer || q.golden_answer_hint || '';
       console.error(`  ${q.id}: judging...`);
       // Use raw_text as fallback when answer_text is empty (agent didn't use <answer> tags)
       const textToJudge = answer.answer_text || answer.raw_text || '';
