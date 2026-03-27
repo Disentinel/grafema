@@ -28,6 +28,7 @@ jobs:
 
     strategy:
       fail-fast: false
+      max-parallel: 8
       matrix:
         platform: [darwin-arm64, darwin-x64, linux-x64, linux-arm64]
         binary:
