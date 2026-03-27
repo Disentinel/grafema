@@ -300,6 +300,20 @@ export class GrafemaClientManager extends EventEmitter {
    * Public so analyze command can ensure server is running before analysis.
    */
   async startServer(): Promise<void> {
+    // If socket exists and a server is responding, skip — already running
+    if (existsSync(this.socketPath)) {
+      try {
+        const probe = new RFDBClient(this.socketPath, 'probe');
+        await probe.connect();
+        const pong = await probe.ping();
+        await probe.close();
+        if (pong) return; // Server is alive, nothing to do
+      } catch {
+        // Socket exists but server is dead — remove stale socket below
+      }
+      unlinkSync(this.socketPath);
+    }
+
     const binaryPath = this.findServerBinary();
     if (!binaryPath) {
       throw new Error(
@@ -307,22 +321,6 @@ export class GrafemaClientManager extends EventEmitter {
           'Install @grafema/rfdb: npm install @grafema/rfdb\n' +
           'Or build from source: cargo build --release --bin rfdb-server'
       );
-    }
-
-    // If socket exists, probe to check if a server is already running
-    if (existsSync(this.socketPath)) {
-      try {
-        const probe = new RFDBClient(this.socketPath, 'probe');
-        await probe.connect();
-        const pong = await probe.ping();
-        await probe.close();
-        if (pong) {
-          return; // Server already running, skip start
-        }
-      } catch {
-        // Socket exists but server is dead — remove stale socket below
-      }
-      unlinkSync(this.socketPath);
     }
 
     this.serverProcess = spawn(binaryPath, [this.dbPath, '--socket', this.socketPath], {
