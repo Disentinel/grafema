@@ -456,11 +456,22 @@ async function enrichNodes(
       if (callsOut.length > 0) context.calls_out = callsOut.length;
       if (callsIn.length > 0) {
         context.called_by = callsIn.length;
-        context.callers = callsIn.slice(0, 3).map(e => edgeSrc(e).split('#').pop() || '?');
+        context.callers = callsIn.slice(0, 3).map(e => humanReadableId(edgeSrc(e)));
       }
       if (imports.length > 0) context.imports = imports.length;
       if (containedBy.length > 0) {
-        context.parent = edgeSrc(containedBy[0]).split('#').pop() || undefined;
+        context.parent = humanReadableId(edgeSrc(containedBy[0]));
+      }
+
+      // For CLASS/INTERFACE nodes: list contained methods/properties
+      const nodeType = String(node.type || '');
+      if ((nodeType === 'CLASS' || nodeType === 'INTERFACE') && containsCount > 0 && containsCount <= 20) {
+        const edgeDst = (e: Record<string, unknown>) => String(e.dst || '');
+        const children = outEdges
+          .filter(e => edgeType(e) === 'CONTAINS')
+          .map(e => humanReadableId(edgeDst(e)))
+          .filter(n => n !== '?');
+        if (children.length > 0) context.members = children.slice(0, 10);
       }
     } catch {
       // Edge queries may fail for some node types — skip enrichment silently
@@ -473,6 +484,48 @@ async function enrichNodes(
     }
   }
   return result;
+}
+
+/** Convert a semantic ID to human-readable "name in file.ts" format.
+ * Handles: grafema://host/path/file.ts#TYPE->name[scope], path/file.ts#TYPE->name,
+ * TYPE-%3Ename (URL-encoded, no file prefix), or raw node IDs. */
+function humanReadableId(semanticId: string): string {
+  if (!semanticId) return '?';
+  // Decode URI components first
+  let id = semanticId;
+  try { id = decodeURIComponent(id); } catch { /* keep as-is */ }
+
+  // Find the # separator between file path and node descriptor
+  const hashIdx = id.lastIndexOf('#');
+  let filePart = '';
+  let nodePart = id;
+  if (hashIdx !== -1) {
+    filePart = id.slice(0, hashIdx);
+    nodePart = id.slice(hashIdx + 1);
+  }
+
+  const fileName = filePart ? (filePart.split('/').pop() || '') : '';
+
+  // Extract name from TYPE->name or TYPE->name[in:scope,h:hash]
+  const arrowIdx = nodePart.indexOf('->');
+  if (arrowIdx === -1) return fileName || nodePart;
+
+  let name = nodePart.slice(arrowIdx + 2);
+  // Strip scope/hash info [in:xxx,h:xxx]
+  const bracketIdx = name.indexOf('[');
+  let scope = '';
+  if (bracketIdx > 0) {
+    const scopeStr = name.slice(bracketIdx + 1, -1);
+    const inMatch = scopeStr.match(/in:([^,]+)/);
+    if (inMatch) scope = inMatch[1];
+    name = name.slice(0, bracketIdx);
+  }
+
+  // Build readable string: "name" or "name (in scope)" or "name in file.ts"
+  if (scope && scope !== name) {
+    return fileName ? `${name} (in ${scope}) in ${fileName}` : `${name} (in ${scope})`;
+  }
+  return fileName ? `${name} in ${fileName}` : name || '?';
 }
 
 /** Grep source files for a name, then find nearest graph nodes for each match */

@@ -185,7 +185,10 @@ Example 3: "What is the lifecycle of a terminal instance?"
   → Combine graph results with targeted Read for implementation details
 
 find_nodes supports partial matching: find_nodes(file="auth/") matches all files in auth/.
-find_nodes(name="redis", type="CALL") finds all calls containing "redis".`,
+find_nodes(name="redis", type="CALL") finds all calls containing "redis".
+
+TIP: If unsure about the type, omit it — find_nodes(name="Foo") searches all types.
+Results include _context with callers, members, and parent — often no follow-up needed.`,
   }
 );
 
