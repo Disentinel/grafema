@@ -56,3 +56,6 @@ pub use graph::{compute_node_id, string_id_to_u128};
 
 // Re-export metrics types
 pub use metrics::{Metrics, MetricsSnapshot, SLOW_QUERY_THRESHOLD_MS};
+
+#[cfg(feature = "embedding")]
+pub mod embedding;

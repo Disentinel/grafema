@@ -34,6 +34,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{GraphError, Result};
 use crate::storage_v2::compaction::{CompactionConfig, CompactionResult};
 use crate::storage_v2::index::{build_inverted_indexes, GlobalIndex, IndexEntry, InvertedIndex};
+use crate::storage_v2::index::token::{TokenIndex, TokenMatch, tokenize_name};
 use crate::storage_v2::manifest::{ManifestStore, SegmentDescriptor};
 use crate::storage_v2::segment::{self, EdgeSegmentV2, NodeSegmentV2};
 use crate::storage_v2::shard::{Shard, ShardDiagnostics, TombstoneSet};
@@ -718,6 +719,88 @@ impl MultiShardStore {
         if !stopped && !buffer.is_empty() {
             callback(&buffer);
         }
+    }
+
+    /// Find nodes with names similar to the query via token-based fuzzy matching.
+    ///
+    /// Searches all shards' token indexes and write buffers, returning
+    /// top-k matches above `min_score`, sorted by score descending.
+    pub fn find_similar_names(
+        &self,
+        query: &str,
+        node_type: Option<&str>,
+        k: usize,
+        min_score: f32,
+    ) -> Vec<TokenMatch> {
+        let mut all_matches: Vec<TokenMatch> = Vec::new();
+        let mut seen_ids: HashSet<u128> = HashSet::new();
+        let query_tokens: HashSet<String> = tokenize_name(query).into_iter().collect();
+
+        // Search L1 token indexes on each shard
+        for shard in &self.shards {
+            if let Some(token_idx) = shard.l1_token_index() {
+                let matches = token_idx.search(query, k * 2, min_score); // over-fetch for dedup
+                for m in matches {
+                    if self.is_node_tombstoned(m.node_id) {
+                        continue;
+                    }
+                    if !seen_ids.insert(m.node_id) {
+                        continue;
+                    }
+                    // Apply node_type filter if specified
+                    if let Some(nt) = node_type {
+                        if let Some(node) = self.get_node(m.node_id) {
+                            if node.node_type != nt {
+                                continue;
+                            }
+                        } else {
+                            continue;
+                        }
+                    }
+                    all_matches.push(m);
+                }
+            }
+
+            // Also scan write buffer names
+            if !query_tokens.is_empty() {
+                for record in shard.write_buffer_iter_nodes() {
+                    if record.name.is_empty() || self.is_node_tombstoned(record.id) {
+                        continue;
+                    }
+                    if !seen_ids.insert(record.id) {
+                        continue;
+                    }
+                    if let Some(nt) = node_type {
+                        if record.node_type != nt {
+                            continue;
+                        }
+                    }
+                    let name_tokens: HashSet<String> = tokenize_name(&record.name).into_iter().collect();
+                    if name_tokens.is_empty() {
+                        continue;
+                    }
+                    let intersection = query_tokens.intersection(&name_tokens).count();
+                    let union = query_tokens.union(&name_tokens).count();
+                    let score = intersection as f32 / union as f32;
+                    if score >= min_score {
+                        all_matches.push(TokenMatch {
+                            node_id: record.id,
+                            name: record.name.clone(),
+                            score,
+                        });
+                    }
+                }
+            }
+        }
+
+        // Sort by score descending, take top k
+        all_matches.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        all_matches.truncate(k);
+        all_matches
     }
 }
 
@@ -1422,6 +1505,7 @@ impl MultiShardStore {
             let mut by_type_idx: Option<InvertedIndex> = None;
             let mut by_file_idx: Option<InvertedIndex> = None;
             let mut by_name_idx: Option<InvertedIndex> = None;
+            let mut token_idx: Option<TokenIndex> = None;
 
             if let (Some(bytes), Some(meta)) = (&result.node_segment_bytes, &result.node_meta) {
                 let seg_id = manifest_store.next_segment_id();
@@ -1444,6 +1528,7 @@ impl MultiShardStore {
                 by_type_idx = Some(InvertedIndex::from_bytes(&built.by_type)?);
                 by_file_idx = Some(InvertedIndex::from_bytes(&built.by_file)?);
                 by_name_idx = Some(InvertedIndex::from_bytes(&built.by_name)?);
+                token_idx = Some(TokenIndex::from_bytes(&built.by_token)?);
 
                 // Collect entries for global index
                 for (offset, record) in records.iter().enumerate() {
@@ -1487,7 +1572,7 @@ impl MultiShardStore {
                 l1_node_seg, l1_node_desc,
                 l1_edge_seg, l1_edge_desc,
             );
-            self.shards[shard_idx].set_l1_indexes(by_type_idx, by_file_idx, by_name_idx);
+            self.shards[shard_idx].set_l1_indexes(by_type_idx, by_file_idx, by_name_idx, token_idx);
 
             total_tombstones_removed += result.tombstones_removed;
             compacted_shard_ids.insert(shard_id);

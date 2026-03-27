@@ -355,6 +355,7 @@ export async function handleFindNodes(args: FindNodesArgs): Promise<ToolResult> 
   if (name) filter.name = name;
   if (file) filter.file = file;
   filter.substringMatch = true;
+  filter.fuzzyNameFallback = true;  // Auto-fallback to fuzzy matching when 0 exact results
 
   const nodes: GraphNode[] = [];
   let skipped = 0;

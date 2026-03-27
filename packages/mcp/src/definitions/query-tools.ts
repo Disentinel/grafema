@@ -113,7 +113,7 @@ Use this when you need to:
 
 Returns semantic IDs that you can pass to get_context, get_node, get_neighbors, or find_guards.
 
-Supports partial matches on name and file. Use limit/offset for pagination.`,
+Supports partial matches on name and file. When a name filter returns no exact matches, automatically falls back to fuzzy name matching using token similarity (CamelCase/snake_case aware). Use limit/offset for pagination.`,
     inputSchema: {
       type: 'object',
       properties: {

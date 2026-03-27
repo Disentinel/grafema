@@ -57,8 +57,30 @@ quote = "1"
 proc-macro2 = { version = "1", features = ["span-locations"] }
 regex-lite = "0.1"
 
+# Embedding support (feature-gated)
+lancedb = { version = "0.27", optional = true }
+arrow-array = { version = "57", optional = true }
+arrow-schema = { version = "57", optional = true }
+candle-core = { version = "0.9", optional = true }
+candle-nn = { version = "0.9", optional = true }
+candle-transformers = { version = "0.9", optional = true }
+hf-hub = { version = "0.5", optional = true }
+tokenizers = { version = "0.22", optional = true, features = ["onig"] }
+dirs = { version = "5", optional = true }
+
 [features]
 default = []
+embedding = [
+    "dep:lancedb",
+    "dep:arrow-array",
+    "dep:arrow-schema",
+    "dep:candle-core",
+    "dep:candle-nn",
+    "dep:candle-transformers",
+    "dep:hf-hub",
+    "dep:tokenizers",
+    "dep:dirs",
+]
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

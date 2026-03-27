@@ -63,6 +63,9 @@ pub enum GraphError {
 
     #[error("Query limit exceeded: {0}")]
     QueryLimitExceeded(String),
+
+    #[error("Embedding error: {0}")]
+    Embedding(String),
 }
 
 impl GraphError {

@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::Result;
 use crate::storage_v2::index::InvertedIndex;
+use crate::storage_v2::index::token::TokenIndex;
 use crate::storage_v2::manifest::SegmentDescriptor;
 use crate::storage_v2::segment::{EdgeSegmentV2, NodeSegmentV2};
 use crate::storage_v2::types::{EdgeRecordV2, NodeRecordV2, SegmentMeta, SegmentType};
@@ -60,6 +61,7 @@ pub struct ShardDiagnostics {
     pub l1_by_file_keys: usize,
     pub l1_by_name_keys: usize,
     pub has_l1_edge_type_index: bool,
+    pub has_l1_token_index: bool,
 }
 
 // ── Tombstone Set ────────────────────────────────────────────────────
@@ -228,6 +230,9 @@ pub struct Shard {
     /// Inverted index: name -> IndexEntry list (built during compaction).
     l1_by_name_index: Option<InvertedIndex>,
 
+    /// Token-based fuzzy name index (built during compaction).
+    l1_token_index: Option<TokenIndex>,
+
     /// L1 edge-type index: edge_type → [(src, dst)].
     /// Built once when L1 segments are set (compaction or shard open).
     /// Never invalidated — L1 is immutable.
@@ -258,6 +263,7 @@ impl Shard {
             l1_by_type_index: None,
             l1_by_file_index: None,
             l1_by_name_index: None,
+            l1_token_index: None,
             l1_edge_type_index: None,
         })
     }
@@ -306,6 +312,7 @@ impl Shard {
             l1_by_type_index: None,
             l1_by_file_index: None,
             l1_by_name_index: None,
+            l1_token_index: None,
             l1_edge_type_index: None,
         })
     }
@@ -329,6 +336,7 @@ impl Shard {
             l1_by_type_index: None,
             l1_by_file_index: None,
             l1_by_name_index: None,
+            l1_token_index: None,
             l1_edge_type_index: None,
         }
     }
@@ -355,6 +363,7 @@ impl Shard {
             l1_by_type_index: None,
             l1_by_file_index: None,
             l1_by_name_index: None,
+            l1_token_index: None,
             l1_edge_type_index: None,
         })
     }
@@ -404,6 +413,7 @@ impl Shard {
             l1_by_type_index: None,
             l1_by_file_index: None,
             l1_by_name_index: None,
+            l1_token_index: None,
             l1_edge_type_index: None,
         })
     }
@@ -712,10 +722,12 @@ impl Shard {
         by_type_index: Option<InvertedIndex>,
         by_file_index: Option<InvertedIndex>,
         by_name_index: Option<InvertedIndex>,
+        token_index: Option<TokenIndex>,
     ) {
         self.l1_by_type_index = by_type_index;
         self.l1_by_file_index = by_file_index;
         self.l1_by_name_index = by_name_index;
+        self.l1_token_index = token_index;
     }
 
     /// Get reference to L1 by_type inverted index (for query optimization).
@@ -731,6 +743,16 @@ impl Shard {
     /// Get reference to L1 by_name inverted index (for query optimization).
     pub fn l1_by_name_index(&self) -> Option<&InvertedIndex> {
         self.l1_by_name_index.as_ref()
+    }
+
+    /// Token-based fuzzy name index (built during compaction).
+    pub fn l1_token_index(&self) -> Option<&TokenIndex> {
+        self.l1_token_index.as_ref()
+    }
+
+    /// Iterator over write buffer nodes (for fuzzy search fallback).
+    pub fn write_buffer_iter_nodes(&self) -> impl Iterator<Item = &NodeRecordV2> {
+        self.write_buffer.iter_nodes()
     }
 
     /// Clear L0 segments after compaction (they've been merged into L1).
@@ -2064,6 +2086,7 @@ impl Shard {
             l1_by_file_keys: self.l1_by_file_index.as_ref().map_or(0, |i| i.key_count()),
             l1_by_name_keys: self.l1_by_name_index.as_ref().map_or(0, |i| i.key_count()),
             has_l1_edge_type_index: self.l1_edge_type_index.is_some(),
+            has_l1_token_index: self.l1_token_index.is_some(),
         }
     }
 
