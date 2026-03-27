@@ -175,6 +175,9 @@ pub struct GraphEngineV2 {
     cached_profile: TuningProfile,
     /// Timestamp of last resource re-detection (rate-limits sysinfo calls).
     last_resource_check: Instant,
+    /// Embedding engine for semantic search (None when feature disabled or not initialized).
+    #[cfg(feature = "embedding")]
+    embedding_engine: Option<std::sync::Arc<crate::embedding::EmbeddingEngine>>,
 }
 
 // ── Constructors ────────────────────────────────────────────────────
@@ -203,6 +206,8 @@ impl GraphEngineV2 {
             declared_fields: Vec::new(),
             cached_profile: profile,
             last_resource_check: Instant::now(),
+            #[cfg(feature = "embedding")]
+            embedding_engine: Self::init_embedding_engine(Some(path)),
         })
     }
 
@@ -220,6 +225,8 @@ impl GraphEngineV2 {
             declared_fields: Vec::new(),
             cached_profile: TuningProfile::default(),
             last_resource_check: Instant::now(),
+            #[cfg(feature = "embedding")]
+            embedding_engine: None,
         }
     }
 
@@ -256,7 +263,33 @@ impl GraphEngineV2 {
             declared_fields: Vec::new(),
             cached_profile: profile,
             last_resource_check: Instant::now(),
+            #[cfg(feature = "embedding")]
+            embedding_engine: Self::init_embedding_engine(Some(path)),
         })
+    }
+
+    /// Initialize embedding engine from database path (feature-gated).
+    #[cfg(feature = "embedding")]
+    fn init_embedding_engine(db_path: Option<&Path>) -> Option<std::sync::Arc<crate::embedding::EmbeddingEngine>> {
+        let path = db_path?;
+        let lance_dir = path.with_extension("embeddings.lance");
+        let model_dir = dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".grafema")
+            .join("models");
+        match crate::embedding::EmbeddingEngine::new(&lance_dir, &model_dir) {
+            Ok(engine) => Some(std::sync::Arc::new(engine)),
+            Err(e) => {
+                tracing::warn!("Embedding engine init failed (non-fatal): {}", e);
+                None
+            }
+        }
+    }
+
+    /// Public accessor for the embedding engine.
+    #[cfg(feature = "embedding")]
+    pub fn embedding_engine(&self) -> Option<&std::sync::Arc<crate::embedding::EmbeddingEngine>> {
+        self.embedding_engine.as_ref()
     }
 }
 
@@ -402,6 +435,25 @@ impl GraphStore for GraphEngineV2 {
             }
         }
 
+        // Embedding similarity fallback (tier 4): when token fuzzy also returned nothing
+        #[cfg(feature = "embedding")]
+        if ids.is_empty()
+            && query.name.is_some()
+            && query.fuzzy_name_fallback != Some(false)
+        {
+            if let Some(ref engine) = self.embedding_engine {
+                let name = query.name.as_deref().unwrap();
+                if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                    let matches = handle.block_on(engine.search(name, exact_type, 10, 0.5));
+                    for m in matches {
+                        if !self.is_node_tombstoned(m.node_id) {
+                            ids.push(m.node_id);
+                        }
+                    }
+                }
+            }
+        }
+
         ids
     }
 
@@ -474,7 +526,29 @@ impl GraphStore for GraphEngineV2 {
                 .map(|m| m.node_id)
                 .collect();
             if !fuzzy_ids.is_empty() {
+                found_any = true;
                 callback(&fuzzy_ids);
+            }
+        }
+
+        // Embedding similarity fallback for streaming path (tier 4)
+        #[cfg(feature = "embedding")]
+        if !found_any
+            && query.name.is_some()
+            && query.fuzzy_name_fallback != Some(false)
+        {
+            if let Some(ref engine) = self.embedding_engine {
+                let name = query.name.as_deref().unwrap();
+                if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                    let matches = handle.block_on(engine.search(name, exact_type, 10, 0.5));
+                    let emb_ids: Vec<u128> = matches.iter()
+                        .filter(|m| !self.is_node_tombstoned(m.node_id))
+                        .map(|m| m.node_id)
+                        .collect();
+                    if !emb_ids.is_empty() {
+                        callback(&emb_ids);
+                    }
+                }
             }
         }
     }
