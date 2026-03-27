@@ -338,6 +338,8 @@ export interface AttrQuery {
   exported?: boolean;
   /** When true, name and file filters use substring (contains) matching instead of exact match */
   substringMatch?: boolean;
+  /** When true, fall back to fuzzy name matching if exact search returns 0 results */
+  fuzzyNameFallback?: boolean;
   /** @deprecated Node-level version filter is legacy. In v2, use snapshot/tag APIs for history. */
   version?: string;
   /** Extra fields are matched against node metadata JSON (e.g. object, method, async) */

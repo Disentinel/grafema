@@ -333,6 +333,7 @@ fn scenario_find_by_name(engine: &dyn GraphStore) -> (usize, Duration) {
                 name: Some(name),
                 metadata_filters: Vec::new(),
                 substring_match: false,
+                fuzzy_name_fallback: None,
             };
             total += engine.find_by_attr(&query).len();
         }

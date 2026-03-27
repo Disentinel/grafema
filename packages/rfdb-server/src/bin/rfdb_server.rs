@@ -740,7 +740,7 @@ pub struct WireFrontierEdge {
 /// Known fields are deserialized into typed fields;
 /// any extra fields (e.g. "object", "method") are captured in `extra`
 /// and used as metadata filters.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WireAttrQuery {
     pub node_type: Option<String>,
@@ -749,6 +749,9 @@ pub struct WireAttrQuery {
     pub exported: Option<bool>,
     #[serde(default)]
     pub substring_match: bool,
+    /// When true, fall back to fuzzy name matching if exact search returns 0 results.
+    #[serde(default)]
+    pub fuzzy_name_fallback: Option<bool>,
     /// Extra fields are matched against node metadata JSON.
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
@@ -965,6 +968,7 @@ fn wire_to_attr_query(query: WireAttrQuery) -> AttrQuery {
         name: query.name,
         metadata_filters,
         substring_match: query.substring_match,
+        fuzzy_name_fallback: query.fuzzy_name_fallback,
     }
 }
 
@@ -1994,6 +1998,7 @@ fn handle_commit_batch(
             name: None,
             metadata_filters: vec![],
             substring_match: false,
+            fuzzy_name_fallback: None,
         };
         let old_ids = engine.find_by_attr(&attr_query);
 
@@ -3976,6 +3981,7 @@ mod protocol_tests {
                 exported: None,
                 substring_match: false,
                 extra,
+            fuzzy_name_fallback: None,
             },
         }, &None);
 
@@ -3999,6 +4005,7 @@ mod protocol_tests {
                 exported: None,
                 substring_match: false,
                 extra,
+            fuzzy_name_fallback: None,
             },
         }, &None);
 
@@ -4018,6 +4025,7 @@ mod protocol_tests {
                 exported: None,
                 substring_match: false,
                 extra: std::collections::HashMap::new(),
+            fuzzy_name_fallback: None,
             },
         }, &None);
 
@@ -4072,6 +4080,7 @@ mod protocol_tests {
                 exported: None,
                 substring_match: true,
                 extra: std::collections::HashMap::new(),
+            fuzzy_name_fallback: None,
             },
         }, &None);
 
@@ -4121,6 +4130,7 @@ mod protocol_tests {
                 exported: None,
                 substring_match: true,
                 extra: std::collections::HashMap::new(),
+            fuzzy_name_fallback: None,
             },
         }, &None);
 
@@ -4161,6 +4171,7 @@ mod protocol_tests {
         }, &None);
 
         // substring_match defaults to false — partial name must NOT match
+        // fuzzy_name_fallback explicitly disabled so fuzzy doesn't kick in
         let response = handle_request(&manager, &mut session, Request::FindByAttr {
             query: WireAttrQuery {
                 node_type: None,
@@ -4169,6 +4180,7 @@ mod protocol_tests {
                 exported: None,
                 substring_match: false,
                 extra: std::collections::HashMap::new(),
+                fuzzy_name_fallback: Some(false),
             },
         }, &None);
 
@@ -4188,12 +4200,81 @@ mod protocol_tests {
                 exported: None,
                 substring_match: false,
                 extra: std::collections::HashMap::new(),
+            fuzzy_name_fallback: None,
             },
         }, &None);
 
         match response {
             Response::Ids { ids } => {
                 assert_eq!(ids.len(), 1, "Exact match for 'handleFooBar' should find the node");
+            }
+            _ => panic!("Expected Ids response"),
+        }
+    }
+
+    #[test]
+    fn test_find_by_attr_fuzzy_fallback_returns_results() {
+        // When exact match returns 0, fuzzy fallback should find similar names
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+
+        handle_request(&manager, &mut session, Request::CreateDatabase {
+            name: "testdb".to_string(),
+            ephemeral: true,
+        }, &None);
+        handle_request(&manager, &mut session, Request::OpenDatabase {
+            name: "testdb".to_string(),
+            mode: "rw".to_string(),
+        }, &None);
+
+        // Add a node with name "HeartbeatService"
+        handle_request(&manager, &mut session, Request::AddNodes {
+            nodes: vec![
+                WireNode {
+                    id: "heartbeat-svc".to_string(),
+                    node_type: Some("CLASS".to_string()),
+                    name: Some("HeartbeatService".to_string()),
+                    file: Some("services/pty.ts".to_string()),
+                    exported: false,
+                    metadata: None,
+                    semantic_id: None,
+                },
+            ],
+        }, &None);
+
+        // Compact to build token index
+        handle_request(&manager, &mut session, Request::Compact, &None);
+
+        // Search for "PtyHostHeartbeatService" — no exact match exists
+        // Fuzzy fallback should find "HeartbeatService" via shared tokens
+        let response = handle_request(&manager, &mut session, Request::FindByAttr {
+            query: WireAttrQuery {
+                name: Some("PtyHostHeartbeatService".to_string()),
+                ..Default::default()
+            },
+        }, &None);
+
+        match response {
+            Response::Ids { ids } => {
+                assert_eq!(ids.len(), 1,
+                    "Fuzzy fallback should find HeartbeatService when searching PtyHostHeartbeatService");
+            }
+            _ => panic!("Expected Ids response"),
+        }
+
+        // Verify fuzzy can be explicitly disabled
+        let response = handle_request(&manager, &mut session, Request::FindByAttr {
+            query: WireAttrQuery {
+                name: Some("PtyHostHeartbeatService".to_string()),
+                fuzzy_name_fallback: Some(false),
+                ..Default::default()
+            },
+        }, &None);
+
+        match response {
+            Response::Ids { ids } => {
+                assert_eq!(ids.len(), 0,
+                    "Fuzzy disabled: PtyHostHeartbeatService should NOT match anything");
             }
             _ => panic!("Expected Ids response"),
         }
@@ -4256,6 +4337,7 @@ mod protocol_tests {
                 exported: None,
                 substring_match: true,
                 extra: std::collections::HashMap::new(),
+            fuzzy_name_fallback: None,
             },
         }, &None);
 
@@ -4314,6 +4396,7 @@ mod protocol_tests {
                 exported: None,
                 substring_match: true,
                 extra: std::collections::HashMap::new(),
+            fuzzy_name_fallback: None,
             },
         }, &None);
 
@@ -4368,6 +4451,7 @@ mod protocol_tests {
                 exported: None,
                 substring_match: true,
                 extra: std::collections::HashMap::new(),
+            fuzzy_name_fallback: None,
             },
         }, &None);
 
@@ -4387,6 +4471,7 @@ mod protocol_tests {
                 exported: None,
                 substring_match: true,
                 extra: std::collections::HashMap::new(),
+            fuzzy_name_fallback: None,
             },
         }, &None);
 
@@ -4468,6 +4553,7 @@ mod protocol_tests {
                 exported: None,
                 substring_match: false,
                 extra,
+            fuzzy_name_fallback: None,
             },
         }, &None);
 
@@ -5431,6 +5517,7 @@ mod protocol_tests {
             file: None,
             exported: None,
             substring_match: false,
+            fuzzy_name_fallback: None,
             extra: HashMap::new(),
         };
 
@@ -5485,6 +5572,7 @@ mod protocol_tests {
             file: None,
             exported: None,
             substring_match: false,
+            fuzzy_name_fallback: None,
             extra: HashMap::new(),
         };
 
@@ -5555,6 +5643,7 @@ mod protocol_tests {
             file: None,
             exported: None,
             substring_match: false,
+            fuzzy_name_fallback: None,
             extra: HashMap::new(),
         };
 
@@ -5602,6 +5691,7 @@ mod protocol_tests {
             file: None,
             exported: None,
             substring_match: false,
+            fuzzy_name_fallback: None,
             extra: HashMap::new(),
         };
 
@@ -5639,6 +5729,7 @@ mod protocol_tests {
                 exported: None,
                 substring_match: false,
                 extra: HashMap::new(),
+            fuzzy_name_fallback: None,
             },
         }, &None);
 
@@ -5668,6 +5759,7 @@ mod protocol_tests {
             file: None,
             exported: None,
             substring_match: false,
+            fuzzy_name_fallback: None,
             extra: HashMap::new(),
         };
 

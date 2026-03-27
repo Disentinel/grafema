@@ -97,6 +97,12 @@ pub struct AttrQuery {
     /// instead of exact equality. Default: false (exact match).
     #[serde(default)]
     pub substring_match: bool,
+    /// Fuzzy name fallback behavior:
+    /// - None (default): auto-fallback when name is set and 0 exact results
+    /// - Some(true): always include fuzzy results alongside exact
+    /// - Some(false): never use fuzzy fallback
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fuzzy_name_fallback: Option<bool>,
 }
 
 impl AttrQuery {

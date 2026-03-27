@@ -14,6 +14,7 @@ use crate::error::Result;
 use crate::storage_v2::index::format::{
     IndexEntry, IndexFileHeader, LookupTableEntry, INDEX_MAGIC, INDEX_VERSION,
 };
+use crate::storage_v2::index::token::build_token_index;
 use crate::storage_v2::types::NodeRecordV2;
 
 /// Built indexes ready to use in memory or write to disk.
@@ -24,6 +25,8 @@ pub struct BuiltIndexes {
     pub by_file: Vec<u8>,
     /// by_name index: maps name -> sorted IndexEntry list
     pub by_name: Vec<u8>,
+    /// Token-based fuzzy name index (Jaccard similarity over tokenized names).
+    pub by_token: Vec<u8>,
 }
 
 /// Build inverted indexes from sorted, compacted node records.
@@ -68,11 +71,13 @@ pub fn build_inverted_indexes(
     let by_type_bytes = serialize_index(&by_type)?;
     let by_file_bytes = serialize_index(&by_file)?;
     let by_name_bytes = serialize_index(&by_name)?;
+    let by_token_bytes = build_token_index(records, shard_id, segment_id)?;
 
     Ok(BuiltIndexes {
         by_type: by_type_bytes,
         by_file: by_file_bytes,
         by_name: by_name_bytes,
+        by_token: by_token_bytes,
     })
 }
 

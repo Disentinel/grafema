@@ -378,11 +378,30 @@ impl GraphStore for GraphEngineV2 {
             query.substring_match,
         );
 
-        if self.pending_tombstone_nodes.is_empty() {
-            return ids;
+        if !self.pending_tombstone_nodes.is_empty() {
+            ids.retain(|id| !self.is_node_tombstoned(*id));
         }
 
-        ids.retain(|id| !self.is_node_tombstoned(*id));
+        // Fuzzy name fallback: when name is specified, 0 exact results,
+        // and fuzzy is not explicitly disabled
+        if ids.is_empty()
+            && query.name.is_some()
+            && query.fuzzy_name_fallback != Some(false)
+        {
+            let name = query.name.as_deref().unwrap();
+            let fuzzy_matches = self.store.find_similar_names(
+                name,
+                exact_type,
+                20,  // top-K
+                0.3, // min Jaccard score
+            );
+            for m in &fuzzy_matches {
+                if !self.is_node_tombstoned(m.node_id) {
+                    ids.push(m.node_id);
+                }
+            }
+        }
+
         ids
     }
 
@@ -398,6 +417,8 @@ impl GraphStore for GraphEngineV2 {
             other => (other, None),
         };
 
+        let mut found_any = false;
+
         if self.pending_tombstone_nodes.is_empty() {
             self.store.find_node_ids_by_attr_chunked(
                 exact_type,
@@ -408,7 +429,10 @@ impl GraphStore for GraphEngineV2 {
                 &query.metadata_filters,
                 query.substring_match,
                 chunk_size,
-                callback,
+                &mut |ids| {
+                    if !ids.is_empty() { found_any = true; }
+                    callback(ids)
+                },
             );
         } else {
             self.store.find_node_ids_by_attr_chunked(
@@ -425,9 +449,33 @@ impl GraphStore for GraphEngineV2 {
                         .filter(|&&id| !self.is_node_tombstoned(id))
                         .copied()
                         .collect();
-                    if filtered.is_empty() { true } else { callback(&filtered) }
+                    if filtered.is_empty() { true } else {
+                        found_any = true;
+                        callback(&filtered)
+                    }
                 },
             );
+        }
+
+        // Fuzzy name fallback for streaming path (same logic as find_by_attr)
+        if !found_any
+            && query.name.is_some()
+            && query.fuzzy_name_fallback != Some(false)
+        {
+            let name = query.name.as_deref().unwrap();
+            let fuzzy_matches = self.store.find_similar_names(
+                name,
+                exact_type,
+                20,
+                0.3,
+            );
+            let fuzzy_ids: Vec<u128> = fuzzy_matches.iter()
+                .filter(|m| !self.is_node_tombstoned(m.node_id))
+                .map(|m| m.node_id)
+                .collect();
+            if !fuzzy_ids.is_empty() {
+                callback(&fuzzy_ids);
+            }
         }
     }
 
