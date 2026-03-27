@@ -12,7 +12,7 @@ Graph-driven code analysis. AI should query the graph, not read code.
 
 Grafema builds a queryable graph from your codebase via static analysis. Instead of reading thousands of files, ask questions: "who calls this?", "where does this data come from?", "what does this file do?" — and get structured answers.
 
-**Scale tested:** Grafema analyzes [microsoft/vscode](https://github.com/microsoft/vscode) (4,555 TypeScript files) into a 3.56M-node, 7.55M-edge graph in ~14 minutes. Self-analysis of its own 500+ file polyglot codebase (TypeScript + Haskell + Rust + Elixir) takes ~25 seconds.
+**Scale tested:** Grafema analyzes [microsoft/vscode](https://github.com/microsoft/vscode) (~5,600 TypeScript files in `src/`) into a 3.56M-node, 7.55M-edge graph in ~14 minutes. Self-analysis of its own 500+ file polyglot codebase (TypeScript + Haskell + Rust + Elixir) takes ~25 seconds.
 
 **AI benchmark:** On 30 real questions from VS Code GitHub issues (Sillito taxonomy L1-L4), Claude Sonnet with Grafema graph tools scores **77% accuracy vs 67% baseline** — with 96% MCP tool adoption.
 
@@ -135,7 +135,7 @@ Interactive graph navigation directly in your editor. Install from the [VS Code 
 |----------|-------|-------|-------|------|
 | Grafema (self) | 509 | 203K | 385K | 25s |
 | BullMQ | 90 | 24K | 50K | 8s |
-| microsoft/vscode | 4,555 | 3.56M | 7.55M | 14 min |
+| microsoft/vscode | ~5,600 | 3.56M | 7.55M | 14 min |
 
 ### AI Agent Accuracy (Autoresearch)
 
