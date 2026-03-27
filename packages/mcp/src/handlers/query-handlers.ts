@@ -374,6 +374,33 @@ export async function handleFindNodes(args: FindNodesArgs): Promise<ToolResult> 
     }
   }
 
+  // If 0 results with type filter, retry without type as "did you mean?" suggestion
+  if (totalMatched === 0 && type && name) {
+    const relaxedFilter: Record<string, unknown> = {};
+    if (name) relaxedFilter.name = name;
+    if (file) relaxedFilter.file = file;
+    relaxedFilter.substringMatch = true;
+    relaxedFilter.fuzzyNameFallback = true;
+
+    const suggestions: GraphNode[] = [];
+    for await (const node of db.queryNodes(relaxedFilter)) {
+      if (suggestions.length < 5) suggestions.push(node);
+      else break;
+    }
+
+    if (suggestions.length > 0) {
+      const typeList = [...new Set(suggestions.map(n => n.type))].join(', ');
+      return textResult(
+        `No ${type} nodes found matching "${name}". Did you mean one of these (${typeList})?\n\n${JSON.stringify(
+          serializeBigInt(suggestions),
+          null,
+          2
+        )}`
+      );
+    }
+    return textResult('No nodes found matching criteria');
+  }
+
   if (totalMatched === 0) {
     return textResult('No nodes found matching criteria');
   }
