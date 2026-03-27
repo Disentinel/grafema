@@ -188,7 +188,11 @@ find_nodes supports partial matching: find_nodes(file="auth/") matches all files
 find_nodes(name="redis", type="CALL") finds all calls containing "redis".
 
 TIP: If unsure about the type, omit it — find_nodes(name="Foo") searches all types.
-Results include _context with callers, members, and parent — often no follow-up needed.`,
+Results include _context with callers, members, and parent — often no follow-up needed.
+
+BUG FIX PATTERN: After identifying a bug in a method, use find_calls(name="method") to check
+ALL callers. Other components may call the same method without the guard your fix adds.
+This catches "same bug, different caller" patterns common in large codebases.`,
   }
 );
 
