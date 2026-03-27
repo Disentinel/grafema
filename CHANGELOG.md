@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Highlights
+
+- **Fuzzy name search via local embeddings (RFD-63)** — RFDB now includes a token-based + embedding index for fuzzy name matching. When exact name match returns 0 results, `find_nodes` falls back to embedding similarity. Example: `find_nodes(name="PtyHostHeartbeatService")` finds `HeartbeatService`, `PtyHostService`, `PtyService`. Works offline with a local model, no API calls.
+- **Rich find_nodes output (REG-1015)** — `find_nodes` now returns structural context per node: callers (human-readable names), member list for classes, parent node, import/call counts. One `find_nodes` call often eliminates the need for follow-up `get_file_overview` or `find_calls`.
+- **Progressive fallback chain** — `find_nodes` tries: exact match → fuzzy embedding → type relaxation ("did you mean?") → grep-enriched results. Fights for the answer before returning empty.
+- **Config version compatibility** — Patch-level version differences (0.3.21 config with 0.3.22 CLI) now warn instead of throwing. Config auto-updated after successful analyze.
+- **Autoresearch benchmark** — 30 questions from real VS Code GitHub issues. Grafema + Claude Sonnet = **77% vs 67% baseline** (+10% accuracy). Prompt ablation study (20 variants, 60 runs) found that explicit routing rules + prohibition = optimal adoption pattern.
+
+### Features
+
+- feat(rfdb): fuzzy name search — token-based + embedding index in RFDB (RFD-63)
+- feat(mcp): rich find_nodes output with `_context` (callers, members, parent, counts)
+- feat(mcp): progressive fallback chain — embedding → type relaxation → grep enriched
+- feat(mcp): auto-retry find_nodes without type filter on 0 results ("did you mean?")
+- feat(mcp): human-readable callers/parent names in find_nodes (decode semantic IDs)
+- feat(mcp): server instructions with prohibition + routing rules + few-shot examples
+- feat(mcp): action hint in get_stats response ("Graph is ready — use find_nodes...")
+- feat(autoresearch): ordered trace + fallback detection in harness
+- feat(autoresearch): MCP preflight check before runs (catches empty graph / version mismatch)
+- feat(autoresearch): H012 prompt ablation — 20 prompts, 7 dimensions, 60 runs
+
+### Bug Fixes
+
+- fix: config version check relaxed to patch-level (warn, not throw)
+- fix: auto-update config version after successful analyze
+- fix(rfdb): wire gc_collect + gc_purge into compact flow (orphaned segment cleanup)
+- fix(mcp): use HAS_METHOD edges for CLASS member listing (was CONTAINS)
+
 ## [0.3.22] - 2026-03-25
 
 ### Highlights

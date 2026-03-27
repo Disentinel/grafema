@@ -12,7 +12,9 @@ Graph-driven code analysis. AI should query the graph, not read code.
 
 Grafema builds a queryable graph from your codebase via static analysis. Instead of reading thousands of files, ask questions: "who calls this?", "where does this data come from?", "what does this file do?" — and get structured answers.
 
-**Self-analysis:** Grafema analyzes its own 500+ file polyglot codebase (TypeScript + Haskell + Rust + Elixir) in ~25 seconds.
+**Scale tested:** Grafema analyzes [microsoft/vscode](https://github.com/microsoft/vscode) (4,555 TypeScript files) into a 3.56M-node, 7.55M-edge graph in ~14 minutes. Self-analysis of its own 500+ file polyglot codebase (TypeScript + Haskell + Rust + Elixir) takes ~25 seconds.
+
+**AI benchmark:** On 30 real questions from VS Code GitHub issues (Sillito taxonomy L1-L4), Claude Sonnet with Grafema graph tools scores **77% accuracy vs 67% baseline** — with 96% MCP tool adoption.
 
 ## Quick Start
 
@@ -71,6 +73,8 @@ For Claude Desktop (`~/Library/Application Support/Claude/claude_desktop_config.
 
 30+ MCP tools available: `find_nodes`, `find_calls`, `trace_dataflow`, `get_file_overview`, `describe`, `query_graph`, and more. The AI agent queries the graph instead of reading files — faster, cheaper, more complete.
 
+`find_nodes` returns rich context in a single call: callers, members, parent, import/call counts. Fuzzy name matching via local embeddings means approximate queries like `find_nodes(name="PtyHostHeartbeatService")` find `HeartbeatService` even without exact match.
+
 ## Why Grafema?
 
 **For AI agents:** A `describe` call returns a file overview in 10-20x fewer tokens than reading the source. `find_calls` finds ALL callers across the entire codebase in one query — no grep, no missed references.
@@ -123,6 +127,40 @@ Interactive graph navigation directly in your editor. Install from the [VS Code 
 - **Nodes in File** — All graph nodes in current file with positions
 - **Explorer** — Navigate edges (incoming/outgoing) interactively
 
+## Benchmarks
+
+### Analysis Performance
+
+| Codebase | Files | Nodes | Edges | Time |
+|----------|-------|-------|-------|------|
+| Grafema (self) | 509 | 203K | 385K | 25s |
+| BullMQ | 90 | 24K | 50K | 8s |
+| microsoft/vscode | 4,555 | 3.56M | 7.55M | 14 min |
+
+### AI Agent Accuracy (Autoresearch)
+
+Methodology: 30 questions sourced from real VS Code GitHub issues, scored by LLM judge. Questions span Sillito taxonomy levels L1 (finding focus) through L4 (full architecture understanding). Each question run as independent `claude -p` session with no prior context.
+
+| Condition | Accuracy | MCP Adoption | Tokens | Detail |
+|-----------|----------|-------------|--------|--------|
+| Baseline (grep + read only) | 20/30 (67%) | 0% | 88K | Agent uses Grep, Read, Glob |
+| Grafema (graph tools) | 23/30 (77%) | 96% | 139K | +10% accuracy, graph-guided navigation |
+
+Grafema provides the biggest advantage on **L4 architecture questions** and **debugging/tracing** (up to +4 points per question) where structural graph queries outperform text search. On simple L1 lookups ("where is X?"), grep is often sufficient.
+
+The evaluation harness captures full tool interaction traces including MCP tool results, reasoning chains, and fallback patterns. See [`autoresearch/`](./autoresearch/) for methodology and raw data.
+
+### Prompt Engineering Findings (H012)
+
+We tested 20 prompt variants across 7 feature dimensions (60 runs) to determine what drives MCP tool adoption:
+
+- **Explicit routing rules** ("for call analysis, use find_calls") = 100% adoption
+- **Prohibition** ("avoid grep for structural questions") = 100% adoption, best accuracy
+- **Soft suggestions** ("consider using graph tools") = 0% adoption (worse than nothing)
+- **"Start with get_stats" instruction** = 100% adoption but no accuracy gain (forced adoption on easy questions wastes tokens)
+
+Key insight: **specificity > force**. Telling the model _which tool for which task_ works; telling it _you must use tools_ does not.
+
 ## Architecture
 
 Grafema uses a Rust orchestrator, Haskell per-language analyzers, and a custom columnar graph database (RFDB):
@@ -137,7 +175,7 @@ grafema analyze → Rust orchestrator → per-language analyzers → RFDB (graph
                             grafema tldr / MCP / CLI ← @grafema/util
 ```
 
-- **RFDB** — columnar graph database optimized for code analysis workloads. Deferred indexing, L1 compaction, edge-type and by-name indexes.
+- **RFDB** — columnar graph database optimized for code analysis workloads. Deferred indexing, L1 compaction, edge-type and by-name indexes. Includes **local embedding index** for fuzzy name search — approximate queries find structurally similar names without exact match (e.g., `PtyHostHeartbeatService` matches `HeartbeatService`). Automatic segment GC after compaction.
 - **Orchestrator** — Rust binary that coordinates discovery, parsing, RFDB ingestion, and resolution across languages. Streaming pipeline frees AST memory after ingestion.
 - **Analyzers** — Haskell binaries per language (JS/TS, Rust, Java, Kotlin, Python, Go, C/C++, Swift, Elixir/Erlang). Run as daemon pools with JSON-over-stdio protocol.
 - **MCP Server** — 30+ tools for AI agent integration (find_nodes, find_calls, trace_dataflow, describe, query_graph, etc.)
