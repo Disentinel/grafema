@@ -463,15 +463,21 @@ async function enrichNodes(
         context.parent = humanReadableId(edgeSrc(containedBy[0]));
       }
 
-      // For CLASS/INTERFACE nodes: list contained methods/properties
+      // For CLASS/INTERFACE nodes: list methods and properties
       const nodeType = String(node.type || '');
-      if ((nodeType === 'CLASS' || nodeType === 'INTERFACE') && containsCount > 0 && containsCount <= 20) {
+      if (nodeType === 'CLASS' || nodeType === 'INTERFACE') {
         const edgeDst = (e: Record<string, unknown>) => String(e.dst || '');
-        const children = outEdges
-          .filter(e => edgeType(e) === 'CONTAINS')
-          .map(e => humanReadableId(edgeDst(e)))
-          .filter(n => n !== '?');
-        if (children.length > 0) context.members = children.slice(0, 10);
+        const methodEdges = outEdges.filter(e => edgeType(e) === 'HAS_METHOD');
+        const containsEdges = outEdges.filter(e => edgeType(e) === 'CONTAINS');
+        const memberEdges = methodEdges.length > 0 ? methodEdges : containsEdges;
+        if (memberEdges.length > 0 && memberEdges.length <= 30) {
+          const members = memberEdges
+            .map(e => humanReadableId(edgeDst(e)))
+            .filter(n => n !== '?');
+          if (members.length > 0) context.members = members.slice(0, 15);
+        } else if (memberEdges.length > 30) {
+          context.member_count = memberEdges.length;
+        }
       }
     } catch {
       // Edge queries may fail for some node types — skip enrichment silently
