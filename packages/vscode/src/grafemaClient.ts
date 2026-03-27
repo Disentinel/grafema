@@ -309,8 +309,19 @@ export class GrafemaClientManager extends EventEmitter {
       );
     }
 
-    // Remove stale socket
+    // If socket exists, probe to check if a server is already running
     if (existsSync(this.socketPath)) {
+      try {
+        const probe = new RFDBClient(this.socketPath, 'probe');
+        await probe.connect();
+        const pong = await probe.ping();
+        await probe.close();
+        if (pong) {
+          return; // Server already running, skip start
+        }
+      } catch {
+        // Socket exists but server is dead — remove stale socket below
+      }
       unlinkSync(this.socketPath);
     }
 

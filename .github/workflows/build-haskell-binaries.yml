@@ -92,7 +92,7 @@ jobs:
           - platform: darwin-arm64
             os: macos-latest
           - platform: darwin-x64
-            os: macos-13-large
+            os: macos-13
           - platform: linux-x64
             os: ubuntu-22.04
           - platform: linux-arm64
