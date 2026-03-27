@@ -76,6 +76,8 @@ main = hspec $ do
     importResolutionTests
   describe "TypeScript Interfaces"
     interfaceTests
+  describe "CALL argCount metadata"
+    callArgCountTests
 
 
 scopeResolutionTests :: Spec
@@ -407,3 +409,88 @@ interfaceTests = do
     let iid = gnId ifaceNode
     methodNode <- requireNode "METHOD_SIGNATURE" "greet" fa
     hasEdge "HAS_PROPERTY" iid (gnId methodNode) fa `shouldBe` True
+
+
+callArgCountTests :: Spec
+callArgCountTests = do
+
+  -- f() — 0-argument call should have argCount=0
+  it "stores argCount=0 for zero-arg call" $ do
+    let fa = analyzeAST $ BL.concat
+          [ "{\"type\":\"Program\",\"start\":0,\"end\":10,\"body\":["
+          , "{\"type\":\"ExpressionStatement\",\"start\":0,\"end\":4,"
+          , "\"expression\":{\"type\":\"CallExpression\",\"start\":0,\"end\":3,"
+          , "\"callee\":{\"type\":\"Identifier\",\"start\":0,\"end\":1,\"name\":\"f\"},"
+          , "\"arguments\":[]}}"
+          , "]}"
+          ]
+    callNode <- requireNode "CALL" "f" fa
+    Map.lookup "argCount" (gnMetadata callNode) `shouldBe` Just (MetaInt 0)
+
+  -- f(1, 2) — 2-argument call should have argCount=2
+  it "stores argCount=2 for two-arg call" $ do
+    let fa = analyzeAST $ BL.concat
+          [ "{\"type\":\"Program\",\"start\":0,\"end\":10,\"body\":["
+          , "{\"type\":\"ExpressionStatement\",\"start\":0,\"end\":7,"
+          , "\"expression\":{\"type\":\"CallExpression\",\"start\":0,\"end\":6,"
+          , "\"callee\":{\"type\":\"Identifier\",\"start\":0,\"end\":1,\"name\":\"f\"},"
+          , "\"arguments\":["
+          , "{\"type\":\"Literal\",\"start\":2,\"end\":3,\"value\":1,\"raw\":\"1\"},"
+          , "{\"type\":\"Literal\",\"start\":4,\"end\":5,\"value\":2,\"raw\":\"2\"}"
+          , "]}}"
+          , "]}"
+          ]
+    callNode <- requireNode "CALL" "f" fa
+    Map.lookup "argCount" (gnMetadata callNode) `shouldBe` Just (MetaInt 2)
+
+  -- new Foo(x) — constructor call should have argCount=1 and kind="new"
+  it "stores argCount and kind for new expression" $ do
+    let fa = analyzeAST $ BL.concat
+          [ "{\"type\":\"Program\",\"start\":0,\"end\":12,\"body\":["
+          , "{\"type\":\"ExpressionStatement\",\"start\":0,\"end\":11,"
+          , "\"expression\":{\"type\":\"NewExpression\",\"start\":0,\"end\":10,"
+          , "\"callee\":{\"type\":\"Identifier\",\"start\":4,\"end\":7,\"name\":\"Foo\"},"
+          , "\"arguments\":["
+          , "{\"type\":\"Identifier\",\"start\":8,\"end\":9,\"name\":\"x\"}"
+          , "]}}"
+          , "]}"
+          ]
+    callNode <- requireNode "CALL" "Foo" fa
+    Map.lookup "argCount" (gnMetadata callNode) `shouldBe` Just (MetaInt 1)
+    Map.lookup "kind" (gnMetadata callNode) `shouldBe` Just (MetaText "new")
+
+  -- import('./mod') — dynamic import should have argCount=1
+  it "stores argCount=1 for dynamic import" $ do
+    let fa = analyzeAST $ BL.concat
+          [ "{\"type\":\"Program\",\"start\":0,\"end\":18,\"body\":["
+          , "{\"type\":\"ExpressionStatement\",\"start\":0,\"end\":17,"
+          , "\"expression\":{\"type\":\"ImportExpression\",\"start\":0,\"end\":16,"
+          , "\"source\":{\"type\":\"Literal\",\"start\":7,\"end\":14,\"value\":\"./mod\",\"raw\":\"'./mod'\"}}}"
+          , "]}"
+          ]
+    callNode <- requireNode "CALL" "import" fa
+    Map.lookup "argCount" (gnMetadata callNode) `shouldBe` Just (MetaInt 1)
+    Map.lookup "kind" (gnMetadata callNode) `shouldBe` Just (MetaText "dynamic_import")
+
+  -- tag`${x}${y}` — tagged template with 2 expressions should have argCount=2
+  it "stores argCount for tagged template expressions" $ do
+    let fa = analyzeAST $ BL.concat
+          [ "{\"type\":\"Program\",\"start\":0,\"end\":20,\"body\":["
+          , "{\"type\":\"ExpressionStatement\",\"start\":0,\"end\":19,"
+          , "\"expression\":{\"type\":\"TaggedTemplateExpression\",\"start\":0,\"end\":18,"
+          , "\"tag\":{\"type\":\"Identifier\",\"start\":0,\"end\":3,\"name\":\"tag\"},"
+          , "\"quasi\":{\"type\":\"TemplateLiteral\",\"start\":3,\"end\":18,"
+          , "\"quasis\":["
+          , "{\"type\":\"TemplateElement\",\"start\":4,\"end\":4,\"value\":{\"raw\":\"\",\"cooked\":\"\"},\"tail\":false},"
+          , "{\"type\":\"TemplateElement\",\"start\":8,\"end\":8,\"value\":{\"raw\":\"\",\"cooked\":\"\"},\"tail\":false},"
+          , "{\"type\":\"TemplateElement\",\"start\":12,\"end\":12,\"value\":{\"raw\":\"\",\"cooked\":\"\"},\"tail\":true}"
+          , "],"
+          , "\"expressions\":["
+          , "{\"type\":\"Identifier\",\"start\":6,\"end\":7,\"name\":\"x\"},"
+          , "{\"type\":\"Identifier\",\"start\":10,\"end\":11,\"name\":\"y\"}"
+          , "]}}}"
+          , "]}"
+          ]
+    callNode <- requireNode "CALL" "tag" fa
+    Map.lookup "argCount" (gnMetadata callNode) `shouldBe` Just (MetaInt 2)
+    Map.lookup "kind" (gnMetadata callNode) `shouldBe` Just (MetaText "tagged_template")
