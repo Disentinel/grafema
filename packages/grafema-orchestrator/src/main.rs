@@ -657,7 +657,7 @@ async fn main() -> Result<()> {
 
             // 4b–4k. All other languages — pool-based analysis, results forwarded
             spawn_analysis!(hs_files, "Haskell", analyzer::analyze_haskell_files_parallel_pooled);
-            spawn_analysis!(rs_files, "Rust", analyzer::analyze_rust_files_parallel_pooled);
+            spawn_analysis!(rs_files, "Rust", grafema_orchestrator::rust_analyzer::analyze_rust_files_native);
             spawn_analysis!(java_files, "Java", analyzer::analyze_java_files_parallel_pooled);
             spawn_analysis!(kotlin_files, "Kotlin", analyzer::analyze_kotlin_files_parallel_pooled);
             spawn_analysis!(py_files, "Python", analyzer::analyze_python_files_parallel_pooled);
