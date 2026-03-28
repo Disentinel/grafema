@@ -26,7 +26,7 @@ import Analysis.Types
 import Analysis.Context
 import {-# SOURCE #-} Analysis.Walker (walkNode)
 import Analysis.Scope (withScope, declareInScope)
-import Analysis.SemanticId (semanticId)
+import Analysis.SemanticId (semanticId, contentHash)
 import AST.Types
 import AST.Span (Span(..))
 import Data.Maybe (fromMaybe)
@@ -425,7 +425,16 @@ ruleImportDeclaration node = do
       source = case getChildrenMaybe "source" node of
                  Just srcNode -> getTextFieldOr "value" "" srcNode
                  Nothing      -> ""
-      nodeId = semanticId file "IMPORT" source Nothing Nothing
+      specs  = getChildren "specifiers" node
+      -- Disambiguate duplicate imports from same source (e.g. `import { A } from 'x'` + `import type { B } from 'x'`)
+      -- Use specifier names as stable content hash — doesn't change when lines shift.
+      specNames = T.intercalate "," $ map (\s ->
+        case getChildrenMaybe "local" s of
+          Just l  -> getTextFieldOr "name" "" l
+          Nothing -> ""
+        ) specs
+      hash   = contentHash [("import", source), ("specifiers", specNames)]
+      nodeId = semanticId file "IMPORT" source Nothing (Just hash)
 
   emitNode GraphNode
     { gnId = nodeId, gnType = "IMPORT", gnName = source
@@ -445,7 +454,6 @@ ruleImportDeclaration node = do
     }
 
   -- Walk specifiers for individual import bindings
-  let specs = getChildren "specifiers" node
   mapM_ (\s -> withNamedParent source $ withImportNodeId nodeId $ withAncestor node (walkNode s)) specs
 
   return (Just nodeId)
