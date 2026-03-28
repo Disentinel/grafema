@@ -2,11 +2,34 @@
  * Node Locator
  *
  * Finds graph nodes at a given cursor position in a file.
+ * Uses a per-file cache to avoid repeated getAllNodes queries.
  */
 
 import type { BaseRFDBClient } from '@grafema/rfdb-client';
 import type { WireNode } from '@grafema/types';
 import { parseNodeMetadata } from './types';
+
+// Per-file node cache. Invalidated on analyze or after TTL.
+const nodeCache = new Map<string, { nodes: WireNode[]; timestamp: number }>();
+const CACHE_TTL_MS = 60_000; // 1 minute
+
+export function invalidateNodeCache(file?: string): void {
+  if (file) {
+    nodeCache.delete(file);
+  } else {
+    nodeCache.clear();
+  }
+}
+
+async function getFileNodes(client: BaseRFDBClient, filePath: string): Promise<WireNode[]> {
+  const cached = nodeCache.get(filePath);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+    return cached.nodes;
+  }
+  const nodes = await client.getAllNodes({ file: filePath });
+  nodeCache.set(filePath, { nodes, timestamp: Date.now() });
+  return nodes;
+}
 
 /**
  * Find the most specific node at the given cursor position.
@@ -23,7 +46,7 @@ export async function findNodeAtCursor(
   line: number,
   column: number
 ): Promise<WireNode | null> {
-  const fileNodes = await client.getAllNodes({ file: filePath });
+  const fileNodes = await getFileNodes(client, filePath);
   if (fileNodes.length === 0) return null;
 
   const matchingNodes: Array<{ node: WireNode; specificity: number }> = [];
@@ -130,5 +153,5 @@ function computeSpanSize(
  * Find all nodes in a file (for caching purposes)
  */
 export async function findNodesInFile(client: BaseRFDBClient, filePath: string): Promise<WireNode[]> {
-  return client.getAllNodes({ file: filePath });
+  return getFileNodes(client, filePath);
 }

@@ -174,9 +174,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // Clear caches when reconnected (database may have changed)
   clientManager.on('reconnected', () => {
-    console.log('[grafema-explore] Reconnected - clearing history');
+    console.log('[grafema-explore] Reconnected - clearing history and node cache');
     edgesProvider?.clearHistory();
     edgesProvider?.setRootNode(null);
+    // Invalidate node locator cache — graph data may have changed
+    const { invalidateNodeCache } = require('./nodeLocator');
+    invalidateNodeCache();
     vscode.window.showInformationMessage('Grafema: Reconnected to graph database');
   });
 

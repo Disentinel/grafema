@@ -342,6 +342,17 @@ export class GrafemaClientManager extends EventEmitter {
       console.error('[grafema-explore] Server process error:', err);
     });
 
+    // Capture server stderr/stdout for debugging
+    this.serverProcess.stderr?.on('data', (data: Buffer) => {
+      console.error('[grafema-explore] rfdb-server stderr:', data.toString().trim());
+    });
+    this.serverProcess.stdout?.on('data', (data: Buffer) => {
+      console.log('[grafema-explore] rfdb-server stdout:', data.toString().trim());
+    });
+    this.serverProcess.on('exit', (code: number | null) => {
+      console.error(`[grafema-explore] rfdb-server exited with code ${code}`);
+    });
+
     // Wait for socket to appear
     let attempts = 0;
     while (!existsSync(this.socketPath) && attempts < 50) {

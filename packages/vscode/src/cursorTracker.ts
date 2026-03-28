@@ -81,33 +81,11 @@ export async function findAndSetRoot(
   try {
     const client = clientManager.getClient();
 
-    // Debug: log the raw query before node search
-    const allNodes = await client.getAllNodes({ file: filePath });
+    const node = await findNodeAtCursor(client, filePath, line, column);
+
     const details: string[] = [
       `cursor: L${line}:${column}`,
-      `getAllNodes({ file }) returned ${allNodes.length} nodes`,
     ];
-
-    if (allNodes.length === 0) {
-      // Try a small sample query to see what file paths look like in the graph
-      const sampleNodes = await client.getAllNodes({ nodeType: 'MODULE' });
-      const files = new Set(sampleNodes.slice(0, 20).map((n) => n.file));
-      details.push(`--- sample MODULE files in graph (first ${files.size}) ---`);
-      for (const f of files) {
-        details.push(`  ${f}`);
-      }
-    } else {
-      // Show first few nodes for context
-      for (const n of allNodes.slice(0, 5)) {
-        const meta = JSON.parse(n.metadata || '{}');
-        details.push(`  ${n.nodeType} "${n.name}" L${meta.line ?? '?'}:${meta.column ?? '?'}`);
-      }
-      if (allNodes.length > 5) {
-        details.push(`  ... and ${allNodes.length - 5} more`);
-      }
-    }
-
-    const node = await findNodeAtCursor(client, filePath, line, column);
 
     debugProvider?.log({
       timestamp: Date.now(),
