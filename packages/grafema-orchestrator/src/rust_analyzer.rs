@@ -413,25 +413,11 @@ fn walk_fn_param(param: &syn::FnArg, fn_id: &str, ctx: &mut Ctx) {
             });
         }
         syn::FnArg::Typed(t) => {
-            if let syn::Pat::Ident(pi) = t.pat.as_ref() {
-                let name = pi.ident.to_string();
-                let (line, col) = ctx.span_line_col(pi.ident.span());
-                let node_id = semantic_id(&ctx.file, "PARAMETER", &name, Some(fn_id), None);
-                ctx.emit_node(GraphNode {
-                    id: node_id,
-                    node_type: "PARAMETER".to_string(),
-                    name,
-                    file: ctx.file.clone(),
-                    line, column: col,
-                    end_line: 0, end_column: 0,
-                    exported: false,
-                    metadata: HashMap::from([
-                        Ctx::meta_bool("mutable", pi.mutability.is_some()),
-                    ]),
-                    extra: HashMap::new(),
-                });
-            }
-            // Complex patterns (tuple, struct destructuring) — walk for refs
+            // Use walk_pat_bindings for all patterns (simple ident + complex destructuring).
+            // Temporarily set enclosing_fn to fn_id so semantic IDs get the right parent.
+            let prev_fn = ctx.enclosing_fn.replace(fn_id.to_string());
+            walk_pat_bindings(t.pat.as_ref(), "param", ctx);
+            ctx.enclosing_fn = prev_fn;
         }
     }
 }
@@ -867,31 +853,98 @@ fn walk_stmt(stmt: &syn::Stmt, ctx: &mut Ctx) {
 }
 
 fn walk_let(local: &syn::Local, ctx: &mut Ctx) {
-    if let syn::Pat::Ident(pi) = &local.pat {
-        let name = pi.ident.to_string();
-        let (line, col) = ctx.span_line_col(pi.ident.span());
-        let parent = ctx.enclosing_fn.as_deref();
-        let hash = ctx.pos_hash(line, col);
-        let node_id = semantic_id(&ctx.file, "VARIABLE", &name, parent, Some(&hash));
-
-        ctx.emit_node(GraphNode {
-            id: node_id,
-            node_type: "VARIABLE".to_string(),
-            name,
-            file: ctx.file.clone(),
-            line, column: col,
-            end_line: 0, end_column: 0,
-            exported: false,
-            metadata: HashMap::from([
-                Ctx::meta_text("kind", "let"),
-                Ctx::meta_bool("mutable", pi.mutability.is_some()),
-            ]),
-            extra: HashMap::new(),
-        });
-    }
+    walk_pat_bindings(&local.pat, "let", ctx);
 
     if let Some(init) = &local.init {
         walk_expr(&init.expr, ctx);
+    }
+}
+
+/// Recursively extract all ident bindings from any pattern, creating VARIABLE
+/// (or PARAMETER when `kind == "param"`) nodes for each. Handles tuple,
+/// tuple-struct, struct, slice, or, reference, and type-annotation patterns.
+fn walk_pat_bindings(pat: &syn::Pat, kind: &str, ctx: &mut Ctx) {
+    match pat {
+        syn::Pat::Ident(pi) => {
+            let name = pi.ident.to_string();
+            let (line, col) = ctx.span_line_col(pi.ident.span());
+            let parent = ctx.enclosing_fn.as_deref();
+            let hash = ctx.pos_hash(line, col);
+            let node_type = if kind == "param" { "PARAMETER" } else { "VARIABLE" };
+            let node_id = semantic_id(&ctx.file, node_type, &name, parent, Some(&hash));
+
+            ctx.emit_node(GraphNode {
+                id: node_id,
+                node_type: node_type.to_string(),
+                name,
+                file: ctx.file.clone(),
+                line, column: col,
+                end_line: 0, end_column: 0,
+                exported: false,
+                metadata: HashMap::from([
+                    Ctx::meta_text("kind", kind),
+                    Ctx::meta_bool("mutable", pi.mutability.is_some()),
+                ]),
+                extra: HashMap::new(),
+            });
+
+            // If the ident has a sub-pattern (e.g. `x @ Some(inner)`), walk it too
+            if let Some((_, sub_pat)) = &pi.subpat {
+                walk_pat_bindings(sub_pat, kind, ctx);
+            }
+        }
+        syn::Pat::Tuple(pt) => {
+            for elem in &pt.elems {
+                walk_pat_bindings(elem, kind, ctx);
+            }
+        }
+        syn::Pat::TupleStruct(pts) => {
+            for elem in &pts.elems {
+                walk_pat_bindings(elem, kind, ctx);
+            }
+        }
+        syn::Pat::Struct(ps) => {
+            for field in &ps.fields {
+                walk_pat_bindings(&field.pat, kind, ctx);
+            }
+            // rest pattern (`..`) has no bindings
+        }
+        syn::Pat::Slice(ps) => {
+            for elem in &ps.elems {
+                walk_pat_bindings(elem, kind, ctx);
+            }
+        }
+        syn::Pat::Or(po) => {
+            for case in &po.cases {
+                walk_pat_bindings(case, kind, ctx);
+            }
+        }
+        syn::Pat::Reference(pr) => {
+            walk_pat_bindings(&pr.pat, kind, ctx);
+        }
+        syn::Pat::Type(pt) => {
+            // `x: i32` — unwrap the type annotation and handle the inner pattern
+            walk_pat_bindings(&pt.pat, kind, ctx);
+        }
+        syn::Pat::Wild(_) => {
+            // `_` — no binding
+        }
+        syn::Pat::Rest(_) => {
+            // `..` — no binding
+        }
+        syn::Pat::Lit(_) | syn::Pat::Range(_) => {
+            // literal/range patterns in match arms — no variable bindings
+        }
+        syn::Pat::Paren(pp) => {
+            walk_pat_bindings(&pp.pat, kind, ctx);
+        }
+        syn::Pat::Macro(_) | syn::Pat::Verbatim(_) => {
+            // opaque patterns — skip
+        }
+        syn::Pat::Const(_) => {
+            // const block pattern — no variable bindings
+        }
+        _ => panic!("rust_analyzer: unhandled Pat variant in walk_pat_bindings"),
     }
 }
 
@@ -1303,6 +1356,69 @@ mod tests {
         let fa = parse_and_analyze("pub fn exported() {} fn private() {}");
         assert_eq!(fa.exports.len(), 1);
         assert_eq!(fa.exports[0].name, "exported");
+    }
+
+    #[test]
+    fn test_tuple_destructuring_let() {
+        let fa = parse_and_analyze("fn main() { let (a, b) = (1, 2); }");
+        assert!(has_node(&fa, "VARIABLE", "a"), "VARIABLE a from tuple");
+        assert!(has_node(&fa, "VARIABLE", "b"), "VARIABLE b from tuple");
+    }
+
+    #[test]
+    fn test_tuple_struct_destructuring_let() {
+        let fa = parse_and_analyze("struct Pair(i32, i32); fn main() { let Pair(x, y) = Pair(1, 2); }");
+        assert!(has_node(&fa, "VARIABLE", "x"), "VARIABLE x from TupleStruct");
+        assert!(has_node(&fa, "VARIABLE", "y"), "VARIABLE y from TupleStruct");
+    }
+
+    #[test]
+    fn test_struct_destructuring_let() {
+        let fa = parse_and_analyze("struct Pt { x: i32, y: i32 } fn main() { let Pt { x, y } = Pt { x: 1, y: 2 }; }");
+        assert!(has_node(&fa, "VARIABLE", "x"), "VARIABLE x from struct pat");
+        assert!(has_node(&fa, "VARIABLE", "y"), "VARIABLE y from struct pat");
+    }
+
+    #[test]
+    fn test_slice_destructuring_let() {
+        let fa = parse_and_analyze("fn main() { let v = vec![1,2,3]; let [a, b, ..] = v[..] else { return; }; }");
+        assert!(has_node(&fa, "VARIABLE", "a"), "VARIABLE a from slice");
+        assert!(has_node(&fa, "VARIABLE", "b"), "VARIABLE b from slice");
+    }
+
+    #[test]
+    fn test_reference_pattern_let() {
+        let fa = parse_and_analyze("fn main() { let &x = &42; }");
+        assert!(has_node(&fa, "VARIABLE", "x"), "VARIABLE x from ref pattern");
+    }
+
+    #[test]
+    fn test_type_annotated_pattern_let() {
+        let fa = parse_and_analyze("fn main() { let x: i32 = 42; }");
+        assert!(has_node(&fa, "VARIABLE", "x"), "VARIABLE x from type-annotated pat");
+    }
+
+    #[test]
+    fn test_nested_tuple_destructuring() {
+        let fa = parse_and_analyze("fn main() { let ((a, b), c) = ((1, 2), 3); }");
+        assert!(has_node(&fa, "VARIABLE", "a"), "VARIABLE a nested");
+        assert!(has_node(&fa, "VARIABLE", "b"), "VARIABLE b nested");
+        assert!(has_node(&fa, "VARIABLE", "c"), "VARIABLE c nested");
+    }
+
+    #[test]
+    fn test_fn_param_tuple_destructuring() {
+        let fa = parse_and_analyze("fn process((x, y): (i32, i32)) {}");
+        assert!(has_node(&fa, "PARAMETER", "x"), "PARAMETER x from tuple param");
+        assert!(has_node(&fa, "PARAMETER", "y"), "PARAMETER y from tuple param");
+    }
+
+    #[test]
+    fn test_wildcard_in_tuple() {
+        let fa = parse_and_analyze("fn main() { let (a, _) = (1, 2); }");
+        assert!(has_node(&fa, "VARIABLE", "a"), "VARIABLE a");
+        // _ should NOT create a node
+        assert!(!has_node(&fa, "VARIABLE", "_"), "wildcard should not create VARIABLE");
     }
 
     #[test]
