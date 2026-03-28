@@ -48,14 +48,58 @@ fn make_module_id(file: &str) -> String {
 // Analysis context
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Scope kinds — matching JS analyzer's scope hierarchy
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy)]
+enum ScopeKind {
+    Module,
+    Function,
+    Block,    // if/match/loop/for/while/unsafe/async blocks
+    Impl,
+    Trait,
+}
+
+impl ScopeKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            ScopeKind::Module => "module",
+            ScopeKind::Function => "function",
+            ScopeKind::Block => "block",
+            ScopeKind::Impl => "impl",
+            ScopeKind::Trait => "trait",
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Deferred references — collected during walk, resolved after
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+struct DeferredRef {
+    name: String,
+    from_node_id: String,
+    edge_type: String, // "READS_FROM" or "CALLS"
+    scope_id: String,
+}
+
 struct Ctx {
     file: String,
     module_id: String,
     scope_stack: Vec<String>,    // current scope ID (head = innermost)
+    scope_kinds: Vec<ScopeKind>, // parallel to scope_stack
     enclosing_fn: Option<String>, // nearest enclosing function node ID
     nodes: Vec<GraphNode>,
     edges: Vec<GraphEdge>,
     exports: Vec<ExportInfo>,
+    /// Declarations per scope: scope_id → Vec<(name, node_id)>
+    declarations: HashMap<String, Vec<(String, String)>>,
+    /// Parent scope map: child_scope_id → parent_scope_id
+    scope_parents: HashMap<String, String>,
+    /// Deferred references to resolve after walk
+    deferred_refs: Vec<DeferredRef>,
 }
 
 impl Ctx {
@@ -65,10 +109,14 @@ impl Ctx {
             file: file.to_string(),
             module_id: module_id.clone(),
             scope_stack: vec![module_id],
+            scope_kinds: vec![ScopeKind::Module],
             enclosing_fn: None,
             nodes: Vec::new(),
             edges: Vec::new(),
             exports: Vec::new(),
+            declarations: HashMap::new(),
+            scope_parents: HashMap::new(),
+            deferred_refs: Vec::new(),
         }
     }
 
@@ -89,16 +137,85 @@ impl Ctx {
         self.nodes.push(node);
     }
 
+    /// Emit a declaration node: CONTAINS + DECLARES edges from current scope.
+    fn emit_declaration(&mut self, node: GraphNode) {
+        let scope = self.scope_id().to_string();
+        let name = node.name.clone();
+        let id = node.id.clone();
+
+        // CONTAINS edge (auto)
+        self.edges.push(GraphEdge {
+            src: scope.clone(),
+            dst: id.clone(),
+            edge_type: "CONTAINS".to_string(),
+            metadata: HashMap::new(),
+        });
+
+        // DECLARES edge — scope declares this binding
+        self.edges.push(GraphEdge {
+            src: scope.clone(),
+            dst: id.clone(),
+            edge_type: "DECLARES".to_string(),
+            metadata: HashMap::new(),
+        });
+
+        // Track for scope resolution
+        self.declarations.entry(scope).or_default().push((name, id));
+
+        self.nodes.push(node);
+    }
+
     fn emit_edge(&mut self, edge: GraphEdge) {
         self.edges.push(edge);
     }
 
-    fn push_scope(&mut self, scope_id: &str) {
+    /// Push a new scope. For Block scopes, emits a SCOPE node + HAS_SCOPE edge.
+    /// For Function/Impl/Trait, the existing node IS the scope (no separate SCOPE node).
+    fn push_scope(&mut self, scope_id: &str, kind: ScopeKind) {
+        let parent = self.scope_id().to_string();
+
+        // Only emit SCOPE node for block scopes — functions/impls/traits are their own scope
+        if matches!(kind, ScopeKind::Block) {
+            self.nodes.push(GraphNode {
+                id: scope_id.to_string(),
+                node_type: "SCOPE".to_string(),
+                name: kind.as_str().to_string(),
+                file: self.file.clone(),
+                line: 0, column: 0, end_line: 0, end_column: 0,
+                exported: false,
+                metadata: HashMap::from([Self::meta_text("kind", kind.as_str())]),
+                extra: HashMap::new(),
+            });
+        }
+
+        // HAS_SCOPE edge from parent
+        self.edges.push(GraphEdge {
+            src: parent.clone(),
+            dst: scope_id.to_string(),
+            edge_type: "HAS_SCOPE".to_string(),
+            metadata: HashMap::new(),
+        });
+
+        // Track parent for scope resolution
+        self.scope_parents.insert(scope_id.to_string(), parent);
+
         self.scope_stack.push(scope_id.to_string());
+        self.scope_kinds.push(kind);
     }
 
     fn pop_scope(&mut self) {
         self.scope_stack.pop().expect("popping empty scope stack");
+        self.scope_kinds.pop();
+    }
+
+    /// Add a deferred reference to resolve after walk completes.
+    fn defer_ref(&mut self, name: &str, from_node_id: &str, edge_type: &str) {
+        self.deferred_refs.push(DeferredRef {
+            name: name.to_string(),
+            from_node_id: from_node_id.to_string(),
+            edge_type: edge_type.to_string(),
+            scope_id: self.scope_id().to_string(),
+        });
     }
 
     fn span_line_col(&self, span: Span) -> (i64, i64) {
@@ -158,6 +275,9 @@ pub fn analyze_rust_file(file: &str, syntax: &syn::File) -> FileAnalysis {
         walk_item(item, &mut ctx);
     }
 
+    // Post-pass: resolve deferred references
+    resolve_refs(&mut ctx);
+
     FileAnalysis {
         file: ctx.file,
         module_id: ctx.module_id,
@@ -165,6 +285,49 @@ pub fn analyze_rust_file(file: &str, syntax: &syn::File) -> FileAnalysis {
         edges: ctx.edges,
         exports: ctx.exports,
     }
+}
+
+/// Resolve deferred references by walking scope chains.
+/// For each DeferredRef, finds the nearest declaration with matching name
+/// by traversing scope_parents upward from the ref's scope.
+fn resolve_refs(ctx: &mut Ctx) {
+    let refs = std::mem::take(&mut ctx.deferred_refs);
+    let mut new_edges = Vec::new();
+
+    for dr in &refs {
+        let mut scope = dr.scope_id.clone();
+        let mut resolved = false;
+
+        // Walk scope chain upward
+        loop {
+            if let Some(decls) = ctx.declarations.get(&scope) {
+                if let Some((_, target_id)) = decls.iter().rev().find(|(n, _)| *n == dr.name) {
+                    new_edges.push(GraphEdge {
+                        src: dr.from_node_id.clone(),
+                        dst: target_id.clone(),
+                        edge_type: dr.edge_type.clone(),
+                        metadata: HashMap::new(),
+                    });
+                    resolved = true;
+                    break;
+                }
+            }
+            // Move to parent scope
+            match ctx.scope_parents.get(&scope) {
+                Some(parent) => scope = parent.clone(),
+                None => break, // reached top
+            }
+        }
+
+        if !resolved {
+            // Mark the REFERENCE node as unresolved
+            if let Some(node) = ctx.nodes.iter_mut().find(|n| n.id == dr.from_node_id) {
+                node.metadata.insert("resolved".to_string(), serde_json::json!(false));
+            }
+        }
+    }
+
+    ctx.edges.extend(new_edges);
 }
 
 /// Analyze Rust files in parallel using the native in-process analyzer.
@@ -353,7 +516,7 @@ fn walk_fn(f: &syn::ItemFn, ctx: &mut Ctx) {
     let is_exported = is_pub(&f.vis);
     let node_id = semantic_id(&ctx.file, "FUNCTION", &ident, None, None);
 
-    ctx.emit_node(GraphNode {
+    ctx.emit_declaration(GraphNode {
         id: node_id.clone(),
         node_type: "FUNCTION".to_string(),
         name: ident.clone(),
@@ -386,7 +549,7 @@ fn walk_fn(f: &syn::ItemFn, ctx: &mut Ctx) {
 
     // Walk body in function scope
     let prev_fn = ctx.enclosing_fn.replace(node_id.clone());
-    ctx.push_scope(&node_id);
+    ctx.push_scope(&node_id, ScopeKind::Function);
     walk_block(&f.block, ctx);
     ctx.pop_scope();
     ctx.enclosing_fn = prev_fn;
@@ -397,7 +560,7 @@ fn walk_fn_param(param: &syn::FnArg, fn_id: &str, ctx: &mut Ctx) {
         syn::FnArg::Receiver(r) => {
             let (line, col) = ctx.span_line_col(r.self_token.span);
             let node_id = semantic_id(&ctx.file, "PARAMETER", "self", Some(fn_id), None);
-            ctx.emit_node(GraphNode {
+            ctx.emit_declaration(GraphNode {
                 id: node_id,
                 node_type: "PARAMETER".to_string(),
                 name: "self".to_string(),
@@ -432,7 +595,7 @@ fn walk_const(c: &syn::ItemConst, ctx: &mut Ctx) {
     let is_exported = is_pub(&c.vis);
     let node_id = semantic_id(&ctx.file, "VARIABLE", &ident, None, None);
 
-    ctx.emit_node(GraphNode {
+    ctx.emit_declaration(GraphNode {
         id: node_id.clone(),
         node_type: "VARIABLE".to_string(),
         name: ident.clone(),
@@ -464,7 +627,7 @@ fn walk_static(s: &syn::ItemStatic, ctx: &mut Ctx) {
     let is_mut = matches!(s.mutability, syn::StaticMutability::Mut(_));
     let node_id = semantic_id(&ctx.file, "VARIABLE", &ident, None, None);
 
-    ctx.emit_node(GraphNode {
+    ctx.emit_declaration(GraphNode {
         id: node_id.clone(),
         node_type: "VARIABLE".to_string(),
         name: ident.clone(),
@@ -499,7 +662,7 @@ fn walk_struct(s: &syn::ItemStruct, ctx: &mut Ctx) {
     let is_exported = is_pub(&s.vis);
     let node_id = semantic_id(&ctx.file, "STRUCT", &ident, None, None);
 
-    ctx.emit_node(GraphNode {
+    ctx.emit_declaration(GraphNode {
         id: node_id.clone(),
         node_type: "STRUCT".to_string(),
         name: ident.clone(),
@@ -525,7 +688,7 @@ fn walk_struct(s: &syn::ItemStruct, ctx: &mut Ctx) {
             let fname = ident.to_string();
             let (fl, fc) = ctx.span_line_col(ident.span());
             let field_id = semantic_id(&ctx.file, "RECORD_FIELD", &fname, Some(&node_id), None);
-            ctx.emit_node(GraphNode {
+            ctx.emit_declaration(GraphNode {
                 id: field_id.clone(),
                 node_type: "RECORD_FIELD".to_string(),
                 name: fname,
@@ -551,7 +714,7 @@ fn walk_enum(e: &syn::ItemEnum, ctx: &mut Ctx) {
     let is_exported = is_pub(&e.vis);
     let node_id = semantic_id(&ctx.file, "ENUM", &ident, None, None);
 
-    ctx.emit_node(GraphNode {
+    ctx.emit_declaration(GraphNode {
         id: node_id.clone(),
         node_type: "ENUM".to_string(),
         name: ident.clone(),
@@ -575,7 +738,7 @@ fn walk_enum(e: &syn::ItemEnum, ctx: &mut Ctx) {
         let vname = variant.ident.to_string();
         let (vl, vc) = ctx.span_line_col(variant.ident.span());
         let variant_id = semantic_id(&ctx.file, "VARIANT", &vname, Some(&node_id), None);
-        ctx.emit_node(GraphNode {
+        ctx.emit_declaration(GraphNode {
             id: variant_id,
             node_type: "VARIANT".to_string(),
             name: vname,
@@ -615,7 +778,7 @@ fn walk_impl(i: &syn::ItemImpl, ctx: &mut Ctx) {
         extra: HashMap::new(),
     });
 
-    ctx.push_scope(&node_id);
+    ctx.push_scope(&node_id, ScopeKind::Impl);
     for impl_item in &i.items {
         walk_impl_item(impl_item, ctx);
     }
@@ -632,7 +795,7 @@ fn walk_impl_item(item: &syn::ImplItem, ctx: &mut Ctx) {
             let parent = ctx.scope_stack.last().map(|s| s.as_str());
             let node_id = semantic_id(&ctx.file, "FUNCTION", &ident, parent, None);
 
-            ctx.emit_node(GraphNode {
+            ctx.emit_declaration(GraphNode {
                 id: node_id.clone(),
                 node_type: "FUNCTION".to_string(),
                 name: ident.clone(),
@@ -660,7 +823,7 @@ fn walk_impl_item(item: &syn::ImplItem, ctx: &mut Ctx) {
             }
 
             let prev_fn = ctx.enclosing_fn.replace(node_id.clone());
-            ctx.push_scope(&node_id);
+            ctx.push_scope(&node_id, ScopeKind::Function);
             walk_block(&m.block, ctx);
             ctx.pop_scope();
             ctx.enclosing_fn = prev_fn;
@@ -679,7 +842,7 @@ fn walk_trait(t: &syn::ItemTrait, ctx: &mut Ctx) {
     let is_exported = is_pub(&t.vis);
     let node_id = semantic_id(&ctx.file, "TRAIT", &ident, None, None);
 
-    ctx.emit_node(GraphNode {
+    ctx.emit_declaration(GraphNode {
         id: node_id.clone(),
         node_type: "TRAIT".to_string(),
         name: ident.clone(),
@@ -699,7 +862,7 @@ fn walk_trait(t: &syn::ItemTrait, ctx: &mut Ctx) {
         });
     }
 
-    ctx.push_scope(&node_id);
+    ctx.push_scope(&node_id, ScopeKind::Trait);
     for trait_item in &t.items {
         if let syn::TraitItem::Fn(m) = trait_item {
             let mname = m.sig.ident.to_string();
@@ -777,7 +940,7 @@ fn emit_import(source: &str, name: &str, line: i64, col: i64, vis: &syn::Visibil
     });
 
     let binding_id = semantic_id(&ctx.file, "IMPORT_BINDING", name, Some(source), None);
-    ctx.emit_node(GraphNode {
+    ctx.emit_declaration(GraphNode {
         id: binding_id.clone(),
         node_type: "IMPORT_BINDING".to_string(),
         name: name.to_string(),
@@ -820,7 +983,7 @@ fn walk_type_alias(t: &syn::ItemType, ctx: &mut Ctx) {
     let ident = t.ident.to_string();
     let (line, col) = ctx.span_line_col(t.ident.span());
     let node_id = semantic_id(&ctx.file, "TYPE_ALIAS", &ident, None, None);
-    ctx.emit_node(GraphNode {
+    ctx.emit_declaration(GraphNode {
         id: node_id,
         node_type: "TYPE_ALIAS".to_string(),
         name: ident,
@@ -853,10 +1016,91 @@ fn walk_stmt(stmt: &syn::Stmt, ctx: &mut Ctx) {
 }
 
 fn walk_let(local: &syn::Local, ctx: &mut Ctx) {
+    // Collect binding IDs before walking init (for ASSIGNED_FROM)
+    let binding_ids = collect_pat_binding_ids(&local.pat, "let", ctx);
     walk_pat_bindings(&local.pat, "let", ctx);
 
     if let Some(init) = &local.init {
         walk_expr(&init.expr, ctx);
+
+        // ASSIGNED_FROM edges: each binding ← init expression
+        // For simple expressions (path, lit), emit direct edge
+        if let Some(init_node_id) = expr_node_id(&init.expr, ctx) {
+            for var_id in &binding_ids {
+                ctx.emit_edge(GraphEdge {
+                    src: var_id.clone(),
+                    dst: init_node_id.clone(),
+                    edge_type: "ASSIGNED_FROM".to_string(),
+                    metadata: HashMap::new(),
+                });
+            }
+        }
+    }
+}
+
+/// Predict binding IDs that walk_pat_bindings will create (without emitting).
+fn collect_pat_binding_ids(pat: &syn::Pat, kind: &str, ctx: &Ctx) -> Vec<String> {
+    let mut ids = Vec::new();
+    collect_pat_ids_inner(pat, kind, ctx, &mut ids);
+    ids
+}
+
+fn collect_pat_ids_inner(pat: &syn::Pat, kind: &str, ctx: &Ctx, ids: &mut Vec<String>) {
+    match pat {
+        syn::Pat::Ident(pi) => {
+            let name = pi.ident.to_string();
+            let (line, col) = ctx.span_line_col(pi.ident.span());
+            let parent = ctx.enclosing_fn.as_deref();
+            let hash = ctx.pos_hash(line, col);
+            let node_type = if kind == "param" { "PARAMETER" } else { "VARIABLE" };
+            ids.push(semantic_id(&ctx.file, node_type, &name, parent, Some(&hash)));
+            if let Some(sub) = &pi.subpat {
+                collect_pat_ids_inner(&sub.1, kind, ctx, ids);
+            }
+        }
+        syn::Pat::Tuple(t) => { for p in &t.elems { collect_pat_ids_inner(p, kind, ctx, ids); } }
+        syn::Pat::TupleStruct(ts) => { for p in &ts.elems { collect_pat_ids_inner(p, kind, ctx, ids); } }
+        syn::Pat::Struct(s) => { for f in &s.fields { collect_pat_ids_inner(&f.pat, kind, ctx, ids); } }
+        syn::Pat::Slice(s) => { for p in &s.elems { collect_pat_ids_inner(p, kind, ctx, ids); } }
+        syn::Pat::Or(o) => { for p in &o.cases { collect_pat_ids_inner(p, kind, ctx, ids); } }
+        syn::Pat::Reference(r) => collect_pat_ids_inner(&r.pat, kind, ctx, ids),
+        syn::Pat::Type(t) => collect_pat_ids_inner(&t.pat, kind, ctx, ids),
+        syn::Pat::Paren(p) => collect_pat_ids_inner(&p.pat, kind, ctx, ids),
+        _ => {} // wild, rest, lit, range, etc. — no bindings
+    }
+}
+
+/// Get the most recent node ID for an expression (for data flow edges).
+fn expr_node_id(expr: &syn::Expr, ctx: &Ctx) -> Option<String> {
+    match expr {
+        syn::Expr::Path(p) if p.path.segments.len() == 1 => {
+            let name = p.path.segments[0].ident.to_string();
+            let (line, col) = ctx.span_line_col(p.path.segments[0].ident.span());
+            let parent = ctx.enclosing_fn.as_deref();
+            let hash = ctx.pos_hash(line, col);
+            Some(semantic_id(&ctx.file, "REFERENCE", &name, parent, Some(&hash)))
+        }
+        syn::Expr::Call(c) => {
+            let name = expr_to_name(&c.func);
+            let (line, col) = ctx.span_line_col(c.paren_token.span.join());
+            let parent = ctx.enclosing_fn.as_deref();
+            let hash = ctx.pos_hash(line, col);
+            Some(semantic_id(&ctx.file, "CALL", &name, parent, Some(&hash)))
+        }
+        syn::Expr::MethodCall(m) => {
+            let name = m.method.to_string();
+            let (line, col) = ctx.span_line_col(m.method.span());
+            let parent = ctx.enclosing_fn.as_deref();
+            let hash = ctx.pos_hash(line, col);
+            Some(semantic_id(&ctx.file, "CALL", &name, parent, Some(&hash)))
+        }
+        syn::Expr::Lit(l) => {
+            let (line, col) = ctx.span_line_col(l.lit.span());
+            let parent = ctx.enclosing_fn.as_deref();
+            let hash = ctx.pos_hash(line, col);
+            Some(semantic_id(&ctx.file, "LITERAL", &lit_to_name(&l.lit), parent, Some(&hash)))
+        }
+        _ => None,
     }
 }
 
@@ -873,7 +1117,7 @@ fn walk_pat_bindings(pat: &syn::Pat, kind: &str, ctx: &mut Ctx) {
             let node_type = if kind == "param" { "PARAMETER" } else { "VARIABLE" };
             let node_id = semantic_id(&ctx.file, node_type, &name, parent, Some(&hash));
 
-            ctx.emit_node(GraphNode {
+            ctx.emit_declaration(GraphNode {
                 id: node_id,
                 node_type: node_type.to_string(),
                 name,
@@ -963,7 +1207,7 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
             let node_id = semantic_id(&ctx.file, "CALL", &func_name, parent, Some(&hash));
 
             ctx.emit_node(GraphNode {
-                id: node_id,
+                id: node_id.clone(),
                 node_type: "CALL".to_string(),
                 name: func_name,
                 file: ctx.file.clone(),
@@ -975,8 +1219,16 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
             });
 
             walk_expr(&e.func, ctx);
-            for arg in &e.args {
+            for (i, arg) in e.args.iter().enumerate() {
                 walk_expr(arg, ctx);
+                if let Some(arg_id) = expr_node_id(arg, ctx) {
+                    ctx.emit_edge(GraphEdge {
+                        src: node_id.clone(),
+                        dst: arg_id,
+                        edge_type: "PASSES_ARGUMENT".to_string(),
+                        metadata: HashMap::from([Ctx::meta_int("index", i as i64)]),
+                    });
+                }
             }
         }
 
@@ -988,7 +1240,7 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
             let node_id = semantic_id(&ctx.file, "CALL", &method, parent, Some(&hash));
 
             ctx.emit_node(GraphNode {
-                id: node_id,
+                id: node_id.clone(),
                 node_type: "CALL".to_string(),
                 name: method,
                 file: ctx.file.clone(),
@@ -1003,8 +1255,16 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
             });
 
             walk_expr(&e.receiver, ctx);
-            for arg in &e.args {
+            for (i, arg) in e.args.iter().enumerate() {
                 walk_expr(arg, ctx);
+                if let Some(arg_id) = expr_node_id(arg, ctx) {
+                    ctx.emit_edge(GraphEdge {
+                        src: node_id.clone(),
+                        dst: arg_id,
+                        edge_type: "PASSES_ARGUMENT".to_string(),
+                        metadata: HashMap::from([Ctx::meta_int("index", i as i64)]),
+                    });
+                }
             }
         }
 
@@ -1019,9 +1279,9 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
             let node_id = semantic_id(&ctx.file, "REFERENCE", &name, parent, Some(&hash));
 
             ctx.emit_node(GraphNode {
-                id: node_id,
+                id: node_id.clone(),
                 node_type: "REFERENCE".to_string(),
-                name,
+                name: name.clone(),
                 file: ctx.file.clone(),
                 line, column: col,
                 end_line: 0, end_column: 0,
@@ -1029,6 +1289,12 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
                 metadata: HashMap::new(),
                 extra: HashMap::new(),
             });
+
+            // Defer scope resolution: REFERENCE → READS_FROM → declaration
+            // Only for simple names (not paths like std::io)
+            if e.path.segments.len() == 1 {
+                ctx.defer_ref(&name, &node_id, "READS_FROM");
+            }
         }
 
         syn::Expr::Field(e) => {
@@ -1056,12 +1322,13 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
             walk_expr(&e.base, ctx);
         }
 
-        // ── BRANCH nodes ────────────────────────────────────────────
+        // ── BRANCH nodes with block scopes ──────────────────────────
         syn::Expr::If(e) => {
             let (line, col) = ctx.span_line_col(e.if_token.span);
             let parent = ctx.enclosing_fn.as_deref();
             let hash = ctx.pos_hash(line, col);
             let node_id = semantic_id(&ctx.file, "BRANCH", "if", parent, Some(&hash));
+            let scope_id = semantic_id(&ctx.file, "SCOPE", "if", parent, Some(&hash));
             ctx.emit_node(GraphNode {
                 id: node_id,
                 node_type: "BRANCH".to_string(),
@@ -1074,7 +1341,9 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
                 extra: HashMap::new(),
             });
             walk_expr(&e.cond, ctx);
+            ctx.push_scope(&scope_id, ScopeKind::Block);
             walk_block(&e.then_branch, ctx);
+            ctx.pop_scope();
             if let Some((_, else_branch)) = &e.else_branch {
                 walk_expr(else_branch, ctx);
             }
@@ -1086,7 +1355,7 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
             let hash = ctx.pos_hash(line, col);
             let node_id = semantic_id(&ctx.file, "BRANCH", "match", parent, Some(&hash));
             ctx.emit_node(GraphNode {
-                id: node_id,
+                id: node_id.clone(),
                 node_type: "BRANCH".to_string(),
                 name: "match".to_string(),
                 file: ctx.file.clone(),
@@ -1098,29 +1367,40 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
             });
             walk_expr(&e.expr, ctx);
             for arm in &e.arms {
+                // Each match arm gets its own block scope
+                let arm_hash = ctx.pos_hash(line, col);
+                let arm_scope = semantic_id(&ctx.file, "SCOPE", "match_arm", Some(&node_id), Some(&arm_hash));
+                ctx.push_scope(&arm_scope, ScopeKind::Block);
                 if let Some(guard) = &arm.guard {
                     walk_expr(guard.1.as_ref(), ctx);
                 }
                 walk_expr(&arm.body, ctx);
+                ctx.pop_scope();
             }
         }
 
         syn::Expr::Loop(e) => {
             let (line, col) = ctx.span_line_col(e.loop_token.span);
-            emit_branch("loop", line, col, ctx);
+            let (_, scope_id) = emit_branch("loop", line, col, ctx);
+            ctx.push_scope(&scope_id, ScopeKind::Block);
             walk_block(&e.body, ctx);
+            ctx.pop_scope();
         }
         syn::Expr::While(e) => {
             let (line, col) = ctx.span_line_col(e.while_token.span);
-            emit_branch("while", line, col, ctx);
+            let (_, scope_id) = emit_branch("while", line, col, ctx);
             walk_expr(&e.cond, ctx);
+            ctx.push_scope(&scope_id, ScopeKind::Block);
             walk_block(&e.body, ctx);
+            ctx.pop_scope();
         }
         syn::Expr::ForLoop(e) => {
             let (line, col) = ctx.span_line_col(e.for_token.span);
-            emit_branch("for", line, col, ctx);
+            let (_, scope_id) = emit_branch("for", line, col, ctx);
             walk_expr(&e.expr, ctx);
+            ctx.push_scope(&scope_id, ScopeKind::Block);
             walk_block(&e.body, ctx);
+            ctx.pop_scope();
         }
 
         // ── CLOSURE ─────────────────────────────────────────────────
@@ -1187,8 +1467,25 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
         syn::Expr::Yield(e) => { if let Some(expr) = &e.expr { walk_expr(expr, ctx); } }
         syn::Expr::Group(e) => walk_expr(&e.expr, ctx),
 
-        // ── Leaf / no children ──────────────────────────────────────
-        syn::Expr::Lit(_) => {}
+        // ── LITERAL nodes ────────────────────────────────────────────
+        syn::Expr::Lit(e) => {
+            let name = lit_to_name(&e.lit);
+            let (line, col) = ctx.span_line_col(e.lit.span());
+            let parent = ctx.enclosing_fn.as_deref();
+            let hash = ctx.pos_hash(line, col);
+            let node_id = semantic_id(&ctx.file, "LITERAL", &name, parent, Some(&hash));
+            ctx.emit_node(GraphNode {
+                id: node_id,
+                node_type: "LITERAL".to_string(),
+                name,
+                file: ctx.file.clone(),
+                line, column: col,
+                end_line: 0, end_column: 0,
+                exported: false,
+                metadata: HashMap::new(),
+                extra: HashMap::new(),
+            });
+        }
         syn::Expr::Macro(_) => {}
         syn::Expr::Const(_) => {}
         syn::Expr::Infer(_) => {}
@@ -1198,12 +1495,14 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
     }
 }
 
-fn emit_branch(kind: &str, line: i64, col: i64, ctx: &mut Ctx) {
+/// Returns (branch_node_id, scope_id) — separate IDs so SCOPE node is distinct from BRANCH.
+fn emit_branch(kind: &str, line: i64, col: i64, ctx: &mut Ctx) -> (String, String) {
     let parent = ctx.enclosing_fn.as_deref();
     let hash = ctx.pos_hash(line, col);
     let node_id = semantic_id(&ctx.file, "BRANCH", kind, parent, Some(&hash));
+    let scope_id = semantic_id(&ctx.file, "SCOPE", kind, parent, Some(&hash));
     ctx.emit_node(GraphNode {
-        id: node_id,
+        id: node_id.clone(),
         node_type: "BRANCH".to_string(),
         name: kind.to_string(),
         file: ctx.file.clone(),
@@ -1213,11 +1512,27 @@ fn emit_branch(kind: &str, line: i64, col: i64, ctx: &mut Ctx) {
         metadata: HashMap::from([Ctx::meta_text("kind", kind)]),
         extra: HashMap::new(),
     });
+    (node_id, scope_id)
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+fn lit_to_name(lit: &syn::Lit) -> String {
+    match lit {
+        syn::Lit::Str(s) => s.value(),
+        syn::Lit::ByteStr(s) => format!("b\"{}\"", String::from_utf8_lossy(&s.value())),
+        syn::Lit::CStr(s) => format!("c\"{}\"", s.value().to_string_lossy()),
+        syn::Lit::Byte(b) => format!("b'{}'", b.value() as char),
+        syn::Lit::Char(c) => format!("'{}'", c.value()),
+        syn::Lit::Int(i) => i.base10_digits().to_string(),
+        syn::Lit::Float(f) => f.base10_digits().to_string(),
+        syn::Lit::Bool(b) => b.value.to_string(),
+        syn::Lit::Verbatim(v) => v.to_string(),
+        _ => "<lit>".to_string(),
+    }
+}
 
 fn expr_to_name(expr: &syn::Expr) -> String {
     match expr {
@@ -1432,5 +1747,67 @@ mod tests {
         // If we get here, the basic case works. The panic branches are tested
         // by the compiler — they exist in the match arms.
         panic!("unhandled — test sentinel");
+    }
+
+    #[test]
+    fn test_scope_hierarchy() {
+        let fa = parse_and_analyze("fn main() { if true { let x = 1; } }");
+        // Block scope for if body
+        assert!(has_node(&fa, "SCOPE", "block"), "block scope for if");
+        // MODULE → HAS_SCOPE → FUNCTION
+        assert!(has_edge(&fa, "HAS_SCOPE", "MODULE", "FUNCTION"), "MODULE HAS_SCOPE FUNCTION");
+        // FUNCTION → HAS_SCOPE → SCOPE (if block scope lives under function)
+        assert!(has_edge(&fa, "HAS_SCOPE", "FUNCTION", "SCOPE"), "FUNCTION HAS_SCOPE block SCOPE");
+        // Variable declared inside if block → DECLARES from block scope
+        let decl_in_block: Vec<_> = fa.edges.iter()
+            .filter(|e| e.edge_type == "DECLARES" && e.dst.contains("VARIABLE"))
+            .collect();
+        assert!(!decl_in_block.is_empty(), "block scope DECLARES variable");
+    }
+
+    #[test]
+    fn test_declares_edges() {
+        let fa = parse_and_analyze("fn main() { let x = 1; }");
+        // Function scope declares x
+        let decl_edges: Vec<_> = fa.edges.iter()
+            .filter(|e| e.edge_type == "DECLARES" && e.dst.contains("VARIABLE"))
+            .collect();
+        assert!(!decl_edges.is_empty(), "should have DECLARES edge to VARIABLE");
+    }
+
+    #[test]
+    fn test_reference_resolution() {
+        let fa = parse_and_analyze("fn main() { let x = 1; let _y = x; }");
+        // REFERENCE "x" should have READS_FROM → VARIABLE "x"
+        let refs: Vec<_> = fa.edges.iter()
+            .filter(|e| e.edge_type == "READS_FROM")
+            .collect();
+        assert!(!refs.is_empty(), "should have READS_FROM edges, got edges: {:?}",
+            fa.edges.iter().map(|e| format!("{} {} -> {}", e.edge_type, &e.src[..20.min(e.src.len())], &e.dst[..20.min(e.dst.len())])).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn test_assigned_from() {
+        let fa = parse_and_analyze("fn main() { let x = foo(); }");
+        let assigned: Vec<_> = fa.edges.iter()
+            .filter(|e| e.edge_type == "ASSIGNED_FROM")
+            .collect();
+        assert!(!assigned.is_empty(), "should have ASSIGNED_FROM edges");
+    }
+
+    #[test]
+    fn test_passes_argument() {
+        let fa = parse_and_analyze("fn foo(x: i32) {} fn main() { foo(42); }");
+        let passes: Vec<_> = fa.edges.iter()
+            .filter(|e| e.edge_type == "PASSES_ARGUMENT")
+            .collect();
+        assert!(!passes.is_empty(), "should have PASSES_ARGUMENT edges");
+    }
+
+    #[test]
+    fn test_literal_nodes() {
+        let fa = parse_and_analyze("fn main() { let x = 42; let s = \"hello\"; }");
+        assert!(has_node(&fa, "LITERAL", "42"), "integer literal");
+        assert!(has_node(&fa, "LITERAL", "hello"), "string literal");
     }
 }
