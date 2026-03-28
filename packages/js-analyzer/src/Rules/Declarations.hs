@@ -446,7 +446,7 @@ ruleImportDeclaration node = do
 
   -- Walk specifiers for individual import bindings
   let specs = getChildren "specifiers" node
-  mapM_ (\s -> withNamedParent source $ withAncestor node (walkNode s)) specs
+  mapM_ (\s -> withNamedParent source $ withImportNodeId nodeId $ withAncestor node (walkNode s)) specs
 
   return (Just nodeId)
 
@@ -457,6 +457,7 @@ ruleImportSpecifier node = do
   file <- askFile
   parent <- askNamedParent
   curScopeId <- askScopeId
+  importId <- askImportNodeId
   let sp = astNodeSpan node
       localName = case getChildrenMaybe "local" node of
                     Just l  -> getTextFieldOr "name" "<import>" l
@@ -476,6 +477,12 @@ ruleImportSpecifier node = do
         , ("source", MetaText (fromMaybe "" parent))
         ]
     }
+  -- CONTAINS edge from IMPORT to IMPORT_BINDING
+  forM_ importId $ \iid ->
+    emitEdge GraphEdge
+      { geSource = iid, geTarget = nodeId
+      , geType = "CONTAINS", geMetadata = Map.empty
+      }
   emitEdge GraphEdge
     { geSource = curScopeId, geTarget = nodeId
     , geType = "DECLARES", geMetadata = Map.empty
@@ -488,6 +495,7 @@ ruleImportDefaultSpecifier node = do
   file <- askFile
   parent <- askNamedParent
   curScopeId <- askScopeId
+  importId <- askImportNodeId
   let sp = astNodeSpan node
       localName = case getChildrenMaybe "local" node of
                     Just l  -> getTextFieldOr "name" "<default>" l
@@ -504,6 +512,12 @@ ruleImportDefaultSpecifier node = do
         , ("source", MetaText (fromMaybe "" parent))
         ]
     }
+  -- CONTAINS edge from IMPORT to IMPORT_BINDING
+  forM_ importId $ \iid ->
+    emitEdge GraphEdge
+      { geSource = iid, geTarget = nodeId
+      , geType = "CONTAINS", geMetadata = Map.empty
+      }
   emitEdge GraphEdge
     { geSource = curScopeId, geTarget = nodeId
     , geType = "DECLARES", geMetadata = Map.empty
@@ -516,6 +530,7 @@ ruleImportNamespaceSpecifier node = do
   file <- askFile
   parent <- askNamedParent
   curScopeId <- askScopeId
+  importId <- askImportNodeId
   let sp = astNodeSpan node
       localName = case getChildrenMaybe "local" node of
                     Just l  -> getTextFieldOr "name" "<namespace>" l
@@ -532,6 +547,12 @@ ruleImportNamespaceSpecifier node = do
         , ("source", MetaText (fromMaybe "" parent))
         ]
     }
+  -- CONTAINS edge from IMPORT to IMPORT_BINDING
+  forM_ importId $ \iid ->
+    emitEdge GraphEdge
+      { geSource = iid, geTarget = nodeId
+      , geType = "CONTAINS", geMetadata = Map.empty
+      }
   emitEdge GraphEdge
     { geSource = curScopeId, geTarget = nodeId
     , geType = "DECLARES", geMetadata = Map.empty

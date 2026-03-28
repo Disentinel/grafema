@@ -9,6 +9,7 @@ import type { ChildProcess } from 'child_process';
 import { spawn } from 'child_process';
 import type { FSWatcher } from 'fs';
 import { existsSync, unlinkSync, watch } from 'fs';
+import { homedir } from 'os';
 import { join, dirname, basename } from 'path';
 import { EventEmitter } from 'events';
 import { RFDBClient, RFDBWebSocketClient } from '@grafema/rfdb-client';
@@ -267,7 +268,13 @@ export class GrafemaClientManager extends EventEmitter {
       }
     }
 
-    // 4. Check @grafema/rfdb npm package
+    // 4. Check ~/.grafema/bin/ (lazy-downloaded by CLI)
+    const homeBinary = join(homedir(), '.grafema', 'bin', 'rfdb-server');
+    if (existsSync(homeBinary)) {
+      return homeBinary;
+    }
+
+    // 5. Check @grafema/rfdb npm package
     try {
       // Use require.resolve to find the package
       const rfdbPkg = require.resolve('@grafema/rfdb');
