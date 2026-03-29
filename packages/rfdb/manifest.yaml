@@ -1,0 +1,19 @@
+schema_version: 1
+analyzer_version: 0.2.12-beta
+authored: false
+confidence: 0
+generated: 2026-03-15T22:14:49.378Z
+package:
+  purl: pkg:npm/@grafema/rfdb-client
+  source_type: source
+exports: []
+imports: []
+capabilities:
+  total_exports: 0
+  total_internal_symbols: 0
+  has_graph: true
+access:
+  local: ./graph.rfdb
+language: typescript
+language_specific:
+  module_system: esm

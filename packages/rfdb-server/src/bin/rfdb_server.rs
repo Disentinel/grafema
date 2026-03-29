@@ -48,6 +48,26 @@ use rfdb::metrics::{Metrics, MetricsSnapshot, SLOW_QUERY_THRESHOLD_MS};
 // Global client ID counter
 static NEXT_CLIENT_ID: AtomicUsize = AtomicUsize::new(1);
 
+/// Server-wide configuration set once at startup.
+/// Uses OnceLock so handle_request can read it without parameter changes.
+#[derive(Debug)]
+struct ServerConfig {
+    /// Whether federation mode is active (--federate flag)
+    federate: bool,
+    /// Absolute path of the project root this shard covers.
+    /// In federation mode, this defines the shard's "territory".
+    root: Option<PathBuf>,
+}
+
+static SERVER_CONFIG: std::sync::OnceLock<ServerConfig> = std::sync::OnceLock::new();
+
+/// Verbose logging: set RFDB_VERBOSE=1 to log every request with timing.
+/// Useful with `grafema server start --foreground`.
+fn is_verbose() -> bool {
+    static VERBOSE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *VERBOSE.get_or_init(|| std::env::var("RFDB_VERBOSE").map(|v| v == "1" || v == "true").unwrap_or(false))
+}
+
 /// Streaming threshold: queries returning more than this many nodes
 /// will use chunked streaming instead of a single Response::Nodes.
 /// Only active when the client negotiated protocol version >= 3.
@@ -197,6 +217,8 @@ pub enum Request {
     // Bulk operations
     GetAllEdges,
     QueryNodes { query: WireAttrQuery },
+    /// Query all nodes belonging to a specific file path (exact match).
+    QueryNodesByFile { file: String },
 
     // Datalog queries
     CheckGuarantee {
@@ -214,6 +236,13 @@ pub enum Request {
     },
     ExecuteDatalog {
         source: String,
+        #[serde(default)]
+        explain: bool,
+    },
+
+    // Cypher queries
+    CypherQuery {
+        query: String,
         #[serde(default)]
         explain: bool,
     },
@@ -310,6 +339,31 @@ pub enum Request {
         #[serde(rename = "requestId")]
         request_id: String,
     },
+
+    // ========================================================================
+    // Federation Commands (Protocol v4)
+    // ========================================================================
+
+    /// Identify this shard: what territory it covers, how fresh the data is.
+    /// Used by federation router to validate that a discovered shard
+    /// actually covers the expected file paths.
+    WhoAreYou,
+
+    /// Extract a reachable subgraph from entry points.
+    /// Returns visited nodes, traversed edges, and frontier (dangling edges
+    /// whose target doesn't exist in this shard — candidates for cross-shard resolution).
+    Subgraph {
+        /// Semantic IDs of entry point nodes
+        entries: Vec<String>,
+        /// "forward", "backward", or "both"
+        direction: String,
+        /// Edge types to traverse (empty = all)
+        #[serde(default, rename = "edgeTypes")]
+        edge_types: Vec<String>,
+        /// Maximum traversal depth
+        #[serde(rename = "maxDepth")]
+        max_depth: u32,
+    },
 }
 
 fn default_rw_mode() -> String { "rw".to_string() }
@@ -394,6 +448,12 @@ pub enum Response {
     Identifier { identifier: Option<String> },
     DatalogResults { results: Vec<WireViolation> },
     ExplainResult(WireExplainResult),
+    CypherResult {
+        columns: Vec<String>,
+        rows: Vec<Vec<serde_json::Value>>,
+        #[serde(rename = "rowCount")]
+        row_count: usize,
+    },
 
     // ========================================================================
     // Protocol v3 Responses
@@ -426,6 +486,40 @@ pub enum Response {
         files: Vec<String>,
     },
 
+    /// Federation: subgraph extraction result
+    SubgraphResult {
+        ok: bool,
+        nodes: Vec<WireNode>,
+        edges: Vec<WireEdge>,
+        /// Dangling edges: target node doesn't exist in this shard.
+        /// Each entry has src (semantic ID), dst (semantic ID), edgeType.
+        frontier: Vec<WireFrontierEdge>,
+    },
+
+    /// Federation: shard identity response
+    ShardIdentity {
+        ok: bool,
+        /// Absolute path of the analysis root this shard covers
+        root: String,
+        /// Number of analyzed files in this shard
+        #[serde(rename = "fileCount")]
+        file_count: u64,
+        /// Total nodes in the graph
+        #[serde(rename = "nodeCount")]
+        node_count: u64,
+        /// Total edges in the graph
+        #[serde(rename = "edgeCount")]
+        edge_count: u64,
+        /// Analyzer version that produced this graph
+        #[serde(rename = "analyzerVersion")]
+        analyzer_version: String,
+        /// Server version
+        #[serde(rename = "serverVersion")]
+        server_version: String,
+        /// Whether federation mode is active
+        federated: bool,
+    },
+
     /// Performance statistics response
     Stats {
         // Graph size
@@ -435,6 +529,8 @@ pub enum Response {
         edge_count: u64,
         #[serde(rename = "deltaSize")]
         delta_size: u64,
+        #[serde(rename = "diskBytes")]
+        disk_bytes: u64,
 
         // Memory (system)
         #[serde(rename = "memoryPercent")]
@@ -624,11 +720,27 @@ pub struct WireEdge {
     pub metadata: Option<String>,
 }
 
+/// Frontier edge: a dangling edge whose target doesn't exist in this shard.
+/// Used by federation router for cross-shard resolution.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WireFrontierEdge {
+    /// Source node semantic ID (in this shard)
+    pub src: String,
+    /// Target node ID (hash, not resolved — target doesn't exist locally)
+    pub dst: String,
+    /// Edge type
+    pub edge_type: String,
+    /// Edge metadata (JSON string, may contain "source" for IMPORTS_FROM edges)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<String>,
+}
+
 /// Attribute query for wire protocol.
 /// Known fields are deserialized into typed fields;
 /// any extra fields (e.g. "object", "method") are captured in `extra`
 /// and used as metadata filters.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WireAttrQuery {
     pub node_type: Option<String>,
@@ -637,6 +749,9 @@ pub struct WireAttrQuery {
     pub exported: Option<bool>,
     #[serde(default)]
     pub substring_match: bool,
+    /// When true, fall back to fuzzy name matching if exact search returns 0 results.
+    #[serde(default)]
+    pub fuzzy_name_fallback: Option<bool>,
     /// Extra fields are matched against node metadata JSON.
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
@@ -725,7 +840,7 @@ pub struct WireShardDiagnostics {
     pub l1_by_type_keys: usize,
     pub l1_by_file_keys: usize,
     pub l1_by_name_keys: usize,
-    pub has_edge_type_index: bool,
+    pub has_l1_edge_type_index: bool,
 }
 
 // ============================================================================
@@ -853,6 +968,7 @@ fn wire_to_attr_query(query: WireAttrQuery) -> AttrQuery {
         name: query.name,
         metadata_filters,
         substring_match: query.substring_match,
+        fuzzy_name_fallback: query.fuzzy_name_fallback,
     }
 }
 
@@ -910,7 +1026,36 @@ fn get_operation_name(request: &Request) -> String {
         Request::QueryEdges { .. } => "QueryEdges".to_string(),
         Request::FindDependentFiles { .. } => "FindDependentFiles".to_string(),
         Request::CancelQuery { .. } => "CancelQuery".to_string(),
-        _ => "Other".to_string(),
+        Request::CypherQuery { .. } => "CypherQuery".to_string(),
+        Request::WhoAreYou => "WhoAreYou".to_string(),
+        Request::Subgraph { .. } => "Subgraph".to_string(),
+        Request::Hello { .. } => "Hello".to_string(),
+        Request::Ping => "Ping".to_string(),
+        Request::Shutdown => "Shutdown".to_string(),
+        Request::OpenDatabase { .. } => "OpenDatabase".to_string(),
+        Request::CreateDatabase { .. } => "CreateDatabase".to_string(),
+        Request::ListDatabases => "ListDatabases".to_string(),
+        Request::CloseDatabase => "CloseDatabase".to_string(),
+        Request::DropDatabase { .. } => "DropDatabase".to_string(),
+        Request::CurrentDatabase => "CurrentDatabase".to_string(),
+        Request::QueryNodes { .. } => "QueryNodes".to_string(),
+        Request::QueryNodesByFile { .. } => "QueryNodesByFile".to_string(),
+        Request::BeginBatch => "BeginBatch".to_string(),
+        Request::AbortBatch => "AbortBatch".to_string(),
+        Request::Clear => "Clear".to_string(),
+        Request::DeleteNode { .. } => "DeleteNode".to_string(),
+        Request::DeleteEdge { .. } => "DeleteEdge".to_string(),
+        Request::NodeExists { .. } => "NodeExists".to_string(),
+        Request::CountNodesByType { .. } => "CountNodesByType".to_string(),
+        Request::CountEdgesByType { .. } => "CountEdgesByType".to_string(),
+        Request::GetAllEdges => "GetAllEdges".to_string(),
+        Request::DatalogLoadRules { .. } => "DatalogLoadRules".to_string(),
+        Request::DatalogClearRules => "DatalogClearRules".to_string(),
+        Request::ExecuteDatalog { .. } => "ExecuteDatalog".to_string(),
+        Request::IsEndpoint { .. } => "IsEndpoint".to_string(),
+        Request::GetNodeIdentifier { .. } => "GetNodeIdentifier".to_string(),
+        Request::UpdateNodeVersion { .. } => "UpdateNodeVersion".to_string(),
+        Request::DeclareFields { .. } => "DeclareFields".to_string(),
     }
 }
 
@@ -1266,6 +1411,21 @@ fn handle_request_with_cancel(
             })
         }
 
+        Request::QueryNodesByFile { file } => {
+            with_engine_read(session, |engine| {
+                let attr_query = AttrQuery {
+                    file: Some(file),
+                    ..AttrQuery::default()
+                };
+                let ids = engine.find_by_attr(&attr_query);
+                let nodes: Vec<WireNode> = ids.into_iter()
+                    .filter_map(|id| engine.get_node(id))
+                    .map(|r| record_to_wire_node(&r))
+                    .collect();
+                Response::Nodes { nodes }
+            })
+        }
+
         Request::CheckGuarantee { rule_source, explain } => {
             let cf = cancel_flag.clone();
             with_engine_read(session, |engine| {
@@ -1308,6 +1468,22 @@ fn handle_request_with_cancel(
                     Ok(DatalogResponse::Violations(results)) => Response::DatalogResults { results },
                     Ok(DatalogResponse::Explain(result)) => Response::ExplainResult(result),
                     Err(e) => Response::Error { error: e },
+                }
+            })
+        }
+
+        Request::CypherQuery { query, explain: _ } => {
+            let cf = cancel_flag.clone();
+            with_engine_read(session, |engine| {
+                let mut limits = rfdb::datalog::EvalLimits::default();
+                limits.cancelled = Some(cf);
+                match rfdb::cypher::execute(engine, &query, limits) {
+                    Ok(result) => Response::CypherResult {
+                        columns: result.columns,
+                        rows: result.rows,
+                        row_count: result.row_count,
+                    },
+                    Err(e) => Response::Error { error: e.to_string() },
                 }
             })
         }
@@ -1364,9 +1540,10 @@ fn handle_request_with_cancel(
             };
 
             // Get graph stats from current database (if any)
-            let (node_count, edge_count, delta_size, shard_diags) = if let Some(ref db) = session.current_db {
+            let (node_count, edge_count, delta_size, disk_bytes, shard_diags) = if let Some(ref db) = session.current_db {
                 let engine = db.engine.read().unwrap();
                 let ops = 0u64;
+                let disk = engine.disk_size_bytes();
                 let diags: Vec<WireShardDiagnostics> = engine.shard_diagnostics()
                     .into_iter()
                     .map(|d| WireShardDiagnostics {
@@ -1388,18 +1565,19 @@ fn handle_request_with_cancel(
                         l1_by_type_keys: d.l1_by_type_keys,
                         l1_by_file_keys: d.l1_by_file_keys,
                         l1_by_name_keys: d.l1_by_name_keys,
-                        has_edge_type_index: d.has_edge_type_index,
+                        has_l1_edge_type_index: d.has_l1_edge_type_index,
                     })
                     .collect();
                 (
                     engine.node_count() as u64,
                     engine.edge_count() as u64,
                     ops,
+                    disk,
                     diags,
                 )
             } else {
                 // No database selected - return zeros
-                (0, 0, 0, vec![])
+                (0, 0, 0, 0, vec![])
             };
 
             // Get system memory
@@ -1409,6 +1587,7 @@ fn handle_request_with_cancel(
                 node_count,
                 edge_count,
                 delta_size,
+                disk_bytes,
                 memory_percent,
                 query_count: metrics_snapshot.query_count,
                 slow_query_count: metrics_snapshot.slow_query_count,
@@ -1435,7 +1614,16 @@ fn handle_request_with_cancel(
 
         Request::CommitBatch { changed_files, nodes, edges, tags: _, file_context, defer_index, protected_types } => {
             with_engine_write(session, |engine| {
-                handle_commit_batch(engine, changed_files, nodes, edges, file_context, defer_index, protected_types)
+                // Try V2 native path (O(batch_size) via file_to_node_ids index)
+                match engine.as_any_mut().downcast_mut::<GraphEngineV2>() {
+                    Some(v2) => handle_commit_batch_v2(
+                        v2, changed_files, nodes, edges, file_context, defer_index, protected_types,
+                    ),
+                    // Fallback to V1-style individual operations
+                    None => handle_commit_batch(
+                        engine, changed_files, nodes, edges, file_context, defer_index, protected_types,
+                    ),
+                }
             })
         }
 
@@ -1624,6 +1812,135 @@ fn handle_request_with_cancel(
             })
         }
 
+        Request::WhoAreYou => {
+            let config = SERVER_CONFIG.get();
+            let federated = config.map(|c| c.federate).unwrap_or(false);
+            let root = config
+                .and_then(|c| c.root.as_ref())
+                .map(|p| p.display().to_string())
+                .unwrap_or_default();
+
+            // Get counts from default database
+            let (node_count, edge_count, file_count) = if let Ok(db) = manager.get_database("default") {
+                let engine = db.engine.read().unwrap();
+                let nc = engine.node_count() as u64;
+                let ec = engine.edge_count() as u64;
+                // Count unique files: query nodes with type MODULE
+                let file_nodes = engine.find_by_type("MODULE");
+                let fc = file_nodes.len() as u64;
+                (nc, ec, fc)
+            } else {
+                (0, 0, 0)
+            };
+
+            Response::ShardIdentity {
+                ok: true,
+                root,
+                file_count,
+                node_count,
+                edge_count,
+                analyzer_version: String::new(), // populated by orchestrator metadata later
+                server_version: env!("CARGO_PKG_VERSION").to_string(),
+                federated,
+            }
+        }
+
+        Request::Subgraph { entries, direction, edge_types, max_depth } => {
+            let protocol = session.protocol_version;
+            with_engine_read(session, |engine| {
+                // Resolve entry point semantic IDs to u128
+                let start_ids: Vec<u128> = entries.iter()
+                    .map(|s| string_to_id(s))
+                    .collect();
+
+                let edge_types_owned: Vec<String> = edge_types.iter().cloned().collect();
+
+                // Build edge getter based on direction
+                let get_edges = |node_id: u128| -> Vec<(u128, String, String)> {
+                    let types_refs: Vec<&str> = edge_types_owned.iter().map(|s| s.as_str()).collect();
+                    let types_opt = if types_refs.is_empty() { None } else { Some(types_refs.as_slice()) };
+
+                    let mut result = Vec::new();
+
+                    if direction == "forward" || direction == "both" {
+                        for edge in engine.get_outgoing_edges(node_id, types_opt) {
+                            let etype = edge.edge_type.unwrap_or_default();
+                            let meta = edge.metadata.unwrap_or_default();
+                            result.push((edge.dst, etype, meta));
+                        }
+                    }
+                    if direction == "backward" || direction == "both" {
+                        for edge in engine.get_incoming_edges(node_id, types_opt) {
+                            let etype = edge.edge_type.unwrap_or_default();
+                            let meta = edge.metadata.unwrap_or_default();
+                            result.push((edge.src, etype, meta));
+                        }
+                    }
+
+                    result
+                };
+
+                let node_exists = |id: u128| -> bool {
+                    engine.node_exists(id)
+                };
+
+                let sub = rfdb::graph::traversal::subgraph(
+                    &start_ids,
+                    max_depth as usize,
+                    get_edges,
+                    node_exists,
+                );
+
+                // Convert node IDs to full WireNodes
+                let nodes: Vec<WireNode> = sub.node_ids.iter()
+                    .filter_map(|&id| engine.get_node(id).map(|n| record_to_wire_node(&n)))
+                    .collect();
+
+                // Convert edges to WireEdges
+                let mut edges: Vec<WireEdge> = sub.edges.iter()
+                    .map(|(src, dst, etype)| WireEdge {
+                        src: id_to_string(*src),
+                        dst: id_to_string(*dst),
+                        edge_type: Some(etype.clone()),
+                        metadata: None,
+                    })
+                    .collect();
+
+                // Resolve semantic IDs on edges for protocol v3+
+                if protocol >= 3 {
+                    resolve_edge_semantic_ids(&mut edges, engine);
+                }
+
+                // Build frontier with semantic IDs where possible
+                let frontier: Vec<WireFrontierEdge> = sub.frontier.iter()
+                    .map(|(src, dst, etype, meta)| {
+                        let src_id = if protocol >= 3 {
+                            engine.get_node(*src)
+                                .and_then(|n| n.semantic_id)
+                                .unwrap_or_else(|| id_to_string(*src))
+                        } else {
+                            id_to_string(*src)
+                        };
+                        // dst doesn't exist locally, so just use hash string
+                        let dst_id = id_to_string(*dst);
+                        WireFrontierEdge {
+                            src: src_id,
+                            dst: dst_id,
+                            edge_type: etype.clone(),
+                            metadata: if meta.is_empty() { None } else { Some(meta.clone()) },
+                        }
+                    })
+                    .collect();
+
+                Response::SubgraphResult {
+                    ok: true,
+                    nodes,
+                    edges,
+                    frontier,
+                }
+            })
+        }
+
         Request::CancelQuery { .. } => {
             // CancelQuery is handled at the transport layer (WebSocket handler).
             // If it reaches handle_request, it means it was sent over unix socket
@@ -1636,14 +1953,18 @@ fn handle_request_with_cancel(
 /// Handle CommitBatch: atomically replace nodes/edges for changed files.
 ///
 /// Uses GraphStore trait methods (delete-then-add) which works correctly
-/// for both v1 and v2 engines. The v2-native commit_batch path will be
-/// activated when clients negotiate protocol v3 with semantic IDs.
+/// for both v1 and v2 engines.
 ///
 /// When `file_context` is provided, the batch operates in enrichment mode:
 /// - The file_context is added to `changed_files` so old enrichment edges
 ///   for that virtual file are tombstoned during deletion phase
 /// - Each edge gets `__file_context` injected into its metadata via
 ///   `enrichment_edge_metadata()`
+///
+/// Deletion only tombstones OUTGOING edges from deleted nodes (by src).
+/// Incoming edges (from other nodes) become orphaned but are filtered
+/// out at query time by node tombstone checks (neighbors/reverse_neighbors).
+/// Compaction cleans them up permanently.
 fn handle_commit_batch(
     engine: &mut dyn GraphStore,
     mut changed_files: Vec<String>,
@@ -1677,6 +1998,7 @@ fn handle_commit_batch(
             name: None,
             metadata_filters: vec![],
             substring_match: false,
+            fuzzy_name_fallback: None,
         };
         let old_ids = engine.find_by_attr(&attr_query);
 
@@ -1698,18 +2020,10 @@ fn handle_commit_batch(
                 }
             }
 
+            // Only delete outgoing edges (indexed by src → efficient).
+            // Incoming edges become orphaned but are filtered at query time
+            // by node tombstone checks. Compaction cleans them up permanently.
             for edge in engine.get_outgoing_edges(*id, None) {
-                let edge_key = (edge.src, edge.dst, edge.edge_type.clone().unwrap_or_default());
-                if deleted_edge_keys.insert(edge_key) {
-                    if let Some(ref et) = edge.edge_type {
-                        changed_edge_types.insert(et.clone());
-                    }
-                    engine.delete_edge(edge.src, edge.dst, edge.edge_type.as_deref().unwrap_or(""));
-                    edges_removed += 1;
-                }
-            }
-
-            for edge in engine.get_incoming_edges(*id, None) {
                 let edge_key = (edge.src, edge.dst, edge.edge_type.clone().unwrap_or_default());
                 if deleted_edge_keys.insert(edge_key) {
                     if let Some(ref et) = edge.edge_type {
@@ -1766,6 +2080,13 @@ fn handle_commit_batch(
         return Response::Error { error: format!("Flush failed during commit: {}", e) };
     }
 
+    if is_verbose() {
+        eprintln!("[rfdb]   commitBatch: +{}n -{}n +{}e -{}e, files={}, flush={}",
+            nodes_added, nodes_removed, edges_added, edges_removed,
+            changed_files.len(),
+            if defer_index { "data-only" } else { "full" });
+    }
+
     let delta = WireCommitDelta {
         changed_files,
         nodes_added,
@@ -1777,6 +2098,106 @@ fn handle_commit_batch(
     };
 
     Response::BatchCommitted { ok: true, delta }
+}
+
+/// Handle CommitBatch using V2 native commit_batch (O(batch_size) via index).
+///
+/// Converts wire types to V2 record types and delegates to
+/// `GraphEngineV2::commit_batch_ext` which uses file_to_node_ids index,
+/// shard-targeted edge lookup, and Arc-shared tombstones.
+fn handle_commit_batch_v2(
+    engine: &mut GraphEngineV2,
+    mut changed_files: Vec<String>,
+    nodes: Vec<WireNode>,
+    edges: Vec<WireEdge>,
+    file_context: Option<String>,
+    _defer_index: bool,
+    protected_types: Vec<String>,
+) -> Response {
+    use rfdb::storage_v2::types::{NodeRecordV2, EdgeRecordV2, enrichment_edge_metadata};
+
+    // If file_context is set, ensure it's included in changed_files
+    if let Some(ref ctx) = file_context {
+        if !changed_files.contains(ctx) {
+            changed_files.push(ctx.clone());
+        }
+    }
+
+    let edges_added = edges.len() as u64;
+
+    // Convert WireNode → NodeRecordV2
+    let v2_nodes: Vec<NodeRecordV2> = nodes
+        .into_iter()
+        .map(|node| {
+            let semantic_id = node.semantic_id.clone().unwrap_or_else(|| node.id.clone());
+            let id = string_to_id(&semantic_id);
+            NodeRecordV2 {
+                semantic_id,
+                id,
+                node_type: node.node_type.unwrap_or_default(),
+                name: node.name.unwrap_or_default(),
+                file: node.file.unwrap_or_default(),
+                content_hash: 0,
+                metadata: node.metadata.unwrap_or_default(),
+            }
+        })
+        .collect();
+
+    // Convert WireEdge → EdgeRecordV2, injecting __file_context if present
+    let v2_edges: Vec<EdgeRecordV2> = edges
+        .into_iter()
+        .map(|edge| {
+            let metadata = if let Some(ref ctx) = file_context {
+                let existing = edge.metadata.as_deref().unwrap_or("");
+                enrichment_edge_metadata(ctx, existing)
+            } else {
+                edge.metadata.unwrap_or_default()
+            };
+            EdgeRecordV2 {
+                src: string_to_id(&edge.src),
+                dst: string_to_id(&edge.dst),
+                edge_type: edge.edge_type.unwrap_or_default(),
+                metadata,
+            }
+        })
+        .collect();
+
+    // Call V2 native commit_batch
+    match engine.commit_batch_ext(
+        v2_nodes,
+        v2_edges,
+        &changed_files,
+        HashMap::new(),
+        &protected_types,
+    ) {
+        Ok(delta) => {
+            if is_verbose() {
+                eprintln!(
+                    "[rfdb]   commitBatch(v2): +{}n -{}n +{}e, files={}, mod={}",
+                    delta.nodes_added,
+                    delta.nodes_removed,
+                    edges_added,
+                    changed_files.len(),
+                    delta.nodes_modified,
+                );
+            }
+
+            let wire_delta = WireCommitDelta {
+                changed_files: delta.changed_files,
+                nodes_added: delta.nodes_added,
+                nodes_removed: delta.nodes_removed,
+                edges_added,
+                edges_removed: delta.edges_removed,
+                changed_node_types: delta.changed_node_types.into_iter().collect(),
+                changed_edge_types: delta.changed_edge_types.into_iter().collect(),
+            };
+
+            Response::BatchCommitted { ok: true, delta: wire_delta }
+        }
+        Err(e) => Response::Error {
+            error: format!("V2 commit_batch failed: {}", e),
+        },
+    }
 }
 
 /// Helper: execute read operation on current database
@@ -2174,6 +2595,9 @@ fn handle_query_nodes_streaming(
             .filter_map(|id| engine_ref.get_node(id))
             .map(|r| record_to_wire_node(&r))
             .collect();
+        if is_verbose() {
+            eprintln!("[rfdb]   queryNodes: {} nodes (single frame)", nodes.len());
+        }
         return HandleResult::Single(Response::Nodes { nodes });
     }
 
@@ -2182,6 +2606,11 @@ fn handle_query_nodes_streaming(
         if !send_chunk(last, true, chunk_index, request_id, stream) {
             return HandleResult::Streamed;
         }
+        chunk_index += 1;
+    }
+
+    if is_verbose() {
+        eprintln!("[rfdb]   queryNodes: streamed {} chunks", chunk_index);
     }
 
     HandleResult::Streamed
@@ -2286,9 +2715,15 @@ fn handle_client_unix(
             }
         };
 
+        let duration_ms = start.elapsed().as_millis() as u64;
+
+        // Verbose logging: every request with timing (RFDB_VERBOSE=1)
+        if is_verbose() {
+            eprintln!("[rfdb] {} {}ms (client {})", op_name, duration_ms, client_id);
+        }
+
         // Record metrics if enabled
         if let Some(ref m) = metrics {
-            let duration_ms = start.elapsed().as_millis() as u64;
             m.record_query(&op_name, duration_ms);
 
             // Track timeout/cancelled queries
@@ -2332,7 +2767,19 @@ fn handle_client_unix(
         }
 
         if is_shutdown {
-            eprintln!("[rfdb-server] Shutdown requested by client {}", client_id);
+            eprintln!("[rfdb-server] Shutdown requested by client {}, flushing...", client_id);
+            // Flush all databases before exit (same as signal handler)
+            for db_info in manager.list_databases() {
+                if let Ok(db) = manager.get_database(&db_info.name) {
+                    if let Ok(mut engine) = db.engine.write() {
+                        match engine.flush() {
+                            Ok(()) => eprintln!("[rfdb-server] Flushed database '{}'", db_info.name),
+                            Err(e) => eprintln!("[rfdb-server] Flush failed for '{}': {}", db_info.name, e),
+                        }
+                    }
+                }
+            }
+            eprintln!("[rfdb-server] Exiting");
             std::process::exit(0);
         }
     }
@@ -2553,7 +3000,18 @@ async fn handle_client_websocket(
         }
 
         if is_shutdown {
-            eprintln!("[rfdb-server] Shutdown requested by WebSocket client {}", client_id);
+            eprintln!("[rfdb-server] Shutdown requested by WebSocket client {}, flushing...", client_id);
+            for db_info in manager.list_databases() {
+                if let Ok(db) = manager.get_database(&db_info.name) {
+                    if let Ok(mut engine) = db.engine.write() {
+                        match engine.flush() {
+                            Ok(()) => eprintln!("[rfdb-server] Flushed database '{}'", db_info.name),
+                            Err(e) => eprintln!("[rfdb-server] Flush failed for '{}': {}", db_info.name, e),
+                        }
+                    }
+                }
+            }
+            eprintln!("[rfdb-server] Exiting");
             std::process::exit(0);
         }
     }
@@ -2596,6 +3054,8 @@ async fn main() {
         println!("  -V, --version  Print version information");
         println!("  -h, --help     Print this help message");
         println!("  --metrics      Enable performance metrics collection");
+        println!("  --federate     Enable federation mode (shard discovery + registration)");
+        println!("  --root <path>  Project root this shard covers (default: parent of db-path)");
         std::process::exit(0);
     }
 
@@ -2664,6 +3124,71 @@ async fn main() {
         None
     };
 
+    // Parse federation flags
+    let federate = args.iter().any(|a| a == "--federate");
+    let federation_root: PathBuf = args.iter()
+        .position(|a| a == "--root")
+        .and_then(|i| args.get(i + 1))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            // Default root: grandparent of db_path (db_path is typically .grafema/graph.rfdb)
+            db_path.parent()
+                .and_then(|p| p.parent())
+                .unwrap_or(&db_path)
+                .to_path_buf()
+        });
+
+    // Canonicalize root path for consistent shard discovery
+    let federation_root = std::fs::canonicalize(&federation_root).unwrap_or(federation_root);
+
+    SERVER_CONFIG.set(ServerConfig {
+        federate,
+        root: Some(federation_root.clone()),
+    }).expect("ServerConfig already set");
+
+    // Federation: register shard in /tmp/rfdb-shards/
+    let shard_registration_path: Option<PathBuf> = if federate {
+        let shards_dir = PathBuf::from("/tmp/rfdb-shards");
+        if let Err(e) = std::fs::create_dir_all(&shards_dir) {
+            eprintln!("[rfdb-server] WARNING: Cannot create shard registry dir: {}", e);
+            None
+        } else {
+            // Hash root path to create unique filename
+            let hash = {
+                use std::hash::{Hash, Hasher};
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                federation_root.hash(&mut hasher);
+                format!("{:016x}", hasher.finish())
+            };
+            let reg_path = shards_dir.join(format!("{}.json", hash));
+            let started_epoch = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let registration = serde_json::json!({
+                "root": federation_root.display().to_string(),
+                "socket": socket_path,
+                "wsPort": ws_port,
+                "pid": std::process::id(),
+                "started": started_epoch,
+                "serverVersion": env!("CARGO_PKG_VERSION"),
+            });
+            match std::fs::write(&reg_path, serde_json::to_string_pretty(&registration).unwrap()) {
+                Ok(()) => {
+                    eprintln!("[rfdb-server] Federation: registered shard at {:?}", reg_path);
+                    eprintln!("[rfdb-server] Federation: territory = {:?}", federation_root);
+                    Some(reg_path)
+                }
+                Err(e) => {
+                    eprintln!("[rfdb-server] WARNING: Cannot write shard registration: {}", e);
+                    None
+                }
+            }
+        }
+    } else {
+        None
+    };
+
     // Remove stale socket file
     let _ = std::fs::remove_file(socket_path);
 
@@ -2701,6 +3226,7 @@ async fn main() {
     // Set up signal handler for graceful shutdown
     let manager_for_signal = Arc::clone(&manager);
     let socket_path_for_signal = socket_path.to_string();
+    let shard_reg_for_signal = shard_registration_path.clone();
     let mut signals = signal_hook::iterator::Signals::new(&[
         signal_hook::consts::SIGINT,
         signal_hook::consts::SIGTERM,
@@ -2723,6 +3249,13 @@ async fn main() {
             }
 
             let _ = std::fs::remove_file(&socket_path_for_signal);
+
+            // Federation: remove shard registration
+            if let Some(ref reg_path) = shard_reg_for_signal {
+                let _ = std::fs::remove_file(reg_path);
+                eprintln!("[rfdb-server] Federation: unregistered shard");
+            }
+
             eprintln!("[rfdb-server] Exiting");
             std::process::exit(0);
         }
@@ -3356,6 +3889,34 @@ mod protocol_tests {
     }
 
     // ============================================================================
+    // Federation: WhoAreYou
+    // ============================================================================
+
+    #[test]
+    fn test_who_are_you_returns_shard_identity() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+
+        // Initialize ServerConfig if not yet set (tests may race, ignore error)
+        let _ = SERVER_CONFIG.set(ServerConfig {
+            federate: false,
+            root: Some(PathBuf::from("/test/project")),
+        });
+
+        let response = handle_request(&manager, &mut session, Request::WhoAreYou, &None);
+
+        match response {
+            Response::ShardIdentity { ok, server_version, federated, .. } => {
+                assert!(ok);
+                assert!(!server_version.is_empty());
+                // federated depends on which test runs first (OnceLock)
+                let _ = federated;
+            }
+            other => panic!("Expected ShardIdentity, got {:?}", other),
+        }
+    }
+
+    // ============================================================================
     // FindByAttr with Metadata Filters
     // ============================================================================
 
@@ -3420,6 +3981,7 @@ mod protocol_tests {
                 exported: None,
                 substring_match: false,
                 extra,
+            fuzzy_name_fallback: None,
             },
         }, &None);
 
@@ -3443,6 +4005,7 @@ mod protocol_tests {
                 exported: None,
                 substring_match: false,
                 extra,
+            fuzzy_name_fallback: None,
             },
         }, &None);
 
@@ -3462,6 +4025,7 @@ mod protocol_tests {
                 exported: None,
                 substring_match: false,
                 extra: std::collections::HashMap::new(),
+            fuzzy_name_fallback: None,
             },
         }, &None);
 
@@ -3516,6 +4080,7 @@ mod protocol_tests {
                 exported: None,
                 substring_match: true,
                 extra: std::collections::HashMap::new(),
+            fuzzy_name_fallback: None,
             },
         }, &None);
 
@@ -3565,6 +4130,7 @@ mod protocol_tests {
                 exported: None,
                 substring_match: true,
                 extra: std::collections::HashMap::new(),
+            fuzzy_name_fallback: None,
             },
         }, &None);
 
@@ -3605,6 +4171,7 @@ mod protocol_tests {
         }, &None);
 
         // substring_match defaults to false — partial name must NOT match
+        // fuzzy_name_fallback explicitly disabled so fuzzy doesn't kick in
         let response = handle_request(&manager, &mut session, Request::FindByAttr {
             query: WireAttrQuery {
                 node_type: None,
@@ -3613,6 +4180,7 @@ mod protocol_tests {
                 exported: None,
                 substring_match: false,
                 extra: std::collections::HashMap::new(),
+                fuzzy_name_fallback: Some(false),
             },
         }, &None);
 
@@ -3632,12 +4200,81 @@ mod protocol_tests {
                 exported: None,
                 substring_match: false,
                 extra: std::collections::HashMap::new(),
+            fuzzy_name_fallback: None,
             },
         }, &None);
 
         match response {
             Response::Ids { ids } => {
                 assert_eq!(ids.len(), 1, "Exact match for 'handleFooBar' should find the node");
+            }
+            _ => panic!("Expected Ids response"),
+        }
+    }
+
+    #[test]
+    fn test_find_by_attr_fuzzy_fallback_returns_results() {
+        // When exact match returns 0, fuzzy fallback should find similar names
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+
+        handle_request(&manager, &mut session, Request::CreateDatabase {
+            name: "testdb".to_string(),
+            ephemeral: true,
+        }, &None);
+        handle_request(&manager, &mut session, Request::OpenDatabase {
+            name: "testdb".to_string(),
+            mode: "rw".to_string(),
+        }, &None);
+
+        // Add a node with name "HeartbeatService"
+        handle_request(&manager, &mut session, Request::AddNodes {
+            nodes: vec![
+                WireNode {
+                    id: "heartbeat-svc".to_string(),
+                    node_type: Some("CLASS".to_string()),
+                    name: Some("HeartbeatService".to_string()),
+                    file: Some("services/pty.ts".to_string()),
+                    exported: false,
+                    metadata: None,
+                    semantic_id: None,
+                },
+            ],
+        }, &None);
+
+        // Compact to build token index
+        handle_request(&manager, &mut session, Request::Compact, &None);
+
+        // Search for "PtyHostHeartbeatService" — no exact match exists
+        // Fuzzy fallback should find "HeartbeatService" via shared tokens
+        let response = handle_request(&manager, &mut session, Request::FindByAttr {
+            query: WireAttrQuery {
+                name: Some("PtyHostHeartbeatService".to_string()),
+                ..Default::default()
+            },
+        }, &None);
+
+        match response {
+            Response::Ids { ids } => {
+                assert_eq!(ids.len(), 1,
+                    "Fuzzy fallback should find HeartbeatService when searching PtyHostHeartbeatService");
+            }
+            _ => panic!("Expected Ids response"),
+        }
+
+        // Verify fuzzy can be explicitly disabled
+        let response = handle_request(&manager, &mut session, Request::FindByAttr {
+            query: WireAttrQuery {
+                name: Some("PtyHostHeartbeatService".to_string()),
+                fuzzy_name_fallback: Some(false),
+                ..Default::default()
+            },
+        }, &None);
+
+        match response {
+            Response::Ids { ids } => {
+                assert_eq!(ids.len(), 0,
+                    "Fuzzy disabled: PtyHostHeartbeatService should NOT match anything");
             }
             _ => panic!("Expected Ids response"),
         }
@@ -3700,6 +4337,7 @@ mod protocol_tests {
                 exported: None,
                 substring_match: true,
                 extra: std::collections::HashMap::new(),
+            fuzzy_name_fallback: None,
             },
         }, &None);
 
@@ -3758,6 +4396,7 @@ mod protocol_tests {
                 exported: None,
                 substring_match: true,
                 extra: std::collections::HashMap::new(),
+            fuzzy_name_fallback: None,
             },
         }, &None);
 
@@ -3812,6 +4451,7 @@ mod protocol_tests {
                 exported: None,
                 substring_match: true,
                 extra: std::collections::HashMap::new(),
+            fuzzy_name_fallback: None,
             },
         }, &None);
 
@@ -3831,6 +4471,7 @@ mod protocol_tests {
                 exported: None,
                 substring_match: true,
                 extra: std::collections::HashMap::new(),
+            fuzzy_name_fallback: None,
             },
         }, &None);
 
@@ -3912,6 +4553,7 @@ mod protocol_tests {
                 exported: None,
                 substring_match: false,
                 extra,
+            fuzzy_name_fallback: None,
             },
         }, &None);
 
@@ -4128,37 +4770,36 @@ mod protocol_tests {
                 assert!(ok);
                 assert_eq!(delta.nodes_removed, 2, "s1 and s2 should be removed");
                 assert_eq!(delta.nodes_added, 1, "s4 added");
-                assert_eq!(delta.edges_removed, 2, "s1->s2 and s3->s1 edges removed");
+                // Only outgoing edges from the file's nodes are tombstoned.
+                // s1→s2 is outgoing from s1 (in a.js). s3→s1 is outgoing from
+                // s3 (in c.js) — it becomes orphaned, filtered by node tombstone.
+                assert_eq!(delta.edges_removed, 1, "s1->s2 CONTAINS edge removed");
             }
             _ => panic!("Expected BatchCommitted, got {:?}", response),
         }
 
-        // Verify old edges are actually gone (not just claimed to be removed)
+        // Verify the explicitly tombstoned outgoing edge (s1→s2) is gone.
+        // The orphaned incoming edge (s3→s1) remains because only outgoing
+        // edges from the file's nodes are tombstoned. The orphaned edge's
+        // destination (s1) is tombstoned, so it's meaningless but still
+        // visible in get_all_edges (which doesn't filter by node tombstones).
         let edges = handle_request(&manager, &mut session, Request::GetAllEdges, &None);
         match edges {
             Response::Edges { edges } => {
-                assert_eq!(edges.len(), 0, "All edges should be gone after commit batch");
+                // Only the orphaned s3→s1 edge remains
+                assert_eq!(edges.len(), 1, "Only orphaned s3->s1 edge should remain");
+                assert_eq!(edges[0].edge_type, Some("IMPORTS_FROM".to_string()));
             }
             _ => panic!("Expected Edges"),
         }
 
-        // Verify countEdgesByType also reflects deletion
-        let counts = handle_request(&manager, &mut session, Request::CountEdgesByType { edge_types: None }, &None);
-        match counts {
-            Response::Counts { counts } => {
-                let total: usize = counts.values().sum();
-                assert_eq!(total, 0, "countEdgesByType should return 0 after deletion");
-            }
-            _ => panic!("Expected Counts"),
-        }
-
-        // Flush again — edges must stay gone (not reappear from segment)
+        // Flush again — the orphaned edge should persist (not duplicated)
         handle_request(&manager, &mut session, Request::Flush, &None);
 
         let edges_after_flush = handle_request(&manager, &mut session, Request::GetAllEdges, &None);
         match edges_after_flush {
             Response::Edges { edges } => {
-                assert_eq!(edges.len(), 0, "Edges must not reappear after second flush");
+                assert_eq!(edges.len(), 1, "Orphaned edge persists after flush");
             }
             _ => panic!("Expected Edges"),
         }
@@ -4876,6 +5517,7 @@ mod protocol_tests {
             file: None,
             exported: None,
             substring_match: false,
+            fuzzy_name_fallback: None,
             extra: HashMap::new(),
         };
 
@@ -4930,6 +5572,7 @@ mod protocol_tests {
             file: None,
             exported: None,
             substring_match: false,
+            fuzzy_name_fallback: None,
             extra: HashMap::new(),
         };
 
@@ -5000,6 +5643,7 @@ mod protocol_tests {
             file: None,
             exported: None,
             substring_match: false,
+            fuzzy_name_fallback: None,
             extra: HashMap::new(),
         };
 
@@ -5047,6 +5691,7 @@ mod protocol_tests {
             file: None,
             exported: None,
             substring_match: false,
+            fuzzy_name_fallback: None,
             extra: HashMap::new(),
         };
 
@@ -5084,6 +5729,7 @@ mod protocol_tests {
                 exported: None,
                 substring_match: false,
                 extra: HashMap::new(),
+            fuzzy_name_fallback: None,
             },
         }, &None);
 
@@ -5113,6 +5759,7 @@ mod protocol_tests {
             file: None,
             exported: None,
             substring_match: false,
+            fuzzy_name_fallback: None,
             extra: HashMap::new(),
         };
 

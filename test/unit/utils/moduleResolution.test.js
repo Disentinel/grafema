@@ -94,7 +94,7 @@ describe('Module Resolution Utility (REG-320)', () => {
   describe('isRelativeImport()', () => {
     it('should return true for ./ imports', async (t) => {
       if (!implementationAvailable) {
-        t.skip('Module resolution utility not yet implemented');
+        t.todo('Module resolution utility not yet implemented');
         return;
       }
 
@@ -105,7 +105,7 @@ describe('Module Resolution Utility (REG-320)', () => {
 
     it('should return true for ../ imports', async (t) => {
       if (!implementationAvailable) {
-        t.skip('Module resolution utility not yet implemented');
+        t.todo('Module resolution utility not yet implemented');
         return;
       }
 
@@ -116,7 +116,7 @@ describe('Module Resolution Utility (REG-320)', () => {
 
     it('should return false for bare module specifiers', async (t) => {
       if (!implementationAvailable) {
-        t.skip('Module resolution utility not yet implemented');
+        t.todo('Module resolution utility not yet implemented');
         return;
       }
 
@@ -127,7 +127,7 @@ describe('Module Resolution Utility (REG-320)', () => {
 
     it('should return false for scoped packages', async (t) => {
       if (!implementationAvailable) {
-        t.skip('Module resolution utility not yet implemented');
+        t.todo('Module resolution utility not yet implemented');
         return;
       }
 
@@ -138,7 +138,7 @@ describe('Module Resolution Utility (REG-320)', () => {
 
     it('should return false for node: protocol imports', async (t) => {
       if (!implementationAvailable) {
-        t.skip('Module resolution utility not yet implemented');
+        t.todo('Module resolution utility not yet implemented');
         return;
       }
 
@@ -148,7 +148,7 @@ describe('Module Resolution Utility (REG-320)', () => {
 
     it('should return false for absolute paths', async (t) => {
       if (!implementationAvailable) {
-        t.skip('Module resolution utility not yet implemented');
+        t.todo('Module resolution utility not yet implemented');
         return;
       }
 
@@ -166,7 +166,7 @@ describe('Module Resolution Utility (REG-320)', () => {
     describe('Exact path resolution', () => {
       it('should resolve exact file path when file exists', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -179,7 +179,7 @@ describe('Module Resolution Utility (REG-320)', () => {
 
       it('should return null when file does not exist', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -193,7 +193,7 @@ describe('Module Resolution Utility (REG-320)', () => {
     describe('Extension resolution', () => {
       it('should resolve .js extension', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -206,7 +206,7 @@ describe('Module Resolution Utility (REG-320)', () => {
 
       it('should resolve .mjs extension', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -219,7 +219,7 @@ describe('Module Resolution Utility (REG-320)', () => {
 
       it('should resolve .cjs extension', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -232,7 +232,7 @@ describe('Module Resolution Utility (REG-320)', () => {
 
       it('should resolve .jsx extension', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -245,7 +245,7 @@ describe('Module Resolution Utility (REG-320)', () => {
 
       it('should resolve .ts extension', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -258,7 +258,7 @@ describe('Module Resolution Utility (REG-320)', () => {
 
       it('should resolve .tsx extension', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -271,7 +271,7 @@ describe('Module Resolution Utility (REG-320)', () => {
 
       it('should prefer exact match over extension addition', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -289,7 +289,7 @@ describe('Module Resolution Utility (REG-320)', () => {
     describe('Index file resolution', () => {
       it('should resolve index.js in directory', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -302,7 +302,7 @@ describe('Module Resolution Utility (REG-320)', () => {
 
       it('should resolve index.ts in directory', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -315,7 +315,7 @@ describe('Module Resolution Utility (REG-320)', () => {
 
       it('should resolve index.mjs in directory', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -328,7 +328,7 @@ describe('Module Resolution Utility (REG-320)', () => {
 
       it('should resolve index.cjs in directory', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -341,7 +341,7 @@ describe('Module Resolution Utility (REG-320)', () => {
 
       it('should resolve index.jsx in directory', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -354,7 +354,7 @@ describe('Module Resolution Utility (REG-320)', () => {
 
       it('should resolve index.tsx in directory', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -367,7 +367,7 @@ describe('Module Resolution Utility (REG-320)', () => {
 
       it('should prefer file with extension over index file', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -385,7 +385,7 @@ describe('Module Resolution Utility (REG-320)', () => {
     describe('Directory handling (bug fix)', () => {
       it('should return null for directory without index file', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -401,7 +401,7 @@ describe('Module Resolution Utility (REG-320)', () => {
     describe('Not found cases', () => {
       it('should return null when no file matches', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -413,7 +413,7 @@ describe('Module Resolution Utility (REG-320)', () => {
 
       it('should return null for directory with wrong index extension', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -436,7 +436,7 @@ describe('Module Resolution Utility (REG-320)', () => {
     describe('Basic resolution with fileIndex Set', () => {
       it('should resolve exact path from fileIndex', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -454,7 +454,7 @@ describe('Module Resolution Utility (REG-320)', () => {
 
       it('should resolve index file from fileIndex', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -472,7 +472,7 @@ describe('Module Resolution Utility (REG-320)', () => {
 
       it('should return null when not in fileIndex', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -489,7 +489,7 @@ describe('Module Resolution Utility (REG-320)', () => {
 
       it('should NOT access filesystem when fileIndex is provided', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -514,7 +514,7 @@ describe('Module Resolution Utility (REG-320)', () => {
     describe('Validation', () => {
       it('should throw when useFilesystem=false and no fileIndex provided', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -527,7 +527,7 @@ describe('Module Resolution Utility (REG-320)', () => {
 
       it('should throw when useFilesystem=false and fileIndex is undefined', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -543,7 +543,7 @@ describe('Module Resolution Utility (REG-320)', () => {
 
       it('should throw when useFilesystem=false and fileIndex is null', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -561,7 +561,7 @@ describe('Module Resolution Utility (REG-320)', () => {
     describe('Extension priority in fileIndex', () => {
       it('should try extensions in order when multiple exist', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -583,7 +583,7 @@ describe('Module Resolution Utility (REG-320)', () => {
 
       it('should return exact match if in fileIndex', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -605,7 +605,7 @@ describe('Module Resolution Utility (REG-320)', () => {
     describe('Index file priority in fileIndex', () => {
       it('should prefer file extension over index file in fileIndex', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -634,7 +634,7 @@ describe('Module Resolution Utility (REG-320)', () => {
     describe('Basic resolution', () => {
       it('should resolve ./ specifier relative to containing file', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -658,7 +658,7 @@ describe('Module Resolution Utility (REG-320)', () => {
 
       it('should resolve ../ specifier relative to containing file', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -673,7 +673,7 @@ describe('Module Resolution Utility (REG-320)', () => {
 
       it('should resolve deeply nested ../ specifiers', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -690,7 +690,7 @@ describe('Module Resolution Utility (REG-320)', () => {
     describe('With fileIndex', () => {
       it('should use fileIndex for resolution when provided', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -710,7 +710,7 @@ describe('Module Resolution Utility (REG-320)', () => {
     describe('Non-relative specifiers', () => {
       it('should return null for bare module specifiers', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -723,7 +723,7 @@ describe('Module Resolution Utility (REG-320)', () => {
 
       it('should return null for scoped package specifiers', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -745,7 +745,7 @@ describe('Module Resolution Utility (REG-320)', () => {
     describe('.js → .ts redirect (filesystem)', () => {
       it('should resolve .js import to .ts file when .js does not exist', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -759,7 +759,7 @@ describe('Module Resolution Utility (REG-320)', () => {
 
       it('should prefer .js file when it exists (no redirect needed)', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -773,7 +773,7 @@ describe('Module Resolution Utility (REG-320)', () => {
 
       it('should resolve .js to .tsx when .ts does not exist', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -788,7 +788,7 @@ describe('Module Resolution Utility (REG-320)', () => {
     describe('.jsx → .tsx redirect (filesystem)', () => {
       it('should resolve .jsx import to .tsx file', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -803,7 +803,7 @@ describe('Module Resolution Utility (REG-320)', () => {
     describe('.mjs → .mts redirect (filesystem)', () => {
       it('should resolve .mjs import to .mts file', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -818,7 +818,7 @@ describe('Module Resolution Utility (REG-320)', () => {
     describe('.cjs → .cts redirect (filesystem)', () => {
       it('should resolve .cjs import to .cts file', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -833,7 +833,7 @@ describe('Module Resolution Utility (REG-320)', () => {
     describe('In-memory mode (fileIndex)', () => {
       it('should resolve .js to .ts in fileIndex', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -850,7 +850,7 @@ describe('Module Resolution Utility (REG-320)', () => {
 
       it('should prefer existing .js in fileIndex over .ts redirect', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -871,7 +871,7 @@ describe('Module Resolution Utility (REG-320)', () => {
     describe('resolveRelativeSpecifier with redirect', () => {
       it('should resolve relative .js import to .ts file', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -889,7 +889,7 @@ describe('Module Resolution Utility (REG-320)', () => {
     describe('No false positives', () => {
       it('should return null when neither .js nor .ts exists', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -900,7 +900,7 @@ describe('Module Resolution Utility (REG-320)', () => {
 
       it('should not redirect non-JS extensions', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -923,7 +923,7 @@ describe('Module Resolution Utility (REG-320)', () => {
     describe('Path normalization', () => {
       it('should handle paths with trailing slash', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -940,7 +940,7 @@ describe('Module Resolution Utility (REG-320)', () => {
 
       it('should handle Windows-style paths in fileIndex', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -961,7 +961,7 @@ describe('Module Resolution Utility (REG-320)', () => {
     describe('Special characters in paths', () => {
       it('should handle paths with spaces', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -976,7 +976,7 @@ describe('Module Resolution Utility (REG-320)', () => {
 
       it('should handle paths with special characters', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -993,7 +993,7 @@ describe('Module Resolution Utility (REG-320)', () => {
     describe('Empty and edge inputs', () => {
       it('should handle empty basePath gracefully', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -1006,7 +1006,7 @@ describe('Module Resolution Utility (REG-320)', () => {
 
       it('should return empty set file correctly from fileIndex', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -1024,7 +1024,7 @@ describe('Module Resolution Utility (REG-320)', () => {
     describe('Default options', () => {
       it('should default to filesystem mode when options not provided', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 
@@ -1039,7 +1039,7 @@ describe('Module Resolution Utility (REG-320)', () => {
 
       it('should default to filesystem mode when useFilesystem not specified', async (t) => {
         if (!implementationAvailable) {
-          t.skip('Module resolution utility not yet implemented');
+          t.todo('Module resolution utility not yet implemented');
           return;
         }
 

@@ -45,6 +45,7 @@ export type ConnectionState =
   | { status: 'starting-server' }
   | { status: 'connecting' }
   | { status: 'connected' }
+  | { status: 'analyzing'; message?: string }
   | { status: 'error'; message: string };
 
 /**

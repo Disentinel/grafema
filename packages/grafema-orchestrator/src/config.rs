@@ -5,6 +5,89 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+/// A workspace service (sub-project within the monorepo).
+#[derive(Debug, Clone, Deserialize)]
+pub struct ServiceConfig {
+    /// Service name (human label, e.g., "util")
+    pub name: String,
+
+    /// Relative path from project root to the service directory (e.g., "packages/util")
+    pub path: String,
+
+    /// Entry point relative to the service directory (e.g., "src/index.ts")
+    #[serde(default = "default_entry_point", alias = "entryPoint")]
+    pub entry_point: String,
+}
+
+fn default_entry_point() -> String {
+    "src/index.ts".to_string()
+}
+
+/// A discovered workspace package: npm name → entry point file.
+#[derive(Debug, Clone)]
+pub struct WorkspacePackage {
+    /// npm package name (e.g., "@grafema/util")
+    pub name: String,
+    /// Entry point relative to project root (e.g., "packages/util/src/index.ts")
+    pub entry_point: String,
+    /// Package directory relative to project root (e.g., "packages/util")
+    pub package_dir: String,
+}
+
+/// Discover workspace packages by reading package.json from each service.
+///
+/// For each service in the config, reads `{root}/{service.path}/package.json`,
+/// extracts the npm `"name"` field, and combines it with the entry point path.
+/// Services with missing or unreadable package.json are skipped with a warning.
+pub fn discover_workspace_packages(root: &Path, services: &[ServiceConfig]) -> Vec<WorkspacePackage> {
+    let mut packages = Vec::new();
+    for service in services {
+        let pkg_json_path = root.join(&service.path).join("package.json");
+        match std::fs::read_to_string(&pkg_json_path) {
+            Ok(content) => {
+                match serde_json::from_str::<serde_json::Value>(&content) {
+                    Ok(json) => {
+                        if let Some(npm_name) = json.get("name").and_then(|v| v.as_str()) {
+                            let entry_point = format!("{}/{}", service.path, service.entry_point);
+                            packages.push(WorkspacePackage {
+                                name: npm_name.to_string(),
+                                entry_point,
+                                package_dir: service.path.clone(),
+                            });
+                            tracing::info!(
+                                npm_name = npm_name,
+                                entry_point = %packages.last().unwrap().entry_point,
+                                "Discovered workspace package"
+                            );
+                        } else {
+                            tracing::warn!(
+                                path = %pkg_json_path.display(),
+                                "package.json has no 'name' field, skipping service '{}'",
+                                service.name
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            path = %pkg_json_path.display(),
+                            "Failed to parse package.json for service '{}': {e}",
+                            service.name
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    path = %pkg_json_path.display(),
+                    "Cannot read package.json for service '{}': {e}",
+                    service.name
+                );
+            }
+        }
+    }
+    packages
+}
+
 /// Top-level analyzer configuration.
 #[derive(Debug, Deserialize)]
 pub struct AnalyzerConfig {
@@ -30,6 +113,69 @@ pub struct AnalyzerConfig {
     /// Analyzer binary path overrides
     #[serde(default)]
     pub analyzers: AnalyzerBinaries,
+
+    /// Workspace services (sub-projects) for cross-package resolution
+    #[serde(default)]
+    pub services: Vec<ServiceConfig>,
+
+    /// URI authority for grafema:// URIs (e.g., "github.com/owner/repo").
+    /// Auto-detected from git remote if not specified.
+    #[serde(default)]
+    pub authority: Option<String>,
+
+    /// Import path aliases for resolving build-artifact paths to source.
+    ///
+    /// Maps import prefixes to source directories. Useful when packages
+    /// are imported via build-output paths (e.g., `jodit/esm/config`)
+    /// that don't exist in the source tree.
+    ///
+    /// Example:
+    /// ```yaml
+    /// aliases:
+    ///   "jodit/esm": "jodit/src"
+    ///   "jodit/es2021": "jodit/src"
+    /// ```
+    ///
+    /// Internally, each alias creates a virtual workspace package so the
+    /// existing sub-path resolution handles `jodit/esm/config` → `jodit/src/config.ts`.
+    #[serde(default)]
+    pub aliases: std::collections::HashMap<String, String>,
+
+    /// Maximum source file size in KB. Files larger than this are skipped with an ISSUE node.
+    /// Set to 0 to disable the file size guard. Default: 1024 (1 MB).
+    #[serde(default = "default_max_file_size_kb", alias = "maxFileSizeKb")]
+    pub max_file_size_kb: u64,
+
+    /// Maximum AST JSON size in KB. Files producing ASTs larger than this are skipped.
+    /// Set to 0 to disable the AST size guard. Default: 51200 (50 MB).
+    #[serde(default = "default_max_ast_size_kb", alias = "maxAstSizeKb")]
+    pub max_ast_size_kb: u64,
+}
+
+/// Lightweight copy-friendly wrapper that converts KB config values to byte thresholds.
+/// A threshold of 0 means "no limit" (the guard is disabled).
+#[derive(Debug, Clone, Copy)]
+pub struct SizeLimits {
+    pub max_file_bytes: u64,
+    pub max_ast_bytes: u64,
+}
+
+impl SizeLimits {
+    /// Create from config values (KB → bytes). Zero means unlimited.
+    pub fn from_config(cfg: &AnalyzerConfig) -> Self {
+        Self {
+            max_file_bytes: if cfg.max_file_size_kb == 0 { 0 } else { cfg.max_file_size_kb * 1024 },
+            max_ast_bytes: if cfg.max_ast_size_kb == 0 { 0 } else { cfg.max_ast_size_kb * 1024 },
+        }
+    }
+
+    /// No size limits — all files pass.
+    pub fn unlimited() -> Self {
+        Self {
+            max_file_bytes: 0,
+            max_ast_bytes: 0,
+        }
+    }
 }
 
 /// Optional overrides for analyzer binary paths.
@@ -62,6 +208,94 @@ pub struct AnalyzerBinaries {
     /// Path to Rust resolve binary (default: "grafema-rust-resolve")
     #[serde(default = "default_rust_resolve")]
     pub rust_resolve: String,
+
+    /// Path to Java analyzer binary (default: "grafema-java-analyzer")
+    #[serde(default = "default_java_analyzer")]
+    pub java: String,
+
+    /// Path to Java resolve binary (default: "java-resolve")
+    #[serde(default = "default_java_resolve")]
+    pub java_resolve: String,
+
+    /// Path to Java parser binary (default: "java-parser")
+    #[serde(default = "default_java_parser")]
+    pub java_parser: String,
+
+    /// Path to Kotlin analyzer binary (default: "grafema-kotlin-analyzer")
+    #[serde(default = "default_kotlin_analyzer")]
+    pub kotlin: String,
+
+    /// Path to Kotlin resolve binary (default: "kotlin-resolve")
+    #[serde(default = "default_kotlin_resolve")]
+    pub kotlin_resolve: String,
+
+    /// Path to Kotlin parser binary (default: "kotlin-parser")
+    #[serde(default = "default_kotlin_parser")]
+    pub kotlin_parser: String,
+
+    /// Path to JVM cross-language resolve binary (default: "jvm-cross-resolve")
+    #[serde(default = "default_jvm_cross_resolve")]
+    pub jvm_cross_resolve: String,
+
+    /// Path to Python analyzer binary (default: "grafema-python-analyzer")
+    #[serde(default = "default_python_analyzer")]
+    pub python: String,
+
+    /// Path to Python resolve binary (default: "python-resolve")
+    #[serde(default = "default_python_resolve")]
+    pub python_resolve: String,
+
+    /// Path to Go analyzer binary (default: "grafema-go-analyzer")
+    #[serde(default = "default_go_analyzer")]
+    pub go: String,
+
+    /// Path to Go resolve binary (default: "go-resolve")
+    #[serde(default = "default_go_resolve")]
+    pub go_resolve: String,
+
+    /// Path to Go parser binary (default: "go-parser")
+    #[serde(default = "default_go_parser")]
+    pub go_parser: String,
+
+    /// Path to C/C++ analyzer binary (default: "grafema-cpp-analyzer")
+    #[serde(default = "default_cpp_analyzer")]
+    pub cpp: String,
+
+    /// Path to C/C++ resolve binary (default: "cpp-resolve")
+    #[serde(default = "default_cpp_resolve")]
+    pub cpp_resolve: String,
+
+    /// Path to Swift analyzer binary (default: "grafema-swift-analyzer")
+    #[serde(default = "default_swift_analyzer")]
+    pub swift: String,
+
+    /// Path to Swift resolve binary (default: "swift-resolve")
+    #[serde(default = "default_swift_resolve")]
+    pub swift_resolve: String,
+
+    /// Path to Swift parser binary (default: "swift-parser")
+    #[serde(default = "default_swift_parser")]
+    pub swift_parser: String,
+
+    /// Path to Obj-C analyzer binary (default: "grafema-objc-analyzer")
+    #[serde(default = "default_objc_analyzer")]
+    pub objc: String,
+
+    /// Path to Obj-C parser binary (default: "objc-parser")
+    #[serde(default = "default_objc_parser")]
+    pub objc_parser: String,
+
+    /// Path to Apple cross-language resolve binary (default: "apple-cross-resolve")
+    #[serde(default = "default_apple_cross_resolve")]
+    pub apple_cross_resolve: String,
+
+    /// Path to BEAM (Elixir/Erlang) analyzer binary (default: "beam-analyzer")
+    #[serde(default = "default_beam_analyzer")]
+    pub beam: String,
+
+    /// Path to BEAM resolve binary (default: "beam-resolve")
+    #[serde(default = "default_beam_resolve")]
+    pub beam_resolve: String,
 }
 
 impl Default for AnalyzerBinaries {
@@ -73,6 +307,28 @@ impl Default for AnalyzerBinaries {
             js_resolve: default_js_resolve(),
             haskell_resolve: default_haskell_resolve(),
             rust_resolve: default_rust_resolve(),
+            java: default_java_analyzer(),
+            java_resolve: default_java_resolve(),
+            java_parser: default_java_parser(),
+            kotlin: default_kotlin_analyzer(),
+            kotlin_resolve: default_kotlin_resolve(),
+            kotlin_parser: default_kotlin_parser(),
+            jvm_cross_resolve: default_jvm_cross_resolve(),
+            python: default_python_analyzer(),
+            python_resolve: default_python_resolve(),
+            go: default_go_analyzer(),
+            go_resolve: default_go_resolve(),
+            go_parser: default_go_parser(),
+            cpp: default_cpp_analyzer(),
+            cpp_resolve: default_cpp_resolve(),
+            swift: default_swift_analyzer(),
+            swift_resolve: default_swift_resolve(),
+            swift_parser: default_swift_parser(),
+            objc: default_objc_analyzer(),
+            objc_parser: default_objc_parser(),
+            apple_cross_resolve: default_apple_cross_resolve(),
+            beam: default_beam_analyzer(),
+            beam_resolve: default_beam_resolve(),
         }
     }
 }
@@ -82,9 +338,10 @@ impl Default for AnalyzerBinaries {
 /// Search order:
 /// 1. If already an absolute path → return as-is
 /// 2. Same directory as the orchestrator binary (std::env::current_exe())
-/// 3. ~/.cabal/bin/
-/// 4. ~/.local/bin/
-/// 5. Return bare name unchanged (falls back to $PATH via Command::new)
+/// 3. ~/.grafema/bin/ (lazy-downloaded by CLI)
+/// 4. ~/.cabal/bin/
+/// 5. ~/.local/bin/
+/// 6. Return bare name unchanged (falls back to $PATH via Command::new)
 pub fn resolve_binary(name: &str) -> String {
     let path = Path::new(name);
 
@@ -107,7 +364,7 @@ pub fn resolve_binary(name: &str) -> String {
 
     // Check well-known directories
     if let Some(home) = home_dir() {
-        for subdir in &["/.cabal/bin/", "/.local/bin/"] {
+        for subdir in &["/.grafema/bin/", "/.cabal/bin/", "/.local/bin/"] {
             let mut candidate = home.clone();
             candidate.push(&subdir[1..]); // strip leading /
             candidate.push(name);
@@ -157,6 +414,116 @@ impl AnalyzerBinaries {
     /// Resolved path for the Rust resolve binary.
     pub fn rust_resolve_path(&self) -> String {
         resolve_binary(&self.rust_resolve)
+    }
+
+    /// Resolved path for the Java analyzer binary.
+    pub fn java_path(&self) -> String {
+        resolve_binary(&self.java)
+    }
+
+    /// Resolved path for the Java resolve binary.
+    pub fn java_resolve_path(&self) -> String {
+        resolve_binary(&self.java_resolve)
+    }
+
+    /// Resolved path for the Java parser binary.
+    pub fn java_parser_path(&self) -> String {
+        resolve_binary(&self.java_parser)
+    }
+
+    /// Resolved path for the Kotlin analyzer binary.
+    pub fn kotlin_path(&self) -> String {
+        resolve_binary(&self.kotlin)
+    }
+
+    /// Resolved path for the Kotlin resolve binary.
+    pub fn kotlin_resolve_path(&self) -> String {
+        resolve_binary(&self.kotlin_resolve)
+    }
+
+    /// Resolved path for the Kotlin parser binary.
+    pub fn kotlin_parser_path(&self) -> String {
+        resolve_binary(&self.kotlin_parser)
+    }
+
+    /// Resolved path for the JVM cross-language resolve binary.
+    pub fn jvm_cross_resolve_path(&self) -> String {
+        resolve_binary(&self.jvm_cross_resolve)
+    }
+
+    /// Resolved path for the Python analyzer binary.
+    pub fn python_path(&self) -> String {
+        resolve_binary(&self.python)
+    }
+
+    /// Resolved path for the Python resolve binary.
+    pub fn python_resolve_path(&self) -> String {
+        resolve_binary(&self.python_resolve)
+    }
+
+    /// Resolved path for the Go analyzer binary.
+    pub fn go_path(&self) -> String {
+        resolve_binary(&self.go)
+    }
+
+    /// Resolved path for the Go resolve binary.
+    pub fn go_resolve_path(&self) -> String {
+        resolve_binary(&self.go_resolve)
+    }
+
+    /// Resolved path for the Go parser binary.
+    pub fn go_parser_path(&self) -> String {
+        resolve_binary(&self.go_parser)
+    }
+
+    /// Resolved path for the C/C++ analyzer binary.
+    pub fn cpp_path(&self) -> String {
+        resolve_binary(&self.cpp)
+    }
+
+    /// Resolved path for the C/C++ resolve binary.
+    pub fn cpp_resolve_path(&self) -> String {
+        resolve_binary(&self.cpp_resolve)
+    }
+
+    /// Resolved path for the Swift analyzer binary.
+    pub fn swift_path(&self) -> String {
+        resolve_binary(&self.swift)
+    }
+
+    /// Resolved path for the Swift resolve binary.
+    pub fn swift_resolve_path(&self) -> String {
+        resolve_binary(&self.swift_resolve)
+    }
+
+    /// Resolved path for the Swift parser binary.
+    pub fn swift_parser_path(&self) -> String {
+        resolve_binary(&self.swift_parser)
+    }
+
+    /// Resolved path for the Obj-C analyzer binary.
+    pub fn objc_path(&self) -> String {
+        resolve_binary(&self.objc)
+    }
+
+    /// Resolved path for the Obj-C parser binary.
+    pub fn objc_parser_path(&self) -> String {
+        resolve_binary(&self.objc_parser)
+    }
+
+    /// Resolved path for the Apple cross-language resolve binary.
+    pub fn apple_cross_resolve_path(&self) -> String {
+        resolve_binary(&self.apple_cross_resolve)
+    }
+
+    /// Resolved path for the BEAM analyzer binary.
+    pub fn beam_path(&self) -> String {
+        resolve_binary(&self.beam)
+    }
+
+    /// Resolved path for the BEAM resolve binary.
+    pub fn beam_resolve_path(&self) -> String {
+        resolve_binary(&self.beam_resolve)
     }
 }
 
@@ -243,6 +610,14 @@ fn default_rfdb_socket() -> Option<PathBuf> {
     Some(PathBuf::from("/tmp/rfdb.sock"))
 }
 
+fn default_max_file_size_kb() -> u64 {
+    1024
+}
+
+fn default_max_ast_size_kb() -> u64 {
+    51200
+}
+
 fn default_js_analyzer() -> String {
     "grafema-analyzer".to_string()
 }
@@ -267,40 +642,173 @@ fn default_rust_resolve() -> String {
     "grafema-rust-resolve".to_string()
 }
 
+fn default_java_analyzer() -> String {
+    "grafema-java-analyzer".to_string()
+}
+
+fn default_java_resolve() -> String {
+    "java-resolve".to_string()
+}
+
+fn default_java_parser() -> String {
+    "java-parser".to_string()
+}
+
+fn default_kotlin_analyzer() -> String {
+    "grafema-kotlin-analyzer".to_string()
+}
+
+fn default_kotlin_resolve() -> String {
+    "kotlin-resolve".to_string()
+}
+
+fn default_kotlin_parser() -> String {
+    "kotlin-parser".to_string()
+}
+
+fn default_jvm_cross_resolve() -> String {
+    "jvm-cross-resolve".to_string()
+}
+
+fn default_python_analyzer() -> String {
+    "grafema-python-analyzer".to_string()
+}
+
+fn default_python_resolve() -> String {
+    "python-resolve".to_string()
+}
+
+fn default_go_analyzer() -> String {
+    "grafema-go-analyzer".to_string()
+}
+
+fn default_go_resolve() -> String {
+    "go-resolve".to_string()
+}
+
+fn default_go_parser() -> String {
+    "go-parser".to_string()
+}
+
+fn default_cpp_analyzer() -> String {
+    "grafema-cpp-analyzer".to_string()
+}
+
+fn default_cpp_resolve() -> String {
+    "cpp-resolve".to_string()
+}
+
+fn default_swift_analyzer() -> String {
+    "grafema-swift-analyzer".to_string()
+}
+
+fn default_swift_resolve() -> String {
+    "swift-resolve".to_string()
+}
+
+fn default_swift_parser() -> String {
+    "swift-parser".to_string()
+}
+
+fn default_objc_analyzer() -> String {
+    "grafema-objc-analyzer".to_string()
+}
+
+fn default_objc_parser() -> String {
+    "objc-parser".to_string()
+}
+
+fn default_apple_cross_resolve() -> String {
+    "apple-cross-resolve".to_string()
+}
+
+fn default_beam_analyzer() -> String {
+    "beam-analyzer".to_string()
+}
+
+fn default_beam_resolve() -> String {
+    "beam-resolve".to_string()
+}
+
 /// Language detection based on file extension.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Language {
     JavaScript,
     Haskell,
     Rust,
+    Java,
+    Kotlin,
+    Python,
+    Go,
+    Cpp,
+    Swift,
+    ObjectiveC,
+    Beam,
 }
 
 /// Detect language from file extension.
 pub fn detect_language(path: &Path) -> Option<Language> {
-    match path.extension()?.to_str()? {
+    let ext = path.extension()?.to_str()?;
+    match ext {
         "js" | "jsx" | "ts" | "tsx" | "mjs" | "cjs" | "mts" | "cts" => {
             Some(Language::JavaScript)
         }
         "hs" => Some(Language::Haskell),
         "rs" => Some(Language::Rust),
-        _ => None,
+        "java" => Some(Language::Java),
+        "kt" | "kts" => Some(Language::Kotlin),
+        "py" | "pyi" => Some(Language::Python),
+        "go" => Some(Language::Go),
+        "c" | "h" | "cpp" | "hpp" | "cc" | "cxx" | "hxx" | "hh" | "inl" | "ipp" | "tpp" | "txx" => {
+            Some(Language::Cpp)
+        }
+        "swift" => Some(Language::Swift),
+        "m" | "mm" => Some(Language::ObjectiveC),
+        "ex" | "exs" | "erl" | "hrl" => Some(Language::Beam),
+        _ => {
+            // Handle case-sensitive extensions: .c++ .h++ .C .H
+            let file_name = path.file_name()?.to_str()?;
+            if file_name.ends_with(".c++") || file_name.ends_with(".h++") {
+                Some(Language::Cpp)
+            } else if ext == "C" || ext == "H" {
+                Some(Language::Cpp)
+            } else {
+                None
+            }
+        }
     }
 }
 
 /// Partition files by detected language.
-pub fn partition_by_language(files: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>) {
+pub fn partition_by_language(files: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>) {
     let mut js_files = Vec::new();
     let mut hs_files = Vec::new();
     let mut rs_files = Vec::new();
+    let mut java_files = Vec::new();
+    let mut kotlin_files = Vec::new();
+    let mut py_files = Vec::new();
+    let mut go_files = Vec::new();
+    let mut cpp_files = Vec::new();
+    let mut swift_files = Vec::new();
+    let mut objc_files = Vec::new();
+    let mut beam_files = Vec::new();
     for file in files {
         match detect_language(file) {
             Some(Language::JavaScript) => js_files.push(file.clone()),
             Some(Language::Haskell) => hs_files.push(file.clone()),
             Some(Language::Rust) => rs_files.push(file.clone()),
+            Some(Language::Java) => java_files.push(file.clone()),
+            Some(Language::Kotlin) => kotlin_files.push(file.clone()),
+            Some(Language::Python) => py_files.push(file.clone()),
+            Some(Language::Go) => go_files.push(file.clone()),
+            Some(Language::Cpp) => cpp_files.push(file.clone()),
+            Some(Language::Swift) => swift_files.push(file.clone()),
+            Some(Language::ObjectiveC) => objc_files.push(file.clone()),
+            Some(Language::Beam) => beam_files.push(file.clone()),
             None => {} // skip unknown extensions
         }
     }
-    (js_files, hs_files, rs_files)
+    (js_files, hs_files, rs_files, java_files, kotlin_files, py_files, go_files, cpp_files, swift_files, objc_files, beam_files)
 }
 
 /// Load and validate configuration from a YAML file.
@@ -338,6 +846,48 @@ pub fn load(path: &Path) -> Result<AnalyzerConfig> {
     }
 
     Ok(config)
+}
+
+/// Discover the Go module path from `go.mod` in the given root directory.
+///
+/// Reads `{root}/go.mod` and looks for the first line matching `module <path>`.
+/// Returns the module path (e.g., `"github.com/user/myproject"`) or `None`
+/// if no `go.mod` exists or no module directive is found.
+pub fn discover_go_module_path(root: &Path) -> Option<String> {
+    let go_mod_path = root.join("go.mod");
+    match std::fs::read_to_string(&go_mod_path) {
+        Ok(content) => {
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if let Some(rest) = trimmed.strip_prefix("module") {
+                    // Must be followed by whitespace (not e.g. "modulefoo")
+                    if rest.starts_with(char::is_whitespace) {
+                        let module_path = rest.trim().to_string();
+                        if !module_path.is_empty() {
+                            tracing::info!(
+                                module_path = %module_path,
+                                path = %go_mod_path.display(),
+                                "Discovered Go module path"
+                            );
+                            return Some(module_path);
+                        }
+                    }
+                }
+            }
+            tracing::debug!(
+                path = %go_mod_path.display(),
+                "go.mod found but no module directive"
+            );
+            None
+        }
+        Err(_) => {
+            tracing::debug!(
+                path = %go_mod_path.display(),
+                "No go.mod found in project root"
+            );
+            None
+        }
+    }
 }
 
 #[cfg(test)]
@@ -640,7 +1190,6 @@ plugins:
     fn detect_language_unknown_returns_none() {
         assert_eq!(detect_language(Path::new("README.md")), None);
         assert_eq!(detect_language(Path::new("Makefile")), None);
-        assert_eq!(detect_language(Path::new("src/main.py")), None);
     }
 
     #[test]
@@ -652,26 +1201,124 @@ plugins:
             PathBuf::from("src/Lib.hs"),
             PathBuf::from("src/main.rs"),
             PathBuf::from("src/lib.rs"),
+            PathBuf::from("src/App.java"),
+            PathBuf::from("src/script.py"),
+            PathBuf::from("src/main.go"),
+            PathBuf::from("src/parser.cpp"),
+            PathBuf::from("src/parser.h"),
+            PathBuf::from("src/App.swift"),
+            PathBuf::from("src/Legacy.m"),
+            PathBuf::from("src/Mixed.mm"),
+            PathBuf::from("lib/server.ex"),
             PathBuf::from("README.md"),
         ];
-        let (js, hs, rs) = partition_by_language(&files);
+        let (js, hs, rs, java, kotlin, py, go, cpp, swift, objc, beam) = partition_by_language(&files);
         assert_eq!(js, vec![PathBuf::from("src/index.ts"), PathBuf::from("src/app.jsx")]);
         assert_eq!(hs, vec![PathBuf::from("src/Main.hs"), PathBuf::from("src/Lib.hs")]);
         assert_eq!(rs, vec![PathBuf::from("src/main.rs"), PathBuf::from("src/lib.rs")]);
+        assert_eq!(java, vec![PathBuf::from("src/App.java")]);
+        assert!(kotlin.is_empty());
+        assert_eq!(py, vec![PathBuf::from("src/script.py")]);
+        assert_eq!(go, vec![PathBuf::from("src/main.go")]);
+        assert_eq!(cpp, vec![PathBuf::from("src/parser.cpp"), PathBuf::from("src/parser.h")]);
+        assert_eq!(swift, vec![PathBuf::from("src/App.swift")]);
+        assert_eq!(objc, vec![PathBuf::from("src/Legacy.m"), PathBuf::from("src/Mixed.mm")]);
+        assert_eq!(beam, vec![PathBuf::from("lib/server.ex")]);
     }
 
     #[test]
     fn partition_by_language_empty_input() {
-        let (js, hs, rs) = partition_by_language(&[]);
+        let (js, hs, rs, java, kotlin, py, go, cpp, swift, objc, beam) = partition_by_language(&[]);
         assert!(js.is_empty());
         assert!(hs.is_empty());
         assert!(rs.is_empty());
+        assert!(java.is_empty());
+        assert!(kotlin.is_empty());
+        assert!(py.is_empty());
+        assert!(go.is_empty());
+        assert!(cpp.is_empty());
+        assert!(swift.is_empty());
+        assert!(objc.is_empty());
+        assert!(beam.is_empty());
     }
 
     #[test]
     fn detect_language_rust() {
         let path = PathBuf::from("src/main.rs");
         assert_eq!(detect_language(&path), Some(Language::Rust));
+    }
+
+    #[test]
+    fn detect_language_java() {
+        let path = PathBuf::from("src/Main.java");
+        assert_eq!(detect_language(&path), Some(Language::Java));
+    }
+
+    #[test]
+    fn detect_language_kotlin() {
+        assert_eq!(detect_language(Path::new("src/Main.kt")), Some(Language::Kotlin));
+        assert_eq!(detect_language(Path::new("build.gradle.kts")), Some(Language::Kotlin));
+    }
+
+    #[test]
+    fn detect_language_python() {
+        assert_eq!(detect_language(Path::new("src/app.py")), Some(Language::Python));
+        assert_eq!(detect_language(Path::new("src/types.pyi")), Some(Language::Python));
+    }
+
+    #[test]
+    fn detect_language_go() {
+        assert_eq!(detect_language(Path::new("src/main.go")), Some(Language::Go));
+    }
+
+    #[test]
+    fn detect_language_beam() {
+        assert_eq!(detect_language(Path::new("lib/app.ex")), Some(Language::Beam));
+        assert_eq!(detect_language(Path::new("test/app_test.exs")), Some(Language::Beam));
+        assert_eq!(detect_language(Path::new("src/module.erl")), Some(Language::Beam));
+        assert_eq!(detect_language(Path::new("include/header.hrl")), Some(Language::Beam));
+    }
+
+    #[test]
+    fn detect_language_cpp() {
+        // C files
+        assert_eq!(detect_language(Path::new("src/main.c")), Some(Language::Cpp));
+        // Headers default to C++ mode
+        assert_eq!(detect_language(Path::new("src/parser.h")), Some(Language::Cpp));
+        // C++ extensions
+        assert_eq!(detect_language(Path::new("src/parser.cpp")), Some(Language::Cpp));
+        assert_eq!(detect_language(Path::new("src/parser.hpp")), Some(Language::Cpp));
+        assert_eq!(detect_language(Path::new("src/parser.cc")), Some(Language::Cpp));
+        assert_eq!(detect_language(Path::new("src/parser.cxx")), Some(Language::Cpp));
+        assert_eq!(detect_language(Path::new("src/parser.hxx")), Some(Language::Cpp));
+        assert_eq!(detect_language(Path::new("src/parser.hh")), Some(Language::Cpp));
+        // Implementation/template files
+        assert_eq!(detect_language(Path::new("src/parser.inl")), Some(Language::Cpp));
+        assert_eq!(detect_language(Path::new("src/parser.ipp")), Some(Language::Cpp));
+        assert_eq!(detect_language(Path::new("src/parser.tpp")), Some(Language::Cpp));
+        assert_eq!(detect_language(Path::new("src/parser.txx")), Some(Language::Cpp));
+    }
+
+    #[test]
+    fn detect_language_swift() {
+        assert_eq!(detect_language(Path::new("src/App.swift")), Some(Language::Swift));
+    }
+
+    #[test]
+    fn detect_language_objc() {
+        assert_eq!(detect_language(Path::new("src/Legacy.m")), Some(Language::ObjectiveC));
+        assert_eq!(detect_language(Path::new("src/Mixed.mm")), Some(Language::ObjectiveC));
+    }
+
+    #[test]
+    fn partition_by_language_includes_python() {
+        let files = vec![
+            PathBuf::from("src/main.py"),
+            PathBuf::from("src/app.js"),
+        ];
+        let (js, _hs, _rs, _java, _kotlin, py, _go, _cpp, _swift, _objc, _beam) = partition_by_language(&files);
+        assert_eq!(js, vec![PathBuf::from("src/app.js")]);
+        assert_eq!(py, vec![PathBuf::from("src/main.py")]);
     }
 
     #[test]
@@ -714,6 +1361,22 @@ analyzers:
         assert_eq!(cfg.analyzers.js_resolve, "grafema-resolve");
         assert_eq!(cfg.analyzers.haskell_resolve, "haskell-resolve");
         assert_eq!(cfg.analyzers.rust_resolve, "grafema-rust-resolve");
+        assert_eq!(cfg.analyzers.java, "grafema-java-analyzer");
+        assert_eq!(cfg.analyzers.java_resolve, "java-resolve");
+        assert_eq!(cfg.analyzers.java_parser, "java-parser");
+        assert_eq!(cfg.analyzers.kotlin, "grafema-kotlin-analyzer");
+        assert_eq!(cfg.analyzers.kotlin_resolve, "kotlin-resolve");
+        assert_eq!(cfg.analyzers.kotlin_parser, "kotlin-parser");
+        assert_eq!(cfg.analyzers.jvm_cross_resolve, "jvm-cross-resolve");
+        assert_eq!(cfg.analyzers.python, "grafema-python-analyzer");
+        assert_eq!(cfg.analyzers.python_resolve, "python-resolve");
+        assert_eq!(cfg.analyzers.go, "grafema-go-analyzer");
+        assert_eq!(cfg.analyzers.go_resolve, "go-resolve");
+        assert_eq!(cfg.analyzers.go_parser, "go-parser");
+        assert_eq!(cfg.analyzers.cpp, "grafema-cpp-analyzer");
+        assert_eq!(cfg.analyzers.cpp_resolve, "cpp-resolve");
+        assert_eq!(cfg.analyzers.beam, "beam-analyzer");
+        assert_eq!(cfg.analyzers.beam_resolve, "beam-resolve");
         cleanup(&dir);
     }
 
@@ -726,6 +1389,22 @@ analyzers:
         assert_eq!(defaults.js_resolve, "grafema-resolve");
         assert_eq!(defaults.haskell_resolve, "haskell-resolve");
         assert_eq!(defaults.rust_resolve, "grafema-rust-resolve");
+        assert_eq!(defaults.java, "grafema-java-analyzer");
+        assert_eq!(defaults.java_resolve, "java-resolve");
+        assert_eq!(defaults.java_parser, "java-parser");
+        assert_eq!(defaults.kotlin, "grafema-kotlin-analyzer");
+        assert_eq!(defaults.kotlin_resolve, "kotlin-resolve");
+        assert_eq!(defaults.kotlin_parser, "kotlin-parser");
+        assert_eq!(defaults.jvm_cross_resolve, "jvm-cross-resolve");
+        assert_eq!(defaults.python, "grafema-python-analyzer");
+        assert_eq!(defaults.python_resolve, "python-resolve");
+        assert_eq!(defaults.go, "grafema-go-analyzer");
+        assert_eq!(defaults.go_resolve, "go-resolve");
+        assert_eq!(defaults.go_parser, "go-parser");
+        assert_eq!(defaults.cpp, "grafema-cpp-analyzer");
+        assert_eq!(defaults.cpp_resolve, "cpp-resolve");
+        assert_eq!(defaults.beam, "beam-analyzer");
+        assert_eq!(defaults.beam_resolve, "beam-resolve");
     }
 
     #[test]
@@ -764,6 +1443,28 @@ analyzers:
             js_resolve: "/abs/grafema-resolve".to_string(),
             haskell_resolve: "/abs/haskell-resolve".to_string(),
             rust_resolve: "/abs/grafema-rust-resolve".to_string(),
+            java: "/abs/grafema-java-analyzer".to_string(),
+            java_resolve: "/abs/java-resolve".to_string(),
+            java_parser: "/abs/java-parser".to_string(),
+            kotlin: "/abs/grafema-kotlin-analyzer".to_string(),
+            kotlin_resolve: "/abs/kotlin-resolve".to_string(),
+            kotlin_parser: "/abs/kotlin-parser".to_string(),
+            jvm_cross_resolve: "/abs/jvm-cross-resolve".to_string(),
+            python: "/abs/grafema-python-analyzer".to_string(),
+            python_resolve: "/abs/python-resolve".to_string(),
+            go: "/abs/grafema-go-analyzer".to_string(),
+            go_resolve: "/abs/go-resolve".to_string(),
+            go_parser: "/abs/go-parser".to_string(),
+            cpp: "/abs/grafema-cpp-analyzer".to_string(),
+            cpp_resolve: "/abs/cpp-resolve".to_string(),
+            swift: "/abs/grafema-swift-analyzer".to_string(),
+            swift_resolve: "/abs/swift-resolve".to_string(),
+            swift_parser: "/abs/swift-parser".to_string(),
+            objc: "/abs/grafema-objc-analyzer".to_string(),
+            objc_parser: "/abs/objc-parser".to_string(),
+            apple_cross_resolve: "/abs/apple-cross-resolve".to_string(),
+            beam: "/abs/beam-analyzer".to_string(),
+            beam_resolve: "/abs/beam-resolve".to_string(),
         };
         assert_eq!(bins.js_path(), "/abs/grafema-analyzer");
         assert_eq!(bins.haskell_path(), "/abs/haskell-analyzer");
@@ -771,5 +1472,168 @@ analyzers:
         assert_eq!(bins.js_resolve_path(), "/abs/grafema-resolve");
         assert_eq!(bins.haskell_resolve_path(), "/abs/haskell-resolve");
         assert_eq!(bins.rust_resolve_path(), "/abs/grafema-rust-resolve");
+        assert_eq!(bins.java_path(), "/abs/grafema-java-analyzer");
+        assert_eq!(bins.java_resolve_path(), "/abs/java-resolve");
+        assert_eq!(bins.java_parser_path(), "/abs/java-parser");
+        assert_eq!(bins.kotlin_path(), "/abs/grafema-kotlin-analyzer");
+        assert_eq!(bins.kotlin_resolve_path(), "/abs/kotlin-resolve");
+        assert_eq!(bins.kotlin_parser_path(), "/abs/kotlin-parser");
+        assert_eq!(bins.jvm_cross_resolve_path(), "/abs/jvm-cross-resolve");
+        assert_eq!(bins.python_path(), "/abs/grafema-python-analyzer");
+        assert_eq!(bins.python_resolve_path(), "/abs/python-resolve");
+        assert_eq!(bins.go_path(), "/abs/grafema-go-analyzer");
+        assert_eq!(bins.go_resolve_path(), "/abs/go-resolve");
+        assert_eq!(bins.go_parser_path(), "/abs/go-parser");
+        assert_eq!(bins.cpp_path(), "/abs/grafema-cpp-analyzer");
+        assert_eq!(bins.cpp_resolve_path(), "/abs/cpp-resolve");
+        assert_eq!(bins.swift_path(), "/abs/grafema-swift-analyzer");
+        assert_eq!(bins.swift_resolve_path(), "/abs/swift-resolve");
+        assert_eq!(bins.swift_parser_path(), "/abs/swift-parser");
+        assert_eq!(bins.objc_path(), "/abs/grafema-objc-analyzer");
+        assert_eq!(bins.objc_parser_path(), "/abs/objc-parser");
+        assert_eq!(bins.apple_cross_resolve_path(), "/abs/apple-cross-resolve");
+        assert_eq!(bins.beam_path(), "/abs/beam-analyzer");
+        assert_eq!(bins.beam_resolve_path(), "/abs/beam-resolve");
+    }
+
+    #[test]
+    fn config_with_services_deserializes() {
+        let dir = test_dir();
+        let yaml = format!(
+            r#"
+root: "{}"
+include:
+  - "**/*.ts"
+services:
+  - name: util
+    path: packages/util
+    entry_point: src/index.ts
+  - name: cli
+    path: packages/cli
+"#,
+            dir.display()
+        );
+        let config_path = write_config(&dir, &yaml);
+        let cfg = load(&config_path).unwrap();
+        assert_eq!(cfg.services.len(), 2);
+        assert_eq!(cfg.services[0].name, "util");
+        assert_eq!(cfg.services[0].path, "packages/util");
+        assert_eq!(cfg.services[0].entry_point, "src/index.ts");
+        assert_eq!(cfg.services[1].name, "cli");
+        assert_eq!(cfg.services[1].entry_point, "src/index.ts"); // default
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn config_without_services_defaults_to_empty() {
+        let dir = test_dir();
+        let config_path = write_config(
+            &dir,
+            &format!(
+                "root: \"{}\"\ninclude:\n  - \"**/*.js\"\n",
+                dir.display()
+            ),
+        );
+        let cfg = load(&config_path).unwrap();
+        assert!(cfg.services.is_empty());
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn discover_workspace_packages_reads_package_json() {
+        let dir = test_dir();
+        let pkg_dir = dir.join("packages").join("util");
+        fs::create_dir_all(&pkg_dir).unwrap();
+        fs::write(
+            pkg_dir.join("package.json"),
+            r#"{"name": "@grafema/util", "version": "0.1.0"}"#,
+        )
+        .unwrap();
+
+        let services = vec![ServiceConfig {
+            name: "util".to_string(),
+            path: "packages/util".to_string(),
+            entry_point: "src/index.ts".to_string(),
+        }];
+
+        let packages = discover_workspace_packages(&dir, &services);
+        assert_eq!(packages.len(), 1);
+        assert_eq!(packages[0].name, "@grafema/util");
+        assert_eq!(packages[0].entry_point, "packages/util/src/index.ts");
+        assert_eq!(packages[0].package_dir, "packages/util");
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn discover_workspace_packages_skips_missing_package_json() {
+        let dir = test_dir();
+        let services = vec![ServiceConfig {
+            name: "missing".to_string(),
+            path: "packages/missing".to_string(),
+            entry_point: "src/index.ts".to_string(),
+        }];
+
+        let packages = discover_workspace_packages(&dir, &services);
+        assert!(packages.is_empty());
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn discover_workspace_packages_skips_no_name_field() {
+        let dir = test_dir();
+        let pkg_dir = dir.join("packages").join("noname");
+        fs::create_dir_all(&pkg_dir).unwrap();
+        fs::write(
+            pkg_dir.join("package.json"),
+            r#"{"version": "0.1.0"}"#,
+        )
+        .unwrap();
+
+        let services = vec![ServiceConfig {
+            name: "noname".to_string(),
+            path: "packages/noname".to_string(),
+            entry_point: "src/index.ts".to_string(),
+        }];
+
+        let packages = discover_workspace_packages(&dir, &services);
+        assert!(packages.is_empty());
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn discover_go_module_path_valid() {
+        let dir = test_dir();
+        fs::write(
+            dir.join("go.mod"),
+            "module github.com/user/project\n\ngo 1.21\n",
+        )
+        .unwrap();
+
+        let result = discover_go_module_path(&dir);
+        assert_eq!(result, Some("github.com/user/project".to_string()));
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn discover_go_module_path_missing() {
+        let dir = test_dir();
+        // No go.mod file created
+        let result = discover_go_module_path(&dir);
+        assert_eq!(result, None);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn discover_go_module_path_with_comments() {
+        let dir = test_dir();
+        fs::write(
+            dir.join("go.mod"),
+            "// This is a comment\n// Another comment\nmodule github.com/user/project\n\ngo 1.21\n",
+        )
+        .unwrap();
+
+        let result = discover_go_module_path(&dir);
+        assert_eq!(result, Some("github.com/user/project".to_string()));
+        cleanup(&dir);
     }
 }

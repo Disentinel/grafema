@@ -135,6 +135,10 @@ pub trait GraphStore: Send + Sync {
     /// Default returns empty vec for engines that don't support sharding.
     fn shard_diagnostics(&self) -> Vec<ShardDiagnostics> { vec![] }
 
+    /// Total size of the database on disk in bytes.
+    /// Returns 0 for ephemeral databases.
+    fn disk_size_bytes(&self) -> u64 { 0 }
+
     // === DOWNCAST SUPPORT ===
 
     /// Downcast to concrete engine type (for engine-specific operations)

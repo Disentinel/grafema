@@ -4,51 +4,14 @@
 
 import { Command } from 'commander';
 import { resolve, join } from 'path';
-import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
+import { existsSync } from 'fs';
 import { spawn } from 'child_process';
 import { createInterface } from 'readline';
 import { fileURLToPath } from 'url';
-import { stringify as stringifyYAML } from 'yaml';
-import { DEFAULT_CONFIG, GRAFEMA_VERSION, getSchemaVersion } from '@grafema/util';
 import { installSkill } from './setup-skill.js';
+import { generateSmartConfig, writeConfig, updateGitignore } from '../utils/quickstart.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
-
-/**
- * Generate config.yaml content with commented future features.
- * Only includes implemented features (plugins).
- */
-function generateConfigYAML(): string {
-  // Start with working default config
-  const config = {
-    version: getSchemaVersion(GRAFEMA_VERSION),
-    // Plugin list (fully implemented)
-    plugins: DEFAULT_CONFIG.plugins,
-  };
-
-  // Convert to YAML
-  const yaml = stringifyYAML(config, {
-    lineWidth: 0, // Don't wrap long lines
-  });
-
-  // Add header comment
-  return `# Grafema Configuration
-# Documentation: https://github.com/grafema/grafema#configuration
-
-${yaml}
-# File filtering patterns (optional)
-# By default, Grafema follows imports from package.json entry points.
-# Use these patterns to control which files are analyzed:
-#
-# include:  # Only analyze files matching these patterns
-#   - "src/**/*.{ts,js,tsx,jsx}"
-#
-# exclude:  # Skip files matching these patterns (takes precedence over include)
-#   - "**/*.test.ts"
-#   - "**/__tests__/**"
-#   - "**/node_modules/**"
-`;
-}
 
 /**
  * Ask user a yes/no question. Returns true for yes (default), false for no.
@@ -129,29 +92,28 @@ Examples:
     const projectPath = resolve(path);
     const grafemaDir = join(projectPath, '.grafema');
     const configPath = join(grafemaDir, 'config.yaml');
-    const packageJsonPath = join(projectPath, 'package.json');
-    const tsconfigPath = join(projectPath, 'tsconfig.json');
-
-    // Check package.json
-    if (!existsSync(packageJsonPath)) {
-      console.error('✗ Grafema currently supports JavaScript/TypeScript projects only.');
-      console.error(`  No package.json found in ${projectPath}`);
-      console.error('');
-      console.error('  Supported: Node.js, React, Express, Next.js, Vue, Angular, etc.');
-      console.error('  Coming soon: Python, Go, Rust');
-      console.error('');
-      console.error('  If this IS a JS/TS project, create package.json first:');
-      console.error('    npm init -y');
-      process.exit(1);
-    }
-    console.log('✓ Found package.json');
-
-    // Detect TypeScript
-    const isTypeScript = existsSync(tsconfigPath);
-    if (isTypeScript) {
-      console.log('✓ Detected TypeScript project');
+    // Detect project markers
+    const markers = [
+      { file: 'package.json', lang: 'JavaScript/TypeScript' },
+      { file: 'Cargo.toml', lang: 'Rust' },
+      { file: 'go.mod', lang: 'Go' },
+      { file: 'pom.xml', lang: 'Java' },
+      { file: 'build.gradle', lang: 'Java/Kotlin' },
+      { file: 'build.gradle.kts', lang: 'Kotlin' },
+      { file: 'setup.py', lang: 'Python' },
+      { file: 'pyproject.toml', lang: 'Python' },
+      { file: 'mix.exs', lang: 'Elixir' },
+      { file: 'rebar.config', lang: 'Erlang' },
+      { file: 'stack.yaml', lang: 'Haskell' },
+      { file: 'CMakeLists.txt', lang: 'C/C++' },
+      { file: 'Package.swift', lang: 'Swift' },
+    ];
+    const detected = markers.filter(m => existsSync(join(projectPath, m.file)));
+    if (detected.length > 0) {
+      const langs = [...new Set(detected.map(m => m.lang))].join(', ');
+      console.log(`✓ Detected: ${langs}`);
     } else {
-      console.log('✓ Detected JavaScript project');
+      console.log('✓ Initializing (no project markers found — will analyze all supported files)');
     }
 
     // Check existing config
@@ -163,27 +125,14 @@ Examples:
       return;
     }
 
-    // Create .grafema directory
-    if (!existsSync(grafemaDir)) {
-      mkdirSync(grafemaDir, { recursive: true });
-    }
-
-    // Write config
-    const configContent = generateConfigYAML();
-    writeFileSync(configPath, configContent);
+    // Write config (generateSmartConfig with no args = all extensions, same as before)
+    const configContent = generateSmartConfig();
+    writeConfig(projectPath, configContent);
     console.log('✓ Created .grafema/config.yaml');
 
     // Add to .gitignore if exists
-    const gitignorePath = join(projectPath, '.gitignore');
-    if (existsSync(gitignorePath)) {
-      const gitignore = readFileSync(gitignorePath, 'utf-8');
-      if (!gitignore.includes('.grafema/graph.rfdb')) {
-        writeFileSync(
-          gitignorePath,
-          gitignore + '\n# Grafema\n.grafema/graph.rfdb\n.grafema/rfdb.sock\n'
-        );
-        console.log('✓ Updated .gitignore');
-      }
+    if (updateGitignore(projectPath)) {
+      console.log('✓ Updated .gitignore');
     }
 
     // Auto-install Agent Skill for AI-assisted development

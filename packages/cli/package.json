@@ -1,6 +1,6 @@
 {
   "name": "@grafema/cli",
-  "version": "0.2.12-beta",
+  "version": "0.3.22",
   "description": "CLI for Grafema code analysis toolkit",
   "type": "module",
   "main": "./dist/cli.js",
@@ -32,7 +32,7 @@
     "code-analysis",
     "static-analysis"
   ],
-  "license": "Apache-2.0",
+  "license": "FSL-1.1-Apache-2.0",
   "author": "Vadim Reshetnikov",
   "repository": {
     "type": "git",
@@ -45,6 +45,12 @@
     "@grafema/types": "workspace:*",
     "commander": "^13.0.0",
     "yaml": "^2.8.2"
+  },
+  "optionalDependencies": {
+    "@grafema/grafema-darwin-arm64": "0.3.16",
+    "@grafema/grafema-darwin-x64": "0.3.16",
+    "@grafema/grafema-linux-arm64": "0.3.16",
+    "@grafema/grafema-linux-x64": "0.3.16"
   },
   "devDependencies": {
     "@types/node": "^25.0.8",

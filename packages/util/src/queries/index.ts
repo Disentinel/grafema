@@ -10,6 +10,7 @@
 export { findCallsInFunction } from './findCallsInFunction.js';
 export { findContainingFunction } from './findContainingFunction.js';
 export { traceValues, aggregateValues, NONDETERMINISTIC_PATTERNS, NONDETERMINISTIC_OBJECTS } from './traceValues.js';
+export { traceDataflow, traceForwardBFS, traceBackwardBFS } from './traceDataflow.js';
 export {
   buildNodeContext,
   getNodeDisplayName,
@@ -34,3 +35,10 @@ export type {
   TraceValuesGraphBackend,
   NondeterministicPattern,
 } from './types.js';
+export type {
+  DataflowNode,
+  DataflowEdge,
+  DataflowBackend,
+  TraceDataflowOptions,
+  TraceDataflowResult,
+} from './traceDataflow.js';

@@ -6,6 +6,7 @@ dist/
 *.tsbuildinfo
 target/
 dist-newstyle/
+.build-hash
 
 # IDE
 .idea/
@@ -61,5 +62,33 @@ _qa/screenshots/*
 !_qa/screenshots/.gitkeep
 !_qa/screenshots/*.cjs
 
+# Platform package binaries (downloaded from CI, not committed)
+packages/grafema-darwin-arm64/bin/*
+packages/grafema-darwin-x64/bin/*
+packages/grafema-linux-arm64/bin/*
+packages/grafema-linux-x64/bin/*
+!packages/grafema-*/bin/.gitkeep
+
+# QA automation (non-screenshot files)
+_qa/*.cjs
+
+# Enox experiment (local data, not shipped)
+enox/data/
+enox/server/
+enox/*.rfdb/
+enox/rfdb.pid
+enox/fetch-*.js
+
+# Autoresearch results (regenerable, potentially large)
+autoresearch/results/
+
 # SWE-bench artifacts
 logs/run_evaluation/
+scripts/swe-bench/results/
+scripts/swe-bench/results-hard/
+scripts/swe-bench/build-images.sh
+scripts/swe-bench/experiment.sh
+scripts/swe-bench/templates/
+
+# Generated manifests (grafema analyze output)
+manifest.yaml

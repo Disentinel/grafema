@@ -1,0 +1,134 @@
+schema_version: 1
+analyzer_version: 0.3.16
+authored: false
+confidence: 0.5
+generated: 2026-03-17T14:51:54.816Z
+package:
+  purl: pkg:npm/@msgpack/msgpack@3.1.3
+  source_type: source
+exports:
+  - name: __esModule
+    kind: VARIABLE
+    semanticId: dist.umd/msgpack.js->EXPORT_BINDING->__esModule
+    effects:
+      - UNKNOWN
+  - name: decode
+    kind: VARIABLE
+    semanticId: src/index.ts->EXPORT_BINDING->decode
+    effects:
+      - UNKNOWN
+  - name: decodeArrayStream
+    kind: VARIABLE
+    semanticId: src/index.ts->EXPORT_BINDING->decodeArrayStream
+    effects:
+      - UNKNOWN
+  - name: decodeAsync
+    kind: VARIABLE
+    semanticId: src/index.ts->EXPORT_BINDING->decodeAsync
+    effects:
+      - UNKNOWN
+  - name: DecodeError
+    kind: VARIABLE
+    semanticId: src/index.ts->EXPORT_BINDING->DecodeError
+    effects:
+      - UNKNOWN
+  - name: decodeMulti
+    kind: VARIABLE
+    semanticId: src/index.ts->EXPORT_BINDING->decodeMulti
+    effects:
+      - UNKNOWN
+  - name: decodeMultiStream
+    kind: VARIABLE
+    semanticId: src/index.ts->EXPORT_BINDING->decodeMultiStream
+    effects:
+      - UNKNOWN
+  - name: Decoder
+    kind: VARIABLE
+    semanticId: src/index.ts->EXPORT_BINDING->Decoder
+    effects:
+      - UNKNOWN
+  - name: DecoderOptions
+    kind: VARIABLE
+    semanticId: src/index.ts->EXPORT_BINDING->DecoderOptions
+    effects:
+      - UNKNOWN
+  - name: decodeTimestampExtension
+    kind: VARIABLE
+    semanticId: src/index.ts->EXPORT_BINDING->decodeTimestampExtension
+    effects:
+      - UNKNOWN
+  - name: decodeTimestampToTimeSpec
+    kind: VARIABLE
+    semanticId: src/index.ts->EXPORT_BINDING->decodeTimestampToTimeSpec
+    effects:
+      - UNKNOWN
+  - name: encode
+    kind: VARIABLE
+    semanticId: src/index.ts->EXPORT_BINDING->encode
+    effects:
+      - UNKNOWN
+  - name: encodeDateToTimeSpec
+    kind: VARIABLE
+    semanticId: src/index.ts->EXPORT_BINDING->encodeDateToTimeSpec
+    effects:
+      - UNKNOWN
+  - name: Encoder
+    kind: VARIABLE
+    semanticId: src/index.ts->EXPORT_BINDING->Encoder
+    effects:
+      - UNKNOWN
+  - name: EncoderOptions
+    kind: VARIABLE
+    semanticId: src/index.ts->EXPORT_BINDING->EncoderOptions
+    effects:
+      - UNKNOWN
+  - name: encodeTimeSpecToTimestamp
+    kind: VARIABLE
+    semanticId: src/index.ts->EXPORT_BINDING->encodeTimeSpecToTimestamp
+    effects:
+      - UNKNOWN
+  - name: encodeTimestampExtension
+    kind: VARIABLE
+    semanticId: src/index.ts->EXPORT_BINDING->encodeTimestampExtension
+    effects:
+      - UNKNOWN
+  - name: EXT_TIMESTAMP
+    kind: VARIABLE
+    semanticId: src/index.ts->EXPORT_BINDING->EXT_TIMESTAMP
+    effects:
+      - UNKNOWN
+  - name: ExtData
+    kind: VARIABLE
+    semanticId: src/index.ts->EXPORT_BINDING->ExtData
+    effects:
+      - UNKNOWN
+  - name: ExtensionCodec
+    kind: VARIABLE
+    semanticId: src/index.ts->EXPORT_BINDING->ExtensionCodec
+    effects:
+      - UNKNOWN
+  - name: ExtensionCodecType
+    kind: VARIABLE
+    semanticId: src/index.ts->EXPORT_BINDING->ExtensionCodecType
+    effects:
+      - UNKNOWN
+  - name: ExtensionDecoderType
+    kind: VARIABLE
+    semanticId: src/index.ts->EXPORT_BINDING->ExtensionDecoderType
+    effects:
+      - UNKNOWN
+  - name: ExtensionEncoderType
+    kind: VARIABLE
+    semanticId: src/index.ts->EXPORT_BINDING->ExtensionEncoderType
+    effects:
+      - UNKNOWN
+imports: []
+capabilities:
+  total_exports: 23
+  total_internal_symbols: 1048
+  has_graph: true
+access:
+  local: ./graph.rfdb
+language: typescript
+language_specific:
+  module_system: esm

@@ -12,7 +12,7 @@
 //!   queries RFDB directly.
 
 use crate::config::{PluginConfig, PluginMode};
-use crate::process_pool::ProcessPool;
+use crate::process_pool::{ProcessPool, WorkerHandle};
 use crate::rfdb::{RfdbClient, WireEdge, WireNode};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -428,9 +428,12 @@ pub async fn run_plugin(
     let result = tokio::time::timeout(timeout_duration, async {
         match plugin.mode {
             PluginMode::Streaming => {
-                let mut output = match resolve_pool {
-                    Some(pool) => run_streaming_plugin_pooled(plugin, rfdb, pool).await?,
-                    None => run_streaming_plugin(plugin, rfdb).await?,
+                // Use the resolve daemon pool only for grafema-resolve subcommands.
+                // User-defined plugins with custom commands run as standalone processes.
+                let is_resolve_cmd = plugin.command.starts_with("grafema-resolve");
+                let mut output = match (resolve_pool, is_resolve_cmd) {
+                    (Some(pool), true) => run_streaming_plugin_pooled(plugin, rfdb, pool).await?,
+                    _ => run_streaming_plugin(plugin, rfdb).await?,
                 };
                 validate_plugin_output(&output)?;
                 stamp_metadata(&mut output, &plugin.name, generation);
@@ -495,11 +498,21 @@ pub async fn run_plugin(
 // Pooled streaming plugin execution (daemon mode)
 // ---------------------------------------------------------------------------
 
+/// Workspace package info sent to the resolve daemon.
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkspacePackageWire {
+    pub name: String,
+    pub entry_point: String,
+    pub package_dir: String,
+}
+
 /// Request sent to grafema-resolve in --daemon mode.
 #[derive(Serialize)]
 struct ResolveRequest {
     cmd: String,
     nodes: Vec<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    workspace_packages: Vec<WorkspacePackageWire>,
 }
 
 /// Response from grafema-resolve in --daemon mode.
@@ -557,7 +570,7 @@ pub async fn run_streaming_plugin_pooled(
         .map(|r| serde_json::to_value(&r.bindings).unwrap_or_default())
         .collect();
 
-    let request = ResolveRequest { cmd, nodes };
+    let request = ResolveRequest { cmd, nodes, workspace_packages: vec![] };
     let payload = rmp_serde::to_vec_named(&request).context(format!(
         "Failed to encode resolve request for plugin '{}'",
         plugin.name
@@ -616,38 +629,81 @@ pub async fn run_streaming_plugin_pooled(
 }
 
 // ---------------------------------------------------------------------------
-// Direct resolution with in-memory nodes (bypasses RFDB Datalog round-trip)
+// Streaming double-buffer resolution
 // ---------------------------------------------------------------------------
 
-/// Run a resolution command with pre-collected nodes, bypassing RFDB.
+/// Flush threshold: nodes buffered before sending to a worker.
+/// 50K nodes × ~250B = 12.5MB in buffer; JSON conversion ~75MB transient.
+const FLUSH_SIZE: usize = 50_000;
+
+/// Deterministic shard assignment by file path.
 ///
-/// Instead of querying RFDB via Datalog and losing field names/types in the
-/// round-trip, this sends the original `GraphNode` JSON values directly to
-/// the resolve daemon pool.
+/// Uses a simple byte-folding hash — streaming-compatible, no need to see
+/// all files upfront.
+fn shard_for_file(file: &str, shard_count: usize) -> usize {
+    let hash = file
+        .bytes()
+        .fold(0u64, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u64));
+    (hash as usize) % shard_count
+}
+
+/// Node types that form the "context" for global resolvers.
 ///
-/// # Arguments
-/// * `cmd` - Resolution subcommand (e.g., "imports", "runtime-globals")
-/// * `nodes` - Pre-collected `serde_json::Value` nodes from analysis results
-/// * `resolve_pool` - Persistent resolve daemon process pool
-pub async fn run_resolve_with_nodes(
+/// These are declarations/exports needed for building resolution indexes.
+/// Work items (CALL, REFERENCE, IMPORT_BINDING, etc.) are sharded across workers.
+const CONTEXT_NODE_TYPES: &[&str] = &[
+    "EXPORT",
+    "EXPORT_BINDING",
+    "FUNCTION",
+    "CLASS",
+    "VARIABLE",
+    "CONSTANT",
+    "INTERFACE",
+    "ENUM",
+    "TYPE_ALIAS",
+    "METHOD",
+    "PARAMETER",
+    "MODULE",
+];
+
+/// Check whether a node type is a "context" type for global resolvers.
+fn is_context_node_type(node_type: &str) -> bool {
+    CONTEXT_NODE_TYPES.contains(&node_type)
+}
+
+/// Build a load-context msgpack payload from WireNodes.
+fn build_load_context_payload(
+    nodes: &[WireNode],
+    workspace_packages: &[WorkspacePackageWire],
+) -> Result<Vec<u8>> {
+    let json_nodes: Vec<serde_json::Value> = nodes
+        .iter()
+        .map(|n| crate::analyzer::wire_node_to_resolve_json(n))
+        .collect();
+    let request = ResolveRequest {
+        cmd: "load-context".to_string(),
+        nodes: json_nodes,
+        workspace_packages: workspace_packages.to_vec(),
+    };
+    rmp_serde::to_vec_named(&request).context("Failed to encode load-context payload")
+}
+
+/// Build a resolve command payload (empty nodes — workers use accumulated data).
+fn build_resolve_payload(
     cmd: &str,
-    nodes: &[serde_json::Value],
-    resolve_pool: &ProcessPool,
-) -> Result<PluginOutput> {
+    workspace_packages: &[WorkspacePackageWire],
+) -> Result<Vec<u8>> {
     let request = ResolveRequest {
         cmd: cmd.to_string(),
-        nodes: nodes.to_vec(),
+        nodes: vec![],
+        workspace_packages: workspace_packages.to_vec(),
     };
+    rmp_serde::to_vec_named(&request).context("Failed to encode resolve payload")
+}
 
-    let payload = rmp_serde::to_vec_named(&request)
-        .context("Failed to encode resolve request")?;
-
-    let response_bytes = resolve_pool
-        .request(&payload)
-        .await
-        .context(format!("Pool request failed for resolve cmd '{cmd}'"))?;
-
-    let response: ResolveResponse = rmp_serde::from_slice(&response_bytes)
+/// Parse a resolve response from a worker.
+fn parse_resolve_response(response_bytes: &[u8], cmd: &str) -> Result<PluginOutput> {
+    let response: ResolveResponse = rmp_serde::from_slice(response_bytes)
         .context(format!("Failed to decode resolve response for cmd '{cmd}'"))?;
 
     if response.status != "ok" {
@@ -684,6 +740,414 @@ pub async fn run_resolve_with_nodes(
 
     Ok(output)
 }
+
+/// Merge multiple PluginOutputs into one.
+fn merge_outputs(outputs: Vec<PluginOutput>) -> PluginOutput {
+    let mut merged = PluginOutput::default();
+    for output in outputs {
+        merged.nodes.extend(output.nodes);
+        merged.edges.extend(output.edges);
+    }
+    merged
+}
+
+/// Deduplicate virtual nodes (nodes without a real file) by semantic_id.
+///
+/// When sharded, resolvers like runtime-globals and builtins may create
+/// duplicate virtual nodes (e.g., `GLOBAL::console`) across shards.
+pub fn deduplicate_virtual_nodes(output: &mut PluginOutput) {
+    let mut seen_semantic_ids: HashSet<String> = HashSet::new();
+    output.nodes.retain(|node| {
+        // Only dedup file-less nodes (virtual nodes)
+        let is_virtual = node.file.is_none()
+            || node.file.as_deref() == Some("")
+            || node.file.as_deref().map_or(false, |f| f.starts_with("__grafema_virtual/"));
+
+        if !is_virtual {
+            return true; // Keep all real-file nodes
+        }
+
+        if let Some(ref sid) = node.semantic_id {
+            seen_semantic_ids.insert(sid.clone())
+        } else {
+            // No semantic_id — keep it (can't dedup)
+            true
+        }
+    });
+}
+
+/// Flush buffered nodes to a specific worker via load-context.
+async fn flush_to_worker(
+    handle: &WorkerHandle<'_>,
+    nodes: &[WireNode],
+    workspace_packages: &[WorkspacePackageWire],
+) -> Result<()> {
+    let payload = build_load_context_payload(nodes, workspace_packages)?;
+    let response_bytes = handle.request(&payload).await?;
+    validate_load_context_response(&response_bytes, nodes.len())?;
+    Ok(())
+}
+
+/// Broadcast buffered nodes to ALL workers via load-context.
+async fn flush_to_all_workers(
+    handles: &[WorkerHandle<'_>],
+    nodes: &[WireNode],
+    workspace_packages: &[WorkspacePackageWire],
+) -> Result<()> {
+    let payload = build_load_context_payload(nodes, workspace_packages)?;
+    let futs: Vec<_> = handles.iter().map(|h| h.request(&payload)).collect();
+    let responses = futures::future::try_join_all(futs).await?;
+    for response_bytes in &responses {
+        validate_load_context_response(response_bytes, nodes.len())?;
+    }
+    Ok(())
+}
+
+/// Validate that a load-context response is successful.
+/// The daemon returns {"status": "ok"} on success or {"status": "error", "error": "..."} on failure.
+fn validate_load_context_response(response_bytes: &[u8], node_count: usize) -> Result<()> {
+    let response: ResolveResponse = rmp_serde::from_slice(response_bytes)
+        .context("Failed to decode load-context response")?;
+    if response.status != "ok" {
+        let msg = response.error.unwrap_or_else(|| "unknown error".to_string());
+        bail!("load-context failed ({node_count} nodes): {msg}");
+    }
+    Ok(())
+}
+
+/// Stream resolve nodes from RFDB to workers incrementally.
+///
+/// Queries one node type at a time from RFDB using streaming consumption,
+/// filters by language, then routes:
+/// - Context types (FUNCTION, EXPORT, CLASS, etc.) → broadcast to ALL workers
+/// - Work types (CALL, IMPORT_BINDING, REFERENCE, etc.) → targeted to specific shard
+///
+/// Buffers are flushed at `FLUSH_SIZE` threshold. Streaming means the full
+/// per-type result is never materialized — only the current chunk + flush
+/// buffers are in memory at any time.
+pub async fn stream_resolve_nodes_to_workers(
+    rfdb: &mut RfdbClient,
+    lang: crate::config::Language,
+    handles: &[WorkerHandle<'_>],
+    workspace_packages: &[WorkspacePackageWire],
+) -> Result<usize> {
+    /// Process a single node: filter by language, route to context or shard
+    /// buffer, flush if full. Defined as a macro because the body contains
+    /// `continue` (to skip to the next node in the caller's `for` loop) and
+    /// `.await` (which closures cannot use without boxing).
+    macro_rules! route_node {
+        ($node:expr, $lang:expr, $context_buffer:expr, $shard_buffers:expr,
+         $total:expr, $handles:expr, $workspace_packages:expr, $shard_count:expr) => {{
+            let node: WireNode = $node;
+            if let Some(ref file) = node.file {
+                if crate::config::detect_language(std::path::Path::new(file)) != Some($lang) {
+                    continue;
+                }
+            } else {
+                continue;
+            }
+
+            $total += 1;
+            if $total % 500_000 == 0 {
+                eprintln!("    {} nodes streamed...", $total);
+            }
+
+            if is_context_node_type(node.node_type.as_deref().unwrap_or("")) {
+                $context_buffer.push(node);
+                if $context_buffer.len() >= FLUSH_SIZE {
+                    flush_to_all_workers($handles, &$context_buffer, $workspace_packages).await?;
+                    $context_buffer.clear();
+                }
+            } else {
+                let file = node.file.as_deref().unwrap_or("");
+                let shard = shard_for_file(file, $shard_count);
+                $shard_buffers[shard].push(node);
+                if $shard_buffers[shard].len() >= FLUSH_SIZE {
+                    flush_to_worker(&$handles[shard], &$shard_buffers[shard], $workspace_packages)
+                        .await?;
+                    $shard_buffers[shard].clear();
+                }
+            }
+        }};
+    }
+
+    let shard_count = handles.len();
+    let mut context_buffer: Vec<WireNode> = Vec::new();
+    let mut shard_buffers: Vec<Vec<WireNode>> = (0..shard_count).map(|_| Vec::new()).collect();
+    let mut total = 0usize;
+
+    // NOTE: If `route_node!` (flush_to_all_workers / flush_to_worker) fails
+    // mid-stream, `?` propagates the error and abandons the RFDB stream with
+    // unread frames. This is safe because the caller drops the RfdbClient on
+    // error, closing the socket. If we ever want to RECOVER from a worker
+    // failure and continue with the next node type, use
+    // `rfdb.drain_query_stream()` before continuing.
+    for node_type in crate::analyzer::resolve_node_types() {
+        let (first_chunk, is_streaming) =
+            rfdb.start_query_nodes_by_type(node_type).await?;
+
+        // Process first chunk
+        for node in first_chunk {
+            route_node!(node, lang, context_buffer, shard_buffers,
+                        total, handles, workspace_packages, shard_count);
+        }
+
+        // Process remaining streaming chunks
+        if is_streaming {
+            loop {
+                let (chunk_nodes, done) = rfdb.recv_query_frame().await?;
+                for node in chunk_nodes {
+                    route_node!(node, lang, context_buffer, shard_buffers,
+                                total, handles, workspace_packages, shard_count);
+                }
+                if done { break; }
+            }
+        }
+    }
+
+    // Flush remaining buffers
+    if !context_buffer.is_empty() {
+        flush_to_all_workers(handles, &context_buffer, workspace_packages).await?;
+    }
+    for i in 0..shard_count {
+        if !shard_buffers[i].is_empty() {
+            flush_to_worker(&handles[i], &shard_buffers[i], workspace_packages).await?;
+        }
+    }
+
+    tracing::info!(
+        total_nodes = total,
+        shard_count = shard_count,
+        "Streamed resolve nodes to workers"
+    );
+
+    Ok(total)
+}
+
+/// Run a resolve command on all workers concurrently.
+///
+/// Sends the command with empty `nodes: []` — workers process data
+/// accumulated via prior `load-context` calls. Results from all workers
+/// are merged and virtual nodes are deduplicated.
+pub async fn run_resolve_on_workers(
+    cmd: &str,
+    handles: &[WorkerHandle<'_>],
+    workspace_packages: &[WorkspacePackageWire],
+) -> Result<PluginOutput> {
+    let payload = build_resolve_payload(cmd, workspace_packages)?;
+    let futs: Vec<_> = handles.iter().map(|h| h.request(&payload)).collect();
+    let responses = futures::future::try_join_all(futs).await?;
+
+    let outputs: Vec<PluginOutput> = responses
+        .iter()
+        .enumerate()
+        .map(|(i, r)| {
+            parse_resolve_response(r, cmd)
+                .with_context(|| format!("Failed to parse response from worker {i} for cmd '{cmd}'"))
+        })
+        .collect::<Result<_>>()?;
+
+    let mut output = merge_outputs(outputs);
+    deduplicate_virtual_nodes(&mut output);
+    Ok(output)
+}
+
+/// Clear accumulated context from all workers.
+pub async fn clear_context_on_workers(
+    handles: &[WorkerHandle<'_>],
+) -> Result<()> {
+    let request = ResolveRequest {
+        cmd: "clear-context".to_string(),
+        nodes: vec![],
+        workspace_packages: vec![],
+    };
+    let payload = rmp_serde::to_vec_named(&request)
+        .context("Failed to encode clear-context request")?;
+    let futs: Vec<_> = handles.iter().map(|h| h.request(&payload)).collect();
+    futures::future::try_join_all(futs)
+        .await
+        .context("Failed to clear context from workers")?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Per-file resolution (build-index + resolve-file)
+// ---------------------------------------------------------------------------
+
+/// Index-worthy node types: these form the export index for cross-file resolution.
+const INDEX_NODE_TYPES: &[&str] = &[
+    "EXPORT_BINDING", "EXPORT", "MODULE",
+    "FUNCTION", "VARIABLE", "CONSTANT", "CLASS", "INTERFACE", "TYPE_ALIAS", "ENUM",
+];
+
+/// Per-file resolve: builds an export index on the worker, then resolves each
+/// file individually by querying RFDB for that file's nodes.
+///
+/// This avoids loading the entire graph into worker memory — only one file's
+/// nodes are in flight at a time. The index (build-index) is compact: only
+/// exported symbols and module metadata.
+///
+/// Protocol:
+/// 1. Query MODULE nodes → discover files for the given language
+/// 2. Query index-worthy nodes (exports, modules) → send `build-index` to worker
+/// 3. For each file: `query_nodes_by_file` → send `resolve-file` → accumulate edges
+/// 4. Return accumulated PluginOutput (caller commits to RFDB)
+pub async fn resolve_per_file(
+    rfdb: &mut RfdbClient,
+    lang: crate::config::Language,
+    handle: &WorkerHandle<'_>,
+    workspace_packages: &[WorkspacePackageWire],
+) -> Result<PluginOutput> {
+    // Step 1: Get all MODULE nodes to find files for this language
+    let module_nodes = rfdb.query_nodes_by_type("MODULE").await?;
+    let files: Vec<String> = module_nodes.iter()
+        .filter(|n| {
+            n.file.as_ref().map_or(false, |f| {
+                crate::config::detect_language(std::path::Path::new(f)) == Some(lang)
+            })
+        })
+        .filter_map(|n| n.file.clone())
+        .collect();
+
+    tracing::info!(files = files.len(), "Per-file resolve: discovered files");
+
+    // Step 2: Collect index-worthy nodes and send build-index
+    let mut index_json_nodes: Vec<serde_json::Value> = Vec::new();
+    for node_type in INDEX_NODE_TYPES {
+        let nodes = rfdb.query_nodes_by_type(node_type).await?;
+        for node in nodes {
+            // Filter by language
+            if let Some(ref file) = node.file {
+                if crate::config::detect_language(std::path::Path::new(file)) != Some(lang) {
+                    continue;
+                }
+            } else {
+                continue;
+            }
+            // For declarations (FUNCTION etc.), only include exported ones
+            if matches!(*node_type, "FUNCTION" | "VARIABLE" | "CONSTANT" | "CLASS" | "INTERFACE" | "TYPE_ALIAS" | "ENUM") {
+                if !node.exported {
+                    continue;
+                }
+            }
+            index_json_nodes.push(crate::analyzer::wire_node_to_resolve_json(&node));
+        }
+    }
+
+    tracing::info!(nodes = index_json_nodes.len(), "Per-file resolve: sending build-index");
+
+    let build_index_request = ResolveRequest {
+        cmd: "build-index".to_string(),
+        nodes: index_json_nodes,
+        workspace_packages: workspace_packages.to_vec(),
+    };
+    let payload = rmp_serde::to_vec_named(&build_index_request)
+        .context("Failed to encode build-index request")?;
+    let response_bytes = handle.request(&payload).await
+        .context("build-index request failed")?;
+    let response: ResolveResponse = rmp_serde::from_slice(&response_bytes)
+        .context("Failed to decode build-index response")?;
+    if response.status != "ok" {
+        let msg = response.error.unwrap_or_else(|| "unknown error".to_string());
+        bail!("build-index failed: {msg}");
+    }
+    drop(build_index_request); // Free memory
+
+    // Step 3: For each file, query nodes and send resolve-file
+    let mut all_output = PluginOutput::default();
+    let total_files = files.len();
+
+    for (i, file) in files.iter().enumerate() {
+        let file_nodes = rfdb.query_nodes_by_file(file).await?;
+        if file_nodes.is_empty() { continue; }
+
+        let json_nodes: Vec<serde_json::Value> = file_nodes
+            .iter()
+            .map(|n| crate::analyzer::wire_node_to_resolve_json(n))
+            .collect();
+
+        let request = ResolveRequest {
+            cmd: "resolve-file".to_string(),
+            nodes: json_nodes,
+            workspace_packages: workspace_packages.to_vec(),
+        };
+        let payload = rmp_serde::to_vec_named(&request)
+            .context("Failed to encode resolve-file request")?;
+        let response_bytes = handle.request(&payload).await
+            .with_context(|| format!("resolve-file failed for '{file}'"))?;
+        let output = parse_resolve_response(&response_bytes, "resolve-file")?;
+
+        all_output.nodes.extend(output.nodes);
+        all_output.edges.extend(output.edges);
+
+        if (i + 1) % 500 == 0 || i + 1 == total_files {
+            eprintln!("    Per-file resolve: {}/{} files ({} edges so far)",
+                i + 1, total_files, all_output.edges.len());
+        }
+    }
+
+    deduplicate_virtual_nodes(&mut all_output);
+
+    Ok(all_output)
+}
+
+/// Collect nodes and run resolve commands on a single worker.
+///
+/// For single-worker languages (Haskell, Rust, Java, etc.) whose daemons
+/// do NOT support the `load-context` protocol: collects all resolve nodes
+/// from RFDB, then passes them directly in each resolve command.
+/// Caller is responsible for committing outputs to RFDB.
+pub async fn stream_and_resolve_single_worker(
+    rfdb: &mut RfdbClient,
+    langs: &[crate::config::Language],
+    commands: &[(&str, &[WorkspacePackageWire])],
+    pool: &ProcessPool,
+) -> Result<Vec<(String, PluginOutput)>> {
+    let handle = pool.acquire().await?;
+
+    // Collect all resolve nodes for these languages
+    let mut all_nodes: Vec<serde_json::Value> = Vec::new();
+    for node_type in crate::analyzer::resolve_node_types() {
+        let nodes = rfdb.query_nodes_by_type(node_type).await?;
+        for node in nodes {
+            if let Some(ref file) = node.file {
+                let detected = crate::config::detect_language(std::path::Path::new(file));
+                if !langs.iter().any(|&l| detected == Some(l)) {
+                    continue;
+                }
+            } else {
+                continue;
+            }
+            all_nodes.push(crate::analyzer::wire_node_to_resolve_json(&node));
+        }
+    }
+
+    if all_nodes.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    tracing::info!(total_nodes = all_nodes.len(), "Streamed nodes to single worker");
+
+    let mut results = Vec::with_capacity(commands.len());
+    for &(cmd, ws) in commands {
+        let request = ResolveRequest {
+            cmd: cmd.to_string(),
+            nodes: all_nodes.clone(),
+            workspace_packages: ws.to_vec(),
+        };
+        let payload = rmp_serde::to_vec_named(&request)
+            .context(format!("Failed to encode request for cmd '{cmd}'"))?;
+        let response_bytes = handle
+            .request(&payload)
+            .await
+            .with_context(|| format!("Single-worker request failed for cmd '{cmd}'"))?;
+        let output = parse_resolve_response(&response_bytes, cmd)?;
+        results.push((cmd.to_string(), output));
+    }
+
+    Ok(results)
+}
+
 
 // ---------------------------------------------------------------------------
 // Full DAG execution

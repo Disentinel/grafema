@@ -1,0 +1,9 @@
+root: ".."
+include:
+  - "lib/**/*.ex"
+  - "lib/**/*.exs"
+  - "src/**/*.erl"
+  - "src/**/*.hrl"
+exclude:
+  - "_build/**"
+  - "deps/**"

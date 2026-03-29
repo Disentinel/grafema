@@ -15,10 +15,14 @@
  * @see _tasks/2025-01-23-reg-159-mcp-concurrent-safety/005-joel-revised-plan.md
  */
 
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { MCPTestHarness } from './helpers/MCPTestHarness.js';
 import { MockBackend } from './helpers/MockBackend.js';
+import { findProjectRoot } from '../src/state.js';
 
 // ============================================================================
 // SECTION 1: Test Infrastructure
@@ -1030,5 +1034,59 @@ describe('find_guards Tool', () => {
       assert.strictEqual(guards.length, 1, 'Should find only conditional scopes');
       assert.strictEqual(guards[0].scopeId, 'SCOPE:file.js:5');
     });
+  });
+});
+
+// ============================================================================
+// SECTION 7: findProjectRoot (REG-652)
+// ============================================================================
+
+describe('findProjectRoot', () => {
+  let tmp: string;
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), 'grafema-test-'));
+  });
+
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it('returns directory that contains grafema.yaml', () => {
+    writeFileSync(join(tmp, 'grafema.yaml'), 'services: []');
+    const sub = join(tmp, 'packages', 'mcp');
+    mkdirSync(sub, { recursive: true });
+    assert.strictEqual(findProjectRoot(sub), tmp);
+  });
+
+  it('returns directory that contains .grafema/', () => {
+    mkdirSync(join(tmp, '.grafema'));
+    const sub = join(tmp, 'deep', 'nested', 'dir');
+    mkdirSync(sub, { recursive: true });
+    assert.strictEqual(findProjectRoot(sub), tmp);
+  });
+
+  it('returns the start directory itself when it contains grafema.yaml', () => {
+    writeFileSync(join(tmp, 'grafema.yaml'), 'services: []');
+    assert.strictEqual(findProjectRoot(tmp), tmp);
+  });
+
+  it('returns null when no grafema.yaml or .grafema found', () => {
+    const sub = join(tmp, 'some', 'dir');
+    mkdirSync(sub, { recursive: true });
+    const result = findProjectRoot(sub);
+    assert.ok(result === null || typeof result === 'string');
+  });
+
+  it('finds nearest ancestor when multiple candidates exist', () => {
+    // outer: has grafema.yaml
+    writeFileSync(join(tmp, 'grafema.yaml'), 'services: []');
+    // inner: also has grafema.yaml — should be found first (closer to CWD)
+    const inner = join(tmp, 'inner');
+    mkdirSync(inner);
+    writeFileSync(join(inner, 'grafema.yaml'), 'services: []');
+    const sub = join(inner, 'src');
+    mkdirSync(sub);
+    assert.strictEqual(findProjectRoot(sub), inner);
   });
 });

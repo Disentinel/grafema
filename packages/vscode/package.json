@@ -2,8 +2,15 @@
   "name": "grafema-explore",
   "displayName": "Grafema Explore",
   "description": "Interactive graph navigation for Grafema code analysis",
-  "version": "0.2.12",
-  "publisher": "grafema",
+  "version": "0.3.22",
+  "private": true,
+  "publisher": "GrafemaLabs",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Disentinel/grafema",
+    "directory": "packages/vscode"
+  },
+  "license": "SEE LICENSE IN LICENSE.md",
   "engines": {
     "vscode": "^1.74.0"
   },
@@ -17,7 +24,9 @@
     "onView:grafemaCallers",
     "onView:grafemaIssues",
     "onView:grafemaBlastRadius",
-    "onView:grafemaNodesInFile"
+    "onView:grafemaNodesInFile",
+    "workspaceContains:.grafema/config.yaml",
+    "workspaceContains:grafema.config.yaml"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -32,14 +41,46 @@
     },
     "views": {
       "grafema": [
-        { "id": "grafemaStatus", "name": "Status", "visibility": "visible" },
-        { "id": "grafemaValueTrace", "name": "Value Trace", "visibility": "collapsed" },
-        { "id": "grafemaCallers", "name": "Callers", "visibility": "collapsed" },
-        { "id": "grafemaBlastRadius", "name": "Blast Radius", "visibility": "collapsed" },
-        { "id": "grafemaIssues", "name": "Issues", "visibility": "collapsed" },
-        { "id": "grafemaNodesInFile", "name": "Nodes in File", "visibility": "collapsed" },
-        { "id": "grafemaExplore", "name": "Explorer", "visibility": "collapsed" },
-        { "id": "grafemaDebug", "name": "Debug Log", "visibility": "collapsed" }
+        {
+          "id": "grafemaStatus",
+          "name": "Status",
+          "visibility": "visible"
+        },
+        {
+          "id": "grafemaValueTrace",
+          "name": "Value Trace",
+          "visibility": "collapsed"
+        },
+        {
+          "id": "grafemaCallers",
+          "name": "Callers",
+          "visibility": "collapsed"
+        },
+        {
+          "id": "grafemaBlastRadius",
+          "name": "Blast Radius",
+          "visibility": "collapsed"
+        },
+        {
+          "id": "grafemaIssues",
+          "name": "Issues",
+          "visibility": "collapsed"
+        },
+        {
+          "id": "grafemaNodesInFile",
+          "name": "Nodes in File",
+          "visibility": "collapsed"
+        },
+        {
+          "id": "grafemaExplore",
+          "name": "Explorer",
+          "visibility": "collapsed"
+        },
+        {
+          "id": "grafemaDebug",
+          "name": "Debug Log",
+          "visibility": "collapsed"
+        }
       ]
     },
     "commands": [
@@ -182,6 +223,21 @@
         "command": "grafema.nodesInFile.refresh",
         "title": "Refresh",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "grafema.analyze",
+        "title": "Grafema: Analyze Project",
+        "icon": "$(play)"
+      },
+      {
+        "command": "grafema.init",
+        "title": "Grafema: Initialize Project",
+        "icon": "$(new-file)"
+      },
+      {
+        "command": "grafema.reanalyze",
+        "title": "Grafema: Re-analyze (Force)",
+        "icon": "$(debug-restart)"
       }
     ],
     "menus": {
@@ -225,6 +281,11 @@
           "command": "grafema.copyTreeState",
           "when": "view == grafemaExplore",
           "group": "navigation@7"
+        },
+        {
+          "command": "grafema.analyze",
+          "when": "view == grafemaStatus",
+          "group": "navigation@0"
         },
         {
           "command": "grafema.clearDebugLog",
@@ -356,7 +417,10 @@
         },
         "grafema.rfdbTransport": {
           "type": "string",
-          "enum": ["unix", "websocket"],
+          "enum": [
+            "unix",
+            "websocket"
+          ],
           "default": "unix",
           "description": "RFDB transport protocol (unix socket or WebSocket)",
           "enumDescriptions": [
@@ -368,6 +432,11 @@
           "type": "string",
           "default": "ws://localhost:7474",
           "description": "RFDB WebSocket URL (when transport is 'websocket')"
+        },
+        "grafema.orchestratorPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to grafema-orchestrator binary. If empty, auto-detect."
         },
         "grafema.codeLens.enabled": {
           "type": "boolean",
@@ -403,6 +472,7 @@
     "build": "node esbuild.config.mjs",
     "watch": "node esbuild.config.mjs --watch",
     "clean": "rm -rf dist binaries",
+    "test": "node --import tsx --test 'test/unit/*.test.ts'",
     "vscode:prepublish": "npm run build",
     "package": "vsce package",
     "package:darwin-arm64": "vsce package --target darwin-arm64",

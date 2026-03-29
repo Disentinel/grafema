@@ -2,17 +2,42 @@
  * MCP Server State Management
  */
 
-import { join } from 'path';
+import { join, dirname } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { RFDBServerBackend, GuaranteeManager, GuaranteeAPI, KnowledgeBase } from '@grafema/util';
 import type { GuaranteeGraphBackend, GuaranteeGraph, ResolverBackend } from '@grafema/util';
 import { loadConfig } from './config.js';
+import type { MCPConfig } from './config.js';
 import { log, initLogger } from './utils.js';
 import type { AnalysisStatus } from './types.js';
 import type { GraphBackend } from '@grafema/types';
 
+/**
+ * Walk up from startDir to find a Grafema project root.
+ *
+ * A directory is treated as a project root when it contains:
+ *   - grafema.yaml  (explicit config)
+ *   - .grafema/     (analysis artefacts already created)
+ *
+ * Returns the absolute path of the first matching ancestor, or null if
+ * nothing is found before the filesystem root.
+ */
+export function findProjectRoot(startDir: string): string | null {
+  let dir = startDir;
+  while (true) {
+    if (existsSync(join(dir, 'grafema.yaml')) || existsSync(join(dir, '.grafema'))) {
+      return dir;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break; // filesystem root
+    dir = parent;
+  }
+  return null;
+}
+
 // === GLOBAL STATE ===
 let projectPath: string = process.cwd();
+let socketPathOverride: string | null = null;
 let backend: GraphBackend | null = null;
 let isAnalyzed: boolean = false;
 let backgroundPid: number | null = null;
@@ -93,6 +118,10 @@ const LOCK_TIMEOUT_MS = 10 * 60 * 1000;
 // === GETTERS ===
 export function getProjectPath(): string {
   return projectPath;
+}
+
+export function getSocketPathOverride(): string | null {
+  return socketPathOverride;
 }
 
 export function getIsAnalyzed(): boolean {
@@ -220,10 +249,14 @@ export async function waitForAnalysis(): Promise<void> {
   }
 }
 
-// === BACKEND ===
+// === RESET ===
 export function resetBackend(): void {
   backend = null;
   isAnalyzed = false;
+}
+
+export function resetKnowledgeBase(): void {
+  knowledgeBase = null;
 }
 
 export async function getOrCreateBackend(): Promise<GraphBackend> {
@@ -246,9 +279,9 @@ export async function getOrCreateBackend(): Promise<GraphBackend> {
     mkdirSync(grafemaDir, { recursive: true });
   }
 
-  const config = loadConfig(projectPath);
-  // Socket path from config, or let RFDBServerBackend derive it from dbPath
-  const socketPath = (config as any).analysis?.parallel?.socketPath;
+  const config = loadConfig(projectPath) as MCPConfig;
+  // Socket path priority: --socket CLI arg > config rfdb_socket > auto-derive from dbPath
+  const socketPath = socketPathOverride || config.rfdb_socket || undefined;
 
   log(`[Grafema MCP] Using RFDB server backend: socket=${socketPath || 'auto'}, db=${dbPath}`);
 
@@ -265,20 +298,31 @@ export async function getOrCreateBackend(): Promise<GraphBackend> {
   }
 
   // Initialize guarantee managers
-  initializeGuaranteeManagers(rfdbBackend);
+  await initializeGuaranteeManagers(rfdbBackend);
 
   return backend;
 }
 
 /**
- * Initialize GuaranteeManager (Datalog-based) and GuaranteeAPI (contract-based)
+ * Initialize GuaranteeManager (Datalog-based) and GuaranteeAPI (contract-based).
+ * Loads guarantees from .grafema/guarantees.yaml if the file exists.
  */
-function initializeGuaranteeManagers(rfdbBackend: RFDBServerBackend): void {
+async function initializeGuaranteeManagers(rfdbBackend: RFDBServerBackend): Promise<void> {
   // GuaranteeManager for Datalog-based guarantees
   // Cast to GuaranteeGraph interface expected by GuaranteeManager
   const guaranteeGraph = rfdbBackend as unknown as GuaranteeGraph;
   guaranteeManager = new GuaranteeManager(guaranteeGraph, projectPath);
   log(`[Grafema MCP] GuaranteeManager initialized`);
+
+  // Load guarantees from YAML (idempotent, skips existing)
+  try {
+    const result = await guaranteeManager.loadFromYaml();
+    if (result.imported > 0 || result.skipped > 0) {
+      log(`[Grafema MCP] Guarantees loaded from YAML: ${result.imported} imported, ${result.skipped} skipped`);
+    }
+  } catch (err) {
+    log(`[Grafema MCP] Warning: failed to load guarantees from YAML: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
   // GuaranteeAPI for contract-based guarantees
   const guaranteeGraphBackend = rfdbBackend as unknown as GuaranteeGraphBackend;
@@ -325,11 +369,27 @@ export async function getOrCreateKnowledgeBase(): Promise<KnowledgeBase> {
 // === INITIALIZATION ===
 export function initializeFromArgs(): void {
   const args = process.argv.slice(2);
+  let projectArgProvided = false;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--project' && args[i + 1]) {
       projectPath = args[i + 1];
+      projectArgProvided = true;
+      i++;
+    } else if (args[i] === '--socket' && args[i + 1]) {
+      socketPathOverride = args[i + 1];
       i++;
     }
+  }
+
+  // Auto-detect project root from CWD when --project is not supplied.
+  // Claude Code (and other MCP hosts) spawn the server with CWD = workspace root,
+  // so this makes the server workspace-aware without any config change.
+  if (!projectArgProvided) {
+    const detected = findProjectRoot(process.cwd());
+    if (detected) {
+      projectPath = detected;
+    }
+    // else: keep process.cwd() as fallback
   }
 }
 

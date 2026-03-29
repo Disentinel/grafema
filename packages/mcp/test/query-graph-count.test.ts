@@ -92,8 +92,16 @@ mock.module('../dist/analysis.js', {
   },
 });
 
-// Import handler AFTER mocking
+// Mock state.js for dataflow-handlers import
+mock.module('../dist/state.js', {
+  namedExports: {
+    getProjectPath: () => '/mock/project',
+  },
+});
+
+// Import handlers AFTER mocking
 const { handleQueryGraph } = await import('../dist/handlers/query-handlers.js');
+const { handleCheckInvariant } = await import('../dist/handlers/dataflow-handlers.js');
 
 // === TESTS ===
 
@@ -298,6 +306,128 @@ describe('query_graph count parameter (REG-507)', () => {
       const text = result.content[0].text;
       assert.ok(text.includes('Found 1 result(s)'), 'Should contain normal result text');
       assert.ok(text.includes('processData'), 'Should contain node name');
+    });
+  });
+
+  describe('non-node-ID Datalog results (RFD-48)', () => {
+    describe('query_graph: string binding values not dropped', () => {
+      it('should return raw bindings map when getNode returns null', async () => {
+        // Binding value is a file path string, not a node ID
+        mockBackend = createQueryMockBackend([
+          { bindings: [{ name: 'X', value: '../types.js' }] },
+        ]);
+        // No node registered for '../types.js'
+
+        const result = await handleQueryGraph({
+          query: 'violation(S) :- node(X, "IMPORT"), attr(X, "source", S).',
+        });
+
+        assert.ok(!result.isError, 'Should not be an error');
+        const text = result.content[0].text;
+        assert.ok(text.includes('../types.js'), 'Should contain the string binding value');
+        const parsed = JSON.parse(text.split('\n\n')[1]);
+        assert.deepStrictEqual(parsed[0], { X: '../types.js' });
+      });
+
+      it('should return mixed results: enriched nodes + raw bindings', async () => {
+        mockBackend = createQueryMockBackend([
+          { bindings: [{ name: 'X', value: 'FUNCTION:app.js:handleRequest' }] },
+          { bindings: [{ name: 'X', value: '../utils.js' }] },
+          { bindings: [{ name: 'X', value: 'FUNCTION:app.js:processData' }] },
+        ]);
+        mockBackend.addNode({
+          id: 'FUNCTION:app.js:handleRequest',
+          type: 'FUNCTION',
+          name: 'handleRequest',
+          file: 'app.js',
+          line: 10,
+        });
+        mockBackend.addNode({
+          id: 'FUNCTION:app.js:processData',
+          type: 'FUNCTION',
+          name: 'processData',
+          file: 'app.js',
+          line: 20,
+        });
+
+        const result = await handleQueryGraph({
+          query: 'violation(X) :- node(X, "FUNCTION").',
+        });
+
+        assert.ok(!result.isError);
+        const text = result.content[0].text;
+        assert.ok(text.includes('Found 3 result(s)'), 'Should count all 3 results');
+        const parsed = JSON.parse(text.split('\n\n')[1]);
+        assert.strictEqual(parsed.length, 3, 'All 3 results should be present');
+        // First is enriched node
+        assert.strictEqual(parsed[0].id, 'FUNCTION:app.js:handleRequest');
+        assert.strictEqual(parsed[0].type, 'FUNCTION');
+        // Second is raw bindings map
+        assert.deepStrictEqual(parsed[1], { X: '../utils.js' });
+        // Third is enriched node
+        assert.strictEqual(parsed[2].id, 'FUNCTION:app.js:processData');
+      });
+
+      it('should include all bindings in raw map for multi-binding results', async () => {
+        mockBackend = createQueryMockBackend([
+          { bindings: [{ name: 'X', value: 'foo' }, { name: 'Y', value: 'bar' }] },
+        ]);
+
+        const result = await handleQueryGraph({
+          query: 'violation(X) :- attr(X, "name", Y).',
+        });
+
+        assert.ok(!result.isError);
+        const parsed = JSON.parse(result.content[0].text.split('\n\n')[1]);
+        assert.deepStrictEqual(parsed[0], { X: 'foo', Y: 'bar' });
+      });
+    });
+
+    describe('check_invariant: string binding values not dropped', () => {
+      it('should return raw bindings map for non-node violations', async () => {
+        mockBackend = createQueryMockBackend([
+          { bindings: [{ name: 'X', value: '../types.js' }] },
+          { bindings: [{ name: 'X', value: '../utils.js' }] },
+        ]);
+
+        const result = await handleCheckInvariant({
+          rule: 'violation(S) :- node(X, "IMPORT"), attr(X, "source", S).',
+          name: 'test invariant',
+        });
+
+        assert.ok(!result.isError);
+        const text = result.content[0].text;
+        assert.ok(text.includes('2 violation(s)'), 'Should report 2 violations');
+        assert.ok(text.includes('../types.js'), 'Should contain first binding value');
+        assert.ok(text.includes('../utils.js'), 'Should contain second binding value');
+      });
+
+      it('should return mixed enriched nodes + raw bindings for violations', async () => {
+        mockBackend = createQueryMockBackend([
+          { bindings: [{ name: 'X', value: 'FUNCTION:app.js:handleRequest' }] },
+          { bindings: [{ name: 'X', value: '../orphan.js' }] },
+        ]);
+        mockBackend.addNode({
+          id: 'FUNCTION:app.js:handleRequest',
+          type: 'FUNCTION',
+          name: 'handleRequest',
+          file: 'app.js',
+          line: 10,
+        });
+
+        const result = await handleCheckInvariant({
+          rule: 'violation(X) :- node(X, "FUNCTION").',
+          name: 'mixed test',
+        });
+
+        assert.ok(!result.isError);
+        const text = result.content[0].text;
+        assert.ok(text.includes('2 violation(s)'));
+        const parsed = JSON.parse(text.slice(text.indexOf('[')));
+        assert.strictEqual(parsed.length, 2);
+        assert.strictEqual(parsed[0].id, 'FUNCTION:app.js:handleRequest');
+        assert.deepStrictEqual(parsed[1], { X: '../orphan.js' });
+      });
     });
   });
 

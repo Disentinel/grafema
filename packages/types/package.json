@@ -1,6 +1,6 @@
 {
   "name": "@grafema/types",
-  "version": "0.2.12-beta",
+  "version": "0.3.22",
   "description": "Type definitions for Grafema code analysis toolkit",
   "type": "module",
   "main": "./dist/index.js",
@@ -25,7 +25,7 @@
     "code-analysis",
     "typescript"
   ],
-  "license": "Apache-2.0",
+  "license": "FSL-1.1-Apache-2.0",
   "author": "Vadim Reshetnikov",
   "repository": {
     "type": "git",

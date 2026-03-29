@@ -12,7 +12,7 @@
 //! concern (T3.x). Shard receives segment descriptors and returns flush
 //! results; the caller updates the manifest.
 
-use std::sync::Mutex;
+use std::sync::Arc;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufWriter, Cursor};
@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::Result;
 use crate::storage_v2::index::InvertedIndex;
+use crate::storage_v2::index::token::TokenIndex;
 use crate::storage_v2::manifest::SegmentDescriptor;
 use crate::storage_v2::segment::{EdgeSegmentV2, NodeSegmentV2};
 use crate::storage_v2::types::{EdgeRecordV2, NodeRecordV2, SegmentMeta, SegmentType};
@@ -59,7 +60,8 @@ pub struct ShardDiagnostics {
     pub l1_by_type_keys: usize,
     pub l1_by_file_keys: usize,
     pub l1_by_name_keys: usize,
-    pub has_edge_type_index: bool,
+    pub has_l1_edge_type_index: bool,
+    pub has_l1_token_index: bool,
 }
 
 // ── Tombstone Set ────────────────────────────────────────────────────
@@ -75,8 +77,9 @@ pub struct ShardDiagnostics {
 pub struct TombstoneSet {
     /// Deleted node IDs. Queries skip records with these IDs.
     pub node_ids: HashSet<u128>,
-    /// Deleted edge keys (src, dst, edge_type). Queries skip matching edges.
-    pub edge_keys: HashSet<(u128, u128, String)>,
+    /// Deleted edge keys (src, dst, edge_type). Uses Arc<str> for deduplication —
+    /// edge types have ~15 distinct values, so interning saves ~40 bytes per entry.
+    pub edge_keys: HashSet<(u128, u128, Arc<str>)>,
 }
 
 impl TombstoneSet {
@@ -95,7 +98,9 @@ impl TombstoneSet {
     ) -> Self {
         Self {
             node_ids: node_ids.into_iter().collect(),
-            edge_keys: edge_keys.into_iter().collect(),
+            edge_keys: edge_keys.into_iter()
+                .map(|(s, d, t)| (s, d, Arc::from(t.as_str())))
+                .collect(),
         }
     }
 
@@ -106,9 +111,13 @@ impl TombstoneSet {
     }
 
     /// Check if an edge key is tombstoned.
+    ///
+    /// Creates a temporary Arc<str> for the lookup. The allocation cost per call
+    /// is comparable to the old `.to_string()`, but storage is dramatically reduced
+    /// because all tombstone entries share interned Arc<str> values.
     #[inline]
     pub fn contains_edge(&self, src: u128, dst: u128, edge_type: &str) -> bool {
-        self.edge_keys.contains(&(src, dst, edge_type.to_string()))
+        self.edge_keys.contains(&(src, dst, Arc::from(edge_type)))
     }
 
     /// Add tombstoned node IDs (union with existing).
@@ -117,7 +126,7 @@ impl TombstoneSet {
     }
 
     /// Add tombstoned edge keys (union with existing).
-    pub fn add_edges(&mut self, keys: impl IntoIterator<Item = (u128, u128, String)>) {
+    pub fn add_edges(&mut self, keys: impl IntoIterator<Item = (u128, u128, Arc<str>)>) {
         self.edge_keys.extend(keys);
     }
 
@@ -196,7 +205,8 @@ pub struct Shard {
     edge_descriptors: Vec<SegmentDescriptor>,
 
     /// Tombstone state (loaded from manifest on open).
-    tombstones: TombstoneSet,
+    /// Arc-wrapped for zero-cost sharing across shards in commit_batch.
+    tombstones: Arc<TombstoneSet>,
 
     /// L1 (compacted) node segment — sorted, deduplicated, tombstones removed.
     /// None if shard has never been compacted.
@@ -220,9 +230,13 @@ pub struct Shard {
     /// Inverted index: name -> IndexEntry list (built during compaction).
     l1_by_name_index: Option<InvertedIndex>,
 
-    /// Lazy edge-type index: edge_type → [(src, dst)].
-    /// Built on first `get_edges_by_type()` call, invalidated on mutation.
-    edge_type_index: Mutex<Option<HashMap<String, Vec<(u128, u128)>>>>,
+    /// Token-based fuzzy name index (built during compaction).
+    l1_token_index: Option<TokenIndex>,
+
+    /// L1 edge-type index: edge_type → [(src, dst)].
+    /// Built once when L1 segments are set (compaction or shard open).
+    /// Never invalidated — L1 is immutable.
+    l1_edge_type_index: Option<HashMap<String, Vec<(u128, u128)>>>,
 }
 
 // -- Constructors -------------------------------------------------------------
@@ -241,7 +255,7 @@ impl Shard {
             edge_segments: Vec::new(),
             node_descriptors: Vec::new(),
             edge_descriptors: Vec::new(),
-            tombstones: TombstoneSet::new(),
+            tombstones: Arc::new(TombstoneSet::new()),
             l1_node_segment: None,
             l1_node_descriptor: None,
             l1_edge_segment: None,
@@ -249,7 +263,8 @@ impl Shard {
             l1_by_type_index: None,
             l1_by_file_index: None,
             l1_by_name_index: None,
-            edge_type_index: Mutex::new(None),
+            l1_token_index: None,
+            l1_edge_type_index: None,
         })
     }
 
@@ -289,7 +304,7 @@ impl Shard {
             edge_segments,
             node_descriptors,
             edge_descriptors,
-            tombstones: TombstoneSet::new(),
+            tombstones: Arc::new(TombstoneSet::new()),
             l1_node_segment: None,
             l1_node_descriptor: None,
             l1_edge_segment: None,
@@ -297,7 +312,8 @@ impl Shard {
             l1_by_type_index: None,
             l1_by_file_index: None,
             l1_by_name_index: None,
-            edge_type_index: Mutex::new(None),
+            l1_token_index: None,
+            l1_edge_type_index: None,
         })
     }
 
@@ -312,7 +328,7 @@ impl Shard {
             edge_segments: Vec::new(),
             node_descriptors: Vec::new(),
             edge_descriptors: Vec::new(),
-            tombstones: TombstoneSet::new(),
+            tombstones: Arc::new(TombstoneSet::new()),
             l1_node_segment: None,
             l1_node_descriptor: None,
             l1_edge_segment: None,
@@ -320,7 +336,8 @@ impl Shard {
             l1_by_type_index: None,
             l1_by_file_index: None,
             l1_by_name_index: None,
-            edge_type_index: Mutex::new(None),
+            l1_token_index: None,
+            l1_edge_type_index: None,
         }
     }
 
@@ -338,7 +355,7 @@ impl Shard {
             edge_segments: Vec::new(),
             node_descriptors: Vec::new(),
             edge_descriptors: Vec::new(),
-            tombstones: TombstoneSet::new(),
+            tombstones: Arc::new(TombstoneSet::new()),
             l1_node_segment: None,
             l1_node_descriptor: None,
             l1_edge_segment: None,
@@ -346,7 +363,8 @@ impl Shard {
             l1_by_type_index: None,
             l1_by_file_index: None,
             l1_by_name_index: None,
-            edge_type_index: Mutex::new(None),
+            l1_token_index: None,
+            l1_edge_type_index: None,
         })
     }
 
@@ -387,7 +405,7 @@ impl Shard {
             edge_segments,
             node_descriptors,
             edge_descriptors,
-            tombstones: TombstoneSet::new(),
+            tombstones: Arc::new(TombstoneSet::new()),
             l1_node_segment: None,
             l1_node_descriptor: None,
             l1_edge_segment: None,
@@ -395,7 +413,8 @@ impl Shard {
             l1_by_type_index: None,
             l1_by_file_index: None,
             l1_by_name_index: None,
-            edge_type_index: Mutex::new(None),
+            l1_token_index: None,
+            l1_edge_type_index: None,
         })
     }
 }
@@ -410,9 +429,9 @@ impl Shard {
 
     /// Upsert edges into write buffer. Immediately queryable.
     /// Dedup via edge_keys in WriteBuffer.
+    /// WriteBuffer maintains its own incremental edge_type_index.
     pub fn upsert_edges(&mut self, records: Vec<EdgeRecordV2>) {
         self.write_buffer.upsert_edges(records);
-        *self.edge_type_index.lock().unwrap() = None;
     }
 }
 
@@ -426,17 +445,20 @@ impl Shard {
     ///
     /// Complexity: O(1) (pointer swap)
     pub fn set_tombstones(&mut self, tombstones: TombstoneSet) {
+        self.tombstones = Arc::new(tombstones);
+    }
+
+    /// Set tombstone state from a pre-wrapped Arc (zero-copy sharing).
+    ///
+    /// Used by commit_batch to share the same tombstone set across all shards
+    /// without cloning. Each shard gets Arc::clone (refcount bump only).
+    pub fn set_tombstones_shared(&mut self, tombstones: Arc<TombstoneSet>) {
         self.tombstones = tombstones;
     }
 
     /// Get reference to current tombstone set (for reading).
     pub fn tombstones(&self) -> &TombstoneSet {
         &self.tombstones
-    }
-
-    /// Get mutable reference to tombstone set.
-    pub fn tombstones_mut(&mut self) -> &mut TombstoneSet {
-        &mut self.tombstones
     }
 
     /// Find edge keys (src, dst, edge_type) where src is in the given ID set.
@@ -685,11 +707,13 @@ impl Shard {
     ) {
         self.l1_node_segment = node_segment;
         self.l1_node_descriptor = node_descriptor;
+        // Build L1 edge-type index eagerly (single O(L1) pass).
+        // L1 is immutable, so this index never needs invalidation.
+        self.l1_edge_type_index = edge_segment.as_ref().map(|seg| {
+            Self::build_l1_edge_type_index(seg, &self.tombstones)
+        });
         self.l1_edge_segment = edge_segment;
         self.l1_edge_descriptor = edge_descriptor;
-        // Rebuild edge-type index eagerly — L0 segments it was built from
-        // are replaced by L1 after compaction.
-        *self.edge_type_index.lock().unwrap() = Some(self.build_edge_type_index());
     }
 
     /// Set inverted indexes for L1 node segment (built during compaction).
@@ -698,10 +722,12 @@ impl Shard {
         by_type_index: Option<InvertedIndex>,
         by_file_index: Option<InvertedIndex>,
         by_name_index: Option<InvertedIndex>,
+        token_index: Option<TokenIndex>,
     ) {
         self.l1_by_type_index = by_type_index;
         self.l1_by_file_index = by_file_index;
         self.l1_by_name_index = by_name_index;
+        self.l1_token_index = token_index;
     }
 
     /// Get reference to L1 by_type inverted index (for query optimization).
@@ -719,6 +745,16 @@ impl Shard {
         self.l1_by_name_index.as_ref()
     }
 
+    /// Token-based fuzzy name index (built during compaction).
+    pub fn l1_token_index(&self) -> Option<&TokenIndex> {
+        self.l1_token_index.as_ref()
+    }
+
+    /// Iterator over write buffer nodes (for fuzzy search fallback).
+    pub fn write_buffer_iter_nodes(&self) -> impl Iterator<Item = &NodeRecordV2> {
+        self.write_buffer.iter_nodes()
+    }
+
     /// Clear L0 segments after compaction (they've been merged into L1).
     /// Also clears tombstones since they were applied during merge.
     pub fn clear_l0_after_compaction(&mut self) {
@@ -726,7 +762,7 @@ impl Shard {
         self.node_descriptors.clear();
         self.edge_segments.clear();
         self.edge_descriptors.clear();
-        self.tombstones = TombstoneSet::new();
+        self.tombstones = Arc::new(TombstoneSet::new());
     }
 }
 
@@ -753,8 +789,6 @@ impl Shard {
         if self.write_buffer.is_empty() {
             return Ok(None);
         }
-
-        *self.edge_type_index.lock().unwrap() = None;
 
         let mut result = FlushResult {
             node_meta: None,
@@ -1902,55 +1936,39 @@ impl Shard {
         results
     }
 
-    /// Get edges filtered by edge type, using the lazy edge-type index.
+    /// Get edges filtered by edge type using per-level read path.
     ///
-    /// On first call, builds an in-memory index from all edges (write buffer +
-    /// L0 segments + L1 segment), grouped by edge type. Subsequent calls reuse
-    /// the cached index until invalidated by `upsert_edges()` or `flush_with_ids()`.
+    /// Merges results from three levels (newest-wins dedup):
+    /// 1. WB: O(1) index lookup via WriteBuffer::edges_by_type()
+    /// 2. L0: scan matching segments (small, transient)
+    /// 3. L1: O(1) HashMap lookup via l1_edge_type_index (never invalidated)
+    ///
+    /// No Mutex needed — WB index is maintained incrementally via &mut self,
+    /// L1 index is immutable after construction.
     pub fn get_edges_by_type(&self, edge_type: &str) -> Vec<EdgeRecordV2> {
-        let mut guard = self.edge_type_index.lock().unwrap();
-        if guard.is_none() {
-            *guard = Some(self.build_edge_type_index());
-        }
-        match guard.as_ref().unwrap().get(edge_type) {
-            Some(pairs) => pairs
-                .iter()
-                .map(|(src, dst)| EdgeRecordV2 {
-                    src: *src,
-                    dst: *dst,
-                    edge_type: edge_type.to_string(),
-                    metadata: String::new(),
-                })
-                .collect(),
-            None => Vec::new(),
-        }
-    }
-
-    /// Build the edge-type index by scanning all edge sources.
-    /// Same dedup/tombstone logic as `iter_all_edges()` but groups by type.
-    fn build_edge_type_index(&self) -> HashMap<String, Vec<(u128, u128)>> {
         let mut seen_edge_keys: HashSet<(u128, u128, String)> = HashSet::new();
-        let mut index: HashMap<String, Vec<(u128, u128)>> = HashMap::new();
+        let mut results: Vec<EdgeRecordV2> = Vec::new();
 
-        // Step 1: Write buffer (authoritative, newest)
-        for edge in self.write_buffer.iter_edges() {
+        // Step 1: Write buffer (authoritative, newest) — O(1) index lookup
+        for edge in self.write_buffer.edges_by_type(edge_type) {
             let key = (edge.src, edge.dst, edge.edge_type.clone());
             seen_edge_keys.insert(key);
             if self.tombstones.contains_edge(edge.src, edge.dst, &edge.edge_type) {
                 continue;
             }
-            index
-                .entry(edge.edge_type.clone())
-                .or_default()
-                .push((edge.src, edge.dst));
+            results.push(edge.clone());
         }
 
         // Step 2: L0 edge segments (newest-to-oldest for proper dedup)
+        // Scan only — L0 segments are small and transient.
         for seg in self.edge_segments.iter().rev() {
             for j in 0..seg.record_count() {
+                let et = seg.get_edge_type(j);
+                if et != edge_type {
+                    continue;
+                }
                 let src = seg.get_src(j);
                 let dst = seg.get_dst(j);
-                let et = seg.get_edge_type(j);
                 let key = (src, dst, et.to_string());
 
                 if seen_edge_keys.contains(&key) {
@@ -1961,36 +1979,53 @@ impl Shard {
                 if self.tombstones.contains_edge(src, dst, et) {
                     continue;
                 }
-                index
-                    .entry(et.to_string())
-                    .or_default()
-                    .push((src, dst));
+                results.push(seg.get_record(j));
             }
         }
 
-        // Step 3: L1 edge segment (oldest, compacted)
-        if let Some(l1_seg) = &self.l1_edge_segment {
-            for j in 0..l1_seg.record_count() {
-                let src = l1_seg.get_src(j);
-                let dst = l1_seg.get_dst(j);
-                let et = l1_seg.get_edge_type(j);
-                let key = (src, dst, et.to_string());
-
-                if seen_edge_keys.contains(&key) {
-                    continue;
+        // Step 3: L1 edge-type index — O(1) HashMap lookup
+        if let Some(index) = &self.l1_edge_type_index {
+            if let Some(pairs) = index.get(edge_type) {
+                for &(src, dst) in pairs {
+                    let key = (src, dst, edge_type.to_string());
+                    if seen_edge_keys.contains(&key) {
+                        continue;
+                    }
+                    // No tombstone check needed — L1 index is built with
+                    // tombstone filtering in build_l1_edge_type_index().
+                    results.push(EdgeRecordV2 {
+                        src,
+                        dst,
+                        edge_type: edge_type.to_string(),
+                        metadata: String::new(),
+                    });
                 }
-                seen_edge_keys.insert(key);
-
-                if self.tombstones.contains_edge(src, dst, et) {
-                    continue;
-                }
-                index
-                    .entry(et.to_string())
-                    .or_default()
-                    .push((src, dst));
             }
         }
 
+        results
+    }
+
+    /// Build edge-type index from L1 edge segment only.
+    /// Single O(L1) pass. Filters out tombstoned edges.
+    /// Called once at set_l1_segments() — result is immutable.
+    fn build_l1_edge_type_index(
+        seg: &EdgeSegmentV2,
+        tombstones: &TombstoneSet,
+    ) -> HashMap<String, Vec<(u128, u128)>> {
+        let mut index: HashMap<String, Vec<(u128, u128)>> = HashMap::new();
+        for j in 0..seg.record_count() {
+            let src = seg.get_src(j);
+            let dst = seg.get_dst(j);
+            let et = seg.get_edge_type(j);
+            if tombstones.contains_edge(src, dst, et) {
+                continue;
+            }
+            index
+                .entry(et.to_string())
+                .or_default()
+                .push((src, dst));
+        }
         index
     }
 }
@@ -2030,7 +2065,6 @@ impl Shard {
     /// Collect full diagnostic snapshot of this shard's lifecycle state.
     pub fn diagnostics(&self, shard_id: u16) -> ShardDiagnostics {
         let (wb_nodes, wb_edges) = self.write_buffer_size();
-        let has_edge_type_index = self.edge_type_index.lock().unwrap().is_some();
 
         ShardDiagnostics {
             shard_id,
@@ -2051,7 +2085,8 @@ impl Shard {
             l1_by_type_keys: self.l1_by_type_index.as_ref().map_or(0, |i| i.key_count()),
             l1_by_file_keys: self.l1_by_file_index.as_ref().map_or(0, |i| i.key_count()),
             l1_by_name_keys: self.l1_by_name_index.as_ref().map_or(0, |i| i.key_count()),
-            has_edge_type_index,
+            has_l1_edge_type_index: self.l1_edge_type_index.is_some(),
+            has_l1_token_index: self.l1_token_index.is_some(),
         }
     }
 
@@ -2112,6 +2147,56 @@ impl Shard {
         }
 
         ids
+    }
+
+    /// Return all live node IDs with their file paths.
+    ///
+    /// Same scan as `all_node_ids()` but also reads the file column
+    /// for building the `file_to_node_ids` index in MultiShardStore.
+    pub fn all_node_ids_with_file(&self) -> Vec<(u128, String)> {
+        let mut results = Vec::new();
+        let mut seen = HashSet::new();
+
+        // Write buffer (authoritative, newest)
+        for node in self.write_buffer.iter_nodes() {
+            seen.insert(node.id);
+            if self.tombstones.contains_node(node.id) {
+                continue;
+            }
+            results.push((node.id, node.file.clone()));
+        }
+
+        // L0 segments
+        for seg in &self.node_segments {
+            for j in 0..seg.record_count() {
+                let id = seg.get_id(j);
+                if seen.contains(&id) {
+                    continue;
+                }
+                seen.insert(id);
+                if self.tombstones.contains_node(id) {
+                    continue;
+                }
+                results.push((id, seg.get_file(j).to_string()));
+            }
+        }
+
+        // L1 segment (oldest, compacted)
+        if let Some(l1_seg) = &self.l1_node_segment {
+            for j in 0..l1_seg.record_count() {
+                let id = l1_seg.get_id(j);
+                if seen.contains(&id) {
+                    continue;
+                }
+                seen.insert(id);
+                if self.tombstones.contains_node(id) {
+                    continue;
+                }
+                results.push((id, l1_seg.get_file(j).to_string()));
+            }
+        }
+
+        results
     }
 
     /// Count nodes by type without loading full records.
@@ -2994,7 +3079,7 @@ mod tests {
 
         // Tombstone edge src->dst1
         let mut ts = TombstoneSet::new();
-        ts.add_edges(vec![(src_id, dst1_id, "CALLS".to_string())]);
+        ts.add_edges(vec![(src_id, dst1_id, Arc::from("CALLS"))]);
         shard.set_tombstones(ts);
 
         let result = shard.get_outgoing_edges(src_id, None);
@@ -3018,7 +3103,7 @@ mod tests {
 
         // Tombstone edge src1->target
         let mut ts = TombstoneSet::new();
-        ts.add_edges(vec![(src1_id, target_id, "CALLS".to_string())]);
+        ts.add_edges(vec![(src1_id, target_id, Arc::from("CALLS"))]);
         shard.set_tombstones(ts);
 
         let result = shard.get_incoming_edges(target_id, None);
@@ -3084,7 +3169,7 @@ mod tests {
     fn test_tombstone_set_add_union() {
         let mut ts = TombstoneSet::new();
         ts.add_nodes(vec![1, 2]);
-        ts.add_edges(vec![(10, 20, "CALLS".to_string())]);
+        ts.add_edges(vec![(10, 20, Arc::from("CALLS"))]);
 
         assert_eq!(ts.node_count(), 2);
         assert_eq!(ts.edge_count(), 1);
@@ -3092,8 +3177,8 @@ mod tests {
         // Union with overlapping and new
         ts.add_nodes(vec![2, 3]);
         ts.add_edges(vec![
-            (10, 20, "CALLS".to_string()),     // duplicate
-            (30, 40, "IMPORTS".to_string()),    // new
+            (10, 20, Arc::from("CALLS")),     // duplicate
+            (30, 40, Arc::from("IMPORTS")),    // new
         ]);
 
         assert_eq!(ts.node_count(), 3); // {1, 2, 3}

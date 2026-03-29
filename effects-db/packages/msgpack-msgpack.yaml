@@ -1,0 +1,41 @@
+# @msgpack/msgpack (v3.x) — MessagePack serialization
+# Generated: 2026-03-15
+# Method: Grafema graph analysis + Claude inference, cross-validated
+# Taxonomy version: 1
+# purl: pkg:npm/@msgpack/msgpack
+#
+# Graph validation findings (5298 nodes, 12147 edges):
+#   - Date in GLOBAL_DEFINITION → timestamp extension uses Date
+#   - All write* calls are internal buffer writes (writeU8, writeU32, etc.) — not IO
+#   - No console, process, fetch, fs calls → confirmed PURE core
+#   - RangeError in globals → throws on decode errors
+
+"@msgpack/msgpack":
+  # Core encode/decode — THROW on invalid data
+  encode: [PURE]
+  decode: [THROW]               # throws DecodeError/RangeError on malformed input
+  decodeMulti: [THROW]          # generator, yields decoded values, throws on error
+
+  # Streaming (still PURE — operates on in-memory buffers)
+  Encoder.new: [PURE]
+  Encoder.encode: [PURE]
+  Encoder.encodeSharedRef: [PURE]
+
+  Decoder.new: [PURE]
+  Decoder.decode: [THROW]       # throws DecodeError on malformed input
+  Decoder.decodeMulti: [THROW]
+
+  # Extension types
+  ExtensionCodec.new: [PURE]
+  ExtensionCodec.register: [MUTATION]
+  ExtData.new: [PURE]
+
+  # Timestamp extension (FOUND BY GRAFEMA — Date in globals)
+  # Uses new Date() for encoding/decoding timestamps
+  _internal.timestampEncode: [NONDETERMINISTIC]
+  _internal.timestampDecode: [PURE]  # decodes bytes to Date — deterministic
+
+  # Decode options / codec helpers — async iteration
+  decodeAsync: [ASYNC, THROW]
+  decodeArrayStream: [ASYNC, THROW]
+  decodeMultiStream: [ASYNC, THROW]

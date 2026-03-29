@@ -7,9 +7,9 @@
  */
 
 import { existsSync } from 'fs';
-import { join, delimiter, dirname } from 'path';
+import { join } from 'path';
 import { spawn } from 'child_process';
-import { fileURLToPath } from 'url';
+import { findOrchestratorBinary, getBinaryNotFoundMessage } from '@grafema/util';
 import {
   getOrCreateBackend,
   getProjectPath,
@@ -24,50 +24,6 @@ import {
 import { loadConfig } from './config.js';
 import { log } from './utils.js';
 import type { GraphBackend } from '@grafema/types';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-/**
- * Find the grafema-orchestrator binary.
- *
- * Search order:
- * 1. GRAFEMA_ORCHESTRATOR environment variable
- * 2. Monorepo target/release (development)
- * 3. Monorepo target/debug (development)
- * 4. System PATH
- * 5. ~/.local/bin
- */
-function findOrchestratorBinary(): string | null {
-  // 1. Environment variable
-  const envBinary = process.env.GRAFEMA_ORCHESTRATOR;
-  if (envBinary && existsSync(envBinary)) {
-    return envBinary;
-  }
-
-  // 2-3. Monorepo development builds
-  const monorepoRoot = dirname(dirname(dirname(__dirname)));
-  for (const profile of ['release', 'debug']) {
-    const path = join(monorepoRoot, 'packages', 'grafema-orchestrator', 'target', profile, 'grafema-orchestrator');
-    if (existsSync(path)) return path;
-  }
-
-  // 4. System PATH
-  for (const dir of (process.env.PATH || '').split(delimiter)) {
-    if (!dir) continue;
-    const path = join(dir, 'grafema-orchestrator');
-    if (existsSync(path)) return path;
-  }
-
-  // 5. ~/.local/bin
-  const home = process.env.HOME || process.env.USERPROFILE || '';
-  if (home) {
-    const path = join(home, '.local', 'bin', 'grafema-orchestrator');
-    if (existsSync(path)) return path;
-  }
-
-  return null;
-}
 
 /**
  * Resolve the config file path for grafema-orchestrator.
@@ -219,13 +175,7 @@ export async function ensureAnalyzed(
     // Find the orchestrator binary
     const binaryPath = findOrchestratorBinary();
     if (!binaryPath) {
-      throw new Error(
-        'grafema-orchestrator binary not found.\n' +
-          'Options:\n' +
-          '1. Build from source: cd packages/grafema-orchestrator && cargo build --release\n' +
-          '2. Set environment variable: export GRAFEMA_ORCHESTRATOR=/path/to/grafema-orchestrator\n' +
-          '3. Install to PATH or ~/.local/bin\n'
-      );
+      throw new Error(getBinaryNotFoundMessage('grafema-orchestrator'));
     }
 
     // Find config file

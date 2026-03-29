@@ -42,6 +42,7 @@ export type { MCPConfig } from './config.js';
 // === TOOL ARGUMENTS ===
 export interface QueryGraphArgs {
   query: string;
+  language?: 'datalog' | 'cypher';
   limit?: number;
   offset?: number;
   format?: 'table' | 'json' | 'tree';
@@ -70,6 +71,7 @@ export interface TraceDataFlowArgs {
   direction?: 'forward' | 'backward' | 'both';
   max_depth?: number;
   limit?: number;
+  detail?: 'summary' | 'normal' | 'full';
 }
 
 export interface CheckInvariantArgs {
@@ -401,6 +403,14 @@ export interface SupersedeFactArgs {
   new_slug?: string;
 }
 
+// === DESCRIBE ARGS (DSL notation) ===
+
+export interface DescribeArgs {
+  target: string;
+  depth?: number;
+  perspective?: string;
+}
+
 // === GIT QUERY ARGS (REG-628) ===
 
 export interface GitChurnArgs {
@@ -419,4 +429,17 @@ export interface GitOwnershipArgs {
 
 export interface GitArchaeologyArgs {
   file: string;
+}
+
+// === GRAPHQL ARGS (REG-666) ===
+
+export interface GraphQLQueryArgs {
+  query: string;
+  variables?: Record<string, unknown>;
+  operationName?: string;
+}
+
+export interface QueryRegistryArgs {
+  package?: string;
+  symbol?: string;
 }

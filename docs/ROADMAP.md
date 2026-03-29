@@ -26,11 +26,14 @@ Graph-Driven Development: from code graph to system guarantees.
 
 ### CLI ✅
 
-- `npx @grafema/cli analyze` — full project analysis
-- `npx @grafema/cli query` — pattern matching + Datalog queries
-- `npx @grafema/cli ls` — list nodes by type
-- `npx @grafema/cli types` — show available node types
-- `npx @grafema/cli show` — node details with edges
+- `grafema init` — initialize project
+- `grafema analyze` — full project analysis
+- `grafema tldr <file>` — compact DSL file overview
+- `grafema wtf <symbol>` — backward dataflow trace
+- `grafema who <symbol>` — find callers/references
+- `grafema why <symbol>` — knowledge base decisions
+- `grafema doctor` — system health check
+- `grafema overview` — project stats
 
 ### MCP Server (24+ tools) ✅
 
@@ -193,8 +196,8 @@ Long-term vision features.
 | Version | Focus | Status |
 |---------|-------|--------|
 | **v0.1.x** | Works correctly | Done |
-| **v0.2** | Works on real projects + core-v2 | Current |
-| **v0.3** | Easy to adopt | Next |
+| **v0.2** | Works on real projects + core-v2 | Done |
+| **v0.3** | Easy to adopt (unified `grafema` package) | Current |
 | **v0.5+** | Full GDD vision | Future |
 
 ⭐ = Planned for Grafema Pro (details TBA)
@@ -242,4 +245,4 @@ Most features should be: **enricher** (adds data) + **Datalog rules** (query it)
 
 ---
 
-*Last updated: 2026-03-01*
+*Last updated: 2026-03-13*

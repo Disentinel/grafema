@@ -8,31 +8,45 @@ import { DEFAULT_LIMIT, MAX_LIMIT } from '../utils.js';
 export const QUERY_TOOLS: ToolDefinition[] = [
   {
     name: 'query_graph',
-    description: `Execute a Datalog query on the code graph.
+    description: `Execute a Datalog or Cypher query on the code graph.
 
-Available predicates:
-- type(Id, Type) - match nodes by type (alias: node)
+Set language to "cypher" for Cypher queries (e.g., MATCH (n:FUNCTION) RETURN n.name).
+Default is Datalog.
+
+Available Datalog predicates:
+- type(Id, Type) / node(Id, Type) - match nodes by type
 - edge(Src, Dst, Type) - match edges
 - attr(Id, Name, Value) - match node attributes (name, file, line, etc.)
+- gt(Val, N), lt(Val, N), gte(Val, N), lte(Val, N) - numeric comparisons
+- \\+ - negation (not)
 
 NODE TYPES:
 - MODULE, FUNCTION, METHOD, CLASS, VARIABLE, PARAMETER
 - CALL, PROPERTY_ACCESS, METHOD_CALL, CALL_SITE
+- METRIC (performance metrics: value/unit/source in metadata, OBSERVES → MODULE)
+- ISSUE (analysis problems: category/severity/message in metadata, CONTAINS ← MODULE)
 - http:route, http:request, db:query, socketio:emit, socketio:on
 
 EDGE TYPES:
 - CONTAINS, CALLS, DEPENDS_ON, ASSIGNED_FROM, INSTANCE_OF, PASSES_ARGUMENT
+- OBSERVES (METRIC → MODULE, links performance metric to observed file)
 
 EXAMPLES:
   violation(X) :- node(X, "MODULE").
   violation(X) :- node(X, "FUNCTION"), attr(X, "file", "src/api.js").
-  violation(X) :- node(X, "CALL"), \\+ edge(X, _, "CALLS").`,
+  violation(X) :- node(X, "CALL"), \\+ edge(X, _, "CALLS").
+  violation(F, Ms) :- node(M, "METRIC"), attr(M, "name", "parse_ms"), attr(M, "value", Ms), gte(Ms, 500), edge(M, Mod, "OBSERVES"), attr(Mod, "file", F).`,
     inputSchema: {
       type: 'object',
       properties: {
         query: {
           type: 'string',
-          description: 'Datalog query. Must define violation/1 predicate for results.',
+          description: 'Datalog query (must define violation/1 predicate) or Cypher query (when language is "cypher").',
+        },
+        language: {
+          type: 'string',
+          description: 'Query language: "datalog" (default) or "cypher"',
+          enum: ['datalog', 'cypher'],
         },
         limit: {
           type: 'number',
@@ -99,7 +113,7 @@ Use this when you need to:
 
 Returns semantic IDs that you can pass to get_context, get_node, get_neighbors, or find_guards.
 
-Supports partial matches on name and file. Use limit/offset for pagination.`,
+Supports partial matches on name and file. When a name filter returns no exact matches, automatically falls back to fuzzy name matching using token similarity (CamelCase/snake_case aware). Use limit/offset for pagination.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -190,6 +204,11 @@ Tip: Start with max_depth=5, increase if needed.`,
         limit: {
           type: 'number',
           description: `Max results (default: ${DEFAULT_LIMIT})`,
+        },
+        detail: {
+          type: 'string',
+          description: 'Level of detail: summary (counts only), normal (auto-compressed, default), full (every node)',
+          enum: ['summary', 'normal', 'full'],
         },
       },
       required: ['source'],

@@ -7,6 +7,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 
 use crate::error::Result;
@@ -159,13 +160,24 @@ pub struct GraphEngineV2 {
     /// Node IDs marked for deletion but not yet flushed.
     pending_tombstone_nodes: HashSet<u128>,
     /// Edge keys marked for deletion but not yet flushed.
-    pending_tombstone_edges: HashSet<(u128, u128, String)>,
+    /// Uses Arc<str> for edge type deduplication — ~15 distinct values
+    /// shared across millions of tombstone entries.
+    pending_tombstone_edges: HashSet<(u128, u128, Arc<str>)>,
+    /// Count of nodes deleted then re-added (old segment version persists
+    /// alongside new write buffer version). Used to correct node_count().
+    /// Reset on compact() when segment dedup removes old versions.
+    superseded_node_count: usize,
+    /// Count of edges deleted then re-added. Same purpose as above.
+    superseded_edge_count: usize,
     /// Declared metadata fields for indexing (v1 compat).
     declared_fields: Vec<FieldDecl>,
     /// Cached tuning profile — avoids re-probing sysinfo on every write.
     cached_profile: TuningProfile,
     /// Timestamp of last resource re-detection (rate-limits sysinfo calls).
     last_resource_check: Instant,
+    /// Embedding engine for semantic search (None when feature disabled or not initialized).
+    #[cfg(feature = "embedding")]
+    embedding_engine: Option<std::sync::Arc<crate::embedding::EmbeddingEngine>>,
 }
 
 // ── Constructors ────────────────────────────────────────────────────
@@ -189,9 +201,13 @@ impl GraphEngineV2 {
             ephemeral: false,
             pending_tombstone_nodes: HashSet::new(),
             pending_tombstone_edges: HashSet::new(),
+            superseded_node_count: 0,
+            superseded_edge_count: 0,
             declared_fields: Vec::new(),
             cached_profile: profile,
             last_resource_check: Instant::now(),
+            #[cfg(feature = "embedding")]
+            embedding_engine: Self::init_embedding_engine(Some(path)),
         })
     }
 
@@ -204,9 +220,13 @@ impl GraphEngineV2 {
             ephemeral: true,
             pending_tombstone_nodes: HashSet::new(),
             pending_tombstone_edges: HashSet::new(),
+            superseded_node_count: 0,
+            superseded_edge_count: 0,
             declared_fields: Vec::new(),
             cached_profile: TuningProfile::default(),
             last_resource_check: Instant::now(),
+            #[cfg(feature = "embedding")]
+            embedding_engine: None,
         }
     }
 
@@ -214,14 +234,20 @@ impl GraphEngineV2 {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref();
         let manifest = ManifestStore::open(path)?;
-        let store = MultiShardStore::open(path, &manifest)?;
+        let mut store = MultiShardStore::open(path, &manifest)?;
 
-        // Restore tombstones from manifest so deleted nodes/edges stay deleted.
+        // Restore tombstones from manifest into shard TombstoneSet (single source of truth).
+        // Engine's pending_tombstone_* stays empty — queries delegate to store shards.
         let current = manifest.current();
-        let pending_tombstone_nodes: HashSet<u128> =
-            current.tombstoned_node_ids.iter().copied().collect();
-        let pending_tombstone_edges: HashSet<(u128, u128, String)> =
-            current.tombstoned_edge_keys.iter().cloned().collect();
+        if !current.tombstoned_node_ids.is_empty() || !current.tombstoned_edge_keys.is_empty() {
+            let tombstone_nodes: HashSet<u128> =
+                current.tombstoned_node_ids.iter().copied().collect();
+            let tombstone_edges: HashSet<(u128, u128, Arc<str>)> =
+                current.tombstoned_edge_keys.iter()
+                    .map(|(s, d, t)| (*s, *d, Arc::from(t.as_str())))
+                    .collect();
+            store.set_tombstones(&tombstone_nodes, &tombstone_edges);
+        }
 
         let profile = ResourceManager::auto_tune();
 
@@ -230,26 +256,62 @@ impl GraphEngineV2 {
             manifest,
             path: Some(path.to_path_buf()),
             ephemeral: false,
-            pending_tombstone_nodes,
-            pending_tombstone_edges,
+            pending_tombstone_nodes: HashSet::new(),
+            pending_tombstone_edges: HashSet::new(),
+            superseded_node_count: 0,
+            superseded_edge_count: 0,
             declared_fields: Vec::new(),
             cached_profile: profile,
             last_resource_check: Instant::now(),
+            #[cfg(feature = "embedding")]
+            embedding_engine: Self::init_embedding_engine(Some(path)),
         })
+    }
+
+    /// Initialize embedding engine from database path (feature-gated).
+    #[cfg(feature = "embedding")]
+    fn init_embedding_engine(db_path: Option<&Path>) -> Option<std::sync::Arc<crate::embedding::EmbeddingEngine>> {
+        let path = db_path?;
+        let lance_dir = path.with_extension("embeddings.lance");
+        let model_dir = dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".grafema")
+            .join("models");
+        match crate::embedding::EmbeddingEngine::new(&lance_dir, &model_dir) {
+            Ok(engine) => Some(std::sync::Arc::new(engine)),
+            Err(e) => {
+                tracing::warn!("Embedding engine init failed (non-fatal): {}", e);
+                None
+            }
+        }
+    }
+
+    /// Public accessor for the embedding engine.
+    #[cfg(feature = "embedding")]
+    pub fn embedding_engine(&self) -> Option<&std::sync::Arc<crate::embedding::EmbeddingEngine>> {
+        self.embedding_engine.as_ref()
     }
 }
 
 // ── Helper: tombstone filtering ─────────────────────────────────────
 
 impl GraphEngineV2 {
-    /// Check if a node is pending tombstone.
+    /// Check if a node is tombstoned.
+    ///
+    /// Checks both engine-level pending tombstones (from delete_node, not yet flushed)
+    /// and store shard tombstones (persisted via commit_batch_ext or flush).
     fn is_node_tombstoned(&self, id: u128) -> bool {
         self.pending_tombstone_nodes.contains(&id)
+            || self.store.is_node_tombstoned(id)
     }
 
-    /// Check if an edge is pending tombstone.
+    /// Check if an edge is tombstoned.
+    ///
+    /// Checks both engine-level pending tombstones (from delete_edge, not yet flushed)
+    /// and store shard tombstones (persisted via commit_batch_ext or flush).
     fn is_edge_tombstoned(&self, src: u128, dst: u128, edge_type: &str) -> bool {
-        self.pending_tombstone_edges.contains(&(src, dst, edge_type.to_string()))
+        self.pending_tombstone_edges.contains(&(src, dst, Arc::from(edge_type)))
+            || self.store.is_edge_tombstoned(src, dst, edge_type)
     }
 
     /// Filter tombstoned edges from a list of v2 edge records.
@@ -270,7 +332,12 @@ impl GraphStore for GraphEngineV2 {
         // Re-adding a node in the same session must resurrect it immediately.
         // Without this, delete->add keeps the node hidden until flush.
         for node in &v2_nodes {
-            self.pending_tombstone_nodes.remove(&node.id);
+            if self.pending_tombstone_nodes.remove(&node.id) {
+                // Node was deleted then re-added. The old version persists in
+                // a flushed segment alongside the new write-buffer version.
+                // Track this so node_count() subtracts the stale segment copy.
+                self.superseded_node_count += 1;
+            }
         }
         self.store.add_nodes(v2_nodes);
 
@@ -289,7 +356,7 @@ impl GraphStore for GraphEngineV2 {
             self.pending_tombstone_edges.insert((
                 edge.src,
                 edge.dst,
-                edge.edge_type.clone(),
+                Arc::from(edge.edge_type.as_str()),
             ));
         }
         let incoming = self.store.get_incoming_edges(id, None);
@@ -297,7 +364,7 @@ impl GraphStore for GraphEngineV2 {
             self.pending_tombstone_edges.insert((
                 edge.src,
                 edge.dst,
-                edge.edge_type.clone(),
+                Arc::from(edge.edge_type.as_str()),
             ));
         }
     }
@@ -344,11 +411,49 @@ impl GraphStore for GraphEngineV2 {
             query.substring_match,
         );
 
-        if self.pending_tombstone_nodes.is_empty() {
-            return ids;
+        if !self.pending_tombstone_nodes.is_empty() {
+            ids.retain(|id| !self.is_node_tombstoned(*id));
         }
 
-        ids.retain(|id| !self.is_node_tombstoned(*id));
+        // Fuzzy name fallback: when name is specified, 0 exact results,
+        // and fuzzy is not explicitly disabled
+        if ids.is_empty()
+            && query.name.is_some()
+            && query.fuzzy_name_fallback != Some(false)
+        {
+            let name = query.name.as_deref().unwrap();
+            let fuzzy_matches = self.store.find_similar_names(
+                name,
+                exact_type,
+                20,  // top-K
+                0.3, // min Jaccard score
+            );
+            for m in &fuzzy_matches {
+                if !self.is_node_tombstoned(m.node_id) {
+                    ids.push(m.node_id);
+                }
+            }
+        }
+
+        // Embedding similarity fallback (tier 4): when token fuzzy also returned nothing
+        #[cfg(feature = "embedding")]
+        if ids.is_empty()
+            && query.name.is_some()
+            && query.fuzzy_name_fallback != Some(false)
+        {
+            if let Some(ref engine) = self.embedding_engine {
+                let name = query.name.as_deref().unwrap();
+                if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                    let matches = handle.block_on(engine.search(name, exact_type, 10, 0.5));
+                    for m in matches {
+                        if !self.is_node_tombstoned(m.node_id) {
+                            ids.push(m.node_id);
+                        }
+                    }
+                }
+            }
+        }
+
         ids
     }
 
@@ -364,6 +469,8 @@ impl GraphStore for GraphEngineV2 {
             other => (other, None),
         };
 
+        let mut found_any = false;
+
         if self.pending_tombstone_nodes.is_empty() {
             self.store.find_node_ids_by_attr_chunked(
                 exact_type,
@@ -374,7 +481,10 @@ impl GraphStore for GraphEngineV2 {
                 &query.metadata_filters,
                 query.substring_match,
                 chunk_size,
-                callback,
+                &mut |ids| {
+                    if !ids.is_empty() { found_any = true; }
+                    callback(ids)
+                },
             );
         } else {
             self.store.find_node_ids_by_attr_chunked(
@@ -391,9 +501,55 @@ impl GraphStore for GraphEngineV2 {
                         .filter(|&&id| !self.is_node_tombstoned(id))
                         .copied()
                         .collect();
-                    if filtered.is_empty() { true } else { callback(&filtered) }
+                    if filtered.is_empty() { true } else {
+                        found_any = true;
+                        callback(&filtered)
+                    }
                 },
             );
+        }
+
+        // Fuzzy name fallback for streaming path (same logic as find_by_attr)
+        if !found_any
+            && query.name.is_some()
+            && query.fuzzy_name_fallback != Some(false)
+        {
+            let name = query.name.as_deref().unwrap();
+            let fuzzy_matches = self.store.find_similar_names(
+                name,
+                exact_type,
+                20,
+                0.3,
+            );
+            let fuzzy_ids: Vec<u128> = fuzzy_matches.iter()
+                .filter(|m| !self.is_node_tombstoned(m.node_id))
+                .map(|m| m.node_id)
+                .collect();
+            if !fuzzy_ids.is_empty() {
+                found_any = true;
+                callback(&fuzzy_ids);
+            }
+        }
+
+        // Embedding similarity fallback for streaming path (tier 4)
+        #[cfg(feature = "embedding")]
+        if !found_any
+            && query.name.is_some()
+            && query.fuzzy_name_fallback != Some(false)
+        {
+            if let Some(ref engine) = self.embedding_engine {
+                let name = query.name.as_deref().unwrap();
+                if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                    let matches = handle.block_on(engine.search(name, exact_type, 10, 0.5));
+                    let emb_ids: Vec<u128> = matches.iter()
+                        .filter(|m| !self.is_node_tombstoned(m.node_id))
+                        .map(|m| m.node_id)
+                        .collect();
+                    if !emb_ids.is_empty() {
+                        callback(&emb_ids);
+                    }
+                }
+            }
         }
     }
 
@@ -425,11 +581,11 @@ impl GraphStore for GraphEngineV2 {
         // Re-adding an edge in the same session must clear any pending tombstone
         // for the same (src, dst, type) triple.
         for edge in &v2_edges {
-            self.pending_tombstone_edges.remove(&(
-                edge.src,
-                edge.dst,
-                edge.edge_type.clone(),
-            ));
+            let key = (edge.src, edge.dst, Arc::from(edge.edge_type.as_str()));
+            if self.pending_tombstone_edges.remove(&key) {
+                // Edge was deleted then re-added. Old segment version persists.
+                self.superseded_edge_count += 1;
+            }
         }
         let result = self.store.upsert_edges(v2_edges);
         if !skip_validation {
@@ -447,7 +603,7 @@ impl GraphStore for GraphEngineV2 {
         self.pending_tombstone_edges.insert((
             src,
             dst,
-            edge_type.to_string(),
+            Arc::from(edge_type),
         ));
     }
 
@@ -572,13 +728,16 @@ impl GraphStore for GraphEngineV2 {
     }
 
     fn flush_data_only(&mut self) -> Result<()> {
-        // V2 uses in-memory write buffers with adaptive auto-flush
-        // (triggered by add_nodes via maybe_auto_flush).
-        // During bulk load (deferIndex=true), skip explicit flush —
-        // data is readable from write buffers, and auto-flush
-        // persists to disk when buffer limits are exceeded.
-        // The final rebuild_indexes() → flush() ensures all data
-        // is persisted at the end of the bulk load.
+        // Flush to disk when write buffers exceed safe limits.
+        // Previously this was a no-op, relying on compact() at the end
+        // of analysis to persist everything. But if analysis fails before
+        // compact (OOM, timeout, resolver error), ALL data was lost.
+        //
+        // Threshold: flush when any shard has >50K nodes or >128MB in buffers.
+        // Lowered from 100K/256MB to reduce peak RSS on large graphs (4M+ nodes).
+        if self.store.any_shard_needs_flush(50_000, 128 * 1024 * 1024) {
+            self.store.flush_all(&mut self.manifest)?;
+        }
         Ok(())
     }
 
@@ -598,8 +757,28 @@ impl GraphStore for GraphEngineV2 {
     }
 
     fn compact(&mut self) -> Result<()> {
-        let config = CompactionConfig::default();
+        // Flush write buffers to L0 segments first — resolution and derived
+        // edge commits use flush_data_only() (no-op in V2), so data may
+        // still be in write buffers at compact time.
+        self.flush()?;
+        // Force-compact all shards with any L0 segments (threshold=1).
+        // The default threshold (4) skips shards with few L0 segments,
+        // leaving old L1 + new L0 = double-counted nodes/edges.
+        let config = CompactionConfig { segment_threshold: 1 };
         self.store.compact(&mut self.manifest, &config)?;
+        // GC: collect orphaned segments after compaction
+        let moved = self.manifest.gc_collect()?;
+        if !moved.is_empty() {
+            tracing::info!("GC: moved {} orphaned segment(s) to gc/", moved.len());
+        }
+        // Purge: permanently delete collected segments
+        let purged = self.manifest.gc_purge()?;
+        if purged > 0 {
+            tracing::info!("GC: purged {} segment file(s)", purged);
+        }
+        // Compaction deduplicates segments — old superseded versions are removed.
+        self.superseded_node_count = 0;
+        self.superseded_edge_count = 0;
         Ok(())
     }
 
@@ -611,12 +790,20 @@ impl GraphStore for GraphEngineV2 {
 
     fn node_count(&self) -> usize {
         let total = self.store.node_count();
-        total.saturating_sub(self.pending_tombstone_nodes.len())
+        // Shard tombstones (from commit_batch_ext/flush) and pending tombstones
+        // (from delete_node, not yet flushed) are disjoint sets.
+        let shard_tombstones = self.store.tombstone_node_count();
+        total.saturating_sub(shard_tombstones)
+             .saturating_sub(self.pending_tombstone_nodes.len())
+             .saturating_sub(self.superseded_node_count)
     }
 
     fn edge_count(&self) -> usize {
         let total = self.store.edge_count();
-        total.saturating_sub(self.pending_tombstone_edges.len())
+        let shard_tombstones = self.store.tombstone_edge_count();
+        total.saturating_sub(shard_tombstones)
+             .saturating_sub(self.pending_tombstone_edges.len())
+             .saturating_sub(self.superseded_edge_count)
     }
 
     fn clear(&mut self) {
@@ -624,6 +811,8 @@ impl GraphStore for GraphEngineV2 {
         self.manifest = ManifestStore::ephemeral();
         self.pending_tombstone_nodes.clear();
         self.pending_tombstone_edges.clear();
+        self.superseded_node_count = 0;
+        self.superseded_edge_count = 0;
         self.declared_fields.clear();
     }
 
@@ -635,8 +824,34 @@ impl GraphStore for GraphEngineV2 {
         self.store.shard_diagnostics()
     }
 
+    fn disk_size_bytes(&self) -> u64 {
+        match &self.path {
+            Some(p) => dir_size_bytes(p),
+            None => 0,
+        }
+    }
+
     fn as_any(&self) -> &dyn std::any::Any { self }
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any { self }
+}
+
+/// Recursively compute total size of a directory in bytes.
+fn dir_size_bytes(path: &Path) -> u64 {
+    let mut total = 0u64;
+    if let Ok(entries) = std::fs::read_dir(path) {
+        for entry in entries.flatten() {
+            let meta = match entry.metadata() {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            if meta.is_dir() {
+                total += dir_size_bytes(&entry.path());
+            } else {
+                total += meta.len();
+            }
+        }
+    }
+    total
 }
 
 // ── Engine-specific Methods (NOT on GraphStore trait) ────────────────
@@ -717,14 +932,29 @@ impl GraphEngineV2 {
         changed_files: &[String],
         tags: HashMap<String, String>,
     ) -> Result<CommitDelta> {
-        let delta = self.store
-            .commit_batch(nodes, edges, changed_files, tags, &mut self.manifest)?;
+        self.commit_batch_ext(nodes, edges, changed_files, tags, &[])
+    }
 
-        // Reload tombstones from manifest so node_count()/edge_count()
-        // and tombstone filtering stay correct within the same session.
-        let current = self.manifest.current();
-        self.pending_tombstone_nodes = current.tombstoned_node_ids.iter().copied().collect();
-        self.pending_tombstone_edges = current.tombstoned_edge_keys.iter().cloned().collect();
+    /// Atomic batch commit with protected types.
+    ///
+    /// Nodes whose `node_type` is in `protected_types` are excluded from
+    /// tombstoning during re-analysis of their file.
+    pub fn commit_batch_ext(
+        &mut self,
+        nodes: Vec<NodeRecordV2>,
+        edges: Vec<EdgeRecordV2>,
+        changed_files: &[String],
+        tags: HashMap<String, String>,
+        protected_types: &[String],
+    ) -> Result<CommitDelta> {
+        let delta = self.store
+            .commit_batch_ext(nodes, edges, changed_files, tags, &mut self.manifest, protected_types)?;
+
+        // After commit_batch_ext, all tombstones live in the store's shard TombstoneSet
+        // (set via set_tombstones_shared). The engine's pending sets are cleared —
+        // is_node/edge_tombstoned() delegates to the store for persisted tombstones.
+        self.pending_tombstone_nodes.clear();
+        self.pending_tombstone_edges.clear();
 
         Ok(delta)
     }
@@ -735,8 +965,13 @@ impl GraphEngineV2 {
     /// exposes the full `CompactionResult` including nodes_merged, edges_merged,
     /// tombstones_removed, and duration_ms.
     pub fn compact_with_stats(&mut self) -> Result<CompactionResult> {
-        let config = CompactionConfig::default();
-        self.store.compact(&mut self.manifest, &config)
+        // Flush write buffers to L0 first (same reason as compact()).
+        self.flush()?;
+        let config = CompactionConfig { segment_threshold: 1 };
+        let result = self.store.compact(&mut self.manifest, &config)?;
+        self.superseded_node_count = 0;
+        self.superseded_edge_count = 0;
+        Ok(result)
     }
 
     /// Tag an existing snapshot.
@@ -802,10 +1037,12 @@ impl GraphEngineV2 {
         );
 
         // Under high memory pressure, flush earlier but only if buffer
-        // has meaningful data (>= 1000 nodes). Flushing 2 nodes is not
+        // has meaningful data (>= 500 nodes). Flushing 2 nodes is not
         // worth the I/O cost even under pressure.
-        let pressure_flush = self.cached_profile.memory_pressure > 0.8
-            && self.store.total_write_buffer_nodes() >= 1000;
+        // Thresholds lowered from 0.8/1000 to 0.7/500 to flush earlier
+        // on memory-constrained VMs (16GB with 4M+ node graphs).
+        let pressure_flush = self.cached_profile.memory_pressure > 0.7
+            && self.store.total_write_buffer_nodes() >= 500;
 
         if exceeds_limits || pressure_flush {
             if let Err(e) = self.store.flush_all(&mut self.manifest) {

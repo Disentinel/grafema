@@ -8,6 +8,14 @@
 import * as vscode from 'vscode';
 
 /**
+ * Check if a document URI represents a code file that Grafema can analyze.
+ * Accepts 'file' (local) and 'vscode-remote' (code-server, SSH Remote, etc.)
+ */
+export function isCodeDocument(uri: vscode.Uri): boolean {
+  return uri.scheme === 'file' || uri.scheme === 'vscode-remote';
+}
+
+/**
  * Debounce a function call by delay milliseconds.
  * If called again before delay expires, resets the timer.
  *

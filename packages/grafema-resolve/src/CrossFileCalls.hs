@@ -9,7 +9,7 @@
 -- Re-derives import links from IMPORT_BINDING metadata (source + importedName)
 -- and the export index built from all nodes. No dependency on prior resolution
 -- passes — only needs the raw analysis nodes.
-module CrossFileCalls (run, resolveAll) where
+module CrossFileCalls (run, resolveAll, resolveFileWithIndex) where
 
 import Grafema.Types (GraphNode(..), GraphEdge(..), MetaValue(..))
 import Grafema.Protocol (PluginCommand(..), readNodesFromStdin, writeCommandsToStdout)
@@ -110,7 +110,7 @@ resolveCallee importBindingIndex exportIndex file callee =
 -- Returns the node ID of the target export entry.
 resolveInModule :: ExportIndex -> Text -> Text -> Text -> Maybe Text
 resolveInModule exportIndex importerFile source importedName =
-  case resolveModulePath importerFile source exportIndex of
+  case resolveModulePath importerFile source exportIndex Map.empty of
     Nothing -> Nothing
     Just resolvedFile ->
       case Map.lookup resolvedFile exportIndex of
@@ -119,6 +119,21 @@ resolveInModule exportIndex importerFile source importedName =
           case findMatchingExport importedName exports of
             Nothing    -> Nothing
             Just entry -> Just (eeNodeId entry)
+
+-- ---------------------------------------------------------------------------
+-- Per-file streaming resolution (uses pre-built ExportIndex)
+-- ---------------------------------------------------------------------------
+
+-- | Resolve cross-file calls for a single file's nodes using a pre-built ExportIndex.
+--
+-- Unlike 'resolveAll' which builds the ExportIndex from all nodes, this function
+-- takes a pre-built index (from the 'build-index' phase) and only builds the
+-- ImportBindingIndex from the file's own nodes.
+resolveFileWithIndex :: ExportIndex -> [GraphNode] -> [PluginCommand]
+resolveFileWithIndex exportIndex fileNodes =
+  let importBindingIndex = buildImportBindingIndex fileNodes
+      callNodes = filter (\n -> gnType n == "CALL") fileNodes
+  in concatMap (resolveCallNode exportIndex importBindingIndex) callNodes
 
 -- ---------------------------------------------------------------------------
 -- CLI entry point

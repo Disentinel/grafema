@@ -230,6 +230,11 @@ mod tests {
             plugins: vec![],
             rfdb_socket: None,
             analyzers: Default::default(),
+            services: vec![],
+            authority: None,
+            aliases: Default::default(),
+            max_file_size_kb: 1024,
+            max_ast_size_kb: 51200,
         };
 
         let files = discover(&config).unwrap();

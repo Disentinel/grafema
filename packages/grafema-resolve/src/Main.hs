@@ -1,29 +1,54 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Main where
 
-import Data.Aeson (FromJSON(..), ToJSON(..), withObject, (.:), object, (.=))
+import Data.Aeson (FromJSON(..), ToJSON(..), withObject, (.:), (.:?), (.!=), object, (.=))
 import qualified Data.Text as T
 import Data.Text (Text)
 import System.Environment (getArgs)
-import System.IO (stdin, stdout, hSetBinaryMode)
+import System.IO (stdin, stdout, stderr, hSetBinaryMode, hPutStrLn)
+import Data.Time.Clock (getCurrentTime, diffUTCTime)
+import Data.IORef
 import Options.Applicative
 import qualified ImportResolution
 import qualified RuntimeGlobals
 import qualified Builtins
 import qualified CrossFileCalls
+import qualified SameFileCalls
+import qualified PropertyAccess
+import qualified JsLocalRefs
 import Grafema.Types (GraphNode)
-import Grafema.Protocol (PluginCommand(..), readFrame, writeFrame, encodeMsgpack, decodeMsgpack)
+import Grafema.Protocol (PluginCommand(..), readFrame, writeFrame, encodeMsgpack, decodeMsgpack, pluginCommandToMsgpack)
+import ImportResolution (ExportIndex, WorkspaceMap, ModuleIndex)
+import qualified Data.Binary as Binary
+import qualified Data.MessagePack as MP
+import qualified Data.Vector as V
+import qualified Data.Map.Strict as Map
+
+-- | A workspace package mapping: npm name → entry point file path.
+data WorkspacePackage = WorkspacePackage
+  { wpName       :: !Text  -- ^ npm package name (e.g., "@grafema/util")
+  , wpEntryPoint :: !Text  -- ^ entry point relative to project root (e.g., "packages/util/src/index.ts")
+  , wpPackageDir :: !Text  -- ^ package directory relative to project root (e.g., "packages/util")
+  } deriving (Show, Eq)
+
+instance FromJSON WorkspacePackage where
+  parseJSON = withObject "WorkspacePackage" $ \v -> WorkspacePackage
+    <$> v .: "name"
+    <*> v .: "entry_point"
+    <*> v .: "package_dir"
 
 -- | Request from orchestrator in daemon mode.
 data DaemonRequest = DaemonRequest
-  { drCmd   :: Text        -- "imports" | "runtime-globals" | "builtins" | "cross-file-calls"
-  , drNodes :: [GraphNode]
+  { drCmd               :: Text              -- "imports" | "runtime-globals" | "builtins" | "cross-file-calls"
+  , drNodes             :: [GraphNode]
+  , drWorkspacePackages :: [WorkspacePackage] -- workspace packages for cross-package resolution
   }
 
 instance FromJSON DaemonRequest where
   parseJSON = withObject "DaemonRequest" $ \v -> DaemonRequest
     <$> v .: "cmd"
     <*> v .: "nodes"
+    <*> v .:? "workspace_packages" .!= []
 
 -- | Response to orchestrator.
 data DaemonResponse
@@ -40,9 +65,36 @@ instance ToJSON DaemonResponse where
     , "error"  .= msg
     ]
 
+-- | Daemon context state: accumulates chunks during load-context,
+-- flattens once on first resolve command.
+data DaemonState
+  = Accumulating [[GraphNode]]
+  | Finalized [GraphNode]
+
+-- | Pre-built indexes for per-file streaming resolution.
+-- Built once by 'build-index', then reused for each 'resolve-file' call.
+data ResolveIndexes = ResolveIndexes
+  { riExportIndex  :: !ExportIndex
+  , riWorkspaceMap :: !WorkspaceMap
+  , riModuleIndex  :: !ModuleIndex
+  }
+
+-- | Flatten accumulated chunks into a single list, caching the result.
+finalizeContext :: IORef DaemonState -> IO [GraphNode]
+finalizeContext stateRef = do
+  state <- readIORef stateRef
+  case state of
+    Finalized cached -> return cached
+    Accumulating chunks -> do
+      let flat = concat chunks
+      writeIORef stateRef (Finalized flat)
+      return flat
+
 -- | Daemon loop: read frames from stdin, dispatch, write responses.
-daemonLoop :: IO ()
-daemonLoop = do
+--   Maintains an IORef of context chunks that accumulate across load-context calls.
+--   Also maintains an IORef of pre-built indexes for per-file streaming resolution.
+daemonLoop :: IORef DaemonState -> IORef (Maybe ResolveIndexes) -> IO ()
+daemonLoop stateRef indexRef = do
   mFrame <- readFrame stdin
   case mFrame of
     Nothing -> return ()  -- EOF
@@ -51,20 +103,107 @@ daemonLoop = do
         Left err -> do
           writeFrame stdout (encodeMsgpack (ResError ("decode error: " ++ err)))
         Right req -> do
-          result <- dispatch (drCmd req) (drNodes req)
-          writeFrame stdout (encodeMsgpack result)
-      daemonLoop
+          case drCmd req of
+            "load-context" -> do
+              state <- readIORef stateRef
+              case state of
+                Accumulating chunks -> do
+                  writeIORef stateRef (Accumulating (chunks ++ [drNodes req]))
+                  writeFrame stdout (encodeMsgpack (ResOk []))
+                Finalized _ -> do
+                  -- Defensive: re-accumulate if load-context after resolve
+                  writeIORef stateRef (Accumulating [drNodes req])
+                  writeFrame stdout (encodeMsgpack (ResOk []))
+            "clear-context" -> do
+              writeIORef stateRef (Accumulating [])
+              writeFrame stdout (encodeMsgpack (ResOk []))
+            "resolve-all" -> do
+              startTime <- getCurrentTime
+              hPutStrLn stderr "[grafema-resolve] Starting resolve-all"
+              allNodes <- finalizeContext stateRef
+              let ws = drWorkspacePackages req
+              let wsList = map (\wp -> (wpName wp, wpEntryPoint wp, wpPackageDir wp)) ws
+              -- Run resolvers sequentially via evaluate to ensure each
+              -- resolver's indexes are GC-eligible before the next runs.
+              -- The ++ chain is lazy so encodeMsgpack serializes incrementally.
+              let r1 = SameFileCalls.resolveAll allNodes
+              let r2 = JsLocalRefs.resolveAll allNodes
+              let r3 = RuntimeGlobals.resolveAll allNodes
+              let r4 = Builtins.resolveAll allNodes
+              r5 <- ImportResolution.resolveAllWithWorkspace allNodes wsList
+              let r6 = CrossFileCalls.resolveAll allNodes
+              let r7 = PropertyAccess.resolveAll allNodes
+              let result = r1 ++ r2 ++ r3 ++ r4 ++ r5 ++ r6 ++ r7
+              -- Encode directly to msgpack, bypassing aeson intermediate
+              let msgpackResult = MP.ObjectMap $ V.fromList
+                    [ (MP.ObjectStr "status", MP.ObjectStr "ok")
+                    , (MP.ObjectStr "commands", MP.ObjectArray (V.fromList (map pluginCommandToMsgpack result)))
+                    ]
+              writeFrame stdout (Binary.encode msgpackResult)
+              endTime <- getCurrentTime
+              hPutStrLn stderr $ "[grafema-resolve] resolve-all complete in "
+                ++ show (diffUTCTime endTime startTime)
+            "build-index" -> do
+              startTime <- getCurrentTime
+              let nodes = drNodes req
+              let ws = drWorkspacePackages req
+              let wsList = map (\wp -> (wpName wp, wpEntryPoint wp, wpPackageDir wp)) ws
+              let exportIndex = ImportResolution.buildExportIndex nodes
+              let wsMap = ImportResolution.buildWorkspaceMap wsList
+              let moduleIndex = ImportResolution.buildModuleIndex nodes
+              writeIORef indexRef (Just (ResolveIndexes exportIndex wsMap moduleIndex))
+              endTime <- getCurrentTime
+              hPutStrLn stderr $ "[grafema-resolve] build-index complete: "
+                ++ show (Map.size exportIndex) ++ " files in export index, "
+                ++ show (Map.size moduleIndex) ++ " modules, "
+                ++ show (diffUTCTime endTime startTime)
+              writeFrame stdout (encodeMsgpack (ResOk []))
+            "resolve-file" -> do
+              mIndexes <- readIORef indexRef
+              case mIndexes of
+                Nothing -> writeFrame stdout (encodeMsgpack (ResError "No index built. Send build-index first."))
+                Just indexes -> do
+                  let fileNodes = drNodes req
+                  -- Run all 7 resolvers on just this file's nodes
+                  let r1 = SameFileCalls.resolveAll fileNodes
+                  let r2 = JsLocalRefs.resolveAll fileNodes
+                  let r3 = RuntimeGlobals.resolveAll fileNodes
+                  let r4 = Builtins.resolveAll fileNodes
+                  -- For import resolution: use pre-built export index + workspace map + module index
+                  r5 <- ImportResolution.resolveFileWithIndex (riExportIndex indexes) (riWorkspaceMap indexes) (riModuleIndex indexes) fileNodes
+                  -- For cross-file calls: use pre-built export index
+                  let r6 = CrossFileCalls.resolveFileWithIndex (riExportIndex indexes) fileNodes
+                  let r7 = PropertyAccess.resolveFileWithIndex (riExportIndex indexes) fileNodes
+                  let result = r1 ++ r2 ++ r3 ++ r4 ++ r5 ++ r6 ++ r7
+                  -- Encode directly to msgpack, bypassing aeson intermediate
+                  let msgpackResult = MP.ObjectMap $ V.fromList
+                        [ (MP.ObjectStr "status", MP.ObjectStr "ok")
+                        , (MP.ObjectStr "commands", MP.ObjectArray (V.fromList (map pluginCommandToMsgpack result)))
+                        ]
+                  writeFrame stdout (Binary.encode msgpackResult)
+            _ -> do
+              -- Legacy per-command path (backward compat)
+              allNodes <- finalizeContext stateRef
+              let allWithReq = allNodes ++ drNodes req
+              result <- dispatch (drCmd req) allWithReq (drWorkspacePackages req)
+              writeFrame stdout (encodeMsgpack result)
+      daemonLoop stateRef indexRef
 
 -- | Dispatch a request to the appropriate resolver.
-dispatch :: Text -> [GraphNode] -> IO DaemonResponse
-dispatch "imports" nodes = ResOk <$> ImportResolution.resolveAll nodes
-dispatch "runtime-globals" nodes = return $ ResOk (RuntimeGlobals.resolveAll nodes)
-dispatch "builtins" nodes = return $ ResOk (Builtins.resolveAll nodes)
-dispatch "cross-file-calls" nodes = return $ ResOk (CrossFileCalls.resolveAll nodes)
-dispatch cmd _ = return $ ResError ("unknown command: " ++ T.unpack cmd)
+dispatch :: Text -> [GraphNode] -> [WorkspacePackage] -> IO DaemonResponse
+dispatch "imports" nodes wsPackages =
+  let wsList = map (\wp -> (wpName wp, wpEntryPoint wp, wpPackageDir wp)) wsPackages
+  in ResOk <$> ImportResolution.resolveAllWithWorkspace nodes wsList
+dispatch "runtime-globals" nodes _ = return $ ResOk (RuntimeGlobals.resolveAll nodes)
+dispatch "builtins" nodes _ = return $ ResOk (Builtins.resolveAll nodes)
+dispatch "cross-file-calls" nodes _ = return $ ResOk (CrossFileCalls.resolveAll nodes)
+dispatch "same-file-calls" nodes _ = return $ ResOk (SameFileCalls.resolveAll nodes)
+dispatch "property-access" nodes _ = return $ ResOk (PropertyAccess.resolveAll nodes)
+dispatch "js-local-refs" nodes _ = return $ ResOk (JsLocalRefs.resolveAll nodes)
+dispatch cmd _ _ = return $ ResError ("unknown command: " ++ T.unpack cmd)
 
 -- | Original CLI subcommand parser.
-data Command = CmdImports | CmdRuntimeGlobals | CmdBuiltins | CmdCrossFileCalls
+data Command = CmdImports | CmdRuntimeGlobals | CmdBuiltins | CmdCrossFileCalls | CmdSameFileCalls | CmdPropertyAccess | CmdJsLocalRefs
 
 commandParser :: Parser Command
 commandParser = subparser
@@ -76,6 +215,12 @@ commandParser = subparser
     (info (pure CmdBuiltins) (progDesc "Resolve Node.js builtin module imports and calls"))
   <> command "cross-file-calls"
     (info (pure CmdCrossFileCalls) (progDesc "Create CALLS edges for cross-file invocations"))
+  <> command "same-file-calls"
+    (info (pure CmdSameFileCalls) (progDesc "Create CALLS edges for same-file function invocations"))
+  <> command "property-access"
+    (info (pure CmdPropertyAccess) (progDesc "Resolve PROPERTY_ACCESS nodes to property definitions"))
+  <> command "js-local-refs"
+    (info (pure CmdJsLocalRefs) (progDesc "Resolve JS/TS REFERENCE nodes to same-file declarations"))
   )
 
 cliOpts :: ParserInfo Command
@@ -91,7 +236,10 @@ main = do
   hSetBinaryMode stdout True
   args <- getArgs
   if "--daemon" `elem` args
-    then daemonLoop
+    then do
+      contextRef <- newIORef (Accumulating [])
+      indexRef <- newIORef Nothing
+      daemonLoop contextRef indexRef
     else do
       cmd <- execParser cliOpts
       case cmd of
@@ -99,3 +247,6 @@ main = do
         CmdRuntimeGlobals -> RuntimeGlobals.run
         CmdBuiltins       -> Builtins.run
         CmdCrossFileCalls -> CrossFileCalls.run
+        CmdSameFileCalls  -> SameFileCalls.run
+        CmdPropertyAccess -> PropertyAccess.run
+        CmdJsLocalRefs    -> JsLocalRefs.run

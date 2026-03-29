@@ -11,6 +11,7 @@ executable haskell-resolve
 
   other-modules:
     HaskellImportResolution
+    HaskellLocalRefs
 
   build-depends:
     base                 >= 4.17 && < 5,

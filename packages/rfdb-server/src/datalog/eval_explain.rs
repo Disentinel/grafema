@@ -238,7 +238,7 @@ impl<'a> EvaluatorExplain<'a> {
 
             // Check if hash join applies for positive edge/incoming literals
             if let Literal::Positive(atom) = literal {
-                if let Some(join_var) = self.should_hash_join(atom, &bound_vars, current.len()) {
+                if let Some((join_var, 0)) = self.should_hash_join(atom, &bound_vars, current.len()) {
                     let start = Instant::now();
                     current = match atom.predicate() {
                         "edge" => self.eval_edge_hash_join(atom, &current, &join_var),
@@ -266,9 +266,9 @@ impl<'a> EvaluatorExplain<'a> {
 
             // Check if hash join applies for negation edge/incoming literals
             if let Literal::Negative(atom) = literal {
-                if let Some(join_var) = self.should_hash_join(atom, &bound_vars, current.len()) {
+                if let Some((join_var, key_pos)) = self.should_hash_join(atom, &bound_vars, current.len()) {
                     let start = Instant::now();
-                    current = self.eval_negation_hash_join(atom, &current, &join_var);
+                    current = self.eval_negation_hash_join(atom, &current, &join_var, key_pos);
                     let duration = start.elapsed();
                     self.record_step(
                         "hash_join_negation",
@@ -276,7 +276,7 @@ impl<'a> EvaluatorExplain<'a> {
                         atom.args(),
                         current.len(),
                         duration,
-                        Some(format!("key_var={}", join_var)),
+                        Some(format!("key_var={}, key_pos={}", join_var, key_pos)),
                     );
                     if current.is_empty() {
                         break;
@@ -323,7 +323,7 @@ impl<'a> EvaluatorExplain<'a> {
 
     /// Decide whether to use hash join for an edge/incoming literal.
     /// See Evaluator::should_hash_join for full documentation.
-    fn should_hash_join(&self, atom: &Atom, bound_vars: &HashSet<String>, current_count: usize) -> Option<String> {
+    fn should_hash_join(&self, atom: &Atom, bound_vars: &HashSet<String>, current_count: usize) -> Option<(String, usize)> {
         let pred = atom.predicate();
         if pred != "edge" && pred != "incoming" {
             return None;
@@ -342,10 +342,17 @@ impl<'a> EvaluatorExplain<'a> {
             return None;
         }
 
-        match &args[0] {
-            Term::Var(var) if bound_vars.contains(var.as_str()) => Some(var.clone()),
-            _ => None,
+        if let Term::Var(var) = &args[0] {
+            if bound_vars.contains(var.as_str()) {
+                return Some((var.clone(), 0));
+            }
         }
+        if let Term::Var(var) = &args[1] {
+            if bound_vars.contains(var.as_str()) {
+                return Some((var.clone(), 1));
+            }
+        }
+        None
     }
 
     /// Hash join for `edge(Src, Dst, "TYPE")` where Src is bound.
@@ -464,7 +471,7 @@ impl<'a> EvaluatorExplain<'a> {
 
     /// Hash join for negation: `\+ edge(X, _, "TYPE")` or `\+ incoming(X, _, "TYPE")`
     /// See Evaluator::eval_negation_hash_join for full documentation.
-    fn eval_negation_hash_join(&mut self, atom: &Atom, current: &[Bindings], key_var: &str) -> Vec<Bindings> {
+    fn eval_negation_hash_join(&mut self, atom: &Atom, current: &[Bindings], key_var: &str, key_pos: usize) -> Vec<Bindings> {
         let args = atom.args();
         let edge_type = match args.get(2) {
             Some(Term::Const(s)) => s.as_str(),
@@ -476,9 +483,11 @@ impl<'a> EvaluatorExplain<'a> {
         let edges = self.engine.get_edges_by_type(edge_type);
         self.stats.edges_traversed += edges.len();
 
-        let exists: HashSet<u128> = match atom.predicate() {
-            "edge" => edges.iter().map(|e| e.src).collect(),
-            "incoming" => edges.iter().map(|e| e.dst).collect(),
+        let exists: HashSet<u128> = match (atom.predicate(), key_pos) {
+            ("edge", 0) => edges.iter().map(|e| e.src).collect(),
+            ("edge", 1) => edges.iter().map(|e| e.dst).collect(),
+            ("incoming", 0) => edges.iter().map(|e| e.dst).collect(),
+            ("incoming", 1) => edges.iter().map(|e| e.src).collect(),
             _ => return current.to_vec(),
         };
 
@@ -572,6 +581,7 @@ impl<'a> EvaluatorExplain<'a> {
             "path" => self.eval_path(atom),
             "attr" => self.eval_attr(atom),
             "neq" => self.eval_neq(atom),
+            "gt" | "lt" | "gte" | "lte" => self.eval_numeric_cmp(atom),
             "starts_with" => self.eval_starts_with(atom),
             "not_starts_with" => self.eval_not_starts_with(atom),
             "string_contains" => self.eval_string_contains(atom),
@@ -596,6 +606,7 @@ impl<'a> EvaluatorExplain<'a> {
             "path" => self.eval_path(atom),
             "attr" => self.eval_attr(atom),
             "neq" => self.eval_neq(atom),
+            "gt" | "lt" | "gte" | "lte" => self.eval_numeric_cmp(atom),
             "starts_with" => self.eval_starts_with(atom),
             "not_starts_with" => self.eval_not_starts_with(atom),
             "string_contains" => self.eval_string_contains(atom),
@@ -1107,6 +1118,48 @@ impl<'a> EvaluatorExplain<'a> {
         }
     }
 
+    /// Evaluate gt/lt/gte/lte(X, Y) - numeric comparison constraints
+    fn eval_numeric_cmp(&mut self, atom: &Atom) -> Vec<Bindings> {
+        let args = atom.args();
+        if args.len() < 2 {
+            return vec![];
+        }
+
+        let left_str = match &args[0] {
+            Term::Const(s) => s.as_str(),
+            _ => return vec![],
+        };
+
+        let right_str = match &args[1] {
+            Term::Const(s) => s.as_str(),
+            _ => return vec![],
+        };
+
+        let left: f64 = match left_str.parse() {
+            Ok(v) => v,
+            Err(_) => return vec![],
+        };
+
+        let right: f64 = match right_str.parse() {
+            Ok(v) => v,
+            Err(_) => return vec![],
+        };
+
+        let pass = match atom.predicate() {
+            "gt" => left > right,
+            "lt" => left < right,
+            "gte" => left >= right,
+            "lte" => left <= right,
+            _ => return vec![],
+        };
+
+        if pass {
+            vec![Bindings::new()]
+        } else {
+            vec![]
+        }
+    }
+
     /// Evaluate starts_with(X, Prefix)
     fn eval_starts_with(&mut self, atom: &Atom) -> Vec<Bindings> {
         let args = atom.args();
@@ -1362,7 +1415,7 @@ impl<'a> EvaluatorExplain<'a> {
 
             // Check if hash join applies for positive edge/incoming literals
             if let Literal::Positive(atom) = literal {
-                if let Some(join_var) = self.should_hash_join(atom, &bound_vars, current.len()) {
+                if let Some((join_var, 0)) = self.should_hash_join(atom, &bound_vars, current.len()) {
                     let start = Instant::now();
                     current = match atom.predicate() {
                         "edge" => self.eval_edge_hash_join(atom, &current, &join_var),
@@ -1390,9 +1443,9 @@ impl<'a> EvaluatorExplain<'a> {
 
             // Check if hash join applies for negation edge/incoming literals
             if let Literal::Negative(atom) = literal {
-                if let Some(join_var) = self.should_hash_join(atom, &bound_vars, current.len()) {
+                if let Some((join_var, key_pos)) = self.should_hash_join(atom, &bound_vars, current.len()) {
                     let start = Instant::now();
-                    current = self.eval_negation_hash_join(atom, &current, &join_var);
+                    current = self.eval_negation_hash_join(atom, &current, &join_var, key_pos);
                     let duration = start.elapsed();
                     self.record_step(
                         "hash_join_negation",
@@ -1400,7 +1453,7 @@ impl<'a> EvaluatorExplain<'a> {
                         atom.args(),
                         current.len(),
                         duration,
-                        Some(format!("key_var={}", join_var)),
+                        Some(format!("key_var={}, key_pos={}", join_var, key_pos)),
                     );
                     if current.is_empty() {
                         break;

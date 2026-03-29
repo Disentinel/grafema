@@ -1,19 +1,16 @@
-# Build rfdb-server binaries for all supported platforms
+# Build Rust binaries (rfdb-server + grafema-orchestrator) for all platforms
 #
-# Triggered by: git tag rfdb-vX.Y.Z && git push --tags
-# Outputs: GitHub Release with 4 binary assets
+# Triggered by: git tag binaries-vX.Y.Z && git push --tags
+#               git tag rfdb-vX.Y.Z && git push --tags (legacy)
 #
-# Platforms:
-#   - darwin-x64:   Native build on macos-latest (Intel via Rosetta or x64 runner)
-#   - darwin-arm64: Native build on macos-latest (Apple Silicon)
-#   - linux-x64:    Native build on ubuntu-22.04
-#   - linux-arm64:  Cross-compile via actions-rust-cross
+# Outputs: GitHub Release with 8 binary assets (2 binaries × 4 platforms)
 
-name: Build rfdb-server Binaries
+name: Build Rust Binaries
 
 on:
   push:
     tags:
+      - 'binaries-v*'
       - 'rfdb-v*'
 
 permissions:
@@ -66,15 +63,18 @@ jobs:
         if: ${{ !matrix.use_cross }}
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: packages/rfdb-server -> target
+          workspaces: |
+            packages/rfdb-server -> target
+            packages/grafema-orchestrator -> target
           key: ${{ matrix.target }}
 
-      - name: Build (native)
+      # --- rfdb-server ---
+      - name: Build rfdb-server (native)
         if: ${{ !matrix.use_cross }}
         working-directory: packages/rfdb-server
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Build with cross (linux-arm64)
+      - name: Build rfdb-server (cross)
         if: ${{ matrix.use_cross }}
         uses: houseabsolute/actions-rust-cross@v0
         with:
@@ -83,24 +83,50 @@ jobs:
           args: --release --manifest-path packages/rfdb-server/Cargo.toml
           strip: true
 
-      - name: Strip binary (native builds)
+      # --- grafema-orchestrator ---
+      - name: Build grafema-orchestrator (native)
         if: ${{ !matrix.use_cross }}
-        run: strip packages/rfdb-server/target/${{ matrix.target }}/release/rfdb-server
+        working-directory: packages/grafema-orchestrator
+        run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Prepare binary for upload
+      - name: Build grafema-orchestrator (cross)
+        if: ${{ matrix.use_cross }}
+        uses: houseabsolute/actions-rust-cross@v0
+        with:
+          command: build
+          target: ${{ matrix.target }}
+          args: --release --manifest-path packages/grafema-orchestrator/Cargo.toml
+          strip: true
+
+      # --- Strip native builds ---
+      - name: Strip binaries (native builds)
+        if: ${{ !matrix.use_cross }}
+        run: |
+          strip packages/rfdb-server/target/${{ matrix.target }}/release/rfdb-server
+          strip packages/grafema-orchestrator/target/${{ matrix.target }}/release/grafema-orchestrator
+
+      # --- Prepare for upload ---
+      - name: Prepare binaries for upload
         run: |
           mkdir -p dist
           cp packages/rfdb-server/target/${{ matrix.target }}/release/rfdb-server dist/rfdb-server-${{ matrix.name }}
-          chmod +x dist/rfdb-server-${{ matrix.name }}
+          cp packages/grafema-orchestrator/target/${{ matrix.target }}/release/grafema-orchestrator dist/grafema-orchestrator-${{ matrix.name }}
+          chmod +x dist/*
           ls -lh dist/
 
-      - name: Verify binary
+      - name: Verify binaries
         run: |
+          echo "=== rfdb-server ==="
           file dist/rfdb-server-${{ matrix.name }}
           du -h dist/rfdb-server-${{ matrix.name }}
+          echo "=== grafema-orchestrator ==="
+          file dist/grafema-orchestrator-${{ matrix.name }}
+          du -h dist/grafema-orchestrator-${{ matrix.name }}
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/rfdb-server-${{ matrix.name }}
+          files: |
+            dist/rfdb-server-${{ matrix.name }}
+            dist/grafema-orchestrator-${{ matrix.name }}
           fail_on_unmatched_files: true

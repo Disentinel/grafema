@@ -9,9 +9,10 @@
  */
 
 import { Command } from 'commander';
-import { resolve, join } from 'path';
+import { resolve, join, dirname } from 'path';
 import { existsSync, unlinkSync, readFileSync } from 'fs';
 import { setTimeout as sleep } from 'timers/promises';
+import { spawn } from 'child_process';
 import { RFDBClient, loadConfig, RFDBServerBackend, findRfdbBinary, startRfdbServer } from '@grafema/util';
 import { exitWithError } from '../utils/errorFormatter.js';
 
@@ -137,7 +138,8 @@ serverCommand
   .description('Start the RFDB server')
   .option('-p, --project <path>', 'Project path', '.')
   .option('-b, --binary <path>', 'Path to rfdb-server binary')
-  .action(async (options: { project: string; binary?: string }) => {
+  .option('-f, --foreground', 'Run in foreground with request logging (Ctrl+C to stop)')
+  .action(async (options: { project: string; binary?: string; foreground?: boolean }) => {
     const projectPath = resolve(options.project);
     const { grafemaDir, socketPath, dbPath, pidPath } = getProjectPaths(projectPath);
 
@@ -156,6 +158,9 @@ serverCommand
       if (status.version) {
         console.log(`  Version: ${status.version}`);
       }
+      if (options.foreground) {
+        console.log('Stop it first: grafema server stop');
+      }
       return;
     }
 
@@ -172,6 +177,48 @@ serverCommand
       ]);
     }
 
+    // Foreground mode: run server in current process with logs visible
+    if (options.foreground) {
+      const dataDir = dirname(socketPath);
+
+      // Remove stale socket
+      if (existsSync(socketPath)) {
+        unlinkSync(socketPath);
+      }
+
+      console.log(`Starting RFDB server (foreground)...`);
+      console.log(`  Binary: ${binaryPath}`);
+      console.log(`  Database: ${dbPath}`);
+      console.log(`  Socket: ${socketPath}`);
+      console.log(`  Press Ctrl+C to stop\n`);
+
+      const child = spawn(binaryPath, [dbPath, '--socket', socketPath, '--data-dir', dataDir], {
+        stdio: ['ignore', 'inherit', 'inherit'],
+        env: { ...process.env, RFDB_VERBOSE: '1' },
+      });
+
+      const shutdown = () => {
+        console.log('\nStopping RFDB server...');
+        child.kill('SIGTERM');
+      };
+      process.on('SIGINT', shutdown);
+      process.on('SIGTERM', shutdown);
+
+      child.on('close', (code) => {
+        // Clean up socket and PID
+        if (existsSync(socketPath)) {
+          try { unlinkSync(socketPath); } catch { /* ignore */ }
+        }
+        if (existsSync(pidPath)) {
+          try { unlinkSync(pidPath); } catch { /* ignore */ }
+        }
+        process.exit(code ?? 0);
+      });
+
+      return;
+    }
+
+    // Background mode (default): detached server
     console.log(`Starting RFDB server...`);
     console.log(`  Binary: ${binaryPath}`);
     console.log(`  Database: ${dbPath}`);

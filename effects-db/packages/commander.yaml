@@ -1,0 +1,96 @@
+# commander (v13.x) — CLI framework
+# Generated: 2026-03-15
+# Method: Grafema graph analysis + Claude inference, cross-validated
+# Taxonomy version: 1
+# purl: pkg:npm/commander
+#
+# Graph validation findings (7599 nodes, 18285 edges):
+#   - 3x process.exit calls → IO, THROW (in _exit, error handling)
+#   - 2x childProcess.spawn calls → IO, ASYNC (executableSubcommand support)
+#   - process.on → IO (signal handling)
+#   - <obj>.write / writeErr → IO (stdout/stderr output)
+#   - Buffer usage → PURE (string encoding)
+
+commander:
+  # Command class — core API
+  Command.new: [PURE]
+  Command.name: [MUTATION]        # setter — mutates this
+  Command.description: [MUTATION]
+  Command.version: [MUTATION]
+  Command.option: [MUTATION]
+  Command.requiredOption: [MUTATION]
+  Command.addOption: [MUTATION]
+  Command.argument: [MUTATION]
+  Command.addArgument: [MUTATION]
+  Command.command: [MUTATION]      # registers subcommand
+  Command.addCommand: [MUTATION]
+  Command.action: [MUTATION]       # registers handler
+  Command.hook: [MUTATION]
+  Command.alias: [MUTATION]
+  Command.aliases: [MUTATION]
+  Command.usage: [MUTATION]
+  Command.addHelpText: [MUTATION]
+  Command.addHelpCommand: [MUTATION]
+  Command.helpOption: [MUTATION]
+  Command.configureHelp: [MUTATION]
+  Command.showHelpAfterError: [MUTATION]
+  Command.showSuggestionAfterError: [MUTATION]
+  Command.configureOutput: [MUTATION]
+  Command.exitOverride: [MUTATION]
+  Command.enablePositionalOptions: [MUTATION]
+  Command.passThroughOptions: [MUTATION]
+  Command.allowUnknownOption: [MUTATION]
+  Command.allowExcessArguments: [MUTATION]
+  Command.combineFlagAndOptionalValue: [MUTATION]
+  Command.storeOptionsAsProperties: [MUTATION]
+
+  # Execution — IO (reads process.argv, writes stdout/stderr, may call process.exit)
+  # GRAFEMA FOUND: process.exit (3x), childProcess.spawn (2x), process.on, write/writeErr
+  Command.parse: [IO, MUTATION, THROW]        # may call process.exit
+  Command.parseAsync: [IO, ASYNC, MUTATION, THROW]
+  Command.parseOptions: [MUTATION]
+  Command._exit: [IO, THROW]                  # calls process.exit
+  Command.executableSubcommand: [IO, ASYNC]    # calls childProcess.spawn
+
+  # Output — IO
+  Command.help: [IO]               # writes to stdout
+  Command.outputHelp: [IO]
+  Command.helpInformation: [PURE]  # returns string, no IO
+
+  # Getters — PURE
+  Command.opts: [PURE]
+  Command.optsWithGlobals: [PURE]
+  Command.getOptionValue: [PURE]
+  Command.getOptionValueSource: [PURE]
+  Command.setOptionValue: [MUTATION]
+  Command.setOptionValueWithSource: [MUTATION]
+  Command.args: [PURE]
+
+  # Option class
+  Option.new: [PURE]
+  Option.default: [MUTATION]
+  Option.preset: [MUTATION]
+  Option.env: [MUTATION]
+  Option.argParser: [MUTATION]
+  Option.choices: [MUTATION]
+  Option.conflicts: [MUTATION]
+  Option.implies: [MUTATION]
+  Option.hideHelp: [MUTATION]
+  Option.makeOptionMandatory: [MUTATION]
+
+  # Argument class
+  Argument.new: [PURE]
+  Argument.default: [MUTATION]
+  Argument.argParser: [MUTATION]
+  Argument.choices: [MUTATION]
+  Argument.argRequired: [MUTATION]
+  Argument.argOptional: [MUTATION]
+
+  # Top-level helpers
+  createCommand: [PURE]
+  createOption: [PURE]
+  createArgument: [PURE]
+
+  # InvalidArgumentError
+  InvalidArgumentError.new: [PURE]
+  CommanderError.new: [PURE]

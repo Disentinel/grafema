@@ -4,7 +4,7 @@
 
 import { ensureAnalyzed } from '../analysis.js';
 import { getProjectPath } from '../state.js';
-import { findCallsInFunction, findContainingFunction, FileOverview, buildNodeContext, getNodeDisplayName, formatEdgeMetadata, STRUCTURAL_EDGE_TYPES } from '@grafema/util';
+import { findCallsInFunction, findContainingFunction, FileOverview, buildNodeContext, getNodeDisplayName, formatEdgeMetadata, STRUCTURAL_EDGE_TYPES, isGrafemaUri, toCompactSemanticId } from '@grafema/util';
 import type { CallInfo, CallerInfo, NodeContext } from '@grafema/util';
 import { existsSync, readFileSync, realpathSync } from 'fs';
 import { isAbsolute, join, relative } from 'path';
@@ -26,12 +26,11 @@ import type {
 /**
  * Get comprehensive function details including calls made and callers.
  *
- * Graph structure:
- * ```
- * FUNCTION -[HAS_SCOPE]-> SCOPE -[CONTAINS]-> CALL/METHOD_CALL
- *                         SCOPE -[CONTAINS]-> SCOPE (nested blocks)
- * CALL -[CALLS]-> FUNCTION (target)
- * ```
+ * Supports two graph layouts (see findCallsInFunction for details):
+ * - Layout A: FUNCTION -> HAS_SCOPE -> SCOPE -> CONTAINS -> CALL (legacy)
+ * - Layout B: FUNCTION -> AWAITS|RETURNS|THROWS -> CALL (Rust orchestrator)
+ *
+ * In both layouts: CALL -[CALLS]-> FUNCTION (target)
  *
  * This is the core tool for understanding function behavior.
  * Use transitive=true to follow call chains (A -> B -> C).
@@ -42,12 +41,35 @@ export async function handleGetFunctionDetails(
   const db = await ensureAnalyzed();
   const { name, file, transitive = false } = args;
 
-  // Step 1: Find the function
+  // Step 1: Find the function (search both FUNCTION and METHOD nodes)
   const candidates: GraphNode[] = [];
-  for await (const node of db.queryNodes({ type: 'FUNCTION' })) {
-    if (node.name !== name) continue;
-    if (file && !node.file?.includes(file)) continue;
-    candidates.push(node);
+  for (const nodeType of ['FUNCTION', 'METHOD']) {
+    for await (const node of db.queryNodes({ type: nodeType })) {
+      if (node.name !== name) continue;
+      if (file && !node.file?.includes(file)) continue;
+      candidates.push(node);
+    }
+  }
+
+  // Fallback: search for const-bound arrow functions
+  // Pattern: CONSTANT("create_search_handler") -[ASSIGNED_FROM]-> FUNCTION("<arrow>")
+  if (candidates.length === 0) {
+    for (const nodeType of ['CONSTANT', 'VARIABLE']) {
+      for await (const node of db.queryNodes({ type: nodeType })) {
+        if (node.name !== name) continue;
+        if (file && !node.file?.includes(file)) continue;
+        // Check if this variable/constant is assigned from a function
+        const assignedEdges = await db.getOutgoingEdges(node.id, ['ASSIGNED_FROM']);
+        for (const edge of assignedEdges) {
+          const target = await db.getNode(edge.dst);
+          if (target && (target.type === 'FUNCTION' || target.type === 'METHOD')) {
+            // Use the function node but keep the const name for display
+            const fnNode = { ...target, name: node.name } as GraphNode;
+            candidates.push(fnNode);
+          }
+        }
+      }
+    }
   }
 
   if (candidates.length === 0) {
@@ -168,11 +190,14 @@ export async function handleGetContext(
   const db = await ensureAnalyzed();
   const { semanticId, contextLines: ctxLines = 3, edgeType } = args;
 
+  // Accept both grafema:// URI and compact format
+  const displayId = isGrafemaUri(semanticId) ? toCompactSemanticId(semanticId) : semanticId;
+
   // 1. Look up node
   const node = await db.getNode(semanticId);
   if (!node) {
     return errorResult(
-      `Node not found: "${semanticId}"\n` +
+      `Node not found: "${displayId}"\n` +
       `Use find_nodes or query_graph to find the correct semantic ID.`
     );
   }

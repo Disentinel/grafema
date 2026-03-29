@@ -1,0 +1,83 @@
+# @anthropic-ai/sdk (v0.x) — Anthropic API client
+# Generated: 2026-03-15
+# Method: Grafema graph analysis + Claude source-code inference, cross-validated
+# Taxonomy version: 1
+# purl: pkg:npm/@anthropic-ai/sdk
+#
+# Graph validation findings (13800 nodes, 33707 edges):
+#   - fetch, setTimeout (3x), clearTimeout, process, Buffer in globals → IO+ASYNC confirmed
+#   - fetchWithTimeout internal call → network IO
+#   - Date in globals → retry timing (not NONDETERMINISTIC for API purposes)
+#
+# Source-code analysis corrections (batch 2 subagent):
+#   - All API methods THROW (APIError subclasses: rate limit, auth, timeout)
+#   - Constructor is MUTATION, not IO — reads process.env but doesn't make network calls
+
+"@anthropic-ai/sdk":
+  # Constructor — reads ANTHROPIC_API_KEY from process.env, creates mutable state
+  Anthropic.new: [MUTATION]
+
+  # Messages API — all IO + ASYNC + THROW (HTTP + APIError)
+  Anthropic.messages.create: [IO, ASYNC, THROW]
+  Anthropic.messages.stream: [IO, ASYNC, THROW]
+  Anthropic.messages.parse: [IO, ASYNC, THROW]
+  Anthropic.messages.countTokens: [IO, ASYNC, THROW]
+
+  # Message batches
+  Anthropic.messages.batches.create: [IO, ASYNC, THROW]
+  Anthropic.messages.batches.list: [IO, ASYNC, THROW]
+  Anthropic.messages.batches.retrieve: [IO, ASYNC, THROW]
+  Anthropic.messages.batches.delete: [IO, ASYNC, THROW]
+  Anthropic.messages.batches.cancel: [IO, ASYNC, THROW]
+  Anthropic.messages.batches.results: [IO, ASYNC, THROW]
+
+  # Completions (legacy)
+  Anthropic.completions.create: [IO, ASYNC, THROW]
+
+  # Models
+  Anthropic.models.list: [IO, ASYNC, THROW]
+  Anthropic.models.retrieve: [IO, ASYNC, THROW]
+
+  # Beta APIs
+  Anthropic.beta.messages.create: [IO, ASYNC, THROW]
+  Anthropic.beta.messages.stream: [IO, ASYNC, THROW]
+  Anthropic.beta.messages.parse: [IO, ASYNC, THROW]
+  Anthropic.beta.messages.countTokens: [IO, ASYNC, THROW]
+  Anthropic.beta.messages.toolRunner: [IO, ASYNC, THROW]
+  Anthropic.beta.messages.batches.create: [IO, ASYNC, THROW]
+  Anthropic.beta.messages.batches.list: [IO, ASYNC, THROW]
+  Anthropic.beta.messages.batches.retrieve: [IO, ASYNC, THROW]
+  Anthropic.beta.messages.batches.delete: [IO, ASYNC, THROW]
+  Anthropic.beta.messages.batches.cancel: [IO, ASYNC, THROW]
+  Anthropic.beta.messages.batches.results: [IO, ASYNC, THROW]
+  Anthropic.beta.models.list: [IO, ASYNC, THROW]
+  Anthropic.beta.models.retrieve: [IO, ASYNC, THROW]
+  Anthropic.beta.files.upload: [IO, ASYNC, THROW]
+  Anthropic.beta.files.list: [IO, ASYNC, THROW]
+  Anthropic.beta.files.delete: [IO, ASYNC, THROW]
+  Anthropic.beta.files.retrieveMetadata: [IO, ASYNC, THROW]
+  Anthropic.beta.files.download: [IO, ASYNC, THROW]
+
+  # Streaming helpers
+  MessageStream.new: [PURE]
+  MessageStream.on: [MUTATION]
+  MessageStream.off: [MUTATION]
+  MessageStream.abort: [MUTATION]
+  MessageStream.finalMessage: [ASYNC]
+  MessageStream.finalText: [ASYNC]
+
+  # File utilities
+  toFile: [ASYNC]
+
+  # Content block helpers (PURE — data types)
+  TextBlock: [PURE]
+  ToolUseBlock: [PURE]
+  ContentBlockDeltaEvent: [PURE]
+
+  # Error types
+  APIError.new: [PURE]
+  AuthenticationError.new: [PURE]
+  BadRequestError.new: [PURE]
+  NotFoundError.new: [PURE]
+  RateLimitError.new: [PURE]
+  APIConnectionError.new: [PURE]

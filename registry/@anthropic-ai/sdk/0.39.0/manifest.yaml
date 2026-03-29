@@ -1,0 +1,148 @@
+schema_version: 1
+analyzer_version: 0.3.20
+authored: false
+confidence: 1
+generated: 2026-03-20T18:45:01.422Z
+package:
+  purl: pkg:npm/@anthropic-ai/sdk@0.39.0
+  source_type: source
+exports:
+  - name: __esModule
+    kind: TYPE
+    semanticId: grafema://localhost/pkg/index.js#EXPORT_BINDING-%3E__esModule
+    effects:
+      - PURE
+  - name: Anthropic
+    kind: CLASS
+    semanticId: grafema://localhost/pkg/index.js#CLASS-%3EAnthropic
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: AnthropicError
+    kind: TYPE
+    semanticId: grafema://localhost/pkg/index.js#EXPORT_BINDING-%3EAnthropicError
+    effects:
+      - PURE
+  - name: APIConnectionError
+    kind: TYPE
+    semanticId: grafema://localhost/pkg/index.js#EXPORT_BINDING-%3EAPIConnectionError
+    effects:
+      - PURE
+  - name: APIConnectionTimeoutError
+    kind: TYPE
+    semanticId: grafema://localhost/pkg/index.js#EXPORT_BINDING-%3EAPIConnectionTimeoutError
+    effects:
+      - PURE
+  - name: APIError
+    kind: TYPE
+    semanticId: grafema://localhost/pkg/index.js#EXPORT_BINDING-%3EAPIError
+    effects:
+      - PURE
+  - name: APIUserAbortError
+    kind: TYPE
+    semanticId: grafema://localhost/pkg/index.js#EXPORT_BINDING-%3EAPIUserAbortError
+    effects:
+      - PURE
+  - name: AuthenticationError
+    kind: TYPE
+    semanticId: grafema://localhost/pkg/index.js#EXPORT_BINDING-%3EAuthenticationError
+    effects:
+      - PURE
+  - name: BadRequestError
+    kind: TYPE
+    semanticId: grafema://localhost/pkg/index.js#EXPORT_BINDING-%3EBadRequestError
+    effects:
+      - PURE
+  - name: ConflictError
+    kind: TYPE
+    semanticId: grafema://localhost/pkg/index.js#EXPORT_BINDING-%3EConflictError
+    effects:
+      - PURE
+  - name: default
+    kind: TYPE
+    semanticId: grafema://localhost/pkg/index.js#EXPORT_BINDING-%3Edefault
+    effects:
+      - PURE
+  - name: fileFromPath
+    kind: TYPE
+    semanticId: grafema://localhost/pkg/index.js#EXPORT_BINDING-%3EfileFromPath
+    effects:
+      - PURE
+  - name: InternalServerError
+    kind: TYPE
+    semanticId: grafema://localhost/pkg/index.js#EXPORT_BINDING-%3EInternalServerError
+    effects:
+      - PURE
+  - name: NotFoundError
+    kind: TYPE
+    semanticId: grafema://localhost/pkg/index.js#EXPORT_BINDING-%3ENotFoundError
+    effects:
+      - PURE
+  - name: PermissionDeniedError
+    kind: TYPE
+    semanticId: grafema://localhost/pkg/index.js#EXPORT_BINDING-%3EPermissionDeniedError
+    effects:
+      - PURE
+  - name: RateLimitError
+    kind: TYPE
+    semanticId: grafema://localhost/pkg/index.js#EXPORT_BINDING-%3ERateLimitError
+    effects:
+      - PURE
+  - name: toFile
+    kind: TYPE
+    semanticId: grafema://localhost/pkg/index.js#EXPORT_BINDING-%3EtoFile
+    effects:
+      - PURE
+  - name: UnprocessableEntityError
+    kind: TYPE
+    semanticId: grafema://localhost/pkg/index.js#EXPORT_BINDING-%3EUnprocessableEntityError
+    effects:
+      - PURE
+imports:
+  - purl: pkg:npm/@anthropic-ai/sdk
+    symbols:
+      - "@anthropic-ai/sdk/_shims/auto/runtime"
+      - "@anthropic-ai/sdk/_shims/auto/types"
+      - "@anthropic-ai/sdk/_shims/index"
+      - "@anthropic-ai/sdk/core"
+      - "@anthropic-ai/sdk/error"
+      - "@anthropic-ai/sdk/resources/beta/messages/messages"
+      - "@anthropic-ai/sdk/resources/messages"
+      - "@anthropic-ai/sdk/streaming"
+  - purl: pkg:npm/abort-controller
+    symbols:
+      - abort-controller
+  - purl: pkg:npm/agentkeepalive
+    symbols:
+      - agentkeepalive
+  - purl: pkg:npm/form-data-encoder
+    symbols:
+      - form-data-encoder
+  - purl: pkg:npm/formdata-node
+    symbols:
+      - formdata-node
+  - purl: pkg:npm/node-fetch
+    symbols:
+      - node-fetch
+  - purl: pkg:npm/node@*#fs
+    symbols:
+      - node:fs
+  - purl: pkg:npm/node@*#http
+    symbols:
+      - node:http
+  - purl: pkg:npm/node@*#stream
+    symbols:
+      - node:stream
+  - purl: pkg:npm/node@*#stream/web
+    symbols:
+      - node:stream/web
+capabilities:
+  total_exports: 18
+  total_internal_symbols: 2882
+  has_graph: true
+access:
+  local: ./graph.rfdb
+language: typescript
+language_specific:
+  module_system: esm

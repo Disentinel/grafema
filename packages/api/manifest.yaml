@@ -1,0 +1,70 @@
+schema_version: 1
+analyzer_version: 0.2.12-beta
+authored: false
+confidence: 1
+generated: 2026-03-15T22:16:00.461Z
+package:
+  purl: pkg:npm/@grafema/api
+  source_type: source
+exports:
+  - name: createGraphQLServer
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/api/src/server.ts#FUNCTION-%3EcreateGraphQLServer
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: GraphQLContext
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/api/src/context.ts#INTERFACE-%3EGraphQLContext
+    effects:
+      - PURE
+  - name: GraphQLServerOptions
+    kind: INTERFACE
+    semanticId: grafema://github.com/Disentinel/grafema/packages/api/src/server.ts#INTERFACE-%3EGraphQLServerOptions
+    effects:
+      - PURE
+  - name: startServer
+    kind: FUNCTION
+    semanticId: grafema://github.com/Disentinel/grafema/packages/api/src/server.ts#FUNCTION-%3EstartServer
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+imports:
+  - purl: pkg:npm/@grafema/types
+    symbols:
+      - "@grafema/types"
+  - purl: pkg:npm/@grafema/util
+    symbols:
+      - "@grafema/util"
+  - purl: pkg:npm/dataloader
+    symbols:
+      - dataloader
+  - purl: pkg:npm/graphql-scalars
+    symbols:
+      - graphql-scalars
+  - purl: pkg:npm/graphql-yoga
+    symbols:
+      - graphql-yoga
+  - purl: pkg:npm/node@*#fs
+    symbols:
+      - node:fs
+  - purl: pkg:npm/node@*#http
+    symbols:
+      - node:http
+  - purl: pkg:npm/node@*#path
+    symbols:
+      - node:path
+  - purl: pkg:npm/node@*#url
+    symbols:
+      - node:url
+capabilities:
+  total_exports: 4
+  total_internal_symbols: 115
+  has_graph: true
+access:
+  local: ./graph.rfdb
+language: typescript
+language_specific:
+  module_system: esm

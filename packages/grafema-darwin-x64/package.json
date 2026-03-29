@@ -1,0 +1,30 @@
+{
+  "name": "@grafema/grafema-darwin-x64",
+  "version": "0.3.22",
+  "description": "Grafema native binaries for macOS x64",
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "main": "index.js",
+  "scripts": {
+    "postinstall": "node postinstall.js"
+  },
+  "files": [
+    "bin/",
+    "index.js",
+    "postinstall.js"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Disentinel/grafema.git",
+    "directory": "packages/grafema-darwin-x64"
+  },
+  "license": "FSL-1.1-Apache-2.0",
+  "author": "Vadim Reshetnikov",
+  "engines": {
+    "node": ">= 18"
+  }
+}

@@ -1,5 +1,7 @@
 /**
  * MCP Dataflow Handlers
+ *
+ * Delegates BFS tracing to @grafema/util's shared traceDataflow module.
  */
 
 import { ensureAnalyzed } from '../analysis.js';
@@ -9,6 +11,7 @@ import {
   textResult,
   errorResult,
 } from '../utils.js';
+import { isGrafemaUri, toCompactSemanticId } from '@grafema/util';
 import type {
   ToolResult,
   TraceAliasArgs,
@@ -16,8 +19,14 @@ import type {
   CheckInvariantArgs,
   GraphNode,
 } from '../types.js';
+import {
+  traceDataflow,
+  renderTraceNarrative,
+  type DataflowBackend,
+  type TraceDetail,
+} from '@grafema/util';
 
-// === TRACE HANDLERS ===
+// === TRACE ALIAS (unchanged) ===
 
 export async function handleTraceAlias(args: TraceAliasArgs): Promise<ToolResult> {
   const db = await ensureAnalyzed();
@@ -58,6 +67,16 @@ export async function handleTraceAlias(args: TraceAliasArgs): Promise<ToolResult
     }
     visited.add(current.id);
 
+    // Resolve REFERENCE → declaration transparently (don't add to chain)
+    if (current.type === 'REFERENCE') {
+      const resolveEdges = await db.getOutgoingEdges(current.id, ['READS_FROM']);
+      if (resolveEdges.length > 0) {
+        current = await db.getNode(resolveEdges[0].dst);
+        continue;
+      }
+      break;
+    }
+
     chain.push({
       type: current.type,
       name: current.name,
@@ -80,70 +99,63 @@ export async function handleTraceAlias(args: TraceAliasArgs): Promise<ToolResult
   );
 }
 
+// === TRACE DATAFLOW ===
+
 export async function handleTraceDataFlow(args: TraceDataFlowArgs): Promise<ToolResult> {
   const db = await ensureAnalyzed();
-  const { source, direction = 'forward', max_depth = 10 } = args;
+  const { source, file, direction = 'forward', max_depth = 10, limit = 50, detail } = args;
 
   // Find source node
-  let sourceNode: GraphNode | null = null;
-
-  // Try to find by ID first
-  sourceNode = await db.getNode(source);
-
-  // If not found, search by name
+  let sourceNode: GraphNode | null = await db.getNode(source);
   if (!sourceNode) {
+    // Search by name, preferring nodes that match the file filter
+    let fallbackNode: GraphNode | null = null;
     for await (const node of db.queryNodes({ name: source })) {
+      if (file && !node.file?.includes(file)) {
+        // Keep first match as fallback in case no file-matching node is found
+        if (!fallbackNode) fallbackNode = node;
+        continue;
+      }
       sourceNode = node;
       break;
     }
+    // Also try PARAMETER type nodes (often the real entry point for dataflow)
+    if (!sourceNode) {
+      for await (const node of db.queryNodes({ type: 'PARAMETER', name: source })) {
+        if (file && !node.file?.includes(file)) {
+          if (!fallbackNode) fallbackNode = node;
+          continue;
+        }
+        sourceNode = node;
+        break;
+      }
+    }
+    // Use fallback (first name match regardless of file) if no file-specific match
+    if (!sourceNode && fallbackNode) {
+      sourceNode = fallbackNode;
+    }
   }
-
   if (!sourceNode) {
-    return errorResult(`Source "${source}" not found`);
+    const displaySource = isGrafemaUri(source) ? toCompactSemanticId(source) : source;
+    return errorResult(`Source "${displaySource}" not found`);
   }
 
-  const visited = new Set<string>();
-  const paths: unknown[] = [];
+  // Cast db to DataflowBackend — runtime types are compatible
+  const dfDb = db as unknown as DataflowBackend;
 
-  async function trace(nodeId: string, depth: number, path: string[]): Promise<void> {
-    if (depth > max_depth || visited.has(nodeId)) return;
-    visited.add(nodeId);
+  const traceResults = await traceDataflow(dfDb, sourceNode.id, {
+    direction: direction as 'forward' | 'backward' | 'both',
+    maxDepth: max_depth,
+    limit,
+  });
 
-    const newPath = [...path, nodeId];
-
-    if (direction === 'forward' || direction === 'both') {
-      const outEdges = await db.getOutgoingEdges(nodeId, [
-        'ASSIGNED_FROM',
-        'DERIVES_FROM',
-        'PASSES_ARGUMENT',
-      ]);
-      for (const edge of outEdges) {
-        await trace(edge.dst, depth + 1, newPath);
-      }
-    }
-
-    if (direction === 'backward' || direction === 'both') {
-      const inEdges = await db.getIncomingEdges(nodeId, [
-        'ASSIGNED_FROM',
-        'DERIVES_FROM',
-        'PASSES_ARGUMENT',
-      ]);
-      for (const edge of inEdges) {
-        await trace(edge.src, depth + 1, newPath);
-      }
-    }
-
-    if (depth > 0) {
-      paths.push(newPath);
-    }
-  }
-
-  await trace(sourceNode.id, 0, []);
-
-  return textResult(
-    `Data flow from "${source}" (${paths.length} paths):\n\n${JSON.stringify(paths, null, 2)}`
-  );
+  const sourceName = sourceNode.name || source;
+  return textResult(renderTraceNarrative(traceResults, sourceName, {
+    detail: (detail as TraceDetail) || 'normal',
+  }));
 }
+
+// === CHECK INVARIANT (unchanged) ===
 
 export async function handleCheckInvariant(args: CheckInvariantArgs): Promise<ToolResult> {
   const db = await ensureAnalyzed();
@@ -159,28 +171,34 @@ export async function handleCheckInvariant(args: CheckInvariantArgs): Promise<To
     const total = violations.length;
 
     if (total === 0) {
-      return textResult(`✅ Invariant holds: ${description || 'No violations found'}`);
+      return textResult(`Invariant holds: ${description || 'No violations found'}`);
     }
 
     const enrichedViolations: unknown[] = [];
     for (const v of violations.slice(0, 20)) {
-      const nodeId = v.bindings?.find((b: any) => b.name === 'X')?.value;
-      if (nodeId) {
-        const node = await db.getNode(nodeId);
+      const xBinding = v.bindings?.find((b: { name: string; value: string }) => b.name === 'X');
+      if (xBinding) {
+        const node = await db.getNode(xBinding.value);
         if (node) {
           enrichedViolations.push({
-            id: nodeId,
+            id: xBinding.value,
             type: node.type,
             name: node.name,
             file: node.file,
             line: node.line,
           });
+        } else {
+          const bindingsMap: Record<string, string> = {};
+          for (const b of v.bindings!) {
+            bindingsMap[b.name] = b.value;
+          }
+          enrichedViolations.push(bindingsMap);
         }
       }
     }
 
     return textResult(
-      `❌ ${total} violation(s) found:\n\n${JSON.stringify(
+      `${total} violation(s) found:\n\n${JSON.stringify(
         serializeBigInt(enrichedViolations),
         null,
         2

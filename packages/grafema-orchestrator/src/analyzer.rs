@@ -16,13 +16,21 @@ use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
-use tokio::sync::Semaphore;
+use tokio::sync::{mpsc, Semaphore};
 
 use crate::parser;
 use crate::process_pool::{PoolConfig, ProcessPool};
 use crate::rfdb::{WireEdge, WireNode};
+
+static BACKPRESSURE_COUNT: AtomicU64 = AtomicU64::new(0);
+
+/// Read and reset the backpressure counter (number of times channel was full).
+pub fn read_backpressure_count() -> u64 {
+    BACKPRESSURE_COUNT.swap(0, Ordering::Relaxed)
+}
 
 // ---------------------------------------------------------------------------
 // Deserialization types — FileAnalysis from grafema-analyzer stdout
@@ -144,11 +152,186 @@ impl FileAnalysis {
 
         self.edges.extend(new_edges);
     }
+
+    /// Convert byte-offset positions to line:column for all nodes.
+    ///
+    /// The JS/TS analyzer (Haskell `js-analyzer`) outputs byte offsets in the
+    /// `line` and `endLine` fields, with `column` and `endColumn` always 0.
+    /// This method reads the source file to build a line index and converts
+    /// each node's positions to 1-based line and 0-based column.
+    ///
+    /// Must be called BEFORE `relativize_paths()` since it needs the absolute
+    /// file path to read the source.
+    pub fn convert_byte_offsets_to_lines(&mut self, file_path: &Path) {
+        let content = match std::fs::read(file_path) {
+            Ok(c) => c,
+            Err(_) => return, // Can't read file, skip conversion
+        };
+        let line_index = build_line_index(&content);
+
+        for node in &mut self.nodes {
+            if node.line > 0 {
+                let (line, col) = byte_offset_to_line_col(&line_index, node.line as usize);
+                node.line = line;
+                node.column = col;
+            }
+            if node.end_line > 0 {
+                let (line, col) = byte_offset_to_line_col(&line_index, node.end_line as usize);
+                node.end_line = line;
+                node.end_column = col;
+            }
+        }
+    }
+
+    /// Convert all semantic IDs in this analysis to URI format.
+    ///
+    /// URI format: grafema://{authority}/{file}#{encoded_fragment}
+    /// Virtual nodes (no file prefix): grafema://{authority}/_/{encoded_full_id}
+    /// Module IDs: grafema://{authority}/{file}#MODULE
+    pub fn to_uri_format(&mut self, authority: &str) {
+        let convert = |id: &str| -> String {
+            compact_to_uri(id, authority)
+        };
+
+        self.module_id = convert(&self.module_id);
+        self.file = self.file.clone(); // file path stays as-is
+
+        for node in &mut self.nodes {
+            node.id = convert(&node.id);
+            // node.file stays as relative path
+        }
+        for edge in &mut self.edges {
+            edge.src = convert(&edge.src);
+            edge.dst = convert(&edge.dst);
+        }
+        for export in &mut self.exports {
+            export.node_id = convert(&export.node_id);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Byte-offset → line:column conversion
+// ---------------------------------------------------------------------------
+
+/// Build an index of byte offsets for each line start.
+///
+/// `index[0] = 0` (first line starts at byte 0),
+/// `index[1]` = position after first newline, etc.
+fn build_line_index(content: &[u8]) -> Vec<usize> {
+    let mut index = vec![0usize];
+    for (i, &byte) in content.iter().enumerate() {
+        if byte == b'\n' {
+            index.push(i + 1);
+        }
+    }
+    index
+}
+
+/// Convert a byte offset to 1-based line and 0-based column.
+///
+/// Uses binary search on the line index. Returns `(1, 0)` if the offset
+/// is out of bounds (beyond end of file).
+fn byte_offset_to_line_col(line_index: &[usize], offset: usize) -> (i64, i64) {
+    match line_index.binary_search(&offset) {
+        // Exact match: offset is at the start of a line
+        Ok(line) => ((line + 1) as i64, 0),
+        // Between two line starts: offset falls within line (insertion_point - 1)
+        Err(insertion_point) => {
+            if insertion_point == 0 {
+                // Shouldn't happen since index[0] = 0, but handle gracefully
+                (1, offset as i64)
+            } else {
+                let line_start = line_index[insertion_point - 1];
+                (insertion_point as i64, (offset - line_start) as i64)
+            }
+        }
+    }
+}
+
+/// Check whether a file path has a JS/TS extension (analyzed by Haskell js-analyzer
+/// which outputs byte offsets instead of line:column).
+pub fn is_js_ts_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| matches!(ext, "js" | "jsx" | "ts" | "tsx" | "mjs" | "cjs" | "mts" | "cts"))
+        .unwrap_or(false)
+}
+
+/// Encode a fragment string for use in a grafema:// URI.
+/// Only 4 chars need percent-encoding in fragments: > [ ] #
+fn encode_fragment(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len() + 16);
+    for ch in raw.chars() {
+        match ch {
+            '>' => out.push_str("%3E"),
+            '[' => out.push_str("%5B"),
+            ']' => out.push_str("%5D"),
+            '#' => out.push_str("%23"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+/// Convert a compact semantic ID to a grafema:// URI.
+///
+/// Handles three formats:
+/// 1. `MODULE#file` → `grafema://{authority}/{file}#MODULE`
+/// 2. `file->TYPE->rest` → `grafema://{authority}/{file}#TYPE->{rest}` (with encoding)
+/// 3. Virtual nodes (no file prefix, e.g., `EXTERNAL_MODULE->lodash`, `net:stdio->__stdio__`) →
+///    `grafema://{authority}/_/{encoded_full_id}`
+fn compact_to_uri(id: &str, authority: &str) -> String {
+    // Case 1: MODULE#file format
+    if let Some(file) = id.strip_prefix("MODULE#") {
+        return format!("grafema://{authority}/{file}#MODULE");
+    }
+
+    // Case 2 & 3: Check for file->TYPE->rest pattern
+    // The file part is everything before the first '->'
+    if let Some(first_arrow) = id.find("->") {
+        let before_arrow = &id[..first_arrow];
+
+        // Virtual nodes have no file path — they start with uppercase type or special prefix
+        // Examples: EXTERNAL_MODULE->lodash, GLOBAL::console, net:stdio->__stdio__
+        // Heuristic: if the part before '->' contains a '/' or '.', it's a file path
+        let is_file_path = before_arrow.contains('/') || before_arrow.contains('.');
+
+        if is_file_path {
+            // Standard node: file->REST
+            let file = before_arrow;
+            let rest = &id[first_arrow + 2..]; // TYPE->name[...] part
+            let encoded = encode_fragment(rest);
+            format!("grafema://{authority}/{file}#{encoded}")
+        } else {
+            // Virtual node: encode the whole ID
+            let encoded = encode_fragment(id);
+            format!("grafema://{authority}/_/{encoded}")
+        }
+    } else {
+        // No arrow at all — treat as virtual
+        let encoded = encode_fragment(id);
+        format!("grafema://{authority}/_/{encoded}")
+    }
 }
 
 // ---------------------------------------------------------------------------
 // AnalysisResult — per-file outcome
 // ---------------------------------------------------------------------------
+
+/// A structured issue discovered during analysis (oversized file, parse error, etc.).
+/// Converted to ISSUE nodes in the graph via `issues_to_wire()`.
+#[derive(Debug, Clone)]
+pub struct AnalysisIssue {
+    /// Category: `oversized_source`, `oversized_ast`, `parse_error`, `analysis_error`
+    pub category: String,
+    /// `warning` (size guards) or `error` (parse/analysis failures)
+    pub severity: String,
+    /// Human-readable description
+    pub message: String,
+    /// Source file (relative or absolute — relativized later in ingest_chunk)
+    pub file: String,
+}
 
 /// Result of analyzing a single file. Contains either a successful `FileAnalysis`
 /// or collected error messages (parse errors, analyzer failures, etc.).
@@ -158,6 +341,389 @@ pub struct AnalysisResult {
     pub file: PathBuf,
     pub analysis: Option<FileAnalysis>,
     pub errors: Vec<String>,
+    /// Structured issues to persist as ISSUE nodes in the graph.
+    pub issues: Vec<AnalysisIssue>,
+    /// Performance metrics for this file's analysis.
+    pub metrics: FileMetrics,
+}
+
+/// Per-file performance metrics captured during analysis.
+/// Carried in-band via `AnalysisResult` so main.rs can emit profiler events
+/// without passing the profiler into inner functions.
+#[derive(Debug, Default)]
+pub struct FileMetrics {
+    pub file_size_bytes: u64,
+    pub ast_size_bytes: u64,
+    pub parse_ms: u64,
+    pub analyze_ms: u64,
+    pub total_ms: u64,
+    pub node_count: usize,
+    pub edge_count: usize,
+    // Semantic density metrics
+    pub decl_count: usize,
+    pub ref_count: usize,
+    pub call_count: usize,
+    pub prop_count: usize,
+}
+
+impl FileMetrics {
+    /// Populate semantic density counts from the analysis result's nodes.
+    /// Counts declarations (FUNCTION, METHOD, CLASS, VARIABLE, CONSTANT),
+    /// references (REFERENCE), calls (CALL), and property accesses (PROPERTY_ACCESS).
+    pub fn fill_density(&mut self, analysis: &Option<FileAnalysis>) {
+        if let Some(a) = analysis {
+            for node in &a.nodes {
+                match node.node_type.as_str() {
+                    "FUNCTION" | "METHOD" | "CLASS" | "VARIABLE" | "CONSTANT" => self.decl_count += 1,
+                    "REFERENCE" => self.ref_count += 1,
+                    "CALL" => self.call_count += 1,
+                    "PROPERTY_ACCESS" => self.prop_count += 1,
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Size guards
+// ---------------------------------------------------------------------------
+
+use crate::config::SizeLimits;
+
+/// Check source file size against the configured limit.
+/// Returns `Some(issue)` if the file exceeds `limits.max_file_bytes` (and the limit is non-zero).
+pub fn check_file_size(file: &Path, limits: SizeLimits) -> Option<AnalysisIssue> {
+    if limits.max_file_bytes == 0 {
+        return None;
+    }
+    let size = match std::fs::metadata(file) {
+        Ok(m) => m.len(),
+        Err(_) => return None, // let downstream handle missing files
+    };
+    if size > limits.max_file_bytes {
+        Some(AnalysisIssue {
+            category: "oversized_source".to_string(),
+            severity: "warning".to_string(),
+            message: format!(
+                "Source file too large: {} KB (limit: {} KB)",
+                size / 1024,
+                limits.max_file_bytes / 1024
+            ),
+            file: file.display().to_string(),
+        })
+    } else {
+        None
+    }
+}
+
+/// Check AST JSON size against the configured limit.
+/// Returns `Some(issue)` if the AST exceeds `limits.max_ast_bytes` (and the limit is non-zero).
+pub fn check_ast_size(file_display: &str, ast_size: usize, limits: SizeLimits) -> Option<AnalysisIssue> {
+    if limits.max_ast_bytes == 0 {
+        return None;
+    }
+    if ast_size as u64 > limits.max_ast_bytes {
+        Some(AnalysisIssue {
+            category: "oversized_ast".to_string(),
+            severity: "warning".to_string(),
+            message: format!(
+                "AST too large: {} KB (limit: {} KB)",
+                ast_size / 1024,
+                limits.max_ast_bytes / 1024
+            ),
+            file: file_display.to_string(),
+        })
+    } else {
+        None
+    }
+}
+
+/// Convert analysis issues into RFDB wire nodes and edges.
+///
+/// For each issue, creates:
+/// - An ISSUE node with category/severity/message metadata
+/// - A CONTAINS edge from the MODULE stub to the ISSUE node
+///
+/// If `include_module_stub` is true (analysis failed completely), also creates
+/// a MODULE stub so the file appears in graph queries and file-scoped GC works.
+pub fn issues_to_wire(
+    issues: &[AnalysisIssue],
+    file: &str,
+    authority: &str,
+    include_module_stub: bool,
+) -> (Vec<WireNode>, Vec<WireEdge>) {
+    let mut nodes = Vec::new();
+    let mut edges = Vec::new();
+
+    if issues.is_empty() {
+        return (nodes, edges);
+    }
+
+    let module_id = compact_to_uri(&format!("MODULE#{file}"), authority);
+
+    if include_module_stub {
+        nodes.push(WireNode {
+            id: module_id.clone(),
+            semantic_id: Some(module_id.clone()),
+            node_type: Some("MODULE".to_string()),
+            name: Some(file.to_string()),
+            file: Some(file.to_string()),
+            exported: false,
+            metadata: None,
+        });
+    }
+
+    for issue in issues {
+        // Hash first 8 hex chars of blake3(message) for uniqueness
+        let hash = blake3::hash(issue.message.as_bytes());
+        let hash8 = &hash.to_hex()[..8];
+        let compact_id = format!("{file}->ISSUE->{category}::{hash8}", category = issue.category);
+        let issue_id = compact_to_uri(&compact_id, authority);
+
+        let mut meta = HashMap::new();
+        meta.insert("category".to_string(), serde_json::json!(issue.category));
+        meta.insert("severity".to_string(), serde_json::json!(issue.severity));
+        meta.insert("message".to_string(), serde_json::json!(issue.message));
+
+        nodes.push(WireNode {
+            id: issue_id.clone(),
+            semantic_id: Some(issue_id.clone()),
+            node_type: Some("ISSUE".to_string()),
+            name: Some(format!("{}: {}", issue.category, issue.severity)),
+            file: Some(file.to_string()),
+            exported: false,
+            metadata: Some(serde_json::to_string(&meta).unwrap()),
+        });
+
+        edges.push(WireEdge {
+            src: module_id.clone(),
+            dst: issue_id,
+            edge_type: "CONTAINS".to_string(),
+            metadata: None,
+        });
+    }
+
+    (nodes, edges)
+}
+
+// ---------------------------------------------------------------------------
+// Unresolved diagnostics → ISSUE wire nodes
+// ---------------------------------------------------------------------------
+
+/// Generate ISSUE nodes for unresolved calls and imports.
+///
+/// Each unresolved node is categorized:
+/// - `unresolved_external` (severity=info): target likely outside analyzed root
+/// - `unresolved_internal` (severity=warning): target file exists but symbol not resolved
+///
+/// Returns wire nodes and edges on synthetic file `__grafema_virtual/unresolved-diagnostics`.
+pub fn unresolved_diagnostics_to_wire(
+    unresolved: &[(String, String, String)], // (node_id, name, file)
+    file_set: &HashSet<String>,
+    authority: &str,
+) -> (Vec<WireNode>, Vec<WireEdge>) {
+    let mut nodes = Vec::new();
+    let mut edges = Vec::new();
+
+    if unresolved.is_empty() {
+        return (nodes, edges);
+    }
+
+    let synthetic_file = "__grafema_virtual/unresolved-diagnostics";
+    let module_id = compact_to_uri(&format!("MODULE#{synthetic_file}"), authority);
+
+    // Create MODULE stub for the synthetic file
+    nodes.push(WireNode {
+        id: module_id.clone(),
+        semantic_id: Some(module_id.clone()),
+        node_type: Some("MODULE".to_string()),
+        name: Some(synthetic_file.to_string()),
+        file: Some(synthetic_file.to_string()),
+        exported: false,
+        metadata: None,
+    });
+
+    for (node_id, name, file) in unresolved {
+        // Extract a plausible target path from the name field.
+        // Patterns: "./billing_endpoint", "../utils/helper", "express", "lodash/get"
+        let target = name
+            .trim_start_matches("./")
+            .trim_start_matches("../");
+
+        // Check if any file in the analyzed set matches the target.
+        // A match means the target file is in the graph but symbol resolution failed.
+        let is_internal = file_set.iter().any(|f| {
+            f.ends_with(target) || f.contains(target)
+        });
+
+        let (category, severity, message) = if is_internal {
+            (
+                "unresolved_internal",
+                "warning",
+                format!(
+                    "Unresolved symbol '{}' in file '{}': target file exists in graph but symbol not resolved (node: {})",
+                    name, file, node_id
+                ),
+            )
+        } else {
+            (
+                "unresolved_external",
+                "info",
+                format!(
+                    "Unresolved symbol '{}' in file '{}': target likely outside analyzed root (node: {})",
+                    name, file, node_id
+                ),
+            )
+        };
+
+        let hash = blake3::hash(message.as_bytes());
+        let hash8 = &hash.to_hex()[..8];
+        let compact_id = format!("{synthetic_file}->ISSUE->{category}::{hash8}");
+        let issue_id = compact_to_uri(&compact_id, authority);
+
+        let mut meta = HashMap::new();
+        meta.insert("category".to_string(), serde_json::json!(category));
+        meta.insert("severity".to_string(), serde_json::json!(severity));
+        meta.insert("message".to_string(), serde_json::json!(message));
+        meta.insert("source_node".to_string(), serde_json::json!(node_id));
+        meta.insert("source_file".to_string(), serde_json::json!(file));
+        meta.insert("symbol_name".to_string(), serde_json::json!(name));
+
+        nodes.push(WireNode {
+            id: issue_id.clone(),
+            semantic_id: Some(issue_id.clone()),
+            node_type: Some("ISSUE".to_string()),
+            name: Some(format!("{category}: {severity}")),
+            file: Some(synthetic_file.to_string()),
+            exported: false,
+            metadata: Some(serde_json::to_string(&meta).unwrap()),
+        });
+
+        edges.push(WireEdge {
+            src: module_id.clone(),
+            dst: issue_id,
+            edge_type: "CONTAINS".to_string(),
+            metadata: None,
+        });
+    }
+
+    (nodes, edges)
+}
+
+// ---------------------------------------------------------------------------
+// Metrics → wire nodes
+// ---------------------------------------------------------------------------
+
+/// Metric definition: name, unit, and extractor from `FileMetrics`.
+struct MetricDef {
+    name: &'static str,
+    unit: &'static str,
+    extract: fn(&FileMetrics) -> u64,
+}
+
+const FILE_METRIC_DEFS: &[MetricDef] = &[
+    MetricDef { name: "parse_ms",        unit: "ms",    extract: |m| m.parse_ms },
+    MetricDef { name: "analyze_ms",      unit: "ms",    extract: |m| m.analyze_ms },
+    MetricDef { name: "total_ms",        unit: "ms",    extract: |m| m.total_ms },
+    MetricDef { name: "file_size_bytes", unit: "bytes", extract: |m| m.file_size_bytes },
+    MetricDef { name: "ast_size_bytes",  unit: "bytes", extract: |m| m.ast_size_bytes },
+    MetricDef { name: "node_count",      unit: "count", extract: |m| m.node_count as u64 },
+    MetricDef { name: "edge_count",      unit: "count", extract: |m| m.edge_count as u64 },
+    MetricDef { name: "decl_count",      unit: "count", extract: |m| m.decl_count as u64 },
+    MetricDef { name: "ref_count",       unit: "count", extract: |m| m.ref_count as u64 },
+    MetricDef { name: "call_count",      unit: "count", extract: |m| m.call_count as u64 },
+    MetricDef { name: "prop_count",      unit: "count", extract: |m| m.prop_count as u64 },
+];
+
+/// Convert per-file performance metrics into RFDB wire nodes and edges.
+///
+/// For each non-zero metric in `FileMetrics`, creates:
+/// - A METRIC node with value/unit/source metadata
+/// - An OBSERVES edge from the METRIC node to the file's MODULE node
+pub fn metrics_to_wire(
+    metrics: &FileMetrics,
+    file: &str,
+    authority: &str,
+) -> (Vec<WireNode>, Vec<WireEdge>) {
+    let mut nodes = Vec::new();
+    let mut edges = Vec::new();
+
+    let module_id = compact_to_uri(&format!("MODULE#{file}"), authority);
+
+    for def in FILE_METRIC_DEFS {
+        let value = (def.extract)(metrics);
+        if value == 0 {
+            continue;
+        }
+
+        let compact_id = format!("{file}->METRIC->{}", def.name);
+        let metric_id = compact_to_uri(&compact_id, authority);
+
+        let mut meta = HashMap::new();
+        meta.insert("value".to_string(), serde_json::json!(value));
+        meta.insert("unit".to_string(), serde_json::json!(def.unit));
+        meta.insert("source".to_string(), serde_json::json!("orchestrator"));
+
+        nodes.push(WireNode {
+            id: metric_id.clone(),
+            semantic_id: Some(metric_id.clone()),
+            node_type: Some("METRIC".to_string()),
+            name: Some(def.name.to_string()),
+            file: Some(file.to_string()),
+            exported: false,
+            metadata: Some(serde_json::to_string(&meta).unwrap()),
+        });
+
+        edges.push(WireEdge {
+            src: metric_id,
+            dst: module_id.clone(),
+            edge_type: "OBSERVES".to_string(),
+            metadata: None,
+        });
+    }
+
+    (nodes, edges)
+}
+
+/// Convert pipeline-level phase metrics into RFDB wire nodes.
+///
+/// Phase metrics use synthetic file `__grafema_perf/{phase}` for proper
+/// GC tombstoning. No OBSERVES edges — phase metrics observe the pipeline,
+/// not a specific module.
+pub fn phase_metrics_to_wire(
+    phase_metrics: &[(&str, &str, u64, &str)], // (phase, metric_name, value, unit)
+    authority: &str,
+) -> (Vec<WireNode>, Vec<WireEdge>) {
+    let mut nodes = Vec::new();
+
+    for &(phase, metric_name, value, unit) in phase_metrics {
+        if value == 0 {
+            continue;
+        }
+
+        let synthetic_file = format!("__grafema_perf/{phase}");
+        let compact_id = format!("{synthetic_file}->METRIC->{metric_name}");
+        let metric_id = compact_to_uri(&compact_id, authority);
+
+        let mut meta = HashMap::new();
+        meta.insert("value".to_string(), serde_json::json!(value));
+        meta.insert("unit".to_string(), serde_json::json!(unit));
+        meta.insert("source".to_string(), serde_json::json!("orchestrator"));
+        meta.insert("phase".to_string(), serde_json::json!(phase));
+
+        nodes.push(WireNode {
+            id: metric_id.clone(),
+            semantic_id: Some(metric_id.clone()),
+            node_type: Some("METRIC".to_string()),
+            name: Some(metric_name.to_string()),
+            file: Some(synthetic_file),
+            exported: false,
+            metadata: Some(serde_json::to_string(&meta).unwrap()),
+        });
+    }
+
+    (nodes, Vec::new())
 }
 
 // ---------------------------------------------------------------------------
@@ -310,6 +876,84 @@ pub async fn analyze_haskell_file(file: &Path, analyzer_bin: &str) -> Result<Fil
 }
 
 // ---------------------------------------------------------------------------
+// BEAM single-file analysis
+// ---------------------------------------------------------------------------
+
+/// Analyze a single BEAM (Elixir/Erlang) file: read source, run beam-analyzer, return FileAnalysis.
+///
+/// Like Haskell analysis, there is no OXC parsing step — `beam-analyzer` parses
+/// internally. The payload sent to stdin is `{"file":"<filepath>","source":"<source_text>"}`.
+///
+/// Returns `Err` if the file cannot be read, the analyzer binary cannot be
+/// spawned, the analyzer exits non-zero, or its output is not valid
+/// `FileAnalysis` JSON.
+pub async fn analyze_beam_file(file: &Path, analyzer_bin: &str) -> Result<FileAnalysis> {
+    let file_str = file.display().to_string();
+
+    let source = tokio::fs::read_to_string(file)
+        .await
+        .with_context(|| format!("Failed to read BEAM source file {file_str}"))?;
+
+    let mut child = tokio::process::Command::new(analyzer_bin)
+        .arg(&file_str)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .with_context(|| format!("Failed to spawn beam-analyzer for {file_str}"))?;
+
+    // Build JSON payload: {"file":"...","source":"..."}
+    let payload = serde_json::json!({
+        "file": file_str,
+        "source": source,
+    });
+
+    {
+        let stdin = child
+            .stdin
+            .as_mut()
+            .context("Failed to open stdin for beam-analyzer")?;
+        stdin
+            .write_all(payload.to_string().as_bytes())
+            .await
+            .with_context(|| {
+                format!("Failed to write source to beam-analyzer stdin for {file_str}")
+            })?;
+        stdin
+            .shutdown()
+            .await
+            .with_context(|| format!("Failed to close beam-analyzer stdin for {file_str}"))?;
+    }
+
+    let output = child
+        .wait_with_output()
+        .await
+        .with_context(|| format!("Failed to wait for beam-analyzer for {file_str}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let code = output
+            .status
+            .code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "signal".to_string());
+        anyhow::bail!(
+            "beam-analyzer exited with code {code} for {file_str}: {stderr}"
+        );
+    }
+
+    let stdout = &output.stdout;
+    let analysis: FileAnalysis = serde_json::from_slice(stdout).with_context(|| {
+        let preview = String::from_utf8_lossy(&stdout[..stdout.len().min(200)]);
+        format!(
+            "Failed to parse beam-analyzer output as FileAnalysis for {file_str}: {preview}"
+        )
+    })?;
+
+    Ok(analysis)
+}
+
+// ---------------------------------------------------------------------------
 // Daemon-mode analysis via ProcessPool
 // ---------------------------------------------------------------------------
 
@@ -405,6 +1049,265 @@ pub async fn analyze_haskell_file_pooled(
     }
 }
 
+/// Analyze a single BEAM (Elixir/Erlang) file via a persistent daemon process pool.
+///
+/// Reads the source file from disk, builds a `{"file":"...","source":"..."}`
+/// JSON request via string concatenation (avoids parsing the source into Value),
+/// sends it as a length-prefixed frame through the pool, and parses the JSON
+/// response.
+pub async fn analyze_beam_file_pooled(
+    pool: &ProcessPool,
+    file: &Path,
+) -> Result<FileAnalysis> {
+    let file_str = file.display().to_string();
+
+    let source = tokio::fs::read_to_string(file)
+        .await
+        .with_context(|| format!("Failed to read BEAM source file {file_str}"))?;
+
+    // Build JSON request by concatenation — both file path and source are JSON-escaped.
+    let escaped_file = serde_json::to_string(&file_str)
+        .with_context(|| format!("Failed to escape file path for {file_str}"))?;
+    let escaped_source = serde_json::to_string(&source)
+        .with_context(|| format!("Failed to escape source for {file_str}"))?;
+    let payload = format!(
+        r#"{{"file":{},"source":{}}}"#,
+        escaped_file, escaped_source
+    );
+
+    let response_bytes = pool
+        .request(payload.as_bytes())
+        .await
+        .with_context(|| format!("Pool request failed for {file_str}"))?;
+
+    let response: DaemonResponse = serde_json::from_slice(&response_bytes)
+        .with_context(|| format!("Failed to decode response for {file_str}"))?;
+
+    match response.status.as_str() {
+        "ok" => response
+            .result
+            .with_context(|| format!("Daemon returned ok but no result for {file_str}")),
+        "error" => {
+            let msg = response.error.unwrap_or_else(|| "unknown error".to_string());
+            bail!("beam-analyzer daemon error for {file_str}: {msg}")
+        }
+        other => bail!("Unknown daemon response status '{other}' for {file_str}"),
+    }
+}
+
+/// Analyze a single JS/TS file: OXC parse → daemon pool request → AnalysisResult.
+///
+/// Extracted from `analyze_files_parallel_pooled` so both the Vec-collecting and
+/// channel-streaming variants can reuse the same per-file logic.
+async fn analyze_single_js_file(
+    pool: Arc<ProcessPool>,
+    file: PathBuf,
+    idx: usize,
+    total: usize,
+    limits: SizeLimits,
+) -> AnalysisResult {
+    let file_display = file.display().to_string();
+    let file_start = std::time::Instant::now();
+
+    // Get file size for metrics
+    let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
+    // Log milestones (every 100 files), or every file for small batches
+    if total <= 100 || (idx + 1) % 100 == 0 || idx + 1 == total {
+        tracing::info!("[{}/{}] Analyzing {}", idx + 1, total, file_display);
+    } else {
+        tracing::debug!("[{}/{}] Analyzing {}", idx + 1, total, file_display);
+    }
+
+    let mut errors = Vec::new();
+    let mut issues = Vec::new();
+
+    // Size guard: check source file size before parsing
+    if let Some(issue) = check_file_size(&file, limits) {
+        tracing::warn!(
+            file = %file_display,
+            "Skipping oversized source file: {}",
+            issue.message
+        );
+        issues.push(issue);
+        return AnalysisResult {
+            file,
+            analysis: None,
+            errors,
+            issues,
+            metrics: FileMetrics {
+                file_size_bytes,
+                total_ms: file_start.elapsed().as_millis() as u64,
+                ..FileMetrics::default()
+            },
+        };
+    }
+
+    // Step 1: Parse with OXC (CPU-bound -> spawn_blocking)
+    let parse_result = {
+        let file_clone = file.clone();
+        tokio::task::spawn_blocking(move || parser::parse_file(&file_clone)).await
+    };
+
+    let parse_ms = file_start.elapsed().as_millis();
+
+    let ast_json = match parse_result {
+        Ok(Ok(result)) => {
+            if !result.errors.is_empty() {
+                for e in &result.errors {
+                    errors.push(format!("Parse warning in {file_display}: {e}"));
+                }
+                tracing::warn!(
+                    file = %file_display,
+                    count = result.errors.len(),
+                    "Parse errors (continuing with partial AST)"
+                );
+            }
+            result.json
+        }
+        Ok(Err(e)) => {
+            let msg = format!("Parse failed for {file_display}: {e}");
+            errors.push(msg.clone());
+            issues.push(AnalysisIssue {
+                category: "parse_error".to_string(),
+                severity: "error".to_string(),
+                message: msg,
+                file: file_display.clone(),
+            });
+            tracing::warn!("[{}/{}] FAILED parse {}ms {}", idx + 1, total, parse_ms, file_display);
+            return AnalysisResult {
+                file,
+                analysis: None,
+                errors,
+                issues,
+                metrics: FileMetrics {
+                    file_size_bytes,
+                    parse_ms: parse_ms as u64,
+                    total_ms: file_start.elapsed().as_millis() as u64,
+                    ..FileMetrics::default()
+                },
+            };
+        }
+        Err(e) => {
+            let msg = format!("Parse task panicked for {file_display}: {e}");
+            errors.push(msg.clone());
+            issues.push(AnalysisIssue {
+                category: "parse_error".to_string(),
+                severity: "error".to_string(),
+                message: msg,
+                file: file_display.clone(),
+            });
+            tracing::error!("[{}/{}] PANIC parse {}ms {}", idx + 1, total, parse_ms, file_display);
+            return AnalysisResult {
+                file,
+                analysis: None,
+                errors,
+                issues,
+                metrics: FileMetrics {
+                    file_size_bytes,
+                    parse_ms: parse_ms as u64,
+                    total_ms: file_start.elapsed().as_millis() as u64,
+                    ..FileMetrics::default()
+                },
+            };
+        }
+    };
+
+    let ast_size = ast_json.len();
+
+    // Size guard: check AST size before sending to daemon
+    if let Some(issue) = check_ast_size(&file_display, ast_size, limits) {
+        tracing::warn!(
+            file = %file_display,
+            ast_kb = ast_size / 1024,
+            "Skipping oversized AST"
+        );
+        issues.push(issue);
+        return AnalysisResult {
+            file,
+            analysis: None,
+            errors,
+            issues,
+            metrics: FileMetrics {
+                file_size_bytes,
+                ast_size_bytes: ast_size as u64,
+                parse_ms: parse_ms as u64,
+                total_ms: file_start.elapsed().as_millis() as u64,
+                ..FileMetrics::default()
+            },
+        };
+    }
+
+    // Step 2: Send to daemon pool
+    let analyze_start = std::time::Instant::now();
+    let mut result = match analyze_file_pooled(&pool, &file, &ast_json).await {
+        Ok(analysis) => AnalysisResult {
+            file,
+            analysis: Some(analysis),
+            errors,
+            issues,
+            metrics: FileMetrics::default(),
+        },
+        Err(e) => {
+            let msg = format!("Analyzer failed for {file_display}: {e}");
+            errors.push(msg.clone());
+            issues.push(AnalysisIssue {
+                category: "analysis_error".to_string(),
+                severity: "error".to_string(),
+                message: msg,
+                file: file_display.clone(),
+            });
+            AnalysisResult {
+                file,
+                analysis: None,
+                errors,
+                issues,
+                metrics: FileMetrics::default(),
+            }
+        }
+    };
+
+    let analyze_ms = analyze_start.elapsed().as_millis() as u64;
+    let total_ms = file_start.elapsed().as_millis();
+
+    let (node_count, edge_count) = match &result.analysis {
+        Some(a) => (a.nodes.len(), a.edges.len()),
+        None => (0, 0),
+    };
+
+    result.metrics = FileMetrics {
+        file_size_bytes,
+        ast_size_bytes: ast_size as u64,
+        parse_ms: parse_ms as u64,
+        analyze_ms,
+        total_ms: total_ms as u64,
+        node_count,
+        edge_count,
+        ..Default::default()
+    };
+
+    // Log slow files (>5s) at info level, rest at debug
+    if total_ms > 5000 {
+        tracing::warn!(
+            "[{}/{}] SLOW {}ms (parse={}ms, ast={}KB) {}",
+            idx + 1, total, total_ms, parse_ms,
+            ast_size / 1024, file_display
+        );
+    } else if total <= 100 || (idx + 1) % 100 == 0 || idx + 1 == total {
+        tracing::info!(
+            "[{}/{}] Done {}ms {}",
+            idx + 1, total, total_ms, file_display
+        );
+    } else {
+        tracing::debug!(
+            "[{}/{}] Done {}ms {}",
+            idx + 1, total, total_ms, file_display
+        );
+    }
+
+    result
+}
+
 /// Analyze multiple files in parallel using persistent daemon processes.
 ///
 /// Creates a `ProcessPool` with `grafema-analyzer --daemon` workers, parses
@@ -414,6 +1317,7 @@ pub async fn analyze_files_parallel_pooled(
     files: &[PathBuf],
     jobs: usize,
     analyzers: &crate::config::AnalyzerBinaries,
+    limits: SizeLimits,
 ) -> Vec<AnalysisResult> {
     let pool_config = PoolConfig {
         command: analyzers.js_path(),
@@ -439,76 +1343,13 @@ pub async fn analyze_files_parallel_pooled(
             let sem = Arc::clone(&semaphore);
             let pool = Arc::clone(&pool);
             let file = file.clone();
-            let file_display = file.display().to_string();
 
             tokio::spawn(async move {
                 let _permit = sem
                     .acquire()
                     .await
                     .expect("Semaphore closed unexpectedly");
-
-                tracing::info!("[{}/{}] Analyzing {}", idx + 1, total, file_display);
-
-                let mut errors = Vec::new();
-
-                // Step 1: Parse with OXC (CPU-bound -> spawn_blocking)
-                let parse_result = {
-                    let file_clone = file.clone();
-                    tokio::task::spawn_blocking(move || parser::parse_file(&file_clone)).await
-                };
-
-                let ast_json = match parse_result {
-                    Ok(Ok(result)) => {
-                        if !result.errors.is_empty() {
-                            for e in &result.errors {
-                                errors.push(format!("Parse warning in {file_display}: {e}"));
-                            }
-                            tracing::warn!(
-                                file = %file_display,
-                                count = result.errors.len(),
-                                "Parse errors (continuing with partial AST)"
-                            );
-                        }
-                        result.json
-                    }
-                    Ok(Err(e)) => {
-                        errors.push(format!("Parse failed for {file_display}: {e}"));
-                        return AnalysisResult {
-                            file,
-                            analysis: None,
-                            errors,
-                        };
-                    }
-                    Err(e) => {
-                        errors.push(format!(
-                            "Parse task panicked for {file_display}: {e}"
-                        ));
-                        return AnalysisResult {
-                            file,
-                            analysis: None,
-                            errors,
-                        };
-                    }
-                };
-
-                // Step 2: Send to daemon pool
-                match analyze_file_pooled(&pool, &file, &ast_json).await {
-                    Ok(analysis) => AnalysisResult {
-                        file,
-                        analysis: Some(analysis),
-                        errors,
-                    },
-                    Err(e) => {
-                        errors.push(format!(
-                            "Analyzer failed for {file_display}: {e}"
-                        ));
-                        AnalysisResult {
-                            file,
-                            analysis: None,
-                            errors,
-                        }
-                    }
-                }
+                analyze_single_js_file(pool, file, idx, total, limits).await
             })
         })
         .collect();
@@ -522,6 +1363,8 @@ pub async fn analyze_files_parallel_pooled(
                     file: PathBuf::new(),
                     analysis: None,
                     errors: vec![format!("Analysis task failed: {e}")],
+                    issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
                 });
             }
         }
@@ -529,6 +1372,72 @@ pub async fn analyze_files_parallel_pooled(
 
     pool.shutdown().await;
     results
+}
+
+/// Analyze JS/TS files with streaming output: results are sent through a channel
+/// as each file completes, enabling double-buffered ingestion.
+///
+/// Analysis and RFDB ingestion run in parallel: while the receiver batches and
+/// commits results to RFDB, analysis continues filling the channel. The bounded
+/// channel provides backpressure — if ingestion is slow, analysis pauses.
+///
+/// Takes ownership of `files` because this function is designed to be spawned
+/// into a `tokio::spawn` task.
+pub async fn analyze_js_files_streaming(
+    files: Vec<PathBuf>,
+    jobs: usize,
+    analyzer_path: String,
+    tx: mpsc::Sender<AnalysisResult>,
+    limits: SizeLimits,
+) {
+    let pool_config = PoolConfig {
+        command: analyzer_path,
+        args: vec!["--daemon".to_string()],
+        ..PoolConfig::default()
+    };
+
+    let pool = match ProcessPool::new(pool_config, jobs.max(1)) {
+        Ok(p) => Arc::new(p),
+        Err(e) => {
+            tracing::error!("Failed to create JS analyzer pool for streaming: {e}");
+            return;
+        }
+    };
+
+    let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
+    let total = files.len();
+
+    let mut handles = Vec::with_capacity(total);
+    for (idx, file) in files.into_iter().enumerate() {
+        let tx = tx.clone();
+        let sem = Arc::clone(&semaphore);
+        let pool = Arc::clone(&pool);
+
+        handles.push(tokio::spawn(async move {
+            let _permit = sem
+                .acquire()
+                .await
+                .expect("Semaphore closed unexpectedly");
+            let result = analyze_single_js_file(pool, file, idx, total, limits).await;
+            match tx.try_send(result) {
+                Ok(()) => {}
+                Err(mpsc::error::TrySendError::Full(result)) => {
+                    BACKPRESSURE_COUNT.fetch_add(1, Ordering::Relaxed);
+                    let _ = tx.send(result).await;
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => return,
+            }
+        }));
+    }
+
+    // Drop the original sender so the channel closes when all task clones are dropped
+    drop(tx);
+
+    for handle in handles {
+        let _ = handle.await;
+    }
+
+    pool.shutdown().await;
 }
 
 // ---------------------------------------------------------------------------
@@ -544,6 +1453,7 @@ pub async fn analyze_haskell_files_parallel_pooled(
     files: &[PathBuf],
     jobs: usize,
     analyzers: &crate::config::AnalyzerBinaries,
+    limits: SizeLimits,
 ) -> Vec<AnalysisResult> {
     let pool_config = PoolConfig {
         command: analyzers.haskell_path(),
@@ -579,6 +1489,9 @@ pub async fn analyze_haskell_files_parallel_pooled(
                     .await
                     .expect("Semaphore closed unexpectedly");
 
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
                 tracing::info!(
                     "[{}/{}] Analyzing Haskell file {}",
                     idx + 1,
@@ -588,12 +1501,43 @@ pub async fn analyze_haskell_files_parallel_pooled(
 
                 let errors = Vec::new();
 
+                // Size guard
+                if let Some(issue) = check_file_size(&file, limits) {
+                    tracing::warn!(file = %file.display(), "Skipping oversized source file: {}", issue.message);
+                    return AnalysisResult {
+                        file,
+                        analysis: None,
+                        errors,
+                        issues: vec![issue],
+                        metrics: FileMetrics {
+                            file_size_bytes,
+                            ..FileMetrics::default()
+                        },
+                    };
+                }
+
                 // No OXC parsing step — send source directly to haskell-analyzer
                 match analyze_haskell_file_pooled(&pool, &file).await {
-                    Ok(analysis) => AnalysisResult {
-                        file,
-                        analysis: Some(analysis),
-                        errors,
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult {
+                            file,
+                            analysis: Some(analysis),
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                ast_size_bytes: 0,
+                                parse_ms: 0,
+                                analyze_ms: total_ms,
+                                total_ms,
+                                node_count,
+                                edge_count,
+                                ..Default::default()
+                            },
+                        }
                     },
                     Err(e) => {
                         let mut errors = errors;
@@ -604,6 +1548,12 @@ pub async fn analyze_haskell_files_parallel_pooled(
                             file,
                             analysis: None,
                             errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                total_ms: file_start.elapsed().as_millis() as u64,
+                                ..FileMetrics::default()
+                            },
                         }
                     }
                 }
@@ -620,6 +1570,8 @@ pub async fn analyze_haskell_files_parallel_pooled(
                     file: PathBuf::new(),
                     analysis: None,
                     errors: vec![format!("Haskell analysis task failed: {e}")],
+                    issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
                 });
             }
         }
@@ -663,6 +1615,9 @@ pub async fn analyze_haskell_files_parallel(
                     .await
                     .expect("Semaphore closed unexpectedly");
 
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
                 tracing::info!(
                     "[{}/{}] Analyzing Haskell file {}",
                     idx + 1,
@@ -673,10 +1628,26 @@ pub async fn analyze_haskell_files_parallel(
                 let errors = Vec::new();
 
                 match analyze_haskell_file(&file, &bin).await {
-                    Ok(analysis) => AnalysisResult {
-                        file,
-                        analysis: Some(analysis),
-                        errors,
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult {
+                            file,
+                            analysis: Some(analysis),
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                ast_size_bytes: 0,
+                                parse_ms: 0,
+                                analyze_ms: total_ms,
+                                total_ms,
+                                node_count,
+                                edge_count,
+                                ..Default::default()
+                            },
+                        }
                     },
                     Err(e) => {
                         let mut errors = errors;
@@ -687,6 +1658,12 @@ pub async fn analyze_haskell_files_parallel(
                             file,
                             analysis: None,
                             errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                total_ms: file_start.elapsed().as_millis() as u64,
+                                ..FileMetrics::default()
+                            },
                         }
                     }
                 }
@@ -703,6 +1680,258 @@ pub async fn analyze_haskell_files_parallel(
                     file: PathBuf::new(),
                     analysis: None,
                     errors: vec![format!("Haskell analysis task failed: {e}")],
+                    issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
+                });
+            }
+        }
+    }
+
+    results
+}
+
+// ---------------------------------------------------------------------------
+// BEAM parallel multi-file analysis
+// ---------------------------------------------------------------------------
+
+/// Analyze multiple BEAM (Elixir/Erlang) files in parallel using persistent daemon processes.
+///
+/// Creates a `ProcessPool` with `beam-analyzer --daemon` workers, reads
+/// source files from disk, and sends them through the pool. Falls back to
+/// `analyze_beam_files_parallel` if pool creation fails.
+pub async fn analyze_beam_files_parallel_pooled(
+    files: &[PathBuf],
+    jobs: usize,
+    analyzers: &crate::config::AnalyzerBinaries,
+    limits: SizeLimits,
+) -> Vec<AnalysisResult> {
+    let pool_config = PoolConfig {
+        command: analyzers.beam_path(),
+        args: vec!["--daemon".to_string()],
+        ..PoolConfig::default()
+    };
+
+    let pool = match ProcessPool::new(pool_config, jobs.max(1)) {
+        Ok(p) => Arc::new(p),
+        Err(e) => {
+            tracing::warn!(
+                "Failed to create beam-analyzer pool, falling back to spawn-per-file: {e}"
+            );
+            return analyze_beam_files_parallel(files, jobs, &analyzers.beam_path()).await;
+        }
+    };
+
+    let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
+    let total = files.len();
+
+    let handles: Vec<_> = files
+        .iter()
+        .enumerate()
+        .map(|(idx, file)| {
+            let sem = Arc::clone(&semaphore);
+            let pool = Arc::clone(&pool);
+            let file = file.clone();
+            let file_display = file.display().to_string();
+
+            tokio::spawn(async move {
+                let _permit = sem
+                    .acquire()
+                    .await
+                    .expect("Semaphore closed unexpectedly");
+
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
+                tracing::info!(
+                    "[{}/{}] Analyzing BEAM file {}",
+                    idx + 1,
+                    total,
+                    file_display
+                );
+
+                let errors = Vec::new();
+
+                // Size guard
+                if let Some(issue) = check_file_size(&file, limits) {
+                    tracing::warn!(file = %file.display(), "Skipping oversized source file: {}", issue.message);
+                    return AnalysisResult {
+                        file,
+                        analysis: None,
+                        errors,
+                        issues: vec![issue],
+                        metrics: FileMetrics {
+                            file_size_bytes,
+                            ..FileMetrics::default()
+                        },
+                    };
+                }
+
+                // No OXC parsing step — send source directly to beam-analyzer
+                match analyze_beam_file_pooled(&pool, &file).await {
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult {
+                            file,
+                            analysis: Some(analysis),
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                ast_size_bytes: 0,
+                                parse_ms: 0,
+                                analyze_ms: total_ms,
+                                total_ms,
+                                node_count,
+                                edge_count,
+                                ..Default::default()
+                            },
+                        }
+                    },
+                    Err(e) => {
+                        let mut errors = errors;
+                        errors.push(format!(
+                            "BEAM analyzer failed for {file_display}: {e}"
+                        ));
+                        AnalysisResult {
+                            file,
+                            analysis: None,
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                total_ms: file_start.elapsed().as_millis() as u64,
+                                ..FileMetrics::default()
+                            },
+                        }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        match handle.await {
+            Ok(result) => results.push(result),
+            Err(e) => {
+                results.push(AnalysisResult {
+                    file: PathBuf::new(),
+                    analysis: None,
+                    errors: vec![format!("BEAM analysis task failed: {e}")],
+                    issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
+                });
+            }
+        }
+    }
+
+    pool.shutdown().await;
+    results
+}
+
+/// Analyze multiple BEAM (Elixir/Erlang) files in parallel with bounded concurrency (spawn mode).
+///
+/// For each file:
+/// 1. Read source from disk (no OXC parsing — beam-analyzer parses internally)
+/// 2. Spawn `beam-analyzer` asynchronously, pipe the source JSON
+/// 3. Collect `FileAnalysis` or error
+///
+/// `jobs` controls the maximum number of concurrent analyses. A tokio
+/// `Semaphore` enforces the bound. Failures in individual files do not stop
+/// other files from being analyzed.
+pub async fn analyze_beam_files_parallel(
+    files: &[PathBuf],
+    jobs: usize,
+    analyzer_bin: &str,
+) -> Vec<AnalysisResult> {
+    let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
+    let total = files.len();
+    let analyzer_bin = analyzer_bin.to_string();
+
+    let handles: Vec<_> = files
+        .iter()
+        .enumerate()
+        .map(|(idx, file)| {
+            let sem = Arc::clone(&semaphore);
+            let file = file.clone();
+            let file_display = file.display().to_string();
+            let bin = analyzer_bin.clone();
+
+            tokio::spawn(async move {
+                let _permit = sem
+                    .acquire()
+                    .await
+                    .expect("Semaphore closed unexpectedly");
+
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
+                tracing::info!(
+                    "[{}/{}] Analyzing BEAM file {}",
+                    idx + 1,
+                    total,
+                    file_display
+                );
+
+                let errors = Vec::new();
+
+                match analyze_beam_file(&file, &bin).await {
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult {
+                            file,
+                            analysis: Some(analysis),
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                ast_size_bytes: 0,
+                                parse_ms: 0,
+                                analyze_ms: total_ms,
+                                total_ms,
+                                node_count,
+                                edge_count,
+                                ..Default::default()
+                            },
+                        }
+                    },
+                    Err(e) => {
+                        let mut errors = errors;
+                        errors.push(format!(
+                            "BEAM analyzer failed for {file_display}: {e}"
+                        ));
+                        AnalysisResult {
+                            file,
+                            analysis: None,
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                total_ms: file_start.elapsed().as_millis() as u64,
+                                ..FileMetrics::default()
+                            },
+                        }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        match handle.await {
+            Ok(result) => results.push(result),
+            Err(e) => {
+                results.push(AnalysisResult {
+                    file: PathBuf::new(),
+                    analysis: None,
+                    errors: vec![format!("BEAM analysis task failed: {e}")],
+                    issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
                 });
             }
         }
@@ -814,6 +2043,7 @@ pub async fn analyze_rust_files_parallel_pooled(
     files: &[PathBuf],
     jobs: usize,
     analyzers: &crate::config::AnalyzerBinaries,
+    limits: SizeLimits,
 ) -> Vec<AnalysisResult> {
     let pool_config = PoolConfig {
         command: analyzers.rust_path(),
@@ -845,9 +2075,28 @@ pub async fn analyze_rust_files_parallel_pooled(
 
             tokio::spawn(async move {
                 let _permit = sem.acquire().await.expect("Semaphore closed unexpectedly");
+
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
                 tracing::info!("[{}/{}] Analyzing Rust file {}", idx + 1, total, file_display);
 
                 let mut errors = Vec::new();
+
+                // Size guard
+                if let Some(issue) = check_file_size(&file, limits) {
+                    tracing::warn!(file = %file.display(), "Skipping oversized source file: {}", issue.message);
+                    return AnalysisResult {
+                        file,
+                        analysis: None,
+                        errors,
+                        issues: vec![issue],
+                        metrics: FileMetrics {
+                            file_size_bytes,
+                            ..FileMetrics::default()
+                        },
+                    };
+                }
 
                 // Step 1: Parse with syn (CPU-bound -> spawn_blocking)
                 let parse_result = {
@@ -857,24 +2106,35 @@ pub async fn analyze_rust_files_parallel_pooled(
                     }).await
                 };
 
+                let parse_ms = file_start.elapsed().as_millis() as u64;
+
                 let ast_json = match parse_result {
                     Ok(Ok(json)) => json,
                     Ok(Err(e)) => {
                         errors.push(format!("Rust parse failed for {file_display}: {e}"));
-                        return AnalysisResult { file, analysis: None, errors };
+                        return AnalysisResult { file, analysis: None, errors, issues: vec![], metrics: FileMetrics { file_size_bytes, parse_ms, total_ms: file_start.elapsed().as_millis() as u64, ..FileMetrics::default() } };
                     }
                     Err(e) => {
                         errors.push(format!("Rust parse task panicked for {file_display}: {e}"));
-                        return AnalysisResult { file, analysis: None, errors };
+                        return AnalysisResult { file, analysis: None, errors, issues: vec![], metrics: FileMetrics { file_size_bytes, parse_ms, total_ms: file_start.elapsed().as_millis() as u64, ..FileMetrics::default() } };
                     }
                 };
 
                 // Step 2: Send to daemon pool
                 match analyze_rust_file_pooled(&pool, &file, &ast_json).await {
-                    Ok(analysis) => AnalysisResult { file, analysis: Some(analysis), errors },
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let analyze_ms = total_ms.saturating_sub(parse_ms);
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult { file, analysis: Some(analysis), errors, issues: vec![], metrics: FileMetrics {
+                            file_size_bytes, ast_size_bytes: 0, parse_ms, analyze_ms, total_ms, node_count, edge_count,
+                            ..Default::default()
+                        } }
+                    },
                     Err(e) => {
                         errors.push(format!("Rust analyzer failed for {file_display}: {e}"));
-                        AnalysisResult { file, analysis: None, errors }
+                        AnalysisResult { file, analysis: None, errors, issues: vec![], metrics: FileMetrics { file_size_bytes, parse_ms, total_ms: file_start.elapsed().as_millis() as u64, ..FileMetrics::default() } }
                     }
                 }
             })
@@ -890,6 +2150,8 @@ pub async fn analyze_rust_files_parallel_pooled(
                     file: PathBuf::new(),
                     analysis: None,
                     errors: vec![format!("Rust analysis task failed: {e}")],
+                    issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
                 });
             }
         }
@@ -920,6 +2182,10 @@ pub async fn analyze_rust_files_parallel(
 
             tokio::spawn(async move {
                 let _permit = sem.acquire().await.expect("Semaphore closed unexpectedly");
+
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
                 tracing::info!("[{}/{}] Analyzing Rust file {}", idx + 1, total, file_display);
 
                 let mut errors = Vec::new();
@@ -929,16 +2195,27 @@ pub async fn analyze_rust_files_parallel(
                     Ok(json) => json,
                     Err(e) => {
                         errors.push(format!("Rust parse failed for {file_display}: {e}"));
-                        return AnalysisResult { file, analysis: None, errors };
+                        return AnalysisResult { file, analysis: None, errors, issues: vec![], metrics: FileMetrics { file_size_bytes, total_ms: file_start.elapsed().as_millis() as u64, ..FileMetrics::default() } };
                     }
                 };
 
+                let parse_ms = file_start.elapsed().as_millis() as u64;
+
                 // Step 2: Spawn analyzer
                 match analyze_rust_file(&file, &ast_json, &bin).await {
-                    Ok(analysis) => AnalysisResult { file, analysis: Some(analysis), errors },
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let analyze_ms = total_ms.saturating_sub(parse_ms);
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult { file, analysis: Some(analysis), errors, issues: vec![], metrics: FileMetrics {
+                            file_size_bytes, ast_size_bytes: 0, parse_ms, analyze_ms, total_ms, node_count, edge_count,
+                            ..Default::default()
+                        } }
+                    },
                     Err(e) => {
                         errors.push(format!("Rust analyzer failed for {file_display}: {e}"));
-                        AnalysisResult { file, analysis: None, errors }
+                        AnalysisResult { file, analysis: None, errors, issues: vec![], metrics: FileMetrics { file_size_bytes, parse_ms, total_ms: file_start.elapsed().as_millis() as u64, ..FileMetrics::default() } }
                     }
                 }
             })
@@ -954,6 +2231,974 @@ pub async fn analyze_rust_files_parallel(
                     file: PathBuf::new(),
                     analysis: None,
                     errors: vec![format!("Rust analysis task failed: {e}")],
+                    issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
+                });
+            }
+        }
+    }
+
+    results
+}
+
+// ---------------------------------------------------------------------------
+// Java single-file analysis (two-step: java-parser → java-analyzer)
+// ---------------------------------------------------------------------------
+
+/// Analyze a single Java file: read source, parse with java-parser, analyze with java-analyzer.
+///
+/// Pipeline:
+/// 1. Read `.java` source from disk
+/// 2. Send `{"file":"...","source":"..."}` to java-parser → receive `{"status":"ok","ast":{...}}`
+/// 3. Send `{"file":"...","ast":...}` to java-analyzer → receive FileAnalysis
+pub async fn analyze_java_file(
+    file: &Path,
+    analyzers: &crate::config::AnalyzerBinaries,
+) -> Result<FileAnalysis> {
+    let file_str = file.display().to_string();
+
+    let source = tokio::fs::read_to_string(file)
+        .await
+        .with_context(|| format!("Failed to read Java source file {file_str}"))?;
+
+    // Step 1: Parse with java-parser
+    let parser_bin = analyzers.java_parser_path();
+    let mut parser_child = tokio::process::Command::new(&parser_bin)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .with_context(|| format!("Failed to spawn java-parser for {file_str}"))?;
+
+    let parser_payload = serde_json::json!({
+        "file": file_str,
+        "source": source,
+    });
+
+    {
+        let stdin = parser_child
+            .stdin
+            .as_mut()
+            .context("Failed to open stdin for java-parser")?;
+        stdin
+            .write_all(parser_payload.to_string().as_bytes())
+            .await
+            .with_context(|| format!("Failed to write source to java-parser stdin for {file_str}"))?;
+        stdin
+            .shutdown()
+            .await
+            .with_context(|| format!("Failed to close java-parser stdin for {file_str}"))?;
+    }
+
+    let parser_output = parser_child
+        .wait_with_output()
+        .await
+        .with_context(|| format!("Failed to wait for java-parser for {file_str}"))?;
+
+    if !parser_output.status.success() {
+        let stderr = String::from_utf8_lossy(&parser_output.stderr);
+        let code = parser_output
+            .status
+            .code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "signal".to_string());
+        bail!("java-parser exited with code {code} for {file_str}: {stderr}");
+    }
+
+    // Extract AST from parser response
+    let parser_response: serde_json::Value =
+        serde_json::from_slice(&parser_output.stdout).with_context(|| {
+            let preview =
+                String::from_utf8_lossy(&parser_output.stdout[..parser_output.stdout.len().min(200)]);
+            format!("Failed to parse java-parser output for {file_str}: {preview}")
+        })?;
+
+    if parser_response.get("status").and_then(|s| s.as_str()) != Some("ok") {
+        let err = parser_response
+            .get("error")
+            .and_then(|e| e.as_str())
+            .unwrap_or("unknown error");
+        bail!("java-parser error for {file_str}: {err}");
+    }
+
+    let ast = parser_response
+        .get("ast")
+        .with_context(|| format!("java-parser returned ok but no ast for {file_str}"))?;
+
+    // Step 2: Analyze with java-analyzer
+    let analyzer_bin = analyzers.java_path();
+    let mut analyzer_child = tokio::process::Command::new(&analyzer_bin)
+        .arg(&file_str)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .with_context(|| format!("Failed to spawn java-analyzer for {file_str}"))?;
+
+    let analyzer_payload = serde_json::json!({
+        "file": file_str,
+        "ast": ast,
+    });
+
+    {
+        let stdin = analyzer_child
+            .stdin
+            .as_mut()
+            .context("Failed to open stdin for java-analyzer")?;
+        stdin
+            .write_all(analyzer_payload.to_string().as_bytes())
+            .await
+            .with_context(|| {
+                format!("Failed to write AST to java-analyzer stdin for {file_str}")
+            })?;
+        stdin
+            .shutdown()
+            .await
+            .with_context(|| format!("Failed to close java-analyzer stdin for {file_str}"))?;
+    }
+
+    let analyzer_output = analyzer_child
+        .wait_with_output()
+        .await
+        .with_context(|| format!("Failed to wait for java-analyzer for {file_str}"))?;
+
+    if !analyzer_output.status.success() {
+        let stderr = String::from_utf8_lossy(&analyzer_output.stderr);
+        let code = analyzer_output
+            .status
+            .code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "signal".to_string());
+        bail!("java-analyzer exited with code {code} for {file_str}: {stderr}");
+    }
+
+    let analysis: FileAnalysis =
+        serde_json::from_slice(&analyzer_output.stdout).with_context(|| {
+            let preview = String::from_utf8_lossy(
+                &analyzer_output.stdout[..analyzer_output.stdout.len().min(200)],
+            );
+            format!("Failed to parse java-analyzer output for {file_str}: {preview}")
+        })?;
+
+    Ok(analysis)
+}
+
+// ---------------------------------------------------------------------------
+// Java daemon-mode analysis via ProcessPool (two pools)
+// ---------------------------------------------------------------------------
+
+/// Response from java-parser daemon.
+/// Uses RawValue for `ast` to avoid parsing + re-serializing the full AST JSON.
+#[derive(Deserialize)]
+struct JavaParserResponse<'a> {
+    status: String,
+    #[serde(borrow)]
+    ast: Option<&'a serde_json::value::RawValue>,
+    error: Option<String>,
+}
+
+/// Analyze a single Java file via two persistent daemon process pools.
+///
+/// 1. Read source, send to java-parser pool → receive AST JSON
+/// 2. Send AST to java-analyzer pool → receive FileAnalysis
+pub async fn analyze_java_file_pooled(
+    parser_pool: &ProcessPool,
+    analyzer_pool: &ProcessPool,
+    file: &Path,
+) -> Result<FileAnalysis> {
+    let file_str = file.display().to_string();
+
+    let source = tokio::fs::read_to_string(file)
+        .await
+        .with_context(|| format!("Failed to read Java source file {file_str}"))?;
+
+    // Step 1: Send to java-parser pool
+    let escaped_file = serde_json::to_string(&file_str)
+        .with_context(|| format!("Failed to escape file path for {file_str}"))?;
+    let escaped_source = serde_json::to_string(&source)
+        .with_context(|| format!("Failed to escape source for {file_str}"))?;
+    let parser_payload = format!(
+        r#"{{"file":{},"source":{}}}"#,
+        escaped_file, escaped_source
+    );
+
+    let parser_response_bytes = parser_pool
+        .request(parser_payload.as_bytes())
+        .await
+        .with_context(|| format!("Java parser pool request failed for {file_str}"))?;
+
+    // Zero-copy: parse only status/error, borrow raw AST JSON bytes
+    let parser_response: JavaParserResponse =
+        serde_json::from_slice(&parser_response_bytes)
+            .with_context(|| format!("Failed to decode java-parser response for {file_str}"))?;
+
+    let ast_raw = match parser_response.status.as_str() {
+        "ok" => parser_response
+            .ast
+            .with_context(|| format!("java-parser returned ok but no ast for {file_str}"))?,
+        "error" => {
+            let msg = parser_response
+                .error
+                .unwrap_or_else(|| "unknown error".to_string());
+            bail!("java-parser daemon error for {file_str}: {msg}")
+        }
+        other => bail!("Unknown java-parser response status '{other}' for {file_str}"),
+    };
+
+    // Step 2: Send to java-analyzer pool (raw AST bytes passed through without re-serialization)
+    let analyzer_payload = format!(r#"{{"file":{},"ast":{}}}"#, escaped_file, ast_raw.get());
+
+    let analyzer_response_bytes = analyzer_pool
+        .request(analyzer_payload.as_bytes())
+        .await
+        .with_context(|| format!("Java analyzer pool request failed for {file_str}"))?;
+
+    let response: DaemonResponse = serde_json::from_slice(&analyzer_response_bytes)
+        .with_context(|| format!("Failed to decode java-analyzer response for {file_str}"))?;
+
+    match response.status.as_str() {
+        "ok" => response
+            .result
+            .with_context(|| format!("java-analyzer daemon returned ok but no result for {file_str}")),
+        "error" => {
+            let msg = response.error.unwrap_or_else(|| "unknown error".to_string());
+            bail!("java-analyzer daemon error for {file_str}: {msg}")
+        }
+        other => bail!("Unknown java-analyzer response status '{other}' for {file_str}"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Java parallel multi-file analysis
+// ---------------------------------------------------------------------------
+
+/// Analyze multiple Java files in parallel using two persistent daemon pools.
+///
+/// Creates a java-parser pool and a java-analyzer pool. For each file:
+/// 1. Read source → send to java-parser pool → receive AST
+/// 2. Send AST to java-analyzer pool → receive FileAnalysis
+///
+/// Falls back to `analyze_java_files_parallel` if pool creation fails.
+pub async fn analyze_java_files_parallel_pooled(
+    files: &[PathBuf],
+    jobs: usize,
+    analyzers: &crate::config::AnalyzerBinaries,
+    limits: SizeLimits,
+) -> Vec<AnalysisResult> {
+    let parser_pool_config = PoolConfig {
+        command: analyzers.java_parser_path(),
+        args: vec!["--daemon".to_string()],
+        ..PoolConfig::default()
+    };
+
+    let analyzer_pool_config = PoolConfig {
+        command: analyzers.java_path(),
+        args: vec!["--daemon".to_string()],
+        ..PoolConfig::default()
+    };
+
+    let parser_pool = match ProcessPool::new(parser_pool_config, jobs.max(1)) {
+        Ok(p) => Arc::new(p),
+        Err(e) => {
+            tracing::warn!(
+                "Failed to create java-parser pool, falling back to spawn-per-file: {e}"
+            );
+            return analyze_java_files_parallel(files, jobs, analyzers).await;
+        }
+    };
+
+    let analyzer_pool = match ProcessPool::new(analyzer_pool_config, jobs.max(1)) {
+        Ok(p) => Arc::new(p),
+        Err(e) => {
+            tracing::warn!(
+                "Failed to create java-analyzer pool, falling back to spawn-per-file: {e}"
+            );
+            parser_pool.shutdown().await;
+            return analyze_java_files_parallel(files, jobs, analyzers).await;
+        }
+    };
+
+    let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
+    let total = files.len();
+
+    let handles: Vec<_> = files
+        .iter()
+        .enumerate()
+        .map(|(idx, file)| {
+            let sem = Arc::clone(&semaphore);
+            let parser_pool = Arc::clone(&parser_pool);
+            let analyzer_pool = Arc::clone(&analyzer_pool);
+            let file = file.clone();
+            let file_display = file.display().to_string();
+
+            tokio::spawn(async move {
+                let _permit = sem
+                    .acquire()
+                    .await
+                    .expect("Semaphore closed unexpectedly");
+
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
+                tracing::info!(
+                    "[{}/{}] Analyzing Java file {}",
+                    idx + 1,
+                    total,
+                    file_display
+                );
+
+                let errors = Vec::new();
+
+                // Size guard
+                if let Some(issue) = check_file_size(&file, limits) {
+                    tracing::warn!(file = %file.display(), "Skipping oversized source file: {}", issue.message);
+                    return AnalysisResult {
+                        file,
+                        analysis: None,
+                        errors,
+                        issues: vec![issue],
+                        metrics: FileMetrics {
+                            file_size_bytes,
+                            ..FileMetrics::default()
+                        },
+                    };
+                }
+
+                match analyze_java_file_pooled(&parser_pool, &analyzer_pool, &file).await {
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult {
+                            file,
+                            analysis: Some(analysis),
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                ast_size_bytes: 0,
+                                parse_ms: 0,
+                                analyze_ms: total_ms,
+                                total_ms,
+                                node_count,
+                                edge_count,
+                                ..Default::default()
+                            },
+                        }
+                    },
+                    Err(e) => {
+                        let mut errors = errors;
+                        errors.push(format!(
+                            "Java analyzer failed for {file_display}: {e}"
+                        ));
+                        AnalysisResult {
+                            file,
+                            analysis: None,
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                total_ms: file_start.elapsed().as_millis() as u64,
+                                ..FileMetrics::default()
+                            },
+                        }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        match handle.await {
+            Ok(result) => results.push(result),
+            Err(e) => {
+                results.push(AnalysisResult {
+                    file: PathBuf::new(),
+                    analysis: None,
+                    errors: vec![format!("Java analysis task failed: {e}")],
+                    issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
+                });
+            }
+        }
+    }
+
+    parser_pool.shutdown().await;
+    analyzer_pool.shutdown().await;
+    results
+}
+
+/// Analyze multiple Java files in parallel with bounded concurrency (spawn mode).
+///
+/// Fallback when daemon pools cannot be created. Spawns separate processes per file.
+pub async fn analyze_java_files_parallel(
+    files: &[PathBuf],
+    jobs: usize,
+    analyzers: &crate::config::AnalyzerBinaries,
+) -> Vec<AnalysisResult> {
+    let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
+    let total = files.len();
+    let analyzers = analyzers.clone();
+
+    let handles: Vec<_> = files
+        .iter()
+        .enumerate()
+        .map(|(idx, file)| {
+            let sem = Arc::clone(&semaphore);
+            let file = file.clone();
+            let file_display = file.display().to_string();
+            let analyzers = analyzers.clone();
+
+            tokio::spawn(async move {
+                let _permit = sem
+                    .acquire()
+                    .await
+                    .expect("Semaphore closed unexpectedly");
+
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
+                tracing::info!(
+                    "[{}/{}] Analyzing Java file {}",
+                    idx + 1,
+                    total,
+                    file_display
+                );
+
+                let errors = Vec::new();
+
+                match analyze_java_file(&file, &analyzers).await {
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult {
+                            file,
+                            analysis: Some(analysis),
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                ast_size_bytes: 0,
+                                parse_ms: 0,
+                                analyze_ms: total_ms,
+                                total_ms,
+                                node_count,
+                                edge_count,
+                                ..Default::default()
+                            },
+                        }
+                    },
+                    Err(e) => {
+                        let mut errors = errors;
+                        errors.push(format!(
+                            "Java analyzer failed for {file_display}: {e}"
+                        ));
+                        AnalysisResult {
+                            file,
+                            analysis: None,
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                total_ms: file_start.elapsed().as_millis() as u64,
+                                ..FileMetrics::default()
+                            },
+                        }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        match handle.await {
+            Ok(result) => results.push(result),
+            Err(e) => {
+                results.push(AnalysisResult {
+                    file: PathBuf::new(),
+                    analysis: None,
+                    errors: vec![format!("Java analysis task failed: {e}")],
+                    issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
+                });
+            }
+        }
+    }
+
+    results
+}
+
+// ---------------------------------------------------------------------------
+// Kotlin single-file analysis (two-stage: kotlin-parser → kotlin-analyzer)
+// ---------------------------------------------------------------------------
+
+/// Analyze a single Kotlin file: parse with kotlin-parser, then analyze with kotlin-analyzer.
+///
+/// Same two-stage pipeline as Java:
+/// 1. Read source, send `{"file":"...","source":"..."}` to kotlin-parser
+/// 2. Extract AST from parser response
+/// 3. Send `{"file":"...","ast":{...}}` to kotlin-analyzer
+/// 4. Return FileAnalysis
+pub async fn analyze_kotlin_file(
+    file: &Path,
+    analyzers: &crate::config::AnalyzerBinaries,
+) -> Result<FileAnalysis> {
+    let file_str = file.display().to_string();
+
+    let source = tokio::fs::read_to_string(file)
+        .await
+        .with_context(|| format!("Failed to read Kotlin source file {file_str}"))?;
+
+    // Step 1: Parse with kotlin-parser
+    let parser_bin = analyzers.kotlin_parser_path();
+    let mut parser_child = tokio::process::Command::new(&parser_bin)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .with_context(|| format!("Failed to spawn kotlin-parser for {file_str}"))?;
+
+    let parser_payload = serde_json::json!({
+        "file": file_str,
+        "source": source,
+    });
+
+    {
+        let stdin = parser_child
+            .stdin
+            .as_mut()
+            .context("Failed to open stdin for kotlin-parser")?;
+        stdin
+            .write_all(parser_payload.to_string().as_bytes())
+            .await
+            .with_context(|| format!("Failed to write source to kotlin-parser stdin for {file_str}"))?;
+        stdin
+            .shutdown()
+            .await
+            .with_context(|| format!("Failed to close kotlin-parser stdin for {file_str}"))?;
+    }
+
+    let parser_output = parser_child
+        .wait_with_output()
+        .await
+        .with_context(|| format!("Failed to wait for kotlin-parser for {file_str}"))?;
+
+    if !parser_output.status.success() {
+        let stderr = String::from_utf8_lossy(&parser_output.stderr);
+        let code = parser_output
+            .status
+            .code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "signal".to_string());
+        bail!("kotlin-parser exited with code {code} for {file_str}: {stderr}");
+    }
+
+    let parser_response: serde_json::Value =
+        serde_json::from_slice(&parser_output.stdout).with_context(|| {
+            let preview =
+                String::from_utf8_lossy(&parser_output.stdout[..parser_output.stdout.len().min(200)]);
+            format!("Failed to parse kotlin-parser output for {file_str}: {preview}")
+        })?;
+
+    if parser_response.get("status").and_then(|s| s.as_str()) != Some("ok") {
+        let err = parser_response
+            .get("error")
+            .and_then(|e| e.as_str())
+            .unwrap_or("unknown error");
+        bail!("kotlin-parser error for {file_str}: {err}");
+    }
+
+    let ast = parser_response
+        .get("ast")
+        .with_context(|| format!("kotlin-parser returned ok but no ast for {file_str}"))?;
+
+    // Step 2: Analyze with kotlin-analyzer
+    let analyzer_bin = analyzers.kotlin_path();
+    let mut analyzer_child = tokio::process::Command::new(&analyzer_bin)
+        .arg(&file_str)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .with_context(|| format!("Failed to spawn kotlin-analyzer for {file_str}"))?;
+
+    let analyzer_payload = serde_json::json!({
+        "file": file_str,
+        "ast": ast,
+    });
+
+    {
+        let stdin = analyzer_child
+            .stdin
+            .as_mut()
+            .context("Failed to open stdin for kotlin-analyzer")?;
+        stdin
+            .write_all(analyzer_payload.to_string().as_bytes())
+            .await
+            .with_context(|| {
+                format!("Failed to write AST to kotlin-analyzer stdin for {file_str}")
+            })?;
+        stdin
+            .shutdown()
+            .await
+            .with_context(|| format!("Failed to close kotlin-analyzer stdin for {file_str}"))?;
+    }
+
+    let analyzer_output = analyzer_child
+        .wait_with_output()
+        .await
+        .with_context(|| format!("Failed to wait for kotlin-analyzer for {file_str}"))?;
+
+    if !analyzer_output.status.success() {
+        let stderr = String::from_utf8_lossy(&analyzer_output.stderr);
+        let code = analyzer_output
+            .status
+            .code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "signal".to_string());
+        bail!("kotlin-analyzer exited with code {code} for {file_str}: {stderr}");
+    }
+
+    let analysis: FileAnalysis =
+        serde_json::from_slice(&analyzer_output.stdout).with_context(|| {
+            let preview = String::from_utf8_lossy(
+                &analyzer_output.stdout[..analyzer_output.stdout.len().min(200)],
+            );
+            format!("Failed to parse kotlin-analyzer output for {file_str}: {preview}")
+        })?;
+
+    Ok(analysis)
+}
+
+// ---------------------------------------------------------------------------
+// Kotlin daemon-mode analysis via ProcessPool (two pools)
+// ---------------------------------------------------------------------------
+
+/// Analyze a single Kotlin file via two persistent daemon process pools.
+///
+/// 1. Read source, send to kotlin-parser pool → receive AST JSON
+/// 2. Send AST to kotlin-analyzer pool → receive FileAnalysis
+pub async fn analyze_kotlin_file_pooled(
+    parser_pool: &ProcessPool,
+    analyzer_pool: &ProcessPool,
+    file: &Path,
+) -> Result<FileAnalysis> {
+    let file_str = file.display().to_string();
+
+    let source = tokio::fs::read_to_string(file)
+        .await
+        .with_context(|| format!("Failed to read Kotlin source file {file_str}"))?;
+
+    // Step 1: Send to kotlin-parser pool
+    let escaped_file = serde_json::to_string(&file_str)
+        .with_context(|| format!("Failed to escape file path for {file_str}"))?;
+    let escaped_source = serde_json::to_string(&source)
+        .with_context(|| format!("Failed to escape source for {file_str}"))?;
+    let parser_payload = format!(
+        r#"{{"file":{},"source":{}}}"#,
+        escaped_file, escaped_source
+    );
+
+    let parser_response_bytes = parser_pool
+        .request(parser_payload.as_bytes())
+        .await
+        .with_context(|| format!("Kotlin parser pool request failed for {file_str}"))?;
+
+    // Zero-copy: parse only status/error, borrow raw AST JSON bytes
+    let parser_response: JavaParserResponse =
+        serde_json::from_slice(&parser_response_bytes)
+            .with_context(|| format!("Failed to decode kotlin-parser response for {file_str}"))?;
+
+    let ast_raw = match parser_response.status.as_str() {
+        "ok" => parser_response
+            .ast
+            .with_context(|| format!("kotlin-parser returned ok but no ast for {file_str}"))?,
+        "error" => {
+            let msg = parser_response
+                .error
+                .unwrap_or_else(|| "unknown error".to_string());
+            bail!("kotlin-parser daemon error for {file_str}: {msg}")
+        }
+        other => bail!("Unknown kotlin-parser response status '{other}' for {file_str}"),
+    };
+
+    // Step 2: Send to kotlin-analyzer pool
+    let analyzer_payload = format!(r#"{{"file":{},"ast":{}}}"#, escaped_file, ast_raw.get());
+
+    let analyzer_response_bytes = analyzer_pool
+        .request(analyzer_payload.as_bytes())
+        .await
+        .with_context(|| format!("Kotlin analyzer pool request failed for {file_str}"))?;
+
+    let response: DaemonResponse = serde_json::from_slice(&analyzer_response_bytes)
+        .with_context(|| format!("Failed to decode kotlin-analyzer response for {file_str}"))?;
+
+    match response.status.as_str() {
+        "ok" => response
+            .result
+            .with_context(|| format!("kotlin-analyzer daemon returned ok but no result for {file_str}")),
+        "error" => {
+            let msg = response.error.unwrap_or_else(|| "unknown error".to_string());
+            bail!("kotlin-analyzer daemon error for {file_str}: {msg}")
+        }
+        other => bail!("Unknown kotlin-analyzer response status '{other}' for {file_str}"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Kotlin parallel multi-file analysis
+// ---------------------------------------------------------------------------
+
+/// Analyze multiple Kotlin files in parallel using two persistent daemon pools.
+///
+/// Falls back to `analyze_kotlin_files_parallel` if pool creation fails.
+pub async fn analyze_kotlin_files_parallel_pooled(
+    files: &[PathBuf],
+    jobs: usize,
+    analyzers: &crate::config::AnalyzerBinaries,
+    limits: SizeLimits,
+) -> Vec<AnalysisResult> {
+    let parser_pool_config = PoolConfig {
+        command: analyzers.kotlin_parser_path(),
+        args: vec!["--daemon".to_string()],
+        ..PoolConfig::default()
+    };
+
+    let analyzer_pool_config = PoolConfig {
+        command: analyzers.kotlin_path(),
+        args: vec!["--daemon".to_string()],
+        ..PoolConfig::default()
+    };
+
+    let parser_pool = match ProcessPool::new(parser_pool_config, jobs.max(1)) {
+        Ok(p) => Arc::new(p),
+        Err(e) => {
+            tracing::warn!(
+                "Failed to create kotlin-parser pool, falling back to spawn-per-file: {e}"
+            );
+            return analyze_kotlin_files_parallel(files, jobs, analyzers).await;
+        }
+    };
+
+    let analyzer_pool = match ProcessPool::new(analyzer_pool_config, jobs.max(1)) {
+        Ok(p) => Arc::new(p),
+        Err(e) => {
+            tracing::warn!(
+                "Failed to create kotlin-analyzer pool, falling back to spawn-per-file: {e}"
+            );
+            parser_pool.shutdown().await;
+            return analyze_kotlin_files_parallel(files, jobs, analyzers).await;
+        }
+    };
+
+    let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
+    let total = files.len();
+
+    let handles: Vec<_> = files
+        .iter()
+        .enumerate()
+        .map(|(idx, file)| {
+            let sem = Arc::clone(&semaphore);
+            let parser_pool = Arc::clone(&parser_pool);
+            let analyzer_pool = Arc::clone(&analyzer_pool);
+            let file = file.clone();
+            let file_display = file.display().to_string();
+
+            tokio::spawn(async move {
+                let _permit = sem
+                    .acquire()
+                    .await
+                    .expect("Semaphore closed unexpectedly");
+
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
+                tracing::info!(
+                    "[{}/{}] Analyzing Kotlin file {}",
+                    idx + 1,
+                    total,
+                    file_display
+                );
+
+                let errors = Vec::new();
+
+                // Size guard
+                if let Some(issue) = check_file_size(&file, limits) {
+                    tracing::warn!(file = %file.display(), "Skipping oversized source file: {}", issue.message);
+                    return AnalysisResult {
+                        file,
+                        analysis: None,
+                        errors,
+                        issues: vec![issue],
+                        metrics: FileMetrics {
+                            file_size_bytes,
+                            ..FileMetrics::default()
+                        },
+                    };
+                }
+
+                match analyze_kotlin_file_pooled(&parser_pool, &analyzer_pool, &file).await {
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult {
+                            file,
+                            analysis: Some(analysis),
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                ast_size_bytes: 0,
+                                parse_ms: 0,
+                                analyze_ms: total_ms,
+                                total_ms,
+                                node_count,
+                                edge_count,
+                                ..Default::default()
+                            },
+                        }
+                    },
+                    Err(e) => {
+                        let mut errors = errors;
+                        errors.push(format!(
+                            "Kotlin analyzer failed for {file_display}: {e}"
+                        ));
+                        AnalysisResult {
+                            file,
+                            analysis: None,
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                total_ms: file_start.elapsed().as_millis() as u64,
+                                ..FileMetrics::default()
+                            },
+                        }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        match handle.await {
+            Ok(result) => results.push(result),
+            Err(e) => {
+                results.push(AnalysisResult {
+                    file: PathBuf::new(),
+                    analysis: None,
+                    errors: vec![format!("Kotlin analysis task failed: {e}")],
+                    issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
+                });
+            }
+        }
+    }
+
+    parser_pool.shutdown().await;
+    analyzer_pool.shutdown().await;
+    results
+}
+
+/// Analyze multiple Kotlin files in parallel with bounded concurrency (spawn mode).
+///
+/// Fallback when daemon pools cannot be created.
+pub async fn analyze_kotlin_files_parallel(
+    files: &[PathBuf],
+    jobs: usize,
+    analyzers: &crate::config::AnalyzerBinaries,
+) -> Vec<AnalysisResult> {
+    let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
+    let total = files.len();
+    let analyzers = analyzers.clone();
+
+    let handles: Vec<_> = files
+        .iter()
+        .enumerate()
+        .map(|(idx, file)| {
+            let sem = Arc::clone(&semaphore);
+            let file = file.clone();
+            let file_display = file.display().to_string();
+            let analyzers = analyzers.clone();
+
+            tokio::spawn(async move {
+                let _permit = sem
+                    .acquire()
+                    .await
+                    .expect("Semaphore closed unexpectedly");
+
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
+                tracing::info!(
+                    "[{}/{}] Analyzing Kotlin file {}",
+                    idx + 1,
+                    total,
+                    file_display
+                );
+
+                let errors = Vec::new();
+
+                match analyze_kotlin_file(&file, &analyzers).await {
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult {
+                            file,
+                            analysis: Some(analysis),
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                ast_size_bytes: 0,
+                                parse_ms: 0,
+                                analyze_ms: total_ms,
+                                total_ms,
+                                node_count,
+                                edge_count,
+                                ..Default::default()
+                            },
+                        }
+                    },
+                    Err(e) => {
+                        let mut errors = errors;
+                        errors.push(format!(
+                            "Kotlin analyzer failed for {file_display}: {e}"
+                        ));
+                        AnalysisResult {
+                            file,
+                            analysis: None,
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                total_ms: file_start.elapsed().as_millis() as u64,
+                                ..FileMetrics::default()
+                            },
+                        }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        match handle.await {
+            Ok(result) => results.push(result),
+            Err(e) => {
+                results.push(AnalysisResult {
+                    file: PathBuf::new(),
+                    analysis: None,
+                    errors: vec![format!("Kotlin analysis task failed: {e}")],
+                    issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
                 });
             }
         }
@@ -1031,6 +3276,56 @@ pub fn to_wire_edges(analysis: &FileAnalysis) -> Vec<WireEdge> {
 // Resolution node collection
 // ---------------------------------------------------------------------------
 
+/// Accessor for RESOLVE_NODE_TYPES (used by main.rs for RFDB queries).
+pub fn resolve_node_types() -> &'static [&'static str] {
+    RESOLVE_NODE_TYPES
+}
+
+/// Convert an RFDB `WireNode` back to the resolver-compatible JSON format
+/// (matching the `GraphNode` serialization that resolution plugins expect).
+///
+/// Key transformations:
+/// - `nodeType` → `type`
+/// - `semantic_id` → `id` (resolver uses semantic ID strings, not u128 hashes)
+/// - metadata string → parsed, `line`/`column`/`endLine`/`endColumn` extracted as top-level fields
+pub fn wire_node_to_resolve_json(node: &crate::rfdb::WireNode) -> serde_json::Value {
+    let metadata: serde_json::Map<String, serde_json::Value> = node
+        .metadata
+        .as_deref()
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or_default();
+
+    let line = metadata.get("line").cloned().unwrap_or(serde_json::json!(0));
+    let column = metadata.get("column").cloned().unwrap_or(serde_json::json!(0));
+    let end_line = metadata.get("endLine").cloned().unwrap_or(serde_json::json!(0));
+    let end_column = metadata.get("endColumn").cloned().unwrap_or(serde_json::json!(0));
+
+    // Build clean metadata (strip position fields — they're now top-level)
+    let clean_metadata: serde_json::Map<String, serde_json::Value> = metadata
+        .into_iter()
+        .filter(|(k, _)| k != "line" && k != "column" && k != "endLine" && k != "endColumn")
+        .collect();
+
+    // Use semantic_id if available, fall back to id
+    let id = node
+        .semantic_id
+        .as_ref()
+        .unwrap_or(&node.id);
+
+    serde_json::json!({
+        "id": id,
+        "type": node.node_type,
+        "name": node.name,
+        "file": node.file,
+        "line": line,
+        "column": column,
+        "endLine": end_line,
+        "endColumn": end_column,
+        "exported": node.exported,
+        "metadata": clean_metadata,
+    })
+}
+
 /// Node types that the resolution plugin needs.
 const RESOLVE_NODE_TYPES: &[&str] = &[
     // JS/TS types
@@ -1043,6 +3338,12 @@ const RESOLVE_NODE_TYPES: &[&str] = &[
     "CONSTANT",
     "CLASS",
     "CALL",
+    "METHOD",
+    "REFERENCE",
+    "PROPERTY_ACCESS",
+    "PROPERTY_ASSIGNMENT",
+    "TYPE_ALIAS",
+    "NAMESPACE",
     // Haskell types
     "TYPE_CLASS",
     "INSTANCE",
@@ -1050,6 +3351,7 @@ const RESOLVE_NODE_TYPES: &[&str] = &[
     "CONSTRUCTOR",
     "TYPE_SYNONYM",
     "TYPE_FAMILY",
+    "RECORD_FIELD",
     // Rust types
     "STRUCT",
     "ENUM",
@@ -1057,6 +3359,27 @@ const RESOLVE_NODE_TYPES: &[&str] = &[
     "TRAIT",
     "IMPL_BLOCK",
     "MODULE",
+    // Java types
+    "INTERFACE",
+    "RECORD",
+    "PARAMETER",
+    "ATTRIBUTE",
+    "CLOSURE",
+    "TYPE_PARAMETER",
+    // Swift/Apple types
+    "EXTENSION",
+    "TYPE_ALIAS",
+    "SPM_TARGET",
+    "SPM_PACKAGE",
+    // Python types
+    "UNSAFE_DYNAMIC",
+    // Control flow (shared across languages)
+    "LOOP",
+    "BRANCH",
+    "TRY_BLOCK",
+    "CATCH_BLOCK",
+    "FINALLY_BLOCK",
+    "CASE",
 ];
 
 /// Collect nodes relevant for cross-file resolution from analysis results.
@@ -1086,6 +3409,27 @@ pub fn collect_resolve_nodes_for_lang(
         .filter_map(|r| r.analysis.as_ref())
         .filter(|a| {
             crate::config::detect_language(std::path::Path::new(&a.file)) == Some(lang)
+        })
+        .flat_map(|a| &a.nodes)
+        .filter(|n| RESOLVE_NODE_TYPES.contains(&n.node_type.as_str()))
+        .filter_map(|n| serde_json::to_value(n).ok())
+        .collect()
+}
+
+/// Like `collect_resolve_nodes_for_lang`, but collects nodes from ALL JVM
+/// languages (Java + Kotlin). Used by jvm-cross-resolve which needs nodes
+/// from both languages to resolve cross-language edges.
+pub fn collect_resolve_nodes_for_jvm(
+    results: &[AnalysisResult],
+) -> Vec<serde_json::Value> {
+    results
+        .iter()
+        .filter_map(|r| r.analysis.as_ref())
+        .filter(|a| {
+            matches!(
+                crate::config::detect_language(std::path::Path::new(&a.file)),
+                Some(crate::config::Language::Java) | Some(crate::config::Language::Kotlin)
+            )
         })
         .flat_map(|a| &a.nodes)
         .filter(|n| RESOLVE_NODE_TYPES.contains(&n.node_type.as_str()))
@@ -1136,7 +3480,15 @@ pub async fn analyze_files_parallel(
                     .await
                     .expect("Semaphore closed unexpectedly");
 
-                tracing::info!("[{}/{}] Analyzing {}", idx + 1, total, file_display);
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
+                // Log milestones (every 100 files), or every file for small batches
+                if total <= 100 || (idx + 1) % 100 == 0 || idx + 1 == total {
+                    tracing::info!("[{}/{}] Analyzing {}", idx + 1, total, file_display);
+                } else {
+                    tracing::debug!("[{}/{}] Analyzing {}", idx + 1, total, file_display);
+                }
 
                 let mut errors = Vec::new();
 
@@ -1145,6 +3497,8 @@ pub async fn analyze_files_parallel(
                     let file_clone = file.clone();
                     tokio::task::spawn_blocking(move || parser::parse_file(&file_clone)).await
                 };
+
+                let parse_ms = file_start.elapsed().as_millis() as u64;
 
                 let ast_json = match parse_result {
                     Ok(Ok(result)) => {
@@ -1166,6 +3520,13 @@ pub async fn analyze_files_parallel(
                             file,
                             analysis: None,
                             errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                parse_ms,
+                                total_ms: file_start.elapsed().as_millis() as u64,
+                                ..FileMetrics::default()
+                            },
                         };
                     }
                     Err(e) => {
@@ -1176,16 +3537,40 @@ pub async fn analyze_files_parallel(
                             file,
                             analysis: None,
                             errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                parse_ms,
+                                total_ms: file_start.elapsed().as_millis() as u64,
+                                ..FileMetrics::default()
+                            },
                         };
                     }
                 };
 
                 // Step 2: Spawn grafema-analyzer
                 match analyze_file(&file, &ast_json, &bin).await {
-                    Ok(analysis) => AnalysisResult {
-                        file,
-                        analysis: Some(analysis),
-                        errors,
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let analyze_ms = total_ms.saturating_sub(parse_ms);
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult {
+                            file,
+                            analysis: Some(analysis),
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                ast_size_bytes: 0,
+                                parse_ms,
+                                analyze_ms,
+                                total_ms,
+                                node_count,
+                                edge_count,
+                                ..Default::default()
+                            },
+                        }
                     },
                     Err(e) => {
                         errors.push(format!(
@@ -1195,6 +3580,13 @@ pub async fn analyze_files_parallel(
                             file,
                             analysis: None,
                             errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                parse_ms,
+                                total_ms: file_start.elapsed().as_millis() as u64,
+                                ..FileMetrics::default()
+                            },
                         }
                     }
                 }
@@ -1213,12 +3605,2113 @@ pub async fn analyze_files_parallel(
                     file: PathBuf::new(),
                     analysis: None,
                     errors: vec![format!("Analysis task failed: {e}")],
+                    issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
                 });
             }
         }
     }
 
     results
+}
+
+// ---------------------------------------------------------------------------
+// Python single-file analysis (spawn mode)
+// ---------------------------------------------------------------------------
+
+/// Analyze a single Python file: parse with rustpython-parser, send AST to python-analyzer daemon.
+pub async fn analyze_python_file(file: &Path, ast_json: &str, analyzer_bin: &str) -> Result<FileAnalysis> {
+    let file_str = file.display().to_string();
+
+    let mut child = tokio::process::Command::new(analyzer_bin)
+        .arg(&file_str)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .with_context(|| format!("Failed to spawn grafema-python-analyzer for {file_str}"))?;
+
+    let payload = serde_json::json!({
+        "file": file_str,
+        "ast": serde_json::from_str::<serde_json::Value>(ast_json)
+            .unwrap_or(serde_json::Value::Null),
+    });
+
+    {
+        let stdin = child.stdin.as_mut()
+            .context("Failed to open stdin for grafema-python-analyzer")?;
+        stdin.write_all(payload.to_string().as_bytes()).await
+            .with_context(|| format!("Failed to write AST to grafema-python-analyzer stdin for {file_str}"))?;
+        stdin.shutdown().await
+            .with_context(|| format!("Failed to close grafema-python-analyzer stdin for {file_str}"))?;
+    }
+
+    let output = child.wait_with_output().await
+        .with_context(|| format!("Failed to wait for grafema-python-analyzer for {file_str}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let code = output.status.code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "signal".to_string());
+        anyhow::bail!("grafema-python-analyzer exited with code {code} for {file_str}: {stderr}");
+    }
+
+    let stdout = &output.stdout;
+    let analysis: FileAnalysis = serde_json::from_slice(stdout).with_context(|| {
+        let preview = String::from_utf8_lossy(&stdout[..stdout.len().min(200)]);
+        format!("Failed to parse grafema-python-analyzer output for {file_str}: {preview}")
+    })?;
+
+    Ok(analysis)
+}
+
+// ---------------------------------------------------------------------------
+// Python daemon-mode analysis via ProcessPool
+// ---------------------------------------------------------------------------
+
+/// Analyze a single Python file via a persistent daemon process pool.
+pub async fn analyze_python_file_pooled(
+    pool: &ProcessPool,
+    file: &Path,
+    ast_json: &str,
+) -> Result<FileAnalysis> {
+    let file_str = file.display().to_string();
+
+    let escaped_file = serde_json::to_string(&file_str)
+        .with_context(|| format!("Failed to escape file path for {file_str}"))?;
+    let payload = format!(r#"{{"file":{},"ast":{}}}"#, escaped_file, ast_json);
+
+    let response_bytes = pool
+        .request(payload.as_bytes())
+        .await
+        .with_context(|| format!("Pool request failed for {file_str}"))?;
+
+    let response: DaemonResponse = serde_json::from_slice(&response_bytes)
+        .with_context(|| format!("Failed to decode response for {file_str}"))?;
+
+    match response.status.as_str() {
+        "ok" => response
+            .result
+            .with_context(|| format!("Daemon returned ok but no result for {file_str}")),
+        "error" => {
+            let msg = response.error.unwrap_or_else(|| "unknown error".to_string());
+            bail!("grafema-python-analyzer daemon error for {file_str}: {msg}")
+        }
+        other => bail!("Unknown daemon response status '{other}' for {file_str}"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Python parallel multi-file analysis
+// ---------------------------------------------------------------------------
+
+/// Analyze multiple Python files in parallel using persistent daemon processes.
+pub async fn analyze_python_files_parallel_pooled(
+    files: &[PathBuf],
+    jobs: usize,
+    analyzers: &crate::config::AnalyzerBinaries,
+    limits: SizeLimits,
+) -> Vec<AnalysisResult> {
+    let pool_config = PoolConfig {
+        command: analyzers.python_path(),
+        args: vec!["--daemon".to_string()],
+        ..PoolConfig::default()
+    };
+
+    let pool = match ProcessPool::new(pool_config, jobs.max(1)) {
+        Ok(p) => Arc::new(p),
+        Err(e) => {
+            tracing::warn!(
+                "Failed to create grafema-python-analyzer pool, falling back to spawn-per-file: {e}"
+            );
+            return analyze_python_files_parallel(files, jobs, &analyzers.python_path()).await;
+        }
+    };
+
+    let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
+    let total = files.len();
+
+    let handles: Vec<_> = files
+        .iter()
+        .enumerate()
+        .map(|(idx, file)| {
+            let sem = Arc::clone(&semaphore);
+            let pool = Arc::clone(&pool);
+            let file = file.clone();
+            let file_display = file.display().to_string();
+
+            tokio::spawn(async move {
+                let _permit = sem.acquire().await.expect("Semaphore closed unexpectedly");
+
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
+                tracing::info!("[{}/{}] Analyzing Python file {}", idx + 1, total, file_display);
+
+                let mut errors = Vec::new();
+
+                // Size guard
+                if let Some(issue) = check_file_size(&file, limits) {
+                    tracing::warn!(file = %file.display(), "Skipping oversized source file: {}", issue.message);
+                    return AnalysisResult {
+                        file,
+                        analysis: None,
+                        errors,
+                        issues: vec![issue],
+                        metrics: FileMetrics {
+                            file_size_bytes,
+                            ..FileMetrics::default()
+                        },
+                    };
+                }
+
+                // Step 1: Parse with rustpython-parser (CPU-bound -> spawn_blocking)
+                let parse_result = {
+                    let file_clone = file.clone();
+                    tokio::task::spawn_blocking(move || {
+                        crate::python_parser::parse_python_file(&file_clone)
+                    }).await
+                };
+
+                let parse_ms = file_start.elapsed().as_millis() as u64;
+
+                let ast_json = match parse_result {
+                    Ok(Ok(json)) => json,
+                    Ok(Err(e)) => {
+                        errors.push(format!("Python parse failed for {file_display}: {e}"));
+                        return AnalysisResult { file, analysis: None, errors, issues: vec![], metrics: FileMetrics { file_size_bytes, parse_ms, total_ms: file_start.elapsed().as_millis() as u64, ..FileMetrics::default() } };
+                    }
+                    Err(e) => {
+                        errors.push(format!("Python parse task panicked for {file_display}: {e}"));
+                        return AnalysisResult { file, analysis: None, errors, issues: vec![], metrics: FileMetrics { file_size_bytes, parse_ms, total_ms: file_start.elapsed().as_millis() as u64, ..FileMetrics::default() } };
+                    }
+                };
+
+                // Step 2: Send to daemon pool
+                match analyze_python_file_pooled(&pool, &file, &ast_json).await {
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let analyze_ms = total_ms.saturating_sub(parse_ms);
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult { file, analysis: Some(analysis), errors, issues: vec![], metrics: FileMetrics {
+                            file_size_bytes, ast_size_bytes: 0, parse_ms, analyze_ms, total_ms, node_count, edge_count,
+                            ..Default::default()
+                        } }
+                    },
+                    Err(e) => {
+                        errors.push(format!("Python analyzer failed for {file_display}: {e}"));
+                        AnalysisResult { file, analysis: None, errors, issues: vec![], metrics: FileMetrics { file_size_bytes, parse_ms, total_ms: file_start.elapsed().as_millis() as u64, ..FileMetrics::default() } }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        match handle.await {
+            Ok(result) => results.push(result),
+            Err(e) => {
+                results.push(AnalysisResult {
+                    file: PathBuf::new(),
+                    analysis: None,
+                    errors: vec![format!("Python analysis task failed: {e}")],
+                    issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
+                });
+            }
+        }
+    }
+
+    pool.shutdown().await;
+    results
+}
+
+/// Fallback: analyze Python files in parallel by spawning per-file processes.
+pub async fn analyze_python_files_parallel(
+    files: &[PathBuf],
+    jobs: usize,
+    analyzer_bin: &str,
+) -> Vec<AnalysisResult> {
+    let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
+    let total = files.len();
+    let analyzer_bin = analyzer_bin.to_string();
+
+    let handles: Vec<_> = files
+        .iter()
+        .enumerate()
+        .map(|(idx, file)| {
+            let sem = Arc::clone(&semaphore);
+            let file = file.clone();
+            let file_display = file.display().to_string();
+            let bin = analyzer_bin.clone();
+
+            tokio::spawn(async move {
+                let _permit = sem.acquire().await.expect("Semaphore closed unexpectedly");
+
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
+                tracing::info!("[{}/{}] Analyzing Python file {}", idx + 1, total, file_display);
+
+                let mut errors = Vec::new();
+
+                // Step 1: Parse with rustpython-parser
+                let ast_json = match crate::python_parser::parse_python_file(&file) {
+                    Ok(json) => json,
+                    Err(e) => {
+                        errors.push(format!("Python parse failed for {file_display}: {e}"));
+                        return AnalysisResult { file, analysis: None, errors, issues: vec![], metrics: FileMetrics { file_size_bytes, total_ms: file_start.elapsed().as_millis() as u64, ..FileMetrics::default() } };
+                    }
+                };
+
+                let parse_ms = file_start.elapsed().as_millis() as u64;
+
+                // Step 2: Spawn analyzer
+                match analyze_python_file(&file, &ast_json, &bin).await {
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let analyze_ms = total_ms.saturating_sub(parse_ms);
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult { file, analysis: Some(analysis), errors, issues: vec![], metrics: FileMetrics {
+                            file_size_bytes, ast_size_bytes: 0, parse_ms, analyze_ms, total_ms, node_count, edge_count,
+                            ..Default::default()
+                        } }
+                    },
+                    Err(e) => {
+                        errors.push(format!("Python analyzer failed for {file_display}: {e}"));
+                        AnalysisResult { file, analysis: None, errors, issues: vec![], metrics: FileMetrics { file_size_bytes, parse_ms, total_ms: file_start.elapsed().as_millis() as u64, ..FileMetrics::default() } }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        match handle.await {
+            Ok(result) => results.push(result),
+            Err(e) => {
+                results.push(AnalysisResult {
+                    file: PathBuf::new(),
+                    analysis: None,
+                    errors: vec![format!("Python analysis task failed: {e}")],
+                    issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
+                });
+            }
+        }
+    }
+
+    results
+}
+
+// ---------------------------------------------------------------------------
+// Go single-file analysis (two-stage: go-parser → go-analyzer)
+// ---------------------------------------------------------------------------
+
+/// Analyze a single Go file: parse with go-parser, analyze with go-analyzer.
+///
+/// Two-stage pipeline:
+/// 1. Read source from disk, send to go-parser → receive AST JSON
+/// 2. Send AST to go-analyzer → receive FileAnalysis
+pub async fn analyze_go_file(
+    file: &Path,
+    analyzers: &crate::config::AnalyzerBinaries,
+) -> Result<FileAnalysis> {
+    let file_str = file.display().to_string();
+
+    let source = tokio::fs::read_to_string(file)
+        .await
+        .with_context(|| format!("Failed to read Go source file {file_str}"))?;
+
+    // Step 1: Parse with go-parser
+    let parser_bin = analyzers.go_parser_path();
+    let mut parser_child = tokio::process::Command::new(&parser_bin)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .with_context(|| format!("Failed to spawn go-parser for {file_str}"))?;
+
+    let parser_payload = serde_json::json!({
+        "file": file_str,
+        "source": source,
+    });
+
+    {
+        let stdin = parser_child
+            .stdin
+            .as_mut()
+            .context("Failed to open stdin for go-parser")?;
+        stdin
+            .write_all(parser_payload.to_string().as_bytes())
+            .await
+            .with_context(|| format!("Failed to write source to go-parser stdin for {file_str}"))?;
+        stdin
+            .shutdown()
+            .await
+            .with_context(|| format!("Failed to close go-parser stdin for {file_str}"))?;
+    }
+
+    let parser_output = parser_child
+        .wait_with_output()
+        .await
+        .with_context(|| format!("Failed to wait for go-parser for {file_str}"))?;
+
+    if !parser_output.status.success() {
+        let stderr = String::from_utf8_lossy(&parser_output.stderr);
+        let code = parser_output
+            .status
+            .code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "signal".to_string());
+        bail!("go-parser exited with code {code} for {file_str}: {stderr}");
+    }
+
+    // Extract AST from parser response
+    let parser_response: serde_json::Value =
+        serde_json::from_slice(&parser_output.stdout).with_context(|| {
+            let preview =
+                String::from_utf8_lossy(&parser_output.stdout[..parser_output.stdout.len().min(200)]);
+            format!("Failed to parse go-parser output for {file_str}: {preview}")
+        })?;
+
+    if parser_response.get("status").and_then(|s| s.as_str()) != Some("ok") {
+        let err = parser_response
+            .get("error")
+            .and_then(|e| e.as_str())
+            .unwrap_or("unknown error");
+        bail!("go-parser error for {file_str}: {err}");
+    }
+
+    let ast = parser_response
+        .get("ast")
+        .with_context(|| format!("go-parser returned ok but no ast for {file_str}"))?;
+
+    // Step 2: Analyze with go-analyzer
+    let analyzer_bin = analyzers.go_path();
+    let mut analyzer_child = tokio::process::Command::new(&analyzer_bin)
+        .arg(&file_str)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .with_context(|| format!("Failed to spawn go-analyzer for {file_str}"))?;
+
+    let analyzer_payload = serde_json::json!({
+        "file": file_str,
+        "ast": ast,
+    });
+
+    {
+        let stdin = analyzer_child
+            .stdin
+            .as_mut()
+            .context("Failed to open stdin for go-analyzer")?;
+        stdin
+            .write_all(analyzer_payload.to_string().as_bytes())
+            .await
+            .with_context(|| {
+                format!("Failed to write AST to go-analyzer stdin for {file_str}")
+            })?;
+        stdin
+            .shutdown()
+            .await
+            .with_context(|| format!("Failed to close go-analyzer stdin for {file_str}"))?;
+    }
+
+    let analyzer_output = analyzer_child
+        .wait_with_output()
+        .await
+        .with_context(|| format!("Failed to wait for go-analyzer for {file_str}"))?;
+
+    if !analyzer_output.status.success() {
+        let stderr = String::from_utf8_lossy(&analyzer_output.stderr);
+        let code = analyzer_output
+            .status
+            .code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "signal".to_string());
+        bail!("go-analyzer exited with code {code} for {file_str}: {stderr}");
+    }
+
+    let analysis: FileAnalysis =
+        serde_json::from_slice(&analyzer_output.stdout).with_context(|| {
+            let preview = String::from_utf8_lossy(
+                &analyzer_output.stdout[..analyzer_output.stdout.len().min(200)],
+            );
+            format!("Failed to parse go-analyzer output for {file_str}: {preview}")
+        })?;
+
+    Ok(analysis)
+}
+
+// ---------------------------------------------------------------------------
+// Go daemon-mode analysis via ProcessPool (two pools)
+// ---------------------------------------------------------------------------
+
+/// Response from go-parser daemon.
+/// Uses RawValue for `ast` to avoid parsing + re-serializing the full AST JSON.
+#[derive(Deserialize)]
+struct GoParserResponse<'a> {
+    status: String,
+    #[serde(borrow)]
+    ast: Option<&'a serde_json::value::RawValue>,
+    error: Option<String>,
+}
+
+/// Analyze a single Go file via two persistent daemon process pools.
+///
+/// 1. Read source, send to go-parser pool → receive AST JSON
+/// 2. Send AST to go-analyzer pool → receive FileAnalysis
+pub async fn analyze_go_file_pooled(
+    parser_pool: &ProcessPool,
+    analyzer_pool: &ProcessPool,
+    file: &Path,
+) -> Result<FileAnalysis> {
+    let file_str = file.display().to_string();
+
+    let source = tokio::fs::read_to_string(file)
+        .await
+        .with_context(|| format!("Failed to read Go source file {file_str}"))?;
+
+    // Step 1: Send to go-parser pool
+    let escaped_file = serde_json::to_string(&file_str)
+        .with_context(|| format!("Failed to escape file path for {file_str}"))?;
+    let escaped_source = serde_json::to_string(&source)
+        .with_context(|| format!("Failed to escape source for {file_str}"))?;
+    let parser_payload = format!(
+        r#"{{"file":{},"source":{}}}"#,
+        escaped_file, escaped_source
+    );
+
+    let parser_response_bytes = parser_pool
+        .request(parser_payload.as_bytes())
+        .await
+        .with_context(|| format!("Go parser pool request failed for {file_str}"))?;
+
+    // Zero-copy: parse only status/error, borrow raw AST JSON bytes
+    let parser_response: GoParserResponse =
+        serde_json::from_slice(&parser_response_bytes)
+            .with_context(|| format!("Failed to decode go-parser response for {file_str}"))?;
+
+    let ast_raw = match parser_response.status.as_str() {
+        "ok" => parser_response
+            .ast
+            .with_context(|| format!("go-parser returned ok but no ast for {file_str}"))?,
+        "error" => {
+            let msg = parser_response
+                .error
+                .unwrap_or_else(|| "unknown error".to_string());
+            bail!("go-parser daemon error for {file_str}: {msg}")
+        }
+        other => bail!("Unknown go-parser response status '{other}' for {file_str}"),
+    };
+
+    // Step 2: Send to go-analyzer pool (raw AST bytes passed through without re-serialization)
+    let analyzer_payload = format!(r#"{{"file":{},"ast":{}}}"#, escaped_file, ast_raw.get());
+
+    let analyzer_response_bytes = analyzer_pool
+        .request(analyzer_payload.as_bytes())
+        .await
+        .with_context(|| format!("Go analyzer pool request failed for {file_str}"))?;
+
+    let response: DaemonResponse = serde_json::from_slice(&analyzer_response_bytes)
+        .with_context(|| format!("Failed to decode go-analyzer response for {file_str}"))?;
+
+    match response.status.as_str() {
+        "ok" => response
+            .result
+            .with_context(|| format!("go-analyzer daemon returned ok but no result for {file_str}")),
+        "error" => {
+            let msg = response.error.unwrap_or_else(|| "unknown error".to_string());
+            bail!("go-analyzer daemon error for {file_str}: {msg}")
+        }
+        other => bail!("Unknown go-analyzer response status '{other}' for {file_str}"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Go parallel multi-file analysis
+// ---------------------------------------------------------------------------
+
+/// Analyze multiple Go files in parallel using two persistent daemon pools.
+///
+/// Creates a go-parser pool and a go-analyzer pool. For each file:
+/// 1. Read source → send to go-parser pool → receive AST
+/// 2. Send AST to go-analyzer pool → receive FileAnalysis
+///
+/// Falls back to `analyze_go_files_parallel` if pool creation fails.
+pub async fn analyze_go_files_parallel_pooled(
+    files: &[PathBuf],
+    jobs: usize,
+    analyzers: &crate::config::AnalyzerBinaries,
+    limits: SizeLimits,
+) -> Vec<AnalysisResult> {
+    let parser_pool_config = PoolConfig {
+        command: analyzers.go_parser_path(),
+        args: vec!["--daemon".to_string()],
+        ..PoolConfig::default()
+    };
+
+    let analyzer_pool_config = PoolConfig {
+        command: analyzers.go_path(),
+        args: vec!["--daemon".to_string()],
+        ..PoolConfig::default()
+    };
+
+    let parser_pool = match ProcessPool::new(parser_pool_config, jobs.max(1)) {
+        Ok(p) => Arc::new(p),
+        Err(e) => {
+            tracing::warn!(
+                "Failed to create go-parser pool, falling back to spawn-per-file: {e}"
+            );
+            return analyze_go_files_parallel(files, jobs, analyzers).await;
+        }
+    };
+
+    let analyzer_pool = match ProcessPool::new(analyzer_pool_config, jobs.max(1)) {
+        Ok(p) => Arc::new(p),
+        Err(e) => {
+            tracing::warn!(
+                "Failed to create go-analyzer pool, falling back to spawn-per-file: {e}"
+            );
+            parser_pool.shutdown().await;
+            return analyze_go_files_parallel(files, jobs, analyzers).await;
+        }
+    };
+
+    let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
+    let total = files.len();
+
+    let handles: Vec<_> = files
+        .iter()
+        .enumerate()
+        .map(|(idx, file)| {
+            let sem = Arc::clone(&semaphore);
+            let parser_pool = Arc::clone(&parser_pool);
+            let analyzer_pool = Arc::clone(&analyzer_pool);
+            let file = file.clone();
+            let file_display = file.display().to_string();
+
+            tokio::spawn(async move {
+                let _permit = sem
+                    .acquire()
+                    .await
+                    .expect("Semaphore closed unexpectedly");
+
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
+                tracing::info!(
+                    "[{}/{}] Analyzing Go file {}",
+                    idx + 1,
+                    total,
+                    file_display
+                );
+
+                let errors = Vec::new();
+
+                // Size guard
+                if let Some(issue) = check_file_size(&file, limits) {
+                    tracing::warn!(file = %file.display(), "Skipping oversized source file: {}", issue.message);
+                    return AnalysisResult {
+                        file,
+                        analysis: None,
+                        errors,
+                        issues: vec![issue],
+                        metrics: FileMetrics {
+                            file_size_bytes,
+                            ..FileMetrics::default()
+                        },
+                    };
+                }
+
+                match analyze_go_file_pooled(&parser_pool, &analyzer_pool, &file).await {
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult {
+                            file,
+                            analysis: Some(analysis),
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                ast_size_bytes: 0,
+                                parse_ms: 0,
+                                analyze_ms: total_ms,
+                                total_ms,
+                                node_count,
+                                edge_count,
+                                ..Default::default()
+                            },
+                        }
+                    },
+                    Err(e) => {
+                        let mut errors = errors;
+                        errors.push(format!(
+                            "Go analyzer failed for {file_display}: {e}"
+                        ));
+                        AnalysisResult {
+                            file,
+                            analysis: None,
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                total_ms: file_start.elapsed().as_millis() as u64,
+                                ..FileMetrics::default()
+                            },
+                        }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        match handle.await {
+            Ok(result) => results.push(result),
+            Err(e) => {
+                results.push(AnalysisResult {
+                    file: PathBuf::new(),
+                    analysis: None,
+                    errors: vec![format!("Go analysis task failed: {e}")],
+                    issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
+                });
+            }
+        }
+    }
+
+    parser_pool.shutdown().await;
+    analyzer_pool.shutdown().await;
+    results
+}
+
+/// Analyze multiple Go files in parallel with bounded concurrency (spawn mode).
+///
+/// Fallback when daemon pools cannot be created. Spawns separate processes per file.
+pub async fn analyze_go_files_parallel(
+    files: &[PathBuf],
+    jobs: usize,
+    analyzers: &crate::config::AnalyzerBinaries,
+) -> Vec<AnalysisResult> {
+    let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
+    let total = files.len();
+    let analyzers = analyzers.clone();
+
+    let handles: Vec<_> = files
+        .iter()
+        .enumerate()
+        .map(|(idx, file)| {
+            let sem = Arc::clone(&semaphore);
+            let file = file.clone();
+            let file_display = file.display().to_string();
+            let analyzers = analyzers.clone();
+
+            tokio::spawn(async move {
+                let _permit = sem
+                    .acquire()
+                    .await
+                    .expect("Semaphore closed unexpectedly");
+
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
+                tracing::info!(
+                    "[{}/{}] Analyzing Go file {}",
+                    idx + 1,
+                    total,
+                    file_display
+                );
+
+                let errors = Vec::new();
+
+                match analyze_go_file(&file, &analyzers).await {
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult {
+                            file,
+                            analysis: Some(analysis),
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                ast_size_bytes: 0,
+                                parse_ms: 0,
+                                analyze_ms: total_ms,
+                                total_ms,
+                                node_count,
+                                edge_count,
+                                ..Default::default()
+                            },
+                        }
+                    },
+                    Err(e) => {
+                        let mut errors = errors;
+                        errors.push(format!(
+                            "Go analyzer failed for {file_display}: {e}"
+                        ));
+                        AnalysisResult {
+                            file,
+                            analysis: None,
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                total_ms: file_start.elapsed().as_millis() as u64,
+                                ..FileMetrics::default()
+                            },
+                        }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        match handle.await {
+            Ok(result) => results.push(result),
+            Err(e) => {
+                results.push(AnalysisResult {
+                    file: PathBuf::new(),
+                    analysis: None,
+                    errors: vec![format!("Go analysis task failed: {e}")],
+                    issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
+                });
+            }
+        }
+    }
+
+    results
+}
+
+// ---------------------------------------------------------------------------
+// C/C++ single-file analysis (in-process parse → cpp-analyzer daemon)
+// ---------------------------------------------------------------------------
+
+/// Analyze a single C/C++ file: parse with clang-sys, send AST to cpp-analyzer daemon.
+///
+/// Pipeline:
+/// 1. Parse source with libclang (via `crate::cpp_parser::parse_cpp_file`) -> JSON AST
+/// 2. Send `{"file":"...","ast":...}` to grafema-cpp-analyzer -> receive FileAnalysis
+pub async fn analyze_cpp_file(
+    file: &Path,
+    ast_json: &str,
+    analyzer_bin: &str,
+) -> Result<FileAnalysis> {
+    let file_str = file.display().to_string();
+
+    let mut child = tokio::process::Command::new(analyzer_bin)
+        .arg(&file_str)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .with_context(|| format!("Failed to spawn grafema-cpp-analyzer for {file_str}"))?;
+
+    let payload = serde_json::json!({
+        "file": file_str,
+        "ast": serde_json::from_str::<serde_json::Value>(ast_json)
+            .unwrap_or(serde_json::Value::Null),
+    });
+
+    {
+        let stdin = child.stdin.as_mut()
+            .context("Failed to open stdin for grafema-cpp-analyzer")?;
+        stdin.write_all(payload.to_string().as_bytes()).await
+            .with_context(|| format!("Failed to write AST to grafema-cpp-analyzer stdin for {file_str}"))?;
+        stdin.shutdown().await
+            .with_context(|| format!("Failed to close grafema-cpp-analyzer stdin for {file_str}"))?;
+    }
+
+    let output = child.wait_with_output().await
+        .with_context(|| format!("Failed to wait for grafema-cpp-analyzer for {file_str}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let code = output.status.code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "signal".to_string());
+        anyhow::bail!("grafema-cpp-analyzer exited with code {code} for {file_str}: {stderr}");
+    }
+
+    let stdout = &output.stdout;
+    let analysis: FileAnalysis = serde_json::from_slice(stdout).with_context(|| {
+        let preview = String::from_utf8_lossy(&stdout[..stdout.len().min(200)]);
+        format!("Failed to parse grafema-cpp-analyzer output for {file_str}: {preview}")
+    })?;
+
+    Ok(analysis)
+}
+
+// ---------------------------------------------------------------------------
+// Swift single-file analysis (spawn mode)
+// ---------------------------------------------------------------------------
+
+/// Analyze a single Swift file: parse with swift-parser, analyze with swift-analyzer.
+///
+/// Same two-stage pipeline as Kotlin/Go:
+/// 1. Read source, send `{"file":"...","source":"..."}` to swift-parser
+/// 2. Extract AST from parser response
+/// 3. Send `{"file":"...","ast":{...}}` to swift-analyzer
+/// 4. Return FileAnalysis
+pub async fn analyze_swift_file(
+    file: &Path,
+    analyzers: &crate::config::AnalyzerBinaries,
+) -> Result<FileAnalysis> {
+    let file_str = file.display().to_string();
+
+    // Step 1: Parse with swift-parser (single-file mode: pass file path as argument)
+    let parser_bin = analyzers.swift_parser_path();
+    let parser_output = tokio::process::Command::new(&parser_bin)
+        .arg(&file_str)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .await
+        .with_context(|| format!("Failed to run swift-parser for {file_str}"))?;
+
+    if !parser_output.status.success() {
+        let stderr = String::from_utf8_lossy(&parser_output.stderr);
+        let code = parser_output
+            .status
+            .code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "signal".to_string());
+        bail!("swift-parser exited with code {code} for {file_str}: {stderr}");
+    }
+
+    let parser_response: serde_json::Value =
+        serde_json::from_slice(&parser_output.stdout).with_context(|| {
+            let preview =
+                String::from_utf8_lossy(&parser_output.stdout[..parser_output.stdout.len().min(200)]);
+            format!("Failed to parse swift-parser output for {file_str}: {preview}")
+        })?;
+
+    // Single-file mode returns the AST directly ({declarations, imports, file}).
+    // Daemon mode wraps it in {status: "ok", ast: {...}}.
+    let ast = if let Some(inner) = parser_response.get("ast") {
+        // Daemon-style response — check status first
+        if parser_response.get("status").and_then(|s| s.as_str()) != Some("ok") {
+            let err = parser_response
+                .get("error")
+                .and_then(|e| e.as_str())
+                .unwrap_or("unknown error");
+            bail!("swift-parser error for {file_str}: {err}");
+        }
+        inner.clone()
+    } else {
+        // Single-file mode: the response IS the AST
+        parser_response
+    };
+
+    // Step 2: Analyze with swift-analyzer
+    let analyzer_bin = analyzers.swift_path();
+    let mut analyzer_child = tokio::process::Command::new(&analyzer_bin)
+        .arg(&file_str)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .with_context(|| format!("Failed to spawn swift-analyzer for {file_str}"))?;
+
+    let analyzer_payload = serde_json::json!({
+        "file": file_str,
+        "ast": ast,
+    });
+
+    {
+        let stdin = analyzer_child
+            .stdin
+            .as_mut()
+            .context("Failed to open stdin for swift-analyzer")?;
+        stdin
+            .write_all(analyzer_payload.to_string().as_bytes())
+            .await
+            .with_context(|| {
+                format!("Failed to write AST to swift-analyzer stdin for {file_str}")
+            })?;
+        stdin
+            .shutdown()
+            .await
+            .with_context(|| format!("Failed to close swift-analyzer stdin for {file_str}"))?;
+    }
+
+    let analyzer_output = analyzer_child
+        .wait_with_output()
+        .await
+        .with_context(|| format!("Failed to wait for swift-analyzer for {file_str}"))?;
+
+    if !analyzer_output.status.success() {
+        let stderr = String::from_utf8_lossy(&analyzer_output.stderr);
+        let code = analyzer_output
+            .status
+            .code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "signal".to_string());
+        bail!("swift-analyzer exited with code {code} for {file_str}: {stderr}");
+    }
+
+    let analysis: FileAnalysis =
+        serde_json::from_slice(&analyzer_output.stdout).with_context(|| {
+            let preview = String::from_utf8_lossy(
+                &analyzer_output.stdout[..analyzer_output.stdout.len().min(200)],
+            );
+            format!("Failed to parse swift-analyzer output for {file_str}: {preview}")
+        })?;
+
+    Ok(analysis)
+}
+
+// ---------------------------------------------------------------------------
+// C/C++ daemon-mode analysis via ProcessPool
+// ---------------------------------------------------------------------------
+
+/// Analyze a single C/C++ file via a persistent daemon process pool.
+pub async fn analyze_cpp_file_pooled(
+    pool: &ProcessPool,
+    file: &Path,
+    ast_json: &str,
+) -> Result<FileAnalysis> {
+    let file_str = file.display().to_string();
+
+    let escaped_file = serde_json::to_string(&file_str)
+        .with_context(|| format!("Failed to escape file path for {file_str}"))?;
+    let payload = format!(r#"{{"file":{},"ast":{}}}"#, escaped_file, ast_json);
+
+    let response_bytes = pool
+        .request(payload.as_bytes())
+        .await
+        .with_context(|| format!("Pool request failed for {file_str}"))?;
+
+    let response: DaemonResponse = serde_json::from_slice(&response_bytes)
+        .with_context(|| format!("Failed to decode response for {file_str}"))?;
+
+    match response.status.as_str() {
+        "ok" => response
+            .result
+            .with_context(|| format!("Daemon returned ok but no result for {file_str}")),
+        "error" => {
+            let msg = response.error.unwrap_or_else(|| "unknown error".to_string());
+            bail!("grafema-cpp-analyzer daemon error for {file_str}: {msg}")
+        }
+        other => bail!("Unknown daemon response status '{other}' for {file_str}"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Swift daemon-mode analysis via ProcessPool (two pools)
+// ---------------------------------------------------------------------------
+
+/// Response from swift-parser daemon.
+/// Uses RawValue for `ast` to avoid parsing + re-serializing the full AST JSON.
+#[derive(Deserialize)]
+struct SwiftParserResponse<'a> {
+    status: String,
+    #[serde(borrow)]
+    ast: Option<&'a serde_json::value::RawValue>,
+    error: Option<String>,
+}
+
+/// Analyze a single Swift file via two persistent daemon process pools.
+///
+/// 1. Read source, send to swift-parser pool -> receive AST JSON
+/// 2. Send AST to swift-analyzer pool -> receive FileAnalysis
+pub async fn analyze_swift_file_pooled(
+    parser_pool: &ProcessPool,
+    analyzer_pool: &ProcessPool,
+    file: &Path,
+) -> Result<FileAnalysis> {
+    let file_str = file.display().to_string();
+
+    let source = tokio::fs::read_to_string(file)
+        .await
+        .with_context(|| format!("Failed to read Swift source file {file_str}"))?;
+
+    // Step 1: Send to swift-parser pool
+    let escaped_file = serde_json::to_string(&file_str)
+        .with_context(|| format!("Failed to escape file path for {file_str}"))?;
+    let escaped_source = serde_json::to_string(&source)
+        .with_context(|| format!("Failed to escape source for {file_str}"))?;
+    let parser_payload = format!(
+        r#"{{"file":{},"source":{}}}"#,
+        escaped_file, escaped_source
+    );
+
+    let parser_response_bytes = parser_pool
+        .request(parser_payload.as_bytes())
+        .await
+        .with_context(|| format!("Swift parser pool request failed for {file_str}"))?;
+
+    // Zero-copy: parse only status/error, borrow raw AST JSON bytes
+    let parser_response: SwiftParserResponse =
+        serde_json::from_slice(&parser_response_bytes)
+            .with_context(|| format!("Failed to decode swift-parser response for {file_str}"))?;
+
+    let ast_raw = match parser_response.status.as_str() {
+        "ok" => parser_response
+            .ast
+            .with_context(|| format!("swift-parser returned ok but no ast for {file_str}"))?,
+        "error" => {
+            let msg = parser_response
+                .error
+                .unwrap_or_else(|| "unknown error".to_string());
+            bail!("swift-parser daemon error for {file_str}: {msg}")
+        }
+        other => bail!("Unknown swift-parser response status '{other}' for {file_str}"),
+    };
+
+    // Step 2: Send to swift-analyzer pool
+    let analyzer_payload = format!(r#"{{"file":{},"ast":{}}}"#, escaped_file, ast_raw.get());
+
+    let analyzer_response_bytes = analyzer_pool
+        .request(analyzer_payload.as_bytes())
+        .await
+        .with_context(|| format!("Swift analyzer pool request failed for {file_str}"))?;
+
+    let response: DaemonResponse = serde_json::from_slice(&analyzer_response_bytes)
+        .with_context(|| format!("Failed to decode swift-analyzer response for {file_str}"))?;
+
+    match response.status.as_str() {
+        "ok" => response
+            .result
+            .with_context(|| format!("swift-analyzer daemon returned ok but no result for {file_str}")),
+        "error" => {
+            let msg = response.error.unwrap_or_else(|| "unknown error".to_string());
+            bail!("swift-analyzer daemon error for {file_str}: {msg}")
+        }
+        other => bail!("Unknown swift-analyzer response status '{other}' for {file_str}"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// C/C++ parallel multi-file analysis
+// ---------------------------------------------------------------------------
+
+/// Analyze multiple C/C++ files in parallel using persistent daemon processes.
+///
+/// Pipeline per file:
+/// 1. Parse with libclang (via `crate::cpp_parser::parse_cpp_file`) -> JSON AST
+/// 2. Send AST to grafema-cpp-analyzer daemon pool -> receive FileAnalysis
+///
+/// Falls back to `analyze_cpp_files_parallel` if pool creation fails.
+pub async fn analyze_cpp_files_parallel_pooled(
+    files: &[PathBuf],
+    jobs: usize,
+    analyzers: &crate::config::AnalyzerBinaries,
+    compile_commands: Option<&crate::cpp_parser::CompileCommandsDb>,
+    limits: SizeLimits,
+) -> Vec<AnalysisResult> {
+    let pool_config = PoolConfig {
+        command: analyzers.cpp_path(),
+        args: vec!["--daemon".to_string()],
+        ..PoolConfig::default()
+    };
+
+    let pool = match ProcessPool::new(pool_config, jobs.max(1)) {
+        Ok(p) => Arc::new(p),
+        Err(e) => {
+            tracing::warn!(
+                "Failed to create grafema-cpp-analyzer pool, falling back to spawn-per-file: {e}"
+            );
+            return analyze_cpp_files_parallel(files, jobs, &analyzers.cpp_path(), compile_commands).await;
+        }
+    };
+
+    let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
+    let total = files.len();
+
+    // Pre-compute compile args for each file (CompileCommandsDb is not Send)
+    let file_args: Vec<(PathBuf, Vec<String>)> = files.iter().map(|file| {
+        let args = compile_commands
+            .map(|db| db.get_args(file))
+            .unwrap_or_default();
+        (file.clone(), args)
+    }).collect();
+
+    let handles: Vec<_> = file_args
+        .into_iter()
+        .enumerate()
+        .map(|(idx, (file, extra_args))| {
+            let sem = Arc::clone(&semaphore);
+            let pool = Arc::clone(&pool);
+            let file_display = file.display().to_string();
+
+            tokio::spawn(async move {
+                let _permit = sem.acquire().await.expect("Semaphore closed unexpectedly");
+
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
+                tracing::info!("[{}/{}] Analyzing C/C++ file {}", idx + 1, total, file_display);
+
+                let mut errors = Vec::new();
+
+                // Size guard
+                if let Some(issue) = check_file_size(&file, limits) {
+                    tracing::warn!(file = %file.display(), "Skipping oversized source file: {}", issue.message);
+                    return AnalysisResult {
+                        file,
+                        analysis: None,
+                        errors,
+                        issues: vec![issue],
+                        metrics: FileMetrics {
+                            file_size_bytes,
+                            ..FileMetrics::default()
+                        },
+                    };
+                }
+
+                // Step 1: Parse with libclang (CPU-bound -> spawn_blocking)
+                let parse_result = {
+                    let file_clone = file.clone();
+                    tokio::task::spawn_blocking(move || {
+                        // Build default args if no compile_commands
+                        let is_c = crate::cpp_parser::is_c_file(&file_clone);
+                        let mut args = extra_args;
+                        let has_lang_flag = args.iter().any(|a| a.starts_with("-x") || a.starts_with("-std="));
+                        if !has_lang_flag {
+                            if is_c {
+                                args.extend_from_slice(&["-std=c11".to_string(), "-xc".to_string()]);
+                            } else {
+                                args.extend_from_slice(&["-std=c++17".to_string(), "-xc++".to_string()]);
+                            }
+                        }
+
+                        let source = std::fs::read_to_string(&file_clone)
+                            .with_context(|| format!("Failed to read {}", file_clone.display()))?;
+                        let filename = file_clone.display().to_string();
+                        let ast = crate::cpp_parser::parse_cpp_source(&source, &filename, &args)?;
+                        serde_json::to_string(&ast).context("Failed to serialize C/C++ AST to JSON")
+                    }).await
+                };
+
+                let parse_ms = file_start.elapsed().as_millis() as u64;
+
+                let ast_json = match parse_result {
+                    Ok(Ok(json)) => json,
+                    Ok(Err(e)) => {
+                        errors.push(format!("C/C++ parse failed for {file_display}: {e}"));
+                        return AnalysisResult { file, analysis: None, errors, issues: vec![], metrics: FileMetrics { file_size_bytes, parse_ms, total_ms: file_start.elapsed().as_millis() as u64, ..FileMetrics::default() } };
+                    }
+                    Err(e) => {
+                        errors.push(format!("C/C++ parse task panicked for {file_display}: {e}"));
+                        return AnalysisResult { file, analysis: None, errors, issues: vec![], metrics: FileMetrics { file_size_bytes, parse_ms, total_ms: file_start.elapsed().as_millis() as u64, ..FileMetrics::default() } };
+                    }
+                };
+
+                // Step 2: Send to daemon pool
+                match analyze_cpp_file_pooled(&pool, &file, &ast_json).await {
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let analyze_ms = total_ms.saturating_sub(parse_ms);
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult { file, analysis: Some(analysis), errors, issues: vec![], metrics: FileMetrics {
+                            file_size_bytes, ast_size_bytes: 0, parse_ms, analyze_ms, total_ms, node_count, edge_count,
+                            ..Default::default()
+                        } }
+                    },
+                    Err(e) => {
+                        errors.push(format!("C/C++ analyzer failed for {file_display}: {e}"));
+                        AnalysisResult { file, analysis: None, errors, issues: vec![], metrics: FileMetrics { file_size_bytes, parse_ms, total_ms: file_start.elapsed().as_millis() as u64, ..FileMetrics::default() } }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        match handle.await {
+            Ok(result) => results.push(result),
+            Err(e) => {
+                results.push(AnalysisResult {
+                    file: PathBuf::new(),
+                    analysis: None,
+                    errors: vec![format!("C/C++ analysis task failed: {e}")],
+                    issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
+                });
+            }
+        }
+    }
+
+    pool.shutdown().await;
+    results
+}
+
+/// Fallback: analyze C/C++ files in parallel by spawning per-file processes.
+pub async fn analyze_cpp_files_parallel(
+    files: &[PathBuf],
+    jobs: usize,
+    analyzer_bin: &str,
+    compile_commands: Option<&crate::cpp_parser::CompileCommandsDb>,
+) -> Vec<AnalysisResult> {
+    let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
+    let total = files.len();
+    let analyzer_bin = analyzer_bin.to_string();
+
+    // Pre-compute compile args for each file
+    let file_args: Vec<(PathBuf, Vec<String>)> = files.iter().map(|file| {
+        let args = compile_commands
+            .map(|db| db.get_args(file))
+            .unwrap_or_default();
+        (file.clone(), args)
+    }).collect();
+
+    let handles: Vec<_> = file_args
+        .into_iter()
+        .enumerate()
+        .map(|(idx, (file, extra_args))| {
+            let sem = Arc::clone(&semaphore);
+            let file_display = file.display().to_string();
+            let bin = analyzer_bin.clone();
+
+            tokio::spawn(async move {
+                let _permit = sem.acquire().await.expect("Semaphore closed unexpectedly");
+
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
+                tracing::info!("[{}/{}] Analyzing C/C++ file {}", idx + 1, total, file_display);
+
+                let mut errors = Vec::new();
+
+                // Step 1: Parse with libclang
+                let is_c = crate::cpp_parser::is_c_file(&file);
+                let mut args = extra_args;
+                let has_lang_flag = args.iter().any(|a| a.starts_with("-x") || a.starts_with("-std="));
+                if !has_lang_flag {
+                    if is_c {
+                        args.extend_from_slice(&["-std=c11".to_string(), "-xc".to_string()]);
+                    } else {
+                        args.extend_from_slice(&["-std=c++17".to_string(), "-xc++".to_string()]);
+                    }
+                }
+
+                let source = match std::fs::read_to_string(&file) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        errors.push(format!("Failed to read {file_display}: {e}"));
+                        return AnalysisResult { file, analysis: None, errors, issues: vec![], metrics: FileMetrics { file_size_bytes, total_ms: file_start.elapsed().as_millis() as u64, ..FileMetrics::default() } };
+                    }
+                };
+
+                let ast_value = match crate::cpp_parser::parse_cpp_source(&source, &file_display, &args) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        errors.push(format!("C/C++ parse failed for {file_display}: {e}"));
+                        return AnalysisResult { file, analysis: None, errors, issues: vec![], metrics: FileMetrics { file_size_bytes, total_ms: file_start.elapsed().as_millis() as u64, ..FileMetrics::default() } };
+                    }
+                };
+
+                let ast_json = match serde_json::to_string(&ast_value) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        errors.push(format!("C/C++ AST serialization failed for {file_display}: {e}"));
+                        return AnalysisResult { file, analysis: None, errors, issues: vec![], metrics: FileMetrics { file_size_bytes, total_ms: file_start.elapsed().as_millis() as u64, ..FileMetrics::default() } };
+                    }
+                };
+
+                let parse_ms = file_start.elapsed().as_millis() as u64;
+
+                // Step 2: Spawn analyzer
+                match analyze_cpp_file(&file, &ast_json, &bin).await {
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let analyze_ms = total_ms.saturating_sub(parse_ms);
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult { file, analysis: Some(analysis), errors, issues: vec![], metrics: FileMetrics {
+                            file_size_bytes, ast_size_bytes: 0, parse_ms, analyze_ms, total_ms, node_count, edge_count,
+                            ..Default::default()
+                        } }
+                    },
+                    Err(e) => {
+                        errors.push(format!("C/C++ analyzer failed for {file_display}: {e}"));
+                        AnalysisResult { file, analysis: None, errors, issues: vec![], metrics: FileMetrics { file_size_bytes, parse_ms, total_ms: file_start.elapsed().as_millis() as u64, ..FileMetrics::default() } }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        match handle.await {
+            Ok(result) => results.push(result),
+            Err(e) => {
+                results.push(AnalysisResult {
+                    file: PathBuf::new(),
+                    analysis: None,
+                    errors: vec![format!("C/C++ analysis task failed: {e}")],
+                    issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
+                });
+            }
+        }
+    }
+
+    results
+}
+
+// ---------------------------------------------------------------------------
+// Swift parallel multi-file analysis
+// ---------------------------------------------------------------------------
+
+/// Analyze multiple Swift files in parallel using two persistent daemon pools.
+///
+/// Falls back to `analyze_swift_files_parallel` if pool creation fails.
+pub async fn analyze_swift_files_parallel_pooled(
+    files: &[PathBuf],
+    jobs: usize,
+    analyzers: &crate::config::AnalyzerBinaries,
+    limits: SizeLimits,
+) -> Vec<AnalysisResult> {
+    let parser_pool_config = PoolConfig {
+        command: analyzers.swift_parser_path(),
+        args: vec!["--daemon".to_string()],
+        ..PoolConfig::default()
+    };
+
+    let analyzer_pool_config = PoolConfig {
+        command: analyzers.swift_path(),
+        args: vec!["--daemon".to_string()],
+        ..PoolConfig::default()
+    };
+
+    let parser_pool = match ProcessPool::new(parser_pool_config, jobs.max(1)) {
+        Ok(p) => Arc::new(p),
+        Err(e) => {
+            tracing::warn!(
+                "Failed to create swift-parser pool, falling back to spawn-per-file: {e}"
+            );
+            return analyze_swift_files_parallel(files, jobs, analyzers).await;
+        }
+    };
+
+    let analyzer_pool = match ProcessPool::new(analyzer_pool_config, jobs.max(1)) {
+        Ok(p) => Arc::new(p),
+        Err(e) => {
+            tracing::warn!(
+                "Failed to create swift-analyzer pool, falling back to spawn-per-file: {e}"
+            );
+            parser_pool.shutdown().await;
+            return analyze_swift_files_parallel(files, jobs, analyzers).await;
+        }
+    };
+
+    let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
+    let total = files.len();
+
+    let handles: Vec<_> = files
+        .iter()
+        .enumerate()
+        .map(|(idx, file)| {
+            let sem = Arc::clone(&semaphore);
+            let parser_pool = Arc::clone(&parser_pool);
+            let analyzer_pool = Arc::clone(&analyzer_pool);
+            let file = file.clone();
+            let file_display = file.display().to_string();
+
+            tokio::spawn(async move {
+                let _permit = sem
+                    .acquire()
+                    .await
+                    .expect("Semaphore closed unexpectedly");
+
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
+                tracing::info!(
+                    "[{}/{}] Analyzing Swift file {}",
+                    idx + 1,
+                    total,
+                    file_display
+                );
+
+                let errors = Vec::new();
+
+                // Size guard
+                if let Some(issue) = check_file_size(&file, limits) {
+                    tracing::warn!(file = %file.display(), "Skipping oversized source file: {}", issue.message);
+                    return AnalysisResult {
+                        file,
+                        analysis: None,
+                        errors,
+                        issues: vec![issue],
+                        metrics: FileMetrics {
+                            file_size_bytes,
+                            ..FileMetrics::default()
+                        },
+                    };
+                }
+
+                match analyze_swift_file_pooled(&parser_pool, &analyzer_pool, &file).await {
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult {
+                            file,
+                            analysis: Some(analysis),
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                ast_size_bytes: 0,
+                                parse_ms: 0,
+                                analyze_ms: total_ms,
+                                total_ms,
+                                node_count,
+                                edge_count,
+                                ..Default::default()
+                            },
+                        }
+                    },
+                    Err(e) => {
+                        let mut errors = errors;
+                        errors.push(format!(
+                            "Swift analyzer failed for {file_display}: {e}"
+                        ));
+                        AnalysisResult {
+                            file,
+                            analysis: None,
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                total_ms: file_start.elapsed().as_millis() as u64,
+                                ..FileMetrics::default()
+                            },
+                        }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        match handle.await {
+            Ok(result) => results.push(result),
+            Err(e) => {
+                results.push(AnalysisResult {
+                    file: PathBuf::new(),
+                    analysis: None,
+                    errors: vec![format!("Swift analysis task failed: {e}")],
+                    issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
+                });
+            }
+        }
+    }
+
+    parser_pool.shutdown().await;
+    analyzer_pool.shutdown().await;
+    results
+}
+
+/// Analyze multiple Swift files in parallel with bounded concurrency (spawn mode).
+///
+/// Fallback when daemon pools cannot be created.
+pub async fn analyze_swift_files_parallel(
+    files: &[PathBuf],
+    jobs: usize,
+    analyzers: &crate::config::AnalyzerBinaries,
+) -> Vec<AnalysisResult> {
+    let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
+    let total = files.len();
+    let analyzers = analyzers.clone();
+
+    let handles: Vec<_> = files
+        .iter()
+        .enumerate()
+        .map(|(idx, file)| {
+            let sem = Arc::clone(&semaphore);
+            let file = file.clone();
+            let file_display = file.display().to_string();
+            let analyzers = analyzers.clone();
+
+            tokio::spawn(async move {
+                let _permit = sem
+                    .acquire()
+                    .await
+                    .expect("Semaphore closed unexpectedly");
+
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
+                tracing::info!(
+                    "[{}/{}] Analyzing Swift file {}",
+                    idx + 1,
+                    total,
+                    file_display
+                );
+
+                let errors = Vec::new();
+
+                match analyze_swift_file(&file, &analyzers).await {
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult {
+                            file,
+                            analysis: Some(analysis),
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                ast_size_bytes: 0,
+                                parse_ms: 0,
+                                analyze_ms: total_ms,
+                                total_ms,
+                                node_count,
+                                edge_count,
+                                ..Default::default()
+                            },
+                        }
+                    },
+                    Err(e) => {
+                        let mut errors = errors;
+                        errors.push(format!(
+                            "Swift analyzer failed for {file_display}: {e}"
+                        ));
+                        AnalysisResult {
+                            file,
+                            analysis: None,
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                total_ms: file_start.elapsed().as_millis() as u64,
+                                ..FileMetrics::default()
+                            },
+                        }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        match handle.await {
+            Ok(result) => results.push(result),
+            Err(e) => {
+                results.push(AnalysisResult {
+                    file: PathBuf::new(),
+                    analysis: None,
+                    errors: vec![format!("Swift analysis task failed: {e}")],
+                    issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
+                });
+            }
+        }
+    }
+
+    results
+}
+
+// ---------------------------------------------------------------------------
+// Obj-C single-file analysis (spawn mode)
+// ---------------------------------------------------------------------------
+
+/// Analyze a single Obj-C file: parse with objc-parser, analyze with objc-analyzer.
+///
+/// Same two-stage pipeline as Swift/Kotlin/Go:
+/// 1. Read source, send `{"file":"...","source":"..."}` to objc-parser
+/// 2. Extract AST from parser response
+/// 3. Send `{"file":"...","ast":{...}}` to objc-analyzer
+/// 4. Return FileAnalysis
+pub async fn analyze_objc_file(
+    file: &Path,
+    analyzers: &crate::config::AnalyzerBinaries,
+) -> Result<FileAnalysis> {
+    let file_str = file.display().to_string();
+
+    // Step 1: Parse with objc-parser (single-file mode: pass file path as argument)
+    let parser_bin = analyzers.objc_parser_path();
+    let parser_output = tokio::process::Command::new(&parser_bin)
+        .arg(&file_str)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .await
+        .with_context(|| format!("Failed to run objc-parser for {file_str}"))?;
+
+    if !parser_output.status.success() {
+        let stderr = String::from_utf8_lossy(&parser_output.stderr);
+        let code = parser_output
+            .status
+            .code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "signal".to_string());
+        bail!("objc-parser exited with code {code} for {file_str}: {stderr}");
+    }
+
+    let parser_response: serde_json::Value =
+        serde_json::from_slice(&parser_output.stdout).with_context(|| {
+            let preview =
+                String::from_utf8_lossy(&parser_output.stdout[..parser_output.stdout.len().min(200)]);
+            format!("Failed to parse objc-parser output for {file_str}: {preview}")
+        })?;
+
+    // Single-file mode returns {status: "ok", ast: {...}}.
+    // Handle both wrapped and direct AST formats for robustness.
+    let ast = if let Some(inner) = parser_response.get("ast") {
+        if parser_response.get("status").and_then(|s| s.as_str()) != Some("ok") {
+            let err = parser_response
+                .get("error")
+                .and_then(|e| e.as_str())
+                .unwrap_or("unknown error");
+            bail!("objc-parser error for {file_str}: {err}");
+        }
+        inner.clone()
+    } else {
+        parser_response
+    };
+
+    // Step 2: Analyze with objc-analyzer
+    let analyzer_bin = analyzers.objc_path();
+    let mut analyzer_child = tokio::process::Command::new(&analyzer_bin)
+        .arg(&file_str)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .with_context(|| format!("Failed to spawn objc-analyzer for {file_str}"))?;
+
+    let analyzer_payload = serde_json::json!({
+        "file": file_str,
+        "ast": ast,
+    });
+
+    {
+        let stdin = analyzer_child
+            .stdin
+            .as_mut()
+            .context("Failed to open stdin for objc-analyzer")?;
+        stdin
+            .write_all(analyzer_payload.to_string().as_bytes())
+            .await
+            .with_context(|| {
+                format!("Failed to write AST to objc-analyzer stdin for {file_str}")
+            })?;
+        stdin
+            .shutdown()
+            .await
+            .with_context(|| format!("Failed to close objc-analyzer stdin for {file_str}"))?;
+    }
+
+    let analyzer_output = analyzer_child
+        .wait_with_output()
+        .await
+        .with_context(|| format!("Failed to wait for objc-analyzer for {file_str}"))?;
+
+    if !analyzer_output.status.success() {
+        let stderr = String::from_utf8_lossy(&analyzer_output.stderr);
+        let code = analyzer_output
+            .status
+            .code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "signal".to_string());
+        bail!("objc-analyzer exited with code {code} for {file_str}: {stderr}");
+    }
+
+    let analysis: FileAnalysis =
+        serde_json::from_slice(&analyzer_output.stdout).with_context(|| {
+            let preview = String::from_utf8_lossy(
+                &analyzer_output.stdout[..analyzer_output.stdout.len().min(200)],
+            );
+            format!("Failed to parse objc-analyzer output for {file_str}: {preview}")
+        })?;
+
+    Ok(analysis)
+}
+
+// ---------------------------------------------------------------------------
+// Obj-C daemon-mode analysis via ProcessPool (two pools)
+// ---------------------------------------------------------------------------
+
+/// Response from objc-parser daemon.
+/// Uses RawValue for `ast` to avoid parsing + re-serializing the full AST JSON.
+#[derive(Deserialize)]
+struct ObjcParserResponse<'a> {
+    status: String,
+    #[serde(borrow)]
+    ast: Option<&'a serde_json::value::RawValue>,
+    error: Option<String>,
+}
+
+/// Analyze a single Obj-C file via two persistent daemon process pools.
+///
+/// 1. Read source, send to objc-parser pool -> receive AST JSON
+/// 2. Send AST to objc-analyzer pool -> receive FileAnalysis
+pub async fn analyze_objc_file_pooled(
+    parser_pool: &ProcessPool,
+    analyzer_pool: &ProcessPool,
+    file: &Path,
+) -> Result<FileAnalysis> {
+    let file_str = file.display().to_string();
+
+    let source = tokio::fs::read_to_string(file)
+        .await
+        .with_context(|| format!("Failed to read Obj-C source file {file_str}"))?;
+
+    // Step 1: Send to objc-parser pool
+    let escaped_file = serde_json::to_string(&file_str)
+        .with_context(|| format!("Failed to escape file path for {file_str}"))?;
+    let escaped_source = serde_json::to_string(&source)
+        .with_context(|| format!("Failed to escape source for {file_str}"))?;
+    let parser_payload = format!(
+        r#"{{"file":{},"source":{}}}"#,
+        escaped_file, escaped_source
+    );
+
+    let parser_response_bytes = parser_pool
+        .request(parser_payload.as_bytes())
+        .await
+        .with_context(|| format!("Obj-C parser pool request failed for {file_str}"))?;
+
+    // Zero-copy: parse only status/error, borrow raw AST JSON bytes
+    let parser_response: ObjcParserResponse =
+        serde_json::from_slice(&parser_response_bytes)
+            .with_context(|| format!("Failed to decode objc-parser response for {file_str}"))?;
+
+    let ast_raw = match parser_response.status.as_str() {
+        "ok" => parser_response
+            .ast
+            .with_context(|| format!("objc-parser returned ok but no ast for {file_str}"))?,
+        "error" => {
+            let msg = parser_response
+                .error
+                .unwrap_or_else(|| "unknown error".to_string());
+            bail!("objc-parser daemon error for {file_str}: {msg}")
+        }
+        other => bail!("Unknown objc-parser response status '{other}' for {file_str}"),
+    };
+
+    // Step 2: Send to objc-analyzer pool
+    let analyzer_payload = format!(r#"{{"file":{},"ast":{}}}"#, escaped_file, ast_raw.get());
+
+    let analyzer_response_bytes = analyzer_pool
+        .request(analyzer_payload.as_bytes())
+        .await
+        .with_context(|| format!("Obj-C analyzer pool request failed for {file_str}"))?;
+
+    let response: DaemonResponse = serde_json::from_slice(&analyzer_response_bytes)
+        .with_context(|| format!("Failed to decode objc-analyzer response for {file_str}"))?;
+
+    match response.status.as_str() {
+        "ok" => response
+            .result
+            .with_context(|| format!("objc-analyzer daemon returned ok but no result for {file_str}")),
+        "error" => {
+            let msg = response.error.unwrap_or_else(|| "unknown error".to_string());
+            bail!("objc-analyzer daemon error for {file_str}: {msg}")
+        }
+        other => bail!("Unknown objc-analyzer response status '{other}' for {file_str}"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Obj-C parallel multi-file analysis
+// ---------------------------------------------------------------------------
+
+/// Analyze multiple Obj-C files in parallel using two persistent daemon pools.
+///
+/// Falls back to `analyze_objc_files_parallel` if pool creation fails.
+pub async fn analyze_objc_files_parallel_pooled(
+    files: &[PathBuf],
+    jobs: usize,
+    analyzers: &crate::config::AnalyzerBinaries,
+    limits: SizeLimits,
+) -> Vec<AnalysisResult> {
+    let parser_pool_config = PoolConfig {
+        command: analyzers.objc_parser_path(),
+        args: vec!["--daemon".to_string()],
+        ..PoolConfig::default()
+    };
+
+    let analyzer_pool_config = PoolConfig {
+        command: analyzers.objc_path(),
+        args: vec!["--daemon".to_string()],
+        ..PoolConfig::default()
+    };
+
+    let parser_pool = match ProcessPool::new(parser_pool_config, jobs.max(1)) {
+        Ok(p) => Arc::new(p),
+        Err(e) => {
+            tracing::warn!(
+                "Failed to create objc-parser pool, falling back to spawn-per-file: {e}"
+            );
+            return analyze_objc_files_parallel(files, jobs, analyzers).await;
+        }
+    };
+
+    let analyzer_pool = match ProcessPool::new(analyzer_pool_config, jobs.max(1)) {
+        Ok(p) => Arc::new(p),
+        Err(e) => {
+            tracing::warn!(
+                "Failed to create objc-analyzer pool, falling back to spawn-per-file: {e}"
+            );
+            parser_pool.shutdown().await;
+            return analyze_objc_files_parallel(files, jobs, analyzers).await;
+        }
+    };
+
+    let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
+    let total = files.len();
+
+    let handles: Vec<_> = files
+        .iter()
+        .enumerate()
+        .map(|(idx, file)| {
+            let sem = Arc::clone(&semaphore);
+            let parser_pool = Arc::clone(&parser_pool);
+            let analyzer_pool = Arc::clone(&analyzer_pool);
+            let file = file.clone();
+            let file_display = file.display().to_string();
+
+            tokio::spawn(async move {
+                let _permit = sem
+                    .acquire()
+                    .await
+                    .expect("Semaphore closed unexpectedly");
+
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
+                tracing::info!(
+                    "[{}/{}] Analyzing Obj-C file {}",
+                    idx + 1,
+                    total,
+                    file_display
+                );
+
+                let errors = Vec::new();
+
+                // Size guard
+                if let Some(issue) = check_file_size(&file, limits) {
+                    tracing::warn!(file = %file.display(), "Skipping oversized source file: {}", issue.message);
+                    return AnalysisResult {
+                        file,
+                        analysis: None,
+                        errors,
+                        issues: vec![issue],
+                        metrics: FileMetrics {
+                            file_size_bytes,
+                            ..FileMetrics::default()
+                        },
+                    };
+                }
+
+                match analyze_objc_file_pooled(&parser_pool, &analyzer_pool, &file).await {
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult {
+                            file,
+                            analysis: Some(analysis),
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                ast_size_bytes: 0,
+                                parse_ms: 0,
+                                analyze_ms: total_ms,
+                                total_ms,
+                                node_count,
+                                edge_count,
+                                ..Default::default()
+                            },
+                        }
+                    },
+                    Err(e) => {
+                        let mut errors = errors;
+                        errors.push(format!(
+                            "Obj-C analyzer failed for {file_display}: {e}"
+                        ));
+                        AnalysisResult {
+                            file,
+                            analysis: None,
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                total_ms: file_start.elapsed().as_millis() as u64,
+                                ..FileMetrics::default()
+                            },
+                        }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        match handle.await {
+            Ok(result) => results.push(result),
+            Err(e) => {
+                results.push(AnalysisResult {
+                    file: PathBuf::new(),
+                    analysis: None,
+                    errors: vec![format!("Obj-C analysis task failed: {e}")],
+                    issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
+                });
+            }
+        }
+    }
+
+    parser_pool.shutdown().await;
+    analyzer_pool.shutdown().await;
+    results
+}
+
+/// Analyze multiple Obj-C files in parallel with bounded concurrency (spawn mode).
+///
+/// Fallback when daemon pools cannot be created.
+pub async fn analyze_objc_files_parallel(
+    files: &[PathBuf],
+    jobs: usize,
+    analyzers: &crate::config::AnalyzerBinaries,
+) -> Vec<AnalysisResult> {
+    let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
+    let total = files.len();
+    let analyzers = analyzers.clone();
+
+    let handles: Vec<_> = files
+        .iter()
+        .enumerate()
+        .map(|(idx, file)| {
+            let sem = Arc::clone(&semaphore);
+            let file = file.clone();
+            let file_display = file.display().to_string();
+            let analyzers = analyzers.clone();
+
+            tokio::spawn(async move {
+                let _permit = sem
+                    .acquire()
+                    .await
+                    .expect("Semaphore closed unexpectedly");
+
+                let file_start = std::time::Instant::now();
+                let file_size_bytes = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+
+                tracing::info!(
+                    "[{}/{}] Analyzing Obj-C file {}",
+                    idx + 1,
+                    total,
+                    file_display
+                );
+
+                let errors = Vec::new();
+
+                match analyze_objc_file(&file, &analyzers).await {
+                    Ok(analysis) => {
+                        let total_ms = file_start.elapsed().as_millis() as u64;
+                        let node_count = analysis.nodes.len();
+                        let edge_count = analysis.edges.len();
+                        AnalysisResult {
+                            file,
+                            analysis: Some(analysis),
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                ast_size_bytes: 0,
+                                parse_ms: 0,
+                                analyze_ms: total_ms,
+                                total_ms,
+                                node_count,
+                                edge_count,
+                                ..Default::default()
+                            },
+                        }
+                    },
+                    Err(e) => {
+                        let mut errors = errors;
+                        errors.push(format!(
+                            "Obj-C analyzer failed for {file_display}: {e}"
+                        ));
+                        AnalysisResult {
+                            file,
+                            analysis: None,
+                            errors,
+                            issues: vec![],
+                            metrics: FileMetrics {
+                                file_size_bytes,
+                                total_ms: file_start.elapsed().as_millis() as u64,
+                                ..FileMetrics::default()
+                            },
+                        }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        match handle.await {
+            Ok(result) => results.push(result),
+            Err(e) => {
+                results.push(AnalysisResult {
+                    file: PathBuf::new(),
+                    analysis: None,
+                    errors: vec![format!("Obj-C analysis task failed: {e}")],
+                    issues: vec![],
+                    metrics: FileMetrics::default(), // task panicked, no metrics available
+                });
+            }
+        }
+    }
+
+    results
+}
+
+// ---------------------------------------------------------------------------
+// Apple cross-language node collection
+// ---------------------------------------------------------------------------
+
+/// Collect resolve nodes from ALL Apple ecosystem languages (Swift + Obj-C).
+/// Used by apple-cross-resolve which needs nodes from both languages
+/// to resolve cross-language edges (e.g., Swift calling Obj-C bridged APIs).
+pub fn collect_resolve_nodes_for_apple(
+    results: &[AnalysisResult],
+) -> Vec<serde_json::Value> {
+    results
+        .iter()
+        .filter_map(|r| r.analysis.as_ref())
+        .filter(|a| {
+            matches!(
+                crate::config::detect_language(std::path::Path::new(&a.file)),
+                Some(crate::config::Language::Swift) | Some(crate::config::Language::ObjectiveC)
+            )
+        })
+        .flat_map(|a| &a.nodes)
+        .filter(|n| RESOLVE_NODE_TYPES.contains(&n.node_type.as_str()))
+        .filter_map(|n| serde_json::to_value(n).ok())
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -1363,7 +5856,7 @@ mod tests {
     fn relativize_paths_strips_root_prefix() {
         let mut analysis = FileAnalysis {
             file: "/home/user/project/src/app.ts".to_string(),
-            module_id: "/home/user/project/src/app.ts".to_string(),
+            module_id: "MODULE#/home/user/project/src/app.ts".to_string(),
             nodes: vec![GraphNode {
                 id: "/home/user/project/src/app.ts->FUNCTION->main".to_string(),
                 node_type: "FUNCTION".to_string(),
@@ -1394,7 +5887,7 @@ mod tests {
         analysis.relativize_paths("/home/user/project");
 
         assert_eq!(analysis.file, "src/app.ts");
-        assert_eq!(analysis.module_id, "src/app.ts");
+        assert_eq!(analysis.module_id, "MODULE#src/app.ts");
         assert_eq!(analysis.nodes[0].id, "src/app.ts->FUNCTION->main");
         assert_eq!(analysis.nodes[0].file, "src/app.ts");
         assert_eq!(analysis.edges[0].src, "src/app.ts->FUNCTION->main");
@@ -1612,14 +6105,17 @@ mod tests {
                 exports: vec![],
             }),
             errors: vec![],
+            issues: vec![],
+            metrics: FileMetrics::default(),
         }];
 
         let nodes = collect_resolve_nodes(&results);
-        // Should include IMPORT_BINDING, FUNCTION, and CALL; skip REFERENCE
-        assert_eq!(nodes.len(), 3);
+        // Should include IMPORT_BINDING, FUNCTION, REFERENCE, and CALL
+        assert_eq!(nodes.len(), 4);
         assert_eq!(nodes[0]["type"], "IMPORT_BINDING");
         assert_eq!(nodes[1]["type"], "FUNCTION");
-        assert_eq!(nodes[2]["type"], "CALL");
+        assert_eq!(nodes[2]["type"], "REFERENCE");
+        assert_eq!(nodes[3]["type"], "CALL");
     }
 
     #[test]
@@ -1647,11 +6143,15 @@ mod tests {
                     exports: vec![],
                 }),
                 errors: vec![],
+                issues: vec![],
+                metrics: FileMetrics::default(),
             },
             AnalysisResult {
                 file: PathBuf::from("fail.js"),
                 analysis: None,
                 errors: vec!["parse failed".to_string()],
+                issues: vec![],
+                metrics: FileMetrics::default(),
             },
         ];
 
@@ -1720,6 +6220,17 @@ mod tests {
             assert!(
                 RESOLVE_NODE_TYPES.contains(hs_type),
                 "RESOLVE_NODE_TYPES should contain {hs_type}"
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_node_types_include_apple_types() {
+        let apple_types = ["EXTENSION", "TYPE_ALIAS"];
+        for apple_type in &apple_types {
+            assert!(
+                RESOLVE_NODE_TYPES.contains(apple_type),
+                "RESOLVE_NODE_TYPES should contain {apple_type}"
             );
         }
     }
@@ -1828,6 +6339,8 @@ mod tests {
                 exports: vec![],
             }),
             errors: vec![],
+            issues: vec![],
+            metrics: FileMetrics::default(),
         }];
 
         let nodes = collect_resolve_nodes(&results);
@@ -1880,6 +6393,8 @@ mod tests {
                     exports: vec![],
                 }),
                 errors: vec![],
+                issues: vec![],
+                metrics: FileMetrics::default(),
             },
             AnalysisResult {
                 file: PathBuf::from("src/Main.hs"),
@@ -1912,6 +6427,8 @@ mod tests {
                     exports: vec![],
                 }),
                 errors: vec![],
+                issues: vec![],
+                metrics: FileMetrics::default(),
             },
         ];
 
@@ -1977,6 +6494,8 @@ mod tests {
                 exports: vec![],
             }),
             errors: vec![],
+            issues: vec![],
+            metrics: FileMetrics::default(),
         }];
 
         let nodes = collect_resolve_nodes_for_lang(
@@ -1985,6 +6504,148 @@ mod tests {
         // FUNCTION is in RESOLVE_NODE_TYPES, EXPRESSION is not
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0]["type"].as_str().unwrap(), "FUNCTION");
+    }
+
+    #[test]
+    fn collect_resolve_nodes_for_jvm_combines_java_and_kotlin() {
+        let results = vec![
+            AnalysisResult {
+                file: PathBuf::from("src/Foo.java"),
+                analysis: Some(FileAnalysis {
+                    file: "src/Foo.java".to_string(),
+                    module_id: "src/Foo.java".to_string(),
+                    nodes: vec![
+                        GraphNode {
+                            id: "src/Foo.java->MODULE->Foo".to_string(),
+                            node_type: "MODULE".to_string(),
+                            name: "Foo".to_string(),
+                            file: "src/Foo.java".to_string(),
+                            line: 1, column: 0, end_line: 50, end_column: 0,
+                            exported: false,
+                            metadata: HashMap::new(),
+                            extra: HashMap::new(),
+                        },
+                        GraphNode {
+                            id: "src/Foo.java->CLASS->Foo".to_string(),
+                            node_type: "CLASS".to_string(),
+                            name: "Foo".to_string(),
+                            file: "src/Foo.java".to_string(),
+                            line: 3, column: 0, end_line: 50, end_column: 0,
+                            exported: true,
+                            metadata: HashMap::new(),
+                            extra: HashMap::new(),
+                        },
+                    ],
+                    edges: vec![],
+                    exports: vec![],
+                }),
+                errors: vec![],
+                issues: vec![],
+                metrics: FileMetrics::default(),
+            },
+            AnalysisResult {
+                file: PathBuf::from("src/Bar.kt"),
+                analysis: Some(FileAnalysis {
+                    file: "src/Bar.kt".to_string(),
+                    module_id: "src/Bar.kt".to_string(),
+                    nodes: vec![
+                        GraphNode {
+                            id: "src/Bar.kt->MODULE->Bar".to_string(),
+                            node_type: "MODULE".to_string(),
+                            name: "Bar".to_string(),
+                            file: "src/Bar.kt".to_string(),
+                            line: 1, column: 0, end_line: 30, end_column: 0,
+                            exported: false,
+                            metadata: HashMap::new(),
+                            extra: HashMap::new(),
+                        },
+                        GraphNode {
+                            id: "src/Bar.kt->IMPORT->com.example.Foo".to_string(),
+                            node_type: "IMPORT".to_string(),
+                            name: "com.example.Foo".to_string(),
+                            file: "src/Bar.kt".to_string(),
+                            line: 2, column: 0, end_line: 2, end_column: 30,
+                            exported: false,
+                            metadata: HashMap::new(),
+                            extra: HashMap::new(),
+                        },
+                    ],
+                    edges: vec![],
+                    exports: vec![],
+                }),
+                errors: vec![],
+                issues: vec![],
+                metrics: FileMetrics::default(),
+            },
+            // JS file should be excluded
+            AnalysisResult {
+                file: PathBuf::from("src/index.ts"),
+                analysis: Some(FileAnalysis {
+                    file: "src/index.ts".to_string(),
+                    module_id: "src/index.ts".to_string(),
+                    nodes: vec![
+                        GraphNode {
+                            id: "src/index.ts->MODULE->index".to_string(),
+                            node_type: "MODULE".to_string(),
+                            name: "index".to_string(),
+                            file: "src/index.ts".to_string(),
+                            line: 1, column: 0, end_line: 10, end_column: 0,
+                            exported: false,
+                            metadata: HashMap::new(),
+                            extra: HashMap::new(),
+                        },
+                    ],
+                    edges: vec![],
+                    exports: vec![],
+                }),
+                errors: vec![],
+                issues: vec![],
+                metrics: FileMetrics::default(),
+            },
+        ];
+
+        let jvm_nodes = collect_resolve_nodes_for_jvm(&results);
+        // Should include Java (MODULE + CLASS) and Kotlin (MODULE + IMPORT) nodes, but NOT JS
+        assert_eq!(jvm_nodes.len(), 4);
+        let files: Vec<&str> = jvm_nodes.iter().map(|n| n["file"].as_str().unwrap()).collect();
+        assert!(files.iter().all(|f| f.ends_with(".java") || f.ends_with(".kt")));
+        assert!(!files.iter().any(|f| f.ends_with(".ts")));
+    }
+
+    #[test]
+    fn collect_resolve_nodes_for_jvm_empty_results() {
+        let nodes = collect_resolve_nodes_for_jvm(&[]);
+        assert!(nodes.is_empty());
+    }
+
+    #[test]
+    fn collect_resolve_nodes_for_jvm_no_jvm_files() {
+        let results = vec![AnalysisResult {
+            file: PathBuf::from("src/index.ts"),
+            analysis: Some(FileAnalysis {
+                file: "src/index.ts".to_string(),
+                module_id: "src/index.ts".to_string(),
+                nodes: vec![
+                    GraphNode {
+                        id: "src/index.ts->MODULE->index".to_string(),
+                        node_type: "MODULE".to_string(),
+                        name: "index".to_string(),
+                        file: "src/index.ts".to_string(),
+                        line: 1, column: 0, end_line: 10, end_column: 0,
+                        exported: false,
+                        metadata: HashMap::new(),
+                        extra: HashMap::new(),
+                    },
+                ],
+                edges: vec![],
+                exports: vec![],
+            }),
+            errors: vec![],
+            issues: vec![],
+            metrics: FileMetrics::default(),
+        }];
+        let nodes = collect_resolve_nodes_for_jvm(&results);
+        assert!(nodes.is_empty());
     }
 
     #[test]
@@ -2184,5 +6845,789 @@ mod tests {
         assert_eq!(meta["specifiers"][0], "React");
         // Standard fields also present
         assert_eq!(meta["line"], 1);
+    }
+
+    #[test]
+    fn test_encode_fragment() {
+        assert_eq!(encode_fragment("FUNCTION->foo"), "FUNCTION-%3Efoo");
+        assert_eq!(encode_fragment("CALL->c.log[in:x,h:a3f2]"), "CALL-%3Ec.log%5Bin:x,h:a3f2%5D");
+        assert_eq!(encode_fragment("FN->a[in:x,h:ff00]#1"), "FN-%3Ea%5Bin:x,h:ff00%5D%231");
+        // Chars that DON'T need encoding
+        assert_eq!(encode_fragment("name:with,commas-and.dots"), "name:with,commas-and.dots");
+    }
+
+    #[test]
+    fn test_compact_to_uri_standard_node() {
+        assert_eq!(
+            compact_to_uri("src/app.js->FUNCTION->foo", "localhost/grafema"),
+            "grafema://localhost/grafema/src/app.js#FUNCTION-%3Efoo"
+        );
+    }
+
+    #[test]
+    fn test_compact_to_uri_with_brackets() {
+        assert_eq!(
+            compact_to_uri("src/app.js->FUNCTION->foo[in:bar]", "localhost/grafema"),
+            "grafema://localhost/grafema/src/app.js#FUNCTION-%3Efoo%5Bin:bar%5D"
+        );
+    }
+
+    #[test]
+    fn test_compact_to_uri_with_hash_counter() {
+        assert_eq!(
+            compact_to_uri("src/app.js->FN->a[in:x,h:ff00]#1", "localhost/grafema"),
+            "grafema://localhost/grafema/src/app.js#FN-%3Ea%5Bin:x,h:ff00%5D%231"
+        );
+    }
+
+    #[test]
+    fn test_compact_to_uri_call_with_dot_name() {
+        assert_eq!(
+            compact_to_uri("src/app.js->CALL->c.log[in:x,h:a3f2]", "localhost/grafema"),
+            "grafema://localhost/grafema/src/app.js#CALL-%3Ec.log%5Bin:x,h:a3f2%5D"
+        );
+    }
+
+    #[test]
+    fn test_compact_to_uri_module() {
+        assert_eq!(
+            compact_to_uri("MODULE#src/app.js", "localhost/grafema"),
+            "grafema://localhost/grafema/src/app.js#MODULE"
+        );
+    }
+
+    #[test]
+    fn test_compact_to_uri_external_module() {
+        assert_eq!(
+            compact_to_uri("EXTERNAL_MODULE->lodash", "localhost/grafema"),
+            "grafema://localhost/grafema/_/EXTERNAL_MODULE-%3Elodash"
+        );
+    }
+
+    #[test]
+    fn test_compact_to_uri_singleton() {
+        assert_eq!(
+            compact_to_uri("net:stdio->__stdio__", "localhost/grafema"),
+            "grafema://localhost/grafema/_/net:stdio-%3E__stdio__"
+        );
+    }
+
+    #[test]
+    fn test_to_uri_format_rewrites_all_fields() {
+        let mut analysis = FileAnalysis {
+            file: "src/app.js".to_string(),
+            module_id: "MODULE#src/app.js".to_string(),
+            nodes: vec![GraphNode {
+                id: "src/app.js->FUNCTION->foo".to_string(),
+                node_type: "FUNCTION".to_string(),
+                name: "foo".to_string(),
+                file: "src/app.js".to_string(),
+                line: 1,
+                column: 0,
+                end_line: 10,
+                end_column: 1,
+                exported: false,
+                metadata: HashMap::new(),
+                extra: HashMap::new(),
+            }],
+            edges: vec![GraphEdge {
+                src: "MODULE#src/app.js".to_string(),
+                dst: "src/app.js->FUNCTION->foo".to_string(),
+                edge_type: "CONTAINS".to_string(),
+                metadata: HashMap::new(),
+            }],
+            exports: vec![],
+        };
+
+        analysis.to_uri_format("localhost/grafema");
+
+        assert_eq!(analysis.module_id, "grafema://localhost/grafema/src/app.js#MODULE");
+        assert_eq!(analysis.nodes[0].id, "grafema://localhost/grafema/src/app.js#FUNCTION-%3Efoo");
+        assert_eq!(analysis.nodes[0].file, "src/app.js"); // file stays as-is
+        assert_eq!(analysis.edges[0].src, "grafema://localhost/grafema/src/app.js#MODULE");
+        assert_eq!(analysis.edges[0].dst, "grafema://localhost/grafema/src/app.js#FUNCTION-%3Efoo");
+    }
+
+    // -----------------------------------------------------------------------
+    // Size guard tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn check_file_size_passes_when_under_limit() {
+        // Use Cargo.toml as a small test file (well under 1MB)
+        let file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+        let limits = SizeLimits { max_file_bytes: 1024 * 1024, max_ast_bytes: 0 };
+        assert!(check_file_size(&file, limits).is_none());
+    }
+
+    #[test]
+    fn check_file_size_skips_when_over_limit() {
+        // Use Cargo.toml but with a very low limit (1 byte)
+        let file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+        let limits = SizeLimits { max_file_bytes: 1, max_ast_bytes: 0 };
+        let issue = check_file_size(&file, limits);
+        assert!(issue.is_some());
+        let issue = issue.unwrap();
+        assert_eq!(issue.category, "oversized_source");
+        assert_eq!(issue.severity, "warning");
+        assert!(issue.message.contains("Source file too large"));
+    }
+
+    #[test]
+    fn check_file_size_disabled_when_zero() {
+        let file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+        let limits = SizeLimits { max_file_bytes: 0, max_ast_bytes: 0 };
+        assert!(check_file_size(&file, limits).is_none());
+    }
+
+    #[test]
+    fn check_file_size_missing_file_returns_none() {
+        let file = PathBuf::from("/nonexistent/file.js");
+        let limits = SizeLimits { max_file_bytes: 100, max_ast_bytes: 0 };
+        assert!(check_file_size(&file, limits).is_none());
+    }
+
+    #[test]
+    fn check_ast_size_passes_when_under_limit() {
+        let limits = SizeLimits { max_file_bytes: 0, max_ast_bytes: 1024 * 1024 };
+        assert!(check_ast_size("test.js", 500, limits).is_none());
+    }
+
+    #[test]
+    fn check_ast_size_skips_when_over_limit() {
+        let limits = SizeLimits { max_file_bytes: 0, max_ast_bytes: 100 };
+        let issue = check_ast_size("test.js", 200, limits);
+        assert!(issue.is_some());
+        let issue = issue.unwrap();
+        assert_eq!(issue.category, "oversized_ast");
+        assert_eq!(issue.severity, "warning");
+        assert!(issue.message.contains("AST too large"));
+    }
+
+    #[test]
+    fn check_ast_size_disabled_when_zero() {
+        let limits = SizeLimits { max_file_bytes: 0, max_ast_bytes: 0 };
+        assert!(check_ast_size("test.js", 999_999_999, limits).is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // issues_to_wire tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn issues_to_wire_empty_returns_empty() {
+        let (nodes, edges) = issues_to_wire(&[], "src/app.js", "example.com/repo", true);
+        assert!(nodes.is_empty());
+        assert!(edges.is_empty());
+    }
+
+    #[test]
+    fn issues_to_wire_with_module_stub() {
+        let issues = vec![AnalysisIssue {
+            category: "oversized_source".to_string(),
+            severity: "warning".to_string(),
+            message: "Source file too large: 2048 KB (limit: 1024 KB)".to_string(),
+            file: "src/big.js".to_string(),
+        }];
+        let (nodes, edges) = issues_to_wire(&issues, "src/big.js", "example.com/repo", true);
+
+        // MODULE stub + ISSUE node
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(edges.len(), 1);
+
+        // MODULE stub
+        assert_eq!(nodes[0].node_type.as_deref(), Some("MODULE"));
+        assert_eq!(nodes[0].file.as_deref(), Some("src/big.js"));
+
+        // ISSUE node
+        assert_eq!(nodes[1].node_type.as_deref(), Some("ISSUE"));
+        assert_eq!(nodes[1].file.as_deref(), Some("src/big.js"));
+        let meta: HashMap<String, serde_json::Value> =
+            serde_json::from_str(nodes[1].metadata.as_ref().unwrap()).unwrap();
+        assert_eq!(meta["category"], "oversized_source");
+        assert_eq!(meta["severity"], "warning");
+
+        // CONTAINS edge: MODULE → ISSUE
+        assert_eq!(edges[0].edge_type, "CONTAINS");
+        assert_eq!(edges[0].src, nodes[0].id);
+        assert_eq!(edges[0].dst, nodes[1].id);
+    }
+
+    #[test]
+    fn issues_to_wire_without_module_stub() {
+        let issues = vec![AnalysisIssue {
+            category: "parse_error".to_string(),
+            severity: "error".to_string(),
+            message: "Parse failed".to_string(),
+            file: "src/bad.js".to_string(),
+        }];
+        let (nodes, edges) = issues_to_wire(&issues, "src/bad.js", "example.com/repo", false);
+
+        // No MODULE stub, just ISSUE node
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(edges.len(), 1);
+        assert_eq!(nodes[0].node_type.as_deref(), Some("ISSUE"));
+    }
+
+    #[test]
+    fn issues_to_wire_multiple_issues() {
+        let issues = vec![
+            AnalysisIssue {
+                category: "oversized_source".to_string(),
+                severity: "warning".to_string(),
+                message: "File too large".to_string(),
+                file: "src/huge.js".to_string(),
+            },
+            AnalysisIssue {
+                category: "parse_error".to_string(),
+                severity: "error".to_string(),
+                message: "Unexpected token".to_string(),
+                file: "src/huge.js".to_string(),
+            },
+        ];
+        let (nodes, edges) = issues_to_wire(&issues, "src/huge.js", "example.com/repo", true);
+
+        // MODULE stub + 2 ISSUE nodes
+        assert_eq!(nodes.len(), 3);
+        // 2 CONTAINS edges
+        assert_eq!(edges.len(), 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // unresolved_diagnostics_to_wire tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn unresolved_diagnostics_empty_returns_empty() {
+        let file_set = HashSet::new();
+        let (nodes, edges) = unresolved_diagnostics_to_wire(&[], &file_set, "example.com/repo");
+        assert!(nodes.is_empty());
+        assert!(edges.is_empty());
+    }
+
+    #[test]
+    fn unresolved_diagnostics_external_when_file_not_in_set() {
+        let file_set: HashSet<String> = ["src/app.ts", "src/utils.ts"]
+            .iter().map(|s| s.to_string()).collect();
+
+        let unresolved = vec![(
+            "node-1".to_string(),
+            "express".to_string(),
+            "src/app.ts".to_string(),
+        )];
+
+        let (nodes, edges) = unresolved_diagnostics_to_wire(
+            &unresolved, &file_set, "example.com/repo",
+        );
+
+        // MODULE stub + 1 ISSUE node
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(edges.len(), 1);
+
+        // MODULE stub
+        assert_eq!(nodes[0].node_type.as_deref(), Some("MODULE"));
+        assert_eq!(
+            nodes[0].file.as_deref(),
+            Some("__grafema_virtual/unresolved-diagnostics")
+        );
+
+        // ISSUE node — external
+        assert_eq!(nodes[1].node_type.as_deref(), Some("ISSUE"));
+        let meta: HashMap<String, serde_json::Value> =
+            serde_json::from_str(nodes[1].metadata.as_ref().unwrap()).unwrap();
+        assert_eq!(meta["category"], "unresolved_external");
+        assert_eq!(meta["severity"], "info");
+        assert_eq!(meta["symbol_name"], "express");
+        assert_eq!(meta["source_file"], "src/app.ts");
+
+        // CONTAINS edge: MODULE → ISSUE
+        assert_eq!(edges[0].edge_type, "CONTAINS");
+        assert_eq!(edges[0].src, nodes[0].id);
+        assert_eq!(edges[0].dst, nodes[1].id);
+    }
+
+    #[test]
+    fn unresolved_diagnostics_internal_when_file_in_set() {
+        let file_set: HashSet<String> = [
+            "src/app.ts",
+            "src/utils/helper.ts",
+        ].iter().map(|s| s.to_string()).collect();
+
+        let unresolved = vec![(
+            "node-2".to_string(),
+            "./utils/helper".to_string(),
+            "src/app.ts".to_string(),
+        )];
+
+        let (nodes, _edges) = unresolved_diagnostics_to_wire(
+            &unresolved, &file_set, "example.com/repo",
+        );
+
+        // MODULE stub + 1 ISSUE node
+        assert_eq!(nodes.len(), 2);
+
+        let meta: HashMap<String, serde_json::Value> =
+            serde_json::from_str(nodes[1].metadata.as_ref().unwrap()).unwrap();
+        assert_eq!(meta["category"], "unresolved_internal");
+        assert_eq!(meta["severity"], "warning");
+    }
+
+    #[test]
+    fn unresolved_diagnostics_multiple_mixed() {
+        let file_set: HashSet<String> = [
+            "src/app.ts",
+            "src/billing/endpoint.ts",
+        ].iter().map(|s| s.to_string()).collect();
+
+        let unresolved = vec![
+            (
+                "node-a".to_string(),
+                "lodash".to_string(),
+                "src/app.ts".to_string(),
+            ),
+            (
+                "node-b".to_string(),
+                "./billing/endpoint".to_string(),
+                "src/app.ts".to_string(),
+            ),
+        ];
+
+        let (nodes, edges) = unresolved_diagnostics_to_wire(
+            &unresolved, &file_set, "example.com/repo",
+        );
+
+        // MODULE stub + 2 ISSUE nodes
+        assert_eq!(nodes.len(), 3);
+        // 2 CONTAINS edges
+        assert_eq!(edges.len(), 2);
+
+        // First: external (lodash not in file_set)
+        let meta0: HashMap<String, serde_json::Value> =
+            serde_json::from_str(nodes[1].metadata.as_ref().unwrap()).unwrap();
+        assert_eq!(meta0["category"], "unresolved_external");
+
+        // Second: internal (billing/endpoint matches a file in set)
+        let meta1: HashMap<String, serde_json::Value> =
+            serde_json::from_str(nodes[2].metadata.as_ref().unwrap()).unwrap();
+        assert_eq!(meta1["category"], "unresolved_internal");
+    }
+
+    #[test]
+    fn unresolved_diagnostics_uri_format() {
+        let file_set = HashSet::new();
+        let unresolved = vec![(
+            "node-1".to_string(),
+            "foo".to_string(),
+            "src/bar.ts".to_string(),
+        )];
+
+        let (nodes, _) = unresolved_diagnostics_to_wire(
+            &unresolved, &file_set, "example.com/repo",
+        );
+
+        // All IDs should be grafema:// URIs
+        for node in &nodes {
+            assert!(
+                node.id.starts_with("grafema://example.com/repo/"),
+                "Expected grafema URI, got: {}",
+                node.id
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // metrics_to_wire tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn metrics_to_wire_default_returns_empty() {
+        let metrics = FileMetrics::default();
+        let (nodes, edges) = metrics_to_wire(&metrics, "src/app.js", "example.com/repo");
+        assert!(nodes.is_empty());
+        assert!(edges.is_empty());
+    }
+
+    #[test]
+    fn metrics_to_wire_skips_zero_values() {
+        let metrics = FileMetrics {
+            parse_ms: 42,
+            analyze_ms: 0,
+            total_ms: 0,
+            file_size_bytes: 0,
+            ast_size_bytes: 0,
+            node_count: 0,
+            edge_count: 0,
+            ..Default::default()
+        };
+        let (nodes, edges) = metrics_to_wire(&metrics, "src/app.js", "example.com/repo");
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(edges.len(), 1);
+        assert_eq!(nodes[0].name.as_deref(), Some("parse_ms"));
+    }
+
+    #[test]
+    fn metrics_to_wire_all_fields() {
+        let metrics = FileMetrics {
+            parse_ms: 10,
+            analyze_ms: 20,
+            total_ms: 30,
+            file_size_bytes: 1024,
+            ast_size_bytes: 2048,
+            node_count: 5,
+            edge_count: 3,
+            ..Default::default()
+        };
+        let (nodes, edges) = metrics_to_wire(&metrics, "src/app.js", "example.com/repo");
+
+        // 7 non-zero metrics → 7 nodes + 7 OBSERVES edges
+        assert_eq!(nodes.len(), 7);
+        assert_eq!(edges.len(), 7);
+
+        // All nodes are METRIC type
+        for node in &nodes {
+            assert_eq!(node.node_type.as_deref(), Some("METRIC"));
+            assert_eq!(node.file.as_deref(), Some("src/app.js"));
+        }
+
+        // All edges are OBSERVES pointing to MODULE
+        let module_id = compact_to_uri("MODULE#src/app.js", "example.com/repo");
+        for edge in &edges {
+            assert_eq!(edge.edge_type, "OBSERVES");
+            assert_eq!(edge.dst, module_id);
+        }
+
+        // Check first metric metadata
+        let meta: HashMap<String, serde_json::Value> =
+            serde_json::from_str(nodes[0].metadata.as_ref().unwrap()).unwrap();
+        assert_eq!(meta["value"], 10);
+        assert_eq!(meta["unit"], "ms");
+        assert_eq!(meta["source"], "orchestrator");
+    }
+
+    #[test]
+    fn metrics_to_wire_uri_format() {
+        let metrics = FileMetrics {
+            total_ms: 100,
+            ..Default::default()
+        };
+        let (nodes, _) = metrics_to_wire(&metrics, "src/app.js", "example.com/repo");
+        assert_eq!(nodes.len(), 1);
+        // ID should be a grafema:// URI
+        assert!(nodes[0].id.starts_with("grafema://example.com/repo/src/app.js#"));
+    }
+
+    // -----------------------------------------------------------------------
+    // phase_metrics_to_wire tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn phase_metrics_to_wire_empty() {
+        let (nodes, edges) = phase_metrics_to_wire(&[], "example.com/repo");
+        assert!(nodes.is_empty());
+        assert!(edges.is_empty());
+    }
+
+    #[test]
+    fn phase_metrics_to_wire_skips_zero() {
+        let metrics = vec![
+            ("analysis", "duration_ms", 0u64, "ms"),
+            ("analysis", "total_nodes", 500u64, "count"),
+        ];
+        let (nodes, edges) = phase_metrics_to_wire(&metrics, "example.com/repo");
+        assert_eq!(nodes.len(), 1);
+        assert!(edges.is_empty());
+        assert_eq!(nodes[0].name.as_deref(), Some("total_nodes"));
+    }
+
+    #[test]
+    fn phase_metrics_to_wire_synthetic_file() {
+        let metrics = vec![
+            ("analysis", "duration_ms", 5000u64, "ms"),
+            ("compact", "duration_ms", 200u64, "ms"),
+        ];
+        let (nodes, _) = phase_metrics_to_wire(&metrics, "example.com/repo");
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(nodes[0].file.as_deref(), Some("__grafema_perf/analysis"));
+        assert_eq!(nodes[1].file.as_deref(), Some("__grafema_perf/compact"));
+
+        // Check phase metadata
+        let meta: HashMap<String, serde_json::Value> =
+            serde_json::from_str(nodes[0].metadata.as_ref().unwrap()).unwrap();
+        assert_eq!(meta["phase"], "analysis");
+        assert_eq!(meta["value"], 5000);
+        assert_eq!(meta["unit"], "ms");
+    }
+
+    #[test]
+    fn size_limits_from_config_converts_kb_to_bytes() {
+        let cfg = crate::config::AnalyzerConfig {
+            root: PathBuf::from("."),
+            include: vec![],
+            exclude: vec![],
+            plugins: vec![],
+            rfdb_socket: None,
+            analyzers: Default::default(),
+            services: vec![],
+            authority: None,
+            aliases: Default::default(),
+            max_file_size_kb: 512,
+            max_ast_size_kb: 2048,
+        };
+        let limits = SizeLimits::from_config(&cfg);
+        assert_eq!(limits.max_file_bytes, 512 * 1024);
+        assert_eq!(limits.max_ast_bytes, 2048 * 1024);
+    }
+
+    #[test]
+    fn size_limits_zero_means_unlimited() {
+        let cfg = crate::config::AnalyzerConfig {
+            root: PathBuf::from("."),
+            include: vec![],
+            exclude: vec![],
+            plugins: vec![],
+            rfdb_socket: None,
+            analyzers: Default::default(),
+            services: vec![],
+            authority: None,
+            aliases: Default::default(),
+            max_file_size_kb: 0,
+            max_ast_size_kb: 0,
+        };
+        let limits = SizeLimits::from_config(&cfg);
+        assert_eq!(limits.max_file_bytes, 0);
+        assert_eq!(limits.max_ast_bytes, 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Byte-offset → line:column conversion tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn build_line_index_empty() {
+        let idx = build_line_index(b"");
+        assert_eq!(idx, vec![0]);
+    }
+
+    #[test]
+    fn build_line_index_single_line() {
+        let idx = build_line_index(b"hello");
+        assert_eq!(idx, vec![0]);
+    }
+
+    #[test]
+    fn build_line_index_multiple_lines() {
+        // "ab\ncd\nef"
+        // Line 1: bytes 0..2 ("ab")
+        // Line 2: bytes 3..4 ("cd")
+        // Line 3: bytes 6..7 ("ef")
+        let idx = build_line_index(b"ab\ncd\nef");
+        assert_eq!(idx, vec![0, 3, 6]);
+    }
+
+    #[test]
+    fn build_line_index_trailing_newline() {
+        let idx = build_line_index(b"ab\n");
+        assert_eq!(idx, vec![0, 3]);
+    }
+
+    #[test]
+    fn byte_offset_to_line_col_start_of_file() {
+        let idx = build_line_index(b"ab\ncd\nef");
+        // Offset 0 = start of line 1
+        assert_eq!(byte_offset_to_line_col(&idx, 0), (1, 0));
+    }
+
+    #[test]
+    fn byte_offset_to_line_col_middle_of_first_line() {
+        let idx = build_line_index(b"abcdef\ngh");
+        // Offset 3 = 4th byte on line 1, column 3
+        assert_eq!(byte_offset_to_line_col(&idx, 3), (1, 3));
+    }
+
+    #[test]
+    fn byte_offset_to_line_col_start_of_second_line() {
+        let idx = build_line_index(b"ab\ncd\nef");
+        // Offset 3 = start of line 2
+        assert_eq!(byte_offset_to_line_col(&idx, 3), (2, 0));
+    }
+
+    #[test]
+    fn byte_offset_to_line_col_middle_of_second_line() {
+        let idx = build_line_index(b"ab\ncd\nef");
+        // Offset 4 = "d" on line 2, column 1
+        assert_eq!(byte_offset_to_line_col(&idx, 4), (2, 1));
+    }
+
+    #[test]
+    fn byte_offset_to_line_col_start_of_third_line() {
+        let idx = build_line_index(b"ab\ncd\nef");
+        // Offset 6 = start of line 3
+        assert_eq!(byte_offset_to_line_col(&idx, 6), (3, 0));
+    }
+
+    #[test]
+    fn byte_offset_to_line_col_beyond_eof() {
+        let idx = build_line_index(b"ab\ncd");
+        // Offset 100 = beyond end of file, should land on last line
+        let (line, col) = byte_offset_to_line_col(&idx, 100);
+        assert_eq!(line, 2);
+        assert_eq!(col, 97); // 100 - 3 (start of line 2)
+    }
+
+    #[test]
+    fn byte_offset_to_line_col_at_newline_char() {
+        let idx = build_line_index(b"ab\ncd\nef");
+        // Offset 2 = the '\n' character on line 1, column 2
+        assert_eq!(byte_offset_to_line_col(&idx, 2), (1, 2));
+    }
+
+    #[test]
+    fn is_js_ts_file_js_extensions() {
+        for ext in &["js", "jsx", "ts", "tsx", "mjs", "cjs", "mts", "cts"] {
+            let path = PathBuf::from(format!("src/app.{ext}"));
+            assert!(is_js_ts_file(&path), "expected true for .{ext}");
+        }
+    }
+
+    #[test]
+    fn is_js_ts_file_non_js_extensions() {
+        for ext in &["rs", "py", "hs", "java", "go", "cpp"] {
+            let path = PathBuf::from(format!("src/app.{ext}"));
+            assert!(!is_js_ts_file(&path), "expected false for .{ext}");
+        }
+    }
+
+    #[test]
+    fn convert_byte_offsets_to_lines_with_real_file() {
+        use std::io::Write;
+        // Create a temporary file with known content
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("test.js");
+        {
+            let mut f = std::fs::File::create(&file_path).unwrap();
+            // Line 1: "const x = 1;\n"   (13 bytes: 0..12, newline at 12)
+            // Line 2: "const y = 2;\n"   (13 bytes: 13..25, newline at 25)
+            // Line 3: "function foo() {\n" (17 bytes: 26..42, newline at 42)
+            // line_index = [0, 13, 26, 43]
+            write!(f, "const x = 1;\nconst y = 2;\nfunction foo() {{\n").unwrap();
+        }
+
+        let mut analysis = FileAnalysis {
+            file: file_path.display().to_string(),
+            module_id: file_path.display().to_string(),
+            nodes: vec![
+                GraphNode {
+                    id: "test.js->VARIABLE->x".to_string(),
+                    node_type: "VARIABLE".to_string(),
+                    name: "x".to_string(),
+                    file: file_path.display().to_string(),
+                    line: 6,    // byte offset of 'x' in "const x"
+                    column: 0,
+                    end_line: 12, // byte offset of '\n' at end of line 1
+                    end_column: 0,
+                    exported: false,
+                    metadata: HashMap::new(),
+                    extra: HashMap::new(),
+                },
+                GraphNode {
+                    id: "test.js->FUNCTION->foo".to_string(),
+                    node_type: "FUNCTION".to_string(),
+                    name: "foo".to_string(),
+                    file: file_path.display().to_string(),
+                    line: 26,   // byte offset of "function" on line 3
+                    column: 0,
+                    end_line: 42, // byte offset of '\n' at end of line 3
+                    end_column: 0,
+                    exported: false,
+                    metadata: HashMap::new(),
+                    extra: HashMap::new(),
+                },
+            ],
+            edges: vec![],
+            exports: vec![],
+        };
+
+        analysis.convert_byte_offsets_to_lines(&file_path);
+
+        // Node 0: byte 6 → line 1, col 6; byte 12 → line 1, col 12
+        assert_eq!(analysis.nodes[0].line, 1);
+        assert_eq!(analysis.nodes[0].column, 6);
+        assert_eq!(analysis.nodes[0].end_line, 1);
+        assert_eq!(analysis.nodes[0].end_column, 12);
+
+        // Node 1: byte 26 → line 3, col 0; byte 42 → line 3, col 16
+        assert_eq!(analysis.nodes[1].line, 3);
+        assert_eq!(analysis.nodes[1].column, 0);
+        assert_eq!(analysis.nodes[1].end_line, 3);
+        assert_eq!(analysis.nodes[1].end_column, 16);
+    }
+
+    #[test]
+    fn convert_byte_offsets_skips_zero_positions() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("test.js");
+        {
+            let mut f = std::fs::File::create(&file_path).unwrap();
+            write!(f, "const x = 1;\n").unwrap();
+        }
+
+        let mut analysis = FileAnalysis {
+            file: file_path.display().to_string(),
+            module_id: file_path.display().to_string(),
+            nodes: vec![GraphNode {
+                id: "test.js->MODULE".to_string(),
+                node_type: "MODULE".to_string(),
+                name: "test.js".to_string(),
+                file: file_path.display().to_string(),
+                line: 0,     // 0 means "no position" — should NOT be converted
+                column: 0,
+                end_line: 0,
+                end_column: 0,
+                exported: false,
+                metadata: HashMap::new(),
+                extra: HashMap::new(),
+            }],
+            edges: vec![],
+            exports: vec![],
+        };
+
+        analysis.convert_byte_offsets_to_lines(&file_path);
+
+        // Zero positions should remain unchanged
+        assert_eq!(analysis.nodes[0].line, 0);
+        assert_eq!(analysis.nodes[0].column, 0);
+        assert_eq!(analysis.nodes[0].end_line, 0);
+        assert_eq!(analysis.nodes[0].end_column, 0);
+    }
+
+    #[test]
+    fn convert_byte_offsets_missing_file_is_noop() {
+        let missing_path = PathBuf::from("/nonexistent/file.js");
+        let mut analysis = FileAnalysis {
+            file: missing_path.display().to_string(),
+            module_id: missing_path.display().to_string(),
+            nodes: vec![GraphNode {
+                id: "file.js->FUNCTION->foo".to_string(),
+                node_type: "FUNCTION".to_string(),
+                name: "foo".to_string(),
+                file: missing_path.display().to_string(),
+                line: 100,
+                column: 0,
+                end_line: 200,
+                end_column: 0,
+                exported: false,
+                metadata: HashMap::new(),
+                extra: HashMap::new(),
+            }],
+            edges: vec![],
+            exports: vec![],
+        };
+
+        analysis.convert_byte_offsets_to_lines(&missing_path);
+
+        // Should be unchanged — file couldn't be read
+        assert_eq!(analysis.nodes[0].line, 100);
+        assert_eq!(analysis.nodes[0].end_line, 200);
     }
 }

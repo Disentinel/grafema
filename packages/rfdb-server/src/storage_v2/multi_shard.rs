@@ -27,12 +27,14 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
 use crate::error::{GraphError, Result};
 use crate::storage_v2::compaction::{CompactionConfig, CompactionResult};
 use crate::storage_v2::index::{build_inverted_indexes, GlobalIndex, IndexEntry, InvertedIndex};
+use crate::storage_v2::index::token::{TokenIndex, TokenMatch, tokenize_name};
 use crate::storage_v2::manifest::{ManifestStore, SegmentDescriptor};
 use crate::storage_v2::segment::{self, EdgeSegmentV2, NodeSegmentV2};
 use crate::storage_v2::shard::{Shard, ShardDiagnostics, TombstoneSet};
@@ -114,6 +116,15 @@ pub struct MultiShardStore {
     /// containing enrichment edges FROM that node.
     /// Used for cross-shard edge queries.
     enrichment_edge_to_shard: HashMap<u128, HashSet<u16>>,
+
+    /// File-to-node-IDs index: maps file path to the set of node IDs
+    /// in that file. Used by commit_batch Phase 1 for O(batch_size) lookups
+    /// instead of O(total_nodes) find_nodes scans.
+    file_to_node_ids: HashMap<String, HashSet<u128>>,
+
+    /// Intern pool for edge type strings. Edge types have ~15 distinct values,
+    /// so interning saves ~40 bytes per tombstone entry (4M+ entries on large graphs).
+    edge_type_intern: HashMap<String, Arc<str>>,
 }
 
 // ── Constructors ───────────────────────────────────────────────────
@@ -145,6 +156,8 @@ impl MultiShardStore {
             node_to_shard: HashMap::new(),
             global_index: None,
             enrichment_edge_to_shard: HashMap::new(),
+            file_to_node_ids: HashMap::new(),
+            edge_type_intern: HashMap::new(),
         })
     }
 
@@ -240,11 +253,13 @@ impl MultiShardStore {
             shards.push(shard);
         }
 
-        // Rebuild node_to_shard from all shards
+        // Rebuild node_to_shard and file_to_node_ids from all shards
         let mut node_to_shard = HashMap::new();
+        let mut file_to_node_ids: HashMap<String, HashSet<u128>> = HashMap::new();
         for (shard_id, shard) in shards.iter().enumerate() {
-            for node_id in shard.all_node_ids() {
+            for (node_id, file) in shard.all_node_ids_with_file() {
                 node_to_shard.insert(node_id, shard_id as u16);
+                file_to_node_ids.entry(file).or_default().insert(node_id);
             }
         }
 
@@ -266,6 +281,8 @@ impl MultiShardStore {
             node_to_shard,
             global_index: None,
             enrichment_edge_to_shard,
+            file_to_node_ids,
+            edge_type_intern: HashMap::new(),
         })
     }
 
@@ -284,6 +301,27 @@ impl MultiShardStore {
             node_to_shard: HashMap::new(),
             global_index: None,
             enrichment_edge_to_shard: HashMap::new(),
+            file_to_node_ids: HashMap::new(),
+            edge_type_intern: HashMap::new(),
+        }
+    }
+}
+
+// ── Edge Type Interning ────────────────────────────────────────────
+
+impl MultiShardStore {
+    /// Intern an edge type string. Returns a shared Arc<str> for deduplication.
+    ///
+    /// Edge types have ~15 distinct values ("CALLS", "IMPORTS_FROM", etc.).
+    /// Interning avoids storing millions of individual String allocations
+    /// in tombstone sets — each entry shares the same Arc<str>.
+    fn intern_edge_type(&mut self, edge_type: &str) -> Arc<str> {
+        if let Some(interned) = self.edge_type_intern.get(edge_type) {
+            Arc::clone(interned)
+        } else {
+            let interned: Arc<str> = Arc::from(edge_type);
+            self.edge_type_intern.insert(edge_type.to_string(), Arc::clone(&interned));
+            interned
         }
     }
 }
@@ -300,6 +338,10 @@ impl MultiShardStore {
         for node in records {
             let shard_id = self.planner.compute_shard_id(&node.file);
             self.node_to_shard.insert(node.id, shard_id);
+            self.file_to_node_ids
+                .entry(node.file.clone())
+                .or_default()
+                .insert(node.id);
             by_shard.entry(shard_id).or_default().push(node);
         }
 
@@ -369,22 +411,44 @@ impl MultiShardStore {
     pub fn set_tombstones(
         &mut self,
         node_ids: &HashSet<u128>,
-        edge_keys: &HashSet<(u128, u128, String)>,
+        edge_keys: &HashSet<(u128, u128, Arc<str>)>,
     ) {
+        let tombstones = TombstoneSet {
+            node_ids: node_ids.clone(),
+            edge_keys: edge_keys.clone(),
+        };
+        let shared = Arc::new(tombstones);
         for shard in &mut self.shards {
-            let mut merged_nodes: HashSet<u128> =
-                shard.tombstones().node_ids.iter().copied().collect();
-            merged_nodes.extend(node_ids.iter().copied());
-
-            let mut merged_edges: HashSet<(u128, u128, String)> =
-                shard.tombstones().edge_keys.iter().cloned().collect();
-            merged_edges.extend(edge_keys.iter().cloned());
-
-            shard.set_tombstones(TombstoneSet {
-                node_ids: merged_nodes,
-                edge_keys: merged_edges,
-            });
+            shard.set_tombstones_shared(Arc::clone(&shared));
         }
+    }
+
+    /// Check if a node is tombstoned in the shard TombstoneSet.
+    ///
+    /// All shards share the same Arc<TombstoneSet>, so checking shard 0 is sufficient.
+    pub fn is_node_tombstoned(&self, id: u128) -> bool {
+        if self.shards.is_empty() { return false; }
+        self.shards[0].tombstones().contains_node(id)
+    }
+
+    /// Check if an edge is tombstoned in the shard TombstoneSet.
+    ///
+    /// All shards share the same Arc<TombstoneSet>, so checking shard 0 is sufficient.
+    pub fn is_edge_tombstoned(&self, src: u128, dst: u128, edge_type: &str) -> bool {
+        if self.shards.is_empty() { return false; }
+        self.shards[0].tombstones().contains_edge(src, dst, edge_type)
+    }
+
+    /// Count of tombstoned nodes in the shard TombstoneSet.
+    pub fn tombstone_node_count(&self) -> usize {
+        if self.shards.is_empty() { return 0; }
+        self.shards[0].tombstones().node_count()
+    }
+
+    /// Count of tombstoned edges in the shard TombstoneSet.
+    pub fn tombstone_edge_count(&self) -> usize {
+        if self.shards.is_empty() { return 0; }
+        self.shards[0].tombstones().edge_count()
     }
 }
 
@@ -656,6 +720,88 @@ impl MultiShardStore {
             callback(&buffer);
         }
     }
+
+    /// Find nodes with names similar to the query via token-based fuzzy matching.
+    ///
+    /// Searches all shards' token indexes and write buffers, returning
+    /// top-k matches above `min_score`, sorted by score descending.
+    pub fn find_similar_names(
+        &self,
+        query: &str,
+        node_type: Option<&str>,
+        k: usize,
+        min_score: f32,
+    ) -> Vec<TokenMatch> {
+        let mut all_matches: Vec<TokenMatch> = Vec::new();
+        let mut seen_ids: HashSet<u128> = HashSet::new();
+        let query_tokens: HashSet<String> = tokenize_name(query).into_iter().collect();
+
+        // Search L1 token indexes on each shard
+        for shard in &self.shards {
+            if let Some(token_idx) = shard.l1_token_index() {
+                let matches = token_idx.search(query, k * 2, min_score); // over-fetch for dedup
+                for m in matches {
+                    if self.is_node_tombstoned(m.node_id) {
+                        continue;
+                    }
+                    if !seen_ids.insert(m.node_id) {
+                        continue;
+                    }
+                    // Apply node_type filter if specified
+                    if let Some(nt) = node_type {
+                        if let Some(node) = self.get_node(m.node_id) {
+                            if node.node_type != nt {
+                                continue;
+                            }
+                        } else {
+                            continue;
+                        }
+                    }
+                    all_matches.push(m);
+                }
+            }
+
+            // Also scan write buffer names
+            if !query_tokens.is_empty() {
+                for record in shard.write_buffer_iter_nodes() {
+                    if record.name.is_empty() || self.is_node_tombstoned(record.id) {
+                        continue;
+                    }
+                    if !seen_ids.insert(record.id) {
+                        continue;
+                    }
+                    if let Some(nt) = node_type {
+                        if record.node_type != nt {
+                            continue;
+                        }
+                    }
+                    let name_tokens: HashSet<String> = tokenize_name(&record.name).into_iter().collect();
+                    if name_tokens.is_empty() {
+                        continue;
+                    }
+                    let intersection = query_tokens.intersection(&name_tokens).count();
+                    let union = query_tokens.union(&name_tokens).count();
+                    let score = intersection as f32 / union as f32;
+                    if score >= min_score {
+                        all_matches.push(TokenMatch {
+                            node_id: record.id,
+                            name: record.name.clone(),
+                            score,
+                        });
+                    }
+                }
+            }
+        }
+
+        // Sort by score descending, take top k
+        all_matches.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        all_matches.truncate(k);
+        all_matches
+    }
 }
 
 // ── Neighbor Queries ───────────────────────────────────────────────
@@ -742,22 +888,18 @@ impl MultiShardStore {
 // ── Edge Key Discovery ─────────────────────────────────────────────
 
 impl MultiShardStore {
-    /// Find edge keys (src, dst, edge_type) where src is in the given ID set,
-    /// across all shards.
+    /// Find edge keys (src, dst, edge_type) where src is in the given ID set.
     ///
-    /// Fan-out to all shards, concatenate results.
+    /// Shard-targeted: groups src_ids by their owning shard via `node_to_shard`,
+    /// scanning only the relevant shard for each node. Falls back to all-shard
+    /// scan for IDs not in `node_to_shard`.
     ///
-    /// Complexity: O(N * S * (K * B + N_matching))
-    ///   where N = shard_count
+    /// Complexity: O(1 shard × scan) per mapped node, O(N_shards × scan) per unmapped
     pub fn find_edge_keys_by_src_ids(
         &self,
         src_ids: &HashSet<u128>,
     ) -> Vec<(u128, u128, String)> {
-        let mut keys = Vec::new();
-        for shard in &self.shards {
-            keys.extend(shard.find_edge_keys_by_src_ids(src_ids));
-        }
-        keys
+        self.find_edge_keys_by_src_ids_targeted(src_ids, false)
     }
 
     /// Like `find_edge_keys_by_src_ids` but excludes enrichment edges
@@ -769,10 +911,56 @@ impl MultiShardStore {
         &self,
         src_ids: &HashSet<u128>,
     ) -> Vec<(u128, u128, String)> {
-        let mut keys = Vec::new();
-        for shard in &self.shards {
-            keys.extend(shard.find_non_enrichment_edge_keys_by_src_ids(src_ids));
+        self.find_edge_keys_by_src_ids_targeted(src_ids, true)
+    }
+
+    /// Internal: shard-targeted edge key discovery.
+    fn find_edge_keys_by_src_ids_targeted(
+        &self,
+        src_ids: &HashSet<u128>,
+        exclude_enrichment: bool,
+    ) -> Vec<(u128, u128, String)> {
+        // Group src_ids by their owning shard
+        let mut ids_by_shard: HashMap<u16, HashSet<u128>> = HashMap::new();
+        let mut unmapped_ids: HashSet<u128> = HashSet::new();
+        for &id in src_ids {
+            if let Some(&shard_id) = self.node_to_shard.get(&id) {
+                ids_by_shard.entry(shard_id).or_default().insert(id);
+            } else {
+                unmapped_ids.insert(id);
+            }
         }
+
+        let mut keys = Vec::new();
+
+        // Scan only the relevant shard for mapped IDs
+        for (shard_id, ids) in &ids_by_shard {
+            if exclude_enrichment {
+                keys.extend(
+                    self.shards[*shard_id as usize]
+                        .find_non_enrichment_edge_keys_by_src_ids(ids),
+                );
+            } else {
+                keys.extend(
+                    self.shards[*shard_id as usize]
+                        .find_edge_keys_by_src_ids(ids),
+                );
+            }
+        }
+
+        // Fallback: scan all shards for unmapped IDs
+        if !unmapped_ids.is_empty() {
+            for shard in &self.shards {
+                if exclude_enrichment {
+                    keys.extend(
+                        shard.find_non_enrichment_edge_keys_by_src_ids(&unmapped_ids),
+                    );
+                } else {
+                    keys.extend(shard.find_edge_keys_by_src_ids(&unmapped_ids));
+                }
+            }
+        }
+
         keys
     }
 
@@ -801,20 +989,7 @@ impl MultiShardStore {
     /// add new nodes/edges, flush, commit manifest with tombstones.
     ///
     /// Returns CommitDelta describing what changed.
-    ///
-    /// Algorithm (9 phases):
-    /// 1. Snapshot old state for delta computation
-    /// 2. Compute tombstones (node IDs + edge keys)
-    /// 3. Collect changed node/edge types for delta
-    /// 4. Apply tombstones to all shards (union with existing)
-    /// 5. Add new data (nodes + edges)
-    /// 5.5. Remove re-added IDs from tombstones (new data supersedes)
-    /// 6. Compute modified count (same id, different content_hash)
-    /// 7. Flush shards (inlined from flush_all for tombstone injection)
-    /// 8. Build and commit manifest WITH tombstones
-    /// 9. Build CommitDelta
-    ///
-    /// Complexity: O(F * N_per_file + K * S * B + N + E + flush)
+    /// Backward-compatible wrapper — calls `commit_batch_ext` with no protected types.
     pub fn commit_batch(
         &mut self,
         nodes: Vec<NodeRecordV2>,
@@ -823,9 +998,40 @@ impl MultiShardStore {
         tags: HashMap<String, String>,
         manifest_store: &mut ManifestStore,
     ) -> Result<CommitDelta> {
+        self.commit_batch_ext(nodes, edges, changed_files, tags, manifest_store, &[])
+    }
+
+    /// Atomic batch commit with protected types.
+    ///
+    /// Nodes whose `node_type` is in `protected_types` are excluded from
+    /// tombstoning (they survive the re-analysis of their file).
+    ///
+    /// Algorithm (9 phases):
+    /// 1. Snapshot old state via file_to_node_ids index (O(batch_size))
+    /// 2. Compute tombstones (node IDs + edge keys), respecting protected_types
+    /// 3. Collect changed node/edge types for delta
+    /// 4. Apply tombstones to all shards via Arc sharing (O(1) per shard)
+    /// 5. Add new data (nodes + edges), update file_to_node_ids
+    /// 5.5. Remove re-added IDs from tombstones (new data supersedes)
+    /// 6. Compute modified count (same id, different content_hash)
+    /// 7. Flush shards (inlined from flush_all for tombstone injection)
+    /// 8. Build and commit manifest WITH tombstones
+    /// 9. Build CommitDelta
+    pub fn commit_batch_ext(
+        &mut self,
+        nodes: Vec<NodeRecordV2>,
+        edges: Vec<EdgeRecordV2>,
+        changed_files: &[String],
+        tags: HashMap<String, String>,
+        manifest_store: &mut ManifestStore,
+        protected_types: &[String],
+    ) -> Result<CommitDelta> {
+        use std::time::Instant;
+
         // ── Phase 1: Snapshot old state for delta ──
+        let t_phase1 = Instant::now();
+
         // Separate enrichment file contexts from normal files.
-        // Enrichment file contexts start with "__enrichment__/".
         let mut normal_files: Vec<&String> = Vec::new();
         let mut enrichment_contexts: Vec<&String> = Vec::new();
         for file in changed_files {
@@ -836,19 +1042,39 @@ impl MultiShardStore {
             }
         }
 
+        // Use file_to_node_ids index for O(batch_size) lookup instead of
+        // O(total_nodes) find_nodes scan.
         let mut old_nodes_by_id: HashMap<u128, NodeRecordV2> = HashMap::new();
-        // Snapshot nodes for ALL changed files (including enrichment contexts,
-        // which may have nodes in backward-compatible mode).
         for file in changed_files {
-            for node in self.find_nodes(None, Some(file)) {
-                old_nodes_by_id.insert(node.id, node);
+            if let Some(ids) = self.file_to_node_ids.get(file.as_str()) {
+                for &id in ids {
+                    if let Some(node) = self.get_node(id) {
+                        old_nodes_by_id.insert(node.id, node);
+                    }
+                }
             }
         }
         let old_node_ids: HashSet<u128> = old_nodes_by_id.keys().copied().collect();
 
+        tracing::debug!(
+            "commit_batch phase1_find_old: {}ms, {} nodes",
+            t_phase1.elapsed().as_millis(),
+            old_nodes_by_id.len()
+        );
+
         // ── Phase 2: Compute tombstones ──
-        // 2a. Node tombstones = all old nodes for ALL changed files
-        let tombstone_node_ids: HashSet<u128> = old_node_ids.clone();
+        let t_phase2 = Instant::now();
+
+        // 2a. Node tombstones = old nodes, excluding protected types
+        let tombstone_node_ids: HashSet<u128> = if protected_types.is_empty() {
+            old_node_ids.clone()
+        } else {
+            old_nodes_by_id
+                .iter()
+                .filter(|(_, node)| !protected_types.contains(&node.node_type))
+                .map(|(id, _)| *id)
+                .collect()
+        };
 
         // 2b. Edge tombstones: depends on file type.
         //
@@ -862,25 +1088,44 @@ impl MultiShardStore {
         let normal_file_node_ids: HashSet<u128> = old_nodes_by_id
             .iter()
             .filter(|(_, n)| !n.file.starts_with("__enrichment__/"))
+            .filter(|(id, _)| tombstone_node_ids.contains(id))
             .map(|(id, _)| *id)
             .collect();
         let enrichment_file_node_ids: HashSet<u128> = old_nodes_by_id
             .iter()
             .filter(|(_, n)| n.file.starts_with("__enrichment__/"))
+            .filter(|(id, _)| tombstone_node_ids.contains(id))
             .map(|(id, _)| *id)
             .collect();
 
-        let mut tombstone_edge_keys: Vec<(u128, u128, String)> =
+        let mut raw_tombstone_edge_keys: Vec<(u128, u128, String)> =
             self.find_non_enrichment_edge_keys_by_src_ids(&normal_file_node_ids);
 
         if !enrichment_file_node_ids.is_empty() {
-            tombstone_edge_keys.extend(
+            raw_tombstone_edge_keys.extend(
                 self.find_edge_keys_by_src_ids(&enrichment_file_node_ids),
             );
         }
         for ctx in &enrichment_contexts {
-            tombstone_edge_keys.extend(self.find_edge_keys_by_file_context(ctx));
+            raw_tombstone_edge_keys.extend(self.find_edge_keys_by_file_context(ctx));
         }
+        let edges_removed = raw_tombstone_edge_keys.len() as u64;
+
+        // Intern edge type strings for tombstone deduplication
+        let tombstone_edge_keys: Vec<(u128, u128, Arc<str>)> = raw_tombstone_edge_keys
+            .into_iter()
+            .map(|(s, d, t)| {
+                let interned = self.intern_edge_type(&t);
+                (s, d, interned)
+            })
+            .collect();
+
+        tracing::debug!(
+            "commit_batch phase2_tombstones: {}ms, {} node_tombs, {} edge_tombs",
+            t_phase2.elapsed().as_millis(),
+            tombstone_node_ids.len(),
+            edges_removed
+        );
 
         // ── Phase 3: Collect changed types ──
         let mut changed_node_types: HashSet<String> = HashSet::new();
@@ -891,7 +1136,7 @@ impl MultiShardStore {
             changed_node_types.insert(node.node_type.clone());
         }
         for (_, _, et) in &tombstone_edge_keys {
-            changed_edge_types.insert(et.clone());
+            changed_edge_types.insert(et.to_string());
         }
 
         // From new nodes/edges
@@ -903,29 +1148,60 @@ impl MultiShardStore {
         }
 
         // ── Phase 4: Apply tombstones to shards ──
-        // Build combined tombstone set (existing manifest + new)
-        let current = manifest_store.current();
-        let mut all_tomb_nodes: HashSet<u128> =
-            current.tombstoned_node_ids.iter().copied().collect();
+        let t_phase4 = Instant::now();
+
+        // Build combined tombstone set (existing shard tombstones + new).
+        // Read from shard TombstoneSet (single source of truth), not manifest.
+        // Manifest tombstone Vecs may be cleared after commit to save memory.
+        let mut all_tomb_nodes: HashSet<u128> = if !self.shards.is_empty() {
+            self.shards[0].tombstones().node_ids.clone()
+        } else {
+            HashSet::new()
+        };
         all_tomb_nodes.extend(&tombstone_node_ids);
 
-        let mut all_tomb_edges: HashSet<(u128, u128, String)> =
-            current.tombstoned_edge_keys.iter().cloned().collect();
+        let mut all_tomb_edges: HashSet<(u128, u128, Arc<str>)> = if !self.shards.is_empty() {
+            self.shards[0].tombstones().edge_keys.clone()
+        } else {
+            HashSet::new()
+        };
         all_tomb_edges.extend(tombstone_edge_keys.iter().cloned());
 
+        // Arc-share tombstones across shards (O(1) per shard instead of O(N) clone)
+        let shared_tombstones = Arc::new(TombstoneSet {
+            node_ids: all_tomb_nodes.clone(),
+            edge_keys: all_tomb_edges.clone(),
+        });
         for shard in &mut self.shards {
-            shard.set_tombstones(TombstoneSet {
-                node_ids: all_tomb_nodes.clone(),
-                edge_keys: all_tomb_edges.clone(),
-            });
+            shard.set_tombstones_shared(Arc::clone(&shared_tombstones));
+        }
+
+        tracing::debug!(
+            "commit_batch phase4_apply_tombstones: {}ms",
+            t_phase4.elapsed().as_millis()
+        );
+
+        // ── Phase 4.5: Update file_to_node_ids for changed files ──
+        // Remove old entries before add_nodes adds new ones.
+        for file in changed_files {
+            self.file_to_node_ids.remove(file.as_str());
         }
 
         // ── Phase 5: Add new data ──
+        let t_phase5 = Instant::now();
+
         // Clone edges before upsert_edges (which takes ownership).
         // We need the clone for Phase 5.5 edge tombstone removal.
         let edges_clone: Vec<EdgeRecordV2> = edges.clone();
         self.add_nodes(nodes.clone());
         self.upsert_edges(edges)?;
+
+        tracing::debug!(
+            "commit_batch phase5_add_data: {}ms, {} nodes, {} edges",
+            t_phase5.elapsed().as_millis(),
+            nodes.len(),
+            edges_clone.len()
+        );
 
         // ── Phase 5.5: Remove re-added IDs from tombstones ──
         // New data supersedes tombstones for the same IDs.
@@ -933,15 +1209,17 @@ impl MultiShardStore {
             all_tomb_nodes.remove(&node.id);
         }
         for edge in &edges_clone {
-            all_tomb_edges.remove(&(edge.src, edge.dst, edge.edge_type.clone()));
+            let interned_type = self.intern_edge_type(&edge.edge_type);
+            all_tomb_edges.remove(&(edge.src, edge.dst, interned_type));
         }
 
-        // Re-apply updated tombstones to shards
+        // Re-apply updated tombstones to shards (Arc-shared)
+        let shared_tombstones = Arc::new(TombstoneSet {
+            node_ids: all_tomb_nodes.clone(),
+            edge_keys: all_tomb_edges.clone(),
+        });
         for shard in &mut self.shards {
-            shard.set_tombstones(TombstoneSet {
-                node_ids: all_tomb_nodes.clone(),
-                edge_keys: all_tomb_edges.clone(),
-            });
+            shard.set_tombstones_shared(Arc::clone(&shared_tombstones));
         }
 
         // ── Phase 6: Compute modified count ──
@@ -963,6 +1241,8 @@ impl MultiShardStore {
         }
 
         // ── Phase 7: Flush shards (inlined from flush_all) ──
+        let t_phase7 = Instant::now();
+
         // We inline flush coordination so we can inject tombstones
         // into the manifest between create_manifest() and commit().
         let shard_count = self.shards.len();
@@ -1006,7 +1286,14 @@ impl MultiShardStore {
             }
         }
 
+        tracing::debug!(
+            "commit_batch phase7_flush: {}ms",
+            t_phase7.elapsed().as_millis()
+        );
+
         // ── Phase 8: Build and commit manifest WITH tombstones ──
+        let t_phase8 = Instant::now();
+
         let mut all_node_segs = manifest_store.current().node_segments.clone();
         let mut all_edge_segs = manifest_store.current().edge_segments.clone();
         all_node_segs.extend(new_node_descs);
@@ -1020,10 +1307,18 @@ impl MultiShardStore {
 
         // Inject tombstones into manifest before commit
         manifest.tombstoned_node_ids = all_tomb_nodes.into_iter().collect();
-        manifest.tombstoned_edge_keys = all_tomb_edges.into_iter().collect();
+        manifest.tombstoned_edge_keys = all_tomb_edges
+            .into_iter()
+            .map(|(s, d, t)| (s, d, t.to_string()))
+            .collect();
 
         let manifest_version = manifest.version;
         manifest_store.commit(manifest)?;
+
+        tracing::debug!(
+            "commit_batch phase8_manifest: {}ms",
+            t_phase8.elapsed().as_millis()
+        );
 
         // ── Phase 9: Build CommitDelta ──
         Ok(CommitDelta {
@@ -1032,6 +1327,7 @@ impl MultiShardStore {
             nodes_removed: tombstone_node_ids.len() as u64,
             nodes_modified,
             removed_node_ids: tombstone_node_ids.into_iter().collect(),
+            edges_removed,
             changed_node_types,
             changed_edge_types,
             manifest_version,
@@ -1209,6 +1505,7 @@ impl MultiShardStore {
             let mut by_type_idx: Option<InvertedIndex> = None;
             let mut by_file_idx: Option<InvertedIndex> = None;
             let mut by_name_idx: Option<InvertedIndex> = None;
+            let mut token_idx: Option<TokenIndex> = None;
 
             if let (Some(bytes), Some(meta)) = (&result.node_segment_bytes, &result.node_meta) {
                 let seg_id = manifest_store.next_segment_id();
@@ -1231,6 +1528,7 @@ impl MultiShardStore {
                 by_type_idx = Some(InvertedIndex::from_bytes(&built.by_type)?);
                 by_file_idx = Some(InvertedIndex::from_bytes(&built.by_file)?);
                 by_name_idx = Some(InvertedIndex::from_bytes(&built.by_name)?);
+                token_idx = Some(TokenIndex::from_bytes(&built.by_token)?);
 
                 // Collect entries for global index
                 for (offset, record) in records.iter().enumerate() {
@@ -1274,7 +1572,7 @@ impl MultiShardStore {
                 l1_node_seg, l1_node_desc,
                 l1_edge_seg, l1_edge_desc,
             );
-            self.shards[shard_idx].set_l1_indexes(by_type_idx, by_file_idx, by_name_idx);
+            self.shards[shard_idx].set_l1_indexes(by_type_idx, by_file_idx, by_name_idx, token_idx);
 
             total_tombstones_removed += result.tombstones_removed;
             compacted_shard_ids.insert(shard_id);
@@ -1885,7 +2183,7 @@ mod tests {
         // Tombstone 2 nodes — set_tombstones broadcasts to all shards,
         // so each shard gets both tombstone IDs.
         let tombstone_ids: std::collections::HashSet<u128> = ids[..2].iter().copied().collect();
-        let tombstone_edges: std::collections::HashSet<(u128, u128, String)> = std::collections::HashSet::new();
+        let tombstone_edges: std::collections::HashSet<(u128, u128, Arc<str>)> = std::collections::HashSet::new();
         store.set_tombstones(&tombstone_ids, &tombstone_edges);
 
         let diags = store.shard_diagnostics();
@@ -2577,21 +2875,24 @@ mod tests {
             &mut manifest_store,
         ).unwrap();
 
-        // Manifest should contain tombstones for old nodes
+        // Manifest tombstone Vecs are cleared after commit to save memory.
+        // Tombstones now live in the shard TombstoneSet (single source of truth).
         let manifest = manifest_store.current();
-        let tomb_nodes: HashSet<u128> =
-            manifest.tombstoned_node_ids.iter().copied().collect();
-        assert!(tomb_nodes.contains(&a.id));
-        assert!(tomb_nodes.contains(&b.id));
-
-        // Manifest should contain tombstones for old edges
         assert!(
-            !manifest.tombstoned_edge_keys.is_empty(),
-            "Expected tombstoned edge keys in manifest"
+            manifest.tombstoned_node_ids.is_empty(),
+            "Manifest tombstone Vecs should be cleared after commit"
         );
-        let tomb_edges: HashSet<(u128, u128, String)> =
-            manifest.tombstoned_edge_keys.iter().cloned().collect();
-        assert!(tomb_edges.contains(&(edge.src, edge.dst, edge.edge_type.clone())));
+        assert!(
+            manifest.tombstoned_edge_keys.is_empty(),
+            "Manifest tombstone Vecs should be cleared after commit"
+        );
+
+        // Shard TombstoneSet should contain tombstones for old nodes
+        assert!(store.is_node_tombstoned(a.id));
+        assert!(store.is_node_tombstoned(b.id));
+
+        // Shard TombstoneSet should contain tombstones for old edges
+        assert!(store.is_edge_tombstoned(edge.src, edge.dst, &edge.edge_type));
     }
 
     // -- Validation + Integration Tests (RFD-8 T3.1 Commit 5) --------------------
@@ -2738,26 +3039,24 @@ mod tests {
             &mut manifest_store,
         ).unwrap();
 
-        // Manifest should contain tombstones for A and B
-        let manifest = manifest_store.current();
-        let tomb_nodes: HashSet<u128> =
-            manifest.tombstoned_node_ids.iter().copied().collect();
+        // Shard TombstoneSet should contain tombstones for A and B
+        // (manifest Vecs are cleared after commit to save memory)
         assert!(
-            tomb_nodes.contains(&a.id),
-            "Tombstone for node A missing from manifest"
+            store.is_node_tombstoned(a.id),
+            "Tombstone for node A missing from shard TombstoneSet"
         );
         assert!(
-            tomb_nodes.contains(&b.id),
-            "Tombstone for node B missing from manifest"
+            store.is_node_tombstoned(b.id),
+            "Tombstone for node B missing from shard TombstoneSet"
         );
 
         // Nodes C, D (from file b) should NOT be tombstoned
         assert!(
-            !tomb_nodes.contains(&c.id),
+            !store.is_node_tombstoned(c.id),
             "Node C should not be tombstoned"
         );
         assert!(
-            !tomb_nodes.contains(&d.id),
+            !store.is_node_tombstoned(d.id),
             "Node D should not be tombstoned"
         );
 
@@ -3731,5 +4030,214 @@ mod tests {
         );
 
         assert_eq!(collected.len(), 5, "Should stop after first chunk of 5");
+    }
+
+    // ── RFD-51: Optimization Tests ────────────────────────────────────
+
+    #[test]
+    fn test_file_to_node_ids_maintained() {
+        let mut store = MultiShardStore::ephemeral(4);
+        let mut ms = ManifestStore::ephemeral();
+
+        // Add nodes for 3 files
+        let n1 = make_node("a/f1", "FUNCTION", "f1", "a/file.js");
+        let n2 = make_node("a/f2", "FUNCTION", "f2", "a/file.js");
+        let n3 = make_node("b/g1", "FUNCTION", "g1", "b/file.js");
+        let n4 = make_node("c/h1", "CLASS", "h1", "c/file.js");
+        store.add_nodes(vec![n1.clone(), n2.clone(), n3.clone(), n4.clone()]);
+
+        // Verify file_to_node_ids index
+        let a_ids = store.file_to_node_ids.get("a/file.js").unwrap();
+        assert_eq!(a_ids.len(), 2);
+        assert!(a_ids.contains(&n1.id));
+        assert!(a_ids.contains(&n2.id));
+
+        let b_ids = store.file_to_node_ids.get("b/file.js").unwrap();
+        assert_eq!(b_ids.len(), 1);
+        assert!(b_ids.contains(&n3.id));
+
+        let c_ids = store.file_to_node_ids.get("c/file.js").unwrap();
+        assert_eq!(c_ids.len(), 1);
+        assert!(c_ids.contains(&n4.id));
+
+        // commit_batch re-analyzing a/file.js with new nodes
+        let n5 = make_node("a/f3", "FUNCTION", "f3", "a/file.js");
+        store.commit_batch(
+            vec![n5.clone()],
+            vec![],
+            &["a/file.js".to_string()],
+            HashMap::new(),
+            &mut ms,
+        ).unwrap();
+
+        // After commit: a/file.js should have only n5
+        let a_ids_new = store.file_to_node_ids.get("a/file.js").unwrap();
+        assert_eq!(a_ids_new.len(), 1);
+        assert!(a_ids_new.contains(&n5.id));
+
+        // b and c untouched
+        assert_eq!(store.file_to_node_ids.get("b/file.js").unwrap().len(), 1);
+        assert_eq!(store.file_to_node_ids.get("c/file.js").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_file_to_node_ids_on_open() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("test.rfdb");
+        std::fs::create_dir_all(&db_path).unwrap();
+
+        let mut ms = ManifestStore::create(&db_path).unwrap();
+
+        // Create, add nodes, flush
+        {
+            let mut store = MultiShardStore::create(&db_path, 4).unwrap();
+            let n1 = make_node("src/a", "FUNCTION", "a", "src/a.js");
+            let n2 = make_node("src/b", "FUNCTION", "b", "src/b.js");
+            store.add_nodes(vec![n1.clone(), n2.clone()]);
+            store.flush_all(&mut ms).unwrap();
+        }
+
+        // Reopen and verify file_to_node_ids rebuilt correctly
+        let store = MultiShardStore::open(&db_path, &ms).unwrap();
+        assert!(store.file_to_node_ids.get("src/a.js").unwrap().len() == 1);
+        assert!(store.file_to_node_ids.get("src/b.js").unwrap().len() == 1);
+    }
+
+    #[test]
+    fn test_arc_tombstone_sharing() {
+        let mut store = MultiShardStore::ephemeral(4);
+        let mut ms = ManifestStore::ephemeral();
+
+        let n1 = make_node("src/a/f1", "FUNCTION", "f1", "src/a/f.js");
+        store.add_nodes(vec![n1.clone()]);
+
+        // Commit batch — should use Arc-shared tombstones
+        let n2 = make_node("src/a/f2", "FUNCTION", "f2", "src/a/f.js");
+        store.commit_batch(
+            vec![n2],
+            vec![],
+            &["src/a/f.js".to_string()],
+            HashMap::new(),
+            &mut ms,
+        ).unwrap();
+
+        // All shards should have the same tombstone set (n1 tombstoned, n2 re-added)
+        // Verify tombstones are consistent across shards
+        let shard0_tomb = store.shards[0].tombstones().node_count();
+        for shard in &store.shards[1..] {
+            assert_eq!(
+                shard.tombstones().node_count(),
+                shard0_tomb,
+                "All shards should have same tombstone count"
+            );
+        }
+    }
+
+    #[test]
+    fn test_commit_batch_with_protected_types() {
+        let mut store = MultiShardStore::ephemeral(4);
+        let mut ms = ManifestStore::ephemeral();
+
+        let m1 = make_node("app.js->MODULE", "MODULE", "app", "app.js");
+        let f1 = make_node("app.js->FUNCTION->init", "FUNCTION", "init", "app.js");
+        store.add_nodes(vec![m1.clone(), f1.clone()]);
+
+        // Re-analyze app.js with protected MODULE type
+        let f2 = make_node("app.js->FUNCTION->initV2", "FUNCTION", "initV2", "app.js");
+        let delta = store.commit_batch_ext(
+            vec![f2.clone()],
+            vec![],
+            &["app.js".to_string()],
+            HashMap::new(),
+            &mut ms,
+            &["MODULE".to_string()],
+        ).unwrap();
+
+        // MODULE node should survive (protected), FUNCTION tombstoned
+        assert!(store.get_node(m1.id).is_some(), "MODULE should be protected");
+        assert!(store.get_node(f1.id).is_none(), "Old FUNCTION should be tombstoned");
+        assert!(store.get_node(f2.id).is_some(), "New FUNCTION should exist");
+
+        // nodes_removed should NOT include the protected MODULE
+        assert_eq!(delta.nodes_removed, 1, "Only FUNCTION should be removed");
+    }
+
+    #[test]
+    fn test_commit_batch_edges_removed_count() {
+        let mut store = MultiShardStore::ephemeral(4);
+        let mut ms = ManifestStore::ephemeral();
+
+        let n1 = make_node("a.js->f1", "FUNCTION", "f1", "a.js");
+        let n2 = make_node("a.js->f2", "FUNCTION", "f2", "a.js");
+        store.add_nodes(vec![n1.clone(), n2.clone()]);
+
+        let e1 = EdgeRecordV2 {
+            src: n1.id, dst: n2.id,
+            edge_type: "CALLS".to_string(),
+            metadata: String::new(),
+        };
+        store.upsert_edges(vec![e1]).unwrap();
+
+        // Re-analyze a.js — should report 1 edge removed
+        let n3 = make_node("a.js->f3", "FUNCTION", "f3", "a.js");
+        let delta = store.commit_batch(
+            vec![n3],
+            vec![],
+            &["a.js".to_string()],
+            HashMap::new(),
+            &mut ms,
+        ).unwrap();
+
+        assert_eq!(delta.edges_removed, 1, "n1→n2 CALLS edge should be removed");
+        assert_eq!(delta.nodes_removed, 2, "n1 and n2 should be removed");
+    }
+
+    #[test]
+    fn test_commit_batch_performance_scaling() {
+        // Regression test: 25 sequential batches should NOT degrade O(N²).
+        // Last batch should be within 5x of first batch.
+        use std::time::Instant;
+
+        let mut store = MultiShardStore::ephemeral(4);
+        let mut ms = ManifestStore::ephemeral();
+
+        let batch_count = 25;
+        let nodes_per_batch = 50;
+        let mut batch_times: Vec<u128> = Vec::new();
+
+        for batch_idx in 0..batch_count {
+            let file = format!("src/batch_{}.js", batch_idx);
+            let nodes: Vec<NodeRecordV2> = (0..nodes_per_batch)
+                .map(|i| {
+                    make_node(
+                        &format!("{}->{}", file, i),
+                        "FUNCTION",
+                        &format!("fn_{}", i),
+                        &file,
+                    )
+                })
+                .collect();
+
+            let t = Instant::now();
+            store
+                .commit_batch(nodes, vec![], &[file], HashMap::new(), &mut ms)
+                .unwrap();
+            batch_times.push(t.elapsed().as_micros());
+        }
+
+        let first = batch_times[0] as f64;
+        let last = *batch_times.last().unwrap() as f64;
+
+        // With O(N²), last/first ratio would be ~25x.
+        // With O(N), last/first should be ~1-2x.
+        let ratio = last / first;
+        assert!(
+            ratio < 5.0,
+            "Last batch took {:.1}x the first batch ({:.0}µs vs {:.0}µs). \
+             O(N²) regression detected.",
+            ratio,
+            last,
+            first,
+        );
     }
 }

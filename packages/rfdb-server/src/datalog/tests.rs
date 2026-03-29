@@ -4269,6 +4269,60 @@ mod hash_join_tests {
     }
 
     #[test]
+    fn test_hash_join_negation_dst_position() {
+        // Negation with dst-position variable: \+ edge(_, X, "CONTAINS")
+        // This is the guarantee pattern that was timing out (RFD-49)
+        let n = HASH_JOIN_THRESHOLD + 10;
+        let mut engine = setup_hash_join_graph(n);
+
+        // Add CONTAINS edges: module → some FUNCTION nodes (but not all)
+        let module_id = (3 * n + 1) as u128;
+        engine.add_nodes(vec![NodeRecord {
+            id: module_id,
+            node_type: Some("MODULE".to_string()),
+            name: Some("mod".to_string()),
+            file: Some("test.js".to_string()),
+            file_id: 0,
+            name_offset: 0,
+            version: "main".into(),
+            exported: false,
+            replaces: None,
+            deleted: false,
+            metadata: None,
+            semantic_id: None,
+        }]);
+
+        // Add CONTAINS edges to first n-5 FUNCTION nodes (leave 5 orphans)
+        let orphan_count = 5;
+        let contained_count = n - orphan_count;
+        let mut edges = Vec::new();
+        for i in 1..=contained_count {
+            edges.push(EdgeRecord {
+                src: module_id,
+                dst: i as u128, // FUNCTION node IDs from setup_hash_join_graph
+                edge_type: Some("CONTAINS".to_string()),
+                version: "main".into(),
+                metadata: None,
+                deleted: false,
+            });
+        }
+        engine.add_edges(edges, false);
+
+        let mut evaluator = Evaluator::new(&engine);
+        let rule = parse_rule(
+            r#"orphan(X) :- node(X, "FUNCTION"), \+ edge(_, X, "CONTAINS")."#
+        ).unwrap();
+        evaluator.add_rule(rule);
+
+        let goal = parse_atom("orphan(X)").unwrap();
+        let results = evaluator.query(&goal).unwrap();
+
+        // Only the last 5 FUNCTION nodes should be orphans
+        assert_eq!(results.len(), orphan_count,
+            "only FUNCTION nodes without incoming CONTAINS should match");
+    }
+
+    #[test]
     fn test_hash_join_3literal_with_attr() {
         // Full 3-literal join: node(F, "FUNCTION"), edge(F, C, "CALLS"), attr(C, "name", Name)
         let n = HASH_JOIN_THRESHOLD + 10;
@@ -4494,5 +4548,216 @@ mod eval_limits_tests {
 
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("cancelled"));
+    }
+}
+
+// ============================================================================
+// RFD-52: Numeric Comparison Operators (gt, lt, gte, lte)
+// ============================================================================
+
+mod numeric_cmp_tests {
+    use super::*;
+    use crate::graph::{GraphEngineV2, GraphStore};
+    use crate::storage::NodeRecord;
+    use crate::datalog::eval::{Evaluator, Value};
+    use crate::datalog::utils::reorder_literals;
+
+    #[test]
+    fn test_eval_gt_integer_success() {
+        let engine = GraphEngineV2::create_ephemeral();
+        let evaluator = Evaluator::new(&engine);
+
+        let query = Atom::new("gt", vec![
+            Term::constant("1500"),
+            Term::constant("1000"),
+        ]);
+        let results = evaluator.query_atom(&query).unwrap();
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn test_eval_gt_integer_failure() {
+        let engine = GraphEngineV2::create_ephemeral();
+        let evaluator = Evaluator::new(&engine);
+
+        let query = Atom::new("gt", vec![
+            Term::constant("500"),
+            Term::constant("1000"),
+        ]);
+        let results = evaluator.query_atom(&query).unwrap();
+        assert_eq!(results.len(), 0);
+    }
+
+    #[test]
+    fn test_eval_lt_success() {
+        let engine = GraphEngineV2::create_ephemeral();
+        let evaluator = Evaluator::new(&engine);
+
+        let query = Atom::new("lt", vec![
+            Term::constant("500"),
+            Term::constant("1000"),
+        ]);
+        let results = evaluator.query_atom(&query).unwrap();
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn test_eval_lt_failure() {
+        let engine = GraphEngineV2::create_ephemeral();
+        let evaluator = Evaluator::new(&engine);
+
+        let query = Atom::new("lt", vec![
+            Term::constant("1500"),
+            Term::constant("1000"),
+        ]);
+        let results = evaluator.query_atom(&query).unwrap();
+        assert_eq!(results.len(), 0);
+    }
+
+    #[test]
+    fn test_eval_gte_equal() {
+        let engine = GraphEngineV2::create_ephemeral();
+        let evaluator = Evaluator::new(&engine);
+
+        let query = Atom::new("gte", vec![
+            Term::constant("1000"),
+            Term::constant("1000"),
+        ]);
+        let results = evaluator.query_atom(&query).unwrap();
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn test_eval_lte_equal() {
+        let engine = GraphEngineV2::create_ephemeral();
+        let evaluator = Evaluator::new(&engine);
+
+        let query = Atom::new("lte", vec![
+            Term::constant("1000"),
+            Term::constant("1000"),
+        ]);
+        let results = evaluator.query_atom(&query).unwrap();
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn test_eval_gt_float() {
+        let engine = GraphEngineV2::create_ephemeral();
+        let evaluator = Evaluator::new(&engine);
+
+        let query = Atom::new("gt", vec![
+            Term::constant("1000.5"),
+            Term::constant("1000"),
+        ]);
+        let results = evaluator.query_atom(&query).unwrap();
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn test_eval_gt_negative() {
+        let engine = GraphEngineV2::create_ephemeral();
+        let evaluator = Evaluator::new(&engine);
+
+        let query = Atom::new("gt", vec![
+            Term::constant("5"),
+            Term::constant("-10"),
+        ]);
+        let results = evaluator.query_atom(&query).unwrap();
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn test_eval_gt_non_numeric() {
+        let engine = GraphEngineV2::create_ephemeral();
+        let evaluator = Evaluator::new(&engine);
+
+        let query = Atom::new("gt", vec![
+            Term::constant("abc"),
+            Term::constant("100"),
+        ]);
+        let results = evaluator.query_atom(&query).unwrap();
+        assert_eq!(results.len(), 0);
+    }
+
+    #[test]
+    fn test_eval_gt_in_rule() {
+        let mut engine = GraphEngineV2::create_ephemeral();
+
+        engine.add_nodes(vec![
+            NodeRecord {
+                id: 1,
+                node_type: Some("METRIC".to_string()),
+                name: Some("response_time".to_string()),
+                file: Some("api.js".to_string()),
+                file_id: 0, name_offset: 0,
+                version: "main".into(),
+                exported: false, replaces: None, deleted: false,
+                metadata: Some(r#"{"value":"1500"}"#.to_string()),
+                semantic_id: None,
+            },
+            NodeRecord {
+                id: 2,
+                node_type: Some("METRIC".to_string()),
+                name: Some("fast_call".to_string()),
+                file: Some("api.js".to_string()),
+                file_id: 0, name_offset: 0,
+                version: "main".into(),
+                exported: false, replaces: None, deleted: false,
+                metadata: Some(r#"{"value":"500"}"#.to_string()),
+                semantic_id: None,
+            },
+            NodeRecord {
+                id: 3,
+                node_type: Some("METRIC".to_string()),
+                name: Some("exact_threshold".to_string()),
+                file: Some("api.js".to_string()),
+                file_id: 0, name_offset: 0,
+                version: "main".into(),
+                exported: false, replaces: None, deleted: false,
+                metadata: Some(r#"{"value":"1000"}"#.to_string()),
+                semantic_id: None,
+            },
+        ]);
+
+        let mut evaluator = Evaluator::new(&engine);
+
+        let rule = parse_rule(
+            r#"violation(X) :- node(X, "METRIC"), attr(X, "value", V), gt(V, "1000")."#
+        ).unwrap();
+        evaluator.add_rule(rule);
+
+        let query = parse_atom("violation(X)").unwrap();
+        let results = evaluator.query(&query).unwrap();
+
+        // Only node 1 (value=1500) should violate; node 2 (500) and node 3 (1000) should not
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].get("X"), Some(&Value::Id(1)));
+    }
+
+    #[test]
+    fn test_reorder_numeric_cmp() {
+        // gt before node bindings should be reordered: node first, then attr, then gt
+        let lit_node = Literal::positive(Atom::new("node", vec![
+            Term::var("X"),
+            Term::constant("METRIC"),
+        ]));
+        let lit_attr = Literal::positive(Atom::new("attr", vec![
+            Term::var("X"),
+            Term::constant("value"),
+            Term::var("V"),
+        ]));
+        let lit_gt = Literal::positive(Atom::new("gt", vec![
+            Term::var("V"),
+            Term::constant("1000"),
+        ]));
+
+        // Wrong order: gt first
+        let input = vec![lit_gt.clone(), lit_attr.clone(), lit_node.clone()];
+        let result = reorder_literals(&input).unwrap();
+
+        // node must come first (provides X), attr second (needs X, provides V), gt last (needs V)
+        assert_eq!(result[0].atom().predicate(), "node");
+        assert_eq!(result[1].atom().predicate(), "attr");
+        assert_eq!(result[2].atom().predicate(), "gt");
     }
 }

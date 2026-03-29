@@ -2,7 +2,7 @@ import { readFileSync, existsSync, statSync } from 'fs';
 import { join, basename } from 'path';
 import { parse as parseYAML } from 'yaml';
 import type { ServiceDefinition, RoutingRule } from '@grafema/types';
-import { GRAFEMA_VERSION, getSchemaVersion } from '../version.js';
+import { GRAFEMA_VERSION, getSchemaVersion, isCompatibleVersion, parseVersion } from '../version.js';
 
 /**
  * Grafema configuration schema.
@@ -112,6 +112,15 @@ export interface GrafemaConfig {
    * ```
    */
   workspace?: WorkspaceConfig;
+
+  /**
+   * URI configuration for grafema:// identifiers.
+   * Used by MCP and CLI for compact<->URI conversion.
+   */
+  uri?: {
+    /** URI authority (e.g., "github.com/owner/repo"). Auto-detected if omitted. */
+    authority?: string;
+  };
 }
 
 /**
@@ -224,8 +233,8 @@ export function loadConfig(
       return DEFAULT_CONFIG;
     }
 
-    // Validate version compatibility (THROWS on error) - REG-403
-    validateVersion(parsed.version);
+    // Validate version compatibility (THROWS on major/minor mismatch, warns on patch) - REG-403
+    validateVersion(parsed.version, undefined, logger);
 
     // Validate services array if present (THROWS on error per Linus review)
     // This is OUTSIDE try-catch - config errors MUST throw
@@ -260,8 +269,8 @@ export function loadConfig(
       return DEFAULT_CONFIG;
     }
 
-    // Validate version compatibility (THROWS on error) - REG-403
-    validateVersion(parsed.version);
+    // Validate version compatibility (THROWS on major/minor mismatch, warns on patch) - REG-403
+    validateVersion(parsed.version, undefined, logger);
 
     // Validate services array if present (THROWS on error)
     // This is OUTSIDE try-catch - config errors MUST throw
@@ -285,17 +294,20 @@ export function loadConfig(
 
 /**
  * Validate config version compatibility with running Grafema version.
- * THROWS on error (fail loudly per project convention).
+ * THROWS on major/minor mismatch (fail loudly per project convention).
+ * WARNS on patch mismatch (allows minor version bumps without breaking).
  *
- * Compares major.minor.patch (pre-release tags are stripped).
+ * Compares major.minor (pre-release tags are stripped).
  * If config has no version field, validation passes silently (backward compat).
  *
  * @param configVersion - Version string from config file (may be undefined)
  * @param currentVersion - Override for testing (defaults to GRAFEMA_VERSION)
+ * @param logger - Optional logger for patch-mismatch warnings
  */
 export function validateVersion(
   configVersion: unknown,
-  currentVersion?: string
+  currentVersion?: string,
+  logger?: { warn: (msg: string) => void }
 ): void {
   // No version field = backward compat, accept silently
   if (configVersion === undefined || configVersion === null) {
@@ -314,11 +326,27 @@ export function validateVersion(
   const configSchema = getSchemaVersion(configVersion);
   const currentSchema = getSchemaVersion(current);
 
-  if (configSchema !== currentSchema) {
+  // Exact match — no warning needed
+  if (configSchema === currentSchema) {
+    return;
+  }
+
+  // Check major.minor compatibility (patch differences are OK)
+  if (!isCompatibleVersion(configVersion, current)) {
     throw new Error(
       `Config error: config version "${configVersion}" is not compatible with ` +
       `Grafema ${current}. Expected "${currentSchema}".\n` +
       `  Run: grafema init --force  (to regenerate config for current version)`
+    );
+  }
+
+  // Only patch differs — warn but don't throw
+  const configParsed = parseVersion(configVersion);
+  const currentParsed = parseVersion(current);
+  if (configParsed && currentParsed && configParsed.patch !== currentParsed.patch) {
+    logger?.warn(
+      `Config version "${configSchema}" differs from Grafema "${currentSchema}" (patch mismatch). ` +
+      `Consider running: grafema init --force`
     );
   }
 }
@@ -638,5 +666,7 @@ function mergeConfig(
     routing: user.routing ?? undefined,
     // Workspace config: pass through if specified (REG-76)
     workspace: user.workspace ?? undefined,
+    // URI config: pass through if specified (REG-666)
+    uri: user.uri ?? undefined,
   };
 }

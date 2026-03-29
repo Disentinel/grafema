@@ -36,6 +36,7 @@ import { PROMPTS, getPrompt } from './prompts.js';
 import { TOOLS } from './definitions/index.js';
 import { initializeFromArgs, setupLogging, getProjectPath } from './state.js';
 import { textResult, errorResult, log } from './utils.js';
+import { getSocketPathOverride } from './state.js';
 import { discoverServices } from './analysis.js';
 import {
   handleQueryGraph,
@@ -69,10 +70,14 @@ import {
   handleQueryDecisions,
   handleSupersedeFact,
   handleGetKnowledgeStats,
-  handleGitChurn,
-  handleGitCoChange,
-  handleGitOwnership,
-  handleGitArchaeology,
+  // Disabled: requires git-ingest (US-17). See US-17 in AI-AGENT-STORIES.md
+  // handleGitChurn,
+  // handleGitCoChange,
+  // handleGitOwnership,
+  // handleGitArchaeology,
+  handleDescribe,
+  handleGraphQLQuery,
+  handleQueryRegistry,
 } from './handlers/index.js';
 import type {
   ToolResult,
@@ -103,10 +108,14 @@ import type {
   QueryKnowledgeArgs,
   QueryDecisionsArgs,
   SupersedeFactArgs,
-  GitChurnArgs,
-  GitCoChangeArgs,
-  GitOwnershipArgs,
-  GitArchaeologyArgs,
+  // Disabled: requires git-ingest (US-17). See US-17 in AI-AGENT-STORIES.md
+  // GitChurnArgs,
+  // GitCoChangeArgs,
+  // GitOwnershipArgs,
+  // GitArchaeologyArgs,
+  DescribeArgs,
+  GraphQLQueryArgs,
+  QueryRegistryArgs,
 } from './types.js';
 
 /**
@@ -123,7 +132,8 @@ initializeFromArgs();
 setupLogging();
 
 const projectPath = getProjectPath();
-log(`[Grafema MCP] Starting server for project: ${projectPath}`);
+const socketOverride = getSocketPathOverride();
+log(`[Grafema MCP] Starting server for project: ${projectPath}${socketOverride ? ` socket=${socketOverride}` : ''}`);
 
 // Create MCP server
 const server = new Server(
@@ -142,18 +152,47 @@ const server = new Server(
 START HERE: call get_stats to check if the graph is loaded (nodeCount > 0).
 If nodeCount is 0, call analyze_project first.
 
-EXPLORATION WORKFLOW:
-1. To understand a file → get_file_overview (shows imports, exports, functions, classes with relationships)
-2. To find functions/classes/modules → find_nodes (filter by type, name, or file pattern)
-3. To find who calls a function → find_calls (returns call sites with resolution status)
-4. To understand data flow → trace_dataflow (forward: where does this value go? backward: where does it come from?)
-5. To understand full context of a node → get_context (shows surrounding code, scope chain, relationships)
-6. For complex pattern queries → query_graph with Datalog (call get_documentation topic="queries" for syntax)
-7. To query architectural decisions and facts → query_knowledge, query_decisions, get_knowledge_stats
+IMPORTANT: for structural questions about code (who calls what, where is something defined,
+how does data flow), avoid using Grep — it only does text matching and misses calls through
+aliases, re-exports, and dynamic dispatch. Use graph tools instead.
 
-KEY INSIGHT: find_nodes supports partial matching on name and file fields.
-Example: find_nodes(file="auth/") returns all nodes in files matching "auth/".
-Example: find_nodes(name="redis", type="CALL") finds all calls containing "redis".`,
+TOOL ROUTING — use the right tool for the task:
+- "Where is X defined?" → find_nodes(name="X") or find_nodes(name="X", type="CLASS")
+- "Who calls function X?" → find_calls(name="X")
+- "What does file X contain?" → get_file_overview(file="X")
+- "How does data flow from A to B?" → trace_dataflow(source="A", direction="forward")
+- "What's the structure of class X?" → describe(nodeId="X")
+- "Find all classes in directory Y" → find_nodes(type="CLASS", file="Y/")
+- For text search in comments or strings → Grep
+- For reading exact source code → Read
+
+EXAMPLES — how to answer common questions using graph tools:
+
+Example 1: "Where is the drag and drop handler for the file explorer?"
+  → find_nodes(name="DragAndDrop", type="CLASS")
+  → Result: FileDragAndDrop in src/vs/workbench/contrib/files/browser/views/explorerViewer.ts
+  → Then: get_file_overview(file="explorerViewer.ts") to see related classes
+
+Example 2: "Who calls the createTerminal method?"
+  → find_calls(name="createTerminal")
+  → Result: 12 call sites across 5 files with file:line locations
+  → Then: Read specific call sites for implementation details
+
+Example 3: "What is the lifecycle of a terminal instance?"
+  → find_nodes(name="Terminal", type="CLASS") to find key classes
+  → find_calls(name="createTerminal") to find entry points
+  → trace_dataflow(source="TerminalInstance", direction="forward") to trace the flow
+  → Combine graph results with targeted Read for implementation details
+
+find_nodes supports partial matching: find_nodes(file="auth/") matches all files in auth/.
+find_nodes(name="redis", type="CALL") finds all calls containing "redis".
+
+TIP: If unsure about the type, omit it — find_nodes(name="Foo") searches all types.
+Results include _context with callers, members, and parent — often no follow-up needed.
+
+BUG FIX PATTERN: After identifying a bug in a method, use find_calls(name="method") to check
+ALL callers. Other components may call the same method without the guard your fix adds.
+This catches "same bug, different caller" patterns common in large codebases.`,
   }
 );
 
@@ -314,20 +353,33 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
         result = await handleGetKnowledgeStats();
         break;
 
-      case 'git_churn':
-        result = await handleGitChurn(asArgs<GitChurnArgs>(args));
+      // Disabled: requires git-ingest (US-17). See US-17 in AI-AGENT-STORIES.md
+      // case 'git_churn':
+      //   result = await handleGitChurn(asArgs<GitChurnArgs>(args));
+      //   break;
+      //
+      // case 'git_cochange':
+      //   result = await handleGitCoChange(asArgs<GitCoChangeArgs>(args));
+      //   break;
+      //
+      // case 'git_ownership':
+      //   result = await handleGitOwnership(asArgs<GitOwnershipArgs>(args));
+      //   break;
+      //
+      // case 'git_archaeology':
+      //   result = await handleGitArchaeology(asArgs<GitArchaeologyArgs>(args));
+      //   break;
+
+      case 'describe':
+        result = await handleDescribe(asArgs<DescribeArgs>(args));
         break;
 
-      case 'git_cochange':
-        result = await handleGitCoChange(asArgs<GitCoChangeArgs>(args));
+      case 'query_graphql':
+        result = await handleGraphQLQuery(asArgs<GraphQLQueryArgs>(args));
         break;
 
-      case 'git_ownership':
-        result = await handleGitOwnership(asArgs<GitOwnershipArgs>(args));
-        break;
-
-      case 'git_archaeology':
-        result = await handleGitArchaeology(asArgs<GitArchaeologyArgs>(args));
+      case 'query_registry':
+        result = await handleQueryRegistry(asArgs<QueryRegistryArgs>(args));
         break;
 
       default:

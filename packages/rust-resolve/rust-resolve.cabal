@@ -11,6 +11,7 @@ executable grafema-rust-resolve
 
   other-modules:
     RustImportResolution
+    RustCallResolution
 
   build-depends:
     base                 >= 4.17 && < 5,
@@ -31,6 +32,7 @@ test-suite spec
 
   other-modules:
     RustImportResolution
+    RustCallResolution
 
   build-depends:
     base                 >= 4.17 && < 5,

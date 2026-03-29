@@ -281,6 +281,54 @@ export function computeSemanticIdV2(
  * @returns Parsed components or null if not a valid v2 ID
  */
 export function parseSemanticIdV2(id: string): ParsedSemanticIdV2 | null {
+  // Handle grafema:// URI input — convert to compact first
+  if (id.startsWith('grafema://')) {
+    const scheme = 'grafema://';
+    const rest = id.slice(scheme.length);
+
+    const slashUnderscore = rest.indexOf('/_/');
+    const hashPos = rest.indexOf('#');
+
+    if (slashUnderscore !== -1 && (hashPos === -1 || slashUnderscore < hashPos)) {
+      // Virtual node: decode and re-parse
+      const encodedId = rest.slice(slashUnderscore + 3);
+      const decoded = encodedId
+        .replaceAll('%3E', '>').replaceAll('%3e', '>')
+        .replaceAll('%5B', '[').replaceAll('%5b', '[')
+        .replaceAll('%5D', ']').replaceAll('%5d', ']')
+        .replaceAll('%23', '#');
+      return parseSemanticIdV2(decoded);
+    }
+
+    if (hashPos !== -1) {
+      const pathPart = rest.slice(0, hashPos);
+      const fragment = rest.slice(hashPos + 1);
+      const decoded = fragment
+        .replaceAll('%3E', '>').replaceAll('%3e', '>')
+        .replaceAll('%5B', '[').replaceAll('%5b', '[')
+        .replaceAll('%5D', ']').replaceAll('%5d', ']')
+        .replaceAll('%23', '#');
+
+      if (decoded === 'MODULE') {
+        const segments = pathPart.split('/');
+        const host = segments[0];
+        const skip = (host === 'github.com' || host === 'gitlab.com' || host === 'bitbucket.org') ? 3 : 2;
+        const filePath = segments.slice(skip).join('/');
+        return { file: filePath, type: 'MODULE', name: filePath };
+      }
+
+      // Standard node: extract file and reconstruct compact ID
+      const segments = pathPart.split('/');
+      const host = segments[0];
+      const skip = (host === 'github.com' || host === 'gitlab.com' || host === 'bitbucket.org') ? 3 : 2;
+      const filePath = segments.slice(skip).join('/');
+      const compactId = `${filePath}->${decoded}`;
+      return parseSemanticIdV2(compactId);
+    }
+
+    return null;
+  }
+
   // Handle singletons
   if (id.startsWith('net:stdio') || id.startsWith('net:request')) {
     const arrowIdx = id.indexOf('->');

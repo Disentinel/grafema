@@ -108,7 +108,25 @@ export class StatusProvider implements vscode.TreeDataProvider<StatusItem> {
           undefined,
           new vscode.ThemeIcon('circle-large-outline', new vscode.ThemeColor('disabledForeground')),
         ));
-        items.push(new StatusItem('Run: grafema analyze'));
+        items.push(new StatusItem(
+          '$(play) Analyze Project',
+          undefined,
+          undefined,
+          { title: 'Analyze', command: 'grafema.analyze' },
+        ));
+        items.push(new StatusItem(
+          '$(new-file) Initialize Project',
+          undefined,
+          undefined,
+          { title: 'Init', command: 'grafema.init' },
+        ));
+        break;
+      case 'analyzing':
+        items.push(new StatusItem(
+          'Analyzing...',
+          state.message,
+          new vscode.ThemeIcon('loading~spin'),
+        ));
         break;
       case 'disconnected':
         items.push(new StatusItem(

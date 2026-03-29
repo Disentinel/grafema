@@ -9,6 +9,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { initCommand } from './commands/init.js';
 import { analyzeCommand } from './commands/analyze.js';
+import { resolveCommand } from './commands/resolve.js';
 import { overviewCommand } from './commands/overview.js';
 import { queryCommand } from './commands/query.js';
 import { typesCommand } from './commands/types.js';
@@ -17,6 +18,11 @@ import { getCommand } from './commands/get.js';
 import { traceCommand } from './commands/trace.js';
 import { impactCommand } from './commands/impact.js';
 import { contextCommand } from './commands/context.js';
+import { describeCommand } from './commands/describe.js';
+import { tldrCommand } from './commands/tldr.js';
+import { wtfCommand } from './commands/wtf.js';
+import { whoCommand } from './commands/who.js';
+import { whyCommand } from './commands/why.js';
 
 import { statsCommand } from './commands/stats.js';
 import { checkCommand } from './commands/check.js';
@@ -28,6 +34,7 @@ import { explainCommand } from './commands/explain.js';
 import { fileCommand } from './commands/file.js';
 import { setupSkillCommand } from './commands/setup-skill.js';
 import { gitIngestCommand } from './commands/git-ingest.js';
+import { registryCommand } from './commands/registry.js';
 
 // Read version from package.json
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -40,12 +47,20 @@ program
   .description('Grafema code analysis CLI')
   .version(pkg.version);
 
+// Human-first commands
+program.addCommand(tldrCommand);
+program.addCommand(wtfCommand);
+program.addCommand(whoCommand);
+program.addCommand(whyCommand);
+
 // Commands in logical order
 program.addCommand(initCommand);
 program.addCommand(analyzeCommand);
+program.addCommand(resolveCommand);
 program.addCommand(overviewCommand);
 program.addCommand(queryCommand);
 program.addCommand(contextCommand);
+program.addCommand(describeCommand);
 program.addCommand(typesCommand);
 program.addCommand(lsCommand);
 program.addCommand(getCommand);
@@ -62,5 +77,6 @@ program.addCommand(explainCommand);
 program.addCommand(fileCommand);
 program.addCommand(setupSkillCommand);
 program.addCommand(gitIngestCommand);
+program.addCommand(registryCommand);
 
 program.parse();

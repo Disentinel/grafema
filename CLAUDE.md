@@ -30,9 +30,43 @@ Grafema is NOT competing with TypeScript or static type checkers. It's for codeb
 
 - **Plugin-based, modular architecture**
 - Modules: `types`, `util`, `cli`, `mcp`, `gui`
-- `packages/util/` (`@grafema/util`) — query layer, config, diagnostics, guarantees, RFDB lifecycle
+- `packages/util/` (`@grafema/util`) — query layer, config, diagnostics, guarantees, RFDB lifecycle, manifest generation
 - `packages/grafema-orchestrator/` — Rust analysis binary (replaces old JS analysis pipeline)
 - RFDB server (`packages/rfdb-server/`) — Rust graph database, client-server architecture via unix-socket
+- `effects-db/` — curated side-effect annotations for npm packages and Node.js builtins
+
+### Manifests & Effects (API Surface Analysis)
+
+`grafema analyze` automatically generates `manifest.yaml` — a description of the package's exported API with side-effect annotations.
+
+**Manifest contents:**
+- `exports[]` — each exported symbol with `name`, `kind`, `semanticId`, `effects[]`, `params[]`
+- `imports[]` — dependencies as Package URLs (`pkg:npm/@scope/name`)
+- `capabilities` — summary stats (total_exports, total_internal_symbols, has_graph)
+- `confidence` — 0.0–1.0 score; lower when many exports have `UNKNOWN` effects
+
+**Effects taxonomy** (`effects-db/taxonomy.yaml`): PURE, MUTATION, IO, THROW, ASYNC, NONDETERMINISTIC, UNKNOWN. Effects propagate transitively through the call graph — if function A calls function B with IO, A inherits IO.
+
+**Effects-DB** (`effects-db/packages/*.yaml`, `effects-db/runtimes/node.yaml`): pre-built effect annotations for npm packages (commander, graphql, ajv, etc.) and Node.js builtins (fs, crypto, process, etc.). Used by ManifestGenerator for transitive effect computation.
+
+**ManifestResolver** (`@grafema/util`): load manifests from files/node_modules, resolve `import { foo } from 'pkg'` → effects + metadata.
+
+### METRIC and ISSUE Nodes
+
+The graph contains diagnostic node types beyond code structure:
+
+- **METRIC nodes** — per-file performance data (parse_ms, analyze_ms, file_size_bytes, ast_size_bytes, node_count, edge_count, total_ms). Linked to MODULE via OBSERVES edges. Query with `find_nodes(type="METRIC")` or Datalog.
+- **ISSUE nodes** — analysis problems (oversized files, parse errors, analysis failures). Linked to MODULE via CONTAINS edges. Query with `find_nodes(type="ISSUE")`.
+- **Phase METRIC nodes** — pipeline-level metrics (analysis/resolve/compact duration_ms). Synthetic file `__grafema_perf/{phase}`.
+
+Example Datalog: find files where parsing took > 500ms:
+```datalog
+slow(File, Val) :- node(M, "METRIC"), attr(M, "name", "parse_ms"), attr(M, "value", Val), gte(Val, 500), edge(M, Mod, "OBSERVES"), attr(Mod, "file", File).
+```
+
+### Datalog Numeric Predicates
+
+RFDB supports numeric comparison in Datalog rules: `gt(Val, Threshold)`, `lt(Val, Threshold)`, `gte(Val, Threshold)`, `lte(Val, Threshold)`. Values are parsed as f64. Use with `attr()` to filter by metadata values.
 
 ## Core Principles
 
@@ -113,6 +147,38 @@ If user provides just a task ID without further context, the Linear issue descri
 
 **3-Review:** Steve ∥ Вадим auto ∥ Uncle Bob (single parallel batch, all Opus). ANY REJECT → fix + re-run ALL 3. ALL approve → present to user.
 
+## Enox Long-Term Memory (MANDATORY for experiments and decisions)
+
+Enox Smart Node (`mcp__enox__*` tools) is persistent knowledge graph shared across all sessions. It survives session boundaries — use it to avoid repeating failed approaches.
+
+**MCP tools are deferred — load via `ToolSearch("+enox recall")` before first use.**
+
+### Session Start
+- `recent_activity(since="<last_session_date>")` — see what changed since your last session
+- `recall(query="<today's task topic>")` — check for prior findings, rejected alternatives, confirmed hypotheses
+
+### Before Experiments / Architectural Decisions
+- `recall(query="<approach you're about to try>")` — **STOP if it returns `fails_on` or `rejected_alternative`**
+- `semantic_search(query="<what you're trying to achieve>")` — find related prior work
+
+### After Completing Experiments
+- `remember(subject="<topic>", fact="<finding with numbers and dates>")` — quick save
+- `add_assertion(source, target, relation, context)` — precise structured finding
+- Record rejected approaches as `fails_on` with `source_type: rejected_alternative`
+- Record confirmed hypotheses as `supports` or `outperforms`
+
+### Key Relations for Memory
+| Relation | When to use |
+|----------|------------|
+| `outperforms` | A is better than B (include metrics in context) |
+| `fails_on` | Approach X doesn't work for Y (include why) |
+| `supersedes` | New finding replaces old one |
+| `contradicts` | Conflicting evidence found |
+| `triggered_by` | This experiment was caused by that finding |
+| `references` | Links to artifact (PR, commit, file path) |
+
+**Why this exists:** We wasted hours repeating a disproven experiment (aggressive prompt for MCP adoption) because prior session findings (H005, H006) weren't in context. Enox prevents this.
+
 ## Plan Mode (Mandatory)
 
 **Mandatory for all non-trivial tasks.** Trivial tasks (typo, single-line fix) may skip.
@@ -127,6 +193,22 @@ If user provides just a task ID without further context, the Linear issue descri
 - **Autonomous decisions** in favor of: broader coverage, fuller resolving, larger cohesive scope. Escalate to user only for genuine architectural trade-offs.
 - Details in `_ai/workflow.md`
 - Тривиальные задачи (typo, однострочник) — можно без plan mode
+
+## Knowledge Extraction (MANDATORY)
+
+**After completing any non-trivial task, extract knowledge into the KB.** This is step 6 of the workflow pipeline.
+
+Run `/extract-knowledge` (skill) which follows `_ai/runbooks/02-claude-sessions.md`:
+- Create SESSION node linked to task_id
+- Extract DECISIONs (with rejected alternatives) and FACTs (explicit + side-effect + preferences)
+- Capture created artifacts (tickets, commits)
+- Add edges to `edges.yaml`
+- Validate: IDs, collisions, edge targets, code ref resolution
+- Check for newly dangling refs in existing KB
+
+**Skip conditions:** trivial sessions (typo, single-line fix, no decisions), sessions that only read code.
+
+**Runbooks for other sources:** `_ai/runbooks/` — git history, existing docs.
 
 ## Forbidden Patterns
 
@@ -207,6 +289,18 @@ node --test test/unit/specific-file.test.js             # Run single test file
 
 **CRITICAL: Tests run against `dist/`, not `src/`.** Always `pnpm build` before running tests after any TypeScript changes.
 
+## Performance Profiling
+
+Full guide: `_ai/profiling-guide.md`
+
+```bash
+grafema analyze                                                          # Produces .grafema/analysis-profile.jsonl
+node scripts/profile-analyze.mjs .grafema/analysis-profile.jsonl         # Report
+node scripts/profile-analyze.mjs ... --predict 14000 --assumptions scripts/assumptions.yaml  # Scaling predictions
+```
+
+Key files: `profiler.rs` (JSONL emitter), `analyzer.rs` (`FileMetrics`), `scripts/profile-analyze.mjs` (analysis tool), `scripts/assumptions.yaml` (interval bounds).
+
 ## Skills
 
 Project-specific skills in `.claude/skills/`. Key skills:
@@ -215,6 +309,11 @@ Project-specific skills in `.claude/skills/`. Key skills:
 **Skill:** `grafema-release` — use when publishing new versions to npm.
 **Trigger:** User says "release", "publish", "bump version"
 **Quick command:** `./scripts/release.sh patch --publish`
+
+### /gap-loop
+**Skill:** `gap-loop` — cyclical dogfooding loop for AI-AGENT-STORIES.md.
+**Trigger:** User says "/gap-loop", "dogfooding session", "test stories", "check gaps"
+**Cycle:** Load stories -> Test all against live graph -> Discover new stories -> Analyze gaps -> Fix root causes -> Re-test -> Report
 
 ### Other Skills
 See `.claude/skills/` for debugging skills: `grafema-cli-dev-workflow`, `grafema-cross-file-operations`, `pnpm-workspace-publish`
@@ -227,17 +326,68 @@ Do NOT delegate exploration to Explore subagents — they don't know about Grafe
 
 MCP tools are deferred — load them via `ToolSearch` before first use (e.g., `ToolSearch("+grafema find")`).
 
-| Instead of... | Use Grafema MCP |
-|---------------|-----------------|
-| `Glob **/*.ts` + Read files | `mcp__grafema__find_nodes` by type/name/file |
-| `Grep "functionName"` | `mcp__grafema__find_calls --name functionName` |
-| Read file to understand deps | `mcp__grafema__trace_dataflow` or `mcp__grafema__get_file_overview` |
-| Read file to understand structure | `mcp__grafema__get_file_overview` or `mcp__grafema__get_function_details` |
-| Multiple Reads to understand impact | `mcp__grafema__query_graph` with Datalog |
-| Find cross-package imports | `query_graph` with `attr(X, "source", "@grafema/util")` |
+### Keep graph fresh: `reload` after code changes
+
+The MCP server caches the graph in memory. In long-lived sessions, code changes (commits, branch switches, `pnpm build`) make the cache stale. **After any `grafema analyze`, `git checkout`, or `git pull` — call `reload()` before querying the graph.** Otherwise you're querying an outdated snapshot and results will be wrong or incomplete.
+
+Rule of thumb: if you changed code and more than ~10 minutes passed since last `reload` — reload.
+
+### Exploration priority: KB → Graph → Files
+
+1. **Knowledge Base first** — `query_knowledge(text="<area>")`, `query_decisions(module="<module>")`. Existing decisions, facts, and session notes may already answer your question.
+2. **Code graph second** — tools below. Structural understanding of current code.
+3. **File reads last** — only when KB and graph don't have what you need.
+
+### Tool routing by task
+
+**Load tools via `ToolSearch("+grafema <keyword>")` before first use.** They are deferred.
+
+#### "What's in this file/function?" → `describe`
+Compact DSL notation view (= `grafema tldr`). Shows structure, calls, deps, data flow in a few lines. **Use instead of Read for orientation** — saves tokens, gives relationships Read can't show.
+```
+describe(nodeId="<semantic-id>", depth=2)  # depth 0=names, 1=edges, 2=nested+folded
+```
+Operators in output: `o-` import, `>` calls, `<` reads, `=>` writes, `>x` throws, `~>>` emits, `?|` guard
+
+#### "Who calls this? Is it dead code?" → `find_calls`
+All callsites of a function/method across the codebase. **Use instead of `Grep "functionName"`** — finds calls even through aliases, gives file+line+resolved status.
+```
+find_calls(name="getUserById")                    # global function
+find_calls(name="get", className="redis")         # method call
+```
+
+#### "Where does this value go?" / "Where does it come from?" → `trace_dataflow`
+Follows assignments, arguments, returns across function boundaries. **Use for impact analysis, taint tracking, understanding data pipelines.**
+```
+trace_dataflow(source="userInput", file="src/api.ts", direction="forward")   # where does it flow?
+trace_dataflow(source="response", file="src/api.ts", direction="backward")   # what feeds it?
+trace_dataflow(source="config", file="src/app.ts", direction="both")         # full lineage
+```
+Start with max_depth=5, increase if chain is longer.
+
+#### "What's the real target behind this alias?" → `trace_alias`
+Resolves `const alias = obj.method; alias()` back to `obj.method`. **Use when variable name doesn't match the function being called** — re-exports, destructured imports, callback assignments.
+```
+trace_alias(variableName="handler", file="src/routes.ts")
+```
+
+#### Other routing
+
+| Task | Tool |
+|------|------|
+| Find all functions/classes/nodes matching criteria | `find_nodes(type="FUNCTION", name="parse*", file="src/")` |
+| Understand a node with code snippet + relationships | `get_context(nodeId="<id>")` |
+| Full file structure (all exports, classes, functions) | `get_file_overview(file="src/auth.ts")` |
+| Complex structural patterns (Datalog) | `query_graph(query="...")` |
+| Cross-package imports | `query_graph` with `attr(X, "source", "@grafema/util")` |
+| Analysis issues (oversized files, parse errors) | `find_nodes(type="ISSUE")` |
+| Per-file performance metrics | `find_nodes(type="METRIC", file="src/heavy.ts")` |
+| Slow files (Datalog + numeric compare) | `query_graph` with `gte(Val, 500)` on METRIC nodes |
+| Why code is structured this way | `query_decisions(module="<semantic-addr>")` |
+| Known issues / gotchas for an area | `query_knowledge(type="FACT", text="<area>")` |
 
 **Fallback to file reads ONLY when:**
-1. Graph returned 0 results AND you verified the query was correct
+1. KB and graph returned 0 results AND you verified the queries were correct
 2. You need exact source code for implementation (not exploration)
 3. `get_stats` shows nodeCount=0 (graph not loaded)
 
@@ -276,3 +426,39 @@ This is not a minor note. A gap means the product is failing its core thesis. Pr
 ```
 
 Full dogfooding guide: `_ai/dogfooding.md`
+
+## First Principles Framework (FPF)
+
+**Spec:** `_ai/FPF-Spec.md` (56k lines, by Anatoly Levenchuk). Domain-agnostic pattern language for structured reasoning about systems, knowledge, and organizations.
+
+**When to use:** Before diving into implementation — when reasoning about architecture, evaluating options, assessing trust in decisions, or structuring creative search. Load the relevant section from the spec into context.
+
+**Quick reference — situation → FPF section:**
+
+| Situation | Section | Key idea |
+|-----------|---------|----------|
+| Anomaly / "why doesn't this work?" | B.5 | Abduction → Deduction → Induction. Start with L0 hypothesis, don't jump to testing |
+| Hypothesis formed — what next? | B.5.1 | Explore → Shape → Evidence → Operate. Don't skip Shape before tests |
+| Multiple architectural options | B.5.2.1 | NQD: keep Pareto front, don't scalarize into single ranking. Record rationale for rejected options |
+| Analysis paralysis / endless refactoring | B.5 | Anti-pattern "Ready, Fire, Aim": can't test before deductive analysis. What exactly are you verifying? |
+| How much to trust a claim/decision? | B.3 | Trust = ⟨F, G, R⟩. Formality (how rigorous?), Scope (where applicable?), Reliability (what evidence?) |
+| Old ADR — still valid? | B.3.4 | Epistemic Debt: knowledge has TTL. Check: context changed? Evidence stale? |
+| Designing decision registry / knowledge model | B.3 + B.3.4 | F-G-R as schema + lifecycle: active / superseded / abandoned. Evidence decay as explicit TTL field |
+| Designing ontology / new projections | A.1 | Holonic foundation: System vs Episteme. Part and whole simultaneously. Strict separation of roles and entities |
+| Isolating semantics across contexts | A.1.1 | BoundedContext: local Glossary + Invariants + explicit Bridges with declared translation loss |
+| Mixing "what it can do" / "what it does" / "who's responsible" | A.7 + A.2 | Strict distinction: Role ≠ Method ≠ Work |
+| Versioning evolving models | A.4 | Temporal Duality: design-time vs run-time always separated. DRR for each decision |
+| Brainstorm stuck in loop / old ideas dominate | C.18 | NQD-CAL: explicitly measure Novelty + Diversity. Don't let one "favorite" idea dominate without competitors |
+| How much exploration before exploitation? | C.19 | E/E-LOG: explicit explore-exploit policy. Default without it is premature exploitation |
+| Is this idea actually novel? | C.17 | Creativity-CHR: Novelty@context (novel relative to what?), Use-Value, Surprise, ConstraintFit |
+| Harvesting literature / arxiv | G.2 + G.4 | TraditionCards (schools of thought) + OperatorCards (their operators). SoTA Pack as selector portfolio |
+| SoTA going stale — how to track freshness | G.11 | Telemetry-Driven Refresh: decay orchestrator, edition pins, Bridge Sentinels |
+| Comparing competing approaches without scalarizing | G.5 | Multi-Method Dispatcher: Pareto portfolio (Archive + Pareto front), no single "winner" |
+
+**How to load a section:**
+```bash
+# Find section boundaries
+grep -n "^## B.3" _ai/FPF-Spec.md
+# Then read the range
+sed -n '${start},${end}p' _ai/FPF-Spec.md
+```

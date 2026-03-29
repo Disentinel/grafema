@@ -21,7 +21,6 @@ on:
       - 'packages/rfdb-server/src/**'
       - 'packages/rfdb-server/benches/**'
       - 'packages/rfdb-server/Cargo.toml'
-      - 'scripts/bench-v1-v2-report.sh'
       - '.github/workflows/benchmark.yml'
   pull_request:
     branches: [main]
@@ -72,15 +71,6 @@ jobs:
         working-directory: packages/rfdb-server
         run: cargo bench --bench graph_operations -- --save-baseline pr
 
-      - name: Run v1 vs v2 comparison
-        working-directory: packages/rfdb-server
-        run: cargo bench --bench v1_v2_comparison
-
-      - name: Generate v1 vs v2 report
-        id: v1v2
-        run: |
-          bash scripts/bench-v1-v2-report.sh > /tmp/v1v2-report.md
-
       # --- PR comparison flow ---
 
       - name: Checkout main branch for baseline
@@ -114,11 +104,7 @@ jobs:
       - name: Generate benchmark report
         if: github.event_name == 'pull_request'
         run: |
-          {
-            bash scripts/bench-report.sh /tmp/bench-comparison.txt 1.20 || true
-            echo ""
-            cat /tmp/v1v2-report.md
-          } > /tmp/bench-report.md
+          bash scripts/bench-report.sh /tmp/bench-comparison.txt 1.20 > /tmp/bench-report.md || true
 
       - name: Post benchmark results to PR
         if: github.event_name == 'pull_request'
@@ -181,8 +167,6 @@ jobs:
           echo "## RFDB Benchmark Score" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "**${{ steps.score.outputs.value }}**" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          cat /tmp/v1v2-report.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Update benchmark badge
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.COVERAGE_GIST_ID != ''

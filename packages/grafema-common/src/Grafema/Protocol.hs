@@ -12,6 +12,8 @@ module Grafema.Protocol
   -- * MessagePack encode/decode via aeson bridge
   , encodeMsgpack
   , decodeMsgpack
+  -- * Direct msgpack encoding (bypasses aeson)
+  , pluginCommandToMsgpack
   ) where
 
 import Grafema.Types
@@ -66,6 +68,32 @@ instance ToJSON PluginCommand where
     , "edgeType" .= geType e
     ] ++
     [ "metadata" .= metaToJSONString (geMetadata e) | not (Map.null (geMetadata e)) ]
+
+-- | Convert a PluginCommand directly to msgpack Object, bypassing aeson.
+-- Used by the daemon's batch response path for better memory efficiency.
+pluginCommandToMsgpack :: PluginCommand -> MP.Object
+pluginCommandToMsgpack (EmitNode n) = MP.ObjectMap $ V.fromList $
+  [ (MP.ObjectStr "type", MP.ObjectStr "emit_node")
+  , (MP.ObjectStr "id", MP.ObjectStr (gnId n))
+  , (MP.ObjectStr "nodeType", MP.ObjectStr (gnType n))
+  , (MP.ObjectStr "name", MP.ObjectStr (gnName n))
+  , (MP.ObjectStr "file", MP.ObjectStr (gnFile n))
+  , (MP.ObjectStr "line", MP.ObjectInt (fromIntegral (gnLine n)))
+  , (MP.ObjectStr "column", MP.ObjectInt (fromIntegral (gnColumn n)))
+  , (MP.ObjectStr "exported", MP.ObjectBool (gnExported n))
+  ] ++
+  [ (MP.ObjectStr "metadata", MP.ObjectStr (metaToJSONString (gnMetadata n)))
+  | not (Map.null (gnMetadata n))
+  ]
+pluginCommandToMsgpack (EmitEdge e) = MP.ObjectMap $ V.fromList $
+  [ (MP.ObjectStr "type", MP.ObjectStr "emit_edge")
+  , (MP.ObjectStr "src", MP.ObjectStr (geSource e))
+  , (MP.ObjectStr "dst", MP.ObjectStr (geTarget e))
+  , (MP.ObjectStr "edgeType", MP.ObjectStr (geType e))
+  ] ++
+  [ (MP.ObjectStr "metadata", MP.ObjectStr (metaToJSONString (geMetadata e)))
+  | not (Map.null (geMetadata e))
+  ]
 
 -- | Read NDJSON nodes from stdin.
 readNodesFromStdin :: IO [GraphNode]

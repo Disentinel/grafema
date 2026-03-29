@@ -1,0 +1,99 @@
+# Questions for h3 (unjs/h3) — HTTP framework
+# Source: real questions during onboarding exploration
+# Project root: ~/autoresearch-repos/h3
+
+questions:
+  # --- Simple (should be easy for both) ---
+
+  - id: h3-01
+    category: 1
+    question: "What is the main entry point of this project? Which file exports the public API?"
+    eval_type: superset
+    expected:
+      - "src/index.ts"
+    difficulty: easy
+    tags: [onboarding, entry-point]
+
+  - id: h3-02
+    category: 2
+    question: "What utility modules exist in src/utils/? List all of them."
+    eval_type: superset
+    expected:
+      - "auth.ts"
+      - "body.ts"
+      - "cache.ts"
+      - "cookie.ts"
+      - "cors.ts"
+      - "proxy.ts"
+      - "session.ts"
+      - "ws.ts"
+    difficulty: easy
+    tags: [structure, exploration]
+
+  # --- Medium (requires reading multiple files) ---
+
+  - id: h3-03
+    category: 2
+    question: "The H3 source uses properties like '~middleware' and '~routes' with tilde prefix. What are these? Why not use standard # private fields or regular properties?"
+    eval_type: judge
+    reference_answer: "The ~prefix properties are JavaScript private-by-convention (not truly private). They're used as internal properties that TypeScript can still access across classes in the same package. They avoid # private fields which can't be accessed in subclasses or tests. The tilde prefix is a convention specific to this codebase (similar to _prefix but more distinctive)."
+    difficulty: medium
+    tags: [conventions, design-choices]
+
+  - id: h3-04
+    category: 3
+    question: "Trace the request lifecycle: when H3Core.fetch() receives a request, what happens step by step until a response is returned? Name each function/method involved."
+    eval_type: judge
+    reference_answer: "fetch() → ~request(request) → creates H3Event → callMiddleware(event, ~middleware) runs middleware chain → ~findRoute(event) matches route via rou3 router → handler(event) executes matched handler → toResponse(event, result) converts return value to Response object. If error: error propagates, toResponse handles HTTPError conversion. If no route: NoHandler returns kNotFound symbol."
+    difficulty: hard
+    tags: [request-lifecycle, tracing]
+
+  - id: h3-05
+    category: 3
+    question: "How does error handling work? If a route handler throws an Error, what catches it, transforms it, and what does the client see?"
+    eval_type: judge
+    reference_answer: "Handler errors are caught in the request processing chain (H3Core ~request method or middleware runner). If the error is an HTTPError (from error.ts), it has status, statusText, data. The error is converted to a Response via toResponse() with the appropriate status code and JSON body. Non-HTTPError errors get wrapped as 500 Internal Server Error. The response includes the error body (status, statusText, message, data)."
+    difficulty: hard
+    tags: [error-handling, tracing]
+
+  - id: h3-06
+    category: 3
+    question: "How does the middleware system work? Can middleware short-circuit a request (return early without calling the handler)? How?"
+    eval_type: judge
+    reference_answer: "Middleware is defined via app.use() and stored in ~middleware array. callMiddleware() in middleware.ts runs each middleware in order. Middleware can short-circuit by returning a value (non-undefined) — the response is sent immediately without reaching the route handler. Middleware runs for ALL requests unless filtered by path pattern in MiddlewareOptions."
+    difficulty: hard
+    tags: [middleware, architecture]
+
+  - id: h3-07
+    category: 3
+    question: "The project supports multiple runtimes (Node, Bun, Deno, Cloudflare Workers). How is this achieved? What's the adapter pattern?"
+    eval_type: judge
+    reference_answer: "src/_entries/ contains runtime-specific entry points. src/adapters.ts provides adapter functions. The core H3 app is runtime-agnostic — it works with standard Request/Response objects. Each adapter translates the runtime's server API to the standard interface. The 'srvx' package provides the ServerRequest abstraction. The build produces separate bundles per runtime."
+    difficulty: medium
+    tags: [architecture, multi-runtime]
+
+  # --- Hard (requires deep understanding) ---
+
+  - id: h3-08
+    category: 4
+    question: "If I wanted to add request-level rate limiting to this framework, where would I implement it? What existing patterns should I follow? Which files would I need to modify?"
+    eval_type: judge
+    reference_answer: "Implement as a middleware (following the pattern in src/utils/cors.ts or src/utils/cache.ts). Create src/utils/rate-limit.ts that exports a defineRateLimitMiddleware() function. Use app.use() to register it. The middleware checks a counter (needs storage — could use H3Event context or external store), returns 429 error via createError() if limit exceeded. No core files need modification — the middleware system is already extensible."
+    difficulty: hard
+    tags: [planning, extending]
+
+  - id: h3-09
+    category: 4
+    question: "What are the security implications of the proxy utility (src/utils/proxy.ts)? What could go wrong if misconfigured?"
+    eval_type: judge
+    reference_answer: "Proxy utility forwards requests to upstream servers. Security risks: SSRF if the target URL comes from user input without validation, header leaking (forwarding sensitive headers like Authorization to untrusted upstream), cookie scope confusion, response smuggling if Content-Length manipulation. The proxy code should sanitize headers, validate target URLs against allowlists, and handle timeouts to prevent resource exhaustion."
+    difficulty: hard
+    tags: [security, proxy, analysis]
+
+  - id: h3-10
+    category: 4
+    question: "This project uses 'srvx' and 'rou3' as dependencies. What would break if 'rou3' was replaced with a different router library? What interface does h3 expect from the router?"
+    eval_type: judge
+    reference_answer: "h3.ts imports createRouter, addRoute, findRoute from rou3. The interface expected: createRouter() returns a router object, addRoute(router, method, path, data) adds a route, findRoute(router, method, path) returns a matched route with params. Replacing rou3 would require implementing these three functions with the same signature. The route matching semantics (param extraction, wildcard handling) would need to match. All router usage is in h3.ts — one file to modify."
+    difficulty: hard
+    tags: [dependencies, coupling, impact-analysis]

@@ -1,0 +1,1099 @@
+schema_version: 1
+analyzer_version: 0.3.16
+authored: false
+confidence: 1
+generated: 2026-03-17T17:07:09.730Z
+package:
+  purl: pkg:npm/graphql@16.12.0
+  source_type: compiled_js
+exports:
+  - name: __Directive
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->__Directive
+    effects:
+      - PURE
+  - name: __DirectiveLocation
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->__DirectiveLocation
+    effects:
+      - PURE
+  - name: __EnumValue
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->__EnumValue
+    effects:
+      - PURE
+  - name: __esModule
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->__esModule
+    effects:
+      - PURE
+  - name: __Field
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->__Field
+    effects:
+      - PURE
+  - name: __InputValue
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->__InputValue
+    effects:
+      - PURE
+  - name: __Schema
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->__Schema
+    effects:
+      - PURE
+  - name: __Type
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->__Type
+    effects:
+      - PURE
+  - name: __TypeKind
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->__TypeKind
+    effects:
+      - PURE
+  - name: assertAbstractType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->assertAbstractType
+    effects:
+      - PURE
+  - name: assertCompositeType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->assertCompositeType
+    effects:
+      - PURE
+  - name: assertDirective
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->assertDirective
+    effects:
+      - PURE
+  - name: assertEnumType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->assertEnumType
+    effects:
+      - PURE
+  - name: assertEnumValueName
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->assertEnumValueName
+    effects:
+      - PURE
+  - name: assertInputObjectType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->assertInputObjectType
+    effects:
+      - PURE
+  - name: assertInputType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->assertInputType
+    effects:
+      - PURE
+  - name: assertInterfaceType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->assertInterfaceType
+    effects:
+      - PURE
+  - name: assertLeafType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->assertLeafType
+    effects:
+      - PURE
+  - name: assertListType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->assertListType
+    effects:
+      - PURE
+  - name: assertName
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->assertName
+    effects:
+      - PURE
+  - name: assertNamedType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->assertNamedType
+    effects:
+      - PURE
+  - name: assertNonNullType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->assertNonNullType
+    effects:
+      - PURE
+  - name: assertNullableType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->assertNullableType
+    effects:
+      - PURE
+  - name: assertObjectType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->assertObjectType
+    effects:
+      - PURE
+  - name: assertOutputType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->assertOutputType
+    effects:
+      - PURE
+  - name: assertScalarType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->assertScalarType
+    effects:
+      - PURE
+  - name: assertSchema
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->assertSchema
+    effects:
+      - PURE
+  - name: assertType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->assertType
+    effects:
+      - PURE
+  - name: assertUnionType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->assertUnionType
+    effects:
+      - PURE
+  - name: assertValidName
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->assertValidName
+    effects:
+      - PURE
+  - name: assertValidSchema
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->assertValidSchema
+    effects:
+      - PURE
+  - name: assertWrappingType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->assertWrappingType
+    effects:
+      - PURE
+  - name: astFromValue
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->astFromValue
+    effects:
+      - PURE
+  - name: BREAK
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->BREAK
+    effects:
+      - PURE
+  - name: BreakingChangeType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->BreakingChangeType
+    effects:
+      - PURE
+  - name: buildASTSchema
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->buildASTSchema
+    effects:
+      - PURE
+  - name: buildClientSchema
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->buildClientSchema
+    effects:
+      - PURE
+  - name: buildSchema
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->buildSchema
+    effects:
+      - PURE
+  - name: coerceInputValue
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->coerceInputValue
+    effects:
+      - PURE
+  - name: concatAST
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->concatAST
+    effects:
+      - PURE
+  - name: createSourceEventStream
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->createSourceEventStream
+    effects:
+      - PURE
+  - name: DangerousChangeType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->DangerousChangeType
+    effects:
+      - PURE
+  - name: DEFAULT_DEPRECATION_REASON
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->DEFAULT_DEPRECATION_REASON
+    effects:
+      - PURE
+  - name: defaultFieldResolver
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->defaultFieldResolver
+    effects:
+      - PURE
+  - name: defaultTypeResolver
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->defaultTypeResolver
+    effects:
+      - PURE
+  - name: DirectiveLocation
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->DirectiveLocation
+    effects:
+      - PURE
+  - name: doTypesOverlap
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->doTypesOverlap
+    effects:
+      - PURE
+  - name: ExecutableDefinitionsRule
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->ExecutableDefinitionsRule
+    effects:
+      - PURE
+  - name: execute
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->execute
+    effects:
+      - PURE
+  - name: executeSync
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->executeSync
+    effects:
+      - PURE
+  - name: extendSchema
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->extendSchema
+    effects:
+      - PURE
+  - name: FieldsOnCorrectTypeRule
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->FieldsOnCorrectTypeRule
+    effects:
+      - PURE
+  - name: findBreakingChanges
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->findBreakingChanges
+    effects:
+      - PURE
+  - name: findDangerousChanges
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->findDangerousChanges
+    effects:
+      - PURE
+  - name: formatError
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->formatError
+    effects:
+      - PURE
+  - name: FragmentsOnCompositeTypesRule
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->FragmentsOnCompositeTypesRule
+    effects:
+      - PURE
+  - name: getArgumentValues
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->getArgumentValues
+    effects:
+      - PURE
+  - name: getDirectiveValues
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->getDirectiveValues
+    effects:
+      - PURE
+  - name: getEnterLeaveForKind
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->getEnterLeaveForKind
+    effects:
+      - PURE
+  - name: getIntrospectionQuery
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->getIntrospectionQuery
+    effects:
+      - PURE
+  - name: getLocation
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->getLocation
+    effects:
+      - PURE
+  - name: getNamedType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->getNamedType
+    effects:
+      - PURE
+  - name: getNullableType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->getNullableType
+    effects:
+      - PURE
+  - name: getOperationAST
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->getOperationAST
+    effects:
+      - PURE
+  - name: getOperationRootType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->getOperationRootType
+    effects:
+      - PURE
+  - name: getVariableValues
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->getVariableValues
+    effects:
+      - PURE
+  - name: getVisitFn
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->getVisitFn
+    effects:
+      - PURE
+  - name: graphql
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->graphql
+    effects:
+      - PURE
+  - name: GRAPHQL_MAX_INT
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->GRAPHQL_MAX_INT
+    effects:
+      - PURE
+  - name: GRAPHQL_MIN_INT
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->GRAPHQL_MIN_INT
+    effects:
+      - PURE
+  - name: GraphQLBoolean
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->GraphQLBoolean
+    effects:
+      - PURE
+  - name: GraphQLDeprecatedDirective
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->GraphQLDeprecatedDirective
+    effects:
+      - PURE
+  - name: GraphQLDirective
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->GraphQLDirective
+    effects:
+      - PURE
+  - name: GraphQLEnumType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->GraphQLEnumType
+    effects:
+      - PURE
+  - name: GraphQLError
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->GraphQLError
+    effects:
+      - PURE
+  - name: GraphQLFloat
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->GraphQLFloat
+    effects:
+      - PURE
+  - name: GraphQLID
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->GraphQLID
+    effects:
+      - PURE
+  - name: GraphQLIncludeDirective
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->GraphQLIncludeDirective
+    effects:
+      - PURE
+  - name: GraphQLInputObjectType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->GraphQLInputObjectType
+    effects:
+      - PURE
+  - name: GraphQLInt
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->GraphQLInt
+    effects:
+      - PURE
+  - name: GraphQLInterfaceType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->GraphQLInterfaceType
+    effects:
+      - PURE
+  - name: GraphQLList
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->GraphQLList
+    effects:
+      - PURE
+  - name: GraphQLNonNull
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->GraphQLNonNull
+    effects:
+      - PURE
+  - name: GraphQLObjectType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->GraphQLObjectType
+    effects:
+      - PURE
+  - name: GraphQLOneOfDirective
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->GraphQLOneOfDirective
+    effects:
+      - PURE
+  - name: GraphQLScalarType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->GraphQLScalarType
+    effects:
+      - PURE
+  - name: GraphQLSchema
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->GraphQLSchema
+    effects:
+      - PURE
+  - name: GraphQLSkipDirective
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->GraphQLSkipDirective
+    effects:
+      - PURE
+  - name: GraphQLSpecifiedByDirective
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->GraphQLSpecifiedByDirective
+    effects:
+      - PURE
+  - name: GraphQLString
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->GraphQLString
+    effects:
+      - PURE
+  - name: graphqlSync
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->graphqlSync
+    effects:
+      - PURE
+  - name: GraphQLUnionType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->GraphQLUnionType
+    effects:
+      - PURE
+  - name: introspectionFromSchema
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->introspectionFromSchema
+    effects:
+      - PURE
+  - name: introspectionTypes
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->introspectionTypes
+    effects:
+      - PURE
+  - name: isAbstractType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->isAbstractType
+    effects:
+      - PURE
+  - name: isCompositeType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->isCompositeType
+    effects:
+      - PURE
+  - name: isConstValueNode
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->isConstValueNode
+    effects:
+      - PURE
+  - name: isDefinitionNode
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->isDefinitionNode
+    effects:
+      - PURE
+  - name: isDirective
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->isDirective
+    effects:
+      - PURE
+  - name: isEnumType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->isEnumType
+    effects:
+      - PURE
+  - name: isEqualType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->isEqualType
+    effects:
+      - PURE
+  - name: isExecutableDefinitionNode
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->isExecutableDefinitionNode
+    effects:
+      - PURE
+  - name: isInputObjectType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->isInputObjectType
+    effects:
+      - PURE
+  - name: isInputType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->isInputType
+    effects:
+      - PURE
+  - name: isInterfaceType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->isInterfaceType
+    effects:
+      - PURE
+  - name: isIntrospectionType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->isIntrospectionType
+    effects:
+      - PURE
+  - name: isLeafType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->isLeafType
+    effects:
+      - PURE
+  - name: isListType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->isListType
+    effects:
+      - PURE
+  - name: isNamedType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->isNamedType
+    effects:
+      - PURE
+  - name: isNonNullType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->isNonNullType
+    effects:
+      - PURE
+  - name: isNullableType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->isNullableType
+    effects:
+      - PURE
+  - name: isObjectType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->isObjectType
+    effects:
+      - PURE
+  - name: isOutputType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->isOutputType
+    effects:
+      - PURE
+  - name: isRequiredArgument
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->isRequiredArgument
+    effects:
+      - PURE
+  - name: isRequiredInputField
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->isRequiredInputField
+    effects:
+      - PURE
+  - name: isScalarType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->isScalarType
+    effects:
+      - PURE
+  - name: isSchema
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->isSchema
+    effects:
+      - PURE
+  - name: isSchemaCoordinateNode
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->isSchemaCoordinateNode
+    effects:
+      - PURE
+  - name: isSelectionNode
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->isSelectionNode
+    effects:
+      - PURE
+  - name: isSpecifiedDirective
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->isSpecifiedDirective
+    effects:
+      - PURE
+  - name: isSpecifiedScalarType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->isSpecifiedScalarType
+    effects:
+      - PURE
+  - name: isType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->isType
+    effects:
+      - PURE
+  - name: isTypeDefinitionNode
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->isTypeDefinitionNode
+    effects:
+      - PURE
+  - name: isTypeExtensionNode
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->isTypeExtensionNode
+    effects:
+      - PURE
+  - name: isTypeNode
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->isTypeNode
+    effects:
+      - PURE
+  - name: isTypeSubTypeOf
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->isTypeSubTypeOf
+    effects:
+      - PURE
+  - name: isTypeSystemDefinitionNode
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->isTypeSystemDefinitionNode
+    effects:
+      - PURE
+  - name: isTypeSystemExtensionNode
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->isTypeSystemExtensionNode
+    effects:
+      - PURE
+  - name: isUnionType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->isUnionType
+    effects:
+      - PURE
+  - name: isValidNameError
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->isValidNameError
+    effects:
+      - PURE
+  - name: isValueNode
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->isValueNode
+    effects:
+      - PURE
+  - name: isWrappingType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->isWrappingType
+    effects:
+      - PURE
+  - name: Kind
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->Kind
+    effects:
+      - PURE
+  - name: KnownArgumentNamesRule
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->KnownArgumentNamesRule
+    effects:
+      - PURE
+  - name: KnownDirectivesRule
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->KnownDirectivesRule
+    effects:
+      - PURE
+  - name: KnownFragmentNamesRule
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->KnownFragmentNamesRule
+    effects:
+      - PURE
+  - name: KnownTypeNamesRule
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->KnownTypeNamesRule
+    effects:
+      - PURE
+  - name: Lexer
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->Lexer
+    effects:
+      - PURE
+  - name: lexicographicSortSchema
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->lexicographicSortSchema
+    effects:
+      - PURE
+  - name: locatedError
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->locatedError
+    effects:
+      - PURE
+  - name: Location
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->Location
+    effects:
+      - PURE
+  - name: LoneAnonymousOperationRule
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->LoneAnonymousOperationRule
+    effects:
+      - PURE
+  - name: LoneSchemaDefinitionRule
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->LoneSchemaDefinitionRule
+    effects:
+      - PURE
+  - name: MaxIntrospectionDepthRule
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->MaxIntrospectionDepthRule
+    effects:
+      - PURE
+  - name: NoDeprecatedCustomRule
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->NoDeprecatedCustomRule
+    effects:
+      - PURE
+  - name: NoFragmentCyclesRule
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->NoFragmentCyclesRule
+    effects:
+      - PURE
+  - name: NoSchemaIntrospectionCustomRule
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->NoSchemaIntrospectionCustomRule
+    effects:
+      - PURE
+  - name: NoUndefinedVariablesRule
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->NoUndefinedVariablesRule
+    effects:
+      - PURE
+  - name: NoUnusedFragmentsRule
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->NoUnusedFragmentsRule
+    effects:
+      - PURE
+  - name: NoUnusedVariablesRule
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->NoUnusedVariablesRule
+    effects:
+      - PURE
+  - name: OperationTypeNode
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->OperationTypeNode
+    effects:
+      - PURE
+  - name: OverlappingFieldsCanBeMergedRule
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->OverlappingFieldsCanBeMergedRule
+    effects:
+      - PURE
+  - name: parse
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->parse
+    effects:
+      - PURE
+  - name: parseConstValue
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->parseConstValue
+    effects:
+      - PURE
+  - name: parseSchemaCoordinate
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->parseSchemaCoordinate
+    effects:
+      - PURE
+  - name: parseType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->parseType
+    effects:
+      - PURE
+  - name: parseValue
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->parseValue
+    effects:
+      - PURE
+  - name: PossibleFragmentSpreadsRule
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->PossibleFragmentSpreadsRule
+    effects:
+      - PURE
+  - name: PossibleTypeExtensionsRule
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->PossibleTypeExtensionsRule
+    effects:
+      - PURE
+  - name: print
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->print
+    effects:
+      - PURE
+  - name: printError
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->printError
+    effects:
+      - PURE
+  - name: printIntrospectionSchema
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->printIntrospectionSchema
+    effects:
+      - PURE
+  - name: printLocation
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->printLocation
+    effects:
+      - PURE
+  - name: printSchema
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->printSchema
+    effects:
+      - PURE
+  - name: printSourceLocation
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->printSourceLocation
+    effects:
+      - PURE
+  - name: printType
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->printType
+    effects:
+      - PURE
+  - name: ProvidedRequiredArgumentsRule
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->ProvidedRequiredArgumentsRule
+    effects:
+      - PURE
+  - name: recommendedRules
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->recommendedRules
+    effects:
+      - PURE
+  - name: resolveASTSchemaCoordinate
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->resolveASTSchemaCoordinate
+    effects:
+      - PURE
+  - name: resolveObjMapThunk
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->resolveObjMapThunk
+    effects:
+      - PURE
+  - name: resolveReadonlyArrayThunk
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->resolveReadonlyArrayThunk
+    effects:
+      - PURE
+  - name: resolveSchemaCoordinate
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->resolveSchemaCoordinate
+    effects:
+      - PURE
+  - name: responsePathAsArray
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->responsePathAsArray
+    effects:
+      - PURE
+  - name: ScalarLeafsRule
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->ScalarLeafsRule
+    effects:
+      - PURE
+  - name: SchemaMetaFieldDef
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->SchemaMetaFieldDef
+    effects:
+      - PURE
+  - name: separateOperations
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->separateOperations
+    effects:
+      - PURE
+  - name: SingleFieldSubscriptionsRule
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->SingleFieldSubscriptionsRule
+    effects:
+      - PURE
+  - name: Source
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->Source
+    effects:
+      - PURE
+  - name: specifiedDirectives
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->specifiedDirectives
+    effects:
+      - PURE
+  - name: specifiedRules
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->specifiedRules
+    effects:
+      - PURE
+  - name: specifiedScalarTypes
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->specifiedScalarTypes
+    effects:
+      - PURE
+  - name: stripIgnoredCharacters
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->stripIgnoredCharacters
+    effects:
+      - PURE
+  - name: subscribe
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->subscribe
+    effects:
+      - PURE
+  - name: syntaxError
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->syntaxError
+    effects:
+      - PURE
+  - name: Token
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->Token
+    effects:
+      - PURE
+  - name: TokenKind
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->TokenKind
+    effects:
+      - PURE
+  - name: typeFromAST
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->typeFromAST
+    effects:
+      - PURE
+  - name: TypeInfo
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->TypeInfo
+    effects:
+      - PURE
+  - name: TypeKind
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->TypeKind
+    effects:
+      - PURE
+  - name: TypeMetaFieldDef
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->TypeMetaFieldDef
+    effects:
+      - PURE
+  - name: TypeNameMetaFieldDef
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->TypeNameMetaFieldDef
+    effects:
+      - PURE
+  - name: UniqueArgumentDefinitionNamesRule
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->UniqueArgumentDefinitionNamesRule
+    effects:
+      - PURE
+  - name: UniqueArgumentNamesRule
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->UniqueArgumentNamesRule
+    effects:
+      - PURE
+  - name: UniqueDirectiveNamesRule
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->UniqueDirectiveNamesRule
+    effects:
+      - PURE
+  - name: UniqueDirectivesPerLocationRule
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->UniqueDirectivesPerLocationRule
+    effects:
+      - PURE
+  - name: UniqueEnumValueNamesRule
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->UniqueEnumValueNamesRule
+    effects:
+      - PURE
+  - name: UniqueFieldDefinitionNamesRule
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->UniqueFieldDefinitionNamesRule
+    effects:
+      - PURE
+  - name: UniqueFragmentNamesRule
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->UniqueFragmentNamesRule
+    effects:
+      - PURE
+  - name: UniqueInputFieldNamesRule
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->UniqueInputFieldNamesRule
+    effects:
+      - PURE
+  - name: UniqueOperationNamesRule
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->UniqueOperationNamesRule
+    effects:
+      - PURE
+  - name: UniqueOperationTypesRule
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->UniqueOperationTypesRule
+    effects:
+      - PURE
+  - name: UniqueTypeNamesRule
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->UniqueTypeNamesRule
+    effects:
+      - PURE
+  - name: UniqueVariableNamesRule
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->UniqueVariableNamesRule
+    effects:
+      - PURE
+  - name: validate
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->validate
+    effects:
+      - PURE
+  - name: validateSchema
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->validateSchema
+    effects:
+      - PURE
+  - name: ValidationContext
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->ValidationContext
+    effects:
+      - PURE
+  - name: valueFromAST
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->valueFromAST
+    effects:
+      - PURE
+  - name: valueFromASTUntyped
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->valueFromASTUntyped
+    effects:
+      - PURE
+  - name: ValuesOfCorrectTypeRule
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->ValuesOfCorrectTypeRule
+    effects:
+      - PURE
+  - name: VariablesAreInputTypesRule
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->VariablesAreInputTypesRule
+    effects:
+      - PURE
+  - name: VariablesInAllowedPositionRule
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->VariablesInAllowedPositionRule
+    effects:
+      - PURE
+  - name: version
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->version
+    effects:
+      - PURE
+  - name: versionInfo
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->versionInfo
+    effects:
+      - PURE
+  - name: visit
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->visit
+    effects:
+      - PURE
+  - name: visitInParallel
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->visitInParallel
+    effects:
+      - PURE
+  - name: visitWithTypeInfo
+    kind: TYPE
+    semanticId: index.js->EXPORT_BINDING->visitWithTypeInfo
+    effects:
+      - PURE
+imports: []
+capabilities:
+  total_exports: 216
+  total_internal_symbols: 2900
+  has_graph: true
+access:
+  local: ./graph.rfdb
+language: typescript
+language_specific:
+  module_system: esm

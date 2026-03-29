@@ -2,6 +2,7 @@
 .git
 **/node_modules
 **/dist
+**/target
 **/*.tsbuildinfo
 coverage
 logs

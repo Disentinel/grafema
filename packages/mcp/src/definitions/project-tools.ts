@@ -122,19 +122,22 @@ Use AFTER analyze_project when queries return unexpected empty results.`,
     description: `Get documentation about Grafema usage and query syntax.
 
 Topics available:
-- queries: Datalog query syntax and examples
-- types: Available node and edge types
+- queries: Datalog query syntax, predicates (including numeric comparisons), and examples
+- types: Available node and edge types (including METRIC and ISSUE diagnostic nodes)
 - guarantees: How to create and manage code guarantees
+- notation: DSL notation reference (archetypes, operators, LOD, perspectives)
+- metrics: Performance metrics (METRIC nodes) and analysis issues (ISSUE nodes)
+- effects: Side-effect taxonomy and manifest system
 - onboarding: Step-by-step guide for new projects
 - overview: High-level Grafema architecture
 
-Use this when you need to learn Datalog syntax or understand available features.`,
+Use this when you need to learn Datalog syntax, DSL notation, or understand available features.`,
     inputSchema: {
       type: 'object',
       properties: {
         topic: {
           type: 'string',
-          description: 'Topic: queries, types, guarantees, onboarding, or overview',
+          description: 'Topic: queries, types, guarantees, notation, metrics, effects, onboarding, or overview',
         },
       },
     },

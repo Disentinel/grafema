@@ -297,6 +297,9 @@ export class GuaranteeManager {
             file: (violatingNode as ModuleNode).file,
             line: (violatingNode as { line?: number }).line
           });
+        } else {
+          // Non-node-ID binding (e.g. attr() string value) — return raw binding as violation
+          enrichedViolations.push({ nodeId, type: 'raw_binding', name: nodeId });
         }
       }
     }
@@ -412,6 +415,24 @@ export class GuaranteeManager {
   }
 
   /**
+   * Load guarantees from the project's YAML file (.grafema/guarantees.yaml).
+   *
+   * Reads the YAML file, skips non-datalog guarantees (e.g., integration-test),
+   * and creates GUARANTEE nodes in the graph for each datalog guarantee.
+   * Idempotent: skips guarantees that already exist in the graph.
+   * Gracefully handles missing file (no error, just returns).
+   *
+   * @returns ImportResult with counts of imported and skipped guarantees
+   */
+  async loadFromYaml(): Promise<ImportResult> {
+    if (!existsSync(this.guaranteesFile)) {
+      return { imported: 0, skipped: 0, importedIds: [], skippedIds: [] };
+    }
+
+    return this.import(this.guaranteesFile);
+  }
+
+  /**
    * Удалить гарантию
    */
   async delete(guaranteeId: string): Promise<void> {
@@ -481,6 +502,14 @@ export class GuaranteeManager {
     const skipped: string[] = [];
 
     for (const g of data.guarantees) {
+      // Normalize: YAML uses 'name', code expects 'id'
+      if (!g.id && g.name) g.id = g.name;
+      // Skip non-Datalog guarantees (integration-test entries have no rule)
+      if (!g.rule) {
+        skipped.push(g.id || g.name || 'unknown');
+        continue;
+      }
+
       const fullId = `GUARANTEE:${g.id}`;
       const existing = await this.graph.getNode(fullId);
 
@@ -489,6 +518,10 @@ export class GuaranteeManager {
         continue;
       }
 
+      // Default governs to all files if not specified in YAML
+      if (!g.governs) {
+        g.governs = ['**/*'];
+      }
       await this.create(g);
       imported.push(g.id);
     }

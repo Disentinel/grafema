@@ -1,0 +1,435 @@
+# Autoresearch Question Set v1
+#
+# Source: Sillito et al. (2006/2008) taxonomy of developer questions.
+# Questions phrased as real developers would ask — NOT biased toward tools.
+#
+# Eval types:
+#   set      — exact match (expected == actual, order-independent)
+#   superset — all expected items must be present (recall = 1.0)
+#   text     — all expected keywords present in answer
+#   judge    — LLM judge scores 0-5 (reference_answer used for grading)
+#
+# Anchors: patterns that must exist in code for question to be valid (staleness check)
+
+questions:
+  # ============================================================================
+  # TIER 1: Focus & Expand (Sillito categories 1-2) — 15 questions, deterministic eval
+  # ============================================================================
+
+  # --- Feature Location (cat 1) ---
+
+  - id: Q01
+    category: 1
+    question: "Where in the codebase is the error message about RFDB server not running produced? Give the file path."
+    eval_type: superset
+    expected:
+      - "packages/util/src/storage/backends/RFDBServerBackend.ts"
+    anchors:
+      - pattern: "RFDB server not running"
+        file: "packages/util/src/**/*.ts"
+    difficulty: easy
+    tags: [feature-location, rfdb, error-handling]
+
+  - id: Q02
+    category: 1
+    question: "Which file implements the MCP tool handler for `find_calls`? Give the file path."
+    eval_type: set
+    expected:
+      - "packages/mcp/src/handlers/query-handlers.ts"
+    anchors:
+      - pattern: "handleFindCalls"
+        file: "packages/mcp/src/handlers/*.ts"
+    difficulty: easy
+    tags: [feature-location, mcp]
+
+  - id: Q03
+    category: 1
+    question: "Where is the RFDB Unix socket path derived or configured? List all files involved."
+    eval_type: superset
+    expected:
+      - "packages/mcp/src/state.ts"
+      - "packages/util/src/storage/backends/RFDBServerBackend.ts"
+    anchors:
+      - pattern: "rfdb.sock"
+        file: "packages/**/*.ts"
+    difficulty: medium
+    tags: [feature-location, rfdb, config]
+
+  - id: Q04
+    category: 1
+    question: "Which file implements the `analyze` CLI command's action logic (not just command registration)?"
+    eval_type: set
+    expected:
+      - "packages/cli/src/commands/analyzeAction.ts"
+    anchors:
+      - pattern: "analyzeAction"
+        file: "packages/cli/src/commands/*.ts"
+    difficulty: easy
+    tags: [feature-location, cli]
+
+  - id: Q05
+    category: 1
+    question: "Where is the `NodeQuery` interface (used for querying graph nodes) defined? Give the file path."
+    eval_type: set
+    expected:
+      - "packages/util/src/storage/backends/RFDBServerBackend.ts"
+    anchors:
+      - pattern: "NodeQuery"
+        file: "packages/util/src/**/*.ts"
+    difficulty: easy
+    tags: [feature-location, types]
+
+  # --- Call / Dependency Analysis (cat 2) ---
+
+  - id: Q06
+    category: 2
+    question: "What functions or methods call `commitBatch` in the TypeScript codebase? List the files where calls occur."
+    eval_type: superset
+    expected:
+      - "packages/util/src/storage/backends/RFDBServerBackend.ts"
+      - "packages/rfdb/ts/base-client.ts"
+    anchors:
+      - pattern: "commitBatch"
+        file: "packages/**/*.ts"
+    difficulty: medium
+    tags: [call-analysis, rfdb]
+
+  - id: Q07
+    category: 2
+    question: "Which packages in the monorepo have `@grafema/types` as a dependency? List the package names."
+    eval_type: superset
+    expected:
+      - "@grafema/util"
+      - "@grafema/mcp"
+      - "@grafema/cli"
+      - "@grafema/rfdb-client"
+      - "@grafema/api"
+      - "@grafema/vscode"
+    anchors:
+      - pattern: "@grafema/types"
+        file: "packages/**/*.json"
+    difficulty: easy
+    tags: [dependency-analysis, monorepo]
+
+  - id: Q08
+    category: 2
+    question: "What MCP tool handler files exist in the handlers directory? List all handler file names (not index)."
+    eval_type: superset
+    expected:
+      - "query-handlers.ts"
+      - "dataflow-handlers.ts"
+      - "analysis-handlers.ts"
+      - "guarantee-handlers.ts"
+      - "context-handlers.ts"
+      - "project-handlers.ts"
+      - "coverage-handlers.ts"
+      - "guard-handlers.ts"
+      - "documentation-handlers.ts"
+      - "issue-handlers.ts"
+      - "graph-handlers.ts"
+      - "knowledge-handlers.ts"
+      - "notation-handlers.ts"
+      - "graphql-handlers.ts"
+      - "registry-handlers.ts"
+    anchors:
+      - pattern: "handlers"
+        file: "packages/mcp/src/handlers/index.ts"
+    difficulty: easy
+    tags: [structure, mcp]
+
+  - id: Q09
+    category: 2
+    question: "What are the direct npm dependencies (not dev, not optional) of the `@grafema/mcp` package? List the package names."
+    eval_type: set
+    expected:
+      - "@grafema/api"
+      - "@grafema/util"
+      - "@grafema/types"
+      - "@modelcontextprotocol/sdk"
+      - "ajv"
+      - "yaml"
+    anchors:
+      - pattern: "dependencies"
+        file: "packages/mcp/package.json"
+    difficulty: easy
+    tags: [dependency-analysis, mcp]
+
+  - id: Q10
+    category: 2
+    question: "What CLI commands does the `grafema` tool support? List all top-level command names."
+    eval_type: superset
+    expected:
+      - "analyze"
+      - "server"
+      - "query"
+      - "stats"
+      - "check"
+      - "coverage"
+      - "describe"
+      - "overview"
+      - "impact"
+      - "trace"
+      - "init"
+      - "schema"
+      - "doctor"
+    anchors:
+      - pattern: "addCommand"
+        file: "packages/cli/src/cli.ts"
+    difficulty: easy
+    tags: [structure, cli]
+
+  # --- Structure (cat 2) ---
+
+  - id: Q11
+    category: 2
+    question: "What public methods does the `RFDBServerBackend` class expose? List at least 15 method names."
+    eval_type: superset
+    expected:
+      - "connect"
+      - "close"
+      - "addNode"
+      - "addNodes"
+      - "getNode"
+      - "queryNodes"
+      - "getAllNodes"
+      - "addEdge"
+      - "addEdges"
+      - "getAllEdges"
+      - "getOutgoingEdges"
+      - "getIncomingEdges"
+      - "nodeCount"
+      - "edgeCount"
+      - "commitBatch"
+    anchors:
+      - pattern: "class RFDBServerBackend"
+        file: "packages/util/src/storage/backends/RFDBServerBackend.ts"
+    difficulty: medium
+    tags: [structure, rfdb, api]
+
+  - id: Q12
+    category: 2
+    question: "What edge type constants are defined for import/export relationships? List them."
+    eval_type: superset
+    expected:
+      - "IMPORTS"
+      - "EXPORTS"
+      - "IMPORTS_FROM"
+    anchors:
+      - pattern: "IMPORTS_FROM"
+        file: "packages/types/src/edges.ts"
+    difficulty: easy
+    tags: [structure, types, edges]
+
+  - id: Q13
+    category: 2
+    question: "What edge type constants are defined for data flow relationships? List them."
+    eval_type: superset
+    expected:
+      - "DEFINES"
+      - "USES"
+      - "DECLARES"
+      - "MODIFIES"
+      - "ASSIGNED_FROM"
+      - "READS_FROM"
+      - "WRITES_TO"
+      - "DERIVES_FROM"
+      - "FLOWS_INTO"
+    anchors:
+      - pattern: "ASSIGNED_FROM"
+        file: "packages/types/src/edges.ts"
+    difficulty: medium
+    tags: [structure, types, edges, dataflow]
+
+  - id: Q14
+    category: 2
+    question: "What handler functions does the `handleFindCalls` MCP tool use from the RFDB backend? List the backend method names it calls."
+    eval_type: superset
+    expected:
+      - "queryNodes"
+      - "getOutgoingEdges"
+    anchors:
+      - pattern: "handleFindCalls"
+        file: "packages/mcp/src/handlers/query-handlers.ts"
+    difficulty: medium
+    tags: [call-analysis, mcp, rfdb]
+
+  - id: Q15
+    category: 2
+    question: "What are the edge type categories defined in packages/types/src/edges.ts? List the category comment names."
+    eval_type: superset
+    expected:
+      - "Structure"
+      - "Calls"
+      - "Imports/Exports"
+      - "Data flow"
+    anchors:
+      - pattern: "EDGE_TYPE"
+        file: "packages/types/src/edges.ts"
+    difficulty: easy
+    tags: [structure, types]
+
+  # ============================================================================
+  # TIER 2: Subgraph Understanding (Sillito category 3) — 10 questions, LLM judge
+  # ============================================================================
+
+  # --- Cross-service tracing ---
+
+  - id: Q16
+    category: 3
+    question: "Trace the path: when Claude calls the `find_calls` MCP tool, how does the request travel from the MCP server to the RFDB database and back? Describe each step."
+    eval_type: judge
+    reference_answer: "MCP server receives tools/call JSON-RPC request in server.ts → dispatches to handleFindCalls in query-handlers.ts → calls ensureAnalyzed() which gets RFDBServerBackend via getOrCreateBackend() in state.ts → handler calls db.queryNodes({type:'CALL'}) which sends queryNodes command via RFDBClient over Unix socket → for each matching CALL node, calls db.getOutgoingEdges(id, ['CALLS']) → collects results into JSON array → returns as MCP tool result text"
+    anchors:
+      - pattern: "handleFindCalls"
+        file: "packages/mcp/src/handlers/query-handlers.ts"
+    difficulty: hard
+    tags: [cross-service, mcp, rfdb, tracing]
+
+  - id: Q17
+    category: 3
+    question: "How does the CLI `analyze` command result in graph nodes being written to the RFDB database? Describe the pipeline from CLI invocation to data storage."
+    eval_type: judge
+    reference_answer: "CLI analyze command (analyzeAction.ts) creates RFDBServerBackend, connects to or auto-starts RFDB server via Unix socket. Then finds and spawns grafema-orchestrator Rust binary with --config and --socket args. Orchestrator discovers files, parses JS/TS with OXC parser, pipes AST JSON to grafema-analyzer binary which produces GraphNode/GraphEdge structs. Orchestrator sends these to RFDB via commitBatch wire commands (MessagePack-encoded over socket). Then orchestrator runs resolution plugins that add cross-file edges. CLI monitors orchestrator exit code."
+    anchors:
+      - pattern: "analyzeAction"
+        file: "packages/cli/src/commands/analyzeAction.ts"
+    difficulty: hard
+    tags: [cross-service, cli, rfdb, pipeline]
+
+  - id: Q18
+    category: 3
+    question: "How does the MCP dev-proxy hot-reload mechanism work? What happens when you call the `reload` tool?"
+    eval_type: judge
+    reference_answer: "dev-proxy.ts is a stdio proxy between Claude Code and the real MCP server (server.js spawned as child process). It intercepts tools/call requests with name 'reload' — when received, kills the child server (SIGTERM, fallback SIGKILL after 3s), then respawns it so it picks up new dist/ code after pnpm build. It also injects a 'reload' tool definition into tools/list responses. Messages during restart are buffered in pendingMessages and flushed when child is ready. Auto-restarts on crash after 500ms."
+    anchors:
+      - pattern: "dev-proxy"
+        file: "packages/mcp/src/dev-proxy.ts"
+    difficulty: medium
+    tags: [architecture, mcp, dev-tooling]
+
+  # --- Data flow ---
+
+  - id: Q19
+    category: 3
+    question: "What is the data transformation pipeline for a source file becoming graph nodes? Describe each stage from file on disk to nodes in RFDB."
+    eval_type: judge
+    reference_answer: "1) Orchestrator discovers files via include/exclude patterns from config.yaml. 2) JS/TS files parsed into AST JSON by OXC parser (embedded in orchestrator). 3) AST JSON piped to grafema-analyzer binary which walks the AST producing FileAnalysis with GraphNode structs (FUNCTION, CALL, VARIABLE, etc.) and GraphEdge structs. 4) Orchestrator receives analysis output. 5) Resolution plugins add cross-file edges (import resolution, call resolution). 6) All nodes/edges sent to RFDB via commitBatch over Unix socket."
+    anchors:
+      - pattern: "grafema-orchestrator"
+        file: "packages/cli/src/commands/analyzeAction.ts"
+    difficulty: hard
+    tags: [pipeline, dataflow, architecture]
+
+  - id: Q20
+    category: 3
+    question: "Trace backward: where does the `socketPath` value come from when the MCP server starts and connects to RFDB? What is the priority chain?"
+    eval_type: judge
+    reference_answer: "Priority chain: 1) --socket CLI arg parsed in state.ts initializeFromArgs() sets socketPathOverride. 2) config.rfdb_socket from grafema.yaml. 3) config.analysis.parallel.socketPath from analysis.ts resolveSocketPath(). 4) Default derived in RFDBServerBackend constructor: join(dirname(dbPath), 'rfdb.sock'), fallback to /tmp/rfdb.sock. The canonical path is {project}/.grafema/rfdb.sock."
+    anchors:
+      - pattern: "socketPath"
+        file: "packages/mcp/src/state.ts"
+    difficulty: medium
+    tags: [dataflow, config, mcp]
+
+  # --- Error handling ---
+
+  - id: Q21
+    category: 3
+    question: "If the RFDB server crashes during analysis, what error does the user see? Trace the error propagation path."
+    eval_type: judge
+    reference_answer: "RFDBClient detects socket close event, rejects all pending requests with Error('Connection closed') and fails pending streams. The orchestrator (communicating via its own socket in Rust) gets connection errors causing it to exit non-zero. In MCP path: runOrchestrator() in analysis.ts rejects with 'grafema-orchestrator exited with code N' plus stderr. ensureAnalyzed() catches this, handleAnalyzeProject returns errorResult. For CLI: analyzeAction.ts displays error and exits non-zero. RFDBClient has enhanced messages: ENOENT='socket not found', ECONNREFUSED='connection refused', EPIPE/ECONNRESET='connection lost, server may have crashed'."
+    anchors:
+      - pattern: "Connection closed"
+        file: "packages/rfdb/ts/*.ts"
+    difficulty: hard
+    tags: [error-handling, rfdb, resilience]
+
+  - id: Q22
+    category: 3
+    question: "What error handling pattern do MCP handlers follow? Describe the common pattern and give an example."
+    eval_type: judge
+    reference_answer: "Common pattern: 1) Call ensureAnalyzed() which tries getOrCreateBackend() — reconnects if disconnected. 2) Wrap main logic in try/catch. 3) On error, return errorResult(message) instead of throwing. Example: handleAnalyzeProject catches errors from ensureAnalyzed() and returns errorResult. handleQueryGraph catches Datalog/Cypher errors. RFDBServerBackend throws 'Not connected' for calls when client is null. RFDBClient has 60s request timeouts."
+    anchors:
+      - pattern: "errorResult"
+        file: "packages/mcp/src/handlers/*.ts"
+    difficulty: medium
+    tags: [error-handling, mcp, patterns]
+
+  # --- Concurrency & async ---
+
+  - id: Q23
+    category: 3
+    question: "What concurrency controls exist between analysis and MCP queries? Can queries run while analysis is in progress?"
+    eval_type: judge
+    reference_answer: "Promise-based mutex in state.ts: analysisLock is a Promise|null. null=no analysis running. acquireAnalysisLock() waits for existing analysis (10-min timeout), then creates new lock Promise. ensureAnalyzed() acquires lock before analysis. Query handlers call ensureAnalyzed() which returns existing backend if already analyzed, or waits for lock if analysis running. If force=true and analysis already running, returns error immediately. No lock for read queries — they run concurrently with each other. Analysis and queries serialized only when analysis needs to run."
+    anchors:
+      - pattern: "analysisLock"
+        file: "packages/mcp/src/state.ts"
+    difficulty: hard
+    tags: [concurrency, mcp, architecture]
+
+  - id: Q24
+    category: 3
+    question: "Can two enrichment plugins modify the same node simultaneously? What prevents conflicts?"
+    eval_type: judge
+    reference_answer: "No. Plugin runner in grafema-orchestrator/src/plugin.rs executes plugins in DAG-ordered levels via Kahn's algorithm. Plugins in the same level could theoretically run in parallel, but communicate with RFDB through commitBatch (atomic). Plugins in different levels execute sequentially (level N completes before N+1). Plugins don't directly modify existing nodes — they emit new nodes/edges committed atomically via BatchHandle."
+    anchors:
+      - pattern: "plugin"
+        file: "packages/grafema-orchestrator/src/*.rs"
+    difficulty: hard
+    tags: [concurrency, plugins, architecture]
+
+  - id: Q25
+    category: 3
+    question: "What is the lifecycle of an RFDB client connection from creation to cleanup? Describe each phase."
+    eval_type: judge
+    reference_answer: "1) Construction: new RFDBClient(socketPath, clientName) — socket=null, connected=false. 2) connect() opens Unix socket, sets up event handlers. 3) Protocol negotiation: hello(protocolVersion) negotiates v2/v3, discovers streaming support. 4) Usage: _send(cmd, payload) encodes MessagePack with 4-byte length prefix, tracks via requestId, 60s timeout. 5) Batch: beginBatch buffers locally, commitBatch sends atomically. 6) Disconnect: on socket close, rejects pending requests, sets connected=false. 7) close(): destroys socket. Server continues running (multi-client)."
+    anchors:
+      - pattern: "class RFDBClient"
+        file: "packages/rfdb/ts/client.ts"
+    difficulty: hard
+    tags: [lifecycle, rfdb, protocol]
+
+  # ============================================================================
+  # TIER 3: Adversarial — 5 questions where graph should NOT help
+  # ============================================================================
+
+  - id: Q26
+    category: 4
+    question: "Why does the MCP dev-proxy use newline-delimited JSON instead of HTTP Content-Length framing for message boundaries?"
+    eval_type: judge
+    reference_answer: "This is a design intent question. The graph cannot answer 'why' — only 'what'. Possible reasons include simplicity (NDJSON is easier to parse line-by-line), compatibility with stdio-based MCP transport, and no need for binary length prefixing in a text-based JSON-RPC protocol. But the real reason requires reading comments or asking the author."
+    difficulty: medium
+    tags: [adversarial, intent, design-rationale]
+
+  - id: Q27
+    category: 4
+    question: "What is the current runtime value of the analysis timeout configuration in a typical production Grafema deployment?"
+    eval_type: judge
+    reference_answer: "This is a runtime state question that cannot be answered from static code analysis. The timeout value depends on deployment configuration, environment variables, and config files at runtime. The graph only captures static code structure."
+    difficulty: easy
+    tags: [adversarial, runtime-state]
+
+  - id: Q28
+    category: 4
+    question: "Could there be a race condition if the MCP `reload` tool is called while a `find_calls` query is in-flight? Analyze the scenario."
+    eval_type: judge
+    reference_answer: "This requires temporal reasoning beyond static structure. The dev-proxy kills the child server on reload, which would break in-flight requests. The proxy buffers new messages during restart but doesn't have logic to complete already-dispatched requests. So yes, there could be data loss — but answering this requires understanding the proxy's buffering logic AND the timing of kill vs response, which is a dynamic analysis question."
+    difficulty: hard
+    tags: [adversarial, concurrency, reasoning]
+
+  - id: Q29
+    category: 4
+    question: "Is the current error message 'RFDB server not running' user-friendly? How would you improve it to help developers debug connection issues?"
+    eval_type: judge
+    reference_answer: "This is a UX/opinion question. The graph can show what the error message IS, but not whether it's good. Improvements might include: showing the socket path that was tried, suggesting 'grafema server start', checking if the server process exists, or showing the last known server status."
+    difficulty: easy
+    tags: [adversarial, ux, opinion]
+
+  - id: Q30
+    category: 4
+    question: "What test coverage is currently missing for the MCP tool handlers? Which handlers lack unit tests?"
+    eval_type: judge
+    reference_answer: "This is a meta-analysis question requiring knowledge of both the handler implementations AND the test files. The graph could theoretically help (find handlers, find test files, compare), but it requires reasoning about coverage gaps — what's NOT there — which is harder than finding what IS there."
+    difficulty: medium
+    tags: [adversarial, meta-analysis, testing]

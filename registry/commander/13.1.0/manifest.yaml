@@ -1,0 +1,24 @@
+schema_version: 1
+analyzer_version: 0.3.16
+authored: false
+confidence: 1
+generated: 2026-03-17T14:54:10.662Z
+package:
+  purl: pkg:npm/commander@13.1.0
+  source_type: compiled_js
+exports:
+  - name: program
+    kind: CONSTANT
+    semanticId: esm.mjs->CONSTANT->program
+    effects:
+      - PURE
+imports: []
+capabilities:
+  total_exports: 1
+  total_internal_symbols: 503
+  has_graph: true
+access:
+  local: ./graph.rfdb
+language: typescript
+language_specific:
+  module_system: esm

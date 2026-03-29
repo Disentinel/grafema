@@ -8,6 +8,7 @@ import System.Environment (getArgs)
 import System.IO (stdin, stdout, hSetBinaryMode)
 import Options.Applicative
 import qualified HaskellImportResolution
+import qualified HaskellLocalRefs
 import Grafema.Types (GraphNode)
 import Grafema.Protocol (PluginCommand(..), readFrame, writeFrame, encodeMsgpack, decodeMsgpack)
 
@@ -55,15 +56,18 @@ daemonLoop = do
 -- | Dispatch a command to the resolver.
 dispatch :: Text -> [GraphNode] -> IO DaemonResponse
 dispatch "haskell-imports" nodes = ResOk <$> HaskellImportResolution.resolveAll nodes
+dispatch "haskell-local-refs" nodes = return $ ResOk (HaskellLocalRefs.resolveAll nodes)
 dispatch cmd _ = return $ ResError ("unknown command: " ++ T.unpack cmd)
 
 -- | CLI subcommand parser.
-data Command = CmdHaskellImports
+data Command = CmdHaskellImports | CmdHaskellLocalRefs
 
 commandParser :: Parser Command
 commandParser = subparser
   ( command "haskell-imports"
     (info (pure CmdHaskellImports) (progDesc "Resolve Haskell imports across files"))
+  <> command "haskell-local-refs"
+    (info (pure CmdHaskellLocalRefs) (progDesc "Resolve Haskell local references to same-file declarations"))
   )
 
 cliOpts :: ParserInfo Command
@@ -83,4 +87,5 @@ main = do
     else do
       cmd <- execParser cliOpts
       case cmd of
-        CmdHaskellImports -> HaskellImportResolution.run
+        CmdHaskellImports    -> HaskellImportResolution.run
+        CmdHaskellLocalRefs  -> HaskellLocalRefs.run

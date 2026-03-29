@@ -8,6 +8,7 @@ import {
   textResult,
   errorResult,
 } from '../utils.js';
+import { isGrafemaUri, toCompactSemanticId } from '@grafema/util';
 import type {
   ToolResult,
   FindGuardsArgs,
@@ -28,10 +29,13 @@ export async function handleFindGuards(args: FindGuardsArgs): Promise<ToolResult
   const db = await getOrCreateBackend();
   const { nodeId } = args;
 
+  // Accept both grafema:// URI and compact format
+  const displayId = isGrafemaUri(nodeId) ? toCompactSemanticId(nodeId) : nodeId;
+
   // Verify target node exists
   const targetNode = await db.getNode(nodeId);
   if (!targetNode) {
-    return errorResult(`Node not found: ${nodeId}`);
+    return errorResult(`Node not found: ${displayId}`);
   }
 
   const guards: GuardInfo[] = [];
@@ -79,7 +83,7 @@ export async function handleFindGuards(args: FindGuardsArgs): Promise<ToolResult
 
   if (guards.length === 0) {
     return textResult(
-      `No guards found for node: ${nodeId}\n` +
+      `No guards found for node: ${displayId}\n` +
       `The node is not protected by any conditional scope (if/else/switch/etc.).`
     );
   }
@@ -91,7 +95,7 @@ export async function handleFindGuards(args: FindGuardsArgs): Promise<ToolResult
   }).join('\n');
 
   return textResult(
-    `Found ${guards.length} guard(s) for node: ${nodeId}\n` +
+    `Found ${guards.length} guard(s) for node: ${displayId}\n` +
     `(inner to outer order)\n\n` +
     summary +
     `\n\n` +

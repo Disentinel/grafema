@@ -48,6 +48,8 @@ export type RFDBCommand =
   | 'datalogQuery'
   | 'checkGuarantee'
   | 'executeDatalog'
+  // Cypher
+  | 'cypherQuery'
   // Protocol v2 - Multi-Database Commands
   | 'hello'
   | 'createDatabase'
@@ -336,6 +338,8 @@ export interface AttrQuery {
   exported?: boolean;
   /** When true, name and file filters use substring (contains) matching instead of exact match */
   substringMatch?: boolean;
+  /** When true, fall back to fuzzy name matching if exact search returns 0 results */
+  fuzzyNameFallback?: boolean;
   /** @deprecated Node-level version filter is legacy. In v2, use snapshot/tag APIs for history. */
   version?: string;
   /** Extra fields are matched against node metadata JSON (e.g. object, method, async) */
@@ -400,6 +404,13 @@ export interface DatalogExplainResult {
   profile: QueryProfile;
   explainSteps: ExplainStep[];
   warnings: string[];
+}
+
+// === CYPHER TYPES ===
+export interface CypherResult {
+  columns: string[];
+  rows: unknown[][];
+  rowCount: number;
 }
 
 // === SNAPSHOT TYPES ===
@@ -515,6 +526,7 @@ export interface ServerStats {
   nodeCount: number;
   edgeCount: number;
   deltaSize: number;
+  diskBytes: number;
   memoryPercent: number;
   queryCount: number;
   slowQueryCount: number;
@@ -597,6 +609,9 @@ export interface IRFDBClient {
   executeDatalog(source: string): Promise<DatalogResult[]>;
   /** Pass literal `true` for explain -- a boolean variable won't narrow the return type. */
   executeDatalog(source: string, explain: true): Promise<DatalogExplainResult>;
+
+  // Cypher
+  cypherQuery(query: string): Promise<CypherResult>;
 
   // Batch operations
   beginBatch(): void;

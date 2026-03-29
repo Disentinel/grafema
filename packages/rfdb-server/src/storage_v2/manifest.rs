@@ -844,6 +844,9 @@ impl ManifestStore {
         if self.db_path.is_none() {
             self.index.add_snapshot(&manifest);
             self.current = manifest;
+            // Free tombstone memory — shard TombstoneSet is the source of truth.
+            self.current.tombstoned_node_ids = Vec::new();
+            self.current.tombstoned_edge_keys = Vec::new();
             return Ok(());
         }
 
@@ -871,6 +874,12 @@ impl ManifestStore {
 
         // 4. Update cache
         self.current = manifest;
+
+        // 5. Free tombstone memory — data is persisted on disk.
+        // Tombstones are loaded fresh on open() and live in shard TombstoneSet
+        // during runtime. Keeping them in manifest wastes memory (copy #1 of 3+).
+        self.current.tombstoned_node_ids = Vec::new();
+        self.current.tombstoned_edge_keys = Vec::new();
 
         Ok(())
     }

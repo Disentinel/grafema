@@ -244,6 +244,9 @@ export function getNodeDisplayName(node: BaseNodeRecord): string {
     if (event) return event;
   }
 
+  // Anonymous arrows/expressions → λ
+  if (node.name === '<arrow>' || node.name === '<expression>') return 'λ';
+
   // Default: name or ID fallback
   if (node.name && !node.name.startsWith('{')) return node.name;
   return node.id;

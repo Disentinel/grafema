@@ -112,6 +112,7 @@ mod tests {
         );
     }
 
+
     #[test]
     fn parse_typescript_source() {
         let source = "const x: number = 42;";

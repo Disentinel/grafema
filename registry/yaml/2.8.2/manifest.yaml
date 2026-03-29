@@ -1,0 +1,219 @@
+schema_version: 1
+analyzer_version: 0.3.16
+authored: false
+confidence: 1
+generated: 2026-03-17T15:05:43.581Z
+package:
+  purl: pkg:npm/yaml@2.8.2
+  source_type: compiled_js
+exports:
+  - name: Alias
+    kind: CLASS
+    semanticId: browser/dist/nodes/Alias.js->CLASS->Alias
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: Composer
+    kind: CLASS
+    semanticId: browser/dist/compose/composer.js->CLASS->Composer
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: cst
+    kind: TYPE
+    semanticId: browser/dist/index.js->EXPORT_BINDING->cst
+    effects:
+      - PURE
+  - name: Document
+    kind: CLASS
+    semanticId: browser/dist/doc/Document.js->CLASS->Document
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: isAlias
+    kind: CONSTANT
+    semanticId: browser/dist/nodes/identity.js->CONSTANT->isAlias
+    effects:
+      - PURE
+  - name: isCollection
+    kind: FUNCTION
+    semanticId: browser/dist/nodes/identity.js->FUNCTION->isCollection
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: isDocument
+    kind: CONSTANT
+    semanticId: browser/dist/nodes/identity.js->CONSTANT->isDocument
+    effects:
+      - PURE
+  - name: isMap
+    kind: CONSTANT
+    semanticId: browser/dist/nodes/identity.js->CONSTANT->isMap
+    effects:
+      - PURE
+  - name: isNode
+    kind: FUNCTION
+    semanticId: browser/dist/nodes/identity.js->FUNCTION->isNode
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: isPair
+    kind: CONSTANT
+    semanticId: browser/dist/nodes/identity.js->CONSTANT->isPair
+    effects:
+      - PURE
+  - name: isScalar
+    kind: CONSTANT
+    semanticId: browser/dist/nodes/identity.js->CONSTANT->isScalar
+    effects:
+      - PURE
+  - name: isSeq
+    kind: CONSTANT
+    semanticId: browser/dist/nodes/identity.js->CONSTANT->isSeq
+    effects:
+      - PURE
+  - name: Lexer
+    kind: CLASS
+    semanticId: browser/dist/parse/lexer.js->CLASS->Lexer
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: LineCounter
+    kind: CLASS
+    semanticId: browser/dist/parse/line-counter.js->CLASS->LineCounter
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: Pair
+    kind: CLASS
+    semanticId: browser/dist/nodes/Pair.js->CLASS->Pair
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: parse
+    kind: FUNCTION
+    semanticId: browser/dist/public-api.js->FUNCTION->parse
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: parseAllDocuments
+    kind: FUNCTION
+    semanticId: browser/dist/public-api.js->FUNCTION->parseAllDocuments
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: parseDocument
+    kind: FUNCTION
+    semanticId: browser/dist/public-api.js->FUNCTION->parseDocument
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: Parser
+    kind: CLASS
+    semanticId: browser/dist/parse/parser.js->CLASS->Parser
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: Scalar
+    kind: CLASS
+    semanticId: browser/dist/nodes/Scalar.js->CLASS->Scalar
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: Schema
+    kind: CLASS
+    semanticId: browser/dist/schema/Schema.js->CLASS->Schema
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: stringify
+    kind: FUNCTION
+    semanticId: browser/dist/public-api.js->FUNCTION->stringify
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: visit
+    kind: FUNCTION
+    semanticId: browser/dist/visit.js->FUNCTION->visit
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: visitAsync
+    kind: FUNCTION
+    semanticId: browser/dist/visit.js->FUNCTION->visitAsync
+    effects:
+      - ASYNC
+    returns:
+      flow: OUT
+  - name: YAML
+    kind: TYPE
+    semanticId: browser/index.js->REFERENCE->YAML[h:1e93]
+    effects:
+      - PURE
+  - name: YAMLError
+    kind: CLASS
+    semanticId: browser/dist/errors.js->CLASS->YAMLError
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: YAMLMap
+    kind: CLASS
+    semanticId: browser/dist/nodes/YAMLMap.js->CLASS->YAMLMap
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: YAMLParseError
+    kind: CLASS
+    semanticId: browser/dist/errors.js->CLASS->YAMLParseError
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: YAMLSeq
+    kind: CLASS
+    semanticId: browser/dist/nodes/YAMLSeq.js->CLASS->YAMLSeq
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+  - name: YAMLWarning
+    kind: CLASS
+    semanticId: browser/dist/errors.js->CLASS->YAMLWarning
+    effects:
+      - PURE
+    returns:
+      flow: OUT
+imports:
+  - purl: pkg:npm/path
+    symbols:
+      - path
+  - purl: pkg:npm/util
+    symbols:
+      - util
+capabilities:
+  total_exports: 30
+  total_internal_symbols: 2937
+  has_graph: true
+access:
+  local: ./graph.rfdb
+language: typescript
+language_specific:
+  module_system: esm

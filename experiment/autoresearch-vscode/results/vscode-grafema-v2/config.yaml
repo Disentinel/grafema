@@ -1,0 +1,7 @@
+mode: grafema
+model: claude-sonnet-4-6
+model_alias: sonnet
+date: 2026-03-25T01:41:03.160Z
+question_count: 30
+questions_file: /home/dev/vscode/autoresearch/questions.yaml
+run_id: vscode-grafema-v2

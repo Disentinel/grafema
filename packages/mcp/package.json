@@ -1,6 +1,6 @@
 {
   "name": "@grafema/mcp",
-  "version": "0.2.12-beta",
+  "version": "0.3.22",
   "description": "MCP server for Grafema code analysis toolkit",
   "type": "module",
   "main": "./dist/server.js",
@@ -35,7 +35,7 @@
     "model-context-protocol",
     "code-analysis"
   ],
-  "license": "Apache-2.0",
+  "license": "FSL-1.1-Apache-2.0",
   "author": "Vadim Reshetnikov",
   "repository": {
     "type": "git",
@@ -43,11 +43,18 @@
     "directory": "packages/mcp"
   },
   "dependencies": {
+    "@grafema/api": "workspace:*",
     "@grafema/util": "workspace:*",
     "@grafema/types": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.25.1",
     "ajv": "^8.17.1",
     "yaml": "^2.8.2"
+  },
+  "optionalDependencies": {
+    "@grafema/grafema-darwin-arm64": "0.3.16",
+    "@grafema/grafema-darwin-x64": "0.3.16",
+    "@grafema/grafema-linux-arm64": "0.3.16",
+    "@grafema/grafema-linux-x64": "0.3.16"
   },
   "devDependencies": {
     "@types/node": "^25.0.8",

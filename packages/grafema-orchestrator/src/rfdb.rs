@@ -128,6 +128,20 @@ struct RequestEnvelope {
     params: serde_json::Value,
 }
 
+/// Direct-serialization envelope for commitBatch.
+/// Avoids intermediate serde_json::Value heap allocations (~70K+ objects
+/// for large batches) by serializing typed Rust structs straight to msgpack.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CommitBatchEnvelope<'a> {
+    request_id: String,
+    cmd: &'static str,
+    changed_files: &'a [String],
+    nodes: &'a [WireNode],
+    edges: &'a [WireEdge],
+    defer_index: bool,
+}
+
 // ---------------------------------------------------------------------------
 // Wire types — node & edge
 // ---------------------------------------------------------------------------
@@ -217,6 +231,16 @@ struct RawResponse {
     // DatalogQuery results
     #[serde(default)]
     results: Option<Vec<DatalogResult>>,
+
+    // QueryNodes results
+    #[serde(default)]
+    nodes: Option<Vec<WireNode>>,
+
+    // Streaming fields (queryNodes protocol v3+)
+    #[serde(default)]
+    done: Option<bool>,
+    #[serde(default)]
+    chunk_index: Option<u32>,
 }
 
 impl RawResponse {
@@ -571,7 +595,20 @@ impl RfdbClient {
         Ok(())
     }
 
+    /// Compact the graph storage, merging segments and deduplicating nodes/edges.
+    ///
+    /// Should be called after `rebuild_indexes` to ensure that re-analyzed files
+    /// don't cause duplicate counts (old segment + new segment for same node ID).
+    pub async fn compact(&mut self) -> Result<()> {
+        self.send_command("compact", serde_json::json!({}))
+            .await?;
+        Ok(())
+    }
+
     /// Send a single CommitBatch chunk to the server.
+    ///
+    /// Uses [`CommitBatchEnvelope`] for direct struct→msgpack serialization,
+    /// bypassing the `serde_json::Value` intermediate that `send_command` uses.
     async fn send_commit_batch_chunk(
         &mut self,
         changed_files: &[String],
@@ -579,26 +616,154 @@ impl RfdbClient {
         edges: &[WireEdge],
         defer_index: bool,
     ) -> Result<CommitDelta> {
-        let params = serde_json::json!({
-            "changedFiles": changed_files,
-            "nodes": nodes,
-            "edges": edges,
-            "deferIndex": defer_index,
-        });
-        let resp = self.send_command("commitBatch", params).await?;
+        let t0 = std::time::Instant::now();
+        let envelope = CommitBatchEnvelope {
+            request_id: self.next_request_id(),
+            cmd: "commitBatch",
+            changed_files,
+            nodes,
+            edges,
+            defer_index,
+        };
+        let payload = rmp_serde::to_vec_named(&envelope)?;
+        let serialize_ms = t0.elapsed().as_millis();
+        self.send_raw(&payload).await?;
+        let resp = self.recv_raw().await?;
+        resp.check_error()?;
+        let total_ms = t0.elapsed().as_millis();
+        tracing::info!(
+            serialize_ms,
+            server_ms = total_ms - serialize_ms,
+            total_ms,
+            nodes = nodes.len(),
+            edges = edges.len(),
+            files = changed_files.len(),
+            "commitBatch timing"
+        );
 
         Ok(resp.delta.unwrap_or_default())
     }
 
     /// Execute a Datalog query and return the result bindings.
+    ///
+    /// Uses the unified `executeDatalog` wire command which auto-detects
+    /// whether the source contains rules (program) or a direct query.
+    /// This allows plugins to use both `violation(X) :- ...` rule syntax
+    /// and direct query syntax like `node(X, "CALL"), attr(X, "name", N)`.
     pub async fn datalog_query(&mut self, query: &str) -> Result<Vec<DatalogResult>> {
         let params = serde_json::json!({
-            "query": query,
+            "source": query,
             "explain": false,
         });
-        let resp = self.send_command("datalogQuery", params).await?;
+        let resp = self.send_command("executeDatalog", params).await?;
 
         Ok(resp.results.unwrap_or_default())
+    }
+
+    /// Start a streaming queryNodes request. Returns (first_chunk, is_streaming).
+    ///
+    /// If `is_streaming` is true, call [`recv_query_frame`](Self::recv_query_frame)
+    /// in a loop to get remaining chunks. If false, `first_chunk` contains all
+    /// results.
+    ///
+    /// This avoids materializing the full result set in memory — for large
+    /// node types (CALL, REFERENCE) this can save hundreds of MB.
+    pub async fn start_query_nodes_by_type(
+        &mut self,
+        node_type: &str,
+    ) -> Result<(Vec<WireNode>, bool)> {
+        let params = serde_json::json!({
+            "query": {
+                "nodeType": node_type
+            }
+        });
+        let envelope = RequestEnvelope {
+            request_id: self.next_request_id(),
+            cmd: "queryNodes".to_string(),
+            params,
+        };
+        let payload = rmp_serde::to_vec_named(&envelope)?;
+        self.send_raw(&payload).await?;
+
+        let first = self.recv_raw().await?;
+        first.check_error()?;
+
+        let nodes = first.nodes.unwrap_or_default();
+        let is_streaming = first.done == Some(false);
+        Ok((nodes, is_streaming))
+    }
+
+    /// Read the next frame of a streaming queryNodes response.
+    ///
+    /// Returns `(nodes_in_this_frame, is_stream_complete)`. Keep calling in a
+    /// loop until `is_stream_complete` is `true`. The final frame may still
+    /// contain nodes — process them before stopping.
+    ///
+    /// MUST only be called after [`start_query_nodes_by_type`](Self::start_query_nodes_by_type)
+    /// returned `is_streaming = true`. Do NOT call again after receiving
+    /// `is_stream_complete = true`.
+    pub async fn recv_query_frame(&mut self) -> Result<(Vec<WireNode>, bool)> {
+        let chunk = self.recv_raw().await?;
+        chunk.check_error()?;
+        let nodes = chunk.nodes.unwrap_or_default();
+        let done = chunk.done.unwrap_or(true);
+        Ok((nodes, done))
+    }
+
+    /// Drain remaining frames of a streaming query to keep the socket clean.
+    ///
+    /// Call this when abandoning a query mid-stream (e.g., after a flush error)
+    /// to prevent protocol state corruption. Reads and discards frames until
+    /// the `done=true` frame is received.
+    ///
+    /// If draining itself fails (e.g., connection lost), the error is logged
+    /// but not propagated — the caller already has an error to handle.
+    pub async fn drain_query_stream(&mut self) {
+        loop {
+            match self.recv_raw().await {
+                Ok(chunk) => {
+                    if chunk.done.unwrap_or(true) {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to drain RFDB query stream: {e}");
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Query nodes by type from RFDB.
+    ///
+    /// Returns all nodes matching the given `node_type` string.
+    /// Convenience wrapper that collects all streaming chunks into a Vec.
+    /// For memory-sensitive code, use [`start_query_nodes_by_type`](Self::start_query_nodes_by_type)
+    /// + [`recv_query_frame`](Self::recv_query_frame) instead.
+    pub async fn query_nodes_by_type(&mut self, node_type: &str) -> Result<Vec<WireNode>> {
+        let (mut all, is_streaming) = self.start_query_nodes_by_type(node_type).await?;
+        if is_streaming {
+            loop {
+                let (nodes, done) = self.recv_query_frame().await?;
+                all.extend(nodes);
+                if done {
+                    break;
+                }
+            }
+        }
+        Ok(all)
+    }
+
+    /// Query all nodes for a specific file path (exact match).
+    ///
+    /// Returns all nodes whose `file` field equals the given path.
+    /// Uses the `queryNodesByFile` server command which is not streamed
+    /// (per-file result sets are small enough for a single response).
+    pub async fn query_nodes_by_file(&mut self, file: &str) -> Result<Vec<WireNode>> {
+        let params = serde_json::json!({ "file": file });
+        let resp = self.send_command("queryNodesByFile", params).await?;
+        resp.check_error()?;
+        Ok(resp.nodes.unwrap_or_default())
     }
 
     /// Health-check ping. Returns `Ok(true)` if the server responds with `pong`.
@@ -785,6 +950,9 @@ mod tests {
             edge_count: None,
             delta: None,
             results: None,
+            nodes: None,
+            done: None,
+            chunk_index: None,
         };
         assert!(resp.check_error().is_ok());
     }
@@ -806,6 +974,9 @@ mod tests {
             edge_count: None,
             delta: None,
             results: None,
+            nodes: None,
+            done: None,
+            chunk_index: None,
         };
         let err = resp.check_error().unwrap_err();
         let msg = err.to_string();
@@ -879,5 +1050,83 @@ mod tests {
     #[test]
     fn test_commit_chunk_size_constant() {
         assert_eq!(COMMIT_CHUNK_SIZE, 10_000);
+    }
+
+    /// Verify that CommitBatchEnvelope produces identical msgpack to the old
+    /// RequestEnvelope + serde_json::Value approach.
+    #[test]
+    fn test_commit_batch_envelope_wire_compat() {
+        let files = vec!["src/main.js".to_string()];
+        let nodes = vec![WireNode {
+            id: "FUNCTION:foo:src/main.js".to_string(),
+            semantic_id: None,
+            node_type: Some("FUNCTION".to_string()),
+            name: Some("foo".to_string()),
+            file: Some("src/main.js".to_string()),
+            exported: false,
+            metadata: None,
+        }];
+        let edges = vec![WireEdge {
+            src: "a".to_string(),
+            dst: "b".to_string(),
+            edge_type: "CALLS".to_string(),
+            metadata: None,
+        }];
+
+        // New typed envelope
+        let new_envelope = CommitBatchEnvelope {
+            request_id: "r0".to_string(),
+            cmd: "commitBatch",
+            changed_files: &files,
+            nodes: &nodes,
+            edges: &edges,
+            defer_index: true,
+        };
+        let new_bytes = rmp_serde::to_vec_named(&new_envelope).unwrap();
+
+        // Old approach: serde_json::Value + RequestEnvelope with flatten
+        let old_envelope = RequestEnvelope {
+            request_id: "r0".to_string(),
+            cmd: "commitBatch".to_string(),
+            params: serde_json::json!({
+                "changedFiles": files,
+                "nodes": nodes,
+                "edges": edges,
+                "deferIndex": true,
+            }),
+        };
+        let old_bytes = rmp_serde::to_vec_named(&old_envelope).unwrap();
+
+        // Decode both to a generic Value to compare semantically
+        // (field order in msgpack maps may differ between the two approaches)
+        let new_decoded: serde_json::Value = rmp_serde::from_slice(&new_bytes).unwrap();
+        let old_decoded: serde_json::Value = rmp_serde::from_slice(&old_bytes).unwrap();
+
+        assert_eq!(new_decoded["requestId"], old_decoded["requestId"]);
+        assert_eq!(new_decoded["cmd"], old_decoded["cmd"]);
+        assert_eq!(new_decoded["changedFiles"], old_decoded["changedFiles"]);
+        assert_eq!(new_decoded["nodes"], old_decoded["nodes"]);
+        assert_eq!(new_decoded["edges"], old_decoded["edges"]);
+        assert_eq!(new_decoded["deferIndex"], old_decoded["deferIndex"]);
+    }
+
+    /// Verify CommitBatchEnvelope with empty collections serializes correctly.
+    #[test]
+    fn test_commit_batch_envelope_empty() {
+        let envelope = CommitBatchEnvelope {
+            request_id: "r5".to_string(),
+            cmd: "commitBatch",
+            changed_files: &[],
+            nodes: &[],
+            edges: &[],
+            defer_index: false,
+        };
+        let bytes = rmp_serde::to_vec_named(&envelope).unwrap();
+        let decoded: serde_json::Value = rmp_serde::from_slice(&bytes).unwrap();
+        assert_eq!(decoded["cmd"], "commitBatch");
+        assert_eq!(decoded["changedFiles"].as_array().unwrap().len(), 0);
+        assert_eq!(decoded["nodes"].as_array().unwrap().len(), 0);
+        assert_eq!(decoded["edges"].as_array().unwrap().len(), 0);
+        assert_eq!(decoded["deferIndex"], false);
     }
 }

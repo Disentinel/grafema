@@ -5,6 +5,7 @@
 
 import { ensureAnalyzed } from '../analysis.js';
 import { textResult, errorResult } from '../utils.js';
+import { isGrafemaUri, toCompactSemanticId } from '@grafema/util';
 import type { ToolResult, GetNodeArgs, GetNeighborsArgs, TraverseGraphArgs } from '../types.js';
 import type { EdgeType, EdgeRecord } from '@grafema/types';
 
@@ -54,10 +55,14 @@ export async function getNodeLogic(db: GraphBackendLike, args: GetNodeArgs): Pro
     return errorResult('semanticId must be a non-empty string');
   }
 
+  // Accept both grafema:// URI and compact format
+  // If URI is passed, convert to compact for error messages
+  const displayId = isGrafemaUri(semanticId) ? toCompactSemanticId(semanticId) : semanticId;
+
   const node = await db.getNode(semanticId);
 
   if (!node) {
-    return errorResult(`Node not found: "${semanticId}". Use find_nodes to search by type, name, or file.`);
+    return errorResult(`Node not found: "${displayId}". Use find_nodes to search by type, name, or file.`);
   }
 
   return textResult(JSON.stringify(node, null, 2));
@@ -74,10 +79,13 @@ export async function getNeighborsLogic(db: GraphBackendLike, args: GetNeighbors
     return errorResult('edgeTypes must not be an empty array. Omit edgeTypes to get all edge types.');
   }
 
+  // Accept both grafema:// URI and compact format
+  const displayId = isGrafemaUri(semanticId) ? toCompactSemanticId(semanticId) : semanticId;
+
   const node = await db.getNode(semanticId);
 
   if (!node) {
-    return errorResult(`Node not found: "${semanticId}". Use find_nodes to search by type, name, or file.`);
+    return errorResult(`Node not found: "${displayId}". Use find_nodes to search by type, name, or file.`);
   }
 
   const edgeFilter = (edgeTypes as EdgeType[] | undefined) ?? null;
@@ -120,7 +128,9 @@ export async function traverseGraphLogic(db: GraphBackendLike, args: TraverseGra
   for (const id of uniqueStartIds) {
     const node = await db.getNode(id);
     if (!node) {
-      return errorResult(`Start node not found: "${id}". Use find_nodes to search by type, name, or file.`);
+      // Accept both grafema:// URI and compact format for display
+      const displayId = isGrafemaUri(id) ? toCompactSemanticId(id) : id;
+      return errorResult(`Start node not found: "${displayId}". Use find_nodes to search by type, name, or file.`);
     }
   }
 

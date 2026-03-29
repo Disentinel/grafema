@@ -9,12 +9,18 @@
 
 use anyhow::{bail, Context, Result};
 use std::process::Stdio;
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::{mpsc, Mutex};
 
 /// Maximum message size (100 MB), matching RFDB client.
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 100 * 1024 * 1024;
+
+/// Default per-request timeout (120 seconds).
+/// If a worker takes longer than this, the request is aborted
+/// and the worker is killed + respawned.
+const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Configuration for spawning pool workers.
 pub struct PoolConfig {
@@ -24,6 +30,8 @@ pub struct PoolConfig {
     pub args: Vec<String>,
     /// Maximum allowed frame size in bytes.
     pub max_message_size: usize,
+    /// Per-request timeout. Worker is killed and respawned if exceeded.
+    pub request_timeout: Duration,
 }
 
 impl Default for PoolConfig {
@@ -32,6 +40,7 @@ impl Default for PoolConfig {
             command: String::new(),
             args: Vec::new(),
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
+            request_timeout: DEFAULT_REQUEST_TIMEOUT,
         }
     }
 }
@@ -160,7 +169,21 @@ impl ProcessPool {
             .await
             .context("pool is shut down")?;
 
-        let result = self.do_request(idx, payload).await;
+        let timeout = self.config.request_timeout;
+        let result = match tokio::time::timeout(timeout, self.do_request(idx, payload)).await {
+            Ok(r) => r,
+            Err(_) => {
+                // Timeout: kill the stuck worker and respawn
+                tracing::error!(
+                    worker = idx,
+                    timeout_secs = timeout.as_secs(),
+                    "worker timed out — killing and respawning"
+                );
+                let _ = self.respawn_worker(idx).await;
+                let _ = self.return_tx.send(idx).await;
+                bail!("worker {} timed out after {}s", idx, timeout.as_secs());
+            }
+        };
 
         match result {
             Ok(response) => {
@@ -171,7 +194,24 @@ impl ProcessPool {
                 // Try to respawn and retry once
                 match self.respawn_worker(idx).await {
                     Ok(()) => {
-                        let retry_result = self.do_request(idx, payload).await;
+                        let retry_result = match tokio::time::timeout(
+                            timeout,
+                            self.do_request(idx, payload),
+                        )
+                        .await
+                        {
+                            Ok(r) => r,
+                            Err(_) => {
+                                let _ = self.respawn_worker(idx).await;
+                                let _ = self.return_tx.send(idx).await;
+                                bail!(
+                                    "worker {} retry also timed out after {}s (original: {})",
+                                    idx,
+                                    timeout.as_secs(),
+                                    first_err
+                                );
+                            }
+                        };
                         let _ = self.return_tx.send(idx).await;
                         retry_result.with_context(|| {
                             format!("retry after respawn also failed (original: {})", first_err)
@@ -246,6 +286,82 @@ impl ProcessPool {
     /// Return the number of worker slots in the pool.
     pub fn size(&self) -> usize {
         self.workers.len()
+    }
+
+    /// Acquire a specific worker from the pool for directed communication.
+    ///
+    /// Returns a [`WorkerHandle`] that allows sending multiple requests to the
+    /// same worker. The worker is returned to the pool when the handle is dropped.
+    pub async fn acquire(&self) -> Result<WorkerHandle<'_>> {
+        let idx = self
+            .available_rx
+            .lock()
+            .await
+            .recv()
+            .await
+            .context("pool is shut down")?;
+        Ok(WorkerHandle { pool: self, idx, returned: false })
+    }
+
+    /// Acquire ALL workers from the pool at once.
+    ///
+    /// Returns handles to every worker, allowing directed communication with
+    /// each one. All handles must be dropped to return workers to the pool.
+    pub async fn acquire_all(&self) -> Result<Vec<WorkerHandle<'_>>> {
+        let mut handles = Vec::with_capacity(self.workers.len());
+        for _ in 0..self.workers.len() {
+            handles.push(self.acquire().await?);
+        }
+        Ok(handles)
+    }
+
+    /// Send a payload to ALL workers in the pool (for context loading).
+    ///
+    /// Acquires all workers, sends the payload to each one, collects responses,
+    /// then releases all workers back to the pool.
+    pub async fn send_to_all(&self, payload: &[u8]) -> Result<Vec<Vec<u8>>> {
+        let mut handles = Vec::with_capacity(self.workers.len());
+        for _ in 0..self.workers.len() {
+            handles.push(self.acquire().await?);
+        }
+        let mut responses = Vec::with_capacity(handles.len());
+        for handle in &handles {
+            responses.push(handle.request(payload).await?);
+        }
+        Ok(responses)
+    }
+}
+
+/// A handle to a specific worker in the pool, acquired via [`ProcessPool::acquire`].
+///
+/// While held, the worker is exclusively owned by this handle. Requests can be
+/// sent directly to this specific worker via [`WorkerHandle::request`].
+/// The worker is returned to the pool when the handle is dropped.
+pub struct WorkerHandle<'a> {
+    pool: &'a ProcessPool,
+    idx: usize,
+    returned: bool,
+}
+
+impl WorkerHandle<'_> {
+    /// Send a request to this specific worker and return the response.
+    pub async fn request(&self, payload: &[u8]) -> Result<Vec<u8>> {
+        let timeout = self.pool.config.request_timeout;
+        match tokio::time::timeout(timeout, self.pool.do_request(self.idx, payload)).await {
+            Ok(result) => result,
+            Err(_) => {
+                bail!("worker {} timed out after {}s", self.idx, timeout.as_secs());
+            }
+        }
+    }
+}
+
+impl Drop for WorkerHandle<'_> {
+    fn drop(&mut self) {
+        if !self.returned {
+            self.returned = true;
+            let _ = self.pool.return_tx.try_send(self.idx);
+        }
     }
 }
 
@@ -330,6 +446,7 @@ mod tests {
             command: "cat".to_string(),
             args: vec![],
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
+            request_timeout: DEFAULT_REQUEST_TIMEOUT,
         };
         let result = ProcessPool::new(config, 0);
         match result {
@@ -366,6 +483,7 @@ while True:
             command: "python3".to_string(),
             args: vec!["-c".to_string(), python_script.to_string()],
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
+            request_timeout: DEFAULT_REQUEST_TIMEOUT,
         };
 
         let pool = match ProcessPool::new(config, 2) {
@@ -412,6 +530,7 @@ while True:
             command: "python3".to_string(),
             args: vec!["-c".to_string(), python_script.to_string()],
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
+            request_timeout: DEFAULT_REQUEST_TIMEOUT,
         };
 
         let pool = match ProcessPool::new(config, 3) {
@@ -460,6 +579,7 @@ if len(hdr) == 4:
             command: "python3".to_string(),
             args: vec!["-c".to_string(), python_script.to_string()],
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
+            request_timeout: DEFAULT_REQUEST_TIMEOUT,
         };
 
         let pool = match ProcessPool::new(config, 1) {
@@ -504,6 +624,7 @@ while True:
             command: "python3".to_string(),
             args: vec!["-c".to_string(), python_script.to_string()],
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
+            request_timeout: DEFAULT_REQUEST_TIMEOUT,
         };
 
         let pool = match ProcessPool::new(config, 1) {

@@ -1,0 +1,4 @@
+packages: .
+         ../grafema-common
+         ../grafema-resolve
+         ../haskell-analyzer

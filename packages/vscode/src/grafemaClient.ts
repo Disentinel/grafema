@@ -35,7 +35,7 @@ function sleep(ms: number): Promise<void> {
  * - DB exists, server running: Connect directly
  */
 export class GrafemaClientManager extends EventEmitter {
-  private workspaceRoot: string;
+  readonly workspaceRoot: string;
   private explicitBinaryPath: string | null;
   private explicitSocketPath: string | null;
   private client: RFDBClient | RFDBWebSocketClient | null = null;
@@ -55,7 +55,10 @@ export class GrafemaClientManager extends EventEmitter {
     return this._state;
   }
 
-  private setState(state: ConnectionState): void {
+  /**
+   * Set connection state. Public so analyze/init commands can update state.
+   */
+  setState(state: ConnectionState): void {
     this._state = state;
     this.emit('stateChange', state);
   }
@@ -293,9 +296,10 @@ export class GrafemaClientManager extends EventEmitter {
   }
 
   /**
-   * Start RFDB server process
+   * Start RFDB server process.
+   * Public so analyze command can ensure server is running before analysis.
    */
-  private async startServer(): Promise<void> {
+  async startServer(): Promise<void> {
     const binaryPath = this.findServerBinary();
     if (!binaryPath) {
       throw new Error(
@@ -305,8 +309,19 @@ export class GrafemaClientManager extends EventEmitter {
       );
     }
 
-    // Remove stale socket
+    // If socket exists, probe to check if a server is already running
     if (existsSync(this.socketPath)) {
+      try {
+        const probe = new RFDBClient(this.socketPath, 'probe');
+        await probe.connect();
+        const pong = await probe.ping();
+        await probe.close();
+        if (pong) {
+          return; // Server already running, skip start
+        }
+      } catch {
+        // Socket exists but server is dead — remove stale socket below
+      }
       unlinkSync(this.socketPath);
     }
 
