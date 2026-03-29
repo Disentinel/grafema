@@ -7,8 +7,11 @@
  */
 
 import * as vscode from 'vscode';
+import type { WireNode } from '@grafema/types';
+import type { BaseRFDBClient } from '@grafema/rfdb-client';
 import type { GrafemaClientManager } from './grafemaClient';
 import type { EdgesProvider } from './edgesProvider';
+import type { CallersProvider } from './callersProvider';
 import type { DebugProvider } from './debugProvider';
 import { findNodeAtCursor } from './nodeLocator';
 
@@ -24,7 +27,8 @@ export async function findAndSetRoot(
   clientManager: GrafemaClientManager | null,
   edgesProvider: EdgesProvider | null,
   debugProvider: DebugProvider | null,
-  preserveHistory: boolean
+  preserveHistory: boolean,
+  callersProvider?: CallersProvider | null,
 ): Promise<void> {
   console.log('[grafema-explore] findAndSetRoot called');
 
@@ -93,7 +97,7 @@ export async function findAndSetRoot(
       query: { file: filePath, line, column },
       result: node
         ? `found: ${node.nodeType} "${node.name}"`
-        : `${allNodes.length} nodes in file, none matched`,
+        : 'no node matched at cursor',
       details,
     });
 
@@ -103,8 +107,17 @@ export async function findAndSetRoot(
       } else {
         edgesProvider.clearAndSetRoot(node);
       }
+
+      // Update callers panel: find enclosing FUNCTION for current node
+      if (callersProvider) {
+        const fnNode = node.nodeType === 'FUNCTION' || node.nodeType === 'METHOD'
+          ? node
+          : await findEnclosingFunction(client, node);
+        callersProvider.setRootNode(fnNode);
+      }
     } else {
       edgesProvider.setStatusMessage('No graph node at cursor');
+      if (callersProvider) callersProvider.setRootNode(null);
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -117,6 +130,39 @@ export async function findAndSetRoot(
     });
     edgesProvider.setStatusMessage('Error querying graph');
   }
+}
+
+/**
+ * Walk up CONTAINS edges to find the nearest enclosing FUNCTION or METHOD node.
+ * Returns null if no function found (e.g. module-level code).
+ */
+async function findEnclosingFunction(client: BaseRFDBClient, node: WireNode): Promise<WireNode | null> {
+  const visited = new Set<string>();
+  let currentId = node.id;
+
+  for (let depth = 0; depth < 10; depth++) {
+    if (visited.has(currentId)) break;
+    visited.add(currentId);
+
+    try {
+      const edges = await client.getIncomingEdges(currentId, ['CONTAINS' as any]);
+      if (edges.length === 0) break;
+
+      const parentId = edges[0].src;
+      const parentNode = await client.getNode(parentId);
+      if (!parentNode) break;
+
+      if (parentNode.nodeType === 'FUNCTION' || parentNode.nodeType === 'METHOD') {
+        return parentNode;
+      }
+
+      currentId = parentId;
+    } catch {
+      break;
+    }
+  }
+
+  return null;
 }
 
 /**
