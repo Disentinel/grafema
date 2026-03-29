@@ -157,6 +157,73 @@ import { CivMap } from './civ-map/CivMap.js';
 
 const map = new CivMap({ container: document.getElementById('canvas-container') });
 await map.load('/api/hex-stream');
+
+// Expose for postMessage API (VS Code webview integration)
+window._grafemaMap = map;
+
+// Listen for messages from VS Code webview parent
+window.addEventListener('message', async (event) => {
+    const msg = event.data;
+    if (!msg || !msg.command) return;
+
+    if (msg.command === 'highlightNode' && msg.nodeName) {
+        // Search for node by name and navigate to it
+        try {
+            const resp = await fetch(`/api/search?q=${encodeURIComponent(msg.nodeName)}&limit=1`);
+            const results = await resp.json();
+            if (results.length > 0) {
+                const r = results[0];
+                // Clear previous selection and activate this node
+                map.interaction?.clearActive();
+                if (r.tileIndex != null) {
+                    map.interaction?.addActive(r.tileIndex);
+                    // Fly camera to the node
+                    map.scene?.flyTo(r.worldX, r.worldZ, 15);
+                }
+            }
+        } catch (e) {
+            console.warn('highlightNode failed:', e);
+        }
+    }
+
+    if (msg.command === 'showTrace' && msg.nodeNames) {
+        // Highlight multiple nodes for trace visualization
+        map.interaction?.clearActive();
+        for (const name of msg.nodeNames) {
+            try {
+                const resp = await fetch(`/api/search?q=${encodeURIComponent(name)}&limit=1`);
+                const results = await resp.json();
+                if (results.length > 0 && results[0].tileIndex != null) {
+                    map.interaction?.addActive(results[0].tileIndex);
+                }
+            } catch {}
+        }
+    }
+});
+
+// Notify parent when a node is double-clicked (activated)
+const origToggle = map.interaction?.toggleActive.bind(map.interaction);
+if (map.interaction && origToggle) {
+    map.interaction.toggleActive = (seqIdx) => {
+        origToggle(seqIdx);
+        // Fetch node details and post to parent
+        const globalIdx = map.data?.tileGlobalIdx?.[seqIdx];
+        if (globalIdx != null) {
+            fetch(`/api/node?index=${globalIdx}`)
+                .then(r => r.json())
+                .then(detail => {
+                    window.parent.postMessage({
+                        type: 'nodeClick',
+                        nodeId: detail.semanticId ?? detail.id,
+                        file: detail.file,
+                        line: detail.line,
+                        name: detail.name,
+                    }, '*');
+                })
+                .catch(() => {});
+        }
+    };
+}
 </script>
 
 </body>

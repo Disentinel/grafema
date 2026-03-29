@@ -108,6 +108,14 @@ export async function findAndSetRoot(
         edgesProvider.clearAndSetRoot(node);
       }
 
+      // Update map panel: highlight current node
+      try {
+        const { MapPanel } = require('./mapPanel');
+        if (MapPanel.currentPanel) {
+          MapPanel.currentPanel.highlightNode(node.name || '', node.nodeType || '');
+        }
+      } catch { /* map panel not open */ }
+
       // Update callers panel: find enclosing FUNCTION for current node
       if (callersProvider) {
         const fnNode = node.nodeType === 'FUNCTION' || node.nodeType === 'METHOD'
