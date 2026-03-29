@@ -8,7 +8,7 @@
 import type { ChildProcess } from 'child_process';
 import { spawn } from 'child_process';
 import type { FSWatcher } from 'fs';
-import { existsSync, unlinkSync, watch } from 'fs';
+import { existsSync, readFileSync, unlinkSync, watch } from 'fs';
 import { homedir } from 'os';
 import { join, dirname, basename } from 'path';
 import { EventEmitter } from 'events';
@@ -321,6 +321,22 @@ export class GrafemaClientManager extends EventEmitter {
       unlinkSync(this.socketPath);
     }
 
+    // Kill any old server holding the db lock (prevents flock conflict)
+    const pidPath = join(dirname(this.socketPath), 'rfdb.pid');
+    if (existsSync(pidPath)) {
+      try {
+        const oldPid = parseInt(readFileSync(pidPath, 'utf-8').trim(), 10);
+        if (oldPid > 0) {
+          process.kill(oldPid, 'SIGTERM');
+          // Brief wait for graceful exit
+          await sleep(500);
+        }
+      } catch {
+        // Process already dead or permission denied — fine
+      }
+      try { unlinkSync(pidPath); } catch { /* ignore */ }
+    }
+
     const binaryPath = this.findServerBinary();
     if (!binaryPath) {
       throw new Error(
@@ -337,6 +353,12 @@ export class GrafemaClientManager extends EventEmitter {
 
     // Don't let server process prevent VS Code from exiting
     this.serverProcess.unref();
+
+    // Write PID file so future restarts can gracefully kill this server
+    if (this.serverProcess.pid) {
+      const { writeFileSync } = require('fs');
+      try { writeFileSync(pidPath, String(this.serverProcess.pid)); } catch { /* ignore */ }
+    }
 
     this.serverProcess.on('error', (err: Error) => {
       console.error('[grafema-explore] Server process error:', err);
