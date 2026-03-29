@@ -161,33 +161,41 @@ await map.load('/api/hex-stream');
 // Expose for postMessage API (VS Code webview integration)
 window._grafemaMap = map;
 
+// Debounce highlight to avoid rapid flyTo spam from cursor movement
+let _highlightTimer = null;
+let _lastHighlight = '';
+
 // Listen for messages from VS Code webview parent
 window.addEventListener('message', async (event) => {
     const msg = event.data;
     if (!msg || !msg.command) return;
 
     if (msg.command === 'highlightNode' && msg.nodeName) {
-        // Search for node by name, prefer matching type + file
-        try {
-            const resp = await fetch(`/api/search?q=${encodeURIComponent(msg.nodeName)}&limit=20`);
-            const results = await resp.json();
-            // Best match: tile with matching type AND file
-            const match = results.find(r => r.tileIndex != null && r.type === msg.nodeType && msg.file && r.file === msg.file)
-                       || results.find(r => r.tileIndex != null && r.type === msg.nodeType)
-                       || results.find(r => r.tileIndex != null && msg.file && r.file === msg.file)
-                       || results.find(r => r.tileIndex != null)
-                       || results[0];
-            if (match) {
-                map.interaction?.clearActive();
-                if (match.tileIndex != null) {
-                    map.interaction?.addActive(match.tileIndex);
+        // Debounce: skip if same node, delay to avoid flyTo spam
+        const key = `${msg.nodeName}:${msg.file}`;
+        if (key === _lastHighlight) return;
+        _lastHighlight = key;
+        clearTimeout(_highlightTimer);
+        _highlightTimer = setTimeout(async () => {
+            try {
+                const resp = await fetch(`/api/search?q=${encodeURIComponent(msg.nodeName)}&limit=20`);
+                const results = await resp.json();
+                const match = results.find(r => r.tileIndex != null && r.type === msg.nodeType && msg.file && r.file === msg.file)
+                           || results.find(r => r.tileIndex != null && r.type === msg.nodeType)
+                           || results.find(r => r.tileIndex != null && msg.file && r.file === msg.file)
+                           || results.find(r => r.tileIndex != null)
+                           || results[0];
+                if (match) {
+                    map.interaction?.clearActive();
+                    if (match.tileIndex != null) {
+                        map.interaction?.addActive(match.tileIndex);
+                    }
+                    map.scene?.flyTo(match.worldX, match.worldZ, 800);
                 }
-                // Fly camera to the node
-                map.scene?.flyTo(match.worldX, match.worldZ, 15);
+            } catch (e) {
+                console.warn('highlightNode failed:', e);
             }
-        } catch (e) {
-            console.warn('highlightNode failed:', e);
-        }
+        }, 300); // 300ms debounce
     }
 
     if (msg.command === 'showTrace' && msg.nodeNames) {
