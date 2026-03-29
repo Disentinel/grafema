@@ -1100,6 +1100,18 @@ fn expr_node_id(expr: &syn::Expr, ctx: &Ctx) -> Option<String> {
             let hash = ctx.pos_hash(line, col);
             Some(semantic_id(&ctx.file, "CALL", &name, parent, Some(&hash)))
         }
+        syn::Expr::Field(f) => {
+            let member = match &f.member {
+                syn::Member::Named(i) => i.to_string(),
+                syn::Member::Unnamed(i) => i.index.to_string(),
+            };
+            let (line, col) = ctx.span_line_col(f.dot_token.span);
+            let parent = ctx.enclosing_fn.as_deref();
+            let hash = ctx.pos_hash(line, col);
+            Some(semantic_id(&ctx.file, "PROPERTY_ACCESS", &member, parent, Some(&hash)))
+        }
+        syn::Expr::Reference(r) => expr_node_id(&r.expr, ctx),
+        syn::Expr::Paren(p) => expr_node_id(&p.expr, ctx),
         syn::Expr::Lit(l) => {
             let (line, col) = ctx.span_line_col(l.lit.span());
             let parent = ctx.enclosing_fn.as_deref();
@@ -1267,9 +1279,19 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
                 extra: HashMap::new(),
             });
 
-            // READS_FROM: method call reads the receiver
+            // READS_FROM: method call reads the receiver.
+            // Try direct edge first (for chains like a.b.c()), fall back to deferred.
             let receiver_name = expr_to_name(&e.receiver);
-            ctx.defer_ref(&receiver_name, &node_id, "READS_FROM");
+            if let Some(recv_id) = expr_node_id(&e.receiver, ctx) {
+                ctx.emit_edge(GraphEdge {
+                    src: node_id.clone(),
+                    dst: recv_id,
+                    edge_type: "READS_FROM".to_string(),
+                    metadata: HashMap::new(),
+                });
+            } else {
+                ctx.defer_ref(&receiver_name, &node_id, "READS_FROM");
+            }
 
             walk_expr(&e.receiver, ctx);
             for (i, arg) in e.args.iter().enumerate() {
@@ -1339,8 +1361,17 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
                 extra: HashMap::new(),
             });
 
-            // READS_FROM: property access reads the receiver variable
-            ctx.defer_ref(&receiver_name, &node_id, "READS_FROM");
+            // READS_FROM: property access reads the receiver.
+            if let Some(recv_id) = expr_node_id(&e.base, ctx) {
+                ctx.emit_edge(GraphEdge {
+                    src: node_id.clone(),
+                    dst: recv_id,
+                    edge_type: "READS_FROM".to_string(),
+                    metadata: HashMap::new(),
+                });
+            } else {
+                ctx.defer_ref(&receiver_name, &node_id, "READS_FROM");
+            }
 
             walk_expr(&e.base, ctx);
         }
