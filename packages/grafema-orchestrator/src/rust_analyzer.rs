@@ -1112,6 +1112,23 @@ fn expr_node_id(expr: &syn::Expr, ctx: &Ctx) -> Option<String> {
         }
         syn::Expr::Reference(r) => expr_node_id(&r.expr, ctx),
         syn::Expr::Paren(p) => expr_node_id(&p.expr, ctx),
+        syn::Expr::Try(t) => expr_node_id(&t.expr, ctx),
+        syn::Expr::Await(a) => expr_node_id(&a.base, ctx),
+        syn::Expr::Unary(u) => expr_node_id(&u.expr, ctx),
+        syn::Expr::Block(b) => {
+            // Block expression returns its last expression
+            b.block.stmts.last().and_then(|s| match s {
+                syn::Stmt::Expr(e, _) => expr_node_id(e, ctx),
+                _ => None,
+            })
+        }
+        syn::Expr::If(i) => {
+            // if-else expression returns from then branch
+            i.then_branch.stmts.last().and_then(|s| match s {
+                syn::Stmt::Expr(e, _) => expr_node_id(e, ctx),
+                _ => None,
+            })
+        }
         syn::Expr::Lit(l) => {
             let (line, col) = ctx.span_line_col(l.lit.span());
             let parent = ctx.enclosing_fn.as_deref();
@@ -1875,5 +1892,49 @@ mod tests {
 
         let var = fa.nodes.iter().find(|n| n.node_type == "VARIABLE" && n.name == "x").unwrap();
         assert!(var.line > 0, "VARIABLE should have line > 0, got {}", var.line);
+    }
+
+    #[test]
+    fn test_method_chain_trace() {
+        let fa = parse_and_analyze(
+            "struct Foo; impl Foo { fn bar(&self) -> &Self { self } } \
+             fn main() { let f = Foo; let x = f.bar(); }"
+        );
+        // x ASSIGNED_FROM CALL bar
+        let assigned: Vec<_> = fa.edges.iter()
+            .filter(|e| e.edge_type == "ASSIGNED_FROM" && e.src.contains("VARIABLE") && e.src.contains("x"))
+            .collect();
+        assert!(!assigned.is_empty(), "x should have ASSIGNED_FROM");
+        // CALL bar READS_FROM REFERENCE f
+        let reads: Vec<_> = fa.edges.iter()
+            .filter(|e| e.edge_type == "READS_FROM" && e.src.contains("CALL") && e.src.contains("bar"))
+            .collect();
+        assert!(!reads.is_empty(), "CALL bar should READS_FROM receiver f");
+    }
+
+    #[test]
+    fn test_try_operator_chain() {
+        // let x = foo()? — Try wraps the call, ASSIGNED_FROM should see through it
+        let fa = parse_and_analyze(
+            "fn foo() -> Result<i32, ()> { Ok(1) } \
+             fn main() -> Result<(), ()> { let x = foo()?; Ok(()) }"
+        );
+        let assigned: Vec<_> = fa.edges.iter()
+            .filter(|e| e.edge_type == "ASSIGNED_FROM" && e.src.contains("VARIABLE") && e.src.contains("x"))
+            .collect();
+        assert!(!assigned.is_empty(), "x should have ASSIGNED_FROM (through ?)");
+        // The ASSIGNED_FROM dst should be the CALL foo (not the Try node)
+        let dst = &assigned[0].dst;
+        assert!(dst.contains("CALL"), "ASSIGNED_FROM should point to CALL, got: {}", dst);
+    }
+
+    #[test]
+    fn test_property_access_reads_from() {
+        let fa = parse_and_analyze("struct S { x: i32 } fn main() { let s = S { x: 1 }; let v = s.x; }");
+        // PROPERTY_ACCESS "x" should have READS_FROM → REFERENCE "s"
+        let reads: Vec<_> = fa.edges.iter()
+            .filter(|e| e.edge_type == "READS_FROM" && e.src.contains("PROPERTY_ACCESS"))
+            .collect();
+        assert!(!reads.is_empty(), "PROPERTY_ACCESS should have READS_FROM");
     }
 }
