@@ -78,7 +78,9 @@ import {
   handleDescribe,
   handleGraphQLQuery,
   handleQueryRegistry,
+  handleExplain,
 } from './handlers/index.js';
+import type { ExplainArgs } from './handlers/index.js';
 import type {
   ToolResult,
   ReportIssueArgs,
@@ -242,6 +244,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
 
       case 'trace_dataflow':
         result = await handleTraceDataFlow(asArgs<TraceDataFlowArgs>(args));
+        break;
+
+      case 'explain':
+        result = await handleExplain(asArgs<ExplainArgs>(args));
         break;
 
       case 'check_invariant':

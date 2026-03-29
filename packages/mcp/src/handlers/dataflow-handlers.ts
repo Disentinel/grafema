@@ -155,6 +155,99 @@ export async function handleTraceDataFlow(args: TraceDataFlowArgs): Promise<Tool
   }));
 }
 
+// === EXPLAIN (graph data + LLM prompt injection) ===
+
+export interface ExplainArgs {
+  target: string;
+  file?: string;
+  question?: string;
+}
+
+export async function handleExplain(args: ExplainArgs): Promise<ToolResult> {
+  const db = await ensureAnalyzed();
+  const { target, file, question } = args;
+
+  // 1. Find the target node
+  let targetNode: GraphNode | null = await db.getNode(target);
+  if (!targetNode) {
+    for await (const node of db.queryNodes({ name: target })) {
+      if (file && !node.file?.includes(file)) continue;
+      targetNode = node;
+      break;
+    }
+  }
+  if (!targetNode) {
+    // Try PARAMETER, CONSTANT
+    for (const type of ['PARAMETER', 'CONSTANT', 'IMPORT_BINDING']) {
+      for await (const node of db.queryNodes({ type, name: target })) {
+        if (file && !node.file?.includes(file)) continue;
+        targetNode = node;
+        break;
+      }
+      if (targetNode) break;
+    }
+  }
+  if (!targetNode) {
+    return errorResult(`Target "${target}" not found`);
+  }
+
+  // 2. Gather graph context based on question type
+  const dfDb = db as unknown as DataflowBackend;
+  const sections: string[] = [];
+
+  const nodeType = targetNode.nodeType || targetNode.type;
+  const nodeName = targetNode.name || target;
+  const nodeFile = targetNode.file || '';
+
+  sections.push(`## ${nodeType} "${nodeName}" in ${nodeFile}`);
+
+  // Always include dataflow (both directions)
+  const trace = await traceDataflow(dfDb, targetNode.id, {
+    direction: 'both',
+    maxDepth: 8,
+    limit: 30,
+  });
+  const traceText = renderTraceNarrative(trace, nodeName, { detail: 'normal' });
+  sections.push(`### Dataflow\n${traceText}`);
+
+  // Include structure context if it's a function
+  if (nodeType === 'FUNCTION') {
+    const allOutEdges = await db.getOutgoingEdges(targetNode.id);
+    const allInEdges = await db.getIncomingEdges(targetNode.id);
+    const outSummary: string[] = [];
+    const inSummary: string[] = [];
+    for (const edge of allOutEdges.slice(0, 15)) {
+      if (['CALLS', 'CONTAINS', 'HAS_SCOPE'].includes(edge.type)) {
+        const dst = await db.getNode(edge.dst);
+        if (dst) outSummary.push(`${edge.type} → ${dst.nodeType} "${dst.name}"`);
+      }
+    }
+    for (const edge of allInEdges.slice(0, 15)) {
+      if (['CALLS', 'CONTAINS'].includes(edge.type)) {
+        const src = await db.getNode(edge.src);
+        if (src) inSummary.push(`${edge.type} ← ${src.nodeType} "${src.name}"`);
+      }
+    }
+    if (outSummary.length) sections.push(`### Outgoing\n${outSummary.join('\n')}`);
+    if (inSummary.length) sections.push(`### Incoming\n${inSummary.join('\n')}`);
+  }
+
+  // 3. Prompt injection — instruct the calling LLM to summarize
+  const questionText = question || `what is "${nodeName}" and how is it used?`;
+  const prompt = `
+---
+INSTRUCTION: Based on the graph data above, answer the user's question in 2-3 concise sentences.
+Question: "${questionText}"
+Focus on: data origins, transformations, and where the value ends up.
+Use concrete names from the trace (function names, variable names, file paths).
+Do NOT repeat the raw graph data — synthesize it into a human-readable explanation.
+---`;
+
+  sections.push(prompt);
+
+  return textResult(sections.join('\n\n'));
+}
+
 // === CHECK INVARIANT (unchanged) ===
 
 export async function handleCheckInvariant(args: CheckInvariantArgs): Promise<ToolResult> {

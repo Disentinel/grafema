@@ -215,6 +215,41 @@ Tip: Start with max_depth=5, increase if needed.`,
     },
   },
   {
+    name: 'explain',
+    description: `Explain a code element using graph data — returns structured context + prompt for the LLM to summarize.
+
+Unlike other tools that return raw data, this tool returns graph query results
+PLUS a natural-language prompt asking the calling LLM to explain the results
+to the user. The LLM uses its own reasoning to produce a human-readable summary.
+
+No extra API calls needed — the calling model (Claude, GPT, etc.) does the summarization.
+
+Use cases:
+- "Explain where this value comes from" → dataflow trace + summarization prompt
+- "What does this function do?" → structure + calls + prompt to describe
+- "How is this variable used?" → forward trace + prompt to explain usage patterns
+
+The question parameter guides what graph data to fetch and how to frame the summary.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        target: {
+          type: 'string',
+          description: 'Variable, function, or node name to explain',
+        },
+        file: {
+          type: 'string',
+          description: 'File path to narrow scope',
+        },
+        question: {
+          type: 'string',
+          description: 'What to explain: "where does this value come from?", "what does this function do?", "how is this used?" (default: general explanation)',
+        },
+      },
+      required: ['target'],
+    },
+  },
+  {
     name: 'check_invariant',
     description: `Check a one-off code invariant using a Datalog rule. Returns violations if broken.
 
