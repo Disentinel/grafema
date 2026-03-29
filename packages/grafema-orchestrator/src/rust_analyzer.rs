@@ -566,7 +566,7 @@ fn walk_fn_param(param: &syn::FnArg, fn_id: &str, ctx: &mut Ctx) {
                 name: "self".to_string(),
                 file: ctx.file.clone(),
                 line, column: col,
-                end_line: 0, end_column: 0,
+                end_line: ctx.span_end_line_col(r.self_token.span).0, end_column: ctx.span_end_line_col(r.self_token.span).1,
                 exported: false,
                 metadata: HashMap::from([
                     Ctx::meta_bool("mutable", r.mutability.is_some()),
@@ -601,7 +601,7 @@ fn walk_const(c: &syn::ItemConst, ctx: &mut Ctx) {
         name: ident.clone(),
         file: ctx.file.clone(),
         line, column: col,
-        end_line: 0, end_column: 0,
+        end_line: ctx.span_end_line_col(c.ident.span()).0, end_column: ctx.span_end_line_col(c.ident.span()).1,
         exported: is_exported,
         metadata: HashMap::from([
             Ctx::meta_text("kind", "const"),
@@ -633,7 +633,7 @@ fn walk_static(s: &syn::ItemStatic, ctx: &mut Ctx) {
         name: ident.clone(),
         file: ctx.file.clone(),
         line, column: col,
-        end_line: 0, end_column: 0,
+        end_line: ctx.span_end_line_col(s.ident.span()).0, end_column: ctx.span_end_line_col(s.ident.span()).1,
         exported: is_exported,
         metadata: HashMap::from([
             Ctx::meta_text("kind", "static"),
@@ -668,7 +668,7 @@ fn walk_struct(s: &syn::ItemStruct, ctx: &mut Ctx) {
         name: ident.clone(),
         file: ctx.file.clone(),
         line, column: col,
-        end_line: 0, end_column: 0,
+        end_line: ctx.span_end_line_col(s.ident.span()).0, end_column: ctx.span_end_line_col(s.ident.span()).1,
         exported: is_exported,
         metadata: HashMap::from([
             Ctx::meta_text("visibility", vis_to_text(&s.vis)),
@@ -694,7 +694,7 @@ fn walk_struct(s: &syn::ItemStruct, ctx: &mut Ctx) {
                 name: fname,
                 file: ctx.file.clone(),
                 line: fl, column: fc,
-                end_line: 0, end_column: 0,
+                end_line: ctx.span_end_line_col(ident.span()).0, end_column: ctx.span_end_line_col(ident.span()).1,
                 exported: false,
                 metadata: HashMap::new(),
                 extra: HashMap::new(),
@@ -720,7 +720,7 @@ fn walk_enum(e: &syn::ItemEnum, ctx: &mut Ctx) {
         name: ident.clone(),
         file: ctx.file.clone(),
         line, column: col,
-        end_line: 0, end_column: 0,
+        end_line: ctx.span_end_line_col(e.ident.span()).0, end_column: ctx.span_end_line_col(e.ident.span()).1,
         exported: is_exported,
         metadata: HashMap::from([
             Ctx::meta_text("visibility", vis_to_text(&e.vis)),
@@ -744,7 +744,7 @@ fn walk_enum(e: &syn::ItemEnum, ctx: &mut Ctx) {
             name: vname,
             file: ctx.file.clone(),
             line: vl, column: vc,
-            end_line: 0, end_column: 0,
+            end_line: ctx.span_end_line_col(variant.ident.span()).0, end_column: ctx.span_end_line_col(variant.ident.span()).1,
             exported: false,
             metadata: HashMap::new(),
             extra: HashMap::new(),
@@ -768,7 +768,7 @@ fn walk_impl(i: &syn::ItemImpl, ctx: &mut Ctx) {
         name: self_ty,
         file: ctx.file.clone(),
         line, column: col,
-        end_line: 0, end_column: 0,
+        end_line: ctx.span_end_line_col(i.impl_token.span).0, end_column: ctx.span_end_line_col(i.impl_token.span).1,
         exported: false,
         metadata: if let Some(t) = &trait_name {
             HashMap::from([Ctx::meta_text("trait", t)])
@@ -848,7 +848,7 @@ fn walk_trait(t: &syn::ItemTrait, ctx: &mut Ctx) {
         name: ident.clone(),
         file: ctx.file.clone(),
         line, column: col,
-        end_line: 0, end_column: 0,
+        end_line: ctx.span_end_line_col(t.ident.span()).0, end_column: ctx.span_end_line_col(t.ident.span()).1,
         exported: is_exported,
         metadata: HashMap::from([
             Ctx::meta_text("visibility", vis_to_text(&t.vis)),
@@ -874,7 +874,7 @@ fn walk_trait(t: &syn::ItemTrait, ctx: &mut Ctx) {
                 name: mname,
                 file: ctx.file.clone(),
                 line: ml, column: mc,
-                end_line: 0, end_column: 0,
+                end_line: ctx.span_end_line_col(m.sig.ident.span()).0, end_column: ctx.span_end_line_col(m.sig.ident.span()).1,
                 exported: false,
                 metadata: HashMap::new(),
                 extra: HashMap::new(),
@@ -989,7 +989,7 @@ fn walk_type_alias(t: &syn::ItemType, ctx: &mut Ctx) {
         name: ident,
         file: ctx.file.clone(),
         line, column: col,
-        end_line: 0, end_column: 0,
+        end_line: ctx.span_end_line_col(t.ident.span()).0, end_column: ctx.span_end_line_col(t.ident.span()).1,
         exported: is_pub(&t.vis),
         metadata: HashMap::new(),
         extra: HashMap::new(),
@@ -1123,7 +1123,7 @@ fn walk_pat_bindings(pat: &syn::Pat, kind: &str, ctx: &mut Ctx) {
                 name,
                 file: ctx.file.clone(),
                 line, column: col,
-                end_line: 0, end_column: 0,
+                end_line: ctx.span_end_line_col(pi.ident.span()).0, end_column: ctx.span_end_line_col(pi.ident.span()).1,
                 exported: false,
                 metadata: HashMap::from([
                     Ctx::meta_text("kind", kind),
@@ -1212,7 +1212,7 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
                 name: func_name,
                 file: ctx.file.clone(),
                 line, column: col,
-                end_line: 0, end_column: 0,
+                end_line: ctx.span_end_line_col(e.paren_token.span.join()).0, end_column: ctx.span_end_line_col(e.paren_token.span.join()).1,
                 exported: false,
                 metadata: HashMap::from([Ctx::meta_bool("method", false)]),
                 extra: HashMap::new(),
@@ -1245,7 +1245,7 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
                 name: method,
                 file: ctx.file.clone(),
                 line, column: col,
-                end_line: 0, end_column: 0,
+                end_line: ctx.span_end_line_col(e.method.span()).0, end_column: ctx.span_end_line_col(e.method.span()).1,
                 exported: false,
                 metadata: HashMap::from([
                     Ctx::meta_bool("method", true),
@@ -1284,7 +1284,7 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
                 name: name.clone(),
                 file: ctx.file.clone(),
                 line, column: col,
-                end_line: 0, end_column: 0,
+                end_line: ctx.span_end_line_col(e.path.segments.last().map(|s| s.ident.span()).unwrap_or_else(Span::call_site)).0, end_column: ctx.span_end_line_col(e.path.segments.last().map(|s| s.ident.span()).unwrap_or_else(Span::call_site)).1,
                 exported: false,
                 metadata: HashMap::new(),
                 extra: HashMap::new(),
@@ -1313,7 +1313,7 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
                 name: member,
                 file: ctx.file.clone(),
                 line, column: col,
-                end_line: 0, end_column: 0,
+                end_line: ctx.span_end_line_col(e.dot_token.span).0, end_column: ctx.span_end_line_col(e.dot_token.span).1,
                 exported: false,
                 metadata: HashMap::from([Ctx::meta_bool("field", true)]),
                 extra: HashMap::new(),
@@ -1335,7 +1335,7 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
                 name: "if".to_string(),
                 file: ctx.file.clone(),
                 line, column: col,
-                end_line: 0, end_column: 0,
+                end_line: ctx.span_end_line_col(e.if_token.span).0, end_column: ctx.span_end_line_col(e.if_token.span).1,
                 exported: false,
                 metadata: HashMap::from([Ctx::meta_text("kind", "if")]),
                 extra: HashMap::new(),
@@ -1360,7 +1360,7 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
                 name: "match".to_string(),
                 file: ctx.file.clone(),
                 line, column: col,
-                end_line: 0, end_column: 0,
+                end_line: ctx.span_end_line_col(e.match_token.span).0, end_column: ctx.span_end_line_col(e.match_token.span).1,
                 exported: false,
                 metadata: HashMap::from([Ctx::meta_text("kind", "match")]),
                 extra: HashMap::new(),
@@ -1415,7 +1415,7 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
                 name: "<closure>".to_string(),
                 file: ctx.file.clone(),
                 line, column: col,
-                end_line: 0, end_column: 0,
+                end_line: ctx.span_end_line_col(e.or1_token.span).0, end_column: ctx.span_end_line_col(e.or1_token.span).1,
                 exported: false,
                 metadata: HashMap::from([
                     Ctx::meta_bool("capture", e.capture.is_some()),
@@ -1480,7 +1480,7 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
                 name,
                 file: ctx.file.clone(),
                 line, column: col,
-                end_line: 0, end_column: 0,
+                end_line: ctx.span_end_line_col(e.lit.span()).0, end_column: ctx.span_end_line_col(e.lit.span()).1,
                 exported: false,
                 metadata: HashMap::new(),
                 extra: HashMap::new(),
@@ -1809,5 +1809,18 @@ mod tests {
         let fa = parse_and_analyze("fn main() { let x = 42; let s = \"hello\"; }");
         assert!(has_node(&fa, "LITERAL", "42"), "integer literal");
         assert!(has_node(&fa, "LITERAL", "hello"), "string literal");
+    }
+
+    #[test]
+    fn test_end_positions_present() {
+        let fa = parse_and_analyze("fn main() {\n    let x = 42;\n    foo(x);\n}\nfn foo(n: i32) -> i32 {\n    n + 1\n}\n");
+        let main_fn = fa.nodes.iter().find(|n| n.node_type == "FUNCTION" && n.name == "main").unwrap();
+        assert!(main_fn.end_line > main_fn.line, "FUNCTION should have end_line > line, got line={} end_line={}", main_fn.line, main_fn.end_line);
+
+        let call = fa.nodes.iter().find(|n| n.node_type == "CALL" && n.name == "foo").unwrap();
+        assert!(call.line > 0, "CALL should have line > 0, got {}", call.line);
+
+        let var = fa.nodes.iter().find(|n| n.node_type == "VARIABLE" && n.name == "x").unwrap();
+        assert!(var.line > 0, "VARIABLE should have line > 0, got {}", var.line);
     }
 }
