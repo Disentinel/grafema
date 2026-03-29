@@ -648,53 +648,8 @@ pub fn compute_layout(client: &mut RfdbClient, tile_size: f32, file_filter: Opti
         region.center = [cx / n, cz / n];
     }
 
-    // 10b. Graph coloring — assign hues so adjacent regions have distinct colors
-    {
-        // Build coord → region map
-        let mut coord_to_region: HashMap<HexCoord, u16> = HashMap::new();
-        for tile in &tiles {
-            coord_to_region.insert(tile.coord, tile.region_idx);
-        }
-
-        // Build region adjacency
-        let mut region_adj: Vec<HashSet<u16>> = vec![HashSet::new(); regions.len()];
-        for tile in &tiles {
-            for neighbor in tile.coord.neighbors() {
-                if let Some(&nr) = coord_to_region.get(&neighbor) {
-                    if nr != tile.region_idx {
-                        region_adj[tile.region_idx as usize].insert(nr);
-                    }
-                }
-            }
-        }
-
-        // Greedy coloring with 12 color slots
-        let n_slots: u8 = 12;
-        // Golden-angle hues for max perceptual distance between slots
-        let slot_hues: Vec<f32> = (0..n_slots).map(|i| (i as f32 * 137.508) % 360.0).collect();
-
-        // Order regions by degree (most-constrained first) for better coloring
-        let mut order: Vec<usize> = (0..regions.len()).collect();
-        order.sort_by(|a, b| region_adj[*b].len().cmp(&region_adj[*a].len()));
-
-        let mut region_slot: Vec<u8> = vec![255; regions.len()];
-        for ri in order {
-            let used: HashSet<u8> = region_adj[ri].iter()
-                .filter_map(|&ni| {
-                    let s = region_slot[ni as usize];
-                    if s < 255 { Some(s) } else { None }
-                })
-                .collect();
-            for c in 0..n_slots {
-                if !used.contains(&c) {
-                    region_slot[ri] = c;
-                    break;
-                }
-            }
-            if region_slot[ri] == 255 { region_slot[ri] = 0; }
-            regions[ri].hue = slot_hues[region_slot[ri] as usize];
-        }
-    }
+    // 10b. Region hues — will be set from hierarchy after color_hierarchy() runs.
+    // (Graph coloring removed: all sub-regions derive hue from their package.)
 
     // 11. Container metadata — for each container with placed leaves, compute border + info
     let mut containers: Vec<ContainerInfo> = Vec::new();
@@ -728,10 +683,8 @@ pub fn compute_layout(client: &mut RfdbClient, tile_size: f32, file_filter: Opti
         let n = descendant_coords.len() as f32;
         let depth = compute_depth(cid, &nodes_by_id);
 
-        // Use file's region hue so container fill color matches tile color
-        let hue = file_to_region.get(&cnode.file)
-            .map(|&ri| regions[ri as usize].hue)
-            .unwrap_or((containers.len() as f32 * 137.508) % 360.0);
+        // Hue will be set from hierarchy after color_hierarchy() runs
+        let hue = 0.0;
 
         containers.push(ContainerInfo {
             name: cnode.name.clone(),
@@ -809,6 +762,33 @@ pub fn compute_layout(client: &mut RfdbClient, tile_size: f32, file_filter: Opti
     let mut hierarchy = build_directory_hierarchy(&regions, &tiles, &containers, tile_size);
     tracing::info!("Hierarchy: {} nodes, coloring...", hierarchy.len());
     color_hierarchy(&mut hierarchy);
+
+    // 15b. Propagate hierarchy hues back to regions and containers
+    {
+        // File hierarchy node hue → region hue
+        for h in &hierarchy {
+            if matches!(h.kind, RegionKind::File) {
+                if let Some(&ri) = file_to_region.get(&h.id) {
+                    regions[ri as usize].hue = h.hue;
+                }
+            }
+        }
+        // Container hue: find file from any tile belonging to this container
+        let mut container_to_file: HashMap<u32, String> = HashMap::new();
+        for tile in &tiles {
+            if tile.container_idx != u32::MAX && tile.container_idx < containers.len() as u32 {
+                container_to_file.entry(tile.container_idx)
+                    .or_insert_with(|| tile.file.clone());
+            }
+        }
+        for (ci, c) in containers.iter_mut().enumerate() {
+            if let Some(file_path) = container_to_file.get(&(ci as u32)) {
+                if let Some(&ri) = file_to_region.get(file_path) {
+                    c.hue = regions[ri as usize].hue;
+                }
+            }
+        }
+    }
 
     // 16. Assign hierarchy indices to tiles
     {
@@ -946,7 +926,8 @@ fn compute_border(tiles: &[HexCoord], tile_size: f32) -> Vec<[f32; 2]> {
         }
     }
 
-    chain_segments(&segments, tile_size * 0.01)
+    let polygon = chain_segments(&segments, tile_size * 0.01);
+    simplify_polygon(&polygon, tile_size * 0.4)
 }
 
 fn chain_segments(segments: &[(f32, f32, f32, f32)], epsilon: f32) -> Vec<[f32; 2]> {
@@ -1011,6 +992,76 @@ fn chain_segments_fast(segments: &[(f32, f32, f32, f32)], epsilon: f32) -> Vec<[
     }
 
     polygon
+}
+
+/// Ramer-Douglas-Peucker polygon simplification.
+/// Removes vertices that deviate less than `epsilon` from the straight line
+/// between kept vertices, turning hex-edge zigzags into clean polylines.
+fn simplify_polygon(polygon: &[[f32; 2]], epsilon: f32) -> Vec<[f32; 2]> {
+    if polygon.len() < 4 { return polygon.to_vec(); }
+
+    // For closed polygons, simplify as open polyline then re-close
+    let is_closed = polygon.len() > 2
+        && (polygon[0][0] - polygon[polygon.len() - 1][0]).abs() < 0.01
+        && (polygon[0][1] - polygon[polygon.len() - 1][1]).abs() < 0.01;
+
+    let points = if is_closed { &polygon[..polygon.len() - 1] } else { polygon };
+    if points.len() < 3 {
+        return polygon.to_vec();
+    }
+
+    let mut keep = vec![false; points.len()];
+    keep[0] = true;
+    keep[points.len() - 1] = true;
+
+    rdp_recurse(points, 0, points.len() - 1, epsilon * epsilon, &mut keep);
+
+    let mut result: Vec<[f32; 2]> = points.iter().enumerate()
+        .filter(|(i, _)| keep[*i])
+        .map(|(_, p)| *p)
+        .collect();
+
+    if is_closed && !result.is_empty() {
+        result.push(result[0]);
+    }
+
+    result
+}
+
+fn rdp_recurse(points: &[[f32; 2]], start: usize, end: usize, eps_sq: f32, keep: &mut [bool]) {
+    if end <= start + 1 { return; }
+
+    let (sx, sz) = (points[start][0], points[start][1]);
+    let (ex, ez) = (points[end][0], points[end][1]);
+    let dx = ex - sx;
+    let dz = ez - sz;
+    let len_sq = dx * dx + dz * dz;
+
+    let mut max_dist_sq = 0.0f32;
+    let mut max_idx = start;
+
+    for i in (start + 1)..end {
+        let (px, pz) = (points[i][0] - sx, points[i][1] - sz);
+        let dist_sq = if len_sq < 1e-10 {
+            px * px + pz * pz
+        } else {
+            let t = (px * dx + pz * dz) / len_sq;
+            let t = t.clamp(0.0, 1.0);
+            let proj_x = px - t * dx;
+            let proj_z = pz - t * dz;
+            proj_x * proj_x + proj_z * proj_z
+        };
+        if dist_sq > max_dist_sq {
+            max_dist_sq = dist_sq;
+            max_idx = i;
+        }
+    }
+
+    if max_dist_sq > eps_sq {
+        keep[max_idx] = true;
+        rdp_recurse(points, start, max_idx, eps_sq, keep);
+        rdp_recurse(points, max_idx, end, eps_sq, keep);
+    }
 }
 
 // ── Connected components ──────────────────────────────────────────
@@ -1386,18 +1437,18 @@ fn build_directory_hierarchy(
 fn color_hierarchy(hierarchy: &mut Vec<HierarchyNode>) {
     let slot_hues: Vec<f32> = (0..12).map(|i| (i as f32 * 137.508) % 360.0).collect();
 
-    // Level 1 (packages): golden-angle hues
+    // Level 1 (packages): golden-angle hues — each package gets a distinct base hue
     let mut pkg_idx = 0u8;
     for h in hierarchy.iter_mut() {
         if matches!(h.kind, RegionKind::Package) {
             h.hue = slot_hues[(pkg_idx as usize) % 12];
-            h.saturation = 80.0;
-            h.lightness = 35.0;
+            h.saturation = 75.0;
+            h.lightness = 30.0;
             pkg_idx += 1;
         }
     }
 
-    // Level 2+ (directories): variations of parent package hue
+    // Level 2+ (directories): SAME hue as parent package, vary lightness/saturation
     let len = hierarchy.len();
     for i in 0..len {
         if !matches!(hierarchy[i].kind, RegionKind::Directory) { continue; }
@@ -1405,20 +1456,28 @@ fn color_hierarchy(hierarchy: &mut Vec<HierarchyNode>) {
             .map(|pi| hierarchy[pi as usize].hue)
             .unwrap_or(0.0);
 
-        let sibling_order = hierarchy[i].parent_idx
+        let (sibling_order, sibling_count) = hierarchy[i].parent_idx
             .map(|pi| {
-                hierarchy[pi as usize].children_indices.iter()
+                let children = &hierarchy[pi as usize].children_indices;
+                let order = children.iter()
                     .position(|&ci| ci == i as u32)
-                    .unwrap_or(0)
+                    .unwrap_or(0);
+                (order, children.len())
             })
-            .unwrap_or(0);
+            .unwrap_or((0, 1));
 
+        // Spread lightness evenly across siblings: 20..45 range
+        let t = if sibling_count > 1 {
+            sibling_order as f32 / (sibling_count - 1) as f32
+        } else {
+            0.5
+        };
         hierarchy[i].hue = parent_hue;
-        hierarchy[i].saturation = 70.0 + (sibling_order as f32 * 3.0).min(20.0);
-        hierarchy[i].lightness = 25.0 + (sibling_order as f32 * 2.5).min(15.0);
+        hierarchy[i].saturation = 65.0 + t * 20.0; // 65..85
+        hierarchy[i].lightness = 20.0 + t * 25.0;  // 20..45
     }
 
-    // Level 3+ (files): slight hue shift from parent directory
+    // Level 3+ (files): SAME hue as parent directory, vary lightness within dir range
     for i in 0..len {
         if !matches!(hierarchy[i].kind, RegionKind::File) { continue; }
         let parent_hue = hierarchy[i].parent_idx
@@ -1426,22 +1485,30 @@ fn color_hierarchy(hierarchy: &mut Vec<HierarchyNode>) {
             .unwrap_or(0.0);
         let parent_sat = hierarchy[i].parent_idx
             .map(|pi| hierarchy[pi as usize].saturation)
-            .unwrap_or(80.0);
+            .unwrap_or(75.0);
         let parent_light = hierarchy[i].parent_idx
             .map(|pi| hierarchy[pi as usize].lightness)
-            .unwrap_or(35.0);
+            .unwrap_or(30.0);
 
-        let sibling_order = hierarchy[i].parent_idx
+        let (sibling_order, sibling_count) = hierarchy[i].parent_idx
             .map(|pi| {
-                hierarchy[pi as usize].children_indices.iter()
+                let children = &hierarchy[pi as usize].children_indices;
+                let order = children.iter()
                     .position(|&ci| ci == i as u32)
-                    .unwrap_or(0)
+                    .unwrap_or(0);
+                (order, children.len())
             })
-            .unwrap_or(0);
+            .unwrap_or((0, 1));
 
-        hierarchy[i].hue = parent_hue + (sibling_order as f32 * 5.0 - 10.0).clamp(-15.0, 15.0);
-        hierarchy[i].saturation = parent_sat;
-        hierarchy[i].lightness = parent_light + (sibling_order as f32 * 1.5 - 3.0).clamp(-5.0, 5.0);
+        // Files vary lightness ±8 around parent lightness, saturation ±10
+        let t = if sibling_count > 1 {
+            sibling_order as f32 / (sibling_count - 1) as f32
+        } else {
+            0.5
+        };
+        hierarchy[i].hue = parent_hue; // NO hue shift
+        hierarchy[i].saturation = (parent_sat - 10.0 + t * 20.0).clamp(40.0, 95.0);
+        hierarchy[i].lightness = (parent_light - 8.0 + t * 16.0).clamp(15.0, 50.0);
     }
 
     // Function/Block: inherit from file parent

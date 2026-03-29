@@ -47,7 +47,7 @@ export const HEX_ANGLES = [0, 60, 120, 180, 240, 300].map(a => a * Math.PI / 180
 
 // Pin marker
 export const PIN_COLOR = 0xff2222;
-export const PIN_HEIGHT = 6.0;
+export const PIN_HEIGHT = 2.5;
 export const PIN_BOB_SPEED = 2.0;
 export const PIN_BOB_AMPLITUDE = 0.5;
 

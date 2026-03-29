@@ -124,8 +124,8 @@ export class RegionRenderer {
             const geo = new LineSegmentsGeometry();
             geo.setPositions(filePositions);
             const mat = new LineMaterial({
-                color: 0x445566, linewidth: 1.5,
-                transparent: true, opacity: 0.4,
+                color: 0x00e5ff, linewidth: 1,
+                transparent: true, opacity: 0.35,
                 resolution: res,
             });
             this._fileBorders = new LineSegments2(geo, mat);
@@ -159,7 +159,8 @@ export class RegionRenderer {
             const minTiles = kindName === 'Package' ? 0 : kindName === 'Directory' ? 50 : 30;
             if (node.allTileCount < minTiles) continue;
 
-            // Region bounding box for label sizing
+            // Region dimensions for label sizing:
+            // Compute width AT the center Z (not full bbox) so label fits inside
             let bboxW = 10, bboxH = 10;
             if (node.border.length >= 3) {
                 let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
@@ -169,8 +170,19 @@ export class RegionRenderer {
                     if (z < minZ) minZ = z;
                     if (z > maxZ) maxZ = z;
                 }
-                bboxW = maxX - minX;
                 bboxH = maxZ - minZ;
+
+                // Width at center: scan border points near center Z
+                const cz = node.center[1];
+                const tolerance = bboxH * 0.25;
+                let lx = Infinity, rx = -Infinity;
+                for (const [x, z] of node.border) {
+                    if (Math.abs(z - cz) <= tolerance) {
+                        if (x < lx) lx = x;
+                        if (x > rx) rx = x;
+                    }
+                }
+                bboxW = (rx > lx) ? (rx - lx) : (maxX - minX);
             }
 
             const tier = kindName === 'Package' ? 'pkg' : kindName === 'Directory' ? 'dir' : 'file';
@@ -259,10 +271,12 @@ export class RegionRenderer {
         });
         const sprite = new THREE.Sprite(spriteMat);
 
-        // Scale to fit within region bounding box (capped)
+        // Scale to fit within region: width ≤ 70% of regionW, height ≤ 40% of regionH
         const aspect = canvas.width / canvas.height;
-        const maxExtent = Math.min(regionW || 10, regionH || 10) * 0.6;
-        const scale = Math.max(2, Math.min(maxExtent, Math.sqrt(tileCount) * 0.8, 50));
+        const maxByW = ((regionW || 10) * 0.7) / Math.max(aspect, 0.5);
+        const maxByH = (regionH || 10) * 0.4;
+        const idealScale = Math.sqrt(tileCount) * 0.8;
+        const scale = Math.max(1.5, Math.min(maxByW, maxByH, idealScale, 50));
         sprite.scale.set(scale * aspect, scale, 1);
 
         return sprite;
@@ -362,6 +376,7 @@ export class RegionRenderer {
 
     /**
      * Set visibility based on camera LOD level.
+     * Progressive disclosure: parent labels hide when children appear.
      * @param {number} lodLevel - 0 (very far) to 4 (very close)
      */
     setLODLevel(lodLevel) {
@@ -377,13 +392,13 @@ export class RegionRenderer {
             this._fileBorders.material.opacity = lodLevel >= 3 ? 0.4 : 0.2;
         }
 
-        // Label tier visibility
+        // Label tier visibility — hide parent when children are revealed
         const pkgLabels = this._labelGroups.get('pkg');
         const dirLabels = this._labelGroups.get('dir');
         const fileLabels = this._labelGroups.get('file');
 
-        if (pkgLabels) pkgLabels.visible = true;       // always
-        if (dirLabels) dirLabels.visible = lodLevel >= 1;
+        if (pkgLabels) pkgLabels.visible = lodLevel <= 0;   // hide when dirs appear
+        if (dirLabels) dirLabels.visible = lodLevel === 1;   // hide when files appear
         if (fileLabels) fileLabels.visible = lodLevel >= 2;
     }
 

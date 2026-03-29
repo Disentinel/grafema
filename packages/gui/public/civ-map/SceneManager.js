@@ -44,13 +44,13 @@ export class SceneManager {
             RIGHT: THREE.MOUSE.ROTATE,
         };
 
-        // WASD keyboard navigation
+        // WASD keyboard navigation (uses e.code for layout-independent physical keys)
         this._keys = {};
         this._onKeyDown = (e) => {
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-            this._keys[e.key.toLowerCase()] = true;
+            this._keys[e.code] = true;
         };
-        this._onKeyUp = (e) => { this._keys[e.key.toLowerCase()] = false; };
+        this._onKeyUp = (e) => { this._keys[e.code] = false; };
         document.addEventListener('keydown', this._onKeyDown);
         document.addEventListener('keyup', this._onKeyUp);
 
@@ -103,32 +103,35 @@ export class SceneManager {
             if (t >= 1) this._flyTarget = null;
         }
 
-        // WASD movement — pan camera and target together on XZ plane
-        const speed = this.getCameraDistance() * 0.8; // faster when zoomed out
+        // WASD movement — camera-relative pan on XZ plane
+        const speed = this.getCameraDistance() * 0.8;
         const dt0 = this._clock.getDelta();
         const move = speed * dt0;
-        if (this._keys['w'] || this._keys['arrowup']) {
-            this.camera.position.z -= move;
-            this.controls.target.z -= move;
+
+        // Camera forward/right projected onto XZ plane
+        const forward = new THREE.Vector3();
+        this.camera.getWorldDirection(forward);
+        forward.y = 0;
+        forward.normalize();
+        const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+
+        const delta = new THREE.Vector3();
+        if (this._keys['KeyW'] || this._keys['ArrowUp'])    delta.addScaledVector(forward, move);
+        if (this._keys['KeyS'] || this._keys['ArrowDown'])  delta.addScaledVector(forward, -move);
+        if (this._keys['KeyA'] || this._keys['ArrowLeft'])  delta.addScaledVector(right, -move);
+        if (this._keys['KeyD'] || this._keys['ArrowRight']) delta.addScaledVector(right, move);
+
+        if (delta.lengthSq() > 0) {
+            this.camera.position.add(delta);
+            this.controls.target.add(delta);
         }
-        if (this._keys['s'] || this._keys['arrowdown']) {
-            this.camera.position.z += move;
-            this.controls.target.z += move;
-        }
-        if (this._keys['a'] || this._keys['arrowleft']) {
-            this.camera.position.x -= move;
-            this.controls.target.x -= move;
-        }
-        if (this._keys['d'] || this._keys['arrowright']) {
-            this.camera.position.x += move;
-            this.controls.target.x += move;
-        }
+
         // Q/E for zoom in/out
-        if (this._keys['q']) {
+        if (this._keys['KeyQ']) {
             const dir = this.camera.position.clone().sub(this.controls.target).normalize();
             this.camera.position.addScaledVector(dir, move);
         }
-        if (this._keys['e']) {
+        if (this._keys['KeyE']) {
             const dir = this.camera.position.clone().sub(this.controls.target).normalize();
             this.camera.position.addScaledVector(dir, -move);
         }

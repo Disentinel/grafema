@@ -1,5 +1,3 @@
-import { LOD, LOD_TRANSITION_MS } from './constants.js';
-
 export class LODController {
     /**
      * @param {import('./SceneManager.js').SceneManager} sceneManager
@@ -24,6 +22,75 @@ export class LODController {
             }
         }
         if (this.maxLevel === 0) this.maxLevel = data.metadata?.max_depth ?? 4;
+
+        this._computeThresholds();
+    }
+
+    /**
+     * Compute LOD distance thresholds from actual data extents.
+     * Uses viewport diagonal: at what camera distance does a given
+     * world-space extent fill a fraction of the screen?
+     */
+    _computeThresholds() {
+        const data = this.data;
+        const fovRad = (this.sceneManager.camera.fov || 60) * Math.PI / 180;
+        const tanHalf = Math.tan(fovRad / 2);
+        const aspect = window.innerWidth / window.innerHeight;
+        // Visible diagonal at distance d = d * visPerDist
+        const visPerDist = 2 * tanHalf * Math.sqrt(1 + aspect * aspect);
+
+        // Graph bounding box diagonal
+        let gx0 = Infinity, gx1 = -Infinity, gz0 = Infinity, gz1 = -Infinity;
+        for (let i = 0; i < data.tileCount; i++) {
+            const x = data.worldX[i], z = data.worldZ[i];
+            if (x < gx0) gx0 = x; if (x > gx1) gx1 = x;
+            if (z < gz0) gz0 = z; if (z > gz1) gz1 = z;
+        }
+        const graphDiag = Math.sqrt((gx1 - gx0) ** 2 + (gz1 - gz0) ** 2) || 100;
+
+        // Largest package diagonal
+        let maxPkgDiag = 0;
+        for (const node of (data.hierarchy ?? [])) {
+            if (node.kind !== 1 || node.border.length < 3) continue;
+            let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+            for (const [x, z] of node.border) {
+                if (x < x0) x0 = x; if (x > x1) x1 = x;
+                if (z < z0) z0 = z; if (z > z1) z1 = z;
+            }
+            const d = Math.sqrt((x1 - x0) ** 2 + (z1 - z0) ** 2);
+            if (d > maxPkgDiag) maxPkgDiag = d;
+        }
+
+        // Largest directory diagonal
+        let maxDirDiag = 0;
+        for (const node of (data.hierarchy ?? [])) {
+            if (node.kind !== 2 || node.border.length < 3) continue;
+            let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+            for (const [x, z] of node.border) {
+                if (x < x0) x0 = x; if (x > x1) x1 = x;
+                if (z < z0) z0 = z; if (z > z1) z1 = z;
+            }
+            const d = Math.sqrt((x1 - x0) ** 2 + (z1 - z0) ** 2);
+            if (d > maxDirDiag) maxDirDiag = d;
+        }
+
+        if (maxPkgDiag === 0) maxPkgDiag = graphDiag * 0.4;
+        if (maxDirDiag === 0) maxDirDiag = maxPkgDiag * 0.3;
+
+        // LOD thresholds (camera distance):
+        // LOD 0→1: entire graph fills 100% of viewport diagonal
+        // LOD 1→2: largest package fills 50% of viewport
+        // LOD 2→3: largest directory fills 50% of viewport
+        // LOD 3→4: directory fills 200% (very close)
+        this._lodThresholds = [
+            graphDiag / (1.0 * visPerDist),
+            maxPkgDiag / (0.5 * visPerDist),
+            maxDirDiag / (0.5 * visPerDist),
+            maxDirDiag / (2.0 * visPerDist),
+        ];
+
+        console.log('LOD thresholds:', this._lodThresholds.map(t => t.toFixed(0)),
+            `graph=${graphDiag.toFixed(0)} pkg=${maxPkgDiag.toFixed(0)} dir=${maxDirDiag.toFixed(0)}`);
     }
 
     update() {
@@ -40,10 +107,11 @@ export class LODController {
     }
 
     _distanceToLevel(distance) {
-        if (distance > LOD.PACKAGES_ONLY) return 0;
-        if (distance > LOD.DIRECTORIES) return 1;
-        if (distance > LOD.FILES) return 2;
-        if (distance > LOD.FUNCTIONS) return 3;
+        const t = this._lodThresholds;
+        if (distance > t[0]) return 0;
+        if (distance > t[1]) return 1;
+        if (distance > t[2]) return 2;
+        if (distance > t[3]) return 3;
         return 4;
     }
 
@@ -71,26 +139,28 @@ export class LODController {
         this.regionRenderer.setLevelVisibility(levelOpacity);
 
         // Tile visibility based on LOD level
+        // Progressive disclosure: at far zoom fills show solid region color,
+        // at close zoom individual tiles become visible with type-based color.
         if (this.tileGrid && this.data) {
             for (let i = 0; i < this.data.tileCount; i++) {
                 const isFiller = this.data.tileIsFiller?.[i] ?? 0;
 
                 if (level >= 3) {
-                    // Close zoom: show all tiles
+                    // Close zoom: full detail
                     this.tileGrid.setOpacity(i, isFiller ? 0.3 : 1.0);
-                    if (this.fillGrid) this.fillGrid.setOpacity(i, isFiller ? 0.15 : 0.5);
+                    if (this.fillGrid) this.fillGrid.setOpacity(i, isFiller ? 0.15 : 0.4);
                 } else if (level >= 2) {
-                    // Medium zoom: show tiles at reduced opacity
+                    // Files visible: tiles appear, fills as background
                     this.tileGrid.setOpacity(i, isFiller ? 0.15 : 0.6);
                     if (this.fillGrid) this.fillGrid.setOpacity(i, isFiller ? 0.1 : 0.4);
                 } else if (level >= 1) {
-                    // Far zoom: dim tiles, keep fills visible
-                    this.tileGrid.setOpacity(i, 0.15);
-                    if (this.fillGrid) this.fillGrid.setOpacity(i, 0.3);
-                } else {
-                    // Very far: hide tiles, keep fill barely visible
+                    // Directories: fills show dir-level color, tiles dimmed
                     this.tileGrid.setOpacity(i, 0.0);
-                    if (this.fillGrid) this.fillGrid.setOpacity(i, 0.2);
+                    if (this.fillGrid) this.fillGrid.setOpacity(i, isFiller ? 0.2 : 0.7);
+                } else {
+                    // Packages only: fills show solid package color
+                    this.tileGrid.setOpacity(i, 0.0);
+                    if (this.fillGrid) this.fillGrid.setOpacity(i, isFiller ? 0.3 : 0.85);
                 }
             }
         }
