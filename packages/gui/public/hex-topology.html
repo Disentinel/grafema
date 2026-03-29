@@ -167,19 +167,21 @@ window.addEventListener('message', async (event) => {
     if (!msg || !msg.command) return;
 
     if (msg.command === 'highlightNode' && msg.nodeName) {
-        // Search for node by name and navigate to it
+        // Search for node by name, prefer matching type
         try {
-            const resp = await fetch(`/api/search?q=${encodeURIComponent(msg.nodeName)}&limit=1`);
+            const resp = await fetch(`/api/search?q=${encodeURIComponent(msg.nodeName)}&limit=10`);
             const results = await resp.json();
-            if (results.length > 0) {
-                const r = results[0];
-                // Clear previous selection and activate this node
+            // Find best match: prefer tile (not container) with matching type
+            const match = results.find(r => r.tileIndex != null && r.type === msg.nodeType)
+                       || results.find(r => r.tileIndex != null)
+                       || results[0];
+            if (match) {
                 map.interaction?.clearActive();
-                if (r.tileIndex != null) {
-                    map.interaction?.addActive(r.tileIndex);
-                    // Fly camera to the node
-                    map.scene?.flyTo(r.worldX, r.worldZ, 15);
+                if (match.tileIndex != null) {
+                    map.interaction?.addActive(match.tileIndex);
                 }
+                // Fly camera to the node
+                map.scene?.flyTo(match.worldX, match.worldZ, 15);
             }
         } catch (e) {
             console.warn('highlightNode failed:', e);

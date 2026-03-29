@@ -108,11 +108,16 @@ export async function findAndSetRoot(
         edgesProvider.clearAndSetRoot(node);
       }
 
-      // Update map panel: highlight current node
+      // Update map panel: highlight enclosing function (more useful than individual refs)
       try {
         const { MapPanel } = require('./mapPanel');
         if (MapPanel.currentPanel) {
-          MapPanel.currentPanel.highlightNode(node.name || '', node.nodeType || '');
+          const mapNode = (node.nodeType === 'FUNCTION' || node.nodeType === 'METHOD' || node.nodeType === 'CLASS')
+            ? node
+            : await findEnclosingFunction(client, node);
+          if (mapNode) {
+            MapPanel.currentPanel.highlightNode(mapNode.name || '', mapNode.nodeType || '');
+          }
         }
       } catch { /* map panel not open */ }
 
