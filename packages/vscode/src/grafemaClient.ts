@@ -321,15 +321,19 @@ export class GrafemaClientManager extends EventEmitter {
       unlinkSync(this.socketPath);
     }
 
-    // Kill any old server holding the db lock (prevents flock conflict)
+    // Gracefully stop any old server holding the db lock.
+    // SIGTERM triggers flush + exit in rfdb-server's signal handler.
     const pidPath = join(dirname(this.socketPath), 'rfdb.pid');
     if (existsSync(pidPath)) {
       try {
         const oldPid = parseInt(readFileSync(pidPath, 'utf-8').trim(), 10);
         if (oldPid > 0) {
           process.kill(oldPid, 'SIGTERM');
-          // Brief wait for graceful exit
-          await sleep(500);
+          // Wait for process to actually exit (flush may take seconds for large graphs)
+          for (let i = 0; i < 50; i++) {
+            await sleep(100);
+            try { process.kill(oldPid, 0); } catch { break; } // process gone
+          }
         }
       } catch {
         // Process already dead or permission denied — fine
@@ -377,7 +381,7 @@ export class GrafemaClientManager extends EventEmitter {
 
     // Wait for socket to appear
     let attempts = 0;
-    while (!existsSync(this.socketPath) && attempts < 50) {
+    while (!existsSync(this.socketPath) && attempts < 100) {
       await sleep(100);
       attempts++;
     }
