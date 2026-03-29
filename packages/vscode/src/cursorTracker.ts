@@ -108,7 +108,7 @@ export async function findAndSetRoot(
         edgesProvider.clearAndSetRoot(node);
       }
 
-      // Update map panel: highlight enclosing function (more useful than individual refs)
+      // Update map panel: highlight enclosing function
       try {
         const { MapPanel } = require('./mapPanel');
         if (MapPanel.currentPanel) {
@@ -116,7 +116,11 @@ export async function findAndSetRoot(
             ? node
             : await findEnclosingFunction(client, node);
           if (mapNode) {
-            MapPanel.currentPanel.highlightNode(mapNode.name || '', mapNode.nodeType || '');
+            MapPanel.currentPanel.highlightNode(
+              mapNode.name || '',
+              mapNode.nodeType || '',
+              mapNode.file || filePath,
+            );
           }
         }
       } catch { /* map panel not open */ }

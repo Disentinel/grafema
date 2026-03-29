@@ -63,8 +63,8 @@ export class MapPanel {
   }
 
   /** Send current cursor node to the map for highlighting. */
-  public highlightNode(nodeName: string, nodeType: string): void {
-    this.panel.webview.postMessage({ command: 'highlightNode', nodeName, nodeType });
+  public highlightNode(nodeName: string, nodeType: string, file?: string): void {
+    this.panel.webview.postMessage({ command: 'highlightNode', nodeName, nodeType, file });
   }
 
   /** Show a trace route on the map. */
