@@ -172,16 +172,22 @@ impl Ctx {
     /// Push a new scope. For Block scopes, emits a SCOPE node + HAS_SCOPE edge.
     /// For Function/Impl/Trait, the existing node IS the scope (no separate SCOPE node).
     fn push_scope(&mut self, scope_id: &str, kind: ScopeKind) {
+        self.push_scope_with_span(scope_id, kind, None);
+    }
+
+    fn push_scope_with_span(&mut self, scope_id: &str, kind: ScopeKind, span: Option<Span>) {
         let parent = self.scope_id().to_string();
 
         // Only emit SCOPE node for block scopes — functions/impls/traits are their own scope
         if matches!(kind, ScopeKind::Block) {
+            let (line, col) = span.map(|s| self.span_line_col(s)).unwrap_or((0, 0));
+            let (end_line, end_col) = span.map(|s| self.span_end_line_col(s)).unwrap_or((0, 0));
             self.nodes.push(GraphNode {
                 id: scope_id.to_string(),
                 node_type: "SCOPE".to_string(),
                 name: kind.as_str().to_string(),
                 file: self.file.clone(),
-                line: 0, column: 0, end_line: 0, end_column: 0,
+                line, column: col, end_line, end_column: end_col,
                 exported: false,
                 metadata: HashMap::from([Self::meta_text("kind", kind.as_str())]),
                 extra: HashMap::new(),
@@ -1302,20 +1308,23 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
                 syn::Member::Named(i) => i.to_string(),
                 syn::Member::Unnamed(i) => i.index.to_string(),
             };
+            let receiver_name = expr_to_name(&e.base);
             let (line, col) = ctx.span_line_col(e.dot_token.span);
             let parent = ctx.enclosing_fn.as_deref();
             let hash = ctx.pos_hash(line, col);
-            let node_id = semantic_id(&ctx.file, "REFERENCE", &member, parent, Some(&hash));
+            let node_id = semantic_id(&ctx.file, "PROPERTY_ACCESS", &member, parent, Some(&hash));
 
             ctx.emit_node(GraphNode {
                 id: node_id,
-                node_type: "REFERENCE".to_string(),
+                node_type: "PROPERTY_ACCESS".to_string(),
                 name: member,
                 file: ctx.file.clone(),
                 line, column: col,
                 end_line: ctx.span_end_line_col(e.dot_token.span).0, end_column: ctx.span_end_line_col(e.dot_token.span).1,
                 exported: false,
-                metadata: HashMap::from([Ctx::meta_bool("field", true)]),
+                metadata: HashMap::from([
+                    Ctx::meta_text("receiver", &receiver_name),
+                ]),
                 extra: HashMap::new(),
             });
 
@@ -1341,7 +1350,7 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
                 extra: HashMap::new(),
             });
             walk_expr(&e.cond, ctx);
-            ctx.push_scope(&scope_id, ScopeKind::Block);
+            ctx.push_scope_with_span(&scope_id, ScopeKind::Block, Some(e.then_branch.brace_token.span.join()));
             walk_block(&e.then_branch, ctx);
             ctx.pop_scope();
             if let Some((_, else_branch)) = &e.else_branch {
@@ -1366,9 +1375,8 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
                 extra: HashMap::new(),
             });
             walk_expr(&e.expr, ctx);
-            for arm in &e.arms {
-                // Each match arm gets its own block scope
-                let arm_hash = ctx.pos_hash(line, col);
+            for (arm_idx, arm) in e.arms.iter().enumerate() {
+                let arm_hash = content_hash(&[("match", &line.to_string()), ("arm", &arm_idx.to_string())]);
                 let arm_scope = semantic_id(&ctx.file, "SCOPE", "match_arm", Some(&node_id), Some(&arm_hash));
                 ctx.push_scope(&arm_scope, ScopeKind::Block);
                 if let Some(guard) = &arm.guard {
@@ -1382,7 +1390,7 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
         syn::Expr::Loop(e) => {
             let (line, col) = ctx.span_line_col(e.loop_token.span);
             let (_, scope_id) = emit_branch("loop", line, col, ctx);
-            ctx.push_scope(&scope_id, ScopeKind::Block);
+            ctx.push_scope_with_span(&scope_id, ScopeKind::Block, Some(e.body.brace_token.span.join()));
             walk_block(&e.body, ctx);
             ctx.pop_scope();
         }
@@ -1390,7 +1398,7 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
             let (line, col) = ctx.span_line_col(e.while_token.span);
             let (_, scope_id) = emit_branch("while", line, col, ctx);
             walk_expr(&e.cond, ctx);
-            ctx.push_scope(&scope_id, ScopeKind::Block);
+            ctx.push_scope_with_span(&scope_id, ScopeKind::Block, Some(e.body.brace_token.span.join()));
             walk_block(&e.body, ctx);
             ctx.pop_scope();
         }
@@ -1398,7 +1406,7 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
             let (line, col) = ctx.span_line_col(e.for_token.span);
             let (_, scope_id) = emit_branch("for", line, col, ctx);
             walk_expr(&e.expr, ctx);
-            ctx.push_scope(&scope_id, ScopeKind::Block);
+            ctx.push_scope_with_span(&scope_id, ScopeKind::Block, Some(e.body.brace_token.span.join()));
             walk_block(&e.body, ctx);
             ctx.pop_scope();
         }
