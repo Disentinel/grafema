@@ -15,7 +15,7 @@ import { getNodeIcon } from './utils';
 import { MAX_BRANCHING_FACTOR } from './traceEngine';
 
 /** Edge type used for call hierarchy traversal */
-const CALLS_EDGE_TYPES = ['CALLS'] as const;
+const CALLS_EDGE_TYPES = ['CALLS', 'PASSES_ARGUMENT'] as const;
 
 /** Patterns that identify test files */
 const TEST_FILE_PATTERNS = [
