@@ -729,6 +729,12 @@ function registerCommands(): vscode.Disposable[] {
     nodesInFileProvider?.refresh();
   }));
 
+  // Open Map panel
+  disposables.push(vscode.commands.registerCommand('grafema.openMap', () => {
+    const { MapPanel } = require('./mapPanel');
+    MapPanel.createOrShow();
+  }));
+
   // Follow cursor on selection change
   disposables.push(vscode.window.onDidChangeTextEditorSelection(
     debounce(async (_event: vscode.TextEditorSelectionChangeEvent) => {

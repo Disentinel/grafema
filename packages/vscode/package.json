@@ -85,6 +85,11 @@
     },
     "commands": [
       {
+        "command": "grafema.openMap",
+        "title": "Grafema: Open Map",
+        "icon": "$(globe)"
+      },
+      {
         "command": "grafema.focusStatus",
         "title": "Grafema: Show Status"
       },
