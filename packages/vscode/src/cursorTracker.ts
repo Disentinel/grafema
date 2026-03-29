@@ -145,10 +145,13 @@ async function findEnclosingFunction(client: BaseRFDBClient, node: WireNode): Pr
     visited.add(currentId);
 
     try {
-      const edges = await client.getIncomingEdges(currentId, ['CONTAINS' as any]);
-      if (edges.length === 0) break;
+      // Walk up: CONTAINS (child → parent scope) or HAS_SCOPE (scope → owner)
+      const containsEdges = await client.getIncomingEdges(currentId, ['CONTAINS' as any]);
+      const hasScopeEdges = await client.getIncomingEdges(currentId, ['HAS_SCOPE' as any]);
+      const parentEdge = containsEdges[0] || hasScopeEdges[0];
+      if (!parentEdge) break;
 
-      const parentId = edges[0].src;
+      const parentId = parentEdge.src;
       const parentNode = await client.getNode(parentId);
       if (!parentNode) break;
 
