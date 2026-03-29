@@ -33,13 +33,52 @@ export const TYPE_LIGHTNESS = {
     DEFAULT: 35,
 };
 
-// Edge type colors (as hex integers)
+// Edge type colors — data flow (warm/cyan) vs control flow (magenta/orange) vs structure (blue/grey)
 export const EDGE_COLORS = {
-    CALLS: 0xff6b6b, READS_FROM: 0x4ecdc4, WRITES_TO: 0xffe66d,
-    RETURNS: 0xa8e6cf, INHERITS: 0xdda0dd, IMPLEMENTS: 0xb0e0e6,
-    IMPORTS: 0x87ceeb, EXPORTS: 0xffa07a, TYPE_OF: 0xd8bfd8,
-    ARGUMENT_OF: 0xf0e68c, CONDITION_OF: 0xffb6c1,
-    DEFAULT: 0x666666,
+    // ── Data flow (cyan → green spectrum) ─────────────────
+    READS_FROM:       0x00e5ff,  // bright cyan — primary data read
+    ASSIGNED_FROM:    0x00bcd4,  // teal — value assignment
+    WRITES_TO:        0xffe66d,  // yellow — mutation
+    PASSES_ARGUMENT:  0x26c6da,  // light teal — argument passing
+    RETURNS:          0x4dd0e1,  // pale cyan — return value
+    ITERATES_OVER:    0x80deea,  // soft cyan — iteration
+    DERIVES_FROM:     0x009688,  // dark teal — derivation
+    RECEIVES_ARGUMENT:0x4db6ac,  // muted teal
+
+    // ── Call graph (warm red/orange spectrum) ─────────────
+    CALLS:            0xff5252,  // bright red — function call
+    IMPORTS_FROM:     0xff7043,  // deep orange — cross-file import
+    RESOLVES_TO:      0xff8a65,  // soft orange — name resolution
+    DEPENDS_ON:       0xffab91,  // pale orange — module dependency
+    RE_EXPORTS:       0xffccbc,  // very pale orange
+
+    // ── Control flow (magenta/pink spectrum) ─────────────
+    HAS_CONDITION:    0xe040fb,  // magenta — branch condition
+    HAS_ALTERNATE:    0xce93d8,  // light purple — else branch
+    HAS_CONSEQUENT:   0xba68c8,  // purple — then branch
+    THROWS:           0xff1744,  // hot red — exception
+    AWAITS:           0xea80fc,  // light magenta — async
+    YIELDS:           0xb388ff,  // lavender — generator
+
+    // ── Structure (blue/grey spectrum) ───────────────────
+    CONTAINS:         0x1a237e,  // very dark blue — nearly invisible (structural noise)
+    HAS_SCOPE:        0x1a237e,  // same — structural
+    DECLARES:         0x283593,  // dark blue
+    EXPORTS:          0x42a5f5,  // blue — export link
+    HAS_METHOD:       0x5c6bc0,  // indigo
+    HAS_FIELD:        0x7986cb,  // light indigo
+    HAS_PROPERTY:     0x7986cb,  // same
+    HAS_SIGNATURE:    0x9fa8da,  // pale indigo
+
+    // ── Misc ─────────────────────────────────────────────
+    OBSERVES:         0x78909c,  // blue grey — metrics
+    HAS_ELEMENT:      0x546e7a,  // dark grey-blue
+    HAS_BODY:         0x455a64,  // darker
+    HAS_CATCH:        0xef5350,  // red — error handling
+    HAS_FINALLY:      0xef9a9a,  // light red
+    MISSING_CONSTRUCTOR: 0xff1744, // hot red — diagnostic
+
+    DEFAULT:          0x37474f,  // dark blue-grey — fallback
 };
 
 // Hex geometry

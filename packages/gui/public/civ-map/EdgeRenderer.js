@@ -37,10 +37,17 @@ export class EdgeRenderer {
         this.maxEdges = MAX_EDGES_DEFAULT;
         this.visibleTypes = new Set(); // edge type indices that are visible
 
-        // Initialize all edge types as visible
+        // Initialize edge types: hide structural noise (CONTAINS, HAS_SCOPE, DECLARES)
+        // These dominate the graph (~60% of edges) and obscure data/call flow
+        const HIDDEN_BY_DEFAULT = new Set([
+            'CONTAINS', 'HAS_SCOPE', 'DECLARES', 'HAS_BODY',
+            'HAS_ELEMENT', 'OBSERVES', 'HAS_SIGNATURE',
+        ]);
         const etTable = data.metadata?.edge_type_table ?? [];
         for (let i = 0; i < etTable.length; i++) {
-            this.visibleTypes.add(i);
+            if (!HIDDEN_BY_DEFAULT.has(etTable[i])) {
+                this.visibleTypes.add(i);
+            }
         }
 
         // Pre-sort edges by degree sum (higher-degree edges first for importance culling)
