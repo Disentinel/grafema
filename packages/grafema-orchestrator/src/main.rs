@@ -497,6 +497,7 @@ async fn main() -> Result<()> {
                         }
                         analysis.relativize_paths(root_str);
                         analysis.ensure_function_contains_edges();
+                        analysis.ensure_function_scope_edges();
                         analysis.ensure_exported_flags();
                         analysis.to_uri_format(authority);
                     }

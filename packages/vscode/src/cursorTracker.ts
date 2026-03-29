@@ -149,7 +149,22 @@ async function findEnclosingFunction(client: BaseRFDBClient, node: WireNode): Pr
       const containsEdges = await client.getIncomingEdges(currentId, ['CONTAINS' as any]);
       const hasScopeEdges = await client.getIncomingEdges(currentId, ['HAS_SCOPE' as any]);
       const parentEdge = containsEdges[0] || hasScopeEdges[0];
-      if (!parentEdge) break;
+
+      if (!parentEdge) {
+        // JS analyzer creates SCOPE nodes with ":scope" suffix on the FUNCTION semantic ID.
+        // E.g. FUNCTION->analyzeAction has scope FUNCTION->analyzeAction:scope
+        // Try to find the FUNCTION by stripping ":scope" from current node's semantic ID.
+        const currentNode = await client.getNode(currentId);
+        const semId = currentNode?.semanticId || '';
+        if (semId.endsWith(':scope')) {
+          const fnSemId = semId.slice(0, -6); // strip ":scope"
+          const fnNode = await client.getNode(fnSemId);
+          if (fnNode && (fnNode.nodeType === 'FUNCTION' || fnNode.nodeType === 'METHOD')) {
+            return fnNode;
+          }
+        }
+        break;
+      }
 
       const parentId = parentEdge.src;
       const parentNode = await client.getNode(parentId);

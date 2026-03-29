@@ -153,6 +153,46 @@ impl FileAnalysis {
         self.edges.extend(new_edges);
     }
 
+    /// Ensure FUNCTION/CLASS nodes have HAS_SCOPE edges to their scope nodes.
+    ///
+    /// JS analyzer creates SCOPE nodes with ID `{function_id}:scope` but doesn't
+    /// emit `FUNCTION → HAS_SCOPE → SCOPE`. This makes it impossible to walk from
+    /// a child node up to the enclosing FUNCTION via edges.
+    pub fn ensure_function_scope_edges(&mut self) {
+        let fn_ids: HashSet<String> = self
+            .nodes
+            .iter()
+            .filter(|n| n.node_type == "FUNCTION" || n.node_type == "CLASS")
+            .map(|n| n.id.clone())
+            .collect();
+
+        if fn_ids.is_empty() {
+            return;
+        }
+
+        let scope_suffix = ":scope";
+        let new_edges: Vec<GraphEdge> = self
+            .nodes
+            .iter()
+            .filter(|n| n.node_type == "SCOPE" && n.id.ends_with(scope_suffix))
+            .filter_map(|scope| {
+                let fn_id = &scope.id[..scope.id.len() - scope_suffix.len()];
+                if fn_ids.contains(fn_id) {
+                    Some(GraphEdge {
+                        src: fn_id.to_string(),
+                        dst: scope.id.clone(),
+                        edge_type: "HAS_SCOPE".to_string(),
+                        metadata: HashMap::new(),
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        self.edges.extend(new_edges);
+    }
+
     /// Mark nodes as exported if they appear in the file's exports list.
     ///
     /// The JS/TS analyzer may not set `exported: true` on FUNCTION/CLASS nodes
