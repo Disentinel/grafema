@@ -1215,7 +1215,7 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
             ctx.emit_node(GraphNode {
                 id: node_id.clone(),
                 node_type: "CALL".to_string(),
-                name: func_name,
+                name: func_name.clone(),
                 file: ctx.file.clone(),
                 line, column: col,
                 end_line: ctx.span_end_line_col(e.paren_token.span.join()).0, end_column: ctx.span_end_line_col(e.paren_token.span.join()).1,
@@ -1223,6 +1223,13 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
                 metadata: HashMap::from([Ctx::meta_bool("method", false)]),
                 extra: HashMap::new(),
             });
+
+            // Defer CALLS resolution for simple function names
+            if let syn::Expr::Path(p) = e.func.as_ref() {
+                if p.path.segments.len() == 1 {
+                    ctx.defer_ref(&func_name, &node_id, "CALLS");
+                }
+            }
 
             walk_expr(&e.func, ctx);
             for (i, arg) in e.args.iter().enumerate() {
@@ -1259,6 +1266,10 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
                 ]),
                 extra: HashMap::new(),
             });
+
+            // READS_FROM: method call reads the receiver
+            let receiver_name = expr_to_name(&e.receiver);
+            ctx.defer_ref(&receiver_name, &node_id, "READS_FROM");
 
             walk_expr(&e.receiver, ctx);
             for (i, arg) in e.args.iter().enumerate() {
@@ -1315,7 +1326,7 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
             let node_id = semantic_id(&ctx.file, "PROPERTY_ACCESS", &member, parent, Some(&hash));
 
             ctx.emit_node(GraphNode {
-                id: node_id,
+                id: node_id.clone(),
                 node_type: "PROPERTY_ACCESS".to_string(),
                 name: member,
                 file: ctx.file.clone(),
@@ -1327,6 +1338,9 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
                 ]),
                 extra: HashMap::new(),
             });
+
+            // READS_FROM: property access reads the receiver variable
+            ctx.defer_ref(&receiver_name, &node_id, "READS_FROM");
 
             walk_expr(&e.base, ctx);
         }
