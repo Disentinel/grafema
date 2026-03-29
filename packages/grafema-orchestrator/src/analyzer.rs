@@ -153,6 +153,34 @@ impl FileAnalysis {
         self.edges.extend(new_edges);
     }
 
+    /// Mark nodes as exported if they appear in the file's exports list.
+    ///
+    /// The JS/TS analyzer may not set `exported: true` on FUNCTION/CLASS nodes
+    /// for `export function foo()` due to AST walking order. This post-processing
+    /// step cross-references `faExports` with nodes and sets the flag.
+    pub fn ensure_exported_flags(&mut self) {
+        let export_ids: HashSet<String> = self
+            .exports
+            .iter()
+            .map(|e| e.node_id.clone())
+            .collect();
+
+        if export_ids.is_empty() {
+            return;
+        }
+
+        let mut fixed = 0;
+        for node in &mut self.nodes {
+            if !node.exported && export_ids.contains(&node.id) {
+                node.exported = true;
+                fixed += 1;
+            }
+        }
+        if fixed > 0 {
+            tracing::debug!(fixed, file = %self.file, "Fixed exported flags from exports list");
+        }
+    }
+
     /// Convert byte-offset positions to line:column for all nodes.
     ///
     /// The JS/TS analyzer (Haskell `js-analyzer`) outputs byte offsets in the
