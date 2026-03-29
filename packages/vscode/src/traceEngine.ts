@@ -13,10 +13,10 @@ import { parseNodeMetadata } from './types';
 import type { TraceNode, TraceOutput, TraceGap, SourceKind } from './types';
 
 /** Edge types followed when tracing value backward (finding origins) */
-const BACKWARD_EDGE_TYPES = ['ASSIGNED_FROM', 'DERIVES_FROM', 'READS_FROM'] as const;
+const BACKWARD_EDGE_TYPES = ['ASSIGNED_FROM', 'DERIVES_FROM', 'READS_FROM', 'ITERATES_OVER'] as const;
 
 /** Edge types followed when tracing value forward (finding consumers) */
-const FORWARD_EDGE_TYPES = ['ASSIGNED_FROM', 'DERIVES_FROM', 'PASSES_ARGUMENT', 'READS_FROM'] as const;
+const FORWARD_EDGE_TYPES = ['ASSIGNED_FROM', 'DERIVES_FROM', 'PASSES_ARGUMENT', 'READS_FROM', 'ITERATES_OVER'] as const;
 
 /**
  * Maximum edges to follow per node.
