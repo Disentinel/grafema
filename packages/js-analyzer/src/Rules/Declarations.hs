@@ -363,9 +363,18 @@ ruleMethodDefinition node = do
       }
     Nothing -> return ()
 
-  -- Walk function value
+  -- Walk function value and link METHOD to its body scope
   case getChildrenMaybe "value" node of
-    Just val -> withEnclosingFn nodeId $ withNamedParent name $ withAncestor node (walkNode val) >> return ()
+    Just val -> do
+      mFnId <- withEnclosingFn nodeId $ withNamedParent name $ withAncestor node (walkNode val)
+      -- Create HAS_SCOPE edge from METHOD to the FunctionExpression's scope
+      -- This allows traversal: METHOD -> HAS_SCOPE -> SCOPE -> CONTAINS -> CALL
+      case mFnId of
+        Just fnId -> emitEdge GraphEdge
+          { geSource = nodeId, geTarget = fnId <> ":scope"
+          , geType = "HAS_SCOPE", geMetadata = Map.empty
+          }
+        Nothing -> return ()
     Nothing  -> return ()
 
   return (Just nodeId)

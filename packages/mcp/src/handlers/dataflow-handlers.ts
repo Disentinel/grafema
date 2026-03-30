@@ -16,12 +16,14 @@ import type {
   ToolResult,
   TraceAliasArgs,
   TraceDataFlowArgs,
+  TraceCallChainArgs,
   CheckInvariantArgs,
   GraphNode,
 } from '../types.js';
 import {
   traceDataflow,
   renderTraceNarrative,
+  traceCallChain,
   type DataflowBackend,
   type TraceDetail,
 } from '@grafema/util';
@@ -153,6 +155,75 @@ export async function handleTraceDataFlow(args: TraceDataFlowArgs): Promise<Tool
   return textResult(renderTraceNarrative(traceResults, sourceName, {
     detail: (detail as TraceDetail) || 'normal',
   }));
+}
+
+// === TRACE CALL CHAIN ===
+
+export async function handleTraceCallChain(args: TraceCallChainArgs): Promise<ToolResult> {
+  const db = await ensureAnalyzed();
+  const { source, file, direction = 'forward', max_depth = 10 } = args;
+
+  // Find source node (same resolution logic as trace_dataflow)
+  let sourceNode: GraphNode | null = await db.getNode(source);
+  if (!sourceNode) {
+    let fallbackNode: GraphNode | null = null;
+    for (const type of ['FUNCTION', 'METHOD']) {
+      for await (const node of db.queryNodes({ type, name: source })) {
+        if (file && !node.file?.includes(file)) {
+          if (!fallbackNode) fallbackNode = node;
+          continue;
+        }
+        sourceNode = node;
+        break;
+      }
+      if (sourceNode) break;
+    }
+    if (!sourceNode && fallbackNode) {
+      sourceNode = fallbackNode;
+    }
+  }
+  if (!sourceNode) {
+    const displaySource = isGrafemaUri(source) ? toCompactSemanticId(source) : source;
+    return errorResult(`Source "${displaySource}" not found. Provide a FUNCTION or METHOD name.`);
+  }
+
+  const results = await traceCallChain(db as never, sourceNode.id, {
+    direction: direction as 'forward' | 'backward' | 'both',
+    maxDepth: max_depth,
+    limit: 100,
+  });
+
+  // Render as indented call tree
+  const lines: string[] = [];
+  const sourceName = sourceNode.name || source;
+  const sourceFile = sourceNode.file ? sourceNode.file.split('/').pop() : '';
+
+  for (const result of results) {
+    lines.push(`## ${result.direction === 'forward' ? 'Outgoing calls from' : 'Incoming callers of'} ${sourceName} (${sourceFile}:${sourceNode.line ?? '?'})`);
+    lines.push('');
+
+    if (result.chain.length === 0) {
+      lines.push('  (no calls found)');
+      continue;
+    }
+
+    for (const hop of result.chain) {
+      const indent = '  '.repeat(hop.depth + 1);
+      const prefix = hop.remote ? '> calls_remote' : '> calls';
+      const shortFile = hop.file ? hop.file.split('/').pop() : '?';
+      const loc = hop.line ? `${shortFile}:${hop.line}` : shortFile;
+      const unresolvedTag = hop.resolved ? '' : ' [unresolved]';
+      lines.push(`${indent}${prefix} ${hop.name} (${loc})${unresolvedTag}`);
+    }
+
+    lines.push('');
+    lines.push(`${result.totalFound} hop(s) found`);
+  }
+
+  lines.push('');
+  lines.push('Legend: > calls = local call, > calls_remote = cross-process/language boundary');
+
+  return textResult(lines.join('\n'));
 }
 
 // === EXPLAIN (graph data + LLM prompt injection) ===

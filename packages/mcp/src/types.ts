@@ -74,6 +74,13 @@ export interface TraceDataFlowArgs {
   detail?: 'summary' | 'normal' | 'full';
 }
 
+export interface TraceCallChainArgs {
+  source: string;
+  file?: string;
+  direction?: string;
+  max_depth?: number;
+}
+
 export interface CheckInvariantArgs {
   rule: string;
   name?: string;
