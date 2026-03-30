@@ -44,6 +44,7 @@ import {
   handleFindNodes,
   handleTraceAlias,
   handleTraceDataFlow,
+  handleTraceCallChain,
   handleCheckInvariant,
   handleAnalyzeProject,
   handleGetAnalysisStatus,
@@ -78,7 +79,9 @@ import {
   handleDescribe,
   handleGraphQLQuery,
   handleQueryRegistry,
+  handleExplain,
 } from './handlers/index.js';
+import type { ExplainArgs } from './handlers/index.js';
 import type {
   ToolResult,
   ReportIssueArgs,
@@ -90,6 +93,7 @@ import type {
   FindNodesArgs,
   TraceAliasArgs,
   TraceDataFlowArgs,
+  TraceCallChainArgs,
   CheckInvariantArgs,
   AnalyzeProjectArgs,
   GetSchemaArgs,
@@ -242,6 +246,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
 
       case 'trace_dataflow':
         result = await handleTraceDataFlow(asArgs<TraceDataFlowArgs>(args));
+        break;
+
+      case 'trace_calls':
+        result = await handleTraceCallChain(asArgs<TraceCallChainArgs>(args));
+        break;
+
+      case 'explain':
+        result = await handleExplain(asArgs<ExplainArgs>(args));
         break;
 
       case 'check_invariant':

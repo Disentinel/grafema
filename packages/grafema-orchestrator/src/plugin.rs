@@ -1024,7 +1024,9 @@ pub async fn resolve_per_file(
             } else {
                 continue;
             }
-            // For declarations (FUNCTION etc.), only include exported ones
+            // For declarations, only include exported ones in the index.
+            // Note: JS analyzer's `exported` flag may be false for `export function foo()`
+            // due to OXC AST walking order. We also check the file's exports list below.
             if matches!(*node_type, "FUNCTION" | "VARIABLE" | "CONSTANT" | "CLASS" | "INTERFACE" | "TYPE_ALIAS" | "ENUM") {
                 if !node.exported {
                     continue;

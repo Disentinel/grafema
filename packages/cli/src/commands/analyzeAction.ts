@@ -263,6 +263,12 @@ export async function analyzeAction(path: string, options: { service?: string; e
   if (options.clear) {
     debug('Clearing existing database...');
     await backend.clear();
+    // Shutdown + restart server for clean state.
+    // Without this, the old server keeps running with a stale socket
+    // after the orchestrator finishes, causing "connection failed" in extension.
+    debug('Restarting server for clean state...');
+    await backend.shutdownServer();
+    await backend.connect(); // auto-starts a fresh server
   }
 
   const startTime = Date.now();

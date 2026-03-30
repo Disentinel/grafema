@@ -330,6 +330,23 @@ importResolutionTests = do
     Map.lookup "importedName" (gnMetadata ibNode) `shouldBe` Just (MetaText "default")
     gnId ibNode `shouldBe` "test.js->IMPORT_BINDING->bar[in:./mod]"
 
+  -- IMPORT → CONTAINS → IMPORT_BINDING edge
+  it "emits CONTAINS edge from IMPORT to IMPORT_BINDING" $ do
+    let fa = analyzeAST $ BL.concat
+          [ "{\"type\":\"Program\",\"start\":0,\"end\":35,\"body\":["
+          , "{\"type\":\"ImportDeclaration\",\"start\":0,\"end\":35,"
+          , "\"specifiers\":["
+          , "{\"type\":\"ImportSpecifier\",\"start\":9,\"end\":12,"
+          , "\"local\":{\"type\":\"Identifier\",\"start\":9,\"end\":12,\"name\":\"foo\"},"
+          , "\"imported\":{\"type\":\"Identifier\",\"start\":9,\"end\":12,\"name\":\"foo\"}}"
+          , "],"
+          , "\"source\":{\"type\":\"Literal\",\"start\":20,\"end\":29,\"value\":\"./utils\",\"raw\":\"'./utils'\"}}"
+          , "]}"
+          ]
+    importNode <- requireNode "IMPORT" "./utils" fa
+    ibNode <- requireNode "IMPORT_BINDING" "foo" fa
+    hasEdge "CONTAINS" (gnId importNode) (gnId ibNode) fa `shouldBe` True
+
   -- Namespace import: import * as ns from './all'
   it "propagates source metadata to namespace import binding" $ do
     let fa = analyzeAST $ BL.concat

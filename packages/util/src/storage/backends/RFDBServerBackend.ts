@@ -284,6 +284,22 @@ export class RFDBServerBackend {
   }
 
   /**
+   * Shutdown the RFDB server gracefully (flush + exit).
+   * Use before operations that invalidate the socket (e.g. clear + restart).
+   */
+  async shutdownServer(): Promise<void> {
+    if (!this.client) return;
+    try {
+      await this.client.shutdown();
+    } catch {
+      // Server may already be gone
+    }
+    this.client = null;
+    this.connected = false;
+    this.serverProcess = null;
+  }
+
+  /**
    * Clear the database
    */
   async clear(): Promise<void> {

@@ -8,7 +8,8 @@
 import type { ChildProcess } from 'child_process';
 import { spawn } from 'child_process';
 import type { FSWatcher } from 'fs';
-import { existsSync, unlinkSync, watch } from 'fs';
+import { existsSync, readFileSync, unlinkSync, watch } from 'fs';
+import { homedir } from 'os';
 import { join, dirname, basename } from 'path';
 import { EventEmitter } from 'events';
 import { RFDBClient, RFDBWebSocketClient } from '@grafema/rfdb-client';
@@ -267,7 +268,13 @@ export class GrafemaClientManager extends EventEmitter {
       }
     }
 
-    // 4. Check @grafema/rfdb npm package
+    // 4. Check ~/.grafema/bin/ (lazy-downloaded by CLI)
+    const homeBinary = join(homedir(), '.grafema', 'bin', 'rfdb-server');
+    if (existsSync(homeBinary)) {
+      return homeBinary;
+    }
+
+    // 5. Check @grafema/rfdb npm package
     try {
       // Use require.resolve to find the package
       const rfdbPkg = require.resolve('@grafema/rfdb');
@@ -300,6 +307,40 @@ export class GrafemaClientManager extends EventEmitter {
    * Public so analyze command can ensure server is running before analysis.
    */
   async startServer(): Promise<void> {
+    // If socket exists and a server is responding, skip — already running
+    if (existsSync(this.socketPath)) {
+      try {
+        const probe = new RFDBClient(this.socketPath, 'probe');
+        await probe.connect();
+        const pong = await probe.ping();
+        await probe.close();
+        if (pong) return; // Server is alive, nothing to do
+      } catch {
+        // Socket exists but server is dead — remove stale socket below
+      }
+      unlinkSync(this.socketPath);
+    }
+
+    // Gracefully stop any old server holding the db lock.
+    // SIGTERM triggers flush + exit in rfdb-server's signal handler.
+    const pidPath = join(dirname(this.socketPath), 'rfdb.pid');
+    if (existsSync(pidPath)) {
+      try {
+        const oldPid = parseInt(readFileSync(pidPath, 'utf-8').trim(), 10);
+        if (oldPid > 0) {
+          process.kill(oldPid, 'SIGTERM');
+          // Wait for process to actually exit (flush may take seconds for large graphs)
+          for (let i = 0; i < 50; i++) {
+            await sleep(100);
+            try { process.kill(oldPid, 0); } catch { break; } // process gone
+          }
+        }
+      } catch {
+        // Process already dead or permission denied — fine
+      }
+      try { unlinkSync(pidPath); } catch { /* ignore */ }
+    }
+
     const binaryPath = this.findServerBinary();
     if (!binaryPath) {
       throw new Error(
@@ -307,22 +348,6 @@ export class GrafemaClientManager extends EventEmitter {
           'Install @grafema/rfdb: npm install @grafema/rfdb\n' +
           'Or build from source: cargo build --release --bin rfdb-server'
       );
-    }
-
-    // If socket exists, probe to check if a server is already running
-    if (existsSync(this.socketPath)) {
-      try {
-        const probe = new RFDBClient(this.socketPath, 'probe');
-        await probe.connect();
-        const pong = await probe.ping();
-        await probe.close();
-        if (pong) {
-          return; // Server already running, skip start
-        }
-      } catch {
-        // Socket exists but server is dead — remove stale socket below
-      }
-      unlinkSync(this.socketPath);
     }
 
     this.serverProcess = spawn(binaryPath, [this.dbPath, '--socket', this.socketPath], {
@@ -333,13 +358,30 @@ export class GrafemaClientManager extends EventEmitter {
     // Don't let server process prevent VS Code from exiting
     this.serverProcess.unref();
 
+    // Write PID file so future restarts can gracefully kill this server
+    if (this.serverProcess.pid) {
+      const { writeFileSync } = require('fs');
+      try { writeFileSync(pidPath, String(this.serverProcess.pid)); } catch { /* ignore */ }
+    }
+
     this.serverProcess.on('error', (err: Error) => {
       console.error('[grafema-explore] Server process error:', err);
     });
 
+    // Capture server stderr/stdout for debugging
+    this.serverProcess.stderr?.on('data', (data: Buffer) => {
+      console.error('[grafema-explore] rfdb-server stderr:', data.toString().trim());
+    });
+    this.serverProcess.stdout?.on('data', (data: Buffer) => {
+      console.log('[grafema-explore] rfdb-server stdout:', data.toString().trim());
+    });
+    this.serverProcess.on('exit', (code: number | null) => {
+      console.error(`[grafema-explore] rfdb-server exited with code ${code}`);
+    });
+
     // Wait for socket to appear
     let attempts = 0;
-    while (!existsSync(this.socketPath) && attempts < 50) {
+    while (!existsSync(this.socketPath) && attempts < 100) {
       await sleep(100);
       attempts++;
     }

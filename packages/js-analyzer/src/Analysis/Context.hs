@@ -15,11 +15,13 @@ module Analysis.Context
   , askEnclosingFn
   , askEnclosingClass
   , askNamedParent
+  , askImportNodeId
   , askAncestors
   , withAncestor
   , withEnclosingFn
   , withEnclosingClass
   , withNamedParent
+  , withImportNodeId
   , withExported
   , askExported
   ) where
@@ -40,6 +42,7 @@ data Ctx = Ctx
   , ctxEnclosingFn    :: !(Maybe Text)    -- node ID
   , ctxEnclosingClass :: !(Maybe Text)    -- node ID
   , ctxNamedParent    :: !(Maybe Text)    -- nearest named ancestor name
+  , ctxImportNodeId   :: !(Maybe Text)    -- IMPORT node ID (for IMPORT→CONTAINS→IMPORT_BINDING)
   , ctxAncestors      :: ![ASTNode]       -- parent chain (head = immediate parent)
   , ctxExported       :: !Bool            -- inside an export declaration?
   }
@@ -62,6 +65,7 @@ runAnalyzer file moduleId action =
         , ctxEnclosingFn    = Nothing
         , ctxEnclosingClass = Nothing
         , ctxNamedParent    = Nothing
+        , ctxImportNodeId   = Nothing
         , ctxAncestors      = []
         , ctxExported       = False
         }
@@ -116,6 +120,9 @@ askEnclosingClass = asks ctxEnclosingClass
 askNamedParent :: Analyzer (Maybe Text)
 askNamedParent = asks ctxNamedParent
 
+askImportNodeId :: Analyzer (Maybe Text)
+askImportNodeId = asks ctxImportNodeId
+
 askAncestors :: Analyzer [ASTNode]
 askAncestors = asks ctxAncestors
 
@@ -132,6 +139,9 @@ withEnclosingClass clsId = local (\ctx -> ctx { ctxEnclosingClass = Just clsId }
 
 withNamedParent :: Text -> Analyzer a -> Analyzer a
 withNamedParent name = local (\ctx -> ctx { ctxNamedParent = Just name })
+
+withImportNodeId :: Text -> Analyzer a -> Analyzer a
+withImportNodeId nid = local (\ctx -> ctx { ctxImportNodeId = Just nid })
 
 withExported :: Analyzer a -> Analyzer a
 withExported = local (\ctx -> ctx { ctxExported = True })

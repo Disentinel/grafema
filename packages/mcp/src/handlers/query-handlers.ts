@@ -272,6 +272,36 @@ export async function handleFindCalls(args: FindCallsArgs): Promise<ToolResult> 
     });
   }
 
+  // Also find callback usages: where the function is passed as argument
+  // Pattern: CALL "action" → PASSES_ARGUMENT → REFERENCE "analyzeAction" → READS_FROM → FUNCTION
+  // Search: REFERENCE nodes with matching name that have incoming PASSES_ARGUMENT
+  if (totalMatched === 0 || calls.length < limit) {
+    for await (const ref of db.queryNodes({ type: 'REFERENCE', name })) {
+      const inEdges = await db.getIncomingEdges(ref.id, ['PASSES_ARGUMENT' as any]);
+      if (inEdges.length === 0) continue;
+
+      totalMatched++;
+      if (skipped < offset) { skipped++; continue; }
+      if (calls.length >= limit) continue;
+
+      const callerNode = await db.getNode(inEdges[0].src);
+      calls.push({
+        id: ref.id,
+        name: `${callerNode?.name ?? '?'}(${name})`,
+        object: undefined,
+        file: ref.file,
+        line: ref.line,
+        resolved: true,
+        target: callerNode ? {
+          type: callerNode.type,
+          name: callerNode.name ?? '',
+          file: callerNode.file,
+          line: callerNode.line,
+        } : null,
+      });
+    }
+  }
+
   if (totalMatched === 0) {
     return textResult(`No calls found for "${className ? className + '.' : ''}${name}"`);
   }

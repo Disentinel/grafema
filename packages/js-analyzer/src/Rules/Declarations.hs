@@ -26,7 +26,7 @@ import Analysis.Types
 import Analysis.Context
 import {-# SOURCE #-} Analysis.Walker (walkNode)
 import Analysis.Scope (withScope, declareInScope)
-import Analysis.SemanticId (semanticId)
+import Analysis.SemanticId (semanticId, contentHash)
 import AST.Types
 import AST.Span (Span(..))
 import Data.Maybe (fromMaybe)
@@ -363,9 +363,18 @@ ruleMethodDefinition node = do
       }
     Nothing -> return ()
 
-  -- Walk function value
+  -- Walk function value and link METHOD to its body scope
   case getChildrenMaybe "value" node of
-    Just val -> withEnclosingFn nodeId $ withNamedParent name $ withAncestor node (walkNode val) >> return ()
+    Just val -> do
+      mFnId <- withEnclosingFn nodeId $ withNamedParent name $ withAncestor node (walkNode val)
+      -- Create HAS_SCOPE edge from METHOD to the FunctionExpression's scope
+      -- This allows traversal: METHOD -> HAS_SCOPE -> SCOPE -> CONTAINS -> CALL
+      case mFnId of
+        Just fnId -> emitEdge GraphEdge
+          { geSource = nodeId, geTarget = fnId <> ":scope"
+          , geType = "HAS_SCOPE", geMetadata = Map.empty
+          }
+        Nothing -> return ()
     Nothing  -> return ()
 
   return (Just nodeId)
@@ -425,7 +434,16 @@ ruleImportDeclaration node = do
       source = case getChildrenMaybe "source" node of
                  Just srcNode -> getTextFieldOr "value" "" srcNode
                  Nothing      -> ""
-      nodeId = semanticId file "IMPORT" source Nothing Nothing
+      specs  = getChildren "specifiers" node
+      -- Disambiguate duplicate imports from same source (e.g. `import { A } from 'x'` + `import type { B } from 'x'`)
+      -- Use specifier names as stable content hash — doesn't change when lines shift.
+      specNames = T.intercalate "," $ map (\s ->
+        case getChildrenMaybe "local" s of
+          Just l  -> getTextFieldOr "name" "" l
+          Nothing -> ""
+        ) specs
+      hash   = contentHash [("import", source), ("specifiers", specNames)]
+      nodeId = semanticId file "IMPORT" source Nothing (Just hash)
 
   emitNode GraphNode
     { gnId = nodeId, gnType = "IMPORT", gnName = source
@@ -445,8 +463,7 @@ ruleImportDeclaration node = do
     }
 
   -- Walk specifiers for individual import bindings
-  let specs = getChildren "specifiers" node
-  mapM_ (\s -> withNamedParent source $ withAncestor node (walkNode s)) specs
+  mapM_ (\s -> withNamedParent source $ withImportNodeId nodeId $ withAncestor node (walkNode s)) specs
 
   return (Just nodeId)
 
@@ -457,6 +474,7 @@ ruleImportSpecifier node = do
   file <- askFile
   parent <- askNamedParent
   curScopeId <- askScopeId
+  importId <- askImportNodeId
   let sp = astNodeSpan node
       localName = case getChildrenMaybe "local" node of
                     Just l  -> getTextFieldOr "name" "<import>" l
@@ -476,6 +494,12 @@ ruleImportSpecifier node = do
         , ("source", MetaText (fromMaybe "" parent))
         ]
     }
+  -- CONTAINS edge from IMPORT to IMPORT_BINDING
+  forM_ importId $ \iid ->
+    emitEdge GraphEdge
+      { geSource = iid, geTarget = nodeId
+      , geType = "CONTAINS", geMetadata = Map.empty
+      }
   emitEdge GraphEdge
     { geSource = curScopeId, geTarget = nodeId
     , geType = "DECLARES", geMetadata = Map.empty
@@ -488,6 +512,7 @@ ruleImportDefaultSpecifier node = do
   file <- askFile
   parent <- askNamedParent
   curScopeId <- askScopeId
+  importId <- askImportNodeId
   let sp = astNodeSpan node
       localName = case getChildrenMaybe "local" node of
                     Just l  -> getTextFieldOr "name" "<default>" l
@@ -504,6 +529,12 @@ ruleImportDefaultSpecifier node = do
         , ("source", MetaText (fromMaybe "" parent))
         ]
     }
+  -- CONTAINS edge from IMPORT to IMPORT_BINDING
+  forM_ importId $ \iid ->
+    emitEdge GraphEdge
+      { geSource = iid, geTarget = nodeId
+      , geType = "CONTAINS", geMetadata = Map.empty
+      }
   emitEdge GraphEdge
     { geSource = curScopeId, geTarget = nodeId
     , geType = "DECLARES", geMetadata = Map.empty
@@ -516,6 +547,7 @@ ruleImportNamespaceSpecifier node = do
   file <- askFile
   parent <- askNamedParent
   curScopeId <- askScopeId
+  importId <- askImportNodeId
   let sp = astNodeSpan node
       localName = case getChildrenMaybe "local" node of
                     Just l  -> getTextFieldOr "name" "<namespace>" l
@@ -532,6 +564,12 @@ ruleImportNamespaceSpecifier node = do
         , ("source", MetaText (fromMaybe "" parent))
         ]
     }
+  -- CONTAINS edge from IMPORT to IMPORT_BINDING
+  forM_ importId $ \iid ->
+    emitEdge GraphEdge
+      { geSource = iid, geTarget = nodeId
+      , geType = "CONTAINS", geMetadata = Map.empty
+      }
   emitEdge GraphEdge
     { geSource = curScopeId, geTarget = nodeId
     , geType = "DECLARES", geMetadata = Map.empty

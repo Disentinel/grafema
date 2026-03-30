@@ -174,9 +174,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // Clear caches when reconnected (database may have changed)
   clientManager.on('reconnected', () => {
-    console.log('[grafema-explore] Reconnected - clearing history');
+    console.log('[grafema-explore] Reconnected - clearing history and node cache');
     edgesProvider?.clearHistory();
     edgesProvider?.setRootNode(null);
+    // Invalidate node locator cache — graph data may have changed
+    const { invalidateNodeCache } = require('./nodeLocator');
+    invalidateNodeCache();
     vscode.window.showInformationMessage('Grafema: Reconnected to graph database');
   });
 
@@ -264,7 +267,7 @@ function registerCommands(): vscode.Disposable[] {
   // Find node at cursor and set as root (clears history)
   disposables.push(vscode.commands.registerCommand('grafema.findAtCursor', async () => {
     console.log('[grafema-explore] findAtCursor command fired');
-    await findAndSetRoot(clientManager, edgesProvider, debugProvider, false);
+    await findAndSetRoot(clientManager, edgesProvider, debugProvider, false, callersProvider);
   }));
 
   // Set selected tree item as new root (preserves history)
@@ -311,7 +314,7 @@ function registerCommands(): vscode.Disposable[] {
     followCursor = !followCursor;
     updateStatusBar(statusBarItem, clientManager, followCursor);
     if (followCursor) {
-      findAndSetRoot(clientManager, edgesProvider, debugProvider, false);
+      findAndSetRoot(clientManager, edgesProvider, debugProvider, false, callersProvider);
       vscode.window.showInformationMessage('Grafema: Follow cursor enabled');
     } else {
       vscode.window.showInformationMessage('Grafema: Follow cursor disabled (locked)');
@@ -726,12 +729,18 @@ function registerCommands(): vscode.Disposable[] {
     nodesInFileProvider?.refresh();
   }));
 
+  // Open Map panel
+  disposables.push(vscode.commands.registerCommand('grafema.openMap', () => {
+    const { MapPanel } = require('./mapPanel');
+    MapPanel.createOrShow();
+  }));
+
   // Follow cursor on selection change
   disposables.push(vscode.window.onDidChangeTextEditorSelection(
     debounce(async (_event: vscode.TextEditorSelectionChangeEvent) => {
       console.log(`[grafema-explore] selection changed, followCursor=${followCursor}, connected=${clientManager?.isConnected()}`);
       if (followCursor && clientManager?.isConnected()) {
-        await findAndSetRoot(clientManager, edgesProvider, debugProvider, false);
+        await findAndSetRoot(clientManager, edgesProvider, debugProvider, false, callersProvider);
         await findAndTraceAtCursor();
         await findAndSetCallersAtCursor();
         await findAndSetBlastRadiusAtCursor();

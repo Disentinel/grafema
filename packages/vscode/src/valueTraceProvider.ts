@@ -14,7 +14,7 @@ import { parseNodeMetadata } from './types';
 import { getNodeIcon } from './utils';
 import type { ValueTraceItem, TraceNode, TraceResult } from './types';
 
-const PANEL_DEPTH = 5;
+const PANEL_DEPTH = 10;
 
 export class ValueTraceProvider implements vscode.TreeDataProvider<ValueTraceItem> {
   private _onDidChangeTreeData =

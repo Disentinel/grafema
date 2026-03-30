@@ -89,8 +89,9 @@ export const EDGE_TYPE = {
   EMITS_EVENT: 'EMITS_EVENT',
   JOINS_ROOM: 'JOINS_ROOM',
 
-  // External
+  // External / Cross-process
   CALLS_API: 'CALLS_API',
+  CALLS_REMOTE: 'CALLS_REMOTE',
   INTERACTS_WITH: 'INTERACTS_WITH',
   HTTP_RECEIVES: 'HTTP_RECEIVES',
 

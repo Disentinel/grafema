@@ -6,6 +6,8 @@ root: ".."
 include:
   # TypeScript packages
   - "packages/*/src/**/*.ts"
+  # rfdb package uses ts/ not src/
+  - "packages/rfdb/ts/**/*.ts"
   # Rust packages (rfdb-server, grafema-orchestrator)
   - "packages/*/src/**/*.rs"
   # Haskell packages (grafema-common, grafema-resolve, haskell-analyzer, haskell-resolve, rust-analyzer, rust-resolve)
@@ -34,12 +36,25 @@ services:
   - name: "vscode"
     path: "packages/vscode"
     entryPoint: "src/extension.ts"
+  - name: "rfdb"
+    path: "packages/rfdb"
+    entryPoint: "ts/index.ts"
   - name: "rfdb-server"
     path: "packages/rfdb-server"
-    entryPoint: "src/main.rs"
+    entryPoint: "src/bin/rfdb_server.rs"
   - name: "grafema-orchestrator"
     path: "packages/grafema-orchestrator"
     entryPoint: "src/main.rs"
+
+plugins:
+  - name: "method-call-resolver"
+    command: "node plugins/method-call-resolver.mjs"
+    mode: batch
+  - name: "ipc-bridge-detector"
+    command: "node plugins/ipc-bridge-detector.mjs"
+    mode: batch
+    depends_on:
+      - "method-call-resolver"
 
 exclude:
   - "**/*.test.ts"

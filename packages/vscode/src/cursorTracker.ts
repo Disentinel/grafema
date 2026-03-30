@@ -7,8 +7,11 @@
  */
 
 import * as vscode from 'vscode';
+import type { WireNode } from '@grafema/types';
+import type { BaseRFDBClient } from '@grafema/rfdb-client';
 import type { GrafemaClientManager } from './grafemaClient';
 import type { EdgesProvider } from './edgesProvider';
+import type { CallersProvider } from './callersProvider';
 import type { DebugProvider } from './debugProvider';
 import { findNodeAtCursor } from './nodeLocator';
 
@@ -24,7 +27,8 @@ export async function findAndSetRoot(
   clientManager: GrafemaClientManager | null,
   edgesProvider: EdgesProvider | null,
   debugProvider: DebugProvider | null,
-  preserveHistory: boolean
+  preserveHistory: boolean,
+  callersProvider?: CallersProvider | null,
 ): Promise<void> {
   console.log('[grafema-explore] findAndSetRoot called');
 
@@ -81,33 +85,11 @@ export async function findAndSetRoot(
   try {
     const client = clientManager.getClient();
 
-    // Debug: log the raw query before node search
-    const allNodes = await client.getAllNodes({ file: filePath });
+    const node = await findNodeAtCursor(client, filePath, line, column);
+
     const details: string[] = [
       `cursor: L${line}:${column}`,
-      `getAllNodes({ file }) returned ${allNodes.length} nodes`,
     ];
-
-    if (allNodes.length === 0) {
-      // Try a small sample query to see what file paths look like in the graph
-      const sampleNodes = await client.getAllNodes({ nodeType: 'MODULE' });
-      const files = new Set(sampleNodes.slice(0, 20).map((n) => n.file));
-      details.push(`--- sample MODULE files in graph (first ${files.size}) ---`);
-      for (const f of files) {
-        details.push(`  ${f}`);
-      }
-    } else {
-      // Show first few nodes for context
-      for (const n of allNodes.slice(0, 5)) {
-        const meta = JSON.parse(n.metadata || '{}');
-        details.push(`  ${n.nodeType} "${n.name}" L${meta.line ?? '?'}:${meta.column ?? '?'}`);
-      }
-      if (allNodes.length > 5) {
-        details.push(`  ... and ${allNodes.length - 5} more`);
-      }
-    }
-
-    const node = await findNodeAtCursor(client, filePath, line, column);
 
     debugProvider?.log({
       timestamp: Date.now(),
@@ -115,7 +97,7 @@ export async function findAndSetRoot(
       query: { file: filePath, line, column },
       result: node
         ? `found: ${node.nodeType} "${node.name}"`
-        : `${allNodes.length} nodes in file, none matched`,
+        : 'no node matched at cursor',
       details,
     });
 
@@ -125,8 +107,34 @@ export async function findAndSetRoot(
       } else {
         edgesProvider.clearAndSetRoot(node);
       }
+
+      // Update map panel: highlight enclosing function
+      try {
+        const { MapPanel } = require('./mapPanel');
+        if (MapPanel.currentPanel) {
+          const mapNode = (node.nodeType === 'FUNCTION' || node.nodeType === 'METHOD' || node.nodeType === 'CLASS')
+            ? node
+            : await findEnclosingFunction(client, node);
+          if (mapNode) {
+            MapPanel.currentPanel.highlightNode(
+              mapNode.name || '',
+              mapNode.nodeType || '',
+              mapNode.file || filePath,
+            );
+          }
+        }
+      } catch { /* map panel not open */ }
+
+      // Update callers panel: find enclosing FUNCTION for current node
+      if (callersProvider) {
+        const fnNode = node.nodeType === 'FUNCTION' || node.nodeType === 'METHOD'
+          ? node
+          : await findEnclosingFunction(client, node);
+        callersProvider.setRootNode(fnNode);
+      }
     } else {
       edgesProvider.setStatusMessage('No graph node at cursor');
+      if (callersProvider) callersProvider.setRootNode(null);
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -139,6 +147,57 @@ export async function findAndSetRoot(
     });
     edgesProvider.setStatusMessage('Error querying graph');
   }
+}
+
+/**
+ * Walk up CONTAINS edges to find the nearest enclosing FUNCTION or METHOD node.
+ * Returns null if no function found (e.g. module-level code).
+ */
+async function findEnclosingFunction(client: BaseRFDBClient, node: WireNode): Promise<WireNode | null> {
+  const visited = new Set<string>();
+  let currentId = node.id;
+
+  for (let depth = 0; depth < 10; depth++) {
+    if (visited.has(currentId)) break;
+    visited.add(currentId);
+
+    try {
+      // Walk up: CONTAINS (child → parent scope) or HAS_SCOPE (scope → owner)
+      const containsEdges = await client.getIncomingEdges(currentId, ['CONTAINS' as any]);
+      const hasScopeEdges = await client.getIncomingEdges(currentId, ['HAS_SCOPE' as any]);
+      const parentEdge = containsEdges[0] || hasScopeEdges[0];
+
+      if (!parentEdge) {
+        // JS analyzer creates SCOPE nodes with ":scope" suffix on the FUNCTION semantic ID.
+        // E.g. FUNCTION->analyzeAction has scope FUNCTION->analyzeAction:scope
+        // Try to find the FUNCTION by stripping ":scope" from current node's semantic ID.
+        const currentNode = await client.getNode(currentId);
+        const semId = currentNode?.semanticId || '';
+        if (semId.endsWith(':scope')) {
+          const fnSemId = semId.slice(0, -6); // strip ":scope"
+          const fnNode = await client.getNode(fnSemId);
+          if (fnNode && (fnNode.nodeType === 'FUNCTION' || fnNode.nodeType === 'METHOD')) {
+            return fnNode;
+          }
+        }
+        break;
+      }
+
+      const parentId = parentEdge.src;
+      const parentNode = await client.getNode(parentId);
+      if (!parentNode) break;
+
+      if (parentNode.nodeType === 'FUNCTION' || parentNode.nodeType === 'METHOD') {
+        return parentNode;
+      }
+
+      currentId = parentId;
+    } catch {
+      break;
+    }
+  }
+
+  return null;
 }
 
 /**

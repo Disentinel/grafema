@@ -83,6 +83,7 @@ export const EDGE_ARCHETYPE_MAP: Record<string, EdgeMapping> = {
   HANDLED_BY:         m('flow_out', '>', 'handled by'),
   MAKES_REQUEST:      m('flow_out', '>', 'requests'),
   CALLS_API:          m('flow_out', '>', 'calls API'),
+  CALLS_REMOTE:       m('flow_out', '>', 'calls remote'),
   INVOKES_FUNCTION:   m('flow_out', '>', 'invokes'),
   PASSES_ARGUMENT:    m('flow_out', '>', 'passes'),
   RETURNS:            m('flow_out', '>', 'returns', RETURNS_SORT),

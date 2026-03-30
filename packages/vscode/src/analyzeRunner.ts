@@ -8,6 +8,7 @@
 import type { ChildProcess } from 'child_process';
 import { spawn } from 'child_process';
 import { existsSync } from 'fs';
+import { homedir } from 'os';
 import { join } from 'path';
 import * as vscode from 'vscode';
 
@@ -42,7 +43,13 @@ export function findOrchestratorBinary(): string | null {
     return envBinary;
   }
 
-  // 4. Monorepo development paths
+  // 4. ~/.grafema/bin/ (lazy-downloaded by CLI)
+  const homeBinary = join(homedir(), '.grafema', 'bin', 'grafema-orchestrator');
+  if (existsSync(homeBinary)) {
+    return homeBinary;
+  }
+
+  // 5. Monorepo development paths
   const possibleRoots = [
     join(__dirname, '..', '..', '..'),
     join(__dirname, '..', '..', '..', '..'),

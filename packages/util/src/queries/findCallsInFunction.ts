@@ -39,7 +39,8 @@ import type { CallInfo, FindCallsOptions } from './types.js';
 interface GraphBackend {
   getNode(id: string): Promise<{
     id: string;
-    type: string;
+    type?: string;
+    nodeType?: string;
     name?: string;
     file?: string;
     line?: number;
@@ -49,6 +50,11 @@ interface GraphBackend {
     nodeId: string,
     edgeTypes: string[] | null
   ): Promise<Array<{ src: string; dst: string; type: string }>>;
+}
+
+/** Normalize node type field (RFDB uses nodeType, some backends use type) */
+function getNodeType(node: { type?: string; nodeType?: string }): string {
+  return node.nodeType ?? node.type ?? 'UNKNOWN';
 }
 
 /**
@@ -111,7 +117,7 @@ export async function findCallsInFunction(
         const child = await backend.getNode(edge.dst);
         if (!child) continue;
 
-        if (child.type === 'CALL' || child.type === 'METHOD_CALL') {
+        if (getNodeType(child) === 'CALL' || getNodeType(child) === 'METHOD_CALL') {
           const callInfo = await buildCallInfo(backend, child, 0);
           calls.push(callInfo);
 
@@ -128,7 +134,7 @@ export async function findCallsInFunction(
         }
 
         // Continue into nested scopes, but NOT into nested functions/classes
-        if (child.type === 'SCOPE') {
+        if (getNodeType(child) === 'SCOPE') {
           queue.push({ id: child.id, depth: depth + 1 });
         }
       }
@@ -169,12 +175,13 @@ export async function findCallsInFunction(
  */
 async function buildCallInfo(
   backend: GraphBackend,
-  callNode: { id: string; type: string; name?: string; file?: string; line?: number; object?: string },
+  callNode: { id: string; type?: string; nodeType?: string; name?: string; file?: string; line?: number; object?: string },
   depth: number
 ): Promise<CallInfo> {
-  // Check for CALLS edge (resolved target)
-  const callsEdges = await backend.getOutgoingEdges(callNode.id, ['CALLS']);
+  // Check for CALLS or CALLS_REMOTE edge (resolved target)
+  const callsEdges = await backend.getOutgoingEdges(callNode.id, ['CALLS', 'CALLS_REMOTE']);
   const isResolved = callsEdges.length > 0;
+  const isRemote = callsEdges.length > 0 && callsEdges[0].type === 'CALLS_REMOTE';
 
   let target = undefined;
   if (isResolved) {
@@ -192,13 +199,14 @@ async function buildCallInfo(
   return {
     id: callNode.id,
     name: callNode.name ?? '<unknown>',
-    type: callNode.type as 'CALL' | 'METHOD_CALL',
+    type: getNodeType(callNode) as 'CALL' | 'METHOD_CALL',
     object: callNode.object,
     resolved: isResolved,
     target,
     file: callNode.file,
     line: callNode.line,
     depth,
+    remote: isRemote,
   };
 }
 

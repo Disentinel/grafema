@@ -2131,6 +2131,19 @@ fn handle_commit_batch_v2(
         .map(|node| {
             let semantic_id = node.semantic_id.clone().unwrap_or_else(|| node.id.clone());
             let id = string_to_id(&semantic_id);
+            // Inject __exported into metadata (V2 doesn't have top-level exported field)
+            let mut metadata = node.metadata.unwrap_or_default();
+            if node.exported {
+                if metadata.is_empty() || metadata == "{}" {
+                    metadata = r#"{"__exported":true}"#.to_string();
+                } else if !metadata.contains("__exported") {
+                    // Insert before closing brace
+                    if let Some(pos) = metadata.rfind('}') {
+                        let comma = if metadata[..pos].trim_end().ends_with('{') { "" } else { "," };
+                        metadata.insert_str(pos, &format!("{comma}\"__exported\":true"));
+                    }
+                }
+            }
             NodeRecordV2 {
                 semantic_id,
                 id,
@@ -2138,7 +2151,7 @@ fn handle_commit_batch_v2(
                 name: node.name.unwrap_or_default(),
                 file: node.file.unwrap_or_default(),
                 content_hash: 0,
-                metadata: node.metadata.unwrap_or_default(),
+                metadata,
             }
         })
         .collect();

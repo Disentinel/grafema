@@ -157,6 +157,93 @@ import { CivMap } from './civ-map/CivMap.js';
 
 const map = new CivMap({ container: document.getElementById('canvas-container') });
 await map.load('/api/hex-stream');
+
+// Expose for postMessage API (VS Code webview integration)
+window._grafemaMap = map;
+
+// Debounce highlight to avoid rapid flyTo spam from cursor movement
+let _highlightTimer = null;
+let _lastHighlight = '';
+
+// Listen for messages from VS Code webview parent
+window.addEventListener('message', async (event) => {
+    const msg = event.data;
+    if (!msg || !msg.command) return;
+
+    if (msg.command === 'highlightNode' && msg.nodeName) {
+        // Debounce: skip if same node, delay to avoid flyTo spam
+        const key = `${msg.nodeName}:${msg.file}`;
+        if (key === _lastHighlight) return;
+        _lastHighlight = key;
+        clearTimeout(_highlightTimer);
+        _highlightTimer = setTimeout(async () => {
+            try {
+                const resp = await fetch(`/api/search?q=${encodeURIComponent(msg.nodeName)}&limit=20`);
+                const results = await resp.json();
+                const match = results.find(r => r.tileIndex != null && r.type === msg.nodeType && msg.file && r.file === msg.file)
+                           || results.find(r => r.tileIndex != null && r.type === msg.nodeType)
+                           || results.find(r => r.tileIndex != null && msg.file && r.file === msg.file)
+                           || results.find(r => r.tileIndex != null)
+                           || results[0];
+                if (match) {
+                    map.interaction?.clearActive();
+                    if (match.tileIndex != null) {
+                        map.interaction?.addActive(match.tileIndex);
+                    }
+                    map.scene?.flyTo(match.worldX, match.worldZ, 800);
+                }
+            } catch (e) {
+                console.warn('highlightNode failed:', e);
+            }
+        }, 300); // 300ms debounce
+    }
+
+    if (msg.command === 'showTrace' && msg.nodeNames) {
+        // Highlight multiple nodes for trace visualization
+        map.interaction?.clearActive();
+        for (const name of msg.nodeNames) {
+            try {
+                const resp = await fetch(`/api/search?q=${encodeURIComponent(name)}&limit=1`);
+                const results = await resp.json();
+                if (results.length > 0 && results[0].tileIndex != null) {
+                    map.interaction?.addActive(results[0].tileIndex);
+                }
+            } catch {}
+        }
+    }
+});
+
+// Notify parent when a node is double-clicked (activated)
+const origToggle = map.interaction?.toggleActive.bind(map.interaction);
+if (map.interaction && origToggle) {
+    map.interaction.toggleActive = (seqIdx) => {
+        origToggle(seqIdx);
+        // Fetch node details and post to parent
+        const globalIdx = map.data?.tileGlobalIdx?.[seqIdx];
+        if (globalIdx != null) {
+            fetch(`/api/node?index=${globalIdx}`)
+                .then(r => r.json())
+                .then(detail => {
+                    // line is inside metadata JSON string
+                    let line = 1;
+                    try {
+                        const meta = typeof detail.metadata === 'string'
+                            ? JSON.parse(detail.metadata) : detail.metadata;
+                        line = meta?.line ?? 1;
+                    } catch {}
+                    window.parent.postMessage({
+                        type: 'nodeClick',
+                        nodeId: detail.semanticId ?? detail.id,
+                        file: detail.file,
+                        line,
+                        name: detail.name,
+                        nodeType: detail.type,
+                    }, '*');
+                })
+                .catch(() => {});
+        }
+    };
+}
 </script>
 
 </body>

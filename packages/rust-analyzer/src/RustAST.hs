@@ -25,6 +25,7 @@ module RustAST
   ) where
 
 import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Aeson (FromJSON(..), withObject, withText, (.:), (.:?), (.!=))
 import Data.Aeson.Types (Parser)
 
@@ -440,27 +441,36 @@ instance FromJSON RustBlock where
     <$> v .:? "stmts" .!= []
 
 instance FromJSON RustStmt where
-  parseJSON = withObject "RustStmt" $ \v -> do
+  parseJSON val = withObject "RustStmt" (\v -> do
     ty <- v .: "type" :: Parser Text
     case ty of
-      "Local" -> StmtLocal
+      -- syn serializes Stmt::Local as {"type": "StmtLocal", "pat": ..., "init": ..., "span": ...}
+      "StmtLocal" -> StmtLocal
         <$> v .:  "pat"
         <*> v .:? "init"
         <*> v .:  "span"
-      "Expr" -> StmtExpr
-        <$> v .: "expr"
-      "Semi" -> StmtSemi
-        <$> v .: "expr"
-      "Item" -> StmtItem
-        <$> v .: "item"
-      "Macro" -> StmtMacro
+      -- syn serializes Stmt::Macro as {"type": "StmtMacro", "mac": ..., "span": ...}
+      "StmtMacro" -> StmtMacro
         <$> v .: "span"
-      _ -> StmtMacro
-        <$> v .: "span"
+      -- syn serializes Stmt::Expr as the expression itself ({"type": "ExprCall", ...})
+      -- with optional "semi": true for Stmt::Expr(_, Some(semi))
+      -- syn serializes Stmt::Item as the item itself ({"type": "ItemFn", ...})
+      _ | T.isPrefixOf "Expr" ty -> do
+              hasSemi <- v .:? "semi" .!= False
+              let expr = val  -- the whole object IS the expression
+              if hasSemi
+                then StmtSemi <$> parseJSON expr
+                else StmtExpr <$> parseJSON expr
+        | T.isPrefixOf "Item" ty ->
+              StmtItem <$> parseJSON val  -- the whole object IS the item
+        | otherwise -> StmtMacro <$> v .: "span"
+    ) val
 
 instance FromJSON RustExpr where
   parseJSON = withObject "RustExpr" $ \v -> do
-    ty <- v .: "type" :: Parser Text
+    rawTy <- v .: "type" :: Parser Text
+    -- Orchestrator serializes as "ExprCall", "ExprPath", etc. — strip "Expr" prefix.
+    let ty = maybe rawTy id (T.stripPrefix "Expr" rawTy)
     case ty of
       "Call" -> ExprCall
         <$> v .:  "func"
@@ -586,7 +596,9 @@ instance FromJSON RustExpr where
 
 instance FromJSON RustPat where
   parseJSON = withObject "RustPat" $ \v -> do
-    ty <- v .: "type" :: Parser Text
+    rawTy <- v .: "type" :: Parser Text
+    -- Orchestrator serializes as "PatIdent", "PatStruct", etc. — strip "Pat" prefix.
+    let ty = maybe rawTy id (T.stripPrefix "Pat" rawTy)
     case ty of
       "Ident" -> PatIdent
         <$> v .:  "ident"

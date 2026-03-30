@@ -1002,6 +1002,30 @@ impl Shard {
             Err(_) => return false,
         };
         for (key, value) in filters {
+            // Range filters: "field:min" / "field:max" for numeric comparison.
+            // E.g. ("line:min", "100") checks metadata.line >= 100.
+            // E.g. ("endLine:max", "200") checks metadata.endLine <= 200.
+            if let Some(field) = key.strip_suffix(":min") {
+                let threshold: f64 = match value.parse() {
+                    Ok(n) => n,
+                    Err(_) => return false,
+                };
+                match parsed.get(field).and_then(|v| v.as_f64()) {
+                    Some(n) if n >= threshold => continue,
+                    _ => return false,
+                }
+            }
+            if let Some(field) = key.strip_suffix(":max") {
+                let threshold: f64 = match value.parse() {
+                    Ok(n) => n,
+                    Err(_) => return false,
+                };
+                match parsed.get(field).and_then(|v| v.as_f64()) {
+                    Some(n) if n <= threshold => continue,
+                    _ => return false,
+                }
+            }
+            // Exact match (existing behavior)
             match parsed.get(key) {
                 Some(v) => {
                     let v_str = match v {
