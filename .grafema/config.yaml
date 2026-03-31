@@ -47,9 +47,14 @@ services:
     entryPoint: "src/main.rs"
 
 plugins:
+  - name: "type-inference"
+    command: "node plugins/type-inference.mjs"
+    mode: batch
   - name: "method-call-resolver"
     command: "node plugins/method-call-resolver.mjs"
     mode: batch
+    depends_on:
+      - "type-inference"
   - name: "semantic-bridge-detector"
     command: "node plugins/semantic-bridge-detector.mjs"
     mode: batch

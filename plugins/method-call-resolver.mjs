@@ -41,12 +41,23 @@ try {
     const name = node.name;
     if (!name) continue;
     if (!methodIndex.has(name)) methodIndex.set(name, []);
+    let className = extractClassName(node.semanticId || '');
+    // Fallback: find parent CLASS via incoming HAS_METHOD edge
+    if (!className) {
+      const nodeId = node.semanticId || String(node.id);
+      const incoming = await client.getIncomingEdges(nodeId);
+      const hasMethod = incoming.find(e => e.type === 'HAS_METHOD');
+      if (hasMethod) {
+        const parentClass = await client.getNode(hasMethod.src);
+        if (parentClass) className = parentClass.name || null;
+      }
+    }
     methodIndex.get(name).push({
-      id: node.semanticId || String(node.id),
+      id: String(node.id), // numeric ID required for addEdges
       name,
       file: node.file,
       line: node.line,
-      className: extractClassName(node.semanticId || ''),
+      className,
     });
     methodCount++;
   }
@@ -74,6 +85,7 @@ try {
 
     // Check if already resolved
     const nodeId = node.semanticId || String(node.id);
+    const numericId = String(node.id); // for addEdges (requires numeric)
     const outEdges = await client.getOutgoingEdges(nodeId);
     if (outEdges.some(e => e.type === 'CALLS' || e.type === 'CALLS_REMOTE')) {
       skipped++;
@@ -87,7 +99,7 @@ try {
     if (candidates.length === 1) {
       // Unique match — resolve directly
       batchEdges.push({
-        src: nodeId,
+        src: numericId,
         dst: candidates[0].id,
         type: 'CALLS',
         metadata: JSON.stringify({
@@ -102,7 +114,7 @@ try {
       const target = await disambiguate(client, nodeId, receiverName, methodName, candidates, node.file);
       if (target) {
         batchEdges.push({
-          src: nodeId,
+          src: numericId,
           dst: target.id,
           type: 'CALLS',
           metadata: JSON.stringify({
@@ -136,6 +148,14 @@ try {
 // ── Disambiguation ──────────────────────────────────────────────────────────
 
 async function disambiguate(client, callId, receiverName, methodName, candidates, callFile) {
+  // Strategy 0 (highest priority): INSTANCE_OF type resolution
+  // Trace receiver → variable → INSTANCE_OF → CLASS → HAS_METHOD → match
+  const instanceOfType = await resolveReceiverType(client, callId);
+  if (instanceOfType) {
+    const match = candidates.find(c => c.className === instanceOfType);
+    if (match) return { ...match, strategy: 'instance_of' };
+  }
+
   // Strategy 1: same file preference
   const sameFile = candidates.filter(c => c.file === callFile);
   if (sameFile.length === 1) {
@@ -231,12 +251,66 @@ async function disambiguate(client, callId, receiverName, methodName, candidates
   return null;
 }
 
+// ── INSTANCE_OF-based type resolution ────────────────────────────────────────
+
+async function resolveReceiverType(client, callId) {
+  // Path: CALL → DERIVED_FROM → PROPERTY_ACCESS → READS_FROM → REF → READS_FROM → VARIABLE → INSTANCE_OF → CLASS
+  const callEdges = await client.getOutgoingEdges(callId);
+
+  // Try direct READS_FROM first
+  let readsFrom = callEdges.filter(e => e.type === 'READS_FROM');
+
+  // If not, follow DERIVED_FROM → PROPERTY_ACCESS → READS_FROM
+  if (readsFrom.length === 0) {
+    for (const df of callEdges.filter(e => e.type === 'DERIVED_FROM')) {
+      const paNode = await client.getNode(df.dst);
+      if (!paNode || (paNode.nodeType !== 'PROPERTY_ACCESS' && paNode.nodeType !== 'REFERENCE')) continue;
+      const paId = paNode.semanticId || String(paNode.id);
+      readsFrom = (await client.getOutgoingEdges(paId)).filter(e => e.type === 'READS_FROM');
+      if (readsFrom.length > 0) break;
+    }
+  }
+
+  // Follow READS_FROM chain to find VARIABLE with INSTANCE_OF
+  for (const rf of readsFrom) {
+    let node = await client.getNode(rf.dst);
+    if (!node) continue;
+
+    // If REFERENCE, follow one more READS_FROM
+    if (node.nodeType === 'REFERENCE') {
+      const refId = node.semanticId || String(node.id);
+      const refEdges = (await client.getOutgoingEdges(refId)).filter(e => e.type === 'READS_FROM');
+      if (refEdges.length > 0) node = await client.getNode(refEdges[0].dst);
+      if (!node) continue;
+    }
+
+    // Check for INSTANCE_OF edge
+    const varId = node.semanticId || String(node.id);
+    const varEdges = await client.getOutgoingEdges(varId);
+    const instanceOf = varEdges.find(e => e.type === 'INSTANCE_OF');
+    if (instanceOf) {
+      const classNode = await client.getNode(instanceOf.dst);
+      if (classNode) return classNode.name;
+    }
+  }
+
+  return null;
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function extractClassName(semanticId) {
-  // Extract class name from semantic ID like ...#METHOD->addNode[in:KnowledgeBase]
-  // Handles both raw and URL-encoded forms (%5B = [, %5D = ])
+  // Extract class name from semantic ID
+  // Format 1: ...#METHOD->addNode[in:KnowledgeBase] (URL-encoded: %5Bin:...%5D)
+  // Format 2: METHOD:push@<builtin> (builtin nodes)
   const decoded = decodeURIComponent(semanticId);
   const match = decoded.match(/\[in:([^\]]+)\]/);
-  return match ? match[1] : null;
+  if (match) return match[1];
+
+  // Builtin format: CLASS:Array@<builtin> or METHOD:push[in:Array]@<builtin>
+  const builtinMatch = decoded.match(/\[in:([^\]]+)\]@/);
+  if (builtinMatch) return builtinMatch[1];
+
+  // Fallback: use HAS_METHOD edge to find parent class (done at index time)
+  return null;
 }
