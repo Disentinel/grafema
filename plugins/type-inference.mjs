@@ -48,6 +48,9 @@ const BUILTINS = {
   RegExp: ['test', 'exec', 'toString'],
   Number: ['toFixed', 'toString', 'parseInt', 'parseFloat', 'isNaN', 'isFinite', 'toLocaleString'],
   Buffer: ['from', 'alloc', 'concat', 'toString', 'slice', 'write', 'readUInt32BE', 'writeUInt32BE', 'byteLength'],
+  process: ['exit', 'cwd', 'env', 'argv', 'on', 'stdout', 'stderr', 'stdin', 'kill', 'pid', 'execPath'],
+  Boolean: ['valueOf', 'toString'],
+  EventEmitter: ['on', 'once', 'off', 'emit', 'removeListener', 'removeAllListeners', 'addListener', 'listeners'],
 };
 
 // ── Literal type mapping ────────────────────────────────────────────────────
@@ -60,6 +63,15 @@ const LITERAL_TYPE_MAP = {
   'null': 'null',
   'undefined': 'undefined',
 };
+
+// ── Global singletons ───────────────────────────────────────────────────────
+// Objects that exist as globals — receiver name maps directly to CLASS.
+
+const GLOBAL_SINGLETONS = new Set([
+  'console', 'JSON', 'Math', 'Date', 'Array', 'Object', 'String',
+  'Number', 'Boolean', 'Promise', 'Map', 'Set', 'RegExp', 'Error',
+  'Buffer', 'process', 'Reflect', 'Proxy', 'Symbol',
+]);
 
 // ── Main ────────────────────────────────────────────────────────────────────
 
@@ -115,13 +127,117 @@ try {
     }
   }
 
-  // Commit edges in batches
+  // Commit INSTANCE_OF edges in batches
   const BATCH = 500;
   for (let i = 0; i < edges.length; i += BATCH) {
     await client.addEdges(edges.slice(i, i + BATCH));
   }
+  console.error(`[type-inference] Phase 3: ${processed} variables processed, ${instanceOfCreated} INSTANCE_OF edges created`);
 
-  console.error(`[type-inference] Done: ${processed} variables processed, ${instanceOfCreated} INSTANCE_OF edges created`);
+  // Phase 4: Global singleton direct resolution
+  // For CALL nodes like console.log, JSON.stringify — resolve receiver directly to builtin CLASS
+  let singletonResolved = 0;
+  const singletonEdges = [];
+
+  for await (const node of client.queryNodes({ type: 'CALL' })) {
+    const callName = node.name || '';
+    const dotIdx = callName.indexOf('.');
+    if (dotIdx === -1) continue;
+
+    const receiver = callName.substring(0, dotIdx);
+    if (!GLOBAL_SINGLETONS.has(receiver)) continue;
+
+    // Check if already has CALLS edge
+    const callId = String(node.id);
+    const out = await client.getOutgoingEdges(callId);
+    if (out.some(e => e.type === 'CALLS')) continue;
+
+    // Find the method in the builtin CLASS
+    const methodName = callName.substring(dotIdx + 1);
+    const targetClassId = classIndex.get(receiver);
+    if (!targetClassId) continue;
+
+    // Find METHOD node with this name in this CLASS
+    const classOut = await client.getOutgoingEdges(targetClassId);
+    const hasMethod = classOut.filter(e => e.type === 'HAS_METHOD');
+    for (const hm of hasMethod) {
+      const methodNode = await client.getNode(hm.dst);
+      if (methodNode && methodNode.name === methodName) {
+        singletonEdges.push({
+          src: callId,
+          dst: String(methodNode.id),
+          type: 'CALLS',
+          metadata: JSON.stringify({ _source: 'type-inference', strategy: 'global_singleton' }),
+        });
+        singletonResolved++;
+        break;
+      }
+    }
+  }
+
+  for (let i = 0; i < singletonEdges.length; i += BATCH) {
+    await client.addEdges(singletonEdges.slice(i, i + BATCH));
+  }
+  console.error(`[type-inference] Phase 4: ${singletonResolved} global singleton calls resolved`);
+
+  // Phase 5: Parameter type propagation
+  // If a function parameter receives a value with known INSTANCE_OF type,
+  // propagate that type to the parameter.
+  let paramTyped = 0;
+  const paramEdges = [];
+
+  for await (const param of client.queryNodes({ type: 'PARAMETER' })) {
+    const paramId = String(param.id);
+
+    // Check if already typed
+    const paramOut = await client.getOutgoingEdges(paramId);
+    if (paramOut.some(e => e.type === 'INSTANCE_OF')) continue;
+
+    // Find RECEIVES_ARGUMENT → CALL → PASSES_ARGUMENT → source variable
+    const recvArgs = paramOut.filter(e => e.type === 'RECEIVES_ARGUMENT');
+    for (const ra of recvArgs) {
+      const callNode = await client.getNode(ra.dst);
+      if (!callNode) continue;
+
+      const callOut = await client.getOutgoingEdges(String(callNode.id));
+      const passArgs = callOut.filter(e => e.type === 'PASSES_ARGUMENT');
+      for (const pa of passArgs) {
+        const argNode = await client.getNode(pa.dst);
+        if (!argNode) continue;
+
+        // Follow to declaration if REFERENCE
+        let declNode = argNode;
+        if (argNode.nodeType === 'REFERENCE') {
+          const refOut = await client.getOutgoingEdges(String(argNode.id));
+          const rf = refOut.find(e => e.type === 'READS_FROM');
+          if (rf) declNode = await client.getNode(rf.dst);
+          if (!declNode) continue;
+        }
+
+        // Check if source has INSTANCE_OF
+        const declOut = await client.getOutgoingEdges(String(declNode.id));
+        const instanceOf = declOut.find(e => e.type === 'INSTANCE_OF');
+        if (instanceOf) {
+          paramEdges.push({
+            src: paramId,
+            dst: instanceOf.dst, // propagate same class
+            type: 'INSTANCE_OF',
+            metadata: JSON.stringify({ _source: 'type-inference', strategy: 'param_propagation' }),
+          });
+          paramTyped++;
+          break; // one type per param is enough
+        }
+      }
+      if (paramEdges.length > paramTyped - 1) break; // already found
+    }
+  }
+
+  for (let i = 0; i < paramEdges.length; i += BATCH) {
+    await client.addEdges(paramEdges.slice(i, i + BATCH));
+  }
+  console.error(`[type-inference] Phase 5: ${paramTyped} parameter types propagated`);
+
+  console.error(`[type-inference] Done: ${instanceOfCreated + paramTyped} INSTANCE_OF + ${singletonResolved} singleton CALLS`);
   await client.close();
 } catch (err) {
   console.error(`[type-inference] Error: ${err.message}`);
