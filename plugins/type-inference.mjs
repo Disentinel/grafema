@@ -55,14 +55,7 @@ const BUILTINS = {
   Command: ['option', 'addCommand', 'action', 'argument', 'addHelpText', 'description',
     'name', 'version', 'parse', 'parseAsync', 'command', 'alias', 'usage',
     'helpOption', 'exitOverride', 'outputHelp', 'opts', 'args'],
-  // TEMPORARY: Grafema graph backend interface (should be inferred from code via contract inference — REG-1086)
-  GraphBackend: ['getNode', 'getOutgoingEdges', 'getIncomingEdges', 'queryNodes',
-    'addNodes', 'addEdges', 'deleteNode', 'deleteEdge', 'nodeExists', 'nodeCount',
-    'edgeCount', 'getAllNodes', 'getAllEdges', 'findByAttr', 'bfs', 'dfs',
-    'reachability', 'getStats', 'flush', 'clear', 'close',
-    'datalogQuery', 'datalogLoadRules', 'checkGuarantee', 'cypherQuery',
-    'beginBatch', 'commitBatch', 'batchNode', 'batchEdge', 'abortBatch',
-    'countNodesByType', 'countEdgesByType'],
+  // GraphBackend removed — real CLASS exists in graph (GraphBackend.ts)
   // VS Code API (common classes)
   TreeItem: ['label', 'description', 'tooltip', 'iconPath', 'collapsibleState', 'command', 'contextValue'],
   EventEmitter2: ['fire', 'event', 'dispose'],
