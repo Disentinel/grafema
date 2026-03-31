@@ -44,7 +44,7 @@ try {
     let className = extractClassName(node.semanticId || '');
     // Fallback: find parent CLASS via incoming HAS_METHOD edge
     if (!className) {
-      const nodeId = node.semanticId || String(node.id);
+      const nodeId = String(node.id);
       const incoming = await client.getIncomingEdges(nodeId);
       const hasMethod = incoming.find(e => e.type === 'HAS_METHOD');
       if (hasMethod) {
@@ -84,7 +84,7 @@ try {
     processed++;
 
     // Check if already resolved
-    const nodeId = node.semanticId || String(node.id);
+    const nodeId = String(node.id);
     const numericId = String(node.id); // for addEdges (requires numeric)
     const outEdges = await client.getOutgoingEdges(nodeId);
     if (outEdges.some(e => e.type === 'CALLS' || e.type === 'CALLS_REMOTE')) {
@@ -184,7 +184,7 @@ async function disambiguate(client, callId, receiverName, methodName, candidates
     for (const df of derivedFrom) {
       const paNode = await client.getNode(df.dst);
       if (!paNode || paNode.nodeType !== 'PROPERTY_ACCESS') continue;
-      const paId = paNode.semanticId || String(paNode.id);
+      const paId = String(paNode.id);
       const paEdges = await client.getOutgoingEdges(paId);
       readsFrom = paEdges.filter(e => e.type === 'READS_FROM');
       if (readsFrom.length > 0) break;
@@ -196,7 +196,7 @@ async function disambiguate(client, callId, receiverName, methodName, candidates
 
     // If READS_FROM points to REFERENCE, follow one more READS_FROM to reach the declaration
     if (varNode.nodeType === 'REFERENCE') {
-      const refId = varNode.semanticId || String(varNode.id);
+      const refId = String(varNode.id);
       const refEdges = (await client.getOutgoingEdges(refId)).filter(e => e.type === 'READS_FROM');
       if (refEdges.length > 0) {
         varNode = await client.getNode(refEdges[0].dst);
@@ -205,7 +205,7 @@ async function disambiguate(client, callId, receiverName, methodName, candidates
     }
 
     // Follow ASSIGNED_FROM to find what's assigned to this variable
-    const varId = varNode.semanticId || String(varNode.id);
+    const varId = String(varNode.id);
     const assignedFrom = (await client.getOutgoingEdges(varId)).filter(e => e.type === 'ASSIGNED_FROM');
     for (const af of assignedFrom) {
       const sourceNode = await client.getNode(af.dst);
@@ -213,7 +213,7 @@ async function disambiguate(client, callId, receiverName, methodName, candidates
 
       // If source is a CALL that resolves to a function, check return type
       if (sourceNode.nodeType === 'CALL') {
-        const sourceId = sourceNode.semanticId || String(sourceNode.id);
+        const sourceId = String(sourceNode.id);
         const sourceCallsEdges = (await client.getOutgoingEdges(sourceId)).filter(e => e.type === 'CALLS');
         for (const sc of sourceCallsEdges) {
           const fnNode = await client.getNode(sc.dst);
@@ -265,7 +265,7 @@ async function resolveReceiverType(client, callId) {
     for (const df of callEdges.filter(e => e.type === 'DERIVED_FROM')) {
       const paNode = await client.getNode(df.dst);
       if (!paNode || (paNode.nodeType !== 'PROPERTY_ACCESS' && paNode.nodeType !== 'REFERENCE')) continue;
-      const paId = paNode.semanticId || String(paNode.id);
+      const paId = String(paNode.id);
       readsFrom = (await client.getOutgoingEdges(paId)).filter(e => e.type === 'READS_FROM');
       if (readsFrom.length > 0) break;
     }
@@ -278,14 +278,14 @@ async function resolveReceiverType(client, callId) {
 
     // If REFERENCE, follow one more READS_FROM
     if (node.nodeType === 'REFERENCE') {
-      const refId = node.semanticId || String(node.id);
+      const refId = String(node.id);
       const refEdges = (await client.getOutgoingEdges(refId)).filter(e => e.type === 'READS_FROM');
       if (refEdges.length > 0) node = await client.getNode(refEdges[0].dst);
       if (!node) continue;
     }
 
     // Check for INSTANCE_OF edge
-    const varId = node.semanticId || String(node.id);
+    const varId = String(node.id);
     const varEdges = await client.getOutgoingEdges(varId);
     const instanceOf = varEdges.find(e => e.type === 'INSTANCE_OF');
     if (instanceOf) {
