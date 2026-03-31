@@ -1,9 +1,9 @@
-# Grafema Effects Taxonomy v1
+# Grafema Effects Taxonomy v2
 # Defines the vocabulary for annotating function side effects.
 # Used in manifests and effects-db to describe what a function does
 # beyond its return value.
 
-version: 1
+version: 2
 
 types:
   PURE:
@@ -34,13 +34,75 @@ types:
     description: "Analysis could not determine effects. MUST propagate transitively as a warning."
     examples: ["FFI calls", "eval", "dynamic require", "minified code"]
 
+# ── IO subtypes (v2) ────────────────────────────────────────
+# Hierarchical subtypes for IO. Format: IO:<CHANNEL>:<OPERATION>.
+# Any IO subtype implies the parent IO effect for backward compatibility:
+#   IO:SOCKET:WRITE implies IO.
+#   A check for IO must match IO:*:* (any IO subtype).
+
+subtypes:
+  IO:
+    IO:FILE:READ:
+      description: "Reads from the filesystem."
+      examples: ["fs.readFileSync", "fs.readFile", "fs.readdir"]
+    IO:FILE:WRITE:
+      description: "Writes to the filesystem."
+      examples: ["fs.writeFileSync", "fs.writeFile", "fs.appendFile"]
+    IO:SOCKET:CONNECT:
+      description: "Opens a network socket connection."
+      examples: ["net.connect", "tls.connect"]
+    IO:SOCKET:WRITE:
+      description: "Writes data to a network socket."
+      examples: ["socket.write", "socket.end"]
+    IO:SOCKET:READ:
+      description: "Reads data from a network socket."
+      examples: ["socket.on('data')"]
+    IO:SOCKET:LISTEN:
+      description: "Binds a socket to a port and listens for connections."
+      examples: ["net.createServer().listen", "server.listen"]
+    IO:HTTP:REQUEST:
+      description: "Makes an outgoing HTTP request."
+      examples: ["fetch", "http.request", "axios.get"]
+    IO:HTTP:LISTEN:
+      description: "Starts an HTTP server listening for incoming requests."
+      examples: ["express().listen", "http.createServer().listen"]
+    IO:PROCESS:SPAWN:
+      description: "Spawns a child process."
+      examples: ["child_process.spawn", "child_process.exec", "child_process.fork"]
+    IO:PROCESS:STDIN_WRITE:
+      description: "Writes to a child process stdin."
+      examples: ["child.stdin.write"]
+    IO:PROCESS:STDIN_READ:
+      description: "Reads from own process stdin."
+      examples: ["process.stdin.read", "readline.createInterface"]
+    IO:PROCESS:STDOUT_WRITE:
+      description: "Writes to process stdout."
+      examples: ["process.stdout.write"]
+    IO:PROCESS:STDOUT_READ:
+      description: "Reads from a child process stdout."
+      examples: ["child.stdout.on('data')"]
+    IO:ENV:READ:
+      description: "Reads environment variables."
+      examples: ["process.env.NODE_ENV", "process.env"]
+    IO:ENV:SET:
+      description: "Sets or modifies environment variables."
+      examples: ["process.env.NODE_ENV = 'production'"]
+    IO:CONSOLE:WRITE:
+      description: "Writes to the console (stderr/stdout via console API)."
+      examples: ["console.log", "console.error", "console.warn"]
+
+# Backward compatibility rules:
+#   - IO:SOCKET:WRITE implies IO (any IO subtype is also IO)
+#   - A check for IO must match all IO:*:* subtypes
+#   - Old effects-db entries using plain IO remain valid
+#   - New entries may use IO subtypes for finer granularity
+
 # Propagation rules:
 #   - If A calls B, A inherits ALL of B's effects (union)
 #   - UNKNOWN propagates: if B is UNKNOWN, A is also UNKNOWN
 #   - PURE is the absence of all other effects (not explicitly propagated)
 #   - A function is PURE only if ALL its callees are PURE and it has no direct effects
 
-# Future extensions (schema_version 2, backwards compatible):
-#   IO subtypes: FILE_IO, NETWORK_IO, DB_IO, DEVICE_IO, ENV_IO
+# Future extensions (schema_version 3, backwards compatible):
 #   MUTATION subtypes: MUTATES_ARG, MUTATES_THIS, MUTATES_GLOBAL
 #   New types: BLOCKING (sync IO in async context), IDEMPOTENT, UNSAFE_CAST

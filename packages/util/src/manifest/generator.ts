@@ -22,14 +22,27 @@ import type {
   FlowType,
 } from './types.js';
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 const VALID_EFFECTS: Set<string> = new Set([
   'PURE', 'MUTATION', 'IO', 'THROW', 'ASYNC', 'NONDETERMINISTIC', 'UNKNOWN',
 ]);
 
+function isValidEffect(e: string): boolean {
+  return VALID_EFFECTS.has(e) || e.startsWith('IO:');
+}
+
+/** Extended effect entry (v2 format): effects array + optional channel metadata */
+interface EffectEntry {
+  effects: EffectType[];
+  channel?: Record<string, string>;
+}
+
+/** Raw YAML value: either a plain array (v1) or an object with effects key (v2) */
+type RawEffectValue = EffectType[] | { effects: EffectType[]; channel?: Record<string, string> };
+
 interface EffectsDB {
-  runtimes: Record<string, Record<string, EffectType[]>>;
-  packages: Record<string, Record<string, EffectType[]>>;
+  runtimes: Record<string, Record<string, EffectEntry>>;
+  packages: Record<string, Record<string, EffectEntry>>;
 }
 
 interface GeneratorOptions {
@@ -114,6 +127,25 @@ export class ManifestGenerator {
 
   // ── Effects DB loading ─────────────────────────────────────
 
+  /** Normalize a raw effect value (v1 array or v2 object) into EffectEntry */
+  private static normalizeEffectValue(raw: RawEffectValue): EffectEntry {
+    if (Array.isArray(raw)) {
+      return { effects: raw };
+    }
+    return { effects: raw.effects, channel: raw.channel };
+  }
+
+  /** Normalize a raw function map (each value may be v1 array or v2 object) */
+  private static normalizeEffectsMap(
+    raw: Record<string, RawEffectValue>,
+  ): Record<string, EffectEntry> {
+    const result: Record<string, EffectEntry> = {};
+    for (const [fn, val] of Object.entries(raw)) {
+      result[fn] = ManifestGenerator.normalizeEffectValue(val);
+    }
+    return result;
+  }
+
   private loadEffectsDB(): void {
     const dbPath = this.options.effectsDbPath;
     if (!dbPath) return;
@@ -121,8 +153,10 @@ export class ManifestGenerator {
     // Load runtime builtins
     const nodeYaml = join(dbPath, 'runtimes', 'node.yaml');
     if (existsSync(nodeYaml)) {
-      const raw = parseYaml(readFileSync(nodeYaml, 'utf-8')) as Record<string, Record<string, EffectType[]>>;
-      this.effectsDb.runtimes = raw;
+      const raw = parseYaml(readFileSync(nodeYaml, 'utf-8')) as Record<string, Record<string, RawEffectValue>>;
+      for (const [mod, fns] of Object.entries(raw)) {
+        this.effectsDb.runtimes[mod] = ManifestGenerator.normalizeEffectsMap(fns);
+      }
     }
 
     // Load package effects
@@ -133,7 +167,9 @@ export class ManifestGenerator {
         const raw = parseYaml(readFileSync(join(pkgDir, file), 'utf-8'));
         if (raw && typeof raw === 'object') {
           for (const [pkg, fns] of Object.entries(raw)) {
-            this.effectsDb.packages[pkg] = fns as Record<string, EffectType[]>;
+            this.effectsDb.packages[pkg] = ManifestGenerator.normalizeEffectsMap(
+              fns as Record<string, RawEffectValue>,
+            );
           }
         }
       }
@@ -145,16 +181,16 @@ export class ManifestGenerator {
     // Check runtime builtins (node:fs → readFileSync)
     const nodeModule = `node:${module}`;
     if (this.effectsDb.runtimes[nodeModule]?.[fn]) {
-      return this.effectsDb.runtimes[nodeModule][fn];
+      return this.effectsDb.runtimes[nodeModule][fn].effects;
     }
     // Also check without node: prefix
     if (this.effectsDb.runtimes[module]?.[fn]) {
-      return this.effectsDb.runtimes[module][fn];
+      return this.effectsDb.runtimes[module][fn].effects;
     }
 
     // Check package effects
     if (this.effectsDb.packages[module]?.[fn]) {
-      return this.effectsDb.packages[module][fn];
+      return this.effectsDb.packages[module][fn].effects;
     }
 
     return null;
@@ -398,7 +434,7 @@ export class ManifestGenerator {
           const knownEffects = this.lookupEffects(module, fn);
           if (knownEffects) {
             for (const e of knownEffects) {
-              if (VALID_EFFECTS.has(e) && e !== 'PURE') effects.add(e);
+              if (isValidEffect(e) && e !== 'PURE') effects.add(e);
             }
           } else {
             effects.add('UNKNOWN');

@@ -1,10 +1,12 @@
 # Node.js Built-in Functions Effects Database
-# Generated: 2026-03-15
+# Generated: 2026-03-15, updated: 2026-03-31
 # Method: 3 independent Claude subagent passes, cross-validated
-# Taxonomy version: 1
+# Taxonomy version: 2
 #
-# Format: module.function: [EFFECT, ...]
+# Format (v1): module.function: [EFFECT, ...]
+# Format (v2): module.function: { effects: [EFFECT, ...], channel: { ... } }
 # For class methods: module.ClassName.method: [EFFECT, ...]
+# IO subtypes (v2): IO:FILE:READ, IO:SOCKET:WRITE, IO:PROCESS:SPAWN, etc.
 # PURE means no other effects apply.
 
 # ============================================================
@@ -12,8 +14,8 @@
 # ============================================================
 node:fs:
   # Read operations
-  readFile: [IO, ASYNC]
-  readFileSync: [IO]
+  readFile: [IO, IO:FILE:READ, ASYNC]
+  readFileSync: [IO, IO:FILE:READ]
   readdir: [IO, ASYNC]
   readdirSync: [IO]
   readlink: [IO, ASYNC]
@@ -24,8 +26,8 @@ node:fs:
   readvSync: [IO]
 
   # Write operations
-  writeFile: [IO, ASYNC, MUTATION]
-  writeFileSync: [IO, MUTATION]
+  writeFile: [IO, IO:FILE:WRITE, ASYNC, MUTATION]
+  writeFileSync: [IO, IO:FILE:WRITE, MUTATION]
   write: [IO, ASYNC, MUTATION]
   writeSync: [IO, MUTATION]
   writev: [IO, ASYNC, MUTATION]
@@ -253,27 +255,47 @@ node:crypto:
 # node:child_process — Child processes
 # ============================================================
 node:child_process:
-  exec: [IO, ASYNC, THROW]
-  execSync: [IO, THROW]
-  execFile: [IO, ASYNC, THROW]
-  execFileSync: [IO, THROW]
-  spawn: [IO, THROW]
-  spawnSync: [IO, THROW]
-  fork: [IO, THROW]
+  exec:
+    effects: [IO, IO:PROCESS:SPAWN, ASYNC, THROW]
+    channel: { binary: "arg[0]" }
+  execSync:
+    effects: [IO, IO:PROCESS:SPAWN, THROW]
+    channel: { binary: "arg[0]" }
+  execFile:
+    effects: [IO, IO:PROCESS:SPAWN, ASYNC, THROW]
+    channel: { binary: "arg[0]" }
+  execFileSync:
+    effects: [IO, IO:PROCESS:SPAWN, THROW]
+    channel: { binary: "arg[0]" }
+  spawn:
+    effects: [IO, IO:PROCESS:SPAWN, THROW]
+    channel: { binary: "arg[0]" }
+  spawnSync:
+    effects: [IO, IO:PROCESS:SPAWN, THROW]
+    channel: { binary: "arg[0]" }
+  fork:
+    effects: [IO, IO:PROCESS:SPAWN, THROW]
+    channel: { binary: "arg[0]" }
 
 # ============================================================
 # node:net — TCP networking
 # ============================================================
 node:net:
-  createServer: [IO]
-  connect: [IO, ASYNC]
-  createConnection: [IO, ASYNC]
+  createServer: [IO, IO:SOCKET:LISTEN]
+  connect:
+    effects: [IO, IO:SOCKET:CONNECT, ASYNC]
+    channel: { path: "arg[0]" }
+  createConnection:
+    effects: [IO, IO:SOCKET:CONNECT, ASYNC]
+    channel: { path: "arg[0]" }
   isIP: [PURE]
   isIPv4: [PURE]
   isIPv6: [PURE]
-  Socket.connect: [IO, ASYNC]
-  Socket.write: [IO, ASYNC]
-  Socket.end: [IO, ASYNC]
+  Socket.connect:
+    effects: [IO, IO:SOCKET:CONNECT, ASYNC]
+    channel: { path: "arg[0]" }
+  Socket.write: [IO, IO:SOCKET:WRITE, ASYNC]
+  Socket.end: [IO, IO:SOCKET:WRITE, ASYNC]
   Socket.destroy: [IO, MUTATION]
   Socket.pause: [IO, MUTATION]
   Socket.resume: [IO, MUTATION]
@@ -294,9 +316,13 @@ node:net:
 # node:http — HTTP
 # ============================================================
 node:http:
-  createServer: [IO]
-  request: [IO, ASYNC]
-  get: [IO, ASYNC]
+  createServer: [IO, IO:HTTP:LISTEN]
+  request:
+    effects: [IO, IO:HTTP:REQUEST, ASYNC]
+    channel: { url: "arg[0]" }
+  get:
+    effects: [IO, IO:HTTP:REQUEST, ASYNC]
+    channel: { url: "arg[0]" }
   METHODS: [PURE]
   STATUS_CODES: [PURE]
   maxHeaderSize: [PURE]
@@ -309,7 +335,7 @@ node:http:
   ServerResponse.getHeader: [PURE]
   ServerResponse.removeHeader: [MUTATION]
   ServerResponse.flushHeaders: [IO]
-  Server.listen: [IO, ASYNC]
+  Server.listen: [IO, IO:HTTP:LISTEN, ASYNC]
   Server.close: [IO, ASYNC]
   Server.closeAllConnections: [IO, MUTATION]
   Server.address: [IO]
@@ -318,8 +344,10 @@ node:http:
 # node:https — HTTPS
 # ============================================================
 node:https:
-  createServer: [IO]
-  request: [IO, ASYNC]
+  createServer: [IO, IO:HTTP:LISTEN]
+  request:
+    effects: [IO, IO:HTTP:REQUEST, ASYNC]
+    channel: { url: "arg[0]" }
   get: [IO, ASYNC]
 
 # ============================================================

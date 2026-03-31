@@ -50,8 +50,8 @@ plugins:
   - name: "method-call-resolver"
     command: "node plugins/method-call-resolver.mjs"
     mode: batch
-  - name: "ipc-bridge-detector"
-    command: "node plugins/ipc-bridge-detector.mjs"
+  - name: "semantic-bridge-detector"
+    command: "node plugins/semantic-bridge-detector.mjs"
     mode: batch
     depends_on:
       - "method-call-resolver"
