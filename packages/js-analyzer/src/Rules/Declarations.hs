@@ -306,11 +306,26 @@ ruleClassDeclaration node = do
   isExported <- askExported
   let nodeId = semanticId file "CLASS" name parent Nothing
 
+  -- Extract superClass and implements from AST
+  let superClassName = case getChildrenMaybe "superClass" node of
+        Just superNode -> getTextFieldOr "name" "" superNode
+        Nothing        -> ""
+      implementsNames = map (\implNode ->
+          case getChildrenMaybe "expression" implNode of
+            Just exprNode -> getTextFieldOr "name" "" exprNode
+            Nothing       -> ""
+        ) (getChildren "implements" node)
+      implementsList = filter (not . T.null) implementsNames
+      classMeta = Map.fromList $ concat
+        [ [("superClass", MetaText superClassName) | not (T.null superClassName)]
+        , [("implements", MetaText (T.intercalate "," implementsList)) | not (null implementsList)]
+        ]
+
   emitNode GraphNode
     { gnId = nodeId, gnType = "CLASS", gnName = name
     , gnFile = file, gnLine = spanStart (astNodeSpan node), gnColumn = 0
     , gnEndLine = spanEnd (astNodeSpan node), gnEndColumn = 0
-    , gnExported = isExported, gnMetadata = Map.empty
+    , gnExported = isExported, gnMetadata = classMeta
     }
   -- Scope-aware DECLARES edge
   curScopeId <- askScopeId
@@ -318,6 +333,8 @@ ruleClassDeclaration node = do
     { geSource = curScopeId, geTarget = nodeId
     , geType = "DECLARES", geMetadata = Map.empty
     }
+
+  -- superClass stored in metadata; EXTENDS edge created by shape-tracker plugin
 
   -- Declare class name in parent scope, then walk body in class scope
   let classDecl = Declaration nodeId DeclClass name
