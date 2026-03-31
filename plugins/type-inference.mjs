@@ -51,6 +51,27 @@ const BUILTINS = {
   process: ['exit', 'cwd', 'env', 'argv', 'on', 'stdout', 'stderr', 'stdin', 'kill', 'pid', 'execPath'],
   Boolean: ['valueOf', 'toString'],
   EventEmitter: ['on', 'once', 'off', 'emit', 'removeListener', 'removeAllListeners', 'addListener', 'listeners'],
+  // Commander.js (chain API)
+  Command: ['option', 'addCommand', 'action', 'argument', 'addHelpText', 'description',
+    'name', 'version', 'parse', 'parseAsync', 'command', 'alias', 'usage',
+    'helpOption', 'exitOverride', 'outputHelp', 'opts', 'args'],
+  // TEMPORARY: Grafema graph backend interface (should be inferred from code via contract inference — REG-1086)
+  GraphBackend: ['getNode', 'getOutgoingEdges', 'getIncomingEdges', 'queryNodes',
+    'addNodes', 'addEdges', 'deleteNode', 'deleteEdge', 'nodeExists', 'nodeCount',
+    'edgeCount', 'getAllNodes', 'getAllEdges', 'findByAttr', 'bfs', 'dfs',
+    'reachability', 'getStats', 'flush', 'clear', 'close',
+    'datalogQuery', 'datalogLoadRules', 'checkGuarantee', 'cypherQuery',
+    'beginBatch', 'commitBatch', 'batchNode', 'batchEdge', 'abortBatch',
+    'countNodesByType', 'countEdgesByType'],
+  // VS Code API (common classes)
+  TreeItem: ['label', 'description', 'tooltip', 'iconPath', 'collapsibleState', 'command', 'contextValue'],
+  EventEmitter2: ['fire', 'event', 'dispose'],
+  // VS Code API namespace (for vscode.TreeItem, vscode.ThemeIcon, etc.)
+  vscode: ['TreeItem', 'ThemeIcon', 'Uri', 'Range', 'Position', 'Selection',
+    'EventEmitter', 'TreeItemCollapsibleState', 'MarkdownString', 'Diagnostic',
+    'DiagnosticSeverity', 'StatusBarAlignment', 'ViewColumn', 'CodeLens',
+    'registerCommand', 'showInformationMessage', 'showWarningMessage',
+    'showErrorMessage', 'createOutputChannel'],
 };
 
 // ── Literal type mapping ────────────────────────────────────────────────────
@@ -71,6 +92,7 @@ const GLOBAL_SINGLETONS = new Set([
   'console', 'JSON', 'Math', 'Date', 'Array', 'Object', 'String',
   'Number', 'Boolean', 'Promise', 'Map', 'Set', 'RegExp', 'Error',
   'Buffer', 'process', 'Reflect', 'Proxy', 'Symbol',
+  'vscode', // VS Code API namespace
 ]);
 
 // ── Main ────────────────────────────────────────────────────────────────────
