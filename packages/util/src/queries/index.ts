@@ -12,6 +12,8 @@ export { findContainingFunction } from './findContainingFunction.js';
 export { traceValues, aggregateValues, NONDETERMINISTIC_PATTERNS, NONDETERMINISTIC_OBJECTS } from './traceValues.js';
 export { traceDataflow, traceForwardBFS, traceBackwardBFS } from './traceDataflow.js';
 export { traceCallChain } from './traceCallChain.js';
+export { getShape } from './getShape.js';
+export type { ShapeResult, ShapeMember, ClassIndex } from './getShape.js';
 export {
   buildNodeContext,
   getNodeDisplayName,

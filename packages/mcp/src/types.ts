@@ -81,6 +81,11 @@ export interface TraceCallChainArgs {
   max_depth?: number;
 }
 
+export interface GetShapeArgs {
+  target: string;
+  file?: string;
+}
+
 export interface CheckInvariantArgs {
   rule: string;
   name?: string;

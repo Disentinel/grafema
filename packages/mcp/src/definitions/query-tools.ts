@@ -253,6 +253,34 @@ Returns: Indented call tree showing each hop with file:line location.`,
     },
   },
   {
+    name: 'get_shape',
+    description: `Get the shape (methods + properties) of a CLASS, INTERFACE, or typed variable.
+
+Shows all members including inherited ones via EXTENDS chain. For variables,
+follows INSTANCE_OF to find the type, then returns its shape.
+
+Use this to understand:
+- "What methods does GraphBackend have?" → get_shape(target="GraphBackend")
+- "What can I call on this variable?" → get_shape(target="db", file="handlers.ts")
+- "What does this interface require?" → get_shape(target="NodeRecord")
+
+Returns: members (methods + properties), extends chain, implements list.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        target: {
+          type: 'string',
+          description: 'CLASS, INTERFACE, or variable name (or semantic ID)',
+        },
+        file: {
+          type: 'string',
+          description: 'File path to disambiguate (optional)',
+        },
+      },
+      required: ['target'],
+    },
+  },
+  {
     name: 'explain',
     description: `Explain a code element using graph data — returns structured context + prompt for the LLM to summarize.
 

@@ -235,7 +235,7 @@ ruleTSMethodSignature node = do
   case encClass of
     Just ifaceId -> emitEdge GraphEdge
       { geSource = ifaceId, geTarget = nodeId
-      , geType = "HAS_PROPERTY"
+      , geType = "HAS_METHOD"
       , geMetadata = Map.singleton "key" (MetaText name)
       }
     Nothing -> return ()
