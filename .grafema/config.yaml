@@ -66,6 +66,12 @@ plugins:
     mode: batch
     depends_on:
       - "method-call-resolver"
+  - name: "shape-verifier"
+    command: "node plugins/shape-verifier.mjs"
+    mode: batch
+    depends_on:
+      - "method-call-resolver"
+      - "shape-tracker"
 
 exclude:
   - "**/*.test.ts"
