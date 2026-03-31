@@ -856,6 +856,37 @@ fn string_to_id(s: &str) -> u128 {
     rfdb::graph::string_id_to_u128(s)
 }
 
+/// Resolve a string ID to a u128 node ID.
+/// 1. Try parsing as numeric u128
+/// 2. Try hashing the string and checking if a node exists with that ID
+/// 3. Scan for a node whose semantic_id matches (fallback for generated semantic IDs)
+fn resolve_node_id(s: &str, engine: &dyn GraphStore) -> u128 {
+    // Fast path: numeric ID
+    if let Ok(id) = s.parse::<u128>() {
+        return id;
+    }
+    // Try hash — works when the same string was used at node creation
+    let hashed = rfdb::graph::string_id_to_u128(s);
+    if engine.get_node(hashed).is_some() {
+        return hashed;
+    }
+    // Slow path: scan for matching semantic_id
+    // This handles the case where node was created with id="foo" but
+    // semantic_id was auto-generated as "TYPE:name@file"
+    let query = rfdb::storage::AttrQuery::default();
+    for node_id in engine.find_by_attr(&query) {
+        if let Some(node) = engine.get_node(node_id) {
+            if let Some(ref sid) = node.semantic_id {
+                if sid == s {
+                    return node_id;
+                }
+            }
+        }
+    }
+    // Last resort: return the hash (edge will point to non-existent node)
+    hashed
+}
+
 fn id_to_string(id: u128) -> String {
     format!("{}", id)
 }
@@ -1190,7 +1221,19 @@ fn handle_request_with_cancel(
 
         Request::AddEdges { edges, skip_validation } => {
             with_engine_write(session, |engine| {
-                let records: Vec<EdgeRecord> = edges.into_iter().map(wire_edge_to_record).collect();
+                let records: Vec<EdgeRecord> = edges.into_iter().map(|edge| {
+                    // Resolve src/dst: try numeric parse first, then resolve semantic ID
+                    let src = resolve_node_id(&edge.src, engine);
+                    let dst = resolve_node_id(&edge.dst, engine);
+                    EdgeRecord {
+                        src,
+                        dst,
+                        edge_type: edge.edge_type,
+                        version: "main".to_string(),
+                        metadata: edge.metadata,
+                        deleted: false,
+                    }
+                }).collect();
                 engine.add_edges(records, skip_validation);
                 Response::Ok { ok: true }
             })
