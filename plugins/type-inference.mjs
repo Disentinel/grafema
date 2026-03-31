@@ -156,6 +156,40 @@ try {
   }
   console.error(`[type-inference] Phase 3: ${processed} variables processed, ${instanceOfCreated} INSTANCE_OF edges created`);
 
+  // Phase 3b: TypeScript annotation-based INSTANCE_OF for PARAMETERs
+  let annotationTyped = 0;
+  const annotationEdges = [];
+
+  for await (const param of client.queryNodes({ type: 'PARAMETER' })) {
+    const paramId = String(param.id);
+
+    // Check if already typed
+    const paramOut = await client.getOutgoingEdges(paramId);
+    if (paramOut.some(e => e.type === 'INSTANCE_OF')) continue;
+
+    // Check metadata for typeAnnotation
+    const meta = typeof param.metadata === 'string' ? JSON.parse(param.metadata || '{}') : param.metadata || {};
+    const typeAnno = meta.typeAnnotation;
+    if (!typeAnno) continue;
+
+    // Find CLASS/INTERFACE with this name
+    const targetClassId = classIndex.get(typeAnno);
+    if (!targetClassId) continue;
+
+    annotationEdges.push({
+      src: paramId,
+      dst: targetClassId,
+      type: 'INSTANCE_OF',
+      metadata: JSON.stringify({ _source: 'type-inference', strategy: 'ts_annotation', confidence: 'medium' }),
+    });
+    annotationTyped++;
+  }
+
+  for (let i = 0; i < annotationEdges.length; i += BATCH) {
+    await client.addEdges(annotationEdges.slice(i, i + BATCH));
+  }
+  console.error(`[type-inference] Phase 3b: ${annotationTyped} parameters typed via TS annotations`);
+
   // Phase 4: Global singleton direct resolution
   // For CALL nodes like console.log, JSON.stringify — resolve receiver directly to builtin CLASS
   let singletonResolved = 0;

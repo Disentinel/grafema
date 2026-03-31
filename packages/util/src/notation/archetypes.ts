@@ -109,6 +109,7 @@ export const EDGE_ARCHETYPE_MAP: Record<string, EdgeMapping> = {
   HTTP_RECEIVES:      m('flow_in', '<', 'receives HTTP'),
   EXTENDS:            m('flow_in', '<', 'extends'),
   IMPLEMENTS:         m('flow_in', '<', 'implements'),
+  IMPLEMENTS:         m('flow_in', '<', 'implements'),
   INSTANCE_OF:        m('flow_in', '<', 'instance of'),
 
   // === Write (=>) ===

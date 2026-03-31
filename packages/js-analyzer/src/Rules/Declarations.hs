@@ -745,12 +745,17 @@ declareParams _file _fnName _fnNodeId _parentNode [] bodyAction = bodyAction
 declareParams file fnName fnNodeId parentNode (p:ps) bodyAction = do
   let pName = getParamName p
       pId   = semanticId file "PARAMETER" pName (Just fnName) Nothing
+      -- Extract TypeScript type annotation if present
+      typeAnno = extractTypeAnnotation p
+      paramMeta = case typeAnno of
+        Just t  -> Map.singleton "typeAnnotation" (MetaText t)
+        Nothing -> Map.empty
   curScopeId <- askScopeId
   emitNode GraphNode
     { gnId = pId, gnType = "PARAMETER", gnName = pName
     , gnFile = file, gnLine = spanStart (astNodeSpan p), gnColumn = 0
     , gnEndLine = spanEnd (astNodeSpan p), gnEndColumn = 0
-    , gnExported = False, gnMetadata = Map.empty
+    , gnExported = False, gnMetadata = paramMeta
     }
   emitEdge GraphEdge
     { geSource = fnNodeId, geTarget = pId
@@ -798,6 +803,32 @@ getParamName node = case node of
       Just arg -> "..." <> getParamName arg
       Nothing  -> "<rest>"
   _ -> "<param>"
+
+-- | Extract TypeScript type annotation name from a parameter or variable node.
+-- Handles: `param: TypeName`, `param: TypeName[]`, `param: { ... }` (returns Nothing for complex types)
+extractTypeAnnotation :: ASTNode -> Maybe Text
+extractTypeAnnotation node =
+  -- Direct typeAnnotation on the node
+  case getChildrenMaybe "typeAnnotation" node of
+    Just taNode ->
+      -- TSTypeAnnotation wraps the actual type: { typeAnnotation: TSTypeReference }
+      case getChildrenMaybe "typeAnnotation" taNode of
+        Just typeRef -> Just (getTextFieldOr "name" "" typeRef)
+        Nothing      -> extractTypeName taNode
+    Nothing ->
+      -- AssignmentPattern: check left side
+      case getChildrenMaybe "left" node of
+        Just left -> extractTypeAnnotation left
+        Nothing   -> Nothing
+  where
+    extractTypeName n =
+      -- Try: TSTypeReference → typeName → Identifier → name
+      case getChildrenMaybe "typeName" n of
+        Just tn -> Just (getTextFieldOr "name" "" tn)
+        Nothing ->
+          -- Fallback: direct name field
+          let name = getTextFieldOr "name" "" n
+          in if T.null name then Nothing else Just name
 
 -- | Extract the declared name from a declaration node (for export info).
 getDeclName :: ASTNode -> Text
