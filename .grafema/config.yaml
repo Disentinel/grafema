@@ -50,6 +50,7 @@ plugins:
   - name: "type-inference"
     command: "node plugins/type-inference.mjs"
     mode: batch
+    timeout_secs: 600
   - name: "shape-tracker"
     command: "node plugins/shape-tracker.mjs"
     mode: batch

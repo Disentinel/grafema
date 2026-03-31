@@ -38,6 +38,7 @@ try {
     const methods = new Set();
     classNameIndex.set(classId, cls.name || '?');
 
+    // Use numeric ID for edge queries (semantic IDs don't always resolve for builtins)
     const edges = await client.getOutgoingEdges(classId);
     for (const e of edges) {
       if (e.type === 'HAS_METHOD') {

@@ -306,7 +306,7 @@ async function createBuiltinNodes(client) {
     let classNodeId = null;
     for await (const n of client.queryNodes({ type: 'CLASS', name: className })) {
       if (n.file === '<builtin>') {
-        classNodeId = n.semanticId || String(n.id);
+        classNodeId = String(n.id); // numeric ID for edges
         break;
       }
     }
@@ -321,10 +321,10 @@ async function createBuiltinNodes(client) {
         exported: true,
         metadata: JSON.stringify({ _source: 'type-inference', builtin: true }),
       }]);
-      // Re-fetch to get the actual stored ID
+      // Re-fetch to get the numeric stored ID
       for await (const n of client.queryNodes({ type: 'CLASS', name: className })) {
         if (n.file === '<builtin>') {
-          classNodeId = n.semanticId || String(n.id);
+          classNodeId = String(n.id);
           break;
         }
       }
@@ -333,52 +333,45 @@ async function createBuiltinNodes(client) {
     if (!classNodeId) continue;
     classIds.set(className, classNodeId);
 
-    // Create METHOD nodes and HAS_METHOD edges
+    // Create METHOD nodes one-by-one (unique IDs per class to avoid collisions)
     for (const methodName of methods) {
-      // Check if method already exists
-      let methodExists = false;
+      // Check if already exists for THIS class
+      let exists = false;
       for await (const n of client.queryNodes({ type: 'METHOD', name: methodName })) {
-        if (n.file === '<builtin>') { methodExists = true; break; }
+        if (n.file === '<builtin>') {
+          const meta = typeof n.metadata === 'string' ? JSON.parse(n.metadata || '{}') : {};
+          if (meta.parentClass === className) { exists = true; break; }
+        }
       }
-      if (methodExists) continue;
+      if (exists) continue;
 
-      const tempMethodId = `builtin::${className}::${methodName}`;
       await client.addNodes([{
-        id: tempMethodId,
+        id: `builtin::${className}::${methodName}`,
         type: 'METHOD',
         name: methodName,
         file: '<builtin>',
         exported: true,
-        metadata: JSON.stringify({ _source: 'type-inference', builtin: true, kind: 'method' }),
+        metadata: JSON.stringify({
+          _source: 'type-inference', builtin: true, kind: 'method',
+          parentClass: className,
+        }),
       }]);
 
-      // Re-fetch to get stored ID
-      let methodNodeId = null;
+      // Get numeric ID of method and class, create HAS_METHOD edge
+      let methodNumId = null;
       for await (const n of client.queryNodes({ type: 'METHOD', name: methodName })) {
         if (n.file === '<builtin>') {
-          methodNodeId = n.semanticId || String(n.id);
-          break;
+          const meta = typeof n.metadata === 'string' ? JSON.parse(n.metadata || '{}') : {};
+          if (meta.parentClass === className) { methodNumId = String(n.id); break; }
         }
       }
-
-      if (methodNodeId) {
-        // Use numeric IDs for edges (RFDB requires them, not semantic IDs)
-        let methodNumId = null;
-        for await (const mn of client.queryNodes({ type: 'METHOD', name: methodName })) {
-          if (mn.file === '<builtin>') { methodNumId = String(mn.id); break; }
-        }
-        let classNumId = null;
-        for await (const cn of client.queryNodes({ type: 'CLASS', name: className })) {
-          if (cn.file === '<builtin>') { classNumId = String(cn.id); break; }
-        }
-        if (classNumId && methodNumId) {
-          edgesBatch.push({
-            src: classNumId,
-            dst: methodNumId,
-            type: 'HAS_METHOD',
-            metadata: JSON.stringify({ _source: 'type-inference' }),
-          });
-        }
+      if (methodNumId) {
+        edgesBatch.push({
+          src: classNodeId,
+          dst: methodNumId,
+          type: 'HAS_METHOD',
+          metadata: JSON.stringify({ _source: 'type-inference' }),
+        });
       }
     }
   }
