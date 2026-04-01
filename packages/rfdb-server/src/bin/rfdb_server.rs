@@ -3275,8 +3275,31 @@ async fn main() {
             db.edge_count());
     }
 
-    // Bind Unix socket
-    let listener = UnixListener::bind(socket_path).expect("Failed to bind socket");
+    // Bind Unix socket (SUN_LEN limit: 104 on macOS, 108 on Linux)
+    let socket_len = socket_path.len();
+    let sun_len: usize = if cfg!(target_os = "macos") { 104 } else { 108 };
+    if socket_len >= sun_len {
+        eprintln!("[rfdb-server] ERROR: Socket path too long ({} bytes, limit {}):", socket_len, sun_len);
+        eprintln!("[rfdb-server]   {}", socket_path);
+        eprintln!("[rfdb-server] Your project path is too deep. Use --socket with a shorter path:");
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        socket_path.hash(&mut hasher);
+        eprintln!("[rfdb-server]   rfdb-server {} --socket /tmp/rfdb-{:x}.sock",
+            db_path.display(), hasher.finish());
+        std::process::exit(1);
+    }
+    let listener = match UnixListener::bind(socket_path) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("[rfdb-server] ERROR: Failed to bind socket at {}: {}", socket_path, e);
+            if e.kind() == std::io::ErrorKind::InvalidInput {
+                eprintln!("[rfdb-server] Hint: path may exceed OS socket path limit. Use --socket /tmp/rfdb.sock");
+            }
+            std::process::exit(1);
+        }
+    };
     eprintln!("[rfdb-server] Listening on {}", socket_path);
 
     // Set up signal handler for graceful shutdown

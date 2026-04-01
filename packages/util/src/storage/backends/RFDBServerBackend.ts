@@ -21,6 +21,7 @@
 import { RFDBClient, type BatchHandle } from '@grafema/rfdb-client';
 import type { ChildProcess } from 'child_process';
 import { join, dirname } from 'path';
+import { createHash } from 'crypto';
 
 import type { WireNode, WireEdge, FieldDeclaration, CommitDelta, AttrQuery as RFDBAttrQuery, DatalogExplainResult, ServerStats, CypherResult } from '@grafema/types';
 import type { NodeType, EdgeType } from '@grafema/types';
@@ -119,11 +120,21 @@ export class RFDBServerBackend {
     this.silent = options.silent ?? false;
     this._clientName = options.clientName ?? 'core';
     // Default socket path: next to the database in .grafema folder
-    // This ensures each project has its own socket, avoiding conflicts
+    // This ensures each project has its own socket, avoiding conflicts.
+    // Unix socket paths have a hard limit (SUN_LEN: 104 on macOS, 108 on Linux).
+    // If the project path is too deep, fall back to /tmp with a hash to avoid conflicts.
     if (options.socketPath) {
       this.socketPath = options.socketPath;
     } else if (this.dbPath) {
-      this.socketPath = join(dirname(this.dbPath), 'rfdb.sock');
+      const localSocket = join(dirname(this.dbPath), 'rfdb.sock');
+      const SUN_LEN = process.platform === 'darwin' ? 104 : 108;
+      if (Buffer.byteLength(localSocket) < SUN_LEN) {
+        this.socketPath = localSocket;
+      } else {
+        // Hash the project path to create a unique but short socket path
+        const hash = createHash('md5').update(dirname(this.dbPath)).digest('hex').slice(0, 12);
+        this.socketPath = join('/tmp', `grafema-${hash}.sock`);
+      }
     } else {
       this.socketPath = '/tmp/rfdb.sock'; // fallback, not recommended
     }
