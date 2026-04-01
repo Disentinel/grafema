@@ -27,10 +27,11 @@ module Analysis.Context
   , askUnsafe
   , withAsync
   , askAsync
+  , captureFirstNodeId
   ) where
 
 import Control.Monad.Reader (ReaderT, runReaderT, asks, local)
-import Control.Monad.Writer.Strict (Writer, runWriter, tell)
+import Control.Monad.Writer.Strict (Writer, runWriter, tell, listen)
 import Data.Text (Text)
 import Analysis.Types
 
@@ -142,3 +143,13 @@ withUnsafe = local (\ctx -> ctx { ctxUnsafe = True })
 
 withAsync :: Analyzer a -> Analyzer a
 withAsync = local (\ctx -> ctx { ctxAsync = True })
+
+-- | Run an analyzer action and capture the first emitted node's ID.
+-- Used for PASSES_ARGUMENT edges where we need to know which node
+-- an argument expression resolved to.
+captureFirstNodeId :: Analyzer () -> Analyzer (Maybe Text)
+captureFirstNodeId action = do
+  ((), output) <- listen action
+  case faNodes output of
+    (n:_) -> return (Just (gnId n))
+    []    -> return Nothing

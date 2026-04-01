@@ -44,7 +44,6 @@ export const EDGE_TYPE = {
   // Inheritance
   EXTENDS: 'EXTENDS',
   IMPLEMENTS: 'IMPLEMENTS',
-  IMPLEMENTS: 'IMPLEMENTS',
   INSTANCE_OF: 'INSTANCE_OF',
 
   // Imports/Exports

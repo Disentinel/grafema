@@ -343,14 +343,27 @@ ruleObjectExpression node = do
   let sp     = astNodeSpan node
       hash   = contentHash [("r", "<object>"), ("line", T.pack (show (spanStart sp)))]
       nodeId = semanticId file "LITERAL" "<object>" parent (Just hash)
+      props  = getChildren "properties" node
+      -- Extract property key names for shape metadata
+      propKeys = [ keyName
+                 | p <- props
+                 , let keyName = case getChildrenMaybe "key" p of
+                         Just keyNode -> getTextFieldOr "name"
+                                           (getTextFieldOr "value" "" keyNode)
+                                           keyNode
+                         Nothing      -> ""
+                 , not (T.null keyName)
+                 ]
   emitNode GraphNode
     { gnId = nodeId, gnType = "LITERAL", gnName = "<object>"
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
     , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False
-    , gnMetadata = Map.singleton "kind" (MetaText "object")
+    , gnMetadata = Map.fromList
+        [ ("kind", MetaText "object")
+        , ("objectKeys", MetaList (map MetaText propKeys))
+        ]
     }
-  let props = getChildren "properties" node
   mapM_ (\(idx, p) -> do
     let keyName = case getChildrenMaybe "key" p of
                     Just keyNode -> getTextFieldOr "name"
@@ -424,18 +437,30 @@ ruleTemplateLiteral node = do
   let sp     = astNodeSpan node
       hash   = contentHash [("r", "<template>"), ("line", T.pack (show (spanStart sp)))]
       nodeId = semanticId file "LITERAL" "<template>" parent (Just hash)
+      -- Extract static string parts from quasis (TemplateElement nodes)
+      -- OXC stores text in value.raw (nested object), parse as Map
+      quasis = getChildren "quasis" node
+      quasiTexts = [ txt
+                   | q <- quasis
+                   , let mValueMap = getField "value" q :: Maybe (Map.Map T.Text T.Text)
+                   , let txt = case mValueMap of
+                           Just vm -> Map.findWithDefault "" "raw" vm
+                           Nothing -> getTextFieldOr "raw" "" q
+                   , not (T.null txt)
+                   ]
   emitNode GraphNode
     { gnId = nodeId, gnType = "LITERAL", gnName = "<template>"
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
     , gnEndLine = spanEnd sp, gnEndColumn = 0
     , gnExported = False
-    , gnMetadata = Map.singleton "kind" (MetaText "template")
+    , gnMetadata = Map.fromList $
+        [ ("kind", MetaText "template") ] ++
+        [ ("quasis", MetaList (map MetaText quasiTexts)) | not (null quasiTexts) ]
     }
   -- Walk interpolated expressions (discard results)
   let exprs = getChildren "expressions" node
   mapM_ (\expr -> withAncestor node (walkNode expr) >> return ()) exprs
   -- Walk quasis (template elements, discard results)
-  let quasis = getChildren "quasis" node
   mapM_ (\q -> withAncestor node (walkNode q) >> return ()) quasis
   return (Just nodeId)
 

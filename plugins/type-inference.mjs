@@ -88,6 +88,20 @@ const GLOBAL_SINGLETONS = new Set([
   'vscode', // VS Code API namespace
 ]);
 
+// ── Return type map for standard library methods ────────────────────────────
+// callName → return type. Prevents heuristic from mis-typing .map() as Map, etc.
+
+const RETURN_TYPE_MAP = {
+  // Object static methods that return Array
+  'Object.keys': 'Array',
+  'Object.values': 'Array',
+  'Object.entries': 'Array',
+  // Array-returning instance methods (receiver.method pattern)
+  // These fire when callName is "x.map", "x.filter", etc.
+  // We can't match by method alone, so these are common patterns
+  // that the heuristic would otherwise misclassify.
+};
+
 // ── Main ────────────────────────────────────────────────────────────────────
 
 const client = new RFDBClient(socketPath, 'type-inference');
@@ -126,17 +140,22 @@ try {
       if (existing.some(e => e.type === 'INSTANCE_OF')) continue;
 
       // Trace ASSIGNED_FROM to infer type
-      const inferredType = await inferType(client, varId, classIndex);
-      if (!inferredType) continue;
+      const result = await inferType(client, varId, classIndex);
+      if (!result) continue;
 
-      const classId = classIndex.get(inferredType);
+      const classId = classIndex.get(result.type);
       if (!classId) continue;
+
+      const edgeMeta = { _source: 'type-inference', inferredType: result.type };
+      if (result.shape && result.shape.length > 0) {
+        edgeMeta.shape = result.shape;
+      }
 
       edges.push({
         src: varId,
         dst: classId,
         type: 'INSTANCE_OF',
-        metadata: JSON.stringify({ _source: 'type-inference', inferredType }),
+        metadata: JSON.stringify(edgeMeta),
       });
       instanceOfCreated++;
     }
@@ -405,11 +424,20 @@ async function inferType(client, varId, classIndex) {
     // Rule 1: Literal type
     if (sourceType === 'LITERAL') {
       const litType = LITERAL_TYPE_MAP[source.name];
-      if (litType) return litType;
+      if (litType) {
+        // For object literals, extract structural shape from metadata
+        if (source.name === '<object>') {
+          const meta = typeof source.metadata === 'string'
+            ? JSON.parse(source.metadata || '{}') : source.metadata || {};
+          const shape = Array.isArray(meta.objectKeys) ? meta.objectKeys : [];
+          return { type: litType, shape };
+        }
+        return { type: litType };
+      }
       // String literals
-      if (source.name && source.name.startsWith("'") || source.name?.startsWith('"')) return 'String';
+      if (source.name && source.name.startsWith("'") || source.name?.startsWith('"')) return { type: 'String' };
       // Number literals
-      if (source.name && /^\d/.test(source.name)) return 'Number';
+      if (source.name && /^\d/.test(source.name)) return { type: 'Number' };
       continue;
     }
 
@@ -429,11 +457,11 @@ async function inferType(client, varId, classIndex) {
           const targetName = target.name || '';
 
           // Constructor: CALL → CALLS → CLASS
-          if (targetType === 'CLASS') return targetName;
+          if (targetType === 'CLASS') return { type: targetName };
 
           // Constructor: CALL → CALLS → IMPORT_BINDING → find CLASS with same name
           if (targetType === 'IMPORT_BINDING' && classIndex.has(targetName)) {
-            return targetName;
+            return { type: targetName };
           }
 
           // Constructor: CALL → CALLS → METHOD(constructor) → enclosing class
@@ -443,30 +471,41 @@ async function inferType(client, varId, classIndex) {
             if (meta.kind === 'constructor') {
               // Extract class name from semantic ID
               const className = extractClassName(target.semanticId || '');
-              if (className && classIndex.has(className)) return className;
+              if (className && classIndex.has(className)) return { type: className };
             }
           }
         }
       }
 
-      // Heuristic: function name contains class name
-      // getOrCreateKnowledgeBase → KnowledgeBase
-      // createRFDBClient → RFDBClient
-      for (const [className] of classIndex) {
-        if (className.length >= 3 && callName.toLowerCase().includes(className.toLowerCase())) {
-          return className;
+      // Known return types for standard library methods
+      const returnType = RETURN_TYPE_MAP[callName];
+      if (returnType) return { type: returnType };
+
+      // Common factory patterns (constructors)
+      if (callName === 'new Map' || callName === 'Map') return { type: 'Map' };
+      if (callName === 'new Set' || callName === 'Set') return { type: 'Set' };
+      if (callName === 'new Date' || callName === 'Date') return { type: 'Date' };
+      if (callName === 'new Error' || callName === 'Error') return { type: 'Error' };
+      if (callName === 'new RegExp' || callName === 'RegExp') return { type: 'RegExp' };
+      if (callName === 'new Promise' || callName === 'Promise') return { type: 'Promise' };
+      if (callName === 'Buffer.from' || callName === 'Buffer.alloc') return { type: 'Buffer' };
+      if (callName === 'Array.from' || callName === 'Array.of') return { type: 'Array' };
+
+      // Heuristic: function name ends with class name (factory pattern)
+      // e.g. createRFDBClient → RFDBClient, getOrCreateKnowledgeBase → KnowledgeBase
+      // ONLY suffix match — substring would falsely type processResults→process,
+      // readJsonFile→JSON, etc. Also skip method calls (dots).
+      if (!callName.includes('.')) {
+        const callLower = callName.toLowerCase();
+        for (const [className] of classIndex) {
+          if (className.length >= 3) {
+            const classLower = className.toLowerCase();
+            if (callLower.endsWith(classLower) && callLower.length > classLower.length) {
+              return { type: className };
+            }
+          }
         }
       }
-
-      // Common factory patterns
-      if (callName === 'new Map' || callName === 'Map') return 'Map';
-      if (callName === 'new Set' || callName === 'Set') return 'Set';
-      if (callName === 'new Date' || callName === 'Date') return 'Date';
-      if (callName === 'new Error' || callName === 'Error') return 'Error';
-      if (callName === 'new RegExp' || callName === 'RegExp') return 'RegExp';
-      if (callName === 'new Promise' || callName === 'Promise') return 'Promise';
-      if (callName === 'Buffer.from' || callName === 'Buffer.alloc') return 'Buffer';
-      if (callName === 'Array.from' || callName === 'Array.of') return 'Array';
 
       continue;
     }
@@ -475,8 +514,8 @@ async function inferType(client, varId, classIndex) {
     if (sourceType === 'EXPRESSION') {
       const meta = typeof source.metadata === 'string'
         ? JSON.parse(source.metadata || '{}') : source.metadata || {};
-      if (meta.expressionType === 'ArrayExpression') return 'Array';
-      if (meta.expressionType === 'ObjectExpression') return 'Object';
+      if (meta.expressionType === 'ArrayExpression') return { type: 'Array' };
+      if (meta.expressionType === 'ObjectExpression') return { type: 'Object' };
       continue;
     }
   }
