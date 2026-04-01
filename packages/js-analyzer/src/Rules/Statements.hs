@@ -315,7 +315,11 @@ ruleTryStatement node = do
     , gnExported = False, gnMetadata = Map.empty
     }
   case getChildrenMaybe "block" node of
-    Just blk -> withAncestor node (walkNode blk) >> return ()
+    Just blk -> do
+      mBlkId <- withAncestor node (walkNode blk)
+      forM_ mBlkId $ \blkId ->
+        emitEdge GraphEdge { geSource = tryId, geTarget = blkId
+                           , geType = "HAS_BODY", geMetadata = Map.empty }
     Nothing -> return ()
   case getChildrenMaybe "handler" node of
     Just h -> do
@@ -349,9 +353,16 @@ ruleTryStatement node = do
 
 ruleBlockStatement :: ASTNode -> Analyzer (Maybe Text)
 ruleBlockStatement node = do
-  let stmts = getChildren "body" node
-  mapM_ (\s -> withAncestor node (walkNode s)) stmts
-  return Nothing
+  file <- askFile
+  parent <- askNamedParent
+  let sp = astNodeSpan node
+      hash = contentHash [("k", "block"), ("line", T.pack (show (spanStart sp)))]
+      blockId = semanticId file "BLOCK" "block" parent (Just hash)
+  withScope BlockScope blockId $ do
+    let stmts = getChildren "body" node
+    mapM_ (\s -> withAncestor node (walkNode s)) stmts
+    scopeNodeId <- askScopeId
+    return (Just scopeNodeId)
 
 -- ── Expression Statement ──────────────────────────────────────────────
 

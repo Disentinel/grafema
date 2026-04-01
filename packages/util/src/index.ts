@@ -221,6 +221,9 @@ export type { ChurnEntry, CoChangeEntry, OwnershipEntry, ArchaeologyEntry } from
 // Graph Query Utilities
 export { findCallsInFunction, findContainingFunction, traceValues, aggregateValues, NONDETERMINISTIC_PATTERNS, NONDETERMINISTIC_OBJECTS } from './queries/index.js';
 export { traceDataflow, traceForwardBFS, traceBackwardBFS } from './queries/index.js';
+export { traceCallChain } from './queries/index.js';
+export { getShape } from './queries/index.js';
+export type { ShapeResult, ShapeMember, ClassIndex } from './queries/index.js';
 export { buildNodeContext, getNodeDisplayName, formatEdgeMetadata, STRUCTURAL_EDGE_TYPES } from './queries/index.js';
 export type {
   CallInfo,

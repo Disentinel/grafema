@@ -52,17 +52,19 @@ const EXPECTED_HANDLERS = [
   'handleGraphQLQuery',
   'handleQueryRegistry',
   'handleExplain',
+  'handleTraceCallChain',
+  'handleGetShape',
 ];
 
 describe('MCP handlers export surface', () => {
-  it('should export exactly 35 handler functions', () => {
+  it('should export exactly 37 handler functions', () => {
     const exportedKeys = Object.keys(handlers).filter(
       k => typeof handlers[k] === 'function'
     );
     assert.equal(
       exportedKeys.length,
-      35,
-      `Expected 35 function exports, got ${exportedKeys.length}: ${exportedKeys.join(', ')}`
+      37,
+      `Expected 37 function exports, got ${exportedKeys.length}: ${exportedKeys.join(', ')}`
     );
   });
 

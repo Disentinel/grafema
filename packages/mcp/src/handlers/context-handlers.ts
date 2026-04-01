@@ -4,7 +4,8 @@
 
 import { ensureAnalyzed } from '../analysis.js';
 import { getProjectPath } from '../state.js';
-import { findCallsInFunction, findContainingFunction, FileOverview, buildNodeContext, getNodeDisplayName, formatEdgeMetadata, STRUCTURAL_EDGE_TYPES, isGrafemaUri, toCompactSemanticId } from '@grafema/util';
+import { findCallsInFunction, findContainingFunction, FileOverview, buildNodeContext, getNodeDisplayName, formatEdgeMetadata, STRUCTURAL_EDGE_TYPES, isGrafemaUri, toCompactSemanticId, getShape } from '@grafema/util';
+import type { ClassIndex } from '@grafema/util';
 import type { CallInfo, CallerInfo, NodeContext } from '@grafema/util';
 import { existsSync, readFileSync, realpathSync } from 'fs';
 import { isAbsolute, join, relative } from 'path';
@@ -432,4 +433,82 @@ export async function handleGetFileOverview(
     const message = error instanceof Error ? error.message : String(error);
     return errorResult(`Failed to get file overview: ${message}`);
   }
+}
+
+// === GET SHAPE ===
+
+export async function handleGetShape(args: { target: string; file?: string }): Promise<ToolResult> {
+  const db = await ensureAnalyzed();
+  const { target, file } = args;
+
+  // Find the target node
+  let targetNode: GraphNode | null = await db.getNode(target);
+  if (!targetNode) {
+    // Search by name, preferring CLASS/INTERFACE
+    for (const type of ['CLASS', 'INTERFACE', 'VARIABLE', 'CONSTANT', 'PARAMETER']) {
+      for await (const node of db.queryNodes({ type, name: target })) {
+        if (file && !node.file?.includes(file)) continue;
+        targetNode = node;
+        break;
+      }
+      if (targetNode) break;
+    }
+  }
+  if (!targetNode) {
+    return errorResult(`Target "${target}" not found. Provide a CLASS, INTERFACE, or typed variable name.`);
+  }
+
+  // Build class index for EXTENDS chain walking
+  const classIndex: ClassIndex = new Map();
+  for await (const node of db.queryNodes({ type: 'CLASS' })) {
+    if (node.name) classIndex.set(node.name, String(node.id));
+  }
+  for await (const node of db.queryNodes({ type: 'INTERFACE' })) {
+    if (node.name) classIndex.set(node.name, String(node.id));
+  }
+
+  const backend = {
+    getNode: (id: string) => db.getNode(id),
+    getOutgoingEdges: (id: string) => db.getOutgoingEdges(id),
+    getIncomingEdges: (id: string) => db.getIncomingEdges(id),
+  };
+
+  const shape = await getShape(backend as never, String(targetNode.id), classIndex);
+  if (!shape) {
+    return errorResult(`Could not determine shape for "${target}". It may not be a CLASS, INTERFACE, or typed variable.`);
+  }
+
+  // Format output
+  const lines: string[] = [];
+  lines.push(`## Shape: ${shape.name} (${shape.nodeType})`);
+  if (shape.file) lines.push(`File: ${shape.file}`);
+  if (shape.extends.length > 0) lines.push(`Extends: ${shape.extends.join(' → ')}`);
+  if (shape.implements.length > 0) lines.push(`Implements: ${shape.implements.join(', ')}`);
+  lines.push(`Confidence: ${shape.confidence}`);
+  lines.push('');
+
+  // Group members by source
+  const bySource = new Map<string, typeof shape.members>();
+  for (const m of shape.members) {
+    if (!bySource.has(m.from)) bySource.set(m.from, []);
+    bySource.get(m.from)!.push(m);
+  }
+
+  for (const [source, members] of bySource) {
+    const label = source === shape.name ? 'Own members' : `Inherited from ${source}`;
+    lines.push(`### ${label} (${members.length})`);
+    const methods = members.filter(m => m.kind === 'method' || m.kind === 'method_signature');
+    const props = members.filter(m => m.kind === 'property' || m.kind === 'property_signature');
+    if (methods.length > 0) {
+      lines.push(`Methods: ${methods.map(m => m.name).join(', ')}`);
+    }
+    if (props.length > 0) {
+      lines.push(`Properties: ${props.map(m => m.name).join(', ')}`);
+    }
+    lines.push('');
+  }
+
+  lines.push(`Total: ${shape.members.length} members`);
+
+  return textResult(lines.join('\n'));
 }

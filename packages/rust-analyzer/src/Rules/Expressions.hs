@@ -50,6 +50,7 @@ import Analysis.Context
     , withScope
     , withUnsafe
     , withAsync
+    , captureFirstNodeId
     )
 import Grafema.SemanticId (semanticId, contentHash)
 import {-# SOURCE #-} Rules.Patterns (walkMatchArms)
@@ -125,9 +126,21 @@ walkExpr (ExprCall func args sp) = do
     , geMetadata = Map.empty
     }
 
-  -- Walk subexpressions
+  -- Walk callee
   walkExpr func
-  mapM_ walkExpr args
+
+  -- Walk arguments and emit PASSES_ARGUMENT edges
+  mapM_ (\(idx, arg) -> do
+    mArgId <- captureFirstNodeId (walkExpr arg)
+    case mArgId of
+      Just argId -> emitEdge GraphEdge
+        { geSource   = nodeId
+        , geTarget   = argId
+        , geType     = "PASSES_ARGUMENT"
+        , geMetadata = Map.singleton "index" (MetaInt idx)
+        }
+      Nothing -> return ()
+    ) (zip [0..] args)
 
 -- ── CALL node: method call ───────────────────────────────────────────
 
@@ -166,9 +179,21 @@ walkExpr (ExprMethodCall receiver method args sp) = do
     , geMetadata = Map.empty
     }
 
-  -- Walk subexpressions
+  -- Walk receiver
   walkExpr receiver
-  mapM_ walkExpr args
+
+  -- Walk arguments and emit PASSES_ARGUMENT edges
+  mapM_ (\(idx, arg) -> do
+    mArgId <- captureFirstNodeId (walkExpr arg)
+    case mArgId of
+      Just argId -> emitEdge GraphEdge
+        { geSource   = nodeId
+        , geTarget   = argId
+        , geType     = "PASSES_ARGUMENT"
+        , geMetadata = Map.singleton "index" (MetaInt idx)
+        }
+      Nothing -> return ()
+    ) (zip [0..] args)
 
 -- ── BRANCH node: if/else ─────────────────────────────────────────────
 

@@ -215,6 +215,72 @@ Tip: Start with max_depth=5, increase if needed.`,
     },
   },
   {
+    name: 'trace_calls',
+    description: `Trace call chains from or to a function/method, following CALLS and CALLS_REMOTE edges transitively.
+
+Use this when you need to:
+- "What does this function eventually call?" (forward) — full call tree including cross-language hops
+- "Who calls this function?" (backward) — all callers up the stack
+- "Show the full call chain from handler to database" (forward with depth)
+
+Unlike trace_dataflow (which follows data assignments), this follows function CALLS edges:
+- CALLS: same-language function/method invocation
+- CALLS_REMOTE: cross-process/language boundary (IPC, HTTP, socket)
+
+Returns: Indented call tree showing each hop with file:line location.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        source: {
+          type: 'string',
+          description: 'Function/method name or semantic ID to trace from',
+        },
+        file: {
+          type: 'string',
+          description: 'File path to disambiguate (optional)',
+        },
+        direction: {
+          type: 'string',
+          description: 'forward (callees), backward (callers), or both (default: forward)',
+          enum: ['forward', 'backward', 'both'],
+        },
+        max_depth: {
+          type: 'number',
+          description: 'Maximum chain depth (default: 10)',
+        },
+      },
+      required: ['source'],
+    },
+  },
+  {
+    name: 'get_shape',
+    description: `Get the shape (methods + properties) of a CLASS, INTERFACE, or typed variable.
+
+Shows all members including inherited ones via EXTENDS chain. For variables,
+follows INSTANCE_OF to find the type, then returns its shape.
+
+Use this to understand:
+- "What methods does GraphBackend have?" → get_shape(target="GraphBackend")
+- "What can I call on this variable?" → get_shape(target="db", file="handlers.ts")
+- "What does this interface require?" → get_shape(target="NodeRecord")
+
+Returns: members (methods + properties), extends chain, implements list.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        target: {
+          type: 'string',
+          description: 'CLASS, INTERFACE, or variable name (or semantic ID)',
+        },
+        file: {
+          type: 'string',
+          description: 'File path to disambiguate (optional)',
+        },
+      },
+      required: ['target'],
+    },
+  },
+  {
     name: 'explain',
     description: `Explain a code element using graph data — returns structured context + prompt for the LLM to summarize.
 

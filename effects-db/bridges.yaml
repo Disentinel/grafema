@@ -1,0 +1,58 @@
+# Bridge Pattern Definitions
+# Complementary IO effect pairs that indicate cross-process communication.
+#
+# Each pattern defines:
+#   sender: IO subtypes on the sending side (function that writes/spawns)
+#   receiver: IO subtypes on the receiving side (function that reads/listens)
+#   channel_match: strategy for matching sender to receiver
+#
+# The bridge detection plugin uses these patterns to create CALLS_REMOTE edges.
+
+version: 1
+
+patterns:
+  - name: unix-socket
+    description: "Communication over Unix domain socket"
+    sender: [IO:SOCKET:WRITE, IO:SOCKET:CONNECT]
+    receiver: [IO:SOCKET:LISTEN, IO:SOCKET:READ]
+    channel_match: socket_path
+    # Channel identity: socket file path (e.g., .grafema/rfdb.sock)
+    # Extraction: trace arg of net.connect() or constructor to string literal
+
+  - name: http
+    description: "HTTP client → server communication"
+    sender: [IO:HTTP:REQUEST]
+    receiver: [IO:HTTP:LISTEN]
+    channel_match: url_pattern
+    # Channel identity: URL path (e.g., /api/stats)
+    # Extraction: trace arg[0] of fetch/http.request to string literal
+
+  - name: subprocess-stdio
+    description: "Parent process spawns child, communicates via stdin/stdout"
+    sender: [IO:PROCESS:SPAWN]
+    receiver: [IO:PROCESS:STDIN_READ]
+    channel_match: binary_name
+    # Channel identity: binary name from spawn arg[0]
+    # Extraction: trace arg[0] of spawn() to string, match to service entry point
+
+  - name: subprocess-cli
+    description: "Parent process spawns child with CLI arguments (no stdin pipe)"
+    sender: [IO:PROCESS:SPAWN]
+    receiver: []  # Receiver is the binary's main() entry point
+    channel_match: binary_name
+    # Same as subprocess-stdio but receiver is just the entry point
+
+  - name: env-var
+    description: "Parent sets env var, child reads it"
+    sender: [IO:ENV:SET]
+    receiver: [IO:ENV:READ]
+    channel_match: env_var_name
+    # Channel identity: environment variable name (e.g., RFDB_SOCKET)
+
+  - name: file-ipc
+    description: "Process A writes file, process B reads it"
+    sender: [IO:FILE:WRITE]
+    receiver: [IO:FILE:READ]
+    channel_match: file_path
+    # Channel identity: file path
+    # Note: high false-positive rate — use only when other bridges confirm the pair

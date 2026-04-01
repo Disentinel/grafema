@@ -199,8 +199,9 @@ resolveFileWithIndex :: ExportIndex -> [GraphNode] -> [PluginCommand]
 resolveFileWithIndex exportIndex fileNodes =
   let propDefIndex       = buildPropertyDefIndex fileNodes
       importBindingIndex = buildImportBindingIndex fileNodes
+      classRangeIdx      = buildClassRangeIndex fileNodes
       propAccessNodes    = filter (\n -> gnType n == "PROPERTY_ACCESS") fileNodes
-  in concatMap (resolvePropAccess propDefIndex exportIndex importBindingIndex) propAccessNodes
+  in concatMap (resolvePropAccess propDefIndex exportIndex importBindingIndex classRangeIdx) propAccessNodes
 
 -- ---------------------------------------------------------------------------
 -- CLI entry point

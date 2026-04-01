@@ -34,6 +34,8 @@ export interface CallInfo {
   line?: number;
   /** Depth in transitive call chain (0 = direct call) */
   depth?: number;
+  /** Whether this call crosses a process/language boundary (CALLS_REMOTE) */
+  remote?: boolean;
 }
 
 /**

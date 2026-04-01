@@ -18,7 +18,8 @@ export type EffectType =
   | 'THROW'
   | 'ASYNC'
   | 'NONDETERMINISTIC'
-  | 'UNKNOWN';
+  | 'UNKNOWN'
+  | `IO:${string}`;
 
 // === Flow types (universal across languages) ===
 

@@ -44,6 +44,7 @@ import {
   handleFindNodes,
   handleTraceAlias,
   handleTraceDataFlow,
+  handleTraceCallChain,
   handleCheckInvariant,
   handleAnalyzeProject,
   handleGetAnalysisStatus,
@@ -62,6 +63,7 @@ import {
   handleReadProjectStructure,
   handleWriteConfig,
   handleGetFileOverview,
+  handleGetShape,
   handleGetNode,
   handleGetNeighbors,
   handleTraverseGraph,
@@ -92,6 +94,7 @@ import type {
   FindNodesArgs,
   TraceAliasArgs,
   TraceDataFlowArgs,
+  TraceCallChainArgs,
   CheckInvariantArgs,
   AnalyzeProjectArgs,
   GetSchemaArgs,
@@ -103,6 +106,7 @@ import type {
   ReadProjectStructureArgs,
   WriteConfigArgs,
   GetFileOverviewArgs,
+  GetShapeArgs,
   GetNodeArgs,
   GetNeighborsArgs,
   TraverseGraphArgs,
@@ -246,6 +250,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
         result = await handleTraceDataFlow(asArgs<TraceDataFlowArgs>(args));
         break;
 
+      case 'trace_calls':
+        result = await handleTraceCallChain(asArgs<TraceCallChainArgs>(args));
+        break;
+
       case 'explain':
         result = await handleExplain(asArgs<ExplainArgs>(args));
         break;
@@ -317,6 +325,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
 
       case 'get_file_overview':
         result = await handleGetFileOverview(asArgs<GetFileOverviewArgs>(args));
+        break;
+
+      case 'get_shape':
+        result = await handleGetShape(asArgs<GetShapeArgs>(args));
         break;
 
       case 'read_project_structure':

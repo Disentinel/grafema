@@ -306,11 +306,26 @@ ruleClassDeclaration node = do
   isExported <- askExported
   let nodeId = semanticId file "CLASS" name parent Nothing
 
+  -- Extract superClass and implements from AST
+  let superClassName = case getChildrenMaybe "superClass" node of
+        Just superNode -> getTextFieldOr "name" "" superNode
+        Nothing        -> ""
+      implementsNames = map (\implNode ->
+          case getChildrenMaybe "expression" implNode of
+            Just exprNode -> getTextFieldOr "name" "" exprNode
+            Nothing       -> ""
+        ) (getChildren "implements" node)
+      implementsList = filter (not . T.null) implementsNames
+      classMeta = Map.fromList $ concat
+        [ [("superClass", MetaText superClassName) | not (T.null superClassName)]
+        , [("implements", MetaText (T.intercalate "," implementsList)) | not (null implementsList)]
+        ]
+
   emitNode GraphNode
     { gnId = nodeId, gnType = "CLASS", gnName = name
     , gnFile = file, gnLine = spanStart (astNodeSpan node), gnColumn = 0
     , gnEndLine = spanEnd (astNodeSpan node), gnEndColumn = 0
-    , gnExported = isExported, gnMetadata = Map.empty
+    , gnExported = isExported, gnMetadata = classMeta
     }
   -- Scope-aware DECLARES edge
   curScopeId <- askScopeId
@@ -318,6 +333,8 @@ ruleClassDeclaration node = do
     { geSource = curScopeId, geTarget = nodeId
     , geType = "DECLARES", geMetadata = Map.empty
     }
+
+  -- superClass stored in metadata; EXTENDS edge created by shape-tracker plugin
 
   -- Declare class name in parent scope, then walk body in class scope
   let classDecl = Declaration nodeId DeclClass name
@@ -363,9 +380,18 @@ ruleMethodDefinition node = do
       }
     Nothing -> return ()
 
-  -- Walk function value
+  -- Walk function value and link METHOD to its body scope
   case getChildrenMaybe "value" node of
-    Just val -> withEnclosingFn nodeId $ withNamedParent name $ withAncestor node (walkNode val) >> return ()
+    Just val -> do
+      mFnId <- withEnclosingFn nodeId $ withNamedParent name $ withAncestor node (walkNode val)
+      -- Create HAS_SCOPE edge from METHOD to the FunctionExpression's scope
+      -- This allows traversal: METHOD -> HAS_SCOPE -> SCOPE -> CONTAINS -> CALL
+      case mFnId of
+        Just fnId -> emitEdge GraphEdge
+          { geSource = nodeId, geTarget = fnId <> ":scope"
+          , geType = "HAS_SCOPE", geMetadata = Map.empty
+          }
+        Nothing -> return ()
     Nothing  -> return ()
 
   return (Just nodeId)
@@ -719,12 +745,17 @@ declareParams _file _fnName _fnNodeId _parentNode [] bodyAction = bodyAction
 declareParams file fnName fnNodeId parentNode (p:ps) bodyAction = do
   let pName = getParamName p
       pId   = semanticId file "PARAMETER" pName (Just fnName) Nothing
+      -- Extract TypeScript type annotation if present
+      typeAnno = extractTypeAnnotation p
+      paramMeta = case typeAnno of
+        Just t  -> Map.singleton "typeAnnotation" (MetaText t)
+        Nothing -> Map.empty
   curScopeId <- askScopeId
   emitNode GraphNode
     { gnId = pId, gnType = "PARAMETER", gnName = pName
     , gnFile = file, gnLine = spanStart (astNodeSpan p), gnColumn = 0
     , gnEndLine = spanEnd (astNodeSpan p), gnEndColumn = 0
-    , gnExported = False, gnMetadata = Map.empty
+    , gnExported = False, gnMetadata = paramMeta
     }
   emitEdge GraphEdge
     { geSource = fnNodeId, geTarget = pId
@@ -772,6 +803,32 @@ getParamName node = case node of
       Just arg -> "..." <> getParamName arg
       Nothing  -> "<rest>"
   _ -> "<param>"
+
+-- | Extract TypeScript type annotation name from a parameter or variable node.
+-- Handles: `param: TypeName`, `param: TypeName[]`, `param: { ... }` (returns Nothing for complex types)
+extractTypeAnnotation :: ASTNode -> Maybe Text
+extractTypeAnnotation node =
+  -- Direct typeAnnotation on the node
+  case getChildrenMaybe "typeAnnotation" node of
+    Just taNode ->
+      -- TSTypeAnnotation wraps the actual type: { typeAnnotation: TSTypeReference }
+      case getChildrenMaybe "typeAnnotation" taNode of
+        Just typeRef -> Just (getTextFieldOr "name" "" typeRef)
+        Nothing      -> extractTypeName taNode
+    Nothing ->
+      -- AssignmentPattern: check left side
+      case getChildrenMaybe "left" node of
+        Just left -> extractTypeAnnotation left
+        Nothing   -> Nothing
+  where
+    extractTypeName n =
+      -- Try: TSTypeReference → typeName → Identifier → name
+      case getChildrenMaybe "typeName" n of
+        Just tn -> Just (getTextFieldOr "name" "" tn)
+        Nothing ->
+          -- Fallback: direct name field
+          let name = getTextFieldOr "name" "" n
+          in if T.null name then Nothing else Just name
 
 -- | Extract the declared name from a declaration node (for export info).
 getDeclName :: ASTNode -> Text
