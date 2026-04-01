@@ -53,6 +53,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Features
+
+- feat: Ruby language support via Prism parser — functions, classes, modules, method calls, blocks, require/require_relative resolution
+
 ## [0.3.22] - 2026-03-25
 
 ### Highlights
