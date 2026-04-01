@@ -15,6 +15,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { WireNode, IRFDBClient } from '@grafema/types';
+import { invalidateNodeCache } from '../../src/nodeLocator';
 
 // ============================================================================
 // Mock infrastructure
@@ -30,6 +31,8 @@ interface MockGraph {
  * Only implements getAllNodes — the only method findNodeAtCursor uses.
  */
 function createMockClient(graph: MockGraph): IRFDBClient {
+  // Clear the per-file node cache so each test starts fresh.
+  invalidateNodeCache();
   return {
     getAllNodes: async (query?: { file?: string; nodeType?: string }) => {
       return Object.values(graph.nodes).filter((n) => {
