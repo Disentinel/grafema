@@ -215,7 +215,7 @@ try {
 
 async function createConfigDrivenBridges(client, config) {
   // Load raw YAML config (loadGrafemaConfig transforms plugins into a different format)
-  const rawPlugins = loadRawPlugins();
+  const rawPlugins = await loadRawPlugins();
   if (!rawPlugins || rawPlugins.length === 0) return [];
 
   const results = [];
@@ -684,30 +684,13 @@ async function findContainingFunction(client, nodeId) {
 
 // ── Config loading ──────────────────────────────────────────────────────────
 
-function loadRawPlugins() {
+async function loadRawPlugins() {
   try {
+    const { parse } = await import('yaml');
     const configPath = join(process.cwd(), '.grafema', 'config.yaml');
     const raw = readFileSync(configPath, 'utf8');
-    // Extract plugins section — everything between "plugins:" and the next top-level key
-    const pluginsMatch = raw.match(/^plugins:\n([\s\S]*?)(?=^\w|\Z)/m);
-    if (!pluginsMatch) return [];
-    const block = pluginsMatch[1];
-    const plugins = [];
-    let current = null;
-    for (const line of block.split('\n')) {
-      if (/^\s+-\s+name:/.test(line)) {
-        const m = line.match(/name:\s*"([^"]+)"|name:\s*(\S+)/);
-        current = { name: m?.[1] || m?.[2] || '' };
-        plugins.push(current);
-      } else if (current && /^\s+command:/.test(line)) {
-        const m = line.match(/command:\s*"([^"]+)"|command:\s*(\S+)/);
-        current.command = m?.[1] || m?.[2] || '';
-      } else if (current && /^\s+mode:/.test(line)) {
-        const m = line.match(/mode:\s*(\w+)/);
-        current.mode = m?.[1] || 'batch';
-      }
-    }
-    return plugins;
+    const doc = parse(raw);
+    return Array.isArray(doc.plugins) ? doc.plugins : [];
   } catch {
     return [];
   }

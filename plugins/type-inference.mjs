@@ -147,9 +147,6 @@ try {
       if (!classId) continue;
 
       const edgeMeta = { _source: 'type-inference', inferredType: result.type };
-      if (result.shape && result.shape.length > 0) {
-        edgeMeta.shape = result.shape;
-      }
 
       edges.push({
         src: varId,
@@ -425,13 +422,8 @@ async function inferType(client, varId, classIndex) {
     if (sourceType === 'LITERAL') {
       const litType = LITERAL_TYPE_MAP[source.name];
       if (litType) {
-        // For object literals, extract structural shape from metadata
-        if (source.name === '<object>') {
-          const meta = typeof source.metadata === 'string'
-            ? JSON.parse(source.metadata || '{}') : source.metadata || {};
-          const shape = Array.isArray(meta.objectKeys) ? meta.objectKeys : [];
-          return { type: litType, shape };
-        }
+        // Object literal — type is Object (shape info lives on LITERAL.objectKeys, not here)
+        if (source.name === '<object>') return { type: litType };
         return { type: litType };
       }
       // String literals

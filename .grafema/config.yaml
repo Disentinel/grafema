@@ -62,11 +62,16 @@ plugins:
     depends_on:
       - "type-inference"
       - "shape-tracker"
+  - name: "axum-route-detector"
+    command: "node plugins/axum-route-detector.mjs"
+    mode: batch
+    depends_on:
+      - "method-call-resolver"
   - name: "semantic-bridge-detector"
     command: "node plugins/semantic-bridge-detector.mjs"
     mode: batch
     depends_on:
-      - "method-call-resolver"
+      - "axum-route-detector"
   - name: "shape-verifier"
     command: "node plugins/shape-verifier.mjs"
     mode: batch
