@@ -744,10 +744,17 @@ pub enum Language {
     Swift,
     ObjectiveC,
     Beam,
+    Ruby,
 }
 
 /// Detect language from file extension.
 pub fn detect_language(path: &Path) -> Option<Language> {
+    // Check extensionless filenames first
+    let file_name = path.file_name()?.to_str()?;
+    match file_name {
+        "Gemfile" | "Rakefile" => return Some(Language::Ruby),
+        _ => {}
+    }
     let ext = path.extension()?.to_str()?;
     match ext {
         "js" | "jsx" | "ts" | "tsx" | "mjs" | "cjs" | "mts" | "cts" => {
@@ -765,6 +772,7 @@ pub fn detect_language(path: &Path) -> Option<Language> {
         "swift" => Some(Language::Swift),
         "m" | "mm" => Some(Language::ObjectiveC),
         "ex" | "exs" | "erl" | "hrl" => Some(Language::Beam),
+        "rb" | "rake" | "gemspec" => Some(Language::Ruby),
         _ => {
             // Handle case-sensitive extensions: .c++ .h++ .C .H
             let file_name = path.file_name()?.to_str()?;
@@ -780,7 +788,7 @@ pub fn detect_language(path: &Path) -> Option<Language> {
 }
 
 /// Partition files by detected language.
-pub fn partition_by_language(files: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>) {
+pub fn partition_by_language(files: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>) {
     let mut js_files = Vec::new();
     let mut hs_files = Vec::new();
     let mut rs_files = Vec::new();
@@ -792,6 +800,7 @@ pub fn partition_by_language(files: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>, 
     let mut swift_files = Vec::new();
     let mut objc_files = Vec::new();
     let mut beam_files = Vec::new();
+    let mut rb_files = Vec::new();
     for file in files {
         match detect_language(file) {
             Some(Language::JavaScript) => js_files.push(file.clone()),
@@ -805,10 +814,11 @@ pub fn partition_by_language(files: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>, 
             Some(Language::Swift) => swift_files.push(file.clone()),
             Some(Language::ObjectiveC) => objc_files.push(file.clone()),
             Some(Language::Beam) => beam_files.push(file.clone()),
+            Some(Language::Ruby) => rb_files.push(file.clone()),
             None => {} // skip unknown extensions
         }
     }
-    (js_files, hs_files, rs_files, java_files, kotlin_files, py_files, go_files, cpp_files, swift_files, objc_files, beam_files)
+    (js_files, hs_files, rs_files, java_files, kotlin_files, py_files, go_files, cpp_files, swift_files, objc_files, beam_files, rb_files)
 }
 
 /// Load and validate configuration from a YAML file.
@@ -1212,7 +1222,7 @@ plugins:
             PathBuf::from("lib/server.ex"),
             PathBuf::from("README.md"),
         ];
-        let (js, hs, rs, java, kotlin, py, go, cpp, swift, objc, beam) = partition_by_language(&files);
+        let (js, hs, rs, java, kotlin, py, go, cpp, swift, objc, beam, ruby) = partition_by_language(&files);
         assert_eq!(js, vec![PathBuf::from("src/index.ts"), PathBuf::from("src/app.jsx")]);
         assert_eq!(hs, vec![PathBuf::from("src/Main.hs"), PathBuf::from("src/Lib.hs")]);
         assert_eq!(rs, vec![PathBuf::from("src/main.rs"), PathBuf::from("src/lib.rs")]);
@@ -1224,11 +1234,12 @@ plugins:
         assert_eq!(swift, vec![PathBuf::from("src/App.swift")]);
         assert_eq!(objc, vec![PathBuf::from("src/Legacy.m"), PathBuf::from("src/Mixed.mm")]);
         assert_eq!(beam, vec![PathBuf::from("lib/server.ex")]);
+        assert!(ruby.is_empty());
     }
 
     #[test]
     fn partition_by_language_empty_input() {
-        let (js, hs, rs, java, kotlin, py, go, cpp, swift, objc, beam) = partition_by_language(&[]);
+        let (js, hs, rs, java, kotlin, py, go, cpp, swift, objc, beam, ruby) = partition_by_language(&[]);
         assert!(js.is_empty());
         assert!(hs.is_empty());
         assert!(rs.is_empty());
@@ -1240,6 +1251,7 @@ plugins:
         assert!(swift.is_empty());
         assert!(objc.is_empty());
         assert!(beam.is_empty());
+        assert!(ruby.is_empty());
     }
 
     #[test]
@@ -1316,7 +1328,7 @@ plugins:
             PathBuf::from("src/main.py"),
             PathBuf::from("src/app.js"),
         ];
-        let (js, _hs, _rs, _java, _kotlin, py, _go, _cpp, _swift, _objc, _beam) = partition_by_language(&files);
+        let (js, _hs, _rs, _java, _kotlin, py, _go, _cpp, _swift, _objc, _beam, _ruby) = partition_by_language(&files);
         assert_eq!(js, vec![PathBuf::from("src/app.js")]);
         assert_eq!(py, vec![PathBuf::from("src/main.py")]);
     }
