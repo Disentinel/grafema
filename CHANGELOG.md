@@ -2,35 +2,56 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.3.23] - 2026-04-01
 
 ### Highlights
 
-- **Fuzzy name search via local embeddings (RFD-63)** — RFDB now includes a token-based + embedding index for fuzzy name matching. When exact name match returns 0 results, `find_nodes` falls back to embedding similarity. Example: `find_nodes(name="PtyHostHeartbeatService")` finds `HeartbeatService`, `PtyHostService`, `PtyService`. Works offline with a local model, no API calls.
-- **Rich find_nodes output (REG-1015)** — `find_nodes` now returns structural context per node: callers (human-readable names), member list for classes, parent node, import/call counts. One `find_nodes` call often eliminates the need for follow-up `get_file_overview` or `find_calls`.
-- **Progressive fallback chain** — `find_nodes` tries: exact match → fuzzy embedding → type relaxation ("did you mean?") → grep-enriched results. Fights for the answer before returning empty.
-- **Config version compatibility** — Patch-level version differences (0.3.21 config with 0.3.22 CLI) now warn instead of throwing. Config auto-updated after successful analyze.
-- **Autoresearch benchmark** — 30 questions from real VS Code GitHub issues. Grafema + Claude Sonnet = **77% vs 67% baseline** (+10% accuracy). Prompt ablation study (20 variants, 60 runs) found that explicit routing rules + prohibition = optimal adoption pattern.
+- **Cross-process bridge detection** — Automatic discovery of IPC boundaries across languages: TypeScript `spawn`/`fetch` → Rust handlers, Unix socket connections, config-driven plugin dispatch. 13/14 internal boundaries detected (66 CALLS_REMOTE edges). First tool to link `fetch()` in frontend to Axum route handler in Rust backend through a single graph.
+- **Object literal shapes** — `const config = { host, port }` now carries structural shape (`objectKeys`) through the graph. Type inference heuristic rewritten (suffix-only matching), eliminating 57 false positive shape violations.
+- **CFG connectivity fix** — `BlockStatement` now creates SCOPE nodes, fixing a fundamental gap where `if/else` branches were disconnected from their contents. Enables branch-aware analysis: 179 GUARDED_WRITE edges mark conditional property mutations.
+- **Rust PASSES_ARGUMENT** — Rust analyzer now emits argument edges for function/method calls (25K+ edges), enabling cross-language dataflow tracing.
+- **Fuzzy name search via local embeddings (RFD-63)** — RFDB now includes a token-based + embedding index for fuzzy name matching. When exact name match returns 0 results, `find_nodes` falls back to embedding similarity.
+- **Rich find_nodes output (REG-1015)** — `find_nodes` returns structural context per node: callers, member list for classes, parent node, import/call counts.
+- **Progressive fallback chain** — `find_nodes` tries: exact match → fuzzy embedding → type relaxation → grep-enriched results.
+- **Autoresearch benchmark** — 30 questions from real VS Code GitHub issues. Grafema + Claude Sonnet = 77% vs 67% baseline (+10% accuracy).
 
 ### Features
 
+- feat: object literal `objectKeys` metadata on LITERAL nodes (JS analyzer)
+- feat: template literal `quasis` metadata for static string extraction
+- feat: structural shape in INSTANCE_OF edge metadata via type-inference plugin
+- feat: shape propagation through assignment chains (shape-tracker Phase 3b)
+- feat: GUARDED_WRITE edges for property writes inside if/else branches (Phase 3c)
+- feat: BlockStatement creates SCOPE node via `withScope BlockScope` (CFG fix)
+- feat: TryStatement HAS_BODY edge to block scope
+- feat: Rust analyzer PASSES_ARGUMENT edges via `captureFirstNodeId`/`listen`
+- feat: axum-route-detector plugin — 5 http:route nodes from Axum `.route()` calls
+- feat: semantic-bridge-detector — subprocess, HTTP, unix socket bridge detection
+- feat: config-driven symbolic execution — parse `config.yaml` plugins for dynamic bridges
+- feat: `process.execPath` detection for self-spawn bridges
+- feat: RFDBClient/RFDBServerBackend `channelHint` for class-mediated socket bridges
+- feat: ISSUE nodes for unresolved IPC boundaries (17 actionable diagnostics)
+- feat: `extractServiceName` with deep function call chain tracing
 - feat(rfdb): fuzzy name search — token-based + embedding index in RFDB (RFD-63)
 - feat(mcp): rich find_nodes output with `_context` (callers, members, parent, counts)
 - feat(mcp): progressive fallback chain — embedding → type relaxation → grep enriched
-- feat(mcp): auto-retry find_nodes without type filter on 0 results ("did you mean?")
-- feat(mcp): human-readable callers/parent names in find_nodes (decode semantic IDs)
+- feat(mcp): auto-retry find_nodes without type filter on 0 results
 - feat(mcp): server instructions with prohibition + routing rules + few-shot examples
-- feat(mcp): action hint in get_stats response ("Graph is ready — use find_nodes...")
-- feat(autoresearch): ordered trace + fallback detection in harness
-- feat(autoresearch): MCP preflight check before runs (catches empty graph / version mismatch)
 - feat(autoresearch): H012 prompt ablation — 20 prompts, 7 dimensions, 60 runs
 
 ### Bug Fixes
 
+- fix: Unix socket path panic when project in deep directory (#231)
+- fix: type inference heuristic — substring → suffix-only match (57→0 false violations)
+- fix: dot-calls excluded from factory name heuristic (`.map()` no longer typed as `Map`)
+- fix: `RETURN_TYPE_MAP` for `Object.keys/values/entries` → `Array`
+- fix: duplicate IMPLEMENTS entries in edges.ts and archetypes.ts
+- fix: `<obj>.write` removed from IPC sender primitives (was matching stdout/fs writes)
 - fix: config version check relaxed to patch-level (warn, not throw)
-- fix: auto-update config version after successful analyze
 - fix(rfdb): wire gc_collect + gc_purge into compact flow (orphaned segment cleanup)
 - fix(mcp): use HAS_METHOD edges for CLASS member listing (was CONTAINS)
+
+## [Unreleased]
 
 ## [0.3.22] - 2026-03-25
 
