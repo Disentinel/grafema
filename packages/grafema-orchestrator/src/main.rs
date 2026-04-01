@@ -1,4 +1,4 @@
-use grafema_orchestrator::{analyzer, config, discovery, gc, plugin, process_pool, profiler, rfdb, source_hash};
+use grafema_orchestrator::{analyzer, config, discovery, gc, plugin, process_pool, profiler, rfdb, ruby_resolver, source_hash};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -384,7 +384,7 @@ async fn main() -> Result<()> {
             }
 
             // 3b. Partition by language
-            let (js_files, hs_files, rs_files, java_files, kotlin_files, py_files, go_files, cpp_files, swift_files, objc_files, beam_files) = config::partition_by_language(&changed_files);
+            let (js_files, hs_files, rs_files, java_files, kotlin_files, py_files, go_files, cpp_files, swift_files, objc_files, beam_files, rb_files) = config::partition_by_language(&changed_files);
             tracing::info!(
                 js = js_files.len(),
                 haskell = hs_files.len(),
@@ -397,6 +397,7 @@ async fn main() -> Result<()> {
                 swift = swift_files.len(),
                 objc = objc_files.len(),
                 beam = beam_files.len(),
+                ruby = rb_files.len(),
                 "Partitioned files by language"
             );
 
@@ -667,6 +668,7 @@ async fn main() -> Result<()> {
             spawn_analysis!(swift_files, "Swift", analyzer::analyze_swift_files_parallel_pooled);
             spawn_analysis!(objc_files, "Obj-C", analyzer::analyze_objc_files_parallel_pooled);
             spawn_analysis!(beam_files, "BEAM", analyzer::analyze_beam_files_parallel_pooled);
+            spawn_analysis!(rb_files, "Ruby", grafema_orchestrator::ruby_analyzer::analyze_ruby_files_native);
 
             // C++ needs compile_commands — handle separately
             if !cpp_files.is_empty() {
@@ -1381,7 +1383,38 @@ async fn main() -> Result<()> {
                 }
             }
 
-            // 8l. Run user-defined plugins via DAG (if any non-default plugins configured)
+            // 8l. Ruby resolution (embedded — no external binary)
+            if !rb_files.is_empty() {
+                let lang_start = std::time::Instant::now();
+                profile!("ruby_resolve_start");
+                match ruby_resolver::resolve_ruby_imports(&mut rfdb, &root_str).await {
+                    Ok(output) => {
+                        for edge in &output.edges {
+                            if edge.edge_type == "IMPORTS_FROM" {
+                                all_imports_from_edges
+                                    .push((edge.src.clone(), edge.dst.clone()));
+                            }
+                        }
+                        if !output.edges.is_empty() {
+                            rfdb.commit_batch(&[], &output.nodes, &output.edges, true)
+                                .await
+                                .context("Failed to commit Ruby resolution edges")?;
+                        }
+                        let lang_ms = lang_start.elapsed().as_millis();
+                        profile!("ruby_resolve_complete",
+                            "edges" => output.edges.len(),
+                            "duration_ms" => lang_ms);
+                        tracing::info!(
+                            edges = output.edges.len(),
+                            duration_ms = lang_ms as u64,
+                            "Ruby resolution complete"
+                        );
+                    }
+                    Err(e) => tracing::warn!("Ruby resolution failed: {e}"),
+                }
+            }
+
+            // 8m. Run user-defined plugins via DAG (if any non-default plugins configured)
             let user_plugins: Vec<_> = cfg
                 .plugins
                 .iter()

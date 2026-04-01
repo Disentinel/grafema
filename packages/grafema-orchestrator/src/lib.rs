@@ -14,3 +14,5 @@ pub mod rust_parser;
 pub mod rust_analyzer;
 pub mod profiler;
 pub mod source_hash;
+pub mod ruby_analyzer;
+pub mod ruby_resolver;
