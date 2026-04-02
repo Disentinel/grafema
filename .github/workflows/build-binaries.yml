@@ -95,7 +95,7 @@ jobs:
         with:
           command: build
           target: ${{ matrix.target }}
-          args: --release --manifest-path packages/grafema-orchestrator/Cargo.toml
+          args: --release --no-default-features --manifest-path packages/grafema-orchestrator/Cargo.toml
           strip: true
 
       # --- Strip native builds ---

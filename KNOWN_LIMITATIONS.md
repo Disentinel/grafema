@@ -9,7 +9,7 @@ Honest list of what works, what doesn't, and when we plan to fix it.
 | macOS ARM (Apple Silicon) | ✅ CI builds | ✅ CI builds | Full support |
 | macOS Intel (x64) | ✅ CI builds | ✅ CI builds | Full support |
 | Linux x64 | ✅ CI builds | ✅ CI builds | Full support |
-| Linux ARM64 | ✅ CI builds | ✅ CI builds | Full support |
+| Linux ARM64 | ✅ CI builds | ✅ CI builds | Full support (no Ruby — see below) |
 | Windows | ❌ | ❌ | Not planned |
 
 ## Language Support
@@ -24,7 +24,13 @@ Honest list of what works, what doesn't, and when we plan to fix it.
 | Python | ✅ | ✅ | ✅ | ⚠️ | Beta |
 | C/C++ | ✅ | ✅ | ✅ | ⚠️ | Beta |
 | Go | ✅ | ✅ | ✅ | ⚠️ | Alpha |
+| Ruby | ✅ | ✅ | ✅ | ❌ | Alpha |
 | PHP | ❌ | ❌ | ⚠️ resolve-only | ❌ | Stub |
+
+### Ruby
+
+- **Linux ARM64** — Ruby support is excluded from `linux-arm64` binaries. The `ruby-prism-sys` crate requires `bindgen` + `libclang` at build time, which are unavailable in the `cross` Docker image used for ARM64 cross-compilation. Ruby works on all other platforms (macOS x64/ARM64, Linux x64).
+- **Dataflow** — not yet implemented for Ruby
 
 ### JS/TS Specific Gaps
 

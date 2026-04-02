@@ -178,7 +178,7 @@ jobs:
       - name: Verify binary
         if: steps.check.outputs.exists == 'true'
         run: |
-          file dist/${{ matrix.binary.name }}-${{ matrix.platform }}
+          file dist/${{ matrix.binary.name }}-${{ matrix.platform }} || echo "(file command not available)"
           du -h dist/${{ matrix.binary.name }}-${{ matrix.platform }}
 
       - name: Upload to Release

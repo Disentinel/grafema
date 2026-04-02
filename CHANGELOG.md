@@ -57,6 +57,12 @@ All notable changes to this project will be documented in this file.
 
 - feat: Ruby language support via Prism parser — functions, classes, modules, method calls, blocks, require/require_relative resolution
 
+### Build
+
+- build: enable Ruby support by default (`default = ["ruby"]` in Cargo.toml)
+- build: skip Ruby for linux-arm64 cross-compilation (`--no-default-features`) due to bindgen/libclang requirement
+- ci: make `file` command non-fatal in Haskell binary verify step (self-hosted runner compatibility)
+
 ## [0.3.22] - 2026-03-25
 
 ### Highlights
