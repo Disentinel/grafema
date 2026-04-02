@@ -1023,7 +1023,7 @@ async fn main() -> Result<()> {
                         let results = plugin::stream_and_resolve_single_worker(
                             &mut rfdb,
                             &[config::Language::Rust],
-                            &[("rust-imports", &[]), ("rust-calls", &[])],
+                            &[("rust-imports", &[]), ("rust-calls", &[]), ("rust-globals", &[])],
                             &rs_pool,
                         ).await?;
                         for (cmd, mut output) in results {
@@ -1031,6 +1031,7 @@ async fn main() -> Result<()> {
                             let commit_name = match cmd.as_str() {
                                 "rust-imports" => "rust-import-resolution",
                                 "rust-calls"   => "rust-call-resolution",
+                                "rust-globals" => "rust-runtime-globals",
                                 _ => &cmd,
                             };
                             for edge in &output.edges {
@@ -1865,13 +1866,14 @@ async fn main() -> Result<()> {
                         let results = plugin::stream_and_resolve_single_worker(
                             &mut rfdb,
                             &[config::Language::Rust],
-                            &[("rust-imports", &[]), ("rust-calls", &[])],
+                            &[("rust-imports", &[]), ("rust-calls", &[]), ("rust-globals", &[])],
                             &pool,
                         ).await?;
                         for (cmd, mut output) in results {
                             let commit_name = match cmd.as_str() {
                                 "rust-imports" => "rust-import-resolution",
                                 "rust-calls"   => "rust-call-resolution",
+                                "rust-globals" => "rust-runtime-globals",
                                 _ => &cmd,
                             };
                             for edge in &output.edges {

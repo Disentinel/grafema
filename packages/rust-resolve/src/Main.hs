@@ -9,6 +9,7 @@ import System.IO (stdin, stdout, hSetBinaryMode)
 import Options.Applicative
 import qualified RustImportResolution
 import qualified RustCallResolution
+import qualified RustRuntimeGlobals
 import Grafema.Types (GraphNode)
 import Grafema.Protocol (PluginCommand(..), readFrame, writeFrame, encodeMsgpack, decodeMsgpack)
 
@@ -57,10 +58,11 @@ daemonLoop = do
 dispatch :: Text -> [GraphNode] -> IO DaemonResponse
 dispatch "rust-imports" nodes = ResOk <$> RustImportResolution.resolveAll nodes
 dispatch "rust-calls"   nodes = ResOk <$> RustCallResolution.resolveAll nodes
+dispatch "rust-globals" nodes = ResOk <$> RustRuntimeGlobals.resolveAll nodes
 dispatch cmd _ = return $ ResError ("unknown command: " ++ T.unpack cmd)
 
 -- | CLI subcommand parser.
-data Command = CmdRustImports | CmdRustCalls
+data Command = CmdRustImports | CmdRustCalls | CmdRustGlobals
 
 commandParser :: Parser Command
 commandParser = subparser
@@ -68,6 +70,8 @@ commandParser = subparser
     (info (pure CmdRustImports) (progDesc "Resolve Rust imports across files"))
  <> command "rust-calls"
     (info (pure CmdRustCalls) (progDesc "Resolve Rust intra-file function calls"))
+ <> command "rust-globals"
+    (info (pure CmdRustGlobals) (progDesc "Resolve Rust stdlib globals for unresolved calls"))
   )
 
 cliOpts :: ParserInfo Command
@@ -89,3 +93,4 @@ main = do
       case cmd of
         CmdRustImports -> RustImportResolution.run
         CmdRustCalls   -> RustCallResolution.run
+        CmdRustGlobals -> RustRuntimeGlobals.run
