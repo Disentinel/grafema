@@ -186,17 +186,15 @@ export class EffectsLookup {
   }
 
   /**
-   * Look up a name in rust:core and rust:std runtime sections.
+   * Look up a name in all rust:* runtime sections (rust:core, rust:std,
+   * rust:serde_json, rust:tokio, rust:anyhow, rust:tracing, etc.).
    * Handles both bare names ("clone", "push") and Type.method names ("Vec.push", "Option.unwrap").
    */
   lookupRust(name: string): EffectType[] | null {
-    const rustCore = this.db.runtimes['rust:core'];
-    if (rustCore?.[name]) {
-      return rustCore[name].effects;
-    }
-    const rustStd = this.db.runtimes['rust:std'];
-    if (rustStd?.[name]) {
-      return rustStd[name].effects;
+    for (const [key, section] of Object.entries(this.db.runtimes)) {
+      if (key.startsWith('rust:') && section[name]) {
+        return section[name].effects;
+      }
     }
     return null;
   }

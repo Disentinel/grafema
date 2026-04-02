@@ -50,6 +50,7 @@ data StdCategory
   | StdEnv
   | CoreNumeric
   | CoreChar
+  | ExternalCrate
   deriving (Show, Eq)
 
 -- | Definition of a known Rust stdlib global.
@@ -81,6 +82,7 @@ showCategory StdThread    = "std::thread"
 showCategory StdEnv       = "std::env"
 showCategory CoreNumeric  = "core::numeric"
 showCategory CoreChar     = "core::char"
+showCategory ExternalCrate = "external-crate"
 
 -- | Build a GlobalDef helper.
 mkGlobal :: Text -> StdCategory -> Text -> (Text, GlobalDef)
@@ -111,6 +113,13 @@ globalsDb = Map.fromList $ concat
   , envGlobals
   , numericGlobals
   , charGlobals
+  , qualifiedPathGlobals
+  , serdeJsonGlobals
+  , rmpSerdeGlobals
+  , blake3Globals
+  , tokioGlobals
+  , anyhowGlobals
+  , tracingGlobals
   ]
   where
     optionGlobals =
@@ -279,6 +288,7 @@ globalsDb = Map.fromList $ concat
       , mkGlobal "is_file"            StdPath "method"
       , mkGlobal "is_dir"             StdPath "method"
       , mkGlobal "display"            StdPath "method"
+      , mkGlobal "PathBuf::new"       StdPath "function"       -- 22x
       ]
 
     fsGlobals =
@@ -327,6 +337,7 @@ globalsDb = Map.fromList $ concat
       , mkGlobal "Rc::clone"          StdSync "function"
       , mkGlobal "Box::new"           StdSync "function"       -- 79x
       , mkGlobal "acquire"            StdSync "method"
+      , mkGlobal "Semaphore::new"    StdSync "function"       -- 23x (tokio::sync)
       ]
 
     timeGlobals =
@@ -389,6 +400,78 @@ globalsDb = Map.fromList $ concat
       , mkGlobal "is_numeric"         CoreChar "method"
       , mkGlobal "is_alphanumeric"    CoreChar "method"
       , mkGlobal "is_whitespace"      CoreChar "method"
+      ]
+
+    -- std:: qualified paths (frequently used with full path)
+    qualifiedPathGlobals =
+      [ mkGlobal "std::time::Instant::now"          StdTime     "function"
+      , mkGlobal "std::process::Stdio::piped"       StdProcess  "function"
+      , mkGlobal "std::process::Stdio::null"        StdProcess  "function"
+      , mkGlobal "std::process::Stdio::inherit"     StdProcess  "function"
+      , mkGlobal "std::collections::HashMap::new"   StdHashMap  "function"
+      , mkGlobal "std::collections::HashSet::new"   StdHashSet  "function"
+      , mkGlobal "std::path::Path::new"             StdPath     "function"
+      , mkGlobal "std::env::temp_dir"               StdEnv      "function"
+      , mkGlobal "std::str::from_utf8"              StdStr      "function"
+      , mkGlobal "std::fs::remove_file"             StdFs       "function"
+      , mkGlobal "std::fs::read_to_string"          StdFs       "function"
+      , mkGlobal "std::fs::write"                   StdFs       "function"
+      , mkGlobal "std::fs::create_dir_all"          StdFs       "function"
+      , mkGlobal "std::fs::remove_dir_all"          StdFs       "function"
+      ]
+
+    -- serde_json crate
+    serdeJsonGlobals =
+      [ mkGlobal "serde_json::from_str"        ExternalCrate "function"
+      , mkGlobal "serde_json::from_slice"      ExternalCrate "function"
+      , mkGlobal "serde_json::to_string"       ExternalCrate "function"
+      , mkGlobal "serde_json::to_value"        ExternalCrate "function"
+      , mkGlobal "serde_json::to_vec"          ExternalCrate "function"
+      , mkGlobal "serde_json::json"            ExternalCrate "macro"
+      , mkGlobal "serde_json::Value::String"   ExternalCrate "constructor"
+      , mkGlobal "serde_json::Value::Bool"     ExternalCrate "constructor"
+      , mkGlobal "serde_json::Value::Array"    ExternalCrate "constructor"
+      , mkGlobal "serde_json::Value::Null"     ExternalCrate "constructor"
+      ]
+
+    -- rmp_serde crate
+    rmpSerdeGlobals =
+      [ mkGlobal "rmp_serde::to_vec_named"     ExternalCrate "function"
+      , mkGlobal "rmp_serde::from_slice"       ExternalCrate "function"
+      , mkGlobal "rmp_serde::to_vec"           ExternalCrate "function"
+      ]
+
+    -- blake3 crate
+    blake3Globals =
+      [ mkGlobal "blake3::hash"                ExternalCrate "function"
+      , mkGlobal "blake3::Hasher::new"         ExternalCrate "function"
+      ]
+
+    -- tokio crate
+    tokioGlobals =
+      [ mkGlobal "tokio::task::spawn_blocking"        ExternalCrate "function"
+      , mkGlobal "tokio::time::timeout"               ExternalCrate "function"
+      , mkGlobal "tokio::process::Command::new"       ExternalCrate "function"
+      , mkGlobal "tokio::io::duplex"                  ExternalCrate "function"
+      , mkGlobal "tokio::runtime::Handle::try_current" ExternalCrate "function"
+      , mkGlobal "tokio::sync::Semaphore::new"        ExternalCrate "function"
+      ]
+
+    -- anyhow crate
+    anyhowGlobals =
+      [ mkGlobal "anyhow::Context"             ExternalCrate "trait"
+      , mkGlobal "anyhow::bail"                ExternalCrate "macro"
+      , mkGlobal "anyhow::anyhow"              ExternalCrate "macro"
+      ]
+
+    -- tracing crate
+    tracingGlobals =
+      [ mkGlobal "tracing::info"               ExternalCrate "macro"
+      , mkGlobal "tracing::warn"               ExternalCrate "macro"
+      , mkGlobal "tracing::error"              ExternalCrate "macro"
+      , mkGlobal "tracing::debug"              ExternalCrate "macro"
+      , mkGlobal "tracing::trace"              ExternalCrate "macro"
+      , mkGlobal "tracing::info_span"          ExternalCrate "macro"
       ]
 
 -- | Function index: (file, name) -> node ID.
@@ -461,23 +544,36 @@ mkCallsEdge callNode def = GraphEdge
 -- the set of global names already seen (for deduplication).
 type ResolveAcc = ([GraphNode], [GraphEdge], Set Text)
 
+-- | Generate all @::@ suffixes of a qualified name.
+--
+-- @"std::time::Instant::now"@ -> @["std::time::Instant::now", "time::Instant::now", "Instant::now", "now"]@
+allSuffixes :: Text -> [Text]
+allSuffixes t =
+  let segs = T.splitOn "::" t
+      suffixes = [T.intercalate "::" (drop n segs) | n <- [0..length segs - 1]]
+  in suffixes
+
+-- | Find the first matching 'GlobalDef' from a list of candidate names.
+firstMatch :: [Text] -> Maybe GlobalDef
+firstMatch [] = Nothing
+firstMatch (x:xs) = case Map.lookup x globalsDb of
+  Just def -> Just def
+  Nothing  -> firstMatch xs
+
 -- | Try to match a single CALL node against the globals database.
 --
--- Matching strategy:
---   1. Exact name match (e.g., @"Vec::new"@ -> @"Vec::new"@)
---   2. Last @::@-segment match (e.g., @"crate::utils::clone"@ -> @"clone"@)
+-- Matching strategy (tries multiple prefixes for qualified paths):
+--   1. Exact match: @"std::time::Instant::now"@
+--   2. Drop first segment: @"time::Instant::now"@
+--   3. Last two segments: @"Instant::now"@
+--   4. Last segment: @"now"@
 --
 -- If matched, emit the GLOBAL_DEFINITION node (deduplicated) and a CALLS edge.
 resolveCall :: ResolveAcc -> GraphNode -> ResolveAcc
 resolveCall (nodes, edges, seen) callNode =
-  let name = gnName callNode
-      seg  = lastSegment name
-      -- Try exact match first, then last-segment match
-      mDef = case Map.lookup name globalsDb of
-        Just d  -> Just d
-        Nothing
-          | seg /= name -> Map.lookup seg globalsDb
-          | otherwise    -> Nothing
+  let name       = gnName callNode
+      candidates = allSuffixes name
+      mDef       = firstMatch candidates
   in case mDef of
     Nothing  -> (nodes, edges, seen)
     Just def ->

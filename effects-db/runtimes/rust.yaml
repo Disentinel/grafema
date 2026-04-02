@@ -674,3 +674,49 @@ rust:std:
   # Cow
   Cow.into_owned: [PURE]
   Cow.to_mut: [MUTATION]
+
+# ============================================================
+# External crates
+# ============================================================
+rust:serde_json:
+  from_str: [THROW]
+  from_slice: [THROW]
+  to_string: [THROW]
+  to_value: [PURE]
+  to_vec: [THROW]
+  json: [PURE]
+  Value.String: [PURE]
+  Value.Bool: [PURE]
+  Value.Array: [PURE]
+  Value.Null: [PURE]
+
+rust:rmp_serde:
+  to_vec_named: [THROW]
+  from_slice: [THROW]
+  to_vec: [THROW]
+
+rust:blake3:
+  hash: [PURE]
+  Hasher.new: [PURE]
+
+rust:tokio:
+  task.spawn_blocking: [IO, ASYNC]
+  time.timeout: [ASYNC]
+  process.Command.new: [PURE]
+  io.duplex: [PURE]
+  runtime.Handle.try_current: [PURE]
+  sync.Semaphore.new: [PURE]
+
+rust:anyhow:
+  with_context: [PURE]
+  context: [PURE]
+  bail: [THROW]
+  anyhow: [PURE]
+
+rust:tracing:
+  info: [IO]
+  warn: [IO]
+  error: [IO]
+  debug: [IO]
+  trace: [IO]
+  info_span: [PURE]
