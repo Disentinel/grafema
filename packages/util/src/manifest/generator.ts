@@ -8,9 +8,9 @@
  * propagated transitively via the call graph.
  */
 
-import { readFileSync, existsSync, readdirSync } from 'fs';
+import { existsSync } from 'fs';
 import { join } from 'path';
-import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
+import { stringify as stringifyYaml } from 'yaml';
 import type { GraphBackend, NodeRecord } from '@grafema/types';
 import { GRAFEMA_VERSION } from '../version.js';
 import type {
@@ -21,29 +21,10 @@ import type {
   ExportKind,
   FlowType,
 } from './types.js';
+import { isValidEffect } from './types.js';
+import { EffectsLookup, parseCallTarget } from './effects-lookup.js';
 
 const SCHEMA_VERSION = 2;
-const VALID_EFFECTS: Set<string> = new Set([
-  'PURE', 'MUTATION', 'IO', 'THROW', 'ASYNC', 'NONDETERMINISTIC', 'UNKNOWN',
-]);
-
-function isValidEffect(e: string): boolean {
-  return VALID_EFFECTS.has(e) || e.startsWith('IO:');
-}
-
-/** Extended effect entry (v2 format): effects array + optional channel metadata */
-interface EffectEntry {
-  effects: EffectType[];
-  channel?: Record<string, string>;
-}
-
-/** Raw YAML value: either a plain array (v1) or an object with effects key (v2) */
-type RawEffectValue = EffectType[] | { effects: EffectType[]; channel?: Record<string, string> };
-
-interface EffectsDB {
-  runtimes: Record<string, Record<string, EffectEntry>>;
-  packages: Record<string, Record<string, EffectEntry>>;
-}
 
 interface GeneratorOptions {
   /** Package purl (e.g., "pkg:npm/@grafema/util@0.2.0") */
@@ -65,17 +46,18 @@ interface GeneratorOptions {
 export class ManifestGenerator {
   private backend: GraphBackend;
   private options: GeneratorOptions;
-  private effectsDb: EffectsDB;
-  private effectsCache: Map<string, EffectType[]> = new Map();
+  private effectsLookup: EffectsLookup;
 
   constructor(backend: GraphBackend, options: GeneratorOptions) {
     this.backend = backend;
     this.options = options;
-    this.effectsDb = { runtimes: {}, packages: {} };
+    this.effectsLookup = EffectsLookup.empty();
   }
 
   async generate(): Promise<Manifest> {
-    this.loadEffectsDB();
+    this.effectsLookup = this.options.effectsDbPath
+      ? EffectsLookup.load(this.options.effectsDbPath)
+      : EffectsLookup.empty();
 
     const exports = await this.collectExports();
     await this.enrichEffects(exports);
@@ -123,77 +105,6 @@ export class ManifestGenerator {
       defaultKeyType: 'PLAIN',
       defaultStringType: 'PLAIN',
     });
-  }
-
-  // ── Effects DB loading ─────────────────────────────────────
-
-  /** Normalize a raw effect value (v1 array or v2 object) into EffectEntry */
-  private static normalizeEffectValue(raw: RawEffectValue): EffectEntry {
-    if (Array.isArray(raw)) {
-      return { effects: raw };
-    }
-    return { effects: raw.effects, channel: raw.channel };
-  }
-
-  /** Normalize a raw function map (each value may be v1 array or v2 object) */
-  private static normalizeEffectsMap(
-    raw: Record<string, RawEffectValue>,
-  ): Record<string, EffectEntry> {
-    const result: Record<string, EffectEntry> = {};
-    for (const [fn, val] of Object.entries(raw)) {
-      result[fn] = ManifestGenerator.normalizeEffectValue(val);
-    }
-    return result;
-  }
-
-  private loadEffectsDB(): void {
-    const dbPath = this.options.effectsDbPath;
-    if (!dbPath) return;
-
-    // Load runtime builtins
-    const nodeYaml = join(dbPath, 'runtimes', 'node.yaml');
-    if (existsSync(nodeYaml)) {
-      const raw = parseYaml(readFileSync(nodeYaml, 'utf-8')) as Record<string, Record<string, RawEffectValue>>;
-      for (const [mod, fns] of Object.entries(raw)) {
-        this.effectsDb.runtimes[mod] = ManifestGenerator.normalizeEffectsMap(fns);
-      }
-    }
-
-    // Load package effects
-    const pkgDir = join(dbPath, 'packages');
-    if (existsSync(pkgDir)) {
-      for (const file of readdirSync(pkgDir)) {
-        if (!file.endsWith('.yaml')) continue;
-        const raw = parseYaml(readFileSync(join(pkgDir, file), 'utf-8'));
-        if (raw && typeof raw === 'object') {
-          for (const [pkg, fns] of Object.entries(raw)) {
-            this.effectsDb.packages[pkg] = ManifestGenerator.normalizeEffectsMap(
-              fns as Record<string, RawEffectValue>,
-            );
-          }
-        }
-      }
-    }
-  }
-
-  /** Look up effects for a builtin or external function */
-  private lookupEffects(module: string, fn: string): EffectType[] | null {
-    // Check runtime builtins (node:fs → readFileSync)
-    const nodeModule = `node:${module}`;
-    if (this.effectsDb.runtimes[nodeModule]?.[fn]) {
-      return this.effectsDb.runtimes[nodeModule][fn].effects;
-    }
-    // Also check without node: prefix
-    if (this.effectsDb.runtimes[module]?.[fn]) {
-      return this.effectsDb.runtimes[module][fn].effects;
-    }
-
-    // Check package effects
-    if (this.effectsDb.packages[module]?.[fn]) {
-      return this.effectsDb.packages[module][fn].effects;
-    }
-
-    return null;
   }
 
   // ── Export collection ──────────────────────────────────────
@@ -429,9 +340,10 @@ export class ManifestGenerator {
 
       // Check if target is an external call → look up in effects-db
       if (targetNode.type === 'EXTERNAL_MODULE' || targetNode.type === 'GLOBAL_DEFINITION') {
-        const [module, fn] = this.parseCallTarget(targetNode);
-        if (module && fn) {
-          const knownEffects = this.lookupEffects(module, fn);
+        const parsed = parseCallTarget(targetNode.name ?? '');
+        if (parsed) {
+          const [module, fn] = parsed;
+          const knownEffects = this.effectsLookup.lookup(module, fn);
           if (knownEffects) {
             for (const e of knownEffects) {
               if (isValidEffect(e) && e !== 'PURE') effects.add(e);
@@ -456,16 +368,6 @@ export class ManifestGenerator {
       if (cf?.hasThrow) effects.add('THROW');
       if (cf?.canReject) effects.add('THROW');
     }
-  }
-
-  private parseCallTarget(node: NodeRecord): [string | null, string | null] {
-    // Parse semantic ID like "EXTERNAL_MODULE:fs" or call name like "fs.readFileSync"
-    const name = node.name ?? '';
-    if (name.includes('.')) {
-      const parts = name.split('.');
-      return [parts[0], parts.slice(1).join('.')];
-    }
-    return [name, null];
   }
 
   // ── Import collection ──────────────────────────────────────

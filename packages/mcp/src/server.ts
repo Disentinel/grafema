@@ -81,6 +81,7 @@ import {
   handleGraphQLQuery,
   handleQueryRegistry,
   handleExplain,
+  handleTraceEffects,
 } from './handlers/index.js';
 import type { ExplainArgs } from './handlers/index.js';
 import type {
@@ -119,6 +120,7 @@ import type {
   // GitCoChangeArgs,
   // GitOwnershipArgs,
   // GitArchaeologyArgs,
+  TraceEffectsArgs,
   DescribeArgs,
   GraphQLQueryArgs,
   QueryRegistryArgs,
@@ -256,6 +258,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
 
       case 'explain':
         result = await handleExplain(asArgs<ExplainArgs>(args));
+        break;
+
+      case 'trace_effects':
+        result = await handleTraceEffects(asArgs<TraceEffectsArgs>(args));
         break;
 
       case 'check_invariant':

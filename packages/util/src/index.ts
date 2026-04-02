@@ -222,6 +222,7 @@ export type { ChurnEntry, CoChangeEntry, OwnershipEntry, ArchaeologyEntry } from
 export { findCallsInFunction, findContainingFunction, traceValues, aggregateValues, NONDETERMINISTIC_PATTERNS, NONDETERMINISTIC_OBJECTS } from './queries/index.js';
 export { traceDataflow, traceForwardBFS, traceBackwardBFS } from './queries/index.js';
 export { traceCallChain } from './queries/index.js';
+export { traceEffects } from './queries/index.js';
 export { getShape } from './queries/index.js';
 export type { ShapeResult, ShapeMember, ClassIndex } from './queries/index.js';
 export { buildNodeContext, getNodeDisplayName, formatEdgeMetadata, STRUCTURAL_EDGE_TYPES } from './queries/index.js';
@@ -246,6 +247,10 @@ export type {
   DataflowBackend,
   TraceDataflowOptions,
   TraceDataflowResult,
+  TraceEffectsResult,
+  BoundaryCrossing,
+  LeafSource,
+  TraceEffectsOptions,
 } from './queries/index.js';
 
 // Notation — DSL rendering engine
@@ -273,13 +278,15 @@ export type {
 } from './federation/index.js';
 
 // Manifest generation & resolution (federation)
-export { ManifestGenerator, ManifestResolver, RegistryBuilder, resolvePackageDir, detectSourceType, resolveEntryPoint } from './manifest/index.js';
+export { ManifestGenerator, ManifestResolver, RegistryBuilder, EffectsLookup, resolvePackageDir, detectSourceType, resolveEntryPoint } from './manifest/index.js';
 export type {
   Manifest,
   ManifestExport,
   ManifestImport,
   ManifestParam,
   EffectType,
+  EffectEntry,
+  RawEffectValue,
   FlowType,
   ExportKind,
   ResolveResult,

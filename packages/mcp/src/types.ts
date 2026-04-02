@@ -81,6 +81,12 @@ export interface TraceCallChainArgs {
   max_depth?: number;
 }
 
+export interface TraceEffectsArgs {
+  node: string;
+  file?: string;
+  max_depth?: number;
+}
+
 export interface GetShapeArgs {
   target: string;
   file?: string;

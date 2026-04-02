@@ -21,6 +21,16 @@ export type EffectType =
   | 'UNKNOWN'
   | `IO:${string}`;
 
+/** Valid top-level effect names from taxonomy.yaml */
+export const VALID_EFFECTS: ReadonlySet<string> = new Set([
+  'PURE', 'MUTATION', 'IO', 'THROW', 'ASYNC', 'NONDETERMINISTIC', 'UNKNOWN',
+]);
+
+/** Check if a string is a valid effect (top-level or IO subtype) */
+export function isValidEffect(e: string): e is EffectType {
+  return VALID_EFFECTS.has(e) || e.startsWith('IO:');
+}
+
 // === Flow types (universal across languages) ===
 
 export type FlowType =

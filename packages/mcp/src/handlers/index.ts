@@ -3,7 +3,7 @@
  */
 
 export { handleQueryGraph, handleFindCalls, handleFindNodes } from './query-handlers.js';
-export { handleTraceAlias, handleTraceDataFlow, handleTraceCallChain, handleCheckInvariant, handleExplain } from './dataflow-handlers.js';
+export { handleTraceAlias, handleTraceDataFlow, handleTraceCallChain, handleCheckInvariant, handleExplain, handleTraceEffects } from './dataflow-handlers.js';
 export type { ExplainArgs } from './dataflow-handlers.js';
 export { handleAnalyzeProject, handleGetAnalysisStatus, handleGetStats, handleGetSchema } from './analysis-handlers.js';
 export { handleCreateGuarantee, handleListGuarantees, handleCheckGuarantees, handleDeleteGuarantee } from './guarantee-handlers.js';

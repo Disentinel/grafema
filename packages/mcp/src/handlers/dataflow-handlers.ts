@@ -4,6 +4,8 @@
  * Delegates BFS tracing to @grafema/util's shared traceDataflow module.
  */
 
+import { join } from 'path';
+import { existsSync } from 'fs';
 import { ensureAnalyzed } from '../analysis.js';
 import { getProjectPath } from '../state.js';
 import {
@@ -17,6 +19,7 @@ import type {
   TraceAliasArgs,
   TraceDataFlowArgs,
   TraceCallChainArgs,
+  TraceEffectsArgs,
   CheckInvariantArgs,
   GraphNode,
 } from '../types.js';
@@ -24,6 +27,8 @@ import {
   traceDataflow,
   renderTraceNarrative,
   traceCallChain,
+  traceEffects,
+  EffectsLookup,
   type DataflowBackend,
   type TraceDetail,
 } from '@grafema/util';
@@ -372,4 +377,107 @@ export async function handleCheckInvariant(args: CheckInvariantArgs): Promise<To
     const message = error instanceof Error ? error.message : String(error);
     return errorResult(message);
   }
+}
+
+// === TRACE EFFECTS ===
+
+let _effectsLookup: EffectsLookup | null = null;
+
+function getEffectsLookup(): EffectsLookup {
+  if (!_effectsLookup) {
+    // Find effects-db directory relative to the project
+    // The effects-db is at the project root: <repo>/effects-db/
+    // Also check node_modules for installed packages
+    const candidates = [
+      join(getProjectPath(), 'effects-db'),
+      join(getProjectPath(), 'node_modules', '@grafema', 'effects-db'),
+    ];
+
+    for (const candidate of candidates) {
+      if (existsSync(candidate)) {
+        _effectsLookup = EffectsLookup.load(candidate);
+        break;
+      }
+    }
+
+    if (!_effectsLookup) {
+      _effectsLookup = EffectsLookup.empty();
+    }
+  }
+  return _effectsLookup;
+}
+
+export async function handleTraceEffects(args: TraceEffectsArgs): Promise<ToolResult> {
+  const db = await ensureAnalyzed();
+  const { node, file, max_depth = 10 } = args;
+
+  // Find source node (same pattern as handleTraceCallChain)
+  let sourceNode: GraphNode | null = await db.getNode(node);
+  if (!sourceNode) {
+    let fallbackNode: GraphNode | null = null;
+    for (const type of ['FUNCTION', 'METHOD', 'CONSTRUCTOR']) {
+      for await (const n of db.queryNodes({ type, name: node })) {
+        if (file && !n.file?.includes(file)) {
+          if (!fallbackNode) fallbackNode = n;
+          continue;
+        }
+        sourceNode = n;
+        break;
+      }
+      if (sourceNode) break;
+    }
+    if (!sourceNode && fallbackNode) {
+      sourceNode = fallbackNode;
+    }
+  }
+  if (!sourceNode) {
+    const displaySource = isGrafemaUri(node) ? toCompactSemanticId(node) : node;
+    return errorResult(`Source "${displaySource}" not found. Provide a FUNCTION or METHOD name.`);
+  }
+
+  const effectsLookup = getEffectsLookup();
+  const dfDb = db as unknown as DataflowBackend;
+
+  const result = await traceEffects(dfDb, sourceNode.id, effectsLookup, { maxDepth: max_depth });
+
+  if (!result) {
+    return errorResult(`Could not trace effects for "${sourceNode.name || node}"`);
+  }
+
+  // Format as readable text
+  const lines: string[] = [];
+  const name = result.node.name;
+  const fileShort = result.node.file ? result.node.file.split('/').pop() : '?';
+
+  lines.push(`## Effects of ${name} (${fileShort}:${result.node.line ?? '?'})`);
+  lines.push('');
+
+  lines.push(`**Direct effects:** ${result.direct.join(', ') || 'PURE'}`);
+  lines.push(`**Transitive effects:** ${result.transitive.join(', ')}`);
+  lines.push('');
+
+  if (result.leaf_sources.length > 0) {
+    lines.push(`### Leaf sources (${result.leaf_sources.length})`);
+    for (const leaf of result.leaf_sources) {
+      const leafFile = leaf.file ? leaf.file.split('/').pop() : '';
+      const loc = leafFile ? ` (${leafFile})` : '';
+      lines.push(`  depth ${leaf.depth}: ${leaf.node}${loc} → ${leaf.effects.join(', ')}`);
+    }
+    lines.push('');
+  }
+
+  if (result.boundary_crossings.length > 0) {
+    lines.push(`### Boundary crossings (${result.boundary_crossings.length})`);
+    for (const bc of result.boundary_crossings) {
+      const fromShort = bc.from_file.split('/').pop();
+      const toShort = bc.to_file.split('/').pop();
+      lines.push(`  ${bc.caller} (${fromShort}) → ${bc.callee} (${toShort}): ${bc.effects.join(', ')}`);
+    }
+    lines.push('');
+  }
+
+  lines.push(`---`);
+  lines.push(`Nodes visited: ${result.nodes_visited}, max depth: ${result.max_depth}${result.max_depth_reached ? ' (TRUNCATED — some paths marked UNKNOWN)' : ''}`);
+
+  return textResult(lines.join('\n'));
 }

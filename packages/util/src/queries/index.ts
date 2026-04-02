@@ -45,3 +45,5 @@ export type {
   TraceDataflowOptions,
   TraceDataflowResult,
 } from './traceDataflow.js';
+export { traceEffects } from './traceEffects.js';
+export type { TraceEffectsResult, BoundaryCrossing, LeafSource, TraceEffectsOptions } from './traceEffects.js';

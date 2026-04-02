@@ -20,7 +20,8 @@
  *
  * Algorithm:
  * 1. Try HAS_SCOPE path first (Layout A)
- * 2. If no HAS_SCOPE edges, fall back to direct edges (Layout B):
+ * 2. If Layout A found 0 calls (no HAS_SCOPE edges, or scope chain lacks
+ *    CALL nodes), fall back to direct edges (Layout B):
  *    collect all outgoing edges, keep those targeting CALL/METHOD_CALL nodes
  * 3. For each call, check CALLS edge to determine if resolved
  * 4. If transitive=true, recursively follow resolved CALLS edges
@@ -139,17 +140,19 @@ export async function findCallsInFunction(
         }
       }
     }
-  } else {
-    // Layout B: Direct edges from FUNCTION to CALL/METHOD_CALL nodes
-    // The Rust orchestrator links functions to calls via semantic edge types
-    // (AWAITS, RETURNS, THROWS, etc.) instead of HAS_SCOPE -> CONTAINS.
+  }
+
+  // Layout B fallback: if Layout A found 0 calls, try direct edges.
+  // The Rust orchestrator may produce both HAS_SCOPE (for params/refs) and
+  // direct edges (AWAITS, RETURNS, THROWS) to CALL nodes.
+  if (calls.length === 0) {
     const allOutgoing = await backend.getOutgoingEdges(functionId, null);
 
     for (const edge of allOutgoing) {
       const child = await backend.getNode(edge.dst);
       if (!child) continue;
 
-      if (child.type === 'CALL' || child.type === 'METHOD_CALL') {
+      if (getNodeType(child) === 'CALL' || getNodeType(child) === 'METHOD_CALL') {
         const callInfo = await buildCallInfo(backend, child, 0);
         calls.push(callInfo);
 

@@ -723,3 +723,210 @@ node:string_decoder:
   StringDecoder: [PURE]
   StringDecoder.write: [MUTATION]
   StringDecoder.end: [MUTATION]
+
+# ============================================================
+# ECMAScript builtins — Global objects
+# ============================================================
+ecma:global:
+  # Error constructors — PURE (just create objects)
+  Error: [PURE]
+  TypeError: [PURE]
+  RangeError: [PURE]
+  ReferenceError: [PURE]
+  SyntaxError: [PURE]
+  URIError: [PURE]
+  EvalError: [PURE]
+  AggregateError: [PURE]
+
+  # Promise
+  Promise: [ASYNC]
+  Promise.resolve: [ASYNC]
+  Promise.reject: [ASYNC, THROW]
+  Promise.all: [ASYNC]
+  Promise.allSettled: [ASYNC]
+  Promise.any: [ASYNC]
+  Promise.race: [ASYNC]
+  Promise.prototype.then: [ASYNC]
+  Promise.prototype.catch: [ASYNC]
+  Promise.prototype.finally: [ASYNC]
+
+  # JSON
+  JSON.parse: [THROW]
+  JSON.stringify: [PURE]
+
+  # Math — all PURE
+  Math.abs: [PURE]
+  Math.ceil: [PURE]
+  Math.floor: [PURE]
+  Math.round: [PURE]
+  Math.max: [PURE]
+  Math.min: [PURE]
+  Math.pow: [PURE]
+  Math.sqrt: [PURE]
+  Math.log: [PURE]
+  Math.random: [NONDETERMINISTIC]
+
+  # Date
+  Date: [NONDETERMINISTIC]
+  Date.now: [NONDETERMINISTIC]
+  Date.parse: [PURE]
+  Date.UTC: [PURE]
+
+  # Object
+  Object.keys: [PURE]
+  Object.values: [PURE]
+  Object.entries: [PURE]
+  Object.assign: [MUTATION]
+  Object.freeze: [MUTATION]
+  Object.seal: [MUTATION]
+  Object.create: [PURE]
+  Object.defineProperty: [MUTATION]
+  Object.defineProperties: [MUTATION]
+  Object.getOwnPropertyNames: [PURE]
+  Object.getOwnPropertyDescriptor: [PURE]
+  Object.getPrototypeOf: [PURE]
+  Object.hasOwn: [PURE]
+  Object.is: [PURE]
+  Object.fromEntries: [PURE]
+
+  # Array
+  Array.isArray: [PURE]
+  Array.from: [PURE]
+  Array.of: [PURE]
+  Array.prototype.push: [MUTATION]
+  Array.prototype.pop: [MUTATION]
+  Array.prototype.shift: [MUTATION]
+  Array.prototype.unshift: [MUTATION]
+  Array.prototype.splice: [MUTATION]
+  Array.prototype.sort: [MUTATION]
+  Array.prototype.reverse: [MUTATION]
+  Array.prototype.fill: [MUTATION]
+  Array.prototype.copyWithin: [MUTATION]
+  Array.prototype.map: [PURE]
+  Array.prototype.filter: [PURE]
+  Array.prototype.reduce: [PURE]
+  Array.prototype.find: [PURE]
+  Array.prototype.findIndex: [PURE]
+  Array.prototype.some: [PURE]
+  Array.prototype.every: [PURE]
+  Array.prototype.flat: [PURE]
+  Array.prototype.flatMap: [PURE]
+  Array.prototype.includes: [PURE]
+  Array.prototype.indexOf: [PURE]
+  Array.prototype.join: [PURE]
+  Array.prototype.slice: [PURE]
+  Array.prototype.concat: [PURE]
+  Array.prototype.forEach: [PURE]
+  Array.prototype.at: [PURE]
+
+  # Map
+  Map.prototype.set: [MUTATION]
+  Map.prototype.get: [PURE]
+  Map.prototype.has: [PURE]
+  Map.prototype.delete: [MUTATION]
+  Map.prototype.clear: [MUTATION]
+  Map.prototype.forEach: [PURE]
+  Map.prototype.keys: [PURE]
+  Map.prototype.values: [PURE]
+  Map.prototype.entries: [PURE]
+
+  # Set
+  Set.prototype.add: [MUTATION]
+  Set.prototype.has: [PURE]
+  Set.prototype.delete: [MUTATION]
+  Set.prototype.clear: [MUTATION]
+  Set.prototype.forEach: [PURE]
+  Set.prototype.keys: [PURE]
+  Set.prototype.values: [PURE]
+  Set.prototype.entries: [PURE]
+
+  # WeakMap / WeakSet
+  WeakMap.prototype.set: [MUTATION]
+  WeakMap.prototype.get: [PURE]
+  WeakMap.prototype.has: [PURE]
+  WeakMap.prototype.delete: [MUTATION]
+  WeakSet.prototype.add: [MUTATION]
+  WeakSet.prototype.has: [PURE]
+  WeakSet.prototype.delete: [MUTATION]
+
+  # String
+  String.prototype.trim: [PURE]
+  String.prototype.trimStart: [PURE]
+  String.prototype.trimEnd: [PURE]
+  String.prototype.split: [PURE]
+  String.prototype.slice: [PURE]
+  String.prototype.substring: [PURE]
+  String.prototype.replace: [PURE]
+  String.prototype.replaceAll: [PURE]
+  String.prototype.match: [PURE]
+  String.prototype.matchAll: [PURE]
+  String.prototype.search: [PURE]
+  String.prototype.includes: [PURE]
+  String.prototype.startsWith: [PURE]
+  String.prototype.endsWith: [PURE]
+  String.prototype.padStart: [PURE]
+  String.prototype.padEnd: [PURE]
+  String.prototype.repeat: [PURE]
+  String.prototype.toLowerCase: [PURE]
+  String.prototype.toUpperCase: [PURE]
+  String.prototype.charAt: [PURE]
+  String.prototype.charCodeAt: [PURE]
+  String.prototype.at: [PURE]
+
+  # Number
+  Number.isFinite: [PURE]
+  Number.isInteger: [PURE]
+  Number.isNaN: [PURE]
+  Number.isSafeInteger: [PURE]
+  Number.parseFloat: [PURE]
+  Number.parseInt: [PURE]
+  parseFloat: [PURE]
+  parseInt: [PURE]
+  isNaN: [PURE]
+  isFinite: [PURE]
+
+  # RegExp
+  RegExp.prototype.test: [MUTATION]
+  RegExp.prototype.exec: [MUTATION]
+
+  # Encoding
+  encodeURIComponent: [PURE]
+  decodeURIComponent: [THROW]
+  encodeURI: [PURE]
+  decodeURI: [THROW]
+  btoa: [PURE]
+  atob: [THROW]
+
+  # Structured clone
+  structuredClone: [PURE]
+
+  # Misc
+  eval: [UNKNOWN]
+  queueMicrotask: [ASYNC]
+
+# ============================================================
+# Web/Node.js shared APIs — fetch, AbortController, etc.
+# ============================================================
+ecma:web:
+  fetch:
+    effects: [IO, IO:HTTP:REQUEST, ASYNC]
+    channel: { url: "arg[0]" }
+  AbortController: [PURE]
+  AbortController.prototype.abort: [MUTATION]
+  AbortSignal.abort: [PURE]
+  AbortSignal.timeout: [PURE]
+  Response.prototype.json: [ASYNC]
+  Response.prototype.text: [ASYNC]
+  Response.prototype.arrayBuffer: [ASYNC]
+  Response.prototype.blob: [ASYNC]
+  Request: [PURE]
+  Headers: [PURE]
+  Headers.prototype.get: [PURE]
+  Headers.prototype.set: [MUTATION]
+  Headers.prototype.append: [MUTATION]
+  Headers.prototype.delete: [MUTATION]
+  Headers.prototype.has: [PURE]
+  URL: [PURE]
+  URLSearchParams: [PURE]
+  TextEncoder: [PURE]
+  TextDecoder: [PURE]

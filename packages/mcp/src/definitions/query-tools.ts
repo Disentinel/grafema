@@ -253,6 +253,44 @@ Returns: Indented call tree showing each hop with file:line location.`,
     },
   },
   {
+    name: 'trace_effects',
+    description: `Trace transitive side effects of a function through its call graph.
+
+For any function, traverses CALLS edges (DFS) and collects effects from leaf nodes
+using the effects-db (Node.js builtins, npm packages).
+
+Use this when you need to:
+- "What side effects does this function have?" → direct + transitive effects
+- "Does this handler do IO?" → trace shows IO:FILE:READ from fs.readFileSync at depth 3
+- "Where does the fetch() call come from?" → leaf_sources shows the origin at depth N
+- "What crosses module boundaries?" → boundary_crossings shows file-to-file effect flow
+
+Effect types: PURE, MUTATION, IO (with subtypes like IO:FILE:READ, IO:HTTP:REQUEST),
+THROW, ASYNC, NONDETERMINISTIC, UNKNOWN.
+
+UNKNOWN means: unresolved call, external package not in effects-db, or depth limit reached.
+
+Returns: direct effects, transitive effects, boundary crossings, leaf sources.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        node: {
+          type: 'string',
+          description: 'Function/method name or semantic ID',
+        },
+        file: {
+          type: 'string',
+          description: 'File path to disambiguate (optional)',
+        },
+        max_depth: {
+          type: 'number',
+          description: 'Maximum call graph traversal depth (default: 10)',
+        },
+      },
+      required: ['node'],
+    },
+  },
+  {
     name: 'get_shape',
     description: `Get the shape (methods + properties) of a CLASS, INTERFACE, or typed variable.
 
