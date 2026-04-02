@@ -1,6 +1,6 @@
 {
   "name": "@grafema/grafema-linux-x64",
-  "version": "0.3.23",
+  "version": "0.3.24",
   "description": "Grafema native binaries for Linux x64",
   "os": [
     "linux"

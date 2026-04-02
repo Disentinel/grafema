@@ -1,6 +1,6 @@
 {
   "name": "grafema",
-  "version": "0.3.23",
+  "version": "0.3.24",
   "description": "Graph-driven code analysis tool. AI should query the graph, not read code.",
   "type": "module",
   "main": "./dist/index.js",
@@ -67,9 +67,9 @@
     "node": ">= 18"
   },
   "optionalDependencies": {
-    "@grafema/grafema-darwin-arm64": "0.3.23",
-    "@grafema/grafema-darwin-x64": "0.3.23",
-    "@grafema/grafema-linux-arm64": "0.3.23",
-    "@grafema/grafema-linux-x64": "0.3.23"
+    "@grafema/grafema-darwin-arm64": "0.3.24",
+    "@grafema/grafema-darwin-x64": "0.3.24",
+    "@grafema/grafema-linux-arm64": "0.3.24",
+    "@grafema/grafema-linux-x64": "0.3.24"
   }
 }
