@@ -120,6 +120,8 @@ globalsDb = Map.fromList $ concat
       , mkGlobal "unwrap_or_default"  CoreOption "method"
       , mkGlobal "unwrap_or_else"     CoreOption "method"
       , mkGlobal "map"                CoreOption "method"
+      , mkGlobal "map_or"             CoreOption "method"
+      , mkGlobal "map_or_else"        CoreOption "method"
       , mkGlobal "and_then"           CoreOption "method"
       , mkGlobal "or_else"            CoreOption "method"
       , mkGlobal "filter"             CoreOption "method"
@@ -140,6 +142,7 @@ globalsDb = Map.fromList $ concat
       , mkGlobal "is_err"             CoreResult "method"
       , mkGlobal "ok"                 CoreResult "method"
       , mkGlobal "err"                CoreResult "method"
+      , mkGlobal "unwrap_err"         CoreResult "method"
       , mkGlobal "with_context"       CoreResult "method"      -- 179x
       , mkGlobal "context"            CoreResult "method"
       , mkGlobal "Ok"                 CoreResult "constructor"  -- 295x
@@ -172,6 +175,7 @@ globalsDb = Map.fromList $ concat
       , mkGlobal "last"               CoreIterator "method"
       , mkGlobal "next"               CoreIterator "method"
       , mkGlobal "peekable"           CoreIterator "method"
+      , mkGlobal "filter_map"         CoreIterator "method"
       ]
 
     convertGlobals =
@@ -181,9 +185,12 @@ globalsDb = Map.fromList $ concat
       , mkGlobal "try_from"           CoreConvert "method"
       , mkGlobal "to_string"          CoreConvert "method"     -- 1428x
       , mkGlobal "to_str"             CoreConvert "method"
+      , mkGlobal "to_owned"           CoreConvert "method"
       , mkGlobal "clone"              CoreConvert "method"     -- 949x
       , mkGlobal "default"            CoreConvert "function"
       , mkGlobal "or_default"         CoreConvert "method"
+      , mkGlobal "swap"               CoreConvert "function"
+      , mkGlobal "as_ptr"             CoreConvert "method"
       ]
 
     vecGlobals =
@@ -206,10 +213,21 @@ globalsDb = Map.fromList $ concat
       , mkGlobal "drain"              StdVec "method"
       , mkGlobal "truncate"           StdVec "method"
       , mkGlobal "split_off"          StdVec "method"
+      , mkGlobal "extend_from_slice"  StdVec "method"
+      , mkGlobal "as_slice"           StdVec "method"
+      , mkGlobal "capacity"           StdVec "method"
+      , mkGlobal "reserve"            StdVec "method"
+      , mkGlobal "resize"             StdVec "method"
+      , mkGlobal "to_vec"             StdVec "method"
+      , mkGlobal "windows"            StdVec "method"
+      , mkGlobal "chunks"             StdVec "method"
+      , mkGlobal "VecDeque::new"      StdVec "function"
       ]
 
     hashMapGlobals =
       [ mkGlobal "HashMap::new"       StdHashMap "function"    -- 133x
+      , mkGlobal "HashMap::with_capacity" StdHashMap "function"
+      , mkGlobal "BTreeMap::new"      StdHashMap "function"
       , mkGlobal "get_mut"            StdHashMap "method"
       , mkGlobal "contains_key"       StdHashMap "method"
       , mkGlobal "entry"              StdHashMap "method"
@@ -219,26 +237,34 @@ globalsDb = Map.fromList $ concat
 
     hashSetGlobals =
       [ mkGlobal "HashSet::new"       StdHashSet "function"
+      , mkGlobal "HashSet::with_capacity" StdHashSet "function"
       ]
 
     stringGlobals =
       [ mkGlobal "String::new"        StdString "function"
       , mkGlobal "String::from"       StdString "function"
+      , mkGlobal "String::from_utf8"  StdString "function"
+      , mkGlobal "String::from_utf8_lossy" StdString "function"
+      , mkGlobal "String::with_capacity"   StdString "function"
       , mkGlobal "push_str"           StdString "method"
       , mkGlobal "as_str"             StdString "method"       -- 200x
       , mkGlobal "as_bytes"           StdString "method"
+      , mkGlobal "into_bytes"         StdString "method"
       , mkGlobal "to_uppercase"       StdString "method"
       , mkGlobal "to_lowercase"       StdString "method"
       ]
 
     strGlobals =
       [ mkGlobal "from_utf8"          StdStr "function"
+      , mkGlobal "from_utf8_unchecked" StdStr "function"
       , mkGlobal "starts_with"        StdStr "method"
       , mkGlobal "ends_with"          StdStr "method"
       , mkGlobal "split"              StdStr "method"
       , mkGlobal "trim"               StdStr "method"
       , mkGlobal "replace"            StdStr "method"
       , mkGlobal "parse"              StdStr "method"
+      , mkGlobal "chars"              StdStr "method"
+      , mkGlobal "as_bytes"           StdStr "method"
       ]
 
     pathGlobals =
@@ -252,6 +278,7 @@ globalsDb = Map.fromList $ concat
       , mkGlobal "exists"             StdPath "method"
       , mkGlobal "is_file"            StdPath "method"
       , mkGlobal "is_dir"             StdPath "method"
+      , mkGlobal "display"            StdPath "method"
       ]
 
     fsGlobals =
@@ -298,6 +325,8 @@ globalsDb = Map.fromList $ concat
       , mkGlobal "Arc::clone"         StdSync "function"
       , mkGlobal "Rc::new"            StdSync "function"
       , mkGlobal "Rc::clone"          StdSync "function"
+      , mkGlobal "Box::new"           StdSync "function"       -- 79x
+      , mkGlobal "acquire"            StdSync "method"
       ]
 
     timeGlobals =
@@ -320,6 +349,9 @@ globalsDb = Map.fromList $ concat
       , mkGlobal "status"             StdProcess "method"
       , mkGlobal "exit"               StdProcess "function"
       , mkGlobal "abort"              StdProcess "function"
+      , mkGlobal "Stdio::piped"       StdProcess "function"
+      , mkGlobal "Stdio::null"        StdProcess "function"
+      , mkGlobal "Stdio::inherit"     StdProcess "function"
       ]
 
     threadGlobals =

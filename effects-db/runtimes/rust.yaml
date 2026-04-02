@@ -31,6 +31,8 @@ rust:core:
   Option.as_deref: [PURE]
   Option.cloned: [PURE]
   Option.copied: [PURE]
+  Option.map_or: [PURE]
+  Option.map_or_else: [PURE]
   Option.flatten: [PURE]
   Option.zip: [PURE]
   Option.take: [MUTATION]
@@ -128,6 +130,8 @@ rust:core:
   cloned: [PURE]
 
   # Bare Option/Result method names (for unqualified calls)
+  map_or: [PURE]
+  map_or_else: [PURE]
   unwrap: [THROW]
   expect: [THROW]
   unwrap_or: [PURE]
@@ -137,6 +141,7 @@ rust:core:
   and_then: [PURE]
   or_else: [PURE]
   ok: [PURE]
+  unwrap_err: [THROW]
   is_some: [PURE]
   is_none: [PURE]
   is_ok: [PURE]
@@ -152,9 +157,12 @@ rust:core:
   as_deref: [PURE]
   to_string: [PURE]
   to_str: [PURE]
+  to_owned: [PURE]
   clone: [PURE]
   default: [PURE]
   or_default: [PURE]
+  swap: [MUTATION]
+  as_ptr: [PURE]
 
   # Numeric byte conversion
   u8.from_le_bytes: [PURE]
@@ -262,6 +270,10 @@ rust:std:
   Vec.capacity: [PURE]
   Vec.reserve: [MUTATION]
   Vec.shrink_to_fit: [MUTATION]
+  Vec.extend_from_slice: [MUTATION]
+  Vec.to_vec: [PURE]
+  Vec.windows: [PURE]
+  Vec.chunks: [PURE]
 
   # HashMap
   HashMap.new: [PURE]
@@ -368,6 +380,14 @@ rust:std:
   sort_by: [MUTATION]
   retain: [MUTATION]
   drain: [MUTATION]
+  extend_from_slice: [MUTATION]
+  to_vec: [PURE]
+  windows: [PURE]
+  chunks: [PURE]
+  as_slice: [PURE]
+  capacity: [PURE]
+  reserve: [MUTATION]
+  resize: [MUTATION]
 
   # String
   String.new: [PURE]
@@ -397,9 +417,13 @@ rust:std:
   String.clear: [MUTATION]
   String.capacity: [PURE]
   String.reserve: [MUTATION]
+  String.from_utf8: [THROW]
+  String.from_utf8_lossy: [PURE]
+  String.into_bytes: [PURE]
 
   # str (string slices)
   str.from_utf8: [THROW]
+  str.from_utf8_unchecked: [PURE]
   str.len: [PURE]
   str.is_empty: [PURE]
   str.contains: [PURE]
@@ -425,6 +449,9 @@ rust:std:
   str.repeat: [PURE]
   str.matches: [PURE]
   from_utf8: [THROW]
+  from_utf8_unchecked: [PURE]
+  chars: [PURE]
+  into_bytes: [PURE]
 
   # Path / PathBuf
   Path.new: [PURE]
@@ -438,6 +465,7 @@ rust:std:
   Path.is_relative: [PURE]
   Path.to_str: [PURE]
   Path.to_string_lossy: [PURE]
+  Path.display: [PURE]
   Path.to_path_buf: [PURE]
   Path.components: [PURE]
   Path.strip_prefix: [PURE]
@@ -455,6 +483,7 @@ rust:std:
   PathBuf.set_file_name: [MUTATION]
   path: [PURE]
   join: [PURE]
+  display: [PURE]
   to_path_buf: [PURE]
   extension: [PURE]
 
@@ -534,6 +563,9 @@ rust:std:
   process.Command.stdin: [MUTATION]
   process.Command.stdout: [MUTATION]
   process.Command.stderr: [MUTATION]
+  process.Stdio.piped: [PURE]
+  process.Stdio.null: [PURE]
+  process.Stdio.inherit: [PURE]
   process.Command.spawn: [IO, IO:PROCESS:SPAWN, THROW]
   process.Command.output: [IO, IO:PROCESS:SPAWN, THROW]
   process.Command.status: [IO, IO:PROCESS:SPAWN, THROW]
@@ -551,6 +583,7 @@ rust:std:
   # sync
   Mutex.new: [PURE]
   Mutex.lock: [THROW]
+  Mutex.acquire: [ASYNC, THROW]
   Mutex.try_lock: [PURE]
   RwLock.new: [PURE]
   RwLock.read: [THROW]
@@ -565,6 +598,7 @@ rust:std:
   Rc.clone: [PURE]
   Rc.try_unwrap: [PURE]
   Rc.strong_count: [PURE]
+  acquire: [ASYNC, THROW]
   mpsc.channel: [PURE]
   mpsc.sync_channel: [PURE]
   mpsc.Sender.send: [MUTATION]
