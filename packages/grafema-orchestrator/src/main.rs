@@ -979,13 +979,14 @@ async fn main() -> Result<()> {
                         let results = plugin::stream_and_resolve_single_worker(
                             &mut rfdb,
                             &[config::Language::Haskell],
-                            &[("haskell-imports", &[]), ("haskell-local-refs", &[])],
+                            &[("haskell-imports", &[]), ("haskell-local-refs", &[]), ("haskell-globals", &[])],
                             &hs_pool,
                         ).await?;
                         for (cmd, mut output) in results {
                             let cmd_start = std::time::Instant::now();
                             let commit_name = match cmd.as_str() {
                                 "haskell-imports" => "haskell-import-resolution",
+                                "haskell-globals" => "haskell-runtime-globals",
                                 _ => &cmd,
                             };
                             for edge in &output.edges {
@@ -1829,12 +1830,13 @@ async fn main() -> Result<()> {
                         let results = plugin::stream_and_resolve_single_worker(
                             &mut rfdb,
                             &[config::Language::Haskell],
-                            &[("haskell-imports", &[]), ("haskell-local-refs", &[])],
+                            &[("haskell-imports", &[]), ("haskell-local-refs", &[]), ("haskell-globals", &[])],
                             &pool,
                         ).await?;
                         for (cmd, mut output) in results {
                             let commit_name = match cmd.as_str() {
                                 "haskell-imports" => "haskell-import-resolution",
+                                "haskell-globals" => "haskell-runtime-globals",
                                 _ => &cmd,
                             };
                             for edge in &output.edges {

@@ -12,6 +12,7 @@ executable haskell-resolve
   other-modules:
     HaskellImportResolution
     HaskellLocalRefs
+    HaskellRuntimeGlobals
 
   build-depends:
     base                 >= 4.17 && < 5,
@@ -32,6 +33,7 @@ test-suite spec
 
   other-modules:
     HaskellImportResolution
+    HaskellRuntimeGlobals
 
   build-depends:
     base                 >= 4.17 && < 5,
