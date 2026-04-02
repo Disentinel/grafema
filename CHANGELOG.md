@@ -53,15 +53,25 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.24] - 2026-04-02
+
 ### Features
 
 - feat: Ruby language support via Prism parser — functions, classes, modules, method calls, blocks, require/require_relative resolution
+- feat(vscode): GUI server auto-download — "Open Map" offers to download `grafema-gui` from GitHub Releases when binary not found
+- feat(vscode): `grafema.guiPath` setting for explicit GUI server binary path
 
 ### Build
 
 - build: enable Ruby support by default (`default = ["ruby"]` in Cargo.toml)
 - build: skip Ruby for linux-arm64 cross-compilation (`--no-default-features`) due to bindgen/libclang requirement
+- build: add `grafema-gui` binary to CI build pipeline (4 platforms)
+- build: add `grafema-gui` and `rfdb-server` to lazy-downloadable binaries list
 - ci: make `file` command non-fatal in Haskell binary verify step (self-hosted runner compatibility)
+
+### Bug Fixes
+
+- fix(vscode): GUI server binary discovery — search bundled, env var, ~/.grafema/bin/, monorepo paths (was monorepo-only)
 
 ## [0.3.22] - 2026-03-25
 

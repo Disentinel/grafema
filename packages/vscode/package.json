@@ -443,6 +443,11 @@
           "default": "",
           "description": "Path to grafema-orchestrator binary. If empty, auto-detect."
         },
+        "grafema.guiPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to grafema-gui binary. If empty, auto-detect."
+        },
         "grafema.codeLens.enabled": {
           "type": "boolean",
           "default": true,

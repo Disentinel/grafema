@@ -61,6 +61,10 @@ const DOWNLOADABLE_BINARIES = [
   // BEAM (Elixir/Erlang)
   'beam-analyzer',
   'beam-resolve',
+  // GUI
+  'grafema-gui',
+  // RFDB
+  'rfdb-server',
 ];
 
 /**

@@ -8,8 +8,140 @@
 
 import * as vscode from 'vscode';
 import { spawn, type ChildProcess } from 'child_process';
-import { existsSync } from 'fs';
+import { existsSync, mkdirSync, renameSync, chmodSync, createWriteStream } from 'fs';
+import { get as httpsGet } from 'https';
+import type { IncomingMessage } from 'http';
+import { homedir, platform, arch } from 'os';
 import { join } from 'path';
+
+/**
+ * Find grafema-gui binary.
+ *
+ * Search order:
+ * 1. VS Code setting: grafema.guiPath
+ * 2. Bundled binary in extension (production VSIX)
+ * 3. GRAFEMA_GUI environment variable
+ * 4. ~/.grafema/bin/ (lazy-downloaded by CLI)
+ * 5. Monorepo development paths
+ */
+function findGuiBinary(): string | null {
+  // 1. VS Code setting
+  const config = vscode.workspace.getConfiguration('grafema');
+  const configPath = config.get<string>('guiPath');
+  if (configPath && existsSync(configPath)) {
+    return configPath;
+  }
+
+  // 2. Bundled binary (production VSIX)
+  const extensionBinary = join(__dirname, '..', 'binaries', 'grafema-gui');
+  if (existsSync(extensionBinary)) {
+    return extensionBinary;
+  }
+
+  // 3. GRAFEMA_GUI environment variable
+  const envBinary = process.env.GRAFEMA_GUI;
+  if (envBinary && existsSync(envBinary)) {
+    return envBinary;
+  }
+
+  // 4. ~/.grafema/bin/ (lazy-downloaded by CLI)
+  const homeBinary = join(homedir(), '.grafema', 'bin', 'grafema-gui');
+  if (existsSync(homeBinary)) {
+    return homeBinary;
+  }
+
+  // 5. Monorepo development paths
+  const possibleRoots = [
+    join(__dirname, '..', '..', '..'),
+    join(__dirname, '..', '..', '..', '..'),
+    join(__dirname, '..', '..', '..', '..', '..'),
+  ];
+
+  for (const root of possibleRoots) {
+    const releaseBinary = join(root, 'packages', 'gui-server', 'target', 'release', 'grafema-gui');
+    if (existsSync(releaseBinary)) {
+      return releaseBinary;
+    }
+    const debugBinary = join(root, 'packages', 'gui-server', 'target', 'debug', 'grafema-gui');
+    if (existsSync(debugBinary)) {
+      return debugBinary;
+    }
+  }
+
+  return null;
+}
+
+const GITHUB_REPO = 'Disentinel/grafema';
+
+function getPlatformDir(): string {
+  const p = platform();
+  const a = arch();
+  if (p === 'darwin' && a === 'arm64') return 'darwin-arm64';
+  if (p === 'darwin') return 'darwin-x64';
+  if (p === 'linux' && a === 'arm64') return 'linux-arm64';
+  return 'linux-x64';
+}
+
+function httpsGetFollowRedirects(url: string): Promise<IncomingMessage> {
+  return new Promise((resolve, reject) => {
+    const req = httpsGet(url, { headers: { 'User-Agent': 'grafema-vscode' } }, (res) => {
+      if (res.statusCode === 301 || res.statusCode === 302) {
+        const location = res.headers.location;
+        if (!location) return reject(new Error('Redirect without location'));
+        httpsGetFollowRedirects(location).then(resolve, reject);
+        return;
+      }
+      resolve(res);
+    });
+    req.on('error', reject);
+  });
+}
+
+async function downloadGuiBinary(progress: vscode.Progress<{ message: string }>): Promise<string | null> {
+  const binDir = join(homedir(), '.grafema', 'bin');
+  if (!existsSync(binDir)) {
+    mkdirSync(binDir, { recursive: true });
+  }
+
+  const platformDir = getPlatformDir();
+  const assetName = `grafema-gui-${platformDir}`;
+  const targetPath = join(binDir, 'grafema-gui');
+  const tmpPath = `${targetPath}.downloading`;
+
+  // Find latest binaries-v* release
+  progress.report({ message: 'Finding latest release...' });
+  const apiUrl = `https://api.github.com/repos/${GITHUB_REPO}/releases?per_page=10`;
+  const apiRes = await httpsGetFollowRedirects(apiUrl);
+  const chunks: Buffer[] = [];
+  for await (const chunk of apiRes) {
+    chunks.push(chunk as Buffer);
+  }
+  const releases = JSON.parse(Buffer.concat(chunks).toString('utf-8')) as Array<{ tag_name: string }>;
+  const release = releases.find(r => r.tag_name.startsWith('binaries-v'));
+  if (!release) {
+    throw new Error('No binaries-v* release found');
+  }
+
+  // Download binary
+  const downloadUrl = `https://github.com/${GITHUB_REPO}/releases/download/${release.tag_name}/${assetName}`;
+  progress.report({ message: `Downloading ${assetName}...` });
+  const res = await httpsGetFollowRedirects(downloadUrl);
+  if (res.statusCode !== 200) {
+    throw new Error(`HTTP ${res.statusCode} — asset ${assetName} not found in ${release.tag_name}`);
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const file = createWriteStream(tmpPath);
+    res.pipe(file);
+    file.on('finish', () => { file.close(); resolve(); });
+    file.on('error', reject);
+    res.on('error', reject);
+  });
+
+  renameSync(tmpPath, targetPath);
+  chmodSync(targetPath, 0o755);
+  return targetPath;
+}
 
 const GUI_PORT = 3333;
 const GUI_HOST = `http://localhost:${GUI_PORT}`;
@@ -116,27 +248,43 @@ export class MapPanel {
     const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     if (!root) return;
 
-    // Find gui-server binary
-    const candidates = [
-      join(root, 'packages', 'gui-server', 'target', 'release', 'grafema-gui'),
-      join(root, 'packages', 'gui-server', 'target', 'debug', 'grafema-gui'),
-    ];
-    const binary = candidates.find(p => existsSync(p));
+    // Find gui-server binary, download if missing
+    let binary = findGuiBinary();
     if (!binary) {
-      vscode.window.showWarningMessage(
-        'grafema-gui binary not found. Build with: cd packages/gui-server && cargo build --release'
+      const choice = await vscode.window.showInformationMessage(
+        'grafema-gui binary not found. Download from GitHub?',
+        'Download', 'Cancel'
       );
-      return;
+      if (choice !== 'Download') return;
+
+      try {
+        binary = await vscode.window.withProgress(
+          { location: vscode.ProgressLocation.Notification, title: 'Grafema' },
+          (progress) => downloadGuiBinary(progress),
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        vscode.window.showErrorMessage(`Failed to download grafema-gui: ${msg}`);
+        return;
+      }
+      if (!binary) return;
     }
 
     const socketPath = join(root, '.grafema', 'rfdb.sock');
-    const staticDir = join(root, 'packages', 'gui', 'public');
 
-    guiServerProcess = spawn(binary, [
-      '--socket', socketPath,
-      '--static-dir', staticDir,
-      '--port', String(GUI_PORT),
-    ], {
+    // Find static files directory
+    const staticDirCandidates = [
+      join(__dirname, '..', 'gui-public'),                  // Bundled with extension
+      join(root, 'packages', 'gui', 'public'),              // Monorepo dev
+    ];
+    const staticDir = staticDirCandidates.find(p => existsSync(p));
+
+    const args = ['--socket', socketPath, '--port', String(GUI_PORT)];
+    if (staticDir) {
+      args.push('--static-dir', staticDir);
+    }
+
+    guiServerProcess = spawn(binary, args, {
       cwd: root,
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: true,
