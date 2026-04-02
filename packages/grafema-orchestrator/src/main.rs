@@ -1,4 +1,6 @@
-use grafema_orchestrator::{analyzer, config, discovery, gc, plugin, process_pool, profiler, rfdb, ruby_resolver, source_hash};
+use grafema_orchestrator::{analyzer, config, discovery, gc, plugin, process_pool, profiler, rfdb, source_hash};
+#[cfg(feature = "ruby")]
+use grafema_orchestrator::ruby_resolver;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -668,6 +670,7 @@ async fn main() -> Result<()> {
             spawn_analysis!(swift_files, "Swift", analyzer::analyze_swift_files_parallel_pooled);
             spawn_analysis!(objc_files, "Obj-C", analyzer::analyze_objc_files_parallel_pooled);
             spawn_analysis!(beam_files, "BEAM", analyzer::analyze_beam_files_parallel_pooled);
+            #[cfg(feature = "ruby")]
             spawn_analysis!(rb_files, "Ruby", grafema_orchestrator::ruby_analyzer::analyze_ruby_files_native);
 
             // C++ needs compile_commands — handle separately
@@ -1384,6 +1387,7 @@ async fn main() -> Result<()> {
             }
 
             // 8l. Ruby resolution (embedded — no external binary)
+            #[cfg(feature = "ruby")]
             if !rb_files.is_empty() {
                 let lang_start = std::time::Instant::now();
                 profile!("ruby_resolve_start");

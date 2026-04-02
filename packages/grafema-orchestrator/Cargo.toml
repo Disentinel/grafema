@@ -35,9 +35,13 @@ proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = "1"
 rustpython-parser = { version = "0.4", features = ["all-nodes-with-ranges"] }
 clang-sys = { version = "1", features = ["clang_17_0", "runtime"] }
-ruby-prism = "1.9"
+ruby-prism = { version = "1.9", optional = true }
 stacker = "0.1"
 futures = "0.3"
+
+[features]
+default = []
+ruby = ["ruby-prism"]
 
 [dev-dependencies]
 tempfile = "3"
