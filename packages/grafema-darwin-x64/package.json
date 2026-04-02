@@ -1,6 +1,6 @@
 {
   "name": "@grafema/grafema-darwin-x64",
-  "version": "0.3.22",
+  "version": "0.3.23",
   "description": "Grafema native binaries for macOS x64",
   "os": [
     "darwin"
