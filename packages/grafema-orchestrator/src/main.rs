@@ -1516,9 +1516,17 @@ async fn main() -> Result<()> {
 
                 if !unresolved.is_empty() {
                     let file_set: HashSet<String> = file_to_module.keys().cloned().collect();
-                    let (diag_nodes, diag_edges) = analyzer::unresolved_diagnostics_to_wire(
+                    let (mut diag_nodes, mut diag_edges) = analyzer::unresolved_diagnostics_to_wire(
                         &unresolved, &file_set, &authority,
                     );
+
+                    // Stamp generation so ISSUE nodes are GC'd on next analyze
+                    for node in &mut diag_nodes {
+                        gc::stamp_node_metadata(&mut node.metadata, generation, "unresolved-diagnostics");
+                    }
+                    for edge in &mut diag_edges {
+                        gc::stamp_edge_metadata(&mut edge.metadata, generation, "unresolved-diagnostics");
+                    }
 
                     if !diag_nodes.is_empty() {
                         let diag_files = vec!["__grafema_virtual/unresolved-diagnostics".to_string()];
@@ -2297,9 +2305,17 @@ async fn main() -> Result<()> {
 
                 if !unresolved.is_empty() {
                     let file_set: HashSet<String> = file_to_module.keys().cloned().collect();
-                    let (diag_nodes, diag_edges) = analyzer::unresolved_diagnostics_to_wire(
+                    let (mut diag_nodes, mut diag_edges) = analyzer::unresolved_diagnostics_to_wire(
                         &unresolved, &file_set, &authority,
                     );
+
+                    // Stamp generation so ISSUE nodes are GC'd on next analyze
+                    for node in &mut diag_nodes {
+                        gc::stamp_node_metadata(&mut node.metadata, generation, "unresolved-diagnostics");
+                    }
+                    for edge in &mut diag_edges {
+                        gc::stamp_edge_metadata(&mut edge.metadata, generation, "unresolved-diagnostics");
+                    }
 
                     if !diag_nodes.is_empty() {
                         let diag_files = vec!["__grafema_virtual/unresolved-diagnostics".to_string()];
