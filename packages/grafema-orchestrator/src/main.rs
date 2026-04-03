@@ -367,7 +367,8 @@ async fn main() -> Result<()> {
 
             // 3. Set up generation tracker and filter changed files
             let filter_start = std::time::Instant::now();
-            let mut gen_tracker = gc::GenerationTracker::new(0);
+            let tracker_path = cfg.root.join(".grafema").join("gen-tracker.json");
+            let mut gen_tracker = gc::GenerationTracker::load(&tracker_path);
             let generation = gen_tracker.bump();
             let (changed_files, unchanged_files) =
                 gc::filter_changed_files(&files, &gen_tracker, force)?;
@@ -911,6 +912,9 @@ async fn main() -> Result<()> {
 
             // 7. Update mtime tracker for next incremental run
             gc::update_mtimes(&mut gen_tracker, &changed_files)?;
+            if let Err(e) = gen_tracker.save(&tracker_path) {
+                tracing::warn!("Failed to save generation tracker: {}", e);
+            }
 
             let analysis_ms = analysis_timer.elapsed().as_millis() as u64;
 

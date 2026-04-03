@@ -9,11 +9,12 @@
 //! and detecting deleted files.
 
 use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
 use serde_json;
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
-use std::time::SystemTime;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Statistics from a GC run.
 #[derive(Debug, Default)]
@@ -36,6 +37,13 @@ pub struct GenerationTracker {
     file_mtimes: HashMap<PathBuf, SystemTime>,
 }
 
+/// Serializable representation of tracker state for disk persistence.
+#[derive(Serialize, Deserialize)]
+struct TrackerState {
+    generation: u64,
+    file_mtimes: HashMap<String, u64>,
+}
+
 impl GenerationTracker {
     /// Create a new tracker with the given initial generation.
     pub fn new(generation: u64) -> Self {
@@ -43,6 +51,48 @@ impl GenerationTracker {
             current: generation,
             file_mtimes: HashMap::new(),
         }
+    }
+
+    /// Load tracker state from disk. Returns default (empty) if file doesn't exist or is invalid.
+    pub fn load(path: &Path) -> Self {
+        match fs::read_to_string(path) {
+            Ok(content) => match serde_json::from_str::<TrackerState>(&content) {
+                Ok(state) => {
+                    let file_mtimes = state
+                        .file_mtimes
+                        .into_iter()
+                        .map(|(k, v)| {
+                            let mtime = UNIX_EPOCH + Duration::from_nanos(v);
+                            (PathBuf::from(k), mtime)
+                        })
+                        .collect();
+                    Self {
+                        current: state.generation,
+                        file_mtimes,
+                    }
+                }
+                Err(_) => Self::new(0),
+            },
+            Err(_) => Self::new(0),
+        }
+    }
+
+    /// Save tracker state to disk.
+    pub fn save(&self, path: &Path) -> Result<()> {
+        let state = TrackerState {
+            generation: self.current,
+            file_mtimes: self
+                .file_mtimes
+                .iter()
+                .map(|(k, v)| {
+                    let secs = v.duration_since(UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(0);
+                    (k.display().to_string(), secs)
+                })
+                .collect(),
+        };
+        let json = serde_json::to_string_pretty(&state)?;
+        fs::write(path, json)?;
+        Ok(())
     }
 
     /// Increment the generation counter and return the new value.
