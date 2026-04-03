@@ -1,0 +1,322 @@
+# Haskell Standard Library Effects Database
+# Generated: 2026-04-02
+# Taxonomy version: 2
+#
+# Format: module.function: [EFFECT, ...]
+# Source: packages/haskell-resolve/src/HaskellRuntimeGlobals.hs globalsDb
+#
+# Most Haskell functions are PURE thanks to the type system.
+# IO-typed functions have IO effects. Exception-throwing functions have THROW.
+
+# ============================================================
+# haskell:prelude — Prelude functions, constructors, operators
+# ============================================================
+haskell:prelude:
+  # Data constructors
+  Just: [PURE]
+  Nothing: [PURE]
+  Left: [PURE]
+  Right: [PURE]
+  True: [PURE]
+  False: [PURE]
+  IO: [PURE]
+  Either: [PURE]
+
+  # Common functions
+  return: [PURE]
+  pure: [PURE]
+  show: [PURE]
+  maybe: [PURE]
+  "null": [PURE]
+  length: [PURE]
+  concatMap: [PURE]
+  mapM_: [PURE]
+  filter: [PURE]
+  "foldl'": [PURE]
+  fromList: [PURE]
+  map: [PURE]
+  foldr: [PURE]
+  foldl: [PURE]
+  zip: [PURE]
+  unzip: [PURE]
+  head: [THROW]
+  tail: [THROW]
+  init: [THROW]
+  last: [THROW]
+  take: [PURE]
+  drop: [PURE]
+  reverse: [PURE]
+  elem: [PURE]
+  notElem: [PURE]
+  any: [PURE]
+  all: [PURE]
+  minimum: [THROW]
+  maximum: [THROW]
+  sum: [PURE]
+  product: [PURE]
+  replicate: [PURE]
+  words: [PURE]
+  unwords: [PURE]
+  lines: [PURE]
+  unlines: [PURE]
+  concat: [PURE]
+
+  # Numeric
+  fromIntegral: [PURE]
+  toInteger: [PURE]
+  fromInteger: [PURE]
+  realToFrac: [PURE]
+  mod: [PURE]
+  div: [PURE]
+  abs: [PURE]
+  negate: [PURE]
+
+  # Utility
+  not: [PURE]
+  error: [THROW]
+  undefined: [THROW]
+  otherwise: [PURE]
+  id: [PURE]
+  const: [PURE]
+  flip: [PURE]
+  seq: [PURE]
+
+  # Functor / Applicative / Traversable
+  fmap: [PURE]
+  traverse: [PURE]
+  traverse_: [PURE]
+  for_: [PURE]
+
+  # Monoid
+  mempty: [PURE]
+  mconcat: [PURE]
+  mappend: [PURE]
+
+  # Tuples
+  fst: [PURE]
+  snd: [PURE]
+  uncurry: [PURE]
+  curry: [PURE]
+
+  # Operators
+  "$": [PURE]
+  ">>": [PURE]
+  ">>=": [PURE]
+  "<>": [PURE]
+  "++": [PURE]
+  "==": [PURE]
+  "/=": [PURE]
+  "&&": [PURE]
+  "||": [PURE]
+  "<": [PURE]
+  ">": [PURE]
+  "<=": [PURE]
+  ">=": [PURE]
+  "+": [PURE]
+  "-": [PURE]
+  "*": [PURE]
+  "/": [PURE]
+  "<$>": [PURE]
+  "<*>": [PURE]
+
+# ============================================================
+# haskell:system.io — System.IO (handles, file operations)
+# ============================================================
+haskell:system.io:
+  print: [IO]
+  putStrLn: [IO]
+  putStr: [IO]
+  getLine: [IO]
+  interact: [IO]
+  hPutStrLn: [IO]
+  hPutStr: [IO]
+  hFlush: [IO]
+  hSetBuffering: [IO]
+  stderr: [PURE]
+  stdout: [PURE]
+  stdin: [PURE]
+  readFile: [IO]
+  writeFile: [IO, MUTATION]
+  appendFile: [IO, MUTATION]
+  getArgs: [IO]
+
+# ============================================================
+# haskell:control.monad — Control.Monad functions
+# ============================================================
+haskell:control.monad:
+  void: [PURE]
+  when: [PURE]
+  unless: [PURE]
+  forM: [PURE]
+  forM_: [PURE]
+  mapM: [PURE]
+  sequence: [PURE]
+  sequence_: [PURE]
+
+# ============================================================
+# haskell:control.exception — Exception handling
+# ============================================================
+haskell:control.exception:
+  throwIO: [THROW, IO]
+  catch: [THROW]
+  bracket: [THROW]
+  try: [THROW]
+  finally: [THROW]
+  handle: [THROW]
+  onException: [THROW]
+  throw: [THROW]
+
+# ============================================================
+# haskell:system.exit — Exit codes
+# ============================================================
+haskell:system.exit:
+  exitWith: [IO, THROW]
+  exitSuccess: [IO, THROW]
+  exitFailure: [PURE]
+
+# ============================================================
+# haskell:data.text — Data.Text (qualified T.* and bare forms)
+# ============================================================
+haskell:data.text:
+  # Qualified T.* forms
+  T.pack: [PURE]
+  T.unpack: [PURE]
+  T.length: [PURE]
+  T.null: [PURE]
+  T.empty: [PURE]
+  T.concat: [PURE]
+  T.intercalate: [PURE]
+  T.splitOn: [PURE]
+  T.isPrefixOf: [PURE]
+  T.isSuffixOf: [PURE]
+  T.strip: [PURE]
+  T.toLower: [PURE]
+  T.toUpper: [PURE]
+  T.take: [PURE]
+  T.drop: [PURE]
+  T.append: [PURE]
+  T.replace: [PURE]
+  T.words: [PURE]
+  T.unwords: [PURE]
+  T.lines: [PURE]
+  T.unlines: [PURE]
+  T.singleton: [PURE]
+  T.cons: [PURE]
+  T.snoc: [PURE]
+  T.head: [PURE]
+  T.tail: [PURE]
+  T.last: [PURE]
+  T.init: [PURE]
+  T.map: [PURE]
+  T.filter: [PURE]
+  T.any: [PURE]
+  T.all: [PURE]
+  T.find: [PURE]
+  T.breakOn: [PURE]
+  T.stripPrefix: [PURE]
+  T.stripSuffix: [PURE]
+
+  # Bare (unqualified) forms
+  pack: [PURE]
+  unpack: [PURE]
+  Text: [PURE]
+
+# ============================================================
+# haskell:data.map — Data.Map.Strict (qualified Map.* forms)
+# ============================================================
+haskell:data.map:
+  Map.empty: [PURE]
+  Map.singleton: [PURE]
+  Map.insert: [PURE]
+  Map.delete: [PURE]
+  Map.lookup: [PURE]
+  Map.member: [PURE]
+  Map.notMember: [PURE]
+  Map.findWithDefault: [PURE]
+  Map.fromList: [PURE]
+  Map.toList: [PURE]
+  Map.keys: [PURE]
+  Map.elems: [PURE]
+  Map.size: [PURE]
+  Map.null: [PURE]
+  Map.union: [PURE]
+  Map.unionWith: [PURE]
+  Map.intersection: [PURE]
+  Map.difference: [PURE]
+  Map.map: [PURE]
+  Map.mapWithKey: [PURE]
+  Map.filter: [PURE]
+  Map.filterWithKey: [PURE]
+  Map.foldlWithKey: [PURE]
+  "Map.foldrWithKey'": [PURE]
+  Map.adjust: [PURE]
+  Map.alter: [PURE]
+  Map.mapKeys: [PURE]
+
+# ============================================================
+# haskell:data.set — Data.Set (qualified Set.* forms)
+# ============================================================
+haskell:data.set:
+  Set.empty: [PURE]
+  Set.singleton: [PURE]
+  Set.insert: [PURE]
+  Set.delete: [PURE]
+  Set.member: [PURE]
+  Set.notMember: [PURE]
+  Set.fromList: [PURE]
+  Set.toList: [PURE]
+  Set.size: [PURE]
+  Set.null: [PURE]
+  Set.union: [PURE]
+  Set.intersection: [PURE]
+  Set.difference: [PURE]
+  Set.map: [PURE]
+  Set.filter: [PURE]
+  Set.fold: [PURE]
+
+# ============================================================
+# haskell:data.intmap — Data.IntMap (qualified IntMap.* forms)
+# ============================================================
+haskell:data.intmap:
+  IntMap.empty: [PURE]
+  IntMap.insert: [PURE]
+  IntMap.lookup: [PURE]
+  IntMap.fromList: [PURE]
+
+# ============================================================
+# haskell:data.hashmap — Data.HashMap (qualified HashMap.* forms)
+# ============================================================
+haskell:data.hashmap:
+  HashMap.empty: [PURE]
+  HashMap.insert: [PURE]
+  HashMap.lookup: [PURE]
+  HashMap.fromList: [PURE]
+
+# ============================================================
+# haskell:data.bytestring — Data.ByteString (BS.* and BSL.* forms)
+# ============================================================
+haskell:data.bytestring:
+  # Strict ByteString (BS.*)
+  BS.pack: [PURE]
+  BS.unpack: [PURE]
+  BS.length: [PURE]
+  BS.null: [PURE]
+  BS.empty: [PURE]
+  BS.readFile: [IO]
+  BS.writeFile: [IO, MUTATION]
+  BS.hPut: [IO]
+  BS.hGet: [IO]
+
+  # Lazy ByteString (BSL.*)
+  BSL.pack: [PURE]
+  BSL.unpack: [PURE]
+  BSL.readFile: [IO]
+  BSL.writeFile: [IO, MUTATION]
+
+# ============================================================
+# haskell:mtl — MTL (monad transformers)
+# ============================================================
+haskell:mtl:
+  asks: [PURE]
+  liftIO: [IO]
+  lift: [PURE]

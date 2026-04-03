@@ -32,6 +32,8 @@ pub struct PoolConfig {
     pub max_message_size: usize,
     /// Per-request timeout. Worker is killed and respawned if exceeded.
     pub request_timeout: Duration,
+    /// Optional path to the effects-db directory, passed as GRAFEMA_EFFECTS_DB env var.
+    pub effects_db_path: Option<String>,
 }
 
 impl Default for PoolConfig {
@@ -41,6 +43,7 @@ impl Default for PoolConfig {
             args: Vec::new(),
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
+            effects_db_path: None,
         }
     }
 }
@@ -98,11 +101,17 @@ async fn read_frame(stdout: &mut ChildStdout, max_size: usize) -> Result<Vec<u8>
 
 /// Spawn a single worker process from the given config.
 fn spawn_worker(config: &PoolConfig) -> Result<Worker> {
-    let mut child = Command::new(&config.command)
-        .args(&config.args)
+    let mut cmd = Command::new(&config.command);
+    cmd.args(&config.args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
+        .stderr(Stdio::inherit());
+
+    if let Some(ref path) = config.effects_db_path {
+        cmd.env("GRAFEMA_EFFECTS_DB", path);
+    }
+
+    let mut child = cmd
         .spawn()
         .with_context(|| format!("failed to spawn worker: {}", config.command))?;
 
@@ -447,6 +456,7 @@ mod tests {
             args: vec![],
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
+            effects_db_path: None,
         };
         let result = ProcessPool::new(config, 0);
         match result {
@@ -484,6 +494,7 @@ while True:
             args: vec!["-c".to_string(), python_script.to_string()],
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
+            effects_db_path: None,
         };
 
         let pool = match ProcessPool::new(config, 2) {
@@ -531,6 +542,7 @@ while True:
             args: vec!["-c".to_string(), python_script.to_string()],
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
+            effects_db_path: None,
         };
 
         let pool = match ProcessPool::new(config, 3) {
@@ -580,6 +592,7 @@ if len(hdr) == 4:
             args: vec!["-c".to_string(), python_script.to_string()],
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
+            effects_db_path: None,
         };
 
         let pool = match ProcessPool::new(config, 1) {
@@ -625,6 +638,7 @@ while True:
             args: vec!["-c".to_string(), python_script.to_string()],
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
+            effects_db_path: None,
         };
 
         let pool = match ProcessPool::new(config, 1) {

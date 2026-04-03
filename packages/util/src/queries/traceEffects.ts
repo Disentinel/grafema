@@ -318,8 +318,31 @@ async function processTarget(
     return { maxDepthReached };
   }
 
-  // ── EXTERNAL_MODULE / GLOBAL_DEFINITION → effects-db ──
+  // ── EXTERNAL_MODULE / GLOBAL_DEFINITION → metadata effects first, then effects-db ──
   if (targetNode.type === 'EXTERNAL_MODULE' || targetNode.type === 'GLOBAL_DEFINITION') {
+    // Try reading effects from node metadata (set by GenericRuntimeGlobals enricher)
+    const metaEffects = (targetNode as Record<string, unknown>).effects;
+    if (Array.isArray(metaEffects) && metaEffects.length > 0) {
+      const leafEffects: EffectType[] = [];
+      for (const e of metaEffects) {
+        const effectStr = String(e);
+        if (isValidEffect(effectStr) && effectStr !== 'PURE') {
+          effects.add(effectStr as EffectType);
+          leafEffects.push(effectStr as EffectType);
+        }
+      }
+      if (leafEffects.length === 0) leafEffects.push('PURE');
+      leafSources.push({
+        node: targetNode.name ?? targetNode.id,
+        id: targetNode.id,
+        effects: leafEffects,
+        depth,
+        file: targetNode.file,
+      });
+      return { maxDepthReached };
+    }
+
+    // Fall back to effectsLookup
     const parsed = parseCallTarget(targetNode.name ?? '');
     if (parsed) {
       const [mod, fn] = parsed;

@@ -45,7 +45,7 @@ export class EffectsLookup {
     const db: EffectsDB = { runtimes: {}, packages: {} };
 
     // Load runtime builtins (node.yaml, rust.yaml, etc.)
-    const runtimeFiles = ['node.yaml', 'rust.yaml'];
+    const runtimeFiles = ['node.yaml', 'rust.yaml', 'haskell.yaml'];
     for (const runtimeFile of runtimeFiles) {
       const yamlPath = join(effectsDbPath, 'runtimes', runtimeFile);
       if (existsSync(yamlPath)) {
@@ -137,7 +137,11 @@ export class EffectsLookup {
       if (ecmaResult) return ecmaResult;
 
       // Try rust:core and rust:std for bare names (e.g. "clone", "iter", "push")
-      return this.lookupRust(normalized);
+      const rustResult = this.lookupRust(normalized);
+      if (rustResult) return rustResult;
+
+      // Try haskell:* for bare names (e.g. "mapM_", "hPutStrLn", "Just")
+      return this.lookupHaskell(normalized);
     }
     const parts = normalized.split('.');
     const module = parts[0];
@@ -166,6 +170,10 @@ export class EffectsLookup {
       if (bareRust) return bareRust;
     }
 
+    // Try haskell:* for qualified names (e.g. "Map.lookup", "T.pack", "BS.readFile")
+    const haskellResult = this.lookupHaskell(normalized);
+    if (haskellResult) return haskellResult;
+
     return null;
   }
 
@@ -193,6 +201,20 @@ export class EffectsLookup {
   lookupRust(name: string): EffectType[] | null {
     for (const [key, section] of Object.entries(this.db.runtimes)) {
       if (key.startsWith('rust:') && section[name]) {
+        return section[name].effects;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Look up a name in all haskell:* runtime sections (haskell:prelude,
+   * haskell:system.io, haskell:data.text, etc.).
+   * Handles bare names ("mapM_", "hPutStrLn") and qualified names ("Map.lookup", "T.pack").
+   */
+  lookupHaskell(name: string): EffectType[] | null {
+    for (const [key, section] of Object.entries(this.db.runtimes)) {
+      if (key.startsWith('haskell:') && section[name]) {
         return section[name].effects;
       }
     }

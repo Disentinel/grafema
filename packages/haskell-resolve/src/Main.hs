@@ -4,14 +4,14 @@ module Main where
 import Data.Aeson (FromJSON(..), ToJSON(..), withObject, (.:), object, (.=))
 import qualified Data.Text as T
 import Data.Text (Text)
-import System.Environment (getArgs)
+import System.Environment (getArgs, lookupEnv)
 import System.IO (stdin, stdout, hSetBinaryMode)
 import Options.Applicative
 import qualified HaskellImportResolution
 import qualified HaskellLocalRefs
-import qualified HaskellRuntimeGlobals
 import Grafema.Types (GraphNode)
-import Grafema.Protocol (PluginCommand(..), readFrame, writeFrame, encodeMsgpack, decodeMsgpack)
+import Grafema.Protocol (PluginCommand(..), readFrame, writeFrame, encodeMsgpack, decodeMsgpack, readNodesFromStdin, writeCommandsToStdout)
+import Grafema.RuntimeGlobals (NameStrategy(..), NodeFilter(..), SymbolDB, loadSymbolDB, resolveAll)
 
 -- | Request from orchestrator in daemon mode.
 data DaemonRequest = DaemonRequest
@@ -39,9 +39,28 @@ instance ToJSON DaemonResponse where
     , "error"  .= msg
     ]
 
+-- | Haskell-specific resolution strategy for runtime globals.
+haskellStrategy :: NameStrategy
+haskellStrategy = NameStrategy
+  { nsSeparator = "."
+  , nsPrefix    = "HASKELL_GLOBAL::"
+  , nsCategory  = "haskell-stdlib"
+  , nsFilter    = FilterCalls
+  , nsEdgeType  = "CALLS"
+  }
+
+-- | Load the effects-db SymbolDB from GRAFEMA_EFFECTS_DB env var.
+-- Returns an empty SymbolDB if the env var is not set.
+loadEffectsDB :: IO SymbolDB
+loadEffectsDB = do
+  mPath <- lookupEnv "GRAFEMA_EFFECTS_DB"
+  case mPath of
+    Just path -> loadSymbolDB path
+    Nothing   -> loadSymbolDB "/nonexistent"
+
 -- | Daemon loop: read frames, dispatch, write responses.
-daemonLoop :: IO ()
-daemonLoop = do
+daemonLoop :: SymbolDB -> IO ()
+daemonLoop symbolDb = do
   mFrame <- readFrame stdin
   case mFrame of
     Nothing -> return ()  -- EOF
@@ -50,16 +69,16 @@ daemonLoop = do
         Left err -> do
           writeFrame stdout (encodeMsgpack (ResError ("decode error: " ++ err)))
         Right req -> do
-          result <- dispatch (drCmd req) (drNodes req)
+          result <- dispatch symbolDb (drCmd req) (drNodes req)
           writeFrame stdout (encodeMsgpack result)
-      daemonLoop
+      daemonLoop symbolDb
 
 -- | Dispatch a command to the resolver.
-dispatch :: Text -> [GraphNode] -> IO DaemonResponse
-dispatch "haskell-imports" nodes = ResOk <$> HaskellImportResolution.resolveAll nodes
-dispatch "haskell-local-refs" nodes = return $ ResOk (HaskellLocalRefs.resolveAll nodes)
-dispatch "haskell-globals" nodes = return $ ResOk (HaskellRuntimeGlobals.resolveAll nodes)
-dispatch cmd _ = return $ ResError ("unknown command: " ++ T.unpack cmd)
+dispatch :: SymbolDB -> Text -> [GraphNode] -> IO DaemonResponse
+dispatch _        "haskell-imports"    nodes = ResOk <$> HaskellImportResolution.resolveAll nodes
+dispatch _        "haskell-local-refs" nodes = return $ ResOk (HaskellLocalRefs.resolveAll nodes)
+dispatch symbolDb "haskell-globals"    nodes = return $ ResOk (resolveAll haskellStrategy symbolDb nodes)
+dispatch _        cmd                  _     = return $ ResError ("unknown command: " ++ T.unpack cmd)
 
 -- | CLI subcommand parser.
 data Command = CmdHaskellImports | CmdHaskellLocalRefs | CmdHaskellGlobals
@@ -87,10 +106,15 @@ main = do
   hSetBinaryMode stdout True
   args <- getArgs
   if "--daemon" `elem` args
-    then daemonLoop
+    then do
+      symbolDb <- loadEffectsDB
+      daemonLoop symbolDb
     else do
       cmd <- execParser cliOpts
       case cmd of
         CmdHaskellImports    -> HaskellImportResolution.run
         CmdHaskellLocalRefs  -> HaskellLocalRefs.run
-        CmdHaskellGlobals    -> HaskellRuntimeGlobals.run
+        CmdHaskellGlobals    -> do
+          symbolDb <- loadEffectsDB
+          nodes <- readNodesFromStdin
+          writeCommandsToStdout (resolveAll haskellStrategy symbolDb nodes)

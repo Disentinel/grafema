@@ -201,6 +201,67 @@ describe('traceEffects', () => {
     });
   });
 
+  describe('GLOBAL_DEFINITION with metadata effects', () => {
+    it('reads effects from node metadata instead of effects-db lookup', async () => {
+      const effectsLookup = EffectsLookup.empty();
+      const nodes = [
+        { id: 'fn1', type: 'FUNCTION', name: 'myFunc', file: 'src/a.hs', line: 1 },
+        { id: 'glob1', type: 'GLOBAL_DEFINITION', name: 'hPutStrLn', file: undefined, effects: ['IO'] },
+      ];
+      const edges = [
+        { src: 'fn1', dst: 'glob1', type: 'CALLS' },
+      ];
+      const backend = createMockBackend(nodes, edges);
+
+      const result = await traceEffects(backend, 'fn1', effectsLookup);
+      assert.ok(result, 'Expected non-null result');
+      assert.ok(
+        result.transitive.includes('IO'),
+        `Expected IO in transitive effects from metadata, got: ${result.transitive}`,
+      );
+      assert.ok(result.leaf_sources.length > 0, 'Expected leaf sources');
+      assert.equal(result.leaf_sources[0].node, 'hPutStrLn');
+      assert.deepEqual(result.leaf_sources[0].effects, ['IO']);
+    });
+
+    it('uses PURE when metadata effects are all PURE', async () => {
+      const effectsLookup = EffectsLookup.empty();
+      const nodes = [
+        { id: 'fn1', type: 'FUNCTION', name: 'myFunc', file: 'src/a.hs', line: 1 },
+        { id: 'glob1', type: 'GLOBAL_DEFINITION', name: 'Just', file: undefined, effects: ['PURE'] },
+      ];
+      const edges = [
+        { src: 'fn1', dst: 'glob1', type: 'CALLS' },
+      ];
+      const backend = createMockBackend(nodes, edges);
+
+      const result = await traceEffects(backend, 'fn1', effectsLookup);
+      assert.ok(result, 'Expected non-null result');
+      assert.deepEqual(result.transitive, ['PURE']);
+      assert.ok(result.leaf_sources.length > 0, 'Expected leaf sources');
+      assert.deepEqual(result.leaf_sources[0].effects, ['PURE']);
+    });
+
+    it('falls back to effects-db when metadata effects not present', async () => {
+      const effectsLookup = EffectsLookup.load(EFFECTS_DB_PATH);
+      const nodes = [
+        { id: 'fn1', type: 'FUNCTION', name: 'myFunc', file: 'src/a.ts', line: 1 },
+        { id: 'glob1', type: 'GLOBAL_DEFINITION', name: 'fs.readFileSync', file: undefined },
+      ];
+      const edges = [
+        { src: 'fn1', dst: 'glob1', type: 'CALLS' },
+      ];
+      const backend = createMockBackend(nodes, edges);
+
+      const result = await traceEffects(backend, 'fn1', effectsLookup);
+      assert.ok(result, 'Expected non-null result');
+      assert.ok(
+        result.transitive.includes('IO'),
+        `Expected IO from effects-db fallback, got: ${result.transitive}`,
+      );
+    });
+  });
+
   describe('CALLS_REMOTE edge', () => {
     it('marks boundary crossing same as CALLS', async () => {
       const effectsLookup = EffectsLookup.empty();

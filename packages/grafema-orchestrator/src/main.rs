@@ -472,6 +472,12 @@ async fn main() -> Result<()> {
             let mut total_errors = 0usize;
             let mut total_files_committed = 0usize;
             let root_str = cfg.root.display().to_string();
+            let effects_db_dir = cfg.root.join("effects-db");
+            let effects_db_path: Option<String> = if effects_db_dir.exists() {
+                Some(effects_db_dir.to_string_lossy().to_string())
+            } else {
+                None
+            };
             let authority = resolve_authority(&cfg);
             let total_files = files.len();
 
@@ -926,6 +932,7 @@ async fn main() -> Result<()> {
                     args: vec!["--daemon".to_string()],
                     max_message_size: 200 * 1024 * 1024,
                     request_timeout: std::time::Duration::from_secs(300),
+                    effects_db_path: effects_db_path.clone(),
                 };
 
                 match process_pool::ProcessPool::new(resolve_pool_config, 1) {
@@ -972,6 +979,7 @@ async fn main() -> Result<()> {
                 let hs_pool_config = process_pool::PoolConfig {
                     command: cfg.analyzers.haskell_resolve_path(),
                     args: vec!["--daemon".to_string()],
+                    effects_db_path: effects_db_path.clone(),
                     ..process_pool::PoolConfig::default()
                 };
                 match process_pool::ProcessPool::new(hs_pool_config, 1) {
@@ -1017,6 +1025,7 @@ async fn main() -> Result<()> {
                 let rs_pool_config = process_pool::PoolConfig {
                     command: cfg.analyzers.rust_resolve_path(),
                     args: vec!["--daemon".to_string()],
+                    effects_db_path: effects_db_path.clone(),
                     ..process_pool::PoolConfig::default()
                 };
                 match process_pool::ProcessPool::new(rs_pool_config, 1) {
@@ -1063,6 +1072,7 @@ async fn main() -> Result<()> {
                 let pool_cfg = process_pool::PoolConfig {
                     command: cfg.analyzers.java_resolve_path(),
                     args: vec!["--daemon".to_string()],
+                    effects_db_path: effects_db_path.clone(),
                     ..process_pool::PoolConfig::default()
                 };
                 match process_pool::ProcessPool::new(pool_cfg, 1) {
@@ -1098,6 +1108,7 @@ async fn main() -> Result<()> {
                 let pool_cfg = process_pool::PoolConfig {
                     command: cfg.analyzers.kotlin_resolve_path(),
                     args: vec!["--daemon".to_string()],
+                    effects_db_path: effects_db_path.clone(),
                     ..process_pool::PoolConfig::default()
                 };
                 match process_pool::ProcessPool::new(pool_cfg, 1) {
@@ -1133,6 +1144,7 @@ async fn main() -> Result<()> {
                 let pool_cfg = process_pool::PoolConfig {
                     command: cfg.analyzers.python_resolve_path(),
                     args: vec!["--daemon".to_string()],
+                    effects_db_path: effects_db_path.clone(),
                     ..process_pool::PoolConfig::default()
                 };
                 match process_pool::ProcessPool::new(pool_cfg, 1) {
@@ -1177,6 +1189,7 @@ async fn main() -> Result<()> {
                 let pool_cfg = process_pool::PoolConfig {
                     command: cfg.analyzers.go_resolve_path(),
                     args: vec!["--daemon".to_string()],
+                    effects_db_path: effects_db_path.clone(),
                     ..process_pool::PoolConfig::default()
                 };
                 match process_pool::ProcessPool::new(pool_cfg, 1) {
@@ -1212,6 +1225,7 @@ async fn main() -> Result<()> {
                 let pool_cfg = process_pool::PoolConfig {
                     command: cfg.analyzers.swift_resolve_path(),
                     args: vec!["--daemon".to_string()],
+                    effects_db_path: effects_db_path.clone(),
                     ..process_pool::PoolConfig::default()
                 };
                 match process_pool::ProcessPool::new(pool_cfg, 1) {
@@ -1247,6 +1261,7 @@ async fn main() -> Result<()> {
                 let pool_cfg = process_pool::PoolConfig {
                     command: cfg.analyzers.apple_cross_resolve_path(),
                     args: vec!["--daemon".to_string()],
+                    effects_db_path: effects_db_path.clone(),
                     ..process_pool::PoolConfig::default()
                 };
                 match process_pool::ProcessPool::new(pool_cfg, 1) {
@@ -1280,6 +1295,7 @@ async fn main() -> Result<()> {
                 let pool_cfg = process_pool::PoolConfig {
                     command: cfg.analyzers.jvm_cross_resolve_path(),
                     args: vec!["--daemon".to_string()],
+                    effects_db_path: effects_db_path.clone(),
                     ..process_pool::PoolConfig::default()
                 };
                 match process_pool::ProcessPool::new(pool_cfg, 1) {
@@ -1318,6 +1334,7 @@ async fn main() -> Result<()> {
                 let pool_cfg = process_pool::PoolConfig {
                     command: cfg.analyzers.cpp_resolve_path(),
                     args: vec!["--daemon".to_string()],
+                    effects_db_path: effects_db_path.clone(),
                     ..process_pool::PoolConfig::default()
                 };
                 match process_pool::ProcessPool::new(pool_cfg, 1) {
@@ -1353,6 +1370,7 @@ async fn main() -> Result<()> {
                 let pool_cfg = process_pool::PoolConfig {
                     command: cfg.analyzers.beam_resolve_path(),
                     args: vec!["--daemon".to_string()],
+                    effects_db_path: effects_db_path.clone(),
                     ..process_pool::PoolConfig::default()
                 };
                 match process_pool::ProcessPool::new(pool_cfg, 1) {
@@ -1435,6 +1453,7 @@ async fn main() -> Result<()> {
                 let resolve_pool_config = process_pool::PoolConfig {
                     command: cfg.analyzers.js_resolve_path(),
                     args: vec!["--daemon".to_string()],
+                    effects_db_path: effects_db_path.clone(),
                     ..process_pool::PoolConfig::default()
                 };
                 let resolve_pool = match process_pool::ProcessPool::new(resolve_pool_config, 1) {
@@ -1700,6 +1719,13 @@ async fn main() -> Result<()> {
                 .or(cfg.rfdb_socket.clone())
                 .unwrap_or_else(|| PathBuf::from("/tmp/rfdb.sock"));
 
+            let effects_db_dir = cfg.root.join("effects-db");
+            let effects_db_path: Option<String> = if effects_db_dir.exists() {
+                Some(effects_db_dir.to_string_lossy().to_string())
+            } else {
+                None
+            };
+
             // Discover workspace packages from services config
             let ws_packages_raw = config::discover_workspace_packages(&cfg.root, &cfg.services);
             let mut ws_packages: Vec<plugin::WorkspacePackageWire> = ws_packages_raw
@@ -1781,6 +1807,7 @@ async fn main() -> Result<()> {
                     args: vec!["--daemon".to_string()],
                     max_message_size: 200 * 1024 * 1024,
                     request_timeout: std::time::Duration::from_secs(300),
+                    effects_db_path: effects_db_path.clone(),
                 };
 
                 match process_pool::ProcessPool::new(resolve_pool_config, 1) {
@@ -1823,6 +1850,7 @@ async fn main() -> Result<()> {
                 let pool_cfg = process_pool::PoolConfig {
                     command: cfg.analyzers.haskell_resolve_path(),
                     args: vec!["--daemon".to_string()],
+                    effects_db_path: effects_db_path.clone(),
                     ..process_pool::PoolConfig::default()
                 };
                 match process_pool::ProcessPool::new(pool_cfg, 1) {
@@ -1861,6 +1889,7 @@ async fn main() -> Result<()> {
                 let pool_cfg = process_pool::PoolConfig {
                     command: cfg.analyzers.rust_resolve_path(),
                     args: vec!["--daemon".to_string()],
+                    effects_db_path: effects_db_path.clone(),
                     ..process_pool::PoolConfig::default()
                 };
                 match process_pool::ProcessPool::new(pool_cfg, 1) {
@@ -1900,6 +1929,7 @@ async fn main() -> Result<()> {
                 let pool_cfg = process_pool::PoolConfig {
                     command: cfg.analyzers.java_resolve_path(),
                     args: vec!["--daemon".to_string()],
+                    effects_db_path: effects_db_path.clone(),
                     ..process_pool::PoolConfig::default()
                 };
                 match process_pool::ProcessPool::new(pool_cfg, 1) {
@@ -1930,6 +1960,7 @@ async fn main() -> Result<()> {
                 let pool_cfg = process_pool::PoolConfig {
                     command: cfg.analyzers.kotlin_resolve_path(),
                     args: vec!["--daemon".to_string()],
+                    effects_db_path: effects_db_path.clone(),
                     ..process_pool::PoolConfig::default()
                 };
                 match process_pool::ProcessPool::new(pool_cfg, 1) {
@@ -1960,6 +1991,7 @@ async fn main() -> Result<()> {
                 let pool_cfg = process_pool::PoolConfig {
                     command: cfg.analyzers.python_resolve_path(),
                     args: vec!["--daemon".to_string()],
+                    effects_db_path: effects_db_path.clone(),
                     ..process_pool::PoolConfig::default()
                 };
                 match process_pool::ProcessPool::new(pool_cfg, 1) {
@@ -1999,6 +2031,7 @@ async fn main() -> Result<()> {
                 let pool_cfg = process_pool::PoolConfig {
                     command: cfg.analyzers.go_resolve_path(),
                     args: vec!["--daemon".to_string()],
+                    effects_db_path: effects_db_path.clone(),
                     ..process_pool::PoolConfig::default()
                 };
                 match process_pool::ProcessPool::new(pool_cfg, 1) {
@@ -2029,6 +2062,7 @@ async fn main() -> Result<()> {
                 let pool_cfg = process_pool::PoolConfig {
                     command: cfg.analyzers.swift_resolve_path(),
                     args: vec!["--daemon".to_string()],
+                    effects_db_path: effects_db_path.clone(),
                     ..process_pool::PoolConfig::default()
                 };
                 match process_pool::ProcessPool::new(pool_cfg, 1) {
@@ -2061,6 +2095,7 @@ async fn main() -> Result<()> {
                 let pool_cfg = process_pool::PoolConfig {
                     command: cfg.analyzers.apple_cross_resolve_path(),
                     args: vec!["--daemon".to_string()],
+                    effects_db_path: effects_db_path.clone(),
                     ..process_pool::PoolConfig::default()
                 };
                 match process_pool::ProcessPool::new(pool_cfg, 1) {
@@ -2091,6 +2126,7 @@ async fn main() -> Result<()> {
                 let pool_cfg = process_pool::PoolConfig {
                     command: cfg.analyzers.jvm_cross_resolve_path(),
                     args: vec!["--daemon".to_string()],
+                    effects_db_path: effects_db_path.clone(),
                     ..process_pool::PoolConfig::default()
                 };
                 match process_pool::ProcessPool::new(pool_cfg, 1) {
@@ -2124,6 +2160,7 @@ async fn main() -> Result<()> {
                 let pool_cfg = process_pool::PoolConfig {
                     command: cfg.analyzers.cpp_resolve_path(),
                     args: vec!["--daemon".to_string()],
+                    effects_db_path: effects_db_path.clone(),
                     ..process_pool::PoolConfig::default()
                 };
                 match process_pool::ProcessPool::new(pool_cfg, 1) {
@@ -2154,6 +2191,7 @@ async fn main() -> Result<()> {
                 let pool_cfg = process_pool::PoolConfig {
                     command: cfg.analyzers.beam_resolve_path(),
                     args: vec!["--daemon".to_string()],
+                    effects_db_path: effects_db_path.clone(),
                     ..process_pool::PoolConfig::default()
                 };
                 match process_pool::ProcessPool::new(pool_cfg, 1) {
@@ -2201,6 +2239,7 @@ async fn main() -> Result<()> {
                 let resolve_pool_config = process_pool::PoolConfig {
                     command: cfg.analyzers.js_resolve_path(),
                     args: vec!["--daemon".to_string()],
+                    effects_db_path: effects_db_path.clone(),
                     ..process_pool::PoolConfig::default()
                 };
                 let resolve_pool = match process_pool::ProcessPool::new(resolve_pool_config, 1) {

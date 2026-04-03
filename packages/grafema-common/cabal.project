@@ -1,6 +1,5 @@
 packages:
   .
-  ../grafema-common
 
 constraints:
   libyaml +system-libyaml

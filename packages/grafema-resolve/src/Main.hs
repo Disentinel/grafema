@@ -4,20 +4,20 @@ module Main where
 import Data.Aeson (FromJSON(..), ToJSON(..), withObject, (.:), (.:?), (.!=), object, (.=))
 import qualified Data.Text as T
 import Data.Text (Text)
-import System.Environment (getArgs)
+import System.Environment (getArgs, lookupEnv)
 import System.IO (stdin, stdout, stderr, hSetBinaryMode, hPutStrLn)
 import Data.Time.Clock (getCurrentTime, diffUTCTime)
 import Data.IORef
 import Options.Applicative
 import qualified ImportResolution
-import qualified RuntimeGlobals
 import qualified Builtins
 import qualified CrossFileCalls
 import qualified SameFileCalls
 import qualified PropertyAccess
 import qualified JsLocalRefs
 import Grafema.Types (GraphNode)
-import Grafema.Protocol (PluginCommand(..), readFrame, writeFrame, encodeMsgpack, decodeMsgpack, pluginCommandToMsgpack)
+import Grafema.Protocol (PluginCommand(..), readFrame, writeFrame, encodeMsgpack, decodeMsgpack, pluginCommandToMsgpack, readNodesFromStdin, writeCommandsToStdout)
+import Grafema.RuntimeGlobals (NameStrategy(..), NodeFilter(..), SymbolDB, loadSymbolDB, resolveAll)
 import ImportResolution (ExportIndex, WorkspaceMap, ModuleIndex)
 import qualified Data.Binary as Binary
 import qualified Data.MessagePack as MP
@@ -79,6 +79,26 @@ data ResolveIndexes = ResolveIndexes
   , riModuleIndex  :: !ModuleIndex
   }
 
+-- | JS-specific resolution strategy for runtime globals.
+-- Uses RESOLVES_TO edges (not READS_FROM) and matches REFERENCE nodes.
+jsStrategy :: NameStrategy
+jsStrategy = NameStrategy
+  { nsSeparator = "."
+  , nsPrefix    = "GLOBAL::"
+  , nsCategory  = "ecmascript"
+  , nsFilter    = FilterReferences
+  , nsEdgeType  = "RESOLVES_TO"
+  }
+
+-- | Load the effects-db SymbolDB from GRAFEMA_EFFECTS_DB env var.
+-- Returns an empty SymbolDB if the env var is not set.
+loadEffectsDB :: IO SymbolDB
+loadEffectsDB = do
+  mPath <- lookupEnv "GRAFEMA_EFFECTS_DB"
+  case mPath of
+    Just path -> loadSymbolDB path
+    Nothing   -> loadSymbolDB "/nonexistent"
+
 -- | Flatten accumulated chunks into a single list, caching the result.
 finalizeContext :: IORef DaemonState -> IO [GraphNode]
 finalizeContext stateRef = do
@@ -93,8 +113,8 @@ finalizeContext stateRef = do
 -- | Daemon loop: read frames from stdin, dispatch, write responses.
 --   Maintains an IORef of context chunks that accumulate across load-context calls.
 --   Also maintains an IORef of pre-built indexes for per-file streaming resolution.
-daemonLoop :: IORef DaemonState -> IORef (Maybe ResolveIndexes) -> IO ()
-daemonLoop stateRef indexRef = do
+daemonLoop :: SymbolDB -> IORef DaemonState -> IORef (Maybe ResolveIndexes) -> IO ()
+daemonLoop symbolDb stateRef indexRef = do
   mFrame <- readFrame stdin
   case mFrame of
     Nothing -> return ()  -- EOF
@@ -128,7 +148,7 @@ daemonLoop stateRef indexRef = do
               -- The ++ chain is lazy so encodeMsgpack serializes incrementally.
               let r1 = SameFileCalls.resolveAll allNodes
               let r2 = JsLocalRefs.resolveAll allNodes
-              let r3 = RuntimeGlobals.resolveAll allNodes
+              let r3 = resolveAll jsStrategy symbolDb allNodes
               let r4 = Builtins.resolveAll allNodes
               r5 <- ImportResolution.resolveAllWithWorkspace allNodes wsList
               let r6 = CrossFileCalls.resolveAll allNodes
@@ -167,7 +187,7 @@ daemonLoop stateRef indexRef = do
                   -- Run all 7 resolvers on just this file's nodes
                   let r1 = SameFileCalls.resolveAll fileNodes
                   let r2 = JsLocalRefs.resolveAll fileNodes
-                  let r3 = RuntimeGlobals.resolveAll fileNodes
+                  let r3 = resolveAll jsStrategy symbolDb fileNodes
                   let r4 = Builtins.resolveAll fileNodes
                   -- For import resolution: use pre-built export index + workspace map + module index
                   r5 <- ImportResolution.resolveFileWithIndex (riExportIndex indexes) (riWorkspaceMap indexes) (riModuleIndex indexes) fileNodes
@@ -185,22 +205,22 @@ daemonLoop stateRef indexRef = do
               -- Legacy per-command path (backward compat)
               allNodes <- finalizeContext stateRef
               let allWithReq = allNodes ++ drNodes req
-              result <- dispatch (drCmd req) allWithReq (drWorkspacePackages req)
+              result <- dispatch symbolDb (drCmd req) allWithReq (drWorkspacePackages req)
               writeFrame stdout (encodeMsgpack result)
-      daemonLoop stateRef indexRef
+      daemonLoop symbolDb stateRef indexRef
 
 -- | Dispatch a request to the appropriate resolver.
-dispatch :: Text -> [GraphNode] -> [WorkspacePackage] -> IO DaemonResponse
-dispatch "imports" nodes wsPackages =
+dispatch :: SymbolDB -> Text -> [GraphNode] -> [WorkspacePackage] -> IO DaemonResponse
+dispatch _ "imports" nodes wsPackages =
   let wsList = map (\wp -> (wpName wp, wpEntryPoint wp, wpPackageDir wp)) wsPackages
   in ResOk <$> ImportResolution.resolveAllWithWorkspace nodes wsList
-dispatch "runtime-globals" nodes _ = return $ ResOk (RuntimeGlobals.resolveAll nodes)
-dispatch "builtins" nodes _ = return $ ResOk (Builtins.resolveAll nodes)
-dispatch "cross-file-calls" nodes _ = return $ ResOk (CrossFileCalls.resolveAll nodes)
-dispatch "same-file-calls" nodes _ = return $ ResOk (SameFileCalls.resolveAll nodes)
-dispatch "property-access" nodes _ = return $ ResOk (PropertyAccess.resolveAll nodes)
-dispatch "js-local-refs" nodes _ = return $ ResOk (JsLocalRefs.resolveAll nodes)
-dispatch cmd _ _ = return $ ResError ("unknown command: " ++ T.unpack cmd)
+dispatch symbolDb "runtime-globals" nodes _ = return $ ResOk (resolveAll jsStrategy symbolDb nodes)
+dispatch _ "builtins" nodes _ = return $ ResOk (Builtins.resolveAll nodes)
+dispatch _ "cross-file-calls" nodes _ = return $ ResOk (CrossFileCalls.resolveAll nodes)
+dispatch _ "same-file-calls" nodes _ = return $ ResOk (SameFileCalls.resolveAll nodes)
+dispatch _ "property-access" nodes _ = return $ ResOk (PropertyAccess.resolveAll nodes)
+dispatch _ "js-local-refs" nodes _ = return $ ResOk (JsLocalRefs.resolveAll nodes)
+dispatch _ cmd _ _ = return $ ResError ("unknown command: " ++ T.unpack cmd)
 
 -- | Original CLI subcommand parser.
 data Command = CmdImports | CmdRuntimeGlobals | CmdBuiltins | CmdCrossFileCalls | CmdSameFileCalls | CmdPropertyAccess | CmdJsLocalRefs
@@ -237,14 +257,18 @@ main = do
   args <- getArgs
   if "--daemon" `elem` args
     then do
+      symbolDb <- loadEffectsDB
       contextRef <- newIORef (Accumulating [])
       indexRef <- newIORef Nothing
-      daemonLoop contextRef indexRef
+      daemonLoop symbolDb contextRef indexRef
     else do
       cmd <- execParser cliOpts
       case cmd of
         CmdImports        -> ImportResolution.run
-        CmdRuntimeGlobals -> RuntimeGlobals.run
+        CmdRuntimeGlobals -> do
+          symbolDb <- loadEffectsDB
+          nodes <- readNodesFromStdin
+          writeCommandsToStdout (resolveAll jsStrategy symbolDb nodes)
         CmdBuiltins       -> Builtins.run
         CmdCrossFileCalls -> CrossFileCalls.run
         CmdSameFileCalls  -> SameFileCalls.run

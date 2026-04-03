@@ -172,6 +172,58 @@ describe('EffectsLookup', () => {
     });
   });
 
+  describe('lookup() with Haskell stdlib', () => {
+    it('loads Haskell stdlib from haskell.yaml', () => {
+      const lookup = EffectsLookup.load(EFFECTS_DB_PATH);
+      const effects = lookup.lookup('haskell:prelude', 'Just');
+      assert.ok(effects, 'Expected effects for haskell:prelude Just');
+      assert.deepEqual(effects, ['PURE']);
+    });
+
+    it('lookupByCallName resolves bare Haskell names from prelude', () => {
+      const lookup = EffectsLookup.load(EFFECTS_DB_PATH);
+      const effects = lookup.lookupByCallName('mapM_');
+      assert.ok(effects, 'Expected effects for bare mapM_');
+      assert.deepEqual(effects, ['PURE']);
+    });
+
+    it('lookupByCallName resolves IO functions from system.io', () => {
+      const lookup = EffectsLookup.load(EFFECTS_DB_PATH);
+      const effects = lookup.lookupByCallName('hPutStrLn');
+      assert.ok(effects, 'Expected effects for hPutStrLn');
+      assert.ok(effects.includes('IO'), `Expected IO in effects, got: ${effects}`);
+    });
+
+    it('lookupByCallName resolves qualified Map.lookup', () => {
+      const lookup = EffectsLookup.load(EFFECTS_DB_PATH);
+      const effects = lookup.lookupByCallName('Map.lookup');
+      assert.ok(effects, 'Expected effects for Map.lookup');
+      assert.deepEqual(effects, ['PURE']);
+    });
+
+    it('lookupByCallName resolves qualified T.pack from data.text', () => {
+      const lookup = EffectsLookup.load(EFFECTS_DB_PATH);
+      const effects = lookup.lookupByCallName('T.pack');
+      assert.ok(effects, 'Expected effects for T.pack');
+      assert.deepEqual(effects, ['PURE']);
+    });
+
+    it('lookupByCallName resolves BS.readFile as IO', () => {
+      const lookup = EffectsLookup.load(EFFECTS_DB_PATH);
+      const effects = lookup.lookupByCallName('BS.readFile');
+      assert.ok(effects, 'Expected effects for BS.readFile');
+      assert.ok(effects.includes('IO'), `Expected IO in effects, got: ${effects}`);
+    });
+
+    it('lookup haskell:control.exception throwIO returns THROW and IO', () => {
+      const lookup = EffectsLookup.load(EFFECTS_DB_PATH);
+      const effects = lookup.lookup('haskell:control.exception', 'throwIO');
+      assert.ok(effects, 'Expected effects for throwIO');
+      assert.ok(effects.includes('THROW'), `Expected THROW, got: ${effects}`);
+      assert.ok(effects.includes('IO'), `Expected IO, got: ${effects}`);
+    });
+  });
+
   describe('lookup() with IO subtypes', () => {
     it('node:fs readFile includes IO:FILE:READ', () => {
       const lookup = EffectsLookup.load(EFFECTS_DB_PATH);
