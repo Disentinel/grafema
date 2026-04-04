@@ -703,6 +703,11 @@ fn walk_struct(s: &syn::ItemStruct, ctx: &mut Ctx) {
             let fname = ident.to_string();
             let (fl, fc) = ctx.span_line_col(ident.span());
             let field_id = semantic_id(&ctx.file, "RECORD_FIELD", &fname, Some(&node_id), None);
+            let mut field_meta = HashMap::new();
+            let type_str = type_to_name(&field.ty);
+            if type_str != "<type>" {
+                field_meta.insert("typeAnnotation".to_string(), serde_json::Value::String(type_str));
+            }
             ctx.emit_declaration(GraphNode {
                 id: field_id.clone(),
                 node_type: "RECORD_FIELD".to_string(),
@@ -711,7 +716,7 @@ fn walk_struct(s: &syn::ItemStruct, ctx: &mut Ctx) {
                 line: fl, column: fc,
                 end_line: ctx.span_end_line_col(ident.span()).0, end_column: ctx.span_end_line_col(ident.span()).1,
                 exported: false,
-                metadata: HashMap::new(),
+                metadata: field_meta,
                 extra: HashMap::new(),
             });
             ctx.emit_edge(GraphEdge {
@@ -1817,6 +1822,15 @@ mod tests {
         assert!(has_node(&fa, "RECORD_FIELD", "bar"));
         assert!(has_node(&fa, "RECORD_FIELD", "baz"));
         assert!(has_edge(&fa, "HAS_FIELD", "STRUCT", "RECORD_FIELD"));
+    }
+
+    #[test]
+    fn test_struct_field_type_annotation() {
+        let fa = parse_and_analyze("struct Shard { segments: Vec<Segment>, name: String }");
+        let segments = fa.nodes.iter().find(|n| n.node_type == "RECORD_FIELD" && n.name == "segments").unwrap();
+        assert_eq!(segments.metadata.get("typeAnnotation"), Some(&serde_json::json!("Vec")));
+        let name = fa.nodes.iter().find(|n| n.node_type == "RECORD_FIELD" && n.name == "name").unwrap();
+        assert_eq!(name.metadata.get("typeAnnotation"), Some(&serde_json::json!("String")));
     }
 
     #[test]
