@@ -1033,7 +1033,15 @@ fn walk_stmt(stmt: &syn::Stmt, ctx: &mut Ctx) {
 fn walk_let(local: &syn::Local, ctx: &mut Ctx) {
     // Collect binding IDs before walking init (for ASSIGNED_FROM)
     let binding_ids = collect_pat_binding_ids(&local.pat, "let", ctx);
+
+    // Infer type from constructor-style init: `let x = Type::method(...)`
+    if let Some(init) = &local.init {
+        if let Some(ty) = infer_type_from_init(&init.expr) {
+            ctx.pending_type_annotation = Some(ty);
+        }
+    }
     walk_pat_bindings(&local.pat, "let", ctx);
+    ctx.pending_type_annotation = None;
 
     if let Some(init) = &local.init {
         walk_expr(&init.expr, ctx);
@@ -1635,6 +1643,37 @@ fn expr_to_name(expr: &syn::Expr) -> String {
     }
 }
 
+/// Infer type from a constructor-style initializer expression.
+///
+/// Handles:
+/// - `Type::new(...)` / `Type::from(...)` / `Type::open(...)` → `"Type"`
+/// - `path::Type::method(...)` → `"Type"` (penultimate segment)
+/// - `Type::default()` → `"Type"`
+/// - Anything else → `None`
+fn infer_type_from_init(expr: &syn::Expr) -> Option<String> {
+    // Unwrap .await, ?, and method chains to get the inner call
+    let call_expr = match expr {
+        syn::Expr::Await(a) => return infer_type_from_init(&a.base),
+        syn::Expr::Try(t) => return infer_type_from_init(&t.expr),
+        syn::Expr::Call(c) => c,
+        _ => return None,
+    };
+    // The function being called must be a path with 2+ segments: Type::method
+    if let syn::Expr::Path(p) = call_expr.func.as_ref() {
+        let segments = &p.path.segments;
+        if segments.len() >= 2 {
+            // Penultimate segment = type name, last segment = method
+            let type_seg = &segments[segments.len() - 2];
+            let type_name = type_seg.ident.to_string();
+            // Heuristic: type names start with uppercase
+            if type_name.starts_with(|c: char| c.is_uppercase()) {
+                return Some(type_name);
+            }
+        }
+    }
+    None
+}
+
 fn path_to_string(path: &syn::Path) -> String {
     path.segments.iter()
         .map(|s| s.ident.to_string())
@@ -1720,6 +1759,48 @@ mod tests {
         let fa = parse_and_analyze("fn main() { let x: u64 = 42; }");
         let x = fa.nodes.iter().find(|n| n.node_type == "VARIABLE" && n.name == "x").unwrap();
         assert_eq!(x.metadata.get("typeAnnotation"), Some(&serde_json::json!("u64")));
+    }
+
+    #[test]
+    fn test_type_inferred_from_constructor() {
+        let fa = parse_and_analyze("fn main() { let seg = NodeSegmentV2::open(path); }");
+        let seg = fa.nodes.iter().find(|n| n.node_type == "VARIABLE" && n.name == "seg").unwrap();
+        assert_eq!(seg.metadata.get("typeAnnotation"), Some(&serde_json::json!("NodeSegmentV2")));
+    }
+
+    #[test]
+    fn test_type_inferred_from_new() {
+        let fa = parse_and_analyze("fn main() { let m = HashMap::new(); }");
+        let m = fa.nodes.iter().find(|n| n.node_type == "VARIABLE" && n.name == "m").unwrap();
+        assert_eq!(m.metadata.get("typeAnnotation"), Some(&serde_json::json!("HashMap")));
+    }
+
+    #[test]
+    fn test_type_inferred_from_default() {
+        let fa = parse_and_analyze("fn main() { let v = Vec::with_capacity(10); }");
+        let v = fa.nodes.iter().find(|n| n.node_type == "VARIABLE" && n.name == "v").unwrap();
+        assert_eq!(v.metadata.get("typeAnnotation"), Some(&serde_json::json!("Vec")));
+    }
+
+    #[test]
+    fn test_type_not_inferred_from_plain_call() {
+        let fa = parse_and_analyze("fn main() { let x = foo(); }");
+        let x = fa.nodes.iter().find(|n| n.node_type == "VARIABLE" && n.name == "x").unwrap();
+        assert!(x.metadata.get("typeAnnotation").is_none());
+    }
+
+    #[test]
+    fn test_type_inferred_through_await() {
+        let fa = parse_and_analyze("async fn main() { let c = RfdbClient::connect(path).await; }");
+        let c = fa.nodes.iter().find(|n| n.node_type == "VARIABLE" && n.name == "c").unwrap();
+        assert_eq!(c.metadata.get("typeAnnotation"), Some(&serde_json::json!("RfdbClient")));
+    }
+
+    #[test]
+    fn test_type_inferred_through_try() {
+        let fa = parse_and_analyze("fn main() { let c = RfdbClient::connect(path)?; }");
+        let c = fa.nodes.iter().find(|n| n.node_type == "VARIABLE" && n.name == "c").unwrap();
+        assert_eq!(c.metadata.get("typeAnnotation"), Some(&serde_json::json!("RfdbClient")));
     }
 
     #[test]

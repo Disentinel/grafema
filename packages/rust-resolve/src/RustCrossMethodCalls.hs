@@ -26,6 +26,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Map.Strict as Map
 import Data.Map.Strict (Map)
+import System.IO (hPutStrLn, stderr)
 
 -- | Index of methods defined inside impl blocks: (typeName, methodName) → nodeId.
 type ImplMethodIndex = Map (Text, Text) Text
@@ -56,14 +57,20 @@ buildImplMethodIndex nodes =
 -- @"...no impl..."@ → @Nothing@
 extractImplType :: Text -> Maybe Text
 extractImplType sid =
-  case T.breakOn "IMPL_BLOCK->" sid of
-    (_, rest)
-      | T.null rest -> Nothing
-      | otherwise ->
-          let afterMarker = T.drop (T.length "IMPL_BLOCK->") rest
-              -- Take until ] or [ (whichever comes first)
-              typeName = T.takeWhile (\c -> c /= ']' && c /= '[') afterMarker
-          in if T.null typeName then Nothing else Just typeName
+  -- Try both URL-encoded (-%3E, %5B, %5D) and plain (->,[,]) formats
+  let marker1 = "IMPL_BLOCK->"
+      marker2 = "IMPL_BLOCK-%3E"
+      stopChars = [']', '[', '%']  -- % catches %5D/%5B in URL-encoded IDs
+      tryMarker m s = case T.breakOn m s of
+        (_, rest)
+          | T.null rest -> Nothing
+          | otherwise ->
+              let afterMarker = T.drop (T.length m) rest
+                  typeName = T.takeWhile (\c -> c `notElem` stopChars) afterMarker
+              in if T.null typeName then Nothing else Just typeName
+  in case tryMarker marker2 sid of  -- try URL-encoded first (more common)
+       Just t  -> Just t
+       Nothing -> tryMarker marker1 sid
 
 -- | Build variable type index from VARIABLE and PARAMETER nodes
 -- that have a typeAnnotation metadata field.
@@ -85,18 +92,17 @@ lookupTypeAnnotation meta =
     _                 -> Nothing
 
 -- | Resolve method calls using type information.
-resolveAll :: [GraphNode] -> [PluginCommand]
-resolveAll nodes =
+resolveAll :: [GraphNode] -> IO [PluginCommand]
+resolveAll nodes = do
   let implIdx = buildImplMethodIndex nodes
       varIdx  = buildVarTypeIndex nodes
-      -- Already-resolved CALL IDs (have outgoing CALLS edges)
-      -- Note: we can't check edges here — the resolver only sees nodes.
-      -- The orchestrator filters: we only get CALL nodes without CALLS edges
-      -- if they were excluded by the earlier same-file resolver.
-      -- Actually, all CALL nodes are passed regardless. We emit edges
-      -- and let the orchestrator deduplicate.
       callNodes = filter isMethodCall nodes
-  in concatMap (resolveOne implIdx varIdx) callNodes
+      results = concatMap (resolveOne implIdx varIdx) callNodes
+  hPutStrLn stderr $ "[rust-cross-methods] implIdx=" ++ show (Map.size implIdx)
+    ++ " varIdx=" ++ show (Map.size varIdx)
+    ++ " calls=" ++ show (length callNodes)
+    ++ " resolved=" ++ show (length results)
+  return results
 
 -- | Check if a node is a method call.
 isMethodCall :: GraphNode -> Bool
@@ -143,4 +149,5 @@ lookupReceiver meta =
 run :: IO ()
 run = do
   nodes <- readNodesFromStdin
-  writeCommandsToStdout (resolveAll nodes)
+  results <- resolveAll nodes
+  writeCommandsToStdout results

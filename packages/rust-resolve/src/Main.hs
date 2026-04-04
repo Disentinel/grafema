@@ -79,7 +79,7 @@ daemonLoop symbolDb = do
 dispatch :: SymbolDB -> Text -> [GraphNode] -> IO DaemonResponse
 dispatch _        "rust-imports" nodes = ResOk <$> RustImportResolution.resolveAll nodes
 dispatch _        "rust-calls"   nodes = ResOk <$> RustCallResolution.resolveAll nodes
-dispatch _        "rust-cross-methods" nodes = return $ ResOk (RustCrossMethodCalls.resolveAll nodes)
+dispatch _        "rust-cross-methods" nodes = ResOk <$> RustCrossMethodCalls.resolveAll nodes
 dispatch symbolDb "rust-globals" nodes = return $ ResOk (resolveAll rustStrategy symbolDb nodes)
 dispatch _        cmd            _     = return $ ResError ("unknown command: " ++ T.unpack cmd)
 
