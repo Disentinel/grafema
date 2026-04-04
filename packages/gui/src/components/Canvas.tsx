@@ -5,6 +5,7 @@ import { HexLayer } from '../three/HexLayer';
 import { RegionLayer } from '../three/RegionLayer';
 import { FlowLayer } from '../three/FlowLayer';
 import { RouteLayer } from '../three/RouteLayer';
+import { RouteLabels } from './RouteLabels';
 import { Labels } from './Labels';
 import { CoordGrid } from './CoordGrid';
 import { useDataStore } from '../store/dataStore';
@@ -65,6 +66,7 @@ export function Canvas() {
   const flowLayerLocalRef = useRef<FlowLayer | null>(null);
   const routeLayerRef = useRef<RouteLayer | null>(null);
   const [sm, setSm] = useState<SceneManager | null>(null);
+  const [routeLayerState, setRouteLayerState] = useState<RouteLayer | null>(null);
 
   const nodes = useDataStore((s) => s.nodes);
   const edges = useDataStore((s) => s.edges);
@@ -125,15 +127,26 @@ export function Canvas() {
     // --- Routes ---
     if (routeLayerRef.current) routeLayerRef.current.dispose();
     const routeLayer = new RouteLayer(sm.scene);
-    // Initial build from current routes
-    routeLayer.update(useRouteStore.getState().routes, nodes);
-    sm.onRender((dt) => routeLayer.tick(dt));
     routeLayerRef.current = routeLayer;
+    setRouteLayerState(routeLayer);
 
-    // Subscribe to route changes
-    const unsubRoutes = useRouteStore.subscribe(() => {
+    // Elevate route nodes + rebuild on route changes
+    function applyRoutes() {
       routeLayer.update(useRouteStore.getState().routes, nodes);
-    });
+      // Elevate nodes in visible routes, reset others
+      for (let i = 0; i < nodes.length; i++) {
+        if (routeLayer.activeNodeIndices.has(i)) {
+          layer.setProperty(i, 'elevation', 1.5);
+          layer.setProperty(i, 'outlineWidth', 0.1);
+          layer.setOutlineColor(i, 0xffffff);
+        } else {
+          // Don't override click-selection elevation
+        }
+      }
+    }
+    applyRoutes();
+    sm.onRender((dt) => routeLayer.tick(dt));
+    const unsubRoutes = useRouteStore.subscribe(applyRoutes);
 
     // --- Interaction: hover = light outline, click = elevate + dim ---
     // Build per-flow adjacency: edge type → flow name lookup
@@ -283,6 +296,7 @@ export function Canvas() {
     <div ref={containerRef} className="canvas-container">
       <Labels sceneManager={sm} />
       <CoordGrid sceneManager={sm} visible={showCoords} />
+      <RouteLabels sceneManager={sm} routeLayer={routeLayerState} />
       {tooltip && (
         <div className="node-tooltip" style={{ left: tooltip.x + 14, top: tooltip.y - 10 }}>
           <div className="tt-type">{tooltip.type}</div>
