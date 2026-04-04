@@ -11,6 +11,7 @@ interface LabelCandidate {
   priority: number;
   fontSize: number;
   minDist: number; // appear when camera closer than this
+  mandatory: boolean; // always visible (region/service labels)
 }
 
 /**
@@ -32,37 +33,31 @@ export function Labels({ sceneManager }: { sceneManager: SceneManager | null }) 
     // Build label candidates once
     const candidates: LabelCandidate[] = [];
 
-    // Regions that have a SERVICE node — skip region label (SERVICE label replaces it)
-    const regionsWithService = new Set<string>();
+    // One label per region — use SERVICE name if available, else region path
+    const serviceByRegion = new Map<string, typeof nodes[0]>();
     for (const node of nodes) {
-      if (node.type === 'SERVICE') regionsWithService.add(node.region);
+      if (node.type === 'SERVICE') serviceByRegion.set(node.region, node);
     }
 
     for (const region of regions) {
-      if (regionsWithService.has(region.path)) continue; // SERVICE label replaces region
+      const svc = serviceByRegion.get(region.path);
       candidates.push({
         key: `r:${region.path}`,
-        text: region.path,
+        text: svc ? svc.name : region.path,
         worldX: region.centroid.x,
         worldZ: region.centroid.z,
-        priority: 1000 + region.tileCount,
+        priority: 2000 + region.tileCount,
         fontSize: 13,
         minDist: 500,
+        mandatory: true, // always visible
       });
     }
 
     for (const node of nodes) {
-      if (node.type === 'SERVICE') {
-        candidates.push({
-          key: `n:${node.id}`,
-          text: node.name,
-          worldX: node.x,
-          worldZ: node.z,
-          priority: 1500 + node.degree, // higher than region labels
-          fontSize: 13,
-          minDist: 500,
-        });
-      } else if (node.type === 'MODULE' || node.type === 'CLASS') {
+      // Skip SERVICE — already shown as region label
+      if (node.type === 'SERVICE') continue;
+
+      if (node.type === 'MODULE' || node.type === 'CLASS' || node.type === 'INTERFACE') {
         candidates.push({
           key: `n:${node.id}`,
           text: node.name,
@@ -71,6 +66,7 @@ export function Labels({ sceneManager }: { sceneManager: SceneManager | null }) 
           priority: 100 + node.degree,
           fontSize: 10,
           minDist: 60,
+          mandatory: false,
         });
       } else if (node.type === 'FUNCTION' || node.type === 'METHOD') {
         candidates.push({
@@ -81,6 +77,7 @@ export function Labels({ sceneManager }: { sceneManager: SceneManager | null }) 
           priority: 10 + node.degree,
           fontSize: 9,
           minDist: 35,
+          mandatory: false,
         });
       }
     }
@@ -128,8 +125,8 @@ export function Labels({ sceneManager }: { sceneManager: SceneManager | null }) 
         vec.set(c.worldX, 0, c.worldZ);
         vec.project(camera);
 
-        const sx = (vec.x * 0.5 + 0.5) * w;
-        const sy = (-vec.y * 0.5 + 0.5) * h;
+        let sx = (vec.x * 0.5 + 0.5) * w;
+        let sy = (-vec.y * 0.5 + 0.5) * h;
 
         // Off-screen or behind camera
         if (vec.z > 1 || sx < -80 || sx > w + 80 || sy < -30 || sy > h + 30) {
@@ -137,12 +134,12 @@ export function Labels({ sceneManager }: { sceneManager: SceneManager | null }) 
           continue;
         }
 
-        // Estimate bounding box with padding to prevent crowding
-        const PAD = 6;
-        const estW = c.text.length * c.fontSize * 0.55 + PAD * 2;
-        const estH = c.fontSize * 1.4 + PAD * 2;
-        const rx = sx - estW / 2;
-        const ry = sy - estH / 2 - 10; // offset above tile
+        const PAD = 4;
+        let fontSize = c.fontSize;
+        const estW = c.text.length * fontSize * 0.55 + PAD * 2;
+        const estH = fontSize * 1.4 + PAD * 2;
+        let rx = sx - estW / 2;
+        let ry = sy - estH / 2 - 10;
 
         // Check overlap
         let overlaps = false;
@@ -154,6 +151,31 @@ export function Labels({ sceneManager }: { sceneManager: SceneManager | null }) 
           }
         }
 
+        if (overlaps && c.mandatory) {
+          // Mandatory: try nudging downward, then reduce font
+          for (const nudge of [20, -20, 35, -35]) {
+            ry = sy - estH / 2 - 10 + nudge;
+            rx = sx - estW / 2;
+            let nudgeOverlaps = false;
+            for (const p of placed) {
+              if (rx < p.x + p.w && rx + estW > p.x && ry < p.y + p.h && ry + estH > p.y) {
+                nudgeOverlaps = true;
+                break;
+              }
+            }
+            if (!nudgeOverlaps) {
+              overlaps = false;
+              sy += nudge;
+              break;
+            }
+          }
+          if (overlaps) {
+            // Still overlapping — show with smaller font
+            fontSize = 10;
+            overlaps = false;
+          }
+        }
+
         if (overlaps) {
           el.style.display = 'none';
           continue;
@@ -161,8 +183,8 @@ export function Labels({ sceneManager }: { sceneManager: SceneManager | null }) 
 
         placed.push({ x: rx, y: ry, w: estW, h: estH });
 
-        // Position directly via transform (no layout thrash)
         el.style.display = '';
+        el.style.fontSize = fontSize + 'px';
         el.style.transform = `translate(${sx}px, ${sy - 8}px) translate(-50%, -100%)`;
         el.style.opacity = String(Math.min(1, 2 - dist / c.minDist));
       }
