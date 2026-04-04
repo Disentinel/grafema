@@ -218,8 +218,14 @@ export class HexLayer {
     this._outlineColorAttr.needsUpdate = true;
   }
 
-  /** Animate a scalar property to target over duration (ms) */
+  /** Animate a scalar property to target over duration (ms). Cancels any existing tween for same (index, prop). */
   animateTo(i: number, prop: 'opacity' | 'elevation' | 'scale' | 'outlineWidth', to: number, duration: number) {
+    // Cancel existing tween for this (index, prop)
+    for (let t = this._tweens.length - 1; t >= 0; t--) {
+      if (this._tweens[t].index === i && this._tweens[t].prop === prop) {
+        this._tweens.splice(t, 1);
+      }
+    }
     const arr = this._getArray(prop);
     this._tweens.push({ index: i, prop, from: arr[i], to, elapsed: 0, duration: duration / 1000 });
   }

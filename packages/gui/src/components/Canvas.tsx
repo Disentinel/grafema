@@ -179,30 +179,28 @@ export function Canvas() {
         return;
       }
 
-      // Clear previous selection
-      clearSelection();
-
+      // Clear previous selection, then set new (order matters for tween override)
+      const prevSelected = selectedIdx;
+      const prevConnected = new Set(selectedConnected);
       selectedIdx = clickIdx;
       const connected = new Set(adjList.get(clickIdx) ?? []);
       selectedConnected = connected;
 
-      // Elevate + glow selected node
-      layer.animateTo(clickIdx, 'elevation', 2.0, 300);
-      layer.animateTo(clickIdx, 'outlineWidth', 0.2, 200);
-      layer.setOutlineColor(clickIdx, 0x00e5ff);
-
-      // Elevate + glow connected nodes
-      for (const ci of connected) {
-        layer.animateTo(ci, 'elevation', 1.0, 350);
-        layer.animateTo(ci, 'outlineWidth', 0.12, 250);
-        layer.setOutlineColor(ci, 0x00aacc);
-      }
-
-      // Dim unconnected
+      // Apply all at once: selected + connected = elevate, rest = dim
       for (let i = 0; i < nodes.length; i++) {
-        if (i === clickIdx || connected.has(i)) {
+        if (i === clickIdx) {
+          layer.animateTo(i, 'elevation', 2.0, 300);
+          layer.animateTo(i, 'outlineWidth', 0.2, 200);
+          layer.setOutlineColor(i, 0x00e5ff);
+          layer.animateTo(i, 'opacity', 1.0, 200);
+        } else if (connected.has(i)) {
+          layer.animateTo(i, 'elevation', 1.0, 350);
+          layer.animateTo(i, 'outlineWidth', 0.12, 250);
+          layer.setOutlineColor(i, 0x00aacc);
           layer.animateTo(i, 'opacity', 1.0, 200);
         } else {
+          layer.animateTo(i, 'elevation', 0, 300);
+          layer.animateTo(i, 'outlineWidth', 0, 200);
           layer.animateTo(i, 'opacity', 0.25, 200);
         }
       }
