@@ -58,6 +58,7 @@ export function Canvas() {
   const hexLayerRef = useRef<HexLayer | null>(null);
   const [showCoords, setShowCoords] = useState(false);
   setShowCoordsRef = setShowCoords;
+  const [tooltip, setTooltip] = useState<{ x: number; y: number; name: string; type: string; region: string; edges: string[] } | null>(null);
   const regionLayerRef = useRef<RegionLayer | null>(null);
   const flowLayerLocalRef = useRef<FlowLayer | null>(null);
   const [sm, setSm] = useState<SceneManager | null>(null);
@@ -190,6 +191,7 @@ export function Canvas() {
       // Click same node or empty → deselect
       if (clickIdx === selectedIdx || clickIdx < 0) {
         clearSelection();
+        setTooltip(null);
         return;
       }
 
@@ -223,6 +225,24 @@ export function Canvas() {
       const activeSet = new Set(connected);
       activeSet.add(clickIdx);
       flowLayer.highlightEdges(activeSet);
+
+      // Show tooltip with node info + edge types
+      const edgeInfo = flowLayer.getConnectedEdgeInfo(clickIdx);
+      const edgeLabels = edgeInfo.map((ei) => {
+        const otherIdx = ei.srcIdx === clickIdx ? ei.dstIdx : ei.srcIdx;
+        const otherNode = nodes[otherIdx];
+        const dir = ei.srcIdx === clickIdx ? '→' : '←';
+        return `${ei.edgeType} ${dir} ${otherNode?.name ?? '?'}`;
+      });
+      const rect = containerRef.current!.getBoundingClientRect();
+      setTooltip({
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top,
+        name: nodes[clickIdx].name,
+        type: nodes[clickIdx].type,
+        region: nodes[clickIdx].region,
+        edges: edgeLabels,
+      });
     };
 
     sm.renderer.domElement.addEventListener('mousemove', onMouseMove);
@@ -246,6 +266,18 @@ export function Canvas() {
     <div ref={containerRef} className="canvas-container">
       <Labels sceneManager={sm} />
       <CoordGrid sceneManager={sm} visible={showCoords} />
+      {tooltip && (
+        <div className="node-tooltip" style={{ left: tooltip.x + 14, top: tooltip.y - 10 }}>
+          <div className="tt-type">{tooltip.type}</div>
+          <div className="tt-name">{tooltip.name}</div>
+          <div className="tt-region">{tooltip.region}</div>
+          {tooltip.edges.length > 0 && (
+            <div className="tt-edges">
+              {tooltip.edges.map((e, i) => <div key={i}>{e}</div>)}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

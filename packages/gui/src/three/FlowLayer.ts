@@ -6,10 +6,11 @@ const CURVE_SEGMENTS = 16;
 const BASE_Y = 0.3;
 
 interface EdgeBinding {
-  line: THREE.Line;
+  line: THREE.Mesh; // TubeGeometry mesh
   arrow: THREE.Mesh;
   srcIdx: number;
   dstIdx: number;
+  edgeType: string;
   /** Midpoint lift amount */
   lift: number;
   srcWorld: { x: number; z: number };
@@ -110,11 +111,10 @@ export class FlowLayer {
       );
 
       const points = curve.getPoints(CURVE_SEGMENTS);
-      const posAttr = b.line.geometry.getAttribute('position') as THREE.BufferAttribute;
-      for (let i = 0; i < points.length && i < posAttr.count; i++) {
-        posAttr.setXYZ(i, points[i].x, points[i].y, points[i].z);
-      }
-      posAttr.needsUpdate = true;
+      // Rebuild tube geometry (can't update TubeGeometry positions in-place)
+      b.line.geometry.dispose();
+      const tubePath = new THREE.CatmullRomCurve3(points);
+      b.line.geometry = new THREE.TubeGeometry(tubePath, CURVE_SEGMENTS, 0.15, 4, false);
 
       // Arrow
       const last = points[points.length - 1];
@@ -131,7 +131,7 @@ export class FlowLayer {
   highlightEdges(activeNodes: Set<number> | null) {
     for (const b of this._bindings) {
       if (!b.line.parent?.visible) continue;
-      const lineMat = b.line.material as THREE.LineBasicMaterial;
+      const lineMat = b.line.material as THREE.MeshBasicMaterial;
       const arrowMat = b.arrow.material as THREE.MeshBasicMaterial;
 
       if (!activeNodes) {
@@ -148,6 +148,21 @@ export class FlowLayer {
         arrowMat.opacity = 0.06;
       }
     }
+  }
+
+  /**
+   * Get edge info for edges connected to a node (for tooltip display).
+   * Returns only edges from visible flows.
+   */
+  getConnectedEdgeInfo(nodeIdx: number): { srcIdx: number; dstIdx: number; edgeType: string }[] {
+    const result: { srcIdx: number; dstIdx: number; edgeType: string }[] = [];
+    for (const b of this._bindings) {
+      if (!b.line.parent?.visible) continue;
+      if (b.srcIdx === nodeIdx || b.dstIdx === nodeIdx) {
+        result.push({ srcIdx: b.srcIdx, dstIdx: b.dstIdx, edgeType: b.edgeType });
+      }
+    }
+    return result;
   }
 
   setFlowVisible(flowName: string, visible: boolean) {
@@ -178,21 +193,25 @@ export class FlowLayer {
       );
 
       const points = curve.getPoints(CURVE_SEGMENTS);
-      const geo = new THREE.BufferGeometry().setFromPoints(points);
-      const mat = new THREE.LineBasicMaterial({
+
+      // Thick tube instead of thin line
+      const tubePath = new THREE.CatmullRomCurve3(points);
+      const tubeGeo = new THREE.TubeGeometry(tubePath, CURVE_SEGMENTS, 0.15, 4, false);
+      const tubeMat = new THREE.MeshBasicMaterial({
         color,
         transparent: true,
         opacity: 0.6,
         depthWrite: false,
+        depthTest: false, // always visible, never hidden by tiles
       });
-      const line = new THREE.Line(geo, mat);
+      const line = new THREE.Mesh(tubeGeo, tubeMat);
       group.add(line);
 
-      // Arrow
+      // Small arrow head
       const lastSeg = points[points.length - 1].clone().sub(points[points.length - 2]).normalize();
-      const arrowGeo = new THREE.ConeGeometry(0.3, 1.0, 4);
+      const arrowGeo = new THREE.ConeGeometry(0.2, 0.5, 4);
       arrowGeo.rotateX(Math.PI / 2);
-      const arrowMat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.7 });
+      const arrowMat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.7, depthTest: false });
       const arrow = new THREE.Mesh(arrowGeo, arrowMat);
       arrow.position.copy(points[points.length - 1]);
       arrow.lookAt(points[points.length - 1].clone().add(lastSeg));
@@ -203,6 +222,7 @@ export class FlowLayer {
         arrow,
         srcIdx: edge.source,
         dstIdx: edge.target,
+        edgeType: edge.type,
         lift,
         srcWorld: { x: src.x, z: src.z },
         dstWorld: { x: dst.x, z: dst.z },
