@@ -156,6 +156,7 @@ export function Canvas() {
         layer.animateTo(i, 'outlineWidth', 0, 200);
         layer.animateTo(i, 'opacity', 1.0, 200);
       }
+      flowLayer.highlightEdges(null); // reset edge opacity
       selectedIdx = -1;
       selectedConnected.clear();
     }
@@ -217,6 +218,11 @@ export function Canvas() {
           layer.animateTo(i, 'opacity', 0.25, 200);
         }
       }
+
+      // Dim edges not connected to selection
+      const activeSet = new Set(connected);
+      activeSet.add(clickIdx);
+      flowLayer.highlightEdges(activeSet);
     };
 
     sm.renderer.domElement.addEventListener('mousemove', onMouseMove);

@@ -124,6 +124,32 @@ export class FlowLayer {
     }
   }
 
+  /**
+   * Highlight edges connected to a set of nodes, dim the rest.
+   * Pass null to reset all edges to full opacity.
+   */
+  highlightEdges(activeNodes: Set<number> | null) {
+    for (const b of this._bindings) {
+      if (!b.line.parent?.visible) continue;
+      const lineMat = b.line.material as THREE.LineBasicMaterial;
+      const arrowMat = b.arrow.material as THREE.MeshBasicMaterial;
+
+      if (!activeNodes) {
+        // Reset
+        lineMat.opacity = 0.6;
+        arrowMat.opacity = 0.7;
+      } else if (activeNodes.has(b.srcIdx) || activeNodes.has(b.dstIdx)) {
+        // Connected to active — bright
+        lineMat.opacity = 0.9;
+        arrowMat.opacity = 1.0;
+      } else {
+        // Not connected — dim
+        lineMat.opacity = 0.06;
+        arrowMat.opacity = 0.06;
+      }
+    }
+  }
+
   setFlowVisible(flowName: string, visible: boolean) {
     const group = this._flowGroups.get(flowName);
     if (group) group.visible = visible;
