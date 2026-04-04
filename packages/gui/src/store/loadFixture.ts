@@ -69,13 +69,14 @@ export async function loadFixture() {
   // Run simulated annealing on code nodes only
   const { tileCoords } = annealingLayout(layoutNodes, layoutEdges, regionNames);
 
-  // Build GraphNode[] with world positions (using ORIGINAL indices)
+  // Build dense GraphNode[] using layout indices (0..N-1, no gaps)
   const nodes: GraphNode[] = [];
-  for (const [li, tile] of tileCoords) {
-    const oi = layoutToOld.get(li)!;
-    const fn = allNodes[oi];
+  for (let li = 0; li < layoutNodes.length; li++) {
+    const tile = tileCoords.get(li);
+    if (!tile) continue;
+    const fn = layoutNodes[li];
     const { x, z } = cubeToWorld(tile.q, tile.r, TILE_SIZE);
-    nodes[oi] = {
+    nodes[li] = {
       id: fn.id,
       type: fn.type,
       name: fn.name,
@@ -87,23 +88,14 @@ export async function loadFixture() {
     };
   }
 
-  // Edges use original indices (Canvas reads from fixture data)
-  // But we need to filter edges for Canvas too — only code-node edges
-  const edges: GraphEdge[] = (data.edges as GraphEdge[]).filter(
-    (e) => oldToLayout.has(e.source) && oldToLayout.has(e.target),
-  );
+  // Edges already use layout indices (remapped above)
+  const edges = layoutEdges;
 
-  const typeSet = new Set(data.nodes.map((n: { type: string }) => n.type));
-  const edgeTypeSet = new Set(data.edges.map((e: { type: string }) => e.type));
+  const typeSet = new Set(layoutNodes.map((n) => n.type));
+  const edgeTypeSet = new Set(edges.map((e) => e.type));
   const regions = buildRegions(data.regions, nodes);
 
-  // Remap tileCoords from layout indices to original indices
-  const originalTileCoords = new Map<number, { q: number; r: number }>();
-  for (const [li, coord] of tileCoords) {
-    const oi = layoutToOld.get(li);
-    if (oi !== undefined) originalTileCoords.set(oi, coord);
-  }
-  (globalThis as Record<string, unknown>).__grafemaTileCoords = originalTileCoords;
+  (globalThis as Record<string, unknown>).__grafemaTileCoords = tileCoords;
   (globalThis as Record<string, unknown>).__grafemaTileSize = TILE_SIZE;
 
   store.setGraphData({
