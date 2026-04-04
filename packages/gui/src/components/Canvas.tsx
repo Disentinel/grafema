@@ -4,11 +4,13 @@ import { SceneManager } from '../three/SceneManager';
 import { HexLayer } from '../three/HexLayer';
 import { RegionLayer } from '../three/RegionLayer';
 import { FlowLayer } from '../three/FlowLayer';
+import { RouteLayer } from '../three/RouteLayer';
 import { Labels } from './Labels';
 import { CoordGrid } from './CoordGrid';
 import { useDataStore } from '../store/dataStore';
 import { useMapStore } from '../store/mapStore';
 import { useViewStore } from '../store/viewStore';
+import { useRouteStore } from '../store/routeStore';
 import { FLOWS } from '../config/flows';
 
 /**
@@ -61,6 +63,7 @@ export function Canvas() {
   const [tooltip, setTooltip] = useState<{ x: number; y: number; name: string; type: string; region: string; edges: string[] } | null>(null);
   const regionLayerRef = useRef<RegionLayer | null>(null);
   const flowLayerLocalRef = useRef<FlowLayer | null>(null);
+  const routeLayerRef = useRef<RouteLayer | null>(null);
   const [sm, setSm] = useState<SceneManager | null>(null);
 
   const nodes = useDataStore((s) => s.nodes);
@@ -118,6 +121,19 @@ export function Canvas() {
     sm.onRender(() => flowLayer.tick());
     flowLayerLocalRef.current = flowLayer;
     flowLayerRef = flowLayer; // expose to sidebar
+
+    // --- Routes ---
+    if (routeLayerRef.current) routeLayerRef.current.dispose();
+    const routeLayer = new RouteLayer(sm.scene);
+    // Initial build from current routes
+    routeLayer.update(useRouteStore.getState().routes, nodes);
+    sm.onRender((dt) => routeLayer.tick(dt));
+    routeLayerRef.current = routeLayer;
+
+    // Subscribe to route changes
+    const unsubRoutes = useRouteStore.subscribe(() => {
+      routeLayer.update(useRouteStore.getState().routes, nodes);
+    });
 
     // --- Interaction: hover = light outline, click = elevate + dim ---
     // Build per-flow adjacency: edge type → flow name lookup
@@ -259,6 +275,7 @@ export function Canvas() {
     return () => {
       sm.renderer.domElement.removeEventListener('mousemove', onMouseMove);
       sm.renderer.domElement.removeEventListener('click', onClick);
+      unsubRoutes();
     };
   }, [loaded, nodes, edges, regions]);
 

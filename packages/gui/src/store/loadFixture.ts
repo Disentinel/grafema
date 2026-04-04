@@ -1,4 +1,5 @@
 import { useDataStore, type GraphNode, type GraphEdge, type Region } from './dataStore';
+import { useRouteStore, type Route } from './routeStore';
 import { annealingLayout, type LayoutNode } from './hexLayout';
 
 export function cubeToWorld(q: number, r: number, size: number) {
@@ -106,4 +107,26 @@ export async function loadFixture() {
     typeTable: [...typeSet] as string[],
     edgeTypeTable: [...edgeTypeSet] as string[],
   });
+
+  // Load routes — resolve node IDs to layout indices
+  if (data.routes) {
+    const idToLayoutIdx = new Map<string, number>();
+    for (let li = 0; li < layoutNodes.length; li++) {
+      idToLayoutIdx.set(layoutNodes[li].id, li);
+    }
+
+    const routes: Route[] = data.routes
+      .map((r: { id: string; label: string; color: string; nodeIds: string[] }) => ({
+        id: r.id,
+        label: r.label,
+        color: r.color,
+        nodeIndices: r.nodeIds
+          .map((nid: string) => idToLayoutIdx.get(nid))
+          .filter((idx: number | undefined): idx is number => idx !== undefined),
+        visible: true,
+      }))
+      .filter((r: Route) => r.nodeIndices.length >= 2);
+
+    useRouteStore.getState().setRoutes(routes);
+  }
 }
