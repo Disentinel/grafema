@@ -32,14 +32,21 @@ export function Labels({ sceneManager }: { sceneManager: SceneManager | null }) 
     // Build label candidates once
     const candidates: LabelCandidate[] = [];
 
+    // Regions that have a SERVICE node — skip region label (SERVICE label replaces it)
+    const regionsWithService = new Set<string>();
+    for (const node of nodes) {
+      if (node.type === 'SERVICE') regionsWithService.add(node.region);
+    }
+
     for (const region of regions) {
+      if (regionsWithService.has(region.path)) continue; // SERVICE label replaces region
       candidates.push({
         key: `r:${region.path}`,
         text: region.path,
         worldX: region.centroid.x,
         worldZ: region.centroid.z,
         priority: 1000 + region.tileCount,
-        fontSize: 14,
+        fontSize: 13,
         minDist: 500,
       });
     }
@@ -51,9 +58,9 @@ export function Labels({ sceneManager }: { sceneManager: SceneManager | null }) 
           text: node.name,
           worldX: node.x,
           worldZ: node.z,
-          priority: 500 + node.degree,
-          fontSize: 12,
-          minDist: 200,
+          priority: 1500 + node.degree, // higher than region labels
+          fontSize: 13,
+          minDist: 500,
         });
       } else if (node.type === 'MODULE' || node.type === 'CLASS') {
         candidates.push({
@@ -63,7 +70,7 @@ export function Labels({ sceneManager }: { sceneManager: SceneManager | null }) 
           worldZ: node.z,
           priority: 100 + node.degree,
           fontSize: 10,
-          minDist: 80,
+          minDist: 60,
         });
       } else if (node.type === 'FUNCTION' || node.type === 'METHOD') {
         candidates.push({
@@ -73,7 +80,7 @@ export function Labels({ sceneManager }: { sceneManager: SceneManager | null }) 
           worldZ: node.z,
           priority: 10 + node.degree,
           fontSize: 9,
-          minDist: 40,
+          minDist: 35,
         });
       }
     }
@@ -130,11 +137,12 @@ export function Labels({ sceneManager }: { sceneManager: SceneManager | null }) 
           continue;
         }
 
-        // Estimate bounding box
-        const estW = c.text.length * c.fontSize * 0.55;
-        const estH = c.fontSize * 1.4;
+        // Estimate bounding box with padding to prevent crowding
+        const PAD = 6;
+        const estW = c.text.length * c.fontSize * 0.55 + PAD * 2;
+        const estH = c.fontSize * 1.4 + PAD * 2;
         const rx = sx - estW / 2;
-        const ry = sy - estH / 2 - 8; // offset above tile
+        const ry = sy - estH / 2 - 10; // offset above tile
 
         // Check overlap
         let overlaps = false;
