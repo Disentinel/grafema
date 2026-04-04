@@ -212,7 +212,7 @@ function floodFillLayout(
     if (!anyChanged) break;
   }
 
-  // --- 4. Assign nodes to tiles, then optimize placement ---
+  // --- 4. Initial placement + global swap optimization ---
   const regionTiles = new Map<string, { q: number; r: number }[]>();
   for (const [k, region] of claimed) {
     const [q, r] = k.split(',').map(Number);
@@ -220,151 +220,213 @@ function floodFillLayout(
     regionTiles.get(region)!.push({ q, r });
   }
 
-  // Initial assignment: nodes with cross-region edges go near the border,
-  // others fill from center outward
-  const result: GraphNode[] = [];
+  // nodeIdx → tile coord (mutable, globally accessible)
   const tileCoords = new Map<number, { q: number; r: number }>();
+  // tileKey → nodeIdx (reverse map for swap validation)
+  const tileOwner = new Map<string, number>();
 
-  // Build per-node target: average position of cross-region neighbors
-  const nodeTarget = new Map<number, { q: number; r: number }>();
-  for (const edge of edges) {
-    const r1 = fixtureNodes[edge.source]?.region;
-    const r2 = fixtureNodes[edge.target]?.region;
-    if (!r1 || !r2 || r1 === r2) continue;
-    // For source: target is in r2's seed direction
-    const targetSeed = seeds.get(r2);
-    if (targetSeed) {
-      const prev = nodeTarget.get(edge.source) ?? { q: 0, r: 0 };
-      nodeTarget.set(edge.source, { q: prev.q + targetSeed.q, r: prev.r + targetSeed.r });
-    }
-    const srcSeed = seeds.get(r1);
-    if (srcSeed) {
-      const prev = nodeTarget.get(edge.target) ?? { q: 0, r: 0 };
-      nodeTarget.set(edge.target, { q: prev.q + srcSeed.q, r: prev.r + srcSeed.r });
-    }
-  }
-
+  // --- Phase A: initial placement for ALL regions ---
   for (const region of regionNames) {
     const indices = regionNodeIndices.get(region) ?? [];
     const tiles = regionTiles.get(region) ?? [];
     if (indices.length === 0 || tiles.length === 0) continue;
 
     const seed = seeds.get(region) ?? { q: 0, r: 0 };
+    const sortedTiles = [...tiles].sort((a, b) => cubeDistance(a, seed) - cubeDistance(b, seed));
 
-    // Initial: sort nodes by whether they have cross-region edges
-    // Those with targets get placed near their target, rest from center
-    const withTarget: number[] = [];
-    const withoutTarget: number[] = [];
-    for (const ni of indices) {
-      if (nodeTarget.has(ni)) withTarget.push(ni);
-      else withoutTarget.push(ni);
+    // Sort nodes by degree desc (high-degree near center)
+    const sortedIndices = [...indices].sort((a, b) =>
+      fixtureNodes[b].degree - fixtureNodes[a].degree,
+    );
+
+    for (let j = 0; j < sortedIndices.length && j < sortedTiles.length; j++) {
+      const ni = sortedIndices[j];
+      const tile = sortedTiles[j];
+      tileCoords.set(ni, tile);
+      tileOwner.set(tileKey(tile.q, tile.r), ni);
     }
+  }
 
-    // Sort tiles by distance from seed
-    const sortedTiles = [...tiles];
-    sortedTiles.sort((a, b) => cubeDistance(a, seed) - cubeDistance(b, seed));
+  // --- Phase B: swap optimization across ALL edges ---
+  // For each region, try swapping node pairs to minimize total edge length.
+  // Now tileCoords is fully populated so cross-region edges are measurable.
 
-    // Assign nodes with targets: find tile closest to their target
-    const usedTiles = new Set<number>();
-    const assignment = new Map<number, number>(); // nodeIdx → tileIdx in sortedTiles
+  function edgeCost(nodeA: number, nodeB: number): number {
+    const cA = tileCoords.get(nodeA);
+    const cB = tileCoords.get(nodeB);
+    if (!cA || !cB) return 0;
+    return cubeDistance(cA, cB);
+  }
 
-    for (const ni of withTarget) {
-      const target = nodeTarget.get(ni)!;
-      let bestTileIdx = -1;
-      let bestDist = Infinity;
-      for (let t = 0; t < sortedTiles.length; t++) {
-        if (usedTiles.has(t)) continue;
-        const d = cubeDistance(sortedTiles[t], target);
-        if (d < bestDist) { bestDist = d; bestTileIdx = t; }
-      }
-      if (bestTileIdx >= 0) {
-        assignment.set(ni, bestTileIdx);
-        usedTiles.add(bestTileIdx);
-      }
+  // Precompute per-node edge list for fast cost calculation
+  const nodeEdges = new Map<number, number[]>(); // nodeIdx → list of other nodeIdx
+  for (const edge of edges) {
+    if (!nodeEdges.has(edge.source)) nodeEdges.set(edge.source, []);
+    if (!nodeEdges.has(edge.target)) nodeEdges.set(edge.target, []);
+    nodeEdges.get(edge.source)!.push(edge.target);
+    nodeEdges.get(edge.target)!.push(edge.source);
+  }
+
+  // Cost of a single node at its current position
+  function nodeCost(ni: number): number {
+    let cost = 0;
+    for (const other of (nodeEdges.get(ni) ?? [])) {
+      cost += edgeCost(ni, other);
     }
+    return cost;
+  }
 
-    // Fill remaining from center
-    withoutTarget.sort((a, b) => fixtureNodes[b].degree - fixtureNodes[a].degree);
-    for (const ni of withoutTarget) {
-      for (let t = 0; t < sortedTiles.length; t++) {
-        if (!usedTiles.has(t)) {
-          assignment.set(ni, t);
-          usedTiles.add(t);
-          break;
-        }
-      }
-    }
+  // Swap two nodes (same region only) if it reduces total cost
+  for (const region of regionNames) {
+    const indices = regionNodeIndices.get(region) ?? [];
+    if (indices.length < 2) continue;
 
-    // --- Swap optimization: minimize total edge length ---
-    // For each pair of nodes in this region, try swapping tiles.
-    // Accept if total edge length decreases. Repeat until stable.
-    const regionIndices = [...assignment.keys()];
-
-    function totalEdgeLength(): number {
-      let total = 0;
-      for (const edge of edges) {
-        const tA = assignment.get(edge.source);
-        const tB = assignment.get(edge.target);
-        if (tA === undefined || tB === undefined) {
-          // Cross-region: use actual tile positions
-          const cA = tA !== undefined ? sortedTiles[tA] : tileCoords.get(edge.source);
-          const cB = tB !== undefined ? sortedTiles[tB] : tileCoords.get(edge.target);
-          if (cA && cB) total += cubeDistance(cA, cB);
-          continue;
-        }
-        total += cubeDistance(sortedTiles[tA], sortedTiles[tB]);
-      }
-      return total;
-    }
-
-    // Simple iterative improvement (fast for small regions)
-    for (let pass = 0; pass < 5; pass++) {
+    for (let pass = 0; pass < 10; pass++) {
       let improved = false;
-      for (let i = 0; i < regionIndices.length; i++) {
-        for (let j = i + 1; j < regionIndices.length; j++) {
-          const ni = regionIndices[i];
-          const nj = regionIndices[j];
-          const ti = assignment.get(ni)!;
-          const tj = assignment.get(nj)!;
 
-          // Try swap
-          assignment.set(ni, tj);
-          assignment.set(nj, ti);
-          const afterLen = totalEdgeLength();
+      for (let i = 0; i < indices.length; i++) {
+        for (let j = i + 1; j < indices.length; j++) {
+          const ni = indices[i];
+          const nj = indices[j];
+          const ci = tileCoords.get(ni)!;
+          const cj = tileCoords.get(nj)!;
 
-          // Revert
-          assignment.set(ni, ti);
-          assignment.set(nj, tj);
-          const beforeLen = totalEdgeLength();
+          // Cost before swap (only edges touching ni or nj)
+          const costBefore = nodeCost(ni) + nodeCost(nj);
 
-          if (afterLen < beforeLen) {
-            assignment.set(ni, tj);
-            assignment.set(nj, ti);
+          // Swap
+          tileCoords.set(ni, cj);
+          tileCoords.set(nj, ci);
+
+          const costAfter = nodeCost(ni) + nodeCost(nj);
+
+          if (costAfter < costBefore) {
+            // Keep swap
+            tileOwner.set(tileKey(cj.q, cj.r), ni);
+            tileOwner.set(tileKey(ci.q, ci.r), nj);
             improved = true;
+          } else {
+            // Revert
+            tileCoords.set(ni, ci);
+            tileCoords.set(nj, cj);
           }
         }
       }
+
       if (!improved) break;
     }
+  }
 
-    // Write final positions
-    for (const [ni, tileIdx] of assignment) {
-      const fn = fixtureNodes[ni];
-      const tile = sortedTiles[tileIdx];
-      const { x, z } = cubeToWorld(tile.q, tile.r, tileSize);
+  // --- Phase C: migration — nodes flow to unclaimed tiles ---
+  // A border node can migrate to an adjacent unclaimed tile if:
+  // 1. It reduces the node's total edge cost
+  // 2. The region remains connected after vacating the old tile
 
-      tileCoords.set(ni, tile);
-      result[ni] = {
-        id: fn.id,
-        type: fn.type,
-        name: fn.name,
-        file: fn.file,
-        region: fn.region,
-        x,
-        z,
-        degree: fn.degree,
-      };
+  function regionConnectedWithout(region: string, removedKey: string): boolean {
+    // Collect all tiles of this region except the removed one
+    const tiles: string[] = [];
+    for (const [k, r] of claimed) {
+      if (r === region && k !== removedKey) tiles.push(k);
     }
+    if (tiles.length === 0) return true; // last tile — don't migrate
+
+    // BFS from first tile
+    const visited = new Set<string>();
+    const queue = [tiles[0]];
+    visited.add(tiles[0]);
+    const tileSet = new Set(tiles);
+
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      const [cq, cr] = current.split(',').map(Number);
+      for (const dir of CUBE_DIRS) {
+        const nk = tileKey(cq + dir.q, cr + dir.r);
+        if (tileSet.has(nk) && !visited.has(nk)) {
+          visited.add(nk);
+          queue.push(nk);
+        }
+      }
+    }
+
+    return visited.size === tileSet.size;
+  }
+
+  for (let pass = 0; pass < 10; pass++) {
+    let anyMigrated = false;
+
+    for (const region of regionNames) {
+      const indices = regionNodeIndices.get(region) ?? [];
+
+      for (const ni of indices) {
+        const currentTile = tileCoords.get(ni);
+        if (!currentTile) continue;
+        const currentKey = tileKey(currentTile.q, currentTile.r);
+        const currentCost = nodeCost(ni);
+
+        // Find unclaimed neighbor tiles
+        const candidates: { q: number; r: number; key: string }[] = [];
+        for (const dir of CUBE_DIRS) {
+          const nq = currentTile.q + dir.q;
+          const nr = currentTile.r + dir.r;
+          const nk = tileKey(nq, nr);
+          if (!claimed.has(nk)) {
+            candidates.push({ q: nq, r: nr, key: nk });
+          }
+        }
+
+        if (candidates.length === 0) continue;
+
+        // Try each candidate
+        let bestCandidate: (typeof candidates)[0] | null = null;
+        let bestCost = currentCost;
+
+        for (const cand of candidates) {
+          // Temporarily move
+          tileCoords.set(ni, { q: cand.q, r: cand.r });
+
+          const newCost = nodeCost(ni);
+          if (newCost < bestCost) {
+            // Check connectivity
+            if (regionConnectedWithout(region, currentKey)) {
+              bestCost = newCost;
+              bestCandidate = cand;
+            }
+          }
+
+          // Revert
+          tileCoords.set(ni, currentTile);
+        }
+
+        if (bestCandidate) {
+          // Commit migration
+          tileCoords.set(ni, { q: bestCandidate.q, r: bestCandidate.r });
+          tileOwner.delete(currentKey);
+          tileOwner.set(bestCandidate.key, ni);
+          claimed.delete(currentKey);
+          claimed.set(bestCandidate.key, region);
+          anyMigrated = true;
+        }
+      }
+    }
+
+    if (!anyMigrated) break;
+  }
+
+  // --- Build result ---
+  const result: GraphNode[] = [];
+  for (const [ni, tile] of tileCoords) {
+    const fn = fixtureNodes[ni];
+    const { x, z } = cubeToWorld(tile.q, tile.r, tileSize);
+    result[ni] = {
+      id: fn.id,
+      type: fn.type,
+      name: fn.name,
+      file: fn.file,
+      region: fn.region,
+      x,
+      z,
+      degree: fn.degree,
+    };
   }
 
   return { nodes: result, tileCoords };
