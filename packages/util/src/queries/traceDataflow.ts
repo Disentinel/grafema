@@ -710,6 +710,19 @@ export async function traceBackwardBFS(
       }
     }
 
+    // 5c. Cross call boundary: CALL → CALLS → callee → RETURNS → return expressions
+    if (node.type === 'CALL') {
+      for (const callEdge of await db.getOutgoingEdges(nodeId, ['CALLS'])) {
+        const callee = await db.getNode(callEdge.dst);
+        if (callee && (callee.type === 'FUNCTION' || callee.type === 'METHOD' || callee.type === 'CLOSURE')) {
+          for (const ret of await db.getOutgoingEdges(callEdge.dst, ['RETURNS'])) {
+            const resolved = await resolveRef(db, ret.dst);
+            enq(resolved);
+          }
+        }
+      }
+    }
+
     // 6. PA node: READS_FROM → resolveRef (the receiver's data source)
     if (node.type === 'PROPERTY_ACCESS') {
       for (const rf of await db.getOutgoingEdges(nodeId, ['READS_FROM'])) {

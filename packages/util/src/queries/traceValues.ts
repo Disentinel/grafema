@@ -213,40 +213,41 @@ async function traceRecursive(
 
   // Terminal: CALL / METHOD_CALL - function return value
   if (nodeType === 'CALL' || nodeType === 'METHOD_CALL') {
-    // REG-576: Follow CALL_RETURNS to called function's return values
+    // REG-576: Follow CALLS → callee FUNCTION → RETURNS → return expressions
     if (followCallReturns) {
-      const callReturnsEdges = await backend.getOutgoingEdges(nodeId, ['CALL_RETURNS']);
-      if (callReturnsEdges.length > 0) {
-        for (const crEdge of callReturnsEdges) {
-          // Get RETURNS edges from the target function
-          const returnsEdges = await backend.getOutgoingEdges(crEdge.dst, ['RETURNS']);
-          if (returnsEdges.length > 0) {
-            for (const retEdge of returnsEdges) {
-              await traceRecursive(
-                backend,
-                retEdge.dst,
-                visited,
-                depth + 1,
-                maxDepth,
-                followDerivesFrom,
-                detectNondeterministic,
-                followCallReturns,
-                results
-              );
-            }
-          } else {
-            // Function has no RETURNS edges → implicit undefined
-            const fnNode = await backend.getNode(crEdge.dst);
-            results.push({
-              value: undefined,
-              source: { id: crEdge.dst, file: fnNode?.file || '', line: fnNode?.line || 0 },
-              isUnknown: true,
-              reason: 'implicit_return',
-            });
+      const callsEdges = await backend.getOutgoingEdges(nodeId, ['CALLS']);
+      let crossed = false;
+      for (const callEdge of callsEdges) {
+        const callee = await backend.getNode(callEdge.dst);
+        if (!callee || (callee.type !== 'FUNCTION' && callee.type !== 'METHOD' && callee.type !== 'CLOSURE')) continue;
+        const returnsEdges = await backend.getOutgoingEdges(callEdge.dst, ['RETURNS']);
+        if (returnsEdges.length > 0) {
+          for (const retEdge of returnsEdges) {
+            await traceRecursive(
+              backend,
+              retEdge.dst,
+              visited,
+              depth + 1,
+              maxDepth,
+              followDerivesFrom,
+              detectNondeterministic,
+              followCallReturns,
+              results
+            );
           }
+          crossed = true;
+        } else {
+          // Function has no RETURNS edges → implicit undefined
+          results.push({
+            value: undefined,
+            source: { id: callEdge.dst, file: callee.file || '', line: callee.line || 0 },
+            isUnknown: true,
+            reason: 'implicit_return',
+          });
+          crossed = true;
         }
-        return;
       }
+      if (crossed) return;
     }
 
     // Check for HTTP_RECEIVES edges (cross-service data flow)
