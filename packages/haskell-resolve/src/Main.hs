@@ -47,6 +47,7 @@ haskellStrategy = NameStrategy
   , nsCategory  = "haskell-stdlib"
   , nsFilter    = FilterCalls
   , nsEdgeType  = "CALLS"
+  , nsVirtualFile = "<runtime/haskell>"
   }
 
 -- | Load the effects-db SymbolDB from GRAFEMA_EFFECTS_DB env var.

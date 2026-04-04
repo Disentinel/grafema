@@ -55,6 +55,7 @@ data NameStrategy = NameStrategy
   , nsCategory  :: !Text   -- ^ "rust-stdlib", "haskell-stdlib", "ecmascript"
   , nsFilter    :: !NodeFilter
   , nsEdgeType  :: !Text   -- ^ "CALLS" or "READS_FROM"
+  , nsVirtualFile :: !Text -- ^ Virtual file for GLOBAL_DEFINITION nodes (must be unique per language)
   }
 
 -- | A single symbol entry from the effects database.
@@ -237,7 +238,7 @@ mkGlobalNode strat entry = GraphNode
   { gnId        = nsPrefix strat <> seName entry
   , gnType      = "GLOBAL_DEFINITION"
   , gnName      = seName entry
-  , gnFile      = "<runtime>"
+  , gnFile      = nsVirtualFile strat
   , gnLine      = 0
   , gnColumn    = 0
   , gnEndLine   = 0

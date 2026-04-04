@@ -88,6 +88,7 @@ jsStrategy = NameStrategy
   , nsCategory  = "ecmascript"
   , nsFilter    = FilterReferences
   , nsEdgeType  = "RESOLVES_TO"
+  , nsVirtualFile = "<runtime/js>"
   }
 
 -- | Load the effects-db SymbolDB from GRAFEMA_EFFECTS_DB env var.
