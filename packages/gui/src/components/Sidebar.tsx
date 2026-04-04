@@ -1,34 +1,22 @@
-import { useState, useCallback } from 'react';
+import { useCallback } from 'react';
 import { useDataStore } from '../store/dataStore';
 import { useMapStore } from '../store/mapStore';
+import { useViewStore } from '../store/viewStore';
 import { FlowPanel } from './FlowPanel';
 import { flowLayerRef, setShowCoordsRef } from './Canvas';
-import { FLOWS } from '../config/flows';
 
 const LOD_NAMES = ['Package', 'Directory', 'File', 'Function'];
 
 export function Sidebar() {
   const { nodes, edges, regions, loaded, loading } = useDataStore();
   const { lodLevel, cameraDistance } = useMapStore();
-
-  // Track enabled flows locally (bridges on by default)
-  const [enabledFlows, setEnabledFlows] = useState<Set<string>>(() => {
-    const initial = new Set<string>();
-    for (const [name, preset] of Object.entries(FLOWS)) {
-      if (preset.alwaysOn) initial.add(name);
-    }
-    return initial;
-  });
+  const { enabledFlows } = useViewStore();
 
   const toggleFlow = useCallback((name: string) => {
-    setEnabledFlows((prev) => {
-      const next = new Set(prev);
-      if (next.has(name)) next.delete(name);
-      else next.add(name);
-      // Update FlowLayer visibility
-      flowLayerRef?.setFlowVisible(name, next.has(name));
-      return next;
-    });
+    useViewStore.getState().toggleFlow(name);
+    // Sync to FlowLayer
+    const next = useViewStore.getState().enabledFlows;
+    flowLayerRef?.setFlowVisible(name, next.has(name));
   }, []);
 
   return (

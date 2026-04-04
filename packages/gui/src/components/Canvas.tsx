@@ -8,6 +8,8 @@ import { Labels } from './Labels';
 import { CoordGrid } from './CoordGrid';
 import { useDataStore } from '../store/dataStore';
 import { useMapStore } from '../store/mapStore';
+import { useViewStore } from '../store/viewStore';
+import { FLOWS } from '../config/flows';
 
 /**
  * Region-based coloring: each region gets a stable hue,
@@ -117,12 +119,23 @@ export function Canvas() {
     flowLayerRef = flowLayer; // expose to sidebar
 
     // --- Interaction: hover = light outline, click = elevate + dim ---
-    const adjList = new Map<number, number[]>();
-    for (const edge of edges) {
-      if (!adjList.has(edge.source)) adjList.set(edge.source, []);
-      if (!adjList.has(edge.target)) adjList.set(edge.target, []);
-      adjList.get(edge.source)!.push(edge.target);
-      adjList.get(edge.target)!.push(edge.source);
+    // Build per-flow adjacency: edge type → flow name lookup
+    const edgeTypeToFlow = new Map<string, string>();
+    for (const [name, preset] of Object.entries(FLOWS)) {
+      for (const t of preset.types) edgeTypeToFlow.set(t, name);
+    }
+
+    // Get connected nodes filtered by currently enabled flows
+    function getVisibleConnected(nodeIdx: number): Set<number> {
+      const enabled = useViewStore.getState().enabledFlows;
+      const connected = new Set<number>();
+      for (const edge of edges) {
+        const flowName = edgeTypeToFlow.get(edge.type);
+        if (!flowName || !enabled.has(flowName)) continue;
+        if (edge.source === nodeIdx) connected.add(edge.target);
+        if (edge.target === nodeIdx) connected.add(edge.source);
+      }
+      return connected;
     }
 
     const raycaster = new THREE.Raycaster();
@@ -183,7 +196,7 @@ export function Canvas() {
       const prevSelected = selectedIdx;
       const prevConnected = new Set(selectedConnected);
       selectedIdx = clickIdx;
-      const connected = new Set(adjList.get(clickIdx) ?? []);
+      const connected = getVisibleConnected(clickIdx);
       selectedConnected = connected;
 
       // Apply all at once: selected + connected = elevate, rest = dim
