@@ -116,8 +116,7 @@ export function Canvas() {
     flowLayerLocalRef.current = flowLayer;
     flowLayerRef = flowLayer; // expose to sidebar
 
-    // --- Hover: elevate hovered + all connected nodes ---
-    // Build adjacency list for fast lookup
+    // --- Interaction: hover = light outline, click = elevate + dim ---
     const adjList = new Map<number, number[]>();
     for (const edge of edges) {
       if (!adjList.has(edge.source)) adjList.set(edge.source, []);
@@ -129,62 +128,88 @@ export function Canvas() {
     const raycaster = new THREE.Raycaster();
     const mouse = new THREE.Vector2();
     let hoveredIdx = -1;
-    let prevConnected = new Set<number>();
+    let selectedIdx = -1;
+    let selectedConnected = new Set<number>();
 
-    const onMouseMove = (e: MouseEvent) => {
+    function updateMouse(e: MouseEvent) {
       const rect = containerRef.current!.getBoundingClientRect();
       mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
       mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-      raycaster.setFromCamera(mouse, sm.camera);
+    }
 
+    function clearSelection() {
+      for (let i = 0; i < nodes.length; i++) {
+        layer.animateTo(i, 'elevation', 0, 300);
+        layer.animateTo(i, 'outlineWidth', 0, 200);
+        layer.animateTo(i, 'opacity', 1.0, 200);
+      }
+      selectedIdx = -1;
+      selectedConnected.clear();
+    }
+
+    const onMouseMove = (e: MouseEvent) => {
+      updateMouse(e);
+      raycaster.setFromCamera(mouse, sm.camera);
       const newIdx = layer.raycast(raycaster);
+
       if (newIdx === hoveredIdx) return;
 
-      // Unhover previous — reset all connected
-      if (hoveredIdx >= 0) {
-        layer.animateTo(hoveredIdx, 'elevation', 0, 200);
-        layer.animateTo(hoveredIdx, 'outlineWidth', 0, 200);
-        for (const ci of prevConnected) {
-          layer.animateTo(ci, 'elevation', 0, 200);
-          layer.animateTo(ci, 'outlineWidth', 0, 200);
-        }
-        // Reset all opacities
-        for (let i = 0; i < nodes.length; i++) {
-          layer.animateTo(i, 'opacity', 1.0, 150);
-        }
-        prevConnected.clear();
+      // Remove hover outline from previous (unless it's selected)
+      if (hoveredIdx >= 0 && hoveredIdx !== selectedIdx && !selectedConnected.has(hoveredIdx)) {
+        layer.setProperty(hoveredIdx, 'outlineWidth', 0);
       }
 
       hoveredIdx = newIdx;
 
-      if (hoveredIdx >= 0) {
-        // Find connected nodes
-        const connected = new Set(adjList.get(hoveredIdx) ?? []);
-        prevConnected = connected;
-
-        // Elevate + glow hovered node
-        layer.animateTo(hoveredIdx, 'elevation', 2.0, 200);
-        layer.animateTo(hoveredIdx, 'outlineWidth', 0.2, 200);
+      // Light outline on hover (doesn't affect selection state)
+      if (hoveredIdx >= 0 && hoveredIdx !== selectedIdx && !selectedConnected.has(hoveredIdx)) {
         layer.setOutlineColor(hoveredIdx, 0x00e5ff);
+        layer.setProperty(hoveredIdx, 'outlineWidth', 0.1);
+      }
+    };
 
-        // Elevate + glow connected nodes (softer)
-        for (const ci of connected) {
-          layer.animateTo(ci, 'elevation', 1.0, 250);
-          layer.animateTo(ci, 'outlineWidth', 0.12, 250);
-          layer.setOutlineColor(ci, 0x00aacc);
-        }
+    const onClick = (e: MouseEvent) => {
+      updateMouse(e);
+      raycaster.setFromCamera(mouse, sm.camera);
+      const clickIdx = layer.raycast(raycaster);
 
-        // Dim unconnected nodes
-        for (let i = 0; i < nodes.length; i++) {
-          if (i === hoveredIdx || connected.has(i)) {
-            layer.animateTo(i, 'opacity', 1.0, 150);
-          } else {
-            layer.animateTo(i, 'opacity', 0.25, 150);
-          }
+      // Click same node or empty → deselect
+      if (clickIdx === selectedIdx || clickIdx < 0) {
+        clearSelection();
+        return;
+      }
+
+      // Clear previous selection
+      clearSelection();
+
+      selectedIdx = clickIdx;
+      const connected = new Set(adjList.get(clickIdx) ?? []);
+      selectedConnected = connected;
+
+      // Elevate + glow selected node
+      layer.animateTo(clickIdx, 'elevation', 2.0, 300);
+      layer.animateTo(clickIdx, 'outlineWidth', 0.2, 200);
+      layer.setOutlineColor(clickIdx, 0x00e5ff);
+
+      // Elevate + glow connected nodes
+      for (const ci of connected) {
+        layer.animateTo(ci, 'elevation', 1.0, 350);
+        layer.animateTo(ci, 'outlineWidth', 0.12, 250);
+        layer.setOutlineColor(ci, 0x00aacc);
+      }
+
+      // Dim unconnected
+      for (let i = 0; i < nodes.length; i++) {
+        if (i === clickIdx || connected.has(i)) {
+          layer.animateTo(i, 'opacity', 1.0, 200);
+        } else {
+          layer.animateTo(i, 'opacity', 0.25, 200);
         }
       }
     };
+
     sm.renderer.domElement.addEventListener('mousemove', onMouseMove);
+    sm.renderer.domElement.addEventListener('click', onClick);
 
     // --- Camera ---
     let cx = 0, cz = 0;
@@ -196,6 +221,7 @@ export function Canvas() {
 
     return () => {
       sm.renderer.domElement.removeEventListener('mousemove', onMouseMove);
+      sm.renderer.domElement.removeEventListener('click', onClick);
     };
   }, [loaded, nodes, edges, regions]);
 
