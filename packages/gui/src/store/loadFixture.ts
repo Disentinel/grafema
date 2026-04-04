@@ -514,8 +514,8 @@ function floodFillLayout(
     curQ = Math.round(curQ / indices.length);
     curR = Math.round(curR / indices.length);
 
-    // Skip if already close
-    if (cubeDistance({ q: idealQ, r: idealR }, { q: curQ, r: curR }) <= 2) continue;
+    // Skip if already very close
+    if (cubeDistance({ q: idealQ, r: idealR }, { q: curQ, r: curR }) <= 1) continue;
 
     const costBefore = regionTotalCost(region);
 
@@ -554,19 +554,45 @@ function floodFillLayout(
       continue;
     }
 
-    // Assign nodes to new tiles (closest to ideal centroid first = highest degree)
-    const sortedIndices = [...indices].sort((a, b) =>
-      fixtureNodes[b].degree - fixtureNodes[a].degree,
-    );
-    newTiles.sort((a, b) => cubeDistance(a, { q: idealQ, r: idealR }) - cubeDistance(b, { q: idealQ, r: idealR }));
+    // Assign each node to the tile closest to its OWN connected nodes' positions
+    // (greedy: process nodes with most external edges first)
+    const sortedIndices = [...indices].sort((a, b) => {
+      const aExt = (nodeEdges.get(a) ?? []).filter(o => fixtureNodes[o]?.region !== region).length;
+      const bExt = (nodeEdges.get(b) ?? []).filter(o => fixtureNodes[o]?.region !== region).length;
+      return bExt - aExt; // most externally-connected first
+    });
+    const usedNewTiles = new Set<number>();
 
-    for (let j = 0; j < sortedIndices.length; j++) {
-      const ni = sortedIndices[j];
-      const tile = newTiles[j];
-      tileCoords.set(ni, tile);
-      const k = tileKey(tile.q, tile.r);
-      claimed.set(k, region);
-      tileOwner.set(k, ni);
+    for (const ni of sortedIndices) {
+      // Compute this node's ideal position: average of its cross-region neighbors
+      const neighbors = (nodeEdges.get(ni) ?? []).filter(o => fixtureNodes[o]?.region !== region);
+      let targetQ = idealQ, targetR = idealR;
+      if (neighbors.length > 0) {
+        let sq = 0, sr = 0;
+        for (const o of neighbors) {
+          const ot = tileCoords.get(o);
+          if (ot) { sq += ot.q; sr += ot.r; }
+        }
+        targetQ = Math.round(sq / neighbors.length);
+        targetR = Math.round(sr / neighbors.length);
+      }
+
+      // Find closest available tile to this node's target
+      let bestJ = -1, bestDist = Infinity;
+      for (let j = 0; j < newTiles.length; j++) {
+        if (usedNewTiles.has(j)) continue;
+        const d = cubeDistance(newTiles[j], { q: targetQ, r: targetR });
+        if (d < bestDist) { bestDist = d; bestJ = j; }
+      }
+
+      if (bestJ >= 0) {
+        usedNewTiles.add(bestJ);
+        const tile = newTiles[bestJ];
+        tileCoords.set(ni, tile);
+        const k = tileKey(tile.q, tile.r);
+        claimed.set(k, region);
+        tileOwner.set(k, ni);
+      }
     }
 
     const costAfter = regionTotalCost(region);
