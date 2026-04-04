@@ -39,10 +39,11 @@ export async function loadFixture() {
     id: n.id, type: n.type, name: n.name, file: n.file, region: n.region, degree: n.degree,
   }));
 
-  // Build index set of non-SERVICE nodes
+  // Exclude container types — they are region metadata, not code entities
+  const EXCLUDED_TYPES = new Set(['SERVICE', 'MODULE']);
   const codeNodeIndices = allNodes
     .map((n, i) => ({ n, i }))
-    .filter(({ n }) => n.type !== 'SERVICE')
+    .filter(({ n }) => !EXCLUDED_TYPES.has(n.type))
     .map(({ i }) => i);
 
   // Remap: old index → layout index (only code nodes participate in layout)
