@@ -41,6 +41,20 @@ function cubeDistance(a: { q: number; r: number }, b: { q: number; r: number }):
   );
 }
 
+/**
+ * Deterministic PRNG (mulberry32).
+ * Same seed → same sequence → same layout every time.
+ */
+function createRng(seed: number): () => number {
+  let s = seed | 0;
+  return () => {
+    s = (s + 0x6D2B79F5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 function hexSpiral(count: number): { q: number; r: number }[] {
   const tiles: { q: number; r: number }[] = [{ q: 0, r: 0 }];
   let radius = 1;
@@ -253,6 +267,10 @@ export function annealingLayout(
   }
 
   // --- Simulated Annealing ---
+  // Deterministic seed from graph structure (node count + edge count + region count)
+  const rngSeed = N * 31 + edges.length * 37 + regionNames.length * 41;
+  const rand = createRng(rngSeed);
+
   const ITERATIONS = N * 3000;
   const T_START = 8.0;
   const T_END = 0.01;
@@ -269,15 +287,15 @@ export function annealingLayout(
     T *= COOL;
 
     // Pick random move type
-    const moveType = Math.random();
+    const moveType = rand();
 
     if (moveType < 0.5) {
       // --- Move A: swap two nodes in same region ---
-      const regionName = regionNames[Math.floor(Math.random() * regionNames.length)];
+      const regionName = regionNames[Math.floor(rand() * regionNames.length)];
       const indices = regionIndices.get(regionName)!;
       if (indices.length < 2) continue;
-      const i = indices[Math.floor(Math.random() * indices.length)];
-      const j = indices[Math.floor(Math.random() * indices.length)];
+      const i = indices[Math.floor(rand() * indices.length)];
+      const j = indices[Math.floor(rand() * indices.length)];
       if (i === j) continue;
 
       const ci = tileCoords.get(i)!;
@@ -290,7 +308,7 @@ export function annealingLayout(
       const costAfter = nodeCost(i) + nodeCost(j);
       const delta = costAfter - costBefore;
 
-      if (delta < 0 || Math.random() < Math.exp(-delta / T)) {
+      if (delta < 0 || rand() < Math.exp(-delta / T)) {
         // Accept
         tileToNode.set(tileKey(cj.q, cj.r), i);
         tileToNode.set(tileKey(ci.q, ci.r), j);
@@ -304,7 +322,7 @@ export function annealingLayout(
 
     } else {
       // --- Move B: migrate node to adjacent unclaimed tile ---
-      const ni = allNodeIndices[Math.floor(Math.random() * N)];
+      const ni = allNodeIndices[Math.floor(rand() * N)];
       const region = nodes[ni].region;
       const curTile = tileCoords.get(ni)!;
       const curKey = tileKey(curTile.q, curTile.r);
@@ -319,7 +337,7 @@ export function annealingLayout(
       if (candidates.length === 0) continue;
 
       // Pick random candidate
-      const target = candidates[Math.floor(Math.random() * candidates.length)];
+      const target = candidates[Math.floor(rand() * candidates.length)];
       const targetKey = tileKey(target.q, target.r);
 
       // Must be adjacent to at least one other tile from same region
@@ -353,7 +371,7 @@ export function annealingLayout(
       const costAfter = nodeCost(ni);
       const delta = costAfter - costBefore;
 
-      if (delta < 0 || Math.random() < Math.exp(-delta / T)) {
+      if (delta < 0 || rand() < Math.exp(-delta / T)) {
         currentCost += delta;
         accepted++;
       } else {

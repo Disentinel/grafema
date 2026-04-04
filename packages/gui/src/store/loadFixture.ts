@@ -69,7 +69,7 @@ export async function loadFixture() {
     nodes,
     edges,
     regions,
-    typeTable: [...typeSet],
-    edgeTypeTable: [...edgeTypeSet],
+    typeTable: [...typeSet] as string[],
+    edgeTypeTable: [...edgeTypeSet] as string[],
   });
 }
