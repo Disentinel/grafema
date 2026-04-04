@@ -1,0 +1,58 @@
+.app {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  position: relative;
+}
+
+.canvas-container {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+.sidebar {
+  width: 280px;
+  background: rgba(10, 14, 20, 0.95);
+  border-left: 1px solid #ffffff11;
+  padding: 16px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  z-index: 10;
+}
+
+.sidebar h2 {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: #00e5ff;
+  text-transform: uppercase;
+  margin: 0;
+}
+
+.sidebar .stats {
+  font-size: 12px;
+  color: #666;
+}
+
+/* Label overlay */
+.labels-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+  overflow: hidden;
+}
+
+.map-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  color: #8899bb;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  white-space: nowrap;
+  text-shadow: 0 0 4px rgba(0, 0, 0, 0.8), 0 0 8px rgba(0, 0, 0, 0.5);
+  transition: opacity 0.3s ease;
+  letter-spacing: 0.05em;
+}

@@ -1,0 +1,116 @@
+{
+  "nodes": [
+    { "id": "api-gateway/index", "type": "MODULE", "name": "index.ts", "file": "api-gateway/index.ts", "region": "api-gateway", "degree": 8 },
+    { "id": "api-gateway/router", "type": "MODULE", "name": "router.ts", "file": "api-gateway/router.ts", "region": "api-gateway", "degree": 6 },
+    { "id": "api-gateway/middleware", "type": "MODULE", "name": "middleware.ts", "file": "api-gateway/middleware.ts", "region": "api-gateway", "degree": 4 },
+    { "id": "api-gateway/handleGetUsers", "type": "FUNCTION", "name": "handleGetUsers", "file": "api-gateway/router.ts", "region": "api-gateway", "degree": 5 },
+    { "id": "api-gateway/handleCreateUser", "type": "FUNCTION", "name": "handleCreateUser", "file": "api-gateway/router.ts", "region": "api-gateway", "degree": 6 },
+    { "id": "api-gateway/handleLogin", "type": "FUNCTION", "name": "handleLogin", "file": "api-gateway/router.ts", "region": "api-gateway", "degree": 7 },
+    { "id": "api-gateway/authMiddleware", "type": "FUNCTION", "name": "authMiddleware", "file": "api-gateway/middleware.ts", "region": "api-gateway", "degree": 4 },
+    { "id": "api-gateway/rateLimiter", "type": "FUNCTION", "name": "rateLimiter", "file": "api-gateway/middleware.ts", "region": "api-gateway", "degree": 3 },
+    { "id": "api-gateway/validateBody", "type": "FUNCTION", "name": "validateBody", "file": "api-gateway/router.ts", "region": "api-gateway", "degree": 3 },
+
+    { "id": "auth-service/index", "type": "MODULE", "name": "main.rs", "file": "auth-service/src/main.rs", "region": "auth-service", "degree": 6 },
+    { "id": "auth-service/validate_token", "type": "FUNCTION", "name": "validate_token", "file": "auth-service/src/auth.rs", "region": "auth-service", "degree": 5 },
+    { "id": "auth-service/issue_token", "type": "FUNCTION", "name": "issue_token", "file": "auth-service/src/auth.rs", "region": "auth-service", "degree": 4 },
+    { "id": "auth-service/hash_password", "type": "FUNCTION", "name": "hash_password", "file": "auth-service/src/crypto.rs", "region": "auth-service", "degree": 3 },
+    { "id": "auth-service/verify_password", "type": "FUNCTION", "name": "verify_password", "file": "auth-service/src/crypto.rs", "region": "auth-service", "degree": 3 },
+    { "id": "auth-service/UserRecord", "type": "CLASS", "name": "UserRecord", "file": "auth-service/src/models.rs", "region": "auth-service", "degree": 4 },
+    { "id": "auth-service/TokenClaims", "type": "CLASS", "name": "TokenClaims", "file": "auth-service/src/models.rs", "region": "auth-service", "degree": 3 },
+
+    { "id": "data-store/index", "type": "MODULE", "name": "index.ts", "file": "data-store/index.ts", "region": "data-store", "degree": 7 },
+    { "id": "data-store/UserRepo", "type": "CLASS", "name": "UserRepo", "file": "data-store/repos/user.ts", "region": "data-store", "degree": 6 },
+    { "id": "data-store/findById", "type": "METHOD", "name": "findById", "file": "data-store/repos/user.ts", "region": "data-store", "degree": 4 },
+    { "id": "data-store/create", "type": "METHOD", "name": "create", "file": "data-store/repos/user.ts", "region": "data-store", "degree": 5 },
+    { "id": "data-store/findByEmail", "type": "METHOD", "name": "findByEmail", "file": "data-store/repos/user.ts", "region": "data-store", "degree": 4 },
+    { "id": "data-store/cache", "type": "MODULE", "name": "cache.ts", "file": "data-store/cache.ts", "region": "data-store", "degree": 5 },
+    { "id": "data-store/getFromCache", "type": "FUNCTION", "name": "getFromCache", "file": "data-store/cache.ts", "region": "data-store", "degree": 3 },
+    { "id": "data-store/setInCache", "type": "FUNCTION", "name": "setInCache", "file": "data-store/cache.ts", "region": "data-store", "degree": 3 },
+    { "id": "data-store/pgPool", "type": "VARIABLE", "name": "pgPool", "file": "data-store/db.ts", "region": "data-store", "degree": 4 },
+    { "id": "data-store/redisClient", "type": "VARIABLE", "name": "redisClient", "file": "data-store/cache.ts", "region": "data-store", "degree": 3 },
+
+    { "id": "shared/types", "type": "MODULE", "name": "types.ts", "file": "shared/types.ts", "region": "shared", "degree": 6 },
+    { "id": "shared/User", "type": "INTERFACE", "name": "User", "file": "shared/types.ts", "region": "shared", "degree": 5 },
+    { "id": "shared/AuthResponse", "type": "INTERFACE", "name": "AuthResponse", "file": "shared/types.ts", "region": "shared", "degree": 3 },
+    { "id": "shared/ApiError", "type": "CLASS", "name": "ApiError", "file": "shared/errors.ts", "region": "shared", "degree": 4 },
+
+    { "id": "svc/api-gateway", "type": "SERVICE", "name": "API Gateway", "file": "", "region": "api-gateway", "degree": 10 },
+    { "id": "svc/auth-service", "type": "SERVICE", "name": "Auth Service", "file": "", "region": "auth-service", "degree": 8 },
+    { "id": "svc/data-store", "type": "SERVICE", "name": "Data Store", "file": "", "region": "data-store", "degree": 9 },
+
+    { "id": "ext/postgres", "type": "EXTERNAL", "name": "PostgreSQL", "file": "", "region": "external", "degree": 3 },
+    { "id": "ext/redis", "type": "EXTERNAL", "name": "Redis", "file": "", "region": "external", "degree": 3 },
+    { "id": "ext/jwt-library", "type": "EXTERNAL", "name": "jsonwebtoken", "file": "", "region": "external", "degree": 2 }
+  ],
+  "edges": [
+    { "source": 3, "target": 10, "type": "CALLS" },
+    { "source": 3, "target": 18, "type": "CALLS" },
+    { "source": 4, "target": 19, "type": "CALLS" },
+    { "source": 4, "target": 10, "type": "CALLS" },
+    { "source": 5, "target": 11, "type": "CALLS" },
+    { "source": 5, "target": 13, "type": "CALLS" },
+    { "source": 5, "target": 20, "type": "CALLS" },
+    { "source": 6, "target": 10, "type": "CALLS" },
+    { "source": 7, "target": 22, "type": "CALLS" },
+    { "source": 8, "target": 29, "type": "CALLS" },
+    { "source": 10, "target": 15, "type": "CALLS" },
+    { "source": 11, "target": 15, "type": "CALLS" },
+    { "source": 11, "target": 35, "type": "CALLS" },
+    { "source": 13, "target": 12, "type": "CALLS" },
+    { "source": 18, "target": 22, "type": "CALLS" },
+    { "source": 18, "target": 24, "type": "CALLS" },
+    { "source": 19, "target": 23, "type": "CALLS" },
+    { "source": 19, "target": 24, "type": "CALLS" },
+    { "source": 20, "target": 22, "type": "CALLS" },
+    { "source": 20, "target": 24, "type": "CALLS" },
+    { "source": 22, "target": 25, "type": "CALLS" },
+    { "source": 23, "target": 25, "type": "CALLS" },
+
+    { "source": 0, "target": 1, "type": "IMPORTS_FROM" },
+    { "source": 0, "target": 2, "type": "IMPORTS_FROM" },
+    { "source": 1, "target": 26, "type": "IMPORTS_FROM" },
+    { "source": 16, "target": 26, "type": "IMPORTS_FROM" },
+    { "source": 9, "target": 26, "type": "IMPORTS_FROM" },
+
+    { "source": 17, "target": 27, "type": "IMPLEMENTS" },
+    { "source": 14, "target": 27, "type": "IMPLEMENTS" },
+
+    { "source": 3, "target": 27, "type": "READS_FROM" },
+    { "source": 4, "target": 27, "type": "READS_FROM" },
+    { "source": 5, "target": 28, "type": "READS_FROM" },
+
+    { "source": 24, "target": 33, "type": "CALLS" },
+    { "source": 25, "target": 34, "type": "CALLS" },
+
+    { "source": 30, "target": 31, "type": "CALLS" },
+    { "source": 30, "target": 32, "type": "CALLS" },
+
+    { "source": 3, "target": 9, "type": "REMOTE_CALL" },
+    { "source": 4, "target": 9, "type": "REMOTE_CALL" },
+    { "source": 5, "target": 9, "type": "REMOTE_CALL" },
+    { "source": 3, "target": 16, "type": "REMOTE_CALL" },
+    { "source": 4, "target": 16, "type": "REMOTE_CALL" },
+    { "source": 5, "target": 16, "type": "REMOTE_CALL" }
+  ],
+  "regions": [
+    { "path": "api-gateway", "depth": 0, "tileCount": 9 },
+    { "path": "auth-service", "depth": 0, "tileCount": 7 },
+    { "path": "data-store", "depth": 0, "tileCount": 10 },
+    { "path": "shared", "depth": 0, "tileCount": 4 },
+    { "path": "external", "depth": 0, "tileCount": 3 }
+  ],
+  "routes": [
+    {
+      "id": "login-flow",
+      "label": "Login Flow",
+      "color": "#ff4466",
+      "nodeIds": ["api-gateway/handleLogin", "auth-service/verify_password", "auth-service/issue_token", "data-store/findByEmail"]
+    },
+    {
+      "id": "get-users-flow",
+      "label": "Get Users",
+      "color": "#00d4ff",
+      "nodeIds": ["api-gateway/handleGetUsers", "auth-service/validate_token", "data-store/findById", "data-store/getFromCache"]
+    }
+  ]
+}
