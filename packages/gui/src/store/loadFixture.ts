@@ -435,17 +435,54 @@ function floodFillLayout(
         }
 
         if (bestCandidate) {
+          // Commit migration
           tileCoords.set(ni, { q: bestCandidate.q, r: bestCandidate.r });
           tileOwner.delete(currentKey);
           tileOwner.set(bestCandidate.key, ni);
           claimed.delete(currentKey);
           claimed.set(bestCandidate.key, region);
-          anyMigrated = true;
+
+          // Post-migration connectivity validation
+          if (!isRegionConnectedFull(region)) {
+            // Revert — migration broke connectivity
+            tileCoords.set(ni, currentTile);
+            tileOwner.set(currentKey, ni);
+            tileOwner.delete(bestCandidate.key);
+            claimed.set(currentKey, region);
+            claimed.delete(bestCandidate.key);
+          } else {
+            anyMigrated = true;
+          }
         }
       }
     }
 
     if (!anyMigrated) break;
+  }
+
+  // Final connectivity validation — revert any broken regions
+  function isRegionConnectedFull(region: string): boolean {
+    const tiles: string[] = [];
+    for (const [k, r] of claimed) {
+      if (r === region) tiles.push(k);
+    }
+    if (tiles.length <= 1) return true;
+    const visited = new Set<string>();
+    const queue = [tiles[0]];
+    visited.add(tiles[0]);
+    const tileSet = new Set(tiles);
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      const [cq, cr] = current.split(',').map(Number);
+      for (const dir of CUBE_DIRS) {
+        const nk = tileKey(cq + dir.q, cr + dir.r);
+        if (tileSet.has(nk) && !visited.has(nk)) {
+          visited.add(nk);
+          queue.push(nk);
+        }
+      }
+    }
+    return visited.size === tileSet.size;
   }
 
   // --- Phase D: region teleport ---
@@ -596,9 +633,10 @@ function floodFillLayout(
     }
 
     const costAfter = regionTotalCost(region);
+    const teleportConnected = isRegionConnectedFull(region);
 
-    if (costAfter >= costBefore) {
-      // Revert — teleport didn't help
+    if (costAfter >= costBefore || !teleportConnected) {
+      // Revert — teleport didn't help or broke connectivity
       for (const ni of indices) {
         const t = tileCoords.get(ni)!;
         claimed.delete(tileKey(t.q, t.r));
@@ -610,7 +648,6 @@ function floodFillLayout(
         tileOwner.set(tileKey(tile.q, tile.r), ni);
       }
     }
-    // else: keep teleported position
   }
 
   // Re-run swap optimization after teleport (positions changed)
