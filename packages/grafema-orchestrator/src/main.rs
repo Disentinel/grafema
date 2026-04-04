@@ -1629,11 +1629,27 @@ async fn main() -> Result<()> {
             // 2. DEPENDS_ON and other derived edges are committed with empty
             //    changed_files (no deletion phase), so old segment versions
             //    accumulate. Compaction deduplicates these by (src,dst,type) key.
+            //
+            // For incremental analysis (few files changed), skip compaction and
+            // only rebuild indexes — same pattern as `grafema resolve`. L0 segments
+            // remain queryable; full compaction runs on next full analysis or when
+            // L0 accumulation triggers it. This avoids O(total_graph) compaction
+            // cost for small changes.
             let compact_start = std::time::Instant::now();
             profile!("compact_start", "analysis_nodes" => total_nodes, "analysis_edges" => total_edges);
-            rfdb.compact().await.context("Failed to compact")?;
+            let is_incremental = changed_files.len() < files.len();
+            if is_incremental {
+                tracing::info!(
+                    changed = changed_files.len(),
+                    total = files.len(),
+                    "Incremental analysis — skipping compaction, rebuilding indexes only"
+                );
+                rfdb.rebuild_indexes().await.context("Failed to rebuild indexes")?;
+            } else {
+                rfdb.compact().await.context("Failed to compact")?;
+            }
             let compact_ms = compact_start.elapsed().as_millis();
-            profile!("compact_complete", "duration_ms" => compact_ms);
+            profile!("compact_complete", "duration_ms" => compact_ms, "incremental" => is_incremental);
 
             // 10. Emit pipeline-level phase metrics as METRIC nodes
             {
