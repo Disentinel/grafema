@@ -3,7 +3,7 @@ import type { GraphNode, GraphEdge } from '../store/dataStore';
 import { FLOWS, type FlowPreset } from '../config/flows';
 
 const CURVE_SEGMENTS = 16;
-const BASE_Y = 0.3;
+const BASE_Y = 0.8;
 
 interface EdgeBinding {
   line: THREE.Mesh; // TubeGeometry mesh
@@ -25,6 +25,8 @@ interface EdgeBinding {
  */
 export class FlowLayer {
   private _group = new THREE.Group();
+  // Render order above hex tiles (default 0)
+  private static RENDER_ORDER = 10;
   private _flowGroups = new Map<string, THREE.Group>();
   private _bindings: EdgeBinding[] = [];
   private _nodes: GraphNode[] = [];
@@ -205,6 +207,7 @@ export class FlowLayer {
         depthTest: false, // always visible, never hidden by tiles
       });
       const line = new THREE.Mesh(tubeGeo, tubeMat);
+      line.renderOrder = FlowLayer.RENDER_ORDER;
       group.add(line);
 
       // Small arrow head
@@ -213,6 +216,7 @@ export class FlowLayer {
       arrowGeo.rotateX(Math.PI / 2);
       const arrowMat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.7, depthTest: false });
       const arrow = new THREE.Mesh(arrowGeo, arrowMat);
+      arrow.renderOrder = FlowLayer.RENDER_ORDER;
       arrow.position.copy(points[points.length - 1]);
       arrow.lookAt(points[points.length - 1].clone().add(lastSeg));
       group.add(arrow);
