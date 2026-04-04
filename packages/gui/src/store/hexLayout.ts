@@ -134,7 +134,7 @@ export function annealingLayout(
       const w = pairWeight.get(key) ?? 0;
       if (w > bestWeight) { bestWeight = w; bestTarget = seeds.get(placed)!; }
     }
-    const searchStart = bestWeight > 0 ? 2 : 4;
+    const searchStart = bestWeight > 0 ? 3 : 6; // wider for gap buffer
     let placed = false;
     for (let rad = searchStart; rad < 20 && !placed; rad++) {
       let rq = bestTarget.q + rad * CUBE_DIRS[4].q;
@@ -152,6 +152,17 @@ export function annealingLayout(
         }
       }
     }
+  }
+
+  // --- Gap enforcement: 1 empty tile between regions ---
+  // A tile is only claimable by region R if no neighbor belongs to a DIFFERENT region.
+  function canClaim(q: number, r: number, region: string): boolean {
+    for (const dir of CUBE_DIRS) {
+      const nk = tileKey(q + dir.q, r + dir.r);
+      const owner = claimed.get(nk);
+      if (owner && owner !== region) return false; // adjacent to different region
+    }
+    return true;
   }
 
   // Flood fill
@@ -178,10 +189,12 @@ export function annealingLayout(
       if (frontier.size === 0) continue;
 
       // Pick tile with most same-region neighbors (compact growth)
+      // Must respect gap: no neighbor from a different region
       let bestTile: string | null = null;
       let bestScore = -1;
       for (const k of frontier) {
         const [q, r] = k.split(',').map(Number);
+        if (!canClaim(q, r, region)) continue; // gap violation
         let score = 0;
         for (const dir of CUBE_DIRS) {
           if (claimed.get(tileKey(q + dir.q, r + dir.r)) === region) score++;
@@ -362,6 +375,13 @@ export function annealingLayout(
         if (nk !== curKey && claimed.get(nk) === region) { hasAdj = true; break; }
       }
       if (!hasAdj) continue;
+
+      // Gap enforcement: target must not be adjacent to a different region
+      // (temporarily remove current tile to check — it's being vacated)
+      claimed.delete(curKey);
+      const gapOk = canClaim(target.q, target.r, region);
+      claimed.set(curKey, region);
+      if (!gapOk) continue;
 
       const costBefore = nodeCost(ni);
 
