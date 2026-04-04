@@ -218,10 +218,25 @@ export function annealingLayout(
     }
   }
 
+  // Structural edge types — excluded from layout cost
+  // (they exist for hierarchy/LOD, not for spatial proximity)
+  const STRUCTURAL_EDGES = new Set(['CONTAINS', 'HAS_SCOPE', 'HAS_BODY', 'DECLARES']);
+
+  // Precompute semantic adjacency (exclude structural edges)
+  const semanticNodeEdges = new Map<number, { target: number; weight: number }[]>();
+  for (const e of edges) {
+    if (STRUCTURAL_EDGES.has(e.type)) continue;
+    if (!semanticNodeEdges.has(e.source)) semanticNodeEdges.set(e.source, []);
+    if (!semanticNodeEdges.has(e.target)) semanticNodeEdges.set(e.target, []);
+    semanticNodeEdges.get(e.source)!.push({ target: e.target, weight: 1 });
+    semanticNodeEdges.get(e.target)!.push({ target: e.source, weight: 1 });
+  }
+
   // --- Cost function ---
   function totalCost(): number {
     let cost = 0;
     for (const e of edges) {
+      if (STRUCTURAL_EDGES.has(e.type)) continue;
       const a = tileCoords.get(e.source);
       const b = tileCoords.get(e.target);
       if (a && b) cost += cubeDistance(a, b);
@@ -229,13 +244,13 @@ export function annealingLayout(
     return cost;
   }
 
-  // Node-local cost (for fast delta)
+  // Node-local cost (for fast delta — only semantic edges)
   function nodeCost(ni: number): number {
     let cost = 0;
     const coord = tileCoords.get(ni);
     if (!coord) return 0;
-    for (const other of (nodeEdges.get(ni) ?? [])) {
-      const oc = tileCoords.get(other);
+    for (const { target } of (semanticNodeEdges.get(ni) ?? [])) {
+      const oc = tileCoords.get(target);
       if (oc) cost += cubeDistance(coord, oc);
     }
     return cost;
