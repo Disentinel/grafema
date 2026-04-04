@@ -448,6 +448,172 @@ function floodFillLayout(
     if (!anyMigrated) break;
   }
 
+  // --- Phase D: region teleport ---
+  // If a region's total edge cost would be much lower at a different position,
+  // vacate all its tiles and re-grow near the ideal centroid.
+  //
+  // Ideal centroid = weighted average of connected nodes' positions (in other regions).
+
+  function regionTotalCost(region: string): number {
+    let cost = 0;
+    for (const ni of (regionNodeIndices.get(region) ?? [])) {
+      cost += nodeCost(ni);
+    }
+    return cost;
+  }
+
+  function hexSpiral(count: number): { q: number; r: number }[] {
+    const tiles: { q: number; r: number }[] = [{ q: 0, r: 0 }];
+    let radius = 1;
+    while (tiles.length < count) {
+      let q = radius * CUBE_DIRS[4].q;
+      let r = radius * CUBE_DIRS[4].r;
+      for (let side = 0; side < 6; side++) {
+        for (let step = 0; step < radius; step++) {
+          if (tiles.length >= count) break;
+          tiles.push({ q, r });
+          q += CUBE_DIRS[side].q;
+          r += CUBE_DIRS[side].r;
+        }
+      }
+      radius++;
+    }
+    return tiles.slice(0, count);
+  }
+
+  for (const region of regionNames) {
+    const indices = regionNodeIndices.get(region) ?? [];
+    if (indices.length <= 1) continue;
+
+    // Compute ideal centroid: average position of all nodes in OTHER regions
+    // that share edges with this region, weighted by edge count
+    let sumQ = 0, sumR = 0, totalW = 0;
+    for (const ni of indices) {
+      for (const other of (nodeEdges.get(ni) ?? [])) {
+        if (fixtureNodes[other]?.region === region) continue;
+        const otherTile = tileCoords.get(other);
+        if (!otherTile) continue;
+        sumQ += otherTile.q;
+        sumR += otherTile.r;
+        totalW++;
+      }
+    }
+
+    if (totalW === 0) continue; // no cross-region edges
+
+    const idealQ = Math.round(sumQ / totalW);
+    const idealR = Math.round(sumR / totalW);
+
+    // Current centroid
+    let curQ = 0, curR = 0;
+    for (const ni of indices) {
+      const t = tileCoords.get(ni)!;
+      curQ += t.q;
+      curR += t.r;
+    }
+    curQ = Math.round(curQ / indices.length);
+    curR = Math.round(curR / indices.length);
+
+    // Skip if already close
+    if (cubeDistance({ q: idealQ, r: idealR }, { q: curQ, r: curR }) <= 2) continue;
+
+    const costBefore = regionTotalCost(region);
+
+    // Vacate all tiles of this region
+    const oldTiles: { ni: number; tile: { q: number; r: number } }[] = [];
+    for (const ni of indices) {
+      const t = tileCoords.get(ni)!;
+      oldTiles.push({ ni, tile: { ...t } });
+      const k = tileKey(t.q, t.r);
+      claimed.delete(k);
+      tileOwner.delete(k);
+    }
+
+    // Try to claim tiles near ideal centroid via spiral
+    const spiralTiles = hexSpiral(indices.length * 3); // search wider
+    const newTiles: { q: number; r: number }[] = [];
+
+    for (const st of spiralTiles) {
+      const q = st.q + idealQ;
+      const r = st.r + idealR;
+      const k = tileKey(q, r);
+      if (!claimed.has(k)) {
+        newTiles.push({ q, r });
+        if (newTiles.length >= indices.length) break;
+      }
+    }
+
+    if (newTiles.length < indices.length) {
+      // Can't fit — revert
+      for (const { ni, tile } of oldTiles) {
+        tileCoords.set(ni, tile);
+        const k = tileKey(tile.q, tile.r);
+        claimed.set(k, region);
+        tileOwner.set(k, ni);
+      }
+      continue;
+    }
+
+    // Assign nodes to new tiles (closest to ideal centroid first = highest degree)
+    const sortedIndices = [...indices].sort((a, b) =>
+      fixtureNodes[b].degree - fixtureNodes[a].degree,
+    );
+    newTiles.sort((a, b) => cubeDistance(a, { q: idealQ, r: idealR }) - cubeDistance(b, { q: idealQ, r: idealR }));
+
+    for (let j = 0; j < sortedIndices.length; j++) {
+      const ni = sortedIndices[j];
+      const tile = newTiles[j];
+      tileCoords.set(ni, tile);
+      const k = tileKey(tile.q, tile.r);
+      claimed.set(k, region);
+      tileOwner.set(k, ni);
+    }
+
+    const costAfter = regionTotalCost(region);
+
+    if (costAfter >= costBefore) {
+      // Revert — teleport didn't help
+      for (const ni of indices) {
+        const t = tileCoords.get(ni)!;
+        claimed.delete(tileKey(t.q, t.r));
+        tileOwner.delete(tileKey(t.q, t.r));
+      }
+      for (const { ni, tile } of oldTiles) {
+        tileCoords.set(ni, tile);
+        claimed.set(tileKey(tile.q, tile.r), region);
+        tileOwner.set(tileKey(tile.q, tile.r), ni);
+      }
+    }
+    // else: keep teleported position
+  }
+
+  // Re-run swap optimization after teleport (positions changed)
+  for (const region of regionNames) {
+    const indices = regionNodeIndices.get(region) ?? [];
+    if (indices.length < 2) continue;
+    for (let pass = 0; pass < 5; pass++) {
+      let improved = false;
+      for (let i = 0; i < indices.length; i++) {
+        for (let j = i + 1; j < indices.length; j++) {
+          const ni = indices[i], nj = indices[j];
+          const ci = tileCoords.get(ni)!, cj = tileCoords.get(nj)!;
+          const costBefore = nodeCost(ni) + nodeCost(nj);
+          tileCoords.set(ni, cj);
+          tileCoords.set(nj, ci);
+          if (nodeCost(ni) + nodeCost(nj) < costBefore) {
+            tileOwner.set(tileKey(cj.q, cj.r), ni);
+            tileOwner.set(tileKey(ci.q, ci.r), nj);
+            improved = true;
+          } else {
+            tileCoords.set(ni, ci);
+            tileCoords.set(nj, cj);
+          }
+        }
+      }
+      if (!improved) break;
+    }
+  }
+
   // --- Build result ---
   const result: GraphNode[] = [];
   for (const [ni, tile] of tileCoords) {
