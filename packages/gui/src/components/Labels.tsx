@@ -57,7 +57,19 @@ export function Labels({ sceneManager }: { sceneManager: SceneManager | null }) 
       // Skip SERVICE — already shown as region label
       if (node.type === 'SERVICE') continue;
 
-      if (node.type === 'MODULE' || node.type === 'CLASS' || node.type === 'INTERFACE') {
+      if (node.type === 'EXTERNAL') {
+        // Always visible — important external dependencies
+        candidates.push({
+          key: `n:${node.id}`,
+          text: node.name,
+          worldX: node.x,
+          worldZ: node.z,
+          priority: 800 + node.degree,
+          fontSize: 10,
+          minDist: 500,
+          mandatory: true,
+        });
+      } else if (node.type === 'MODULE' || node.type === 'CLASS' || node.type === 'INTERFACE') {
         candidates.push({
           key: `n:${node.id}`,
           text: node.name,

@@ -46,6 +46,25 @@
   overflow: hidden;
 }
 
+/* Coord grid overlay */
+.coord-grid-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 4;
+  overflow: hidden;
+}
+
+.coord-label {
+  position: absolute;
+  font-size: 7px;
+  color: #445;
+  font-family: 'SF Mono', monospace;
+  white-space: nowrap;
+  pointer-events: none;
+  text-shadow: 0 0 3px rgba(0,0,0,0.9);
+}
+
 .map-label {
   position: absolute;
   transform: translate(-50%, -50%);

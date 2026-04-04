@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react';
 import { useDataStore } from '../store/dataStore';
 import { useMapStore } from '../store/mapStore';
 import { FlowPanel } from './FlowPanel';
-import { flowLayerRef } from './Canvas';
+import { flowLayerRef, setShowCoordsRef } from './Canvas';
 import { FLOWS } from '../config/flows';
 
 const LOD_NAMES = ['Package', 'Directory', 'File', 'Function'];
@@ -60,6 +60,18 @@ export function Sidebar() {
           </div>
 
           <FlowPanel enabledFlows={enabledFlows} onToggle={toggleFlow} />
+
+          <div>
+            <h2>Debug</h2>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: '#888' }}>
+              <input
+                type="checkbox"
+                onChange={(e) => setShowCoordsRef?.(e.target.checked)}
+                style={{ accentColor: '#00e5ff' }}
+              />
+              Show coords (q,r)
+            </label>
+          </div>
         </>
       )}
     </div>

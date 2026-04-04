@@ -5,6 +5,7 @@ import { HexLayer } from '../three/HexLayer';
 import { RegionLayer } from '../three/RegionLayer';
 import { FlowLayer } from '../three/FlowLayer';
 import { Labels } from './Labels';
+import { CoordGrid } from './CoordGrid';
 import { useDataStore } from '../store/dataStore';
 import { useMapStore } from '../store/mapStore';
 
@@ -46,11 +47,15 @@ const TILE_SIZE = 3.0;
 
 // Exported so Sidebar can control flows
 export let flowLayerRef: FlowLayer | null = null;
+// Exported so Sidebar can toggle coord grid
+export let setShowCoordsRef: ((v: boolean) => void) | null = null;
 
 export function Canvas() {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<SceneManager | null>(null);
   const hexLayerRef = useRef<HexLayer | null>(null);
+  const [showCoords, setShowCoords] = useState(false);
+  setShowCoordsRef = setShowCoords;
   const regionLayerRef = useRef<RegionLayer | null>(null);
   const flowLayerLocalRef = useRef<FlowLayer | null>(null);
   const [sm, setSm] = useState<SceneManager | null>(null);
@@ -111,10 +116,20 @@ export function Canvas() {
     flowLayerLocalRef.current = flowLayer;
     flowLayerRef = flowLayer; // expose to sidebar
 
-    // --- Hover ---
+    // --- Hover: elevate hovered + all connected nodes ---
+    // Build adjacency list for fast lookup
+    const adjList = new Map<number, number[]>();
+    for (const edge of edges) {
+      if (!adjList.has(edge.source)) adjList.set(edge.source, []);
+      if (!adjList.has(edge.target)) adjList.set(edge.target, []);
+      adjList.get(edge.source)!.push(edge.target);
+      adjList.get(edge.target)!.push(edge.source);
+    }
+
     const raycaster = new THREE.Raycaster();
     const mouse = new THREE.Vector2();
     let hoveredIdx = -1;
+    let prevConnected = new Set<number>();
 
     const onMouseMove = (e: MouseEvent) => {
       const rect = containerRef.current!.getBoundingClientRect();
@@ -125,15 +140,48 @@ export function Canvas() {
       const newIdx = layer.raycast(raycaster);
       if (newIdx === hoveredIdx) return;
 
+      // Unhover previous — reset all connected
       if (hoveredIdx >= 0) {
         layer.animateTo(hoveredIdx, 'elevation', 0, 200);
         layer.animateTo(hoveredIdx, 'outlineWidth', 0, 200);
+        for (const ci of prevConnected) {
+          layer.animateTo(ci, 'elevation', 0, 200);
+          layer.animateTo(ci, 'outlineWidth', 0, 200);
+        }
+        // Reset all opacities
+        for (let i = 0; i < nodes.length; i++) {
+          layer.animateTo(i, 'opacity', 1.0, 150);
+        }
+        prevConnected.clear();
       }
+
       hoveredIdx = newIdx;
+
       if (hoveredIdx >= 0) {
-        layer.animateTo(hoveredIdx, 'elevation', 1.5, 200);
-        layer.animateTo(hoveredIdx, 'outlineWidth', 0.15, 200);
+        // Find connected nodes
+        const connected = new Set(adjList.get(hoveredIdx) ?? []);
+        prevConnected = connected;
+
+        // Elevate + glow hovered node
+        layer.animateTo(hoveredIdx, 'elevation', 2.0, 200);
+        layer.animateTo(hoveredIdx, 'outlineWidth', 0.2, 200);
         layer.setOutlineColor(hoveredIdx, 0x00e5ff);
+
+        // Elevate + glow connected nodes (softer)
+        for (const ci of connected) {
+          layer.animateTo(ci, 'elevation', 1.0, 250);
+          layer.animateTo(ci, 'outlineWidth', 0.12, 250);
+          layer.setOutlineColor(ci, 0x00aacc);
+        }
+
+        // Dim unconnected nodes
+        for (let i = 0; i < nodes.length; i++) {
+          if (i === hoveredIdx || connected.has(i)) {
+            layer.animateTo(i, 'opacity', 1.0, 150);
+          } else {
+            layer.animateTo(i, 'opacity', 0.25, 150);
+          }
+        }
       }
     };
     sm.renderer.domElement.addEventListener('mousemove', onMouseMove);
@@ -154,6 +202,7 @@ export function Canvas() {
   return (
     <div ref={containerRef} className="canvas-container">
       <Labels sceneManager={sm} />
+      <CoordGrid sceneManager={sm} visible={showCoords} />
     </div>
   );
 }
