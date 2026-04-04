@@ -317,20 +317,20 @@ function floodFillLayout(
     }
   }
 
-  // --- Phase C: migration — nodes flow to unclaimed tiles ---
-  // A border node can migrate to an adjacent unclaimed tile if:
-  // 1. It reduces the node's total edge cost
-  // 2. The region remains connected after vacating the old tile
+  // --- Phase C: multi-hop migration ---
+  // Border nodes BFS through unclaimed tiles up to depth 4.
+  // Pick the position that minimizes edge cost.
+  // Constraints:
+  //   - Region stays connected after vacating old tile
+  //   - New tile must be adjacent to at least one other tile from same region
 
-  function regionConnectedWithout(region: string, removedKey: string): boolean {
-    // Collect all tiles of this region except the removed one
+  function isRegionConnectedWithout(region: string, removedKey: string): boolean {
     const tiles: string[] = [];
     for (const [k, r] of claimed) {
       if (r === region && k !== removedKey) tiles.push(k);
     }
-    if (tiles.length === 0) return true; // last tile — don't migrate
+    if (tiles.length === 0) return false; // can't remove last tile
 
-    // BFS from first tile
     const visited = new Set<string>();
     const queue = [tiles[0]];
     visited.add(tiles[0]);
@@ -347,11 +347,56 @@ function floodFillLayout(
         }
       }
     }
-
     return visited.size === tileSet.size;
   }
 
-  for (let pass = 0; pass < 10; pass++) {
+  function hasAdjacentRegionTile(q: number, r: number, region: string, excludeKey: string): boolean {
+    for (const dir of CUBE_DIRS) {
+      const nk = tileKey(q + dir.q, r + dir.r);
+      if (nk !== excludeKey && claimed.get(nk) === region) return true;
+    }
+    return false;
+  }
+
+  // BFS through unclaimed tiles from a starting position, up to maxDepth
+  function findReachableUnclaimed(startQ: number, startR: number, maxDepth: number): { q: number; r: number; key: string }[] {
+    const result: { q: number; r: number; key: string }[] = [];
+    const visited = new Set<string>();
+    const queue: { q: number; r: number; depth: number }[] = [];
+
+    // Seed from all unclaimed neighbors of start
+    for (const dir of CUBE_DIRS) {
+      const nq = startQ + dir.q;
+      const nr = startR + dir.r;
+      const nk = tileKey(nq, nr);
+      if (!claimed.has(nk) && !visited.has(nk)) {
+        visited.add(nk);
+        queue.push({ q: nq, r: nr, depth: 1 });
+        result.push({ q: nq, r: nr, key: nk });
+      }
+    }
+
+    while (queue.length > 0) {
+      const { q, r, depth } = queue.shift()!;
+      if (depth >= maxDepth) continue;
+      for (const dir of CUBE_DIRS) {
+        const nq = q + dir.q;
+        const nr = r + dir.r;
+        const nk = tileKey(nq, nr);
+        if (!claimed.has(nk) && !visited.has(nk)) {
+          visited.add(nk);
+          queue.push({ q: nq, r: nr, depth: depth + 1 });
+          result.push({ q: nq, r: nr, key: nk });
+        }
+      }
+    }
+
+    return result;
+  }
+
+  const MAX_HOP_DEPTH = 4;
+
+  for (let pass = 0; pass < 15; pass++) {
     let anyMigrated = false;
 
     for (const region of regionNames) {
@@ -363,42 +408,33 @@ function floodFillLayout(
         const currentKey = tileKey(currentTile.q, currentTile.r);
         const currentCost = nodeCost(ni);
 
-        // Find unclaimed neighbor tiles
-        const candidates: { q: number; r: number; key: string }[] = [];
-        for (const dir of CUBE_DIRS) {
-          const nq = currentTile.q + dir.q;
-          const nr = currentTile.r + dir.r;
-          const nk = tileKey(nq, nr);
-          if (!claimed.has(nk)) {
-            candidates.push({ q: nq, r: nr, key: nk });
-          }
-        }
+        // Check if we can safely remove this tile
+        if (!isRegionConnectedWithout(region, currentKey)) continue;
 
+        // BFS through unclaimed tiles
+        const candidates = findReachableUnclaimed(currentTile.q, currentTile.r, MAX_HOP_DEPTH);
         if (candidates.length === 0) continue;
 
-        // Try each candidate
         let bestCandidate: (typeof candidates)[0] | null = null;
         let bestCost = currentCost;
 
         for (const cand of candidates) {
-          // Temporarily move
-          tileCoords.set(ni, { q: cand.q, r: cand.r });
+          // New tile must be adjacent to at least one other tile from this region
+          if (!hasAdjacentRegionTile(cand.q, cand.r, region, currentKey)) continue;
 
+          // Evaluate cost at this position
+          tileCoords.set(ni, { q: cand.q, r: cand.r });
           const newCost = nodeCost(ni);
+
           if (newCost < bestCost) {
-            // Check connectivity
-            if (regionConnectedWithout(region, currentKey)) {
-              bestCost = newCost;
-              bestCandidate = cand;
-            }
+            bestCost = newCost;
+            bestCandidate = cand;
           }
 
-          // Revert
-          tileCoords.set(ni, currentTile);
+          tileCoords.set(ni, currentTile); // revert
         }
 
         if (bestCandidate) {
-          // Commit migration
           tileCoords.set(ni, { q: bestCandidate.q, r: bestCandidate.r });
           tileOwner.delete(currentKey);
           tileOwner.set(bestCandidate.key, ni);
