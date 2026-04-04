@@ -100,6 +100,8 @@ struct Ctx {
     scope_parents: HashMap<String, String>,
     /// Deferred references to resolve after walk
     deferred_refs: Vec<DeferredRef>,
+    /// Type annotation being threaded through walk_pat_bindings
+    pending_type_annotation: Option<String>,
 }
 
 impl Ctx {
@@ -117,6 +119,7 @@ impl Ctx {
             declarations: HashMap::new(),
             scope_parents: HashMap::new(),
             deferred_refs: Vec::new(),
+            pending_type_annotation: None,
         }
     }
 
@@ -585,7 +588,13 @@ fn walk_fn_param(param: &syn::FnArg, fn_id: &str, ctx: &mut Ctx) {
             // Use walk_pat_bindings for all patterns (simple ident + complex destructuring).
             // Temporarily set enclosing_fn to fn_id so semantic IDs get the right parent.
             let prev_fn = ctx.enclosing_fn.replace(fn_id.to_string());
+            // Thread type annotation through to PARAMETER node metadata
+            let type_str = type_to_name(&t.ty);
+            if type_str != "<type>" {
+                ctx.pending_type_annotation = Some(type_str);
+            }
             walk_pat_bindings(t.pat.as_ref(), "param", ctx);
+            ctx.pending_type_annotation = None;
             ctx.enclosing_fn = prev_fn;
         }
     }
@@ -1152,6 +1161,14 @@ fn walk_pat_bindings(pat: &syn::Pat, kind: &str, ctx: &mut Ctx) {
             let node_type = if kind == "param" { "PARAMETER" } else { "VARIABLE" };
             let node_id = semantic_id(&ctx.file, node_type, &name, parent, Some(&hash));
 
+            let mut meta = HashMap::from([
+                Ctx::meta_text("kind", kind),
+                Ctx::meta_bool("mutable", pi.mutability.is_some()),
+            ]);
+            if let Some(ref ty) = ctx.pending_type_annotation {
+                let (k, v) = Ctx::meta_text("typeAnnotation", ty);
+                meta.insert(k, v);
+            }
             ctx.emit_declaration(GraphNode {
                 id: node_id,
                 node_type: node_type.to_string(),
@@ -1160,10 +1177,7 @@ fn walk_pat_bindings(pat: &syn::Pat, kind: &str, ctx: &mut Ctx) {
                 line, column: col,
                 end_line: ctx.span_end_line_col(pi.ident.span()).0, end_column: ctx.span_end_line_col(pi.ident.span()).1,
                 exported: false,
-                metadata: HashMap::from([
-                    Ctx::meta_text("kind", kind),
-                    Ctx::meta_bool("mutable", pi.mutability.is_some()),
-                ]),
+                metadata: meta,
                 extra: HashMap::new(),
             });
 
@@ -1202,8 +1216,14 @@ fn walk_pat_bindings(pat: &syn::Pat, kind: &str, ctx: &mut Ctx) {
             walk_pat_bindings(&pr.pat, kind, ctx);
         }
         syn::Pat::Type(pt) => {
-            // `x: i32` — unwrap the type annotation and handle the inner pattern
+            // `x: i32` — extract type annotation and thread to inner pattern
+            let prev = ctx.pending_type_annotation.take();
+            let type_str = type_to_name(&pt.ty);
+            if type_str != "<type>" {
+                ctx.pending_type_annotation = Some(type_str);
+            }
             walk_pat_bindings(&pt.pat, kind, ctx);
+            ctx.pending_type_annotation = prev;
         }
         syn::Pat::Wild(_) => {
             // `_` — no binding
@@ -1625,6 +1645,10 @@ fn path_to_string(path: &syn::Path) -> String {
 fn type_to_name(ty: &syn::Type) -> String {
     match ty {
         syn::Type::Path(p) => path_to_string(&p.path),
+        syn::Type::Reference(r) => type_to_name(&r.elem),
+        syn::Type::Paren(p) => type_to_name(&p.elem),
+        syn::Type::Group(g) => type_to_name(&g.elem),
+        syn::Type::Slice(s) => type_to_name(&s.elem),
         _ => "<type>".to_string(),
     }
 }
@@ -1680,6 +1704,29 @@ mod tests {
         assert_eq!(count_nodes(&fa, "VARIABLE"), 2);
         assert!(has_node(&fa, "VARIABLE", "x"));
         assert!(has_node(&fa, "VARIABLE", "y"));
+    }
+
+    #[test]
+    fn test_type_annotation_on_param() {
+        let fa = parse_and_analyze("fn foo(x: i32, seg: NodeSegmentV2) {}");
+        let x = fa.nodes.iter().find(|n| n.node_type == "PARAMETER" && n.name == "x").unwrap();
+        assert_eq!(x.metadata.get("typeAnnotation"), Some(&serde_json::json!("i32")));
+        let seg = fa.nodes.iter().find(|n| n.node_type == "PARAMETER" && n.name == "seg").unwrap();
+        assert_eq!(seg.metadata.get("typeAnnotation"), Some(&serde_json::json!("NodeSegmentV2")));
+    }
+
+    #[test]
+    fn test_type_annotation_on_let() {
+        let fa = parse_and_analyze("fn main() { let x: u64 = 42; }");
+        let x = fa.nodes.iter().find(|n| n.node_type == "VARIABLE" && n.name == "x").unwrap();
+        assert_eq!(x.metadata.get("typeAnnotation"), Some(&serde_json::json!("u64")));
+    }
+
+    #[test]
+    fn test_type_annotation_reference() {
+        let fa = parse_and_analyze("fn foo(seg: &NodeSegmentV2) {}");
+        let seg = fa.nodes.iter().find(|n| n.node_type == "PARAMETER" && n.name == "seg").unwrap();
+        assert_eq!(seg.metadata.get("typeAnnotation"), Some(&serde_json::json!("NodeSegmentV2")));
     }
 
     #[test]
