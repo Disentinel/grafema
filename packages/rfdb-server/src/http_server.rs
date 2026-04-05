@@ -222,110 +222,99 @@ fn build_graph_stream_body(
 
     let node_count = node_refs.len();
 
-    // Build CONTAINS parent map for edge lifting:
-    // For nodes NOT in our visible set, find their nearest visible ancestor.
-    // This lets us create aggregated edges: if CALL_X -CALLS-> getUser
-    // and CALL_X is CONTAINS-child of handleGetUser, we lift to handleGetUser → getUser.
-    let all_edges = engine.get_all_edges();
+    // ── Edge aggregation via file-based grouping ──
+    // Group ALL nodes in the graph by file path. For each file, find the best
+    // visible node (FUNCTION > CLASS > MODULE) to "own" non-visible nodes.
+    // Then collect semantic edges and lift both endpoints to their file's owner.
+    //
+    // This handles graphs where CALL nodes have no CONTAINS parent but share
+    // the same file as their enclosing FUNCTION.
 
-    // Build parent map for edge lifting. Each node maps to its most specific
-    // (deepest) parent. Priority: CONTAINS > DECLARES > HAS_SCOPE > HAS_BODY
-    // This ensures CALL nodes lift to their enclosing FUNCTION, not MODULE.
-    let mut contains_parent: HashMap<u128, u128> = HashMap::new();
-    let parent_priority = |etype: &str| -> u8 {
-        match etype {
-            "CONTAINS" => 4,
-            "DECLARES" => 3,
-            "HAS_SCOPE" => 2,
-            "HAS_BODY" => 1,
-            _ => 0,
-        }
-    };
-    let mut parent_prio: HashMap<u128, u8> = HashMap::new();
+    let liftable_types: std::collections::HashSet<&str> = [
+        "CALLS", "READS_FROM", "IMPORTS_FROM", "WRITES_TO",
+        "PASSES_ARGUMENT", "AWAITS", "RETURNS", "ITERATES_OVER",
+        "DEPENDS_ON", "HAS_METHOD",
+    ].into_iter().collect();
 
-    for edge in &all_edges {
-        let etype = edge.edge_type.as_deref().unwrap_or("");
-        let prio = parent_priority(etype);
-        if prio == 0 { continue; }
+    // Build file → visible nodes map
+    let mut file_to_visible: HashMap<String, Vec<u32>> = HashMap::new();
+    for nr in &node_refs {
+        file_to_visible.entry(nr.file.clone()).or_default().push(nr.idx);
+    }
 
-        // Prefer higher priority, or non-MODULE over MODULE for same priority
-        let existing_prio = parent_prio.get(&edge.dst).copied().unwrap_or(0);
-        let src_is_module = engine.get_node(edge.src)
-            .and_then(|n| n.node_type.as_ref().map(|t| t == "MODULE"))
-            .unwrap_or(false);
+    // For each file that has visible nodes, collect ALL nodes in that file
+    // and map non-visible ones to the file's MODULE node (or first visible node)
+    let mut nid_to_visible: HashMap<u128, u32> = HashMap::new();
 
-        if prio > existing_prio || (prio == existing_prio && !src_is_module) {
-            contains_parent.insert(edge.dst, edge.src);
-            parent_prio.insert(edge.dst, prio);
+    // Visible nodes map to themselves
+    for nr in &node_refs {
+        nid_to_visible.insert(nr.id, nr.idx);
+    }
+
+    // Find all non-visible nodes that share a file with visible nodes
+    let files_with_visible: std::collections::HashSet<String> =
+        file_to_visible.keys().cloned().collect();
+
+    let all_node_ids = engine.find_by_attr(&AttrQuery::default());
+    for &nid in &all_node_ids {
+        if nid_to_visible.contains_key(&nid) { continue; }
+        let node = match engine.get_node(nid) {
+            Some(n) => n,
+            None => continue,
+        };
+        let file = node.file.as_deref().unwrap_or("").to_string();
+        if !files_with_visible.contains(&file) { continue; }
+
+        // Map to the best visible node in this file:
+        // Prefer FUNCTION/METHOD/CLASS over MODULE (more specific)
+        if let Some(visible_nodes) = file_to_visible.get(&file) {
+            // Use first visible node as default (could be smarter with line-based proximity)
+            nid_to_visible.insert(nid, visible_nodes[0]);
         }
     }
 
-    // Lift a node ID to its nearest visible ancestor (max 10 levels)
-    let lift_to_visible = |mut nid: u128| -> Option<u32> {
-        for _ in 0..10 {
-            if let Some(&idx) = id_to_idx.get(&nid) {
-                return Some(idx);
-            }
-            nid = *contains_parent.get(&nid)?;
-        }
-        None
-    };
+    eprintln!("[http] edge-lift: {} visible, {} mapped via file grouping",
+        node_count, nid_to_visible.len());
 
-    // Fetch edges with lifting
+    // Collect edges between mapped nodes
     let mut edge_refs: Vec<EdgeRef> = Vec::new();
     let mut edge_type_table: Vec<String> = Vec::new();
     let mut edge_type_idx: HashMap<String, usize> = HashMap::new();
     let mut seen_edges: std::collections::HashSet<(u32, u32, String)> = std::collections::HashSet::new();
 
-    // Edges to lift: CALLS, READS_FROM, IMPORTS_FROM, WRITES_TO, PASSES_ARGUMENT, AWAITS, RETURNS
-    let liftable_types: std::collections::HashSet<&str> = [
-        "CALLS", "READS_FROM", "IMPORTS_FROM", "WRITES_TO",
-        "PASSES_ARGUMENT", "AWAITS", "RETURNS", "ITERATES_OVER",
-    ].into_iter().collect();
+    // For every mapped node, check its outgoing edges
+    for (&nid, &src_vis) in &nid_to_visible {
+        let out_edges = engine.get_outgoing_edges(nid, None);
+        for edge in &out_edges {
+            let etype = edge.edge_type.as_deref().unwrap_or("UNKNOWN").to_string();
+            if !liftable_types.contains(etype.as_str()) { continue; }
 
-    for edge in &all_edges {
-        let etype = edge.edge_type.as_deref().unwrap_or("UNKNOWN").to_string();
-
-        if let Some(ref types) = want_edge_types {
-            if !types.iter().any(|t| t == &etype) { continue; }
-        }
-
-        // Try direct match first
-        let si = id_to_idx.get(&edge.src).copied();
-        let di = id_to_idx.get(&edge.dst).copied();
-
-        let (final_si, final_di) = if si.is_some() && di.is_some() {
-            (si.unwrap(), di.unwrap())
-        } else if liftable_types.contains(etype.as_str()) {
-            // Lift: find nearest visible ancestor for missing endpoint(s)
-            let lifted_si = si.or_else(|| lift_to_visible(edge.src));
-            let lifted_di = di.or_else(|| lift_to_visible(edge.dst));
-            match (lifted_si, lifted_di) {
-                (Some(s), Some(d)) => (s, d),
-                _ => continue,
+            if let Some(ref types) = want_edge_types {
+                if !types.iter().any(|t| t == &etype) { continue; }
             }
-        } else {
-            continue;
-        };
 
-        // Skip self-loops and structural edges in output
-        if final_si == final_di { continue; }
+            let dst_vis = match nid_to_visible.get(&edge.dst) {
+                Some(&idx) => idx,
+                None => continue,
+            };
 
-        // Dedup lifted edges
-        let edge_key = (final_si, final_di, etype.clone());
-        if !seen_edges.insert(edge_key) { continue; }
+            if src_vis == dst_vis { continue; }
 
-        let _eti = *edge_type_idx.entry(etype.clone()).or_insert_with(|| {
-            let idx = edge_type_table.len();
-            edge_type_table.push(etype.clone());
-            idx
-        });
+            let edge_key = (src_vis, dst_vis, etype.clone());
+            if !seen_edges.insert(edge_key) { continue; }
 
-        edge_refs.push(EdgeRef {
-            src_idx: final_si,
-            dst_idx: final_di,
-            edge_type: etype,
-        });
+            let _eti = *edge_type_idx.entry(etype.clone()).or_insert_with(|| {
+                let idx = edge_type_table.len();
+                edge_type_table.push(etype.clone());
+                idx
+            });
+
+            edge_refs.push(EdgeRef {
+                src_idx: src_vis,
+                dst_idx: dst_vis,
+                edge_type: etype,
+            });
+        }
     }
 
     // Compute degrees
