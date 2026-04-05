@@ -207,6 +207,13 @@ export function Canvas() {
       }
 
       prevRouteNodes = new Set(newRouteNodes);
+
+      // Highlight edges between route nodes (both endpoints in route)
+      if (newRouteNodes.size > 0) {
+        flowLayer.highlightEdges(newRouteNodes, 'both');
+      } else {
+        flowLayer.highlightEdges(null);
+      }
     }
     applyRoutes();
     sm.onRender((dt) => routeLayer.tick(dt));

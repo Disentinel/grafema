@@ -165,25 +165,28 @@ export class FlowLayer {
   /**
    * Highlight edges connected to a set of nodes, dim the rest.
    * Pass null to reset all edges to full opacity.
+   * @param mode 'any' = either endpoint matches (default), 'both' = both endpoints must match
    */
-  highlightEdges(activeNodes: Set<number> | null) {
+  highlightEdges(activeNodes: Set<number> | null, mode: 'any' | 'both' = 'any') {
     for (const b of this._bindings) {
       if (!b.line.parent?.visible) continue;
       const lineMat = b.line.material as THREE.MeshBasicMaterial;
       const arrowMat = b.arrow.material as THREE.MeshBasicMaterial;
 
       if (!activeNodes) {
-        // Reset
         lineMat.opacity = 0.6;
         arrowMat.opacity = 0.7;
-      } else if (activeNodes.has(b.srcIdx) || activeNodes.has(b.dstIdx)) {
-        // Connected to active — bright
-        lineMat.opacity = 0.9;
-        arrowMat.opacity = 1.0;
       } else {
-        // Not connected — dim
-        lineMat.opacity = 0.06;
-        arrowMat.opacity = 0.06;
+        const match = mode === 'both'
+          ? activeNodes.has(b.srcIdx) && activeNodes.has(b.dstIdx)
+          : activeNodes.has(b.srcIdx) || activeNodes.has(b.dstIdx);
+        if (match) {
+          lineMat.opacity = 0.9;
+          arrowMat.opacity = 1.0;
+        } else {
+          lineMat.opacity = 0.06;
+          arrowMat.opacity = 0.06;
+        }
       }
     }
   }
