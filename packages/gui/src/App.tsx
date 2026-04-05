@@ -35,7 +35,9 @@ export function App() {
         case 'nodes': setStatus(`Loading nodes: ${count}`); break;
         case 'nodes_done': setStatus(`${count} nodes loaded, fetching edges...`); break;
         case 'edges': setStatus(`Loading edges: ${count}`); break;
-        case 'layout': setStatus(`Running layout for ${count} nodes...`); break;
+        case 'layout': setStatus(`Laying out ${count} nodes...`); break;
+        case 'layout_rendered': setStatus(`${count} nodes — optimizing layout...`); break;
+        case 'sa_refine': setStatus(`Optimizing: ${count} iter, cost ${total}`); break;
         case 'done': setStatus(`Done: ${count} nodes, ${total} edges`); break;
         case 'complete': setStatus(''); break;
       }

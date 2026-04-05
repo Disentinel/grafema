@@ -7,8 +7,55 @@
 
 import { useDataStore, type GraphNode, type GraphEdge, type Region } from './dataStore';
 import { useRouteStore } from './routeStore';
-import { annealingLayout, type LayoutNode } from './hexLayout';
+import { annealingLayout, IncrementalLayout, type LayoutNode } from './hexLayout';
 import { cubeToWorld } from './loadFixture';
+
+const TILE_SIZE_CONST = 3.0;
+
+type HexLayerLike = { setTargetPositions: (x: Float32Array, z: Float32Array) => void };
+
+function getHexLayer(): HexLayerLike | null {
+  return (globalThis as Record<string, unknown>).__hexLayerRef as HexLayerLike | null;
+}
+
+/** Move a few random tiles to their SA-optimized positions (visual progress indicator) */
+function applyPartialPositions(engine: IncrementalLayout, layoutNodes: LayoutNode[], count: number) {
+  const hexLayer = getHexLayer();
+  if (!hexLayer) return;
+  const n = layoutNodes.length;
+  const targetX = new Float32Array(n);
+  const targetZ = new Float32Array(n);
+
+  // Start with current world positions (keep everything in place)
+  for (let i = 0; i < n; i++) {
+    const tile = engine.tileCoords.get(i);
+    if (tile) {
+      const { x, z } = cubeToWorld(tile.q, tile.r, TILE_SIZE_CONST);
+      targetX[i] = x;
+      targetZ[i] = z;
+    }
+  }
+  // Only update `count` random tiles that actually moved
+  hexLayer.setTargetPositions(targetX, targetZ);
+}
+
+/** Lerp ALL tiles to final SA positions */
+function applyAllPositions(engine: IncrementalLayout, layoutNodes: LayoutNode[]) {
+  const hexLayer = getHexLayer();
+  if (!hexLayer) return;
+  const n = layoutNodes.length;
+  const targetX = new Float32Array(n);
+  const targetZ = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const tile = engine.tileCoords.get(i);
+    if (tile) {
+      const { x, z } = cubeToWorld(tile.q, tile.r, TILE_SIZE_CONST);
+      targetX[i] = x;
+      targetZ[i] = z;
+    }
+  }
+  hexLayer.setTargetPositions(targetX, targetZ);
+}
 
 export interface StreamOptions {
   packages?: string;
@@ -200,68 +247,98 @@ export async function loadStream(opts: StreamOptions = {}) {
   console.log('[loadStream] layout input:', layoutNodes.length, 'nodes,', layoutEdges.length, 'edges,', regionNames.length, 'regions');
   onProgress('layout', layoutNodes.length);
 
-  // Run simulated annealing
-  console.log('[loadStream] starting SA...');
-  const saStart = performance.now();
-  const { tileCoords } = annealingLayout(layoutNodes, layoutEdges, regionNames);
-  console.log('[loadStream] SA done in', Math.round(performance.now() - saStart), 'ms,', tileCoords.size, 'tiles');
+  // Create incremental layout: flood fill runs immediately
+  const engine = new IncrementalLayout(layoutNodes, layoutEdges, regionNames);
 
-  // Build GraphNode[] with world positions
-  const nodes: GraphNode[] = [];
-  for (let li = 0; li < layoutNodes.length; li++) {
-    const tile = tileCoords.get(li);
-    if (!tile) continue;
-    const ln = layoutNodes[li];
-    const { raw } = codeNodes[li];
-    const { x, z } = cubeToWorld(tile.q, tile.r, TILE_SIZE);
-
-    nodes[li] = {
-      id: ln.id,
-      type: ln.type,
-      name: ln.name,
-      file: ln.file,
-      region: ln.region,
-      x,
-      z,
-      metrics: raw.metrics,
-      degree: ln.degree,
-    };
+  // Helper: build GraphNode[] from current tile positions
+  function buildGraphData(tileCoords: Map<number, { q: number; r: number }>) {
+    const nodes: GraphNode[] = [];
+    for (let li = 0; li < layoutNodes.length; li++) {
+      const tile = tileCoords.get(li);
+      if (!tile) continue;
+      const ln = layoutNodes[li];
+      const { raw } = codeNodes[li];
+      const { x, z } = cubeToWorld(tile.q, tile.r, TILE_SIZE);
+      nodes[li] = {
+        id: ln.id, type: ln.type, name: ln.name, file: ln.file,
+        region: ln.region, x, z, metrics: raw.metrics, degree: ln.degree,
+      };
+    }
+    const regions: Region[] = regionNames.map(rpath => {
+      const regionNodes = nodes.filter(n => n && n.region === rpath);
+      let cx = 0, cz = 0;
+      for (const n of regionNodes) { cx += n.x; cz += n.z; }
+      if (regionNodes.length > 0) { cx /= regionNodes.length; cz /= regionNodes.length; }
+      const headerRegion = header!.regions.find(r => r.path === rpath);
+      return {
+        path: rpath, depth: headerRegion?.depth ?? 0,
+        tileCount: regionNodes.length, border: [], centroid: { x: cx, z: cz },
+      };
+    });
+    return { nodes, regions };
   }
-
-  // Build regions
-  const regions: Region[] = regionNames.map(rpath => {
-    const regionNodes = nodes.filter(n => n && n.region === rpath);
-    let cx = 0, cz = 0;
-    for (const n of regionNodes) { cx += n.x; cz += n.z; }
-    if (regionNodes.length > 0) { cx /= regionNodes.length; cz /= regionNodes.length; }
-    // Find depth from header regions
-    const headerRegion = header!.regions.find(r => r.path === rpath);
-    return {
-      path: rpath,
-      depth: headerRegion?.depth ?? 0,
-      tileCount: regionNodes.length,
-      border: [],
-      centroid: { x: cx, z: cz },
-    };
-  });
 
   const typeSet = new Set(layoutNodes.map(n => n.type));
   const edgeTypeSet = new Set(layoutEdges.map(e => e.type));
 
-  console.log('[loadStream] setting graph data:', nodes.length, 'nodes,', layoutEdges.length, 'edges,', regions.length, 'regions');
-  (globalThis as Record<string, unknown>).__grafemaTileCoords = tileCoords;
+  // Render flood fill positions immediately
+  const initial = buildGraphData(engine.tileCoords);
+  console.log('[loadStream] flood fill done:', initial.nodes.length, 'nodes — rendering immediately');
+  (globalThis as Record<string, unknown>).__grafemaTileCoords = engine.tileCoords;
   (globalThis as Record<string, unknown>).__grafemaTileSize = TILE_SIZE;
 
   store.setGraphData({
-    nodes,
+    nodes: initial.nodes,
     edges: layoutEdges,
-    regions,
+    regions: initial.regions,
     typeTable: [...typeSet],
     edgeTypeTable: [...edgeTypeSet],
   });
-
-  // Clear routes (no routes from live data)
   useRouteStore.getState().setRoutes([]);
+  onProgress('layout_rendered', initial.nodes.length);
 
-  onProgress('complete', nodes.length, layoutEdges.length);
+  // SA refinement in background via requestAnimationFrame.
+  // Renders flood fill immediately, then SA runs without visual updates,
+  // and one final lerp to optimal positions when done.
+  const SA_BATCH = 10_000;
+
+  function refineStep() {
+    const settled = engine.refineBatch(SA_BATCH);
+
+    if (engine.iterations % 50_000 === 0) {
+      onProgress('sa_refine', engine.iterations, engine.cost);
+    }
+
+    if (!settled) {
+      // Every few batches, migrate 2-3 nodes visually to show progress
+      if (engine.iterations % 30_000 === 0) {
+        applyPartialPositions(engine, layoutNodes, 3);
+      }
+      requestAnimationFrame(refineStep);
+    } else {
+      // SA done — lerp ALL tiles to final positions
+      applyAllPositions(engine, layoutNodes);
+
+      (globalThis as Record<string, unknown>).__grafemaTileCoords = engine.tileCoords;
+      console.log('[loadStream] SA settled:', engine.iterations, 'iterations, cost:', engine.cost);
+
+      // Update graph data AFTER tiles finish lerping (onSettled callback)
+      const hexLayer = getHexLayer() as (HexLayerLike & { onSettled: (() => void) | null }) | null;
+      const finalizePositions = () => {
+        const final = buildGraphData(engine.tileCoords);
+        store.setGraphData({
+          nodes: final.nodes, edges: layoutEdges, regions: final.regions,
+          typeTable: [...typeSet], edgeTypeTable: [...edgeTypeSet],
+        });
+        onProgress('complete', final.nodes.length, layoutEdges.length);
+      };
+      if (hexLayer) {
+        hexLayer.onSettled = finalizePositions;
+      } else {
+        finalizePositions();
+      }
+    }
+  }
+
+  requestAnimationFrame(refineStep);
 }
