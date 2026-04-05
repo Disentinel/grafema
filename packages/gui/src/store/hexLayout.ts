@@ -55,7 +55,7 @@ function createRng(seed: number): () => number {
   };
 }
 
-function hexSpiral(count: number): { q: number; r: number }[] {
+function _hexSpiral(count: number): { q: number; r: number }[] {
   const tiles: { q: number; r: number }[] = [{ q: 0, r: 0 }];
   let radius = 1;
   while (tiles.length < count) {
@@ -269,29 +269,31 @@ export function annealingLayout(
     return cost;
   }
 
-  // Region connectivity check
-  function isRegionConnected(region: string): boolean {
-    const tiles: string[] = [];
-    for (const [k, r] of claimed) {
-      if (r === region) tiles.push(k);
+  // O(1) connectivity check using local hex topology only.
+  // If vacated tile has ≤1 same-region neighbor: can't disconnect.
+  // If 2+ neighbors: check if they form a connected arc around the hex
+  // (adjacent neighbors in hex ring = connected without center tile).
+  function wouldDisconnect(vacatedQ: number, vacatedR: number, region: string): boolean {
+    // Find which of the 6 hex directions have same-region neighbors
+    const hasNeighbor: boolean[] = new Array(6);
+    let count = 0;
+    for (let d = 0; d < 6; d++) {
+      const nk = tileKey(vacatedQ + CUBE_DIRS[d].q, vacatedR + CUBE_DIRS[d].r);
+      hasNeighbor[d] = claimed.get(nk) === region;
+      if (hasNeighbor[d]) count++;
     }
-    if (tiles.length <= 1) return true;
-    const visited = new Set<string>();
-    const queue = [tiles[0]];
-    visited.add(tiles[0]);
-    const tileSet = new Set(tiles);
-    while (queue.length > 0) {
-      const cur = queue.shift()!;
-      const [cq, cr] = cur.split(',').map(Number);
-      for (const dir of CUBE_DIRS) {
-        const nk = tileKey(cq + dir.q, cr + dir.r);
-        if (tileSet.has(nk) && !visited.has(nk)) {
-          visited.add(nk);
-          queue.push(nk);
-        }
-      }
+    if (count <= 1) return false;
+
+    // Check if all occupied neighbors form a single contiguous arc.
+    // Walk the hex ring — if there's only one gap, they're connected.
+    let gaps = 0;
+    for (let d = 0; d < 6; d++) {
+      if (hasNeighbor[d] && !hasNeighbor[(d + 1) % 6]) gaps++;
     }
-    return visited.size === tileSet.size;
+    // 0 gaps = all 6 occupied (fully surrounded) → safe
+    // 1 gap = single contiguous arc → safe (neighbors reach each other around the ring)
+    // 2+ gaps = multiple disconnected arcs → might disconnect region
+    return gaps >= 2;
   }
 
   // --- Simulated Annealing ---
@@ -299,7 +301,10 @@ export function annealingLayout(
   const rngSeed = N * 31 + edges.length * 37 + regionNames.length * 41;
   const rand = createRng(rngSeed);
 
-  const ITERATIONS = N * 3000;
+  // Scale iterations: 3000/node for small graphs, cap for larger ones.
+  // Target: <3s SA on main thread. ~100k iter/s in browser.
+  // 26 nodes → 78k, 100 nodes → 200k, 200+ nodes → 200k
+  const ITERATIONS = Math.min(N * 3000, 200_000);
   const T_START = 8.0;
   const T_END = 0.01;
   const COOL = Math.pow(T_END / T_START, 1 / ITERATIONS);
@@ -383,6 +388,9 @@ export function annealingLayout(
       claimed.set(curKey, region);
       if (!gapOk) continue;
 
+      // Fast connectivity pre-check: would vacating curTile disconnect the region?
+      if (wouldDisconnect(curTile.q, curTile.r, region)) continue;
+
       const costBefore = nodeCost(ni);
 
       // Tentative move
@@ -391,17 +399,6 @@ export function annealingLayout(
       claimed.set(targetKey, region);
       tileToNode.delete(curKey);
       tileToNode.set(targetKey, ni);
-
-      // Check connectivity
-      if (!isRegionConnected(region)) {
-        // Revert
-        tileCoords.set(ni, curTile);
-        claimed.delete(targetKey);
-        claimed.set(curKey, region);
-        tileToNode.delete(targetKey);
-        tileToNode.set(curKey, ni);
-        continue;
-      }
 
       const costAfter = nodeCost(ni);
       const delta = costAfter - costBefore;

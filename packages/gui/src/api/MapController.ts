@@ -9,7 +9,7 @@
 
 import { useDataStore } from '../store/dataStore';
 import { useViewStore } from '../store/viewStore';
-import { useRouteStore, type Route } from '../store/routeStore';
+import { useRouteStore } from '../store/routeStore';
 import { useDiffStore, type NodeChange } from '../store/diffStore';
 import { useMapStore } from '../store/mapStore';
 
