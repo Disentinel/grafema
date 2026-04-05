@@ -57,9 +57,9 @@ const FRAG = /* glsl */ `
   void main() {
     if (vOpacity < 0.01) discard;
 
-    // Top-down lighting with bloom-friendly brightness
-    float light = max(dot(vNormal, vec3(0.0, 1.0, 0.0)), 0.3);
-    vec3 baseColor = vInstanceColor * (0.8 + light * 0.4);
+    // Top-down lighting — keep colors vivid
+    float light = max(dot(vNormal, vec3(0.0, 1.0, 0.0)), 0.4);
+    vec3 baseColor = vInstanceColor * (0.6 + light * 0.3);
 
     // Subtle inner glow — brighter center, darker edges
     float dist = length(vLocalPos);

@@ -69,7 +69,7 @@ export const LENSES: Record<string, Lens> = {
     colorFn: (node) => {
       const hue = strHash(node.region) / 360;
       const lightness = (TYPE_LIGHTNESS[node.type] ?? 30) / 100;
-      return new THREE.Color().setHSL(hue, 0.5, lightness);
+      return new THREE.Color().setHSL(hue, 0.85, lightness * 0.8);
     },
     legend: 'categorical',
   },
@@ -78,7 +78,7 @@ export const LENSES: Record<string, Lens> = {
     label: 'By Type',
     colorFn: (node) => {
       const hue = strHash(node.type) / 360;
-      return new THREE.Color().setHSL(hue, 0.6, 0.4);
+      return new THREE.Color().setHSL(hue, 0.9, 0.3);
     },
     legend: 'categorical',
   },

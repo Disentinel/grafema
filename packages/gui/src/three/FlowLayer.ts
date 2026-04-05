@@ -116,7 +116,7 @@ export class FlowLayer {
       // Rebuild tube geometry (can't update TubeGeometry positions in-place)
       b.line.geometry.dispose();
       const tubePath = new THREE.CatmullRomCurve3(points);
-      b.line.geometry = new THREE.TubeGeometry(tubePath, CURVE_SEGMENTS, 0.15, 4, false);
+      b.line.geometry = new THREE.TubeGeometry(tubePath, CURVE_SEGMENTS, 0.12, 8, false);
 
       // Arrow
       const last = points[points.length - 1];
@@ -173,17 +173,25 @@ export class FlowLayer {
       const lineMat = b.line.material as THREE.MeshBasicMaterial;
       const arrowMat = b.arrow.material as THREE.MeshBasicMaterial;
 
+      const presetColor = this._getPresetColor(b);
       if (!activeNodes) {
         lineMat.opacity = 0.6;
         arrowMat.opacity = 0.7;
+        lineMat.color.copy(presetColor);
+        arrowMat.color.copy(presetColor);
       } else {
         const match = mode === 'both'
           ? activeNodes.has(b.srcIdx) && activeNodes.has(b.dstIdx)
           : activeNodes.has(b.srcIdx) || activeNodes.has(b.dstIdx);
         if (match) {
-          lineMat.opacity = 0.9;
+          // Glow: brighten color for bloom pickup
+          lineMat.color.copy(presetColor).multiplyScalar(2.0);
+          arrowMat.color.copy(presetColor).multiplyScalar(2.0);
+          lineMat.opacity = 1.0;
           arrowMat.opacity = 1.0;
         } else {
+          lineMat.color.copy(presetColor);
+          arrowMat.color.copy(presetColor);
           lineMat.opacity = 0.06;
           arrowMat.opacity = 0.06;
         }
@@ -265,7 +273,7 @@ export class FlowLayer {
 
       // Thick tube instead of thin line
       const tubePath = new THREE.CatmullRomCurve3(points);
-      const tubeGeo = new THREE.TubeGeometry(tubePath, CURVE_SEGMENTS, 0.15, 4, false);
+      const tubeGeo = new THREE.TubeGeometry(tubePath, CURVE_SEGMENTS, 0.12, 8, false);
       const tubeMat = new THREE.MeshBasicMaterial({
         color,
         transparent: true,
