@@ -6,7 +6,12 @@
       "name": "index.ts",
       "file": "api-gateway/index.ts",
       "region": "api-gateway",
-      "degree": 8
+      "degree": 8,
+      "metrics": {
+        "complexity": 17,
+        "fileSize": 381,
+        "churn": 6
+      }
     },
     {
       "id": "api-gateway/router",
@@ -14,7 +19,12 @@
       "name": "router.ts",
       "file": "api-gateway/router.ts",
       "region": "api-gateway",
-      "degree": 6
+      "degree": 6,
+      "metrics": {
+        "complexity": 6,
+        "fileSize": 212,
+        "churn": 14
+      }
     },
     {
       "id": "api-gateway/middleware",
@@ -22,7 +32,12 @@
       "name": "middleware.ts",
       "file": "api-gateway/middleware.ts",
       "region": "api-gateway",
-      "degree": 4
+      "degree": 4,
+      "metrics": {
+        "complexity": 15,
+        "fileSize": 445,
+        "churn": 16
+      }
     },
     {
       "id": "api-gateway/handleGetUsers",
@@ -30,7 +45,12 @@
       "name": "handleGetUsers",
       "file": "api-gateway/router.ts",
       "region": "api-gateway",
-      "degree": 5
+      "degree": 5,
+      "metrics": {
+        "complexity": 12,
+        "fileSize": 210,
+        "churn": 20
+      }
     },
     {
       "id": "api-gateway/handleCreateUser",
@@ -38,7 +58,12 @@
       "name": "handleCreateUser",
       "file": "api-gateway/router.ts",
       "region": "api-gateway",
-      "degree": 6
+      "degree": 6,
+      "metrics": {
+        "complexity": 11,
+        "fileSize": 343,
+        "churn": 6
+      }
     },
     {
       "id": "api-gateway/handleLogin",
@@ -46,7 +71,12 @@
       "name": "handleLogin",
       "file": "api-gateway/router.ts",
       "region": "api-gateway",
-      "degree": 7
+      "degree": 7,
+      "metrics": {
+        "complexity": 3,
+        "fileSize": 248,
+        "churn": 7
+      }
     },
     {
       "id": "api-gateway/authMiddleware",
@@ -54,7 +84,12 @@
       "name": "authMiddleware",
       "file": "api-gateway/middleware.ts",
       "region": "api-gateway",
-      "degree": 4
+      "degree": 4,
+      "metrics": {
+        "complexity": 10,
+        "fileSize": 490,
+        "churn": 6
+      }
     },
     {
       "id": "api-gateway/rateLimiter",
@@ -62,7 +97,12 @@
       "name": "rateLimiter",
       "file": "api-gateway/middleware.ts",
       "region": "api-gateway",
-      "degree": 3
+      "degree": 3,
+      "metrics": {
+        "complexity": 10,
+        "fileSize": 338,
+        "churn": 9
+      }
     },
     {
       "id": "api-gateway/validateBody",
@@ -70,7 +110,12 @@
       "name": "validateBody",
       "file": "api-gateway/router.ts",
       "region": "api-gateway",
-      "degree": 3
+      "degree": 3,
+      "metrics": {
+        "complexity": 10,
+        "fileSize": 203,
+        "churn": 16
+      }
     },
     {
       "id": "auth-service/index",
@@ -78,7 +123,12 @@
       "name": "main.rs",
       "file": "auth-service/src/main.rs",
       "region": "auth-service",
-      "degree": 6
+      "degree": 6,
+      "metrics": {
+        "complexity": 6,
+        "fileSize": 177,
+        "churn": 24
+      }
     },
     {
       "id": "auth-service/validate_token",
@@ -86,7 +136,12 @@
       "name": "validate_token",
       "file": "auth-service/src/auth.rs",
       "region": "auth-service",
-      "degree": 5
+      "degree": 5,
+      "metrics": {
+        "complexity": 10,
+        "fileSize": 91,
+        "churn": 3
+      }
     },
     {
       "id": "auth-service/issue_token",
@@ -94,7 +149,12 @@
       "name": "issue_token",
       "file": "auth-service/src/auth.rs",
       "region": "auth-service",
-      "degree": 4
+      "degree": 4,
+      "metrics": {
+        "complexity": 17,
+        "fileSize": 287,
+        "churn": 22
+      }
     },
     {
       "id": "auth-service/hash_password",
@@ -102,7 +162,12 @@
       "name": "hash_password",
       "file": "auth-service/src/crypto.rs",
       "region": "auth-service",
-      "degree": 3
+      "degree": 3,
+      "metrics": {
+        "complexity": 18,
+        "fileSize": 480,
+        "churn": 21
+      }
     },
     {
       "id": "auth-service/verify_password",
@@ -110,7 +175,12 @@
       "name": "verify_password",
       "file": "auth-service/src/crypto.rs",
       "region": "auth-service",
-      "degree": 3
+      "degree": 3,
+      "metrics": {
+        "complexity": 11,
+        "fileSize": 341,
+        "churn": 22
+      }
     },
     {
       "id": "auth-service/UserRecord",
@@ -118,7 +188,12 @@
       "name": "UserRecord",
       "file": "auth-service/src/models.rs",
       "region": "auth-service",
-      "degree": 4
+      "degree": 4,
+      "metrics": {
+        "complexity": 2,
+        "fileSize": 358,
+        "churn": 10
+      }
     },
     {
       "id": "auth-service/TokenClaims",
@@ -126,7 +201,12 @@
       "name": "TokenClaims",
       "file": "auth-service/src/models.rs",
       "region": "auth-service",
-      "degree": 3
+      "degree": 3,
+      "metrics": {
+        "complexity": 6,
+        "fileSize": 255,
+        "churn": 20
+      }
     },
     {
       "id": "data-store/index",
@@ -134,7 +214,12 @@
       "name": "index.ts",
       "file": "data-store/index.ts",
       "region": "data-store",
-      "degree": 7
+      "degree": 7,
+      "metrics": {
+        "complexity": 17,
+        "fileSize": 381,
+        "churn": 6
+      }
     },
     {
       "id": "data-store/UserRepo",
@@ -142,7 +227,12 @@
       "name": "UserRepo",
       "file": "data-store/repos/user.ts",
       "region": "data-store",
-      "degree": 6
+      "degree": 6,
+      "metrics": {
+        "complexity": 5,
+        "fileSize": 320,
+        "churn": 21
+      }
     },
     {
       "id": "data-store/findById",
@@ -150,7 +240,12 @@
       "name": "findById",
       "file": "data-store/repos/user.ts",
       "region": "data-store",
-      "degree": 4
+      "degree": 4,
+      "metrics": {
+        "complexity": 15,
+        "fileSize": 469,
+        "churn": 17
+      }
     },
     {
       "id": "data-store/create",
@@ -158,7 +253,12 @@
       "name": "create",
       "file": "data-store/repos/user.ts",
       "region": "data-store",
-      "degree": 5
+      "degree": 5,
+      "metrics": {
+        "complexity": 14,
+        "fileSize": 334,
+        "churn": 25
+      }
     },
     {
       "id": "data-store/findByEmail",
@@ -166,7 +266,12 @@
       "name": "findByEmail",
       "file": "data-store/repos/user.ts",
       "region": "data-store",
-      "degree": 4
+      "degree": 4,
+      "metrics": {
+        "complexity": 6,
+        "fileSize": 414,
+        "churn": 17
+      }
     },
     {
       "id": "data-store/cache",
@@ -174,7 +279,12 @@
       "name": "cache.ts",
       "file": "data-store/cache.ts",
       "region": "data-store",
-      "degree": 5
+      "degree": 5,
+      "metrics": {
+        "complexity": 9,
+        "fileSize": 193,
+        "churn": 25
+      }
     },
     {
       "id": "data-store/getFromCache",
@@ -182,7 +292,12 @@
       "name": "getFromCache",
       "file": "data-store/cache.ts",
       "region": "data-store",
-      "degree": 3
+      "degree": 3,
+      "metrics": {
+        "complexity": 10,
+        "fileSize": 308,
+        "churn": 20
+      }
     },
     {
       "id": "data-store/setInCache",
@@ -190,7 +305,12 @@
       "name": "setInCache",
       "file": "data-store/cache.ts",
       "region": "data-store",
-      "degree": 3
+      "degree": 3,
+      "metrics": {
+        "complexity": 17,
+        "fileSize": 237,
+        "churn": 9
+      }
     },
     {
       "id": "data-store/pgPool",
@@ -198,7 +318,12 @@
       "name": "pgPool",
       "file": "data-store/db.ts",
       "region": "data-store",
-      "degree": 4
+      "degree": 4,
+      "metrics": {
+        "complexity": 11,
+        "fileSize": 88,
+        "churn": 25
+      }
     },
     {
       "id": "data-store/redisClient",
@@ -206,7 +331,12 @@
       "name": "redisClient",
       "file": "data-store/cache.ts",
       "region": "data-store",
-      "degree": 3
+      "degree": 3,
+      "metrics": {
+        "complexity": 10,
+        "fileSize": 148,
+        "churn": 7
+      }
     },
     {
       "id": "shared/types",
@@ -214,7 +344,12 @@
       "name": "types.ts",
       "file": "shared/types.ts",
       "region": "shared",
-      "degree": 6
+      "degree": 6,
+      "metrics": {
+        "complexity": 10,
+        "fileSize": 70,
+        "churn": 17
+      }
     },
     {
       "id": "shared/User",
@@ -222,7 +357,12 @@
       "name": "User",
       "file": "shared/types.ts",
       "region": "shared",
-      "degree": 5
+      "degree": 5,
+      "metrics": {
+        "complexity": 15,
+        "fileSize": 274,
+        "churn": 11
+      }
     },
     {
       "id": "shared/AuthResponse",
@@ -230,7 +370,12 @@
       "name": "AuthResponse",
       "file": "shared/types.ts",
       "region": "shared",
-      "degree": 3
+      "degree": 3,
+      "metrics": {
+        "complexity": 3,
+        "fileSize": 107,
+        "churn": 10
+      }
     },
     {
       "id": "shared/ApiError",
@@ -238,7 +383,12 @@
       "name": "ApiError",
       "file": "shared/errors.ts",
       "region": "shared",
-      "degree": 4
+      "degree": 4,
+      "metrics": {
+        "complexity": 6,
+        "fileSize": 370,
+        "churn": 24
+      }
     },
     {
       "id": "svc/api-gateway",
@@ -270,7 +420,12 @@
       "name": "PostgreSQL",
       "file": "",
       "region": "external",
-      "degree": 3
+      "degree": 3,
+      "metrics": {
+        "complexity": 12,
+        "fileSize": 168,
+        "churn": 14
+      }
     },
     {
       "id": "ext/redis",
@@ -278,7 +433,12 @@
       "name": "Redis",
       "file": "",
       "region": "external",
-      "degree": 3
+      "degree": 3,
+      "metrics": {
+        "complexity": 19,
+        "fileSize": 317,
+        "churn": 8
+      }
     },
     {
       "id": "ext/jwt-library",
@@ -286,7 +446,12 @@
       "name": "jsonwebtoken",
       "file": "",
       "region": "external",
-      "degree": 2
+      "degree": 2,
+      "metrics": {
+        "complexity": 17,
+        "fileSize": 413,
+        "churn": 4
+      }
     }
   ],
   "edges": [

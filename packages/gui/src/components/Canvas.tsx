@@ -13,40 +13,7 @@ import { useMapStore } from '../store/mapStore';
 import { useViewStore } from '../store/viewStore';
 import { useRouteStore } from '../store/routeStore';
 import { FLOWS } from '../config/flows';
-
-/**
- * Region-based coloring: each region gets a stable hue,
- * node type shifts lightness within that hue.
- */
-const TYPE_LIGHTNESS: Record<string, number> = {
-  SERVICE:          55,
-  MODULE:           42,
-  CLASS:            45,
-  INTERFACE:        43,
-  FUNCTION:         35,
-  METHOD:           33,
-  GETTER:           33,
-  VARIABLE:         28,
-  PARAMETER:        26,
-  CONSTANT:         40,
-  CALL:             25,
-  EXPRESSION:       22,
-  LITERAL:          20,
-  IMPORT:           30,
-  EXPORT:           32,
-  EXTERNAL:         38,
-  PROPERTY_ACCESS:  25,
-  PROJECT:          50,
-};
-
-/** Stable hash for region name → hue (0..360) */
-function regionHue(name: string): number {
-  let h = 0;
-  for (let i = 0; i < name.length; i++) {
-    h = ((h << 5) - h + name.charCodeAt(i)) | 0;
-  }
-  return ((h % 360) + 360) % 360;
-}
+import { LENSES } from '../config/lenses';
 
 const TILE_SIZE = 3.0;
 
@@ -97,14 +64,30 @@ export function Canvas() {
     if (hexLayerRef.current) sm.scene.remove(hexLayerRef.current.mesh);
     const layer = new HexLayer(nodes.length, TILE_SIZE * 0.92, sm.scene);
     for (let i = 0; i < nodes.length; i++) {
-      const n = nodes[i];
-      // Region hue + type lightness variation
-      const hue = regionHue(n.region) / 360;
-      const lightness = (TYPE_LIGHTNESS[n.type] ?? 30) / 100;
-      layer.setTile(i, n.x, n.z, 0x000000); // placeholder
-      layer.setColorHSL(i, hue, 0.5, lightness);
+      layer.setTile(i, nodes[i].x, nodes[i].z, 0x000000);
+    }
+
+    // Apply lens coloring
+    function applyLens(lensName: string) {
+      const lens = LENSES[lensName] ?? LENSES.region;
+      for (let i = 0; i < nodes.length; i++) {
+        const color = lens.colorFn(nodes[i], nodes);
+        layer.animateColor(i, 'color', color, 400);
+      }
+    }
+    // Initial coloring (immediate, no animation)
+    const initialLens = LENSES[useViewStore.getState().lens] ?? LENSES.region;
+    for (let i = 0; i < nodes.length; i++) {
+      const color = initialLens.colorFn(nodes[i], nodes);
+      layer.setTile(i, nodes[i].x, nodes[i].z, color);
     }
     layer.finalize();
+
+    // Subscribe to lens changes
+    const unsubLens = useViewStore.subscribe((state, prev) => {
+      if (state.lens !== prev.lens) applyLens(state.lens);
+    });
+
     sm.onRender((dt) => layer.tick(dt));
     hexLayerRef.current = layer;
 
@@ -318,6 +301,7 @@ export function Canvas() {
       sm.renderer.domElement.removeEventListener('mousemove', onMouseMove);
       sm.renderer.domElement.removeEventListener('click', onClick);
       unsubRoutes();
+      unsubLens();
     };
   }, [loaded, nodes, edges, regions]);
 

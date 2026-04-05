@@ -78,6 +78,10 @@ export async function loadFixture() {
     if (!tile) continue;
     const fn = layoutNodes[li];
     const { x, z } = cubeToWorld(tile.q, tile.r, TILE_SIZE);
+    // Get metrics from original fixture data
+    const origIdx = layoutToOld.get(li);
+    const origNode = origIdx !== undefined ? data.nodes[origIdx] : null;
+
     nodes[li] = {
       id: fn.id,
       type: fn.type,
@@ -86,6 +90,7 @@ export async function loadFixture() {
       region: fn.region,
       x,
       z,
+      metrics: origNode?.metrics,
       degree: fn.degree,
     };
   }

@@ -4,6 +4,7 @@ import { useMapStore } from '../store/mapStore';
 import { useViewStore } from '../store/viewStore';
 import { FlowPanel } from './FlowPanel';
 import { RoutePanel } from './RoutePanel';
+import { LensPanel } from './LensPanel';
 import { flowLayerRef, setShowCoordsRef } from './Canvas';
 
 const LOD_NAMES = ['Package', 'Directory', 'File', 'Function'];
@@ -48,6 +49,7 @@ export function Sidebar() {
             </div>
           </div>
 
+          <LensPanel />
           <FlowPanel enabledFlows={enabledFlows} onToggle={toggleFlow} />
           <RoutePanel />
 
