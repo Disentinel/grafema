@@ -186,7 +186,7 @@ export function Canvas() {
     // Elevate route nodes + rebuild on route changes
     let prevRouteNodes = new Set<number>();
     function applyRoutes() {
-      routeLayer.update(useRouteStore.getState().routes, nodes);
+      routeLayer.update(useRouteStore.getState().routes, nodes, edges);
       const newRouteNodes = routeLayer.activeNodeIndices;
 
       // Lower nodes that were in routes but aren't anymore

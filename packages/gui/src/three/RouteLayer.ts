@@ -24,18 +24,31 @@ export class RouteLayer {
   /** All node indices in currently visible routes — for elevation */
   activeNodeIndices = new Set<number>();
 
-  /** Waypoint labels: { nodeIdx, screenX, screenY, name, step } */
+  /** Waypoint labels at each node */
   waypointLabels: { nodeIdx: number; worldX: number; worldZ: number; name: string; step: number; routeColor: string; routeLabel: string }[] = [];
+
+  /** Edge labels at midpoint of each hop (edge type between consecutive waypoints) */
+  edgeLabels: { worldX: number; worldZ: number; worldY: number; edgeType: string; routeColor: string }[] = [];
 
   constructor(scene: THREE.Scene) {
     this._group.renderOrder = 15;
     scene.add(this._group);
   }
 
-  update(routes: Route[], nodes: GraphNode[]) {
+  update(routes: Route[], nodes: GraphNode[], edges?: { source: number; target: number; type: string }[]) {
     this._clear();
     this.activeNodeIndices.clear();
     this.waypointLabels = [];
+    this.edgeLabels = [];
+
+    // Build edge lookup: "src,dst" → type (bidirectional)
+    const edgeLookup = new Map<string, string>();
+    if (edges) {
+      for (const e of edges) {
+        edgeLookup.set(`${e.source},${e.target}`, e.type);
+        edgeLookup.set(`${e.target},${e.source}`, e.type);
+      }
+    }
 
     for (const route of routes) {
       if (!route.visible) continue;
@@ -106,6 +119,24 @@ export class RouteLayer {
             routeLabel: route.label,
           });
         }
+      }
+
+      // Edge labels — at midpoint of each hop
+      for (let i = 0; i < validIndices.length - 1; i++) {
+        const srcIdx = validIndices[i];
+        const dstIdx = validIndices[i + 1];
+        const edgeType = edgeLookup.get(`${srcIdx},${dstIdx}`) ?? '→';
+        const midX = (waypoints[i].x + waypoints[i + 1].x) / 2;
+        const midZ = (waypoints[i].z + waypoints[i + 1].z) / 2;
+        // Y at top of the arc
+        const midY = Math.max(waypoints[i].y, waypoints[i + 1].y) + 1.5;
+        this.edgeLabels.push({
+          worldX: midX,
+          worldZ: midZ,
+          worldY: midY,
+          edgeType,
+          routeColor: route.color,
+        });
       }
 
       // Particles

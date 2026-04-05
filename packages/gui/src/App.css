@@ -114,6 +114,18 @@
   padding: 2px 6px 2px 3px;
   border-radius: 4px;
 }
+.route-edge-label {
+  position: absolute;
+  font-size: 8px;
+  font-family: 'SF Mono', monospace;
+  white-space: nowrap;
+  pointer-events: none;
+  background: rgba(10, 14, 20, 0.9);
+  padding: 1px 5px;
+  border-radius: 3px;
+  letter-spacing: 0.05em;
+  opacity: 0.8;
+}
 .rl-step {
   display: inline-flex;
   align-items: center;
