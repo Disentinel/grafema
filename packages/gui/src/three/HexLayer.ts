@@ -152,6 +152,11 @@ export class HexLayer {
   private _tweens: TweenEntry[] = [];
   private _colorTweens: ColorTweenEntry[] = [];
 
+  // Position lerp for progressive SA updates
+  private _targetX: Float32Array | null = null;
+  private _targetZ: Float32Array | null = null;
+  private _lerpRate = 0.08; // exponential decay per frame
+
   constructor(count: number, hexSize: number, scene: THREE.Scene) {
     this.count = count;
 
@@ -277,8 +282,44 @@ export class HexLayer {
   }
 
   /** Tick animations. Call in render loop. */
+  /**
+   * Set target positions for progressive SA layout.
+   * Tiles will lerp toward these positions in tick().
+   */
+  setTargetPositions(targetX: Float32Array, targetZ: Float32Array) {
+    this._targetX = targetX;
+    this._targetZ = targetZ;
+  }
+
   tick(dt: number) {
     let dirty = false;
+
+    // Position lerp toward SA target positions
+    if (this._targetX && this._targetZ) {
+      const rate = this._lerpRate;
+      let moved = 0;
+      for (let i = 0; i < this.count; i++) {
+        const dx = this._targetX[i] - this.worldX[i];
+        const dz = this._targetZ[i] - this.worldZ[i];
+        if (Math.abs(dx) > 0.01 || Math.abs(dz) > 0.01) {
+          this.worldX[i] += dx * rate;
+          this.worldZ[i] += dz * rate;
+          this._dummy.position.set(this.worldX[i], 0, this.worldZ[i]);
+          this._dummy.updateMatrix();
+          this.mesh.setMatrixAt(i, this._dummy.matrix);
+          moved++;
+        }
+      }
+      if (moved > 0) {
+        this.mesh.instanceMatrix.needsUpdate = true;
+        dirty = true;
+      }
+      if (moved === 0) {
+        // All tiles reached target — clear
+        this._targetX = null;
+        this._targetZ = null;
+      }
+    }
 
     // Scalar tweens
     for (let t = this._tweens.length - 1; t >= 0; t--) {

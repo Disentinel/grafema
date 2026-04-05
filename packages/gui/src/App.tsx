@@ -3,6 +3,7 @@ import { Canvas } from './components/Canvas';
 import { Sidebar } from './components/Sidebar';
 import { loadFixture } from './store/loadFixture';
 import { loadStream } from './store/loadStream';
+import { loadLiveLayout } from './store/loadLiveLayout';
 import { initPostMessageAdapter } from './api/PostMessageAdapter';
 import { initWebSocketAdapter } from './api/WebSocketAdapter';
 import { mapController } from './api/MapController';
@@ -11,6 +12,9 @@ import './App.css';
 function getUrlParams() {
   const params = new URLSearchParams(window.location.search);
   return {
+    // ?rust=true → use Rust RFDB server (JSONL + WS SA)
+    // ?live=true → use Node.js server (JSONL only, client SA)
+    rust: params.get('rust') === 'true',
     live: params.get('live') === 'true' || params.has('packages') || params.has('nodeTypes'),
     packages: params.get('packages') || undefined,
     nodeTypes: params.get('nodeTypes') || undefined,
@@ -25,24 +29,36 @@ export function App() {
   useEffect(() => {
     const params = getUrlParams();
 
-    if (params.live) {
+    const streamProgress = (phase: string, count: number, total?: number) => {
+      switch (phase) {
+        case 'header': setStatus('Receiving graph...'); break;
+        case 'nodes': setStatus(`Loading nodes: ${count}`); break;
+        case 'nodes_done': setStatus(`${count} nodes loaded, fetching edges...`); break;
+        case 'edges': setStatus(`Loading edges: ${count}`); break;
+        case 'layout': setStatus(`Running layout for ${count} nodes...`); break;
+        case 'done': setStatus(`Done: ${count} nodes, ${total} edges`); break;
+        case 'complete': setStatus(''); break;
+      }
+    };
+
+    if (params.rust || params.live) {
       setStatus('Connecting to RFDB...');
-      loadStream({
+      const loader = params.rust ? loadLiveLayout : loadStream;
+      loader({
         packages: params.packages,
         nodeTypes: params.nodeTypes,
         edgeTypes: params.edgeTypes,
         maxNodes: params.maxNodes,
-        onProgress: (phase, count, total) => {
-          switch (phase) {
-            case 'header': setStatus('Receiving graph...'); break;
-            case 'nodes': setStatus(`Loading nodes: ${count}`); break;
-            case 'nodes_done': setStatus(`${count} nodes loaded, fetching edges...`); break;
-            case 'edges': setStatus(`Loading edges: ${count}`); break;
-            case 'layout': setStatus(`Running layout for ${count} nodes...`); break;
-            case 'done': setStatus(`Done: ${count} nodes, ${total} edges`); break;
-            case 'complete': setStatus(''); break;
-          }
-        },
+        onProgress: streamProgress,
+        ...(params.rust ? {
+          onSAProgress: (iteration: number, cost: number, _temp: number, settled: boolean) => {
+            if (settled) {
+              setStatus('');
+            } else {
+              setStatus(`SA: iter ${iteration}, cost ${cost}`);
+            }
+          },
+        } : {}),
       }).catch(err => {
         console.error('Stream load failed:', err);
         setStatus(`Error: ${err.message}. Falling back to fixture.`);

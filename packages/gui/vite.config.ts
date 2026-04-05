@@ -13,13 +13,16 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
+      '/api/layout-live': {
+        target: 'ws://localhost:3333',
+        ws: true,
+      },
       '/api/graph-stream': {
         target: 'http://localhost:3333',
         changeOrigin: true,
         // Disable response buffering for streaming NDJSON
         configure: (proxy) => {
           proxy.on('proxyRes', (proxyRes) => {
-            // Prevent http-proxy from buffering the response
             proxyRes.headers['cache-control'] = 'no-cache';
             delete proxyRes.headers['content-length'];
           });

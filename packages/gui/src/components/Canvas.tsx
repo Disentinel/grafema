@@ -17,6 +17,7 @@ import { FLOWS } from '../config/flows';
 import { LENSES } from '../config/lenses';
 import { useDiffStore } from '../store/diffStore';
 import { mapController } from '../api/MapController';
+import { setHexLayerRef } from '../store/loadLiveLayout';
 
 const TILE_SIZE = 3.0;
 
@@ -156,6 +157,9 @@ export function Canvas() {
 
     sm.onRender((dt) => layer.tick(dt));
     hexLayerRef.current = layer;
+
+    // Expose HexLayer for WebSocket SA position updates
+    setHexLayerRef(layer);
 
     // --- Region borders ---
     if (regionLayerRef.current) regionLayerRef.current.dispose();
