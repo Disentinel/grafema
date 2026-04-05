@@ -73,9 +73,9 @@ export class SceneManager {
 
     this._bloom = new UnrealBloomPass(
       new THREE.Vector2(container.clientWidth, container.clientHeight),
-      0.35,  // strength
-      0.4,   // radius
-      0.7,   // threshold
+      0.4,   // strength
+      0.5,   // radius (wider spread)
+      0.6,   // threshold (lower = more things glow)
     );
     this._composer.addPass(this._bloom);
 
