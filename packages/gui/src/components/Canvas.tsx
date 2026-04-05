@@ -103,25 +103,39 @@ export function Canvas() {
       if (state.active === prev.active && state.added === prev.added) return;
 
       if (state.active) {
-        // Enter diff mode
+        // Enter diff mode — nodes
+        const diffActive = new Set<number>();
         for (let i = 0; i < nodes.length; i++) {
           if (state.removed.has(i)) {
-            // Removed: ghost (low opacity, sink)
-            layer.animateTo(i, 'opacity', 0.15, 500);
-            layer.animateTo(i, 'elevation', -0.5, 500);
-            layer.animateTo(i, 'outlineWidth', 0.15, 300);
+            // Removed: elevated ghost with red outline
+            layer.animateTo(i, 'opacity', 0.25, 500);
+            layer.animateTo(i, 'elevation', 1.2, 500);
+            layer.animateTo(i, 'outlineWidth', 0.2, 300);
             layer.setOutlineColor(i, 0xff4466);
+            layer.animateColor(i, 'color', 0xff4466, 500);
+            diffActive.add(i);
+          } else if (state.added.has(i)) {
+            // Added: bright green, elevated
+            layer.animateTo(i, 'elevation', 1.5, 500);
+            layer.animateTo(i, 'outlineWidth', 0.2, 300);
+            layer.setOutlineColor(i, 0x22cc66);
+            layer.animateColor(i, 'color', 0x22cc66, 500);
+            diffActive.add(i);
           } else if (state.changed.has(i)) {
-            // Changed: yellow outline, slight elevation
+            // Changed: yellow outline, elevated
             layer.animateTo(i, 'outlineWidth', 0.18, 300);
             layer.setOutlineColor(i, 0xffaa00);
-            layer.animateTo(i, 'elevation', 0.8, 400);
+            layer.animateTo(i, 'elevation', 1.0, 400);
             layer.animateColor(i, 'color', 0xffaa00, 500);
+            diffActive.add(i);
           } else {
-            // Unchanged: dim slightly
-            layer.animateTo(i, 'opacity', 0.4, 400);
+            // Unchanged: dim
+            layer.animateTo(i, 'opacity', 0.3, 400);
           }
         }
+
+        // Diff edges: highlight edges touching diff nodes, dim the rest
+        flowLayerLocalRef.current?.highlightEdges(diffActive);
       } else {
         // Exit diff mode — restore everything
         const lens = LENSES[useViewStore.getState().lens] ?? LENSES.region;
@@ -131,6 +145,7 @@ export function Canvas() {
           layer.animateTo(i, 'outlineWidth', 0, 300);
           layer.animateColor(i, 'color', lens.colorFn(nodes[i], nodes), 500);
         }
+        flowLayerLocalRef.current?.highlightEdges(null);
       }
     });
 
