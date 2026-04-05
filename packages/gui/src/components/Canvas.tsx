@@ -304,9 +304,23 @@ export function Canvas() {
       }
     };
 
+    // Delayed click to distinguish from dblclick
+    let clickTimer: ReturnType<typeof setTimeout> | null = null;
+
     const onClick = (e: MouseEvent) => {
-      updateMouse(e);
-      raycaster.setFromCamera(mouse, sm.camera);
+      if (clickTimer) clearTimeout(clickTimer);
+      const ex = e.clientX, ey = e.clientY;
+      clickTimer = setTimeout(() => {
+        clickTimer = null;
+        const rect = containerRef.current!.getBoundingClientRect();
+        mouse.x = ((ex - rect.left) / rect.width) * 2 - 1;
+        mouse.y = -((ey - rect.top) / rect.height) * 2 + 1;
+        raycaster.setFromCamera(mouse, sm.camera);
+        handleClick(ex - rect.left, ey - rect.top);
+      }, 250);
+    };
+
+    const handleClick = (tooltipX: number, tooltipY: number) => {
       const clickIdx = layer.raycast(raycaster);
 
       // Click same node or empty → deselect
@@ -363,10 +377,9 @@ export function Canvas() {
         const dir = ei.srcIdx === clickIdx ? '→' : '←';
         return `${ei.edgeType} ${dir} ${otherNode?.name ?? '?'}`;
       });
-      const rect = containerRef.current!.getBoundingClientRect();
       setTooltip({
-        x: e.clientX - rect.left,
-        y: e.clientY - rect.top,
+        x: tooltipX,
+        y: tooltipY,
         name: nodes[clickIdx].name,
         type: nodes[clickIdx].type,
         region: nodes[clickIdx].region,
@@ -375,6 +388,9 @@ export function Canvas() {
     };
 
     const onDblClick = (e: MouseEvent) => {
+      // Cancel pending single-click
+      if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+
       updateMouse(e);
       raycaster.setFromCamera(mouse, sm.camera);
       const idx = layer.raycast(raycaster);
