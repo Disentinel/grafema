@@ -281,10 +281,26 @@ export function Canvas() {
 
       hoveredIdx = newIdx;
 
-      // Light outline on hover (doesn't affect selection state)
-      if (hoveredIdx >= 0 && hoveredIdx !== selectedIdx && !selectedConnected.has(hoveredIdx)) {
-        layer.setOutlineColor(hoveredIdx, 0x00e5ff);
-        layer.setProperty(hoveredIdx, 'outlineWidth', 0.1);
+      if (hoveredIdx >= 0) {
+        // Light outline on hover
+        if (hoveredIdx !== selectedIdx && !selectedConnected.has(hoveredIdx)) {
+          layer.setOutlineColor(hoveredIdx, 0x00e5ff);
+          layer.setProperty(hoveredIdx, 'outlineWidth', 0.1);
+        }
+
+        // Hover tooltip
+        const rect = containerRef.current!.getBoundingClientRect();
+        const n = nodes[hoveredIdx];
+        setTooltip({
+          x: e.clientX - rect.left,
+          y: e.clientY - rect.top,
+          name: n.name,
+          type: n.type,
+          region: n.region,
+          edges: [],
+        });
+      } else {
+        setTooltip(null);
       }
     };
 

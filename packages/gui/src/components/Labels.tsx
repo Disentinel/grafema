@@ -91,6 +91,17 @@ export function Labels({ sceneManager }: { sceneManager: SceneManager | null }) 
           minDist: 35,
           mandatory: false,
         });
+      } else if (node.type === 'VARIABLE' || node.type === 'CONSTANT' || node.type === 'PARAMETER') {
+        candidates.push({
+          key: `n:${node.id}`,
+          text: node.name,
+          worldX: node.x,
+          worldZ: node.z,
+          priority: 5 + node.degree,
+          fontSize: 8,
+          minDist: 30,
+          mandatory: false,
+        });
       }
     }
 

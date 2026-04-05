@@ -128,7 +128,7 @@ export async function loadFixture() {
         nodeIndices: r.nodeIds
           .map((nid: string) => idToLayoutIdx.get(nid))
           .filter((idx: number | undefined): idx is number => idx !== undefined),
-        visible: true,
+        visible: false, // off by default
       }))
       .filter((r: Route) => r.nodeIndices.length >= 2);
 
