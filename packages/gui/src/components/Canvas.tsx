@@ -124,6 +124,11 @@ export function Canvas() {
     flowLayerLocalRef.current = flowLayer;
     flowLayerRef = flowLayer; // expose to sidebar
 
+    // --- Shared interaction state (declared early for applyRoutes access) ---
+    let hoveredIdx = -1;
+    let selectedIdx = -1;
+    let selectedConnected = new Set<number>();
+
     // --- Routes ---
     if (routeLayerRef.current) routeLayerRef.current.dispose();
     const routeLayer = new RouteLayer(sm.scene);
@@ -181,9 +186,6 @@ export function Canvas() {
 
     const raycaster = new THREE.Raycaster();
     const mouse = new THREE.Vector2();
-    let hoveredIdx = -1;
-    let selectedIdx = -1;
-    let selectedConnected = new Set<number>();
 
     function updateMouse(e: MouseEvent) {
       const rect = containerRef.current!.getBoundingClientRect();
