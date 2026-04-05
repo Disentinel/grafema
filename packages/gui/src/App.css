@@ -72,10 +72,14 @@
 .map-label {
   position: absolute;
   transform: translate(-50%, -50%);
-  color: #8ec8e8;
+  color: #b0ddef;
   font-family: 'SF Mono', 'Fira Code', monospace;
   white-space: nowrap;
-  text-shadow: 0 0 8px rgba(0, 229, 255, 0.3), 0 0 20px rgba(0, 0, 0, 0.8);
+  text-shadow:
+    0 0 3px rgba(0, 0, 0, 1),
+    0 0 6px rgba(0, 0, 0, 0.9),
+    0 0 12px rgba(0, 0, 0, 0.6),
+    0 0 8px rgba(0, 229, 255, 0.2);
   transition: opacity 0.3s ease;
   letter-spacing: 0.06em;
 }
@@ -117,9 +121,11 @@
   display: flex;
   align-items: center;
   gap: 5px;
-  background: rgba(10, 14, 20, 0.85);
+  background: rgba(0, 0, 0, 0.85);
   padding: 2px 6px 2px 3px;
   border-radius: 4px;
+  text-shadow: 0 0 4px rgba(0, 0, 0, 1);
+  border: 1px solid rgba(255, 255, 255, 0.06);
 }
 /* Flow edge labels (on tubes for selected/pinned nodes) */
 .flow-edge-labels-overlay {
@@ -148,11 +154,13 @@
   font-family: 'SF Mono', monospace;
   white-space: nowrap;
   pointer-events: none;
-  background: rgba(10, 14, 20, 0.9);
+  background: rgba(0, 0, 0, 0.85);
   padding: 1px 5px;
   border-radius: 3px;
   letter-spacing: 0.05em;
-  opacity: 0.8;
+  opacity: 0.9;
+  text-shadow: 0 0 3px rgba(0, 0, 0, 1);
+  border: 1px solid rgba(255, 255, 255, 0.05);
 }
 .rl-step {
   display: inline-flex;

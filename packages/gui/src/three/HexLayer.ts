@@ -70,9 +70,13 @@ const FRAG = /* glsl */ `
     float rimGlow = smoothstep(0.75, 0.95, dist) * (1.0 - smoothstep(0.95, 1.0, dist));
     baseColor += vInstanceColor * rimGlow * 0.2;
 
-    // Outline
-    float edgeMix = smoothstep(1.0 - vOutlineWidth - 0.05, 1.0 - vOutlineWidth, dist);
-    vec3 color = mix(baseColor, vOutlineColor * 2.5, edgeMix * step(0.001, vOutlineWidth));
+    // Outline — bright enough for bloom, colored by outline color
+    float hasOutline = step(0.001, vOutlineWidth);
+    float edgeMix = smoothstep(1.0 - vOutlineWidth - 0.08, 1.0 - vOutlineWidth, dist);
+    // Also add a soft glow halo around the outline (wider, softer)
+    float haloMix = smoothstep(1.0 - vOutlineWidth - 0.25, 1.0 - vOutlineWidth - 0.08, dist);
+    baseColor = mix(baseColor, baseColor + vOutlineColor * 0.5, haloMix * hasOutline);
+    vec3 color = mix(baseColor, vOutlineColor * 3.0, edgeMix * hasOutline);
 
     gl_FragColor = vec4(color, vOpacity);
   }

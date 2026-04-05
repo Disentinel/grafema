@@ -128,7 +128,7 @@ export function Canvas() {
             diffActive.add(i);
           } else if (state.changed.has(i)) {
             // Changed: yellow outline, elevated
-            layer.animateTo(i, 'outlineWidth', 0.18, 300);
+            layer.animateTo(i, 'outlineWidth', 0.22, 300);
             layer.setOutlineColor(i, 0xffaa00);
             layer.animateTo(i, 'elevation', 1.0, 400);
             layer.animateColor(i, 'color', 0xffaa00, 500);
@@ -262,8 +262,8 @@ export function Canvas() {
         } else if (isPinned) {
           // Preserve pin visual — elevated + outline + scale
           layer.animateTo(i, 'elevation', 1.5, 300);
-          layer.animateTo(i, 'outlineWidth', 0.18, 200);
-          layer.setOutlineColor(i, 0xff2222);
+          layer.animateTo(i, 'outlineWidth', 0.22, 200);
+          layer.setOutlineColor(i, 0xff3333);
           layer.animateTo(i, 'scale', 1.15, 200);
         } else {
           layer.animateTo(i, 'elevation', 0, 300);
@@ -291,8 +291,8 @@ export function Canvas() {
         const pins = useViewStore.getState().pins;
         if (prevNode && pins.has(prevNode.id)) {
           // Restore pin visual (outline + elevation)
-          layer.setOutlineColor(hoveredIdx, 0xff2222);
-          layer.setProperty(hoveredIdx, 'outlineWidth', 0.18);
+          layer.setOutlineColor(hoveredIdx, 0xff3333);
+          layer.setProperty(hoveredIdx, 'outlineWidth', 0.22);
           // elevation stays at 1.5 (set by dblclick, not touched by hover)
         } else {
           layer.setProperty(hoveredIdx, 'outlineWidth', 0);
@@ -380,8 +380,8 @@ export function Canvas() {
             layer.setOutlineColor(i, 0xffffff);
           } else if (isPinned) {
             layer.animateTo(i, 'elevation', 1.5, 300);
-            layer.animateTo(i, 'outlineWidth', 0.18, 200);
-            layer.setOutlineColor(i, 0xff2222);
+            layer.animateTo(i, 'outlineWidth', 0.22, 200);
+            layer.setOutlineColor(i, 0xff3333);
           } else {
             layer.animateTo(i, 'elevation', 0, 300);
             layer.animateTo(i, 'outlineWidth', 0, 200);
@@ -446,8 +446,8 @@ export function Canvas() {
       } else {
         addPin(node.id, '#ff2222', node.name);
         // Pin visual: red outline + scale up + elevated
-        layer.setOutlineColor(idx, 0xff2222);
-        layer.animateTo(idx, 'outlineWidth', 0.18, 200);
+        layer.setOutlineColor(idx, 0xff3333);
+        layer.animateTo(idx, 'outlineWidth', 0.22, 200);
         layer.animateTo(idx, 'scale', 1.15, 200);
         layer.animateTo(idx, 'elevation', 1.5, 300);
         // Fixed tooltip
