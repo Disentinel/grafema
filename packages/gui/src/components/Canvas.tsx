@@ -14,6 +14,7 @@ import { useViewStore } from '../store/viewStore';
 import { useRouteStore } from '../store/routeStore';
 import { FLOWS } from '../config/flows';
 import { LENSES } from '../config/lenses';
+import { useDiffStore } from '../store/diffStore';
 
 const TILE_SIZE = 3.0;
 
@@ -93,6 +94,42 @@ export function Canvas() {
           flowLayerLocalRef.current?.recolorByNodes((ni) => lens.colorFn(nodes[ni], nodes));
         } else {
           flowLayerLocalRef.current?.recolorByNodes(null); // reset to preset colors
+        }
+      }
+    });
+
+    // Subscribe to diff mode
+    const unsubDiff = useDiffStore.subscribe((state, prev) => {
+      if (state.active === prev.active && state.added === prev.added) return;
+
+      if (state.active) {
+        // Enter diff mode
+        for (let i = 0; i < nodes.length; i++) {
+          if (state.removed.has(i)) {
+            // Removed: ghost (low opacity, sink)
+            layer.animateTo(i, 'opacity', 0.15, 500);
+            layer.animateTo(i, 'elevation', -0.5, 500);
+            layer.animateTo(i, 'outlineWidth', 0.15, 300);
+            layer.setOutlineColor(i, 0xff4466);
+          } else if (state.changed.has(i)) {
+            // Changed: yellow outline, slight elevation
+            layer.animateTo(i, 'outlineWidth', 0.18, 300);
+            layer.setOutlineColor(i, 0xffaa00);
+            layer.animateTo(i, 'elevation', 0.8, 400);
+            layer.animateColor(i, 'color', 0xffaa00, 500);
+          } else {
+            // Unchanged: dim slightly
+            layer.animateTo(i, 'opacity', 0.4, 400);
+          }
+        }
+      } else {
+        // Exit diff mode — restore everything
+        const lens = LENSES[useViewStore.getState().lens] ?? LENSES.region;
+        for (let i = 0; i < nodes.length; i++) {
+          layer.animateTo(i, 'opacity', 1.0, 400);
+          layer.animateTo(i, 'elevation', 0, 400);
+          layer.animateTo(i, 'outlineWidth', 0, 300);
+          layer.animateColor(i, 'color', lens.colorFn(nodes[i], nodes), 500);
         }
       }
     });
@@ -311,6 +348,7 @@ export function Canvas() {
       sm.renderer.domElement.removeEventListener('click', onClick);
       unsubRoutes();
       unsubLens();
+      unsubDiff();
     };
   }, [loaded, nodes, edges, regions]);
 

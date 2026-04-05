@@ -5,6 +5,7 @@ import { useViewStore } from '../store/viewStore';
 import { FlowPanel } from './FlowPanel';
 import { RoutePanel } from './RoutePanel';
 import { LensPanel } from './LensPanel';
+import { DiffPanel } from './DiffPanel';
 import { flowLayerRef, setShowCoordsRef } from './Canvas';
 
 const LOD_NAMES = ['Package', 'Directory', 'File', 'Function'];
@@ -52,6 +53,7 @@ export function Sidebar() {
           <LensPanel />
           <FlowPanel enabledFlows={enabledFlows} onToggle={toggleFlow} />
           <RoutePanel />
+          <DiffPanel />
 
           <div>
             <h2>Debug</h2>
