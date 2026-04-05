@@ -206,9 +206,37 @@ export class FlowLayer {
     return result;
   }
 
+  /**
+   * Get midpoint positions + edge types for highlighted edges.
+   * For rendering labels on tubes when nodes are selected/pinned.
+   */
+  getHighlightedEdgeLabels(activeNodes: Set<number>): { worldX: number; worldZ: number; worldY: number; edgeType: string; srcIdx: number; dstIdx: number }[] {
+    const result: { worldX: number; worldZ: number; worldY: number; edgeType: string; srcIdx: number; dstIdx: number }[] = [];
+    for (const b of this._bindings) {
+      if (!b.line.parent?.visible) continue;
+      if (!activeNodes.has(b.srcIdx) && !activeNodes.has(b.dstIdx)) continue;
+
+      // Midpoint of the tube (use current positions from geometry)
+      const srcWorld = b.srcWorld;
+      const dstWorld = b.dstWorld;
+      const srcE = this._elevations?.[b.srcIdx] ?? 0;
+      const dstE = this._elevations?.[b.dstIdx] ?? 0;
+      const midX = (srcWorld.x + dstWorld.x) / 2;
+      const midZ = (srcWorld.z + dstWorld.z) / 2;
+      const midY = 0.8 + b.lift + (srcE + dstE) / 2; // match tube arc
+
+      result.push({ worldX: midX, worldZ: midZ, worldY: midY, edgeType: b.edgeType, srcIdx: b.srcIdx, dstIdx: b.dstIdx });
+    }
+    return result;
+  }
+
   setFlowVisible(flowName: string, visible: boolean) {
     const group = this._flowGroups.get(flowName);
-    if (group) group.visible = visible;
+    if (group) {
+      group.visible = visible;
+      // Force elevation re-sync on next tick (new tubes built at BASE_Y)
+      if (visible) this._prevElev.fill(0);
+    }
   }
 
   isFlowVisible(flowName: string): boolean {

@@ -114,6 +114,27 @@
   padding: 2px 6px 2px 3px;
   border-radius: 4px;
 }
+/* Flow edge labels (on tubes for selected/pinned nodes) */
+.flow-edge-labels-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 7;
+  overflow: hidden;
+}
+.flow-edge-label {
+  position: absolute;
+  font-size: 8px;
+  font-family: 'SF Mono', monospace;
+  white-space: nowrap;
+  pointer-events: none;
+  background: rgba(10, 14, 20, 0.85);
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: #00aacc;
+  opacity: 0.9;
+}
+
 .route-edge-label {
   position: absolute;
   font-size: 8px;

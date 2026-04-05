@@ -6,6 +6,7 @@ import { RegionLayer } from '../three/RegionLayer';
 import { FlowLayer } from '../three/FlowLayer';
 import { RouteLayer } from '../three/RouteLayer';
 import { RouteLabels } from './RouteLabels';
+import { EdgeLabels, activeEdgeLabels } from './EdgeLabels';
 import { Labels } from './Labels';
 import { CoordGrid } from './CoordGrid';
 import { useDataStore } from '../store/dataStore';
@@ -272,6 +273,7 @@ export function Canvas() {
         layer.animateTo(i, 'opacity', 1.0, 200);
       }
       flowLayer.highlightEdges(null);
+      activeEdgeLabels.length = 0;
       selectedIdx = -1;
       selectedConnected.clear();
     }
@@ -393,6 +395,18 @@ export function Canvas() {
       activeSet.add(clickIdx);
       flowLayer.highlightEdges(activeSet);
 
+      // Edge labels on tubes
+      const edgeMidpoints = flowLayer.getHighlightedEdgeLabels(activeSet);
+      activeEdgeLabels.length = 0;
+      for (const em of edgeMidpoints) {
+        activeEdgeLabels.push({
+          worldX: em.worldX,
+          worldZ: em.worldZ,
+          worldY: em.worldY,
+          text: em.edgeType,
+        });
+      }
+
       // Show tooltip with node info + edge types
       const edgeInfo = flowLayer.getConnectedEdgeInfo(clickIdx);
       const edgeLabels = edgeInfo.map((ei) => {
@@ -476,6 +490,7 @@ export function Canvas() {
       <Labels sceneManager={sm} />
       <CoordGrid sceneManager={sm} visible={showCoords} />
       <RouteLabels sceneManager={sm} routeLayer={routeLayerState} />
+      <EdgeLabels sceneManager={sm} />
       {tooltip && (
         <div className="node-tooltip" style={{ left: tooltip.x + 14, top: tooltip.y - 10 }}>
           <div className="tt-type">{tooltip.type}</div>
