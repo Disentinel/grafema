@@ -131,18 +131,29 @@ export function Canvas() {
     setRouteLayerState(routeLayer);
 
     // Elevate route nodes + rebuild on route changes
+    let prevRouteNodes = new Set<number>();
     function applyRoutes() {
       routeLayer.update(useRouteStore.getState().routes, nodes);
-      // Elevate nodes in visible routes, reset others
-      for (let i = 0; i < nodes.length; i++) {
-        if (routeLayer.activeNodeIndices.has(i)) {
-          layer.setProperty(i, 'elevation', 1.5);
-          layer.setProperty(i, 'outlineWidth', 0.1);
-          layer.setOutlineColor(i, 0xffffff);
-        } else {
-          // Don't override click-selection elevation
+      const newRouteNodes = routeLayer.activeNodeIndices;
+
+      // Lower nodes that were in routes but aren't anymore
+      for (const i of prevRouteNodes) {
+        if (!newRouteNodes.has(i) && i !== selectedIdx && !selectedConnected.has(i)) {
+          layer.animateTo(i, 'elevation', 0, 300);
+          layer.animateTo(i, 'outlineWidth', 0, 200);
         }
       }
+
+      // Elevate nodes in visible routes
+      for (const i of newRouteNodes) {
+        if (i !== selectedIdx && !selectedConnected.has(i)) {
+          layer.animateTo(i, 'elevation', 1.5, 300);
+          layer.animateTo(i, 'outlineWidth', 0.1, 200);
+          layer.setOutlineColor(i, 0xffffff);
+        }
+      }
+
+      prevRouteNodes = new Set(newRouteNodes);
     }
     applyRoutes();
     sm.onRender((dt) => routeLayer.tick(dt));
