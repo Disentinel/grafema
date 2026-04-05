@@ -15,6 +15,7 @@ import { useRouteStore } from '../store/routeStore';
 import { FLOWS } from '../config/flows';
 import { LENSES } from '../config/lenses';
 import { useDiffStore } from '../store/diffStore';
+import { mapController } from '../api/MapController';
 
 const TILE_SIZE = 3.0;
 
@@ -60,6 +61,9 @@ export function Canvas() {
   useEffect(() => {
     const sm = sceneRef.current;
     if (!sm || !loaded || nodes.length === 0) return;
+
+    // Expose flyTo to MapController
+    mapController.setScene({ flyTo: (x, z, d) => sm.flyTo(x, z, d) });
 
     // --- Hex tiles ---
     if (hexLayerRef.current) sm.scene.remove(hexLayerRef.current.mesh);
