@@ -222,32 +222,108 @@ fn build_graph_stream_body(
 
     let node_count = node_refs.len();
 
-    // Fetch edges
+    // Build CONTAINS parent map for edge lifting:
+    // For nodes NOT in our visible set, find their nearest visible ancestor.
+    // This lets us create aggregated edges: if CALL_X -CALLS-> getUser
+    // and CALL_X is CONTAINS-child of handleGetUser, we lift to handleGetUser → getUser.
     let all_edges = engine.get_all_edges();
+
+    // Build parent map for edge lifting. Each node maps to its most specific
+    // (deepest) parent. Priority: CONTAINS > DECLARES > HAS_SCOPE > HAS_BODY
+    // This ensures CALL nodes lift to their enclosing FUNCTION, not MODULE.
+    let mut contains_parent: HashMap<u128, u128> = HashMap::new();
+    let parent_priority = |etype: &str| -> u8 {
+        match etype {
+            "CONTAINS" => 4,
+            "DECLARES" => 3,
+            "HAS_SCOPE" => 2,
+            "HAS_BODY" => 1,
+            _ => 0,
+        }
+    };
+    let mut parent_prio: HashMap<u128, u8> = HashMap::new();
+
+    for edge in &all_edges {
+        let etype = edge.edge_type.as_deref().unwrap_or("");
+        let prio = parent_priority(etype);
+        if prio == 0 { continue; }
+
+        // Prefer higher priority, or non-MODULE over MODULE for same priority
+        let existing_prio = parent_prio.get(&edge.dst).copied().unwrap_or(0);
+        let src_is_module = engine.get_node(edge.src)
+            .and_then(|n| n.node_type.as_ref().map(|t| t == "MODULE"))
+            .unwrap_or(false);
+
+        if prio > existing_prio || (prio == existing_prio && !src_is_module) {
+            contains_parent.insert(edge.dst, edge.src);
+            parent_prio.insert(edge.dst, prio);
+        }
+    }
+
+    // Lift a node ID to its nearest visible ancestor (max 10 levels)
+    let lift_to_visible = |mut nid: u128| -> Option<u32> {
+        for _ in 0..10 {
+            if let Some(&idx) = id_to_idx.get(&nid) {
+                return Some(idx);
+            }
+            nid = *contains_parent.get(&nid)?;
+        }
+        None
+    };
+
+    // Fetch edges with lifting
     let mut edge_refs: Vec<EdgeRef> = Vec::new();
     let mut edge_type_table: Vec<String> = Vec::new();
     let mut edge_type_idx: HashMap<String, usize> = HashMap::new();
+    let mut seen_edges: std::collections::HashSet<(u32, u32, String)> = std::collections::HashSet::new();
+
+    // Edges to lift: CALLS, READS_FROM, IMPORTS_FROM, WRITES_TO, PASSES_ARGUMENT, AWAITS, RETURNS
+    let liftable_types: std::collections::HashSet<&str> = [
+        "CALLS", "READS_FROM", "IMPORTS_FROM", "WRITES_TO",
+        "PASSES_ARGUMENT", "AWAITS", "RETURNS", "ITERATES_OVER",
+    ].into_iter().collect();
 
     for edge in &all_edges {
-        let si = match id_to_idx.get(&edge.src) { Some(&i) => i, None => continue };
-        let di = match id_to_idx.get(&edge.dst) { Some(&i) => i, None => continue };
         let etype = edge.edge_type.as_deref().unwrap_or("UNKNOWN").to_string();
 
         if let Some(ref types) = want_edge_types {
-            if !types.iter().any(|t| t == &etype) {
-                continue;
-            }
+            if !types.iter().any(|t| t == &etype) { continue; }
         }
 
-        let eti = *edge_type_idx.entry(etype.clone()).or_insert_with(|| {
+        // Try direct match first
+        let si = id_to_idx.get(&edge.src).copied();
+        let di = id_to_idx.get(&edge.dst).copied();
+
+        let (final_si, final_di) = if si.is_some() && di.is_some() {
+            (si.unwrap(), di.unwrap())
+        } else if liftable_types.contains(etype.as_str()) {
+            // Lift: find nearest visible ancestor for missing endpoint(s)
+            let lifted_si = si.or_else(|| lift_to_visible(edge.src));
+            let lifted_di = di.or_else(|| lift_to_visible(edge.dst));
+            match (lifted_si, lifted_di) {
+                (Some(s), Some(d)) => (s, d),
+                _ => continue,
+            }
+        } else {
+            continue;
+        };
+
+        // Skip self-loops and structural edges in output
+        if final_si == final_di { continue; }
+
+        // Dedup lifted edges
+        let edge_key = (final_si, final_di, etype.clone());
+        if !seen_edges.insert(edge_key) { continue; }
+
+        let _eti = *edge_type_idx.entry(etype.clone()).or_insert_with(|| {
             let idx = edge_type_table.len();
             edge_type_table.push(etype.clone());
             idx
         });
 
         edge_refs.push(EdgeRef {
-            src_idx: si,
-            dst_idx: di,
+            src_idx: final_si,
+            dst_idx: final_di,
             edge_type: etype,
         });
     }

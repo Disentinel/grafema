@@ -27,8 +27,10 @@ export async function loadLiveLayout(opts: LiveLayoutOptions = {}) {
   // Phase 1: Load graph data via JSONL stream + quick client-side SA
   await loadStream(opts);
 
-  // Phase 2: Connect to WebSocket for server-side SA refinement
-  connectLayoutWebSocket(opts);
+  // Phase 2: WS SA disabled until index alignment is fixed
+  // (server SA uses all-node indices, client filters out MODULE → index mismatch)
+  // TODO: either server filters same as client, or client uses server indices
+  // connectLayoutWebSocket(opts);
 }
 
 function connectLayoutWebSocket(opts: LiveLayoutOptions) {

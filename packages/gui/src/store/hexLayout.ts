@@ -231,6 +231,39 @@ export function annealingLayout(
     }
   }
 
+  // Place any unplaced nodes in overflow spiral
+  let overflowRadius = 0;
+  for (const [k] of claimed) {
+    const [q, r] = k.split(',').map(Number);
+    overflowRadius = Math.max(overflowRadius, Math.abs(q), Math.abs(r));
+  }
+  overflowRadius += 3;
+  for (let i = 0; i < N; i++) {
+    if (!tileCoords.has(i)) {
+      // Find next unclaimed tile in overflow area
+      for (let rad = overflowRadius; rad < overflowRadius + N; rad++) {
+        let placed = false;
+        let rq = rad * CUBE_DIRS[4].q;
+        let rr = rad * CUBE_DIRS[4].r;
+        for (let side = 0; side < 6 && !placed; side++) {
+          for (let step = 0; step < rad && !placed; step++) {
+            const k = tileKey(rq, rr);
+            if (!claimed.has(k)) {
+              const region = nodes[i].region;
+              claimed.set(k, region);
+              tileCoords.set(i, { q: rq, r: rr });
+              tileToNode.set(k, i);
+              placed = true;
+            }
+            rq += CUBE_DIRS[side].q;
+            rr += CUBE_DIRS[side].r;
+          }
+        }
+        if (placed) break;
+      }
+    }
+  }
+
   // Structural edge types — excluded from layout cost
   // (they exist for hierarchy/LOD, not for spatial proximity)
   const STRUCTURAL_EDGES = new Set(['CONTAINS', 'HAS_SCOPE', 'HAS_BODY', 'DECLARES']);
