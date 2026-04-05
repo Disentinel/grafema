@@ -64,15 +64,15 @@ const FRAG = /* glsl */ `
     // Subtle inner glow — brighter center, darker edges
     float dist = length(vLocalPos);
     float innerGlow = 1.0 - smoothstep(0.0, 0.9, dist);
-    baseColor += vInstanceColor * innerGlow * 0.3;
+    baseColor += vInstanceColor * innerGlow * 0.15;
 
-    // Hex edge: subtle bright rim (picks up bloom)
+    // Hex edge: subtle bright rim
     float rimGlow = smoothstep(0.75, 0.95, dist) * (1.0 - smoothstep(0.95, 1.0, dist));
-    baseColor += vInstanceColor * rimGlow * 0.4;
+    baseColor += vInstanceColor * rimGlow * 0.2;
 
     // Outline
     float edgeMix = smoothstep(1.0 - vOutlineWidth - 0.05, 1.0 - vOutlineWidth, dist);
-    vec3 color = mix(baseColor, vOutlineColor * 1.5, edgeMix * step(0.001, vOutlineWidth));
+    vec3 color = mix(baseColor, vOutlineColor * 2.5, edgeMix * step(0.001, vOutlineWidth));
 
     gl_FragColor = vec4(color, vOpacity);
   }

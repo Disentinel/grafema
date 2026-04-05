@@ -4,7 +4,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 
-const BACKGROUND = 0x060a10;
+const BACKGROUND = 0x000000;
 
 export class SceneManager {
   renderer: THREE.WebGLRenderer;
@@ -37,7 +37,7 @@ export class SceneManager {
     this.renderer.setClearColor(BACKGROUND);
     this.renderer.setSize(container.clientWidth, container.clientHeight);
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.2;
+    this.renderer.toneMappingExposure = 1.0;
     container.appendChild(this.renderer.domElement);
 
     // Scene
@@ -73,9 +73,9 @@ export class SceneManager {
 
     this._bloom = new UnrealBloomPass(
       new THREE.Vector2(container.clientWidth, container.clientHeight),
-      0.8,   // strength
-      0.4,   // radius
-      0.85,  // threshold
+      0.15,  // strength (subtle — ~20% of default)
+      0.3,   // radius
+      0.9,   // threshold (higher = only bright things bloom)
     );
     this._composer.addPass(this._bloom);
 
