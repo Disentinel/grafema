@@ -250,15 +250,24 @@ export function Canvas() {
 
     function clearSelection() {
       const routeNodes = routeLayer.activeNodeIndices;
+      const pins = useViewStore.getState().pins;
       for (let i = 0; i < nodes.length; i++) {
+        const isPinned = pins.has(nodes[i].id);
         // Preserve route elevation
         if (routeNodes.has(i)) {
           layer.animateTo(i, 'elevation', 1.5, 300);
           layer.animateTo(i, 'outlineWidth', 0.1, 200);
           layer.setOutlineColor(i, 0xffffff);
+        } else if (isPinned) {
+          // Preserve pin visual — elevated + outline + scale
+          layer.animateTo(i, 'elevation', 1.5, 300);
+          layer.animateTo(i, 'outlineWidth', 0.18, 200);
+          layer.setOutlineColor(i, 0xff2222);
+          layer.animateTo(i, 'scale', 1.15, 200);
         } else {
           layer.animateTo(i, 'elevation', 0, 300);
           layer.animateTo(i, 'outlineWidth', 0, 200);
+          layer.animateTo(i, 'scale', 1.0, 200);
         }
         layer.animateTo(i, 'opacity', 1.0, 200);
       }
@@ -274,15 +283,24 @@ export function Canvas() {
 
       if (newIdx === hoveredIdx) return;
 
-      // Remove hover outline from previous (unless it's selected)
+      // Remove hover outline from previous (unless selected or pinned)
       if (hoveredIdx >= 0 && hoveredIdx !== selectedIdx && !selectedConnected.has(hoveredIdx)) {
-        layer.setProperty(hoveredIdx, 'outlineWidth', 0);
+        const prevNode = nodes[hoveredIdx];
+        const pins = useViewStore.getState().pins;
+        if (prevNode && pins.has(prevNode.id)) {
+          // Restore pin visual (outline + elevation)
+          layer.setOutlineColor(hoveredIdx, 0xff2222);
+          layer.setProperty(hoveredIdx, 'outlineWidth', 0.18);
+          // elevation stays at 1.5 (set by dblclick, not touched by hover)
+        } else {
+          layer.setProperty(hoveredIdx, 'outlineWidth', 0);
+        }
       }
 
       hoveredIdx = newIdx;
 
       if (hoveredIdx >= 0) {
-        // Light outline on hover
+        // Light outline on hover (unless selected or pinned)
         if (hoveredIdx !== selectedIdx && !selectedConnected.has(hoveredIdx)) {
           layer.setOutlineColor(hoveredIdx, 0x00e5ff);
           layer.setProperty(hoveredIdx, 'outlineWidth', 0.1);
@@ -350,17 +368,23 @@ export function Canvas() {
           layer.setOutlineColor(i, 0x00aacc);
           layer.animateTo(i, 'opacity', 1.0, 200);
         } else {
-          // Preserve route elevation for route nodes
+          // Preserve route/pin elevation
           const routeNodes = routeLayer.activeNodeIndices;
+          const currentPins = useViewStore.getState().pins;
+          const isPinned = currentPins.has(nodes[i].id);
           if (routeNodes.has(i)) {
             layer.animateTo(i, 'elevation', 1.5, 300);
             layer.animateTo(i, 'outlineWidth', 0.1, 200);
             layer.setOutlineColor(i, 0xffffff);
+          } else if (isPinned) {
+            layer.animateTo(i, 'elevation', 1.5, 300);
+            layer.animateTo(i, 'outlineWidth', 0.18, 200);
+            layer.setOutlineColor(i, 0xff2222);
           } else {
             layer.animateTo(i, 'elevation', 0, 300);
             layer.animateTo(i, 'outlineWidth', 0, 200);
           }
-          layer.animateTo(i, 'opacity', 0.25, 200);
+          layer.animateTo(i, 'opacity', isPinned ? 1.0 : 0.25, 200);
         }
       }
 
@@ -403,12 +427,25 @@ export function Canvas() {
         // Remove pin visual
         layer.animateTo(idx, 'outlineWidth', 0, 200);
         layer.animateTo(idx, 'scale', 1.0, 200);
+        layer.animateTo(idx, 'elevation', 0, 300);
+        setTooltip(null);
       } else {
         addPin(node.id, '#ff2222', node.name);
-        // Pin visual: red outline + slight scale up
+        // Pin visual: red outline + scale up + elevated
         layer.setOutlineColor(idx, 0xff2222);
         layer.animateTo(idx, 'outlineWidth', 0.18, 200);
         layer.animateTo(idx, 'scale', 1.15, 200);
+        layer.animateTo(idx, 'elevation', 1.5, 300);
+        // Fixed tooltip
+        const rect = containerRef.current!.getBoundingClientRect();
+        setTooltip({
+          x: e.clientX - rect.left,
+          y: e.clientY - rect.top,
+          name: node.name,
+          type: node.type,
+          region: node.region,
+          edges: [],
+        });
       }
     };
 
