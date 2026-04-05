@@ -1,7 +1,10 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 
-const BACKGROUND = 0x0a0e14;
+const BACKGROUND = 0x060a10;
 
 export class SceneManager {
   renderer: THREE.WebGLRenderer;
@@ -15,6 +18,17 @@ export class SceneManager {
   private _flyStart: THREE.Vector3 | null = null;
   private _flyProgress = 0;
   private _flyDuration = 0;
+  private _composer: EffectComposer;
+  private _bloom: UnrealBloomPass;
+  private _bloomEnabled = true;
+
+  /** Toggle bloom post-processing on/off */
+  setBloom(enabled: boolean) {
+    this._bloomEnabled = enabled;
+    this._bloom.enabled = enabled;
+  }
+
+  get bloomEnabled() { return this._bloomEnabled; }
 
   constructor(container: HTMLElement) {
     // Renderer
@@ -22,11 +36,13 @@ export class SceneManager {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setClearColor(BACKGROUND);
     this.renderer.setSize(container.clientWidth, container.clientHeight);
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.2;
     container.appendChild(this.renderer.domElement);
 
     // Scene
     this.scene = new THREE.Scene();
-    this.scene.fog = new THREE.FogExp2(BACKGROUND, 0.0008);
+    this.scene.fog = new THREE.FogExp2(BACKGROUND, 0.0006);
 
     // Camera
     this.camera = new THREE.PerspectiveCamera(
@@ -37,7 +53,7 @@ export class SceneManager {
     );
     this.camera.position.set(0, 200, 200);
 
-    // Controls: left=pan, right=orbit (matches civ-map)
+    // Controls
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.05;
@@ -51,6 +67,18 @@ export class SceneManager {
       RIGHT: THREE.MOUSE.ROTATE,
     };
 
+    // Post-processing: bloom
+    this._composer = new EffectComposer(this.renderer);
+    this._composer.addPass(new RenderPass(this.scene, this.camera));
+
+    this._bloom = new UnrealBloomPass(
+      new THREE.Vector2(container.clientWidth, container.clientHeight),
+      0.8,   // strength
+      0.4,   // radius
+      0.85,  // threshold
+    );
+    this._composer.addPass(this._bloom);
+
     // Resize
     const ro = new ResizeObserver(() => this._onResize(container));
     ro.observe(container);
@@ -59,17 +87,14 @@ export class SceneManager {
     this._animate();
   }
 
-  /** Register a callback to run each frame */
   onRender(cb: (dt: number) => void) {
     this._callbacks.push(cb);
   }
 
-  /** Current camera distance to orbit target */
   getCameraDistance(): number {
     return this.camera.position.distanceTo(this.controls.target);
   }
 
-  /** Smooth fly-to animation */
   flyTo(x: number, z: number, duration = 800) {
     this._flyStart = this.controls.target.clone();
     this._flyTarget = new THREE.Vector3(x, 0, z);
@@ -82,6 +107,7 @@ export class SceneManager {
   dispose() {
     this._disposed = true;
     this.renderer.domElement.remove();
+    this._composer.dispose();
     this.renderer.dispose();
     this.controls.dispose();
   }
@@ -92,6 +118,7 @@ export class SceneManager {
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h);
+    this._composer.setSize(w, h);
   }
 
   private _animate = () => {
@@ -99,7 +126,6 @@ export class SceneManager {
     requestAnimationFrame(this._animate);
     const dt = this._clock.getDelta();
 
-    // Fly-to animation
     if (this._flyTarget && this._flyStart) {
       this._flyProgress += dt / this._flyDuration;
       if (this._flyProgress >= 1) {
@@ -113,10 +139,10 @@ export class SceneManager {
     }
 
     this.controls.update();
-
     for (const cb of this._callbacks) cb(dt);
 
-    this.renderer.render(this.scene, this.camera);
+    // Render with bloom
+    this._composer.render();
   };
 }
 
