@@ -154,13 +154,12 @@ export function annealingLayout(
     }
   }
 
-  // --- Gap enforcement: 1 empty tile between regions ---
-  // A tile is only claimable by region R if no neighbor belongs to a DIFFERENT region.
+  // Gap enforcement: 1 empty tile between regions.
   function canClaim(q: number, r: number, region: string): boolean {
     for (const dir of CUBE_DIRS) {
       const nk = tileKey(q + dir.q, r + dir.r);
       const owner = claimed.get(nk);
-      if (owner && owner !== region) return false; // adjacent to different region
+      if (owner && owner !== region) return false;
     }
     return true;
   }
@@ -188,18 +187,25 @@ export function annealingLayout(
       for (const k of frontier) { if (claimed.has(k)) frontier.delete(k); }
       if (frontier.size === 0) continue;
 
-      // Pick tile with most same-region neighbors (compact growth)
-      // Must respect gap: no neighbor from a different region
+      // Pick tile: most same-region neighbors, break ties by proximity to seed.
+      // This fills inward before outward, preventing ring-shaped holes.
+      const regionSeed = seeds.get(region) ?? { q: 0, r: 0 };
       let bestTile: string | null = null;
       let bestScore = -1;
+      let bestDist = Infinity;
       for (const k of frontier) {
         const [q, r] = k.split(',').map(Number);
-        if (!canClaim(q, r, region)) continue; // gap violation
+        if (!canClaim(q, r, region)) continue;
         let score = 0;
         for (const dir of CUBE_DIRS) {
           if (claimed.get(tileKey(q + dir.q, r + dir.r)) === region) score++;
         }
-        if (score > bestScore) { bestScore = score; bestTile = k; }
+        const dist = cubeDistance({ q, r }, regionSeed);
+        if (score > bestScore || (score === bestScore && dist < bestDist)) {
+          bestScore = score;
+          bestDist = dist;
+          bestTile = k;
+        }
       }
       if (!bestTile) continue;
       claimed.set(bestTile, region);
@@ -290,43 +296,69 @@ export function annealingLayout(
     return cost;
   }
 
-  // Node-local cost (for fast delta — only semantic edges)
+  // Node-local cost: semantic edge distances + compactness penalty.
+  // Compactness: penalize exposed sides (neighbors not owned by same region).
+  // This prevents "tentacles" and fills holes.
   function nodeCost(ni: number): number {
     let cost = 0;
     const coord = tileCoords.get(ni);
     if (!coord) return 0;
+
+    // Edge distance cost
     for (const { target } of (semanticNodeEdges.get(ni) ?? [])) {
       const oc = tileCoords.get(target);
       if (oc) cost += cubeDistance(coord, oc);
     }
+
+    // Compactness: each exposed side adds penalty
+    const region = nodes[ni].region;
+    let exposed = 0;
+    for (const dir of CUBE_DIRS) {
+      const nk = tileKey(coord.q + dir.q, coord.r + dir.r);
+      if (claimed.get(nk) !== region) exposed++;
+    }
+    cost += exposed; // 0-6 penalty, same scale as edge distances
+
     return cost;
   }
 
   // O(1) connectivity check using local hex topology only.
-  // If vacated tile has ≤1 same-region neighbor: can't disconnect.
-  // If 2+ neighbors: check if they form a connected arc around the hex
-  // (adjacent neighbors in hex ring = connected without center tile).
+  // Local connectivity check: would removing this tile split its region?
+  // BFS from first same-region neighbor, limited to radius 3 around vacated tile.
+  // Checks if all other same-region neighbors are reachable without going through
+  // the vacated tile. O(~36) worst case, not O(N).
   function wouldDisconnect(vacatedQ: number, vacatedR: number, region: string): boolean {
-    // Find which of the 6 hex directions have same-region neighbors
-    const hasNeighbor: boolean[] = new Array(6);
-    let count = 0;
-    for (let d = 0; d < 6; d++) {
-      const nk = tileKey(vacatedQ + CUBE_DIRS[d].q, vacatedR + CUBE_DIRS[d].r);
-      hasNeighbor[d] = claimed.get(nk) === region;
-      if (hasNeighbor[d]) count++;
+    const neighbors: string[] = [];
+    for (const dir of CUBE_DIRS) {
+      const nk = tileKey(vacatedQ + dir.q, vacatedR + dir.r);
+      if (claimed.get(nk) === region) neighbors.push(nk);
     }
-    if (count <= 1) return false;
+    if (neighbors.length <= 1) return false;
 
-    // Check if all occupied neighbors form a single contiguous arc.
-    // Walk the hex ring — if there's only one gap, they're connected.
-    let gaps = 0;
-    for (let d = 0; d < 6; d++) {
-      if (hasNeighbor[d] && !hasNeighbor[(d + 1) % 6]) gaps++;
+    // BFS from first neighbor, excluding vacated tile
+    const vacatedKey = tileKey(vacatedQ, vacatedR);
+    const visited = new Set<string>();
+    const queue = [neighbors[0]];
+    visited.add(neighbors[0]);
+
+    while (queue.length > 0) {
+      const cur = queue.shift()!;
+      const [cq, cr] = cur.split(',').map(Number);
+      if (cubeDistance({ q: cq, r: cr }, { q: vacatedQ, r: vacatedR }) > 3) continue;
+      for (const dir of CUBE_DIRS) {
+        const nk = tileKey(cq + dir.q, cr + dir.r);
+        if (nk === vacatedKey || visited.has(nk)) continue;
+        if (claimed.get(nk) === region) {
+          visited.add(nk);
+          queue.push(nk);
+        }
+      }
     }
-    // 0 gaps = all 6 occupied (fully surrounded) → safe
-    // 1 gap = single contiguous arc → safe (neighbors reach each other around the ring)
-    // 2+ gaps = multiple disconnected arcs → might disconnect region
-    return gaps >= 2;
+
+    for (const nk of neighbors) {
+      if (!visited.has(nk)) return true;
+    }
+    return false;
   }
 
   // --- Simulated Annealing ---
@@ -421,7 +453,7 @@ export function annealingLayout(
       claimed.set(curKey, region);
       if (!gapOk) continue;
 
-      // Fast connectivity pre-check: would vacating curTile disconnect the region?
+      // Local connectivity check: would vacating this tile split the region?
       if (wouldDisconnect(curTile.q, curTile.r, region)) continue;
 
       const costBefore = nodeCost(ni);
