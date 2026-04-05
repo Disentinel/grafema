@@ -6,6 +6,7 @@ import { FlowPanel } from './FlowPanel';
 import { RoutePanel } from './RoutePanel';
 import { LensPanel } from './LensPanel';
 import { DiffPanel } from './DiffPanel';
+import { PinPanel } from './PinPanel';
 import { flowLayerRef, setShowCoordsRef } from './Canvas';
 
 const LOD_NAMES = ['Package', 'Directory', 'File', 'Function'];
@@ -53,6 +54,7 @@ export function Sidebar() {
           <LensPanel />
           <FlowPanel enabledFlows={enabledFlows} onToggle={toggleFlow} />
           <RoutePanel />
+          <PinPanel />
           <DiffPanel />
 
           <div>

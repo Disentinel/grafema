@@ -106,6 +106,28 @@ class MapControllerImpl {
     };
   }
 
+  /** Pin a node */
+  pin(params: { nodeId?: string; nodeName?: string; color?: string }): CommandResult {
+    const nodes = useDataStore.getState().nodes;
+    const target = nodes.find(
+      (n) => n.id === params.nodeId || n.name === params.nodeName,
+    );
+    if (!target) return { ok: false, error: `Node not found` };
+    useViewStore.getState().addPin(target.id, params.color ?? '#ff2222', target.name);
+    return { ok: true };
+  }
+
+  /** Unpin a node */
+  unpin(params: { nodeId?: string; nodeName?: string }): CommandResult {
+    const nodes = useDataStore.getState().nodes;
+    const target = nodes.find(
+      (n) => n.id === params.nodeId || n.name === params.nodeName,
+    );
+    if (!target) return { ok: false, error: `Node not found` };
+    useViewStore.getState().removePin(target.id);
+    return { ok: true };
+  }
+
   /** Enter diff mode */
   enterDiff(params: { removed?: string[]; changed?: { id: string; changes: Record<string, [number, number]> }[] }): CommandResult {
     const nodes = useDataStore.getState().nodes;
@@ -143,6 +165,8 @@ class MapControllerImpl {
       case 'removeRoute': return this.removeRoute(params as { id: string });
       case 'toggleRoute': return this.toggleRoute(params as { id: string });
       case 'getState': return this.getState();
+      case 'pin': return this.pin(params as { nodeId?: string; nodeName?: string; color?: string });
+      case 'unpin': return this.unpin(params as { nodeId?: string; nodeName?: string });
       case 'enterDiff': return this.enterDiff(params as { removed?: string[]; changed?: { id: string; changes: Record<string, [number, number]> }[] });
       case 'exitDiff': return this.exitDiff();
       default: return { ok: false, error: `Unknown method: ${method}` };

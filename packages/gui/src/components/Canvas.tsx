@@ -374,8 +374,31 @@ export function Canvas() {
       });
     };
 
+    const onDblClick = (e: MouseEvent) => {
+      updateMouse(e);
+      raycaster.setFromCamera(mouse, sm.camera);
+      const idx = layer.raycast(raycaster);
+      if (idx < 0) return;
+
+      const node = nodes[idx];
+      const { pins, addPin, removePin } = useViewStore.getState();
+      if (pins.has(node.id)) {
+        removePin(node.id);
+        // Remove pin visual
+        layer.animateTo(idx, 'outlineWidth', 0, 200);
+        layer.animateTo(idx, 'scale', 1.0, 200);
+      } else {
+        addPin(node.id, '#ff2222', node.name);
+        // Pin visual: red outline + slight scale up
+        layer.setOutlineColor(idx, 0xff2222);
+        layer.animateTo(idx, 'outlineWidth', 0.18, 200);
+        layer.animateTo(idx, 'scale', 1.15, 200);
+      }
+    };
+
     sm.renderer.domElement.addEventListener('mousemove', onMouseMove);
     sm.renderer.domElement.addEventListener('click', onClick);
+    sm.renderer.domElement.addEventListener('dblclick', onDblClick);
 
     // --- Camera ---
     let cx = 0, cz = 0;
@@ -388,6 +411,7 @@ export function Canvas() {
     return () => {
       sm.renderer.domElement.removeEventListener('mousemove', onMouseMove);
       sm.renderer.domElement.removeEventListener('click', onClick);
+      sm.renderer.domElement.removeEventListener('dblclick', onDblClick);
       unsubRoutes();
       unsubLens();
       unsubDiff();
