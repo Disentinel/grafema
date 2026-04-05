@@ -83,9 +83,18 @@ export function Canvas() {
     }
     layer.finalize();
 
-    // Subscribe to lens changes
+    // Subscribe to lens changes (also recolors edges — uses flowLayerLocalRef)
     const unsubLens = useViewStore.subscribe((state, prev) => {
-      if (state.lens !== prev.lens) applyLens(state.lens);
+      if (state.lens !== prev.lens) {
+        applyLens(state.lens);
+        // Recolor edges: heatmap lenses recolor by node metrics, region/type reset
+        const lens = LENSES[state.lens];
+        if (lens?.legend === 'gradient') {
+          flowLayerLocalRef.current?.recolorByNodes((ni) => lens.colorFn(nodes[ni], nodes));
+        } else {
+          flowLayerLocalRef.current?.recolorByNodes(null); // reset to preset colors
+        }
+      }
     });
 
     sm.onRender((dt) => layer.tick(dt));

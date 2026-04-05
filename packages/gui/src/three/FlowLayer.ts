@@ -127,6 +127,42 @@ export class FlowLayer {
   }
 
   /**
+   * Recolor edges based on a per-node color function (e.g., from lens).
+   * Each edge takes the color of its target node (data flows TO target).
+   * Pass null to reset to flow preset colors.
+   */
+  recolorByNodes(colorFn: ((nodeIdx: number) => THREE.Color) | null) {
+    for (const b of this._bindings) {
+      const lineMat = b.line.material as THREE.MeshBasicMaterial;
+      const arrowMat = b.arrow.material as THREE.MeshBasicMaterial;
+
+      if (!colorFn) {
+        // Reset to flow preset color — find parent group's default
+        lineMat.color.copy(this._getPresetColor(b));
+        arrowMat.color.copy(this._getPresetColor(b));
+      } else {
+        // Blend source and target colors (target-weighted)
+        const srcColor = colorFn(b.srcIdx);
+        const dstColor = colorFn(b.dstIdx);
+        const blended = srcColor.clone().lerp(dstColor, 0.7); // bias toward target
+        lineMat.color.copy(blended);
+        arrowMat.color.copy(blended);
+      }
+    }
+  }
+
+  private _getPresetColor(b: EdgeBinding): THREE.Color {
+    // Find which flow preset this edge belongs to
+    const typeToFlow = new Map<string, string>();
+    for (const [name, preset] of Object.entries(FLOWS)) {
+      for (const t of preset.types) typeToFlow.set(t, name);
+    }
+    const flowName = typeToFlow.get(b.edgeType);
+    const preset = flowName ? FLOWS[flowName] : null;
+    return new THREE.Color(preset?.color ?? 0x444466);
+  }
+
+  /**
    * Highlight edges connected to a set of nodes, dim the rest.
    * Pass null to reset all edges to full opacity.
    */
