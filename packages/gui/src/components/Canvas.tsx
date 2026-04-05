@@ -181,12 +181,20 @@ export function Canvas() {
     }
 
     function clearSelection() {
+      const routeNodes = routeLayer.activeNodeIndices;
       for (let i = 0; i < nodes.length; i++) {
-        layer.animateTo(i, 'elevation', 0, 300);
-        layer.animateTo(i, 'outlineWidth', 0, 200);
+        // Preserve route elevation
+        if (routeNodes.has(i)) {
+          layer.animateTo(i, 'elevation', 1.5, 300);
+          layer.animateTo(i, 'outlineWidth', 0.1, 200);
+          layer.setOutlineColor(i, 0xffffff);
+        } else {
+          layer.animateTo(i, 'elevation', 0, 300);
+          layer.animateTo(i, 'outlineWidth', 0, 200);
+        }
         layer.animateTo(i, 'opacity', 1.0, 200);
       }
-      flowLayer.highlightEdges(null); // reset edge opacity
+      flowLayer.highlightEdges(null);
       selectedIdx = -1;
       selectedConnected.clear();
     }
@@ -244,8 +252,16 @@ export function Canvas() {
           layer.setOutlineColor(i, 0x00aacc);
           layer.animateTo(i, 'opacity', 1.0, 200);
         } else {
-          layer.animateTo(i, 'elevation', 0, 300);
-          layer.animateTo(i, 'outlineWidth', 0, 200);
+          // Preserve route elevation for route nodes
+          const routeNodes = routeLayer.activeNodeIndices;
+          if (routeNodes.has(i)) {
+            layer.animateTo(i, 'elevation', 1.5, 300);
+            layer.animateTo(i, 'outlineWidth', 0.1, 200);
+            layer.setOutlineColor(i, 0xffffff);
+          } else {
+            layer.animateTo(i, 'elevation', 0, 300);
+            layer.animateTo(i, 'outlineWidth', 0, 200);
+          }
           layer.animateTo(i, 'opacity', 0.25, 200);
         }
       }
