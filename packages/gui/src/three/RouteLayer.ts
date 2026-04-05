@@ -121,19 +121,22 @@ export class RouteLayer {
         }
       }
 
-      // Edge labels — at midpoint of each hop
+      // Edge labels — at actual midpoint of the spline between each hop pair
       for (let i = 0; i < validIndices.length - 1; i++) {
         const srcIdx = validIndices[i];
         const dstIdx = validIndices[i + 1];
         const edgeType = edgeLookup.get(`${srcIdx},${dstIdx}`) ?? '→';
-        const midX = (waypoints[i].x + waypoints[i + 1].x) / 2;
-        const midZ = (waypoints[i].z + waypoints[i + 1].z) / 2;
-        // Y at top of the arc
-        const midY = Math.max(waypoints[i].y, waypoints[i + 1].y) + 1.5;
+
+        // Get point on the actual spline at the midpoint of this segment
+        // Segment i spans from t = i/(n-1) to t = (i+1)/(n-1)
+        const n = validIndices.length;
+        const tMid = (i + 0.5) / (n - 1);
+        const midPoint = curve.getPointAt(Math.min(tMid, 1));
+
         this.edgeLabels.push({
-          worldX: midX,
-          worldZ: midZ,
-          worldY: midY,
+          worldX: midPoint.x,
+          worldZ: midPoint.z,
+          worldY: midPoint.y,
           edgeType,
           routeColor: route.color,
         });
