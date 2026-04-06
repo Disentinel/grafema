@@ -14,6 +14,9 @@ const TILE_SIZE_CONST = 3.0;
 
 type HexLayerLike = { setTargetPositions: (x: Float32Array, z: Float32Array) => void };
 
+// Abort controller for cancelling previous stream (React StrictMode)
+let _activeAbort: AbortController | null = null;
+
 function getHexLayer(): HexLayerLike | null {
   return (globalThis as Record<string, unknown>).__hexLayerRef as HexLayerLike | null;
 }
@@ -222,9 +225,14 @@ export async function loadStream(opts: StreamOptions = {}) {
   if (opts.edgeTypes) params.set('edgeTypes', opts.edgeTypes);
   if (opts.maxNodes) params.set('maxNodes', String(opts.maxNodes));
 
+  // Abort previous request (React StrictMode fires effect twice)
+  if (_activeAbort) _activeAbort.abort();
+  const abortController = new AbortController();
+  _activeAbort = abortController;
+
   const url = `/api/graph-stream?${params.toString()}`;
   console.log('[loadStream] fetching:', url);
-  const resp = await fetch(url);
+  const resp = await fetch(url, { signal: abortController.signal });
   console.log('[loadStream] response:', resp.status, resp.headers.get('content-type'));
   if (!resp.ok) throw new Error(`graph-stream failed: ${resp.status} ${resp.statusText}`);
   if (!resp.body) throw new Error('No response body — streaming not supported');
