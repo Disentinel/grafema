@@ -286,14 +286,49 @@ export async function loadStream(opts: StreamOptions = {}) {
           hexLayer.setTargetPositions(targetX, targetZ);
         }
         onProgress('sa_refine', msg.iteration, msg.cost);
-        if (msg.settled) {
+        if (msg.settled && hexLayer) {
           console.log('[loadStream] SA settled:', msg.iteration, 'iter, cost:', msg.cost);
+          // After morph completes, rebuild graph data → updates region borders
+          const settledCoords = msg.coords;
+          (hexLayer as HexLayerLike & { onSettled: (() => void) | null }).onSettled = () => {
+            // Build final node positions from SA coords
+            const finalNodes: GraphNode[] = [];
+            for (let i = 0; i < rawNodes.length; i++) {
+              const coord = settledCoords.find((c: [number, number, number]) => c[0] === i);
+              if (!coord) continue;
+              const raw = rawNodes[i];
+              const { x, z } = cubeToWorld(coord[1], coord[2], TILE_SIZE_CONST);
+              finalNodes[i] = {
+                id: raw.id, type: header!.typeTable[raw.t] ?? 'UNKNOWN',
+                name: raw.name, file: raw.file, region: raw.region,
+                x, z, degree: raw.degree,
+              };
+            }
+            const regionNames = [...new Set(rawNodes.map(n => n.region))];
+            const regions: Region[] = regionNames.map(rpath => {
+              const rn = finalNodes.filter(n => n && n.region === rpath);
+              let cx = 0, cz = 0;
+              for (const n of rn) { cx += n.x; cz += n.z; }
+              if (rn.length > 0) { cx /= rn.length; cz /= rn.length; }
+              return { path: rpath, depth: 0, tileCount: rn.length, border: [], centroid: { x: cx, z: cz } };
+            });
+            const typeSet = new Set(finalNodes.filter(Boolean).map(n => n.type));
+            const edgeTypeSet = new Set(rawEdges.map(e => header!.edgeTypeTable[e.t] ?? 'UNKNOWN'));
+            store.setGraphData({
+              nodes: finalNodes, edges: rawEdges.map(e => ({
+                source: e.s, target: e.d, type: header!.edgeTypeTable[e.t] ?? 'UNKNOWN',
+              })),
+              regions, typeTable: [...typeSet], edgeTypeTable: [...edgeTypeSet],
+            });
+            console.log('[loadStream] borders updated after morph');
+            onProgress('complete', finalNodes.length, rawEdges.length);
+          };
         }
         break;
       }
       case 'done':
         console.log('[loadStream] done:', msg.nodeCount, 'nodes,', msg.edgeCount, 'edges,', msg.elapsed, 'ms');
-        onProgress('complete', msg.nodeCount, msg.edgeCount);
+        // 'done' arrives after SA settled — completion handled by onSettled callback
         break;
     }
   }
