@@ -152,15 +152,10 @@ export class HexLayer {
   private _tweens: TweenEntry[] = [];
   private _colorTweens: ColorTweenEntry[] = [];
 
-  // Position lerp: all tiles move together over a fixed duration
-  private _finalX: Float32Array | null = null;
-  private _finalZ: Float32Array | null = null;
-  private _startX: Float32Array | null = null;
-  private _startZ: Float32Array | null = null;
-  private _lerpElapsed = 0;
-  private _lerpDuration = 0.6; // seconds
-  /** Callback when all tiles have reached their targets */
-  onSettled: (() => void) | null = null;
+  // Position lerp for progressive SA updates
+  private _targetX: Float32Array | null = null;
+  private _targetZ: Float32Array | null = null;
+  private _lerpRate = 0.08; // exponential decay per frame
 
   constructor(count: number, hexSize: number, scene: THREE.Scene) {
     this.count = count;
@@ -288,43 +283,41 @@ export class HexLayer {
 
   /** Tick animations. Call in render loop. */
   /**
-   * Set target positions for SA layout.
-   * All tiles morph together over _lerpDuration seconds.
+   * Set target positions for progressive SA layout.
+   * Tiles will lerp toward these positions in tick().
    */
   setTargetPositions(targetX: Float32Array, targetZ: Float32Array) {
-    this._startX = new Float32Array(this.worldX);
-    this._startZ = new Float32Array(this.worldZ);
-    this._finalX = targetX;
-    this._finalZ = targetZ;
-    this._lerpElapsed = 0;
+    this._targetX = targetX;
+    this._targetZ = targetZ;
   }
 
   tick(dt: number) {
     let dirty = false;
 
-    // Smooth position morph (all tiles at once, eased)
-    if (this._finalX && this._finalZ && this._startX && this._startZ) {
-      this._lerpElapsed += dt;
-      const t = Math.min(this._lerpElapsed / this._lerpDuration, 1);
-      // Ease in-out cubic
-      const eased = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-
+    // Position lerp toward SA target positions
+    if (this._targetX && this._targetZ) {
+      const rate = this._lerpRate;
+      let moved = 0;
       for (let i = 0; i < this.count; i++) {
-        this.worldX[i] = this._startX[i] + (this._finalX[i] - this._startX[i]) * eased;
-        this.worldZ[i] = this._startZ[i] + (this._finalZ[i] - this._startZ[i]) * eased;
-        this._dummy.position.set(this.worldX[i], 0, this.worldZ[i]);
-        this._dummy.updateMatrix();
-        this.mesh.setMatrixAt(i, this._dummy.matrix);
+        const dx = this._targetX[i] - this.worldX[i];
+        const dz = this._targetZ[i] - this.worldZ[i];
+        if (Math.abs(dx) > 0.01 || Math.abs(dz) > 0.01) {
+          this.worldX[i] += dx * rate;
+          this.worldZ[i] += dz * rate;
+          this._dummy.position.set(this.worldX[i], 0, this.worldZ[i]);
+          this._dummy.updateMatrix();
+          this.mesh.setMatrixAt(i, this._dummy.matrix);
+          moved++;
+        }
       }
-      this.mesh.instanceMatrix.needsUpdate = true;
-      dirty = true;
-
-      if (t >= 1) {
-        this._finalX = null;
-        this._finalZ = null;
-        this._startX = null;
-        this._startZ = null;
-        this.onSettled?.();
+      if (moved > 0) {
+        this.mesh.instanceMatrix.needsUpdate = true;
+        dirty = true;
+      }
+      if (moved === 0) {
+        // All tiles reached target — clear
+        this._targetX = null;
+        this._targetZ = null;
       }
     }
 

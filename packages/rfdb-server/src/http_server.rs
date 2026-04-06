@@ -14,7 +14,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use futures_util::StreamExt;
 use axum::{
     Router,
     extract::{Query, State, WebSocketUpgrade, ws::{Message, WebSocket}},
@@ -142,42 +141,31 @@ async fn graph_stream(
     let want_edge_types: Option<Vec<String>> = params.edge_types
         .map(|s| s.split(',').map(|p| p.trim().to_string()).collect());
 
-    // Stream JSONL lines as they're produced via mpsc channel
-    let (tx, rx) = tokio::sync::mpsc::channel::<String>(64);
+    // Load graph data from RFDB (blocking — graph engine is sync)
     let manager = state.manager.clone();
-
-    tokio::task::spawn_blocking(move || {
-        stream_graph_data(manager, max_nodes, want_packages, want_node_types, want_edge_types, tx);
-    });
-
-    let stream = tokio_stream::wrappers::ReceiverStream::new(rx)
-        .map(|line| Ok::<_, std::convert::Infallible>(line));
+    let body = tokio::task::spawn_blocking(move || {
+        build_graph_stream_body(manager, max_nodes, want_packages, want_node_types, want_edge_types)
+    }).await.unwrap();
 
     Response::builder()
         .header("Content-Type", "application/x-ndjson")
         .header("Cache-Control", "no-cache")
-        .header("Transfer-Encoding", "chunked")
-        .body(axum::body::Body::from_stream(stream))
+        .body(axum::body::Body::from(body))
         .unwrap()
 }
 
-/// Stream graph data as NDJSON lines via channel.
-/// Sends nodes FIRST (client can render immediately), then edges (computed in background).
-fn stream_graph_data(
+fn build_graph_stream_body(
     manager: Arc<DatabaseManager>,
     max_nodes: usize,
     want_packages: Option<Vec<String>>,
     want_node_types: Option<Vec<String>>,
     want_edge_types: Option<Vec<String>>,
-    tx: tokio::sync::mpsc::Sender<String>,
-) {
+) -> String {
     let start = std::time::Instant::now();
     let db = manager.get_database("default").unwrap();
     let engine = db.engine.read().unwrap();
 
-    let send = |line: String| { let _ = tx.blocking_send(line + "\n"); };
-
-    // ── Phase 1: Fetch visible nodes ──
+    // Fetch all nodes, filter by packages/types, up to max_nodes
     let all_ids = engine.find_by_attr(&AttrQuery::default());
     let mut node_refs: Vec<NodeRef> = Vec::new();
     let mut id_to_idx: HashMap<u128, u32> = HashMap::new();
@@ -186,222 +174,224 @@ fn stream_graph_data(
 
     for &nid in &all_ids {
         if node_refs.len() >= max_nodes { break; }
-        let node = match engine.get_node(nid) { Some(n) => n, None => continue };
+        let node = match engine.get_node(nid) {
+            Some(n) => n,
+            None => continue,
+        };
         let ntype = node.node_type.as_deref().unwrap_or("UNKNOWN").to_string();
         let file = node.file.as_deref().unwrap_or("").to_string();
 
+        // Package filter
         if let Some(ref pkgs) = want_packages {
-            if !pkgs.iter().any(|p| file.starts_with(p.as_str())) { continue; }
+            if !pkgs.iter().any(|p| file.starts_with(p.as_str())) {
+                continue;
+            }
         }
+        // Type filter
         if let Some(ref types) = want_node_types {
-            if !types.iter().any(|t| t == &ntype) { continue; }
+            if !types.iter().any(|t| t == &ntype) {
+                continue;
+            }
         }
 
-        let _ti = *type_idx.entry(ntype.clone()).or_insert_with(|| {
+        let ti = *type_idx.entry(ntype.clone()).or_insert_with(|| {
             let idx = type_table.len();
             type_table.push(ntype.clone());
             idx
         });
 
+        // Clean name: strip absolute paths for MODULE nodes
         let mut name = node.name.as_deref().unwrap_or("").to_string();
         if name.contains('/') && !file.is_empty() {
-            if let Some(pos) = file.rfind('/') { name = file[pos + 1..].to_string(); }
+            if let Some(pos) = file.rfind('/') {
+                name = file[pos + 1..].to_string();
+            }
         }
 
         let idx = node_refs.len() as u32;
         id_to_idx.insert(nid, idx);
         node_refs.push(NodeRef {
-            idx, id: nid,
+            idx,
+            id: nid,
             node_type: node.node_type.as_deref().unwrap_or("UNKNOWN").to_string(),
-            file, name, metadata: node.metadata.clone(),
+            file,
+            name,
+            metadata: node.metadata.clone(),
         });
     }
 
     let node_count = node_refs.len();
 
-    // Build container hierarchy (needs nodes, no edges yet — regions from file paths)
-    let hierarchy = default_hierarchy();
-    let empty_edges: Vec<EdgeRef> = Vec::new();
-    let tree = ContainerTree::build(&hierarchy, &node_refs, &empty_edges);
+    // ── Edge aggregation via file-based grouping ──
+    // Group ALL nodes in the graph by file path. For each file, find the best
+    // visible node (FUNCTION > CLASS > MODULE) to "own" non-visible nodes.
+    // Then collect semantic edges and lift both endpoints to their file's owner.
+    //
+    // This handles graphs where CALL nodes have no CONTAINS parent but share
+    // the same file as their enclosing FUNCTION.
 
-    // ── Stream header + nodes immediately ──
-    let regions: Vec<serde_json::Value> = tree.containers_at_level(tree.sa_region_level)
-        .values()
-        .map(|c| serde_json::json!({"path": c.id, "depth": c.level, "tileCount": c.child_count}))
-        .collect();
-
-    send(serde_json::to_string(&serde_json::json!({
-        "type": "header",
-        "typeTable": type_table,
-        "edgeTypeTable": [],  // will be updated in done message
-        "regions": regions,
-    })).unwrap());
-
-    // Stream nodes (degree=0 for now — updated after edges)
-    for nr in &node_refs {
-        let ti = type_idx.get(&nr.node_type).copied().unwrap_or(0);
-        let region = tree.sa_region(nr.idx).to_string();
-        send(serde_json::to_string(&serde_json::json!({
-            "type": "node",
-            "i": nr.idx, "t": ti,
-            "id": nr.id.to_string(), "name": nr.name, "file": nr.file,
-            "region": region, "degree": 0,
-        })).unwrap());
-    }
-
-    send(serde_json::to_string(&serde_json::json!({
-        "type": "nodes_done", "count": node_count,
-    })).unwrap());
-
-    eprintln!("[http] graph-stream: {} nodes streamed in {}ms, computing edges...",
-        node_count, start.elapsed().as_millis());
-
-    // ── Phase 2: Edge lifting (takes 2-4s for large graphs) ──
     let liftable_types: std::collections::HashSet<&str> = [
         "CALLS", "READS_FROM", "IMPORTS_FROM", "WRITES_TO",
         "PASSES_ARGUMENT", "AWAITS", "RETURNS", "ITERATES_OVER",
         "DEPENDS_ON", "HAS_METHOD",
     ].into_iter().collect();
 
+    // Build file → visible nodes map
     let mut file_to_visible: HashMap<String, Vec<u32>> = HashMap::new();
     for nr in &node_refs {
         file_to_visible.entry(nr.file.clone()).or_default().push(nr.idx);
     }
 
+    // For each file that has visible nodes, collect ALL nodes in that file
+    // and map non-visible ones to the file's MODULE node (or first visible node)
     let mut nid_to_visible: HashMap<u128, u32> = HashMap::new();
-    for nr in &node_refs { nid_to_visible.insert(nr.id, nr.idx); }
 
+    // Visible nodes map to themselves
+    for nr in &node_refs {
+        nid_to_visible.insert(nr.id, nr.idx);
+    }
+
+    // Find all non-visible nodes that share a file with visible nodes
     let files_with_visible: std::collections::HashSet<String> =
         file_to_visible.keys().cloned().collect();
 
-    for &nid in &all_ids {
+    let all_node_ids = engine.find_by_attr(&AttrQuery::default());
+    for &nid in &all_node_ids {
         if nid_to_visible.contains_key(&nid) { continue; }
-        let node = match engine.get_node(nid) { Some(n) => n, None => continue };
+        let node = match engine.get_node(nid) {
+            Some(n) => n,
+            None => continue,
+        };
         let file = node.file.as_deref().unwrap_or("").to_string();
         if !files_with_visible.contains(&file) { continue; }
+
+        // Map to the best visible node in this file:
+        // Prefer FUNCTION/METHOD/CLASS over MODULE (more specific)
         if let Some(visible_nodes) = file_to_visible.get(&file) {
+            // Use first visible node as default (could be smarter with line-based proximity)
             nid_to_visible.insert(nid, visible_nodes[0]);
         }
     }
 
+    eprintln!("[http] edge-lift: {} visible, {} mapped via file grouping",
+        node_count, nid_to_visible.len());
+
+    // Collect edges between mapped nodes
     let mut edge_refs: Vec<EdgeRef> = Vec::new();
     let mut edge_type_table: Vec<String> = Vec::new();
     let mut edge_type_idx: HashMap<String, usize> = HashMap::new();
     let mut seen_edges: std::collections::HashSet<(u32, u32, String)> = std::collections::HashSet::new();
 
+    // For every mapped node, check its outgoing edges
     for (&nid, &src_vis) in &nid_to_visible {
         let out_edges = engine.get_outgoing_edges(nid, None);
         for edge in &out_edges {
             let etype = edge.edge_type.as_deref().unwrap_or("UNKNOWN").to_string();
             if !liftable_types.contains(etype.as_str()) { continue; }
+
             if let Some(ref types) = want_edge_types {
                 if !types.iter().any(|t| t == &etype) { continue; }
             }
-            let dst_vis = match nid_to_visible.get(&edge.dst) { Some(&i) => i, None => continue };
+
+            let dst_vis = match nid_to_visible.get(&edge.dst) {
+                Some(&idx) => idx,
+                None => continue,
+            };
+
             if src_vis == dst_vis { continue; }
+
             let edge_key = (src_vis, dst_vis, etype.clone());
             if !seen_edges.insert(edge_key) { continue; }
+
             let _eti = *edge_type_idx.entry(etype.clone()).or_insert_with(|| {
                 let idx = edge_type_table.len();
                 edge_type_table.push(etype.clone());
                 idx
             });
-            edge_refs.push(EdgeRef { src_idx: src_vis, dst_idx: dst_vis, edge_type: etype });
+
+            edge_refs.push(EdgeRef {
+                src_idx: src_vis,
+                dst_idx: dst_vis,
+                edge_type: etype,
+            });
         }
     }
 
-    // Compute degrees for SA
+    // Compute degrees
     let mut degrees = vec![0u32; node_count];
     for e in &edge_refs {
         degrees[e.src_idx as usize] += 1;
         degrees[e.dst_idx as usize] += 1;
     }
 
-    // Stream edges
-    for e in &edge_refs {
-        let eti = edge_type_idx.get(&e.edge_type).copied().unwrap_or(0);
-        send(serde_json::to_string(&serde_json::json!({
-            "type": "edge", "s": e.src_idx, "d": e.dst_idx, "t": eti,
+    // Build container hierarchy
+    let hierarchy = default_hierarchy();
+    let tree = ContainerTree::build(&hierarchy, &node_refs, &edge_refs);
+
+    // Build JSONL output
+    let mut lines: Vec<String> = Vec::new();
+
+    // Header
+    let regions: Vec<serde_json::Value> = tree.containers_at_level(tree.sa_region_level)
+        .values()
+        .map(|c| serde_json::json!({
+            "path": c.id,
+            "depth": c.level,
+            "tileCount": c.child_count,
+        }))
+        .collect();
+
+    lines.push(serde_json::to_string(&serde_json::json!({
+        "type": "header",
+        "typeTable": type_table,
+        "edgeTypeTable": edge_type_table,
+        "regions": regions,
+    })).unwrap());
+
+    // Nodes
+    for nr in &node_refs {
+        let ti = type_idx.get(&nr.node_type).copied().unwrap_or(0);
+        let region = tree.sa_region(nr.idx).to_string();
+        lines.push(serde_json::to_string(&serde_json::json!({
+            "type": "node",
+            "i": nr.idx,
+            "t": ti,
+            "id": nr.id.to_string(),
+            "name": nr.name,
+            "file": nr.file,
+            "region": region,
+            "degree": degrees[nr.idx as usize],
         })).unwrap());
     }
 
-    send(serde_json::to_string(&serde_json::json!({
-        "type": "edges_done",
-        "count": edge_refs.len(),
-        "edgeTypeTable": edge_type_table,
+    lines.push(serde_json::to_string(&serde_json::json!({
+        "type": "nodes_done",
+        "count": node_count,
     })).unwrap());
 
-    eprintln!("[http] graph-stream: {} nodes, {} edges, {}ms — starting SA...",
-        node_count, edge_refs.len(), start.elapsed().as_millis());
-
-    // ── Phase 3: Server-side SA layout ──
-    // Runs SA on the visible nodes with lifted edges.
-    // Streams position snapshots as they improve.
-    let layout_nodes: Vec<crate::sa_layout::LayoutNode> = node_refs.iter().map(|n| {
-        crate::sa_layout::LayoutNode {
-            idx: n.idx,
-            region: tree.sa_region(n.idx).to_string(),
-            degree: degrees[n.idx as usize],
-        }
-    }).collect();
-
-    let layout_edges: Vec<crate::sa_layout::LayoutEdge> = edge_refs.iter().map(|e| {
-        crate::sa_layout::LayoutEdge {
-            src: e.src_idx,
-            dst: e.dst_idx,
-            edge_type: e.edge_type.clone(),
-        }
-    }).collect();
-
-    let mut sa = crate::sa_layout::SaEngine::new(&layout_nodes, &layout_edges, &tree);
-    let max_iters = sa.max_iterations();
-    let batch_size = 10_000usize;
-    let mut last_snapshot = std::time::Instant::now();
-
-    // Send initial flood fill positions
-    let snap = sa.snapshot();
-    send(serde_json::to_string(&serde_json::json!({
-        "type": "positions",
-        "coords": snap.iter().map(|&(i, q, r)| [i as i32, q as i32, r as i32]).collect::<Vec<_>>(),
-        "iteration": 0,
-        "cost": sa.total_cost(),
-    })).unwrap());
-
-    // SA refinement with periodic snapshots
-    while sa.total_iterations < max_iters {
-        let (cost, _accepted) = sa.run_batch(batch_size);
-
-        if last_snapshot.elapsed() >= std::time::Duration::from_millis(300) {
-            let snap = sa.snapshot();
-            send(serde_json::to_string(&serde_json::json!({
-                "type": "positions",
-                "coords": snap.iter().map(|&(i, q, r)| [i as i32, q as i32, r as i32]).collect::<Vec<_>>(),
-                "iteration": sa.total_iterations,
-                "cost": cost,
-            })).unwrap());
-            last_snapshot = std::time::Instant::now();
-        }
+    // Edges
+    for (i, e) in edge_refs.iter().enumerate() {
+        let eti = edge_type_idx.get(&e.edge_type).copied().unwrap_or(0);
+        lines.push(serde_json::to_string(&serde_json::json!({
+            "type": "edge",
+            "s": e.src_idx,
+            "d": e.dst_idx,
+            "t": eti,
+        })).unwrap());
     }
 
-    // Final positions
-    let snap = sa.snapshot();
     let elapsed = start.elapsed().as_millis();
-    send(serde_json::to_string(&serde_json::json!({
-        "type": "positions",
-        "coords": snap.iter().map(|&(i, q, r)| [i as i32, q as i32, r as i32]).collect::<Vec<_>>(),
-        "iteration": sa.total_iterations,
-        "cost": sa.total_cost(),
-        "settled": true,
-    })).unwrap());
-
-    send(serde_json::to_string(&serde_json::json!({
+    lines.push(serde_json::to_string(&serde_json::json!({
         "type": "done",
-        "nodeCount": node_count, "edgeCount": edge_refs.len(),
+        "nodeCount": node_count,
+        "edgeCount": edge_refs.len(),
         "elapsed": elapsed,
     })).unwrap());
 
-    eprintln!("[http] graph-stream: {} nodes, {} edges, SA {} iter cost {}, {}ms total",
-        node_count, edge_refs.len(), sa.total_iterations, sa.total_cost(), elapsed);
+    eprintln!("[http] graph-stream: {} nodes, {} edges, {} regions, {}ms",
+        node_count, edge_refs.len(), regions.len(), elapsed);
+
+    lines.join("\n") + "\n"
 }
 
 // ── WS /api/layout-live ─────────────────────────────────────────────────

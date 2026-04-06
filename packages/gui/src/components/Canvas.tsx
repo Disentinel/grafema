@@ -158,9 +158,8 @@ export function Canvas() {
     sm.onRender((dt) => layer.tick(dt));
     hexLayerRef.current = layer;
 
-    // Expose HexLayer for WebSocket SA + incremental SA position updates
+    // Expose HexLayer for WebSocket SA position updates
     setHexLayerRef(layer);
-    (globalThis as Record<string, unknown>).__hexLayerRef = layer;
 
     // --- Region borders ---
     if (regionLayerRef.current) regionLayerRef.current.dispose();

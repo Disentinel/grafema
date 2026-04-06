@@ -154,12 +154,13 @@ export function annealingLayout(
     }
   }
 
-  // Gap enforcement: 1 empty tile between regions.
+  // --- Gap enforcement: 1 empty tile between regions ---
+  // A tile is only claimable by region R if no neighbor belongs to a DIFFERENT region.
   function canClaim(q: number, r: number, region: string): boolean {
     for (const dir of CUBE_DIRS) {
       const nk = tileKey(q + dir.q, r + dir.r);
       const owner = claimed.get(nk);
-      if (owner && owner !== region) return false;
+      if (owner && owner !== region) return false; // adjacent to different region
     }
     return true;
   }
@@ -187,25 +188,18 @@ export function annealingLayout(
       for (const k of frontier) { if (claimed.has(k)) frontier.delete(k); }
       if (frontier.size === 0) continue;
 
-      // Pick tile: most same-region neighbors, break ties by proximity to seed.
-      // This fills inward before outward, preventing ring-shaped holes.
-      const regionSeed = seeds.get(region) ?? { q: 0, r: 0 };
+      // Pick tile with most same-region neighbors (compact growth)
+      // Must respect gap: no neighbor from a different region
       let bestTile: string | null = null;
       let bestScore = -1;
-      let bestDist = Infinity;
       for (const k of frontier) {
         const [q, r] = k.split(',').map(Number);
-        if (!canClaim(q, r, region)) continue;
+        if (!canClaim(q, r, region)) continue; // gap violation
         let score = 0;
         for (const dir of CUBE_DIRS) {
           if (claimed.get(tileKey(q + dir.q, r + dir.r)) === region) score++;
         }
-        const dist = cubeDistance({ q, r }, regionSeed);
-        if (score > bestScore || (score === bestScore && dist < bestDist)) {
-          bestScore = score;
-          bestDist = dist;
-          bestTile = k;
-        }
+        if (score > bestScore) { bestScore = score; bestTile = k; }
       }
       if (!bestTile) continue;
       claimed.set(bestTile, region);
@@ -296,69 +290,43 @@ export function annealingLayout(
     return cost;
   }
 
-  // Node-local cost: semantic edge distances + compactness penalty.
-  // Compactness: penalize exposed sides (neighbors not owned by same region).
-  // This prevents "tentacles" and fills holes.
+  // Node-local cost (for fast delta — only semantic edges)
   function nodeCost(ni: number): number {
     let cost = 0;
     const coord = tileCoords.get(ni);
     if (!coord) return 0;
-
-    // Edge distance cost
     for (const { target } of (semanticNodeEdges.get(ni) ?? [])) {
       const oc = tileCoords.get(target);
       if (oc) cost += cubeDistance(coord, oc);
     }
-
-    // Compactness: each exposed side adds penalty
-    const region = nodes[ni].region;
-    let exposed = 0;
-    for (const dir of CUBE_DIRS) {
-      const nk = tileKey(coord.q + dir.q, coord.r + dir.r);
-      if (claimed.get(nk) !== region) exposed++;
-    }
-    cost += exposed; // 0-6 penalty, same scale as edge distances
-
     return cost;
   }
 
   // O(1) connectivity check using local hex topology only.
-  // Local connectivity check: would removing this tile split its region?
-  // BFS from first same-region neighbor, limited to radius 3 around vacated tile.
-  // Checks if all other same-region neighbors are reachable without going through
-  // the vacated tile. O(~36) worst case, not O(N).
+  // If vacated tile has ≤1 same-region neighbor: can't disconnect.
+  // If 2+ neighbors: check if they form a connected arc around the hex
+  // (adjacent neighbors in hex ring = connected without center tile).
   function wouldDisconnect(vacatedQ: number, vacatedR: number, region: string): boolean {
-    const neighbors: string[] = [];
-    for (const dir of CUBE_DIRS) {
-      const nk = tileKey(vacatedQ + dir.q, vacatedR + dir.r);
-      if (claimed.get(nk) === region) neighbors.push(nk);
+    // Find which of the 6 hex directions have same-region neighbors
+    const hasNeighbor: boolean[] = new Array(6);
+    let count = 0;
+    for (let d = 0; d < 6; d++) {
+      const nk = tileKey(vacatedQ + CUBE_DIRS[d].q, vacatedR + CUBE_DIRS[d].r);
+      hasNeighbor[d] = claimed.get(nk) === region;
+      if (hasNeighbor[d]) count++;
     }
-    if (neighbors.length <= 1) return false;
+    if (count <= 1) return false;
 
-    // BFS from first neighbor, excluding vacated tile
-    const vacatedKey = tileKey(vacatedQ, vacatedR);
-    const visited = new Set<string>();
-    const queue = [neighbors[0]];
-    visited.add(neighbors[0]);
-
-    while (queue.length > 0) {
-      const cur = queue.shift()!;
-      const [cq, cr] = cur.split(',').map(Number);
-      if (cubeDistance({ q: cq, r: cr }, { q: vacatedQ, r: vacatedR }) > 3) continue;
-      for (const dir of CUBE_DIRS) {
-        const nk = tileKey(cq + dir.q, cr + dir.r);
-        if (nk === vacatedKey || visited.has(nk)) continue;
-        if (claimed.get(nk) === region) {
-          visited.add(nk);
-          queue.push(nk);
-        }
-      }
+    // Check if all occupied neighbors form a single contiguous arc.
+    // Walk the hex ring — if there's only one gap, they're connected.
+    let gaps = 0;
+    for (let d = 0; d < 6; d++) {
+      if (hasNeighbor[d] && !hasNeighbor[(d + 1) % 6]) gaps++;
     }
-
-    for (const nk of neighbors) {
-      if (!visited.has(nk)) return true;
-    }
-    return false;
+    // 0 gaps = all 6 occupied (fully surrounded) → safe
+    // 1 gap = single contiguous arc → safe (neighbors reach each other around the ring)
+    // 2+ gaps = multiple disconnected arcs → might disconnect region
+    return gaps >= 2;
   }
 
   // --- Simulated Annealing ---
@@ -366,11 +334,10 @@ export function annealingLayout(
   const rngSeed = N * 31 + edges.length * 37 + regionNames.length * 41;
   const rand = createRng(rngSeed);
 
-  // Scale iterations: 1000/node, cap at 100k.
-  // With compactness penalty + local BFS connectivity, fewer iterations
-  // are needed for good results. Worker runs off main thread so speed
-  // matters less, but shorter = faster morph feedback.
-  const ITERATIONS = Math.min(N * 1000, 100_000);
+  // Scale iterations: 3000/node for small graphs, cap for larger ones.
+  // Target: <3s SA on main thread. ~100k iter/s in browser.
+  // 26 nodes → 78k, 100 nodes → 200k, 200+ nodes → 200k
+  const ITERATIONS = Math.min(N * 3000, 200_000);
   const T_START = 8.0;
   const T_END = 0.01;
   const COOL = Math.pow(T_END / T_START, 1 / ITERATIONS);
@@ -454,7 +421,7 @@ export function annealingLayout(
       claimed.set(curKey, region);
       if (!gapOk) continue;
 
-      // Local connectivity check: would vacating this tile split the region?
+      // Fast connectivity pre-check: would vacating curTile disconnect the region?
       if (wouldDisconnect(curTile.q, curTile.r, region)) continue;
 
       const costBefore = nodeCost(ni);
@@ -497,366 +464,4 @@ export function annealingLayout(
   console.log(`[SA] ${ITERATIONS} iterations, ${accepted} accepted, cost: ${totalCost()} (best: ${bestCost})`);
 
   return { tileCoords, cost: bestCost, iterations: ITERATIONS };
-}
-
-/**
- * Incremental layout engine: flood fill → instant render → SA refinement in batches.
- *
- * Usage:
- *   const engine = new IncrementalLayout(nodes, edges, regionNames);
- *   // Immediately render flood fill positions:
- *   engine.tileCoords; // Map<number, {q, r}>
- *   // Then refine in animation frames:
- *   engine.refineBatch(10000); // returns true when settled
- */
-export class IncrementalLayout {
-  readonly tileCoords: Map<number, { q: number; r: number }>;
-  private _claimed: Map<string, string>;
-  private _tileToNode: Map<string, number>;
-  private _nodes: LayoutNode[];
-  private _semanticNodeEdges: Map<number, { target: number; weight: number }[]>;
-  private _regionIndices: Map<string, number[]>;
-  private _regionNames: string[];
-  private _rand: () => number;
-  private _T: number;
-  private _cool: number;
-  private _maxIter: number;
-  private _totalIter = 0;
-  private _bestCost: number;
-  private _bestSnapshot: Map<number, { q: number; r: number }>;
-
-  constructor(nodes: LayoutNode[], edges: GraphEdge[], regionNames: string[]) {
-    this._nodes = nodes;
-    this._regionNames = regionNames;
-    const N = nodes.length;
-
-    // Build semantic adjacency
-    const STRUCTURAL = new Set(['CONTAINS', 'HAS_SCOPE', 'HAS_BODY', 'DECLARES']);
-    this._semanticNodeEdges = new Map();
-    for (const e of edges) {
-      if (STRUCTURAL.has(e.type)) continue;
-      if (!this._semanticNodeEdges.has(e.source)) this._semanticNodeEdges.set(e.source, []);
-      if (!this._semanticNodeEdges.has(e.target)) this._semanticNodeEdges.set(e.target, []);
-      this._semanticNodeEdges.get(e.source)!.push({ target: e.target, weight: 1 });
-      this._semanticNodeEdges.get(e.target)!.push({ target: e.source, weight: 1 });
-    }
-
-    // Region membership
-    this._regionIndices = new Map();
-    for (let i = 0; i < N; i++) {
-      const r = nodes[i].region;
-      if (!this._regionIndices.has(r)) this._regionIndices.set(r, []);
-      this._regionIndices.get(r)!.push(i);
-    }
-
-    // Run flood fill (reuse the same logic as annealingLayout)
-    // This is the "instant render" part
-    this.tileCoords = new Map();
-    this._claimed = new Map();
-    this._tileToNode = new Map();
-    this._floodFill(nodes, edges, regionNames);
-
-    // SA parameters
-    this._maxIter = Math.min(N * 1000, 100_000);
-    const rngSeed = N * 31 + edges.length * 37 + regionNames.length * 41;
-    this._rand = createRng(rngSeed);
-    this._T = 8.0;
-    this._cool = Math.pow(0.01 / 8.0, 1 / this._maxIter);
-
-    this._bestCost = this._totalCost();
-    this._bestSnapshot = new Map(this.tileCoords);
-  }
-
-  get settled(): boolean { return this._totalIter >= this._maxIter; }
-  get progress(): number { return Math.min(this._totalIter / this._maxIter, 1); }
-  get cost(): number { return this._bestCost; }
-  get iterations(): number { return this._totalIter; }
-
-  /** Run a batch of SA iterations. Returns true when settled. */
-  refineBatch(batchSize: number): boolean {
-    if (this.settled) return true;
-    const N = this._nodes.length;
-    const numRegions = this._regionNames.length;
-    let accepted = 0;
-
-    for (let i = 0; i < batchSize && this._totalIter < this._maxIter; i++, this._totalIter++) {
-      this._T *= this._cool;
-      const moveType = this._rand();
-
-      if (moveType < 0.5) {
-        // Swap two nodes in same region
-        const ri = Math.floor(this._rand() * numRegions) % numRegions;
-        const members = this._regionIndices.get(this._regionNames[ri]);
-        if (!members || members.length < 2) continue;
-        const ia = Math.floor(this._rand() * members.length) % members.length;
-        const ib = Math.floor(this._rand() * members.length) % members.length;
-        if (ia === ib) continue;
-        const ni = members[ia], nj = members[ib];
-        const ci = this.tileCoords.get(ni)!, cj = this.tileCoords.get(nj)!;
-        const costBefore = this._nodeCost(ni) + this._nodeCost(nj);
-        this.tileCoords.set(ni, cj);
-        this.tileCoords.set(nj, ci);
-        const costAfter = this._nodeCost(ni) + this._nodeCost(nj);
-        const delta = costAfter - costBefore;
-        if (delta < 0 || this._rand() < Math.exp(-delta / this._T)) {
-          this._tileToNode.set(tileKey(cj.q, cj.r), ni);
-          this._tileToNode.set(tileKey(ci.q, ci.r), nj);
-          accepted++;
-        } else {
-          this.tileCoords.set(ni, ci);
-          this.tileCoords.set(nj, cj);
-        }
-      } else {
-        // Migrate to adjacent unclaimed tile
-        const ni = Math.floor(this._rand() * N) % N;
-        const region = this._nodes[ni].region;
-        const curTile = this.tileCoords.get(ni)!;
-        const curKey = tileKey(curTile.q, curTile.r);
-        const candidates: { q: number; r: number }[] = [];
-        for (const dir of CUBE_DIRS) {
-          const nq = curTile.q + dir.q, nr = curTile.r + dir.r;
-          if (!this._claimed.has(tileKey(nq, nr))) candidates.push({ q: nq, r: nr });
-        }
-        if (candidates.length === 0) continue;
-        const target = candidates[Math.floor(this._rand() * candidates.length) % candidates.length];
-        const targetKey = tileKey(target.q, target.r);
-
-        let hasAdj = false;
-        for (const dir of CUBE_DIRS) {
-          const nk = tileKey(target.q + dir.q, target.r + dir.r);
-          if (nk !== curKey && this._claimed.get(nk) === region) { hasAdj = true; break; }
-        }
-        if (!hasAdj) continue;
-
-        this._claimed.delete(curKey);
-        const gapOk = this._canClaim(target.q, target.r, region);
-        this._claimed.set(curKey, region);
-        if (!gapOk) continue;
-
-        if (this._wouldDisconnect(curTile.q, curTile.r, region)) continue;
-
-        const costBefore = this._nodeCost(ni);
-        this.tileCoords.set(ni, target);
-        this._claimed.delete(curKey);
-        this._claimed.set(targetKey, region);
-        this._tileToNode.delete(curKey);
-        this._tileToNode.set(targetKey, ni);
-        const costAfter = this._nodeCost(ni);
-        const delta = costAfter - costBefore;
-        if (delta < 0 || this._rand() < Math.exp(-delta / this._T)) {
-          accepted++;
-        } else {
-          this.tileCoords.set(ni, curTile);
-          this._claimed.delete(targetKey);
-          this._claimed.set(curKey, region);
-          this._tileToNode.delete(targetKey);
-          this._tileToNode.set(curKey, ni);
-        }
-      }
-
-      const curCost = this._totalCost();
-      if (curCost < this._bestCost) {
-        this._bestCost = curCost;
-        this._bestSnapshot = new Map(this.tileCoords);
-      }
-    }
-
-    if (this.settled) {
-      for (const [ni, coord] of this._bestSnapshot) this.tileCoords.set(ni, coord);
-      console.log(`[SA] ${this._totalIter} iterations, cost: ${this._bestCost}`);
-    }
-
-    return this.settled;
-  }
-
-  private _nodeCost(ni: number): number {
-    let cost = 0;
-    const coord = this.tileCoords.get(ni);
-    if (!coord) return 0;
-    for (const { target } of (this._semanticNodeEdges.get(ni) ?? [])) {
-      const oc = this.tileCoords.get(target);
-      if (oc) cost += cubeDistance(coord, oc);
-    }
-    const region = this._nodes[ni].region;
-    for (const dir of CUBE_DIRS) {
-      if (this._claimed.get(tileKey(coord.q + dir.q, coord.r + dir.r)) !== region) cost++;
-    }
-    return cost;
-  }
-
-  private _totalCost(): number {
-    let cost = 0;
-    for (let i = 0; i < this._nodes.length; i++) cost += this._nodeCost(i);
-    return cost;
-  }
-
-  private _canClaim(q: number, r: number, region: string): boolean {
-    for (const dir of CUBE_DIRS) {
-      const nk = tileKey(q + dir.q, r + dir.r);
-      const owner = this._claimed.get(nk);
-      if (owner && owner !== region) return false;
-    }
-    return true;
-  }
-
-  private _wouldDisconnect(vq: number, vr: number, region: string): boolean {
-    const neighbors: string[] = [];
-    for (const dir of CUBE_DIRS) {
-      const nk = tileKey(vq + dir.q, vr + dir.r);
-      if (this._claimed.get(nk) === region) neighbors.push(nk);
-    }
-    if (neighbors.length <= 1) return false;
-    const vacatedKey = tileKey(vq, vr);
-    const visited = new Set<string>([neighbors[0]]);
-    const queue = [neighbors[0]];
-    while (queue.length > 0) {
-      const cur = queue.shift()!;
-      const [cq, cr] = cur.split(',').map(Number);
-      if (cubeDistance({ q: cq, r: cr }, { q: vq, r: vr }) > 3) continue;
-      for (const dir of CUBE_DIRS) {
-        const nk = tileKey(cq + dir.q, cr + dir.r);
-        if (nk !== vacatedKey && !visited.has(nk) && this._claimed.get(nk) === region) {
-          visited.add(nk); queue.push(nk);
-        }
-      }
-    }
-    return neighbors.some(nk => !visited.has(nk));
-  }
-
-  private _floodFill(nodes: LayoutNode[], edges: GraphEdge[], regionNames: string[]) {
-    const N = nodes.length;
-
-    // Cross-region weights for seed placement
-    const pairWeight = new Map<string, number>();
-    for (const e of edges) {
-      const r1 = nodes[e.source]?.region, r2 = nodes[e.target]?.region;
-      if (!r1 || !r2 || r1 === r2) continue;
-      const key = [r1, r2].sort().join('|');
-      pairWeight.set(key, (pairWeight.get(key) ?? 0) + 1);
-    }
-
-    // Place seeds
-    const sorted = [...regionNames].sort((a, b) =>
-      (this._regionIndices.get(b)?.length ?? 0) - (this._regionIndices.get(a)?.length ?? 0));
-    const seeds = new Map<string, { q: number; r: number }>();
-    if (sorted.length > 0) {
-      seeds.set(sorted[0], { q: 0, r: 0 });
-      this._claimed.set(tileKey(0, 0), sorted[0]);
-    }
-    for (let i = 1; i < sorted.length; i++) {
-      const region = sorted[i];
-      let bestTarget = { q: 0, r: 0 }, bestWeight = 0;
-      for (const [placed] of seeds) {
-        const key = [region, placed].sort().join('|');
-        const w = pairWeight.get(key) ?? 0;
-        if (w > bestWeight) { bestWeight = w; bestTarget = seeds.get(placed)!; }
-      }
-      const searchStart = bestWeight > 0 ? 3 : 6;
-      let placed = false;
-      for (let rad = searchStart; rad < 20 && !placed; rad++) {
-        let rq = bestTarget.q + rad * CUBE_DIRS[4].q, rr = bestTarget.r + rad * CUBE_DIRS[4].r;
-        for (let side = 0; side < 6 && !placed; side++) {
-          for (let step = 0; step < rad && !placed; step++) {
-            const k = tileKey(rq, rr);
-            if (!this._claimed.has(k)) { seeds.set(region, { q: rq, r: rr }); this._claimed.set(k, region); placed = true; }
-            rq += CUBE_DIRS[side].q; rr += CUBE_DIRS[side].r;
-          }
-        }
-      }
-    }
-
-    // Flood fill
-    const frontiers = new Map<string, Set<string>>();
-    const remaining = new Map<string, number>();
-    for (const region of regionNames) {
-      remaining.set(region, (this._regionIndices.get(region)?.length ?? 1) - 1);
-      const seed = seeds.get(region)!;
-      const frontier = new Set<string>();
-      for (const dir of CUBE_DIRS) {
-        const k = tileKey(seed.q + dir.q, seed.r + dir.r);
-        if (!this._claimed.has(k)) frontier.add(k);
-      }
-      frontiers.set(region, frontier);
-    }
-
-    for (let iter = 0; iter < 500; iter++) {
-      let any = false;
-      for (const region of regionNames) {
-        const need = remaining.get(region) ?? 0;
-        if (need <= 0) continue;
-        const frontier = frontiers.get(region)!;
-        for (const k of frontier) { if (this._claimed.has(k)) frontier.delete(k); }
-        if (frontier.size === 0) continue;
-        const regionSeed = seeds.get(region) ?? { q: 0, r: 0 };
-        let bestTile: string | null = null, bestScore = -1, bestDist = Infinity;
-        for (const k of frontier) {
-          const [q, r] = k.split(',').map(Number);
-          if (!this._canClaim(q, r, region)) continue;
-          let score = 0;
-          for (const dir of CUBE_DIRS) {
-            if (this._claimed.get(tileKey(q + dir.q, r + dir.r)) === region) score++;
-          }
-          const dist = cubeDistance({ q, r }, regionSeed);
-          if (score > bestScore || (score === bestScore && dist < bestDist)) {
-            bestScore = score; bestDist = dist; bestTile = k;
-          }
-        }
-        if (!bestTile) continue;
-        this._claimed.set(bestTile, region);
-        frontier.delete(bestTile);
-        remaining.set(region, need - 1);
-        any = true;
-        const [q, r] = bestTile.split(',').map(Number);
-        for (const dir of CUBE_DIRS) {
-          const nk = tileKey(q + dir.q, r + dir.r);
-          if (!this._claimed.has(nk)) frontier.add(nk);
-        }
-      }
-      if (!any) break;
-    }
-
-    // Assign nodes to tiles
-    for (const region of regionNames) {
-      const indices = this._regionIndices.get(region) ?? [];
-      const tiles: { q: number; r: number }[] = [];
-      for (const [k, r] of this._claimed) {
-        if (r === region) { const [q, rr] = k.split(',').map(Number); tiles.push({ q, r: rr }); }
-      }
-      const seed = seeds.get(region) ?? { q: 0, r: 0 };
-      tiles.sort((a, b) => cubeDistance(a, seed) - cubeDistance(b, seed));
-      const sortedIdx = [...indices].sort((a, b) => nodes[b].degree - nodes[a].degree);
-      for (let j = 0; j < sortedIdx.length && j < tiles.length; j++) {
-        this.tileCoords.set(sortedIdx[j], tiles[j]);
-        this._tileToNode.set(tileKey(tiles[j].q, tiles[j].r), sortedIdx[j]);
-      }
-    }
-
-    // Overflow
-    let overflowRadius = 0;
-    for (const [k] of this._claimed) {
-      const [q, r] = k.split(',').map(Number);
-      overflowRadius = Math.max(overflowRadius, Math.abs(q), Math.abs(r));
-    }
-    overflowRadius += 3;
-    for (let i = 0; i < N; i++) {
-      if (this.tileCoords.has(i)) continue;
-      for (let rad = overflowRadius; rad < overflowRadius + N; rad++) {
-        let placed = false;
-        let rq = rad * CUBE_DIRS[4].q, rr = rad * CUBE_DIRS[4].r;
-        for (let side = 0; side < 6 && !placed; side++) {
-          for (let step = 0; step < rad && !placed; step++) {
-            const k = tileKey(rq, rr);
-            if (!this._claimed.has(k)) {
-              this._claimed.set(k, nodes[i].region);
-              this.tileCoords.set(i, { q: rq, r: rr });
-              this._tileToNode.set(k, i);
-              placed = true;
-            }
-            rq += CUBE_DIRS[side].q; rr += CUBE_DIRS[side].r;
-          }
-        }
-        if (placed) break;
-      }
-    }
-  }
 }
