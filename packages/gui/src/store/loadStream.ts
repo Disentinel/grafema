@@ -49,20 +49,15 @@ function renderNodesImmediate(
   rawNodes: NodeMsg[],
   onProgress: (phase: string, count: number, total?: number) => void,
 ) {
-  const EXCLUDED_TYPES = new Set(['SERVICE', 'MODULE']);
-  const codeNodes: { raw: NodeMsg; oldIdx: number }[] = [];
-  for (let i = 0; i < rawNodes.length; i++) {
-    const typeName = header.typeTable[rawNodes[i].t] ?? '';
-    if (!EXCLUDED_TYPES.has(typeName)) codeNodes.push({ raw: rawNodes[i], oldIdx: i });
-  }
-
-  const layoutNodes: LayoutNode[] = codeNodes.map((cn, li) => ({
-    id: cn.raw.id,
-    type: header.typeTable[cn.raw.t] ?? 'UNKNOWN',
-    name: cn.raw.name,
-    file: cn.raw.file,
-    region: cn.raw.region,
-    degree: cn.raw.degree,
+  // No client-side filtering — server already sends only requested nodeTypes.
+  // Indices must match server-side SA positions exactly.
+  const layoutNodes: LayoutNode[] = rawNodes.map((raw, _i) => ({
+    id: raw.id,
+    type: header.typeTable[raw.t] ?? 'UNKNOWN',
+    name: raw.name,
+    file: raw.file,
+    region: raw.region,
+    degree: raw.degree,
   }));
 
   const regionNames = [...new Set(layoutNodes.map(n => n.region))];

@@ -371,11 +371,21 @@ impl SaEngine {
     }
 
     /// Node-local cost (sum of distances to semantic neighbors).
+    /// Node-local cost: semantic edge distances + compactness penalty.
+    /// Exposed sides (neighbors not same region) add +1 penalty each.
     fn node_cost(&self, ni: u32) -> i64 {
         let coord = self.tile_coords[ni as usize];
         let mut cost = 0i64;
         for &neighbor in &self.semantic_adj[ni as usize] {
             cost += coord.distance(self.tile_coords[neighbor as usize]) as i64;
+        }
+        // Compactness: penalize exposed sides
+        let region = self.node_region[ni as usize];
+        for &(dq, dr) in &CUBE_DIRS {
+            let nk = HexCoord::new(coord.q + dq, coord.r + dr);
+            if self.claimed.get(&nk) != Some(&region) {
+                cost += 1;
+            }
         }
         cost
     }
@@ -394,26 +404,38 @@ impl SaEngine {
     }
 
     /// O(1) connectivity check: would removing this tile disconnect its region?
+    /// Local BFS connectivity: checks if all same-region neighbors are reachable
+    /// without going through the vacated tile. Radius-3 BFS, not full region scan.
     fn would_disconnect(&self, coord: HexCoord, region: u16) -> bool {
-        let mut has_neighbor = [false; 6];
-        let mut count = 0;
-        for (d, &(dq, dr)) in CUBE_DIRS.iter().enumerate() {
+        let mut neighbors = Vec::new();
+        for &(dq, dr) in &CUBE_DIRS {
             let nk = HexCoord::new(coord.q + dq, coord.r + dr);
             if self.claimed.get(&nk) == Some(&region) {
-                has_neighbor[d] = true;
-                count += 1;
+                neighbors.push(nk);
             }
         }
-        if count <= 1 { return false; }
+        if neighbors.len() <= 1 { return false; }
 
-        // Count gaps in the ring
-        let mut gaps = 0;
-        for d in 0..6 {
-            if has_neighbor[d] && !has_neighbor[(d + 1) % 6] {
-                gaps += 1;
+        // BFS from first neighbor, excluding vacated tile, limited to radius 3
+        let mut visited = HashSet::new();
+        let mut queue = std::collections::VecDeque::new();
+        visited.insert(neighbors[0]);
+        queue.push_back(neighbors[0]);
+
+        while let Some(cur) = queue.pop_front() {
+            if cur.distance(coord) > 3 { continue; }
+            for &(dq, dr) in &CUBE_DIRS {
+                let nk = HexCoord::new(cur.q + dq, cur.r + dr);
+                if nk == coord { continue; } // skip vacated
+                if visited.contains(&nk) { continue; }
+                if self.claimed.get(&nk) == Some(&region) {
+                    visited.insert(nk);
+                    queue.push_back(nk);
+                }
             }
         }
-        gaps >= 2
+
+        neighbors.iter().any(|nk| !visited.contains(nk))
     }
 
     /// Gap enforcement: can this tile be claimed by this region?
