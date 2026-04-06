@@ -39,6 +39,70 @@ function applyPartialPositions(engine: IncrementalLayout, layoutNodes: LayoutNod
   hexLayer.setTargetPositions(targetX, targetZ);
 }
 
+/**
+ * Render nodes immediately with flood fill layout (no SA, no edges).
+ * Called as soon as nodes_done arrives, before edges are computed.
+ */
+function renderNodesImmediate(
+  store: ReturnType<typeof useDataStore.getState>,
+  header: HeaderMsg,
+  rawNodes: NodeMsg[],
+  onProgress: (phase: string, count: number, total?: number) => void,
+) {
+  const EXCLUDED_TYPES = new Set(['SERVICE', 'MODULE']);
+  const codeNodes: { raw: NodeMsg; oldIdx: number }[] = [];
+  for (let i = 0; i < rawNodes.length; i++) {
+    const typeName = header.typeTable[rawNodes[i].t] ?? '';
+    if (!EXCLUDED_TYPES.has(typeName)) codeNodes.push({ raw: rawNodes[i], oldIdx: i });
+  }
+
+  const layoutNodes: LayoutNode[] = codeNodes.map((cn, li) => ({
+    id: cn.raw.id,
+    type: header.typeTable[cn.raw.t] ?? 'UNKNOWN',
+    name: cn.raw.name,
+    file: cn.raw.file,
+    region: cn.raw.region,
+    degree: cn.raw.degree,
+  }));
+
+  const regionNames = [...new Set(layoutNodes.map(n => n.region))];
+  // Flood fill only (no SA yet) — IncrementalLayout constructor does this
+  const engine = new IncrementalLayout(layoutNodes, [], regionNames);
+
+  const nodes: GraphNode[] = [];
+  for (let li = 0; li < layoutNodes.length; li++) {
+    const tile = engine.tileCoords.get(li);
+    if (!tile) continue;
+    const ln = layoutNodes[li];
+    const { x, z } = cubeToWorld(tile.q, tile.r, TILE_SIZE_CONST);
+    nodes[li] = {
+      id: ln.id, type: ln.type, name: ln.name, file: ln.file,
+      region: ln.region, x, z, degree: ln.degree,
+    };
+  }
+
+  const regions: Region[] = regionNames.map(rpath => {
+    const rn = nodes.filter(n => n && n.region === rpath);
+    let cx = 0, cz = 0;
+    for (const n of rn) { cx += n.x; cz += n.z; }
+    if (rn.length > 0) { cx /= rn.length; cz /= rn.length; }
+    const hr = header.regions.find(r => r.path === rpath);
+    return { path: rpath, depth: hr?.depth ?? 0, tileCount: rn.length, border: [], centroid: { x: cx, z: cz } };
+  });
+
+  const typeSet = new Set(layoutNodes.map(n => n.type));
+  (globalThis as Record<string, unknown>).__grafemaTileCoords = engine.tileCoords;
+  (globalThis as Record<string, unknown>).__grafemaTileSize = TILE_SIZE_CONST;
+
+  console.log('[loadStream] rendering', nodes.length, 'nodes immediately (no edges yet)');
+  store.setGraphData({
+    nodes, edges: [], regions,
+    typeTable: [...typeSet], edgeTypeTable: [],
+  });
+  useRouteStore.getState().setRoutes([]);
+  onProgress('layout_rendered', nodes.length);
+}
+
 /** Lerp ALL tiles to final SA positions */
 function applyAllPositions(engine: IncrementalLayout, layoutNodes: LayoutNode[]) {
   const hexLayer = getHexLayer();
@@ -158,6 +222,7 @@ export async function loadStream(opts: StreamOptions = {}) {
 
   let header: HeaderMsg | null = null;
   const rawNodes: NodeMsg[] = [];
+  let nodesRendered = false;
   const rawEdges: EdgeMsg[] = [];
   let _nodesDone = false;
 
@@ -179,6 +244,11 @@ export async function loadStream(opts: StreamOptions = {}) {
         _nodesDone = true;
         console.log('[loadStream] nodes done:', msg.count);
         onProgress('nodes_done', msg.count);
+        // Render nodes immediately — don't wait for edges
+        if (header && rawNodes.length > 0 && !nodesRendered) {
+          nodesRendered = true;
+          renderNodesImmediate(store, header, rawNodes, onProgress);
+        }
         break;
       case 'edge':
         rawEdges.push(msg);
@@ -186,6 +256,10 @@ export async function loadStream(opts: StreamOptions = {}) {
         break;
       case 'done':
         console.log('[loadStream] done:', msg.nodeCount, 'nodes,', msg.edgeCount, 'edges,', msg.elapsed, 'ms');
+        // Update edgeTypeTable from done message (wasn't available in header)
+        if (header && (msg as DoneMsg & { edgeTypeTable?: string[] }).edgeTypeTable) {
+          header.edgeTypeTable = (msg as DoneMsg & { edgeTypeTable?: string[] }).edgeTypeTable!;
+        }
         onProgress('done', msg.nodeCount, msg.edgeCount);
         break;
     }
