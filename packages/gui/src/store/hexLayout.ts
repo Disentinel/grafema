@@ -366,10 +366,11 @@ export function annealingLayout(
   const rngSeed = N * 31 + edges.length * 37 + regionNames.length * 41;
   const rand = createRng(rngSeed);
 
-  // Scale iterations: 3000/node for small graphs, cap for larger ones.
-  // Target: <3s SA on main thread. ~100k iter/s in browser.
-  // 26 nodes → 78k, 100 nodes → 200k, 200+ nodes → 200k
-  const ITERATIONS = Math.min(N * 3000, 200_000);
+  // Scale iterations: 1000/node, cap at 100k.
+  // With compactness penalty + local BFS connectivity, fewer iterations
+  // are needed for good results. Worker runs off main thread so speed
+  // matters less, but shorter = faster morph feedback.
+  const ITERATIONS = Math.min(N * 1000, 100_000);
   const T_START = 8.0;
   const T_END = 0.01;
   const COOL = Math.pow(T_END / T_START, 1 / ITERATIONS);
@@ -556,7 +557,7 @@ export class IncrementalLayout {
     this._floodFill(nodes, edges, regionNames);
 
     // SA parameters
-    this._maxIter = Math.min(N * 3000, 200_000);
+    this._maxIter = Math.min(N * 1000, 100_000);
     const rngSeed = N * 31 + edges.length * 37 + regionNames.length * 41;
     this._rand = createRng(rngSeed);
     this._T = 8.0;

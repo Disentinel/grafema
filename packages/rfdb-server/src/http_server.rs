@@ -310,6 +310,13 @@ fn stream_graph_data(
         }
     }
 
+    // Compute degrees for SA
+    let mut degrees = vec![0u32; node_count];
+    for e in &edge_refs {
+        degrees[e.src_idx as usize] += 1;
+        degrees[e.dst_idx as usize] += 1;
+    }
+
     // Stream edges
     for e in &edge_refs {
         let eti = edge_type_idx.get(&e.edge_type).copied().unwrap_or(0);
@@ -318,16 +325,83 @@ fn stream_graph_data(
         })).unwrap());
     }
 
+    send(serde_json::to_string(&serde_json::json!({
+        "type": "edges_done",
+        "count": edge_refs.len(),
+        "edgeTypeTable": edge_type_table,
+    })).unwrap());
+
+    eprintln!("[http] graph-stream: {} nodes, {} edges, {}ms — starting SA...",
+        node_count, edge_refs.len(), start.elapsed().as_millis());
+
+    // ── Phase 3: Server-side SA layout ──
+    // Runs SA on the visible nodes with lifted edges.
+    // Streams position snapshots as they improve.
+    let layout_nodes: Vec<crate::sa_layout::LayoutNode> = node_refs.iter().map(|n| {
+        crate::sa_layout::LayoutNode {
+            idx: n.idx,
+            region: tree.sa_region(n.idx).to_string(),
+            degree: degrees[n.idx as usize],
+        }
+    }).collect();
+
+    let layout_edges: Vec<crate::sa_layout::LayoutEdge> = edge_refs.iter().map(|e| {
+        crate::sa_layout::LayoutEdge {
+            src: e.src_idx,
+            dst: e.dst_idx,
+            edge_type: e.edge_type.clone(),
+        }
+    }).collect();
+
+    let mut sa = crate::sa_layout::SaEngine::new(&layout_nodes, &layout_edges, &tree);
+    let max_iters = sa.max_iterations();
+    let batch_size = 10_000usize;
+    let mut last_snapshot = std::time::Instant::now();
+
+    // Send initial flood fill positions
+    let snap = sa.snapshot();
+    send(serde_json::to_string(&serde_json::json!({
+        "type": "positions",
+        "coords": snap.iter().map(|&(i, q, r)| [i as i32, q as i32, r as i32]).collect::<Vec<_>>(),
+        "iteration": 0,
+        "cost": sa.total_cost(),
+    })).unwrap());
+
+    // SA refinement with periodic snapshots
+    while sa.total_iterations < max_iters {
+        let (cost, _accepted) = sa.run_batch(batch_size);
+
+        if last_snapshot.elapsed() >= std::time::Duration::from_millis(300) {
+            let snap = sa.snapshot();
+            send(serde_json::to_string(&serde_json::json!({
+                "type": "positions",
+                "coords": snap.iter().map(|&(i, q, r)| [i as i32, q as i32, r as i32]).collect::<Vec<_>>(),
+                "iteration": sa.total_iterations,
+                "cost": cost,
+            })).unwrap());
+            last_snapshot = std::time::Instant::now();
+        }
+    }
+
+    // Final positions
+    let snap = sa.snapshot();
     let elapsed = start.elapsed().as_millis();
+    send(serde_json::to_string(&serde_json::json!({
+        "type": "positions",
+        "coords": snap.iter().map(|&(i, q, r)| [i as i32, q as i32, r as i32]).collect::<Vec<_>>(),
+        "iteration": sa.total_iterations,
+        "cost": sa.total_cost(),
+        "settled": true,
+    })).unwrap());
+
     send(serde_json::to_string(&serde_json::json!({
         "type": "done",
         "nodeCount": node_count, "edgeCount": edge_refs.len(),
-        "edgeTypeTable": edge_type_table,
         "elapsed": elapsed,
     })).unwrap());
 
-    eprintln!("[http] graph-stream: {} nodes, {} edges, {}ms total",
-        node_count, edge_refs.len(), elapsed);
+    eprintln!("[http] graph-stream: {} nodes, {} edges, SA {} iter cost {}, {}ms total",
+        node_count, edge_refs.len(), sa.total_iterations, sa.total_cost(), elapsed);
 }
 
 // ── WS /api/layout-live ─────────────────────────────────────────────────
