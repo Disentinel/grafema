@@ -337,7 +337,7 @@ impl SaEngine {
         }
 
         // SA parameters
-        let iterations = (n * 3000).min(2_000_000);
+        let iterations = (n * 1000).min(100_000);
         let t_start: f64 = 8.0;
         let t_end: f64 = 0.01;
         let cool = (t_end / t_start).powf(1.0 / iterations as f64);
@@ -367,7 +367,7 @@ impl SaEngine {
 
     /// Total iterations planned.
     pub fn max_iterations(&self) -> usize {
-        (self.n * 3000).min(2_000_000)
+        (self.n * 1000).min(100_000)
     }
 
     /// Node-local cost (sum of distances to semantic neighbors).
@@ -379,12 +379,12 @@ impl SaEngine {
         for &neighbor in &self.semantic_adj[ni as usize] {
             cost += coord.distance(self.tile_coords[neighbor as usize]) as i64;
         }
-        // Compactness: penalize exposed sides
+        // Compactness: penalize exposed sides (weight 3 — must dominate over edge pull)
         let region = self.node_region[ni as usize];
         for &(dq, dr) in &CUBE_DIRS {
             let nk = HexCoord::new(coord.q + dq, coord.r + dr);
             if self.claimed.get(&nk) != Some(&region) {
-                cost += 1;
+                cost += 3;
             }
         }
         cost
