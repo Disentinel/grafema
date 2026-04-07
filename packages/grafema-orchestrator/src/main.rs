@@ -991,13 +991,14 @@ async fn main() -> Result<()> {
                         let results = plugin::stream_and_resolve_single_worker(
                             &mut rfdb,
                             &[config::Language::Haskell],
-                            &[("haskell-imports", &[]), ("haskell-local-refs", &[]), ("haskell-globals", &[])],
+                            &[("haskell-imports", &[]), ("haskell-local-refs", &[]), ("haskell-cross-module-calls", &[]), ("haskell-globals", &[])],
                             &hs_pool,
                         ).await?;
                         for (cmd, mut output) in results {
                             let cmd_start = std::time::Instant::now();
                             let commit_name = match cmd.as_str() {
                                 "haskell-imports" => "haskell-import-resolution",
+                                "haskell-cross-module-calls" => "haskell-cross-module-calls",
                                 "haskell-globals" => "haskell-runtime-globals",
                                 _ => &cmd,
                             };
@@ -1887,12 +1888,13 @@ async fn main() -> Result<()> {
                         let results = plugin::stream_and_resolve_single_worker(
                             &mut rfdb,
                             &[config::Language::Haskell],
-                            &[("haskell-imports", &[]), ("haskell-local-refs", &[]), ("haskell-globals", &[])],
+                            &[("haskell-imports", &[]), ("haskell-local-refs", &[]), ("haskell-cross-module-calls", &[]), ("haskell-globals", &[])],
                             &pool,
                         ).await?;
                         for (cmd, mut output) in results {
                             let commit_name = match cmd.as_str() {
                                 "haskell-imports" => "haskell-import-resolution",
+                                "haskell-cross-module-calls" => "haskell-cross-module-calls",
                                 "haskell-globals" => "haskell-runtime-globals",
                                 _ => &cmd,
                             };

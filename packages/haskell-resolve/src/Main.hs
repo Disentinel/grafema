@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Main where
 
-import Data.Aeson (FromJSON(..), ToJSON(..), withObject, (.:), object, (.=))
+import Data.Aeson (FromJSON(..), ToJSON(..), withObject, (.:), (.:?), (.!=), object, (.=))
 import qualified Data.Text as T
 import Data.Text (Text)
 import System.Environment (getArgs, lookupEnv)
@@ -9,7 +9,8 @@ import System.IO (stdin, stdout, hSetBinaryMode)
 import Options.Applicative
 import qualified HaskellImportResolution
 import qualified HaskellLocalRefs
-import Grafema.Types (GraphNode)
+import qualified HaskellCrossModuleCalls
+import Grafema.Types (GraphNode, GraphEdge)
 import Grafema.Protocol (PluginCommand(..), readFrame, writeFrame, encodeMsgpack, decodeMsgpack, readNodesFromStdin, writeCommandsToStdout)
 import Grafema.RuntimeGlobals (NameStrategy(..), NodeFilter(..), SymbolDB, loadSymbolDB, resolveAll)
 
@@ -17,12 +18,14 @@ import Grafema.RuntimeGlobals (NameStrategy(..), NodeFilter(..), SymbolDB, loadS
 data DaemonRequest = DaemonRequest
   { drCmd   :: Text
   , drNodes :: [GraphNode]
+  , drEdges :: [GraphEdge]
   }
 
 instance FromJSON DaemonRequest where
   parseJSON = withObject "DaemonRequest" $ \v -> DaemonRequest
     <$> v .: "cmd"
     <*> v .: "nodes"
+    <*> v .:? "edges" .!= []
 
 -- | Response to orchestrator.
 data DaemonResponse
@@ -70,19 +73,20 @@ daemonLoop symbolDb = do
         Left err -> do
           writeFrame stdout (encodeMsgpack (ResError ("decode error: " ++ err)))
         Right req -> do
-          result <- dispatch symbolDb (drCmd req) (drNodes req)
+          result <- dispatch symbolDb (drCmd req) (drNodes req) (drEdges req)
           writeFrame stdout (encodeMsgpack result)
       daemonLoop symbolDb
 
 -- | Dispatch a command to the resolver.
-dispatch :: SymbolDB -> Text -> [GraphNode] -> IO DaemonResponse
-dispatch _        "haskell-imports"    nodes = ResOk <$> HaskellImportResolution.resolveAll nodes
-dispatch _        "haskell-local-refs" nodes = return $ ResOk (HaskellLocalRefs.resolveAll nodes)
-dispatch symbolDb "haskell-globals"    nodes = return $ ResOk (resolveAll haskellStrategy symbolDb nodes)
-dispatch _        cmd                  _     = return $ ResError ("unknown command: " ++ T.unpack cmd)
+dispatch :: SymbolDB -> Text -> [GraphNode] -> [GraphEdge] -> IO DaemonResponse
+dispatch _        "haskell-imports"    nodes _     = ResOk <$> HaskellImportResolution.resolveAll nodes
+dispatch _        "haskell-local-refs" nodes _     = return $ ResOk (HaskellLocalRefs.resolveAll nodes)
+dispatch _        "haskell-cross-module-calls" nodes edges = ResOk <$> HaskellCrossModuleCalls.resolveAll nodes edges
+dispatch symbolDb "haskell-globals"    nodes _     = return $ ResOk (resolveAll haskellStrategy symbolDb nodes)
+dispatch _        cmd                  _     _     = return $ ResError ("unknown command: " ++ T.unpack cmd)
 
 -- | CLI subcommand parser.
-data Command = CmdHaskellImports | CmdHaskellLocalRefs | CmdHaskellGlobals
+data Command = CmdHaskellImports | CmdHaskellLocalRefs | CmdHaskellCrossModule | CmdHaskellGlobals
 
 commandParser :: Parser Command
 commandParser = subparser
@@ -90,6 +94,8 @@ commandParser = subparser
     (info (pure CmdHaskellImports) (progDesc "Resolve Haskell imports across files"))
   <> command "haskell-local-refs"
     (info (pure CmdHaskellLocalRefs) (progDesc "Resolve Haskell local references to same-file declarations"))
+  <> command "haskell-cross-module-calls"
+    (info (pure CmdHaskellCrossModule) (progDesc "Resolve Haskell CALLs to imported declarations"))
   <> command "haskell-globals"
     (info (pure CmdHaskellGlobals) (progDesc "Resolve unresolved Haskell calls against stdlib globals database"))
   )
@@ -113,9 +119,10 @@ main = do
     else do
       cmd <- execParser cliOpts
       case cmd of
-        CmdHaskellImports    -> HaskellImportResolution.run
-        CmdHaskellLocalRefs  -> HaskellLocalRefs.run
-        CmdHaskellGlobals    -> do
+        CmdHaskellImports     -> HaskellImportResolution.run
+        CmdHaskellLocalRefs   -> HaskellLocalRefs.run
+        CmdHaskellCrossModule -> HaskellCrossModuleCalls.run
+        CmdHaskellGlobals     -> do
           symbolDb <- loadEffectsDB
           nodes <- readNodesFromStdin
           writeCommandsToStdout (resolveAll haskellStrategy symbolDb nodes)
