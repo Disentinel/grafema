@@ -12,6 +12,7 @@ executable haskell-resolve
   other-modules:
     HaskellImportResolution
     HaskellLocalRefs
+    HaskellLocalCalls
     HaskellCrossModuleCalls
 
   build-depends:
