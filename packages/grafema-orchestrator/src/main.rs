@@ -1,4 +1,4 @@
-use grafema_orchestrator::{analyzer, config, discovery, gc, plugin, process_pool, profiler, rfdb, source_hash};
+use grafema_orchestrator::{analyzer, config, directory_nodes, discovery, gc, plugin, process_pool, profiler, rfdb, source_hash};
 #[cfg(feature = "ruby")]
 use grafema_orchestrator::ruby_resolver;
 
@@ -893,6 +893,37 @@ async fn main() -> Result<()> {
             );
             profile!("analysis_complete",
                 "nodes" => total_nodes, "edges" => total_edges, "errors" => total_errors);
+
+            // 6.5. Build DIRECTORY/FILE structural nodes
+            let dirstruct_start = std::time::Instant::now();
+            let root_prefix_for_dirs = if root_str.ends_with('/') {
+                root_str.clone()
+            } else {
+                format!("{root_str}/")
+            };
+            let relative_files: Vec<String> = files.iter()
+                .map(|p| {
+                    let abs = p.display().to_string();
+                    abs.strip_prefix(&root_prefix_for_dirs).unwrap_or(&abs).to_string()
+                })
+                .collect();
+            let (dir_nodes, dir_edges) = directory_nodes::build(&relative_files);
+            if !dir_nodes.is_empty() {
+                let synthetic_files = vec![directory_nodes::SYNTHETIC_FILE.to_string()];
+                match rfdb.commit_batch(&synthetic_files, &dir_nodes, &dir_edges, false).await {
+                    Ok(_) => {
+                        tracing::info!(
+                            dir_nodes = dir_nodes.len(),
+                            dir_edges = dir_edges.len(),
+                            duration_ms = dirstruct_start.elapsed().as_millis() as u64,
+                            "Directory/file structure committed"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Failed to commit directory structure (non-fatal)");
+                    }
+                }
+            }
 
             // 7. Handle deleted files
             let deleted = gc::detect_deleted_files(&gen_tracker, &files);
