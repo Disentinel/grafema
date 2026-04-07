@@ -959,16 +959,17 @@ async fn main() -> Result<()> {
 
                         commit_resolve_output(&mut output, "js-resolution", generation, &mut rfdb).await?;
 
-                        // Second pass: this.method() resolution via graph traversal
-                        let this_results = plugin::stream_and_resolve_single_worker(
+                        // Second pass: graph-traversal resolvers (this.method() + CALL-based globals)
+                        let second_pass = plugin::stream_and_resolve_single_worker(
                             &mut rfdb,
                             &[config::Language::JavaScript],
-                            &[("js-this-method-calls", &[])],
+                            &[("js-this-method-calls", &[]), ("runtime-call-globals", &[])],
                             &resolve_pool,
                         ).await.unwrap_or_default();
-                        for (cmd, mut o) in this_results {
+                        for (cmd, mut o) in second_pass {
                             let commit_name = match cmd.as_str() {
                                 "js-this-method-calls" => "js-this-method-calls",
+                                "runtime-call-globals" => "js-call-globals",
                                 _ => &cmd,
                             };
                             commit_resolve_output(&mut o, commit_name, generation, &mut rfdb).await?;

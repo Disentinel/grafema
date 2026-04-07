@@ -92,6 +92,20 @@ jsStrategy = NameStrategy
   , nsVirtualFile = "<runtime/js>"
   }
 
+-- | JS CALL-based resolution for global constructors and functions like
+-- `Set()`, `Map()`, `parseInt()`, `Array.isArray()`. These appear in the
+-- graph as CALL nodes, not REFERENCE nodes, so the main jsStrategy misses
+-- them. This sibling strategy targets CALL nodes and emits CALLS edges.
+jsCallStrategy :: NameStrategy
+jsCallStrategy = NameStrategy
+  { nsSeparator = "."
+  , nsPrefix    = "GLOBAL::"
+  , nsCategory  = "ecmascript"
+  , nsFilter    = FilterCalls
+  , nsEdgeType  = "CALLS"
+  , nsVirtualFile = "<runtime/js>"
+  }
+
 -- | Load the effects-db SymbolDB from GRAFEMA_EFFECTS_DB env var.
 -- Returns an empty SymbolDB if the env var is not set.
 loadEffectsDB :: IO SymbolDB
@@ -217,6 +231,7 @@ dispatch _ "imports" nodes wsPackages =
   let wsList = map (\wp -> (wpName wp, wpEntryPoint wp, wpPackageDir wp)) wsPackages
   in ResOk <$> ImportResolution.resolveAllWithWorkspace nodes wsList
 dispatch symbolDb "runtime-globals" nodes _ = return $ ResOk (resolveAll jsStrategy symbolDb nodes)
+dispatch symbolDb "runtime-call-globals" nodes _ = return $ ResOk (resolveAll jsCallStrategy symbolDb nodes)
 dispatch _ "builtins" nodes _ = return $ ResOk (Builtins.resolveAll nodes)
 dispatch _ "cross-file-calls" nodes _ = return $ ResOk (CrossFileCalls.resolveAll nodes)
 dispatch _ "same-file-calls" nodes _ = return $ ResOk (SameFileCalls.resolveAll nodes)
