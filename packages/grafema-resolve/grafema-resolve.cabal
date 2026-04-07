@@ -16,6 +16,7 @@ executable grafema-resolve
     SameFileCalls
     PropertyAccess
     JsLocalRefs
+    JsThisMethodCalls
     ResolveUtil
 
   build-depends:

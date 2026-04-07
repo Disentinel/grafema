@@ -15,6 +15,7 @@ import qualified CrossFileCalls
 import qualified SameFileCalls
 import qualified PropertyAccess
 import qualified JsLocalRefs
+import qualified JsThisMethodCalls
 import Grafema.Types (GraphNode)
 import Grafema.Protocol (PluginCommand(..), readFrame, writeFrame, encodeMsgpack, decodeMsgpack, pluginCommandToMsgpack, readNodesFromStdin, writeCommandsToStdout)
 import Grafema.RuntimeGlobals (NameStrategy(..), NodeFilter(..), SymbolDB, loadSymbolDB, resolveAll)
@@ -221,6 +222,7 @@ dispatch _ "cross-file-calls" nodes _ = return $ ResOk (CrossFileCalls.resolveAl
 dispatch _ "same-file-calls" nodes _ = return $ ResOk (SameFileCalls.resolveAll nodes)
 dispatch _ "property-access" nodes _ = return $ ResOk (PropertyAccess.resolveAll nodes)
 dispatch _ "js-local-refs" nodes _ = return $ ResOk (JsLocalRefs.resolveAll nodes)
+dispatch _ "js-this-method-calls" nodes _ = ResOk <$> JsThisMethodCalls.resolveAll nodes []
 dispatch _ cmd _ _ = return $ ResError ("unknown command: " ++ T.unpack cmd)
 
 -- | Original CLI subcommand parser.

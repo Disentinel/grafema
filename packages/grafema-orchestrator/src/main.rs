@@ -958,6 +958,25 @@ async fn main() -> Result<()> {
                         }
 
                         commit_resolve_output(&mut output, "js-resolution", generation, &mut rfdb).await?;
+
+                        // Second pass: this.method() resolution via graph traversal
+                        let this_results = plugin::stream_and_resolve_single_worker(
+                            &mut rfdb,
+                            &[config::Language::JavaScript],
+                            &[("js-this-method-calls", &[])],
+                            &resolve_pool,
+                        ).await.unwrap_or_default();
+                        for (cmd, mut o) in this_results {
+                            let commit_name = match cmd.as_str() {
+                                "js-this-method-calls" => "js-this-method-calls",
+                                _ => &cmd,
+                            };
+                            commit_resolve_output(&mut o, commit_name, generation, &mut rfdb).await?;
+                            profile!("resolve_cmd_complete", "language" => "js", "cmd" => commit_name,
+                                "nodes" => o.nodes.len(), "edges" => o.edges.len(),
+                                "duration_ms" => 0);
+                        }
+
                         let lang_ms = lang_start.elapsed().as_millis();
                         profile!("js_resolve_complete",
                             "nodes" => output.nodes.len(), "edges" => output.edges.len(),
