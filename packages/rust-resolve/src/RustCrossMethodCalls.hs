@@ -156,10 +156,13 @@ resolveOne implIdx varIdx fieldIdx callNode =
     Just receiver ->
       -- Strategy 1: look up receiver variable type directly
       let mType = Map.lookup (file, receiver) varIdx
-          -- Strategy 2: if receiver looks like it could be a struct field,
-          -- look up in the field type index using the containing struct
-          mFieldType = containingStruct >>= \structName ->
-            Map.lookup (structName, receiver) fieldIdx
+          -- Strategy 2: ONLY for self.field calls (selfField=true in metadata),
+          -- look up field type in the containing struct
+          isSelfField = Map.lookup "selfField" (gnMetadata callNode) == Just (MetaBool True)
+          mFieldType = if isSelfField
+            then containingStruct >>= \structName ->
+              Map.lookup (structName, receiver) fieldIdx
+            else Nothing
           typeName = case mType of
             Just t  -> Just t
             Nothing -> mFieldType

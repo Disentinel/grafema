@@ -1314,6 +1314,13 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
             let hash = ctx.pos_hash(line, col);
             let node_id = semantic_id(&ctx.file, "CALL", &method, parent, Some(&hash));
 
+            let mut call_meta = HashMap::from([
+                Ctx::meta_bool("method", true),
+                Ctx::meta_text("receiver", &expr_to_name(&e.receiver)),
+            ]);
+            if is_self_field_access(&e.receiver) {
+                call_meta.insert("selfField".to_string(), serde_json::Value::Bool(true));
+            }
             ctx.emit_node(GraphNode {
                 id: node_id.clone(),
                 node_type: "CALL".to_string(),
@@ -1322,10 +1329,7 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
                 line, column: col,
                 end_line: ctx.span_end_line_col(e.method.span()).0, end_column: ctx.span_end_line_col(e.method.span()).1,
                 exported: false,
-                metadata: HashMap::from([
-                    Ctx::meta_bool("method", true),
-                    Ctx::meta_text("receiver", &expr_to_name(&e.receiver)),
-                ]),
+                metadata: call_meta,
                 extra: HashMap::new(),
             });
 
@@ -1648,6 +1652,16 @@ fn expr_to_name(expr: &syn::Expr) -> String {
     }
 }
 
+/// Check if an expression is `self.field` (field access on self).
+fn is_self_field_access(expr: &syn::Expr) -> bool {
+    if let syn::Expr::Field(f) = expr {
+        if let syn::Expr::Path(p) = f.base.as_ref() {
+            return p.path.is_ident("self");
+        }
+    }
+    false
+}
+
 /// Infer type from a constructor-style initializer expression.
 ///
 /// Handles:
@@ -1822,6 +1836,33 @@ mod tests {
         assert!(has_node(&fa, "RECORD_FIELD", "bar"));
         assert!(has_node(&fa, "RECORD_FIELD", "baz"));
         assert!(has_edge(&fa, "HAS_FIELD", "STRUCT", "RECORD_FIELD"));
+    }
+
+    #[test]
+    fn test_self_field_method_call() {
+        let fa = parse_and_analyze("
+            struct Foo { bar: Vec<i32> }
+            impl Foo {
+                fn baz(&self) {
+                    self.bar.push(1);
+                    let x = Vec::new();
+                    x.push(2);
+                }
+            }
+        ");
+        // self.bar.push() should have selfField=true
+        let self_call = fa.nodes.iter().find(|n|
+            n.node_type == "CALL" && n.name == "push"
+            && n.metadata.get("receiver") == Some(&serde_json::json!("bar"))
+        ).unwrap();
+        assert_eq!(self_call.metadata.get("selfField"), Some(&serde_json::json!(true)));
+
+        // x.push() should NOT have selfField
+        let local_call = fa.nodes.iter().find(|n|
+            n.node_type == "CALL" && n.name == "push"
+            && n.metadata.get("receiver") == Some(&serde_json::json!("x"))
+        ).unwrap();
+        assert!(local_call.metadata.get("selfField").is_none());
     }
 
     #[test]
