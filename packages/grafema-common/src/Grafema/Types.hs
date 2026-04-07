@@ -5,6 +5,7 @@
 -- Extracted from Analysis.Types for reuse by grafema-analyzer and plugins.
 module Grafema.Types
   ( GraphNode(..)
+  , gnSemanticId
   , GraphEdge(..)
   , MetaValue(..)
   , ExportInfo(..)
@@ -34,6 +35,15 @@ data GraphNode = GraphNode
   , gnExported  :: !Bool
   , gnMetadata  :: !(Map Text MetaValue)
   } deriving (Show, Eq)
+
+-- | Get the semantic ID. When nodes come from the resolve protocol, the
+-- @semanticId@ field in metadata holds the URL-encoded path form. For
+-- analyzer-emitted nodes, falls back to 'gnId' (which is itself the
+-- semantic ID at that point — RFDB hashes it on commit).
+gnSemanticId :: GraphNode -> Text
+gnSemanticId n = case Map.lookup "semanticId" (gnMetadata n) of
+  Just (MetaText t) -> t
+  _                 -> gnId n
 
 -- | Metadata values -- we support the same types as JSON
 data MetaValue
@@ -125,17 +135,25 @@ instance FromJSON MetaValue where
   parseJSON _          = pure MetaNull
 
 instance FromJSON GraphNode where
-  parseJSON = withObject "GraphNode" $ \v -> GraphNode
-    <$> v .:  "id"
-    <*> v .:  "type"
-    <*> v .:  "name"
-    <*> v .:  "file"
-    <*> v .:  "line"
-    <*> v .:  "column"
-    <*> v .:? "endLine"   .!= 0
-    <*> v .:? "endColumn" .!= 0
-    <*> v .:  "exported"
-    <*> v .:? "metadata" .!= Map.empty
+  parseJSON = withObject "GraphNode" $ \v -> do
+    nid <- v .: "id"
+    mSid <- v .:? "semanticId"
+    baseMeta <- v .:? "metadata" .!= Map.empty
+    -- If semanticId is present at top level, store it in metadata for
+    -- gnSemanticId accessor to find later.
+    let meta = case mSid of
+          Just sid | sid /= nid -> Map.insert "semanticId" (MetaText sid) baseMeta
+          _ -> baseMeta
+    GraphNode nid
+      <$> v .:  "type"
+      <*> v .:  "name"
+      <*> v .:  "file"
+      <*> v .:  "line"
+      <*> v .:  "column"
+      <*> v .:? "endLine"   .!= 0
+      <*> v .:? "endColumn" .!= 0
+      <*> v .:  "exported"
+      <*> pure meta
 
 instance FromJSON GraphEdge where
   parseJSON = withObject "GraphEdge" $ \v -> GraphEdge

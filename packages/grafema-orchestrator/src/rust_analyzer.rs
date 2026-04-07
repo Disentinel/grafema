@@ -525,6 +525,20 @@ fn walk_fn(f: &syn::ItemFn, ctx: &mut Ctx) {
     let is_exported = is_pub(&f.vis);
     let node_id = semantic_id(&ctx.file, "FUNCTION", &ident, None, None);
 
+    let mut fn_meta = HashMap::from([
+        Ctx::meta_text("visibility", vis_to_text(&f.vis)),
+        Ctx::meta_bool("async", f.sig.asyncness.is_some()),
+        Ctx::meta_bool("unsafe", f.sig.unsafety.is_some()),
+        Ctx::meta_bool("const", f.sig.constness.is_some()),
+    ]);
+    // Store return type from signature (purely syntactic, not derived)
+    if let syn::ReturnType::Type(_, ty) = &f.sig.output {
+        let return_type = type_to_name(ty);
+        if return_type != "<type>" {
+            let (k, v) = Ctx::meta_text("returnType", &return_type);
+            fn_meta.insert(k, v);
+        }
+    }
     ctx.emit_declaration(GraphNode {
         id: node_id.clone(),
         node_type: "FUNCTION".to_string(),
@@ -533,12 +547,7 @@ fn walk_fn(f: &syn::ItemFn, ctx: &mut Ctx) {
         line, column: col,
         end_line, end_column: end_col,
         exported: is_exported,
-        metadata: HashMap::from([
-            Ctx::meta_text("visibility", vis_to_text(&f.vis)),
-            Ctx::meta_bool("async", f.sig.asyncness.is_some()),
-            Ctx::meta_bool("unsafe", f.sig.unsafety.is_some()),
-            Ctx::meta_bool("const", f.sig.constness.is_some()),
-        ]),
+        metadata: fn_meta,
         extra: HashMap::new(),
     });
 
@@ -815,6 +824,18 @@ fn walk_impl_item(item: &syn::ImplItem, ctx: &mut Ctx) {
             let parent = ctx.scope_stack.last().map(|s| s.as_str());
             let node_id = semantic_id(&ctx.file, "FUNCTION", &ident, parent, None);
 
+            let mut method_meta = HashMap::from([
+                Ctx::meta_text("visibility", vis_to_text(&m.vis)),
+                Ctx::meta_bool("async", m.sig.asyncness.is_some()),
+                Ctx::meta_bool("unsafe", m.sig.unsafety.is_some()),
+            ]);
+            if let syn::ReturnType::Type(_, ty) = &m.sig.output {
+                let return_type = type_to_name(ty);
+                if return_type != "<type>" {
+                    let (k, v) = Ctx::meta_text("returnType", &return_type);
+                    method_meta.insert(k, v);
+                }
+            }
             ctx.emit_declaration(GraphNode {
                 id: node_id.clone(),
                 node_type: "FUNCTION".to_string(),
@@ -823,11 +844,7 @@ fn walk_impl_item(item: &syn::ImplItem, ctx: &mut Ctx) {
                 line, column: col,
                 end_line, end_column: end_col,
                 exported: is_exported,
-                metadata: HashMap::from([
-                    Ctx::meta_text("visibility", vis_to_text(&m.vis)),
-                    Ctx::meta_bool("async", m.sig.asyncness.is_some()),
-                    Ctx::meta_bool("unsafe", m.sig.unsafety.is_some()),
-                ]),
+                metadata: method_meta,
                 extra: HashMap::new(),
             });
 
@@ -1039,14 +1056,11 @@ fn walk_let(local: &syn::Local, ctx: &mut Ctx) {
     // Collect binding IDs before walking init (for ASSIGNED_FROM)
     let binding_ids = collect_pat_binding_ids(&local.pat, "let", ctx);
 
-    // Infer type from constructor-style init: `let x = Type::method(...)`
-    if let Some(init) = &local.init {
-        if let Some(ty) = infer_type_from_init(&init.expr) {
-            ctx.pending_type_annotation = Some(ty);
-        }
-    }
+    // Note: Variable type inference from `let x = Type::method(...)` is now
+    // performed by the resolver via ASSIGNED_FROM graph traversal, not by
+    // storing derived metadata here. We only keep typeAnnotation for
+    // explicitly annotated patterns: `let x: Type = ...`.
     walk_pat_bindings(&local.pat, "let", ctx);
-    ctx.pending_type_annotation = None;
 
     if let Some(init) = &local.init {
         walk_expr(&init.expr, ctx);
@@ -1662,37 +1676,6 @@ fn is_self_field_access(expr: &syn::Expr) -> bool {
     false
 }
 
-/// Infer type from a constructor-style initializer expression.
-///
-/// Handles:
-/// - `Type::new(...)` / `Type::from(...)` / `Type::open(...)` → `"Type"`
-/// - `path::Type::method(...)` → `"Type"` (penultimate segment)
-/// - `Type::default()` → `"Type"`
-/// - Anything else → `None`
-fn infer_type_from_init(expr: &syn::Expr) -> Option<String> {
-    // Unwrap .await, ?, and method chains to get the inner call
-    let call_expr = match expr {
-        syn::Expr::Await(a) => return infer_type_from_init(&a.base),
-        syn::Expr::Try(t) => return infer_type_from_init(&t.expr),
-        syn::Expr::Call(c) => c,
-        _ => return None,
-    };
-    // The function being called must be a path with 2+ segments: Type::method
-    if let syn::Expr::Path(p) = call_expr.func.as_ref() {
-        let segments = &p.path.segments;
-        if segments.len() >= 2 {
-            // Penultimate segment = type name, last segment = method
-            let type_seg = &segments[segments.len() - 2];
-            let type_name = type_seg.ident.to_string();
-            // Heuristic: type names start with uppercase
-            if type_name.starts_with(|c: char| c.is_uppercase()) {
-                return Some(type_name);
-            }
-        }
-    }
-    None
-}
-
 fn path_to_string(path: &syn::Path) -> String {
     path.segments.iter()
         .map(|s| s.ident.to_string())
@@ -1781,48 +1764,6 @@ mod tests {
     }
 
     #[test]
-    fn test_type_inferred_from_constructor() {
-        let fa = parse_and_analyze("fn main() { let seg = NodeSegmentV2::open(path); }");
-        let seg = fa.nodes.iter().find(|n| n.node_type == "VARIABLE" && n.name == "seg").unwrap();
-        assert_eq!(seg.metadata.get("typeAnnotation"), Some(&serde_json::json!("NodeSegmentV2")));
-    }
-
-    #[test]
-    fn test_type_inferred_from_new() {
-        let fa = parse_and_analyze("fn main() { let m = HashMap::new(); }");
-        let m = fa.nodes.iter().find(|n| n.node_type == "VARIABLE" && n.name == "m").unwrap();
-        assert_eq!(m.metadata.get("typeAnnotation"), Some(&serde_json::json!("HashMap")));
-    }
-
-    #[test]
-    fn test_type_inferred_from_default() {
-        let fa = parse_and_analyze("fn main() { let v = Vec::with_capacity(10); }");
-        let v = fa.nodes.iter().find(|n| n.node_type == "VARIABLE" && n.name == "v").unwrap();
-        assert_eq!(v.metadata.get("typeAnnotation"), Some(&serde_json::json!("Vec")));
-    }
-
-    #[test]
-    fn test_type_not_inferred_from_plain_call() {
-        let fa = parse_and_analyze("fn main() { let x = foo(); }");
-        let x = fa.nodes.iter().find(|n| n.node_type == "VARIABLE" && n.name == "x").unwrap();
-        assert!(x.metadata.get("typeAnnotation").is_none());
-    }
-
-    #[test]
-    fn test_type_inferred_through_await() {
-        let fa = parse_and_analyze("async fn main() { let c = RfdbClient::connect(path).await; }");
-        let c = fa.nodes.iter().find(|n| n.node_type == "VARIABLE" && n.name == "c").unwrap();
-        assert_eq!(c.metadata.get("typeAnnotation"), Some(&serde_json::json!("RfdbClient")));
-    }
-
-    #[test]
-    fn test_type_inferred_through_try() {
-        let fa = parse_and_analyze("fn main() { let c = RfdbClient::connect(path)?; }");
-        let c = fa.nodes.iter().find(|n| n.node_type == "VARIABLE" && n.name == "c").unwrap();
-        assert_eq!(c.metadata.get("typeAnnotation"), Some(&serde_json::json!("RfdbClient")));
-    }
-
-    #[test]
     fn test_type_annotation_reference() {
         let fa = parse_and_analyze("fn foo(seg: &NodeSegmentV2) {}");
         let seg = fa.nodes.iter().find(|n| n.node_type == "PARAMETER" && n.name == "seg").unwrap();
@@ -1836,6 +1777,36 @@ mod tests {
         assert!(has_node(&fa, "RECORD_FIELD", "bar"));
         assert!(has_node(&fa, "RECORD_FIELD", "baz"));
         assert!(has_edge(&fa, "HAS_FIELD", "STRUCT", "RECORD_FIELD"));
+    }
+
+    #[test]
+    fn test_function_return_type() {
+        let fa = parse_and_analyze("
+            fn make_shard() -> Shard { todo!() }
+            fn make_box() -> Box<Vec<u8>> { todo!() }
+            fn unit_fn() {}
+        ");
+        let make_shard = fa.nodes.iter().find(|n| n.node_type == "FUNCTION" && n.name == "make_shard").unwrap();
+        assert_eq!(make_shard.metadata.get("returnType"), Some(&serde_json::json!("Shard")));
+
+        let make_box = fa.nodes.iter().find(|n| n.node_type == "FUNCTION" && n.name == "make_box").unwrap();
+        assert_eq!(make_box.metadata.get("returnType"), Some(&serde_json::json!("Box")));
+
+        let unit_fn = fa.nodes.iter().find(|n| n.node_type == "FUNCTION" && n.name == "unit_fn").unwrap();
+        assert!(unit_fn.metadata.get("returnType").is_none());
+    }
+
+    #[test]
+    fn test_method_return_type() {
+        let fa = parse_and_analyze("
+            struct Foo;
+            impl Foo {
+                fn make() -> Foo { Foo }
+                fn no_return(&self) {}
+            }
+        ");
+        let make = fa.nodes.iter().find(|n| n.node_type == "FUNCTION" && n.name == "make").unwrap();
+        assert_eq!(make.metadata.get("returnType"), Some(&serde_json::json!("Foo")));
     }
 
     #[test]
