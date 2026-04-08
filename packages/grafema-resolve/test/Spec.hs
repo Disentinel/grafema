@@ -11,6 +11,7 @@ import Grafema.Protocol (PluginCommand(..))
 import qualified PropertyAccess
 import qualified SameFileCalls
 import qualified JsThisMethodCalls
+import qualified ClassInheritance
 
 -- ---------------------------------------------------------------------------
 -- Test helpers
@@ -606,6 +607,90 @@ testJsThisAmbiguous = do
     _  -> Fail $ "Expected 0 edges for ambiguous this.bar(), got: " ++ show edges
 
 -- ---------------------------------------------------------------------------
+-- ClassInheritance tests
+-- ---------------------------------------------------------------------------
+
+-- | Helper: CLASS node with superClass metadata.
+mkClassWithSuper :: Text -> Text -> Text -> GraphNode
+mkClassWithSuper file className superName =
+  (mkNode
+    (file <> "->CLASS->" <> className)
+    "CLASS"
+    className
+    file
+    (Map.singleton "superClass" (MetaText superName)))
+  { gnLine = 1, gnEndLine = 10 }
+
+-- | Helper: plain CLASS node (no superClass), for ClassInheritance tests.
+mkSimpleClass :: Text -> Text -> GraphNode
+mkSimpleClass file className =
+  mkNode
+    (file <> "->CLASS->" <> className)
+    "CLASS"
+    className
+    file
+    Map.empty
+
+-- | Same-file inheritance: class Dog extends Animal in same .ts file.
+testSameFileExtends :: TestResult
+testSameFileExtends =
+  let file  = "src/animals.ts"
+      nodes =
+        [ mkClassWithSuper file "Dog" "Animal"
+        , mkSimpleClass file "Animal"
+        ]
+      cmds  = ClassInheritance.resolveAll nodes
+      edges = extractEdges cmds
+  in case edges of
+    [e] | geSource e == file <> "->CLASS->Dog"
+        , geTarget e == file <> "->CLASS->Animal"
+        , geType e == "EXTENDS"
+        , Map.lookup "resolvedVia" (geMetadata e) == Just (MetaText "class-inheritance")
+        -> Pass
+    _ -> Fail $ "Expected 1 EXTENDS edge Dog→Animal, got: " ++ show edges
+
+-- | No superClass → no EXTENDS edge.
+testNoSuperClass :: TestResult
+testNoSuperClass =
+  let file  = "src/animals.ts"
+      nodes = [ mkSimpleClass file "Animal" ]
+      cmds  = ClassInheritance.resolveAll nodes
+      edges = extractEdges cmds
+  in case edges of
+    [] -> Pass
+    _  -> Fail $ "Expected 0 edges for class without superClass, got: " ++ show edges
+
+-- | Unknown superClass (not in file, not imported) → no edge.
+testUnknownSuperClass :: TestResult
+testUnknownSuperClass =
+  let file  = "src/animals.ts"
+      nodes = [ mkClassWithSuper file "Dog" "EventEmitter" ]
+      cmds  = ClassInheritance.resolveAll nodes
+      edges = extractEdges cmds
+  in case edges of
+    [] -> Pass
+    _  -> Fail $ "Expected 0 edges for unknown superClass, got: " ++ show edges
+
+-- | Cross-file inheritance: Animal imported from ./base, class Dog extends Animal.
+testCrossFileExtends :: TestResult
+testCrossFileExtends =
+  let appFile  = "src/dog.ts"
+      baseFile = "src/base.ts"
+      nodes =
+        [ mkClassWithSuper appFile "Dog" "Animal"
+        , mkNamedImportBinding appFile "Animal" "Animal" "./base"
+        , (mkSimpleClass baseFile "Animal") { gnExported = True }
+        ]
+      cmds  = ClassInheritance.resolveAll nodes
+      edges = extractEdges cmds
+  in case edges of
+    [e] | geSource e == appFile <> "->CLASS->Dog"
+        , geTarget e == baseFile <> "->CLASS->Animal"
+        , geType e == "EXTENDS"
+        -> Pass
+    _ -> Fail $ "Expected 1 cross-file EXTENDS edge Dog→Animal, got: " ++ show edges
+
+-- ---------------------------------------------------------------------------
 -- Main
 -- ---------------------------------------------------------------------------
 
@@ -648,7 +733,15 @@ main = do
     , runTestIO "this.foo() unresolved when no METHOD matches" testJsThisUnresolved
     , runTestIO "this.bar() ambiguous (two classes) skipped" testJsThisAmbiguous
     ]
-  let allResults = paResults ++ sfcResults ++ jsResults
+  putStrLn ""
+  putStrLn "ClassInheritance unit tests:"
+  ciResults <- sequence
+    [ runTest "same-file class extends creates EXTENDS edge" testSameFileExtends
+    , runTest "class without superClass produces no edge" testNoSuperClass
+    , runTest "unknown superClass produces no edge" testUnknownSuperClass
+    , runTest "cross-file inheritance via import creates EXTENDS edge" testCrossFileExtends
+    ]
+  let allResults = paResults ++ sfcResults ++ jsResults ++ ciResults
       total = length allResults
       passed = length (filter id allResults)
   putStrLn $ "\n" ++ show passed ++ "/" ++ show total ++ " tests passed"
