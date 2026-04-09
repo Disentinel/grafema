@@ -91,6 +91,9 @@ struct Ctx {
     scope_stack: Vec<String>,    // current scope ID (head = innermost)
     scope_kinds: Vec<ScopeKind>, // parallel to scope_stack
     enclosing_fn: Option<String>, // nearest enclosing function node ID
+    /// Trait name if we are inside a `impl TraitName for Type` block.
+    /// Used to tag FUNCTION nodes with `metadata["trait"]` for dyn dispatch resolution.
+    enclosing_trait: Option<String>,
     nodes: Vec<GraphNode>,
     edges: Vec<GraphEdge>,
     exports: Vec<ExportInfo>,
@@ -113,6 +116,7 @@ impl Ctx {
             scope_stack: vec![module_id],
             scope_kinds: vec![ScopeKind::Module],
             enclosing_fn: None,
+            enclosing_trait: None,
             nodes: Vec::new(),
             edges: Vec::new(),
             exports: Vec::new(),
@@ -594,8 +598,6 @@ fn walk_fn_param(param: &syn::FnArg, fn_id: &str, ctx: &mut Ctx) {
             });
         }
         syn::FnArg::Typed(t) => {
-            // Use walk_pat_bindings for all patterns (simple ident + complex destructuring).
-            // Temporarily set enclosing_fn to fn_id so semantic IDs get the right parent.
             let prev_fn = ctx.enclosing_fn.replace(fn_id.to_string());
             // Thread type annotation through to PARAMETER node metadata
             let type_str = type_to_name(&t.ty);
@@ -807,11 +809,14 @@ fn walk_impl(i: &syn::ItemImpl, ctx: &mut Ctx) {
         extra: HashMap::new(),
     });
 
+    let prev_trait = ctx.enclosing_trait.take();
+    ctx.enclosing_trait = trait_name;
     ctx.push_scope(&node_id, ScopeKind::Impl);
     for impl_item in &i.items {
         walk_impl_item(impl_item, ctx);
     }
     ctx.pop_scope();
+    ctx.enclosing_trait = prev_trait;
 }
 
 fn walk_impl_item(item: &syn::ImplItem, ctx: &mut Ctx) {
@@ -835,6 +840,11 @@ fn walk_impl_item(item: &syn::ImplItem, ctx: &mut Ctx) {
                     let (k, v) = Ctx::meta_text("returnType", &return_type);
                     method_meta.insert(k, v);
                 }
+            }
+            // Tag impl-of-trait methods with the trait name so that dyn/impl Trait
+            // dispatch resolution can build a TraitMethodIndex without graph traversal.
+            if let Some(trait_name) = &ctx.enclosing_trait {
+                method_meta.insert("trait".to_string(), serde_json::json!(trait_name));
             }
             ctx.emit_declaration(GraphNode {
                 id: node_id.clone(),
@@ -1690,6 +1700,22 @@ fn type_to_name(ty: &syn::Type) -> String {
         syn::Type::Paren(p) => type_to_name(&p.elem),
         syn::Type::Group(g) => type_to_name(&g.elem),
         syn::Type::Slice(s) => type_to_name(&s.elem),
+        syn::Type::TraitObject(t) => {
+            for bound in &t.bounds {
+                if let syn::TypeParamBound::Trait(tb) = bound {
+                    return format!("dyn {}", path_to_string(&tb.path));
+                }
+            }
+            "<type>".to_string()
+        }
+        syn::Type::ImplTrait(t) => {
+            for bound in &t.bounds {
+                if let syn::TypeParamBound::Trait(tb) = bound {
+                    return format!("impl {}", path_to_string(&tb.path));
+                }
+            }
+            "<type>".to_string()
+        }
         _ => "<type>".to_string(),
     }
 }
