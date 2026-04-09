@@ -13,6 +13,7 @@ executable grafema-rust-resolve
     RustImportResolution
     RustCallResolution
     RustCrossMethodCalls
+    RustTraitResolution
 
   build-depends:
     base                 >= 4.17 && < 5,
@@ -35,6 +36,7 @@ test-suite spec
     RustImportResolution
     RustCallResolution
     RustCrossMethodCalls
+    RustTraitResolution
 
   build-depends:
     base                 >= 4.17 && < 5,
