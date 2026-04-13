@@ -1059,7 +1059,7 @@ async fn main() -> Result<()> {
                         let results = plugin::stream_and_resolve_single_worker(
                             &mut rfdb,
                             &[config::Language::Rust],
-                            &[("rust-imports", &[]), ("rust-calls", &[]), ("rust-cross-methods", &[]), ("rust-globals", &[])],
+                            &[("rust-imports", &[]), ("rust-calls", &[]), ("rust-cross-methods", &[]), ("rust-trait-resolve", &[]), ("rust-globals", &[])],
                             &rs_pool,
                         ).await?;
                         for (cmd, mut output) in results {
@@ -1068,6 +1068,7 @@ async fn main() -> Result<()> {
                                 "rust-imports" => "rust-import-resolution",
                                 "rust-calls"   => "rust-call-resolution",
                                 "rust-cross-methods" => "rust-cross-method-calls",
+                                "rust-trait-resolve" => "rust-trait-resolution",
                                 "rust-globals" => "rust-runtime-globals",
                                 _ => &cmd,
                             };
@@ -1962,7 +1963,7 @@ async fn main() -> Result<()> {
                         let results = plugin::stream_and_resolve_single_worker(
                             &mut rfdb,
                             &[config::Language::Rust],
-                            &[("rust-imports", &[]), ("rust-calls", &[]), ("rust-cross-methods", &[]), ("rust-globals", &[])],
+                            &[("rust-imports", &[]), ("rust-calls", &[]), ("rust-cross-methods", &[]), ("rust-trait-resolve", &[]), ("rust-globals", &[])],
                             &pool,
                         ).await?;
                         for (cmd, mut output) in results {
@@ -1970,6 +1971,7 @@ async fn main() -> Result<()> {
                                 "rust-imports" => "rust-import-resolution",
                                 "rust-calls"   => "rust-call-resolution",
                                 "rust-cross-methods" => "rust-cross-method-calls",
+                                "rust-trait-resolve" => "rust-trait-resolution",
                                 "rust-globals" => "rust-runtime-globals",
                                 _ => &cmd,
                             };
