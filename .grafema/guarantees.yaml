@@ -402,3 +402,79 @@ guarantees:
     check: datalog
     rule: 'violation(X) :- node(X, "UNSAFE_DYNAMIC"), \+ edge(_, X, "CONTAINS").'
     severity: error
+
+  # ============================================================
+  # TIER 3: BEAM MESSAGEFLOW FINDINGS (REG-1098)
+  # beam-message-findings resolver emits ISSUE nodes with a
+  # finding_kind tag for six categories of message-flow problems.
+  # These rules surface them through `grafema check`, one rule per
+  # kind so projects can enable/disable each category independently
+  # via yaml without touching the resolver code.
+  #
+  # Each rule's severity may be overridden per-project. Defaults
+  # below are calibrated for "no false-positive CI failures":
+  # real-bug kinds default to warning, visibility-only kinds to info.
+  # ============================================================
+
+  - name: beam-heterogeneous-key-type
+    description: >
+      Handler clauses within a single BEAM module match the same map
+      key with literal values of different types (atom vs string vs
+      number). One set of clauses is almost certainly dead code —
+      the observed failure mode is a publisher that emits string
+      values while a subscriber's handler clause matches atoms, or
+      vice versa. Statically catches the kami Ichi.Mamori :atom vs
+      "str" regression.
+    check: datalog
+    rule: 'violation(X) :- node(X, "ISSUE"), attr(X, "finding_kind", "heterogeneous_key_type").'
+    severity: warning
+
+  - name: beam-silent-handler
+    description: >
+      A handle_cast/handle_info clause receives a non-trivial tagged
+      message but its body has zero function calls — the message is
+      silently dropped or triggers only a pure state update. Likely
+      intentional for streaming accumulators and nil-guard clauses;
+      likely a bug for action messages. Review case-by-case.
+    check: datalog
+    rule: 'violation(X) :- node(X, "ISSUE"), attr(X, "finding_kind", "silent_handler").'
+    severity: warning
+
+  - name: beam-catchall-sink
+    description: >
+      A `handle_info(_, state)` clause at the end of a handler chain
+      silently absorbs any unmatched message. Often an intentional
+      noise filter, but worth reviewing whenever new message types
+      enter the system — unfamiliar messages routed into the sink
+      are invisible in production.
+    check: datalog
+    rule: 'violation(X) :- node(X, "ISSUE"), attr(X, "finding_kind", "catchall_sink").'
+    severity: info
+
+  - name: beam-unreachable-handler
+    description: >
+      A handler clause's pattern does not unify with any send-site
+      message shape targeting this module. Either the handler is
+      dead code or the process is addressed dynamically (pid) and
+      static analysis is blind to its callers.
+    check: datalog
+    rule: 'violation(X) :- node(X, "ISSUE"), attr(X, "finding_kind", "unreachable_handler").'
+    severity: warning
+
+  - name: beam-orphan-send
+    description: >
+      A SENDS_TO edge carries a message whose shape does not unify
+      with any handler clause in the target module. The message will
+      hit the catch-all (if any) or crash the GenServer at runtime.
+    check: datalog
+    rule: 'violation(X) :- node(X, "ISSUE"), attr(X, "finding_kind", "orphan_send").'
+    severity: warning
+
+  - name: beam-topic-mismatch
+    description: >
+      A Phoenix.PubSub topic has either only broadcasters or only
+      subscribers — broadcasts are lost in the void or subscribers
+      wait forever for a message that never comes.
+    check: datalog
+    rule: 'violation(X) :- node(X, "ISSUE"), attr(X, "finding_kind", "topic_mismatch").'
+    severity: warning
