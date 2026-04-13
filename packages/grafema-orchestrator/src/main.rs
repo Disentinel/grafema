@@ -1411,6 +1411,12 @@ async fn main() -> Result<()> {
                                 ("beam-runtime-globals", &[]),
                                 ("beam-behaviours", &[]),
                                 ("beam-protocols", &[]),
+                                // REG-1098 W6: resolve wrapper calls into virtual effect edges
+                                // (runs after beam-local-refs so CALLS edges exist for walking)
+                                ("beam-wrapper-resolve", &[]),
+                                // REG-1098 W9: emit ISSUE nodes for MessageFlow findings
+                                // (runs last; reads the post-resolution node snapshot)
+                                ("beam-message-findings", &[]),
                             ],
                             &pool,
                         ).await?;
@@ -2265,6 +2271,10 @@ async fn main() -> Result<()> {
                                 ("beam-runtime-globals", &[]),
                                 ("beam-behaviours", &[]),
                                 ("beam-protocols", &[]),
+                                // REG-1098 W6: resolve wrapper calls into virtual effect edges
+                                ("beam-wrapper-resolve", &[]),
+                                // REG-1098 W9: emit ISSUE nodes for MessageFlow findings
+                                ("beam-message-findings", &[]),
                             ],
                             &pool,
                         ).await?;
