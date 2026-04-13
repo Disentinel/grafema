@@ -34,6 +34,14 @@ types:
     description: "Analysis could not determine effects. MUST propagate transitively as a warning."
     examples: ["FFI calls", "eval", "dynamic require", "minified code"]
 
+  SPAWN:
+    description: "Creates a new concurrent execution context (process, fiber, coroutine, worker). Optional metadata: linked: bool, monitored: bool, supervised: bool."
+    examples: ["GenServer.start_link", "Task.start", "spawn", "spawn_link", "Supervisor.start_link"]
+
+  MESSAGE_PASSING:
+    description: "Sends or coordinates messages between concurrent contexts. Covers async fire-and-forget (cast, send) and synchronous request-reply (call). Optional metadata: direction: send|call|cast|reply."
+    examples: ["GenServer.call", "GenServer.cast", "GenServer.reply", "send", "Process.send_after"]
+
 # ── IO subtypes (v2) ────────────────────────────────────────
 # Hierarchical subtypes for IO. Format: IO:<CHANNEL>:<OPERATION>.
 # Any IO subtype implies the parent IO effect for backward compatibility:

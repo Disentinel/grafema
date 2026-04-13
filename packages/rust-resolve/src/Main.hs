@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Main where
 
-import Data.Aeson (FromJSON(..), ToJSON(..), withObject, (.:), object, (.=))
+import Data.Aeson (FromJSON(..), ToJSON(..), withObject, (.:), (.:?), (.!=), object, (.=))
 import qualified Data.Text as T
 import Data.Text (Text)
 import System.Environment (getArgs, lookupEnv)
@@ -9,7 +9,8 @@ import System.IO (stdin, stdout, hSetBinaryMode)
 import Options.Applicative
 import qualified RustImportResolution
 import qualified RustCallResolution
-import Grafema.Types (GraphNode)
+import qualified RustCrossMethodCalls
+import Grafema.Types (GraphNode, GraphEdge)
 import Grafema.Protocol (PluginCommand(..), readFrame, writeFrame, encodeMsgpack, decodeMsgpack, readNodesFromStdin, writeCommandsToStdout)
 import Grafema.RuntimeGlobals (NameStrategy(..), NodeFilter(..), SymbolDB, loadSymbolDB, resolveAll)
 
@@ -17,12 +18,14 @@ import Grafema.RuntimeGlobals (NameStrategy(..), NodeFilter(..), SymbolDB, loadS
 data DaemonRequest = DaemonRequest
   { drCmd   :: Text
   , drNodes :: [GraphNode]
+  , drEdges :: [GraphEdge]
   }
 
 instance FromJSON DaemonRequest where
   parseJSON = withObject "DaemonRequest" $ \v -> DaemonRequest
     <$> v .: "cmd"
     <*> v .: "nodes"
+    <*> v .:? "edges" .!= []
 
 -- | Response to orchestrator.
 data DaemonResponse
@@ -47,6 +50,7 @@ rustStrategy = NameStrategy
   , nsCategory  = "rust-stdlib"
   , nsFilter    = FilterCalls
   , nsEdgeType  = "CALLS"
+  , nsVirtualFile = "<runtime/rust>"
   }
 
 -- | Load the effects-db SymbolDB from GRAFEMA_EFFECTS_DB env var.
@@ -69,19 +73,20 @@ daemonLoop symbolDb = do
         Left err -> do
           writeFrame stdout (encodeMsgpack (ResError ("decode error: " ++ err)))
         Right req -> do
-          result <- dispatch symbolDb (drCmd req) (drNodes req)
+          result <- dispatch symbolDb (drCmd req) (drNodes req) (drEdges req)
           writeFrame stdout (encodeMsgpack result)
       daemonLoop symbolDb
 
 -- | Dispatch a command to the resolver.
-dispatch :: SymbolDB -> Text -> [GraphNode] -> IO DaemonResponse
-dispatch _        "rust-imports" nodes = ResOk <$> RustImportResolution.resolveAll nodes
-dispatch _        "rust-calls"   nodes = ResOk <$> RustCallResolution.resolveAll nodes
-dispatch symbolDb "rust-globals" nodes = return $ ResOk (resolveAll rustStrategy symbolDb nodes)
-dispatch _        cmd            _     = return $ ResError ("unknown command: " ++ T.unpack cmd)
+dispatch :: SymbolDB -> Text -> [GraphNode] -> [GraphEdge] -> IO DaemonResponse
+dispatch _        "rust-imports" nodes _     = ResOk <$> RustImportResolution.resolveAll nodes
+dispatch _        "rust-calls"   nodes _     = ResOk <$> RustCallResolution.resolveAll nodes
+dispatch _        "rust-cross-methods" nodes edges = ResOk <$> RustCrossMethodCalls.resolveAll nodes edges
+dispatch symbolDb "rust-globals" nodes _     = return $ ResOk (resolveAll rustStrategy symbolDb nodes)
+dispatch _        cmd            _     _     = return $ ResError ("unknown command: " ++ T.unpack cmd)
 
 -- | CLI subcommand parser.
-data Command = CmdRustImports | CmdRustCalls | CmdRustGlobals
+data Command = CmdRustImports | CmdRustCalls | CmdRustCrossMethods | CmdRustGlobals
 
 commandParser :: Parser Command
 commandParser = subparser
@@ -89,6 +94,8 @@ commandParser = subparser
     (info (pure CmdRustImports) (progDesc "Resolve Rust imports across files"))
  <> command "rust-calls"
     (info (pure CmdRustCalls) (progDesc "Resolve Rust intra-file function calls"))
+ <> command "rust-cross-methods"
+    (info (pure CmdRustCrossMethods) (progDesc "Resolve Rust cross-file method calls via type annotations"))
  <> command "rust-globals"
     (info (pure CmdRustGlobals) (progDesc "Resolve Rust stdlib globals for unresolved calls"))
   )
@@ -114,6 +121,7 @@ main = do
       case cmd of
         CmdRustImports -> RustImportResolution.run
         CmdRustCalls   -> RustCallResolution.run
+        CmdRustCrossMethods -> RustCrossMethodCalls.run
         CmdRustGlobals -> do
           symbolDb <- loadEffectsDB
           nodes <- readNodesFromStdin

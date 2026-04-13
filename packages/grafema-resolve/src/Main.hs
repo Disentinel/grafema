@@ -15,6 +15,7 @@ import qualified CrossFileCalls
 import qualified SameFileCalls
 import qualified PropertyAccess
 import qualified JsLocalRefs
+import qualified JsThisMethodCalls
 import Grafema.Types (GraphNode)
 import Grafema.Protocol (PluginCommand(..), readFrame, writeFrame, encodeMsgpack, decodeMsgpack, pluginCommandToMsgpack, readNodesFromStdin, writeCommandsToStdout)
 import Grafema.RuntimeGlobals (NameStrategy(..), NodeFilter(..), SymbolDB, loadSymbolDB, resolveAll)
@@ -88,6 +89,21 @@ jsStrategy = NameStrategy
   , nsCategory  = "ecmascript"
   , nsFilter    = FilterReferences
   , nsEdgeType  = "RESOLVES_TO"
+  , nsVirtualFile = "<runtime/js>"
+  }
+
+-- | JS CALL-based resolution for global constructors and functions like
+-- `Set()`, `Map()`, `parseInt()`, `Array.isArray()`. These appear in the
+-- graph as CALL nodes, not REFERENCE nodes, so the main jsStrategy misses
+-- them. This sibling strategy targets CALL nodes and emits CALLS edges.
+jsCallStrategy :: NameStrategy
+jsCallStrategy = NameStrategy
+  { nsSeparator = "."
+  , nsPrefix    = "GLOBAL::"
+  , nsCategory  = "ecmascript"
+  , nsFilter    = FilterCalls
+  , nsEdgeType  = "CALLS"
+  , nsVirtualFile = "<runtime/js>"
   }
 
 -- | Load the effects-db SymbolDB from GRAFEMA_EFFECTS_DB env var.
@@ -215,11 +231,13 @@ dispatch _ "imports" nodes wsPackages =
   let wsList = map (\wp -> (wpName wp, wpEntryPoint wp, wpPackageDir wp)) wsPackages
   in ResOk <$> ImportResolution.resolveAllWithWorkspace nodes wsList
 dispatch symbolDb "runtime-globals" nodes _ = return $ ResOk (resolveAll jsStrategy symbolDb nodes)
+dispatch symbolDb "runtime-call-globals" nodes _ = return $ ResOk (resolveAll jsCallStrategy symbolDb nodes)
 dispatch _ "builtins" nodes _ = return $ ResOk (Builtins.resolveAll nodes)
 dispatch _ "cross-file-calls" nodes _ = return $ ResOk (CrossFileCalls.resolveAll nodes)
 dispatch _ "same-file-calls" nodes _ = return $ ResOk (SameFileCalls.resolveAll nodes)
 dispatch _ "property-access" nodes _ = return $ ResOk (PropertyAccess.resolveAll nodes)
 dispatch _ "js-local-refs" nodes _ = return $ ResOk (JsLocalRefs.resolveAll nodes)
+dispatch _ "js-this-method-calls" nodes _ = ResOk <$> JsThisMethodCalls.resolveAll nodes []
 dispatch _ cmd _ _ = return $ ResError ("unknown command: " ++ T.unpack cmd)
 
 -- | Original CLI subcommand parser.

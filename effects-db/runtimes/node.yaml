@@ -728,6 +728,35 @@ node:string_decoder:
 # ECMAScript builtins — Global objects
 # ============================================================
 ecma:global:
+  # Built-in constructors (callable as `new Foo()` or `Foo()`)
+  Set: [PURE]
+  Map: [PURE]
+  WeakSet: [PURE]
+  WeakMap: [PURE]
+  Array: [PURE]
+  Object: [PURE]
+  String: [PURE]
+  Number: [PURE]
+  Boolean: [PURE]
+  Symbol: [PURE]
+  BigInt: [PURE]
+  RegExp: [PURE]
+  Function: [PURE]
+  ArrayBuffer: [PURE]
+  SharedArrayBuffer: [PURE]
+  DataView: [PURE]
+  Uint8Array: [PURE]
+  Uint16Array: [PURE]
+  Uint32Array: [PURE]
+  Int8Array: [PURE]
+  Int16Array: [PURE]
+  Int32Array: [PURE]
+  Float32Array: [PURE]
+  Float64Array: [PURE]
+  BigInt64Array: [PURE]
+  BigUint64Array: [PURE]
+  Proxy: [PURE]
+
   # Error constructors — PURE (just create objects)
   Error: [PURE]
   TypeError: [PURE]

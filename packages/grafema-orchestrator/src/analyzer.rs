@@ -3374,14 +3374,14 @@ pub fn wire_node_to_resolve_json(node: &crate::rfdb::WireNode) -> serde_json::Va
         .filter(|(k, _)| k != "line" && k != "column" && k != "endLine" && k != "endColumn")
         .collect();
 
-    // Use semantic_id if available, fall back to id
-    let id = node
-        .semantic_id
-        .as_ref()
-        .unwrap_or(&node.id);
+    // For resolvers that need to match edges (which use hash IDs), use the
+    // hash form as primary `id`. Send `semanticId` separately for resolvers
+    // that need to parse semantic IDs (e.g., extracting IMPL_BLOCK type).
+    let semantic = node.semantic_id.as_ref().unwrap_or(&node.id);
 
     serde_json::json!({
-        "id": id,
+        "id": node.id,                  // hash ID — matches edge src/dst
+        "semanticId": semantic,          // semantic ID — for path-based extraction
         "type": node.node_type,
         "name": node.name,
         "file": node.file,

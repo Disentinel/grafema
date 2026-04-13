@@ -100,6 +100,8 @@ struct Ctx {
     scope_parents: HashMap<String, String>,
     /// Deferred references to resolve after walk
     deferred_refs: Vec<DeferredRef>,
+    /// Type annotation being threaded through walk_pat_bindings
+    pending_type_annotation: Option<String>,
 }
 
 impl Ctx {
@@ -117,6 +119,7 @@ impl Ctx {
             declarations: HashMap::new(),
             scope_parents: HashMap::new(),
             deferred_refs: Vec::new(),
+            pending_type_annotation: None,
         }
     }
 
@@ -522,6 +525,20 @@ fn walk_fn(f: &syn::ItemFn, ctx: &mut Ctx) {
     let is_exported = is_pub(&f.vis);
     let node_id = semantic_id(&ctx.file, "FUNCTION", &ident, None, None);
 
+    let mut fn_meta = HashMap::from([
+        Ctx::meta_text("visibility", vis_to_text(&f.vis)),
+        Ctx::meta_bool("async", f.sig.asyncness.is_some()),
+        Ctx::meta_bool("unsafe", f.sig.unsafety.is_some()),
+        Ctx::meta_bool("const", f.sig.constness.is_some()),
+    ]);
+    // Store return type from signature (purely syntactic, not derived)
+    if let syn::ReturnType::Type(_, ty) = &f.sig.output {
+        let return_type = type_to_name(ty);
+        if return_type != "<type>" {
+            let (k, v) = Ctx::meta_text("returnType", &return_type);
+            fn_meta.insert(k, v);
+        }
+    }
     ctx.emit_declaration(GraphNode {
         id: node_id.clone(),
         node_type: "FUNCTION".to_string(),
@@ -530,12 +547,7 @@ fn walk_fn(f: &syn::ItemFn, ctx: &mut Ctx) {
         line, column: col,
         end_line, end_column: end_col,
         exported: is_exported,
-        metadata: HashMap::from([
-            Ctx::meta_text("visibility", vis_to_text(&f.vis)),
-            Ctx::meta_bool("async", f.sig.asyncness.is_some()),
-            Ctx::meta_bool("unsafe", f.sig.unsafety.is_some()),
-            Ctx::meta_bool("const", f.sig.constness.is_some()),
-        ]),
+        metadata: fn_meta,
         extra: HashMap::new(),
     });
 
@@ -585,7 +597,13 @@ fn walk_fn_param(param: &syn::FnArg, fn_id: &str, ctx: &mut Ctx) {
             // Use walk_pat_bindings for all patterns (simple ident + complex destructuring).
             // Temporarily set enclosing_fn to fn_id so semantic IDs get the right parent.
             let prev_fn = ctx.enclosing_fn.replace(fn_id.to_string());
+            // Thread type annotation through to PARAMETER node metadata
+            let type_str = type_to_name(&t.ty);
+            if type_str != "<type>" {
+                ctx.pending_type_annotation = Some(type_str);
+            }
             walk_pat_bindings(t.pat.as_ref(), "param", ctx);
+            ctx.pending_type_annotation = None;
             ctx.enclosing_fn = prev_fn;
         }
     }
@@ -694,6 +712,11 @@ fn walk_struct(s: &syn::ItemStruct, ctx: &mut Ctx) {
             let fname = ident.to_string();
             let (fl, fc) = ctx.span_line_col(ident.span());
             let field_id = semantic_id(&ctx.file, "RECORD_FIELD", &fname, Some(&node_id), None);
+            let mut field_meta = HashMap::new();
+            let type_str = type_to_name(&field.ty);
+            if type_str != "<type>" {
+                field_meta.insert("typeAnnotation".to_string(), serde_json::Value::String(type_str));
+            }
             ctx.emit_declaration(GraphNode {
                 id: field_id.clone(),
                 node_type: "RECORD_FIELD".to_string(),
@@ -702,7 +725,7 @@ fn walk_struct(s: &syn::ItemStruct, ctx: &mut Ctx) {
                 line: fl, column: fc,
                 end_line: ctx.span_end_line_col(ident.span()).0, end_column: ctx.span_end_line_col(ident.span()).1,
                 exported: false,
-                metadata: HashMap::new(),
+                metadata: field_meta,
                 extra: HashMap::new(),
             });
             ctx.emit_edge(GraphEdge {
@@ -801,6 +824,18 @@ fn walk_impl_item(item: &syn::ImplItem, ctx: &mut Ctx) {
             let parent = ctx.scope_stack.last().map(|s| s.as_str());
             let node_id = semantic_id(&ctx.file, "FUNCTION", &ident, parent, None);
 
+            let mut method_meta = HashMap::from([
+                Ctx::meta_text("visibility", vis_to_text(&m.vis)),
+                Ctx::meta_bool("async", m.sig.asyncness.is_some()),
+                Ctx::meta_bool("unsafe", m.sig.unsafety.is_some()),
+            ]);
+            if let syn::ReturnType::Type(_, ty) = &m.sig.output {
+                let return_type = type_to_name(ty);
+                if return_type != "<type>" {
+                    let (k, v) = Ctx::meta_text("returnType", &return_type);
+                    method_meta.insert(k, v);
+                }
+            }
             ctx.emit_declaration(GraphNode {
                 id: node_id.clone(),
                 node_type: "FUNCTION".to_string(),
@@ -809,11 +844,7 @@ fn walk_impl_item(item: &syn::ImplItem, ctx: &mut Ctx) {
                 line, column: col,
                 end_line, end_column: end_col,
                 exported: is_exported,
-                metadata: HashMap::from([
-                    Ctx::meta_text("visibility", vis_to_text(&m.vis)),
-                    Ctx::meta_bool("async", m.sig.asyncness.is_some()),
-                    Ctx::meta_bool("unsafe", m.sig.unsafety.is_some()),
-                ]),
+                metadata: method_meta,
                 extra: HashMap::new(),
             });
 
@@ -1024,6 +1055,11 @@ fn walk_stmt(stmt: &syn::Stmt, ctx: &mut Ctx) {
 fn walk_let(local: &syn::Local, ctx: &mut Ctx) {
     // Collect binding IDs before walking init (for ASSIGNED_FROM)
     let binding_ids = collect_pat_binding_ids(&local.pat, "let", ctx);
+
+    // Note: Variable type inference from `let x = Type::method(...)` is now
+    // performed by the resolver via ASSIGNED_FROM graph traversal, not by
+    // storing derived metadata here. We only keep typeAnnotation for
+    // explicitly annotated patterns: `let x: Type = ...`.
     walk_pat_bindings(&local.pat, "let", ctx);
 
     if let Some(init) = &local.init {
@@ -1152,6 +1188,14 @@ fn walk_pat_bindings(pat: &syn::Pat, kind: &str, ctx: &mut Ctx) {
             let node_type = if kind == "param" { "PARAMETER" } else { "VARIABLE" };
             let node_id = semantic_id(&ctx.file, node_type, &name, parent, Some(&hash));
 
+            let mut meta = HashMap::from([
+                Ctx::meta_text("kind", kind),
+                Ctx::meta_bool("mutable", pi.mutability.is_some()),
+            ]);
+            if let Some(ref ty) = ctx.pending_type_annotation {
+                let (k, v) = Ctx::meta_text("typeAnnotation", ty);
+                meta.insert(k, v);
+            }
             ctx.emit_declaration(GraphNode {
                 id: node_id,
                 node_type: node_type.to_string(),
@@ -1160,10 +1204,7 @@ fn walk_pat_bindings(pat: &syn::Pat, kind: &str, ctx: &mut Ctx) {
                 line, column: col,
                 end_line: ctx.span_end_line_col(pi.ident.span()).0, end_column: ctx.span_end_line_col(pi.ident.span()).1,
                 exported: false,
-                metadata: HashMap::from([
-                    Ctx::meta_text("kind", kind),
-                    Ctx::meta_bool("mutable", pi.mutability.is_some()),
-                ]),
+                metadata: meta,
                 extra: HashMap::new(),
             });
 
@@ -1202,8 +1243,14 @@ fn walk_pat_bindings(pat: &syn::Pat, kind: &str, ctx: &mut Ctx) {
             walk_pat_bindings(&pr.pat, kind, ctx);
         }
         syn::Pat::Type(pt) => {
-            // `x: i32` — unwrap the type annotation and handle the inner pattern
+            // `x: i32` — extract type annotation and thread to inner pattern
+            let prev = ctx.pending_type_annotation.take();
+            let type_str = type_to_name(&pt.ty);
+            if type_str != "<type>" {
+                ctx.pending_type_annotation = Some(type_str);
+            }
             walk_pat_bindings(&pt.pat, kind, ctx);
+            ctx.pending_type_annotation = prev;
         }
         syn::Pat::Wild(_) => {
             // `_` — no binding
@@ -1281,6 +1328,13 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
             let hash = ctx.pos_hash(line, col);
             let node_id = semantic_id(&ctx.file, "CALL", &method, parent, Some(&hash));
 
+            let mut call_meta = HashMap::from([
+                Ctx::meta_bool("method", true),
+                Ctx::meta_text("receiver", &expr_to_name(&e.receiver)),
+            ]);
+            if is_self_field_access(&e.receiver) {
+                call_meta.insert("selfField".to_string(), serde_json::Value::Bool(true));
+            }
             ctx.emit_node(GraphNode {
                 id: node_id.clone(),
                 node_type: "CALL".to_string(),
@@ -1289,10 +1343,7 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
                 line, column: col,
                 end_line: ctx.span_end_line_col(e.method.span()).0, end_column: ctx.span_end_line_col(e.method.span()).1,
                 exported: false,
-                metadata: HashMap::from([
-                    Ctx::meta_bool("method", true),
-                    Ctx::meta_text("receiver", &expr_to_name(&e.receiver)),
-                ]),
+                metadata: call_meta,
                 extra: HashMap::new(),
             });
 
@@ -1615,6 +1666,16 @@ fn expr_to_name(expr: &syn::Expr) -> String {
     }
 }
 
+/// Check if an expression is `self.field` (field access on self).
+fn is_self_field_access(expr: &syn::Expr) -> bool {
+    if let syn::Expr::Field(f) = expr {
+        if let syn::Expr::Path(p) = f.base.as_ref() {
+            return p.path.is_ident("self");
+        }
+    }
+    false
+}
+
 fn path_to_string(path: &syn::Path) -> String {
     path.segments.iter()
         .map(|s| s.ident.to_string())
@@ -1625,6 +1686,10 @@ fn path_to_string(path: &syn::Path) -> String {
 fn type_to_name(ty: &syn::Type) -> String {
     match ty {
         syn::Type::Path(p) => path_to_string(&p.path),
+        syn::Type::Reference(r) => type_to_name(&r.elem),
+        syn::Type::Paren(p) => type_to_name(&p.elem),
+        syn::Type::Group(g) => type_to_name(&g.elem),
+        syn::Type::Slice(s) => type_to_name(&s.elem),
         _ => "<type>".to_string(),
     }
 }
@@ -1683,12 +1748,101 @@ mod tests {
     }
 
     #[test]
+    fn test_type_annotation_on_param() {
+        let fa = parse_and_analyze("fn foo(x: i32, seg: NodeSegmentV2) {}");
+        let x = fa.nodes.iter().find(|n| n.node_type == "PARAMETER" && n.name == "x").unwrap();
+        assert_eq!(x.metadata.get("typeAnnotation"), Some(&serde_json::json!("i32")));
+        let seg = fa.nodes.iter().find(|n| n.node_type == "PARAMETER" && n.name == "seg").unwrap();
+        assert_eq!(seg.metadata.get("typeAnnotation"), Some(&serde_json::json!("NodeSegmentV2")));
+    }
+
+    #[test]
+    fn test_type_annotation_on_let() {
+        let fa = parse_and_analyze("fn main() { let x: u64 = 42; }");
+        let x = fa.nodes.iter().find(|n| n.node_type == "VARIABLE" && n.name == "x").unwrap();
+        assert_eq!(x.metadata.get("typeAnnotation"), Some(&serde_json::json!("u64")));
+    }
+
+    #[test]
+    fn test_type_annotation_reference() {
+        let fa = parse_and_analyze("fn foo(seg: &NodeSegmentV2) {}");
+        let seg = fa.nodes.iter().find(|n| n.node_type == "PARAMETER" && n.name == "seg").unwrap();
+        assert_eq!(seg.metadata.get("typeAnnotation"), Some(&serde_json::json!("NodeSegmentV2")));
+    }
+
+    #[test]
     fn test_struct_with_fields() {
         let fa = parse_and_analyze("pub struct Foo { pub bar: i32, baz: String }");
         assert!(has_node(&fa, "STRUCT", "Foo"));
         assert!(has_node(&fa, "RECORD_FIELD", "bar"));
         assert!(has_node(&fa, "RECORD_FIELD", "baz"));
         assert!(has_edge(&fa, "HAS_FIELD", "STRUCT", "RECORD_FIELD"));
+    }
+
+    #[test]
+    fn test_function_return_type() {
+        let fa = parse_and_analyze("
+            fn make_shard() -> Shard { todo!() }
+            fn make_box() -> Box<Vec<u8>> { todo!() }
+            fn unit_fn() {}
+        ");
+        let make_shard = fa.nodes.iter().find(|n| n.node_type == "FUNCTION" && n.name == "make_shard").unwrap();
+        assert_eq!(make_shard.metadata.get("returnType"), Some(&serde_json::json!("Shard")));
+
+        let make_box = fa.nodes.iter().find(|n| n.node_type == "FUNCTION" && n.name == "make_box").unwrap();
+        assert_eq!(make_box.metadata.get("returnType"), Some(&serde_json::json!("Box")));
+
+        let unit_fn = fa.nodes.iter().find(|n| n.node_type == "FUNCTION" && n.name == "unit_fn").unwrap();
+        assert!(unit_fn.metadata.get("returnType").is_none());
+    }
+
+    #[test]
+    fn test_method_return_type() {
+        let fa = parse_and_analyze("
+            struct Foo;
+            impl Foo {
+                fn make() -> Foo { Foo }
+                fn no_return(&self) {}
+            }
+        ");
+        let make = fa.nodes.iter().find(|n| n.node_type == "FUNCTION" && n.name == "make").unwrap();
+        assert_eq!(make.metadata.get("returnType"), Some(&serde_json::json!("Foo")));
+    }
+
+    #[test]
+    fn test_self_field_method_call() {
+        let fa = parse_and_analyze("
+            struct Foo { bar: Vec<i32> }
+            impl Foo {
+                fn baz(&self) {
+                    self.bar.push(1);
+                    let x = Vec::new();
+                    x.push(2);
+                }
+            }
+        ");
+        // self.bar.push() should have selfField=true
+        let self_call = fa.nodes.iter().find(|n|
+            n.node_type == "CALL" && n.name == "push"
+            && n.metadata.get("receiver") == Some(&serde_json::json!("bar"))
+        ).unwrap();
+        assert_eq!(self_call.metadata.get("selfField"), Some(&serde_json::json!(true)));
+
+        // x.push() should NOT have selfField
+        let local_call = fa.nodes.iter().find(|n|
+            n.node_type == "CALL" && n.name == "push"
+            && n.metadata.get("receiver") == Some(&serde_json::json!("x"))
+        ).unwrap();
+        assert!(local_call.metadata.get("selfField").is_none());
+    }
+
+    #[test]
+    fn test_struct_field_type_annotation() {
+        let fa = parse_and_analyze("struct Shard { segments: Vec<Segment>, name: String }");
+        let segments = fa.nodes.iter().find(|n| n.node_type == "RECORD_FIELD" && n.name == "segments").unwrap();
+        assert_eq!(segments.metadata.get("typeAnnotation"), Some(&serde_json::json!("Vec")));
+        let name = fa.nodes.iter().find(|n| n.node_type == "RECORD_FIELD" && n.name == "name").unwrap();
+        assert_eq!(name.metadata.get("typeAnnotation"), Some(&serde_json::json!("String")));
     }
 
     #[test]

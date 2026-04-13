@@ -12,6 +12,8 @@ executable haskell-resolve
   other-modules:
     HaskellImportResolution
     HaskellLocalRefs
+    HaskellLocalCalls
+    HaskellCrossModuleCalls
 
   build-depends:
     base                 >= 4.17 && < 5,

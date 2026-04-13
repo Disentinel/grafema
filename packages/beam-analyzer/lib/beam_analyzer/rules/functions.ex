@@ -165,14 +165,20 @@ defmodule BeamAnalyzer.Rules.Functions do
       :with -> walk_with(ast, ctx)
       :for -> walk_for(ast, ctx)
       _ ->
-        ctx = BeamAnalyzer.Rules.Calls.process({name, meta, args}, ctx)
-        # Walk call arguments to find nested calls/expressions
-        ctx = walk_call_args(args, ctx)
-        line = Keyword.get(meta, :line, 0)
-        col = Keyword.get(meta, :column, 0)
-        scope = Context.current_scope(ctx) || "module"
-        call_id = SemanticId.call_id(ctx.file, Atom.to_string(name), scope, line, col)
-        BeamAnalyzer.Rules.Infrastructure.process_call(ctx, Atom.to_string(name), call_id, line, col)
+        if BeamAnalyzer.Rules.Calls.callable?(name) do
+          ctx = BeamAnalyzer.Rules.Calls.process({name, meta, args}, ctx)
+          # Walk call arguments to find nested calls/expressions
+          ctx = walk_call_args(args, ctx)
+          line = Keyword.get(meta, :line, 0)
+          col = Keyword.get(meta, :column, 0)
+          scope = Context.current_scope(ctx) || "module"
+          call_id = SemanticId.call_id(ctx.file, Atom.to_string(name), scope, line, col)
+          BeamAnalyzer.Rules.Infrastructure.process_call(ctx, Atom.to_string(name), call_id, line, col)
+        else
+          # Operator or special form: no CALL node, but still walk children
+          # (operands may contain real call sites).
+          walk_call_args(args, ctx)
+        end
     end
   end
 

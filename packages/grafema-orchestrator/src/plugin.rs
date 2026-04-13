@@ -507,10 +507,12 @@ pub struct WorkspacePackageWire {
 }
 
 /// Request sent to grafema-resolve in --daemon mode.
-#[derive(Serialize)]
+#[derive(Serialize, Default)]
 struct ResolveRequest {
     cmd: String,
     nodes: Vec<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    edges: Vec<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     workspace_packages: Vec<WorkspacePackageWire>,
 }
@@ -570,7 +572,7 @@ pub async fn run_streaming_plugin_pooled(
         .map(|r| serde_json::to_value(&r.bindings).unwrap_or_default())
         .collect();
 
-    let request = ResolveRequest { cmd, nodes, workspace_packages: vec![] };
+    let request = ResolveRequest { cmd, nodes, workspace_packages: vec![], edges: vec![] };
     let payload = rmp_serde::to_vec_named(&request).context(format!(
         "Failed to encode resolve request for plugin '{}'",
         plugin.name
@@ -684,6 +686,7 @@ fn build_load_context_payload(
         cmd: "load-context".to_string(),
         nodes: json_nodes,
         workspace_packages: workspace_packages.to_vec(),
+        edges: vec![],
     };
     rmp_serde::to_vec_named(&request).context("Failed to encode load-context payload")
 }
@@ -697,6 +700,7 @@ fn build_resolve_payload(
         cmd: cmd.to_string(),
         nodes: vec![],
         workspace_packages: workspace_packages.to_vec(),
+        edges: vec![],
     };
     rmp_serde::to_vec_named(&request).context("Failed to encode resolve payload")
 }
@@ -960,6 +964,7 @@ pub async fn clear_context_on_workers(
         cmd: "clear-context".to_string(),
         nodes: vec![],
         workspace_packages: vec![],
+        edges: vec![],
     };
     let payload = rmp_serde::to_vec_named(&request)
         .context("Failed to encode clear-context request")?;
@@ -1042,6 +1047,7 @@ pub async fn resolve_per_file(
         cmd: "build-index".to_string(),
         nodes: index_json_nodes,
         workspace_packages: workspace_packages.to_vec(),
+        edges: vec![],
     };
     let payload = rmp_serde::to_vec_named(&build_index_request)
         .context("Failed to encode build-index request")?;
@@ -1072,6 +1078,7 @@ pub async fn resolve_per_file(
             cmd: "resolve-file".to_string(),
             nodes: json_nodes,
             workspace_packages: workspace_packages.to_vec(),
+            edges: vec![],
         };
         let payload = rmp_serde::to_vec_named(&request)
             .context("Failed to encode resolve-file request")?;
@@ -1128,13 +1135,39 @@ pub async fn stream_and_resolve_single_worker(
         return Ok(Vec::new());
     }
 
-    tracing::info!(total_nodes = all_nodes.len(), "Streamed nodes to single worker");
+    // Collect edges needed for graph traversal in resolvers
+    // (currently: ASSIGNED_FROM for type tracing through let bindings)
+    let mut all_edges: Vec<serde_json::Value> = Vec::new();
+    for edge_type in &["ASSIGNED_FROM"] {
+        let query = format!(
+            "violation(S, D) :- edge(S, D, \"{}\").",
+            edge_type
+        );
+        if let Ok(results) = rfdb.datalog_query(&query).await {
+            for row in results {
+                if let (Some(src), Some(dst)) = (row.bindings.get("S"), row.bindings.get("D")) {
+                    all_edges.push(serde_json::json!({
+                        "src": src,
+                        "dst": dst,
+                        "type": edge_type,
+                    }));
+                }
+            }
+        }
+    }
+
+    tracing::info!(
+        total_nodes = all_nodes.len(),
+        total_edges = all_edges.len(),
+        "Streamed nodes to single worker"
+    );
 
     let mut results = Vec::with_capacity(commands.len());
     for &(cmd, ws) in commands {
         let request = ResolveRequest {
             cmd: cmd.to_string(),
             nodes: all_nodes.clone(),
+            edges: all_edges.clone(),
             workspace_packages: ws.to_vec(),
         };
         let payload = rmp_serde::to_vec_named(&request)

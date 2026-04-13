@@ -958,6 +958,26 @@ async fn main() -> Result<()> {
                         }
 
                         commit_resolve_output(&mut output, "js-resolution", generation, &mut rfdb).await?;
+
+                        // Second pass: graph-traversal resolvers (this.method() + CALL-based globals)
+                        let second_pass = plugin::stream_and_resolve_single_worker(
+                            &mut rfdb,
+                            &[config::Language::JavaScript],
+                            &[("js-this-method-calls", &[]), ("runtime-call-globals", &[])],
+                            &resolve_pool,
+                        ).await.unwrap_or_default();
+                        for (cmd, mut o) in second_pass {
+                            let commit_name = match cmd.as_str() {
+                                "js-this-method-calls" => "js-this-method-calls",
+                                "runtime-call-globals" => "js-call-globals",
+                                _ => &cmd,
+                            };
+                            commit_resolve_output(&mut o, commit_name, generation, &mut rfdb).await?;
+                            profile!("resolve_cmd_complete", "language" => "js", "cmd" => commit_name,
+                                "nodes" => o.nodes.len(), "edges" => o.edges.len(),
+                                "duration_ms" => 0);
+                        }
+
                         let lang_ms = lang_start.elapsed().as_millis();
                         profile!("js_resolve_complete",
                             "nodes" => output.nodes.len(), "edges" => output.edges.len(),
@@ -991,13 +1011,15 @@ async fn main() -> Result<()> {
                         let results = plugin::stream_and_resolve_single_worker(
                             &mut rfdb,
                             &[config::Language::Haskell],
-                            &[("haskell-imports", &[]), ("haskell-local-refs", &[]), ("haskell-globals", &[])],
+                            &[("haskell-imports", &[]), ("haskell-local-refs", &[]), ("haskell-local-calls", &[]), ("haskell-cross-module-calls", &[]), ("haskell-globals", &[])],
                             &hs_pool,
                         ).await?;
                         for (cmd, mut output) in results {
                             let cmd_start = std::time::Instant::now();
                             let commit_name = match cmd.as_str() {
                                 "haskell-imports" => "haskell-import-resolution",
+                                "haskell-local-calls" => "haskell-local-calls",
+                                "haskell-cross-module-calls" => "haskell-cross-module-calls",
                                 "haskell-globals" => "haskell-runtime-globals",
                                 _ => &cmd,
                             };
@@ -1037,7 +1059,7 @@ async fn main() -> Result<()> {
                         let results = plugin::stream_and_resolve_single_worker(
                             &mut rfdb,
                             &[config::Language::Rust],
-                            &[("rust-imports", &[]), ("rust-calls", &[]), ("rust-globals", &[])],
+                            &[("rust-imports", &[]), ("rust-calls", &[]), ("rust-cross-methods", &[]), ("rust-globals", &[])],
                             &rs_pool,
                         ).await?;
                         for (cmd, mut output) in results {
@@ -1045,6 +1067,7 @@ async fn main() -> Result<()> {
                             let commit_name = match cmd.as_str() {
                                 "rust-imports" => "rust-import-resolution",
                                 "rust-calls"   => "rust-call-resolution",
+                                "rust-cross-methods" => "rust-cross-method-calls",
                                 "rust-globals" => "rust-runtime-globals",
                                 _ => &cmd,
                             };
@@ -1382,7 +1405,13 @@ async fn main() -> Result<()> {
                         let results = plugin::stream_and_resolve_single_worker(
                             &mut rfdb,
                             &[config::Language::Beam],
-                            &[("beam-imports", &[]), ("beam-local-refs", &[])],
+                            &[
+                                ("beam-imports", &[]),
+                                ("beam-local-refs", &[]),
+                                ("beam-runtime-globals", &[]),
+                                ("beam-behaviours", &[]),
+                                ("beam-protocols", &[]),
+                            ],
                             &pool,
                         ).await?;
                         for (cmd, mut output) in results {
@@ -1886,12 +1915,14 @@ async fn main() -> Result<()> {
                         let results = plugin::stream_and_resolve_single_worker(
                             &mut rfdb,
                             &[config::Language::Haskell],
-                            &[("haskell-imports", &[]), ("haskell-local-refs", &[]), ("haskell-globals", &[])],
+                            &[("haskell-imports", &[]), ("haskell-local-refs", &[]), ("haskell-local-calls", &[]), ("haskell-cross-module-calls", &[]), ("haskell-globals", &[])],
                             &pool,
                         ).await?;
                         for (cmd, mut output) in results {
                             let commit_name = match cmd.as_str() {
                                 "haskell-imports" => "haskell-import-resolution",
+                                "haskell-local-calls" => "haskell-local-calls",
+                                "haskell-cross-module-calls" => "haskell-cross-module-calls",
                                 "haskell-globals" => "haskell-runtime-globals",
                                 _ => &cmd,
                             };
@@ -1925,13 +1956,14 @@ async fn main() -> Result<()> {
                         let results = plugin::stream_and_resolve_single_worker(
                             &mut rfdb,
                             &[config::Language::Rust],
-                            &[("rust-imports", &[]), ("rust-calls", &[]), ("rust-globals", &[])],
+                            &[("rust-imports", &[]), ("rust-calls", &[]), ("rust-cross-methods", &[]), ("rust-globals", &[])],
                             &pool,
                         ).await?;
                         for (cmd, mut output) in results {
                             let commit_name = match cmd.as_str() {
                                 "rust-imports" => "rust-import-resolution",
                                 "rust-calls"   => "rust-call-resolution",
+                                "rust-cross-methods" => "rust-cross-method-calls",
                                 "rust-globals" => "rust-runtime-globals",
                                 _ => &cmd,
                             };
@@ -2227,7 +2259,13 @@ async fn main() -> Result<()> {
                         let results = plugin::stream_and_resolve_single_worker(
                             &mut rfdb,
                             &[config::Language::Beam],
-                            &[("beam-imports", &[]), ("beam-local-refs", &[])],
+                            &[
+                                ("beam-imports", &[]),
+                                ("beam-local-refs", &[]),
+                                ("beam-runtime-globals", &[]),
+                                ("beam-behaviours", &[]),
+                                ("beam-protocols", &[]),
+                            ],
                             &pool,
                         ).await?;
                         for (cmd, mut output) in results {
