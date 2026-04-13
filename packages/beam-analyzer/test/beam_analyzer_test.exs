@@ -310,4 +310,111 @@ defmodule BeamAnalyzerTest do
       assert length(contains_edges) >= 4
     end
   end
+
+  # REG-1097: kami unresolved-CALL triage exposed three classes of analyzer
+  # noise that account for ~37% of unresolved CALL nodes. None of these are
+  # actual function call sites and they should not produce CALL nodes at all.
+  describe "noise removal (REG-1097)" do
+    defp call_names(source) do
+      result = BeamAnalyzer.analyze("lib/noise.ex", source)
+
+      result.nodes
+      |> Enum.filter(&(&1.type == "CALL"))
+      |> Enum.map(& &1.name)
+    end
+
+    test "operators and special forms are not CALL nodes" do
+      source = """
+      defmodule Noise.Ops do
+        def run(a, b, list) do
+          _arith = a + b - a * b / 1
+          _cmp = a == b and a != b and a < b and a > b
+          _bool = a && b || not a
+          _membership = a in list
+          _concat = "x" <> "y"
+          _list_concat = [1, 2] ++ [3]
+          _bits = <<1, 2, 3>>
+          _map = %{key: :value}
+          _tuple = {a, b}
+          _try = try do
+            :ok
+          rescue
+            _ -> :err
+          end
+          _sigil = ~r/foo/
+          a
+        end
+      end
+      """
+
+      names = call_names(source)
+      forbidden = [
+        "+", "-", "*", "/", "==", "!=", "<", ">", "and", "or", "&&", "||",
+        "not", "in", "<>", "++", "<<>>", "%{}", "{}", "try", "sigil_r",
+        "rescue", "->", "=", "::", "@", "|"
+      ]
+
+      for op <- forbidden do
+        refute op in names, "operator/special-form #{inspect(op)} should not produce a CALL node"
+      end
+    end
+
+    test "<obj>.method placeholder calls are suppressed" do
+      # When the receiver is the result of an expression rather than a simple
+      # identifier, beam-analyzer used to emit a CALL with receiver "<obj>".
+      # Such calls carry no resolvable information and are pure noise.
+      source = """
+      defmodule Noise.Obj do
+        def run(state) do
+          state.foo.bar()
+          get_thing().some_method()
+        end
+
+        defp get_thing, do: %{}
+      end
+      """
+
+      names = call_names(source)
+
+      refute Enum.any?(names, &String.starts_with?(&1, "<obj>.")),
+             "expected no <obj>.* placeholder calls, got: #{inspect(names)}"
+    end
+
+    test "struct field access is not classified as a zero-arg method call" do
+      # `state.name` (no parens) is field access, not a function call.
+      # Elixir AST tags this with the :no_parens marker on the dot meta.
+      source = """
+      defmodule Noise.Field do
+        def run(state) do
+          _name = state.name
+          _other = state.queue_dir
+          state
+        end
+      end
+      """
+
+      names = call_names(source)
+
+      refute "state.name" in names,
+             "field access state.name should not produce a CALL node, got: #{inspect(names)}"
+      refute "state.queue_dir" in names,
+             "field access state.queue_dir should not produce a CALL node, got: #{inspect(names)}"
+    end
+
+    test "real qualified function calls are still emitted" do
+      # Regression guard: noise removal must not break legitimate Mod.fun() calls.
+      source = """
+      defmodule Noise.Real do
+        def run do
+          Enum.map([1, 2, 3], fn x -> x + 1 end)
+          GenServer.call(:server, :ping)
+        end
+      end
+      """
+
+      names = call_names(source)
+      assert "Enum.map" in names
+      assert "GenServer.call" in names
+    end
+  end
 end

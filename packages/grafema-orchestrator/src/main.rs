@@ -1405,7 +1405,13 @@ async fn main() -> Result<()> {
                         let results = plugin::stream_and_resolve_single_worker(
                             &mut rfdb,
                             &[config::Language::Beam],
-                            &[("beam-imports", &[]), ("beam-local-refs", &[])],
+                            &[
+                                ("beam-imports", &[]),
+                                ("beam-local-refs", &[]),
+                                ("beam-runtime-globals", &[]),
+                                ("beam-behaviours", &[]),
+                                ("beam-protocols", &[]),
+                            ],
                             &pool,
                         ).await?;
                         for (cmd, mut output) in results {
@@ -2253,7 +2259,13 @@ async fn main() -> Result<()> {
                         let results = plugin::stream_and_resolve_single_worker(
                             &mut rfdb,
                             &[config::Language::Beam],
-                            &[("beam-imports", &[]), ("beam-local-refs", &[])],
+                            &[
+                                ("beam-imports", &[]),
+                                ("beam-local-refs", &[]),
+                                ("beam-runtime-globals", &[]),
+                                ("beam-behaviours", &[]),
+                                ("beam-protocols", &[]),
+                            ],
                             &pool,
                         ).await?;
                         for (cmd, mut output) in results {

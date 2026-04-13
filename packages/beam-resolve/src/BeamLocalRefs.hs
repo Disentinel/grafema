@@ -17,7 +17,7 @@
 -- Elixir/Erlang standard library functions (Kernel, Enum, etc.).
 module BeamLocalRefs (run, resolveAll) where
 
-import Grafema.Types (GraphNode(..), GraphEdge(..), MetaValue(..))
+import Grafema.Types (GraphNode(..), GraphEdge(..), MetaValue(..), gnSemanticId)
 import Grafema.Protocol (PluginCommand(..), readNodesFromStdin, writeCommandsToStdout)
 
 import Data.Text (Text)
@@ -27,6 +27,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Set as Set
 import Data.Set (Set)
 import Data.Maybe (listToMaybe)
+import Text.Read (readMaybe)
 
 -- | Declaration index: (file, name) -> node ID
 -- For BEAM, name includes arity: "foo/2", "bar/1"
@@ -55,11 +56,19 @@ buildNameIndex nodes =
     , not (T.null (gnName n))
     ]
 
--- | Cross-file qualified function index: "ModuleName.func_name" -> node ID.
+-- | Cross-file qualified function index: (module, func_base_name, arity) -> node ID.
 -- Built from MODULE nodes (for module names) and FUNCTION nodes
 -- (for functions belonging to those modules, identified by [in:ModuleName]
 -- in their semantic ID).
-type QualifiedIndex = Map Text Text
+--
+-- BEAM languages overload on arity (foo/1, foo/2 are distinct functions),
+-- so the arity component is required for correct disambiguation.
+type QualifiedIndex = Map (Text, Text, Int) Text
+
+-- | Arity-agnostic fallback index: (module, func_base_name) -> node ID.
+-- Used when a CALL node has no arity metadata (pipe syntax, capture forms)
+-- or when multiple arities exist and we pick one deterministically.
+type QualifiedNameIndex = Map (Text, Text) Text
 
 -- | Module suffix index: maps each suffix of a module name to its full name.
 -- E.g., for module "MyApp.Accounts":
@@ -71,12 +80,17 @@ type ModuleSuffixIndex = Map Text [Text]
 -- | Build cross-file qualified function index and module suffix index.
 --
 -- For each FUNCTION node, extract its containing module from the
--- semantic ID pattern "[in:ModuleName]". Build keys like
--- "ModuleName.func_base_name" -> node ID.
+-- **semantic ID** (not @gnId@ — in production @gnId@ is a u128 hash and the
+-- human-readable semantic ID lives in metadata; 'gnSemanticId' reads the
+-- metadata first, falling back to 'gnId' for analyzer-emitted nodes).
 --
--- For suffix matching, also build entries for each dot-suffix of the
--- module name.
-buildQualifiedIndex :: [GraphNode] -> (QualifiedIndex, ModuleSuffixIndex)
+-- Keys use the full @(module, baseName, arity)@ triple so @foo/1@ and
+-- @foo/2@ in the same module resolve independently. A secondary
+-- @(module, baseName)@ index is built as fallback when the CALL node has
+-- no arity metadata.
+buildQualifiedIndex
+  :: [GraphNode]
+  -> (QualifiedIndex, QualifiedNameIndex, ModuleSuffixIndex)
 buildQualifiedIndex nodes =
   let -- Collect all module names from MODULE nodes
       moduleNames = [ gnName n | n <- nodes, gnType n == "MODULE", not (T.null (gnName n)) ]
@@ -84,15 +98,27 @@ buildQualifiedIndex nodes =
       -- Build suffix index: each suffix of a module name maps to that module name
       suffixIdx = foldl addModuleSuffixes Map.empty moduleNames
 
-      -- Build qualified index from FUNCTION nodes
-      qualIdx = Map.fromList
-        [ (modName <> "." <> extractBaseName (gnName n), gnId n)
+      functionEntries =
+        [ (modName, extractBaseName (gnName n), extractArity (gnName n), gnId n)
         | n <- nodes
         , gnType n == "FUNCTION"
         , not (T.null (gnName n))
-        , Just modName <- [extractModuleFromId (gnId n)]
+        , Just modName <- [extractModuleFromId (gnSemanticId n)]
         ]
-  in (qualIdx, suffixIdx)
+
+      qualIdx = Map.fromList
+        [ ((modName, fnBase, arity), nodeId)
+        | (modName, fnBase, Just arity, nodeId) <- functionEntries
+        ]
+
+      -- Arity-agnostic fallback. Map.fromList keeps the last entry on
+      -- collision, which is fine: any target in the module is a valid
+      -- guess when the caller didn't record arity.
+      nameIdx = Map.fromList
+        [ ((modName, fnBase), nodeId)
+        | (modName, fnBase, _, nodeId) <- functionEntries
+        ]
+  in (qualIdx, nameIdx, suffixIdx)
 
 -- | Add all dot-suffixes of a module name to the suffix index.
 -- E.g., "MyApp.Accounts" -> suffixes: ["MyApp.Accounts", "Accounts"]
@@ -111,24 +137,55 @@ dotSuffixes t
         | otherwise   -> dotSuffixes (T.drop 1 rest)
 
 -- | Extract module name from a FUNCTION node's semantic ID.
--- Pattern: "file->FUNCTION->func_name[in:ModuleName]"
--- Returns the ModuleName from the [in:...] suffix.
+--
+-- Recognises two forms:
+--   1. Legacy arrow form:      "file->FUNCTION->name/arity[in:ModuleName]"
+--   2. URI form (production):  "grafema://.../FUNCTION-%3Ename/arity%5Bin:ModuleName%5D"
+--
+-- The URI form uses percent-encoded brackets (@%5B@ / @%5D@) because the
+-- semantic ID is embedded in a URL fragment. Both forms carry the same
+-- @[in:...]@ marker; we search for either spelling rather than
+-- url-decoding the whole string.
 extractModuleFromId :: Text -> Maybe Text
 extractModuleFromId nodeId =
-  case T.breakOn "[in:" nodeId of
-    (_, rest)
-      | T.null rest -> Nothing
-      | otherwise   ->
-          let afterPrefix = T.drop 4 rest  -- drop "[in:"
-          in case T.breakOn "]" afterPrefix of
-            (modName, suffix)
-              | T.null suffix -> Nothing
-              | otherwise     -> Just modName
+  tryMarker "[in:" "]" nodeId
+    <|> tryMarker "%5Bin:" "%5D" nodeId
+  where
+    (<|>) :: Maybe a -> Maybe a -> Maybe a
+    Just x  <|> _ = Just x
+    Nothing <|> y = y
+
+    tryMarker open close s =
+      case T.breakOn open s of
+        (_, rest)
+          | T.null rest -> Nothing
+          | otherwise   ->
+              let afterPrefix = T.drop (T.length open) rest
+              in case T.breakOn close afterPrefix of
+                (modName, suffix)
+                  | T.null suffix -> Nothing
+                  | otherwise     -> Just modName
 
 -- | Extract base name from "foo/2" -> "foo"
 extractBaseName :: Text -> Text
 extractBaseName t = case T.breakOn "/" t of
   (name, _) -> name
+
+-- | Extract arity from "foo/2" -> Just 2. Returns Nothing when the name
+-- has no @/N@ suffix (e.g., CALL nodes that store the name without arity).
+extractArity :: Text -> Maybe Int
+extractArity t = case T.breakOn "/" t of
+  (_, rest)
+    | T.null rest -> Nothing
+    | otherwise   -> readMaybe (T.unpack (T.drop 1 rest))
+
+-- | Read a CALL node's arity from metadata. BEAM analyzers emit
+-- @metadata.arity@ as an integer for every call site that can be
+-- statically arity-determined.
+callArity :: GraphNode -> Maybe Int
+callArity n = case Map.lookup "arity" (gnMetadata n) of
+  Just (MetaInt i) -> Just i
+  _                -> Nothing
 
 -- | Well-known Elixir/Erlang functions always in scope.
 beamBuiltins :: Set Text
@@ -154,9 +211,9 @@ resolveAll :: [GraphNode] -> [PluginCommand]
 resolveAll nodes =
   let declIndex = buildDeclIndex nodes
       nameIndex = buildNameIndex nodes
-      (qualIndex, suffixIndex) = buildQualifiedIndex nodes
+      (qualIndex, qualNameIndex, suffixIndex) = buildQualifiedIndex nodes
       callNodes = filter (\n -> gnType n == "CALL") nodes
-      (cmds, _seen) = foldl (resolveCall declIndex nameIndex qualIndex suffixIndex)
+      (cmds, _seen) = foldl (resolveCall declIndex nameIndex qualIndex qualNameIndex suffixIndex)
                              ([], Set.empty :: Set Text) callNodes
   in cmds
 
@@ -177,30 +234,51 @@ splitQualifiedCall name =
   in (modPart, funcPart)
 
 -- | Look up a qualified call in the cross-file index.
--- Tries exact match first, then suffix-based matching.
-lookupQualified :: QualifiedIndex -> ModuleSuffixIndex -> Text -> Text -> Maybe Text
-lookupQualified qualIdx suffixIdx modAlias funcName =
-  -- Try exact qualified key first: "ModAlias.func_name"
-  let exactKey = modAlias <> "." <> funcName
-  in case Map.lookup exactKey qualIdx of
-    Just targetId -> Just targetId
+--
+-- Resolution order:
+--   1. Exact @(modAlias, funcName, arity)@ when arity is known.
+--   2. Exact @(modAlias, funcName)@ arity-agnostic fallback.
+--   3. Suffix-based lookup: modAlias may be a short alias of some
+--      fully-qualified module, so try every module name that ends
+--      with @modAlias@, preferring the arity-exact match again.
+lookupQualified
+  :: QualifiedIndex
+  -> QualifiedNameIndex
+  -> ModuleSuffixIndex
+  -> Text          -- ^ module alias as written at the call site
+  -> Text          -- ^ function base name
+  -> Maybe Int     -- ^ arity from CALL metadata, or Nothing
+  -> Maybe Text
+lookupQualified qualIdx nameIdx suffixIdx modAlias funcName mArity =
+  let tryExact fullMod =
+        case mArity of
+          Just arity ->
+            case Map.lookup (fullMod, funcName, arity) qualIdx of
+              Just tid -> Just tid
+              Nothing  -> Map.lookup (fullMod, funcName) nameIdx
+          Nothing -> Map.lookup (fullMod, funcName) nameIdx
+  in case tryExact modAlias of
+    Just tid -> Just tid
     Nothing ->
-      -- Try suffix-based: modAlias might be a short alias.
-      -- Look up full module names that end with modAlias.
       case Map.lookup modAlias suffixIdx of
         Just fullModNames ->
-          -- Try each full module name
-          listToMaybe [ targetId
+          listToMaybe [ tid
                       | fullMod <- fullModNames
-                      , let key = fullMod <> "." <> funcName
-                      , Just targetId <- [Map.lookup key qualIdx]
+                      , Just tid <- [tryExact fullMod]
                       ]
         Nothing -> Nothing
 
 -- | Resolve a single CALL node.
-resolveCall :: DeclIndex -> NameIndex -> QualifiedIndex -> ModuleSuffixIndex
-            -> ([PluginCommand], Set Text) -> GraphNode -> ([PluginCommand], Set Text)
-resolveCall declIndex nameIndex qualIndex suffixIndex (acc, seen) callNode =
+resolveCall
+  :: DeclIndex
+  -> NameIndex
+  -> QualifiedIndex
+  -> QualifiedNameIndex
+  -> ModuleSuffixIndex
+  -> ([PluginCommand], Set Text)
+  -> GraphNode
+  -> ([PluginCommand], Set Text)
+resolveCall declIndex nameIndex qualIndex qualNameIndex suffixIndex (acc, seen) callNode =
   let file = gnFile callNode
       name = gnName callNode
       baseName = extractBaseName name
@@ -231,7 +309,8 @@ resolveCall declIndex nameIndex qualIndex suffixIndex (acc, seen) callNode =
             if isQualifiedCall baseName
               then
                 let (modAlias, funcName) = splitQualifiedCall baseName
-                in case lookupQualified qualIndex suffixIndex modAlias funcName of
+                    mArity = callArity callNode
+                in case lookupQualified qualIndex qualNameIndex suffixIndex modAlias funcName mArity of
                   Just targetId ->
                     ( EmitEdge GraphEdge
                         { geSource   = gnId callNode

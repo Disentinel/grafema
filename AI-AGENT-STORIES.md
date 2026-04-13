@@ -567,6 +567,59 @@ This is the same gap as TypeScript circa early Grafema — structural skeleton w
 
 ---
 
+## US-21: Cross-Module Call Navigation in Elixir
+
+**Status:** ✅ WORKING
+**Last tested:** 2026-04-13 (REG-1097)
+
+As an AI agent debugging an Elixir/BEAM project,
+I want `grafema who "<func>/<arity>"` to return all callers across modules,
+So that I can do impact analysis without grepping the whole repo.
+
+**Acceptance criteria:**
+- `grafema who "emit/3"` on a project that uses `Ichi.EventBus.emit(...)` from many modules returns 30+ resolved callers
+- Cross-file qualified calls (`Mod.fun()`) resolve to their FUNCTION node
+- Stdlib calls (`Enum.map`, `String.trim`, `Logger.info`, `GenServer.call`) resolve to virtual GLOBAL_DEFINITION nodes carrying effects
+- `use GenServer` produces an IMPLEMENTS edge to a virtual MODULE node
+- BEAM analyzer does not emit CALL nodes for operators (`+`, `==`, `<<>>`, `%{}`, …) or struct field access (`state.name`)
+
+**Test results (2026-04-13, kami/ichi project, 36 BEAM files, 6750 LOC):**
+
+| Metric | Before REG-1097 | After REG-1097 |
+|--------|-----------------|----------------|
+| `grafema who "emit/3"` | 0 callers | **37 resolved callers** |
+| Total CALL nodes | 3990 | 1822 (−54%, noise removed) |
+| Unresolved CALLs | 3446 (86%) | **10 (0.5%)** |
+| Resolution rate | 14% | **99.5%** |
+| GLOBAL_DEFINITION nodes | 0 | 149 (stdlib functions) |
+| IMPLEMENTS edges | 0 | 25 (use→behaviour) |
+
+The 10 remaining unresolved are all genuine external libraries (`Req.post`, `Phoenix.PubSub.broadcast`, `Plug.send_resp`, `ExUnit.start_supervised!`) — `effects-db/packages/` territory, not stdlib.
+
+**What was fixed (REG-1097):**
+
+1. **`BeamLocalRefs.buildQualifiedIndex`** — was parsing `[in:Module]` from `gnId`, but in production `gnId` is a u128 hash; the human-readable semantic ID lives in metadata. Switched to `gnSemanticId`. Also added arity disambiguation (was overwriting `foo/1` with `foo/2`) and recognised both legacy `[in:` and URI-encoded `%5Bin:` markers.
+2. **`BeamAnalyzer.Rules.Calls`** — operators, special forms, sigils, and `<obj>.method` placeholder calls are no longer emitted as CALL nodes. Field access (`state.name`) detected via `:no_parens` marker.
+3. **`BeamRuntimeGlobals` + `effects-db/runtimes/elixir.yaml`** — new resolver for stdlib calls via the shared `Grafema.RuntimeGlobals` engine. ~500 functions across Kernel, String, Enum, Logger, File, Path, Map, Keyword, MapSet, DateTime, Date, GenServer, Supervisor, DynamicSupervisor, Task, Agent, Process, System, Application, Jason, Regex, List, Integer, Float, IO, Code, Macro, URI, Calendar.
+4. **`effects-db/runtimes/erlang.yaml`** — Erlang BIFs (`:erlang`, `:lists`, `:maps`, `:ets`, `:gen_server`, `:supervisor`, `:application`).
+5. **`effects-db/taxonomy.yaml`** — added `SPAWN` and `MESSAGE_PASSING` effects for actor-model semantics.
+6. **`BeamBehaviourResolution.findFileModule`** — was parsing `->` from `gnId` (same hash-id bug). Now keys by file directly. Also extended to recognise `kind=use` (Elixir convention) and emit virtual external MODULE nodes for stdlib targets like `GenServer`.
+7. **Orchestrator wiring** — `beam-runtime-globals`, `beam-behaviours`, `beam-protocols` were resolvers that existed but were never invoked. Registered in `main.rs`.
+
+**Sibling check:** `BeamProtocolResolution` and `BeamImportResolution` are clean (no semantic-ID parsing). `BeamImportResolution` produces 0 edges in kami because all imports point to external modules — same pattern as behaviours; symmetric virtual-MODULE fix is a future improvement.
+
+**Known follow-ups (BEAM-only scope):**
+
+- Pre-existing flaky worker timeout in beam-analyzer pool (random file timeouts; unrelated to REG-1097)
+- `grafema who` doesn't search GLOBAL_DEFINITION nodes — `who Logger.info` returns 0 despite 51 callers
+- `grafema impact` returns 0 direct callers despite `who` showing 37 — different code path
+- `effects-db/packages/` for Req, Phoenix, Plug, ExUnit (10 unresolved external lib calls remaining)
+- Symmetric virtual-MODULE in `BeamImportResolution` for non-`use` imports
+- `alias Foo, as: Bar` tracking (kami has 0 of these, no production motivation yet)
+- Datalog string predicates needed for a formal `qualified-call-resolved` guarantee
+
+---
+
 ## Summary
 
 | Story | Status | Key Finding |
