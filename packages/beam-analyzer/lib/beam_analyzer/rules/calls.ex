@@ -62,12 +62,13 @@ defmodule BeamAnalyzer.Rules.Calls do
 
   def process(_ast, ctx), do: ctx
 
-  def process_dot_call({:., _dot_meta, [{:__aliases__, _, parts}, method]}, call_meta, args, _meta, ctx) do
+  def process_dot_call({:., dot_meta, [{:__aliases__, _, parts}, method]} = dot, call_meta, args, _meta, ctx) do
     module_name = parts |> Enum.map(&Atom.to_string/1) |> Enum.join(".")
     call_name = "#{module_name}.#{method}"
     line = Keyword.get(call_meta, :line, 0)
     col = Keyword.get(call_meta, :column, 0)
-    add_call(ctx, call_name, length(args), line, col)
+    ctx = add_call(ctx, call_name, length(args), line, col)
+    maybe_dispatch_pubsub(ctx, dot, args, call_name, line, col, dot_meta)
   end
 
   def process_dot_call({:., _dot_meta, [receiver, method]}, call_meta, args, _meta, ctx) when is_atom(method) do
@@ -95,6 +96,35 @@ defmodule BeamAnalyzer.Rules.Calls do
   end
 
   def process_dot_call(_dot, _call_meta, _args, _meta, ctx), do: ctx
+
+  # REG-1098 W7: dispatch direct Phoenix.PubSub.* dot-calls to the
+  # PubSub topology rule. Called after the CALL node has been added,
+  # so `call_id` is re-derived deterministically the same way add_call
+  # computed it.
+  defp maybe_dispatch_pubsub(ctx, dot, args, call_name, line, col, _dot_meta) do
+    case BeamAnalyzer.Rules.PubSub.classify(dot) do
+      {:pubsub, :subscribe} ->
+        pubsub_ast = Enum.at(args, 0)
+        topic_ast = Enum.at(args, 1)
+        BeamAnalyzer.Rules.PubSub.process_subscribe(ctx, pubsub_ast, topic_ast, nil)
+
+      {:pubsub, op} ->
+        scope = Context.current_scope(ctx) || "module"
+        call_id = SemanticId.call_id(ctx.file, call_name, scope, line, col)
+        pubsub_ast = Enum.at(args, 0)
+        # broadcast_from(pubsub, from, topic, msg) — topic/msg are shifted by 1
+        {topic_ast, msg_ast} =
+          case op do
+            :broadcast_from -> {Enum.at(args, 2), Enum.at(args, 3)}
+            _ -> {Enum.at(args, 1), Enum.at(args, 2)}
+          end
+
+        BeamAnalyzer.Rules.PubSub.process_broadcast(ctx, call_id, pubsub_ast, topic_ast, msg_ast, op)
+
+      :not_pubsub ->
+        ctx
+    end
+  end
 
   def process_pipe(left, right, _meta, ctx) do
     # Walk left side first

@@ -3441,6 +3441,10 @@ const RESOLVE_NODE_TYPES: &[&str] = &[
     "SPM_PACKAGE",
     // Python types
     "UNSAFE_DYNAMIC",
+    // BEAM types (REG-1098 W10 — needed by beam-wrapper-resolve and beam-message-findings)
+    "MESSAGE_TYPE",
+    "PROCESS",
+    "PUBSUB_TOPIC",
     // Control flow (shared across languages)
     "LOOP",
     "BRANCH",

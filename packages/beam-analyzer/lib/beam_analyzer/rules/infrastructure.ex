@@ -41,18 +41,23 @@ defmodule BeamAnalyzer.Rules.Infrastructure do
   Process a CALL node to detect infrastructure patterns.
   Called from the walker after a CALL node is created.
   """
-  def process_call(ctx, call_name, call_id, line, col) do
+  def process_call(ctx, call_name, call_id, line, col, args \\ nil) do
     ctx = detect_process_spawn(ctx, call_name, call_id, line, col)
-    ctx = detect_message_send(ctx, call_name, call_id)
+    ctx = detect_message_send(ctx, call_name, call_id, args)
     ctx
   end
 
   @doc """
   Process a FUNCTION node to detect handle_* callbacks.
   Called after a FUNCTION node is created.
+
+  `first_arg` is the first parameter AST fragment (the message pattern for
+  handle_call/cast/info clauses). Used by REG-1098 W2 to extract per-clause
+  MESSAGE_TYPE nodes with `pattern_shape` metadata. `meta` carries the
+  clause's line/column for unique node IDs.
   """
-  def process_function(ctx, func_name, func_id) do
-    detect_handler(ctx, func_name, func_id)
+  def process_function(ctx, func_name, func_id, first_arg \\ nil, meta \\ [], body \\ nil) do
+    detect_handler(ctx, func_name, func_id, first_arg, meta, body)
   end
 
   @doc """
@@ -136,7 +141,7 @@ defmodule BeamAnalyzer.Rules.Infrastructure do
     end
   end
 
-  defp detect_message_send(ctx, call_name, call_id) do
+  defp detect_message_send(ctx, call_name, call_id, args) do
     base_call = extract_base_call(call_name)
 
     if base_call in @message_senders do
@@ -144,12 +149,22 @@ defmodule BeamAnalyzer.Rules.Infrastructure do
       target = resolve_message_target(ctx)
 
       if target != nil do
-        # SENDS_TO edge from call to target process
+        # REG-1098 W3: extract normalized shape of the message argument.
+        # For GenServer.call/cast/Process.send/send: message is the 2nd arg.
+        message_shape_meta = extract_message_shape(args)
+
+        metadata =
+          if message_shape_meta do
+            %{via: base_call, message_shape: message_shape_meta}
+          else
+            %{via: base_call}
+          end
+
         Context.add_edge(ctx, %{
           src: call_id,
           dst: target,
           type: "SENDS_TO",
-          metadata: %{via: base_call}
+          metadata: metadata
         })
       else
         ctx
@@ -159,31 +174,45 @@ defmodule BeamAnalyzer.Rules.Infrastructure do
     end
   end
 
-  defp detect_handler(ctx, func_name, func_id) do
+  defp extract_message_shape(args) when is_list(args) do
+    case Enum.at(args, 1) do
+      nil -> nil
+      msg_ast ->
+        msg_ast
+        |> BeamAnalyzer.Rules.Patterns.normalize()
+        |> BeamAnalyzer.Rules.Patterns.shape_to_meta()
+    end
+  end
+
+  defp extract_message_shape(_), do: nil
+
+  defp detect_handler(ctx, func_name, func_id, first_arg, meta, body) do
     # Detect handle_call, handle_cast, handle_info callbacks
     cond do
       String.starts_with?(func_name, "handle_call/") ->
-        add_handler_edge(ctx, func_id, "call")
+        add_handler_edge(ctx, func_id, "call", first_arg, meta, body)
 
       String.starts_with?(func_name, "handle_cast/") ->
-        add_handler_edge(ctx, func_id, "cast")
+        add_handler_edge(ctx, func_id, "cast", first_arg, meta, body)
 
       String.starts_with?(func_name, "handle_info/") ->
-        add_handler_edge(ctx, func_id, "info")
+        add_handler_edge(ctx, func_id, "info", first_arg, meta, body)
 
       String.starts_with?(func_name, "handle_continue/") ->
-        add_handler_edge(ctx, func_id, "continue")
+        add_handler_edge(ctx, func_id, "continue", first_arg, meta, body)
 
       String.starts_with?(func_name, "handle_event/") ->
-        add_handler_edge(ctx, func_id, "event")
+        add_handler_edge(ctx, func_id, "event", first_arg, meta, body)
 
       true ->
         ctx
     end
   end
 
-  defp add_handler_edge(ctx, func_id, handler_type) do
+  defp add_handler_edge(ctx, func_id, handler_type, first_arg, meta, body) do
     module_name = ctx.module_name || "unknown"
+    line = Keyword.get(meta, :line, 0)
+    col = Keyword.get(meta, :column, 0)
 
     # Look for a PROCESS node in this module
     process_nodes =
@@ -201,20 +230,36 @@ defmodule BeamAnalyzer.Rules.Infrastructure do
           metadata: %{handler_type: handler_type}
         })
 
-        # Create MESSAGE_TYPE node for the handler pattern
-        msg_id = "#{ctx.file}->MESSAGE_TYPE->#{handler_type}[in:#{module_name}]"
+        # Per-clause MESSAGE_TYPE node — id includes line/column so multi-clause
+        # handlers produce distinct nodes (REG-1098 W2).
+        shape = BeamAnalyzer.Rules.Patterns.normalize(first_arg)
+        shape_meta = BeamAnalyzer.Rules.Patterns.shape_to_meta(shape)
+        catchall? = catchall_pattern?(first_arg)
+
+        # REG-1098 W8: per-clause body scanning for silent_handler finding.
+        {body_total_calls, body_effects} = BeamAnalyzer.Rules.Effects.scan(body)
+
+        msg_id =
+          "#{ctx.file}->MESSAGE_TYPE->#{handler_type}[in:#{module_name}][L:#{line}:#{col}]"
 
         msg_node = %{
           id: msg_id,
           type: "MESSAGE_TYPE",
           name: handler_type,
           file: ctx.file,
-          line: 0,
-          column: 0,
+          line: line,
+          column: col,
           endLine: 0,
           endColumn: 0,
           exported: false,
-          metadata: %{handler_function: func_id}
+          metadata: %{
+            handler_function: func_id,
+            pattern_shape: shape_meta,
+            catchall: catchall?,
+            handler_line: line,
+            body_total_calls: body_total_calls,
+            body_effects: body_effects
+          }
         }
 
         ctx = Context.add_node(ctx, msg_node)
@@ -231,6 +276,16 @@ defmodule BeamAnalyzer.Rules.Infrastructure do
         ctx
     end
   end
+
+  # Catch-all pattern: bare variable, wildcard, or guarded bare variable.
+  # Note: guarded catchalls (e.g. `msg when is_atom(msg)`) are conservatively
+  # marked catchall=true — the guard narrows but we don't evaluate guards.
+  defp catchall_pattern?(nil), do: false
+  defp catchall_pattern?({:_, _, _}), do: true
+  defp catchall_pattern?({name, _, ctx}) when is_atom(name) and is_atom(ctx), do: true
+  defp catchall_pattern?({:when, _, [inner, _]}), do: catchall_pattern?(inner)
+  defp catchall_pattern?({:=, _, [l, r]}), do: catchall_pattern?(l) or catchall_pattern?(r)
+  defp catchall_pattern?(_), do: false
 
   defp extract_base_call(call_name) do
     # Remove arity info if present: "GenServer.start_link/3" -> "GenServer.start_link"

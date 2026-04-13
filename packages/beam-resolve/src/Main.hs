@@ -12,6 +12,8 @@ import qualified BeamLocalRefs
 import qualified BeamProtocolResolution
 import qualified BeamBehaviourResolution
 import qualified BeamRuntimeGlobals
+import qualified BeamWrapperResolution
+import qualified BeamMessageFindings
 import qualified Grafema.RuntimeGlobals as RG
 import Grafema.Types (GraphNode)
 import Grafema.Protocol (PluginCommand(..), readFrame, writeFrame, encodeMsgpack, decodeMsgpack)
@@ -88,6 +90,8 @@ dispatch _ "beam-behaviours" nodes = return $ ResOk (BeamBehaviourResolution.res
 dispatch cache "beam-runtime-globals" nodes = do
   db <- loadCachedDB cache
   return $ ResOk (BeamRuntimeGlobals.resolveAll db nodes)
+dispatch _ "beam-wrapper-resolve" nodes = return $ ResOk (BeamWrapperResolution.resolveAll nodes)
+dispatch _ "beam-message-findings" nodes = return $ ResOk (BeamMessageFindings.runFindings nodes [])
 dispatch _ cmd _ = return $ ResError ("unknown command: " ++ T.unpack cmd)
 
 -- | CLI subcommand parser.
@@ -97,6 +101,8 @@ data Command
   | CmdBeamProtocols
   | CmdBeamBehaviours
   | CmdBeamRuntimeGlobals
+  | CmdBeamWrapperResolve
+  | CmdBeamMessageFindings
 
 commandParser :: Parser Command
 commandParser = subparser
@@ -110,6 +116,10 @@ commandParser = subparser
     (info (pure CmdBeamBehaviours) (progDesc "Resolve BEAM behaviour callbacks (@behaviour)"))
   <> command "beam-runtime-globals"
     (info (pure CmdBeamRuntimeGlobals) (progDesc "Resolve BEAM stdlib calls (Elixir + Erlang BIFs) via effects-db"))
+  <> command "beam-wrapper-resolve"
+    (info (pure CmdBeamWrapperResolve) (progDesc "Emit virtual side-effect edges for calls to public-API wrapper functions (REG-1098 W6)"))
+  <> command "beam-message-findings"
+    (info (pure CmdBeamMessageFindings) (progDesc "Emit ISSUE nodes for BEAM MessageFlow findings (REG-1098 W9)"))
   )
 
 cliOpts :: ParserInfo Command
@@ -136,3 +146,5 @@ main = do
         CmdBeamProtocols      -> BeamProtocolResolution.run
         CmdBeamBehaviours     -> BeamBehaviourResolution.run
         CmdBeamRuntimeGlobals -> BeamRuntimeGlobals.run
+        CmdBeamWrapperResolve -> BeamWrapperResolution.run
+        CmdBeamMessageFindings -> BeamMessageFindings.run
