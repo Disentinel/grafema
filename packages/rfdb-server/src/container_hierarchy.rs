@@ -311,6 +311,63 @@ pub fn default_hierarchy() -> Vec<HierarchyLevel> {
     ]
 }
 
+/// Inspect all node file paths and return a hierarchy that mirrors the
+/// actual directory nesting in the project. The returned chain is:
+///   FilePrefix(1), FilePrefix(2), ..., FilePrefix(maxDepth),
+///   NodeType([MODULE]),
+///   NodeType([FUNCTION, CLASS, METHOD, VARIABLE, INTERFACE])
+///
+/// `maxDepth` = the maximum number of directory segments among all node
+/// file paths (i.e. `file.split('/').count() - 1`, clamped to >= 1).
+/// Nodes with empty file paths are ignored when computing depth.
+///
+/// Level names: `dir1`, `dir2`, ..., `dir{maxDepth}`, `file`, `symbol`.
+pub fn auto_hierarchy_from_nodes(nodes: &[NodeRef]) -> Vec<HierarchyLevel> {
+    const MAX_DEPTH_CAP: usize = 10;
+
+    let mut max_depth: usize = 0;
+    for node in nodes {
+        if node.file.is_empty() {
+            continue;
+        }
+        let segs = node.file.split('/').count();
+        let depth = segs.saturating_sub(1);
+        if depth > max_depth {
+            max_depth = depth;
+        }
+    }
+
+    if max_depth == 0 {
+        max_depth = 1;
+    }
+    if max_depth > MAX_DEPTH_CAP {
+        max_depth = MAX_DEPTH_CAP;
+    }
+
+    let mut levels: Vec<HierarchyLevel> = Vec::with_capacity(max_depth + 2);
+    for i in 1..=max_depth {
+        levels.push(HierarchyLevel::new(
+            &format!("dir{}", i),
+            ContainerRule::FilePrefix(i),
+        ));
+    }
+    levels.push(HierarchyLevel::new(
+        "file",
+        ContainerRule::NodeType(vec!["MODULE".into()]),
+    ));
+    levels.push(HierarchyLevel::new(
+        "symbol",
+        ContainerRule::NodeType(vec![
+            "FUNCTION".into(),
+            "CLASS".into(),
+            "METHOD".into(),
+            "VARIABLE".into(),
+            "INTERFACE".into(),
+        ]),
+    ));
+    levels
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -432,5 +489,109 @@ mod tests {
     fn test_file_dir_helper() {
         assert_eq!(file_dir("packages/util/src/core/graph.ts"), "packages/util/src/core");
         assert_eq!(file_dir("main.ts"), "_root");
+    }
+
+    fn nref(idx: u32, node_type: &str, file: &str, name: &str) -> NodeRef {
+        NodeRef {
+            idx,
+            id: idx as u128 + 1,
+            node_type: node_type.into(),
+            file: file.into(),
+            name: name.into(),
+            metadata: None,
+        }
+    }
+
+    #[test]
+    fn test_auto_hierarchy_depth_detection() {
+        let nodes = vec![
+            nref(0, "MODULE", "packages/a/src/main.ts", "main.ts"),
+            nref(1, "MODULE", "packages/b/lib/util.ts", "util.ts"),
+        ];
+        let h = auto_hierarchy_from_nodes(&nodes);
+        assert_eq!(h.len(), 5);
+        let names: Vec<&str> = h.iter().map(|l| l.name.as_str()).collect();
+        assert_eq!(names, vec!["dir1", "dir2", "dir3", "file", "symbol"]);
+        match &h[0].rule {
+            ContainerRule::FilePrefix(n) => assert_eq!(*n, 1),
+            _ => panic!("expected FilePrefix"),
+        }
+        match &h[2].rule {
+            ContainerRule::FilePrefix(n) => assert_eq!(*n, 3),
+            _ => panic!("expected FilePrefix"),
+        }
+    }
+
+    #[test]
+    fn test_auto_hierarchy_mixed_depth() {
+        let nodes = vec![
+            nref(0, "MODULE", "main.ts", "main.ts"),
+            nref(1, "MODULE", "src/a.ts", "a.ts"),
+            nref(2, "MODULE", "pkg/src/a/b/c.ts", "c.ts"),
+        ];
+        let h = auto_hierarchy_from_nodes(&nodes);
+        assert_eq!(h.len(), 6);
+        let names: Vec<&str> = h.iter().map(|l| l.name.as_str()).collect();
+        assert_eq!(names, vec!["dir1", "dir2", "dir3", "dir4", "file", "symbol"]);
+    }
+
+    #[test]
+    fn test_auto_hierarchy_empty_nodes() {
+        let h = auto_hierarchy_from_nodes(&[]);
+        assert_eq!(h.len(), 3);
+        let names: Vec<&str> = h.iter().map(|l| l.name.as_str()).collect();
+        assert_eq!(names, vec!["dir1", "file", "symbol"]);
+        match &h[0].rule {
+            ContainerRule::FilePrefix(n) => assert_eq!(*n, 1),
+            _ => panic!("expected FilePrefix"),
+        }
+        match &h[1].rule {
+            ContainerRule::NodeType(types) => assert_eq!(types, &vec!["MODULE".to_string()]),
+            _ => panic!("expected NodeType"),
+        }
+    }
+
+    #[test]
+    fn test_auto_hierarchy_clamps_at_10() {
+        // 15 segments → depth 14, should clamp to 10
+        let path = "a/b/c/d/e/f/g/h/i/j/k/l/m/n/o.ts";
+        assert_eq!(path.split('/').count(), 15);
+        let nodes = vec![nref(0, "MODULE", path, "o.ts")];
+        let h = auto_hierarchy_from_nodes(&nodes);
+        assert_eq!(h.len(), 12);
+        match &h[9].rule {
+            ContainerRule::FilePrefix(n) => assert_eq!(*n, 10),
+            _ => panic!("expected FilePrefix(10)"),
+        }
+        assert_eq!(h[10].name, "file");
+        assert_eq!(h[11].name, "symbol");
+    }
+
+    #[test]
+    fn test_auto_hierarchy_nesting_rules_produce_nested_containers() {
+        let nodes = vec![
+            nref(0, "FUNCTION", "a/b/c/foo.ts", "foo1"),
+            nref(1, "FUNCTION", "a/b/c/foo.ts", "foo2"),
+            nref(2, "FUNCTION", "a/b/d/bar.ts", "bar1"),
+        ];
+        let h = auto_hierarchy_from_nodes(&nodes);
+        // depth = 3 → dir1, dir2, dir3, file, symbol = 5 levels
+        assert_eq!(h.len(), 5);
+        let tree = ContainerTree::build(&h, &nodes, &[]);
+
+        // Level 0 (dir1): all share "a"
+        assert_eq!(tree.membership[0][0], "a");
+        assert_eq!(tree.membership[1][0], "a");
+        assert_eq!(tree.membership[2][0], "a");
+
+        // Level 1 (dir2): all share "a/b"
+        assert_eq!(tree.membership[0][1], "a/b");
+        assert_eq!(tree.membership[1][1], "a/b");
+        assert_eq!(tree.membership[2][1], "a/b");
+
+        // Level 2 (dir3): split
+        assert_eq!(tree.membership[0][2], "a/b/c");
+        assert_eq!(tree.membership[1][2], "a/b/c");
+        assert_eq!(tree.membership[2][2], "a/b/d");
     }
 }
