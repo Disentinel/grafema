@@ -16,16 +16,25 @@
 -- every @impl TraitName for TypeName@ block (see @rust_analyzer.rs@).
 module RustTraitResolution (resolveAll) where
 
-import Grafema.Types (GraphNode(..), GraphEdge(..))
+import Grafema.Types (GraphNode(..), GraphEdge(..), gnSemanticId)
 import Grafema.Protocol (PluginCommand(..))
 import qualified Grafema.GraphTraversal as G
 
+import Data.Text (Text)
 import qualified Data.Map.Strict as Map
+import Data.Map.Strict (Map)
+
+-- | Index nodes of a given type by name, returning @name -> gnId@.
+indexByName :: Text -> [GraphNode] -> Map Text Text
+indexByName ty nodes =
+  fmap gnId (G.buildIndexBy key nodes)
+  where
+    key n = if gnType n == ty then Just (gnName n) else Nothing
 
 resolveAll :: [GraphNode] -> [PluginCommand]
 resolveAll nodes =
-  let traitIdx  = Map.fromList [(gnName n, gnId n) | n <- nodes, gnType n == "TRAIT"]
-      structIdx = Map.fromList [(gnName n, gnId n) | n <- nodes, gnType n == "STRUCT"]
+  let traitIdx  = indexByName "TRAIT"  nodes
+      structIdx = indexByName "STRUCT" nodes
   in [ EmitEdge GraphEdge
          { geSource   = structId
          , geTarget   = traitId
@@ -35,7 +44,7 @@ resolveAll nodes =
      | n <- nodes
      , gnType n == "IMPL_BLOCK"
      , Just traitName <- [G.lookupMetaText "trait" n]
-     , Just typeName  <- [G.extractByMarker (gnId n) "IMPL_BLOCK->"]
+     , Just typeName  <- [G.extractByMarker (gnSemanticId n) "IMPL_BLOCK->"]
      , Just structId  <- [Map.lookup typeName structIdx]
      , Just traitId   <- [Map.lookup traitName traitIdx]
      ]
