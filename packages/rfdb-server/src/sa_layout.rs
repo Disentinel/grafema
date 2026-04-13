@@ -11,7 +11,7 @@
 //! 4. O(1) hex-ring connectivity check for migrate moves
 //! 5. 1-tile gap enforced between regions
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::container_hierarchy::ContainerTree;
 
@@ -130,6 +130,24 @@ pub struct SaEngine {
 }
 
 impl SaEngine {
+    /// Top-2 path segments joined by '/'. Used to group sub-regions into packages.
+    fn package_of(region: &str) -> String {
+        region.split('/').take(2).collect::<Vec<_>>().join("/")
+    }
+
+    /// Number of leading '/'-separated segments that two region paths share.
+    /// Returns 0 for the equal case — callers only use `depth > 0` for cross-region bonus.
+    fn common_ancestor_depth(a: &str, b: &str) -> usize {
+        if a == b { return 0; }
+        let mut i = 0usize;
+        let pa: Vec<&str> = a.split('/').collect();
+        let pb: Vec<&str> = b.split('/').collect();
+        while i < pa.len() && i < pb.len() && pa[i] == pb[i] {
+            i += 1;
+        }
+        i
+    }
+
     /// Create SA engine from layout data + container tree.
     pub fn new(
         nodes: &[LayoutNode],
@@ -172,14 +190,10 @@ impl SaEngine {
             }
         }
 
-        // Initial placement: competitive flood-fill
+        // Initial placement: sequential BFS per region (ported from TS hexLayout.ts)
         let mut tile_coords = vec![HexCoord::new(0, 0); n];
         let mut claimed: HashMap<HexCoord, u16> = HashMap::new();
         let mut tile_to_node: HashMap<HexCoord, u32> = HashMap::new();
-
-        // Place region seeds
-        let mut sorted_regions: Vec<usize> = (0..region_name_set.len()).collect();
-        sorted_regions.sort_by(|&a, &b| region_members[b].len().cmp(&region_members[a].len()));
 
         // Cross-region edge weights for seed placement
         let mut pair_weight: HashMap<(u16, u16), u32> = HashMap::new();
@@ -195,123 +209,188 @@ impl SaEngine {
                 *pair_weight.entry(key).or_insert(0) += 1;
             }
         }
-
-        let mut seeds: HashMap<u16, HexCoord> = HashMap::new();
-        if !sorted_regions.is_empty() {
-            let first = sorted_regions[0] as u16;
-            seeds.insert(first, HexCoord::new(0, 0));
-            claimed.insert(HexCoord::new(0, 0), first);
+        // Sibling-affinity bonus based on common ancestor depth
+        const SIBLING_BONUS: u32 = 5;
+        for i in 0..region_name_set.len() {
+            for j in (i + 1)..region_name_set.len() {
+                let depth = Self::common_ancestor_depth(&region_name_set[i], &region_name_set[j]);
+                if depth == 0 { continue; }
+                let (a, b) = (i as u16, j as u16);
+                let key = (a, b);
+                *pair_weight.entry(key).or_insert(0) += (depth as u32) * SIBLING_BONUS;
+            }
         }
 
-        for &ri in sorted_regions.iter().skip(1) {
-            let region = ri as u16;
-            let mut best_target = HexCoord::new(0, 0);
-            let mut best_weight = 0u32;
-            for (&placed, &coord) in &seeds {
-                let key = if region < placed { (region, placed) } else { (placed, region) };
-                let w = pair_weight.get(&key).copied().unwrap_or(0);
-                if w > best_weight {
-                    best_weight = w;
-                    best_target = coord;
+        // Group regions by package root (top-2 path segments). Sort
+        // sub-regions within a package by size desc; sort packages by total
+        // size desc. Flatten to a single ordered `sorted` list.
+        let mut package_groups: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        for (ri, name) in region_name_set.iter().enumerate() {
+            package_groups.entry(Self::package_of(name)).or_default().push(ri);
+        }
+        for subs in package_groups.values_mut() {
+            subs.sort_by(|&a, &b| {
+                region_members[b].len().cmp(&region_members[a].len())
+                    .then_with(|| region_name_set[a].cmp(&region_name_set[b]))
+            });
+        }
+        let mut packages_sorted: Vec<(String, Vec<usize>)> = package_groups.into_iter().collect();
+        packages_sorted.sort_by(|a, b| {
+            let ta: usize = a.1.iter().map(|&r| region_members[r].len()).sum();
+            let tb: usize = b.1.iter().map(|&r| region_members[r].len()).sum();
+            tb.cmp(&ta).then_with(|| a.0.cmp(&b.0))
+        });
+        let mut sorted: Vec<usize> = Vec::with_capacity(region_name_set.len());
+        for (_, subs) in packages_sorted {
+            sorted.extend(subs);
+        }
+
+        // TODO: sibling relaxation — see hexLayout.ts sameParent() (currently `a === b`).
+        let same_parent = |a: u16, b: u16, names: &[String]| -> bool {
+            names[a as usize] == names[b as usize]
+        };
+
+        // Gap enforcement: every neighbor must either be unclaimed or same region.
+        let can_claim = |coord: HexCoord, region: u16, claimed: &HashMap<HexCoord, u16>, names: &[String]| -> bool {
+            for &(dq, dr) in &CUBE_DIRS {
+                let nk = HexCoord::new(coord.q + dq, coord.r + dr);
+                if let Some(&owner) = claimed.get(&nk) {
+                    if !same_parent(owner, region, names) { return false; }
                 }
             }
+            true
+        };
 
-            let search_start = if best_weight > 0 { 3 } else { 6 };
-            let mut placed = false;
-            for rad in search_start..30 {
-                if placed { break; }
-                let mut rq = best_target.q + rad * CUBE_DIRS[4].0;
-                let mut rr = best_target.r + rad * CUBE_DIRS[4].1;
+        // Seed slot finder: hex spiral outward from `target`.
+        let max_radius: i32 = 80i32.max(((n as f64).sqrt().ceil() as i32) * 4);
+        let find_seed_slot = |region: u16, need: usize, target: HexCoord, claimed: &HashMap<HexCoord, u16>, names: &[String]| -> Option<HexCoord> {
+            if !claimed.contains_key(&target) && can_claim(target, region, claimed, names) {
+                // Also require the reachability hint at origin
+                let mut open = 0usize;
+                for &(dq, dr) in &CUBE_DIRS {
+                    if !claimed.contains_key(&HexCoord::new(target.q + dq, target.r + dr)) {
+                        open += 1;
+                    }
+                }
+                if open >= 2usize.min(need.saturating_sub(1)) {
+                    return Some(target);
+                }
+            }
+            for rad in 1..max_radius {
+                let mut rq = target.q + rad * CUBE_DIRS[4].0;
+                let mut rr = target.r + rad * CUBE_DIRS[4].1;
                 for side in 0..6 {
-                    if placed { break; }
                     for _ in 0..rad {
-                        if placed { break; }
-                        let coord = HexCoord::new(rq, rr);
-                        if !claimed.contains_key(&coord) {
-                            seeds.insert(region, coord);
-                            claimed.insert(coord, region);
-                            placed = true;
+                        let c = HexCoord::new(rq, rr);
+                        if !claimed.contains_key(&c) && can_claim(c, region, claimed, names) {
+                            let mut open = 0usize;
+                            for &(dq, dr) in &CUBE_DIRS {
+                                if !claimed.contains_key(&HexCoord::new(rq + dq, rr + dr)) {
+                                    open += 1;
+                                }
+                            }
+                            if open >= 2usize.min(need.saturating_sub(1)) {
+                                return Some(c);
+                            }
                         }
                         rq += CUBE_DIRS[side].0;
                         rr += CUBE_DIRS[side].1;
                     }
                 }
             }
-        }
-
-        // Gap enforcement helper
-        let can_claim = |coord: HexCoord, region: u16, claimed: &HashMap<HexCoord, u16>| -> bool {
-            for &(dq, dr) in &CUBE_DIRS {
-                let nk = HexCoord::new(coord.q + dq, coord.r + dr);
-                if let Some(&owner) = claimed.get(&nk) {
-                    if owner != region { return false; }
-                }
-            }
-            true
+            None
         };
 
-        // Flood fill
-        let mut frontiers: HashMap<u16, Vec<HexCoord>> = HashMap::new();
-        let mut remaining: HashMap<u16, usize> = HashMap::new();
-        for (ri, members) in region_members.iter().enumerate() {
-            let region = ri as u16;
-            if members.is_empty() { continue; }
-            remaining.insert(region, members.len().saturating_sub(1));
-            let seed = seeds.get(&region).copied().unwrap_or(HexCoord::new(0, 0));
-            let mut frontier = Vec::new();
+        // BFS grow a region from its seed, claiming exactly `need` tiles.
+        // Frontier kept as a BTreeSet of (q, r) pairs for deterministic iteration.
+        let grow_region = |region: u16, seed: HexCoord, need: usize, claimed: &mut HashMap<HexCoord, u16>, names: &[String]| {
+            claimed.insert(seed, region);
+            let mut frontier: std::collections::BTreeSet<(i32, i32)> = std::collections::BTreeSet::new();
             for &(dq, dr) in &CUBE_DIRS {
                 let nk = HexCoord::new(seed.q + dq, seed.r + dr);
-                if !claimed.contains_key(&nk) {
-                    frontier.push(nk);
+                if !claimed.contains_key(&nk) && can_claim(nk, region, claimed, names) {
+                    frontier.insert((nk.q, nk.r));
                 }
             }
-            frontiers.insert(region, frontier);
-        }
-
-        for _ in 0..500 {
-            let mut any = false;
-            for (ri, members) in region_members.iter().enumerate() {
-                let region = ri as u16;
-                let need = remaining.get(&region).copied().unwrap_or(0);
-                if need == 0 { continue; }
-                let frontier = match frontiers.get_mut(&region) {
-                    Some(f) => f,
-                    None => continue,
-                };
-                frontier.retain(|c| !claimed.contains_key(c));
-                if frontier.is_empty() { continue; }
-
-                // Pick tile with most same-region neighbors
-                let mut best_idx = 0;
+            let mut claimed_count = 1usize;
+            while claimed_count < need {
+                let mut best: Option<HexCoord> = None;
                 let mut best_score: i32 = -1;
-                for (fi, &coord) in frontier.iter().enumerate() {
-                    if !can_claim(coord, region, &claimed) { continue; }
+                let mut best_dist: i32 = i32::MAX;
+                for &(fq, fr) in frontier.iter() {
+                    let c = HexCoord::new(fq, fr);
+                    if claimed.contains_key(&c) { continue; }
+                    if !can_claim(c, region, claimed, names) { continue; }
                     let mut score = 0i32;
                     for &(dq, dr) in &CUBE_DIRS {
-                        if claimed.get(&HexCoord::new(coord.q + dq, coord.r + dr)) == Some(&region) {
+                        if claimed.get(&HexCoord::new(c.q + dq, c.r + dr)) == Some(&region) {
                             score += 1;
                         }
                     }
-                    if score > best_score { best_score = score; best_idx = fi; }
+                    let dist = c.distance(seed);
+                    if score > best_score || (score == best_score && dist < best_dist) {
+                        best_score = score;
+                        best_dist = dist;
+                        best = Some(c);
+                    }
                 }
-                if best_score < 0 { continue; }
-
-                let chosen = frontier.swap_remove(best_idx);
+                let chosen = match best {
+                    Some(c) => c,
+                    None => break,
+                };
                 claimed.insert(chosen, region);
-                remaining.insert(region, need - 1);
-                any = true;
-
+                frontier.remove(&(chosen.q, chosen.r));
+                claimed_count += 1;
                 for &(dq, dr) in &CUBE_DIRS {
                     let nk = HexCoord::new(chosen.q + dq, chosen.r + dr);
-                    if !claimed.contains_key(&nk) {
-                        frontier.push(nk);
+                    if !claimed.contains_key(&nk) && can_claim(nk, region, claimed, names) {
+                        frontier.insert((nk.q, nk.r));
                     }
                 }
             }
-            if !any { break; }
+        };
+
+        // Place each region in the sorted order.
+        let mut seeds: HashMap<u16, HexCoord> = HashMap::new();
+        let mut seeds_order: Vec<u16> = Vec::new();
+        for &ri in &sorted {
+            let region = ri as u16;
+            let need = region_members[ri].len();
+            if need == 0 { continue; }
+
+            // Pick a target near the highest-pair-weight already-placed seed.
+            // Iterate in insertion order for determinism.
+            let mut target = HexCoord::new(0, 0);
+            let mut best_weight = 0u32;
+            for &placed in &seeds_order {
+                let placed_seed = seeds[&placed];
+                let key = if region < placed { (region, placed) } else { (placed, region) };
+                let w = pair_weight.get(&key).copied().unwrap_or(0);
+                if w > best_weight {
+                    best_weight = w;
+                    target = placed_seed;
+                }
+            }
+
+            let seed_opt = find_seed_slot(region, need, target, &claimed, &region_name_set)
+                .or_else(|| {
+                    if target != HexCoord::new(0, 0) {
+                        find_seed_slot(region, need, HexCoord::new(0, 0), &claimed, &region_name_set)
+                    } else {
+                        None
+                    }
+                });
+            let seed = match seed_opt {
+                Some(s) => s,
+                None => continue,
+            };
+            seeds.insert(region, seed);
+            seeds_order.push(region);
+            grow_region(region, seed, need, &mut claimed, &region_name_set);
         }
 
         // Assign nodes to tiles by degree (important near center)
+        let mut placed_node: Vec<bool> = vec![false; n];
         for (ri, members) in region_members.iter().enumerate() {
             let region = ri as u16;
             let seed = seeds.get(&region).copied().unwrap_or(HexCoord::new(0, 0));
@@ -321,7 +400,11 @@ impl SaEngine {
                 .filter(|(_, &r)| r == region)
                 .map(|(&c, _)| c)
                 .collect();
-            tiles.sort_by_key(|&c| c.distance(seed));
+            tiles.sort_by(|&a, &b| {
+                a.distance(seed).cmp(&b.distance(seed))
+                    .then_with(|| a.q.cmp(&b.q))
+                    .then_with(|| a.r.cmp(&b.r))
+            });
 
             let mut sorted_members = members.clone();
             sorted_members.sort_by(|&a, &b| {
@@ -332,6 +415,41 @@ impl SaEngine {
                 if j < tiles.len() {
                     tile_coords[ni as usize] = tiles[j];
                     tile_to_node.insert(tiles[j], ni);
+                    placed_node[ni as usize] = true;
+                }
+            }
+        }
+
+        // Overflow spiral: place any nodes whose region couldn't BFS-grow enough tiles.
+        let mut overflow_radius: i32 = 0;
+        for &c in claimed.keys() {
+            overflow_radius = overflow_radius.max(c.q.abs()).max(c.r.abs());
+        }
+        overflow_radius += 3;
+        for i in 0..n {
+            if placed_node[i] { continue; }
+            let region = node_region[i];
+            let max_extra = (n as i32).max(1);
+            let mut placed = false;
+            for rad in overflow_radius..(overflow_radius + max_extra) {
+                if placed { break; }
+                let mut rq = rad * CUBE_DIRS[4].0;
+                let mut rr = rad * CUBE_DIRS[4].1;
+                for side in 0..6 {
+                    if placed { break; }
+                    for _ in 0..rad {
+                        let c = HexCoord::new(rq, rr);
+                        if !claimed.contains_key(&c) {
+                            claimed.insert(c, region);
+                            tile_coords[i] = c;
+                            tile_to_node.insert(c, i as u32);
+                            placed_node[i] = true;
+                            placed = true;
+                            break;
+                        }
+                        rq += CUBE_DIRS[side].0;
+                        rr += CUBE_DIRS[side].1;
+                    }
                 }
             }
         }
@@ -671,6 +789,94 @@ mod tests {
         for &coord in engine.tile_coords.iter() {
             let region = engine.claimed.get(&coord).copied().unwrap_or(0);
             let _ = engine.would_disconnect(coord, region);
+        }
+    }
+
+    #[test]
+    fn test_sequential_bfs_produces_compact_regions() {
+        // 3 regions grouped under pkg/: pkg/util (8 nodes), pkg/util/core (6 nodes), pkg/cli (4 nodes).
+        // Two-level hierarchy so regions include the full sub-path.
+        let mut node_refs: Vec<NodeRef> = Vec::new();
+        let mut idx: u32 = 0;
+        let mut add = |nrefs: &mut Vec<NodeRef>, idx: &mut u32, file: &str| {
+            nrefs.push(NodeRef {
+                idx: *idx,
+                id: (*idx + 1) as u128,
+                node_type: "FUNCTION".into(),
+                file: file.into(),
+                name: format!("f{}", *idx),
+                metadata: None,
+            });
+            *idx += 1;
+        };
+        for i in 0..8 { add(&mut node_refs, &mut idx, &format!("pkg/util/file{}.ts", i)); }
+        for i in 0..6 { add(&mut node_refs, &mut idx, &format!("pkg/util/core/file{}.ts", i)); }
+        for i in 0..4 { add(&mut node_refs, &mut idx, &format!("pkg/cli/file{}.ts", i)); }
+
+        let edge_refs: Vec<EdgeRef> = vec![]; // no semantic edges needed for this test
+
+        // Hierarchy: group by top-3 segments so "pkg/util" and "pkg/util/core" are separate regions.
+        let hierarchy = vec![
+            HierarchyLevel::new("package", ContainerRule::FilePrefix(3)),
+        ];
+        let tree = ContainerTree::build(&hierarchy, &node_refs, &edge_refs);
+
+        let layout_nodes: Vec<LayoutNode> = node_refs.iter().map(|nn| LayoutNode {
+            idx: nn.idx,
+            region: tree.sa_region(nn.idx).to_string(),
+            degree: 0,
+        }).collect();
+        let layout_edges: Vec<LayoutEdge> = vec![];
+
+        let engine = SaEngine::new(&layout_nodes, &layout_edges, &tree);
+
+        // Group tiles by region
+        let mut by_region: HashMap<u16, Vec<HexCoord>> = HashMap::new();
+        for (i, &c) in engine.tile_coords.iter().enumerate() {
+            by_region.entry(engine.node_region[i]).or_default().push(c);
+        }
+
+        assert!(by_region.len() >= 3, "expected >=3 regions, got {}", by_region.len());
+
+        for (region, tiles) in &by_region {
+            let region_tile_set: HashSet<HexCoord> = tiles.iter().copied().collect();
+            assert_eq!(region_tile_set.len(), tiles.len(), "duplicate coords in region {}", region);
+
+            // (a) Connectivity: BFS through same-region neighbors must reach every tile.
+            let start = tiles[0];
+            let mut seen: HashSet<HexCoord> = HashSet::new();
+            let mut queue: Vec<HexCoord> = vec![start];
+            seen.insert(start);
+            while let Some(c) = queue.pop() {
+                for &(dq, dr) in &CUBE_DIRS {
+                    let nk = HexCoord::new(c.q + dq, c.r + dr);
+                    if region_tile_set.contains(&nk) && !seen.contains(&nk) {
+                        seen.insert(nk);
+                        queue.push(nk);
+                    }
+                }
+            }
+            assert_eq!(
+                seen.len(), tiles.len(),
+                "region {} not connected: {}/{} tiles reachable",
+                region, seen.len(), tiles.len()
+            );
+
+            // (b) Compactness: max(|q|, |r|) spread ≤ ceil(sqrt(N) * 2.5).
+            let n = tiles.len() as f64;
+            let bound = (n.sqrt() * 2.5).ceil() as i32;
+            // Measure spread around the centroid (region isn't necessarily at origin).
+            let (mut mn_q, mut mx_q, mut mn_r, mut mx_r) = (i32::MAX, i32::MIN, i32::MAX, i32::MIN);
+            for c in tiles {
+                mn_q = mn_q.min(c.q); mx_q = mx_q.max(c.q);
+                mn_r = mn_r.min(c.r); mx_r = mx_r.max(c.r);
+            }
+            let spread = (mx_q - mn_q).max(mx_r - mn_r);
+            assert!(
+                spread <= bound * 2,
+                "region {} not compact: spread={} bound={}",
+                region, spread, bound * 2
+            );
         }
     }
 
