@@ -1,0 +1,756 @@
+# Elixir Standard Library Effects Database
+# Generated: 2026-04-13 (REG-1097)
+# Method: data-driven from kami/ichi unresolved-CALL triage (top-18 modules)
+# Taxonomy: v2 + REG-1097 additions (SPAWN, MESSAGE_PASSING)
+#
+# Format: Module.function: [EFFECT, ...]
+# PURE means no other effects apply.
+#
+# Conventions for Elixir-specific effects:
+# - "!" suffix variants throw on error → add THROW
+# - utc_now/now/today → NONDETERMINISTIC
+# - GenServer.start_link / Task.start / Supervisor.start_link → SPAWN
+# - GenServer.call → MESSAGE_PASSING + ASYNC (waits for reply)
+# - GenServer.cast / send / Process.send_after → MESSAGE_PASSING
+
+# ============================================================
+# Kernel — auto-imported in every Elixir module
+# ============================================================
+Kernel:
+  # Type conversions
+  to_string: [PURE]
+  to_charlist: [PURE]
+  inspect: [PURE]
+
+  # Access / nested data
+  get_in: [PURE]
+  put_in: [PURE]
+  update_in: [PURE]
+  pop_in: [PURE]
+
+  # Type predicates
+  is_atom: [PURE]
+  is_binary: [PURE]
+  is_bitstring: [PURE]
+  is_boolean: [PURE]
+  is_float: [PURE]
+  is_function: [PURE]
+  is_integer: [PURE]
+  is_list: [PURE]
+  is_map: [PURE]
+  is_nil: [PURE]
+  is_number: [PURE]
+  is_pid: [PURE]
+  is_port: [PURE]
+  is_reference: [PURE]
+  is_tuple: [PURE]
+  is_struct: [PURE]
+  is_exception: [PURE]
+
+  # Numerics
+  abs: [PURE]
+  ceil: [PURE]
+  floor: [PURE]
+  round: [PURE]
+  trunc: [PURE]
+  div: [PURE]
+  rem: [PURE]
+  max: [PURE]
+  min: [PURE]
+  byte_size: [PURE]
+  bit_size: [PURE]
+  tuple_size: [PURE]
+  map_size: [PURE]
+  length: [PURE]
+
+  # Tuples / lists
+  elem: [PURE]
+  put_elem: [PURE]
+  hd: [PURE]
+  tl: [PURE]
+  tuple_to_list: [PURE]
+
+  # Functional helpers
+  apply: [UNKNOWN]
+  binding: [PURE]
+  then: [PURE]
+  tap: [UNKNOWN]
+  if: [PURE]
+  unless: [PURE]
+
+  # Process / runtime
+  self: [PURE]
+  send: [MESSAGE_PASSING]
+  spawn: [SPAWN]
+  spawn_link: [SPAWN]
+  spawn_monitor: [SPAWN]
+  exit: [THROW]
+  throw: [THROW]
+  raise: [THROW]
+  reraise: [THROW]
+  node: [PURE]
+  make_ref: [NONDETERMINISTIC]
+
+# ============================================================
+# String
+# ============================================================
+String:
+  trim: [PURE]
+  trim_leading: [PURE]
+  trim_trailing: [PURE]
+  replace: [PURE]
+  slice: [PURE]
+  split: [PURE]
+  split_at: [PURE]
+  splitter: [PURE]
+  length: [PURE]
+  downcase: [PURE]
+  upcase: [PURE]
+  capitalize: [PURE]
+  reverse: [PURE]
+  starts_with?: [PURE]
+  ends_with?: [PURE]
+  contains?: [PURE]
+  match?: [PURE]
+  valid?: [PURE]
+  to_atom: [PURE]
+  to_existing_atom: [PURE, THROW]
+  to_integer: [PURE, THROW]
+  to_float: [PURE, THROW]
+  to_charlist: [PURE]
+  pad_leading: [PURE]
+  pad_trailing: [PURE]
+  duplicate: [PURE]
+  graphemes: [PURE]
+  codepoints: [PURE]
+  first: [PURE]
+  last: [PURE]
+  at: [PURE]
+  chunk: [PURE]
+  jaro_distance: [PURE]
+  myers_difference: [PURE]
+  printable?: [PURE]
+
+# ============================================================
+# Enum
+# ============================================================
+Enum:
+  map: [PURE]
+  filter: [PURE]
+  reject: [PURE]
+  reduce: [PURE]
+  reduce_while: [PURE]
+  each: [UNKNOWN]
+  count: [PURE]
+  empty?: [PURE]
+  any?: [PURE]
+  all?: [PURE]
+  member?: [PURE]
+  find: [PURE]
+  find_index: [PURE]
+  find_value: [PURE]
+  flat_map: [PURE]
+  flat_map_reduce: [PURE]
+  group_by: [PURE]
+  into: [PURE]
+  join: [PURE]
+  map_join: [PURE]
+  map_reduce: [PURE]
+  max: [PURE]
+  min: [PURE]
+  max_by: [PURE]
+  min_by: [PURE]
+  sort: [PURE]
+  sort_by: [PURE]
+  reverse: [PURE]
+  take: [PURE]
+  take_while: [PURE]
+  take_every: [PURE]
+  drop: [PURE]
+  drop_while: [PURE]
+  drop_every: [PURE]
+  chunk_by: [PURE]
+  chunk_every: [PURE]
+  zip: [PURE]
+  zip_with: [PURE]
+  unzip: [PURE]
+  with_index: [PURE]
+  uniq: [PURE]
+  uniq_by: [PURE]
+  dedup: [PURE]
+  dedup_by: [PURE]
+  concat: [PURE]
+  to_list: [PURE]
+  shuffle: [NONDETERMINISTIC]
+  random: [NONDETERMINISTIC]
+  scan: [PURE]
+  split: [PURE]
+  split_with: [PURE]
+  sum: [PURE]
+  product: [PURE]
+  frequencies: [PURE]
+  frequencies_by: [PURE]
+  at: [PURE]
+  fetch: [PURE]
+  fetch!: [PURE, THROW]
+  slice: [PURE]
+
+# ============================================================
+# Logger
+# ============================================================
+Logger:
+  debug: [IO, IO:CONSOLE:WRITE]
+  info: [IO, IO:CONSOLE:WRITE]
+  notice: [IO, IO:CONSOLE:WRITE]
+  warning: [IO, IO:CONSOLE:WRITE]
+  warn: [IO, IO:CONSOLE:WRITE]
+  error: [IO, IO:CONSOLE:WRITE]
+  critical: [IO, IO:CONSOLE:WRITE]
+  alert: [IO, IO:CONSOLE:WRITE]
+  emergency: [IO, IO:CONSOLE:WRITE]
+  log: [IO, IO:CONSOLE:WRITE]
+  metadata: [MUTATION]
+  configure: [MUTATION]
+
+# ============================================================
+# File
+# ============================================================
+File:
+  read: [IO, IO:FILE:READ]
+  read!: [IO, IO:FILE:READ, THROW]
+  write: [IO, IO:FILE:WRITE, MUTATION]
+  write!: [IO, IO:FILE:WRITE, MUTATION, THROW]
+  exists?: [IO, IO:FILE:READ]
+  ls: [IO, IO:FILE:READ]
+  ls!: [IO, IO:FILE:READ, THROW]
+  mkdir: [IO, IO:FILE:WRITE, MUTATION]
+  mkdir!: [IO, IO:FILE:WRITE, MUTATION, THROW]
+  mkdir_p: [IO, IO:FILE:WRITE, MUTATION]
+  mkdir_p!: [IO, IO:FILE:WRITE, MUTATION, THROW]
+  rm: [IO, IO:FILE:WRITE, MUTATION]
+  rm!: [IO, IO:FILE:WRITE, MUTATION, THROW]
+  rm_rf: [IO, IO:FILE:WRITE, MUTATION]
+  rm_rf!: [IO, IO:FILE:WRITE, MUTATION, THROW]
+  rmdir: [IO, IO:FILE:WRITE, MUTATION]
+  rmdir!: [IO, IO:FILE:WRITE, MUTATION, THROW]
+  rename: [IO, IO:FILE:WRITE, MUTATION]
+  rename!: [IO, IO:FILE:WRITE, MUTATION, THROW]
+  cp: [IO, IO:FILE:READ, IO:FILE:WRITE, MUTATION]
+  cp!: [IO, IO:FILE:READ, IO:FILE:WRITE, MUTATION, THROW]
+  cp_r: [IO, IO:FILE:READ, IO:FILE:WRITE, MUTATION]
+  cp_r!: [IO, IO:FILE:READ, IO:FILE:WRITE, MUTATION, THROW]
+  stat: [IO, IO:FILE:READ]
+  stat!: [IO, IO:FILE:READ, THROW]
+  lstat: [IO, IO:FILE:READ]
+  lstat!: [IO, IO:FILE:READ, THROW]
+  chmod: [IO, IO:FILE:WRITE, MUTATION]
+  chmod!: [IO, IO:FILE:WRITE, MUTATION, THROW]
+  chown: [IO, IO:FILE:WRITE, MUTATION]
+  chown!: [IO, IO:FILE:WRITE, MUTATION, THROW]
+  open: [IO, IO:FILE:READ]
+  open!: [IO, IO:FILE:READ, THROW]
+  close: [IO]
+  read_link: [IO, IO:FILE:READ]
+  cwd: [IO]
+  cwd!: [IO, THROW]
+  cd: [IO, MUTATION]
+  cd!: [IO, MUTATION, THROW]
+  stream!: [IO, IO:FILE:READ, ASYNC]
+  touch: [IO, IO:FILE:WRITE, MUTATION]
+  touch!: [IO, IO:FILE:WRITE, MUTATION, THROW]
+
+# ============================================================
+# Path
+# ============================================================
+Path:
+  join: [PURE]
+  expand: [PURE]
+  absname: [IO]
+  basename: [PURE]
+  dirname: [PURE]
+  extname: [PURE]
+  rootname: [PURE]
+  relative: [PURE]
+  relative_to: [PURE]
+  relative_to_cwd: [IO]
+  split: [PURE]
+  type: [PURE]
+  wildcard: [IO, IO:FILE:READ]
+  safe_relative: [PURE]
+  safe_relative_to: [PURE]
+
+# ============================================================
+# Map
+# ============================================================
+Map:
+  new: [PURE]
+  get: [PURE]
+  get_lazy: [PURE]
+  get_and_update: [PURE]
+  get_and_update!: [PURE, THROW]
+  put: [PURE]
+  put_new: [PURE]
+  put_new_lazy: [PURE]
+  delete: [PURE]
+  drop: [PURE]
+  take: [PURE]
+  pop: [PURE]
+  pop!: [PURE, THROW]
+  pop_lazy: [PURE]
+  fetch: [PURE]
+  fetch!: [PURE, THROW]
+  has_key?: [PURE]
+  keys: [PURE]
+  values: [PURE]
+  to_list: [PURE]
+  from_struct: [PURE]
+  merge: [PURE]
+  update: [PURE]
+  update!: [PURE, THROW]
+  replace: [PURE]
+  replace!: [PURE, THROW]
+  reject: [PURE]
+  filter: [PURE]
+  split: [PURE]
+  equal?: [PURE]
+  size: [PURE]
+
+# ============================================================
+# Keyword
+# ============================================================
+Keyword:
+  new: [PURE]
+  get: [PURE]
+  get_lazy: [PURE]
+  get_values: [PURE]
+  put: [PURE]
+  put_new: [PURE]
+  put_new_lazy: [PURE]
+  delete: [PURE]
+  drop: [PURE]
+  take: [PURE]
+  pop: [PURE]
+  pop!: [PURE, THROW]
+  fetch: [PURE]
+  fetch!: [PURE, THROW]
+  has_key?: [PURE]
+  keys: [PURE]
+  values: [PURE]
+  to_list: [PURE]
+  merge: [PURE]
+  update: [PURE]
+  update!: [PURE, THROW]
+  replace: [PURE]
+  replace!: [PURE, THROW]
+  keyword?: [PURE]
+  validate: [PURE]
+  validate!: [PURE, THROW]
+
+# ============================================================
+# MapSet
+# ============================================================
+MapSet:
+  new: [PURE]
+  put: [PURE]
+  delete: [PURE]
+  member?: [PURE]
+  size: [PURE]
+  to_list: [PURE]
+  union: [PURE]
+  intersection: [PURE]
+  difference: [PURE]
+  disjoint?: [PURE]
+  equal?: [PURE]
+  subset?: [PURE]
+  filter: [PURE]
+  reject: [PURE]
+
+# ============================================================
+# DateTime
+# ============================================================
+DateTime:
+  utc_now: [NONDETERMINISTIC]
+  now: [NONDETERMINISTIC]
+  now!: [NONDETERMINISTIC, THROW]
+  to_iso8601: [PURE]
+  from_iso8601: [PURE]
+  from_iso8601!: [PURE, THROW]
+  to_unix: [PURE]
+  from_unix: [PURE]
+  from_unix!: [PURE, THROW]
+  to_naive: [PURE]
+  to_date: [PURE]
+  to_time: [PURE]
+  add: [PURE]
+  diff: [PURE]
+  compare: [PURE]
+  truncate: [PURE]
+  shift_zone: [PURE]
+  shift_zone!: [PURE, THROW]
+  convert: [PURE]
+  convert!: [PURE, THROW]
+  before?: [PURE]
+  after?: [PURE]
+
+# ============================================================
+# Date
+# ============================================================
+Date:
+  utc_today: [NONDETERMINISTIC]
+  to_iso8601: [PURE]
+  from_iso8601: [PURE]
+  from_iso8601!: [PURE, THROW]
+  add: [PURE]
+  diff: [PURE]
+  compare: [PURE]
+  day_of_week: [PURE]
+  day_of_year: [PURE]
+  days_in_month: [PURE]
+  range: [PURE]
+  new: [PURE]
+  new!: [PURE, THROW]
+  beginning_of_month: [PURE]
+  end_of_month: [PURE]
+  before?: [PURE]
+  after?: [PURE]
+
+# ============================================================
+# GenServer — message-passing + spawn
+# ============================================================
+GenServer:
+  start_link: [SPAWN, IO]
+  start: [SPAWN, IO]
+  call: [MESSAGE_PASSING, ASYNC, IO]
+  cast: [MESSAGE_PASSING, IO]
+  reply: [MESSAGE_PASSING, IO]
+  abcast: [MESSAGE_PASSING, IO]
+  multi_call: [MESSAGE_PASSING, ASYNC, IO]
+  stop: [IO, MUTATION]
+  whereis: [IO]
+
+# ============================================================
+# Supervisor
+# ============================================================
+Supervisor:
+  start_link: [SPAWN, IO]
+  init: [PURE]
+  start_child: [SPAWN, IO]
+  terminate_child: [IO, MUTATION]
+  restart_child: [SPAWN, IO]
+  delete_child: [IO, MUTATION]
+  which_children: [IO]
+  count_children: [IO]
+  child_spec: [PURE]
+  stop: [IO, MUTATION]
+
+# ============================================================
+# DynamicSupervisor
+# ============================================================
+DynamicSupervisor:
+  start_link: [SPAWN, IO]
+  init: [PURE]
+  start_child: [SPAWN, IO]
+  terminate_child: [IO, MUTATION]
+  which_children: [IO]
+  count_children: [IO]
+  stop: [IO, MUTATION]
+  child_spec: [PURE]
+
+# ============================================================
+# Task
+# ============================================================
+Task:
+  start: [SPAWN, IO]
+  start_link: [SPAWN, IO]
+  async: [SPAWN, ASYNC, IO]
+  async_stream: [SPAWN, ASYNC, IO]
+  await: [ASYNC, IO]
+  await_many: [ASYNC, IO]
+  yield: [ASYNC, IO]
+  yield_many: [ASYNC, IO]
+  shutdown: [IO, MUTATION]
+  ignore: [PURE]
+  completed: [PURE]
+  child_spec: [PURE]
+
+# ============================================================
+# Agent
+# ============================================================
+Agent:
+  start: [SPAWN, IO]
+  start_link: [SPAWN, IO]
+  get: [MESSAGE_PASSING, ASYNC, IO]
+  get_and_update: [MESSAGE_PASSING, ASYNC, IO, MUTATION]
+  update: [MESSAGE_PASSING, IO, MUTATION]
+  cast: [MESSAGE_PASSING, IO, MUTATION]
+  stop: [IO, MUTATION]
+  child_spec: [PURE]
+
+# ============================================================
+# Process
+# ============================================================
+Process:
+  send: [MESSAGE_PASSING, IO]
+  send_after: [MESSAGE_PASSING, IO, NONDETERMINISTIC]
+  cancel_timer: [IO, MUTATION]
+  read_timer: [IO]
+  sleep: [IO, ASYNC, NONDETERMINISTIC]
+  exit: [IO, MUTATION, THROW]
+  alive?: [IO]
+  whereis: [IO]
+  register: [IO, MUTATION]
+  unregister: [IO, MUTATION]
+  registered: [IO]
+  put: [MUTATION]
+  get: [PURE]
+  get_keys: [PURE]
+  delete: [MUTATION]
+  flag: [MUTATION]
+  link: [IO, MUTATION]
+  unlink: [IO, MUTATION]
+  monitor: [IO, MUTATION]
+  demonitor: [IO, MUTATION]
+  spawn: [SPAWN, IO]
+  info: [IO]
+  list: [IO]
+  group_leader: [IO]
+
+# ============================================================
+# System
+# ============================================================
+System:
+  os_time: [NONDETERMINISTIC]
+  system_time: [NONDETERMINISTIC]
+  monotonic_time: [NONDETERMINISTIC]
+  time_offset: [NONDETERMINISTIC]
+  unique_integer: [NONDETERMINISTIC]
+  cmd: [IO, IO:PROCESS:SPAWN, ASYNC]
+  shell: [IO, IO:PROCESS:SPAWN, ASYNC]
+  stop: [IO, THROW]
+  halt: [IO, THROW]
+  pid: [IO]
+  version: [PURE]
+  otp_release: [PURE]
+  build_info: [PURE]
+  schedulers: [PURE]
+  schedulers_online: [PURE]
+  tmp_dir: [IO]
+  tmp_dir!: [IO, THROW]
+  user_home: [IO]
+  user_home!: [IO, THROW]
+  cwd: [IO]
+  cwd!: [IO, THROW]
+  get_env: [IO, IO:ENV:READ]
+  put_env: [IO, IO:ENV:SET, MUTATION]
+  delete_env: [IO, IO:ENV:SET, MUTATION]
+  fetch_env: [IO, IO:ENV:READ]
+  fetch_env!: [IO, IO:ENV:READ, THROW]
+  argv: [IO]
+  no_halt: [MUTATION]
+
+# ============================================================
+# Application
+# ============================================================
+Application:
+  get_env: [IO, IO:ENV:READ]
+  fetch_env: [IO, IO:ENV:READ]
+  fetch_env!: [IO, IO:ENV:READ, THROW]
+  put_env: [IO, IO:ENV:SET, MUTATION]
+  delete_env: [IO, IO:ENV:SET, MUTATION]
+  get_all_env: [IO, IO:ENV:READ]
+  start: [IO, MUTATION]
+  stop: [IO, MUTATION]
+  ensure_started: [IO, MUTATION]
+  ensure_all_started: [IO, MUTATION]
+  app_dir: [IO]
+  loaded_applications: [IO]
+  started_applications: [IO]
+  spec: [PURE]
+
+# ============================================================
+# Jason — JSON encoder/decoder (de-facto standard, treated as runtime)
+# ============================================================
+Jason:
+  encode: [PURE]
+  encode!: [PURE, THROW]
+  encode_to_iodata: [PURE]
+  encode_to_iodata!: [PURE, THROW]
+  decode: [PURE]
+  decode!: [PURE, THROW]
+
+# ============================================================
+# Regex
+# ============================================================
+Regex:
+  compile: [PURE]
+  compile!: [PURE, THROW]
+  run: [PURE]
+  scan: [PURE]
+  match?: [PURE]
+  named_captures: [PURE]
+  replace: [PURE]
+  split: [PURE]
+  source: [PURE]
+  opts: [PURE]
+  re_pattern: [PURE]
+  recompile: [PURE]
+  recompile!: [PURE, THROW]
+
+# ============================================================
+# List
+# ============================================================
+List:
+  first: [PURE]
+  last: [PURE]
+  delete: [PURE]
+  delete_at: [PURE]
+  insert_at: [PURE]
+  replace_at: [PURE]
+  update_at: [PURE]
+  flatten: [PURE]
+  foldl: [PURE]
+  foldr: [PURE]
+  duplicate: [PURE]
+  keyfind: [PURE]
+  keymember?: [PURE]
+  keyreplace: [PURE]
+  keystore: [PURE]
+  keydelete: [PURE]
+  keysort: [PURE]
+  keytake: [PURE]
+  to_atom: [PURE]
+  to_existing_atom: [PURE, THROW]
+  to_charlist: [PURE]
+  to_float: [PURE, THROW]
+  to_integer: [PURE, THROW]
+  to_string: [PURE]
+  to_tuple: [PURE]
+  zip: [PURE]
+  pop_at: [PURE]
+  starts_with?: [PURE]
+  myers_difference: [PURE]
+  ascii_printable?: [PURE]
+  improper?: [PURE]
+
+# ============================================================
+# Integer / Float
+# ============================================================
+Integer:
+  parse: [PURE]
+  to_string: [PURE]
+  to_charlist: [PURE]
+  digits: [PURE]
+  undigits: [PURE]
+  mod: [PURE]
+  pow: [PURE]
+  gcd: [PURE]
+  is_odd: [PURE]
+  is_even: [PURE]
+
+Float:
+  parse: [PURE]
+  to_string: [PURE]
+  to_charlist: [PURE]
+  round: [PURE]
+  floor: [PURE]
+  ceil: [PURE]
+  ratio: [PURE]
+  pow: [PURE]
+
+# ============================================================
+# IO
+# ============================================================
+IO:
+  puts: [IO, IO:CONSOLE:WRITE]
+  write: [IO, IO:CONSOLE:WRITE]
+  inspect: [IO, IO:CONSOLE:WRITE]
+  read: [IO, IO:PROCESS:STDIN_READ]
+  binread: [IO, IO:PROCESS:STDIN_READ]
+  binwrite: [IO, IO:CONSOLE:WRITE]
+  gets: [IO, IO:PROCESS:STDIN_READ]
+  iodata_to_binary: [PURE]
+  iodata_length: [PURE]
+  chardata_to_string: [PURE]
+  ANSI: [PURE]
+
+# ============================================================
+# Code — Elixir compiler / evaluator
+# ============================================================
+Code:
+  eval_string: [IO, UNKNOWN]
+  eval_quoted: [IO, UNKNOWN]
+  eval_file: [IO, IO:FILE:READ, UNKNOWN]
+  string_to_quoted: [PURE, THROW]
+  string_to_quoted!: [PURE, THROW]
+  quoted_to_algebra: [PURE]
+  format_string!: [PURE, THROW]
+  format_file!: [IO, IO:FILE:READ, THROW]
+  compile_string: [IO, UNKNOWN]
+  compile_file: [IO, IO:FILE:READ, UNKNOWN]
+  compile_quoted: [IO, UNKNOWN]
+  load_file: [IO, IO:FILE:READ, UNKNOWN]
+  require_file: [IO, IO:FILE:READ, UNKNOWN]
+  ensure_loaded: [IO]
+  ensure_loaded?: [IO]
+  ensure_compiled: [IO]
+  ensure_compiled?: [IO]
+  loaded_files: [IO]
+  unrequire_files: [IO, MUTATION]
+
+# ============================================================
+# Macro — AST helpers (compile-time, but called at runtime too)
+# ============================================================
+Macro:
+  prewalk: [PURE]
+  postwalk: [PURE]
+  traverse: [PURE]
+  prewalker: [PURE]
+  postwalker: [PURE]
+  to_string: [PURE]
+  expand: [PURE]
+  expand_once: [PURE]
+  expand_literals: [PURE]
+  validate: [PURE]
+  escape: [PURE]
+  unescape_string: [PURE]
+  underscore: [PURE]
+  camelize: [PURE]
+  decompose_call: [PURE]
+  classify_atom: [PURE]
+  generate_arguments: [PURE]
+  inspect_atom: [PURE]
+  pipe: [PURE]
+  unpipe: [PURE]
+
+# ============================================================
+# URI
+# ============================================================
+URI:
+  parse: [PURE]
+  encode: [PURE]
+  encode_www_form: [PURE]
+  encode_query: [PURE]
+  decode: [PURE]
+  decode_www_form: [PURE]
+  decode_query: [PURE]
+  query_decoder: [PURE]
+  to_string: [PURE]
+  merge: [PURE]
+  new: [PURE]
+  new!: [PURE, THROW]
+  default_port: [PURE]
+  char_reserved?: [PURE]
+  char_unreserved?: [PURE]
+  char_unescaped?: [PURE]
+  append_query: [PURE]
+  append_path: [PURE]
+
+# ============================================================
+# Calendar
+# ============================================================
+Calendar:
+  strftime: [PURE]
+  truncate: [PURE]
+  ISO: [PURE]
+  compatible_calendars?: [PURE]
+

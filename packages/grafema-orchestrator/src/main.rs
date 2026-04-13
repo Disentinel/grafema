@@ -1405,7 +1405,19 @@ async fn main() -> Result<()> {
                         let results = plugin::stream_and_resolve_single_worker(
                             &mut rfdb,
                             &[config::Language::Beam],
-                            &[("beam-imports", &[]), ("beam-local-refs", &[])],
+                            &[
+                                ("beam-imports", &[]),
+                                ("beam-local-refs", &[]),
+                                ("beam-runtime-globals", &[]),
+                                ("beam-behaviours", &[]),
+                                ("beam-protocols", &[]),
+                                // REG-1098 W6: resolve wrapper calls into virtual effect edges
+                                // (runs after beam-local-refs so CALLS edges exist for walking)
+                                ("beam-wrapper-resolve", &[]),
+                                // REG-1098 W9: emit ISSUE nodes for MessageFlow findings
+                                // (runs last; reads the post-resolution node snapshot)
+                                ("beam-message-findings", &[]),
+                            ],
                             &pool,
                         ).await?;
                         for (cmd, mut output) in results {
@@ -2253,7 +2265,17 @@ async fn main() -> Result<()> {
                         let results = plugin::stream_and_resolve_single_worker(
                             &mut rfdb,
                             &[config::Language::Beam],
-                            &[("beam-imports", &[]), ("beam-local-refs", &[])],
+                            &[
+                                ("beam-imports", &[]),
+                                ("beam-local-refs", &[]),
+                                ("beam-runtime-globals", &[]),
+                                ("beam-behaviours", &[]),
+                                ("beam-protocols", &[]),
+                                // REG-1098 W6: resolve wrapper calls into virtual effect edges
+                                ("beam-wrapper-resolve", &[]),
+                                // REG-1098 W9: emit ISSUE nodes for MessageFlow findings
+                                ("beam-message-findings", &[]),
+                            ],
                             &pool,
                         ).await?;
                         for (cmd, mut output) in results {

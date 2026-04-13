@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StrictData #-}
+{-# LANGUAGE TupleSections #-}
 -- Shared graph types matching Contract B (core-v2/src/types.ts)
 -- Extracted from Analysis.Types for reuse by grafema-analyzer and plugins.
 module Grafema.Types
@@ -18,6 +19,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Aeson (ToJSON(..), FromJSON(..), object, (.=), (.:), (.:?), (.!=), Value(..), withObject, withText)
 import qualified Data.Aeson.Key as K
+import qualified Data.Aeson.KeyMap as KM
 import Data.Scientific (floatingOrInteger)
 import qualified Data.Vector as V
 
@@ -51,6 +53,10 @@ data MetaValue
   | MetaBool !Bool
   | MetaInt  !Int
   | MetaList ![MetaValue]
+  | MetaMap  !(Map Text MetaValue)
+    -- ^ Nested JSON object. Added for REG-1098 W6 where FUNCTION
+    -- metadata carries a @wraps@ sub-object describing public-API
+    -- wrapper calls (kind, target, message_shape, topic).
   | MetaNull
   deriving (Show, Eq)
 
@@ -80,6 +86,7 @@ instance ToJSON MetaValue where
   toJSON (MetaBool b) = toJSON b
   toJSON (MetaInt  i) = toJSON i
   toJSON (MetaList l) = toJSON l
+  toJSON (MetaMap  m) = object [ K.fromText k .= v | (k, v) <- Map.toList m ]
   toJSON MetaNull     = Null
 
 metaToJSON :: Map Text MetaValue -> Value
@@ -131,8 +138,12 @@ instance FromJSON MetaValue where
     Right i -> MetaInt i
     Left (_ :: Double) -> MetaInt (truncate n)
   parseJSON (Array a)  = MetaList <$> mapM parseJSON (V.toList a)
+  parseJSON (Object o) = do
+    -- Parse nested JSON objects into MetaMap (used by REG-1098 W6 for
+    -- the FUNCTION.metadata.wraps sub-object).
+    pairs <- mapM (\(k, v) -> (K.toText k,) <$> parseJSON v) (KM.toList o)
+    pure (MetaMap (Map.fromList pairs))
   parseJSON Null       = pure MetaNull
-  parseJSON _          = pure MetaNull
 
 instance FromJSON GraphNode where
   parseJSON = withObject "GraphNode" $ \v -> do

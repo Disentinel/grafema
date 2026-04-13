@@ -1,0 +1,182 @@
+# Erlang BIFs (Built-In Functions) Effects Database
+# Generated: 2026-04-13 (REG-1097)
+# Method: skeletal, expand on demand from BEAM project unresolved tallies
+#
+# Note: in Elixir source, Erlang modules are accessed with a leading colon,
+# e.g. :erlang.now(), :lists.foldl(...), :gen_server.call(pid, msg).
+# beam-analyzer emits these CALL names without the colon prefix
+# (e.g., "erlang.now", "lists.foldl"), so this DB uses bare module names.
+
+# ============================================================
+# :erlang — runtime BIFs
+# ============================================================
+erlang:
+  now: [NONDETERMINISTIC]
+  system_time: [NONDETERMINISTIC]
+  monotonic_time: [NONDETERMINISTIC]
+  unique_integer: [NONDETERMINISTIC]
+  make_ref: [NONDETERMINISTIC]
+  self: [PURE]
+  node: [PURE]
+  nodes: [IO]
+  is_alive: [IO]
+  send: [MESSAGE_PASSING, IO]
+  spawn: [SPAWN, IO]
+  spawn_link: [SPAWN, IO]
+  spawn_monitor: [SPAWN, IO]
+  link: [IO, MUTATION]
+  unlink: [IO, MUTATION]
+  monitor: [IO, MUTATION]
+  demonitor: [IO, MUTATION]
+  exit: [IO, THROW]
+  throw: [THROW]
+  error: [THROW]
+  binary_to_term: [PURE, THROW]
+  term_to_binary: [PURE]
+  iolist_to_binary: [PURE]
+  list_to_binary: [PURE]
+  binary_to_list: [PURE]
+  atom_to_binary: [PURE]
+  binary_to_atom: [PURE, THROW]
+  binary_to_existing_atom: [PURE, THROW]
+  integer_to_binary: [PURE]
+  binary_to_integer: [PURE, THROW]
+  process_info: [IO]
+  process_flag: [IO, MUTATION]
+  garbage_collect: [IO]
+  whereis: [IO]
+  register: [IO, MUTATION]
+  unregister: [IO, MUTATION]
+  registered: [IO]
+
+# ============================================================
+# :lists
+# ============================================================
+lists:
+  map: [PURE]
+  filter: [PURE]
+  foldl: [PURE]
+  foldr: [PURE]
+  reverse: [PURE]
+  sort: [PURE]
+  member: [PURE]
+  nth: [PURE]
+  last: [PURE]
+  flatten: [PURE]
+  zip: [PURE]
+  unzip: [PURE]
+  keyfind: [PURE]
+  keymember: [PURE]
+  keysort: [PURE]
+  usort: [PURE]
+  uniq: [PURE]
+  any: [PURE]
+  all: [PURE]
+  append: [PURE]
+  concat: [PURE]
+  duplicate: [PURE]
+  seq: [PURE]
+  sum: [PURE]
+  max: [PURE]
+  min: [PURE]
+  search: [PURE]
+  partition: [PURE]
+  splitwith: [PURE]
+  takewhile: [PURE]
+  dropwhile: [PURE]
+
+# ============================================================
+# :maps
+# ============================================================
+maps:
+  new: [PURE]
+  get: [PURE]
+  put: [PURE]
+  remove: [PURE]
+  find: [PURE]
+  is_key: [PURE]
+  size: [PURE]
+  keys: [PURE]
+  values: [PURE]
+  to_list: [PURE]
+  from_list: [PURE]
+  merge: [PURE]
+  fold: [PURE]
+  map: [PURE]
+  filter: [PURE]
+  update: [PURE]
+  update_with: [PURE]
+  with: [PURE]
+  without: [PURE]
+
+# ============================================================
+# :ets — Erlang Term Storage (in-memory tables)
+# ============================================================
+ets:
+  new: [IO, MUTATION]
+  insert: [IO, MUTATION]
+  insert_new: [IO, MUTATION]
+  delete: [IO, MUTATION]
+  delete_object: [IO, MUTATION]
+  delete_all_objects: [IO, MUTATION]
+  lookup: [IO]
+  lookup_element: [IO, THROW]
+  member: [IO]
+  match: [IO]
+  match_object: [IO]
+  select: [IO]
+  select_delete: [IO, MUTATION]
+  update_element: [IO, MUTATION]
+  update_counter: [IO, MUTATION, NONDETERMINISTIC]
+  first: [IO]
+  next: [IO]
+  last: [IO]
+  prev: [IO]
+  info: [IO]
+  tab2list: [IO]
+  whereis: [IO]
+  give_away: [IO, MUTATION]
+  setopts: [IO, MUTATION]
+
+# ============================================================
+# :gen_server (Erlang form, mirrors GenServer)
+# ============================================================
+gen_server:
+  start: [SPAWN, IO]
+  start_link: [SPAWN, IO]
+  start_monitor: [SPAWN, IO]
+  call: [MESSAGE_PASSING, ASYNC, IO]
+  cast: [MESSAGE_PASSING, IO]
+  reply: [MESSAGE_PASSING, IO]
+  abcast: [MESSAGE_PASSING, IO]
+  multi_call: [MESSAGE_PASSING, ASYNC, IO]
+  stop: [IO, MUTATION]
+
+# ============================================================
+# :supervisor
+# ============================================================
+supervisor:
+  start_link: [SPAWN, IO]
+  start_child: [SPAWN, IO]
+  terminate_child: [IO, MUTATION]
+  restart_child: [SPAWN, IO]
+  delete_child: [IO, MUTATION]
+  which_children: [IO]
+  count_children: [IO]
+  check_childspecs: [PURE]
+
+# ============================================================
+# :application
+# ============================================================
+application:
+  start: [IO, MUTATION]
+  stop: [IO, MUTATION]
+  ensure_started: [IO, MUTATION]
+  ensure_all_started: [IO, MUTATION]
+  get_env: [IO, IO:ENV:READ]
+  set_env: [IO, IO:ENV:SET, MUTATION]
+  unset_env: [IO, IO:ENV:SET, MUTATION]
+  get_all_env: [IO, IO:ENV:READ]
+  loaded_applications: [IO]
+  which_applications: [IO]
+  info: [IO]

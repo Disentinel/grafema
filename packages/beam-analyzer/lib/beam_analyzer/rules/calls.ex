@@ -3,41 +3,128 @@ defmodule BeamAnalyzer.Rules.Calls do
 
   alias BeamAnalyzer.{Context, SemanticId}
 
+  # Operators, special forms, and pseudo-AST atoms that share the
+  # `{name, meta, args}` shape with real function calls but are not callable.
+  # REG-1097: emitting CALL nodes for these polluted ~700 of 3446 unresolved
+  # CALLs in kami and made the resolution metrics meaningless.
+  @non_callable MapSet.new([
+    # Block / forms / quoting
+    :__block__, :__aliases__, :__MODULE__, :__ENV__, :__CALLER__,
+    :fn, :&, :quote, :unquote, :unquote_splicing, :alias, :require,
+    :import, :super, :defmodule, :def, :defp, :defmacro, :defmacrop,
+    :defguard, :defguardp, :defprotocol, :defimpl, :defstruct,
+    :defexception, :defdelegate, :defoverridable, :defcallback,
+    # Special forms
+    :case, :cond, :if, :unless, :with, :for, :receive, :try,
+    :rescue, :catch, :else, :after, :do, :end,
+    # Match / pin
+    :=, :^, :when,
+    # Arrow / cons / pipe
+    :->, :|, :|>,
+    # Arithmetic
+    :+, :-, :*, :/, :div, :rem,
+    # Comparison
+    :==, :!=, :===, :!==, :=~, :<, :>, :<=, :>=,
+    # Logical
+    :and, :or, :not, :&&, :||, :!,
+    # Membership
+    :in,
+    # Concatenation
+    :<>, :++, :--,
+    # Bitstring / map / tuple literals
+    :<<>>, :%{}, :%, :{},
+    # Module attribute / capture / typespec
+    :@, :"::"
+  ])
+
+  @doc """
+  True if this atom name represents an actual callable function rather
+  than an operator, special form, or pseudo-AST node.
+  """
+  def callable?(name) when is_atom(name) do
+    cond do
+      MapSet.member?(@non_callable, name) -> false
+      # All Elixir sigils (~r, ~s, ~w, ~D, ~U, ...) appear as `sigil_<letter>`
+      String.starts_with?(Atom.to_string(name), "sigil_") -> false
+      true -> true
+    end
+  end
+
   def process({name, meta, args}, ctx) when is_atom(name) and is_list(args) do
-    # Skip special forms
-    if name in [:__block__, :__aliases__, :fn, :&, :quote, :unquote] do
-      ctx
-    else
+    if callable?(name) do
       line = Keyword.get(meta, :line, 0)
       col = Keyword.get(meta, :column, 0)
       add_call(ctx, Atom.to_string(name), length(args), line, col)
+    else
+      ctx
     end
   end
 
   def process(_ast, ctx), do: ctx
 
-  def process_dot_call({:., _dot_meta, [{:__aliases__, _, parts}, method]}, call_meta, args, _meta, ctx) do
+  def process_dot_call({:., dot_meta, [{:__aliases__, _, parts}, method]} = dot, call_meta, args, _meta, ctx) do
     module_name = parts |> Enum.map(&Atom.to_string/1) |> Enum.join(".")
     call_name = "#{module_name}.#{method}"
     line = Keyword.get(call_meta, :line, 0)
     col = Keyword.get(call_meta, :column, 0)
-    add_call(ctx, call_name, length(args), line, col)
+    ctx = add_call(ctx, call_name, length(args), line, col)
+    maybe_dispatch_pubsub(ctx, dot, args, call_name, line, col, dot_meta)
   end
 
   def process_dot_call({:., _dot_meta, [receiver, method]}, call_meta, args, _meta, ctx) when is_atom(method) do
-    receiver_name =
-      case receiver do
-        {name, _, _} when is_atom(name) -> Atom.to_string(name)
-        _ -> "<obj>"
-      end
+    cond do
+      # Field access: `state.name` (no parens) is not a function call.
+      # Elixir tags this with :no_parens on the OUTER call meta.
+      Keyword.get(call_meta, :no_parens, false) ->
+        ctx
 
-    call_name = "#{receiver_name}.#{method}"
-    line = Keyword.get(call_meta, :line, 0)
-    col = Keyword.get(call_meta, :column, 0)
-    add_call(ctx, call_name, length(args), line, col)
+      # Plain identifier receiver: `var.method(args)` — keep as a CALL,
+      # the resolver can try to trace `var` to a known type later.
+      match?({name, _, _} when is_atom(name), receiver) ->
+        {recv_name, _, _} = receiver
+        call_name = "#{recv_name}.#{method}"
+        line = Keyword.get(call_meta, :line, 0)
+        col = Keyword.get(call_meta, :column, 0)
+        add_call(ctx, call_name, length(args), line, col)
+
+      # Compound receiver (chained access, pipe result, function call result).
+      # The old code emitted "<obj>.method" — which is unresolvable by
+      # construction and just inflates noise. Drop it.
+      true ->
+        ctx
+    end
   end
 
   def process_dot_call(_dot, _call_meta, _args, _meta, ctx), do: ctx
+
+  # REG-1098 W7: dispatch direct Phoenix.PubSub.* dot-calls to the
+  # PubSub topology rule. Called after the CALL node has been added,
+  # so `call_id` is re-derived deterministically the same way add_call
+  # computed it.
+  defp maybe_dispatch_pubsub(ctx, dot, args, call_name, line, col, _dot_meta) do
+    case BeamAnalyzer.Rules.PubSub.classify(dot) do
+      {:pubsub, :subscribe} ->
+        pubsub_ast = Enum.at(args, 0)
+        topic_ast = Enum.at(args, 1)
+        BeamAnalyzer.Rules.PubSub.process_subscribe(ctx, pubsub_ast, topic_ast, nil)
+
+      {:pubsub, op} ->
+        scope = Context.current_scope(ctx) || "module"
+        call_id = SemanticId.call_id(ctx.file, call_name, scope, line, col)
+        pubsub_ast = Enum.at(args, 0)
+        # broadcast_from(pubsub, from, topic, msg) — topic/msg are shifted by 1
+        {topic_ast, msg_ast} =
+          case op do
+            :broadcast_from -> {Enum.at(args, 2), Enum.at(args, 3)}
+            _ -> {Enum.at(args, 1), Enum.at(args, 2)}
+          end
+
+        BeamAnalyzer.Rules.PubSub.process_broadcast(ctx, call_id, pubsub_ast, topic_ast, msg_ast, op)
+
+      :not_pubsub ->
+        ctx
+    end
+  end
 
   def process_pipe(left, right, _meta, ctx) do
     # Walk left side first
@@ -61,10 +148,14 @@ defmodule BeamAnalyzer.Rules.Calls do
   end
 
   defp walk_pipe_arg({name, meta, args}, ctx) when is_atom(name) and is_list(args) do
-    line = Keyword.get(meta, :line, 0)
-    col = Keyword.get(meta, :column, 0)
-    # In pipe, the actual arity is args + 1 (piped value)
-    add_call(ctx, Atom.to_string(name), length(args) + 1, line, col)
+    if callable?(name) do
+      line = Keyword.get(meta, :line, 0)
+      col = Keyword.get(meta, :column, 0)
+      # In pipe, the actual arity is args + 1 (piped value)
+      add_call(ctx, Atom.to_string(name), length(args) + 1, line, col)
+    else
+      ctx
+    end
   end
 
   defp walk_pipe_arg(_expr, ctx), do: ctx

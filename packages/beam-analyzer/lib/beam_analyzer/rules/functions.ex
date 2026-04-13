@@ -52,8 +52,22 @@ defmodule BeamAnalyzer.Rules.Functions do
       metadata: %{}
     })
 
-    # Detect infrastructure patterns (handle_* callbacks)
-    ctx = BeamAnalyzer.Rules.Infrastructure.process_function(ctx, "#{name}/#{arity}", func_id)
+    # Detect infrastructure patterns (handle_* callbacks) — pass first arg
+    # so multi-clause handlers get per-clause MESSAGE_TYPE nodes (REG-1098 W2).
+    # Also pass the unwrapped body for per-clause effect scanning (W8).
+    first_arg = List.first(args)
+    keyword_body = List.first(body) || []
+    actual_body = if is_list(keyword_body), do: Keyword.get(keyword_body, :do, nil), else: nil
+
+    ctx =
+      BeamAnalyzer.Rules.Infrastructure.process_function(
+        ctx,
+        "#{name}/#{arity}",
+        func_id,
+        first_arg,
+        meta,
+        actual_body
+      )
 
     # Add export if public
     ctx =
@@ -69,8 +83,20 @@ defmodule BeamAnalyzer.Rules.Functions do
     # Process parameters as variables
     ctx = process_params(args, ctx)
 
-    # Walk body — body from function AST is [[do: ...]], not [do: ...]
-    keyword_body = List.first(body) || []
+    # REG-1098 W5: wrapper detection on public def only, skip callbacks.
+    ctx =
+      if exported and not callback_name?(name) do
+        case BeamAnalyzer.Rules.Wrappers.detect_wrapper(keyword_body) do
+          {:ok, wrap_info} ->
+            Context.merge_node_metadata(ctx, func_id, %{wraps: wrap_info})
+
+          :no_wrap ->
+            ctx
+        end
+      else
+        ctx
+      end
+
     ctx = walk_body(keyword_body, ctx)
 
     Context.pop_scope(ctx)
@@ -107,7 +133,8 @@ defmodule BeamAnalyzer.Rules.Functions do
     })
 
     # Detect infrastructure patterns (handle_* callbacks)
-    ctx = BeamAnalyzer.Rules.Infrastructure.process_function(ctx, "#{name}/#{arity}", func_id)
+    # Erlang path: W2 pattern extraction is Elixir-only, pass nil first_arg.
+    ctx = BeamAnalyzer.Rules.Infrastructure.process_function(ctx, "#{name}/#{arity}", func_id, nil, [])
 
     ctx = Context.push_scope(ctx, "#{name}/#{arity}")
 
@@ -117,6 +144,14 @@ defmodule BeamAnalyzer.Rules.Functions do
 
     Context.pop_scope(ctx)
   end
+
+  @callback_names ~w(
+    handle_call handle_cast handle_info handle_continue handle_event
+    init start_link child_spec terminate code_change
+  )a
+
+  defp callback_name?(name) when is_atom(name), do: name in @callback_names
+  defp callback_name?(_), do: false
 
   defp process_params(args, ctx) do
     Enum.reduce(args, ctx, fn
@@ -165,14 +200,20 @@ defmodule BeamAnalyzer.Rules.Functions do
       :with -> walk_with(ast, ctx)
       :for -> walk_for(ast, ctx)
       _ ->
-        ctx = BeamAnalyzer.Rules.Calls.process({name, meta, args}, ctx)
-        # Walk call arguments to find nested calls/expressions
-        ctx = walk_call_args(args, ctx)
-        line = Keyword.get(meta, :line, 0)
-        col = Keyword.get(meta, :column, 0)
-        scope = Context.current_scope(ctx) || "module"
-        call_id = SemanticId.call_id(ctx.file, Atom.to_string(name), scope, line, col)
-        BeamAnalyzer.Rules.Infrastructure.process_call(ctx, Atom.to_string(name), call_id, line, col)
+        if BeamAnalyzer.Rules.Calls.callable?(name) do
+          ctx = BeamAnalyzer.Rules.Calls.process({name, meta, args}, ctx)
+          # Walk call arguments to find nested calls/expressions
+          ctx = walk_call_args(args, ctx)
+          line = Keyword.get(meta, :line, 0)
+          col = Keyword.get(meta, :column, 0)
+          scope = Context.current_scope(ctx) || "module"
+          call_id = SemanticId.call_id(ctx.file, Atom.to_string(name), scope, line, col)
+          BeamAnalyzer.Rules.Infrastructure.process_call(ctx, Atom.to_string(name), call_id, line, col, args)
+        else
+          # Operator or special form: no CALL node, but still walk children
+          # (operands may contain real call sites).
+          walk_call_args(args, ctx)
+        end
     end
   end
 
@@ -186,7 +227,7 @@ defmodule BeamAnalyzer.Rules.Functions do
     col = Keyword.get(call_meta, :column, 0)
     scope = Context.current_scope(ctx) || "module"
     call_id = SemanticId.call_id(ctx.file, call_name, scope, line, col)
-    BeamAnalyzer.Rules.Infrastructure.process_call(ctx, call_name, call_id, line, col)
+    BeamAnalyzer.Rules.Infrastructure.process_call(ctx, call_name, call_id, line, col, args)
   end
 
   defp walk_expr({{:., meta, _} = dot, call_meta, args}, ctx) do
