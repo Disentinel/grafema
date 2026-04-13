@@ -10,6 +10,7 @@ import Grafema.Types (GraphNode(..), GraphEdge(..), MetaValue(..))
 import Grafema.Protocol (PluginCommand(..))
 import qualified PropertyAccess
 import qualified SameFileCalls
+import qualified JsThisMethodCalls
 
 -- ---------------------------------------------------------------------------
 -- Test helpers
@@ -136,6 +137,12 @@ runTest name Pass = do
 runTest name (Fail msg) = do
   hPutStrLn stderr $ "  FAIL: " ++ name ++ " -- " ++ msg
   return False
+
+-- | Run a test whose check requires IO (e.g. calls a plugin's IO resolveAll).
+runTestIO :: String -> IO TestResult -> IO Bool
+runTestIO name action = do
+  result <- action
+  runTest name result
 
 -- ---------------------------------------------------------------------------
 -- Tests
@@ -546,6 +553,59 @@ testMultipleClassesSameMethod =
     _ -> Fail $ "Expected 1 CALLS edge to Bar.doSomething, got: " ++ show edges
 
 -- ---------------------------------------------------------------------------
+-- JsThisMethodCalls tests
+-- ---------------------------------------------------------------------------
+
+-- | Happy path: this.bar() resolves to METHOD bar when exactly one candidate
+-- exists in the same file.
+testJsThisResolved :: IO TestResult
+testJsThisResolved = do
+  let file = "src/app.ts"
+      nodes =
+        [ mkMethod file "Foo" "bar"
+        , mkMethodCall file "this.bar" 10
+            (file <> "->CALL->this.bar[in:baz,h:1]")
+        ]
+  cmds <- JsThisMethodCalls.resolveAll nodes []
+  let edges = extractEdges cmds
+  return $ case edges of
+    [e] | geType e == "CALLS"
+        , geTarget e == file <> "->METHOD->bar[in:Foo]"
+        -> Pass
+    _ -> Fail $ "Expected 1 CALLS edge to Foo.bar, got: " ++ show edges
+
+-- | Unresolved: this.foo() when no METHOD named foo exists → 0 edges.
+testJsThisUnresolved :: IO TestResult
+testJsThisUnresolved = do
+  let file = "src/app.ts"
+      nodes =
+        [ mkMethod file "Foo" "bar"  -- not "foo"
+        , mkMethodCall file "this.foo" 10
+            (file <> "->CALL->this.foo[in:baz,h:1]")
+        ]
+  cmds <- JsThisMethodCalls.resolveAll nodes []
+  let edges = extractEdges cmds
+  return $ case edges of
+    [] -> Pass
+    _  -> Fail $ "Expected 0 edges for unresolved this.foo(), got: " ++ show edges
+
+-- | Ambiguous: two classes with same method name → skipped (0 edges).
+testJsThisAmbiguous :: IO TestResult
+testJsThisAmbiguous = do
+  let file = "src/app.ts"
+      nodes =
+        [ mkMethod file "Foo" "bar"
+        , mkMethod file "Baz" "bar"
+        , mkMethodCall file "this.bar" 10
+            (file <> "->CALL->this.bar[in:q,h:1]")
+        ]
+  cmds <- JsThisMethodCalls.resolveAll nodes []
+  let edges = extractEdges cmds
+  return $ case edges of
+    [] -> Pass
+    _  -> Fail $ "Expected 0 edges for ambiguous this.bar(), got: " ++ show edges
+
+-- ---------------------------------------------------------------------------
 -- Main
 -- ---------------------------------------------------------------------------
 
@@ -581,7 +641,14 @@ main = do
     , runTest "this.method() outside class no resolution" testThisOutsideClass
     , runTest "multiple classes same method resolves to correct class" testMultipleClassesSameMethod
     ]
-  let allResults = paResults ++ sfcResults
+  putStrLn ""
+  putStrLn "JsThisMethodCalls unit tests:"
+  jsResults <- sequence
+    [ runTestIO "this.bar() resolves to single METHOD" testJsThisResolved
+    , runTestIO "this.foo() unresolved when no METHOD matches" testJsThisUnresolved
+    , runTestIO "this.bar() ambiguous (two classes) skipped" testJsThisAmbiguous
+    ]
+  let allResults = paResults ++ sfcResults ++ jsResults
       total = length allResults
       passed = length (filter id allResults)
   putStrLn $ "\n" ++ show passed ++ "/" ++ show total ++ " tests passed"
