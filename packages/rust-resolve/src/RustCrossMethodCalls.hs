@@ -31,6 +31,11 @@ import System.IO (hPutStrLn, stderr)
 -- whose semantic ID contains @IMPL_BLOCK->TypeName@.
 type ImplMethodIndex = Map (Text, Text) Text
 
+-- | (traitName, methodName) → [method node ID]. Built from FUNCTION nodes
+-- with @metadata[\"trait\"]@ set by the orchestrator for trait impl methods.
+-- A list because multiple types may implement the same trait.
+type TraitMethodIndex = Map (Text, Text) [Text]
+
 -- | (file, varName) → VARIABLE/PARAMETER node.
 type VarIndex = Map (Text, Text) GraphNode
 
@@ -51,6 +56,30 @@ buildImplMethodIndex nodes =
     , not (T.null (gnName n))
     , Just typeName <- [G.extractByMarker (gnSemanticId n) "IMPL_BLOCK->"]
     ]
+
+-- | Build the trait method index from FUNCTION nodes tagged with
+-- @metadata[\"trait\"]@ by the orchestrator.
+buildTraitMethodIndex :: [GraphNode] -> TraitMethodIndex
+buildTraitMethodIndex nodes =
+  Map.fromListWith (++)
+    [ ((traitName, gnName n), [gnId n])
+    | n <- nodes
+    , gnType n == "FUNCTION"
+    , not (T.null (gnName n))
+    , Just traitName <- [G.lookupMetaText "trait" n]
+    ]
+
+-- | Extract the trait name from a @dyn Trait@ or @impl Trait@ type string.
+--
+-- Examples:
+--   @extractDynTrait "dyn Draw"@    -> @Just "Draw"@
+--   @extractDynTrait "impl Serialize"@ -> @Just "Serialize"@
+--   @extractDynTrait "MyStruct"@    -> @Nothing@
+extractDynTrait :: Text -> Maybe Text
+extractDynTrait tn
+  | "dyn "  `T.isPrefixOf` tn = Just $ T.drop 4 tn
+  | "impl " `T.isPrefixOf` tn = Just $ T.drop 5 tn
+  | otherwise                  = Nothing
 
 buildVarIndex :: [GraphNode] -> VarIndex
 buildVarIndex nodes =
@@ -121,14 +150,16 @@ constructorTypeFromCallName name =
 
 resolveAll :: [GraphNode] -> [GraphEdge] -> IO [PluginCommand]
 resolveAll nodes edges = do
-  let implIdx  = buildImplMethodIndex nodes
-      varIdx   = buildVarIndex nodes
-      fieldIdx = buildFieldTypeIndex nodes
-      nodeIdx  = G.buildNodeIndex nodes
-      adj      = G.buildAdjacency edges
+  let implIdx   = buildImplMethodIndex nodes
+      traitIdx  = buildTraitMethodIndex nodes
+      varIdx    = buildVarIndex nodes
+      fieldIdx  = buildFieldTypeIndex nodes
+      nodeIdx   = G.buildNodeIndex nodes
+      adj       = G.buildAdjacency edges
       callNodes = filter isMethodCall nodes
-      results = concatMap (resolveOne implIdx varIdx fieldIdx nodeIdx adj) callNodes
+      results   = concatMap (resolveOne implIdx traitIdx varIdx fieldIdx nodeIdx adj) callNodes
   hPutStrLn stderr $ "[rust-cross-methods] implIdx=" ++ show (Map.size implIdx)
+    ++ " traitIdx=" ++ show (Map.size traitIdx)
     ++ " varIdx=" ++ show (Map.size varIdx)
     ++ " fieldIdx=" ++ show (Map.size fieldIdx)
     ++ " edges=" ++ show (length edges)
@@ -141,9 +172,9 @@ isMethodCall n =
   gnType n == "CALL" && G.lookupMetaBool "method" n == Just True
 
 resolveOne
-  :: ImplMethodIndex -> VarIndex -> FieldTypeIndex
+  :: ImplMethodIndex -> TraitMethodIndex -> VarIndex -> FieldTypeIndex
   -> G.NodeIndex -> G.Adjacency -> GraphNode -> [PluginCommand]
-resolveOne implIdx varIdx fieldIdx nodeIdx adj callNode =
+resolveOne implIdx traitIdx varIdx fieldIdx nodeIdx adj callNode =
   let file     = gnFile callNode
       methName = gnName callNode
       mReceiver = lookupReceiver callNode
@@ -167,7 +198,6 @@ resolveOne implIdx varIdx fieldIdx nodeIdx adj callNode =
           -- Strip generic suffixes: "Vec<String>" → "Vec"
           let baseType = T.takeWhile (\c -> c /= '<' && c /= ':') tn
           in case Map.lookup (baseType, methName) implIdx of
-            Nothing -> []
             Just targetId ->
               [ EmitEdge GraphEdge
                   { geSource   = gnId callNode
@@ -179,6 +209,23 @@ resolveOne implIdx varIdx fieldIdx nodeIdx adj callNode =
                       ]
                   }
               ]
+            Nothing ->
+              -- Fall back to dyn/impl Trait dispatch
+              case extractDynTrait tn of
+                Nothing -> []
+                Just traitName ->
+                  [ EmitEdge GraphEdge
+                      { geSource   = gnId callNode
+                      , geTarget   = targetId
+                      , geType     = "CALLS"
+                      , geMetadata = Map.fromList
+                          [ ("resolvedVia",  MetaText "rust-dyn-dispatch")
+                          , ("receiverType", MetaText tn)
+                          , ("traitName",    MetaText traitName)
+                          ]
+                      }
+                  | targetId <- Map.findWithDefault [] (traitName, methName) traitIdx
+                  ]
 
 lookupReceiver :: GraphNode -> Maybe Text
 lookupReceiver node = case G.lookupMetaText "receiver" node of

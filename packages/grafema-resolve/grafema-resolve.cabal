@@ -43,6 +43,7 @@ test-suite grafema-resolve-test
     PropertyAccess
     ImportResolution
     SameFileCalls
+    JsThisMethodCalls
     ResolveUtil
 
   build-depends:

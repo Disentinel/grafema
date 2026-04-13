@@ -16,81 +16,110 @@ import Data.Text (Text)
 import qualified Data.Map.Strict as Map
 
 import HaskellImportResolution (resolveAll)
-import Grafema.Types (GraphNode(..), GraphEdge(..))
+import qualified HaskellLocalCalls
+import qualified HaskellCrossModuleCalls
+import Grafema.Types (GraphNode(..), GraphEdge(..), MetaValue(..))
 import Grafema.Protocol (PluginCommand(..))
 
 -- ── Test node constructors ──────────────────────────────────────────
 
 mkModuleNode :: Text -> Text -> Text -> GraphNode
 mkModuleNode name file nodeId = GraphNode
-  { gnId       = nodeId
-  , gnType     = "MODULE"
-  , gnName     = name
-  , gnFile     = file
-  , gnLine     = 1
-  , gnColumn   = 0
-  , gnExported = True
-  , gnMetadata = Map.empty
+  { gnId        = nodeId
+  , gnType      = "MODULE"
+  , gnName      = name
+  , gnFile      = file
+  , gnLine      = 1
+  , gnColumn    = 0
+  , gnEndLine   = 0
+  , gnEndColumn = 0
+  , gnExported  = True
+  , gnMetadata  = Map.empty
   }
 
 mkFunctionNode :: Text -> Text -> Text -> Bool -> GraphNode
 mkFunctionNode name file nodeId exported = GraphNode
-  { gnId       = nodeId
-  , gnType     = "FUNCTION"
-  , gnName     = name
-  , gnFile     = file
-  , gnLine     = 5
-  , gnColumn   = 0
-  , gnExported = exported
-  , gnMetadata = Map.empty
+  { gnId        = nodeId
+  , gnType      = "FUNCTION"
+  , gnName      = name
+  , gnFile      = file
+  , gnLine      = 5
+  , gnColumn    = 0
+  , gnEndLine   = 0
+  , gnEndColumn = 0
+  , gnExported  = exported
+  , gnMetadata  = Map.empty
   }
 
 mkImportNode :: Text -> Text -> Text -> GraphNode
 mkImportNode moduleName file nodeId = GraphNode
-  { gnId       = nodeId
-  , gnType     = "IMPORT"
-  , gnName     = moduleName
-  , gnFile     = file
-  , gnLine     = 1
-  , gnColumn   = 0
-  , gnExported = False
-  , gnMetadata = Map.empty
+  { gnId        = nodeId
+  , gnType      = "IMPORT"
+  , gnName      = moduleName
+  , gnFile      = file
+  , gnLine      = 1
+  , gnColumn    = 0
+  , gnEndLine   = 0
+  , gnEndColumn = 0
+  , gnExported  = False
+  , gnMetadata  = Map.empty
   }
 
 mkImportBindingNode :: Text -> Text -> Text -> Text -> GraphNode
 mkImportBindingNode name _moduleName file nodeId = GraphNode
-  { gnId       = nodeId
-  , gnType     = "IMPORT_BINDING"
-  , gnName     = name
-  , gnFile     = file
-  , gnLine     = 1
-  , gnColumn   = 0
-  , gnExported = False
-  , gnMetadata = Map.empty
+  { gnId        = nodeId
+  , gnType      = "IMPORT_BINDING"
+  , gnName      = name
+  , gnFile      = file
+  , gnLine      = 1
+  , gnColumn    = 0
+  , gnEndLine   = 0
+  , gnEndColumn = 0
+  , gnExported  = False
+  , gnMetadata  = Map.empty
   }
 
 mkExportBindingNode :: Text -> Text -> Text -> GraphNode
 mkExportBindingNode name file nodeId = GraphNode
-  { gnId       = nodeId
-  , gnType     = "EXPORT_BINDING"
-  , gnName     = name
-  , gnFile     = file
-  , gnLine     = 0
-  , gnColumn   = 0
-  , gnExported = True
-  , gnMetadata = Map.empty
+  { gnId        = nodeId
+  , gnType      = "EXPORT_BINDING"
+  , gnName      = name
+  , gnFile      = file
+  , gnLine      = 0
+  , gnColumn    = 0
+  , gnEndLine   = 0
+  , gnEndColumn = 0
+  , gnExported  = True
+  , gnMetadata  = Map.empty
   }
 
 mkDataTypeNode :: Text -> Text -> Text -> GraphNode
 mkDataTypeNode name file nodeId = GraphNode
-  { gnId       = nodeId
-  , gnType     = "DATA_TYPE"
-  , gnName     = name
-  , gnFile     = file
-  , gnLine     = 3
-  , gnColumn   = 0
-  , gnExported = True
-  , gnMetadata = Map.empty
+  { gnId        = nodeId
+  , gnType      = "DATA_TYPE"
+  , gnName      = name
+  , gnFile      = file
+  , gnLine      = 3
+  , gnColumn    = 0
+  , gnEndLine   = 0
+  , gnEndColumn = 0
+  , gnExported  = True
+  , gnMetadata  = Map.empty
+  }
+
+-- | Create a CALL node in a Haskell file.
+mkCallNode :: Text -> Text -> Text -> GraphNode
+mkCallNode name file nodeId = GraphNode
+  { gnId        = nodeId
+  , gnType      = "CALL"
+  , gnName      = name
+  , gnFile      = file
+  , gnLine      = 5
+  , gnColumn    = 4
+  , gnEndLine   = 0
+  , gnEndColumn = 0
+  , gnExported  = False
+  , gnMetadata  = Map.empty
   }
 
 -- ── Helpers ─────────────────────────────────────────────────────────
@@ -277,3 +306,103 @@ main = hspec $ do
           geType   edge `shouldBe` "IMPORTS_FROM"
           geTarget edge `shouldBe` "src/Lib.hs->FUNCTION->foo"
         _ -> expectationFailure $ "Expected 1 binding edge, got " ++ show (length bindingEdges)
+
+  -- ── 10. HaskellLocalCalls ──────────────────────────────────────
+  describe "HaskellLocalCalls" $ do
+
+    it "resolves same-file CALL to local FUNCTION" $ do
+      let nodes =
+            [ mkFunctionNode "foo" "src/A.hs" "src/A.hs->FUNCTION->foo" True
+            , mkCallNode     "foo" "src/A.hs" "src/A.hs->CALL->foo@5:4"
+            ]
+      cmds <- HaskellLocalCalls.resolveAll nodes []
+      let edges = extractEdges cmds
+      length edges `shouldBe` 1
+      case edges of
+        [e] -> do
+          geType   e `shouldBe` "CALLS"
+          geTarget e `shouldBe` "src/A.hs->FUNCTION->foo"
+        _ -> expectationFailure "Expected 1 CALLS edge"
+
+    it "skips CALL when an IMPORT_BINDING with same name exists" $ do
+      let nodes =
+            [ mkFunctionNode "foo" "src/A.hs" "src/A.hs->FUNCTION->foo" True
+            , mkImportBindingNode "foo" "B" "src/A.hs" "src/A.hs->IMPORT_BINDING->foo[in:B]"
+            , mkCallNode     "foo" "src/A.hs" "src/A.hs->CALL->foo@5:4"
+            ]
+      cmds <- HaskellLocalCalls.resolveAll nodes []
+      let edges = extractEdges cmds
+      length edges `shouldBe` 0
+
+  -- ── 11. HaskellCrossModuleCalls ────────────────────────────────
+  describe "HaskellCrossModuleCalls" $ do
+
+    it "resolves imported CALL to FUNCTION in exporting module" $ do
+      let nodes =
+            [ mkModuleNode   "B" "src/B.hs" "MODULE#src/B.hs"
+            , mkFunctionNode "foo" "src/B.hs" "src/B.hs->FUNCTION->foo" True
+            , mkImportBindingNode "foo" "B" "src/A.hs"
+                "src/A.hs->IMPORT_BINDING->foo[in:B]"
+            , mkCallNode     "foo" "src/A.hs" "src/A.hs->CALL->foo@5:4"
+            ]
+      cmds <- HaskellCrossModuleCalls.resolveAll nodes []
+      let edges = extractEdges cmds
+      length edges `shouldBe` 1
+      case edges of
+        [e] -> do
+          geType   e `shouldBe` "CALLS"
+          geSource e `shouldBe` "src/A.hs->CALL->foo@5:4"
+          geTarget e `shouldBe` "src/B.hs->FUNCTION->foo"
+        _ -> expectationFailure "Expected 1 CALLS edge"
+
+    it "produces no edge when name is not imported" $ do
+      let nodes =
+            [ mkModuleNode   "B" "src/B.hs" "MODULE#src/B.hs"
+            , mkFunctionNode "foo" "src/B.hs" "src/B.hs->FUNCTION->foo" True
+            , mkCallNode     "foo" "src/A.hs" "src/A.hs->CALL->foo@5:4"
+            ]
+      cmds <- HaskellCrossModuleCalls.resolveAll nodes []
+      let edges = extractEdges cmds
+      length edges `shouldBe` 0
+
+  -- ── 12. Regression: local + cross-module are disjoint ─────────
+  --
+  -- HaskellLocalCalls skips CALLs whose name matches an IMPORT_BINDING in
+  -- the same file. HaskellCrossModuleCalls only fires for CALLs whose name
+  -- DOES match an IMPORT_BINDING. Therefore for any given CALL node at most
+  -- ONE of the two plugins emits a CALLS edge. This regression test
+  -- exercises both on the same node set and asserts no double emission.
+  describe "Regression: local + cross-module disjoint partition" $ do
+
+    it "emits exactly one CALLS edge for an imported call (no double emission)" $ do
+      let nodes =
+            [ mkModuleNode   "B" "src/B.hs" "MODULE#src/B.hs"
+            , mkFunctionNode "foo" "src/B.hs" "src/B.hs->FUNCTION->foo" True
+            -- Same-name "foo" ALSO declared locally in A.hs (pathological
+            -- shadowing scenario). The import should win — local skips.
+            , mkFunctionNode "foo" "src/A.hs" "src/A.hs->FUNCTION->foo" False
+            , mkImportBindingNode "foo" "B" "src/A.hs"
+                "src/A.hs->IMPORT_BINDING->foo[in:B]"
+            , mkCallNode     "foo" "src/A.hs" "src/A.hs->CALL->foo@5:4"
+            ]
+      localCmds <- HaskellLocalCalls.resolveAll nodes []
+      crossCmds <- HaskellCrossModuleCalls.resolveAll nodes []
+      let localEdges = extractEdges localCmds
+          crossEdges = extractEdges crossCmds
+          allEdges   = localEdges ++ crossEdges
+      length localEdges `shouldBe` 0
+      length crossEdges `shouldBe` 1
+      length allEdges   `shouldBe` 1
+      case crossEdges of
+        [e] -> geTarget e `shouldBe` "src/B.hs->FUNCTION->foo"
+        _ -> expectationFailure "Expected exactly 1 cross-module CALLS edge"
+
+    it "emits exactly one CALLS edge via local when name is NOT imported" $ do
+      let nodes =
+            [ mkFunctionNode "bar" "src/A.hs" "src/A.hs->FUNCTION->bar" False
+            , mkCallNode     "bar" "src/A.hs" "src/A.hs->CALL->bar@5:4"
+            ]
+      localCmds <- HaskellLocalCalls.resolveAll nodes []
+      crossCmds <- HaskellCrossModuleCalls.resolveAll nodes []
+      length (extractEdges localCmds) `shouldBe` 1
+      length (extractEdges crossCmds) `shouldBe` 0

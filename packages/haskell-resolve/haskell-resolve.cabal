@@ -34,6 +34,8 @@ test-suite spec
 
   other-modules:
     HaskellImportResolution
+    HaskellLocalCalls
+    HaskellCrossModuleCalls
 
   build-depends:
     base                 >= 4.17 && < 5,
