@@ -23,6 +23,21 @@ defmodule BeamAnalyzer.Context do
     %{ctx | nodes: [node | ctx.nodes]}
   end
 
+  @doc """
+  Merge additional metadata into a node identified by `id`. No-op if the
+  node is not found. Used by REG-1098 W5 to attach wrapper info to a
+  FUNCTION node after it has already been added.
+  """
+  def merge_node_metadata(ctx, id, extra) when is_map(extra) do
+    nodes =
+      Enum.map(ctx.nodes, fn
+        %{id: ^id, metadata: meta} = node -> %{node | metadata: Map.merge(meta || %{}, extra)}
+        other -> other
+      end)
+
+    %{ctx | nodes: nodes}
+  end
+
   def add_edge(ctx, edge) do
     %{ctx | edges: [edge | ctx.edges]}
   end

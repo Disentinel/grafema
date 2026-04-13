@@ -15,6 +15,9 @@ executable beam-resolve
     BeamProtocolResolution
     BeamBehaviourResolution
     BeamRuntimeGlobals
+    BeamWrapperResolution
+    BeamShape
+    BeamMessageFindings
 
   build-depends:
     base                 >= 4.17 && < 5,
@@ -38,6 +41,10 @@ test-suite spec
     BeamLocalRefs
     BeamBehaviourResolution
     BeamProtocolResolution
+    BeamWrapperResolution
+    BeamShape
+    BeamMessageFindings
+
 
   build-depends:
     base                 >= 4.17 && < 5,
