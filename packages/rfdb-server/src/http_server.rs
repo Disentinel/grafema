@@ -270,20 +270,12 @@ fn get_or_build_file_to_nodes(
 /// REFERENCE, PARAMETER, LITERAL, BRANCH, PATTERN, SCOPE, PROPERTY_ACCESS,
 /// IMPORT, CASE, EXPRESSION, DO_BLOCK, METRIC, EFFECT, CONSTRUCTOR are
 /// intentionally excluded — too granular and noisy.
+// File-level atoms only. Symbol-level primitives (FUNCTION, CLASS,
+// METHOD, VARIABLE, ...) blew up hull construction on the client and
+// made stream emit dominate build time. Roll back to one atom per
+// file (MODULE node). 576 atoms on grafema self-analysis.
 const ATOM_TYPES: &[&str] = &[
     "MODULE",
-    "FUNCTION",
-    "METHOD",
-    "CLASS",
-    "INTERFACE",
-    "DATA_TYPE",
-    "VARIABLE",
-    "CONSTANT",
-    "TYPE_SIGNATURE",
-    "PROPERTY_SIGNATURE",
-    "RECORD_FIELD",
-    "EXPORT_BINDING",
-    "IMPORT_BINDING",
 ];
 
 /// Build a file-aware hierarchy where the deepest level corresponds to a
