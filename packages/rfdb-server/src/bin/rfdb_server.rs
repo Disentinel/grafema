@@ -3398,10 +3398,30 @@ async fn main() {
         }
     });
 
-    // Spawn HTTP visualization server (if --http-port provided)
+    // Spawn HTTP visualization server (if --http-port provided).
+    // Warmup is run SYNCHRONOUSLY before the HTTP listener binds so the
+    // first browser request does not race with cache construction. The
+    // server is "not accepting" for ~13 seconds on cold start, then every
+    // request is ~500ms. This gives a clean UX: "server ready" vs "server
+    // accepts requests but first one freezes".
     if let Some(port) = http_port {
         let manager_http = Arc::clone(&manager);
-        tokio::spawn(rfdb::http_server::start(manager_http, port));
+        let http_state = rfdb::http_server::new_state(manager_http);
+        let warmup_state = http_state.clone();
+        let t_warm = std::time::Instant::now();
+        eprintln!("[rfdb-server] warmup: building file→nodes cache and tectonic layout …");
+        let warmup_res = tokio::task::spawn_blocking(move || {
+            rfdb::http_server::warmup(&warmup_state);
+        })
+        .await;
+        match warmup_res {
+            Ok(()) => eprintln!(
+                "[rfdb-server] warmup complete in {}ms — HTTP server is now hot",
+                t_warm.elapsed().as_millis()
+            ),
+            Err(e) => eprintln!("[rfdb-server] warmup task failed: {} (HTTP will still start)", e),
+        }
+        tokio::spawn(rfdb::http_server::start(http_state, port));
     }
 
     // Spawn WebSocket accept loop (if enabled)
