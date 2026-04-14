@@ -42,22 +42,29 @@ export class SceneManager {
 
     // Scene
     this.scene = new THREE.Scene();
-    this.scene.fog = new THREE.FogExp2(BACKGROUND, 0.0006);
+    // Fog tuned for large real-project graphs: at the prior 0.0006 density
+    // a ~4000-unit extent is >90% fogged and content is invisible. Reduced
+    // to effectively-off at this scale; a camera-distance-based fade is a
+    // future improvement.
+    this.scene.fog = new THREE.FogExp2(BACKGROUND, 0.00005);
 
-    // Camera
+    // Camera — far plane bumped from 5000 to 50000 to accommodate
+    // real-project layouts. Initial position is a placeholder; Canvas
+    // autofit immediately overwrites it.
     this.camera = new THREE.PerspectiveCamera(
       60,
       container.clientWidth / container.clientHeight,
       0.1,
-      5000,
+      50000,
     );
     this.camera.position.set(0, 200, 200);
 
-    // Controls
+    // Controls — maxDistance raised from 2000 to 20000 to allow zoom-out
+    // past large-layout autofit distances.
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.05;
-    this.controls.maxDistance = 2000;
+    this.controls.maxDistance = 20000;
     this.controls.minDistance = 5;
     this.controls.maxPolarAngle = Math.PI * 0.45;
     this.controls.screenSpacePanning = false;

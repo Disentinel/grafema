@@ -127,17 +127,27 @@ export function Canvas() {
       }
       if (groupsMap.size === 0) continue;
       const isLeaf = level === maxDepth - 1;
+      // Depth-based visual styling: outermost package hull is white and
+      // thick (clearly separates packages), inner levels fade to a dimmer
+      // cyan tint. Linewidth scales 3..8 px — significantly chunkier than
+      // the previous 1..4 px which was invisible on 4000-unit layouts.
+      const levelColor =
+        level === 0 ? 0xffffff :       // packages: white
+        level === 1 ? 0x66ddff :       // sub-package: cyan
+        level === 2 ? 0x5599bb :       // dirs: dimmer cyan
+        0x446677;                      // deeper: muted
       hullLayersRef.current.push(
         new HullLayer([...groupsMap.values()], {
           hexSize: TILE_SIZE,
-          elevation: 0.3 + level * 0.4,
-          color: isLeaf ? 0x666666 : 0xffffff,
-          opacity: isLeaf ? 0.5 : 0.9,
-          linewidth: 1 + level * 0.8,
+          elevation: 0.3 + level * 0.6,
+          color: levelColor,
+          opacity: isLeaf ? 0.6 : 0.95,
+          linewidth: 3 + (maxDepth - 1 - level) * 1.2,  // outer=thickest
           fillInteriorGaps: !isLeaf,
         }, sm.scene),
       );
     }
+    console.log(`[Canvas] built ${hullLayersRef.current.length} hull layers, maxDepth=${maxDepth}`);
 
     // Subscribe to lens changes (also recolors edges — uses flowLayerLocalRef)
     const unsubLens = useViewStore.subscribe((state, prev) => {
@@ -532,9 +542,47 @@ export function Canvas() {
     const cx = (minX + maxX) / 2;
     const cz = (minZ + maxZ) / 2;
     const extent = Math.max(maxX - minX, maxZ - minZ);
-    const dist = Math.max(80, extent * 1.2);
+    // Tighter fit: 0.7× extent gives ~80% screen coverage with the 60° FOV.
+    // Previous 1.2× put content in ~20% of the viewport, making details
+    // invisible at the default zoom.
+    const dist = Math.max(80, extent * 1.0);
     sm.controls.target.set(cx, 0, cz);
     sm.camera.position.set(cx, dist, cz + dist);
+
+    // --- Zoom-driven LOD hull fade ---
+    // Each hull layer corresponds to one depth in the region hierarchy
+    // (level 0 = top package, level N-1 = leaf file). As the camera zooms:
+    //   - far out (dist ≈ extent) → only outer hulls (level 0,1) visible
+    //   - close in (dist ≈ 80)    → inner hulls (level N-1, N-2) visible
+    // Between, smoothly crossfade by distance.
+    //
+    // Mapping: `focus_level` = log-interpolated from dist.
+    //   dist == extent   → focus_level = 0   (coarsest)
+    //   dist == 80       → focus_level = N-1 (finest)
+    // Each layer's opacity = clamp(1 - |level - focus_level| / fadeWidth).
+    //
+    // Registered as an onRender callback so it runs every frame and
+    // responds to OrbitControls smoothly.
+    const hullExtent = Math.max(extent, 100);
+    const hullMaxDepth = maxDepth;
+    sm.onRender(() => {
+      const d = sm.getCameraDistance();
+      // log-scale: t=0 at d=80, t=1 at d=hullExtent.
+      const lo = Math.log(80);
+      const hi = Math.log(Math.max(hullExtent, 200));
+      const norm = Math.max(0, Math.min(1, (Math.log(Math.max(d, 80)) - lo) / (hi - lo)));
+      // t=0 (zoomed in) → focus_level = N-1, t=1 (zoomed out) → focus_level = 0
+      const focusLevel = (1 - norm) * (hullMaxDepth - 1);
+      const fadeWidth = 1.2;
+      const layers = hullLayersRef.current;
+      for (let i = 0; i < layers.length; i++) {
+        const dist = Math.abs(i - focusLevel);
+        const alphaFactor = Math.max(0, 1 - dist / fadeWidth);
+        // Each layer's base opacity was set at construction; we multiply.
+        const baseOpacity = i === hullMaxDepth - 1 ? 0.6 : 0.95;
+        layers[i].setOpacity(baseOpacity * alphaFactor);
+      }
+    });
 
     // Update LineMaterial resolution on window resize so the hull
     // outlines stay the right pixel width.
