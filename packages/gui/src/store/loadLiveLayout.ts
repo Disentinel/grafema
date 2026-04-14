@@ -33,7 +33,7 @@ export async function loadLiveLayout(opts: LiveLayoutOptions = {}) {
   // connectLayoutWebSocket(opts);
 }
 
-function connectLayoutWebSocket(opts: LiveLayoutOptions) {
+function _connectLayoutWebSocket(opts: LiveLayoutOptions) {
   const params = new URLSearchParams();
   if (opts.packages) params.set('packages', opts.packages);
   if (opts.maxNodes) params.set('maxNodes', String(opts.maxNodes));
@@ -76,7 +76,7 @@ function connectLayoutWebSocket(opts: LiveLayoutOptions) {
     }
   };
 
-  ws.onerror = (e) => {
+  ws.onerror = (_e) => {
     console.warn('[liveLayout] WS error — server-side SA unavailable, using client layout');
   };
 

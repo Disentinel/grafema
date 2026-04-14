@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import { SceneManager } from '../three/SceneManager';
 import { HexLayer } from '../three/HexLayer';
+import { HullLayer, type HullGroup } from '../three/HullLayer';
 import { RegionLayer } from '../three/RegionLayer';
 import { FlowLayer } from '../three/FlowLayer';
 import { RouteLayer } from '../three/RouteLayer';
@@ -30,6 +31,7 @@ export function Canvas() {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<SceneManager | null>(null);
   const hexLayerRef = useRef<HexLayer | null>(null);
+  const hullLayersRef = useRef<HullLayer[]>([]);
   const [showCoords, setShowCoords] = useState(false);
   setShowCoordsRef = setShowCoords;
   const [tooltip, setTooltip] = useState<{ x: number; y: number; name: string; type: string; region: string; edges: string[] } | null>(null);
@@ -89,6 +91,53 @@ export function Canvas() {
       layer.setTile(i, nodes[i].x, nodes[i].z, color);
     }
     layer.finalize();
+
+    // --- Hierarchical hull outlines (N-level) ---
+    // One HullLayer per hierarchy level derived from the region path.
+    // Level k uses the first (k+1) segments of the region path; deeper
+    // levels get thicker lines and higher elevation so nested grouping
+    // reads visually as a stack.
+    for (const h of hullLayersRef.current) h.dispose();
+    hullLayersRef.current = [];
+
+    // Debug: expose scene to window for inspection
+    (window as unknown as Record<string, unknown>).debugScene = sm.scene;
+
+    // Compute maxDepth across all nodes from their region path segments.
+    let maxDepth = 0;
+    for (const n of nodes) {
+      const d = n.region ? n.region.split('/').length : 0;
+      if (d > maxDepth) maxDepth = d;
+    }
+
+    function regionAtLevel(fullRegion: string, level: number): string {
+      // level 0 = top prefix, level k = top k+1 path segments.
+      return fullRegion.split('/').slice(0, level + 1).join('/');
+    }
+
+    for (let level = 0; level < maxDepth; level++) {
+      const groupsMap = new Map<string, HullGroup>();
+      for (const n of nodes) {
+        if (!n.region) continue;
+        const key = regionAtLevel(n.region, level);
+        if (!key) continue;
+        let g = groupsMap.get(key);
+        if (!g) { g = { id: key, tiles: [] }; groupsMap.set(key, g); }
+        g.tiles.push({ x: n.x, z: n.z });
+      }
+      if (groupsMap.size === 0) continue;
+      const isLeaf = level === maxDepth - 1;
+      hullLayersRef.current.push(
+        new HullLayer([...groupsMap.values()], {
+          hexSize: TILE_SIZE,
+          elevation: 0.3 + level * 0.4,
+          color: isLeaf ? 0x666666 : 0xffffff,
+          opacity: isLeaf ? 0.5 : 0.9,
+          linewidth: 1 + level * 0.8,
+          fillInteriorGaps: !isLeaf,
+        }, sm.scene),
+      );
+    }
 
     // Subscribe to lens changes (also recolors edges — uses flowLayerLocalRef)
     const unsubLens = useViewStore.subscribe((state, prev) => {
@@ -471,21 +520,42 @@ export function Canvas() {
     sm.renderer.domElement.addEventListener('click', onClick);
     sm.renderer.domElement.addEventListener('dblclick', onDblClick);
 
-    // --- Camera ---
-    let cx = 0, cz = 0;
-    for (const n of nodes) { cx += n.x; cz += n.z; }
-    cx /= nodes.length;
-    cz /= nodes.length;
+    // --- Camera autofit ---
+    // Compute bounding box of all tiles and place camera to frame it.
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    for (const n of nodes) {
+      if (n.x < minX) minX = n.x;
+      if (n.x > maxX) maxX = n.x;
+      if (n.z < minZ) minZ = n.z;
+      if (n.z > maxZ) maxZ = n.z;
+    }
+    const cx = (minX + maxX) / 2;
+    const cz = (minZ + maxZ) / 2;
+    const extent = Math.max(maxX - minX, maxZ - minZ);
+    const dist = Math.max(80, extent * 1.2);
     sm.controls.target.set(cx, 0, cz);
-    sm.camera.position.set(cx, 80, cz + 80);
+    sm.camera.position.set(cx, dist, cz + dist);
+
+    // Update LineMaterial resolution on window resize so the hull
+    // outlines stay the right pixel width.
+    const onResize = () => {
+      const w = sm.renderer.domElement.clientWidth;
+      const h = sm.renderer.domElement.clientHeight;
+      for (const layer of hullLayersRef.current) layer.setResolution(w, h);
+    };
+    onResize();
+    window.addEventListener('resize', onResize);
 
     return () => {
       sm.renderer.domElement.removeEventListener('mousemove', onMouseMove);
       sm.renderer.domElement.removeEventListener('click', onClick);
       sm.renderer.domElement.removeEventListener('dblclick', onDblClick);
+      window.removeEventListener('resize', onResize);
       unsubRoutes();
       unsubLens();
       unsubDiff();
+      for (const h of hullLayersRef.current) h.dispose();
+      hullLayersRef.current = [];
     };
   }, [loaded, nodes, edges, regions]);
 

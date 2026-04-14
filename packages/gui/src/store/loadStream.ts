@@ -1,13 +1,12 @@
 /**
  * JSONL streaming loader for live RFDB data.
  *
- * Fetches /api/graph-stream, parses line-by-line, runs SA layout,
- * and populates the data store — same contract as loadFixture.
+ * Fetches /api/graph-stream, parses line-by-line, and consumes server-provided
+ * tectonic layout positions directly — no client-side SA.
  */
 
 import { useDataStore, type GraphNode, type GraphEdge, type Region } from './dataStore';
 import { useRouteStore } from './routeStore';
-import { annealingLayout, type LayoutNode } from './hexLayout';
 import { cubeToWorld } from './loadFixture';
 
 export interface StreamOptions {
@@ -15,6 +14,8 @@ export interface StreamOptions {
   nodeTypes?: string;
   edgeTypes?: string;
   maxNodes?: number;
+  /** Container hierarchy level for region grouping (e.g. "package", "directory"). */
+  lodLevel?: string;
   onProgress?: (phase: string, count: number, total?: number) => void;
 }
 
@@ -35,6 +36,7 @@ interface NodeMsg {
   region: string;
   degree: number;
   metrics?: Record<string, number>;
+  pos?: { q: number; r: number } | null;
 }
 
 interface EdgeMsg {
@@ -56,7 +58,21 @@ interface DoneMsg {
   elapsed: number;
 }
 
-type StreamMsg = HeaderMsg | NodeMsg | EdgeMsg | NodesDoneMsg | DoneMsg;
+interface TectonicMetaMsg {
+  type: 'tectonic_meta';
+  num_atoms: number;
+  phase3_initial_cost: number;
+  phase3_final_cost: number;
+  pipeline_ms: number;
+}
+
+type StreamMsg =
+  | HeaderMsg
+  | NodeMsg
+  | EdgeMsg
+  | NodesDoneMsg
+  | DoneMsg
+  | TectonicMetaMsg;
 
 /**
  * Parse a ReadableStream<Uint8Array> as newline-delimited JSON.
@@ -101,6 +117,7 @@ export async function loadStream(opts: StreamOptions = {}) {
   if (opts.nodeTypes) params.set('nodeTypes', opts.nodeTypes);
   if (opts.edgeTypes) params.set('edgeTypes', opts.edgeTypes);
   if (opts.maxNodes) params.set('maxNodes', String(opts.maxNodes));
+  if (opts.lodLevel) params.set('lodLevel', opts.lodLevel);
 
   const url = `/api/graph-stream?${params.toString()}`;
   console.log('[loadStream] fetching:', url);
@@ -112,7 +129,7 @@ export async function loadStream(opts: StreamOptions = {}) {
   let header: HeaderMsg | null = null;
   const rawNodes: NodeMsg[] = [];
   const rawEdges: EdgeMsg[] = [];
-  let _nodesDone = false;
+  let tectonicMeta: TectonicMetaMsg | null = null;
 
   const onProgress = opts.onProgress ?? (() => {});
 
@@ -129,7 +146,6 @@ export async function loadStream(opts: StreamOptions = {}) {
         if (rawNodes.length % 500 === 0) onProgress('nodes', rawNodes.length);
         break;
       case 'nodes_done':
-        _nodesDone = true;
         console.log('[loadStream] nodes done:', msg.count);
         onProgress('nodes_done', msg.count);
         break;
@@ -141,6 +157,15 @@ export async function loadStream(opts: StreamOptions = {}) {
         console.log('[loadStream] done:', msg.nodeCount, 'nodes,', msg.edgeCount, 'edges,', msg.elapsed, 'ms');
         onProgress('done', msg.nodeCount, msg.edgeCount);
         break;
+      case 'tectonic_meta':
+        tectonicMeta = msg;
+        console.log(
+          '[loadStream] tectonic_meta:',
+          `atoms=${msg.num_atoms}`,
+          `cost=${msg.phase3_initial_cost}→${msg.phase3_final_cost}`,
+          `pipeline=${msg.pipeline_ms}ms`,
+        );
+        break;
     }
   }
 
@@ -151,42 +176,54 @@ export async function loadStream(opts: StreamOptions = {}) {
     throw new Error('Empty graph received from server');
   }
 
-  // ── Build layout input ──
+  // Expose tectonic_meta for debug/diagnostic access
+  (globalThis as Record<string, unknown>).__grafemaTectonicMeta = tectonicMeta;
+
+  // ── Build GraphNode[] directly from server positions ──
   const TILE_SIZE = 3.0;
 
-  // Exclude container types from layout (same as loadFixture)
+  // Exclude container types — they are region metadata, not code entities.
   const EXCLUDED_TYPES = new Set(['SERVICE', 'MODULE']);
-  const codeNodes: { raw: NodeMsg; oldIdx: number }[] = [];
-  for (let i = 0; i < rawNodes.length; i++) {
-    const typeName = header.typeTable[rawNodes[i].t] ?? '';
-    if (!EXCLUDED_TYPES.has(typeName)) {
-      codeNodes.push({ raw: rawNodes[i], oldIdx: i });
-    }
-  }
 
-  // Remap indices for layout
+  // Pass 1: collect nodes that participate in layout and remap indices.
   const oldToLayout = new Map<number, number>();
-  const layoutNodes: LayoutNode[] = [];
-  for (let li = 0; li < codeNodes.length; li++) {
-    const { raw, oldIdx } = codeNodes[li];
-    oldToLayout.set(oldIdx, li);
-    layoutNodes.push({
+  const nodes: GraphNode[] = [];
+  let droppedNoPos = 0;
+  for (let i = 0; i < rawNodes.length; i++) {
+    const raw = rawNodes[i];
+    const typeName = header.typeTable[raw.t] ?? 'UNKNOWN';
+    if (EXCLUDED_TYPES.has(typeName)) continue;
+    if (!raw.pos) {
+      droppedNoPos++;
+      continue;
+    }
+    const { x, z } = cubeToWorld(raw.pos.q, raw.pos.r, TILE_SIZE);
+    const li = nodes.length;
+    oldToLayout.set(i, li);
+    nodes.push({
       id: raw.id,
-      type: header.typeTable[raw.t] ?? 'UNKNOWN',
+      type: typeName,
       name: raw.name,
       file: raw.file,
       region: raw.region,
+      x,
+      z,
+      metrics: raw.metrics,
       degree: raw.degree,
     });
   }
 
-  // Remap edges (skip edges touching excluded nodes)
-  const layoutEdges: GraphEdge[] = [];
+  if (droppedNoPos > 0) {
+    console.warn(`[loadStream] dropped ${droppedNoPos} nodes without server positions`);
+  }
+
+  // Pass 2: remap edges (skip edges touching excluded / positionless nodes).
+  const edges: GraphEdge[] = [];
   for (const e of rawEdges) {
     const src = oldToLayout.get(e.s);
     const dst = oldToLayout.get(e.d);
     if (src !== undefined && dst !== undefined) {
-      layoutEdges.push({
+      edges.push({
         source: src,
         target: dst,
         type: header.edgeTypeTable[e.t] ?? 'UNKNOWN',
@@ -194,67 +231,30 @@ export async function loadStream(opts: StreamOptions = {}) {
     }
   }
 
-  // Collect unique region names from layout nodes
-  const regionNames = [...new Set(layoutNodes.map(n => n.region))];
-
-  console.log('[loadStream] layout input:', layoutNodes.length, 'nodes,', layoutEdges.length, 'edges,', regionNames.length, 'regions');
-  onProgress('layout', layoutNodes.length);
-
-  // Run simulated annealing
-  console.log('[loadStream] starting SA...');
-  const saStart = performance.now();
-  const { tileCoords } = annealingLayout(layoutNodes, layoutEdges, regionNames);
-  console.log('[loadStream] SA done in', Math.round(performance.now() - saStart), 'ms,', tileCoords.size, 'tiles');
-
-  // Build GraphNode[] with world positions
-  const nodes: GraphNode[] = [];
-  for (let li = 0; li < layoutNodes.length; li++) {
-    const tile = tileCoords.get(li);
-    if (!tile) continue;
-    const ln = layoutNodes[li];
-    const { raw } = codeNodes[li];
-    const { x, z } = cubeToWorld(tile.q, tile.r, TILE_SIZE);
-
-    nodes[li] = {
-      id: ln.id,
-      type: ln.type,
-      name: ln.name,
-      file: ln.file,
-      region: ln.region,
-      x,
-      z,
-      metrics: raw.metrics,
-      degree: ln.degree,
-    };
-  }
-
-  // Build regions
-  const regions: Region[] = regionNames.map(rpath => {
-    const regionNodes = nodes.filter(n => n && n.region === rpath);
+  // Build regions from header (canonical) joined with per-node centroid data.
+  const regions: Region[] = header.regions.map((hr) => {
+    const regionNodes = nodes.filter((n) => n.region === hr.path);
     let cx = 0, cz = 0;
     for (const n of regionNodes) { cx += n.x; cz += n.z; }
     if (regionNodes.length > 0) { cx /= regionNodes.length; cz /= regionNodes.length; }
-    // Find depth from header regions
-    const headerRegion = header!.regions.find(r => r.path === rpath);
     return {
-      path: rpath,
-      depth: headerRegion?.depth ?? 0,
+      path: hr.path,
+      depth: hr.depth,
       tileCount: regionNodes.length,
       border: [],
       centroid: { x: cx, z: cz },
     };
   });
 
-  const typeSet = new Set(layoutNodes.map(n => n.type));
-  const edgeTypeSet = new Set(layoutEdges.map(e => e.type));
+  const typeSet = new Set(nodes.map((n) => n.type));
+  const edgeTypeSet = new Set(edges.map((e) => e.type));
 
-  console.log('[loadStream] setting graph data:', nodes.length, 'nodes,', layoutEdges.length, 'edges,', regions.length, 'regions');
-  (globalThis as Record<string, unknown>).__grafemaTileCoords = tileCoords;
+  console.log('[loadStream] setting graph data:', nodes.length, 'nodes,', edges.length, 'edges,', regions.length, 'regions');
   (globalThis as Record<string, unknown>).__grafemaTileSize = TILE_SIZE;
 
   store.setGraphData({
     nodes,
-    edges: layoutEdges,
+    edges,
     regions,
     typeTable: [...typeSet],
     edgeTypeTable: [...edgeTypeSet],
@@ -263,5 +263,5 @@ export async function loadStream(opts: StreamOptions = {}) {
   // Clear routes (no routes from live data)
   useRouteStore.getState().setRoutes([]);
 
-  onProgress('complete', nodes.length, layoutEdges.length);
+  onProgress('complete', nodes.length, edges.length);
 }
