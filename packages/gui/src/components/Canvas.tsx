@@ -92,62 +92,28 @@ export function Canvas() {
     }
     layer.finalize();
 
-    // --- Hierarchical hull outlines (N-level) ---
-    // One HullLayer per hierarchy level derived from the region path.
-    // Level k uses the first (k+1) segments of the region path; deeper
-    // levels get thicker lines and higher elevation so nested grouping
-    // reads visually as a stack.
+    // --- Hull rendering disabled ---
+    // The CPU-side HullLayer construction (morphological close +
+    // boundary trace per region per level) becomes O(tiles² × levels)
+    // on real-project graphs. At 15k+ tiles × 5 levels it hangs the
+    // main thread for tens of seconds and the result is a pile of line
+    // materials the browser has to re-draw every frame anyway.
+    //
+    // Instead: tile colors (via LENSES.region) already encode region
+    // membership with per-package hue + per-subdir wobble. Region
+    // boundaries emerge naturally as hue transitions between adjacent
+    // tiles — the GPU draws them for free via the existing HexLayer
+    // instanced color attribute. No hull construction, no line2
+    // materials, no morphological close.
+    //
+    // If sharper outlines are needed later, the proper path is a custom
+    // fragment shader that samples a region-id texture at each hex cell
+    // and detects neighbor differences — but that's future work.
     for (const h of hullLayersRef.current) h.dispose();
     hullLayersRef.current = [];
 
     // Debug: expose scene to window for inspection
     (window as unknown as Record<string, unknown>).debugScene = sm.scene;
-
-    // Compute maxDepth across all nodes from their region path segments.
-    let maxDepth = 0;
-    for (const n of nodes) {
-      const d = n.region ? n.region.split('/').length : 0;
-      if (d > maxDepth) maxDepth = d;
-    }
-
-    function regionAtLevel(fullRegion: string, level: number): string {
-      // level 0 = top prefix, level k = top k+1 path segments.
-      return fullRegion.split('/').slice(0, level + 1).join('/');
-    }
-
-    for (let level = 0; level < maxDepth; level++) {
-      const groupsMap = new Map<string, HullGroup>();
-      for (const n of nodes) {
-        if (!n.region) continue;
-        const key = regionAtLevel(n.region, level);
-        if (!key) continue;
-        let g = groupsMap.get(key);
-        if (!g) { g = { id: key, tiles: [] }; groupsMap.set(key, g); }
-        g.tiles.push({ x: n.x, z: n.z });
-      }
-      if (groupsMap.size === 0) continue;
-      const isLeaf = level === maxDepth - 1;
-      // Depth-based visual styling: outermost package hull is white and
-      // thick (clearly separates packages), inner levels fade to a dimmer
-      // cyan tint. Linewidth scales 3..8 px — significantly chunkier than
-      // the previous 1..4 px which was invisible on 4000-unit layouts.
-      const levelColor =
-        level === 0 ? 0xffffff :       // packages: white
-        level === 1 ? 0x66ddff :       // sub-package: cyan
-        level === 2 ? 0x5599bb :       // dirs: dimmer cyan
-        0x446677;                      // deeper: muted
-      hullLayersRef.current.push(
-        new HullLayer([...groupsMap.values()], {
-          hexSize: TILE_SIZE,
-          elevation: 0.3 + level * 0.6,
-          color: levelColor,
-          opacity: isLeaf ? 0.6 : 0.95,
-          linewidth: 3 + (maxDepth - 1 - level) * 1.2,  // outer=thickest
-          fillInteriorGaps: !isLeaf,
-        }, sm.scene),
-      );
-    }
-    console.log(`[Canvas] built ${hullLayersRef.current.length} hull layers, maxDepth=${maxDepth}`);
 
     // Subscribe to lens changes (also recolors edges — uses flowLayerLocalRef)
     const unsubLens = useViewStore.subscribe((state, prev) => {
@@ -549,47 +515,14 @@ export function Canvas() {
     sm.controls.target.set(cx, 0, cz);
     sm.camera.position.set(cx, dist, cz + dist);
 
-    // --- Zoom-driven LOD hull fade ---
-    // Each hull layer corresponds to one depth in the region hierarchy
-    // (level 0 = top package, level N-1 = leaf file). As the camera zooms:
-    //   - far out (dist ≈ extent) → only outer hulls (level 0,1) visible
-    //   - close in (dist ≈ 80)    → inner hulls (level N-1, N-2) visible
-    // Between, smoothly crossfade by distance.
-    //
-    // Mapping: `focus_level` = log-interpolated from dist.
-    //   dist == extent   → focus_level = 0   (coarsest)
-    //   dist == 80       → focus_level = N-1 (finest)
-    // Each layer's opacity = clamp(1 - |level - focus_level| / fadeWidth).
-    //
-    // Registered as an onRender callback so it runs every frame and
-    // responds to OrbitControls smoothly.
-    const hullExtent = Math.max(extent, 100);
-    const hullMaxDepth = maxDepth;
-    sm.onRender(() => {
-      const d = sm.getCameraDistance();
-      // log-scale: t=0 at d=80, t=1 at d=hullExtent.
-      const lo = Math.log(80);
-      const hi = Math.log(Math.max(hullExtent, 200));
-      const norm = Math.max(0, Math.min(1, (Math.log(Math.max(d, 80)) - lo) / (hi - lo)));
-      // t=0 (zoomed in) → focus_level = N-1, t=1 (zoomed out) → focus_level = 0
-      const focusLevel = (1 - norm) * (hullMaxDepth - 1);
-      const fadeWidth = 1.2;
-      const layers = hullLayersRef.current;
-      for (let i = 0; i < layers.length; i++) {
-        const dist = Math.abs(i - focusLevel);
-        const alphaFactor = Math.max(0, 1 - dist / fadeWidth);
-        // Each layer's base opacity was set at construction; we multiply.
-        const baseOpacity = i === hullMaxDepth - 1 ? 0.6 : 0.95;
-        layers[i].setOpacity(baseOpacity * alphaFactor);
-      }
-    });
+    // Zoom-driven LOD fade removed along with HullLayer. Tile colors
+    // now encode region membership directly; no per-frame fade needed.
 
-    // Update LineMaterial resolution on window resize so the hull
-    // outlines stay the right pixel width.
+    // Hull resolution resize handler was for Line2 linewidth — no-op
+    // now that hulls are gone.
     const onResize = () => {
-      const w = sm.renderer.domElement.clientWidth;
-      const h = sm.renderer.domElement.clientHeight;
-      for (const layer of hullLayersRef.current) layer.setResolution(w, h);
+      // (intentionally empty — kept so the effect teardown signature
+      // stays consistent with the window listener add/remove pair)
     };
     onResize();
     window.addEventListener('resize', onResize);

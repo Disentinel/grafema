@@ -49,11 +49,11 @@ export function App() {
         packages: params.packages,
         nodeTypes: params.nodeTypes,
         edgeTypes: params.edgeTypes,
-        // Default cap raised from 5000 (server default) to 15000 — this
-        // hits ~2.4s build time on the real grafema self-analysis and
-        // gives ~3x the visible density of the server's 5k default.
-        // Explicit ?maxNodes= still overrides.
-        maxNodes: params.maxNodes ?? 15000,
+        // HullLayer removed (Canvas draws regions via tile color), so
+        // stream size is bounded only by server build time + client
+        // HexLayer cost. 50k nodes → ~14s server stream but the client
+        // HexLayer (instanced) handles them trivially.
+        maxNodes: params.maxNodes ?? 50000,
         lodLevel: params.lodLevel,
         onProgress: streamProgress,
         ...(params.rust ? {
