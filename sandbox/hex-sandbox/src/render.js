@@ -46,7 +46,9 @@ export function render(ctx, map, opts) {
     regionColor = defaultRegionColor,
     overlay = null,
     hullLayers = null,
+    hullsOutlineOnly = false,
     hideHexes = false,
+    nodeShortLabels = false,
   } = opts;
 
   const c = ctx.canvas;
@@ -88,6 +90,46 @@ export function render(ctx, map, opts) {
     for (const n of map.nodes.values()) {
       const { x, y } = axialToPixel(n.coord, hexSize);
       drawHex(ctx, origin.x + x, origin.y + y, hexSize * 0.92, regionColor(n.regionId));
+    }
+
+    // Per-node basename labels — active in per-hex mode at LOD max.
+    // Short name = last '/' segment of node.id (which is the full path
+    // for tree-loaded samples). Label drawn in the same darker-region
+    // hue as toponyms for visual consistency.
+    if (nodeShortLabels) {
+      const fontPx = Math.max(9, Math.min(14, hexSize * 0.5));
+      ctx.save();
+      ctx.translate(origin.x, origin.y);
+      ctx.font = `700 ${fontPx}px ui-monospace, Menlo, Monaco, monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      for (const n of map.nodes.values()) {
+        const id = n.id || '';
+        const base = id.includes('/') ? id.slice(id.lastIndexOf('/') + 1) : id;
+        // Truncate if wider than the hex diameter
+        const dot = base.lastIndexOf('.');
+        const stem = dot > 0 ? base.slice(0, dot) : base;
+        const maxW = hexSize * 1.6;
+        let text = stem;
+        let m = ctx.measureText(text);
+        if (m.width > maxW) {
+          // Binary shrink with ellipsis
+          const ell = '…';
+          let lo = 0, hi = text.length;
+          while (lo < hi) {
+            const mid = (lo + hi) >> 1;
+            const candidate = text.slice(0, mid) + ell;
+            if (ctx.measureText(candidate).width <= maxW) lo = mid + 1;
+            else hi = mid;
+          }
+          text = text.slice(0, Math.max(0, lo - 1)) + ell;
+        }
+        if (!text) continue;
+        const { x, y } = axialToPixel(n.coord, hexSize);
+        ctx.fillStyle = darkenHsl(regionColor(n.regionId), 32);
+        ctx.fillText(text, x, y);
+      }
+      ctx.restore();
     }
   }
 
@@ -189,6 +231,12 @@ export function render(ctx, map, opts) {
     }
   }
 
+  // 3.4 Hull-layer labels (toponyms) — one per hull, centered on its
+  // centroid, font size proportional to tile count so big folders
+  // get big labels. Drawn AFTER fills but BEFORE overlay so they sit
+  // on top of the colour but under tectonic debug decorations.
+  // Collected here, rendered right after the hull fill pass below.
+
   // 3.5 Assembly hull layers — drawn between nodes and overlay.
   // Each layer: { coords: [{q,r}], fillColor, strokeColor?, lineWidth? }
   // Used by ring assembly to show "assembled" folders as hulls on top
@@ -210,14 +258,130 @@ export function render(ctx, map, opts) {
         }
         ctx.closePath();
       }
-      if (layer.fillColor) { ctx.fillStyle = layer.fillColor; ctx.fill('nonzero'); }
+      if (!hullsOutlineOnly && layer.fillColor) {
+        ctx.fillStyle = layer.fillColor;
+        ctx.fill('nonzero');
+      }
       if (layer.strokeColor) {
         ctx.strokeStyle = layer.strokeColor;
-        ctx.lineWidth = layer.lineWidth ?? 1.5;
+        // Outline-only mode: thick, high-contrast strokes so folder
+        // boundaries stay legible against the per-hex grid noise.
+        ctx.lineWidth = hullsOutlineOnly
+          ? Math.max(2.5, 5 - (layer._depth ?? 0) * 0.4)
+          : (layer.lineWidth ?? 1.5);
+        ctx.globalAlpha = hullsOutlineOnly ? 0.95 : 1;
         ctx.stroke();
+        ctx.globalAlpha = 1;
       }
     }
     ctx.restore();
+
+    // Toponym labels — drawn over the hull fills in the same origin
+    // space. Gated on nodeLabels opt (repurposed from per-node labels
+    // by the demo bootstrap). Label text = last path segment,
+    // centered on tile-set centroid, font size scaled by √(tile
+    // count) × effective hex size.
+    if (nodeLabels) {
+    // Map-style toponym placement:
+    //   1. PCA over tile centers → principal axis of the hull
+    //   2. Rotate text along that axis (flipped to stay upright)
+    //   3. Fit test: label rectangle must sit inside the hull extents
+    //      along both axes; if it doesn't, the label is dropped and a
+    //      parent or sibling takes the space instead
+    //   4. Overlap culling via the AABB of the rotated rectangle
+    /** @type {Array<{text:string, cx:number, cy:number, angle:number, fontPx:number, tw:number, th:number, aabb:{minX:number,maxX:number,minY:number,maxY:number}}>} */
+    const candidates = [];
+    for (const layer of hullLayers) {
+      if (!layer.coords || layer.coords.length === 0) continue;
+
+      const pts = layer.coords.map(c => axialToPixel(c, hexSize));
+      let cx = 0, cy = 0;
+      for (const p of pts) { cx += p.x; cy += p.y; }
+      cx /= pts.length; cy /= pts.length;
+
+      // PCA covariance (2x2)
+      let sxx = 0, syy = 0, sxy = 0;
+      for (const p of pts) {
+        const dx = p.x - cx, dy = p.y - cy;
+        sxx += dx * dx; syy += dy * dy; sxy += dx * dy;
+      }
+      sxx /= pts.length; syy /= pts.length; sxy /= pts.length;
+      let angle = pts.length > 1 ? 0.5 * Math.atan2(2 * sxy, sxx - syy) : 0;
+      // Keep text upright (no upside-down labels)
+      if (angle > Math.PI / 2) angle -= Math.PI;
+      if (angle < -Math.PI / 2) angle += Math.PI;
+
+      const ax = Math.cos(angle), ay = Math.sin(angle);
+      const bx = -ay, by = ax;
+
+      // Project tile centers onto the two axes to get the hull extent
+      let minA = Infinity, maxA = -Infinity, minB = Infinity, maxB = -Infinity;
+      for (const p of pts) {
+        const dx = p.x - cx, dy = p.y - cy;
+        const pa = dx * ax + dy * ay;
+        const pb = dx * bx + dy * by;
+        if (pa < minA) minA = pa; if (pa > maxA) maxA = pa;
+        if (pb < minB) minB = pb; if (pb > maxB) maxB = pb;
+      }
+      const alongLen = (maxA - minA) + hexSize * 1.7;
+      const perpLen  = (maxB - minB) + hexSize * 1.7;
+
+      // Modest, map-like font size — gently scales with region size
+      const fontPx = Math.min(28, Math.max(12, Math.sqrt(pts.length) * hexSize * 0.18));
+      const text = layer.path === '.' || !layer.path
+        ? 'grafema'
+        : layer.path.split('/').pop();
+      ctx.font = `700 ${fontPx}px ui-monospace, Menlo, Monaco, monospace`;
+      const tw = ctx.measureText(text).width + fontPx * 0.15;
+      const th = fontPx * 1.1;
+
+      // Fit test — label must live inside the oriented bbox of the hull
+      if (tw > alongLen * 0.92 || th > perpLen * 0.92) continue;
+
+      // AABB of the rotated text rectangle for overlap culling
+      const hx = tw / 2, hy = th / 2;
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      for (const sx of [-hx, hx]) for (const sy of [-hy, hy]) {
+        const px = cx + sx * ax + sy * bx;
+        const py = cy + sx * ay + sy * by;
+        if (px < minX) minX = px; if (px > maxX) maxX = px;
+        if (py < minY) minY = py; if (py > maxY) maxY = py;
+      }
+      candidates.push({
+        text, cx, cy, angle, fontPx, tw, th,
+        fillColor: darkenHsl(layer.fillColor, 30),
+        aabb: { minX, maxX, minY, maxY },
+      });
+    }
+
+    // Bigger labels win; overlap via rotated-rect AABB.
+    candidates.sort((a, b) => b.fontPx - a.fontPx);
+    /** @type {typeof candidates} */
+    const placed = [];
+    const aabbOverlap = (a, b) =>
+      a.minX < b.maxX && a.maxX > b.minX && a.minY < b.maxY && a.maxY > b.minY;
+
+    ctx.save();
+    ctx.translate(origin.x, origin.y);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const cand of candidates) {
+      let collide = false;
+      for (const prev of placed) {
+        if (aabbOverlap(cand.aabb, prev.aabb)) { collide = true; break; }
+      }
+      if (collide) continue;
+      placed.push(cand);
+      ctx.save();
+      ctx.translate(cand.cx, cand.cy);
+      ctx.rotate(cand.angle);
+      ctx.font = `700 ${cand.fontPx}px ui-monospace, Menlo, Monaco, monospace`;
+      ctx.fillStyle = cand.fillColor ?? 'rgba(10, 15, 20, 0.95)';
+      ctx.fillText(cand.text, 0, 0);
+      ctx.restore();
+    }
+    ctx.restore();
+    } // end nodeLabels gate
   }
 
   // 4. Overlay — tectonic debug decorations (desire vectors, chosen dirs)
@@ -315,17 +479,6 @@ export function render(ctx, map, opts) {
     ctx.restore();
   }
 
-  // 5. Labels
-  if (nodeLabels) {
-    ctx.fillStyle = '#e0e6ec';
-    ctx.font = '10px monospace';
-    ctx.textAlign = 'center';
-    for (const n of map.nodes.values()) {
-      const { x, y } = axialToPixel(n.coord, hexSize);
-      const label = nodeLabels(n);
-      if (label) ctx.fillText(label, origin.x + x, origin.y + y + 3);
-    }
-  }
 }
 
 /**
@@ -349,6 +502,17 @@ export function drawHex(ctx, cx, cy, size, fill) {
   ctx.strokeStyle = 'rgba(0,0,0,0.3)';
   ctx.lineWidth = 0.5;
   ctx.stroke();
+}
+
+/** Parse an hsl()/hsla() string and return a darker variant for toponym fills. */
+function darkenHsl(hsl, deltaL) {
+  if (!hsl) return 'rgba(10, 15, 20, 0.95)';
+  const m = /hsla?\(\s*([\d.]+)\s*,\s*([\d.]+)%\s*,\s*([\d.]+)%/i.exec(hsl);
+  if (!m) return hsl;
+  const h = +m[1];
+  const s = Math.min(100, +m[2] + 15);
+  const l = Math.max(5, +m[3] - deltaL);
+  return `hsl(${h}, ${s}%, ${l}%)`;
 }
 
 /** Deterministic hue from region id. */

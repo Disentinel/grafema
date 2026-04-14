@@ -15,7 +15,7 @@ import { render, linkColor } from './render.js';
 import { axialToPixel, pixelToAxial } from './hex.js';
 import { computeHullPolygons } from './hull.js';
 import { runRingAssembly } from './ring.js';
-import { runPackingAssembly, buildLodHulls, maxFolderDepth } from './pack.js';
+import { runPackingAssembly, buildLodHulls, maxFolderDepth, folderHslForPath } from './pack.js';
 import { loadTree, buildSampleFromTree } from './tree-sample.js';
 
 const canvas = /** @type {HTMLCanvasElement} */ (document.getElementById('cv'));
@@ -38,13 +38,11 @@ const map = new HexMap();
 // if public/tree.json isn't available (e.g. scan script not run yet).
 /** @type {any} */
 let loadedTree = null;
+/** Cached pack snapshots from the initial run — used by the stepper. */
+let packSnaps = null;
 try {
   loadedTree = await loadTree();
   buildSampleFromTree(map, loadedTree, { hexSize: 22 });
-  // Bind LOD bounds to the tree's max folder depth. LOD 0 = one big
-  // root hull, lodMax-1 = every folder at its own depth, lodMax = per-
-  // hex view (individual nodes, no hull overlay). Per-hex is the
-  // "zoom all the way in" level.
   map.lodMax = maxFolderDepth(loadedTree) + 1;
   map.lod = map.lodMax;
   console.log(`loaded ${loadedTree.leaves.length} leaves, ${loadedTree.folders.length} folders, lodMax=${map.lodMax}`);
@@ -56,7 +54,7 @@ try {
 // ── Rendering ───────────────────────────────────────────────────
 const HEX = 22;
 let showLinks = true;
-let showLabels = false;
+let showLabels = true;  // hull-toponym labels on by default
 let showRoutes = true;
 let fillRegions = false; // ring mode draws individual hexes + assembled hulls on top
 
@@ -102,7 +100,12 @@ function rebuildPalette() {
   });
 }
 function regionColor(id) {
-  return id ? (regionPalette.get(id) ?? '#22272d') : '#22272d';
+  if (!id) return '#22272d';
+  // When the tree is loaded, use the same hierarchical hue function
+  // the LOD hull layers use — node colour then matches its immediate
+  // folder's hull at every LOD level.
+  if (loadedTree) return folderHslForPath(loadedTree, id);
+  return regionPalette.get(id) ?? '#22272d';
 }
 
 function draw() {
@@ -113,15 +116,22 @@ function draw() {
   // debug stepper), prefer that. Otherwise build hulls from the tree
   // at the current LOD.
   let hullLayers = currentSnap?.hullLayers ?? null;
-  // lodMax = per-hex view, no hull overlay. Any lower LOD shows
-  // aggregated folder hulls and hides per-hex.
+  let hullsOutlineOnly = false;
   const useLod = loadedTree && map.lod < map.lodMax;
-  if (!hullLayers && useLod) {
-    try { hullLayers = buildLodHulls(map, loadedTree, map.lod); }
+  if (!hullLayers && loadedTree) {
+    // At LOD max (per-hex), still draw the deepest folder hulls as
+    // OUTLINES ONLY so the user keeps orientation when the colour
+    // flood goes away. Fills and labels drop out; only the stroke
+    // remains. Hit-test ignores these outlines (tooltip prefers the
+    // per-hex node at the pointer).
+    const targetLod = useLod ? map.lod : Math.max(0, map.lodMax - 1);
+    hullsOutlineOnly = !useLod;
+    try { hullLayers = buildLodHulls(map, loadedTree, targetLod); }
     catch (e) { console.warn('hull build failed:', e.message); }
   }
-  // Cache current layers for the mousemove hit-test.
-  window.__currentHullLayers = hullLayers;
+  // Cache current layers for the mousemove hit-test — only used when
+  // hulls are the primary view (i.e. not outline-only).
+  window.__currentHullLayers = hullsOutlineOnly ? null : hullLayers;
   render(ctx, map, {
     hexSize: effectiveHex(),
     origin: { x: originX(), y: originY() },
@@ -129,10 +139,12 @@ function draw() {
     showRoutes,
     fillRegions,
     regionColor,
-    nodeLabels: showLabels ? (n) => n.id : undefined,
+    nodeLabels: showLabels && !hullsOutlineOnly ? true : undefined,
     overlay: currentSnap?.overlay ?? null,
     hullLayers,
+    hullsOutlineOnly,
     hideHexes: useLod,
+    nodeShortLabels: !useLod && !!loadedTree && showLabels,
   });
   updateHud();
   updateTectonicPanel();
@@ -196,27 +208,40 @@ function countRegionAdjacencies() {
 }
 
 // ── Keyboard ────────────────────────────────────────────────────
-async function startTectonic() {
-  // Save the pre-run state so Esc can cleanly restore it.
-  tectonicOriginal = map.takeSnapshot();
-  if (!loadedTree) { console.warn('pack needs tree data — reload after running scan-tree.mjs'); return; }
+/** Run packing once at startup so the first view is the final layout. */
+async function initialPack() {
+  if (!loadedTree) return;
   console.log('running packing assembly on', map.nodes.size, 'nodes…');
   const t0 = performance.now();
   showProgress('starting…');
   try {
-    tectonicSteps = await runPackingAssembly(map, loadedTree, {
+    packSnaps = await runPackingAssembly(map, loadedTree, {
       hexSize: HEX,
       onProgress: (msg) => showProgress(msg),
     });
-    console.log(`pack done in ${(performance.now() - t0).toFixed(0)}ms → ${tectonicSteps.length} snapshots`);
+    console.log(`pack done in ${(performance.now() - t0).toFixed(0)}ms → ${packSnaps.length} snapshots`);
   } catch (err) {
     console.error('pack crashed:', err.stack || err.message);
-    tectonicSteps = [];
+    packSnaps = [];
   }
   hideProgress();
   window.__ringDone = true;
+}
+
+/**
+ * P key now enters a step-through DEMO of the packing process. The
+ * actual pack already ran at startup — this just re-exposes the cached
+ * snapshots as a stepper so the user can watch the blob grow.
+ */
+function startTectonic() {
+  if (!packSnaps || packSnaps.length === 0) {
+    console.warn('no pack snapshots available — pack may not have run yet');
+    return;
+  }
+  tectonicOriginal = map.takeSnapshot();
+  tectonicSteps = packSnaps;
   tectonicIdx = 0;
-  if (tectonicSteps && tectonicSteps[0]) map.restoreSnapshot(tectonicSteps[0].coords);
+  map.restoreSnapshot(tectonicSteps[0].coords);
   draw();
 }
 
@@ -507,18 +532,15 @@ canvas.addEventListener('wheel', (e) => {
   const rect = canvas.getBoundingClientRect();
   const mx = e.clientX - rect.left;
   const my = e.clientY - rect.top;
-  // Scene coord under the cursor BEFORE the zoom — so we can pin it
-  // there afterwards (zoom-to-cursor).
   const beforeSx = mx - originX();
   const beforeSy = my - originY();
   const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
   const newZoom = Math.max(0.005, Math.min(6, view.zoom * factor));
   const ratio = newZoom / view.zoom;
   view.zoom = newZoom;
-  // After the new origin is computed, beforeSx must still map to mx.
-  // origin' = mx - beforeSx * ratio; pan' = origin' - cw/2.
   view.panX = (mx - beforeSx * ratio) - canvas.width / 2;
   view.panY = (my - beforeSy * ratio) - canvas.height / 2;
+  recomputeLodFromZoom();
   draw();
 }, { passive: false });
 
@@ -626,10 +648,60 @@ canvas.addEventListener('mousemove', (e) => {
 canvas.addEventListener('mouseleave', hideTooltip);
 
 // ── Go ──────────────────────────────────────────────────────────
-// When the map has a lot of nodes (real tree data), start with the
-// whole thing in view; otherwise the leaves-ring is off-screen.
+// Immediate first draw so the progress overlay has something behind
+// it while packing runs.
 if (map.nodes.size > 500) fitView();
 draw();
+// Kick off packing. The initial ring placement is the "before" state
+// we show for ~300ms while the pack progress overlay updates; once
+// pack finishes we fitView again to the compact blob and redraw.
+if (loadedTree) {
+  initialPack().then(() => {
+    fitView();
+    // Start at the coarsest LOD that fits the blob on screen — the
+    // zoom→LOD map will pick a sensible default for the current view.
+    recomputeLodFromZoom();
+    draw();
+  });
+}
+
+/**
+ * Map `view.zoom` to a LOD level based on what the viewer can actually
+ * SEE, not raw zoom scalar. Two anchor points:
+ *
+ *   • Min LOD (0 — root hull): blob's display height occupies ≤ 20%
+ *     of viewport. Zooming out past that point already shows "too
+ *     much" — coarsest grouping is appropriate.
+ *   • Max LOD (lodMax — per-hex): viewport fits ≤ 20 hex rows
+ *     vertically. Anything denser than that would make per-hex
+ *     rendering illegible.
+ *
+ * Between the two anchors, LOD is log-linearly interpolated so each
+ * mouse-wheel notch (which is a constant zoom RATIO) moves LOD by a
+ * similar fraction regardless of where you are in the range.
+ */
+function recomputeLodFromZoom() {
+  if (!loadedTree) return;
+  // Blob pixel height at zoom = 1 (from current node positions).
+  let minY = Infinity, maxY = -Infinity;
+  for (const n of map.nodes.values()) {
+    const y = axialToPixel(n.coord, HEX).y;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  }
+  const bboxH = maxY - minY;
+  if (bboxH < 1) return;
+
+  const zoomMinLod = (canvas.height * 0.2) / bboxH;
+  const zoomMaxLod = canvas.height / (20 * Math.sqrt(3) * HEX);
+  const logZ = Math.log(view.zoom);
+  const logMin = Math.log(zoomMinLod);
+  const logMax = Math.log(zoomMaxLod);
+  // Guard against degenerate range (tiny viewport, huge HEX, etc).
+  if (logMax <= logMin) { map.lod = map.lodMax; return; }
+  const t = (logZ - logMin) / (logMax - logMin);
+  map.lod = Math.max(0, Math.min(map.lodMax, Math.round(t * map.lodMax)));
+}
 // Expose for REPL/debugging in DevTools
 window.map = map;
 window.redraw = draw;

@@ -585,6 +585,52 @@ function assignTreeHues(folders) {
 }
 
 /**
+ * Cached (tree, folder) → HSL color for an individual folder. Uses the
+ * same hierarchical hue assignment as buildLodHulls, so hull colors at
+ * any LOD match the per-hex node colors when the node's immediate
+ * folder is used as the lookup key.
+ *
+ * @param {{ leaves: Array<{path:string, folder:string}> }} tree
+ * @param {string} folderPath
+ */
+let _hueCache = null;
+let _hueCacheTree = null;
+export function folderHslForPath(tree, folderPath) {
+  if (tree !== _hueCacheTree) {
+    _hueCacheTree = tree;
+    // Build a minimal folder tree straight from leaf paths. We don't
+    // need node instances here — just the folder hierarchy so we can
+    // assign hues.
+    const folders = new Map();
+    const ensure = (path, depth, parent) => {
+      if (!folders.has(path)) folders.set(path, {
+        path, depth, parent, childFolders: [], directLeaves: [],
+      });
+      return folders.get(path);
+    };
+    ensure('.', 0, null);
+    for (const leaf of tree.leaves) {
+      const parts = leaf.folder === '.' ? [] : leaf.folder.split('/');
+      let parent = '.';
+      for (let i = 0; i < parts.length; i++) {
+        const path = parts.slice(0, i + 1).join('/');
+        ensure(path, i + 1, parent);
+        const pf = folders.get(parent);
+        if (!pf.childFolders.includes(path)) pf.childFolders.push(path);
+        parent = path;
+      }
+    }
+    for (const f of folders.values()) f.childFolders.sort();
+    _hueCache = { folders, hues: assignTreeHues(folders) };
+  }
+  const folder = _hueCache.folders.get(folderPath);
+  const hue = _hueCache.hues.get(folderPath) ?? 180;
+  const depth = folder ? folder.depth : 0;
+  const light = Math.max(32, 62 - depth * 5);
+  return `hsl(${hue}, 68%, ${light}%)`;
+}
+
+/**
  * Max folder depth in the tree. Useful for clamping LOD controls.
  */
 export function maxFolderDepth(tree) {
