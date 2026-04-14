@@ -16,7 +16,8 @@ import { axialToPixel, pixelToAxial } from './hex.js';
 import { computeHullPolygons } from './hull.js';
 import { runRingAssembly } from './ring.js';
 import { runPackingAssembly, buildLodHulls, maxFolderDepth, folderHslForPath } from './pack.js';
-import { loadTree, buildSampleFromTree } from './tree-sample.js';
+import { runMonteCarloLayout } from './pack-mc.js';
+import { loadTree, buildSampleFromTree, loadRealLinks } from './tree-sample.js';
 
 const canvas = /** @type {HTMLCanvasElement} */ (document.getElementById('cv'));
 const ctx = canvas.getContext('2d');
@@ -38,14 +39,18 @@ const map = new HexMap();
 // if public/tree.json isn't available (e.g. scan script not run yet).
 /** @type {any} */
 let loadedTree = null;
+let cachedRealLinks = null;
 /** Cached pack snapshots from the initial run — used by the stepper. */
 let packSnaps = null;
 try {
   loadedTree = await loadTree();
-  buildSampleFromTree(map, loadedTree, { hexSize: 22 });
+  cachedRealLinks = await loadRealLinks();
+  buildSampleFromTree(map, loadedTree, { hexSize: 22, realLinks: cachedRealLinks });
+  const realLinks = cachedRealLinks;
   map.lodMax = maxFolderDepth(loadedTree) + 1;
   map.lod = map.lodMax;
-  console.log(`loaded ${loadedTree.leaves.length} leaves, ${loadedTree.folders.length} folders, lodMax=${map.lodMax}`);
+  const linkSource = realLinks ? `real (${realLinks.edges.length} edges scanned)` : 'synthetic';
+  console.log(`loaded ${loadedTree.leaves.length} leaves, ${loadedTree.folders.length} folders, lodMax=${map.lodMax}, links=${linkSource}`);
 } catch (err) {
   console.warn('tree.json not available, using synthetic sample:', err.message);
   buildSample(map);
@@ -192,7 +197,7 @@ function updateHud() {
     <b style="color:#fc6">LOD: ${map.lod} / ${map.lodMax}</b><br>
     ${tectonicLine}<br>
     <small>drag = pan · wheel = zoom · [0] reset view<br>
-    [P] pack · [F] fit · [↑/↓] LOD (max=nodes, 0=root) · [L] links · [O] routes · [T] labels · [←/→] step · [R] reset</small>
+    [P] pack step · [M] MC refine · [F] fit · [↑/↓] LOD · [L] links · [O] routes · [T] labels · [←/→] step · [R] reset</small>
   `;
 }
 
@@ -226,6 +231,45 @@ async function initialPack() {
   }
   hideProgress();
   window.__ringDone = true;
+}
+
+/**
+ * M key — run the Monte-Carlo refinement pass on the current layout.
+ * Uses whatever's currently placed as the warm start: right after boot
+ * that's the greedy pack result, but you can M → M → M to chain refinement
+ * rounds, or press R first and then M to refine from a fresh pack. Leaves
+ * the resulting snapshots in the stepper so the user can scrub through
+ * the MC trajectory with Left/Right.
+ */
+async function runMcRefine() {
+  if (tectonicSteps) stopTectonic();
+  if (map.nodes.size === 0) {
+    console.warn('MC: no nodes to refine');
+    return;
+  }
+  // Capture the pre-MC state so Escape can restore it verbatim.
+  const preMc = map.takeSnapshot();
+  const t0 = performance.now();
+  /** @type {Array<any> | null} */
+  let mcSnaps = null;
+  try {
+    mcSnaps = await runMonteCarloLayout(map, loadedTree, {
+      onProgress: (msg) => { if (msg) showProgress(msg); else hideProgress(); },
+    });
+  } catch (err) {
+    console.error('mc crashed:', err.stack || err.message);
+  } finally {
+    hideProgress();
+  }
+  console.log(`mc done in ${(performance.now() - t0).toFixed(0)}ms → ${mcSnaps?.length ?? 0} snapshots`);
+  if (mcSnaps && mcSnaps.length > 0) {
+    packSnaps = mcSnaps;
+    tectonicOriginal = preMc;
+    tectonicSteps = mcSnaps;
+    tectonicIdx = mcSnaps.length - 1;
+    map.restoreSnapshot(mcSnaps[tectonicIdx].coords);
+  }
+  draw();
 }
 
 /**
@@ -302,6 +346,7 @@ window.addEventListener('keydown', (e) => {
   else if (e.key === 'f' || e.key === 'F') { fitView(); draw(); }
   else if (e.key === 'p' || e.key === 'P') startTectonic();
   else if (e.key === 's' || e.key === 'S') swapRandom();
+  else if (e.key === 'm' || e.key === 'M') runMcRefine();
   // [H] was the old per-region hull toggle; LOD now drives that. Keep
   // the key unbound so it's available for something else.
   else if (e.key === 'l' || e.key === 'L') { showLinks = !showLinks; draw(); }
@@ -314,7 +359,7 @@ window.addEventListener('keydown', (e) => {
     map.nodes.clear(); map.links.length = 0; map.regions.clear(); map.routes.clear();
     // @ts-ignore — private field reset for demo
     map._byCoord.clear(); map._regionAdjDirty = true;
-    if (loadedTree) buildSampleFromTree(map, loadedTree, { hexSize: 22 });
+    if (loadedTree) buildSampleFromTree(map, loadedTree, { hexSize: 22, realLinks: cachedRealLinks });
     else buildSample(map);
     draw();
   }
@@ -705,3 +750,5 @@ function recomputeLodFromZoom() {
 // Expose for REPL/debugging in DevTools
 window.map = map;
 window.redraw = draw;
+window.runMonteCarloLayout = runMonteCarloLayout;
+window.__tree = () => loadedTree;

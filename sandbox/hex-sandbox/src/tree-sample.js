@@ -23,6 +23,18 @@ export async function loadTree(url = './public/tree.json') {
   return res.json();
 }
 
+/** Optional — load public/links-real.json if present. Returns null on 404
+ *  so callers can fall back to synthetic link generation. */
+export async function loadRealLinks(url = './public/links-real.json') {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    return res.json();
+  } catch {
+    return null;
+  }
+}
+
 /**
  * @param {import('./map.js').HexMap} m
  * @param {{ leaves: Array<{path:string, folder:string, ext:string, size:number, name:string}> }} tree
@@ -37,6 +49,7 @@ export function buildSampleFromTree(m, tree, opts = {}) {
   const hexSize = opts.hexSize ?? 22;
   const spacing = opts.spacing ?? 2.2;
   const linkRatio = opts.linkRatio ?? 1.5;
+  const realLinks = opts.realLinks ?? null;
   let seed = opts.seed ?? 1;
   const rand = () => {
     seed = (seed * 1664525 + 1013904223) >>> 0;
@@ -101,6 +114,23 @@ export function buildSampleFromTree(m, tree, opts = {}) {
   }
 
   // ── Link generation ─────────────────────────────────────────
+  // If real links were provided (via scripts/scan-links.mjs), use them
+  // instead of the synthetic biased random generator. This makes layout
+  // benchmarks reflect actual project topology.
+  if (realLinks?.edges?.length) {
+    let added = 0;
+    for (const e of realLinks.edges) {
+      const a = leafToNode.get(e.source);
+      const b = leafToNode.get(e.target);
+      if (!a || !b || a === b) continue;
+      m.addLink(new Link(a, b, e.weight ?? 1, 'import'));
+      added++;
+    }
+    // eslint-disable-next-line no-console
+    console.log(`real links: ${added} / ${realLinks.edges.length} matched into map`);
+    return;
+  }
+
   // Biased random linking: most edges stay within a folder (the
   // "import-like" tier), some cross to nearby folders (call-like),
   // and a small tail is globally random (ref-like).
