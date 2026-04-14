@@ -193,9 +193,23 @@ export function Canvas() {
     regionLayerRef.current = regionLayer;
 
     // --- Flow edges ---
+    // FlowLayer.build creates one THREE.Mesh per edge (TubeGeometry),
+    // which blows up at real-project edge counts (hundreds of thousands
+    // of draw calls, main-thread hang during build). For large graphs
+    // we DOWNSAMPLE to a bounded edge budget so the scene stays
+    // responsive. Boundary between "small" and "large" tuned empirically:
+    // up to ~2000 edges renders fine; beyond that we sample.
     if (flowLayerLocalRef.current) flowLayerLocalRef.current.dispose();
     const flowLayer = new FlowLayer(sm.scene);
-    flowLayer.build(nodes, edges);
+    const MAX_FLOW_EDGES = 2000;
+    let flowEdges = edges;
+    if (edges.length > MAX_FLOW_EDGES) {
+      // Deterministic uniform sample — pick every Nth edge.
+      const step = Math.ceil(edges.length / MAX_FLOW_EDGES);
+      flowEdges = edges.filter((_, i) => i % step === 0);
+      console.log(`[Canvas] downsampled edges for FlowLayer: ${edges.length} → ${flowEdges.length} (step=${step})`);
+    }
+    flowLayer.build(nodes, flowEdges);
     // Share the SAME elevation array — FlowLayer reads HexLayer's values each tick
     flowLayer.setElevationSource(layer.elevationArray);
     sm.onRender(() => flowLayer.tick());
