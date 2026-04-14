@@ -20,6 +20,7 @@ function getUrlParams() {
     nodeTypes: params.get('nodeTypes') || undefined,
     edgeTypes: params.get('edgeTypes') || undefined,
     maxNodes: params.get('maxNodes') ? parseInt(params.get('maxNodes')!, 10) : undefined,
+    lodLevel: params.get('lodLevel') || undefined,
   };
 }
 
@@ -48,7 +49,12 @@ export function App() {
         packages: params.packages,
         nodeTypes: params.nodeTypes,
         edgeTypes: params.edgeTypes,
-        maxNodes: params.maxNodes,
+        // Default cap raised from 5000 (server default) to 15000 — this
+        // hits ~2.4s build time on the real grafema self-analysis and
+        // gives ~3x the visible density of the server's 5k default.
+        // Explicit ?maxNodes= still overrides.
+        maxNodes: params.maxNodes ?? 15000,
+        lodLevel: params.lodLevel,
         onProgress: streamProgress,
         ...(params.rust ? {
           onSAProgress: (iteration: number, cost: number, _temp: number, settled: boolean) => {
@@ -72,6 +78,10 @@ export function App() {
     initWebSocketAdapter();
     // Expose controller for console access
     (window as unknown as Record<string, unknown>).grafema = mapController;
+    // Debug: expose dataStore for layout inspection
+    import('./store/dataStore').then(m => {
+      (window as unknown as Record<string, unknown>).dataStore = m.useDataStore;
+    });
   }, []);
 
   return (

@@ -684,9 +684,12 @@ fn build_graph_stream_body(
         degrees[e.dst_idx as usize] += 1;
     }
 
+    let t_tree = std::time::Instant::now();
     // Build container hierarchy from actual directory nesting in node paths
     let hierarchy = auto_hierarchy_from_nodes(&node_refs);
     let mut tree = ContainerTree::build(&hierarchy, &node_refs, &edge_refs);
+    eprintln!("[http] tree build: {}ms ({} nodes, {} edges)",
+        t_tree.elapsed().as_millis(), node_refs.len(), edge_refs.len());
 
     // ── Tectonic layout pipeline (Phase G) ──
     // Computed once per server lifetime on file-level atoms (MODULE
@@ -704,6 +707,7 @@ fn build_graph_stream_body(
     }
     let region_level = tree.sa_region_level;
 
+    let t_emit = std::time::Instant::now();
     // Build JSONL output
     let mut lines: Vec<String> = Vec::new();
 
@@ -801,8 +805,9 @@ fn build_graph_stream_body(
         "elapsed": elapsed,
     })).unwrap());
 
-    eprintln!("[http] graph-stream: {} nodes, {} edges, {} regions, {}ms",
-        node_count, edge_refs.len(), regions.len(), elapsed);
+    eprintln!("[http] graph-stream: {} nodes, {} edges, {} regions, {}ms (emit: {}ms)",
+        node_count, edge_refs.len(), regions.len(), elapsed,
+        t_emit.elapsed().as_millis());
 
     lines.join("\n") + "\n"
 }

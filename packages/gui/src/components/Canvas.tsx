@@ -609,7 +609,10 @@ export function Canvas() {
 
   return (
     <div ref={containerRef} className="canvas-container">
+      {/* Labels temporarily disabled — overlapped everything at 40k-atom scale.
+          TODO: add LOD-aware label thinning or toggle button.
       <Labels sceneManager={sm} />
+      */}
       <CoordGrid sceneManager={sm} visible={showCoords} />
       <RouteLabels sceneManager={sm} routeLayer={routeLayerState} />
       <EdgeLabels sceneManager={sm} />
