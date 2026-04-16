@@ -77,3 +77,14 @@ Query:
   extending the class and overriding `add` / `remove`.
 - Add a custom `nodeLabels` function in `demo.js` to probe which
   tile is which.
+
+## Rust layout integration
+
+- Run `./scripts/dump-rust-layout.sh` to generate `public/layout-rust.json`
+  via the `grafema-orchestrator layout` Rust pipeline (pack → iswap → xswap).
+- Reload the browser; the sandbox console will log
+  `applied Rust layout: <updated> / <total> nodes positioned from layout-rust.json`
+  when the file is present. With the synthetic generator, leaf paths won't
+  match `tree.json` paths — `0 / 1497` is expected and the JS pack output
+  stays visible. Visual parity needs RFDB-driven mode against an analyzed
+  project (out of scope for the current step).

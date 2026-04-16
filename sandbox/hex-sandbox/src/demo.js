@@ -17,7 +17,7 @@ import { computeHullPolygons } from './hull.js';
 import { runRingAssembly } from './ring.js';
 import { runPackingAssembly, buildLodHulls, maxFolderDepth, folderHslForPath } from './pack.js';
 import { runMonteCarloLayout } from './pack-mc.js';
-import { loadTree, buildSampleFromTree, loadRealLinks } from './tree-sample.js';
+import { loadTree, buildSampleFromTree, loadRealLinks, loadRustLayout, applyRustLayout } from './tree-sample.js';
 
 const canvas = /** @type {HTMLCanvasElement} */ (document.getElementById('cv'));
 const ctx = canvas.getContext('2d');
@@ -761,12 +761,23 @@ draw();
 // we show for ~300ms while the pack progress overlay updates; once
 // pack finishes we fitView again to the compact blob and redraw.
 if (loadedTree) {
-  initialPack().then(() => {
+  initialPack().then(async () => {
     fitView();
     // Start at the coarsest LOD that fits the blob on screen — the
     // zoom→LOD map will pick a sensible default for the current view.
     recomputeLodFromZoom();
     draw();
+    // After initialPack() completes, optionally swap in the Rust-produced
+    // layout. Useful for verifying parity between the JS and Rust ports
+    // without rebuilding the sandbox to consume Rust-as-default.
+    const rustLayout = await loadRustLayout();
+    if (rustLayout) {
+      const updated = applyRustLayout(map, rustLayout);
+      console.log(`applied Rust layout: ${updated} / ${map.nodes.size} nodes positioned from layout-rust.json`);
+      console.log(`  stats: pack ${rustLayout.stats?.pack_ms}ms, iswap ${rustLayout.stats?.iswap_ms}ms (${rustLayout.stats?.iswap_swaps} swaps), xswap ${rustLayout.stats?.xswap_ms}ms (${rustLayout.stats?.xswap_swaps} swaps)`);
+      fitView();
+      draw();
+    }
   });
 }
 

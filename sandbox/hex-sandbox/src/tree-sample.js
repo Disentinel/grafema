@@ -35,6 +35,40 @@ export async function loadRealLinks(url = './public/links-real.json') {
   }
 }
 
+/** Optional — load a Rust-produced layout JSON if present. Returns
+ *  null on 404 so callers can fall back to the in-browser JS pack. */
+export async function loadRustLayout(url = './public/layout-rust.json') {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    return res.json();
+  } catch {
+    return null;
+  }
+}
+
+/** Apply a Rust-produced layout JSON to the map.
+ *  layoutJson shape: { coords: { "<leaf-path>": {q, r}, ... }, stats: {...} }
+ *  Updates each node's coord by leaf-path lookup. Nodes not in the JSON
+ *  retain their original coord (they were probably ring-placed by
+ *  buildSampleFromTree and just look weird until iswap moves them).
+ *  Returns count of nodes updated. */
+export function applyRustLayout(map, layoutJson) {
+  if (!layoutJson?.coords) return 0;
+  let updated = 0;
+  for (const [path, c] of Object.entries(layoutJson.coords)) {
+    const node = map.nodes.get(path);
+    if (!node) continue;
+    node.coord = { q: c.q, r: c.r };
+    updated++;
+  }
+  // Rebuild the spatial index since coords changed
+  if (typeof map._rebuildSpatialIndex === 'function') {
+    map._rebuildSpatialIndex();
+  }
+  return updated;
+}
+
 /**
  * @param {import('./map.js').HexMap} m
  * @param {{ leaves: Array<{path:string, folder:string, ext:string, size:number, name:string}> }} tree
