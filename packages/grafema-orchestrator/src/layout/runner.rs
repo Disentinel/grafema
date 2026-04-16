@@ -11,7 +11,7 @@
 //!
 //! ## Determinism
 //!
-//! [`run_layout`] is fully deterministic for a given [`SyntheticInput`]: pack,
+//! [`run_layout`] is fully deterministic for a given [`LayoutInput`]: pack,
 //! iswap, and xswap each have their own determinism guarantees (see the
 //! module docs for each). The only non-deterministic field on [`LayoutStats`]
 //! is the timing measurements themselves; everything else (swap counts,
@@ -25,7 +25,7 @@ use super::edges::Incidence;
 use super::hex::HexCoord;
 use super::iswap::iswap;
 use super::pack::pack;
-use super::synthetic::SyntheticInput;
+use super::synthetic::LayoutInput;
 use super::xswap::xswap;
 
 /// Tunable knobs for the pipeline driver.
@@ -93,7 +93,7 @@ pub struct LayoutStats {
 ///
 /// All input-derived data (`tree`, `edges`) is borrowed; only the returned
 /// `coords` are freshly allocated.
-pub fn run_layout(input: &SyntheticInput, opts: &RunOpts) -> RunResult {
+pub fn run_layout(input: &LayoutInput, opts: &RunOpts) -> RunResult {
     // ── Pack ───────────────────────────────────────────────────────────────
     let t_pack = Instant::now();
     let (mut coords, mut state) = pack(&input.tree, input.n_nodes);

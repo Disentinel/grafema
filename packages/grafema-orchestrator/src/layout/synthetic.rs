@@ -1,10 +1,11 @@
 //! Deterministic synthetic input for layout benchmarks and CLI dry-runs.
 //!
-//! Generates a [`SyntheticInput`] (folder tree + edge list) that mimics the
+//! Generates a [`LayoutInput`] (folder tree + edge list) that mimics the
 //! shape of a real codebase — a handful of top-level packages, ~3 levels of
 //! sub-folders, and a mix of intra- and cross-folder edges. This lets the
 //! `layout` CLI subcommand exercise the full pack → iswap → xswap pipeline
-//! end-to-end without RFDB integration (step 6 plugs the real query in).
+//! end-to-end without RFDB integration. The same struct is also produced by
+//! [`super::loader::load_from_rfdb`] for real RFDB-backed runs (step 6).
 //!
 //! Design constraints:
 //! * **Deterministic.** Same `(n_leaves, seed, edge_density)` → byte-identical
@@ -33,11 +34,15 @@ const LEVEL1: &[&str] = &["packages", "apps", "tools"];
 const LEVEL2: &[&str] = &["api", "core", "util", "io", "test", "bench", "ui"];
 const LEVEL3: &[&str] = &["src", "lib", "mod", "impl"];
 
-/// Generated synthetic input ready to feed into [`super::run_layout`].
+/// Input ready to feed into [`super::run_layout`].
+///
+/// Produced either by [`generate`] (deterministic synthetic fixture) or by
+/// [`super::loader::load_from_rfdb`] (real RFDB-backed graph). Both sources
+/// share this shape so the runner stays source-agnostic.
 ///
 /// `n_nodes` matches `tree`'s leaf count (kept as a separate field for
 /// callers that need the count without walking the tree).
-pub struct SyntheticInput {
+pub struct LayoutInput {
     /// Folder hierarchy with leaves placed at depth 4 (`L1/L2/L3/file*.rs`).
     pub tree: FolderTree,
     /// Edge list (intra- and cross-folder mix). Length ≈ `n_nodes × edge_density`
@@ -51,7 +56,7 @@ pub struct SyntheticInput {
     pub leaf_paths: Vec<String>,
 }
 
-impl SyntheticInput {
+impl LayoutInput {
     /// Iterate `(NodeIdx, &str)` pairs in stable insertion order.
     ///
     /// Returns the same shape `FolderTree::build_from_paths` expects, so the
@@ -64,14 +69,14 @@ impl SyntheticInput {
     }
 }
 
-/// Generate a deterministic synthetic [`SyntheticInput`].
+/// Generate a deterministic synthetic [`LayoutInput`].
 ///
 /// `n_leaves` controls graph size (0 → empty tree with only the root folder).
 /// `seed` drives the rng — same `(n_leaves, seed, edge_density)` → identical
 /// output. `edge_density` is the average edges-per-leaf multiplier; the actual
 /// edge count after self-loop and duplicate-pair removal is usually within
 /// ~15% of `n_leaves * edge_density`.
-pub fn generate(n_leaves: usize, seed: u64, edge_density: f32) -> SyntheticInput {
+pub fn generate(n_leaves: usize, seed: u64, edge_density: f32) -> LayoutInput {
     let mut rng = Lcg::new(seed);
 
     // ── Leaf paths ─────────────────────────────────────────────────────────
@@ -161,7 +166,7 @@ pub fn generate(n_leaves: usize, seed: u64, edge_density: f32) -> SyntheticInput
         }
     }
 
-    SyntheticInput {
+    LayoutInput {
         tree,
         edges,
         n_nodes: n_leaves,

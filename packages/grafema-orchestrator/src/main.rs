@@ -66,14 +66,29 @@ enum Commands {
         #[arg(short, long)]
         jobs: Option<usize>,
     },
-    /// Run the hex-grid layout pipeline (pack → iswap → xswap) on a synthetic
-    /// tree. Useful for benchmarking and visualisation dry-runs before the
-    /// RFDB-driven entry point lands in step 6 of REG-1102.
+    /// Run the hex-grid layout pipeline (pack → iswap → xswap).
+    ///
+    /// Two input modes (mutually exclusive):
+    ///   * `--synthetic N` — generate a deterministic N-leaf fixture in memory.
+    ///     Useful for benchmarks and visualisation dry-runs.
+    ///   * `--socket <path> --config <path>` — load real graph data from a
+    ///     live RFDB. MODULE nodes become leaves, MODULE→MODULE DEPENDS_ON
+    ///     edges become layout edges.
     Layout {
-        /// Use a synthetic tree of N leaves (required in this step — step 6
-        /// adds `--socket`/`--config` for RFDB-backed runs).
-        #[arg(long)]
-        synthetic: usize,
+        /// Use a synthetic tree of N leaves. Mutually exclusive with `--socket`.
+        #[arg(long, conflicts_with = "socket")]
+        synthetic: Option<usize>,
+
+        /// Path to RFDB unix socket. Mutually exclusive with `--synthetic`.
+        /// Requires `--config` so callers explicitly bind the layout run to
+        /// a project; the config defaults wiring is intentionally out of scope
+        /// for this step.
+        #[arg(short, long, requires = "config")]
+        socket: Option<PathBuf>,
+
+        /// Path to grafema.config.yaml. Required when `--socket` is given.
+        #[arg(short, long)]
+        config: Option<PathBuf>,
 
         /// Skip iswap and xswap (raw pack only — fast, no optimisation).
         #[arg(long)]
@@ -2525,6 +2540,8 @@ async fn main() -> Result<()> {
 
         Commands::Layout {
             synthetic,
+            socket,
+            config,
             pack_only,
             seed,
             edge_density,
@@ -2532,16 +2549,47 @@ async fn main() -> Result<()> {
             verbose,
         } => {
             let t_total = std::time::Instant::now();
+            // Pick input source. Clap's `conflicts_with` already rejects
+            // (Some, Some) at parse time, so the unreachable arms are just a
+            // belt-and-braces guard.
+            let input = match (synthetic, socket.as_ref(), config.as_ref()) {
+                (Some(n), None, _) => {
+                    eprintln!(
+                        "Generating synthetic tree: {} leaves, seed {}, edge density {}",
+                        n, seed, edge_density
+                    );
+                    grafema_orchestrator::layout::generate(n, seed, edge_density)
+                }
+                (None, Some(sock), Some(_cfg)) => {
+                    // `--config` is reserved for future use (auto-detect socket
+                    // path, project-aware reporting). For now we just require
+                    // the user to pass `--socket` explicitly.
+                    eprintln!("Loading layout input from RFDB at {}", sock.display());
+                    let mut rfdb = grafema_orchestrator::rfdb::RfdbClient::connect(sock)
+                        .await
+                        .with_context(|| {
+                            format!("Failed to connect to RFDB at {}", sock.display())
+                        })?;
+                    grafema_orchestrator::layout::load_from_rfdb(&mut rfdb).await?
+                }
+                (None, None, _) => {
+                    anyhow::bail!(
+                        "layout: must provide either --synthetic N or --socket <path> --config <path>"
+                    );
+                }
+                (Some(_), Some(_), _) => {
+                    unreachable!("clap `conflicts_with` should prevent --synthetic + --socket")
+                }
+                (None, Some(_), None) => {
+                    unreachable!("clap `requires = config` should prevent --socket without --config")
+                }
+            };
             eprintln!(
-                "Generating synthetic tree: {} leaves, seed {}, edge density {}",
-                synthetic, seed, edge_density
-            );
-            let input = grafema_orchestrator::layout::generate(synthetic, seed, edge_density);
-            eprintln!(
-                "Tree: {} folders (max depth {}), {} edges",
+                "Tree: {} folders (max depth {}), {} edges, {} nodes",
                 input.tree.len(),
                 input.tree.max_depth(),
-                input.edges.len()
+                input.edges.len(),
+                input.n_nodes
             );
 
             let opts = grafema_orchestrator::layout::RunOpts { pack_only };
