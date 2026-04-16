@@ -49,6 +49,10 @@ export function render(ctx, map, opts) {
     hullsOutlineOnly = false,
     hideHexes = false,
     nodeShortLabels = false,
+    // Optional per-node filter for link rendering. When set, only links
+    // where source or target is in the set get drawn (hover/pin mode).
+    // When null, all links obey the `showLinks` flag as before.
+    linkVisibleAtoms = null,
   } = opts;
 
   const c = ctx.canvas;
@@ -137,10 +141,22 @@ export function render(ctx, map, opts) {
   // Each link is its own `stroke` call (colors vary), so batching is
   // unprofitable here. For large graphs you'd precompute per-type
   // path buffers; the sandbox stays simple.
-  if (showLinks) {
-    ctx.lineWidth = 1.5;
+  // Link drawing: "showLinks" draws all; linkVisibleAtoms restricts to
+  // links incident to a given node set (hover/pin mode). If neither is
+  // active, links are skipped entirely.
+  const drawAnyLinks = showLinks || (linkVisibleAtoms && linkVisibleAtoms.size > 0);
+  if (drawAnyLinks) {
+    // Thicker strokes when only a few nodes' links are visible so they
+    // read against the hull fills and node grid. In full-show mode the
+    // link count is too high for thick lines to stay legible.
+    ctx.lineWidth = linkVisibleAtoms && linkVisibleAtoms.size > 0 ? 3 : 1.5;
     ctx.lineCap = 'round';
     for (const l of map.links) {
+      if (linkVisibleAtoms && linkVisibleAtoms.size > 0) {
+        if (!linkVisibleAtoms.has(l.source.id) && !linkVisibleAtoms.has(l.target.id)) continue;
+      } else if (!showLinks) {
+        continue;
+      }
       const a = axialToPixel(l.source.coord, hexSize);
       const b = axialToPixel(l.target.coord, hexSize);
       const ax = origin.x + a.x, ay = origin.y + a.y;

@@ -58,7 +58,13 @@ try {
 
 // ── Rendering ───────────────────────────────────────────────────
 const HEX = 22;
-let showLinks = true;
+let showLinks = false;
+/** Node currently under the mouse (hover-highlight its links). */
+/** @type {import('./node.js').Node | null} */
+let hoveredNode = null;
+/** Nodes pinned via click — their links stay drawn until un-pinned. */
+/** @type {Set<string>} */
+const pinnedNodes = new Set();
 let showLabels = true;  // hull-toponym labels on by default
 let showRoutes = true;
 let fillRegions = false; // ring mode draws individual hexes + assembled hulls on top
@@ -137,6 +143,14 @@ function draw() {
   // Cache current layers for the mousemove hit-test — only used when
   // hulls are the primary view (i.e. not outline-only).
   window.__currentHullLayers = hullsOutlineOnly ? null : hullLayers;
+  // Link visibility filter: union of hovered + pinned nodes. Null when
+  // nothing is hovered or pinned — in that case, `showLinks` alone decides.
+  /** @type {Set<string> | null} */
+  let linkVisibleAtoms = null;
+  if (hoveredNode || pinnedNodes.size > 0) {
+    linkVisibleAtoms = new Set(pinnedNodes);
+    if (hoveredNode) linkVisibleAtoms.add(hoveredNode.id);
+  }
   render(ctx, map, {
     hexSize: effectiveHex(),
     origin: { x: originX(), y: originY() },
@@ -150,6 +164,7 @@ function draw() {
     hullsOutlineOnly,
     hideHexes: useLod,
     nodeShortLabels: !useLod && !!loadedTree && showLabels,
+    linkVisibleAtoms,
   });
   updateHud();
   updateTectonicPanel();
@@ -197,7 +212,8 @@ function updateHud() {
     <b style="color:#fc6">LOD: ${map.lod} / ${map.lodMax}</b><br>
     ${tectonicLine}<br>
     <small>drag = pan · wheel = zoom · [0] reset view<br>
-    [P] pack step · [M] MC refine · [F] fit · [↑/↓] LOD · [L] links · [O] routes · [T] labels · [←/→] step · [R] reset</small>
+    [P] pack step · [M] MC refine · [F] fit · [↑/↓] LOD · [L] all links · [O] routes · [T] labels · [←/→] step · [R] reset<br>
+    hover = show node links · click = pin/unpin</small>
   `;
 }
 
@@ -568,8 +584,32 @@ canvas.addEventListener('mousedown', (e) => {
   dragStart = { mx: e.clientX, my: e.clientY, panX: view.panX, panY: view.panY };
   canvas.style.cursor = 'grabbing';
 });
-window.addEventListener('mouseup', () => {
+window.addEventListener('mouseup', (e) => {
+  // Distinguish click from drag: if the cursor hardly moved (≤4 px) from
+  // mousedown position, treat as a click. Click over a node toggles its
+  // pinned state — pinned nodes keep their links drawn after the mouse
+  // leaves them.
+  if (dragStart) {
+    const dx = e.clientX - dragStart.mx;
+    const dy = e.clientY - dragStart.my;
+    if (dx * dx + dy * dy <= 16) {
+      // It was a click, not a drag
+      const rect = canvas.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      const { sx, sy } = screenToScene(mx, my);
+      const eHex = effectiveHex();
+      const { q, r } = pixelToAxial(sx, sy, eHex);
+      const clicked = map.nodeAt(q, r);
+      if (clicked) {
+        if (pinnedNodes.has(clicked.id)) pinnedNodes.delete(clicked.id);
+        else pinnedNodes.add(clicked.id);
+        draw();
+      }
+    }
+  }
   dragging = false;
+  dragStart = null;
   canvas.style.cursor = '';
 });
 canvas.addEventListener('wheel', (e) => {
@@ -606,6 +646,19 @@ canvas.addEventListener('mousemove', (e) => {
   // current effective hex size so they match what render drew.
   const { sx, sy } = screenToScene(mx, my);
   const eHex = effectiveHex();
+
+  // Hover-for-links: always track which node is under the pointer so
+  // the renderer can draw only its incident links. Pin set is untouched
+  // here — that's click-driven. Redraw only when hovered node changes
+  // to avoid flooding the frame loop.
+  {
+    const { q, r } = pixelToAxial(sx, sy, eHex);
+    const under = map.nodeAt(q, r) ?? null;
+    if (under !== hoveredNode) {
+      hoveredNode = under;
+      draw();
+    }
+  }
 
   // 1. Link hit — only when links are actually rendered.
   let linkHit = null;
@@ -690,7 +743,13 @@ canvas.addEventListener('mousemove', (e) => {
 
   hideTooltip();
 });
-canvas.addEventListener('mouseleave', hideTooltip);
+canvas.addEventListener('mouseleave', () => {
+  hideTooltip();
+  if (hoveredNode) {
+    hoveredNode = null;
+    draw();
+  }
+});
 
 // ── Go ──────────────────────────────────────────────────────────
 // Immediate first draw so the progress overlay has something behind
@@ -752,3 +811,7 @@ window.map = map;
 window.redraw = draw;
 window.runMonteCarloLayout = runMonteCarloLayout;
 window.__tree = () => loadedTree;
+window.__view = view;
+window.__canvas = canvas;
+window.__hover = () => hoveredNode?.id ?? null;
+window.__pinned = () => [...pinnedNodes];
