@@ -4,14 +4,18 @@
 //! files are independently unit-testable so the algorithm can be reviewed
 //! piecewise (foundations → pack → iswap → xswap → validate).
 //!
-//! This module currently exposes only the foundation layer (Step 1 of REG-1102):
-//! hex math, occupancy state, and folder-tree construction. Subsequent steps
-//! add `pack.rs`, `iswap.rs`, `xswap.rs`, `validate.rs`, and `loader.rs`.
+//! This module currently exposes the foundation layer (Step 1 of REG-1102) plus
+//! the recursive folder packer + topology validator (Step 2). Subsequent steps
+//! add `iswap.rs`, `xswap.rs`, and `loader.rs`.
 
 pub mod hex;
+pub mod pack;
 pub mod state;
 pub mod tree;
+pub mod validate;
 
 pub use hex::HexCoord;
+pub use pack::{pack, pack_folder};
 pub use state::{NodeIdx, PlacementState};
 pub use tree::{Folder, FolderId, FolderTree};
+pub use validate::{validate, TornFolder, ValidationReport};
