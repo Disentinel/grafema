@@ -64,6 +64,34 @@ impl PlacementState {
         self.occupied.is_empty()
     }
 
+    /// Atomically exchange the `NodeIdx` entries at the two coords.
+    ///
+    /// Used by `iswap` (and later `xswap`) to permute node→cell assignments
+    /// without rebuilding the occupancy map.
+    ///
+    /// Both cells must currently be occupied; panics otherwise (this would
+    /// mean the spatial index has drifted from `coords`, indicating a bug
+    /// in the optimiser).
+    ///
+    /// No-op if `coord_a == coord_b`.
+    pub fn swap(&mut self, coord_a: HexCoord, coord_b: HexCoord) {
+        if coord_a == coord_b {
+            return;
+        }
+        let key_a = pack_key(coord_a.q, coord_a.r);
+        let key_b = pack_key(coord_b.q, coord_b.r);
+        let node_a = *self
+            .occupied
+            .get(&key_a)
+            .unwrap_or_else(|| panic!("PlacementState::swap: cell ({}, {}) is empty", coord_a.q, coord_a.r));
+        let node_b = *self
+            .occupied
+            .get(&key_b)
+            .unwrap_or_else(|| panic!("PlacementState::swap: cell ({}, {}) is empty", coord_b.q, coord_b.r));
+        self.occupied.insert(key_a, node_b);
+        self.occupied.insert(key_b, node_a);
+    }
+
     /// BFS spiral outward from `center`, returning the first empty cell.
     ///
     /// Mirrors `spiralEmpty` in `pack.js:168-180`. Returns `None` if no empty
@@ -153,6 +181,41 @@ mod tests {
         }
         let found = s.spiral_empty(center, 5).unwrap();
         assert_eq!(center.distance(found), 2, "expected ring-2 cell, got {:?}", found);
+    }
+
+    #[test]
+    fn swap_exchanges_two_occupants() {
+        let mut s = PlacementState::new();
+        let a = HexCoord::new(0, 0);
+        let b = HexCoord::new(2, -1);
+        s.place(7, a).unwrap();
+        s.place(13, b).unwrap();
+        s.swap(a, b);
+        assert_eq!(s.get(a.q, a.r), Some(13));
+        assert_eq!(s.get(b.q, b.r), Some(7));
+        // Total occupancy unchanged.
+        assert_eq!(s.len(), 2);
+    }
+
+    #[test]
+    fn swap_same_coord_is_noop() {
+        let mut s = PlacementState::new();
+        let a = HexCoord::new(3, -2);
+        s.place(5, a).unwrap();
+        s.swap(a, a);
+        assert_eq!(s.get(a.q, a.r), Some(5));
+        assert_eq!(s.len(), 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "is empty")]
+    fn swap_panics_when_cell_empty() {
+        let mut s = PlacementState::new();
+        let a = HexCoord::new(0, 0);
+        let b = HexCoord::new(1, 0);
+        s.place(1, a).unwrap();
+        // b is empty → must panic.
+        s.swap(a, b);
     }
 
     #[test]
