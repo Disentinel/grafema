@@ -53,6 +53,9 @@ export function render(ctx, map, opts) {
     // where source or target is in the set get drawn (hover/pin mode).
     // When null, all links obey the `showLinks` flag as before.
     linkVisibleAtoms = null,
+    // Nodes with a persistent pin — drawn with a bright ring so the user
+    // knows which nodes are "locked" for link display.
+    pinnedAtoms = null,
   } = opts;
 
   const c = ctx.canvas;
@@ -398,6 +401,30 @@ export function render(ctx, map, opts) {
     }
     ctx.restore();
     } // end nodeLabels gate
+  }
+
+  // 3.8. Pinned-node highlight — bright ring drawn AFTER hulls+labels so
+  // it's visible on top of hull fills at any LOD level.
+  if (pinnedAtoms && pinnedAtoms.size > 0) {
+    ctx.save();
+    for (const id of pinnedAtoms) {
+      const n = map.nodes.get(id);
+      if (!n) continue;
+      const { x, y } = axialToPixel(n.coord, hexSize);
+      const cx = origin.x + x, cy = origin.y + y;
+      const r = Math.max(hexSize * 0.9, 10);
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.strokeStyle = '#fc6';
+      ctx.lineWidth = Math.max(3, r * 0.3);
+      ctx.stroke();
+      // Inner dot so the pin reads even on a busy background
+      ctx.beginPath();
+      ctx.arc(cx, cy, Math.max(3, r * 0.25), 0, Math.PI * 2);
+      ctx.fillStyle = '#fc6';
+      ctx.fill();
+    }
+    ctx.restore();
   }
 
   // 4. Overlay — tectonic debug decorations (desire vectors, chosen dirs)

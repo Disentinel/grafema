@@ -165,6 +165,7 @@ function draw() {
     hideHexes: useLod,
     nodeShortLabels: !useLod && !!loadedTree && showLabels,
     linkVisibleAtoms,
+    pinnedAtoms: pinnedNodes.size > 0 ? pinnedNodes : null,
   });
   updateHud();
   updateTectonicPanel();
