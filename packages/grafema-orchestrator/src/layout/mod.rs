@@ -8,9 +8,11 @@
 //! the recursive folder packer + topology validator (Step 2), the
 //! intra-folder permutation optimiser (Step 3), the cross-folder boundary
 //! swap with connectivity-preserving BFS (Step 4), the synthetic-input
-//! end-to-end driver + JSON dumper exposed by the CLI (Step 5), and the
-//! RFDB-backed input loader (Step 6).
+//! end-to-end driver + JSON dumper exposed by the CLI (Step 5), the
+//! RFDB-backed input loader (Step 6), and the RFDB commit step that writes
+//! `LAYOUT_POSITION` edges back (Step 8).
 
+pub mod commit;
 pub mod edges;
 pub mod hex;
 pub mod iswap;
@@ -24,6 +26,7 @@ pub mod tree;
 pub mod validate;
 pub mod xswap;
 
+pub use commit::{build_layout_position_edges, commit_layout};
 pub use edges::{Edge, Incidence};
 pub use hex::{pack_key, unpack_key, HexCoord, HEX_DIRS};
 pub use iswap::iswap;

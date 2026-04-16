@@ -108,6 +108,14 @@ enum Commands {
         #[arg(long)]
         dump_json: Option<PathBuf>,
 
+        /// Write `LAYOUT_POSITION` edges back to RFDB after computing the layout.
+        /// Each MODULE node gets one edge to a synthetic `HEX::<q>,<r>` id, with
+        /// metadata `{"_source":"layout-pack"}`. Requires `--socket` (the layout
+        /// must come from RFDB to be committable). Ignored with `--synthetic`
+        /// — a warning is printed and the commit is skipped.
+        #[arg(long)]
+        commit: bool,
+
         /// Print per-folder torn details in the validation report.
         #[arg(short, long)]
         verbose: bool,
@@ -2546,9 +2554,14 @@ async fn main() -> Result<()> {
             seed,
             edge_density,
             dump_json,
+            commit,
             verbose,
         } => {
             let t_total = std::time::Instant::now();
+            // Hold the RFDB client past the load step when --commit is set,
+            // so the commit phase can reuse the same connection. Synthetic
+            // mode never needs an RFDB client.
+            let mut rfdb_for_commit: Option<grafema_orchestrator::rfdb::RfdbClient> = None;
             // Pick input source. Clap's `conflicts_with` already rejects
             // (Some, Some) at parse time, so the unreachable arms are just a
             // belt-and-braces guard.
@@ -2570,7 +2583,11 @@ async fn main() -> Result<()> {
                         .with_context(|| {
                             format!("Failed to connect to RFDB at {}", sock.display())
                         })?;
-                    grafema_orchestrator::layout::load_from_rfdb(&mut rfdb).await?
+                    let loaded = grafema_orchestrator::layout::load_from_rfdb(&mut rfdb).await?;
+                    // Stash the live connection for the commit phase; if --commit
+                    // isn't set this just gets dropped at the end of the arm.
+                    rfdb_for_commit = Some(rfdb);
+                    loaded
                 }
                 (None, None, _) => {
                     anyhow::bail!(
@@ -2649,6 +2666,27 @@ async fn main() -> Result<()> {
                 )
                 .with_context(|| format!("Failed to write JSON to {}", path.display()))?;
                 eprintln!("JSON dumped to {}", path.display());
+            }
+
+            // ── Commit phase (optional) ────────────────────────────────────
+            // --commit only makes sense with --socket. Synthetic leaf paths
+            // don't correspond to any MODULE in any RFDB, so committing
+            // would produce edges that point at nothing. Print a warning
+            // and skip rather than error — the user may have left --commit
+            // on while iterating on synthetic dry-runs.
+            if commit {
+                if let Some(mut rfdb) = rfdb_for_commit {
+                    eprintln!("Committing LAYOUT_POSITION edges to RFDB...");
+                    let n = grafema_orchestrator::layout::commit_layout(
+                        &mut rfdb, &input, &result,
+                    )
+                    .await?;
+                    eprintln!("Committed {} LAYOUT_POSITION edges", n);
+                } else {
+                    eprintln!(
+                        "warning: --commit requires --socket; ignoring (synthetic mode)"
+                    );
+                }
             }
 
             Ok(())

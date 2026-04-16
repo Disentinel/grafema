@@ -65,10 +65,13 @@ pub(crate) fn build_layout_input(
     modules: &[WireNode],
     depends_on: &[DatalogResult],
 ) -> LayoutInput {
-    // ── Build leaf path list and the id → NodeIdx index ────────────────────
+    // ── Build leaf path list, semantic ID list, and the id → NodeIdx index ─
     // We preserve RFDB's iteration order — same DB → same NodeIdx assignment
-    // (see module docs on Determinism).
+    // (see module docs on Determinism). `semantic_ids[i]` is the MODULE
+    // semantic id for leaf `i`; kept parallel to `leaf_paths` so the
+    // commit step can emit `LAYOUT_POSITION` edges keyed by MODULE id.
     let mut leaf_paths: Vec<String> = Vec::with_capacity(modules.len());
+    let mut semantic_ids: Vec<String> = Vec::with_capacity(modules.len());
     let mut id_to_idx: FxHashMap<String, NodeIdx> = FxHashMap::default();
     id_to_idx.reserve(modules.len());
 
@@ -82,6 +85,7 @@ pub(crate) fn build_layout_input(
         };
         let idx = leaf_paths.len() as NodeIdx;
         leaf_paths.push(file.clone());
+        semantic_ids.push(module.id.clone());
         id_to_idx.insert(module.id.clone(), idx);
     }
 
@@ -155,6 +159,7 @@ pub(crate) fn build_layout_input(
         tree,
         edges,
         leaf_paths,
+        semantic_ids: Some(semantic_ids),
     }
 }
 

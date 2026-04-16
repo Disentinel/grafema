@@ -54,6 +54,14 @@ pub struct LayoutInput {
     /// Per-leaf path strings, indexed by `NodeIdx`. Used by the JSON dumper
     /// to label coords with human-readable identifiers.
     pub leaf_paths: Vec<String>,
+    /// MODULE semantic IDs in [`NodeIdx`] order. `Some(_)` for RFDB-loaded
+    /// inputs (one entry per leaf, parallel to [`leaf_paths`]); `None` for
+    /// synthetic fixtures (where leaf paths are not real semantic IDs and
+    /// nothing in RFDB matches them).
+    ///
+    /// Required by [`super::commit::commit_layout`] — without it, we can't
+    /// emit `LAYOUT_POSITION` edges keyed by MODULE id.
+    pub semantic_ids: Option<Vec<String>>,
 }
 
 impl LayoutInput {
@@ -171,6 +179,10 @@ pub fn generate(n_leaves: usize, seed: u64, edge_density: f32) -> LayoutInput {
         edges,
         n_nodes: n_leaves,
         leaf_paths,
+        // Synthetic mode never knows real semantic IDs — leaf paths are
+        // synthesised from the folder vocabulary and don't correspond to any
+        // MODULE node in any RFDB.
+        semantic_ids: None,
     }
 }
 

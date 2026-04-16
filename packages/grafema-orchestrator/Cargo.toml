@@ -46,3 +46,8 @@ ruby = ["ruby-prism"]
 
 [dev-dependencies]
 tempfile = "3"
+criterion = "0.5"
+
+[[bench]]
+name = "layout"
+harness = false
