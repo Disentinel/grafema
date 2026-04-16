@@ -6,24 +6,30 @@
 //!
 //! This module currently exposes the foundation layer (Step 1 of REG-1102),
 //! the recursive folder packer + topology validator (Step 2), the
-//! intra-folder permutation optimiser (Step 3), and the cross-folder
-//! boundary swap with connectivity-preserving BFS (Step 4). The remaining
-//! step adds `loader.rs`.
+//! intra-folder permutation optimiser (Step 3), the cross-folder boundary
+//! swap with connectivity-preserving BFS (Step 4), and the synthetic-input
+//! end-to-end driver + JSON dumper exposed by the CLI (Step 5).
 
 pub mod edges;
 pub mod hex;
 pub mod iswap;
+pub mod json_dump;
 pub mod pack;
+pub mod runner;
 pub mod state;
+pub mod synthetic;
 pub mod tree;
 pub mod validate;
 pub mod xswap;
 
 pub use edges::{Edge, Incidence};
-pub use hex::HexCoord;
+pub use hex::{pack_key, unpack_key, HexCoord, HEX_DIRS};
 pub use iswap::iswap;
+pub use json_dump::dump_to_writer;
 pub use pack::{pack, pack_folder};
+pub use runner::{run_layout, LayoutStats, RunOpts, RunResult};
 pub use state::{NodeIdx, PlacementState};
+pub use synthetic::{generate, SyntheticInput};
 pub use tree::{Folder, FolderId, FolderTree};
 pub use validate::{validate, TornFolder, ValidationReport};
 pub use xswap::xswap;

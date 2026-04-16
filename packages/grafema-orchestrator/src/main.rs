@@ -66,6 +66,37 @@ enum Commands {
         #[arg(short, long)]
         jobs: Option<usize>,
     },
+    /// Run the hex-grid layout pipeline (pack → iswap → xswap) on a synthetic
+    /// tree. Useful for benchmarking and visualisation dry-runs before the
+    /// RFDB-driven entry point lands in step 6 of REG-1102.
+    Layout {
+        /// Use a synthetic tree of N leaves (required in this step — step 6
+        /// adds `--socket`/`--config` for RFDB-backed runs).
+        #[arg(long)]
+        synthetic: usize,
+
+        /// Skip iswap and xswap (raw pack only — fast, no optimisation).
+        #[arg(long)]
+        pack_only: bool,
+
+        /// Random seed for synthetic tree generation. Same seed → identical
+        /// output bytes.
+        #[arg(long, default_value_t = 42)]
+        seed: u64,
+
+        /// Average edges per leaf (default 1.5× leaves).
+        #[arg(long, default_value_t = 1.5)]
+        edge_density: f32,
+
+        /// Dump final coords + stats as pretty JSON to this file. Schema:
+        /// `{ "coords": { "<path>": { "q": i32, "r": i32 }, ... }, "stats": {...} }`.
+        #[arg(long)]
+        dump_json: Option<PathBuf>,
+
+        /// Print per-folder torn details in the validation report.
+        #[arg(short, long)]
+        verbose: bool,
+    },
 }
 
 fn num_cpus() -> usize {
@@ -2488,6 +2519,89 @@ async fn main() -> Result<()> {
             println!(
                 "Resolve complete: resolve {resolve_ms}ms, diagnostics {diagnostics_ms}ms, depends_on {depends_on_ms}ms, flush {compact_ms}ms, total {total_ms}ms"
             );
+
+            Ok(())
+        }
+
+        Commands::Layout {
+            synthetic,
+            pack_only,
+            seed,
+            edge_density,
+            dump_json,
+            verbose,
+        } => {
+            let t_total = std::time::Instant::now();
+            eprintln!(
+                "Generating synthetic tree: {} leaves, seed {}, edge density {}",
+                synthetic, seed, edge_density
+            );
+            let input = grafema_orchestrator::layout::generate(synthetic, seed, edge_density);
+            eprintln!(
+                "Tree: {} folders (max depth {}), {} edges",
+                input.tree.len(),
+                input.tree.max_depth(),
+                input.edges.len()
+            );
+
+            let opts = grafema_orchestrator::layout::RunOpts { pack_only };
+            let result = grafema_orchestrator::layout::run_layout(&input, &opts);
+
+            let report = grafema_orchestrator::layout::validate(&result.coords, &input.tree);
+            eprintln!();
+            eprint!("{}", report);
+
+            eprintln!();
+            eprintln!("Stats:");
+            eprintln!(
+                "  pack:   {} ms, Σlinks = {:.1}",
+                result.stats.pack_ms, result.stats.sigma_link_pre
+            );
+            if !pack_only {
+                let pct = |after: f64, before: f64| -> f64 {
+                    if before == 0.0 {
+                        0.0
+                    } else {
+                        (after - before) / before * 100.0
+                    }
+                };
+                eprintln!(
+                    "  iswap:  {} ms, {} swaps, Σlinks = {:.1} ({:+.1}%)",
+                    result.stats.iswap_ms,
+                    result.stats.iswap_swaps,
+                    result.stats.sigma_link_after_iswap,
+                    pct(result.stats.sigma_link_after_iswap, result.stats.sigma_link_pre)
+                );
+                eprintln!(
+                    "  xswap:  {} ms, {} swaps, Σlinks = {:.1} ({:+.1}%)",
+                    result.stats.xswap_ms,
+                    result.stats.xswap_swaps,
+                    result.stats.sigma_link_after_xswap,
+                    pct(result.stats.sigma_link_after_xswap, result.stats.sigma_link_pre)
+                );
+            }
+            eprintln!("  total:  {} ms", t_total.elapsed().as_millis());
+
+            if verbose {
+                for t in &report.torn {
+                    eprintln!("  torn: {} ({}/{} connected)", t.path, t.connected, t.size);
+                }
+            }
+
+            if let Some(path) = dump_json {
+                let pairs: Vec<(grafema_orchestrator::layout::NodeIdx, &str)> =
+                    input.iter_leaf_paths().collect();
+                let f = std::fs::File::create(&path)
+                    .with_context(|| format!("Failed to create {}", path.display()))?;
+                grafema_orchestrator::layout::dump_to_writer(
+                    &pairs,
+                    &result.coords,
+                    &result.stats,
+                    f,
+                )
+                .with_context(|| format!("Failed to write JSON to {}", path.display()))?;
+                eprintln!("JSON dumped to {}", path.display());
+            }
 
             Ok(())
         }
