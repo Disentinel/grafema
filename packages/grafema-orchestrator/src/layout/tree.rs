@@ -113,6 +113,28 @@ impl FolderTree {
         self.folders.len() <= 1 && self.folders[0].direct_leaves.is_empty()
     }
 
+    /// Map every `NodeIdx` (`0..n_nodes`) to its leaf [`FolderId`].
+    ///
+    /// Walks every folder's `direct_leaves` and writes the folder id at the
+    /// matching node index. A node belongs to exactly one folder so collisions
+    /// are impossible.
+    ///
+    /// `NodeIdx` values not present in any folder's `direct_leaves` keep the
+    /// sentinel `FolderId::MAX` — defensive against pathological inputs;
+    /// pack-produced inputs assign every node so this should never trigger.
+    ///
+    /// Used by `iswap` and `xswap` to group nodes by leaf folder and (for
+    /// xswap) to look up a node's folder when scanning boundary neighbours.
+    pub fn node_to_folder(&self, n_nodes: usize) -> Vec<FolderId> {
+        let mut node_to_folder: Vec<FolderId> = vec![FolderId::MAX; n_nodes];
+        for (fid, folder) in self.iter() {
+            for leaf_idx in &folder.direct_leaves {
+                node_to_folder[*leaf_idx as usize] = fid;
+            }
+        }
+        node_to_folder
+    }
+
     // ── internals ──────────────────────────────────────────────────────────
 
     /// Get-or-create a folder by exact path. Does not parse `path`.
@@ -334,5 +356,32 @@ mod tests {
         assert!(tree.folder_id("does/not/exist").is_none());
         assert!(tree.folder_id("a").is_some());
         assert_eq!(tree.folder_id(".").unwrap(), tree.root());
+    }
+
+    #[test]
+    fn node_to_folder_maps_every_leaf_to_its_folder() {
+        // Mixed: two leaves in "a", one in "x", one at root.
+        let inputs = [(0u32, "a/x.rs"), (1u32, "a/y.rs"), (2u32, "x/z.rs"), (3u32, "top.md")];
+        let tree = FolderTree::build_from_paths(&inputs);
+        let mapping = tree.node_to_folder(4);
+
+        let a_id = tree.folder_id("a").unwrap();
+        let x_id = tree.folder_id("x").unwrap();
+        let root_id = tree.root();
+
+        assert_eq!(mapping[0], a_id);
+        assert_eq!(mapping[1], a_id);
+        assert_eq!(mapping[2], x_id);
+        assert_eq!(mapping[3], root_id);
+    }
+
+    #[test]
+    fn node_to_folder_unmapped_indices_get_sentinel() {
+        // 1 leaf, but ask for 3 slots — slots 1 and 2 should keep the sentinel.
+        let tree = FolderTree::build_from_paths(&[(0u32, "a/x.rs")]);
+        let mapping = tree.node_to_folder(3);
+        assert_eq!(mapping[0], tree.folder_id("a").unwrap());
+        assert_eq!(mapping[1], FolderId::MAX, "unassigned slot must hold sentinel");
+        assert_eq!(mapping[2], FolderId::MAX);
     }
 }

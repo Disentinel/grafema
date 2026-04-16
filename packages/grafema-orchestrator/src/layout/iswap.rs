@@ -44,17 +44,11 @@ pub fn iswap(
     tree: &FolderTree,
     incidence: &Incidence,
 ) -> u32 {
-    // Build NodeIdx → leaf folder lookup. Walk every folder's direct_leaves;
-    // a node belongs to exactly one folder so collisions are impossible.
-    // Default `FolderId::MAX` marks "unassigned" — never indexed because
-    // we group by valid folder ids only.
+    // Build NodeIdx → leaf folder lookup via the shared helper. Default
+    // `FolderId::MAX` marks "unassigned" — never indexed because we group
+    // by valid folder ids only.
     let n_nodes = coords.len();
-    let mut node_to_folder: Vec<FolderId> = vec![FolderId::MAX; n_nodes];
-    for (fid, folder) in tree.iter() {
-        for leaf_idx in &folder.direct_leaves {
-            node_to_folder[*leaf_idx as usize] = fid;
-        }
-    }
+    let node_to_folder = tree.node_to_folder(n_nodes);
 
     // Group nodes by leaf folder. Vec-of-Vec keyed by FolderId, each inner
     // vec carrying NodeIdx in `direct_leaves` order (deterministic).
