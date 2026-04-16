@@ -6,6 +6,7 @@ pub mod cpp_parser;
 pub mod directory_nodes;
 pub mod discovery;
 pub mod gc;
+pub mod layout;
 pub mod parser;
 pub mod plugin;
 pub mod process_pool;

@@ -556,6 +556,7 @@ dependencies = [
  "rayon",
  "rmp-serde",
  "ruby-prism",
+ "rustc-hash 2.1.1",
  "rustpython-parser",
  "serde",
  "serde_json",
