@@ -436,7 +436,7 @@ export async function handleFindNodes(args: FindNodesArgs): Promise<ToolResult> 
   // === Rich context enrichment ===
   // For each found node, add structural context (methods, calls, imports)
   // Only enrich when result set is small enough (≤10 nodes) to avoid latency
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const enriched = nodes.length <= 10
     ? await enrichNodes(db as any, nodes)
     : nodes;

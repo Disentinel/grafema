@@ -813,6 +813,14 @@ impl ManifestStore {
         let version = self.current.version + 1;
         let stats = ManifestStats::from_segments(&node_segments, &edge_segments);
 
+        // Carry forward L1 segments from the current manifest. Compaction
+        // overrides these explicitly after calling create_manifest. Without
+        // this, every commit after compaction silently drops L1 data and
+        // open() loads only the new delta — making post-compaction data
+        // disappear from queries.
+        let l1_node_segments = self.current.l1_node_segments.clone();
+        let l1_edge_segments = self.current.l1_edge_segments.clone();
+
         Ok(Manifest {
             version,
             created_at: current_timestamp(),
@@ -823,8 +831,8 @@ impl ManifestStore {
             parent_version: Some(self.current.version),
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments,
+            l1_edge_segments,
             last_compaction: None,
         })
     }

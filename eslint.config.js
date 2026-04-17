@@ -6,12 +6,13 @@ export default [
     ignores: ['**/dist/**', '**/node_modules/**', '**/*.d.ts', '**/tests/fixtures/**'],
   },
   {
-    files: ['packages/*/src/**/*.ts'],
+    files: ['packages/*/src/**/*.{ts,tsx}'],
     languageOptions: {
       parser: tsparser,
       parserOptions: {
         ecmaVersion: 2022,
         sourceType: 'module',
+        ecmaFeatures: { jsx: true },
       },
     },
     plugins: {

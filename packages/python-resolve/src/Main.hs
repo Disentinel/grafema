@@ -10,8 +10,9 @@ import Options.Applicative
 import qualified ImportResolution
 import qualified CallResolution
 import qualified TypeResolution
+import qualified ClassInheritance
 import Grafema.Types (GraphNode)
-import Grafema.Protocol (PluginCommand(..), readFrame, writeFrame, encodeMsgpack, decodeMsgpack)
+import Grafema.Protocol (PluginCommand(..), readFrame, writeFrame, encodeMsgpack, decodeMsgpack, readNodesFromStdin, writeCommandsToStdout)
 
 -- | Request from orchestrator in daemon mode.
 data DaemonRequest = DaemonRequest
@@ -56,28 +57,32 @@ daemonLoop = do
 
 -- | Dispatch a command to the resolver.
 dispatch :: Text -> [GraphNode] -> IO DaemonResponse
-dispatch "python-imports" nodes = ResOk <$> ImportResolution.resolveAll nodes
-dispatch "python-types"   nodes = ResOk <$> TypeResolution.resolveAll nodes
-dispatch "python-calls"   nodes = ResOk <$> CallResolution.resolveAll nodes
-dispatch "python-all"     nodes = do
-  -- Run all 3 resolution phases in one pass (avoids 3x serialization roundtrip)
-  imports <- ImportResolution.resolveAll nodes
-  types   <- TypeResolution.resolveAll nodes
-  calls   <- CallResolution.resolveAll nodes
-  return $ ResOk (imports ++ types ++ calls)
+dispatch "python-imports"  nodes = ResOk <$> ImportResolution.resolveAll nodes
+dispatch "python-types"    nodes = ResOk <$> TypeResolution.resolveAll nodes
+dispatch "python-calls"    nodes = ResOk <$> CallResolution.resolveAll nodes
+dispatch "python-classes"  nodes = return $ ResOk (ClassInheritance.resolveAll nodes)
+dispatch "python-all"      nodes = do
+  -- Run all 4 resolution phases in one pass (avoids 4x serialization roundtrip)
+  imports  <- ImportResolution.resolveAll nodes
+  types    <- TypeResolution.resolveAll nodes
+  calls    <- CallResolution.resolveAll nodes
+  let classes = ClassInheritance.resolveAll nodes
+  return $ ResOk (imports ++ types ++ calls ++ classes)
 dispatch cmd _ = return $ ResError ("unknown command: " ++ T.unpack cmd)
 
 -- | CLI subcommand parser.
-data Command = CmdPythonImports | CmdPythonTypes | CmdPythonCalls
+data Command = CmdPythonImports | CmdPythonTypes | CmdPythonCalls | CmdPythonClasses
 
 commandParser :: Parser Command
 commandParser = subparser
   ( command "python-imports"
-    (info (pure CmdPythonImports) (progDesc "Resolve Python imports across files"))
+    (info (pure CmdPythonImports)  (progDesc "Resolve Python imports across files"))
   <> command "python-types"
-    (info (pure CmdPythonTypes) (progDesc "Resolve Python type references across files"))
+    (info (pure CmdPythonTypes)    (progDesc "Resolve Python type references across files"))
   <> command "python-calls"
-    (info (pure CmdPythonCalls) (progDesc "Resolve Python function/method calls to declarations"))
+    (info (pure CmdPythonCalls)    (progDesc "Resolve Python function/method calls to declarations"))
+  <> command "python-classes"
+    (info (pure CmdPythonClasses)  (progDesc "Resolve Python class inheritance (EXTENDS edges)"))
   )
 
 cliOpts :: ParserInfo Command
@@ -97,6 +102,9 @@ main = do
     else do
       cmd <- execParser cliOpts
       case cmd of
-        CmdPythonImports -> ImportResolution.run
-        CmdPythonTypes   -> TypeResolution.run
-        CmdPythonCalls   -> CallResolution.run
+        CmdPythonImports  -> ImportResolution.run
+        CmdPythonTypes    -> TypeResolution.run
+        CmdPythonCalls    -> CallResolution.run
+        CmdPythonClasses  -> do
+          nodes <- readNodesFromStdin
+          writeCommandsToStdout (ClassInheritance.resolveAll nodes)

@@ -21,6 +21,56 @@ const SOCKET_FILE = 'rfdb.sock';
 const DB_FILE = 'graph.rfdb';
 
 /**
+ * Default HTTP port for the rfdb-server /ui and /api endpoints (the GUI
+ * is served from the same process as the Unix-socket RPC listener).
+ *
+ * TODO: make dynamic — probe for a free port when spawning rfdb-server
+ * and surface it via workspaceState. For now the extension passes this
+ * fixed port via `--http-port` and MapPanel reads it via getRfdbHttpPort().
+ */
+const DEFAULT_RFDB_HTTP_PORT = 3335;
+
+/**
+ * Module-level holder for the currently-active rfdb HTTP port. Populated
+ * when startServer() spawns rfdb-server with `--http-port`. MapPanel (and
+ * anyone else) reads it via getRfdbHttpPort() so there is one source of
+ * truth.
+ */
+let activeRfdbHttpPort: number | undefined;
+
+/**
+ * Report the HTTP port the rfdb-server is listening on.
+ *
+ * Resolution order:
+ *   1. Port recorded by the last successful startServer() call.
+ *   2. `grafema.rfdbHttpPort` VS Code setting.
+ *   3. `GRAFEMA_RFDB_HTTP_PORT` environment variable.
+ *   4. DEFAULT_RFDB_HTTP_PORT (3335).
+ *
+ * Returns `undefined` only if the caller explicitly sets the setting
+ * to 0 — otherwise always returns a positive port.
+ */
+export function getRfdbHttpPort(): number | undefined {
+  if (typeof activeRfdbHttpPort === 'number' && activeRfdbHttpPort > 0) {
+    return activeRfdbHttpPort;
+  }
+  try {
+    const config = vscode.workspace.getConfiguration('grafema');
+    const configured = config.get<number>('rfdbHttpPort');
+    if (typeof configured === 'number' && configured > 0) return configured;
+    if (configured === 0) return undefined; // explicit opt-out
+  } catch {
+    // vscode API may not be available (e.g., unit tests) — fall through.
+  }
+  const env = process.env.GRAFEMA_RFDB_HTTP_PORT;
+  if (env) {
+    const parsed = Number.parseInt(env, 10);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return DEFAULT_RFDB_HTTP_PORT;
+}
+
+/**
  * Sleep helper
  */
 function sleep(ms: number): Promise<void> {
@@ -350,10 +400,18 @@ export class GrafemaClientManager extends EventEmitter {
       );
     }
 
-    this.serverProcess = spawn(binaryPath, [this.dbPath, '--socket', this.socketPath], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      detached: true,
-    });
+    const httpPort = getRfdbHttpPort() ?? DEFAULT_RFDB_HTTP_PORT;
+    this.serverProcess = spawn(
+      binaryPath,
+      [this.dbPath, '--socket', this.socketPath, '--http-port', String(httpPort)],
+      {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        detached: true,
+      },
+    );
+    // Record the port so MapPanel and other callers of getRfdbHttpPort()
+    // see the actual listening port (not just the configured default).
+    activeRfdbHttpPort = httpPort;
 
     // Don't let server process prevent VS Code from exiting
     this.serverProcess.unref();

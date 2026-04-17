@@ -1,0 +1,11 @@
+{
+  "generation": 5,
+  "file_mtimes": {
+    "/Users/vadimr/grafema-worker-5/packages/gui/fixtures/demo-project/src/auth/jwt.ts": 1775415903766971237,
+    "/Users/vadimr/grafema-worker-5/packages/gui/fixtures/demo-project/src/auth/middleware.ts": 1775415895476225987,
+    "/Users/vadimr/grafema-worker-5/packages/gui/fixtures/demo-project/src/api/router.ts": 1775415889048753450,
+    "/Users/vadimr/grafema-worker-5/packages/gui/fixtures/demo-project/src/auth/userService.ts": 1775415910832611683,
+    "/Users/vadimr/grafema-worker-5/packages/gui/fixtures/demo-project/src/db/pool.ts": 1775415916896505980,
+    "/Users/vadimr/grafema-worker-5/packages/gui/fixtures/demo-project/src/index.ts": 1775415923591449271
+  }
+}

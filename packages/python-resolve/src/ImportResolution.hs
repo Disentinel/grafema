@@ -20,7 +20,13 @@
 --   - "from foo import bar" where bar is a submodule → look up "foo.bar" in module index
 --   - "import foo" → look up "foo" in module index
 --   - "from foo import *" → IMPORTS_FROM to the MODULE node
-module ImportResolution (run, resolveAll) where
+module ImportResolution
+  ( run, resolveAll
+  , ModuleIndex, NameIndex
+  , buildModuleIndex, buildNameIndex
+  , resolveRelativeImport
+  , getMetaText
+  ) where
 
 import Grafema.Types (GraphNode(..), GraphEdge(..), MetaValue(..))
 import Grafema.Protocol (PluginCommand(..), readNodesFromStdin, writeCommandsToStdout)

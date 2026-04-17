@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>hex-sandbox</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #0a0f14;
+      color: #d0d6dc;
+      font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+      overflow: hidden;
+    }
+    canvas {
+      display: block;
+      position: absolute;
+      inset: 0;
+    }
+    #hud {
+      position: fixed;
+      top: 12px;
+      left: 12px;
+      padding: 10px 14px;
+      background: rgba(10, 15, 20, 0.85);
+      border: 1px solid #22303c;
+      font-size: 12px;
+      line-height: 1.5;
+      min-width: 220px;
+      pointer-events: none;
+    }
+    #hud b { color: #6ac; }
+    #hud small { color: #6a7480; }
+    #tooltip {
+      position: fixed;
+      pointer-events: none;
+      padding: 6px 10px;
+      background: rgba(10, 15, 20, 0.95);
+      border: 1px solid #33444c;
+      font-size: 11px;
+      line-height: 1.5;
+      color: #d0d6dc;
+      display: none;
+      z-index: 10;
+      white-space: nowrap;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+    }
+    #tectonic-panel {
+      position: fixed;
+      top: 12px;
+      right: 12px;
+      padding: 12px 16px;
+      background: rgba(10, 15, 20, 0.92);
+      border: 1px solid #4a6070;
+      font-size: 12px;
+      line-height: 1.5;
+      min-width: 320px;
+      max-width: 420px;
+      color: #d0d6dc;
+      display: none;
+      z-index: 5;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+    }
+    #tectonic-panel code {
+      font-family: inherit;
+      background: rgba(255, 204, 102, 0.08);
+      padding: 1px 5px;
+      border-radius: 2px;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="cv"></canvas>
+  <div id="hud"></div>
+  <div id="tooltip"></div>
+  <div id="tectonic-panel"></div>
+  <script type="module" src="./src/demo.js"></script>
+</body>
+</html>

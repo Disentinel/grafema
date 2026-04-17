@@ -37,6 +37,15 @@ tokio = { version = "1.38", features = ["full"] }
 tokio-tungstenite = "0.24"
 futures-util = "0.3"
 
+# HTTP server for visualization API
+axum = { version = "0.8", features = ["ws"] }
+tower-http = { version = "0.6", features = ["cors"] }
+
+# UI embedding (feature-gated via `ui`). The `interpolate-folder-path`
+# feature lets `#[folder = "$OUT_DIR/ui-dist"]` expand the env var at
+# compile time to the absolute path staged by `build.rs`.
+rust-embed = { version = "8", optional = true, features = ["interpolate-folder-path"] }
+
 # Channels for worker thread
 crossbeam-channel = "0.5"
 
@@ -69,7 +78,11 @@ tokenizers = { version = "0.22", optional = true, features = ["onig"] }
 dirs = { version = "5", optional = true }
 
 [features]
-default = []
+default = ["ui"]
+# Embed the Grafema GUI (web.html + JS/CSS bundles) into the server binary
+# and serve it under /ui/*. Also pulls in the `fs` layer of tower-http for
+# any filesystem fallbacks (currently unused, reserved for C14b).
+ui = ["dep:rust-embed", "tower-http/fs"]
 embedding = [
     "dep:lancedb",
     "dep:arrow-array",
@@ -86,6 +99,8 @@ embedding = [
 criterion = { version = "0.5", features = ["html_reports"] }
 tempfile = "3.10"
 proptest = "1.4"
+# Used by integration tests that spin up the HTTP server and issue real requests.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 # neo4j = "0.5"  # TODO: Add when a current neo4j crate becomes available for benchmarks
 
 [[bin]]
@@ -116,6 +131,18 @@ harness = false
 opt-level = 3
 lto = "fat"
 codegen-units = 1
+
+# Fast iteration profile: ~30s rebuilds vs ~15min for full release.
+# Use during development with `cargo build --profile fast`. Binary is
+# slightly slower at runtime (no LTO, more codegen units) but the
+# trade-off is enormous for the edit/test cycle.
+[profile.fast]
+inherits = "release"
+opt-level = 2
+lto = "off"
+codegen-units = 16
+incremental = true
+debug = false
 
 [profile.bench]
 inherits = "release"

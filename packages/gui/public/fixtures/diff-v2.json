@@ -1,0 +1,45 @@
+{
+  "added": [
+    {
+      "id": "api-gateway/sendNotification",
+      "type": "FUNCTION",
+      "name": "sendNotification",
+      "file": "api-gateway/notifications.ts",
+      "region": "api-gateway",
+      "degree": 3,
+      "metrics": {
+        "complexity": 8,
+        "fileSize": 120,
+        "churn": 15
+      }
+    }
+  ],
+  "removed": [
+    "api-gateway/rateLimiter"
+  ],
+  "changed": [
+    {
+      "id": "api-gateway/validateBody",
+      "changes": {
+        "complexity": [
+          5,
+          14
+        ]
+      }
+    }
+  ],
+  "addedEdges": [
+    {
+      "sourceId": "api-gateway/handleCreateUser",
+      "targetId": "api-gateway/sendNotification",
+      "type": "CALLS"
+    }
+  ],
+  "removedEdges": [
+    {
+      "sourceId": "api-gateway/rateLimiter",
+      "targetId": "data-store/getFromCache",
+      "type": "CALLS"
+    }
+  ]
+}

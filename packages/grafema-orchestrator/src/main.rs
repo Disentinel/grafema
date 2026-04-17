@@ -1,4 +1,4 @@
-use grafema_orchestrator::{analyzer, config, discovery, gc, plugin, process_pool, profiler, rfdb, source_hash};
+use grafema_orchestrator::{analyzer, config, directory_nodes, discovery, gc, plugin, process_pool, profiler, rfdb, source_hash};
 #[cfg(feature = "ruby")]
 use grafema_orchestrator::ruby_resolver;
 
@@ -65,6 +65,71 @@ enum Commands {
         /// Number of parallel resolve workers (default: auto based on CPU count)
         #[arg(short, long)]
         jobs: Option<usize>,
+    },
+    /// Commit only DIRECTORY/FILE structural nodes (fast, skips analysis).
+    /// Uses the discovered file list from the config to build the directory
+    /// tree and upsert structural nodes into the existing RFDB.
+    CommitDirs {
+        /// Path to grafema.config.yaml
+        #[arg(short, long)]
+        config: PathBuf,
+        /// Path to RFDB unix socket
+        #[arg(short, long)]
+        socket: Option<PathBuf>,
+    },
+    /// Run the hex-grid layout pipeline (pack → iswap → xswap).
+    ///
+    /// Two input modes (mutually exclusive):
+    ///   * `--synthetic N` — generate a deterministic N-leaf fixture in memory.
+    ///     Useful for benchmarks and visualisation dry-runs.
+    ///   * `--socket <path> --config <path>` — load real graph data from a
+    ///     live RFDB. MODULE nodes become leaves, MODULE→MODULE DEPENDS_ON
+    ///     edges become layout edges.
+    Layout {
+        /// Use a synthetic tree of N leaves. Mutually exclusive with `--socket`.
+        #[arg(long, conflicts_with = "socket")]
+        synthetic: Option<usize>,
+
+        /// Path to RFDB unix socket. Mutually exclusive with `--synthetic`.
+        /// Requires `--config` so callers explicitly bind the layout run to
+        /// a project; the config defaults wiring is intentionally out of scope
+        /// for this step.
+        #[arg(short, long, requires = "config")]
+        socket: Option<PathBuf>,
+
+        /// Path to grafema.config.yaml. Required when `--socket` is given.
+        #[arg(short, long)]
+        config: Option<PathBuf>,
+
+        /// Skip iswap and xswap (raw pack only — fast, no optimisation).
+        #[arg(long)]
+        pack_only: bool,
+
+        /// Random seed for synthetic tree generation. Same seed → identical
+        /// output bytes.
+        #[arg(long, default_value_t = 42)]
+        seed: u64,
+
+        /// Average edges per leaf (default 1.5× leaves).
+        #[arg(long, default_value_t = 1.5)]
+        edge_density: f32,
+
+        /// Dump final coords + stats as pretty JSON to this file. Schema:
+        /// `{ "coords": { "<path>": { "q": i32, "r": i32 }, ... }, "stats": {...} }`.
+        #[arg(long)]
+        dump_json: Option<PathBuf>,
+
+        /// Write `LAYOUT_POSITION` edges back to RFDB after computing the layout.
+        /// Each MODULE node gets one edge to a synthetic `HEX::<q>,<r>` id, with
+        /// metadata `{"_source":"layout-pack"}`. Requires `--socket` (the layout
+        /// must come from RFDB to be committable). Ignored with `--synthetic`
+        /// — a warning is printed and the commit is skipped.
+        #[arg(long)]
+        commit: bool,
+
+        /// Print per-folder torn details in the validation report.
+        #[arg(short, long)]
+        verbose: bool,
     },
 }
 
@@ -893,6 +958,36 @@ async fn main() -> Result<()> {
             );
             profile!("analysis_complete",
                 "nodes" => total_nodes, "edges" => total_edges, "errors" => total_errors);
+
+            // 6.5. Build DIRECTORY/FILE structural nodes
+            let dirstruct_start = std::time::Instant::now();
+            let root_prefix_for_dirs = if root_str.ends_with('/') {
+                root_str.clone()
+            } else {
+                format!("{root_str}/")
+            };
+            let relative_files: Vec<String> = files.iter()
+                .map(|p| {
+                    let abs = p.display().to_string();
+                    abs.strip_prefix(&root_prefix_for_dirs).unwrap_or(&abs).to_string()
+                })
+                .collect();
+            let (dir_nodes, dir_edges, cleanup_files) = directory_nodes::build(&relative_files);
+            if !dir_nodes.is_empty() {
+                match rfdb.commit_batch(&cleanup_files, &dir_nodes, &dir_edges, false).await {
+                    Ok(_) => {
+                        tracing::info!(
+                            dir_nodes = dir_nodes.len(),
+                            dir_edges = dir_edges.len(),
+                            duration_ms = dirstruct_start.elapsed().as_millis() as u64,
+                            "Directory/file structure committed"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Failed to commit directory structure (non-fatal)");
+                    }
+                }
+            }
 
             // 7. Handle deleted files
             let deleted = gc::detect_deleted_files(&gen_tracker, &files);
@@ -2507,6 +2602,209 @@ async fn main() -> Result<()> {
             println!(
                 "Resolve complete: resolve {resolve_ms}ms, diagnostics {diagnostics_ms}ms, depends_on {depends_on_ms}ms, flush {compact_ms}ms, total {total_ms}ms"
             );
+
+            Ok(())
+        }
+
+        Commands::CommitDirs {
+            config: config_path,
+            socket,
+        } => {
+            let cfg = config::load(&config_path)?.with_defaults();
+
+            let socket_path = socket
+                .or(cfg.rfdb_socket.clone())
+                .unwrap_or_else(|| PathBuf::from("/tmp/rfdb.sock"));
+
+            let mut rfdb = rfdb::RfdbClient::connect(&socket_path).await?;
+
+            // Discover files using the same discovery code as analyze.
+            let files = discovery::discover(&cfg)?;
+            tracing::info!(file_count = files.len(), "Discovered files for commit-dirs");
+
+            let root_str = cfg.root.to_string_lossy().to_string();
+            let root_prefix = if root_str.ends_with('/') {
+                root_str.clone()
+            } else {
+                format!("{root_str}/")
+            };
+            let relative_files: Vec<String> = files
+                .iter()
+                .map(|p| {
+                    let abs = p.display().to_string();
+                    abs.strip_prefix(&root_prefix).unwrap_or(&abs).to_string()
+                })
+                .collect();
+
+            let (dir_nodes, dir_edges, mut cleanup_files) =
+                directory_nodes::build(&relative_files);
+
+            if dir_nodes.is_empty() {
+                println!("No directory/file nodes to commit.");
+                return Ok(());
+            }
+
+            // Also clean up legacy virtual path from earlier releases that
+            // stored all DIRECTORY/FILE nodes under a single synthetic file.
+            cleanup_files.push("__grafema_virtual/directory-structure".to_string());
+
+            let start = std::time::Instant::now();
+            rfdb.commit_batch(&cleanup_files, &dir_nodes, &dir_edges, false)
+                .await
+                .context("Failed to commit directory structure")?;
+
+            println!(
+                "Committed {} directory/file nodes, {} CONTAINS edges in {}ms",
+                dir_nodes.len(),
+                dir_edges.len(),
+                start.elapsed().as_millis()
+            );
+
+            Ok(())
+        }
+
+        Commands::Layout {
+            synthetic,
+            socket,
+            config,
+            pack_only,
+            seed,
+            edge_density,
+            dump_json,
+            commit,
+            verbose,
+        } => {
+            let t_total = std::time::Instant::now();
+            // Hold the RFDB client past the load step when --commit is set,
+            // so the commit phase can reuse the same connection. Synthetic
+            // mode never needs an RFDB client.
+            let mut rfdb_for_commit: Option<grafema_orchestrator::rfdb::RfdbClient> = None;
+            // Pick input source. Clap's `conflicts_with` already rejects
+            // (Some, Some) at parse time, so the unreachable arm is just a
+            // belt-and-braces guard.
+            let input = match (synthetic, socket.as_ref(), config.as_ref()) {
+                (Some(n), None, _) => {
+                    eprintln!(
+                        "Generating synthetic tree: {} leaves, seed {}, edge density {}",
+                        n, seed, edge_density
+                    );
+                    grafema_orchestrator::layout::generate(n, seed, edge_density)
+                }
+                (None, Some(sock), Some(_cfg)) => {
+                    // `--config` is reserved for future use (auto-detect socket
+                    // path, project-aware reporting). For now we just require
+                    // the user to pass `--socket` explicitly.
+                    eprintln!("Loading layout input from RFDB at {}", sock.display());
+                    let mut rfdb = grafema_orchestrator::rfdb::RfdbClient::connect(sock)
+                        .await
+                        .with_context(|| {
+                            format!("Failed to connect to RFDB at {}", sock.display())
+                        })?;
+                    let loaded = grafema_orchestrator::layout::load_from_rfdb(&mut rfdb).await?;
+                    // Stash the live connection for the commit phase; if --commit
+                    // isn't set this just gets dropped at the end of the arm.
+                    rfdb_for_commit = Some(rfdb);
+                    loaded
+                }
+                (None, None, _) => {
+                    anyhow::bail!(
+                        "layout: must provide either --synthetic N or --socket <path> --config <path>"
+                    );
+                }
+                (Some(_), Some(_), _) => {
+                    unreachable!("clap `conflicts_with` should prevent --synthetic + --socket")
+                }
+                (None, Some(_), None) => {
+                    unreachable!("clap `requires = config` should prevent --socket without --config")
+                }
+            };
+            eprintln!(
+                "Tree: {} folders (max depth {}), {} edges, {} nodes",
+                input.tree.len(),
+                input.tree.max_depth(),
+                input.edges.len(),
+                input.n_nodes
+            );
+
+            let opts = grafema_orchestrator::layout::RunOpts { pack_only };
+            let result = grafema_orchestrator::layout::run_layout(&input, &opts);
+
+            let report = grafema_orchestrator::layout::validate(&result.coords, &input.tree);
+            eprintln!();
+            eprint!("{}", report);
+
+            eprintln!();
+            eprintln!("Stats:");
+            eprintln!(
+                "  pack:   {} ms, Σlinks = {:.1}",
+                result.stats.pack_ms, result.stats.sigma_link_pre
+            );
+            if !pack_only {
+                let pct = |after: f64, before: f64| -> f64 {
+                    if before == 0.0 {
+                        0.0
+                    } else {
+                        (after - before) / before * 100.0
+                    }
+                };
+                eprintln!(
+                    "  iswap:  {} ms, {} swaps, Σlinks = {:.1} ({:+.1}%)",
+                    result.stats.iswap_ms,
+                    result.stats.iswap_swaps,
+                    result.stats.sigma_link_after_iswap,
+                    pct(result.stats.sigma_link_after_iswap, result.stats.sigma_link_pre)
+                );
+                eprintln!(
+                    "  xswap:  {} ms, {} swaps, Σlinks = {:.1} ({:+.1}%)",
+                    result.stats.xswap_ms,
+                    result.stats.xswap_swaps,
+                    result.stats.sigma_link_after_xswap,
+                    pct(result.stats.sigma_link_after_xswap, result.stats.sigma_link_pre)
+                );
+            }
+            eprintln!("  total:  {} ms", t_total.elapsed().as_millis());
+
+            if verbose {
+                for t in &report.torn {
+                    eprintln!("  torn: {} ({}/{} connected)", t.path, t.connected, t.size);
+                }
+            }
+
+            if let Some(path) = dump_json {
+                let pairs: Vec<(grafema_orchestrator::layout::NodeIdx, &str)> =
+                    input.iter_leaf_paths().collect();
+                let f = std::fs::File::create(&path)
+                    .with_context(|| format!("Failed to create {}", path.display()))?;
+                grafema_orchestrator::layout::dump_to_writer(
+                    &pairs,
+                    &result.coords,
+                    &result.stats,
+                    f,
+                )
+                .with_context(|| format!("Failed to write JSON to {}", path.display()))?;
+                eprintln!("JSON dumped to {}", path.display());
+            }
+
+            // ── Commit phase (optional) ────────────────────────────────────
+            // --commit only makes sense with --socket. Synthetic leaf paths
+            // don't correspond to any MODULE in any RFDB, so committing
+            // would produce edges that point at nothing. Print a warning
+            // and skip rather than error — the user may have left --commit
+            // on while iterating on synthetic dry-runs.
+            if commit {
+                if let Some(mut rfdb) = rfdb_for_commit {
+                    eprintln!("Committing LAYOUT_POSITION edges to RFDB...");
+                    let n = grafema_orchestrator::layout::commit_layout(
+                        &mut rfdb, &input, &result,
+                    )
+                    .await?;
+                    eprintln!("Committed {} LAYOUT_POSITION edges", n);
+                } else {
+                    eprintln!(
+                        "warning: --commit requires --socket; ignoring (synthetic mode)"
+                    );
+                }
+            }
 
             Ok(())
         }
