@@ -10,6 +10,7 @@ import Grafema.Protocol (PluginCommand(..))
 import qualified ImportResolution
 import qualified TypeResolution
 import qualified CallResolution
+import qualified ClassInheritance
 
 -- -- Test helpers ----------------------------------------------------------
 
@@ -240,6 +241,91 @@ main = hspec $ do
       let edges = findEdgesOfType "CALLS" cmds
       length edges `shouldBe` 1
       geTarget (head edges) `shouldBe` "f1.py->FUNCTION->helper[h:y]"
+
+  -- -- ClassInheritance -----------------------------------------------------
+
+  describe "ClassInheritance" $ do
+
+    it "same-file single inheritance: class Dog(Animal)" $ do
+      let animal = mkNode "f.py->CLASS->Animal" "CLASS" "Animal" "f.py"
+          dog    = mkNodeMeta
+                     "f.py->CLASS->Dog" "CLASS" "Dog" "f.py"
+                     [("bases", MetaText "Animal")]
+          nodes  = [animal, dog]
+          cmds   = ClassInheritance.resolveAll nodes
+          edges  = findEdgesOfType "EXTENDS" cmds
+      length edges `shouldBe` 1
+      geSource (head edges) `shouldBe` "f.py->CLASS->Dog"
+      geTarget (head edges) `shouldBe` "f.py->CLASS->Animal"
+
+    it "no bases metadata → no edges" $ do
+      let cls   = mkNode "f.py->CLASS->Plain" "CLASS" "Plain" "f.py"
+          cmds  = ClassInheritance.resolveAll [cls]
+      countEdgeType "EXTENDS" cmds `shouldBe` 0
+
+    it "unknown same-file base → no edge" $ do
+      let dog  = mkNodeMeta
+                   "f.py->CLASS->Dog" "CLASS" "Dog" "f.py"
+                   [("bases", MetaText "NoSuchClass")]
+          cmds = ClassInheritance.resolveAll [dog]
+      countEdgeType "EXTENDS" cmds `shouldBe` 0
+
+    it "same-file multiple inheritance: class C(A, B)" $ do
+      let aNode = mkNode "f.py->CLASS->A" "CLASS" "A" "f.py"
+          bNode = mkNode "f.py->CLASS->B" "CLASS" "B" "f.py"
+          cNode = mkNodeMeta
+                    "f.py->CLASS->C" "CLASS" "C" "f.py"
+                    [("bases", MetaText "A,B")]
+          nodes = [aNode, bNode, cNode]
+          cmds  = ClassInheritance.resolveAll nodes
+          edges = findEdgesOfType "EXTENDS" cmds
+      length edges `shouldBe` 2
+      map geTarget edges `shouldBe` ["f.py->CLASS->A", "f.py->CLASS->B"]
+
+    it "cross-file inheritance via absolute import" $ do
+      -- base.py defines Animal; dog.py imports it and subclasses
+      let modBase  = mkNode "base.py->MODULE->base.py" "MODULE" "base.py" "base.py"
+          animal   = mkNode "base.py->CLASS->Animal"   "CLASS"  "Animal"  "base.py"
+          binding  = mkNodeMeta
+                       "dog.py->IMPORT_BINDING->Animal[h:x]" "IMPORT_BINDING" "Animal" "dog.py"
+                       [ ("source_module", MetaText "base")
+                       , ("imported_name", MetaText "Animal")
+                       ]
+          dog      = mkNodeMeta
+                       "dog.py->CLASS->Dog" "CLASS" "Dog" "dog.py"
+                       [("bases", MetaText "Animal")]
+          nodes    = [modBase, animal, binding, dog]
+          cmds     = ClassInheritance.resolveAll nodes
+          edges    = findEdgesOfType "EXTENDS" cmds
+      length edges `shouldBe` 1
+      geSource (head edges) `shouldBe` "dog.py->CLASS->Dog"
+      geTarget (head edges) `shouldBe` "base.py->CLASS->Animal"
+
+    it "cross-file inheritance via relative import" $ do
+      -- pkg/base.py defines Animal; pkg/dog.py does 'from .base import Animal'
+      let modBase  = mkNode "pkg/base.py->MODULE->pkg/base.py" "MODULE" "pkg/base.py" "pkg/base.py"
+          animal   = mkNode "pkg/base.py->CLASS->Animal"       "CLASS"  "Animal"      "pkg/base.py"
+          binding  = mkNodeMeta
+                       "pkg/dog.py->IMPORT_BINDING->Animal[h:x]" "IMPORT_BINDING" "Animal" "pkg/dog.py"
+                       [ ("source_module", MetaText ".base")
+                       , ("imported_name", MetaText "Animal")
+                       ]
+          dog      = mkNodeMeta
+                       "pkg/dog.py->CLASS->Dog" "CLASS" "Dog" "pkg/dog.py"
+                       [("bases", MetaText "Animal")]
+          nodes    = [modBase, animal, binding, dog]
+          cmds     = ClassInheritance.resolveAll nodes
+          edges    = findEdgesOfType "EXTENDS" cmds
+      length edges `shouldBe` 1
+      geTarget (head edges) `shouldBe` "pkg/base.py->CLASS->Animal"
+
+    it "non-Python files are ignored" $ do
+      -- A CLASS node in a .ts file should not be resolved by python-classes
+      let tsClass = mkNodeMeta
+                      "f.ts->CLASS->Foo" "CLASS" "Foo" "f.ts"
+                      [("bases", MetaText "Bar")]
+          cmds    = ClassInheritance.resolveAll [tsClass]
+      countEdgeType "EXTENDS" cmds `shouldBe` 0
 
   -- -- Edge integrity ------------------------------------------------------
 

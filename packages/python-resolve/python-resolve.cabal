@@ -15,6 +15,7 @@ executable python-resolve
     ImportResolution
     CallResolution
     TypeResolution
+    ClassInheritance
 
   build-depends:
     base               >= 4.17 && < 5,
@@ -36,6 +37,7 @@ test-suite spec
     ImportResolution
     CallResolution
     TypeResolution
+    ClassInheritance
 
   build-depends:
     base               >= 4.17 && < 5,
