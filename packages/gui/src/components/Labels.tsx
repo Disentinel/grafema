@@ -39,17 +39,84 @@ export function Labels({ sceneManager }: { sceneManager: SceneManager | null }) 
       if (node.type === 'SERVICE') serviceByRegion.set(node.region, node);
     }
 
+    // Aggregate "package-level" labels: one per top-2 path prefix.
+    // Centroid is the size-weighted average of member region centroids.
+    // These show at any zoom (mandatory + huge minDist).
+    const packageGroups = new Map<
+      string,
+      { cx: number; cz: number; total: number }
+    >();
+    for (const region of regions) {
+      const segs = region.path.split('/');
+      if (segs.length < 2) continue;
+      const pkg = segs.slice(0, 2).join('/');
+      const g = packageGroups.get(pkg);
+      const w = region.tileCount || 1;
+      if (!g) {
+        packageGroups.set(pkg, {
+          cx: region.centroid.x * w,
+          cz: region.centroid.z * w,
+          total: w,
+        });
+      } else {
+        g.cx += region.centroid.x * w;
+        g.cz += region.centroid.z * w;
+        g.total += w;
+      }
+    }
+    for (const [pkg, g] of packageGroups) {
+      candidates.push({
+        key: `pkg:${pkg}`,
+        text: pkg,
+        worldX: g.cx / g.total,
+        worldZ: g.cz / g.total,
+        priority: 5000 + g.total,
+        fontSize: 16,
+        minDist: 4000, // always visible
+        mandatory: true,
+      });
+    }
+
+    // Per-region labels with LOD by depth — deeper paths only show when
+    // the camera gets closer. Show only the part of the path INSIDE
+    // the package (e.g. "src/api" instead of "packages/util/src/api")
+    // so the label isn't redundant with the package label above it.
     for (const region of regions) {
       const svc = serviceByRegion.get(region.path);
+      const segs = region.path.split('/');
+      const depth = segs.length;
+      let minDist: number;
+      let fontSize: number;
+      let mandatory: boolean;
+      if (depth <= 2) {
+        // Top-level only — already covered by the package label, skip.
+        // (kept here for legacy regions that aren't real sub-paths)
+        minDist = 4000;
+        fontSize = 14;
+        mandatory = true;
+      } else if (depth === 3) {
+        minDist = 220;
+        fontSize = 12;
+        mandatory = false;
+      } else if (depth === 4) {
+        minDist = 110;
+        fontSize = 11;
+        mandatory = false;
+      } else {
+        minDist = 60;
+        fontSize = 10;
+        mandatory = false;
+      }
+      const insideText = depth > 2 ? segs.slice(2).join('/') : region.path;
       candidates.push({
         key: `r:${region.path}`,
-        text: svc ? svc.name : region.path,
+        text: svc ? svc.name : insideText,
         worldX: region.centroid.x,
         worldZ: region.centroid.z,
-        priority: 2000 + region.tileCount,
-        fontSize: 13,
-        minDist: 500,
-        mandatory: true, // always visible
+        priority: 2000 + region.tileCount - depth * 10,
+        fontSize,
+        minDist,
+        mandatory,
       });
     }
 

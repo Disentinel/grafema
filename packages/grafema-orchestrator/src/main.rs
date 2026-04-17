@@ -66,6 +66,17 @@ enum Commands {
         #[arg(short, long)]
         jobs: Option<usize>,
     },
+    /// Commit only DIRECTORY/FILE structural nodes (fast, skips analysis).
+    /// Uses the discovered file list from the config to build the directory
+    /// tree and upsert structural nodes into the existing RFDB.
+    CommitDirs {
+        /// Path to grafema.config.yaml
+        #[arg(short, long)]
+        config: PathBuf,
+        /// Path to RFDB unix socket
+        #[arg(short, long)]
+        socket: Option<PathBuf>,
+    },
     /// Run the hex-grid layout pipeline (pack → iswap → xswap).
     ///
     /// Two input modes (mutually exclusive):
@@ -961,10 +972,9 @@ async fn main() -> Result<()> {
                     abs.strip_prefix(&root_prefix_for_dirs).unwrap_or(&abs).to_string()
                 })
                 .collect();
-            let (dir_nodes, dir_edges) = directory_nodes::build(&relative_files);
+            let (dir_nodes, dir_edges, cleanup_files) = directory_nodes::build(&relative_files);
             if !dir_nodes.is_empty() {
-                let synthetic_files = vec![directory_nodes::SYNTHETIC_FILE.to_string()];
-                match rfdb.commit_batch(&synthetic_files, &dir_nodes, &dir_edges, false).await {
+                match rfdb.commit_batch(&cleanup_files, &dir_nodes, &dir_edges, false).await {
                     Ok(_) => {
                         tracing::info!(
                             dir_nodes = dir_nodes.len(),
@@ -2546,6 +2556,63 @@ async fn main() -> Result<()> {
             Ok(())
         }
 
+        Commands::CommitDirs {
+            config: config_path,
+            socket,
+        } => {
+            let cfg = config::load(&config_path)?.with_defaults();
+
+            let socket_path = socket
+                .or(cfg.rfdb_socket.clone())
+                .unwrap_or_else(|| PathBuf::from("/tmp/rfdb.sock"));
+
+            let mut rfdb = rfdb::RfdbClient::connect(&socket_path).await?;
+
+            // Discover files using the same discovery code as analyze.
+            let files = discovery::discover(&cfg)?;
+            tracing::info!(file_count = files.len(), "Discovered files for commit-dirs");
+
+            let root_str = cfg.root.to_string_lossy().to_string();
+            let root_prefix = if root_str.ends_with('/') {
+                root_str.clone()
+            } else {
+                format!("{root_str}/")
+            };
+            let relative_files: Vec<String> = files
+                .iter()
+                .map(|p| {
+                    let abs = p.display().to_string();
+                    abs.strip_prefix(&root_prefix).unwrap_or(&abs).to_string()
+                })
+                .collect();
+
+            let (dir_nodes, dir_edges, mut cleanup_files) =
+                directory_nodes::build(&relative_files);
+
+            if dir_nodes.is_empty() {
+                println!("No directory/file nodes to commit.");
+                return Ok(());
+            }
+
+            // Also clean up legacy virtual path from earlier releases that
+            // stored all DIRECTORY/FILE nodes under a single synthetic file.
+            cleanup_files.push("__grafema_virtual/directory-structure".to_string());
+
+            let start = std::time::Instant::now();
+            rfdb.commit_batch(&cleanup_files, &dir_nodes, &dir_edges, false)
+                .await
+                .context("Failed to commit directory structure")?;
+
+            println!(
+                "Committed {} directory/file nodes, {} CONTAINS edges in {}ms",
+                dir_nodes.len(),
+                dir_edges.len(),
+                start.elapsed().as_millis()
+            );
+
+            Ok(())
+        }
+
         Commands::Layout {
             synthetic,
             socket,
@@ -2563,7 +2630,7 @@ async fn main() -> Result<()> {
             // mode never needs an RFDB client.
             let mut rfdb_for_commit: Option<grafema_orchestrator::rfdb::RfdbClient> = None;
             // Pick input source. Clap's `conflicts_with` already rejects
-            // (Some, Some) at parse time, so the unreachable arms are just a
+            // (Some, Some) at parse time, so the unreachable arm is just a
             // belt-and-braces guard.
             let input = match (synthetic, socket.as_ref(), config.as_ref()) {
                 (Some(n), None, _) => {

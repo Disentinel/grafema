@@ -63,13 +63,40 @@ function getNormalized(nodes: GraphNode[], metric: string): Map<number, number> 
   return cachedNorm;
 }
 
+/** Take the first N segments of a slash-separated path. */
+function topSegments(path: string, n: number): string {
+  const parts = path.split('/');
+  return parts.slice(0, n).join('/');
+}
+
 export const LENSES: Record<string, Lens> = {
   region: {
     label: 'By Region',
     colorFn: (node) => {
-      const hue = strHash(node.region) / 360;
+      // Two-level coloring:
+      //   * BASE HUE = top-2 path segments (e.g. "packages/util") — one
+      //     hue per package, identifies which package the tile belongs to.
+      //   * HUE WOBBLE = ±20° rotation derived from the file's sub-dir,
+      //     so adjacent sub-directories inside the same package show as
+      //     distinct color patches (e.g. teal/aqua/cyan all clearly
+      //     "packages/util" but obviously different sub-dirs).
+      //   * Lightness wobble adds extra contrast for sub-dirs that hash
+      //     to similar hues.
+      const top = topSegments(node.region, 2);
+      const baseHue = strHash(top); // 0..360
+      const subPath = node.file.includes('/')
+        ? node.file.slice(0, node.file.lastIndexOf('/'))
+        : node.file;
+      const subHash = strHash(subPath);
+      const hueShift = (subHash % 41) - 20; // ±20°
+      const finalHue = ((baseHue + hueShift) % 360 + 360) % 360;
+      const lightShift = (((subHash >> 4) % 17) - 8) / 100; // ±0.08
       const lightness = (TYPE_LIGHTNESS[node.type] ?? 30) / 100;
-      return new THREE.Color().setHSL(hue, 0.85, lightness * 0.8);
+      return new THREE.Color().setHSL(
+        finalHue / 360,
+        0.85,
+        Math.max(0.18, Math.min(0.6, lightness * 0.8 + lightShift)),
+      );
     },
     legend: 'categorical',
   },

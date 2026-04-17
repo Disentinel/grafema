@@ -121,5 +121,17 @@ opt-level = 3
 lto = "fat"
 codegen-units = 1
 
+# Fast iteration profile: ~30s rebuilds vs ~15min for full release.
+# Use during development with `cargo build --profile fast`. Binary is
+# slightly slower at runtime (no LTO, more codegen units) but the
+# trade-off is enormous for the edit/test cycle.
+[profile.fast]
+inherits = "release"
+opt-level = 2
+lto = "off"
+codegen-units = 16
+incremental = true
+debug = false
+
 [profile.bench]
 inherits = "release"
