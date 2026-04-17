@@ -1,0 +1,193 @@
+.app {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  position: relative;
+}
+
+.status-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  padding: 6px 16px;
+  font-size: 12px;
+  font-family: 'JetBrains Mono', monospace;
+  color: #00e5ff;
+  background: rgba(6, 10, 16, 0.85);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid rgba(0, 229, 255, 0.15);
+  text-align: center;
+  pointer-events: none;
+}
+
+.canvas-container {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+.sidebar {
+  width: 280px;
+  background: rgba(6, 10, 16, 0.75);
+  backdrop-filter: blur(20px) saturate(1.5);
+  -webkit-backdrop-filter: blur(20px) saturate(1.5);
+  border-left: 1px solid rgba(0, 229, 255, 0.08);
+  padding: 16px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  z-index: 10;
+  box-shadow: -4px 0 30px rgba(0, 0, 0, 0.5);
+}
+
+.sidebar h2 {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.15em;
+  color: #00e5ff;
+  text-transform: uppercase;
+  margin: 0;
+  text-shadow: 0 0 10px rgba(0, 229, 255, 0.4);
+}
+
+.sidebar .stats {
+  font-size: 12px;
+  color: #556;
+}
+
+/* Label overlay */
+.labels-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+  overflow: hidden;
+}
+
+/* Coord grid overlay */
+.coord-grid-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 4;
+  overflow: hidden;
+}
+
+.coord-label {
+  position: absolute;
+  font-size: 7px;
+  color: #445;
+  font-family: 'SF Mono', monospace;
+  white-space: nowrap;
+  pointer-events: none;
+  text-shadow: 0 0 3px rgba(0,0,0,0.9);
+}
+
+.map-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  color: #b0ddef;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  white-space: nowrap;
+  text-shadow:
+    0 0 3px rgba(0, 0, 0, 1),
+    0 0 6px rgba(0, 0, 0, 0.9),
+    0 0 12px rgba(0, 0, 0, 0.6),
+    0 0 8px rgba(0, 229, 255, 0.2);
+  transition: opacity 0.3s ease;
+  letter-spacing: 0.06em;
+}
+
+/* Node tooltip */
+.node-tooltip {
+  position: absolute;
+  z-index: 30;
+  background: rgba(6, 10, 16, 0.8);
+  backdrop-filter: blur(12px) saturate(1.3);
+  -webkit-backdrop-filter: blur(12px) saturate(1.3);
+  border: 1px solid rgba(0, 229, 255, 0.15);
+  border-radius: 8px;
+  padding: 8px 12px;
+  pointer-events: none;
+  max-width: 350px;
+  font-size: 11px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5), 0 0 15px rgba(0, 229, 255, 0.05);
+}
+.tt-type { color: #00e5ff; font-weight: 600; font-size: 10px; letter-spacing: 0.08em; }
+.tt-name { color: #fff; margin: 2px 0; font-size: 13px; }
+.tt-region { color: #666; font-size: 10px; }
+.tt-edges { margin-top: 6px; border-top: 1px solid #ffffff11; padding-top: 4px; color: #999; font-size: 10px; line-height: 1.6; }
+
+/* Route waypoint labels */
+.route-labels-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 6;
+  overflow: hidden;
+}
+.route-label {
+  position: absolute;
+  font-size: 11px;
+  font-family: 'SF Mono', monospace;
+  white-space: nowrap;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(0, 0, 0, 0.85);
+  padding: 2px 6px 2px 3px;
+  border-radius: 4px;
+  text-shadow: 0 0 4px rgba(0, 0, 0, 1);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+/* Flow edge labels (on tubes for selected/pinned nodes) */
+.flow-edge-labels-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 7;
+  overflow: hidden;
+}
+.flow-edge-label {
+  position: absolute;
+  font-size: 8px;
+  font-family: 'SF Mono', monospace;
+  white-space: nowrap;
+  pointer-events: none;
+  background: rgba(10, 14, 20, 0.85);
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: #00aacc;
+  opacity: 0.9;
+}
+
+.route-edge-label {
+  position: absolute;
+  font-size: 8px;
+  font-family: 'SF Mono', monospace;
+  white-space: nowrap;
+  pointer-events: none;
+  background: rgba(0, 0, 0, 0.85);
+  padding: 1px 5px;
+  border-radius: 3px;
+  letter-spacing: 0.05em;
+  opacity: 0.9;
+  text-shadow: 0 0 3px rgba(0, 0, 0, 1);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+.rl-step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  font-size: 9px;
+  font-weight: 700;
+  color: #000;
+  flex-shrink: 0;
+}

@@ -346,6 +346,45 @@ mod wire_conversion {
     }
 }
 
+mod layout_loader {
+    use std::path::PathBuf;
+
+    /// End-to-end smoke test: connect to a live RFDB, load a [`LayoutInput`]
+    /// from MODULE nodes + DEPENDS_ON edges, run the full pack → iswap →
+    /// xswap pipeline, and validate the resulting hex coords.
+    ///
+    /// `#[ignore]` because we don't boot rfdb-server in CI for this test
+    /// (booting is tracked separately). To run locally:
+    ///   1. Start rfdb-server bound to /tmp/rfdb-test.sock
+    ///   2. `grafema analyze` against tests/fixtures/sample-project
+    ///   3. `cargo test --test integration -- --ignored layout_loads_from_live_rfdb`
+    #[tokio::test]
+    #[ignore = "requires running rfdb-server with sample-project analyzed"]
+    async fn layout_loads_from_live_rfdb() {
+        let socket = PathBuf::from("/tmp/rfdb-test.sock");
+        let mut rfdb = grafema_orchestrator::rfdb::RfdbClient::connect(&socket)
+            .await
+            .expect("Failed to connect to RFDB at /tmp/rfdb-test.sock");
+        let input = grafema_orchestrator::layout::load_from_rfdb(&mut rfdb)
+            .await
+            .expect("Failed to load layout input from RFDB");
+        assert!(
+            input.n_nodes > 0,
+            "fixture should contribute at least one MODULE node"
+        );
+        let result = grafema_orchestrator::layout::run_layout(
+            &input,
+            &grafema_orchestrator::layout::RunOpts { pack_only: false },
+        );
+        let report = grafema_orchestrator::layout::validate(&result.coords, &input.tree);
+        assert!(
+            report.torn.is_empty(),
+            "torn folders found: {:?}",
+            report.torn.iter().map(|t| t.path.clone()).collect::<Vec<_>>()
+        );
+    }
+}
+
 mod cpp_parser {
     use std::path::Path;
 

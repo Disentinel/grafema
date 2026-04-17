@@ -46,6 +46,10 @@ pub mod cypher;
 pub mod database_manager;
 pub mod session;
 pub mod metrics;
+pub mod container_hierarchy;
+pub mod sa_layout;
+pub mod tectonic_layout;
+pub mod http_server;
 
 pub use graph::{GraphStore, GraphEngineV2};
 pub use storage::{NodeRecord, EdgeRecord, AttrQuery, FieldDecl, FieldType};

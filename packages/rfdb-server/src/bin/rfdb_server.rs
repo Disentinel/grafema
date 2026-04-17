@@ -3098,12 +3098,13 @@ async fn main() {
         println!();
         println!("High-performance disk-backed graph database server for Grafema");
         println!();
-        println!("Usage: rfdb-server <db-path> [--socket <socket-path>] [--ws-port <port>] [--data-dir <dir>] [--metrics]");
+        println!("Usage: rfdb-server <db-path> [--socket <socket-path>] [--ws-port <port>] [--http-port <port>] [--data-dir <dir>] [--metrics]");
         println!();
         println!("Arguments:");
         println!("  <db-path>      Path to default graph database directory");
         println!("  --socket       Unix socket path (default: /tmp/rfdb.sock)");
         println!("  --ws-port      WebSocket port (1-65535, e.g., 7474, localhost-only)");
+        println!("  --http-port    HTTP visualization port (e.g., 3333, for HexGraph GUI)");
         println!("  --data-dir     Base directory for multi-database storage");
         println!();
         println!("Flags:");
@@ -3160,6 +3161,23 @@ async fn main() {
                 Ok(port) => port,
                 Err(_) => {
                     eprintln!("[rfdb-server] ERROR: Invalid --ws-port value '{}' (must be 1-65535)", s);
+                    std::process::exit(1);
+                }
+            }
+        });
+
+    let http_port: Option<u16> = args.iter()
+        .position(|a| a == "--http-port")
+        .and_then(|i| args.get(i + 1))
+        .map(|s| {
+            match s.parse::<u16>() {
+                Ok(0) => {
+                    eprintln!("[rfdb-server] ERROR: --http-port 0 is not allowed (port must be 1-65535)");
+                    std::process::exit(1);
+                }
+                Ok(port) => port,
+                Err(_) => {
+                    eprintln!("[rfdb-server] ERROR: Invalid --http-port value '{}' (must be 1-65535)", s);
                     std::process::exit(1);
                 }
             }
@@ -3379,6 +3397,32 @@ async fn main() {
             }
         }
     });
+
+    // Spawn HTTP visualization server (if --http-port provided).
+    // Warmup is run SYNCHRONOUSLY before the HTTP listener binds so the
+    // first browser request does not race with cache construction. The
+    // server is "not accepting" for ~13 seconds on cold start, then every
+    // request is ~500ms. This gives a clean UX: "server ready" vs "server
+    // accepts requests but first one freezes".
+    if let Some(port) = http_port {
+        let manager_http = Arc::clone(&manager);
+        let http_state = rfdb::http_server::new_state(manager_http);
+        let warmup_state = http_state.clone();
+        let t_warm = std::time::Instant::now();
+        eprintln!("[rfdb-server] warmup: building file→nodes cache and tectonic layout …");
+        let warmup_res = tokio::task::spawn_blocking(move || {
+            rfdb::http_server::warmup(&warmup_state);
+        })
+        .await;
+        match warmup_res {
+            Ok(()) => eprintln!(
+                "[rfdb-server] warmup complete in {}ms — HTTP server is now hot",
+                t_warm.elapsed().as_millis()
+            ),
+            Err(e) => eprintln!("[rfdb-server] warmup task failed: {} (HTTP will still start)", e),
+        }
+        tokio::spawn(rfdb::http_server::start(http_state, port));
+    }
 
     // Spawn WebSocket accept loop (if enabled)
     let ws_handle = if let Some(ws_listener) = ws_listener {

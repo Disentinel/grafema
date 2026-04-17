@@ -31,6 +31,7 @@ let client = null;
 async function connectRFDB() {
   if (client?.connected) return client;
   client = new RFDBClient(SOCKET_PATH, 'gui-server');
+  client.setMaxListeners(200);
   await client.connect();
   console.log(`Connected to RFDB at ${SOCKET_PATH}`);
   return client;
@@ -1698,6 +1699,261 @@ const apiRoutes = {
     console.log(`file-graph: ${files.length} files, ${edges.length} edges, ${clusterNames.length} clusters`);
 
     json(res, { files, edges, clusters, clusterNames, degree });
+  },
+
+  /**
+   * JSONL streaming graph endpoint for hex map visualization.
+   *
+   * Streams graph data line-by-line (newline-delimited JSON):
+   *   1. header — typeTable, edgeTypeTable, regions
+   *   2. node lines — one per node with index, type, id, name, file, region, degree
+   *   3. edge lines — one per edge with source, dest, type indices
+   *   4. done — final summary with counts and elapsed time
+   *
+   * Query params:
+   *   packages   — comma-separated file prefixes (e.g. "packages/util/src,packages/mcp/src")
+   *   nodeTypes  — comma-separated node types (e.g. "FUNCTION,CLASS,METHOD")
+   *   edgeTypes  — comma-separated edge types (e.g. "CALLS,IMPORTS_FROM")
+   *   maxNodes   — max nodes to return (default 5000)
+   */
+  '/api/graph-stream': async (req, res) => {
+    const startMs = Date.now();
+    const db = await connectRFDB();
+    const q = parseQuery(req.url);
+    const wantPackages = q.packages ? q.packages.split(',').map(s => s.trim()) : null;
+    const wantNodeTypes = q.nodeTypes ? q.nodeTypes.split(',') : null;
+    const wantEdgeTypes = q.edgeTypes ? q.edgeTypes.split(',') : null;
+    const MAX_NODES = parseInt(q.maxNodes || '5000', 10);
+
+    console.time('graph-stream');
+
+    // ── Phase 1: Fetch nodes ──
+    const typeTable = [];
+    const typeIdx = new Map();
+    const nodeIds = [];
+    const nodeTypesArr = [];
+    const nodeFilePaths = [];
+    const nodeNames = [];
+    const nodeIdMap = new Map(); // id → index
+
+    const nodesByType = await db.countNodesByType();
+    const allTypes = wantNodeTypes
+      ? Object.keys(nodesByType).filter(t => wantNodeTypes.includes(t))
+      : Object.keys(nodesByType);
+    const typesToFetch = [
+      ...TYPE_PRIORITY.filter(t => allTypes.includes(t)),
+      ...allTypes.filter(t => !TYPE_PRIORITY.includes(t)),
+    ];
+
+    let idx = 0;
+    outer:
+    for (const nodeType of typesToFetch) {
+      for await (const node of db.queryNodes({ type: nodeType })) {
+        const file = node.file || '';
+
+        // Package filter: skip nodes not matching any prefix
+        if (wantPackages) {
+          let match = false;
+          for (const prefix of wantPackages) {
+            if (file.startsWith(prefix)) { match = true; break; }
+          }
+          if (!match) continue;
+        }
+
+        let ti = typeIdx.get(node.nodeType);
+        if (ti === undefined) { ti = typeTable.length; typeTable.push(node.nodeType); typeIdx.set(node.nodeType, ti); }
+
+        // Strip absolute paths from node names (MODULE nodes store full paths)
+        let name = node.name || '';
+        if (name.includes('/') && file) {
+          // Use basename from file path for cleaner display
+          const lastSlash = file.lastIndexOf('/');
+          name = lastSlash >= 0 ? file.substring(lastSlash + 1) : file;
+        }
+
+        nodeIdMap.set(node.id, idx);
+        nodeIds.push(node.id);
+        nodeTypesArr.push(ti);
+        nodeFilePaths.push(file);
+        nodeNames.push(name);
+        idx++;
+        if (idx >= MAX_NODES) break outer;
+      }
+    }
+
+    currentNodeIds = nodeIds;
+    const nodeCount = idx;
+
+    // ── Phase 2: Fetch edges (outgoing + incoming, parallel batches) ──
+    // Semantic edges (CALLS, READS_FROM) originate from CALL/REFERENCE nodes
+    // and point TO FUNCTION/VARIABLE nodes. Fetching incoming edges on our nodes
+    // captures these cross-type connections.
+    const edgeTypeTable = [];
+    const edgeTypeMap = new Map();
+    const edgeSrc = [];
+    const edgeDst = [];
+    const edgeTypesArr = [];
+    const seenEdges = new Set(); // "src|dst|type" dedup
+
+    console.time('graph-stream:edges');
+    const EDGE_BATCH = 50;
+    const nodeEntries = [...nodeIdMap.entries()];
+
+    for (let b = 0; b < nodeEntries.length; b += EDGE_BATCH) {
+      const batch = nodeEntries.slice(b, b + EDGE_BATCH);
+      const [outResults, inResults] = await Promise.all([
+        Promise.all(batch.map(([nodeId]) => db.getOutgoingEdges(nodeId, wantEdgeTypes))),
+        Promise.all(batch.map(([nodeId]) => db.getIncomingEdges(nodeId, wantEdgeTypes))),
+      ]);
+
+      for (let k = 0; k < batch.length; k++) {
+        const myIdx = batch[k][1];
+
+        // Outgoing: this node → target
+        for (const edge of outResults[k]) {
+          const di = nodeIdMap.get(edge.dst);
+          if (di === undefined) continue;
+          const et = edge.edgeType || edge.type;
+          if (wantEdgeTypes && !wantEdgeTypes.includes(et)) continue;
+          const ek = `${myIdx}|${di}|${et}`;
+          if (seenEdges.has(ek)) continue;
+          seenEdges.add(ek);
+          let eti = edgeTypeMap.get(et);
+          if (eti === undefined) { eti = edgeTypeTable.length; edgeTypeTable.push(et); edgeTypeMap.set(et, eti); }
+          edgeSrc.push(myIdx);
+          edgeDst.push(di);
+          edgeTypesArr.push(eti);
+        }
+
+        // Incoming: source → this node
+        for (const edge of inResults[k]) {
+          const si = nodeIdMap.get(edge.src);
+          if (si === undefined) continue;
+          const et = edge.edgeType || edge.type;
+          if (wantEdgeTypes && !wantEdgeTypes.includes(et)) continue;
+          const ek = `${si}|${myIdx}|${et}`;
+          if (seenEdges.has(ek)) continue;
+          seenEdges.add(ek);
+          let eti = edgeTypeMap.get(et);
+          if (eti === undefined) { eti = edgeTypeTable.length; edgeTypeTable.push(et); edgeTypeMap.set(et, eti); }
+          edgeSrc.push(si);
+          edgeDst.push(myIdx);
+          edgeTypesArr.push(eti);
+        }
+      }
+    }
+    console.timeEnd('graph-stream:edges');
+
+    const edgeCount = edgeSrc.length;
+
+    // ── Phase 3: Compute degrees ──
+    const degrees = new Uint16Array(nodeCount);
+    for (let i = 0; i < edgeCount; i++) {
+      degrees[edgeSrc[i]]++;
+      degrees[edgeDst[i]]++;
+    }
+
+    // ── Phase 4: Compute regions from file paths ──
+    const { root } = buildDirTree(nodeFilePaths);
+
+    // Collect leaf dirs
+    const leafDirPaths = [];
+    function collectLeafDirs(node) {
+      if (!node.children || node.children.length === 0) {
+        leafDirPaths.push(node.path);
+      } else {
+        for (const child of node.children) collectLeafDirs(child);
+      }
+    }
+    collectLeafDirs(root);
+
+    // Build regions list + assign each node to a region
+    const regionList = [];
+    const regionPathToIdx = new Map();
+    function buildRegionList(node, parentIdx) {
+      const regionIdx = regionList.length;
+      regionPathToIdx.set(node.path, regionIdx);
+      regionList.push({
+        path: node.name || node.path,
+        depth: node.depth,
+        tileCount: node.totalCount,
+        parentIdx,
+      });
+      for (const child of (node.children || [])) {
+        buildRegionList(child, regionIdx);
+      }
+    }
+    buildRegionList(root, null);
+
+    // Map each node to its deepest matching region
+    const nodeRegionIdx = new Uint16Array(nodeCount);
+    for (let i = 0; i < nodeCount; i++) {
+      const file = nodeFilePaths[i];
+      const dir = file.substring(0, file.lastIndexOf('/')) || '/';
+      let bestRegion = 0, bestDepth = -1;
+      for (const [path, ridx] of regionPathToIdx) {
+        if ((dir === path || dir.startsWith(path + '/') || dir.startsWith(path)) &&
+            regionList[ridx].depth > bestDepth) {
+          bestDepth = regionList[ridx].depth;
+          bestRegion = ridx;
+        }
+      }
+      nodeRegionIdx[i] = bestRegion;
+    }
+
+    // ── Phase 5: Stream JSONL ──
+    res.writeHead(200, {
+      'Content-Type': 'application/x-ndjson',
+      'Cache-Control': 'no-cache',
+      'Access-Control-Allow-Origin': '*',
+      'Transfer-Encoding': 'chunked',
+    });
+
+    function writeLine(obj) {
+      res.write(JSON.stringify(obj) + '\n');
+    }
+
+    // Header
+    writeLine({
+      type: 'header',
+      typeTable,
+      edgeTypeTable,
+      regions: regionList,
+    });
+
+    // Nodes
+    for (let i = 0; i < nodeCount; i++) {
+      writeLine({
+        type: 'node',
+        i,
+        t: nodeTypesArr[i],
+        id: nodeIds[i],
+        name: nodeNames[i],
+        file: nodeFilePaths[i],
+        region: regionList[nodeRegionIdx[i]]?.path || '',
+        degree: degrees[i],
+      });
+    }
+
+    writeLine({ type: 'nodes_done', count: nodeCount });
+
+    // Edges
+    for (let i = 0; i < edgeCount; i++) {
+      writeLine({
+        type: 'edge',
+        s: edgeSrc[i],
+        d: edgeDst[i],
+        t: edgeTypesArr[i],
+      });
+    }
+
+    const elapsed = Date.now() - startMs;
+    writeLine({ type: 'done', nodeCount, edgeCount, elapsed });
+
+    console.timeEnd('graph-stream');
+    console.log(`graph-stream: ${nodeCount} nodes, ${edgeCount} edges, ${regionList.length} regions, ${elapsed}ms`);
+
+    res.end();
   },
 };
 

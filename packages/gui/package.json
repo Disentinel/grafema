@@ -2,13 +2,30 @@
   "name": "@grafema/gui",
   "version": "0.0.1",
   "private": true,
-  "description": "Experimental 3D graph visualization for Grafema",
+  "description": "Grafema Hex Map — interactive code graph visualization",
   "type": "module",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "server": "node server.js",
+    "start": "node server.js"
   },
   "dependencies": {
-    "@grafema/rfdb-client": "workspace:*"
+    "@grafema/rfdb-client": "workspace:*",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "three": "^0.175.0",
+    "zustand": "^5.0.5"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.59.1",
+    "@types/react": "^19.1.2",
+    "@types/react-dom": "^19.1.2",
+    "@types/three": "^0.175.0",
+    "@vitejs/plugin-react": "^4.4.1",
+    "playwright": "^1.59.1",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.2"
   }
 }
