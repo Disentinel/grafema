@@ -3098,7 +3098,7 @@ async fn main() {
         println!();
         println!("High-performance disk-backed graph database server for Grafema");
         println!();
-        println!("Usage: rfdb-server <db-path> [--socket <socket-path>] [--ws-port <port>] [--http-port <port>] [--data-dir <dir>] [--metrics]");
+        println!("Usage: rfdb-server <db-path> [--socket <socket-path>] [--ws-port <port>] [--http-port <port>] [--data-dir <dir>] [--metrics] [--static-dir <path>] [--no-ui]");
         println!();
         println!("Arguments:");
         println!("  <db-path>      Path to default graph database directory");
@@ -3106,6 +3106,7 @@ async fn main() {
         println!("  --ws-port      WebSocket port (1-65535, e.g., 7474, localhost-only)");
         println!("  --http-port    HTTP visualization port (e.g., 3333, for HexGraph GUI)");
         println!("  --data-dir     Base directory for multi-database storage");
+        println!("  --static-dir   Override UI with filesystem directory (dev mode)");
         println!();
         println!("Flags:");
         println!("  -V, --version  Print version information");
@@ -3113,6 +3114,7 @@ async fn main() {
         println!("  --metrics      Enable performance metrics collection");
         println!("  --federate     Enable federation mode (shard discovery + registration)");
         println!("  --root <path>  Project root this shard covers (default: parent of db-path)");
+        println!("  --no-ui        Disable the /ui/* HTTP routes entirely (404 on anything under /ui)");
         std::process::exit(0);
     }
 
@@ -3197,6 +3199,36 @@ async fn main() {
     } else {
         None
     };
+
+    // Parse UI flags. These are forwarded to `http_server::ui_config_from_env`
+    // via env vars, which keeps the wiring uniform whether the caller drives
+    // via CLI or sets the env var directly (e.g. Docker images).
+    if args.iter().any(|a| a == "--no-ui") {
+        // Safe: done before any thread spawn that might read env.
+        unsafe { std::env::set_var("RFDB_NO_UI", "1"); }
+        eprintln!("[rfdb-server] UI disabled (--no-ui)");
+    }
+    if let Some(i) = args.iter().position(|a| a == "--static-dir") {
+        match args.get(i + 1) {
+            Some(dir) if !dir.starts_with("--") => {
+                let path = PathBuf::from(dir);
+                if !path.exists() {
+                    eprintln!("[rfdb-server] ERROR: --static-dir path does not exist: {}", dir);
+                    std::process::exit(1);
+                }
+                if !path.is_dir() {
+                    eprintln!("[rfdb-server] ERROR: --static-dir path is not a directory: {}", dir);
+                    std::process::exit(1);
+                }
+                unsafe { std::env::set_var("RFDB_STATIC_DIR", &path); }
+                eprintln!("[rfdb-server] UI served from filesystem: {}", path.display());
+            }
+            _ => {
+                eprintln!("[rfdb-server] ERROR: --static-dir requires a path argument");
+                std::process::exit(1);
+            }
+        }
+    }
 
     // Parse federation flags
     let federate = args.iter().any(|a| a == "--federate");

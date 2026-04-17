@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { GraphNode, Region } from '../store/dataStore';
-import { cubeToWorld } from '../store/loadFixture';
+import { cubeToWorld } from '../geom/hex';
 
 const CUBE_DIRS = [
   { q: 1, r: 0 }, { q: 0, r: 1 }, { q: -1, r: 1 },

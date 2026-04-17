@@ -1,11 +1,7 @@
 import { useDataStore, type GraphNode, type GraphEdge, type Region } from './dataStore';
 import { useRouteStore, type Route } from './routeStore';
-
-export function cubeToWorld(q: number, r: number, size: number) {
-  const x = size * (3 / 2) * q;
-  const z = size * (Math.sqrt(3) / 2 * q + Math.sqrt(3) * r);
-  return { x, z };
-}
+import { cubeToWorld } from '../geom/hex';
+import type { LayoutResult } from '../layout/types';
 
 interface FixtureNode {
   id: string;
@@ -21,6 +17,13 @@ interface FixtureRegion {
   path: string;
   depth: number;
   tileCount: number;
+}
+
+interface FixtureData {
+  nodes: FixtureNode[];
+  edges: GraphEdge[];
+  regions: FixtureRegion[];
+  routes?: { id: string; label: string; color: string; nodeIds: string[] }[];
 }
 
 /**
@@ -87,22 +90,13 @@ function buildRegions(fixtureRegions: FixtureRegion[], nodes: GraphNode[]): Regi
   });
 }
 
-export async function loadFixture() {
-  const store = useDataStore.getState();
-  store.setLoading(true);
+/** Shared constants — kept in one place so parse* and loadFixture agree. */
+const TILE_SIZE = 3.0;
+const EXCLUDED_TYPES = new Set(['SERVICE', 'MODULE']);
 
-  const resp = await fetch('./fixtures/multi-service.json');
-  const data = await resp.json() as {
-    nodes: FixtureNode[];
-    edges: GraphEdge[];
-    regions: FixtureRegion[];
-    routes?: { id: string; label: string; color: string; nodeIds: string[] }[];
-  };
-
-  const TILE_SIZE = 3.0;
-
+/** Build a LayoutResult from the raw fixture JSON. Pure — no store writes. */
+function buildLayoutFromFixture(data: FixtureData): { layout: LayoutResult; layoutNodes: FixtureNode[] } {
   // Exclude container types — they are region metadata, not code entities.
-  const EXCLUDED_TYPES = new Set(['SERVICE', 'MODULE']);
   const oldToLayout = new Map<number, number>();
   const layoutNodes: FixtureNode[] = [];
   for (let i = 0; i < data.nodes.length; i++) {
@@ -148,17 +142,52 @@ export async function loadFixture() {
   const edgeTypeSet = new Set(edges.map((e) => e.type));
   const regions = buildRegions(data.regions, nodes);
 
-  (globalThis as Record<string, unknown>).__grafemaTileSize = TILE_SIZE;
-
-  store.setGraphData({
+  const layout: LayoutResult = {
     nodes,
     edges,
     regions,
     typeTable: [...typeSet],
     edgeTypeTable: [...edgeTypeSet],
-  });
+  };
+  return { layout, layoutNodes };
+}
 
-  // Load routes — resolve node IDs to layout indices
+/**
+ * Transport primitive: fetch + parse a fixture JSON file and return the
+ * layout data WITHOUT touching any store. Supports AbortSignal.
+ */
+export async function parseFixture(
+  path: string,
+  signal?: AbortSignal,
+): Promise<LayoutResult> {
+  const resp = await fetch(path, { signal });
+  if (!resp.ok) throw new Error(`fixture fetch failed: ${resp.status} ${resp.statusText}`);
+  const data = await resp.json() as FixtureData;
+  const { layout } = buildLayoutFromFixture(data);
+  return layout;
+}
+
+/**
+ * Back-compat entry that also populates stores (dataStore + routeStore).
+ *
+ * Keeps the existing call sites in App.tsx working without edits. New code
+ * should prefer `fetchLayout({source:{kind:'fixture',...}})` from
+ * `../layout/layoutClient.ts` and wire the store write at the call site.
+ */
+export async function loadFixture(path = './fixtures/multi-service.json') {
+  const store = useDataStore.getState();
+  store.setLoading(true);
+
+  const resp = await fetch(path);
+  if (!resp.ok) throw new Error(`fixture fetch failed: ${resp.status} ${resp.statusText}`);
+  const data = await resp.json() as FixtureData;
+  const { layout, layoutNodes } = buildLayoutFromFixture(data);
+
+  (globalThis as Record<string, unknown>).__grafemaTileSize = TILE_SIZE;
+
+  store.setGraphData(layout);
+
+  // Routes are fixture-only state (stream source doesn't carry routes).
   if (data.routes) {
     const idToLayoutIdx = new Map<string, number>();
     for (let li = 0; li < layoutNodes.length; li++) {

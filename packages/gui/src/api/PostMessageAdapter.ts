@@ -14,7 +14,7 @@
  *   { jsonrpc: "2.0", method: "event", params: { type: "nodeClick", ... } }
  */
 
-import { mapController } from './MapController';
+import { mapController } from '../controller/MapController';
 
 export function initPostMessageAdapter() {
   window.addEventListener('message', (event) => {
@@ -60,7 +60,7 @@ export function initPostMessageAdapter() {
     }
   });
 
-  console.log('[PostMessageAdapter] Listening for commands');
+  if (import.meta.env?.DEV) console.log('[PostMessageAdapter] Listening for commands');
 }
 
 /** Send an event to parent */

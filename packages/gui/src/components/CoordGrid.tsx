@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
-import { SceneManager } from '../three/SceneManager';
-import { cubeToWorld } from '../store/loadFixture';
+import type { SceneManager } from '../three/SceneManager';
+import { cubeToWorld } from '../geom/hex';
 
 const CUBE_DIRS = [
   { q: 1, r: 0 }, { q: 0, r: 1 }, { q: -1, r: 1 },
@@ -20,7 +20,9 @@ export function CoordGrid({ sceneManager, visible }: { sceneManager: SceneManage
 
     const container = containerRef.current;
     const vec = new THREE.Vector3();
-    const camera = sceneManager.camera;
+    // Camera is re-read per frame inside `update` so mode swaps
+    // (perspective ↔ orthographic) pick up the new camera without a
+    // remount. Canvas stays stable across swaps (DAI-12b).
     const canvas = sceneManager.renderer.domElement;
 
     const tileCoords = (globalThis as Record<string, unknown>).__grafemaTileCoords as Map<number, { q: number; r: number }> | undefined;
@@ -82,6 +84,9 @@ export function CoordGrid({ sceneManager, visible }: { sceneManager: SceneManage
         for (const { el } of elements) el.style.display = 'none';
         return;
       }
+
+      // Fresh per-frame camera read — see comment above.
+      const camera = sceneManager.camera;
 
       const w = canvas.clientWidth;
       const h = canvas.clientHeight;

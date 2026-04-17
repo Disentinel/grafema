@@ -2,9 +2,16 @@
  * MapController — unified command API for controlling the visualization.
  *
  * Used by: PostMessageAdapter (VS Code webview), WebSocketAdapter (CLI),
- * and directly from the browser console.
+ * and directly from the browser console (`window.grafema`).
  *
- * All commands return { ok: true } or { error: string }.
+ * All commands return { ok: true } or { ok: false, error: string }.
+ *
+ * Renderer decoupling: the controller holds a lazily-injected `SceneApi`
+ * (see `./SceneApi`) rather than a Three.js-specific scene ref. Callers
+ * wire the api in when the scene mounts via `setScene(sceneApi)`; before
+ * that, scene-touching commands (flyTo) still resolve state lookups but
+ * are no-ops on the camera itself. This keeps the controller testable
+ * in Node without a renderer.
  */
 
 import { useDataStore } from '../store/dataStore';
@@ -12,6 +19,7 @@ import { useViewStore } from '../store/viewStore';
 import { useRouteStore } from '../store/routeStore';
 import { useDiffStore, type NodeChange } from '../store/diffStore';
 import { useMapStore } from '../store/mapStore';
+import type { SceneApi } from './SceneApi';
 
 export interface CommandResult {
   ok: boolean;
@@ -22,21 +30,23 @@ export interface CommandResult {
 export type CommandHandler = (params: Record<string, unknown>) => CommandResult;
 
 class MapControllerImpl {
-  private _sceneRef: { flyTo?: (x: number, z: number, duration?: number) => void } = {};
+  private _sceneApi: SceneApi | null = null;
 
-  /** Set by Canvas when SceneManager is ready */
-  setScene(scene: { flyTo: (x: number, z: number, duration?: number) => void }) {
-    this._sceneRef = scene;
+  /** Set by Canvas once the scene is constructed. `null` detaches. */
+  setScene(api: SceneApi | null) {
+    this._sceneApi = api;
   }
 
-  /** Fly camera to a node by name or ID */
+  /** Fly camera to a node by name or ID. Silent no-op on camera when no
+   *  scene is attached; the node lookup still runs so the ok/err result
+   *  reflects whether the target exists. */
   flyTo(params: { nodeId?: string; nodeName?: string }): CommandResult {
     const nodes = useDataStore.getState().nodes;
     const target = nodes.find(
       (n) => n.id === params.nodeId || n.name === params.nodeName,
     );
     if (!target) return { ok: false, error: `Node not found: ${params.nodeId ?? params.nodeName}` };
-    this._sceneRef.flyTo?.(target.x, target.z, 800);
+    this._sceneApi?.flyTo(target.x, target.z, 800);
     return { ok: true };
   }
 

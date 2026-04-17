@@ -443,10 +443,12 @@
           "default": "",
           "description": "Path to grafema-orchestrator binary. If empty, auto-detect."
         },
-        "grafema.guiPath": {
-          "type": "string",
-          "default": "",
-          "description": "Path to grafema-gui binary. If empty, auto-detect."
+        "grafema.rfdbHttpPort": {
+          "type": "number",
+          "default": 3335,
+          "minimum": 0,
+          "maximum": 65535,
+          "description": "HTTP port for rfdb-server's /ui and /api endpoints. Used by the Map panel to iframe the graph visualization."
         },
         "grafema.codeLens.enabled": {
           "type": "boolean",

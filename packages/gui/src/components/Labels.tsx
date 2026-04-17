@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { useDataStore } from '../store/dataStore';
-import { SceneManager } from '../three/SceneManager';
+import type { SceneManager } from '../three/SceneManager';
 
 interface LabelCandidate {
   key: string;
@@ -27,7 +27,10 @@ export function Labels({ sceneManager }: { sceneManager: SceneManager | null }) 
 
     const container = containerRef.current;
     const vec = new THREE.Vector3();
-    const camera = sceneManager.camera;
+    // Read `renderer.domElement` once — canvas element is stable across
+    // mode swaps. Camera is re-read every frame in `update` so a
+    // perspective ↔ orthographic swap inside SceneManager picks up the
+    // new camera reference without a component remount (DAI-12b).
     const canvas = sceneManager.renderer.domElement;
 
     // Build label candidates once
@@ -195,9 +198,20 @@ export function Labels({ sceneManager }: { sceneManager: SceneManager | null }) 
       if (!running) return;
       requestAnimationFrame(update);
 
+      // Fresh per-frame camera read — see comment above.
+      const camera = sceneManager.camera;
+
       const w = canvas.clientWidth;
       const h = canvas.clientHeight;
-      const dist = sceneManager.getCameraDistance();
+      // Effective distance: real distance for perspective, or the ortho
+      // equivalent `frustumHeight / zoom`. Per-label minDist thresholds
+      // are finer-grained than the four-band lodFromView, so we keep
+      // them as-is and only reuse the same effective-distance concept.
+      const view = sceneManager.getView();
+      const dist =
+        view.kind === 'perspective'
+          ? view.distance
+          : view.frustumHeight / Math.max(view.zoom, 1e-6);
 
       placed.length = 0;
 

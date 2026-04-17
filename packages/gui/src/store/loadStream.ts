@@ -3,13 +3,24 @@
  *
  * Fetches /api/graph-stream, parses line-by-line, and consumes server-provided
  * tectonic layout positions directly — no client-side SA.
+ *
+ * Two public entry points:
+ *   - `parseStream(opts, signal?)` — transport primitive that returns a
+ *     `LayoutResult`. No store writes. Suitable for the unified
+ *     `fetchLayout` dispatcher in `../layout/layoutClient.ts`.
+ *   - `loadStream(opts)` — back-compat wrapper that calls `parseStream`
+ *     then writes to `useDataStore` and `useRouteStore`. Preserved so
+ *     App.tsx and other callers don't need edits.
  */
 
 import { useDataStore, type GraphNode, type GraphEdge, type Region } from './dataStore';
 import { useRouteStore } from './routeStore';
-import { cubeToWorld } from './loadFixture';
+import { cubeToWorld } from '../geom/hex';
+import type { LayoutResult } from '../layout/types';
 
 export interface StreamOptions {
+  /** URL override. Defaults to `/api/graph-stream`. */
+  url?: string;
   packages?: string;
   nodeTypes?: string;
   edgeTypes?: string;
@@ -108,10 +119,19 @@ async function* parseNDJSON(stream: ReadableStream<Uint8Array>): AsyncGenerator<
   }
 }
 
-export async function loadStream(opts: StreamOptions = {}) {
-  const store = useDataStore.getState();
-  store.setLoading(true);
+const TILE_SIZE = 3.0;
+// Exclude container types — they are region metadata, not code entities.
+const EXCLUDED_TYPES = new Set(['SERVICE', 'MODULE']);
 
+/**
+ * Transport primitive: fetch an NDJSON graph stream and build a
+ * LayoutResult. Does not touch any store. Throws AbortError if the
+ * provided signal is aborted before/during fetch.
+ */
+export async function parseStream(
+  opts: StreamOptions = {},
+  signal?: AbortSignal,
+): Promise<LayoutResult> {
   const params = new URLSearchParams();
   if (opts.packages) params.set('packages', opts.packages);
   if (opts.nodeTypes) params.set('nodeTypes', opts.nodeTypes);
@@ -119,10 +139,13 @@ export async function loadStream(opts: StreamOptions = {}) {
   if (opts.maxNodes) params.set('maxNodes', String(opts.maxNodes));
   if (opts.lodLevel) params.set('lodLevel', opts.lodLevel);
 
-  const url = `/api/graph-stream?${params.toString()}`;
-  console.log('[loadStream] fetching:', url);
-  const resp = await fetch(url);
-  console.log('[loadStream] response:', resp.status, resp.headers.get('content-type'));
+  const baseUrl = opts.url ?? '/api/graph-stream';
+  const search = params.toString();
+  const url = search ? `${baseUrl}?${search}` : baseUrl;
+
+  if (import.meta.env?.DEV) console.log('[parseStream] fetching:', url);
+  const resp = await fetch(url, { signal });
+  if (import.meta.env?.DEV) console.log('[parseStream] response:', resp.status, resp.headers.get('content-type'));
   if (!resp.ok) throw new Error(`graph-stream failed: ${resp.status} ${resp.statusText}`);
   if (!resp.body) throw new Error('No response body — streaming not supported');
 
@@ -133,12 +156,15 @@ export async function loadStream(opts: StreamOptions = {}) {
 
   const onProgress = opts.onProgress ?? (() => {});
 
-  console.log('[loadStream] starting NDJSON parse...');
+  if (import.meta.env?.DEV) console.log('[parseStream] starting NDJSON parse...');
   for await (const msg of parseNDJSON(resp.body)) {
+    if (signal?.aborted) {
+      throw new DOMException('The operation was aborted.', 'AbortError');
+    }
     switch (msg.type) {
       case 'header':
         header = msg;
-        console.log('[loadStream] header received:', msg.typeTable.length, 'types,', msg.regions.length, 'regions');
+        if (import.meta.env?.DEV) console.log('[parseStream] header received:', msg.typeTable.length, 'types,', msg.regions.length, 'regions');
         onProgress('header', 0);
         break;
       case 'node':
@@ -146,7 +172,7 @@ export async function loadStream(opts: StreamOptions = {}) {
         if (rawNodes.length % 500 === 0) onProgress('nodes', rawNodes.length);
         break;
       case 'nodes_done':
-        console.log('[loadStream] nodes done:', msg.count);
+        if (import.meta.env?.DEV) console.log('[parseStream] nodes done:', msg.count);
         onProgress('nodes_done', msg.count);
         break;
       case 'edge':
@@ -154,13 +180,13 @@ export async function loadStream(opts: StreamOptions = {}) {
         if (rawEdges.length % 1000 === 0) onProgress('edges', rawEdges.length);
         break;
       case 'done':
-        console.log('[loadStream] done:', msg.nodeCount, 'nodes,', msg.edgeCount, 'edges,', msg.elapsed, 'ms');
+        if (import.meta.env?.DEV) console.log('[parseStream] done:', msg.nodeCount, 'nodes,', msg.edgeCount, 'edges,', msg.elapsed, 'ms');
         onProgress('done', msg.nodeCount, msg.edgeCount);
         break;
       case 'tectonic_meta':
         tectonicMeta = msg;
-        console.log(
-          '[loadStream] tectonic_meta:',
+        if (import.meta.env?.DEV) console.log(
+          '[parseStream] tectonic_meta:',
           `atoms=${msg.num_atoms}`,
           `cost=${msg.phase3_initial_cost}→${msg.phase3_final_cost}`,
           `pipeline=${msg.pipeline_ms}ms`,
@@ -169,10 +195,9 @@ export async function loadStream(opts: StreamOptions = {}) {
     }
   }
 
-  console.log('[loadStream] stream parsed:', rawNodes.length, 'nodes,', rawEdges.length, 'edges');
+  if (import.meta.env?.DEV) console.log('[parseStream] stream parsed:', rawNodes.length, 'nodes,', rawEdges.length, 'edges');
 
   if (!header || rawNodes.length === 0) {
-    store.setLoading(false);
     throw new Error('Empty graph received from server');
   }
 
@@ -180,11 +205,6 @@ export async function loadStream(opts: StreamOptions = {}) {
   (globalThis as Record<string, unknown>).__grafemaTectonicMeta = tectonicMeta;
 
   // ── Build GraphNode[] directly from server positions ──
-  const TILE_SIZE = 3.0;
-
-  // Exclude container types — they are region metadata, not code entities.
-  const EXCLUDED_TYPES = new Set(['SERVICE', 'MODULE']);
-
   // Pass 1: collect nodes that participate in layout and remap indices.
   const oldToLayout = new Map<number, number>();
   const nodes: GraphNode[] = [];
@@ -214,7 +234,7 @@ export async function loadStream(opts: StreamOptions = {}) {
   }
 
   if (droppedNoPos > 0) {
-    console.warn(`[loadStream] dropped ${droppedNoPos} nodes without server positions`);
+    console.warn(`[parseStream] dropped ${droppedNoPos} nodes without server positions`);
   }
 
   // Pass 2: remap edges (skip edges touching excluded / positionless nodes).
@@ -249,19 +269,46 @@ export async function loadStream(opts: StreamOptions = {}) {
   const typeSet = new Set(nodes.map((n) => n.type));
   const edgeTypeSet = new Set(edges.map((e) => e.type));
 
-  console.log('[loadStream] setting graph data:', nodes.length, 'nodes,', edges.length, 'edges,', regions.length, 'regions');
   (globalThis as Record<string, unknown>).__grafemaTileSize = TILE_SIZE;
 
-  store.setGraphData({
+  return {
     nodes,
     edges,
     regions,
     typeTable: [...typeSet],
     edgeTypeTable: [...edgeTypeSet],
-  });
+  };
+}
+
+/**
+ * Back-compat entry that also populates stores (dataStore + routeStore).
+ *
+ * Keeps App.tsx / loadLiveLayout.ts callers working without edits. New
+ * code should prefer `fetchLayout({source:{kind:'stream',...}})` from
+ * `../layout/layoutClient.ts` and wire the store write at the call site.
+ */
+export async function loadStream(opts: StreamOptions = {}) {
+  const store = useDataStore.getState();
+  store.setLoading(true);
+
+  let layout: LayoutResult;
+  try {
+    layout = await parseStream(opts);
+  } catch (err) {
+    store.setLoading(false);
+    throw err;
+  }
+
+  if (import.meta.env?.DEV) console.log(
+    '[loadStream] setting graph data:',
+    layout.nodes.length, 'nodes,',
+    layout.edges.length, 'edges,',
+    layout.regions.length, 'regions',
+  );
+  store.setGraphData(layout);
 
   // Clear routes (no routes from live data)
   useRouteStore.getState().setRoutes([]);
 
-  onProgress('complete', nodes.length, edges.length);
+  opts.onProgress?.('complete', layout.nodes.length, layout.edges.length);
 }

@@ -41,6 +41,11 @@ futures-util = "0.3"
 axum = { version = "0.8", features = ["ws"] }
 tower-http = { version = "0.6", features = ["cors"] }
 
+# UI embedding (feature-gated via `ui`). The `interpolate-folder-path`
+# feature lets `#[folder = "$OUT_DIR/ui-dist"]` expand the env var at
+# compile time to the absolute path staged by `build.rs`.
+rust-embed = { version = "8", optional = true, features = ["interpolate-folder-path"] }
+
 # Channels for worker thread
 crossbeam-channel = "0.5"
 
@@ -73,7 +78,11 @@ tokenizers = { version = "0.22", optional = true, features = ["onig"] }
 dirs = { version = "5", optional = true }
 
 [features]
-default = []
+default = ["ui"]
+# Embed the Grafema GUI (web.html + JS/CSS bundles) into the server binary
+# and serve it under /ui/*. Also pulls in the `fs` layer of tower-http for
+# any filesystem fallbacks (currently unused, reserved for C14b).
+ui = ["dep:rust-embed", "tower-http/fs"]
 embedding = [
     "dep:lancedb",
     "dep:arrow-array",
@@ -90,6 +99,8 @@ embedding = [
 criterion = { version = "0.5", features = ["html_reports"] }
 tempfile = "3.10"
 proptest = "1.4"
+# Used by integration tests that spin up the HTTP server and issue real requests.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 # neo4j = "0.5"  # TODO: Add when a current neo4j crate becomes available for benchmarks
 
 [[bin]]

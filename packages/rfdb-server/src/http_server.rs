@@ -12,6 +12,8 @@
 //! - `GET /api/node/:id`     — single node details
 
 use std::collections::{BTreeMap, HashMap};
+#[cfg(feature = "ui")]
+use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
 use axum::{
@@ -94,15 +96,112 @@ pub fn warmup(state: &HttpState) {
     let _ = get_or_build_layout(&state.layout_cache, &state.file_to_nodes, &**engine);
 }
 
-/// Start the HTTP server on the given port using a pre-built `HttpState`.
-pub async fn start(state: HttpState, port: u16) {
-    let app = Router::new()
+/// UI serving strategy for the `/ui/*` routes.
+///
+/// Exposed so callers (bin + integration tests) can pick a strategy
+/// explicitly instead of relying on process-global env vars. `start` and
+/// `build_router` still read env vars for backward compatibility.
+#[cfg(feature = "ui")]
+#[derive(Clone, Debug)]
+pub enum UiConfig {
+    /// UI disabled entirely — no routes under `/ui` (anything there returns 404).
+    Disabled,
+    /// Serve the `ui-dist` embedded into the binary at compile time.
+    Embedded,
+    /// Serve from a filesystem directory (dev mode override).
+    StaticDir(PathBuf),
+}
+
+/// Resolve UI config from environment variables.
+///
+/// Precedence: `RFDB_NO_UI=1` → Disabled; else `RFDB_STATIC_DIR=<path>` →
+/// StaticDir; else Embedded.
+#[cfg(feature = "ui")]
+pub fn ui_config_from_env() -> UiConfig {
+    if std::env::var("RFDB_NO_UI").ok().as_deref() == Some("1") {
+        return UiConfig::Disabled;
+    }
+    if let Some(dir) = std::env::var_os("RFDB_STATIC_DIR") {
+        return UiConfig::StaticDir(PathBuf::from(dir));
+    }
+    UiConfig::Embedded
+}
+
+/// Build the HTTP router with the default UI strategy derived from env vars.
+///
+/// Thin wrapper over [`build_router_with_ui`] that uses [`ui_config_from_env`].
+/// Preferred entry point for the binary; tests pick [`build_router_with_ui`]
+/// directly to avoid racing on the process-global env.
+pub fn build_router(state: HttpState) -> Router {
+    #[cfg(feature = "ui")]
+    {
+        build_router_with_ui(state, ui_config_from_env())
+    }
+    #[cfg(not(feature = "ui"))]
+    {
+        build_api_router(state)
+    }
+}
+
+/// API-only router shared by all code paths. Keeping it factored out means
+/// both the UI and no-UI builds attach CORS + state uniformly on top.
+fn build_api_router(state: HttpState) -> Router {
+    Router::new()
         .route("/api/graph-stream", get(graph_stream))
         .route("/api/layout-live", get(layout_live_ws))
         .route("/api/stats", get(stats))
         .route("/api/node/{id}", get(node_by_id))
         .layer(CorsLayer::permissive())
-        .with_state(state);
+        .with_state(state)
+}
+
+/// Build a router with an explicit UI strategy.
+///
+/// Available when the `ui` feature is enabled. Tests use this to avoid
+/// mutating process-global env vars (which would race between parallel
+/// tests).
+///
+/// Route table for UI (axum 0.8 path syntax — `/{param}` and `/{*rest}`):
+///   * `GET /ui/`                         → SPA root (`web.html` / placeholder)
+///   * `GET /ui/{db}`                     → SPA root (client-side routing)
+///   * `GET /ui/{db}/{*path}`             → embedded asset, SPA fallback on miss
+///
+/// When `UiConfig::StaticDir(d)` is used the `/ui` namespace is served by
+/// `tower_http::services::ServeDir` instead of the embedded bundle.
+#[cfg(feature = "ui")]
+pub fn build_router_with_ui(state: HttpState, ui: UiConfig) -> Router {
+    let api = build_api_router(state);
+    match ui {
+        UiConfig::Disabled => api,
+        UiConfig::StaticDir(dir) => {
+            use tower_http::services::ServeDir;
+            api.nest_service("/ui", ServeDir::new(dir))
+        }
+        UiConfig::Embedded => api
+            .route(
+                "/ui/",
+                get(|| async { crate::static_ui::serve_spa_root() }),
+            )
+            .route(
+                "/ui/{db}",
+                get(|_path: axum::extract::Path<String>| async {
+                    crate::static_ui::serve_spa_root()
+                }),
+            )
+            .route(
+                "/ui/{db}/{*path}",
+                get(
+                    |axum::extract::Path((_db, path)): axum::extract::Path<(String, String)>| async move {
+                        crate::static_ui::serve_asset(&path)
+                    },
+                ),
+            ),
+    }
+}
+
+/// Start the HTTP server on the given port using a pre-built `HttpState`.
+pub async fn start(state: HttpState, port: u16) {
+    let app = build_router(state);
 
     let addr = format!("127.0.0.1:{}", port);
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();

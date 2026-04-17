@@ -8,7 +8,7 @@
  * The port is configurable via ?wsPort=XXXX query param.
  */
 
-import { mapController } from './MapController';
+import { mapController } from '../controller/MapController';
 
 let ws: WebSocket | null = null;
 
@@ -16,17 +16,17 @@ export function initWebSocketAdapter() {
   const params = new URLSearchParams(window.location.search);
   const port = params.get('wsPort');
   if (!port) {
-    console.log('[WS] No wsPort param — WebSocket adapter disabled');
+    if (import.meta.env?.DEV) console.log('[WS] No wsPort param — WebSocket adapter disabled');
     return;
   }
 
   const url = `ws://localhost:${port}/ws`;
-  console.log(`[WS] Connecting to ${url}...`);
+  if (import.meta.env?.DEV) console.log(`[WS] Connecting to ${url}...`);
 
   ws = new WebSocket(url);
 
   ws.onopen = () => {
-    console.log('[WS] Connected');
+    if (import.meta.env?.DEV) console.log('[WS] Connected');
     sendEvent('connected', { version: '2.0' });
   };
 
@@ -56,7 +56,7 @@ export function initWebSocketAdapter() {
   };
 
   ws.onclose = () => {
-    console.log('[WS] Disconnected');
+    if (import.meta.env?.DEV) console.log('[WS] Disconnected');
     // Auto-reconnect after 3s
     setTimeout(initWebSocketAdapter, 3000);
   };

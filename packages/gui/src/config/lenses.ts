@@ -1,5 +1,6 @@
 import type { GraphNode } from '../store/dataStore';
 import * as THREE from 'three';
+import { hueFromString } from '../geom/color';
 
 export interface Lens {
   label: string;
@@ -7,12 +8,8 @@ export interface Lens {
   legend?: 'gradient' | 'categorical';
 }
 
-/** Stable hash for string → hue */
-function strHash(s: string): number {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
-  return ((h % 360) + 360) % 360;
-}
+/** Shorter local alias — every caller below uses the shared hash. */
+const strHash = hueFromString;
 
 const TYPE_LIGHTNESS: Record<string, number> = {
   SERVICE: 55, MODULE: 42, CLASS: 45, INTERFACE: 43,

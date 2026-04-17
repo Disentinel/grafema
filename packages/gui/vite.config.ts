@@ -10,6 +10,18 @@ export default defineConfig({
     },
   },
   publicDir: 'public',
+  build: {
+    rollupOptions: {
+      input: {
+        // Two host entries: dev overlay + production SPA served by rfdb-server.
+        // Each gets its own HTML + JS bundle under `dist/`.
+        // The VS Code extension iframes `web.html` via rfdb-server's
+        // `/ui/{db}` route (see REG-1100); no separate vscode entry.
+        index: resolve(__dirname, 'index.html'),
+        web: resolve(__dirname, 'web.html'),
+      },
+    },
+  },
   server: {
     port: 5173,
     proxy: {

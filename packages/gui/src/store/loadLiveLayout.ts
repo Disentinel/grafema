@@ -3,10 +3,14 @@
  *
  * Phase 1: Fetch /api/graph-stream → parse NDJSON → quick client-side SA → render
  * Phase 2: Connect WS /api/layout-live → receive binary position snapshots → lerp tiles
+ *
+ * The module exposes `setLiveLayoutSink(sink)` (DAI-6) so Canvas.tsx can
+ * route incoming WS position snapshots into `sceneApi.setTargetPositions`
+ * without this non-React module holding a Three.js-typed reference.
  */
 
 import { loadStream, type StreamOptions } from './loadStream';
-import { cubeToWorld } from './loadFixture';
+import { cubeToWorld } from '../geom/hex';
 
 const TILE_SIZE = 3.0;
 
@@ -16,20 +20,36 @@ export interface LiveLayoutOptions extends StreamOptions {
   onSAProgress?: (iteration: number, cost: number, temperature: number, settled: boolean) => void;
 }
 
-/** Reference to HexLayer for position updates (set by Canvas after layer creation) */
-let _hexLayerRef: { setTargetPositions: (x: Float32Array, z: Float32Array) => void } | null = null;
+/**
+ * Narrow sink that only exposes the one method this module calls. Canvas
+ * wires in a concrete `SceneApi` (which satisfies this shape) so the
+ * WebSocket snapshot handler below can forward positions without this
+ * module importing Three.js or `SceneApi` directly.
+ */
+export interface LiveLayoutSink {
+  setTargetPositions(x: Float32Array, z: Float32Array): void;
+}
 
-export function setHexLayerRef(ref: typeof _hexLayerRef) {
-  _hexLayerRef = ref;
+/** Sink reference populated by Canvas.tsx once SceneApi is constructed. */
+let _sink: LiveLayoutSink | null = null;
+
+/**
+ * Register the sink that will receive WebSocket SA position snapshots.
+ * Pass `null` during teardown so a disposed scene does not keep receiving
+ * frames. Replaces the former `setHexLayerRef` singleton.
+ */
+export function setLiveLayoutSink(sink: LiveLayoutSink | null) {
+  _sink = sink;
 }
 
 export async function loadLiveLayout(opts: LiveLayoutOptions = {}) {
   // Phase 1: Load graph data via JSONL stream + quick client-side SA
   await loadStream(opts);
 
-  // Phase 2: WS SA disabled until index alignment is fixed
-  // (server SA uses all-node indices, client filters out MODULE → index mismatch)
-  // TODO: either server filters same as client, or client uses server indices
+  // Phase 2: WS SA disabled until index alignment is fixed.
+  // (server SA uses all-node indices, client filters out MODULE → index
+  // mismatch.) Re-enable by calling `_connectLayoutWebSocket(opts)` once
+  // server + client agree on an index space.
   // connectLayoutWebSocket(opts);
 }
 
@@ -42,11 +62,11 @@ function _connectLayoutWebSocket(opts: LiveLayoutOptions) {
   const host = opts.serverUrl || window.location.host;
   const url = `${protocol}//${host}/api/layout-live?${params.toString()}`;
 
-  console.log('[liveLayout] connecting WS:', url);
+  if (import.meta.env?.DEV) console.log('[liveLayout] connecting WS:', url);
   const ws = new WebSocket(url);
 
   ws.onopen = () => {
-    console.log('[liveLayout] WS connected');
+    if (import.meta.env?.DEV) console.log('[liveLayout] WS connected');
   };
 
   ws.onmessage = (event) => {
@@ -55,16 +75,16 @@ function _connectLayoutWebSocket(opts: LiveLayoutOptions) {
       const msg = JSON.parse(event.data);
       switch (msg.type) {
         case 'started':
-          console.log('[liveLayout] SA started');
+          if (import.meta.env?.DEV) console.log('[liveLayout] SA started');
           break;
         case 'progress':
           opts.onSAProgress?.(msg.iteration, msg.cost, msg.temperature, msg.settled);
           if (msg.settled) {
-            console.log('[liveLayout] SA settled, cost:', msg.cost, 'iterations:', msg.iteration);
+            if (import.meta.env?.DEV) console.log('[liveLayout] SA settled, cost:', msg.cost, 'iterations:', msg.iteration);
           }
           break;
         case 'settled':
-          console.log('[liveLayout] SA complete');
+          if (import.meta.env?.DEV) console.log('[liveLayout] SA complete');
           ws.close();
           break;
       }
@@ -81,12 +101,12 @@ function _connectLayoutWebSocket(opts: LiveLayoutOptions) {
   };
 
   ws.onclose = () => {
-    console.log('[liveLayout] WS closed');
+    if (import.meta.env?.DEV) console.log('[liveLayout] WS closed');
   };
 }
 
 function applyPositionSnapshot(buffer: ArrayBuffer) {
-  if (!_hexLayerRef) return;
+  if (!_sink) return;
 
   const view = new DataView(buffer);
   const nodeCount = view.byteLength / 8;
@@ -110,5 +130,5 @@ function applyPositionSnapshot(buffer: ArrayBuffer) {
     targetZ[idx] = z;
   }
 
-  _hexLayerRef.setTargetPositions(targetX, targetZ);
+  _sink.setTargetPositions(targetX, targetZ);
 }

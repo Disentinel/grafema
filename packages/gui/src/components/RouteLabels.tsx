@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
-import { SceneManager } from '../three/SceneManager';
-import { RouteLayer } from '../three/RouteLayer';
+import type { SceneManager } from '../three/SceneManager';
+import type { RouteLayer } from '../three/RouteLayer';
 
 export function RouteLabels({
   sceneManager,
@@ -17,7 +17,9 @@ export function RouteLabels({
 
     const container = containerRef.current;
     const vec = new THREE.Vector3();
-    const camera = sceneManager.camera;
+    // Camera is re-read per frame inside `update` so mode swaps
+    // (perspective ↔ orthographic) pick up the new camera without a
+    // remount. Canvas stays stable across swaps (DAI-12b).
     const canvas = sceneManager.renderer.domElement;
 
     let wpElements: HTMLDivElement[] = [];
@@ -29,6 +31,9 @@ export function RouteLabels({
     const update = () => {
       if (!running) return;
       requestAnimationFrame(update);
+
+      // Fresh per-frame camera read — see comment above.
+      const camera = sceneManager.camera;
 
       const wpLabels = routeLayer.waypointLabels;
       const edgeLabels = routeLayer.edgeLabels;

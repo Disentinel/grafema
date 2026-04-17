@@ -35,6 +35,16 @@ Grafema is NOT competing with TypeScript or static type checkers. It's for codeb
 - RFDB server (`packages/rfdb-server/`) — Rust graph database, client-server architecture via unix-socket
 - `effects-db/` — curated side-effect annotations for npm packages and Node.js builtins
 
+### Serving the Map UI
+
+Interactive hex-atlas visualization (REG-1100).
+
+- **`<HexAtlas>`** is the unified React + Three.js component (`packages/gui/src/HexAtlas.tsx`). One component, runtime 2D ⇄ 3D switch via `viewStore.mode` (camera + tile/flow config swap, not a renderer swap). Shared selection/hover/pins/flows/routes across modes.
+- **`rfdb-server`'s `ui` Cargo feature** (default-on) embeds the GUI bundle via `rust-embed` and serves it at `http://localhost:{port}/ui/{db}`. Route precedence: `--static-dir` > embedded bundle > placeholder.
+- **VS Code extension** (`packages/vscode/src/mapPanel.ts`) iframes that URL — no separate `grafema-gui` binary. The previous `packages/gui-server/` crate was archived to `_archive/packages-gui-server/`.
+- **Build one-liner:** `scripts/build-gui-for-rfdb.sh` runs `pnpm --filter @grafema/gui build`, then rebuilds rfdb-server with `GRAFEMA_UI_DIST=packages/gui/dist` so the new bundle is baked in.
+- **Headless server:** `cargo build -p rfdb --no-default-features` drops the UI feature for deployments that don't need it (server-only, tests).
+
 ### Manifests & Effects (API Surface Analysis)
 
 `grafema analyze` automatically generates `manifest.yaml` — a description of the package's exported API with side-effect annotations.
