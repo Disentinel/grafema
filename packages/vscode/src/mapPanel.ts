@@ -102,6 +102,19 @@ export class MapPanel {
       this.disposables
     );
 
+    // DAI-16: rebuild the iframe when the user changes `grafema.databaseName`
+    // or `grafema.rfdbHttpPort`. Without this the panel would keep pointing
+    // at the old db even after the setting is updated, forcing a reload.
+    const configSub = vscode.workspace.onDidChangeConfiguration((e) => {
+      if (
+        e.affectsConfiguration('grafema.databaseName') ||
+        e.affectsConfiguration('grafema.rfdbHttpPort')
+      ) {
+        this.ensureServerAndLoad();
+      }
+    });
+    this.disposables.push(configSub);
+
     this.panel.webview.html = this.getLoaderHtml();
     this.ensureServerAndLoad();
   }

@@ -126,8 +126,12 @@ require.cache['vscode'] = {
         return [{ uri: { fsPath: mockWorkspaceRoot } }];
       },
       getConfiguration: () => ({
-        get: (_key: string, defaultValue?: unknown) => defaultValue,
+        get: (key: string, defaultValue?: unknown) => {
+          if (key === 'databaseName') return mockDbName;
+          return defaultValue;
+        },
       }),
+      onDidChangeConfiguration: (_handler: unknown) => ({ dispose: () => {} }),
     },
   },
 } as unknown as NodeModule;
@@ -289,6 +293,38 @@ describe('MapPanel — behavior', () => {
       MapPanel.createOrShow();
       assert.strictEqual(lastCreatedPanel, firstPanel, 'Second call reuses the same panel');
       assert.ok(firstPanel!.revealed, 'Existing panel should be revealed');
+    });
+
+    it('uses the value returned by grafema.databaseName config (DAI-16)', async () => {
+      mockDbName = 'customProject';
+      MapPanel.createOrShow();
+      await new Promise((r) => setTimeout(r, 200));
+
+      const html = lastCreatedPanel!.webview.html;
+      assert.match(
+        html,
+        /http:\/\/localhost:\d+\/ui\/customProject/,
+        `HTML should embed /ui/customProject, got: ${html.slice(0, 500)}`,
+      );
+    });
+
+    it('source subscribes to onDidChangeConfiguration for databaseName', () => {
+      // Lock the behavior structurally — without the listener, changing
+      // grafema.databaseName would require closing and reopening the panel.
+      const source = readFileSync(
+        join(__dirname, '..', '..', 'src', 'mapPanel.ts'),
+        'utf-8',
+      );
+      assert.match(
+        source,
+        /onDidChangeConfiguration/,
+        'mapPanel.ts should subscribe to onDidChangeConfiguration',
+      );
+      assert.match(
+        source,
+        /affectsConfiguration\(['"]grafema\.databaseName['"]\)/,
+        'mapPanel.ts should react to grafema.databaseName changes',
+      );
     });
   });
 

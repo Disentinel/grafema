@@ -24,11 +24,14 @@ const DB_FILE = 'graph.rfdb';
  * Default HTTP port for the rfdb-server /ui and /api endpoints (the GUI
  * is served from the same process as the Unix-socket RPC listener).
  *
- * TODO: make dynamic — probe for a free port when spawning rfdb-server
- * and surface it via workspaceState. For now the extension passes this
- * fixed port via `--http-port` and MapPanel reads it via getRfdbHttpPort().
+ * DAI-15: dynamic allocation is preferred. startServer() passes
+ * `--http-port 0` by default (OS picks a free port) and discovers the
+ * actual port via the `<workspace>/.grafema/rfdb-http.port` lockfile.
+ * Users can pin a specific port by setting `grafema.rfdbHttpPort` to a
+ * non-default value.
  */
 const DEFAULT_RFDB_HTTP_PORT = 3335;
+const HTTP_PORT_LOCKFILE = 'rfdb-http.port';
 
 /**
  * Module-level holder for the currently-active rfdb HTTP port. Populated
@@ -39,28 +42,85 @@ const DEFAULT_RFDB_HTTP_PORT = 3335;
 let activeRfdbHttpPort: number | undefined;
 
 /**
+ * Test hook: reset module-level state between tests. Not part of the
+ * public API — only used by unit tests that re-require the module.
+ */
+export function _resetActiveRfdbHttpPortForTests(): void {
+  activeRfdbHttpPort = undefined;
+}
+
+/**
+ * Read the rfdb-http.port lockfile from a workspace (if present). Returns
+ * `undefined` on any I/O / parse error — callers treat this as "no port
+ * discovered yet" and fall back to config or default.
+ */
+export function readRfdbHttpPortLockfile(workspaceRoot: string): number | undefined {
+  try {
+    const p = join(workspaceRoot, GRAFEMA_DIR, HTTP_PORT_LOCKFILE);
+    if (!existsSync(p)) return undefined;
+    const txt = readFileSync(p, 'utf-8').trim();
+    const n = Number.parseInt(txt, 10);
+    if (Number.isFinite(n) && n > 0 && n < 65536) return n;
+  } catch {
+    // ignore — stale or missing lockfile is a soft failure
+  }
+  return undefined;
+}
+
+/**
+ * Returns true when the user has explicitly overridden `grafema.rfdbHttpPort`
+ * at any scope (workspace/user/folder). Lets startServer() decide between
+ * "pin the requested port" (explicit) vs "let the OS pick" (default).
+ */
+function isExplicitRfdbHttpPortSet(): boolean {
+  try {
+    const info = vscode.workspace.getConfiguration('grafema').inspect<number>('rfdbHttpPort');
+    if (!info) return false;
+    return (
+      info.globalValue !== undefined ||
+      info.workspaceValue !== undefined ||
+      info.workspaceFolderValue !== undefined
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Report the HTTP port the rfdb-server is listening on.
  *
  * Resolution order:
- *   1. Port recorded by the last successful startServer() call.
- *   2. `grafema.rfdbHttpPort` VS Code setting.
- *   3. `GRAFEMA_RFDB_HTTP_PORT` environment variable.
- *   4. DEFAULT_RFDB_HTTP_PORT (3335).
+ *   1. Port recorded by the last successful startServer() call (discovered
+ *      from the lockfile or from the explicit `--http-port` CLI arg).
+ *   2. Explicit `grafema.rfdbHttpPort` VS Code setting (non-default).
+ *   3. Lockfile `<workspace>/.grafema/rfdb-http.port` written by a live
+ *      rfdb-server — covers the case where the server was spawned by
+ *      `grafema analyze` (CLI) outside the extension.
+ *   4. `GRAFEMA_RFDB_HTTP_PORT` environment variable.
+ *   5. DEFAULT_RFDB_HTTP_PORT (3335).
  *
  * Returns `undefined` only if the caller explicitly sets the setting
  * to 0 — otherwise always returns a positive port.
  */
-export function getRfdbHttpPort(): number | undefined {
+export function getRfdbHttpPort(workspaceRoot?: string): number | undefined {
   if (typeof activeRfdbHttpPort === 'number' && activeRfdbHttpPort > 0) {
     return activeRfdbHttpPort;
   }
   try {
     const config = vscode.workspace.getConfiguration('grafema');
     const configured = config.get<number>('rfdbHttpPort');
-    if (typeof configured === 'number' && configured > 0) return configured;
-    if (configured === 0) return undefined; // explicit opt-out
+    if (isExplicitRfdbHttpPortSet()) {
+      if (configured === 0) return undefined; // explicit opt-out
+      if (typeof configured === 'number' && configured > 0) return configured;
+    }
   } catch {
     // vscode API may not be available (e.g., unit tests) — fall through.
+  }
+  // Lockfile discovery — covers CLI-started server.
+  const root = workspaceRoot ?? resolveWorkspaceRoot();
+  if (root) {
+    const fromLock = readRfdbHttpPortLockfile(root);
+    if (typeof fromLock === 'number') return fromLock;
   }
   const env = process.env.GRAFEMA_RFDB_HTTP_PORT;
   if (env) {
@@ -68,6 +128,16 @@ export function getRfdbHttpPort(): number | undefined {
     if (Number.isFinite(parsed) && parsed > 0) return parsed;
   }
   return DEFAULT_RFDB_HTTP_PORT;
+}
+
+function resolveWorkspaceRoot(): string | undefined {
+  try {
+    const folders = vscode.workspace.workspaceFolders;
+    if (folders && folders.length > 0) return folders[0].uri.fsPath;
+  } catch {
+    // no workspace (unit test) — ignore
+  }
+  return undefined;
 }
 
 /**
@@ -400,18 +470,32 @@ export class GrafemaClientManager extends EventEmitter {
       );
     }
 
-    const httpPort = getRfdbHttpPort() ?? DEFAULT_RFDB_HTTP_PORT;
+    // DAI-15: prefer OS-assigned port (--http-port 0) unless the user
+    // has explicitly pinned one via `grafema.rfdbHttpPort`. Avoids
+    // collisions when 3335 is taken by another rfdb-server / process.
+    const lockfilePath = join(this.workspaceRoot, GRAFEMA_DIR, HTTP_PORT_LOCKFILE);
+    // Remove any stale lockfile so the post-spawn read can't pick up an
+    // old port from a dead server. `ensureStaleLockfileCleared` also
+    // tries to connect first; if the pre-flight probe above already
+    // reaped a stale socket, the lockfile left behind is guaranteed
+    // stale too.
+    try { if (existsSync(lockfilePath)) unlinkSync(lockfilePath); } catch { /* ignore */ }
+
+    const explicit = isExplicitRfdbHttpPortSet();
+    const requestedPort = explicit
+      ? vscode.workspace.getConfiguration('grafema').get<number>('rfdbHttpPort') ?? 0
+      : 0;
+
     this.serverProcess = spawn(
       binaryPath,
-      [this.dbPath, '--socket', this.socketPath, '--http-port', String(httpPort)],
+      [this.dbPath, '--socket', this.socketPath, '--http-port', String(requestedPort)],
       {
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: true,
       },
     );
-    // Record the port so MapPanel and other callers of getRfdbHttpPort()
-    // see the actual listening port (not just the configured default).
-    activeRfdbHttpPort = httpPort;
+    // Provisional — replaced below once the real port is discovered.
+    activeRfdbHttpPort = requestedPort > 0 ? requestedPort : undefined;
 
     // Don't let server process prevent VS Code from exiting
     this.serverProcess.unref();
@@ -447,6 +531,21 @@ export class GrafemaClientManager extends EventEmitter {
     if (!existsSync(this.socketPath)) {
       throw new Error(`RFDB server failed to start (socket not created after ${attempts * 100}ms)`);
     }
+
+    // Discover the actual HTTP port from the lockfile (written by the
+    // server after bind succeeds). Poll up to 10s — warmup can delay
+    // lockfile appearance when the graph is large.
+    for (let i = 0; i < 100; i++) {
+      const p = readRfdbHttpPortLockfile(this.workspaceRoot);
+      if (typeof p === 'number' && p > 0) {
+        activeRfdbHttpPort = p;
+        break;
+      }
+      await sleep(100);
+    }
+    // If the lockfile never appeared but the user pinned an explicit port,
+    // keep the provisional value — getRfdbHttpPort() will still hand out
+    // a usable port.
   }
 
   /**

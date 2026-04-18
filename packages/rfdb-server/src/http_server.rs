@@ -199,15 +199,40 @@ pub fn build_router_with_ui(state: HttpState, ui: UiConfig) -> Router {
     }
 }
 
-/// Start the HTTP server on the given port using a pre-built `HttpState`.
-pub async fn start(state: HttpState, port: u16) {
+/// Bind the HTTP listener and return `(actual_port, serve_future)`.
+///
+/// When `port == 0` the OS picks a free port; the actual port is read back
+/// from `local_addr()` so the caller can advertise it (lockfile, stderr,
+/// workspaceState, etc.) before awaiting the serve future.
+///
+/// Returns `Err` if bind fails — lets the caller fall back to a different
+/// port or surface a user-facing error without panicking the process.
+pub async fn bind(
+    state: HttpState,
+    port: u16,
+) -> std::io::Result<(u16, impl std::future::Future<Output = ()> + Send + 'static)> {
     let app = build_router(state);
-
     let addr = format!("127.0.0.1:{}", port);
-    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
-    eprintln!("[rfdb-server] HTTP server listening on http://{}", addr);
+    let listener = tokio::net::TcpListener::bind(&addr).await?;
+    let actual_port = listener.local_addr()?.port();
+    eprintln!(
+        "[rfdb-server] HTTP server listening on http://127.0.0.1:{}",
+        actual_port
+    );
+    let serve = async move {
+        let _ = axum::serve(listener, app).await;
+    };
+    Ok((actual_port, serve))
+}
 
-    axum::serve(listener, app).await.unwrap();
+/// Start the HTTP server on the given port using a pre-built `HttpState`.
+///
+/// Backward-compatible wrapper. Panics if bind fails (legacy behavior).
+pub async fn start(state: HttpState, port: u16) {
+    let (_actual, serve) = bind(state, port)
+        .await
+        .expect("Failed to bind HTTP listener");
+    serve.await;
 }
 
 // ── Query parameters ────────────────────────────────────────────────────

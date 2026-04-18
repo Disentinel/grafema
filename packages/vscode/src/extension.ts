@@ -8,6 +8,7 @@
 import * as vscode from 'vscode';
 import type { WireNode } from '@grafema/types';
 import { GrafemaClientManager } from './grafemaClient';
+import type * as GrafemaClientModule from './grafemaClient';
 import { EdgesProvider } from './edgesProvider';
 import { StatusProvider } from './statusProvider';
 import { DebugProvider } from './debugProvider';
@@ -730,8 +731,45 @@ function registerCommands(): vscode.Disposable[] {
   }));
 
   // Open Map panel
-  disposables.push(vscode.commands.registerCommand('grafema.openMap', () => {
+  //
+  // DAI-17: auto-start rfdb-server before creating the panel so users don't
+  // see a 60-second "Waiting for RFDB server" dead-wait when they invoke
+  // `Grafema: Open Map` without having run `Grafema: Analyze` first. If the
+  // server is already up, the startServer() call is a cheap no-op (probe
+  // succeeds, early return). Failures surface as a warning toast rather
+  // than silently hanging.
+  disposables.push(vscode.commands.registerCommand('grafema.openMap', async () => {
     const { MapPanel } = require('./mapPanel');
+    const grafemaClientMod = require('./grafemaClient') as typeof GrafemaClientModule;
+    const { getRfdbHttpPort } = grafemaClientMod;
+
+    if (clientManager) {
+      try {
+        await clientManager.startServer();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        vscode.window.showWarningMessage(
+          `Grafema: could not start rfdb-server (${msg}). Run "Grafema: Analyze" first or check the output for details.`,
+        );
+        return;
+      }
+
+      // Wait up to 10s for the HTTP port to be discoverable (lockfile or
+      // pinned). Without this the panel would poll /api/stats for up to
+      // 60s — a bad UX when startup actually failed.
+      const deadline = Date.now() + 10_000;
+      while (Date.now() < deadline) {
+        if (typeof getRfdbHttpPort() === 'number') break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      if (typeof getRfdbHttpPort() !== 'number') {
+        vscode.window.showWarningMessage(
+          'Grafema: rfdb-server started but no HTTP port was advertised. Run "Grafema: Analyze" first or check the output for errors.',
+        );
+        return;
+      }
+    }
+
     MapPanel.createOrShow();
   }));
 
