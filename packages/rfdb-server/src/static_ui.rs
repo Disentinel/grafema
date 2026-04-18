@@ -88,6 +88,7 @@ pub fn serve_spa_root() -> Response {
 pub fn serve_asset(path: &str) -> Response {
     let clean = path.trim_start_matches('/');
 
+    // 1) Direct hit — embedded path matches request path exactly.
     if let Some(content) = UiAssets::get(clean) {
         return Response::builder()
             .status(StatusCode::OK)
@@ -97,9 +98,33 @@ pub fn serve_asset(path: &str) -> Response {
             .unwrap();
     }
 
-    // SPA fallback — unknown paths return the shell so the client router
-    // can take over. This is the standard pattern for single-page apps
-    // hosted behind a wildcard route.
+    // 2) Relative-base resolution — Vite builds with `base: './'` so HTML
+    //    references `./assets/X.js`. If the SPA entry was served at
+    //    `/ui/{db}/`, the browser resolves that to `/ui/{db}/assets/X.js`,
+    //    which arrives here as `path = "{db}/assets/X.js"`. The embedded
+    //    assets are rooted at `assets/`, so we strip any leading path
+    //    segments up to and including the last `assets/` or `fixtures/`
+    //    occurrence and retry. This keeps both no-trailing-slash
+    //    (`/ui/default`) and trailing-slash (`/ui/default/`) URLs working.
+    for prefix in ["assets/", "fixtures/"] {
+        if let Some(pos) = clean.rfind(prefix) {
+            let normalized = &clean[pos..];
+            if normalized != clean {
+                if let Some(content) = UiAssets::get(normalized) {
+                    return Response::builder()
+                        .status(StatusCode::OK)
+                        .header(header::CONTENT_TYPE, mime_for_path(normalized))
+                        .header(header::CACHE_CONTROL, cache_control_for_path(normalized))
+                        .body(Body::from(content.data.into_owned()))
+                        .unwrap();
+                }
+            }
+        }
+    }
+
+    // 3) SPA fallback — unknown paths return the shell so the client router
+    //    can take over. This is the standard pattern for single-page apps
+    //    hosted behind a wildcard route.
     serve_spa_root()
 }
 

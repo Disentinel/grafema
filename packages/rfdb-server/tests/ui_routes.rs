@@ -210,6 +210,84 @@ async fn ui_known_asset_is_served_when_real_dist_embedded() {
 }
 
 #[tokio::test]
+async fn ui_asset_resolves_at_root_of_ui() {
+    // Regression: Vite builds with `base: './'`, producing HTML that references
+    // `./assets/X.js`. When the SPA is served at `/ui/default` (no trailing
+    // slash — VS Code's URL) the browser resolves assets against `/ui/` and
+    // requests `/ui/assets/X.js`. The old route `/ui/{db}/{*path}` mis-parsed
+    // this as db="assets" and dropped the real path, returning the SPA shell
+    // with text/html content-type instead of JS. New single-wildcard route
+    // plus `serve_asset` fallback to `rfind("assets/")` must serve the JS.
+    if is_placeholder_only() {
+        return;
+    }
+    let asset = rfdb::static_ui::UiAssets::iter()
+        .find(|p| p.starts_with("assets/") && p.ends_with(".js"))
+        .expect("expected at least one hashed .js asset");
+    let (addr, _srv) = spawn_server(test_state(), UiConfig::Embedded);
+
+    // Shape 1: /ui/{asset} (page was /ui/default — no trailing slash)
+    let resp1 = client()
+        .get(format!("http://{}/ui/{}", addr, asset))
+        .send()
+        .await
+        .expect("request send");
+    assert_eq!(resp1.status(), 200, "/ui/{} should serve JS", asset);
+    let ct1 = resp1
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    assert!(
+        ct1.starts_with("application/javascript"),
+        "/ui/{} expected JS, got {:?}",
+        asset,
+        ct1
+    );
+
+    // Shape 2: /ui/default/{asset} (page was /ui/default/ — trailing slash)
+    let resp2 = client()
+        .get(format!("http://{}/ui/default/{}", addr, asset))
+        .send()
+        .await
+        .expect("request send");
+    assert_eq!(resp2.status(), 200);
+    let ct2 = resp2
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    assert!(
+        ct2.starts_with("application/javascript"),
+        "/ui/default/{} expected JS, got {:?}",
+        asset,
+        ct2
+    );
+
+    // Shape 3: deeper nesting /ui/a/b/c/{asset}
+    let resp3 = client()
+        .get(format!("http://{}/ui/a/b/c/{}", addr, asset))
+        .send()
+        .await
+        .expect("request send");
+    assert_eq!(resp3.status(), 200);
+    let ct3 = resp3
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    assert!(
+        ct3.starts_with("application/javascript"),
+        "/ui/a/b/c/{} expected JS, got {:?}",
+        asset,
+        ct3
+    );
+}
+
+#[tokio::test]
 async fn ui_disabled_returns_404() {
     let (addr, _srv) = spawn_server(test_state(), UiConfig::Disabled);
     let resp = client()
