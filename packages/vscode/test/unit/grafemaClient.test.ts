@@ -75,6 +75,22 @@ require.cache['vscode'] = {
             ? mockConfigValues[fullKey]
             : defaultValue;
         },
+        // inspect() surfaces whether a user explicitly set a value at any
+        // scope. Tests drive this via mockConfigValues — any key present
+        // is treated as "explicitly set" at workspace scope.
+        inspect: (key: string) => {
+          const fullKey = section ? `${section}.${key}` : key;
+          if (fullKey in mockConfigValues) {
+            return {
+              key,
+              defaultValue: undefined,
+              globalValue: undefined,
+              workspaceValue: mockConfigValues[fullKey],
+              workspaceFolderValue: undefined,
+            };
+          }
+          return { key, defaultValue: undefined };
+        },
       }),
     },
     languages: { registerCodeLensProvider: () => ({ dispose: () => {} }) },
@@ -477,4 +493,98 @@ describe('GrafemaClientManager — negotiateAndSelectDatabase', () => {
       );
     });
   });
+});
+
+// ============================================================================
+// DAI-15: getRfdbHttpPort lockfile + resolution order
+// ============================================================================
+
+import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join as pathJoin } from 'node:path';
+
+const {
+  readRfdbHttpPortLockfile,
+  _resetActiveRfdbHttpPortForTests,
+  getRfdbHttpPort,
+} = grafemaClientModule as {
+  readRfdbHttpPortLockfile: (root: string) => number | undefined;
+  _resetActiveRfdbHttpPortForTests: () => void;
+  getRfdbHttpPort: (workspaceRoot?: string) => number | undefined;
+};
+
+describe('readRfdbHttpPortLockfile — DAI-15', () => {
+  let workspace: string;
+
+  beforeEach(() => {
+    workspace = pathJoin(tmpdir(), `grafema-lock-${Date.now()}-${Math.random()}`);
+    mkdirSync(pathJoin(workspace, '.grafema'), { recursive: true });
+  });
+
+  it('returns undefined when lockfile is missing', () => {
+    assert.strictEqual(readRfdbHttpPortLockfile(workspace), undefined);
+  });
+
+  it('reads the port integer from the lockfile', () => {
+    writeFileSync(pathJoin(workspace, '.grafema', 'rfdb-http.port'), '45123\n');
+    assert.strictEqual(readRfdbHttpPortLockfile(workspace), 45123);
+  });
+
+  it('returns undefined on unparseable content', () => {
+    writeFileSync(pathJoin(workspace, '.grafema', 'rfdb-http.port'), 'not-a-port');
+    assert.strictEqual(readRfdbHttpPortLockfile(workspace), undefined);
+  });
+
+  it('returns undefined for out-of-range values', () => {
+    writeFileSync(pathJoin(workspace, '.grafema', 'rfdb-http.port'), '99999');
+    assert.strictEqual(readRfdbHttpPortLockfile(workspace), undefined);
+  });
+});
+
+describe('getRfdbHttpPort — resolution order (DAI-15)', () => {
+  let workspace: string;
+  const originalFolders = (
+    require.cache['vscode'] as unknown as { exports: { workspace: { workspaceFolders: unknown } } }
+  ).exports.workspace.workspaceFolders;
+
+  beforeEach(() => {
+    _resetActiveRfdbHttpPortForTests();
+    setMockConfig({});
+    workspace = pathJoin(tmpdir(), `grafema-port-${Date.now()}-${Math.random()}`);
+    mkdirSync(pathJoin(workspace, '.grafema'), { recursive: true });
+    delete process.env.GRAFEMA_RFDB_HTTP_PORT;
+  });
+
+  it('falls back to lockfile when no explicit config and no active port', () => {
+    writeFileSync(pathJoin(workspace, '.grafema', 'rfdb-http.port'), '42042');
+    assert.strictEqual(getRfdbHttpPort(workspace), 42042);
+  });
+
+  it('prefers explicitly-pinned config over lockfile', () => {
+    // User pinned a specific port — must win even if a lockfile advertises
+    // a different port (e.g., a background server bound elsewhere).
+    setMockConfig({ 'grafema.rfdbHttpPort': 7777 });
+    writeFileSync(pathJoin(workspace, '.grafema', 'rfdb-http.port'), '51234');
+    assert.strictEqual(getRfdbHttpPort(workspace), 7777);
+  });
+
+  it('falls through to lockfile when config is not explicitly set', () => {
+    setMockConfig({}); // nothing pinned
+    writeFileSync(pathJoin(workspace, '.grafema', 'rfdb-http.port'), '51234');
+    assert.strictEqual(getRfdbHttpPort(workspace), 51234);
+  });
+
+  it('falls back to DEFAULT when nothing else is available', () => {
+    rmSync(pathJoin(workspace, '.grafema', 'rfdb-http.port'), { force: true });
+    assert.strictEqual(getRfdbHttpPort(workspace), 3335);
+  });
+
+  it('honors GRAFEMA_RFDB_HTTP_PORT env var over default', () => {
+    process.env.GRAFEMA_RFDB_HTTP_PORT = '9090';
+    assert.strictEqual(getRfdbHttpPort(workspace), 9090);
+    delete process.env.GRAFEMA_RFDB_HTTP_PORT;
+  });
+
+  // keep vscode workspace untouched
+  void originalFolders;
 });

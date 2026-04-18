@@ -3168,18 +3168,18 @@ async fn main() {
             }
         });
 
+    // `--http-port 0` = OS-assigned free port (dynamic allocation).
+    // The actual port is written to `<data_dir>/rfdb-http.port` after bind
+    // so clients (VS Code extension, etc.) can discover it without relying
+    // on a fixed default that may collide with unrelated processes.
     let http_port: Option<u16> = args.iter()
         .position(|a| a == "--http-port")
         .and_then(|i| args.get(i + 1))
         .map(|s| {
             match s.parse::<u16>() {
-                Ok(0) => {
-                    eprintln!("[rfdb-server] ERROR: --http-port 0 is not allowed (port must be 1-65535)");
-                    std::process::exit(1);
-                }
                 Ok(port) => port,
                 Err(_) => {
-                    eprintln!("[rfdb-server] ERROR: Invalid --http-port value '{}' (must be 1-65535)", s);
+                    eprintln!("[rfdb-server] ERROR: Invalid --http-port value '{}' (must be 0-65535)", s);
                     std::process::exit(1);
                 }
             }
@@ -3352,10 +3352,17 @@ async fn main() {
     };
     eprintln!("[rfdb-server] Listening on {}", socket_path);
 
+    // HTTP port lockfile path (written after HTTP bind succeeds, removed on
+    // graceful shutdown). `data_dir` is the directory Grafema stores per-db
+    // state in, so placing the lockfile next to `rfdb.pid` keeps discovery
+    // trivial for clients.
+    let http_lockfile_path: PathBuf = data_dir.join("rfdb-http.port");
+
     // Set up signal handler for graceful shutdown
     let manager_for_signal = Arc::clone(&manager);
     let socket_path_for_signal = socket_path.to_string();
     let shard_reg_for_signal = shard_registration_path.clone();
+    let http_lockfile_for_signal = http_lockfile_path.clone();
     let mut signals = signal_hook::iterator::Signals::new(&[
         signal_hook::consts::SIGINT,
         signal_hook::consts::SIGTERM,
@@ -3378,6 +3385,11 @@ async fn main() {
             }
 
             let _ = std::fs::remove_file(&socket_path_for_signal);
+
+            // Remove HTTP port lockfile so stale readers don't point at a
+            // dead process. Harmless if the file was never written (e.g.
+            // server started without --http-port).
+            let _ = std::fs::remove_file(&http_lockfile_for_signal);
 
             // Federation: remove shard registration
             if let Some(ref reg_path) = shard_reg_for_signal {
@@ -3453,7 +3465,31 @@ async fn main() {
             ),
             Err(e) => eprintln!("[rfdb-server] warmup task failed: {} (HTTP will still start)", e),
         }
-        tokio::spawn(rfdb::http_server::start(http_state, port));
+        // Bind synchronously so we can read back the actual port (handles
+        // --http-port 0 → OS-assigned). Write the lockfile + emit the
+        // canonical "HTTP listening on port N" stderr line BEFORE starting
+        // to serve so clients polling the lockfile see the port immediately.
+        match rfdb::http_server::bind(http_state, port).await {
+            Ok((actual_port, serve)) => {
+                eprintln!("[rfdb-server] HTTP listening on port {}", actual_port);
+                if let Some(parent) = http_lockfile_path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                if let Err(e) = std::fs::write(&http_lockfile_path, actual_port.to_string()) {
+                    eprintln!(
+                        "[rfdb-server] WARN: failed to write HTTP port lockfile {}: {}",
+                        http_lockfile_path.display(),
+                        e
+                    );
+                }
+                tokio::spawn(serve);
+            }
+            Err(e) => {
+                eprintln!("[rfdb-server] ERROR: Failed to bind HTTP port {}: {}", port, e);
+                eprintln!("[rfdb-server] Hint: Port may be in use. Try --http-port 0 for OS-assigned.");
+                std::process::exit(1);
+            }
+        }
     }
 
     // Spawn WebSocket accept loop (if enabled)

@@ -448,7 +448,12 @@
           "default": 3335,
           "minimum": 0,
           "maximum": 65535,
-          "description": "HTTP port for rfdb-server's /ui and /api endpoints. Used by the Map panel to iframe the graph visualization."
+          "description": "HTTP port for rfdb-server's /ui and /api endpoints. Used by the Map panel to iframe the graph visualization. Leave at the default to let Grafema pick a free port dynamically (recommended)."
+        },
+        "grafema.databaseName": {
+          "type": "string",
+          "default": "default",
+          "description": "RFDB database name to visualize in the Map panel. Leave as \"default\" unless you have a multi-database setup."
         },
         "grafema.codeLens.enabled": {
           "type": "boolean",
