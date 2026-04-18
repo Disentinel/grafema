@@ -179,19 +179,21 @@ pub fn build_router_with_ui(state: HttpState, ui: UiConfig) -> Router {
         }
         UiConfig::Embedded => api
             .route(
+                "/ui",
+                get(|| async { crate::static_ui::serve_spa_root() }),
+            )
+            .route(
                 "/ui/",
                 get(|| async { crate::static_ui::serve_spa_root() }),
             )
             .route(
-                "/ui/{db}",
-                get(|_path: axum::extract::Path<String>| async {
-                    crate::static_ui::serve_spa_root()
-                }),
-            )
-            .route(
-                "/ui/{db}/{*path}",
+                "/ui/{*path}",
                 get(
-                    |axum::extract::Path((_db, path)): axum::extract::Path<(String, String)>| async move {
+                    |axum::extract::Path(path): axum::extract::Path<String>| async move {
+                        // Single wildcard: pass the whole tail to serve_asset.
+                        // - /ui/assets/web-<hash>.js  -> asset lookup hits (hashed JS/CSS)
+                        // - /ui/{db}                  -> asset miss -> SPA fallback
+                        // - /ui/{db}/subpage          -> asset miss -> SPA fallback
                         crate::static_ui::serve_asset(&path)
                     },
                 ),

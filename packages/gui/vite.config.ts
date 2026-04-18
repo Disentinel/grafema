@@ -4,6 +4,9 @@ import { resolve } from 'path';
 
 export default defineConfig({
   plugins: [react()],
+  // Relative base: HTML references `./assets/...` so the SPA works whether
+  // it is served at `/`, `/ui/`, or `/ui/{db}/` (rfdb-server route layer).
+  base: './',
   resolve: {
     alias: {
       '@': resolve(__dirname, 'src'),
