@@ -84,6 +84,13 @@ export class SceneManager {
    *  copy so caller mutations don't retroactively change "is this a
    *  no-op?" checks. */
   private _mode: SceneMode | null = null;
+  /**
+   * Half-height of the orthographic frustum currently applied, or 0 when
+   * the active camera is perspective. Lets `onResize` preserve the
+   * actual fitted extent (may differ from `SceneMode.frustumSize` when
+   * the value was derived from the prior perspective distance).
+   */
+  private _orthoHalfExtent = 0;
   private _composer: EffectComposer | null;
   private _bloom: UnrealBloomPass | null;
   private _bloomEnabled = true;
@@ -228,11 +235,42 @@ export class SceneManager {
       const nextCamera = this._buildCameraForMode(mode, aspect);
       // Copy position from the outgoing camera so the view doesn't jump.
       nextCamera.position.copy(this.camera.position);
-      // Ortho-specific: top-down requires a positive Y. If we're swapping
-      // into ortho and the prior camera's Y was <= 0 (shouldn't happen in
-      // practice but guard it), hoist it up.
-      if (nextCamera instanceof THREE.OrthographicCamera && nextCamera.position.y <= 0) {
+      // Ortho-specific: to get a true top-down view, the camera must sit
+      // directly above the controls target. Copying the perspective
+      // position verbatim leaves the ortho camera oblique (looking down
+      // at 45°) and orthographic projection at that angle collapses the
+      // layout into a thin band — what shipped in REG-1100 looked like
+      // "tiles near-invisible" but was really tiles squeezed to a line.
+      // Snap X/Z to the target and push Y up to ORTHO_Y so the camera
+      // looks straight down at the ground plane. (DAI-21)
+      if (nextCamera instanceof THREE.OrthographicCamera) {
+        // Fit the ortho frustum so tiles appear the same apparent size
+        // as they did in perspective. At fov=60° the visible half-height
+        // at distance D is `D * tan(30°) ≈ D * 0.577`. DEFAULT_2D_MODE's
+        // `frustumSize: 200` is a placeholder that only makes sense for
+        // a perspective view with distance ~346 — for real layouts the
+        // actual prior distance is what we need. Derive halfHeight from
+        // it directly (overriding DEFAULT_2D_MODE.frustumSize) so 3D → 2D
+        // preserves apparent tile size on every scene. The computed
+        // value is persisted back into `mode.frustumSize` below so
+        // `onResize` has a correct half-extent to preserve.
+        let halfHeight = mode.frustumSize;
+        if (this.camera instanceof THREE.PerspectiveCamera) {
+          const dist = this.camera.position.distanceTo(this.controls.target);
+          if (dist > 0) halfHeight = dist * 0.577;
+        }
+        this._applyOrthoFrustum(nextCamera, halfHeight, aspect);
+        nextCamera.position.x = this.controls.target.x;
+        nextCamera.position.z = this.controls.target.z;
         nextCamera.position.y = ORTHO_Y;
+        // Stash the actually-applied half-extent so `onResize` preserves
+        // it across container size changes. The declared
+        // `DEFAULT_2D_MODE.frustumSize` (a placeholder 200) is not
+        // authoritative once we derive halfHeight from the prior
+        // perspective distance.
+        this._orthoHalfExtent = halfHeight;
+      } else {
+        this._orthoHalfExtent = 0;
       }
       // Dispose old controls and rebuild against the new camera. OrbitControls
       // caches the camera reference internally, so we can't just swap it.
@@ -269,6 +307,17 @@ export class SceneManager {
       this.scene.fog = new THREE.Fog(mode.background, 200, 4000);
     } else {
       this.scene.fog = null;
+    }
+
+    // --- Bloom on 3D only --------------------------------------------
+    // Bloom was tuned for the dark 3D background where a magenta tile
+    // against near-black produces a crisp glow. Against the 2D white
+    // background the same pass desaturates tiles to a pale wash (it
+    // effectively adds a bright halo into every light-ish area). Turn
+    // it off in 2D so tile colors stay readable.
+    if (this._bloom) {
+      const wantBloom = mode.kind === '3d' && this._bloomEnabled;
+      this._bloom.enabled = wantBloom;
     }
 
     // --- OrbitControls constraints per mode --------------------------
@@ -385,7 +434,11 @@ export class SceneManager {
    */
   onResize(w: number, h: number): void {
     if (this.camera instanceof THREE.OrthographicCamera) {
-      const frustumSize = this._mode?.frustumSize ?? (this.camera.top - this.camera.bottom) / 2;
+      // Prefer the actually-applied half-extent (see setMode). Fall back
+      // to the declared mode value, then the current frustum half-height.
+      const frustumSize = this._orthoHalfExtent > 0
+        ? this._orthoHalfExtent
+        : this._mode?.frustumSize ?? (this.camera.top - this.camera.bottom) / 2;
       this._applyOrthoFrustum(this.camera, frustumSize, w / h);
     } else {
       this.camera.aspect = w / h;

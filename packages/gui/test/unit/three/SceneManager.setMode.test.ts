@@ -304,20 +304,26 @@ describe('SceneManager.setMode — idempotency', () => {
 // ---------------------------------------------------------------------------
 
 describe('SceneManager.setMode — camera swap', () => {
-  it('3D → 2D creates a fresh OrthographicCamera and copies position', () => {
+  it('3D → 2D creates a fresh OrthographicCamera snapped above controls target', () => {
     const sm = makeSceneManager();
     sm.setMode(DEFAULT_3D_MODE);
 
-    // Give the perspective camera a known position so we can check the copy.
+    // Point the scene at a non-trivial target. A 2D swap must produce
+    // a top-down camera above THAT target — carrying over an oblique
+    // perspective position would collapse the ortho view into a thin
+    // band on the ground plane (DAI-21).
     sm.camera.position.set(42, 100, 77);
+    sm.controls.target.set(5, 0, 9);
     const perspCam = sm.camera;
 
     sm.setMode(DEFAULT_2D_MODE);
     assert.ok(sm.camera instanceof THREE.OrthographicCamera);
     assert.notStrictEqual(sm.camera, perspCam, 'camera instance must change on projection swap');
-    // Position carried over (ortho is still a THREE.Camera, has position)
-    assert.equal(sm.camera.position.x, 42);
-    assert.equal(sm.camera.position.z, 77);
+    assert.ok(Math.abs(sm.camera.position.x - 5) < 0.001,
+      `ortho camera.x must align with controls.target.x, got ${sm.camera.position.x}`);
+    assert.ok(Math.abs(sm.camera.position.z - 9) < 0.001,
+      `ortho camera.z must align with controls.target.z, got ${sm.camera.position.z}`);
+    assert.ok(sm.camera.position.y > 0, 'ortho camera.y must be positive (above ground plane)');
     sm.dispose();
   });
 
