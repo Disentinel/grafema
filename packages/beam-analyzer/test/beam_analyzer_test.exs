@@ -262,6 +262,27 @@ defmodule BeamAnalyzerTest do
     end
   end
 
+  describe "unicode source handling" do
+    test "analyzes a file containing kanji and emoji without crashing" do
+      source = File.read!(Path.join(__DIR__, "fixtures/unicode.ex"))
+      result = BeamAnalyzer.analyze("test/fixtures/unicode.ex", source)
+
+      module_names =
+        result.nodes
+        |> Enum.filter(&(&1.type == "MODULE"))
+        |> Enum.map(& &1.name)
+
+      assert "Ichi.Mamori" in module_names
+      # Successful analysis has no `:errors` key; its presence signals a parse
+      # failure (see BeamAnalyzer.analyze/2 error branch).
+      refute Map.has_key?(result, :errors)
+
+      # Round-trip through Jason — reproduces the stdio encoding path that
+      # used to raise {:no_translation, :unicode, :latin1} on some hosts.
+      assert {:ok, _encoded} = Jason.encode(result)
+    end
+  end
+
   describe "mixed protocol and behaviour in one file" do
     test "analyzes protocols.ex fixture" do
       source = File.read!(Path.join(__DIR__, "fixtures/protocols.ex"))
@@ -499,6 +520,45 @@ defmodule BeamAnalyzerTest do
       assert Patterns.normalize({{:., [], [{:foo, [], nil}, :bar]}, [], []}) == :unknown
     end
 
+    # --- describe_shape/1 ---
+
+    test "describe_shape: wildcard and unknown collapse to _" do
+      assert Patterns.describe_shape(:_) == "_"
+      assert Patterns.describe_shape(:unknown) == "_"
+    end
+
+    test "describe_shape: atom head uses atom text" do
+      assert Patterns.describe_shape({:atom, :tick}) == "tick"
+      assert Patterns.describe_shape({:atom, :post_commit_fire}) == "post_commit_fire"
+    end
+
+    test "describe_shape: tuple is slash-joined" do
+      shape =
+        {:tuple,
+         [{:atom, :reflect}, {:atom, :post_commit}, :_]}
+
+      assert Patterns.describe_shape(shape) == "reflect/post_commit/_"
+    end
+
+    test "describe_shape: map is map{sorted,keys}" do
+      shape = {:map, [{:type, {:atom, :done}}, {:source, {:atom, :queue}}]}
+      assert Patterns.describe_shape(shape) == "map{source,type}"
+    end
+
+    test "describe_shape: struct uses short module name" do
+      shape = {:struct, MyApp.Event, [{:kind, {:atom, :fire}}]}
+      assert Patterns.describe_shape(shape) == "%Event{kind}"
+    end
+
+    test "describe_shape: labels are capped at 64 chars" do
+      long_tuple =
+        {:tuple, Enum.map(1..50, &{:atom, :"segment_#{&1}"})}
+
+      label = Patterns.describe_shape(long_tuple)
+      assert byte_size(label) <= 64
+      assert String.ends_with?(label, "...")
+    end
+
     # --- unify?/2 ---
 
     test "unify: :_ against anything is true (both directions)" do
@@ -673,7 +733,9 @@ defmodule BeamAnalyzerTest do
         """)
 
       [msg] = msg_nodes(result)
-      assert msg.name == "call"
+      assert msg.name == "call:pay/_"
+      assert msg.metadata.handler_type == "call"
+      assert msg.metadata.shape_label == "pay/_"
       assert msg.metadata.catchall == false
 
       assert msg.metadata.pattern_shape ==
@@ -688,11 +750,16 @@ defmodule BeamAnalyzerTest do
           def handle_info(:stop, state), do: {:stop, :normal, state}
         """)
 
-      msgs = msg_nodes(result) |> Enum.filter(&(&1.name == "info"))
+      msgs = msg_nodes(result) |> Enum.filter(&(&1.metadata.handler_type == "info"))
       assert length(msgs) == 3
 
       ids = Enum.map(msgs, & &1.id) |> Enum.uniq()
       assert length(ids) == 3
+
+      names = Enum.map(msgs, & &1.name)
+      assert "info:tick" in names
+      assert "info:stop" in names
+      assert "info:data/_" in names
 
       shapes = Enum.map(msgs, & &1.metadata.pattern_shape)
       assert ["atom", "tick"] in shapes
@@ -738,7 +805,9 @@ defmodule BeamAnalyzerTest do
         """)
 
       [msg] = msg_nodes(result)
-      assert msg.name == "cast"
+      assert msg.name == "cast:enqueue/_"
+      assert msg.metadata.handler_type == "cast"
+      assert msg.metadata.shape_label == "enqueue/_"
       assert msg.metadata.catchall == false
 
       assert msg.metadata.pattern_shape ==
@@ -752,11 +821,46 @@ defmodule BeamAnalyzerTest do
           def handle_cast(:b, state), do: {:noreply, state}
         """)
 
-      msgs = msg_nodes(result) |> Enum.filter(&(&1.name == "cast"))
+      msgs = msg_nodes(result) |> Enum.filter(&(&1.metadata.handler_type == "cast"))
       assert length(msgs) == 2
       [m1, m2] = msgs
       assert m1.id != m2.id
       assert m1.line != m2.line
+      assert Enum.sort(Enum.map(msgs, & &1.name)) == ["cast:a", "cast:b"]
+    end
+
+    test "nested tuple clause produces slash-joined shape label" do
+      result =
+        w2_analyze("""
+          def handle_info({:reflect, :post_commit, _meta}, state), do: {:noreply, state}
+        """)
+
+      [msg] = msg_nodes(result)
+      assert msg.name == "info:reflect/post_commit/_"
+      assert msg.metadata.shape_label == "reflect/post_commit/_"
+    end
+
+    test "map-pattern clause produces sorted key-list label" do
+      result =
+        w2_analyze("""
+          def handle_info({:event, %{type: :done, source: :queue}}, state),
+            do: {:noreply, state}
+        """)
+
+      [msg] = msg_nodes(result)
+      assert msg.name == "info:event/map{source,type}"
+    end
+
+    test "wildcard catchall gets _ label, not generic kind" do
+      result =
+        w2_analyze("""
+          def handle_info(_, state), do: {:noreply, state}
+        """)
+
+      [msg] = msg_nodes(result)
+      assert msg.name == "info:_"
+      assert msg.metadata.shape_label == "_"
+      assert msg.metadata.catchall == true
     end
 
     test "HANDLES_IN and RECEIVES edges created for every clause" do
@@ -1522,7 +1626,7 @@ defmodule BeamAnalyzerTest do
 
       msgs =
         w8_msgs(result)
-        |> Enum.filter(&(&1.name == "info"))
+        |> Enum.filter(&(&1.metadata.handler_type == "info"))
         |> Enum.sort_by(& &1.line)
 
       assert length(msgs) == 2
