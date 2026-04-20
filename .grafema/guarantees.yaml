@@ -461,6 +461,21 @@ guarantees:
     rule: 'violation(X) :- node(X, "ISSUE"), attr(X, "finding_kind", "unreachable_handler").'
     severity: warning
 
+  - name: beam-unreachable-handler-precise
+    description: >
+      A MESSAGE_TYPE clause has no incoming precise-reachability edge
+      (SENDS_MESSAGE, SELF_SCHEDULE, or PUBLISHES) and is not the
+      module's catch-all. After the shape-aware resolvers run, this
+      means no statically-resolvable caller can deliver to this clause —
+      it is either dead code, driven by dynamic PID / external Port
+      input, or reached through a call path that static analysis
+      doesn't yet model (e.g. `me = self(); send(me, _)` chains).
+      Distinct from `beam-unreachable-handler`, which piggy-backs on
+      the older ISSUE-node path from BeamMessageFindings.
+    check: datalog
+    rule: 'violation(M) :- node(M, "MESSAGE_TYPE"), attr(M, "catchall", "false"), \+ incoming(M, _, "SENDS_MESSAGE"), \+ incoming(M, _, "SELF_SCHEDULE"), \+ incoming(M, _, "PUBLISHES").'
+    severity: warning
+
   - name: beam-orphan-send
     description: >
       A SENDS_TO edge carries a message whose shape does not unify
