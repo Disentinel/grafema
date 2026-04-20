@@ -44,6 +44,10 @@ import Data.Map.Strict (Map)
 import Data.Maybe (fromMaybe, mapMaybe)
 
 import BeamShape (Shape, parseShape, unify)
+import BeamWrapperResolution
+  ( WrapperSite(..), WrapInfo(..), WrapKind(..)
+  , resolvedWrapperSites
+  )
 
 -- ---------------------------------------------------------------------
 -- Views
@@ -144,9 +148,60 @@ buildIndices nodes =
 
 resolveAll :: [GraphNode] -> [PluginCommand]
 resolveAll nodes =
-  let (subsByTopic, handlersByFile) = buildIndices nodes
-      broadcasts = mapMaybe toBroadcast nodes
-  in concatMap (emitFor subsByTopic handlersByFile) broadcasts
+  let (directSubsByTopic, handlersByFile) = buildIndices nodes
+      wrapperSites   = resolvedWrapperSites nodes
+
+      -- Subscribers include direct Phoenix.PubSub.subscribe CALLs AND
+      -- anyone calling a sub-kind wrapper def (e.g. `EventBus.subscribe`).
+      -- The wrapper itself doesn't carry a pubsub server — fold it in
+      -- under the sentinel "<wrapper>" server so wrapper-origin
+      -- broadcasts can match wrapper-origin subscribes without knowing
+      -- the real PubSub process. Direct broadcasts also check this
+      -- sentinel so wrapper-subscribed files receive them.
+      wrapperSubsByTopic = foldr addWrapperSub Map.empty wrapperSites
+      subsByTopic = Map.unionWith (++) directSubsByTopic wrapperSubsByTopic
+
+      directBroadcasts  = mapMaybe toBroadcast nodes
+      wrapperBroadcasts = mapMaybe wrapperBroadcastSite wrapperSites
+
+  in concatMap (emitFor subsByTopic handlersByFile)
+               (directBroadcasts ++ wrapperBroadcasts)
+
+-- | Fold a sub-kind wrapper call into the subscribers-by-topic index.
+addWrapperSub :: WrapperSite -> SubscribersByTopic -> SubscribersByTopic
+addWrapperSub ws acc = case wiKind (wsWrapInfo ws) of
+  WKSub -> case wiTopic (wsWrapInfo ws) of
+    Just topic ->
+      let key = (wrapperServerSentinel, topic)
+      in Map.insertWith (++) key [gnFile (wsCall ws)] acc
+    Nothing -> acc
+  _ -> acc
+
+-- | Turn a broadcast-kind wrapper call into a BroadcastSite. The topic
+-- comes from the wrapper FUNCTION's `wraps.topic` field; the shape
+-- from `wraps.message_shape`. Without a known shape we can't unify —
+-- skip.
+wrapperBroadcastSite :: WrapperSite -> Maybe BroadcastSite
+wrapperBroadcastSite ws = case wiKind (wsWrapInfo ws) of
+  WKBroadcast -> do
+    topic <- wiTopic (wsWrapInfo ws)
+    shape <- wiMessageShape (wsWrapInfo ws)
+    pure BroadcastSite
+      { bsCallId = gnId (wsCall ws)
+      , bsServer = wrapperServerSentinel
+      , bsTopic  = topic
+      , bsShape  = parseShape shape
+      }
+  _ -> Nothing
+
+-- | Sentinel server name for wrapper-mediated pubsub. Real Phoenix.PubSub
+-- calls that go through an `EventBus.subscribe/broadcast` helper don't
+-- record which PubSub server they target (W5 limitation), so we bucket
+-- all wrapper-origin pubsub under this name. Direct broadcasts that
+-- want to reach wrapper-subscribers use the same sentinel as a fallback
+-- (see 'emitFor').
+wrapperServerSentinel :: Text
+wrapperServerSentinel = "<wrapper>"
 
 emitFor
   :: SubscribersByTopic
@@ -155,7 +210,22 @@ emitFor
   -> [PluginCommand]
 emitFor subsByTopic handlersByFile bs =
   let subscriberFiles =
-        fromMaybe [] (Map.lookup (bsServer bs, bsTopic bs) subsByTopic)
+        if bsServer bs == wrapperServerSentinel
+          -- Wrapper-mediated broadcast. W5 doesn't record which PubSub
+          -- server the wrapper targets, so the resolver can't match on
+          -- server — any direct-sub with the same topic is a candidate.
+          then
+            [ f
+            | ((_srv, t), files) <- Map.toList subsByTopic
+            , t == bsTopic bs
+            , f <- files
+            ]
+          else
+            -- Direct broadcast with a known server. Match exact
+            -- (server, topic), plus fall back to the @<wrapper>@
+            -- bucket so wrapper-subscribed files are reachable too.
+            fromMaybe [] (Map.lookup (bsServer bs, bsTopic bs) subsByTopic)
+              ++ fromMaybe [] (Map.lookup (wrapperServerSentinel, bsTopic bs) subsByTopic)
       candidateHandlers = concatMap (lookupDefault handlersByFile) subscriberFiles
       matches = filter (handlerUnifies (bsShape bs)) candidateHandlers
   in map (mkPublishes bs) matches

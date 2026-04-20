@@ -1029,6 +1029,54 @@ main = hspec $ do
           cmds = BeamMessageTypeResolution.resolveAll nodes
       cmds `shouldBe` []
 
+    it "wrapper-integration: call/cast wrapper reaches matching handler via module_self" $ do
+      -- def upsert(server \\ __MODULE__, id, record), do: GenServer.call(server, {:upsert, id, record})
+      -- analyzer refines target to :module_self; resolver should pick up
+      -- the caller site and emit SENDS_MESSAGE to the matching handle_call.
+      let wrapperFn = (mkNode "fn:upsert" "FUNCTION" "upsert/3" "lib/aruji.ex")
+            { gnMetadata = Map.fromList
+                [ ("wraps", MetaMap (Map.fromList
+                    [ ("kind",   MetaText "call")
+                    , ("target", MetaText "module_self")
+                    , ("message_shape",
+                        tupleShape [atomShape "upsert", wildShape, wildShape])
+                    ]))
+                , ("semanticId",
+                    MetaText "lib/aruji.ex->FUNCTION->upsert/3[in:Ichi.ArujiModel]")
+                ]
+            }
+          handler = mkMsgType "mt:upsert" "call" "lib/aruji.ex"
+            (tupleShape [atomShape "upsert", wildShape, wildShape])
+          process = mkProcess "p:aruji" "Ichi.ArujiModel" "lib/aruji.ex"
+          wrapperCaller = (mkNode "c:callsite" "CALL" "Ichi.ArujiModel.upsert" "lib/caller.ex")
+            { gnMetadata = Map.fromList [("arity", MetaInt 2)] }
+          nodes = [process, handler, wrapperFn, wrapperCaller]
+          cmds = BeamMessageTypeResolution.resolveAll nodes
+      edgeTypes cmds `shouldBe` ["SENDS_MESSAGE"]
+      edgeTargets cmds `shouldBe` ["mt:upsert"]
+
+    it "wrapper-integration: literal target_hint is stripped of Elixir. prefix" $ do
+      let wrapperFn = (mkNode "fn:foo" "FUNCTION" "do_it/1" "lib/wrap.ex")
+            { gnMetadata = Map.fromList
+                [ ("wraps", MetaMap (Map.fromList
+                    [ ("kind",   MetaText "cast")
+                    , ("target", MetaText "literal")
+                    , ("target_hint", MetaText "Elixir.Ichi.Other")
+                    , ("message_shape", atomShape "go")
+                    ]))
+                , ("semanticId",
+                    MetaText "lib/wrap.ex->FUNCTION->do_it/1[in:Ichi.Wrap]")
+                ]
+            }
+          handler = mkMsgType "mt:go" "cast" "lib/other.ex" (atomShape "go")
+          process = mkProcess "p:other" "Ichi.Other" "lib/other.ex"
+          wrapperCaller = (mkNode "c:site" "CALL" "Ichi.Wrap.do_it" "lib/caller.ex")
+            { gnMetadata = Map.fromList [("arity", MetaInt 1)] }
+          nodes = [process, handler, wrapperFn, wrapperCaller]
+          cmds = BeamMessageTypeResolution.resolveAll nodes
+      -- Even with `Elixir.` prefix on the hint the process lookup succeeds.
+      edgeTargets cmds `shouldBe` ["mt:go"]
+
     it "cross-process Process.send_after stays SENDS_MESSAGE (not SELF_SCHEDULE)" $ do
       let nodes =
             [ mkProcess "p:1" "Other" "lib/other.ex"
@@ -1140,6 +1188,68 @@ main = hspec $ do
                 (atomShape "ping")
             ]
       publishesEdges (BeamPubsubDelivery.resolveAll nodes) `shouldBe` []
+
+    it "wrapper-integration: direct broadcast reaches wrapper-sub subscribers" $ do
+      -- Subscriber file `lib/sub.ex` calls a wrapper `EventBus.subscribe()`.
+      -- The wrapper FUNCTION in `lib/event_bus.ex` is WKSub with topic=events.
+      -- A DIRECT Phoenix.PubSub.broadcast to the same topic (but with a
+      -- real pubsub server) must reach the subscriber's handle_info
+      -- via the <wrapper> sentinel fallback in emitFor.
+      let wrapperFn = (mkNode "fn:sub" "FUNCTION" "subscribe/0" "lib/event_bus.ex")
+            { gnMetadata = Map.fromList
+                [ ("wraps", MetaMap (Map.fromList
+                    [ ("kind",  MetaText "sub")
+                    , ("topic", MetaText "events")
+                    , ("target", MetaText "literal")
+                    , ("target_hint", MetaText "Ichi.PubSub")
+                    ]))
+                , ("semanticId", MetaText "lib/event_bus.ex->FUNCTION->subscribe/0[in:Ichi.EventBus]")
+                ]
+            }
+          -- CALL in lib/sub.ex that resolves to the wrapper FUNCTION by name.
+          subModule = (mkNode "m:sub" "MODULE" "Ichi.Sub" "lib/sub.ex")
+          wrapperCaller = (mkNode "c:call" "CALL" "Ichi.EventBus.subscribe" "lib/sub.ex")
+            { gnMetadata = Map.fromList [("arity", MetaInt 0)] }
+          nodes =
+            [ subModule
+            , wrapperFn
+            , wrapperCaller
+            , mkInfoHandler "mt:1" "lib/sub.ex" (atomShape "foo")
+            , mkBroadcast "bc:1" "lib/pub.ex" "events" "Ichi.PubSub"
+                (atomShape "foo")
+            ]
+          cmds = publishesEdges (BeamPubsubDelivery.resolveAll nodes)
+      -- The direct broadcast reaches the subscriber via the <wrapper>
+      -- bucket that the subscribe-wrapper caller populated.
+      map geSource cmds `shouldBe` ["bc:1"]
+      map geTarget cmds `shouldBe` ["mt:1"]
+
+    it "wrapper-integration: broadcast wrapper reaches direct subscribers on same topic" $ do
+      let wrapperFn = (mkNode "fn:bc" "FUNCTION" "emit/1" "lib/event_bus.ex")
+            { gnMetadata = Map.fromList
+                [ ("wraps", MetaMap (Map.fromList
+                    [ ("kind",  MetaText "broadcast")
+                    , ("topic", MetaText "events")
+                    , ("target", MetaText "literal")
+                    , ("target_hint", MetaText "Ichi.PubSub")
+                    , ("message_shape", atomShape "ding")
+                    ]))
+                , ("semanticId", MetaText "lib/event_bus.ex->FUNCTION->emit/1[in:Ichi.EventBus]")
+                ]
+            }
+          wrapperCaller = (mkNode "c:bc" "CALL" "Ichi.EventBus.emit" "lib/pub.ex")
+            { gnMetadata = Map.fromList [("arity", MetaInt 1)] }
+          nodes =
+            [ mkNode "m:bus" "MODULE" "Ichi.EventBus" "lib/event_bus.ex"
+            , mkNode "m:pub" "MODULE" "Ichi.Pub"      "lib/pub.ex"
+            , wrapperFn
+            , wrapperCaller
+            , mkSubscribe "sub:1" "lib/sub.ex" "events" "Ichi.PubSub"
+            , mkInfoHandler "mt:1" "lib/sub.ex" (atomShape "ding")
+            ]
+          cmds = publishesEdges (BeamPubsubDelivery.resolveAll nodes)
+      map geSource cmds `shouldBe` ["c:bc"]
+      map geTarget cmds `shouldBe` ["mt:1"]
 
     it "carries topic + server provenance on the edge metadata" $ do
       let nodes =

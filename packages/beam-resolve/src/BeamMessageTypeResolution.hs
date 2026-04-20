@@ -38,11 +38,17 @@ import Grafema.GraphTraversal (lookupMetaText, lookupMetaBool)
 import Grafema.Protocol (PluginCommand(..), readNodesFromStdin, writeCommandsToStdout)
 
 import Data.Text (Text)
+import qualified Data.Text as T
 import qualified Data.Map.Strict as Map
 import Data.Map.Strict (Map)
 import Data.Maybe (fromMaybe, mapMaybe)
 
 import BeamShape (Shape, parseShape, unify)
+import BeamWrapperResolution
+  ( WrapperSite(..), WrapInfo(..), WrapKind(..), WrapTarget(..)
+  , resolvedWrapperSites, extractModuleFromId
+  )
+import Grafema.Types (gnSemanticId)
 
 -- ---------------------------------------------------------------------
 -- Indices
@@ -165,12 +171,68 @@ emitEdges ss matches =
 resolveAll :: [GraphNode] -> [PluginCommand]
 resolveAll nodes =
   let (msgByFile, procByName) = buildIndices nodes
-      sendSites               = mapMaybe toSendSite nodes
+      wrapperSites   = resolvedWrapperSites nodes
+
+      -- Direct send-sites come from analyzer-enriched CALL metadata.
+      -- Wrapper-call sites come from resolving CALLs that target
+      -- call/cast/send/send_after wrapper defs; we synthesize a
+      -- SendSite from the wrapper's @wraps@ metadata so downstream
+      -- shape-unify logic is the same as for direct sends.
+      sendSites =
+        mapMaybe toSendSite nodes
+          ++ mapMaybe wrapperToSendSite wrapperSites
+
       emit ss =
         case matchingHandlers ss (candidateMessageTypes msgByFile procByName ss) of
           []      -> []
           matches -> emitEdges ss matches
   in concatMap emit sendSites
+
+-- | Translate a send/call/cast/send_after wrapper-call into the same
+-- SendSite shape the direct path uses. target_hint is derived from
+-- the wrapper's @wraps.target@ field plus the wrapper FUNCTION's own
+-- module when the wrapper is @module_self@ (because the wrapper's
+-- body executes with __MODULE__ bound to the wrapper's module, not
+-- the caller's).
+wrapperToSendSite :: WrapperSite -> Maybe SendSite
+wrapperToSendSite ws = do
+  let wi = wsWrapInfo ws
+  (via, base) <- senderKind (wiKind wi)
+  shape <- wiMessageShape wi
+  let callNode = wsCall ws
+      wrapperNode = wsWrapper ws
+      hint = case wiTarget wi of
+        WTModuleSelf -> extractModuleFromId (gnSemanticId wrapperNode)
+        WTLiteral t  -> Just (stripElixirPrefixT t)
+        WTVar        -> Nothing
+      isSelf = case wiTarget wi of
+        WTModuleSelf -> gnFile callNode == gnFile wrapperNode
+        _            -> False
+  pure SendSite
+    { ssCallId       = gnId callNode
+    , ssSenderVia    = via
+    , ssSenderBase   = base
+    , ssShape        = parseShape shape
+    , ssTargetIsSelf = isSelf
+    , ssTargetHint   = hint
+    , ssCallFile     = gnFile callNode
+    }
+
+senderKind :: WrapKind -> Maybe (Text, Text)
+senderKind k = case k of
+  WKCall      -> Just ("call",  "GenServer.call")
+  WKCast      -> Just ("cast",  "GenServer.cast")
+  WKSend      -> Just ("info",  "send")
+  WKSendAfter -> Just ("info",  "Process.send_after")
+  _           -> Nothing
+
+-- | Strip the @Elixir.@ prefix that qualified module aliases carry in
+-- W5's target_hint so we match PROCESS names which are bare module
+-- paths (e.g. @Ichi.ArujiModel@).
+stripElixirPrefixT :: Text -> Text
+stripElixirPrefixT t
+  | T.isPrefixOf "Elixir." t = T.drop 7 t
+  | otherwise                = t
 
 -- | CLI entry point.
 run :: IO ()
