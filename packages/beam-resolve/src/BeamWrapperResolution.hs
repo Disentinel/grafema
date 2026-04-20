@@ -31,7 +31,17 @@
 -- wrapper targets; the resolver picks the only matching topic name if
 -- unique, else the one colocated with the wrapper. This is a known
 -- gap (see README for the W5 follow-up).
-module BeamWrapperResolution (run, resolveAll, readWrapInfo, WrapInfo(..), WrapKind(..), WrapTarget(..)) where
+module BeamWrapperResolution
+  ( run, resolveAll
+  , readWrapInfo, WrapInfo(..), WrapKind(..), WrapTarget(..)
+  -- Exposed for downstream resolvers (BeamMessageTypeResolution,
+  -- BeamPubsubDelivery) that need to follow the same wrapper-call
+  -- resolution logic. Without these, each resolver would have to copy
+  -- the index-building here.
+  , WrapperSite(..)
+  , resolvedWrapperSites
+  , extractModuleFromId
+  ) where
 
 import Grafema.Types (GraphNode(..), GraphEdge(..), MetaValue(..), gnSemanticId)
 import Grafema.Protocol (PluginCommand(..), readNodesFromStdin, writeCommandsToStdout)
@@ -301,6 +311,41 @@ buildTopicIdx ns =
     topicFor n = case Map.lookup "topic" (gnMetadata n) of
       Just (MetaText t) -> Just t
       _ -> let nm = gnName n in if T.null nm then Nothing else Just nm
+
+-- ---------------------------------------------------------------------
+-- Shared resolver view
+-- ---------------------------------------------------------------------
+
+-- | A single wrapper-call resolution. Downstream resolvers consume
+-- this to treat wrapper callers like direct sends/broadcasts without
+-- duplicating the call-resolution index logic.
+data WrapperSite = WrapperSite
+  { wsCall     :: !GraphNode
+  , wsWrapper  :: !GraphNode
+  , wsWrapInfo :: !WrapInfo
+  }
+
+-- | Walk every CALL, keep only the ones that resolve to a FUNCTION
+-- annotated with a @wraps@ metadata object. Reuses the local + qualified
+-- indices from this module.
+resolvedWrapperSites :: [GraphNode] -> [WrapperSite]
+resolvedWrapperSites nodes =
+  let lIdx  = buildLocalIdx nodes
+      lBase = buildLocalBaseIdx nodes
+      (qIdx, qBase, sIdx) = buildQualIdx nodes
+      funcById = Map.fromList [ (gnId n, n) | n <- nodes, gnType n == "FUNCTION" ]
+      calls    = filter ((== "CALL") . gnType) nodes
+  in
+    [ WrapperSite
+        { wsCall     = callNode
+        , wsWrapper  = fnNode
+        , wsWrapInfo = wi
+        }
+    | callNode <- calls
+    , Just targetFnId <- [resolveCallTarget lIdx lBase qIdx qBase sIdx callNode]
+    , Just fnNode     <- [Map.lookup targetFnId funcById]
+    , Just wi         <- [readWrapInfo fnNode]
+    ]
 
 -- ---------------------------------------------------------------------
 -- Main resolution

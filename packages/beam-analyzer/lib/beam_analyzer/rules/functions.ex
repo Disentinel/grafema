@@ -88,7 +88,13 @@ defmodule BeamAnalyzer.Rules.Functions do
       if exported and not callback_name?(name) do
         case BeamAnalyzer.Rules.Wrappers.detect_wrapper(keyword_body) do
           {:ok, wrap_info} ->
-            Context.merge_node_metadata(ctx, func_id, %{wraps: wrap_info})
+            # W5 looks only at the body, so wrappers that take the
+            # target as a parameter with default `__MODULE__` land as
+            # target: :var even though in practice the caller always
+            # hits the default. Promote those to :module_self here,
+            # where we do have the function's params.
+            refined = refine_wrapper_target(wrap_info, args)
+            Context.merge_node_metadata(ctx, func_id, %{wraps: refined})
 
           :no_wrap ->
             ctx
@@ -152,6 +158,31 @@ defmodule BeamAnalyzer.Rules.Functions do
 
   defp callback_name?(name) when is_atom(name), do: name in @callback_names
   defp callback_name?(_), do: false
+
+  # Rewrite a wrapper's target from :var → :module_self when the first
+  # parameter's default value is `__MODULE__`. Matches the canonical
+  # `def upsert(server \\ __MODULE__, ...), do: GenServer.call(server, ...)`
+  # public-API pattern: the wrapper accepts a pid override but always
+  # falls back to the current module, so from a caller's perspective
+  # the call is module-self by default. Cross-file resolvers can then
+  # actually target this wrapper instead of dropping it as var-target.
+  defp refine_wrapper_target(wrap_info, args) when is_map(wrap_info) and is_list(args) do
+    cond do
+      Map.get(wrap_info, :target) != :var -> wrap_info
+      first_arg_default_module?(List.first(args)) ->
+        %{wrap_info | target: :module_self}
+
+      true ->
+        wrap_info
+    end
+  end
+
+  defp refine_wrapper_target(wrap_info, _), do: wrap_info
+
+  # Detects `name \\ __MODULE__` parameter shape:
+  #   {:\\, _, [{name, _, ctx}, {:__MODULE__, _, _}]}
+  defp first_arg_default_module?({:\\, _, [_param, {:__MODULE__, _, _}]}), do: true
+  defp first_arg_default_module?(_), do: false
 
   defp process_params(args, ctx) do
     Enum.reduce(args, ctx, fn

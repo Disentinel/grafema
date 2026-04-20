@@ -1494,6 +1494,50 @@ defmodule BeamAnalyzerTest do
       assert wraps_for(result, "subscribe/1") == nil
     end
 
+    test "first arg `server \\\\ __MODULE__` promotes target from :var to :module_self" do
+      # Canonical public-API shape: accept server override, default to __MODULE__.
+      # W5's single-expression detector only sees the body `GenServer.call(server, ...)`
+      # and marks target as :var — functions.ex must refine to :module_self using
+      # the function params.
+      result =
+        w5_analyze("""
+          def upsert(server \\\\ __MODULE__, id, record) do
+            GenServer.call(server, {:upsert, id, record})
+          end
+        """)
+
+      wraps = wraps_for(result, "upsert/3")
+      assert wraps.kind == :call
+      assert wraps.target == :module_self
+    end
+
+    test "var target stays :var when first arg has no __MODULE__ default" do
+      result =
+        w5_analyze("""
+          def forward(pid, msg) do
+            send(pid, msg)
+          end
+        """)
+
+      wraps = wraps_for(result, "forward/2")
+      assert wraps.kind == :send
+      assert wraps.target == :var
+    end
+
+    test "literal target is not overridden by default-arg refinement" do
+      result =
+        w5_analyze("""
+          def tick(msg) do
+            send(Ichi.Scheduler, msg)
+          end
+        """)
+
+      wraps = wraps_for(result, "tick/1")
+      assert wraps.kind == :send
+      assert wraps.target == :literal
+      assert wraps.target_hint == "Elixir.Ichi.Scheduler"
+    end
+
     test "full analysis with 3 wrappers is Jason-encodable" do
       result =
         w5_analyze("""
