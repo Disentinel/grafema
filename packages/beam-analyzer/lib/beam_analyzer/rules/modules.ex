@@ -243,7 +243,14 @@ defmodule BeamAnalyzer.Rules.Modules do
     process(ast, ctx)
   end
 
-  defp walk_statement(_ast, ctx), do: ctx
+  # Unknown top-level statement — most commonly a macro call like
+  # `post "/path" do ... end` from Plug.Router / Phoenix, or a custom
+  # DSL. Its body may contain real call sites (sends, handler dispatch,
+  # GenServer calls). Walk it as a generic expression so those aren't
+  # lost to the graph.
+  defp walk_statement(ast, ctx) do
+    BeamAnalyzer.Rules.Functions.walk_expression(ast, ctx)
+  end
 
   defp extract_module_name({:__aliases__, _, parts}) do
     parts |> Enum.map(&Atom.to_string/1) |> Enum.join(".")

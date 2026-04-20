@@ -1120,6 +1120,179 @@ defmodule BeamAnalyzerTest do
     end
   end
 
+  # ==================================================================
+  # try / rescue / catch / after body walking
+  # ==================================================================
+
+  describe "try-body walking" do
+    # Calls inside `try do ... rescue/catch/after/else ... end` must be
+    # indexed like any other expression. Before this pass, sends inside
+    # protected blocks were invisible — `send(Ichi.Naikan, {:reflect, :force})`
+    # in `ichi/dashboard.ex` produced no CALL/SENDS_TO nodes at all,
+    # silently turning Naikan's `handle_info({:reflect, :force}, _)`
+    # into a "dead" handler in the graph.
+    defp try_analyze(body_source) do
+      source = """
+      defmodule Try.Server do
+        def run do
+      #{body_source}
+        end
+      end
+      """
+
+      BeamAnalyzer.analyze("lib/try_server.ex", source)
+    end
+
+    defp try_call_names(result),
+      do: result.nodes |> Enum.filter(&(&1.type == "CALL")) |> Enum.map(& &1.name)
+
+    test "send inside try-do body is indexed" do
+      result =
+        try_analyze("""
+          try do
+            send(Ichi.Naikan, {:reflect, :force})
+          rescue
+            _ -> :ok
+          end
+        """)
+
+      assert "send" in try_call_names(result)
+    end
+
+    test "call inside rescue clause is indexed" do
+      result =
+        try_analyze("""
+          try do
+            :ok
+          rescue
+            _ -> Logger.error("boom")
+          end
+        """)
+
+      assert "Logger.error" in try_call_names(result)
+    end
+
+    test "call inside catch clause is indexed" do
+      result =
+        try_analyze("""
+          try do
+            :ok
+          catch
+            :exit, _ -> Logger.warning("exit caught")
+          end
+        """)
+
+      assert "Logger.warning" in try_call_names(result)
+    end
+
+    test "call inside after block is indexed" do
+      result =
+        try_analyze("""
+          try do
+            :ok
+          after
+            File.close(:fd)
+          end
+        """)
+
+      assert "File.close" in try_call_names(result)
+    end
+
+    test "call inside else clause is indexed" do
+      result =
+        try_analyze("""
+          try do
+            :ok
+          else
+            _ -> IO.puts("done")
+          end
+        """)
+
+      assert "IO.puts" in try_call_names(result)
+    end
+
+    test "all sections walked — do + rescue + after" do
+      result =
+        try_analyze("""
+          try do
+            do_work()
+          rescue
+            _ -> rescue_work()
+          after
+            after_work()
+          end
+        """)
+
+      names = try_call_names(result)
+      assert "do_work" in names
+      assert "rescue_work" in names
+      assert "after_work" in names
+    end
+
+    test "try emits a BRANCH node" do
+      result =
+        try_analyze("""
+          try do
+            :ok
+          rescue
+            _ -> :ok
+          end
+        """)
+
+      branches = Enum.filter(result.nodes, &(&1.type == "BRANCH"))
+      assert Enum.any?(branches, &(&1.name == "try"))
+    end
+
+    test "Plug.Router regression: send inside block-style macro do-end is walked" do
+      # Real shape from ichi/dashboard.ex: `post "/admin/reflect" do send(...) end`.
+      # AST: {:post, meta, ["/admin/reflect", [do: body]]}. The `[do: body]`
+      # is a keyword-list argument, not a `{:do, body}` tuple — walk_call_args
+      # must descend into it. Before the fix, every Plug.Router/Phoenix route
+      # body was invisible to the graph.
+      source = """
+      defmodule Routes do
+        post "/admin/reflect" do
+          send(Ichi.Naikan, {:reflect, :force})
+          :ok
+        end
+      end
+      """
+
+      result = BeamAnalyzer.analyze("lib/routes.ex", source)
+
+      call =
+        Enum.find(result.nodes, fn n -> n.type == "CALL" and n.name == "send" end)
+
+      assert call != nil
+      assert call.metadata.target_hint == "Ichi.Naikan"
+      assert call.metadata.message_shape ==
+               ["tuple", [["atom", "reflect"], ["atom", "force"]]]
+    end
+
+    test "dashboard.ex regression: send to external module lands as SENDS_TO" do
+      # Exact shape of ichi/dashboard.ex:723 — the false-negative that
+      # made Naikan's {:reflect, :force} handler look dead.
+      result = try_analyze("""
+        try do
+          send(Ichi.Naikan, {:reflect, :force})
+        rescue
+          _ -> :error
+        end
+      """)
+
+      call =
+        Enum.find(result.nodes, fn n -> n.type == "CALL" and n.name == "send" end)
+
+      assert call != nil
+      assert call.metadata.sender_via == "info"
+      assert call.metadata.target_hint == "Ichi.Naikan"
+      assert call.metadata.target_is_self == false
+
+      assert call.metadata.message_shape ==
+               ["tuple", [["atom", "reflect"], ["atom", "force"]]]
+    end
+  end
+
   describe "Wrapper detection (REG-1098 W5)" do
     defp w5_analyze(body_source) do
       source = """
