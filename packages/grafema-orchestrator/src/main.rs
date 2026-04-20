@@ -1510,6 +1510,10 @@ async fn main() -> Result<()> {
                                 // REG-1098 W6: resolve wrapper calls into virtual effect edges
                                 // (runs after beam-local-refs so CALLS edges exist for walking)
                                 ("beam-wrapper-resolve", &[]),
+                                // REG-1098 W6.5: upgrade coarse SENDS_TO→PROCESS into precise
+                                // SENDS_MESSAGE / SELF_SCHEDULE edges to MESSAGE_TYPE clauses
+                                // (needs wrapper-resolve first so virtual calls from wrappers are seen)
+                                ("beam-message-types", &[]),
                                 // REG-1098 W9: emit ISSUE nodes for MessageFlow findings
                                 // (runs last; reads the post-resolution node snapshot)
                                 ("beam-message-findings", &[]),
@@ -2370,6 +2374,8 @@ async fn main() -> Result<()> {
                                 ("beam-protocols", &[]),
                                 // REG-1098 W6: resolve wrapper calls into virtual effect edges
                                 ("beam-wrapper-resolve", &[]),
+                                // REG-1098 W6.5: precise CALL→MESSAGE_TYPE edges via shape unification
+                                ("beam-message-types", &[]),
                                 // REG-1098 W9: emit ISSUE nodes for MessageFlow findings
                                 ("beam-message-findings", &[]),
                             ],

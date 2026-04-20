@@ -14,6 +14,7 @@ import qualified BeamBehaviourResolution
 import qualified BeamProtocolResolution
 import qualified BeamWrapperResolution
 import qualified BeamMessageFindings
+import qualified BeamMessageTypeResolution
 import BeamShape
 
 -- | Helper to create a minimal GraphNode.
@@ -897,3 +898,142 @@ main = hspec $ do
       length edges  `shouldBe` 2
       all ((== "m:acct") . geSource) edges `shouldBe` True
       Set.fromList (map geTarget edges) `shouldBe` Set.fromList (map gnId issues)
+
+  describe "BeamMessageTypeResolution (SENDS_MESSAGE / SELF_SCHEDULE)" $ do
+    -- Test helpers —————————————————————————————————————————————————
+    let mkSendCall nid file via base isSelf mTargetHint mShape =
+          (mkNode nid "CALL" base file)
+            { gnMetadata = Map.fromList $
+                [ ("sender_via",     MetaText via)
+                , ("sender_base",    MetaText base)
+                , ("target_is_self", MetaBool isSelf)
+                , ("message_shape",  mShape)
+                ] ++ maybe [] (\h -> [("target_hint", MetaText h)]) mTargetHint
+            }
+
+        mkMsgType nid handler file clauseShape =
+          (mkNode nid "MESSAGE_TYPE" handler file)
+            { gnMetadata = Map.fromList
+                [ ("handler_type",  MetaText handler)
+                , ("pattern_shape", clauseShape)
+                ]
+            }
+
+        mkProcess nid moduleName file =
+          (mkNode nid "PROCESS" moduleName file)
+            { gnMetadata = Map.fromList [("starter", MetaText "GenServer.start_link")] }
+
+        atomShape a  = MetaList [MetaText "atom", MetaText a]
+        tupleShape xs = MetaList [MetaText "tuple", MetaList xs]
+        wildShape    = MetaList [MetaText "wildcard"]
+
+        edgeTypes cmds = [ geType e | EmitEdge e <- cmds ]
+        edgeTargets cmds = [ geTarget e | EmitEdge e <- cmds ]
+
+    it "emits SELF_SCHEDULE for Process.send_after(self(), atom, _)" $ do
+      let nodes =
+            [ mkProcess "p:1" "Naikan" "lib/naikan.ex"
+            , mkMsgType "mt:reflect" "info" "lib/naikan.ex" (atomShape "reflect")
+            , mkSendCall "c:1" "lib/naikan.ex" "info" "Process.send_after"
+                True Nothing (atomShape "reflect")
+            ]
+          cmds = BeamMessageTypeResolution.resolveAll nodes
+      edgeTypes cmds `shouldBe` ["SELF_SCHEDULE"]
+      edgeTargets cmds `shouldBe` ["mt:reflect"]
+
+    it "emits SENDS_MESSAGE for GenServer.call targeting self" $ do
+      let nodes =
+            [ mkProcess "p:1" "KV" "lib/kv.ex"
+            , mkMsgType "mt:get" "call" "lib/kv.ex"
+                (tupleShape [atomShape "get", wildShape])
+            , mkSendCall "c:1" "lib/kv.ex" "call" "GenServer.call"
+                True Nothing (tupleShape [atomShape "get", wildShape])
+            ]
+          cmds = BeamMessageTypeResolution.resolveAll nodes
+      edgeTypes cmds `shouldBe` ["SENDS_MESSAGE"]
+      edgeTargets cmds `shouldBe` ["mt:get"]
+
+    it "resolves cross-file target via target_hint" $ do
+      let nodes =
+            -- target process lives in a different file
+            [ mkProcess "p:1" "KV.Server" "lib/kv_server.ex"
+            , mkMsgType "mt:put" "cast" "lib/kv_server.ex"
+                (tupleShape [atomShape "put", wildShape])
+            -- send-site lives in caller.ex and points at KV.Server
+            , mkSendCall "c:1" "lib/caller.ex" "cast" "GenServer.cast"
+                False (Just "KV.Server") (tupleShape [atomShape "put", wildShape])
+            ]
+          cmds = BeamMessageTypeResolution.resolveAll nodes
+      edgeTypes cmds `shouldBe` ["SENDS_MESSAGE"]
+      edgeTargets cmds `shouldBe` ["mt:put"]
+
+    it "filters candidates by handler_type (cast send does not hit a call handler)" $ do
+      let nodes =
+            [ mkProcess "p:1" "KV" "lib/kv.ex"
+            , mkMsgType "mt:call" "call" "lib/kv.ex" (atomShape "ping")
+            , mkSendCall "c:1" "lib/kv.ex" "cast" "GenServer.cast"
+                True Nothing (atomShape "ping")
+            ]
+          cmds = BeamMessageTypeResolution.resolveAll nodes
+      cmds `shouldBe` []
+
+    it "filters candidates by shape unification" $ do
+      let nodes =
+            [ mkProcess "p:1" "KV" "lib/kv.ex"
+            , mkMsgType "mt:tick"  "info" "lib/kv.ex" (atomShape "tick")
+            , mkMsgType "mt:other" "info" "lib/kv.ex" (atomShape "other")
+            , mkSendCall "c:1" "lib/kv.ex" "info" "send"
+                True Nothing (atomShape "tick")
+            ]
+          cmds = BeamMessageTypeResolution.resolveAll nodes
+      edgeTargets cmds `shouldBe` ["mt:tick"]
+
+    it "emits one edge per matching clause when multiple handlers unify" $ do
+      let nodes =
+            [ mkProcess "p:1" "KV" "lib/kv.ex"
+            -- Two handle_info clauses: one specific atom, one wildcard — both match :tick
+            , mkMsgType "mt:tick" "info" "lib/kv.ex" (atomShape "tick")
+            , mkMsgType "mt:_"    "info" "lib/kv.ex" wildShape
+            , mkSendCall "c:1" "lib/kv.ex" "info" "send"
+                True Nothing (atomShape "tick")
+            ]
+          cmds = BeamMessageTypeResolution.resolveAll nodes
+      Set.fromList (edgeTargets cmds) `shouldBe` Set.fromList ["mt:tick", "mt:_"]
+
+    it "emits nothing when target is dynamic (no hint, not self)" $ do
+      let nodes =
+            [ mkProcess "p:1" "KV" "lib/kv.ex"
+            , mkMsgType "mt:tick" "info" "lib/kv.ex" (atomShape "tick")
+            , mkSendCall "c:1" "lib/caller.ex" "info" "send"
+                False Nothing (atomShape "tick")
+            ]
+          cmds = BeamMessageTypeResolution.resolveAll nodes
+      cmds `shouldBe` []
+
+    it "emits nothing when the CALL has no message_shape metadata" $ do
+      -- e.g. `send(pid, some_var)` — analyzer records sender_via but no shape.
+      -- mkSendCall requires a shape, so build the node manually:
+      let rawCall = (mkNode "c:1" "CALL" "send" "lib/kv.ex")
+            { gnMetadata = Map.fromList
+                [ ("sender_via",     MetaText "info")
+                , ("sender_base",    MetaText "send")
+                , ("target_is_self", MetaBool True)
+                ]
+            }
+          nodes =
+            [ mkProcess "p:1" "KV" "lib/kv.ex"
+            , mkMsgType "mt:tick" "info" "lib/kv.ex" (atomShape "tick")
+            , rawCall
+            ]
+          cmds = BeamMessageTypeResolution.resolveAll nodes
+      cmds `shouldBe` []
+
+    it "cross-process Process.send_after stays SENDS_MESSAGE (not SELF_SCHEDULE)" $ do
+      let nodes =
+            [ mkProcess "p:1" "Other" "lib/other.ex"
+            , mkMsgType "mt:tick" "info" "lib/other.ex" (atomShape "tick")
+            , mkSendCall "c:1" "lib/caller.ex" "info" "Process.send_after"
+                False (Just "Other") (atomShape "tick")
+            ]
+          cmds = BeamMessageTypeResolution.resolveAll nodes
+      edgeTypes cmds `shouldBe` ["SENDS_MESSAGE"]
