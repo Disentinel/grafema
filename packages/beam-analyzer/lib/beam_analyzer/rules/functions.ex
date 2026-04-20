@@ -79,6 +79,9 @@ defmodule BeamAnalyzer.Rules.Functions do
 
     # Walk function body for calls, variables, control flow
     ctx = Context.push_scope(ctx, "#{name}/#{arity}")
+    # Reset self-alias tracking so `me = self()` from one function
+    # doesn't bleed into the next.
+    ctx = Context.reset_self_aliases(ctx)
 
     # Process parameters as variables
     ctx = process_params(args, ctx)
@@ -223,8 +226,20 @@ defmodule BeamAnalyzer.Rules.Functions do
 
   defp walk_expr({:=, _meta, [left, right]}, ctx) do
     ctx = BeamAnalyzer.Rules.Variables.process_match(left, ctx)
+    ctx = track_self_binding(left, right, ctx)
     walk_expr(right, ctx)
   end
+
+  # `me = self()` — remember `me` as a self-alias for the rest of the
+  # function body. Enables `send(me, _)` / `Process.send_after(me, ...)`
+  # to be recognised as self-directed sends (routine Elixir idiom for
+  # passing self() into a Task.async closure).
+  defp track_self_binding({name, _, ctx_atom}, {:self, _, []}, ctx)
+       when is_atom(name) and is_atom(ctx_atom) do
+    Context.add_self_alias(ctx, name)
+  end
+
+  defp track_self_binding(_left, _right, ctx), do: ctx
 
   defp walk_expr({:|>, meta, [left, right]}, ctx) do
     BeamAnalyzer.Rules.Calls.process_pipe(left, right, meta, ctx)

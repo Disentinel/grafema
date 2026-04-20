@@ -9,7 +9,12 @@ defmodule BeamAnalyzer.Context do
     nodes: [],
     edges: [],
     exports: [],
-    next_id: 0
+    next_id: 0,
+    # Variable names that are bound to `self()` in the current scope.
+    # Used to promote `send(me, msg)` / `Process.send_after(me, ...)`
+    # into self-directed sends when `me = self()` was seen earlier in
+    # the same function body. Reset on every function-body entry.
+    self_aliases: MapSet.new()
   ]
 
   def new(file) do
@@ -64,5 +69,31 @@ defmodule BeamAnalyzer.Context do
   def set_module(ctx, module_name) do
     module_id = "#{ctx.file}->MODULE->#{module_name}"
     %{ctx | module_name: module_name, module_id: module_id}
+  end
+
+  @doc """
+  Mark a variable name as a `self()` alias for the remainder of the
+  current function body. Used by the walker when it sees
+  `me = self()` so later `send(me, ...)` sites know their target is
+  this process.
+  """
+  def add_self_alias(ctx, name) when is_atom(name) do
+    %{ctx | self_aliases: MapSet.put(ctx.self_aliases, name)}
+  end
+
+  def add_self_alias(ctx, _), do: ctx
+
+  def self_alias?(ctx, name) when is_atom(name) do
+    MapSet.member?(ctx.self_aliases, name)
+  end
+
+  def self_alias?(_, _), do: false
+
+  @doc """
+  Drop every tracked self-alias. Called on function-body entry so one
+  function's `me = self()` binding doesn't leak into a sibling.
+  """
+  def reset_self_aliases(ctx) do
+    %{ctx | self_aliases: MapSet.new()}
   end
 end
