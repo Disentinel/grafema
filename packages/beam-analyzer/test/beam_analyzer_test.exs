@@ -1014,6 +1014,86 @@ defmodule BeamAnalyzerTest do
       refute Map.has_key?(call.metadata, :message_shape)
     end
 
+    defp call_node(result, name) do
+      Enum.find(result.nodes, fn n -> n.type == "CALL" and n.name == name end)
+    end
+
+    test "self() target marks target_is_self=true on CALL and edge" do
+      result =
+        w3_analyze("""
+          def start do
+            Process.send_after(self(), :tick, 1000)
+          end
+        """)
+
+      call = call_node(result, "Process.send_after")
+      assert call.metadata.target_is_self == true
+      assert call.metadata.sender_via == "info"
+      assert call.metadata.sender_base == "Process.send_after"
+      assert call.metadata.message_shape == ["atom", "tick"]
+
+      [edge] = sends_to_edges(result)
+      assert edge.metadata.target_is_self == true
+    end
+
+    test "__MODULE__ target marks target_is_self=true" do
+      result =
+        w3_analyze("""
+          def fetch(key), do: GenServer.call(__MODULE__, {:get, key})
+        """)
+
+      call = call_node(result, "GenServer.call")
+      assert call.metadata.target_is_self == true
+      assert call.metadata.sender_via == "call"
+      assert call.metadata.target_hint == "W3.Server"
+    end
+
+    test "literal alias matching current module marks target_is_self=true" do
+      result =
+        w3_analyze("""
+          def fetch(key), do: GenServer.call(W3.Server, {:get, key})
+        """)
+
+      call = call_node(result, "GenServer.call")
+      assert call.metadata.target_is_self == true
+      assert call.metadata.target_hint == "W3.Server"
+    end
+
+    test "external module alias is not self, target_hint captures it" do
+      result =
+        w3_analyze("""
+          def delegate(msg), do: GenServer.cast(Some.Other.Server, msg)
+        """)
+
+      call = call_node(result, "GenServer.cast")
+      assert call.metadata.target_is_self == false
+      assert call.metadata.target_hint == "Some.Other.Server"
+      assert call.metadata.sender_via == "cast"
+    end
+
+    test "bare variable target is not self and has no target_hint" do
+      result =
+        w3_analyze("""
+          def fwd(pid, msg), do: send(pid, msg)
+        """)
+
+      call = call_node(result, "send")
+      assert call.metadata.target_is_self == false
+      refute Map.has_key?(call.metadata, :target_hint)
+      assert call.metadata.sender_via == "info"
+    end
+
+    test "Process.send_after is recognised as a message sender" do
+      result =
+        w3_analyze("""
+          def schedule, do: Process.send_after(self(), :tick, 1000)
+        """)
+
+      [edge] = sends_to_edges(result)
+      assert edge.metadata.via == "Process.send_after"
+      assert edge.metadata.message_shape == ["atom", "tick"]
+    end
+
     test "SENDS_TO edge still carries via field alongside message_shape" do
       result =
         w3_analyze("""
