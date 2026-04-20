@@ -104,9 +104,11 @@ defmodule BeamAnalyzer.Rules.Calls do
   defp maybe_dispatch_pubsub(ctx, dot, args, call_name, line, col, _dot_meta) do
     case BeamAnalyzer.Rules.PubSub.classify(dot) do
       {:pubsub, :subscribe} ->
+        scope = Context.current_scope(ctx) || "module"
+        call_id = SemanticId.call_id(ctx.file, call_name, scope, line, col)
         pubsub_ast = Enum.at(args, 0)
         topic_ast = Enum.at(args, 1)
-        BeamAnalyzer.Rules.PubSub.process_subscribe(ctx, pubsub_ast, topic_ast, nil)
+        BeamAnalyzer.Rules.PubSub.process_subscribe(ctx, call_id, pubsub_ast, topic_ast, nil)
 
       {:pubsub, op} ->
         scope = Context.current_scope(ctx) || "module"
