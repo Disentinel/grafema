@@ -1514,6 +1514,10 @@ async fn main() -> Result<()> {
                                 // SENDS_MESSAGE / SELF_SCHEDULE edges to MESSAGE_TYPE clauses
                                 // (needs wrapper-resolve first so virtual calls from wrappers are seen)
                                 ("beam-message-types", &[]),
+                                // GAP-C: close the PubSub delivery loop — emit PUBLISHES edges
+                                // from broadcast CALLs to subscriber handle_info clauses by
+                                // matching (pubsub_server, topic) + shape unification.
+                                ("beam-pubsub-delivery", &[]),
                                 // REG-1098 W9: emit ISSUE nodes for MessageFlow findings
                                 // (runs last; reads the post-resolution node snapshot)
                                 ("beam-message-findings", &[]),
@@ -2376,6 +2380,8 @@ async fn main() -> Result<()> {
                                 ("beam-wrapper-resolve", &[]),
                                 // REG-1098 W6.5: precise CALL→MESSAGE_TYPE edges via shape unification
                                 ("beam-message-types", &[]),
+                                // GAP-C: PUBLISHES edges from broadcasts to subscriber handlers
+                                ("beam-pubsub-delivery", &[]),
                                 // REG-1098 W9: emit ISSUE nodes for MessageFlow findings
                                 ("beam-message-findings", &[]),
                             ],

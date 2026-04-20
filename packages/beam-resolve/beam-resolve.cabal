@@ -19,6 +19,7 @@ executable beam-resolve
     BeamShape
     BeamMessageFindings
     BeamMessageTypeResolution
+    BeamPubsubDelivery
 
   build-depends:
     base                 >= 4.17 && < 5,
@@ -46,6 +47,7 @@ test-suite spec
     BeamShape
     BeamMessageFindings
     BeamMessageTypeResolution
+    BeamPubsubDelivery
 
 
   build-depends:

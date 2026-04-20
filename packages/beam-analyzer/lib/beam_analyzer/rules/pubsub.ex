@@ -34,10 +34,20 @@ defmodule BeamAnalyzer.Rules.PubSub do
   Handle `Phoenix.PubSub.subscribe(pubsub, topic)`. No-op if the pubsub
   server is not a literal alias or the topic is not a string literal.
   """
-  def process_subscribe(ctx, pubsub_ast, topic_ast, _meta) do
+  def process_subscribe(ctx, call_id, pubsub_ast, topic_ast, _meta) do
     with pubsub_name when is_binary(pubsub_name) <- pubsub_name_of(pubsub_ast),
          {:ok, topic} <- literal_topic(topic_ast) do
       {ctx, topic_id} = ensure_topic_node(ctx, pubsub_name, topic)
+
+      # Enrich the CALL node so the PubSub-delivery resolver can find
+      # subscribe sites without crawling edges (resolver API is
+      # nodes-only).
+      ctx =
+        Context.merge_node_metadata(ctx, call_id, %{
+          pubsub_topic: topic,
+          pubsub_server: pubsub_name,
+          pubsub_op: "subscribe"
+        })
 
       edge = %{
         src: ctx.module_id,
@@ -66,6 +76,16 @@ defmodule BeamAnalyzer.Rules.PubSub do
         msg_ast
         |> Patterns.normalize()
         |> Patterns.shape_to_meta()
+
+      # Enrich CALL node metadata so the PubSub-delivery resolver can
+      # see the topic and shape without edge visibility.
+      ctx =
+        Context.merge_node_metadata(ctx, call_id, %{
+          pubsub_topic: topic,
+          pubsub_server: pubsub_name,
+          pubsub_op: "broadcast",
+          message_shape: message_shape
+        })
 
       edge = %{
         src: call_id,

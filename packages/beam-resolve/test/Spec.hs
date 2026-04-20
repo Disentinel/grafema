@@ -15,6 +15,7 @@ import qualified BeamProtocolResolution
 import qualified BeamWrapperResolution
 import qualified BeamMessageFindings
 import qualified BeamMessageTypeResolution
+import qualified BeamPubsubDelivery
 import BeamShape
 
 -- | Helper to create a minimal GraphNode.
@@ -1037,3 +1038,118 @@ main = hspec $ do
             ]
           cmds = BeamMessageTypeResolution.resolveAll nodes
       edgeTypes cmds `shouldBe` ["SENDS_MESSAGE"]
+
+  describe "BeamPubsubDelivery (PUBLISHES edges)" $ do
+    -- Test helpers ------------------------------------------------
+    let mkBroadcast nid file topic server shape =
+          (mkNode nid "CALL" "Phoenix.PubSub.broadcast" file)
+            { gnMetadata = Map.fromList
+                [ ("pubsub_op",     MetaText "broadcast")
+                , ("pubsub_topic",  MetaText topic)
+                , ("pubsub_server", MetaText server)
+                , ("message_shape", shape)
+                ]
+            }
+
+        mkSubscribe nid file topic server =
+          (mkNode nid "CALL" "Phoenix.PubSub.subscribe" file)
+            { gnMetadata = Map.fromList
+                [ ("pubsub_op",     MetaText "subscribe")
+                , ("pubsub_topic",  MetaText topic)
+                , ("pubsub_server", MetaText server)
+                ]
+            }
+
+        mkInfoHandler nid file clauseShape =
+          (mkNode nid "MESSAGE_TYPE" "info" file)
+            { gnMetadata = Map.fromList
+                [ ("handler_type",  MetaText "info")
+                , ("pattern_shape", clauseShape)
+                ]
+            }
+
+        atomShape a  = MetaList [MetaText "atom", MetaText a]
+        tupleShape xs = MetaList [MetaText "tuple", MetaList xs]
+        wildShape    = MetaList [MetaText "wildcard"]
+
+        publishesEdges cmds = [ e | EmitEdge e <- cmds, geType e == "PUBLISHES" ]
+
+    it "emits PUBLISHES from broadcast to subscriber handle_info clause on shape match" $ do
+      let nodes =
+            [ mkSubscribe "sub:1" "lib/sub.ex" "events" "Ichi.PubSub"
+            , mkInfoHandler "mt:1" "lib/sub.ex"
+                (tupleShape [atomShape "user_added", wildShape])
+            , mkBroadcast "bc:1" "lib/pub.ex" "events" "Ichi.PubSub"
+                (tupleShape [atomShape "user_added", wildShape])
+            ]
+          edges = publishesEdges (BeamPubsubDelivery.resolveAll nodes)
+      map geSource edges `shouldBe` ["bc:1"]
+      map geTarget edges `shouldBe` ["mt:1"]
+
+    it "does NOT emit when topic differs" $ do
+      let nodes =
+            [ mkSubscribe "sub:1" "lib/sub.ex" "other" "Ichi.PubSub"
+            , mkInfoHandler "mt:1" "lib/sub.ex" (atomShape "foo")
+            , mkBroadcast "bc:1" "lib/pub.ex" "events" "Ichi.PubSub"
+                (atomShape "foo")
+            ]
+      publishesEdges (BeamPubsubDelivery.resolveAll nodes) `shouldBe` []
+
+    it "does NOT emit when PubSub server differs" $ do
+      let nodes =
+            [ mkSubscribe "sub:1" "lib/sub.ex" "events" "A.PubSub"
+            , mkInfoHandler "mt:1" "lib/sub.ex" (atomShape "foo")
+            , mkBroadcast "bc:1" "lib/pub.ex" "events" "B.PubSub"
+                (atomShape "foo")
+            ]
+      publishesEdges (BeamPubsubDelivery.resolveAll nodes) `shouldBe` []
+
+    it "does NOT emit when handler shape does not unify" $ do
+      let nodes =
+            [ mkSubscribe "sub:1" "lib/sub.ex" "events" "Ichi.PubSub"
+            , mkInfoHandler "mt:1" "lib/sub.ex" (atomShape "other")
+            , mkBroadcast "bc:1" "lib/pub.ex" "events" "Ichi.PubSub"
+                (atomShape "foo")
+            ]
+      publishesEdges (BeamPubsubDelivery.resolveAll nodes) `shouldBe` []
+
+    it "fans out to multiple subscribers on the same topic" $ do
+      let nodes =
+            [ mkSubscribe "sub:1" "lib/a.ex" "events" "Ichi.PubSub"
+            , mkInfoHandler "mt:a" "lib/a.ex" (atomShape "ping")
+            , mkSubscribe "sub:2" "lib/b.ex" "events" "Ichi.PubSub"
+            , mkInfoHandler "mt:b" "lib/b.ex" (atomShape "ping")
+            , mkBroadcast "bc:1" "lib/pub.ex" "events" "Ichi.PubSub"
+                (atomShape "ping")
+            ]
+          edges = publishesEdges (BeamPubsubDelivery.resolveAll nodes)
+      Set.fromList (map geTarget edges) `shouldBe` Set.fromList ["mt:a", "mt:b"]
+
+    it "filters subscriber's own non-info handlers (no hit on handle_call)" $ do
+      let nodes =
+            [ mkSubscribe "sub:1" "lib/sub.ex" "events" "Ichi.PubSub"
+            -- A handle_call in the subscriber module should not receive PUBLISHES
+            -- even if its shape matches — PubSub delivers as handle_info only.
+            , (mkInfoHandler "mt:call" "lib/sub.ex" (atomShape "ping"))
+                { gnMetadata = Map.fromList
+                    [ ("handler_type",  MetaText "call")
+                    , ("pattern_shape", atomShape "ping")
+                    ]
+                }
+            , mkBroadcast "bc:1" "lib/pub.ex" "events" "Ichi.PubSub"
+                (atomShape "ping")
+            ]
+      publishesEdges (BeamPubsubDelivery.resolveAll nodes) `shouldBe` []
+
+    it "carries topic + server provenance on the edge metadata" $ do
+      let nodes =
+            [ mkSubscribe "sub:1" "lib/sub.ex" "events" "Ichi.PubSub"
+            , mkInfoHandler "mt:1" "lib/sub.ex" (atomShape "foo")
+            , mkBroadcast "bc:1" "lib/pub.ex" "events" "Ichi.PubSub"
+                (atomShape "foo")
+            ]
+          [edge] = publishesEdges (BeamPubsubDelivery.resolveAll nodes)
+      Map.lookup "topic"  (geMetadata edge) `shouldBe` Just (MetaText "events")
+      Map.lookup "server" (geMetadata edge) `shouldBe` Just (MetaText "Ichi.PubSub")
+      Map.lookup "resolvedVia" (geMetadata edge)
+        `shouldBe` Just (MetaText "beam-pubsub-delivery")
