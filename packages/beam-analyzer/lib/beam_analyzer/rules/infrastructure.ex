@@ -34,6 +34,7 @@ defmodule BeamAnalyzer.Rules.Infrastructure do
     "GenServer.call",
     "GenServer.cast",
     "Process.send",
+    "Process.send_after",
     "send"
   ]
 
@@ -145,26 +146,41 @@ defmodule BeamAnalyzer.Rules.Infrastructure do
     base_call = extract_base_call(call_name)
 
     if base_call in @message_senders do
-      # Try to resolve target process
+      # REG-1098 W3: extract normalized shape of the message argument.
+      # For GenServer.call/cast/Process.send/Process.send_after/send: msg is
+      # the 2nd arg; target is the 1st.
+      message_shape_meta = extract_message_shape(args)
+      target_is_self = self_target?(args, ctx)
+      target_hint = explicit_target_hint(args, ctx)
+      sender_via = sender_handler_type(base_call)
+
+      # Enrich CALL node metadata so the cross-file resolver can match
+      # this send-site against MESSAGE_TYPE nodes without needing to
+      # read edges (resolver API is nodes-only). The SENDS_TO edge
+      # itself still points at the PROCESS for coarse linking.
+      call_extras =
+        %{
+          sender_via: sender_via,
+          sender_base: base_call,
+          target_is_self: target_is_self
+        }
+        |> maybe_put(:message_shape, message_shape_meta)
+        |> maybe_put(:target_hint, target_hint)
+
+      ctx = Context.merge_node_metadata(ctx, call_id, call_extras)
+
       target = resolve_message_target(ctx)
 
       if target != nil do
-        # REG-1098 W3: extract normalized shape of the message argument.
-        # For GenServer.call/cast/Process.send/send: message is the 2nd arg.
-        message_shape_meta = extract_message_shape(args)
-
-        metadata =
-          if message_shape_meta do
-            %{via: base_call, message_shape: message_shape_meta}
-          else
-            %{via: base_call}
-          end
+        edge_metadata =
+          %{via: base_call, target_is_self: target_is_self}
+          |> maybe_put(:message_shape, message_shape_meta)
 
         Context.add_edge(ctx, %{
           src: call_id,
           dst: target,
           type: "SENDS_TO",
-          metadata: metadata
+          metadata: edge_metadata
         })
       else
         ctx
@@ -173,6 +189,60 @@ defmodule BeamAnalyzer.Rules.Infrastructure do
       ctx
     end
   end
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
+  # GenServer.call/cast correspond to handle_call / handle_cast.
+  # send / Process.send / Process.send_after all land in handle_info.
+  defp sender_handler_type("GenServer.call"), do: "call"
+  defp sender_handler_type("GenServer.cast"), do: "cast"
+  defp sender_handler_type(_), do: "info"
+
+  # The first argument of every message sender is the target. We flag
+  # sends whose target is statically knowable to be the current module —
+  # `self()`, `__MODULE__`, or a literal alias matching `ctx.module_name`.
+  # This powers SELF_SCHEDULE classification in the resolver.
+  defp self_target?(args, ctx) when is_list(args) do
+    case Enum.at(args, 0) do
+      # `self()` — zero-arg Kernel call, AST is `{:self, meta, []}`.
+      {:self, _, []} -> true
+      # Bare `self` variable (unusual but legal) — 3rd elem is the ctx atom.
+      {:self, _, ctx_atom} when is_atom(ctx_atom) -> true
+      {:__MODULE__, _, _} -> true
+      {:__aliases__, _, parts} when is_list(parts) ->
+        alias_matches_module?(parts, ctx.module_name)
+
+      _ ->
+        false
+    end
+  end
+
+  defp self_target?(_, _), do: false
+
+  defp alias_matches_module?(_parts, nil), do: false
+
+  defp alias_matches_module?(parts, module_name) do
+    joined = parts |> Enum.map(&Atom.to_string/1) |> Enum.join(".")
+    joined == module_name
+  end
+
+  # Returns the fully-qualified module name a send is addressed to when
+  # we can read it from the AST (`OtherModule` / `__MODULE__`). Returns
+  # nil for dynamic PIDs (bare variables, function-call results) — the
+  # resolver cannot match those statically.
+  defp explicit_target_hint(args, ctx) when is_list(args) do
+    case Enum.at(args, 0) do
+      {:__MODULE__, _, _} -> ctx.module_name
+      {:__aliases__, _, parts} when is_list(parts) ->
+        parts |> Enum.map(&Atom.to_string/1) |> Enum.join(".")
+
+      _ ->
+        nil
+    end
+  end
+
+  defp explicit_target_hint(_, _), do: nil
 
   defp extract_message_shape(args) when is_list(args) do
     case Enum.at(args, 1) do

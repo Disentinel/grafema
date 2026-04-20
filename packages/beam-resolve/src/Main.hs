@@ -14,6 +14,7 @@ import qualified BeamBehaviourResolution
 import qualified BeamRuntimeGlobals
 import qualified BeamWrapperResolution
 import qualified BeamMessageFindings
+import qualified BeamMessageTypeResolution
 import qualified Grafema.RuntimeGlobals as RG
 import Grafema.Types (GraphNode)
 import Grafema.Protocol (PluginCommand(..), readFrame, writeFrame, encodeMsgpack, decodeMsgpack)
@@ -91,6 +92,7 @@ dispatch cache "beam-runtime-globals" nodes = do
   db <- loadCachedDB cache
   return $ ResOk (BeamRuntimeGlobals.resolveAll db nodes)
 dispatch _ "beam-wrapper-resolve" nodes = return $ ResOk (BeamWrapperResolution.resolveAll nodes)
+dispatch _ "beam-message-types" nodes = return $ ResOk (BeamMessageTypeResolution.resolveAll nodes)
 dispatch _ "beam-message-findings" nodes = return $ ResOk (BeamMessageFindings.runFindings nodes [])
 dispatch _ cmd _ = return $ ResError ("unknown command: " ++ T.unpack cmd)
 
@@ -102,6 +104,7 @@ data Command
   | CmdBeamBehaviours
   | CmdBeamRuntimeGlobals
   | CmdBeamWrapperResolve
+  | CmdBeamMessageTypes
   | CmdBeamMessageFindings
 
 commandParser :: Parser Command
@@ -118,6 +121,8 @@ commandParser = subparser
     (info (pure CmdBeamRuntimeGlobals) (progDesc "Resolve BEAM stdlib calls (Elixir + Erlang BIFs) via effects-db"))
   <> command "beam-wrapper-resolve"
     (info (pure CmdBeamWrapperResolve) (progDesc "Emit virtual side-effect edges for calls to public-API wrapper functions (REG-1098 W6)"))
+  <> command "beam-message-types"
+    (info (pure CmdBeamMessageTypes) (progDesc "Emit SENDS_MESSAGE / SELF_SCHEDULE edges from CALL send-sites to matching MESSAGE_TYPE clauses"))
   <> command "beam-message-findings"
     (info (pure CmdBeamMessageFindings) (progDesc "Emit ISSUE nodes for BEAM MessageFlow findings (REG-1098 W9)"))
   )
@@ -147,4 +152,5 @@ main = do
         CmdBeamBehaviours     -> BeamBehaviourResolution.run
         CmdBeamRuntimeGlobals -> BeamRuntimeGlobals.run
         CmdBeamWrapperResolve -> BeamWrapperResolution.run
+        CmdBeamMessageTypes   -> BeamMessageTypeResolution.run
         CmdBeamMessageFindings -> BeamMessageFindings.run
