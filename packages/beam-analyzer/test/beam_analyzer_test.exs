@@ -1083,6 +1083,58 @@ defmodule BeamAnalyzerTest do
       assert call.metadata.sender_via == "info"
     end
 
+    test "self() bound to variable is tracked: send(me, _) is self-directed" do
+      # Elixir idiom: `me = self()` then pass `me` into a spawned
+      # Task closure so the task can send messages back to the
+      # starter process. Before self-alias tracking, `send(me, msg)`
+      # looked like a send to a bare var (target_is_self=false) and
+      # never resolved to a handler.
+      result =
+        w3_analyze("""
+          def start do
+            me = self()
+            send(me, :tick)
+          end
+        """)
+
+      call = call_node(result, "send")
+      assert call.metadata.target_is_self == true
+    end
+
+    test "unrelated var assignment does not mark send as self-directed" do
+      result =
+        w3_analyze("""
+          def relay(pid) do
+            me = pid
+            send(me, :tick)
+          end
+        """)
+
+      call = call_node(result, "send")
+      assert call.metadata.target_is_self == false
+    end
+
+    test "self-alias tracking is scoped to the function — doesn't leak" do
+      result =
+        w3_analyze("""
+          def first do
+            me = self()
+            send(me, :a)
+          end
+
+          def second(pid) do
+            send(me, :b)
+          end
+        """)
+
+      calls = Enum.filter(result.nodes, &(&1.type == "CALL" and &1.name == "send"))
+      [call_first, call_second] = Enum.sort_by(calls, & &1.line)
+      assert call_first.metadata.target_is_self == true
+      # `me` in second/1 is unbound (would be a compile error in real
+      # code but walker must still not carry over the alias).
+      assert call_second.metadata.target_is_self == false
+    end
+
     test "Process.send_after is recognised as a message sender" do
       result =
         w3_analyze("""

@@ -213,6 +213,12 @@ defmodule BeamAnalyzer.Rules.Infrastructure do
       {:__aliases__, _, parts} when is_list(parts) ->
         alias_matches_module?(parts, ctx.module_name)
 
+      # Bare variable whose binding is `self()` earlier in the body —
+      # e.g. `me = self(); send(me, :tick)`. Covered by the walker's
+      # self-alias tracking in `track_self_binding/3`.
+      {name, _, ctx_atom} when is_atom(name) and is_atom(ctx_atom) ->
+        Context.self_alias?(ctx, name)
+
       _ ->
         false
     end
