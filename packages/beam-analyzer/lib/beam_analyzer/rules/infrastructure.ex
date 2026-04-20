@@ -234,6 +234,7 @@ defmodule BeamAnalyzer.Rules.Infrastructure do
         # handlers produce distinct nodes (REG-1098 W2).
         shape = BeamAnalyzer.Rules.Patterns.normalize(first_arg)
         shape_meta = BeamAnalyzer.Rules.Patterns.shape_to_meta(shape)
+        shape_label = BeamAnalyzer.Rules.Patterns.describe_shape(shape)
         catchall? = catchall_pattern?(first_arg)
 
         # REG-1098 W8: per-clause body scanning for silent_handler finding.
@@ -245,7 +246,7 @@ defmodule BeamAnalyzer.Rules.Infrastructure do
         msg_node = %{
           id: msg_id,
           type: "MESSAGE_TYPE",
-          name: handler_type,
+          name: "#{handler_type}:#{shape_label}",
           file: ctx.file,
           line: line,
           column: col,
@@ -253,8 +254,10 @@ defmodule BeamAnalyzer.Rules.Infrastructure do
           endColumn: 0,
           exported: false,
           metadata: %{
+            handler_type: handler_type,
             handler_function: func_id,
             pattern_shape: shape_meta,
+            shape_label: shape_label,
             catchall: catchall?,
             handler_line: line,
             body_total_calls: body_total_calls,

@@ -100,6 +100,61 @@ defmodule BeamAnalyzer.Rules.Patterns do
   defp pair_to_meta({k, v}), do: [inspect(k), shape_to_meta(v)]
 
   # ====================================================================
+  # HUMAN-READABLE LABEL
+  # ====================================================================
+
+  @label_max 64
+
+  @doc """
+  Derive a short human-readable label from a `shape()` term.
+
+  Used as the distinguishing part of a MESSAGE_TYPE node's `name`, so
+  `grafema ls -t MESSAGE_TYPE` can show concrete clause heads instead of
+  only the generic callback kind. Labels are collision-stable for equal
+  shapes but not round-trippable — use the full `pattern_shape` metadata
+  for structural equality checks.
+
+  Examples:
+    {:atom, :tick}                                          -> "tick"
+    {:tuple, [{:atom, :reflect}, {:atom, :post_commit}, :_]} -> "reflect/post_commit/_"
+    {:map, [{:source, ...}, {:type, ...}]}                  -> "map{source,type}"
+    :_ / :unknown                                           -> "_"
+  """
+  @spec describe_shape(shape() | any()) :: String.t()
+  def describe_shape(shape) do
+    shape |> do_describe() |> cap()
+  end
+
+  defp do_describe(:_), do: "_"
+  defp do_describe(:unknown), do: "_"
+  defp do_describe(:number), do: "num"
+  defp do_describe({:atom, a}) when is_atom(a), do: Atom.to_string(a)
+  defp do_describe({:str, _}), do: "str"
+  defp do_describe({:tuple, elems}), do: Enum.map_join(elems, "/", &do_describe/1)
+  defp do_describe({:list, _}), do: "list"
+  defp do_describe({:cons, _, _}), do: "list"
+
+  defp do_describe({:map, pairs}) do
+    keys = pairs |> Enum.map(fn {k, _} -> key_to_string(k) end) |> Enum.sort() |> Enum.join(",")
+    "map{#{keys}}"
+  end
+
+  defp do_describe({:struct, mod, pairs}) do
+    mod_short = mod |> Module.split() |> List.last()
+    keys = pairs |> Enum.map(fn {k, _} -> key_to_string(k) end) |> Enum.sort() |> Enum.join(",")
+    "%#{mod_short}{#{keys}}"
+  end
+
+  defp do_describe(_), do: "_"
+
+  defp key_to_string(k) when is_atom(k), do: Atom.to_string(k)
+  defp key_to_string(k) when is_binary(k), do: k
+  defp key_to_string(k), do: inspect(k)
+
+  defp cap(s) when byte_size(s) <= @label_max, do: s
+  defp cap(s), do: binary_part(s, 0, @label_max - 3) <> "..."
+
+  # ====================================================================
   # UNIFICATION
   # ====================================================================
 

@@ -8,6 +8,32 @@ defmodule BeamAnalyzer do
   """
 
   def main(args) do
+    # Stdio is the frame-protocol transport — force encoding to :latin1
+    # so `IO.binread`/`IO.binwrite` are true byte passthroughs without
+    # any unicode<->latin1 translation hops. Without this, escript's
+    # default :unicode stdio raises `{:no_translation, :unicode, :latin1}`
+    # when reading framed bytes whose length prefix or payload happens
+    # to look like an invalid unicode codepoint.
+    :io.setopts(:standard_io, encoding: :latin1)
+
+    # stderr is text output (humans / logs) — keep it :unicode so
+    # inspect() on tuples containing multi-byte binaries doesn't crash.
+    :io.setopts(:standard_error, encoding: :unicode)
+
+    # CRITICAL for daemon mode: redirect Logger to stderr. In daemon
+    # mode stdin/stdout carry the length-prefixed frame protocol —
+    # any extra byte on stdout desynchronizes the orchestrator's
+    # reader, which then parses garbage as a frame length and bails
+    # with `{:no_translation, ...}` or `frame too large`.
+    #
+    # Compile/parser warnings from `Code.string_to_quoted` on some
+    # Elixir files (especially ones with unusual atoms or deprecated
+    # syntax) route through Logger, whose default handler writes to
+    # `:standard_io`. Pointing the default handler at standard_error
+    # keeps stdout exclusively for frames.
+    _ =
+      :logger.update_handler_config(:default, :config, %{type: :standard_error})
+
     case args do
       ["--daemon"] -> daemon_loop()
       _ -> one_shot()
@@ -15,15 +41,15 @@ defmodule BeamAnalyzer do
   end
 
   defp one_shot do
-    input = IO.read(:stdio, :eof)
+    input = IO.binread(:stdio, :eof)
 
     case Jason.decode(input) do
       {:ok, %{"file" => file, "source" => source}} ->
         result = analyze(file, source)
-        IO.write(:stdio, Jason.encode!(result))
+        IO.binwrite(:stdio, Jason.encode!(result))
 
       {:error, reason} ->
-        IO.write(:stdio, Jason.encode!(%{status: "error", error: "Invalid JSON: #{inspect(reason)}"}))
+        IO.binwrite(:stdio, Jason.encode!(%{status: "error", error: "Invalid JSON: #{inspect(reason)}"}))
         System.halt(1)
     end
   end
@@ -48,7 +74,7 @@ defmodule BeamAnalyzer do
         :ok
 
       {:error, reason} ->
-        IO.write(:stderr, "Protocol error: #{inspect(reason)}\n")
+        IO.binwrite(:stderr, "Protocol error: #{inspect(reason)}\n")
         System.halt(1)
     end
   end
