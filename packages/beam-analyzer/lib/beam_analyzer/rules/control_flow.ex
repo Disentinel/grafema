@@ -27,6 +27,10 @@ defmodule BeamAnalyzer.Rules.ControlFlow do
     add_loop(ctx, meta)
   end
 
+  def process({:try, meta, _args}, ctx) do
+    add_branch(ctx, "try", meta)
+  end
+
   def process(_ast, ctx), do: ctx
 
   defp add_branch(ctx, kind, meta) do

@@ -182,6 +182,14 @@ defmodule BeamAnalyzer.Rules.Functions do
   defp walk_body(_, ctx), do: ctx
 
   # Walk Elixir expressions for calls, variables, control flow
+  @doc """
+  Public entry to walk a single expression for nested calls / sends /
+  branches. Used by the module walker to descend into unknown top-level
+  expressions (Plug.Router `post "/..." do ... end`, Phoenix routes,
+  custom DSL macros). Previously these were silently dropped.
+  """
+  def walk_expression(ast, ctx), do: walk_expr(ast, ctx)
+
   defp walk_expr({:=, _meta, [left, right]}, ctx) do
     ctx = BeamAnalyzer.Rules.Variables.process_match(left, ctx)
     walk_expr(right, ctx)
@@ -199,6 +207,7 @@ defmodule BeamAnalyzer.Rules.Functions do
       :unless -> walk_if_unless(ast, ctx)
       :with -> walk_with(ast, ctx)
       :for -> walk_for(ast, ctx)
+      :try -> walk_try(ast, ctx)
       _ ->
         if BeamAnalyzer.Rules.Calls.callable?(name) do
           ctx = BeamAnalyzer.Rules.Calls.process({name, meta, args}, ctx)
@@ -345,6 +354,28 @@ defmodule BeamAnalyzer.Rules.Functions do
     end
   end
 
+  # try-do-rescue-catch-after-else
+  # AST: {:try, meta, [[do: body, rescue: [clauses], catch: [clauses],
+  #                      after: body, else: [clauses]]]}
+  # All five sub-sections are optional; at least `do` is present.
+  # Sends inside protected blocks would be lost if we didn't descend
+  # into every sub-body — `send(Target, msg)` inside a `try do` is a
+  # real send-site, not a no-op.
+  defp walk_try({:try, meta, [clauses]}, ctx) when is_list(clauses) do
+    ctx = BeamAnalyzer.Rules.ControlFlow.process({:try, meta, []}, ctx)
+
+    Enum.reduce(clauses, ctx, fn
+      {:do, body}, ctx -> walk_block(body, ctx)
+      {:rescue, cls}, ctx -> walk_clauses(cls, ctx)
+      {:catch, cls}, ctx -> walk_clauses(cls, ctx)
+      {:else, cls}, ctx -> walk_clauses(cls, ctx)
+      {:after, body}, ctx -> walk_block(body, ctx)
+      _, ctx -> ctx
+    end)
+  end
+
+  defp walk_try({:try, _meta, _args}, ctx), do: ctx
+
   # Walk clauses like {:->, meta, [[pattern], body]}
   defp walk_clauses(clauses, ctx) when is_list(clauses) do
     Enum.reduce(clauses, ctx, fn
@@ -396,10 +427,22 @@ defmodule BeamAnalyzer.Rules.Functions do
   # Walk function call arguments to discover nested expressions
   defp walk_call_args(args, ctx) when is_list(args) do
     Enum.reduce(args, ctx, fn
-      # Skip keyword lists at the top level (they are options, not expressions)
-      # but still walk their values
+      # Keyword-list entry `key: value` at the top level: descend into the
+      # value (e.g. `Enum.map(..., fn: &foo/1)`, `post "/path" do: body`).
       {key, value}, ctx when is_atom(key) ->
         walk_expr(value, ctx)
+
+      # Inline keyword-list argument, as emitted by block-style macros:
+      #   post "/reflect" do ... end   →  args == ["/reflect", [do: body]]
+      # The `[do: body]` item is a list, not a tuple — without this clause
+      # `walk_expr/2` would hit its catch-all and never enter the body,
+      # losing every send-site inside Plug.Router / Phoenix routes.
+      kwlist, ctx when is_list(kwlist) ->
+        if Keyword.keyword?(kwlist) do
+          Enum.reduce(kwlist, ctx, fn {_k, v}, c -> walk_expr(v, c) end)
+        else
+          Enum.reduce(kwlist, ctx, &walk_expr/2)
+        end
 
       arg, ctx ->
         walk_expr(arg, ctx)
