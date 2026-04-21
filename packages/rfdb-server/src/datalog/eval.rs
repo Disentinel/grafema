@@ -560,6 +560,20 @@ impl<'a> Evaluator<'a> {
                         }
                     }
 
+                    // Check dst filter if already-bound variable — critical for
+                    // self-join patterns like `edge(M, C, T1), edge(C, M, T2)`.
+                    // Without this, the second edge unconditionally rebinds `M`
+                    // to any outgoing dst of `C`, silently producing cross-joined
+                    // rows that don't satisfy the pattern. See RFDB-??? (RFDB
+                    // join correctness for shared vars across two edge atoms).
+                    if let Term::Var(var) = dst_term {
+                        if let Some(existing) = bindings.get(var).and_then(|v| v.as_id()) {
+                            if existing != dst_id {
+                                continue;
+                            }
+                        }
+                    }
+
                     let mut new_bindings = bindings.clone();
 
                     // Bind dst
@@ -619,6 +633,19 @@ impl<'a> Evaluator<'a> {
                     if let Term::Const(expected_src) = src_term {
                         if expected_src.parse::<u128>().ok() != Some(src_id) {
                             continue;
+                        }
+                    }
+
+                    // Check src filter if already-bound variable. Same bug
+                    // as eval_edge_hash_join — without this, joins that
+                    // share a variable on opposite ends of two edge atoms
+                    // (e.g. `incoming(A, B, T1), incoming(B, A, T2)`) silently
+                    // produce incorrect rows.
+                    if let Term::Var(var) = src_term {
+                        if let Some(existing) = bindings.get(var).and_then(|v| v.as_id()) {
+                            if existing != src_id {
+                                continue;
+                            }
                         }
                     }
 

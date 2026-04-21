@@ -4229,6 +4229,184 @@ mod hash_join_tests {
         }
     }
 
+    /// Mirror of `test_hash_join_shared_var_across_two_edges` but for the
+    /// `incoming/3` flavour of the same bug: the non-key term must honor
+    /// already-bound variables instead of rebinding them.
+    #[test]
+    fn test_incoming_hash_join_shared_var() {
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let n = HASH_JOIN_THRESHOLD + 10;
+
+        let mut nodes = Vec::with_capacity(3 * n);
+        for i in 1..=n {
+            nodes.push(NodeRecord {
+                id: i as u128,
+                node_type: Some("A".to_string()),
+                name: Some(format!("a_{}", i)),
+                file: Some("t.ex".to_string()),
+                file_id: 0, name_offset: 0, version: "main".into(),
+                exported: false, replaces: None, deleted: false,
+                metadata: None, semantic_id: None,
+            });
+            nodes.push(NodeRecord {
+                id: (n + i) as u128,
+                node_type: Some("B".to_string()),
+                name: Some(format!("b_{}", i)),
+                file: Some("t.ex".to_string()),
+                file_id: 0, name_offset: 0, version: "main".into(),
+                exported: false, replaces: None, deleted: false,
+                metadata: None, semantic_id: None,
+            });
+            nodes.push(NodeRecord {
+                id: (2 * n + i) as u128,
+                node_type: Some("A".to_string()),
+                name: Some(format!("other_a_{}", i)),
+                file: Some("t.ex".to_string()),
+                file_id: 0, name_offset: 0, version: "main".into(),
+                exported: false, replaces: None, deleted: false,
+                metadata: None, semantic_id: None,
+            });
+        }
+        engine.add_nodes(nodes);
+
+        // F: a_i -> b_i
+        let fw: Vec<EdgeRecord> = (1..=n).map(|i| EdgeRecord {
+            src: i as u128,
+            dst: (n + i) as u128,
+            edge_type: Some("F".to_string()),
+            version: "main".into(), metadata: None, deleted: false,
+        }).collect();
+        engine.add_edges(fw, false);
+        // G: b_i -> other_a_i, plus one true round-trip b_1 -> a_1
+        let mut bk: Vec<EdgeRecord> = (1..=n).map(|i| EdgeRecord {
+            src: (n + i) as u128,
+            dst: (2 * n + i) as u128,
+            edge_type: Some("G".to_string()),
+            version: "main".into(), metadata: None, deleted: false,
+        }).collect();
+        bk.push(EdgeRecord {
+            src: (n + 1) as u128,
+            dst: 1u128,
+            edge_type: Some("G".to_string()),
+            version: "main".into(), metadata: None, deleted: false,
+        });
+        engine.add_edges(bk, false);
+
+        let evaluator = Evaluator::new(&engine);
+        // Anchor A via node/1 so the planner can place `incoming` with at
+        // least one bound var; then `incoming(A, B, "G")` binds B while
+        // `incoming(B, A, "F")` re-binds through the hash-join path — the
+        // exact case the shared-var fix must honour.
+        let literals = parse_query(
+            "node(A, \"A\"), incoming(A, B, \"G\"), incoming(B, A, \"F\")"
+        ).unwrap();
+        let results = evaluator.eval_query(&literals).unwrap();
+        assert_eq!(results.len(), 1, "only one true round-trip exists");
+        let b = &results[0];
+        assert_eq!(b.get("A").unwrap().as_id().unwrap(), 1);
+        assert_eq!(b.get("B").unwrap().as_id().unwrap(), (n + 1) as u128);
+    }
+
+    /// Regression: when a variable appears in *both* edge atoms on opposite
+    /// sides (self-join pattern `edge(A, B, T1), edge(B, A, T2)`), the hash-
+    /// join path must verify the variable still unifies — not rebind it to
+    /// any hash-joined value. Without the check, any pair satisfying first
+    /// edge AND some second edge anywhere in the graph bleeds through as a
+    /// false match. Hit in practice when adding MESSAGE_TYPE → CONTAINS →
+    /// CALL edges on Ichi and querying for handler self-loops.
+    #[test]
+    fn test_hash_join_shared_var_across_two_edges() {
+        let mut engine = GraphEngineV2::create_ephemeral();
+
+        // Build > HASH_JOIN_THRESHOLD entities so both edge atoms trip the
+        // hash-join path. We create three layers of nodes:
+        //  - MESSAGE_TYPE nodes msg_i (ids 1..=n)
+        //  - CALL nodes call_i      (ids n+1..=2n)
+        //  - "other" MESSAGE_TYPE   (ids 2n+1..=3n) to be the SENDS_MESSAGE
+        //    target of each call, so SENDS_MESSAGE has edges, but almost
+        //    none of them land back at the CONTAINing msg.
+        //
+        // Correct answer: exactly one pair — msg_1 contains call_1 and
+        // call_1 additionally SENDS_MESSAGE back to msg_1.
+        let n = HASH_JOIN_THRESHOLD + 10;
+
+        let mut nodes = Vec::with_capacity(3 * n);
+        for i in 1..=n {
+            nodes.push(NodeRecord {
+                id: i as u128,
+                node_type: Some("MESSAGE_TYPE".to_string()),
+                name: Some(format!("msg_{}", i)),
+                file: Some("t.ex".to_string()),
+                file_id: 0, name_offset: 0, version: "main".into(),
+                exported: false, replaces: None, deleted: false,
+                metadata: None, semantic_id: None,
+            });
+            nodes.push(NodeRecord {
+                id: (n + i) as u128,
+                node_type: Some("CALL".to_string()),
+                name: Some(format!("call_{}", i)),
+                file: Some("t.ex".to_string()),
+                file_id: 0, name_offset: 0, version: "main".into(),
+                exported: false, replaces: None, deleted: false,
+                metadata: None, semantic_id: None,
+            });
+            nodes.push(NodeRecord {
+                id: (2 * n + i) as u128,
+                node_type: Some("MESSAGE_TYPE".to_string()),
+                name: Some(format!("other_msg_{}", i)),
+                file: Some("t.ex".to_string()),
+                file_id: 0, name_offset: 0, version: "main".into(),
+                exported: false, replaces: None, deleted: false,
+                metadata: None, semantic_id: None,
+            });
+        }
+        engine.add_nodes(nodes);
+
+        // CONTAINS: msg_i -> call_i (n edges)
+        let contains: Vec<EdgeRecord> = (1..=n).map(|i| EdgeRecord {
+            src: i as u128,
+            dst: (n + i) as u128,
+            edge_type: Some("CONTAINS".to_string()),
+            version: "main".into(), metadata: None, deleted: false,
+        }).collect();
+        engine.add_edges(contains, false);
+
+        // SENDS_MESSAGE: call_i -> other_msg_i for every i,
+        // PLUS one real self-loop call_1 -> msg_1.
+        let mut sends: Vec<EdgeRecord> = (1..=n).map(|i| EdgeRecord {
+            src: (n + i) as u128,
+            dst: (2 * n + i) as u128,
+            edge_type: Some("SENDS_MESSAGE".to_string()),
+            version: "main".into(), metadata: None, deleted: false,
+        }).collect();
+        sends.push(EdgeRecord {
+            src: (n + 1) as u128,
+            dst: 1_u128,
+            edge_type: Some("SENDS_MESSAGE".to_string()),
+            version: "main".into(), metadata: None, deleted: false,
+        });
+        engine.add_edges(sends, false);
+
+        let evaluator = Evaluator::new(&engine);
+        // Self-loop rule: `edge(M, C, CONTAINS), edge(C, M, SENDS_MESSAGE)`
+        let literals = parse_query(
+            "edge(M, C, \"CONTAINS\"), edge(C, M, \"SENDS_MESSAGE\")"
+        ).unwrap();
+        let results = evaluator.eval_query(&literals).unwrap();
+
+        // Correct: only (msg_1, call_1). Before the fix, the second edge
+        // atom rebinds M to every SENDS_MESSAGE dst, yielding ~n spurious
+        // rows where M is an other_msg_i that the CONTAIN'ing msg_i never
+        // points to.
+        assert_eq!(
+            results.len(), 1,
+            "hash-join must honor already-bound variables in both edge atoms"
+        );
+        let b = &results[0];
+        assert_eq!(b.get("M").unwrap().as_id().unwrap(), 1);
+        assert_eq!(b.get("C").unwrap().as_id().unwrap(), (n + 1) as u128);
+    }
+
     #[test]
     fn test_hash_join_negation_correctness() {
         // Negation with hash join: \+ edge(F, _, "CALLS") uses existence set
