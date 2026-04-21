@@ -44,19 +44,73 @@ defmodule BeamAnalyzer.Rules.StateDFG do
   """
 
   @doc """
-  Walk an AST fragment and return `{writes, guards}` where each entry
-  is a sorted, deduplicated list of field-name strings.
+  Walk an AST fragment and return `%{writes, writes_truthy, writes_falsy,
+  guards, guards_truthy}` where each entry is a sorted, deduplicated
+  list of field-name strings.
+
+  * `:writes` — every field written against the `state` variable, any
+    value. Use this for "does anything write X at all?" questions.
+  * `:writes_truthy` — subset of `:writes` where the RHS is a literal
+    value Elixir would treat as truthy (any atom except `false` and
+    `nil`, any number, binary, list, tuple — anything that isn't
+    `false`/`nil`). Only literals we can syntactically confirm are
+    truthy land here; dynamic expressions stay in `:writes`.
+  * `:writes_falsy` — subset of `:writes` where the RHS is a literal
+    `false` or `nil`.
+  * `:writes_dynamic` — subset of `:writes` where the RHS is NOT a
+    compile-time literal — a variable, a function-call result, an
+    expression. A Datalog rule can use the absence of this set to
+    conclude "every writer is literal-classified," which is a
+    prerequisite for "always falsy / always truthy" analysis.
+  * `:uses` — every field read anywhere in the body, including
+    guards, call arguments, return values, and string interpolations
+    (`"tag: \#{state.foo}"`). Superset of `:guards`. Lets a rule
+    distinguish "field is written but never read at all" (dead
+    ballast) from "field is read, just not gated on".
+  * `:guards` — every field read in a conditional scrutinee
+    (`if`/`unless`/`case`). Use this for "does anything gate on X?".
+  * `:guards_truthy` — subset of `:guards` where the guard is an
+    explicit truthy test (`if state.X do` / `unless state.X`).
+    Needed for the "always-falsy / always-truthy" Datalog rules
+    because those tests can only be judged dead when paired with
+    literal-value writers.
   """
-  def extract(nil), do: {[], []}
+  def extract(nil), do: empty_result()
 
   def extract(ast) do
+    acc0 = %{
+      writes: MapSet.new(),
+      writes_truthy: MapSet.new(),
+      writes_falsy: MapSet.new(),
+      writes_dynamic: MapSet.new(),
+      guards: MapSet.new(),
+      guards_truthy: MapSet.new(),
+      uses: MapSet.new()
+    }
+
     {_, acc} =
-      Macro.prewalk(ast, {MapSet.new(), MapSet.new()}, fn node, acc ->
+      Macro.prewalk(ast, acc0, fn node, acc ->
         {node, check_node(node, acc)}
       end)
 
-    {writes, guards} = acc
-    {sorted(writes), sorted(guards)}
+    finalize(acc)
+  end
+
+  defp empty_result do
+    %{
+      writes: [],
+      writes_truthy: [],
+      writes_falsy: [],
+      writes_dynamic: [],
+      guards: [],
+      guards_truthy: [],
+      uses: []
+    }
+  end
+
+  defp finalize(%{} = acc) do
+    acc
+    |> Map.new(fn {k, set} -> {k, sorted(set)} end)
   end
 
   @doc """
@@ -77,12 +131,39 @@ defmodule BeamAnalyzer.Rules.StateDFG do
   def extract_init_writes(nil), do: []
 
   def extract_init_writes(ast) do
-    {_, writes} =
-      Macro.prewalk(ast, MapSet.new(), fn node, acc ->
+    extract_init(ast) |> Map.fetch!(:writes)
+  end
+
+  @doc """
+  Like `extract/1` but for an `init/1` body. The result shape is
+  `%{writes, writes_truthy, writes_falsy}` — guards are not
+  applicable for init. Walks every map / struct *literal* (keys
+  and their RHS values) to classify each initial field as truthy
+  or falsy when the RHS is a compile-time literal.
+  """
+  def extract_init(nil) do
+    %{writes: [], writes_truthy: [], writes_falsy: [], writes_dynamic: []}
+  end
+
+  def extract_init(ast) do
+    acc0 = %{
+      writes: MapSet.new(),
+      writes_truthy: MapSet.new(),
+      writes_falsy: MapSet.new(),
+      writes_dynamic: MapSet.new()
+    }
+
+    {_, acc} =
+      Macro.prewalk(ast, acc0, fn node, acc ->
         {node, check_init_node(node, acc)}
       end)
 
-    sorted(writes)
+    %{
+      writes: sorted(acc.writes),
+      writes_truthy: sorted(acc.writes_truthy),
+      writes_falsy: sorted(acc.writes_falsy),
+      writes_dynamic: sorted(acc.writes_dynamic)
+    }
   end
 
   # Map literal `%{k: v, ...}` but NOT an update `%{state | k: v}`
@@ -90,7 +171,7 @@ defmodule BeamAnalyzer.Rules.StateDFG do
     if map_update?(kv_list) do
       acc
     else
-      put_keys(acc, kv_list)
+      record_literal_kv_writes(acc, kv_list)
     end
   end
 
@@ -99,7 +180,7 @@ defmodule BeamAnalyzer.Rules.StateDFG do
     if map_update?(kv_list) do
       acc
     else
-      put_keys(acc, kv_list)
+      record_literal_kv_writes(acc, kv_list)
     end
   end
 
@@ -108,10 +189,19 @@ defmodule BeamAnalyzer.Rules.StateDFG do
   defp map_update?([{:|, _, _} | _]), do: true
   defp map_update?(_), do: false
 
-  defp put_keys(acc, kv_list) do
+  defp record_literal_kv_writes(acc, kv_list) do
     Enum.reduce(kv_list, acc, fn
-      {k, _v}, a when is_atom(k) -> MapSet.put(a, Atom.to_string(k))
-      _, a -> a
+      {k, v}, a when is_atom(k) ->
+        field = Atom.to_string(k)
+
+        case classify_value(v) do
+          :truthy -> a |> put_one(:writes, field) |> put_one(:writes_truthy, field)
+          :falsy -> a |> put_one(:writes, field) |> put_one(:writes_falsy, field)
+          :unknown -> a |> put_one(:writes, field) |> put_one(:writes_dynamic, field)
+        end
+
+      _, a ->
+        a
     end)
   end
 
@@ -125,7 +215,7 @@ defmodule BeamAnalyzer.Rules.StateDFG do
          acc
        )
        when is_atom(ctx) and is_list(kv_list) do
-    put_many(acc, :writes, kv_keys(kv_list))
+    record_kv_writes(acc, kv_list)
   end
 
   # %Struct{state | key: value, ...}
@@ -134,58 +224,156 @@ defmodule BeamAnalyzer.Rules.StateDFG do
          acc
        )
        when is_atom(ctx) and is_list(kv_list) do
-    put_many(acc, :writes, kv_keys(kv_list))
+    record_kv_writes(acc, kv_list)
   end
 
-  # Map.<op>(state, :field, ...)
+  # Map.put(state, :field, value) / Map.put_new / Map.replace!
+  defp check_node(
+         {{:., _, [{:__aliases__, _, [:Map]}, op]}, _, [{:state, _, ctx}, key, value]},
+         acc
+       )
+       when is_atom(ctx) and is_atom(key) and
+              op in [:put, :put_new, :replace!] do
+    record_value_write(acc, Atom.to_string(key), value)
+  end
+
+  # Map.delete(state, :field) — field becomes absent; a subsequent
+  # `state.field` / `Map.get(state, :field)` returns `nil`, which
+  # Elixir treats as falsy. Classify accordingly so "always-falsy"
+  # analysis sees deletes as falsy writes.
+  defp check_node(
+         {{:., _, [{:__aliases__, _, [:Map]}, :delete]}, _, [{:state, _, ctx}, key]},
+         acc
+       )
+       when is_atom(ctx) and is_atom(key) do
+    field = Atom.to_string(key)
+    acc |> put_one(:writes, field) |> put_one(:writes_falsy, field)
+  end
+
+  # Map.update / Map.update! — writer whose new value comes from a
+  # fn applied to the old; conservatively :dynamic.
   defp check_node(
          {{:., _, [{:__aliases__, _, [:Map]}, op]}, _, [{:state, _, ctx}, key | _]},
          acc
        )
-       when is_atom(ctx) and is_atom(key) and
-              op in [:put, :put_new, :delete, :update, :update!, :replace!] do
-    put_one(acc, :writes, Atom.to_string(key))
+       when is_atom(ctx) and is_atom(key) and op in [:update, :update!] do
+    field = Atom.to_string(key)
+    acc |> put_one(:writes, field) |> put_one(:writes_dynamic, field)
   end
 
   # ── GUARDS ─────────────────────────────────────────────────────────
 
-  # if / unless — first arg is the condition
+  # if / unless — first arg is the condition. These are truthy-tests
+  # (except when the condition is a full expression like `state.X == :foo`).
   defp check_node({kind, _, [cond_ast | _rest]}, acc) when kind in [:if, :unless] do
-    maybe_record_guard(cond_ast, acc)
+    maybe_record_guard(cond_ast, acc, :truthy)
   end
 
-  # case — first arg is the scrutinee
+  # case — first arg is the scrutinee. Not a pure truthy test.
   defp check_node({:case, _, [scrutinee | _]}, acc) do
-    maybe_record_guard(scrutinee, acc)
+    maybe_record_guard(scrutinee, acc, :plain)
   end
 
-  defp check_node(_, acc), do: acc
-
-  # Direct `state.field` field access in guard position
-  defp maybe_record_guard({{:., _, [{:state, _, ctx}, field]}, _, []}, acc)
+  # Any bare `state.field` access anywhere in the body — captures
+  # reads used as data (call arguments, return values, string
+  # interpolations) in addition to the guard-position reads above.
+  # Matches the Elixir AST of `state.field`:
+  #   {{:., _, [{:state, _, ctx}, field]}, _, []}
+  # Excludes the `state` variable itself (no method name).
+  defp check_node({{:., _, [{:state, _, ctx}, field]}, _, []}, acc)
        when is_atom(ctx) and is_atom(field) do
-    put_one(acc, :guards, Atom.to_string(field))
+    put_one(acc, :uses, Atom.to_string(field))
   end
 
-  # `Map.get(state, :field)` — common alternative to state.field
-  defp maybe_record_guard(
+  # `Map.get(state, :field, ...)` — also a read, even outside a
+  # guard scrutinee.
+  defp check_node(
          {{:., _, [{:__aliases__, _, [:Map]}, :get]}, _, [{:state, _, ctx}, key | _]},
          acc
        )
        when is_atom(ctx) and is_atom(key) do
-    put_one(acc, :guards, Atom.to_string(key))
+    put_one(acc, :uses, Atom.to_string(key))
   end
 
-  defp maybe_record_guard(_, acc), do: acc
+  # `Map.fetch!(state, :field)` / `Map.fetch(state, :field)`
+  defp check_node(
+         {{:., _, [{:__aliases__, _, [:Map]}, op]}, _, [{:state, _, ctx}, key]},
+         acc
+       )
+       when is_atom(ctx) and is_atom(key) and op in [:fetch, :fetch!, :has_key?] do
+    put_one(acc, :uses, Atom.to_string(key))
+  end
+
+  defp check_node(_, acc), do: acc
+
+  # `state.field` directly in guard position — this IS a truthy test
+  # when seen under `if/unless`.
+  defp maybe_record_guard({{:., _, [{:state, _, ctx}, field]}, _, []}, acc, kind)
+       when is_atom(ctx) and is_atom(field) do
+    record_guard(acc, Atom.to_string(field), kind)
+  end
+
+  # `Map.get(state, :field)` — common alternative.
+  defp maybe_record_guard(
+         {{:., _, [{:__aliases__, _, [:Map]}, :get]}, _, [{:state, _, ctx}, key | _]},
+         acc,
+         kind
+       )
+       when is_atom(ctx) and is_atom(key) do
+    record_guard(acc, Atom.to_string(key), kind)
+  end
+
+  defp maybe_record_guard(_, acc, _kind), do: acc
+
+  defp record_guard(acc, field, :truthy) do
+    acc |> put_one(:guards, field) |> put_one(:guards_truthy, field)
+  end
+
+  defp record_guard(acc, field, :plain), do: put_one(acc, :guards, field)
 
   # ── Helpers ────────────────────────────────────────────────────────
 
-  defp kv_keys(kv_list) do
-    for {k, _v} <- kv_list, is_atom(k), do: Atom.to_string(k)
+  # Map-update keyword list: record each `key: value` write.
+  defp record_kv_writes(acc, kv_list) do
+    Enum.reduce(kv_list, acc, fn
+      {k, v}, a when is_atom(k) -> record_value_write(a, Atom.to_string(k), v)
+      _, a -> a
+    end)
   end
 
-  defp put_one({w, g}, :writes, field), do: {MapSet.put(w, field), g}
-  defp put_one({w, g}, :guards, field), do: {w, MapSet.put(g, field)}
+  defp record_value_write(acc, field, value_ast) do
+    case classify_value(value_ast) do
+      :truthy -> acc |> put_one(:writes, field) |> put_one(:writes_truthy, field)
+      :falsy -> acc |> put_one(:writes, field) |> put_one(:writes_falsy, field)
+      :unknown -> acc |> put_one(:writes, field) |> put_one(:writes_dynamic, field)
+    end
+  end
 
-  defp put_many(acc, tag, fields), do: Enum.reduce(fields, acc, &put_one(&2, tag, &1))
+  # Classify the RHS of a write as syntactically truthy, falsy, or
+  # unknown. A value is provably truthy/falsy only when it's a
+  # compile-time literal with an unambiguous truthiness. Anything
+  # computed — function calls, variable refs, arithmetic — lands in
+  # :unknown so the Datalog rules can't false-positive on a dynamic
+  # writer that happens to produce a falsy value at runtime.
+  defp classify_value(nil), do: :falsy
+  defp classify_value(false), do: :falsy
+  defp classify_value(true), do: :truthy
+  defp classify_value(atom) when is_atom(atom), do: :truthy
+  defp classify_value(n) when is_integer(n) or is_float(n), do: :truthy
+  defp classify_value(s) when is_binary(s), do: :truthy
+  defp classify_value([]), do: :truthy    # [] is truthy in Elixir
+  defp classify_value([_ | _]), do: :truthy
+  defp classify_value({:{}, _, _}), do: :truthy      # tuple literal >2
+  defp classify_value({_, _}), do: :truthy           # 2-tuple literal
+  defp classify_value({:%{}, _, _}), do: :truthy     # map literal
+  defp classify_value({:%, _, _}), do: :truthy       # struct literal
+  defp classify_value({:<<>>, _, _}), do: :truthy    # binary literal
+  # `&capture/arity`, `fn -> ... end` — always a function, truthy.
+  defp classify_value({:&, _, _}), do: :truthy
+  defp classify_value({:fn, _, _}), do: :truthy
+  defp classify_value(_), do: :unknown
+
+  defp put_one(acc, key, field) when is_map_key(acc, key) do
+    Map.update!(acc, key, &MapSet.put(&1, field))
+  end
 end

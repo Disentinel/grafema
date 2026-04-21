@@ -567,3 +567,31 @@ guarantees:
     check: datalog
     rule: 'handler_writes(F) :- edge(M, F, "WRITES_STATE"), node(M, "MESSAGE_TYPE"). violation(F) :- node(F, "STATE_FIELD"), edge(_, F, "READS_STATE"), edge(_, F, "WRITES_STATE"), \+ handler_writes(F).'
     severity: info
+
+  - name: beam-state-truthy-guard-always-falsy
+    description: >
+      A state field is read in a truthy-test position (`if state.X
+      do`, `unless state.X`, `if Map.get(state, :X) do`) but every
+      writer of that field — init, handler clauses, and helper
+      functions — only ever sets it to a compile-time `false` / `nil`
+      literal (or deletes it, which reads back as nil). The truthy
+      branch of the guard is unreachable; the code inside is dead.
+      Requires zero WRITES_STATE_DYNAMIC edges so dynamic writers
+      (function-call results, variable references) don't mask a
+      potential truthy runtime value.
+    check: datalog
+    rule: 'violation(F) :- node(F, "STATE_FIELD"), edge(_, F, "READS_STATE_TRUTHY"), edge(_, F, "WRITES_STATE_FALSY"), \+ edge(_, F, "WRITES_STATE_TRUTHY"), \+ edge(_, F, "WRITES_STATE_DYNAMIC").'
+    severity: warning
+
+  - name: beam-state-truthy-guard-always-truthy
+    description: >
+      Mirror of beam-state-truthy-guard-always-falsy: every writer of
+      the field sets it to a compile-time truthy literal (atom, int,
+      struct, `true`, etc.), no writer emits a falsy value, and no
+      writer is dynamic. The `else` branch of `if state.X do ... else
+      ... end` (or the body of `unless state.X`) is unreachable dead
+      code. Often a sign that a flag was introduced for a toggle but
+      the "off" path was never wired up.
+    check: datalog
+    rule: 'violation(F) :- node(F, "STATE_FIELD"), edge(_, F, "READS_STATE_TRUTHY"), edge(_, F, "WRITES_STATE_TRUTHY"), \+ edge(_, F, "WRITES_STATE_FALSY"), \+ edge(_, F, "WRITES_STATE_DYNAMIC").'
+    severity: warning

@@ -1037,6 +1037,70 @@ defmodule BeamAnalyzerTest do
       assert Map.get(reads_by_clause, "cast:check") == "mode"
     end
 
+    test "helper defp writes emit WRITES_STATE edges (trans-procedural)" do
+      # Regression for the planner_trigger false-positive: without
+      # walking private helpers, `do_spawn` setting running?: true is
+      # invisible and the always-falsy rule fires on a healthy codebase.
+      result =
+        w2_analyze("""
+          def handle_call(:go, _from, state) do
+            {:reply, :ok, spawn_work(state)}
+          end
+
+          defp spawn_work(state) do
+            %{state | running?: true}
+          end
+        """)
+
+      writes = Enum.filter(result.edges, &(&1.type == "WRITES_STATE_TRUTHY"))
+      writer_names = Enum.map(writes, fn e -> node_name(result, e.src) end)
+
+      assert "spawn_work/1" in writer_names
+    end
+
+    test "fixture with true dead-branch triggers the always-falsy classifier" do
+      # A synthetic GenServer where `state.done?` starts false and no
+      # handler / helper ever flips it to a truthy value. The
+      # `if state.done? do` branch is truly dead.
+      result =
+        w2_analyze("""
+          def init(_), do: {:ok, %{done?: false}}
+
+          def handle_call(:status, _from, state) do
+            if state.done? do
+              {:reply, :finished, state}
+            else
+              {:reply, :pending, state}
+            end
+          end
+
+          def handle_cast(:reset, state) do
+            {:noreply, %{state | done?: false}}
+          end
+        """)
+
+      done_field =
+        Enum.find(result.nodes, &(&1.type == "STATE_FIELD" and &1.name == "done?"))
+
+      assert done_field != nil
+
+      edge_types =
+        result.edges
+        |> Enum.filter(&(&1.dst == done_field.id))
+        |> Enum.map(& &1.type)
+        |> Enum.sort()
+        |> Enum.uniq()
+
+      # Expected shape: WRITES_STATE + WRITES_STATE_FALSY on both init
+      # and the :reset handler; READS_STATE + READS_STATE_TRUTHY on
+      # :status handler. No TRUTHY writer, no DYNAMIC writer.
+      assert "WRITES_STATE" in edge_types
+      assert "WRITES_STATE_FALSY" in edge_types
+      assert "READS_STATE_TRUTHY" in edge_types
+      refute "WRITES_STATE_TRUTHY" in edge_types
+      refute "WRITES_STATE_DYNAMIC" in edge_types
+    end
+
     test "init/1 writes are attached to the init FUNCTION, not to any MESSAGE_TYPE" do
       result =
         w2_analyze("""

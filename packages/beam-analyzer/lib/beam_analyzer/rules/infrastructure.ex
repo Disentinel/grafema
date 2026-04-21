@@ -288,9 +288,27 @@ defmodule BeamAnalyzer.Rules.Infrastructure do
       func_name == "init/1" ->
         emit_state_field_edges(ctx, func_id, body, :init)
 
+      # Any other def/defp: propagate state-writes through private
+      # helpers so the guarantee engine sees the full write surface,
+      # not just the handler-clause body. Example: a handler calls
+      # `defp do_spawn(state, _)` which returns `%{state | running?: true}`.
+      #
+      # Gated on module having a PROCESS node (= it's actually a
+      # GenServer / Agent / Task). Without the gate, a non-GenServer
+      # module that happens to bind a local variable called `state`
+      # (e.g. `state = Ichi.Hormones.state()`) would emit bogus
+      # STATE_FIELD edges and pollute the semantic-state guarantees.
       true ->
-        ctx
+        if module_is_genserver?(ctx) do
+          emit_state_field_edges(ctx, func_id, body, :helper)
+        else
+          ctx
+        end
     end
+  end
+
+  defp module_is_genserver?(ctx) do
+    Enum.any?(ctx.nodes, fn n -> n.type == "PROCESS" and n.file == ctx.file end)
   end
 
   defp add_handler_edge(ctx, func_id, handler_type, first_arg, meta, body) do
@@ -392,14 +410,69 @@ defmodule BeamAnalyzer.Rules.Infrastructure do
   # mode = :init    (use map-literal / struct-literal semantics, since
   #                  init builds the initial state from scratch)
   defp emit_state_field_edges(ctx, src_id, body, mode) do
-    {writes, guards} =
-      case mode do
-        :handler -> BeamAnalyzer.Rules.StateDFG.extract(body)
-        :init -> {BeamAnalyzer.Rules.StateDFG.extract_init_writes(body), []}
-      end
+    case mode do
+      :handler ->
+        %{
+          writes: writes,
+          writes_truthy: writes_truthy,
+          writes_falsy: writes_falsy,
+          writes_dynamic: writes_dynamic,
+          guards: guards,
+          guards_truthy: guards_truthy,
+          uses: uses
+        } = BeamAnalyzer.Rules.StateDFG.extract(body)
 
-    ctx = Enum.reduce(writes, ctx, &add_field_edge(&2, src_id, &1, "WRITES_STATE"))
-    Enum.reduce(guards, ctx, &add_field_edge(&2, src_id, &1, "READS_STATE"))
+        ctx
+        |> emit_field_edges(src_id, writes, "WRITES_STATE")
+        |> emit_field_edges(src_id, writes_truthy, "WRITES_STATE_TRUTHY")
+        |> emit_field_edges(src_id, writes_falsy, "WRITES_STATE_FALSY")
+        |> emit_field_edges(src_id, writes_dynamic, "WRITES_STATE_DYNAMIC")
+        |> emit_field_edges(src_id, guards, "READS_STATE")
+        |> emit_field_edges(src_id, guards_truthy, "READS_STATE_TRUTHY")
+        |> emit_field_edges(src_id, uses, "USES_STATE")
+
+      :init ->
+        %{
+          writes: writes,
+          writes_truthy: writes_truthy,
+          writes_falsy: writes_falsy,
+          writes_dynamic: writes_dynamic
+        } = BeamAnalyzer.Rules.StateDFG.extract_init(body)
+
+        ctx
+        |> emit_field_edges(src_id, writes, "WRITES_STATE")
+        |> emit_field_edges(src_id, writes_truthy, "WRITES_STATE_TRUTHY")
+        |> emit_field_edges(src_id, writes_falsy, "WRITES_STATE_FALSY")
+        |> emit_field_edges(src_id, writes_dynamic, "WRITES_STATE_DYNAMIC")
+
+      :helper ->
+        # Private/helper function — same state-write semantics as a
+        # handler body (the `state` variable is the conventional name
+        # of the GenServer state passed as the last argument). Uses
+        # are emitted too so "field written but never read" rules see
+        # state.X references inside helper bodies. Guards are not
+        # emitted: a guard inside a helper only gates work when the
+        # helper is actually called from a handler, and the call
+        # graph already ties it back through CONTAINS/CALLS.
+        %{
+          writes: writes,
+          writes_truthy: writes_truthy,
+          writes_falsy: writes_falsy,
+          writes_dynamic: writes_dynamic,
+          uses: uses
+        } = BeamAnalyzer.Rules.StateDFG.extract(body)
+
+        ctx
+        |> emit_field_edges(src_id, writes, "WRITES_STATE")
+        |> emit_field_edges(src_id, writes_truthy, "WRITES_STATE_TRUTHY")
+        |> emit_field_edges(src_id, writes_falsy, "WRITES_STATE_FALSY")
+        |> emit_field_edges(src_id, writes_dynamic, "WRITES_STATE_DYNAMIC")
+        |> emit_field_edges(src_id, uses, "USES_STATE")
+    end
+  end
+
+  defp emit_field_edges(ctx, src_id, field_names, edge_type) do
+    Enum.reduce(field_names, ctx, &add_field_edge(&2, src_id, &1, edge_type))
   end
 
   defp add_field_edge(ctx, src_id, field_name, edge_type) do
