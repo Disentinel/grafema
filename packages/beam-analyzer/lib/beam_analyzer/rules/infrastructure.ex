@@ -280,6 +280,14 @@ defmodule BeamAnalyzer.Rules.Infrastructure do
       String.starts_with?(func_name, "handle_event/") ->
         add_handler_edge(ctx, func_id, "event", first_arg, meta, body)
 
+      # init/1 — not a message handler but it DOES define the initial
+      # shape of state. Extracting writes from init body lets the
+      # state-field guarantees distinguish "field set once in init and
+      # never touched again" from "field not written anywhere" (the
+      # latter is the hard trap).
+      func_name == "init/1" ->
+        emit_state_field_edges(ctx, func_id, body, :init)
+
       true ->
         ctx
     end
@@ -351,6 +359,12 @@ defmodule BeamAnalyzer.Rules.Infrastructure do
           metadata: %{}
         })
 
+        # State-field DFG: every field the clause body writes or reads
+        # in guard position gets a STATE_FIELD node + WRITES_STATE /
+        # READS_STATE edge from this MESSAGE_TYPE. Enables the
+        # beam-state-* guarantees (field-guard-never-written, etc.).
+        ctx = emit_state_field_edges(ctx, msg_id, body, :handler)
+
         # Activate handler-clause scope so CALL / BRANCH / LOOP nodes
         # emitted by the walker while descending into this def's body
         # are automatically CONTAINed by this MESSAGE_TYPE. The caller
@@ -361,6 +375,57 @@ defmodule BeamAnalyzer.Rules.Infrastructure do
       [] ->
         ctx
     end
+  end
+
+  # Emit STATE_FIELD nodes + WRITES_STATE / READS_STATE edges for
+  # every field the given body touches. Invoked for:
+  #   - handler clauses (src = MESSAGE_TYPE id) — captures runtime
+  #     writes/guards per clause;
+  #   - `init/1` (src = FUNCTION id) — captures the initial-state
+  #     shape so "field never written" can distinguish init-only
+  #     fields from genuinely dangling reads.
+  #
+  # FIELD nodes are per-file so different modules keep independent
+  # field namespaces (two GenServers both with `state.paused` don't
+  # collapse into one node).
+  # mode = :handler (use map-update semantics on the `state` variable)
+  # mode = :init    (use map-literal / struct-literal semantics, since
+  #                  init builds the initial state from scratch)
+  defp emit_state_field_edges(ctx, src_id, body, mode) do
+    {writes, guards} =
+      case mode do
+        :handler -> BeamAnalyzer.Rules.StateDFG.extract(body)
+        :init -> {BeamAnalyzer.Rules.StateDFG.extract_init_writes(body), []}
+      end
+
+    ctx = Enum.reduce(writes, ctx, &add_field_edge(&2, src_id, &1, "WRITES_STATE"))
+    Enum.reduce(guards, ctx, &add_field_edge(&2, src_id, &1, "READS_STATE"))
+  end
+
+  defp add_field_edge(ctx, src_id, field_name, edge_type) do
+    field_id = "#{ctx.file}->STATE_FIELD->#{field_name}"
+
+    field_node = %{
+      id: field_id,
+      type: "STATE_FIELD",
+      name: field_name,
+      file: ctx.file,
+      line: 0,
+      column: 0,
+      endLine: 0,
+      endColumn: 0,
+      exported: false,
+      metadata: %{language: "elixir"}
+    }
+
+    ctx
+    |> Context.add_node(field_node)
+    |> Context.add_edge(%{
+      src: src_id,
+      dst: field_id,
+      type: edge_type,
+      metadata: %{}
+    })
   end
 
   # Catch-all pattern: bare variable, wildcard, or guarded bare variable.

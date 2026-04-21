@@ -970,6 +970,107 @@ defmodule BeamAnalyzerTest do
       refute "call_a" in names_under.(id_b)
     end
 
+    test "handler body writes to state fields emit WRITES_STATE edges to STATE_FIELD nodes" do
+      result =
+        w2_analyze("""
+          def init(_) do
+            {:ok, %{paused: false, counter: 0}}
+          end
+
+          def handle_cast(:pause, state) do
+            {:noreply, %{state | paused: true}}
+          end
+
+          def handle_cast(:tick, state) do
+            {:noreply, %{state | counter: state.counter + 1}}
+          end
+        """)
+
+      state_fields = Enum.filter(result.nodes, &(&1.type == "STATE_FIELD"))
+      field_names = Enum.map(state_fields, & &1.name) |> Enum.uniq() |> Enum.sort()
+      assert field_names == ["counter", "paused"]
+
+      writes = Enum.filter(result.edges, &(&1.type == "WRITES_STATE"))
+      assert length(writes) >= 2
+
+      # :pause clause writes `paused`
+      %{id: pause_id} =
+        Enum.find(msg_nodes(result), &(&1.name == "cast:pause"))
+
+      pause_writes =
+        writes
+        |> Enum.filter(&(&1.src == pause_id))
+        |> Enum.map(fn e -> node_name(result, e.dst) end)
+
+      assert pause_writes == ["paused"]
+    end
+
+    test "handler guard reads emit READS_STATE edges" do
+      result =
+        w2_analyze("""
+          def handle_call(:work, _from, state) do
+            if state.running do
+              {:reply, :ok, state}
+            else
+              {:reply, :paused, state}
+            end
+          end
+
+          def handle_cast(:check, state) do
+            case state.mode do
+              :a -> {:noreply, state}
+              :b -> {:noreply, state}
+            end
+          end
+        """)
+
+      reads = Enum.filter(result.edges, &(&1.type == "READS_STATE"))
+
+      reads_by_clause =
+        for r <- reads,
+            into: %{} do
+          {node_name(result, r.src), node_name(result, r.dst)}
+        end
+
+      # call:work reads `running`, cast:check reads `mode`
+      assert Map.get(reads_by_clause, "call:work") == "running"
+      assert Map.get(reads_by_clause, "cast:check") == "mode"
+    end
+
+    test "init/1 writes are attached to the init FUNCTION, not to any MESSAGE_TYPE" do
+      result =
+        w2_analyze("""
+          def init(_) do
+            {:ok, %{timer: nil, queue: []}}
+          end
+
+          def handle_call(:status, _from, state) do
+            {:reply, state.timer, state}
+          end
+        """)
+
+      init_fn = Enum.find(result.nodes, &(&1.type == "FUNCTION" and &1.name == "init/1"))
+      assert init_fn != nil
+
+      init_writes =
+        result.edges
+        |> Enum.filter(&(&1.type == "WRITES_STATE" and &1.src == init_fn.id))
+        |> Enum.map(fn e -> node_name(result, e.dst) end)
+        |> Enum.sort()
+
+      assert init_writes == ["queue", "timer"]
+
+      # No WRITES_STATE edge from any MESSAGE_TYPE (handle_call :status only reads)
+      msg_ids = msg_nodes(result) |> Enum.map(& &1.id) |> MapSet.new()
+
+      msg_writes =
+        Enum.filter(result.edges, fn e ->
+          e.type == "WRITES_STATE" and MapSet.member?(msg_ids, e.src)
+        end)
+
+      assert msg_writes == []
+    end
+
     test "non-handler def does not attach CONTAINS to any MESSAGE_TYPE" do
       result =
         w2_analyze("""
