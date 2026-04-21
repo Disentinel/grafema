@@ -893,6 +893,122 @@ defmodule BeamAnalyzerTest do
 
       assert {:ok, _} = Jason.encode(result)
     end
+
+    # Precise handler-body scope: MESSAGE_TYPE → CONTAINS → CALL / BRANCH / LOOP
+    # Required for cycle / unguarded-tick / pubsub-echo Datalog rules.
+    # Without this edge, rules can only file-level-match call-sites to
+    # clauses, which conflates wrapper functions in the same module with
+    # real in-handler sends.
+    test "handler-clause CONTAINS its body's CALL / BRANCH / LOOP nodes" do
+      result =
+        w2_analyze("""
+          def handle_info(:tick, state) do
+            case state do
+              %{running: true} -> Process.send_after(self(), :tick, 1000)
+              _ -> :noop
+            end
+            for x <- state.queue, do: log(x)
+            {:noreply, state}
+          end
+        """)
+
+      [msg] = msg_nodes(result) |> Enum.filter(&(&1.metadata.handler_type == "info"))
+
+      contains_from_clause =
+        Enum.filter(result.edges, &(&1.type == "CONTAINS" and &1.src == msg.id))
+
+      # `send_after` + `log` + (any helper CALLs from walkers)
+      call_targets =
+        contains_from_clause
+        |> Enum.filter(fn e -> node_type(result, e.dst) == "CALL" end)
+        |> Enum.map(fn e -> node_name(result, e.dst) end)
+
+      assert "Process.send_after" in call_targets
+      assert "log" in call_targets
+
+      branch_targets =
+        contains_from_clause
+        |> Enum.filter(fn e -> node_type(result, e.dst) == "BRANCH" end)
+        |> Enum.map(fn e -> node_name(result, e.dst) end)
+
+      assert "case" in branch_targets
+
+      loop_targets =
+        contains_from_clause
+        |> Enum.filter(fn e -> node_type(result, e.dst) == "LOOP" end)
+
+      assert length(loop_targets) == 1
+    end
+
+    test "sibling handler clauses do not leak CONTAINS into each other" do
+      result =
+        w2_analyze("""
+          def handle_info(:a, state) do
+            call_a(state)
+            {:noreply, state}
+          end
+
+          def handle_info(:b, state) do
+            call_b(state)
+            {:noreply, state}
+          end
+        """)
+
+      msgs = msg_nodes(result) |> Enum.filter(&(&1.metadata.handler_type == "info"))
+      %{id: id_a} = Enum.find(msgs, &(&1.name == "info:a"))
+      %{id: id_b} = Enum.find(msgs, &(&1.name == "info:b"))
+
+      names_under = fn clause_id ->
+        result.edges
+        |> Enum.filter(&(&1.type == "CONTAINS" and &1.src == clause_id))
+        |> Enum.map(fn e -> node_name(result, e.dst) end)
+      end
+
+      assert "call_a" in names_under.(id_a)
+      refute "call_b" in names_under.(id_a)
+      assert "call_b" in names_under.(id_b)
+      refute "call_a" in names_under.(id_b)
+    end
+
+    test "non-handler def does not attach CONTAINS to any MESSAGE_TYPE" do
+      result =
+        w2_analyze("""
+          def handle_call(:ping, _from, state), do: {:reply, :pong, state}
+
+          def helper(state) do
+            helper_call(state)
+          end
+        """)
+
+      msg_ids = msg_nodes(result) |> Enum.map(& &1.id) |> MapSet.new()
+
+      helper_call_node =
+        Enum.find(result.nodes, &(&1.type == "CALL" and &1.name == "helper_call"))
+
+      assert helper_call_node != nil
+
+      offending =
+        Enum.filter(result.edges, fn e ->
+          e.type == "CONTAINS" and e.dst == helper_call_node.id and
+            MapSet.member?(msg_ids, e.src)
+        end)
+
+      assert offending == []
+    end
+  end
+
+  defp node_type(result, id) do
+    case Enum.find(result.nodes, &(&1.id == id)) do
+      nil -> nil
+      node -> node.type
+    end
+  end
+
+  defp node_name(result, id) do
+    case Enum.find(result.nodes, &(&1.id == id)) do
+      nil -> nil
+      node -> node.name
+    end
   end
 
   # ==================================================================

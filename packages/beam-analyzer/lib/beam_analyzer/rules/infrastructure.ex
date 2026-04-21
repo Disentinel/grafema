@@ -344,12 +344,19 @@ defmodule BeamAnalyzer.Rules.Infrastructure do
         ctx = Context.add_node(ctx, msg_node)
 
         # RECEIVES edge from process to message type
-        Context.add_edge(ctx, %{
+        ctx = Context.add_edge(ctx, %{
           src: process.id,
           dst: msg_id,
           type: "RECEIVES",
           metadata: %{}
         })
+
+        # Activate handler-clause scope so CALL / BRANCH / LOOP nodes
+        # emitted by the walker while descending into this def's body
+        # are automatically CONTAINed by this MESSAGE_TYPE. The caller
+        # (Rules.Functions.process_function/6) clears the scope after
+        # walk_body so the next sibling def starts fresh.
+        Context.set_handler_clause(ctx, msg_id)
 
       [] ->
         ctx
