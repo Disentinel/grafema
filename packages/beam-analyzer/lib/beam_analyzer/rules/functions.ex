@@ -108,6 +108,12 @@ defmodule BeamAnalyzer.Rules.Functions do
 
     ctx = walk_body(keyword_body, ctx)
 
+    # Clear handler-clause scope so siblings don't inherit this def's
+    # MESSAGE_TYPE. Infrastructure only sets the scope for handle_*
+    # callback clauses that actually produced a MESSAGE_TYPE; for any
+    # other def this is a no-op.
+    ctx = Context.clear_handler_clause(ctx)
+
     Context.pop_scope(ctx)
   end
 
@@ -150,6 +156,12 @@ defmodule BeamAnalyzer.Rules.Functions do
     ctx = Enum.reduce(clauses, ctx, fn {:clause, _line, _args, _guards, body}, ctx ->
       Enum.reduce(body, ctx, &walk_erlang_expr/2)
     end)
+
+    # Clear handler-clause scope — same as the Elixir path. Erlang has
+    # a single MESSAGE_TYPE per handle_* function (first_arg = nil in
+    # Infrastructure), so all clause bodies above got CONTAINed by that
+    # one clause. Done for this def.
+    ctx = Context.clear_handler_clause(ctx)
 
     Context.pop_scope(ctx)
   end

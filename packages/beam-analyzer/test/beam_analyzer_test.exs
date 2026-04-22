@@ -893,6 +893,287 @@ defmodule BeamAnalyzerTest do
 
       assert {:ok, _} = Jason.encode(result)
     end
+
+    # Precise handler-body scope: MESSAGE_TYPE → CONTAINS → CALL / BRANCH / LOOP
+    # Required for cycle / unguarded-tick / pubsub-echo Datalog rules.
+    # Without this edge, rules can only file-level-match call-sites to
+    # clauses, which conflates wrapper functions in the same module with
+    # real in-handler sends.
+    test "handler-clause CONTAINS its body's CALL / BRANCH / LOOP nodes" do
+      result =
+        w2_analyze("""
+          def handle_info(:tick, state) do
+            case state do
+              %{running: true} -> Process.send_after(self(), :tick, 1000)
+              _ -> :noop
+            end
+            for x <- state.queue, do: log(x)
+            {:noreply, state}
+          end
+        """)
+
+      [msg] = msg_nodes(result) |> Enum.filter(&(&1.metadata.handler_type == "info"))
+
+      contains_from_clause =
+        Enum.filter(result.edges, &(&1.type == "CONTAINS" and &1.src == msg.id))
+
+      # `send_after` + `log` + (any helper CALLs from walkers)
+      call_targets =
+        contains_from_clause
+        |> Enum.filter(fn e -> node_type(result, e.dst) == "CALL" end)
+        |> Enum.map(fn e -> node_name(result, e.dst) end)
+
+      assert "Process.send_after" in call_targets
+      assert "log" in call_targets
+
+      branch_targets =
+        contains_from_clause
+        |> Enum.filter(fn e -> node_type(result, e.dst) == "BRANCH" end)
+        |> Enum.map(fn e -> node_name(result, e.dst) end)
+
+      assert "case" in branch_targets
+
+      loop_targets =
+        contains_from_clause
+        |> Enum.filter(fn e -> node_type(result, e.dst) == "LOOP" end)
+
+      assert length(loop_targets) == 1
+    end
+
+    test "sibling handler clauses do not leak CONTAINS into each other" do
+      result =
+        w2_analyze("""
+          def handle_info(:a, state) do
+            call_a(state)
+            {:noreply, state}
+          end
+
+          def handle_info(:b, state) do
+            call_b(state)
+            {:noreply, state}
+          end
+        """)
+
+      msgs = msg_nodes(result) |> Enum.filter(&(&1.metadata.handler_type == "info"))
+      %{id: id_a} = Enum.find(msgs, &(&1.name == "info:a"))
+      %{id: id_b} = Enum.find(msgs, &(&1.name == "info:b"))
+
+      names_under = fn clause_id ->
+        result.edges
+        |> Enum.filter(&(&1.type == "CONTAINS" and &1.src == clause_id))
+        |> Enum.map(fn e -> node_name(result, e.dst) end)
+      end
+
+      assert "call_a" in names_under.(id_a)
+      refute "call_b" in names_under.(id_a)
+      assert "call_b" in names_under.(id_b)
+      refute "call_a" in names_under.(id_b)
+    end
+
+    test "handler body writes to state fields emit WRITES_STATE edges to STATE_FIELD nodes" do
+      result =
+        w2_analyze("""
+          def init(_) do
+            {:ok, %{paused: false, counter: 0}}
+          end
+
+          def handle_cast(:pause, state) do
+            {:noreply, %{state | paused: true}}
+          end
+
+          def handle_cast(:tick, state) do
+            {:noreply, %{state | counter: state.counter + 1}}
+          end
+        """)
+
+      state_fields = Enum.filter(result.nodes, &(&1.type == "STATE_FIELD"))
+      field_names = Enum.map(state_fields, & &1.name) |> Enum.uniq() |> Enum.sort()
+      assert field_names == ["counter", "paused"]
+
+      writes = Enum.filter(result.edges, &(&1.type == "WRITES_STATE"))
+      assert length(writes) >= 2
+
+      # :pause clause writes `paused`
+      %{id: pause_id} =
+        Enum.find(msg_nodes(result), &(&1.name == "cast:pause"))
+
+      pause_writes =
+        writes
+        |> Enum.filter(&(&1.src == pause_id))
+        |> Enum.map(fn e -> node_name(result, e.dst) end)
+
+      assert pause_writes == ["paused"]
+    end
+
+    test "handler guard reads emit READS_STATE edges" do
+      result =
+        w2_analyze("""
+          def handle_call(:work, _from, state) do
+            if state.running do
+              {:reply, :ok, state}
+            else
+              {:reply, :paused, state}
+            end
+          end
+
+          def handle_cast(:check, state) do
+            case state.mode do
+              :a -> {:noreply, state}
+              :b -> {:noreply, state}
+            end
+          end
+        """)
+
+      reads = Enum.filter(result.edges, &(&1.type == "READS_STATE"))
+
+      reads_by_clause =
+        for r <- reads,
+            into: %{} do
+          {node_name(result, r.src), node_name(result, r.dst)}
+        end
+
+      # call:work reads `running`, cast:check reads `mode`
+      assert Map.get(reads_by_clause, "call:work") == "running"
+      assert Map.get(reads_by_clause, "cast:check") == "mode"
+    end
+
+    test "helper defp writes emit WRITES_STATE edges (trans-procedural)" do
+      # Regression for the planner_trigger false-positive: without
+      # walking private helpers, `do_spawn` setting running?: true is
+      # invisible and the always-falsy rule fires on a healthy codebase.
+      result =
+        w2_analyze("""
+          def handle_call(:go, _from, state) do
+            {:reply, :ok, spawn_work(state)}
+          end
+
+          defp spawn_work(state) do
+            %{state | running?: true}
+          end
+        """)
+
+      writes = Enum.filter(result.edges, &(&1.type == "WRITES_STATE_TRUTHY"))
+      writer_names = Enum.map(writes, fn e -> node_name(result, e.src) end)
+
+      assert "spawn_work/1" in writer_names
+    end
+
+    test "fixture with true dead-branch triggers the always-falsy classifier" do
+      # A synthetic GenServer where `state.done?` starts false and no
+      # handler / helper ever flips it to a truthy value. The
+      # `if state.done? do` branch is truly dead.
+      result =
+        w2_analyze("""
+          def init(_), do: {:ok, %{done?: false}}
+
+          def handle_call(:status, _from, state) do
+            if state.done? do
+              {:reply, :finished, state}
+            else
+              {:reply, :pending, state}
+            end
+          end
+
+          def handle_cast(:reset, state) do
+            {:noreply, %{state | done?: false}}
+          end
+        """)
+
+      done_field =
+        Enum.find(result.nodes, &(&1.type == "STATE_FIELD" and &1.name == "done?"))
+
+      assert done_field != nil
+
+      edge_types =
+        result.edges
+        |> Enum.filter(&(&1.dst == done_field.id))
+        |> Enum.map(& &1.type)
+        |> Enum.sort()
+        |> Enum.uniq()
+
+      # Expected shape: WRITES_STATE + WRITES_STATE_FALSY on both init
+      # and the :reset handler; READS_STATE + READS_STATE_TRUTHY on
+      # :status handler. No TRUTHY writer, no DYNAMIC writer.
+      assert "WRITES_STATE" in edge_types
+      assert "WRITES_STATE_FALSY" in edge_types
+      assert "READS_STATE_TRUTHY" in edge_types
+      refute "WRITES_STATE_TRUTHY" in edge_types
+      refute "WRITES_STATE_DYNAMIC" in edge_types
+    end
+
+    test "init/1 writes are attached to the init FUNCTION, not to any MESSAGE_TYPE" do
+      result =
+        w2_analyze("""
+          def init(_) do
+            {:ok, %{timer: nil, queue: []}}
+          end
+
+          def handle_call(:status, _from, state) do
+            {:reply, state.timer, state}
+          end
+        """)
+
+      init_fn = Enum.find(result.nodes, &(&1.type == "FUNCTION" and &1.name == "init/1"))
+      assert init_fn != nil
+
+      init_writes =
+        result.edges
+        |> Enum.filter(&(&1.type == "WRITES_STATE" and &1.src == init_fn.id))
+        |> Enum.map(fn e -> node_name(result, e.dst) end)
+        |> Enum.sort()
+
+      assert init_writes == ["queue", "timer"]
+
+      # No WRITES_STATE edge from any MESSAGE_TYPE (handle_call :status only reads)
+      msg_ids = msg_nodes(result) |> Enum.map(& &1.id) |> MapSet.new()
+
+      msg_writes =
+        Enum.filter(result.edges, fn e ->
+          e.type == "WRITES_STATE" and MapSet.member?(msg_ids, e.src)
+        end)
+
+      assert msg_writes == []
+    end
+
+    test "non-handler def does not attach CONTAINS to any MESSAGE_TYPE" do
+      result =
+        w2_analyze("""
+          def handle_call(:ping, _from, state), do: {:reply, :pong, state}
+
+          def helper(state) do
+            helper_call(state)
+          end
+        """)
+
+      msg_ids = msg_nodes(result) |> Enum.map(& &1.id) |> MapSet.new()
+
+      helper_call_node =
+        Enum.find(result.nodes, &(&1.type == "CALL" and &1.name == "helper_call"))
+
+      assert helper_call_node != nil
+
+      offending =
+        Enum.filter(result.edges, fn e ->
+          e.type == "CONTAINS" and e.dst == helper_call_node.id and
+            MapSet.member?(msg_ids, e.src)
+        end)
+
+      assert offending == []
+    end
+  end
+
+  defp node_type(result, id) do
+    case Enum.find(result.nodes, &(&1.id == id)) do
+      nil -> nil
+      node -> node.type
+    end
+  end
+
+  defp node_name(result, id) do
+    case Enum.find(result.nodes, &(&1.id == id)) do
+      nil -> nil
+      node -> node.name
+    end
   end
 
   # ==================================================================

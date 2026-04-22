@@ -493,3 +493,105 @@ guarantees:
     check: datalog
     rule: 'violation(X) :- node(X, "ISSUE"), attr(X, "finding_kind", "topic_mismatch").'
     severity: warning
+
+  - name: beam-handler-self-loop-sends
+    description: >
+      A handler clause's body contains a call that delivers a message
+      back to the same handler clause — a classic `cast`/`call` echo
+      that can run a GenServer at 100% CPU until its mailbox floods.
+      Detected via MESSAGE_TYPE -[CONTAINS]-> CALL -[SENDS_MESSAGE]->
+      same MESSAGE_TYPE. SELF_SCHEDULE is excluded: the tick pattern
+      (`Process.send_after(self(), :tick, N)`) is a legitimate
+      liveness primitive — audit those with `beam-handler-unguarded-tick`.
+    check: datalog
+    rule: 'violation(M) :- edge(M, C, "CONTAINS"), edge(C, M, "SENDS_MESSAGE"), node(M, "MESSAGE_TYPE").'
+    severity: warning
+
+  - name: beam-handler-self-loop-publishes
+    description: >
+      A handler clause publishes to a PubSub topic whose subscriber
+      set includes the same clause — the handler re-enqueues itself
+      through fanout. Classic broadcast-storm pattern. Uses the
+      PUBLISHES edge emitted by BeamPubsubDelivery, so it only
+      fires when static topic unification says the handler really
+      will receive its own message.
+    check: datalog
+    rule: 'violation(M) :- edge(M, C, "CONTAINS"), edge(C, M, "PUBLISHES"), node(M, "MESSAGE_TYPE").'
+    severity: warning
+
+  - name: beam-handler-unguarded-tick
+    description: >
+      A handler clause issues `Process.send_after(self(), _, _)` /
+      `send(self(), _)` (SELF_SCHEDULE) with no BRANCH anywhere in
+      its own body — the next tick fires unconditionally. Usually
+      intentional for polling loops, but worth flagging: once the
+      process is alive it keeps ticking forever, even after its
+      downstream consumer is gone, its config is disabled, or its
+      subject has been removed. Add a guard
+      (`if state.running do schedule_next() end`) to make the
+      liveness condition visible.
+    check: datalog
+    rule: 'has_guard(M) :- edge(M, B, "CONTAINS"), node(B, "BRANCH"). violation(M) :- edge(M, C, "CONTAINS"), edge(C, _, "SELF_SCHEDULE"), node(M, "MESSAGE_TYPE"), \+ has_guard(M).'
+    severity: info
+
+  - name: beam-state-guard-never-written
+    description: >
+      A handler clause reads a state field in a guard position
+      (`if state.X do`, `case state.X do`, `case Map.get(state, :X) do`)
+      but no handler clause AND no `init/1` ever writes to that
+      field. Since the field is never populated, guard branches that
+      depend on a truthy / specific value are permanently
+      unreachable — the corresponding work path is dead code. Built
+      on STATE_FIELD nodes + WRITES_STATE / READS_STATE edges
+      emitted by the beam-analyzer StateDFG pass.
+    check: datalog
+    rule: 'violation(F) :- node(F, "STATE_FIELD"), edge(_, F, "READS_STATE"), \+ edge(_, F, "WRITES_STATE").'
+    severity: warning
+
+  - name: beam-state-init-only-gate
+    description: >
+      A state field is read in a guard position of some handler but
+      the only writer is `init/1`. Three shapes are possible, from
+      safe to buggy:
+      (a) intentional immutable config — the GenServer receives the
+          value at start-up and branches on it for all eternity
+          (e.g. `state.role`, `state.name`); benign.
+      (b) one-shot initialisation — init writes a default and the
+          caller expects a handler to later mutate it, but the
+          handler implementation is missing; the state stays at its
+          init default forever.
+      (c) future-feature placeholder — field added with a default,
+          consumer exists, but the handler meant to toggle it was
+          never wired up.
+      Info-level: needs human judgement to classify.
+    check: datalog
+    rule: 'handler_writes(F) :- edge(M, F, "WRITES_STATE"), node(M, "MESSAGE_TYPE"). violation(F) :- node(F, "STATE_FIELD"), edge(_, F, "READS_STATE"), edge(_, F, "WRITES_STATE"), \+ handler_writes(F).'
+    severity: info
+
+  - name: beam-state-truthy-guard-always-falsy
+    description: >
+      A state field is read in a truthy-test position (`if state.X
+      do`, `unless state.X`, `if Map.get(state, :X) do`) but every
+      writer of that field — init, handler clauses, and helper
+      functions — only ever sets it to a compile-time `false` / `nil`
+      literal (or deletes it, which reads back as nil). The truthy
+      branch of the guard is unreachable; the code inside is dead.
+      Requires zero WRITES_STATE_DYNAMIC edges so dynamic writers
+      (function-call results, variable references) don't mask a
+      potential truthy runtime value.
+    check: datalog
+    rule: 'violation(F) :- node(F, "STATE_FIELD"), edge(_, F, "READS_STATE_TRUTHY"), edge(_, F, "WRITES_STATE_FALSY"), \+ edge(_, F, "WRITES_STATE_TRUTHY"), \+ edge(_, F, "WRITES_STATE_DYNAMIC").'
+    severity: warning
+
+  - name: beam-state-truthy-guard-always-truthy
+    description: >
+      Mirror of beam-state-truthy-guard-always-falsy: every writer of
+      the field sets it to a compile-time truthy literal (atom, int,
+      struct, `true`, etc.), no writer emits a falsy value, and no
+      writer is dynamic. The `else` branch of `if state.X do ... else
+      ... end` (or the body of `unless state.X`) is unreachable dead
+      code. Often a sign that a flag was introduced for a toggle but
+      the "off" path was never wired up.
+    check: datalog
+    rule: 'violation(F) :- node(F, "STATE_FIELD"), edge(_, F, "READS_STATE_TRUTHY"), edge(_, F, "WRITES_STATE_TRUTHY"), \+ edge(_, F, "WRITES_STATE_FALSY"), \+ edge(_, F, "WRITES_STATE_DYNAMIC").'
+    severity: warning
