@@ -33,7 +33,9 @@ import { Canvas } from './components/Canvas';
 import { Sidebar } from './components/Sidebar';
 import { ModeToggle } from './components/ModeToggle';
 import { useViewStore } from './store/viewStore';
-import { useDataStore } from './store/dataStore';
+import { useDataStore, type GraphNode } from './store/dataStore';
+import { useLayoutStore, type OverflowFile } from './store/layoutStore';
+import { OverflowBadge, meanPosition, placedNodesForFile } from './OverflowBadge';
 import { fetchLayout } from './layout/layoutClient';
 import { loadFixture } from './store/loadFixture';
 import { loadStream } from './store/loadStream';
@@ -151,8 +153,151 @@ function readUrlParams(): UrlParams {
   };
 }
 
+/**
+ * "Layout not computed" overlay per §B.4. Rendered when the server
+ * reports `layout_meta.source === "missing"`. Dismissible within a
+ * session (local state only — reappears on page reload since a fresh
+ * HexAtlas mount starts with `dismissed=false`).
+ */
+export interface EmptyLayoutOverlayProps {
+  onReload?: () => void;
+}
+
+export function EmptyLayoutOverlay({ onReload }: EmptyLayoutOverlayProps) {
+  const [dismissed, setDismissed] = useState(false);
+  if (dismissed) return null;
+
+  const cmd = 'grafema layout --commit';
+  const handleReload = () => {
+    if (onReload) onReload();
+    else if (typeof window !== 'undefined') window.location.reload();
+  };
+
+  const overlayStyle: React.CSSProperties = {
+    position: 'absolute',
+    inset: 0,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: 'rgba(0,0,0,0.55)',
+    zIndex: 1000,
+  };
+  const panelStyle: React.CSSProperties = {
+    background: '#1e1e1e',
+    color: '#eee',
+    border: '1px solid #444',
+    borderRadius: 6,
+    padding: '18px 22px',
+    maxWidth: 440,
+    fontFamily: 'system-ui, sans-serif',
+    fontSize: 13,
+    lineHeight: 1.5,
+    boxShadow: '0 6px 20px rgba(0,0,0,0.5)',
+  };
+  const codeStyle: React.CSSProperties = {
+    display: 'block',
+    background: '#0d0d0d',
+    color: '#9fefb3',
+    padding: '6px 8px',
+    borderRadius: 4,
+    fontFamily: 'monospace',
+    margin: '8px 0 12px',
+    userSelect: 'all',
+  };
+  const btnRow: React.CSSProperties = {
+    display: 'flex',
+    gap: 8,
+    justifyContent: 'flex-end',
+    marginTop: 12,
+  };
+  const primary: React.CSSProperties = {
+    background: '#2d7af6',
+    color: '#fff',
+    border: 0,
+    padding: '6px 12px',
+    borderRadius: 4,
+    cursor: 'pointer',
+  };
+  const secondary: React.CSSProperties = {
+    background: 'transparent',
+    color: '#bbb',
+    border: '1px solid #555',
+    padding: '6px 12px',
+    borderRadius: 4,
+    cursor: 'pointer',
+  };
+
+  return (
+    <div className="grafema-empty-layout-overlay" style={overlayStyle} role="dialog" aria-modal="true">
+      <div style={panelStyle}>
+        <strong style={{ fontSize: 15 }}>Layout not computed.</strong>
+        <p style={{ margin: '8px 0' }}>
+          Run <code>grafema layout --commit</code> (after <code>grafema analyze</code>)
+          and reload this view.
+        </p>
+        <code style={codeStyle}>{cmd}</code>
+        <div style={btnRow}>
+          <button type="button" style={secondary} onClick={() => setDismissed(true)}>
+            Dismiss for this session
+          </button>
+          <button type="button" style={primary} onClick={handleReload}>
+            Reload
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Overlay layer that renders one <OverflowBadge> per
+ * `layoutMeta.overflow_files` entry, positioned at the mean placed-node
+ * position for the file (Chunk-6 fallback; hull centroid in Chunk-7).
+ *
+ * `nodes` is an explicit prop so the component is trivially testable
+ * without a Zustand subscription (Zustand v5 returns the initial
+ * snapshot under SSR, which breaks renderToString-based tests).
+ */
+export interface OverflowBadgeLayerProps {
+  overflowFiles: OverflowFile[];
+  nodes: ReadonlyArray<GraphNode>;
+}
+
+export function OverflowBadgeLayer({ overflowFiles, nodes }: OverflowBadgeLayerProps) {
+  if (overflowFiles.length === 0) return null;
+
+  const layerStyle: React.CSSProperties = {
+    position: 'absolute',
+    inset: 0,
+    pointerEvents: 'none',
+    zIndex: 30,
+  };
+
+  return (
+    <div className="grafema-overflow-badges" style={layerStyle}>
+      {overflowFiles.map((entry) => {
+        const placed = placedNodesForFile(nodes, entry.file);
+        const pos = meanPosition(placed);
+        if (pos === null) return null;
+        return <OverflowBadge key={entry.file} entry={entry} position={pos} />;
+      })}
+    </div>
+  );
+}
+
+/**
+ * Store-connected wrapper — pulls nodes from dataStore so HexAtlas
+ * doesn't have to plumb them explicitly. Kept separate from the pure
+ * layer above so tests can render the pure component directly.
+ */
+function ConnectedOverflowBadgeLayer({ overflowFiles }: { overflowFiles: OverflowFile[] }) {
+  const nodes = useDataStore((s) => s.nodes);
+  return <OverflowBadgeLayer overflowFiles={overflowFiles} nodes={nodes} />;
+}
+
 export function HexAtlas({ mode, source, className, skipCanvas }: HexAtlasProps) {
   const [status, setStatus] = useState('');
+  const layoutMeta = useLayoutStore((s) => s.layoutMeta);
 
   // Bridge `mode` prop → viewStore. Runs on mount + whenever the prop
   // identity changes. Deep-equal modes are absorbed by viewStore's
@@ -266,12 +411,17 @@ export function HexAtlas({ mode, source, className, skipCanvas }: HexAtlasProps)
       }
     : {};
 
+  const showEmptyLayout = layoutMeta?.source === 'missing';
+  const overflowFiles = layoutMeta?.overflow_files ?? [];
+
   return (
     <div className={className ?? 'app'} style={rootStyle}>
       {status && <div className="status-bar">{status}</div>}
       {skipCanvas ? null : <Canvas />}
       <Sidebar />
       <ModeToggle />
+      {overflowFiles.length > 0 && <ConnectedOverflowBadgeLayer overflowFiles={overflowFiles} />}
+      {showEmptyLayout && <EmptyLayoutOverlay />}
     </div>
   );
 }

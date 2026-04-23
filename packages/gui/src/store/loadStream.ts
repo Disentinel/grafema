@@ -15,6 +15,13 @@
 
 import { useDataStore, type GraphNode, type GraphEdge, type Region } from './dataStore';
 import { useRouteStore } from './routeStore';
+import {
+  useLayoutStore,
+  buildRegionTree,
+  type LayoutMeta,
+  type RegionNodeRaw,
+  type RegionTree,
+} from './layoutStore';
 import { cubeToWorld } from '../geom/hex';
 import type { LayoutResult } from '../layout/types';
 
@@ -30,11 +37,27 @@ export interface StreamOptions {
   onProgress?: (phase: string, count: number, total?: number) => void;
 }
 
+/**
+ * Flat region entry (legacy SA layout). Kept for back-compat — older
+ * server builds emit this shape; DAI-22 Chunk-6+ emit a nested tree.
+ * See §B.3 of 004-plan-revised.md.
+ */
+interface FlatRegionEntry {
+  path: string;
+  depth: number;
+  tileCount: number;
+  parentIdx: number | null;
+}
+
 interface HeaderMsg {
   type: 'header';
   typeTable: string[];
   edgeTypeTable: string[];
-  regions: { path: string; depth: number; tileCount: number; parentIdx: number | null }[];
+  /**
+   * Either a legacy flat list (older server) or a tree of RegionNodeRaw
+   * (DAI-22 Chunk-6+). We detect by probing for the `id` field.
+   */
+  regions: FlatRegionEntry[] | RegionNodeRaw[];
 }
 
 interface NodeMsg {
@@ -48,6 +71,16 @@ interface NodeMsg {
   degree: number;
   metrics?: Record<string, number>;
   pos?: { q: number; r: number } | null;
+  /**
+   * DAI-22 §B.3 discriminator. When null the node is placed (render it);
+   * otherwise caller decides whether to skip atlas rendering, surface
+   * via the empty-layout overlay, or count toward the overflow badge.
+   */
+  unplaced_reason?: 'excluded' | 'missing_layout' | 'skipped_overflow' | null;
+}
+
+interface LayoutMetaMsg extends LayoutMeta {
+  type: 'layout_meta';
 }
 
 interface EdgeMsg {
@@ -74,7 +107,21 @@ type StreamMsg =
   | NodeMsg
   | EdgeMsg
   | NodesDoneMsg
-  | DoneMsg;
+  | DoneMsg
+  | LayoutMetaMsg;
+
+/**
+ * Detect whether a header's regions array is the new nested-tree shape
+ * (RegionNodeRaw, with `id` + optional `children`) rather than the
+ * legacy flat SA entries (which lack `id`).
+ */
+function isRegionTreeRoots(
+  regions: FlatRegionEntry[] | RegionNodeRaw[],
+): regions is RegionNodeRaw[] {
+  if (regions.length === 0) return true; // empty — safe either way
+  const first = regions[0] as Partial<RegionNodeRaw>;
+  return typeof first.id === 'string';
+}
 
 /**
  * Parse a ReadableStream<Uint8Array> as newline-delimited JSON.
@@ -141,6 +188,7 @@ export async function parseStream(
   if (!resp.body) throw new Error('No response body — streaming not supported');
 
   let header: HeaderMsg | null = null;
+  let layoutMeta: LayoutMeta | null = null;
   const rawNodes: NodeMsg[] = [];
   const rawEdges: EdgeMsg[] = [];
 
@@ -173,6 +221,16 @@ export async function parseStream(
         if (import.meta.env?.DEV) console.log('[parseStream] done:', msg.nodeCount, 'nodes,', msg.edgeCount, 'edges,', msg.elapsed, 'ms');
         onProgress('done', msg.nodeCount, msg.edgeCount);
         break;
+      case 'layout_meta': {
+        // Strip the `type` discriminator before storing.
+        const { type: _t, ...rest } = msg;
+        void _t;
+        layoutMeta = rest;
+        if (import.meta.env?.DEV) {
+          console.log('[parseStream] layout_meta:', layoutMeta.source, layoutMeta.symbol_count);
+        }
+        break;
+      }
     }
   }
 
@@ -184,12 +242,34 @@ export async function parseStream(
 
   // ── Build GraphNode[] directly from server positions ──
   // Pass 1: collect nodes that participate in layout and remap indices.
+  // §B.3: nodes with `unplaced_reason !== null` are excluded from the
+  // atlas render set but surfaced via `unplacedNodes` so host search /
+  // tooltip datasets keep them queryable.
   const oldToLayout = new Map<number, number>();
   const nodes: GraphNode[] = [];
+  const unplacedNodes: NonNullable<LayoutResult['unplacedNodes']> = [];
   let droppedNoPos = 0;
   for (let i = 0; i < rawNodes.length; i++) {
     const raw = rawNodes[i];
     const typeName = header.typeTable[raw.t] ?? 'UNKNOWN';
+    const reason = raw.unplaced_reason ?? null;
+
+    // Server-side hint wins. Fallback: legacy EXCLUDED_TYPES filter for
+    // back-compat with builds that don't emit `unplaced_reason`.
+    if (reason !== null) {
+      unplacedNodes.push({
+        id: raw.id,
+        type: typeName,
+        name: raw.name,
+        file: raw.file,
+        region: raw.region,
+        degree: raw.degree,
+        metrics: raw.metrics,
+        unplacedReason: reason,
+      });
+      continue;
+    }
+
     if (EXCLUDED_TYPES.has(typeName)) continue;
     if (!raw.pos) {
       droppedNoPos++;
@@ -229,8 +309,25 @@ export async function parseStream(
     }
   }
 
-  // Build regions from header (canonical) joined with per-node centroid data.
-  const regions: Region[] = header.regions.map((hr) => {
+  // Build regions from header (canonical) joined with per-node centroid
+  // data. Supports both the legacy flat shape and the DAI-22 nested
+  // tree — the tree is flattened into a list of {path, depth} entries
+  // for the existing `Region[]` consumer, while the richer RegionTree
+  // index is produced separately below for layoutStore.
+  let regionTree: RegionTree | undefined;
+  const flatRegionEntries: { path: string; depth: number }[] = [];
+  if (isRegionTreeRoots(header.regions)) {
+    regionTree = buildRegionTree(header.regions);
+    for (const info of regionTree.byId.values()) {
+      flatRegionEntries.push({ path: info.path, depth: info.depth });
+    }
+  } else {
+    for (const hr of header.regions) {
+      flatRegionEntries.push({ path: hr.path, depth: hr.depth });
+    }
+  }
+
+  const regions: Region[] = flatRegionEntries.map((hr) => {
     const regionNodes = nodes.filter((n) => n.region === hr.path);
     let cx = 0, cz = 0;
     for (const n of regionNodes) { cx += n.x; cz += n.z; }
@@ -255,6 +352,9 @@ export async function parseStream(
     regions,
     typeTable: [...typeSet],
     edgeTypeTable: [...edgeTypeSet],
+    layoutMeta,
+    regionTree,
+    unplacedNodes,
   };
 }
 
@@ -284,6 +384,19 @@ export async function loadStream(opts: StreamOptions = {}) {
     layout.regions.length, 'regions',
   );
   store.setGraphData(layout);
+
+  // DAI-22 Chunk-6: feed layout_meta + regionTree into the layoutStore
+  // so HexAtlas (overlay) and OverflowBadge can subscribe without
+  // reaching into parseStream. `reset()` first to avoid stale values
+  // if a previous stream populated them.
+  const layoutStore = useLayoutStore.getState();
+  layoutStore.reset();
+  if (layout.layoutMeta !== undefined) {
+    layoutStore.setLayoutMeta(layout.layoutMeta);
+  }
+  if (layout.regionTree !== undefined) {
+    layoutStore.setRegionTree(layout.regionTree);
+  }
 
   // Clear routes (no routes from live data)
   useRouteStore.getState().setRoutes([]);

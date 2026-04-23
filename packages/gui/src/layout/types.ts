@@ -11,6 +11,7 @@
  */
 
 import type { GraphNode, GraphEdge, Region } from '../store/dataStore';
+import type { LayoutMeta, RegionTree } from '../store/layoutStore';
 
 /** Input: what source to load from + options. */
 export type LayoutSource =
@@ -30,4 +31,21 @@ export interface LayoutResult {
   regions: Region[];
   typeTable: string[];
   edgeTypeTable: string[];
+  /**
+   * DAI-22 Chunk-6: layout_meta + nested region tree, when the server
+   * emits them. Optional so fixture-based sources (which do not know
+   * these frames) can continue to populate `LayoutResult` as before.
+   */
+  layoutMeta?: LayoutMeta | null;
+  regionTree?: RegionTree;
+  /**
+   * Unplaced node summary — nodes whose `unplaced_reason !== null`. We
+   * keep them OUT of the tile-rendering `nodes` array but expose them
+   * here so host search/tooltip datasets can still index them.
+   */
+  unplacedNodes?: Array<
+    Omit<GraphNode, 'x' | 'z'> & {
+      unplacedReason: 'excluded' | 'missing_layout' | 'skipped_overflow';
+    }
+  >;
 }
