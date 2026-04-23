@@ -26,7 +26,11 @@ pub mod tree;
 pub mod validate;
 pub mod xswap;
 
-pub use commit::{build_layout_position_edges, commit_layout};
+pub use commit::{
+    build_commit_payload, build_layout_position_edges, build_region_graph,
+    build_region_to_symbol_edges, commit_layout, region_semantic_id, url_encode_region_path,
+    CommitPayload, FileOverflow, HardCapOutcome, PlacedSymbol, DEFAULT_HARD_CAP,
+};
 pub use edges::{Edge, Incidence};
 pub use hex::{pack_key, unpack_key, HexCoord, HEX_DIRS};
 pub use iswap::iswap;
