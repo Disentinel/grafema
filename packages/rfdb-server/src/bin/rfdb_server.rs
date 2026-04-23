@@ -278,6 +278,28 @@ pub enum Request {
     /// Send after a series of deferIndex=true CommitBatch commands.
     RebuildIndexes,
 
+    /// Delete all edges of a given type whose metadata contains
+    /// `_source == sourceTag`. Fails if any other `_source` value is
+    /// found for that edge type (collision). Used to clear prior output
+    /// from secondary writers (e.g. `layout-pack`) before a re-run.
+    DeleteEdgesByTypeAndSource {
+        #[serde(rename = "edgeType")]
+        edge_type: String,
+        #[serde(rename = "sourceTag")]
+        source_tag: String,
+    },
+
+    /// Delete all nodes of a given type whose metadata contains
+    /// `_source == sourceTag`. Also deletes outgoing edges from each
+    /// matched node. Same collision semantics as
+    /// `DeleteEdgesByTypeAndSource`.
+    DeleteNodesByTypeAndSource {
+        #[serde(rename = "nodeType")]
+        node_type: String,
+        #[serde(rename = "sourceTag")]
+        source_tag: String,
+    },
+
     // ========================================================================
     // Protocol v3 Commands
     // ========================================================================
@@ -424,6 +446,21 @@ pub enum Response {
     BatchCommitted {
         ok: bool,
         delta: WireCommitDelta,
+    },
+
+    /// Reply for `DeleteEdgesByTypeAndSource`.
+    EdgesDeleted {
+        ok: bool,
+        deleted: u64,
+    },
+
+    /// Reply for `DeleteNodesByTypeAndSource`.
+    NodesDeleted {
+        ok: bool,
+        #[serde(rename = "deletedNodes")]
+        deleted_nodes: u64,
+        #[serde(rename = "deletedOutgoingEdges")]
+        deleted_outgoing_edges: u64,
     },
 
     Ok { ok: bool },
@@ -1050,6 +1087,8 @@ fn get_operation_name(request: &Request) -> String {
         Request::GetStats => "GetStats".to_string(),
         Request::CommitBatch { .. } => "CommitBatch".to_string(),
         Request::RebuildIndexes => "RebuildIndexes".to_string(),
+        Request::DeleteEdgesByTypeAndSource { .. } => "DeleteEdgesByTypeAndSource".to_string(),
+        Request::DeleteNodesByTypeAndSource { .. } => "DeleteNodesByTypeAndSource".to_string(),
         Request::TagSnapshot { .. } => "TagSnapshot".to_string(),
         Request::FindSnapshot { .. } => "FindSnapshot".to_string(),
         Request::ListSnapshots { .. } => "ListSnapshots".to_string(),
@@ -1676,6 +1715,28 @@ fn handle_request_with_cancel(
                     return Response::Error { error: format!("Index rebuild failed: {}", e) };
                 }
                 Response::Ok { ok: true }
+            })
+        }
+
+        Request::DeleteEdgesByTypeAndSource { edge_type, source_tag } => {
+            with_engine_write(session, |engine| {
+                match rfdb::deletion::delete_edges_by_type_and_source(engine, &edge_type, &source_tag) {
+                    Ok(out) => Response::EdgesDeleted { ok: true, deleted: out.deleted as u64 },
+                    Err(e) => Response::Error { error: e },
+                }
+            })
+        }
+
+        Request::DeleteNodesByTypeAndSource { node_type, source_tag } => {
+            with_engine_write(session, |engine| {
+                match rfdb::deletion::delete_nodes_by_type_and_source(engine, &node_type, &source_tag) {
+                    Ok(out) => Response::NodesDeleted {
+                        ok: true,
+                        deleted_nodes: out.deleted_nodes as u64,
+                        deleted_outgoing_edges: out.deleted_outgoing_edges as u64,
+                    },
+                    Err(e) => Response::Error { error: e },
+                }
             })
         }
 

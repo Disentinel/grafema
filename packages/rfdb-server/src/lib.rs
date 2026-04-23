@@ -54,6 +54,8 @@ pub mod http_server;
 #[cfg(feature = "ui")]
 pub mod static_ui; // stub — C14b fills in
 
+pub mod deletion;
+
 pub use graph::{GraphStore, GraphEngineV2};
 pub use storage::{NodeRecord, EdgeRecord, AttrQuery, FieldDecl, FieldType};
 pub use error::{GraphError, Result};
