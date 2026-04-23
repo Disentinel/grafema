@@ -1015,6 +1015,9 @@ mod tests {
             nodes: None,
             done: None,
             chunk_index: None,
+            deleted: None,
+            deleted_nodes: None,
+            deleted_outgoing_edges: None,
         };
         assert!(resp.check_error().is_ok());
     }
@@ -1039,6 +1042,9 @@ mod tests {
             nodes: None,
             done: None,
             chunk_index: None,
+            deleted: None,
+            deleted_nodes: None,
+            deleted_outgoing_edges: None,
         };
         let err = resp.check_error().unwrap_err();
         let msg = err.to_string();

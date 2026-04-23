@@ -157,6 +157,8 @@ mod tests {
             n_nodes: n,
             leaf_paths: ids.iter().map(|s| s.to_string()).collect(),
             semantic_ids: Some(ids.iter().map(|s| s.to_string()).collect()),
+            rfdb_ids: None,
+            degrees: None,
         }
     }
 
