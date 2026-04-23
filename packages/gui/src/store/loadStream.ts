@@ -21,8 +21,10 @@ import {
   type LayoutMeta,
   type RegionNodeRaw,
   type RegionTree,
+  type RegionInfo,
 } from './layoutStore';
 import { cubeToWorld } from '../geom/hex';
+import { computeHullsForRegions, bucketSymbolsByRegion } from '../hulls/computeHulls.js';
 import type { LayoutResult } from '../layout/types';
 
 export interface StreamOptions {
@@ -396,10 +398,105 @@ export async function loadStream(opts: StreamOptions = {}) {
   }
   if (layout.regionTree !== undefined) {
     layoutStore.setRegionTree(layout.regionTree);
+
+    // DAI-22 Chunk-8: compute per-region hulls once per stream load.
+    // We skip depth 0 (root) per Chunk-7's 580ms flood-fill finding —
+    // the root hull would cover the entire atlas and its cost
+    // dominates aggregation. Nested regions carry all the visual
+    // hierarchy we need; the root is implicit.
+    try {
+      const placed = buildPlacedForBucketing(layout, layoutStore.regionTree);
+      const symbolsByRegion = bucketSymbolsByRegion(placed);
+      const filteredTree = filterOutDepthZero(layoutStore.regionTree);
+      const hulls = computeHullsForRegions(filteredTree, symbolsByRegion);
+      layoutStore.setHullCache(hulls);
+    } catch (err) {
+      // Hull compute failure must not break the stream load — renderers
+      // fall back to "no hulls" when the cache is empty.
+      console.warn('[loadStream] hull computation failed:', err);
+    }
   }
 
   // Clear routes (no routes from live data)
   useRouteStore.getState().setRoutes([]);
 
   opts.onProgress?.('complete', layout.nodes.length, layout.edges.length);
+}
+
+// ---------------------------------------------------------------------------
+// DAI-22 Chunk-8 — helpers for per-region hull aggregation on stream load.
+// ---------------------------------------------------------------------------
+
+/**
+ * Invert `cubeToWorld` to recover axial (q, r) from a placed node's
+ * world-space (x, z). Same math as `src/geom/hex.mjs::cubeToWorld`.
+ * Exported for tests that exercise the bucketing path.
+ */
+export function worldToAxial(
+  x: number,
+  z: number,
+  size: number = TILE_SIZE,
+): { q: number; r: number } {
+  const q = x / (size * 1.5);
+  const r = z / (size * Math.sqrt(3)) - q / 2;
+  // Round to integers — layout emits exact hex centres, but floating
+  // point noise can produce 3.9999-style results after round-trip.
+  return { q: Math.round(q), r: Math.round(r) };
+}
+
+/**
+ * Build a flat placed-symbol list keyed by region id for hull bucketing.
+ * Resolves each node's `region` path to a region id via the tree's
+ * `byFile` index (which also covers non-file region kinds — see
+ * layoutStore.buildRegionTree).
+ */
+export function buildPlacedForBucketing(
+  layout: LayoutResult,
+  tree: RegionTree,
+): Array<{ regionId: string; q: number; r: number }> {
+  const out: Array<{ regionId: string; q: number; r: number }> = [];
+  // byFile is keyed by path, and node.region is the region path — the
+  // parser populated it from the server's `region` field verbatim. If a
+  // node's region isn't in the index, it's dropped (defensive: usually
+  // indicates stale nodes from an old stream).
+  for (const n of layout.nodes) {
+    const regionId = tree.byFile.get(n.region);
+    if (regionId === undefined) continue;
+    const { q, r } = worldToAxial(n.x, n.z);
+    out.push({ regionId, q, r });
+  }
+  return out;
+}
+
+/**
+ * Return a region tree view with depth-0 roots elided. Root hulls would
+ * cover the entire atlas (Chunk-7 measured ~580ms to aggregate), and
+ * visually they add no information over the union of their children.
+ *
+ * Implementation: shallow-copy `byId` minus depth-0 entries, promote
+ * depth-1 regions whose parent was a root to `null` parent, and rebuild
+ * `roots` from the surviving depth-1 ids.
+ */
+export function filterOutDepthZero(tree: RegionTree): RegionTree {
+  const byId = new Map<string, RegionInfo>();
+  const roots: string[] = [];
+  const droppedRoots = new Set<string>();
+  for (const info of tree.byId.values()) {
+    if (info.depth === 0) {
+      droppedRoots.add(info.id);
+      continue;
+    }
+    byId.set(info.id, info);
+  }
+  // Rebuild parent chain — depth-1 nodes that pointed at a dropped root
+  // become new roots (parentId = null).
+  for (const [id, info] of byId) {
+    if (info.parentId !== null && droppedRoots.has(info.parentId)) {
+      byId.set(id, { ...info, parentId: null });
+      roots.push(id);
+    } else if (info.parentId === null) {
+      roots.push(id);
+    }
+  }
+  return { roots, byId, byFile: tree.byFile };
 }

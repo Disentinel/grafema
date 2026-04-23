@@ -18,6 +18,7 @@
  */
 
 import { create } from 'zustand';
+import type { HullGeometry } from '../hulls/computeHulls.js';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -148,9 +149,17 @@ export function buildRegionTree(rawRoots: RegionNodeRaw[]): RegionTree {
 export interface LayoutStoreState {
   layoutMeta: LayoutMeta | null;
   regionTree: RegionTree;
+  /**
+   * DAI-22 Chunk-8 — per-region hull geometry cache. Populated by
+   * `computeHullsForRegions` once the stream completes (see loadStream).
+   * Renderers read this map to draw hull polygons without recomputing.
+   * Empty map when hulls have not been computed yet.
+   */
+  hullCache: Map<string, HullGeometry>;
 
   setLayoutMeta: (meta: LayoutMeta | null) => void;
   setRegionTree: (tree: RegionTree) => void;
+  setHullCache: (cache: Map<string, HullGeometry>) => void;
   /** Reset to initial state (used when a new stream load starts). */
   reset: () => void;
 }
@@ -164,10 +173,13 @@ const emptyTree = (): RegionTree => ({
 export const useLayoutStore = create<LayoutStoreState>((set) => ({
   layoutMeta: null,
   regionTree: emptyTree(),
+  hullCache: new Map(),
 
   setLayoutMeta: (meta) => set({ layoutMeta: meta }),
   setRegionTree: (tree) => set({ regionTree: tree }),
-  reset: () => set({ layoutMeta: null, regionTree: emptyTree() }),
+  setHullCache: (cache) => set({ hullCache: cache }),
+  reset: () =>
+    set({ layoutMeta: null, regionTree: emptyTree(), hullCache: new Map() }),
 }));
 
 // ---------------------------------------------------------------------------
