@@ -48,7 +48,6 @@ pub mod session;
 pub mod metrics;
 pub mod container_hierarchy;
 pub mod sa_layout;
-pub mod tectonic_layout;
 pub mod layout_types;
 pub mod http_server;
 

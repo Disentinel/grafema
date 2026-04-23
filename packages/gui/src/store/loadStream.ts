@@ -2,7 +2,7 @@
  * JSONL streaming loader for live RFDB data.
  *
  * Fetches /api/graph-stream, parses line-by-line, and consumes server-provided
- * tectonic layout positions directly — no client-side SA.
+ * layout positions directly — no client-side SA.
  *
  * Two public entry points:
  *   - `parseStream(opts, signal?)` — transport primitive that returns a
@@ -69,21 +69,12 @@ interface DoneMsg {
   elapsed: number;
 }
 
-interface TectonicMetaMsg {
-  type: 'tectonic_meta';
-  num_atoms: number;
-  phase3_initial_cost: number;
-  phase3_final_cost: number;
-  pipeline_ms: number;
-}
-
 type StreamMsg =
   | HeaderMsg
   | NodeMsg
   | EdgeMsg
   | NodesDoneMsg
-  | DoneMsg
-  | TectonicMetaMsg;
+  | DoneMsg;
 
 /**
  * Parse a ReadableStream<Uint8Array> as newline-delimited JSON.
@@ -152,7 +143,6 @@ export async function parseStream(
   let header: HeaderMsg | null = null;
   const rawNodes: NodeMsg[] = [];
   const rawEdges: EdgeMsg[] = [];
-  let tectonicMeta: TectonicMetaMsg | null = null;
 
   const onProgress = opts.onProgress ?? (() => {});
 
@@ -183,15 +173,6 @@ export async function parseStream(
         if (import.meta.env?.DEV) console.log('[parseStream] done:', msg.nodeCount, 'nodes,', msg.edgeCount, 'edges,', msg.elapsed, 'ms');
         onProgress('done', msg.nodeCount, msg.edgeCount);
         break;
-      case 'tectonic_meta':
-        tectonicMeta = msg;
-        if (import.meta.env?.DEV) console.log(
-          '[parseStream] tectonic_meta:',
-          `atoms=${msg.num_atoms}`,
-          `cost=${msg.phase3_initial_cost}→${msg.phase3_final_cost}`,
-          `pipeline=${msg.pipeline_ms}ms`,
-        );
-        break;
     }
   }
 
@@ -200,9 +181,6 @@ export async function parseStream(
   if (!header || rawNodes.length === 0) {
     throw new Error('Empty graph received from server');
   }
-
-  // Expose tectonic_meta for debug/diagnostic access
-  (globalThis as Record<string, unknown>).__grafemaTectonicMeta = tectonicMeta;
 
   // ── Build GraphNode[] directly from server positions ──
   // Pass 1: collect nodes that participate in layout and remap indices.
