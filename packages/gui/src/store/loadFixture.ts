@@ -148,6 +148,9 @@ function buildLayoutFromFixture(data: FixtureData): { layout: LayoutResult; layo
     regions,
     typeTable: [...typeSet],
     edgeTypeTable: [...edgeTypeSet],
+    layoutMeta: null,
+    regionTree: { roots: [], byId: new Map(), byFile: new Map() },
+    unplacedNodes: [],
   };
   return { layout, layoutNodes };
 }

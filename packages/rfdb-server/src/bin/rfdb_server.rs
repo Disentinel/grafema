@@ -3514,7 +3514,7 @@ async fn main() {
         let http_state = rfdb::http_server::new_state(manager_http);
         let warmup_state = http_state.clone();
         let t_warm = std::time::Instant::now();
-        eprintln!("[rfdb-server] warmup: building file→nodes cache and tectonic layout …");
+        eprintln!("[rfdb-server] warmup: building file→nodes cache and loading persisted layout …");
         let warmup_res = tokio::task::spawn_blocking(move || {
             rfdb::http_server::warmup(&warmup_state);
         })
