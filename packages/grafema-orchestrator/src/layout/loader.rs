@@ -145,7 +145,20 @@ pub async fn load_from_rfdb(rfdb: &mut RfdbClient) -> Result<LayoutInput> {
         edges_by_type.push((*ty, rows));
     }
 
-    Ok(build_layout_input(&nodes_by_type, &edges_by_type))
+    // Collect CONTAINS edges separately — they power src-side lift through
+    // non-placeable intermediaries (CALL/REFERENCE/PROPERTY_ACCESS). Not part
+    // of LIFTABLE_EDGE_TYPES (which is the cohesion signal set); CONTAINS is
+    // pure structure.
+    let contains_rows = rfdb
+        .datalog_query(r#"contains(Src, Dst) :- edge(Src, Dst, "CONTAINS")."#)
+        .await
+        .with_context(|| "Failed to query CONTAINS edges")?;
+
+    Ok(build_layout_input(
+        &nodes_by_type,
+        &edges_by_type,
+        &contains_rows,
+    ))
 }
 
 /// Pure transformation: `(placeable_nodes_by_type, liftable_edges_by_type)` → [`LayoutInput`].
@@ -156,6 +169,7 @@ pub async fn load_from_rfdb(rfdb: &mut RfdbClient) -> Result<LayoutInput> {
 pub(crate) fn build_layout_input(
     nodes_by_type: &[(&str, Vec<WireNode>)],
     edges_by_type: &[(&str, Vec<DatalogResult>)],
+    contains_rows: &[DatalogResult],
 ) -> LayoutInput {
     let total_hint: usize = nodes_by_type.iter().map(|(_, v)| v.len()).sum();
 
@@ -220,10 +234,44 @@ pub(crate) fn build_layout_input(
         .collect();
     let tree = FolderTree::build_from_paths_with_leaves(&triples);
 
+    // Build CONTAINS parent index — maps a (potentially non-placeable) child's
+    // RFDB u128 id to the NodeIdx of its placeable CONTAINS-parent. Enables
+    // src-side lift for edges rooted at CALL / REFERENCE / PROPERTY_ACCESS
+    // intermediaries whose true "owner" is the enclosing FUNCTION/METHOD/etc.
+    // First write wins on collision (healthy DB has at most one CONTAINS parent
+    // per child; duplicate is a data-quality issue we log once via counter).
+    let mut parent_of: FxHashMap<u128, NodeIdx> = FxHashMap::default();
+    parent_of.reserve(contains_rows.len());
+    let mut parent_collisions: u64 = 0;
+    for row in contains_rows {
+        let Some(src_id) = binding_str(row, "Src") else { continue };
+        let Some(dst_id) = binding_str(row, "Dst") else { continue };
+        let src_u = semantic_id_to_u128(src_id);
+        let dst_u = semantic_id_to_u128(dst_id);
+        let Some(&parent_idx) = id_to_idx.get(&src_u) else { continue };
+        match parent_of.entry(dst_u) {
+            std::collections::hash_map::Entry::Vacant(e) => {
+                e.insert(parent_idx);
+            }
+            std::collections::hash_map::Entry::Occupied(_) => {
+                parent_collisions += 1;
+            }
+        }
+    }
+
     // Resolve edges and collect them, dedup'd by (src, dst, type).
+    // Src-side lift: if edge.src is not itself placeable but has a placeable
+    // CONTAINS-parent, rewrite src → parent. Dst-side lift deferred (Chunk-12+).
     let mut edges: Vec<Edge> = Vec::new();
     let mut degree: Vec<u32> = vec![0; n_nodes];
     let mut seen: FxHashSet<(NodeIdx, NodeIdx, &str)> = FxHashSet::default();
+
+    let mut direct_count: u64 = 0;
+    let mut lifted_count: u64 = 0;
+    let mut self_loop_after_lift: u64 = 0;
+    let mut dropped_unreachable: u64 = 0;
+    let mut per_type_direct: FxHashMap<&str, u64> = FxHashMap::default();
+    let mut per_type_lifted: FxHashMap<&str, u64> = FxHashMap::default();
 
     for (ty, rows) in edges_by_type {
         for row in rows {
@@ -247,24 +295,77 @@ pub(crate) fn build_layout_input(
             let src_u = semantic_id_to_u128(src_id);
             let dst_u = semantic_id_to_u128(dst_id);
 
-            let Some(&src_idx) = id_to_idx.get(&src_u) else { continue };
-            let Some(&dst_idx) = id_to_idx.get(&dst_u) else { continue };
+            // Dst must be directly placeable (no dst-side lift in v1).
+            let Some(&final_dst) = id_to_idx.get(&dst_u) else { continue };
 
-            if src_idx == dst_idx {
+            // Src: direct if placeable, else try CONTAINS-parent lift, else drop.
+            let (final_src, was_lifted) = match id_to_idx.get(&src_u) {
+                Some(&i) => (i, false),
+                None => match parent_of.get(&src_u) {
+                    Some(&p) => (p, true),
+                    None => {
+                        dropped_unreachable += 1;
+                        continue;
+                    }
+                },
+            };
+
+            if final_src == final_dst {
+                // Post-lift self-loop (e.g. A CONTAINS CALL, CALL CALLS A → A→A).
+                self_loop_after_lift += 1;
                 continue;
             }
-            if !seen.insert((src_idx, dst_idx, *ty)) {
+            if !seen.insert((final_src, final_dst, *ty)) {
                 continue;
             }
 
-            degree[src_idx as usize] = degree[src_idx as usize].saturating_add(1);
-            degree[dst_idx as usize] = degree[dst_idx as usize].saturating_add(1);
+            degree[final_src as usize] = degree[final_src as usize].saturating_add(1);
+            degree[final_dst as usize] = degree[final_dst as usize].saturating_add(1);
 
             edges.push(Edge {
-                src: src_idx,
-                dst: dst_idx,
+                src: final_src,
+                dst: final_dst,
                 weight: 1.0,
             });
+
+            if was_lifted {
+                lifted_count += 1;
+                *per_type_lifted.entry(*ty).or_insert(0) += 1;
+            } else {
+                direct_count += 1;
+                *per_type_direct.entry(*ty).or_insert(0) += 1;
+            }
+        }
+    }
+
+    tracing::info!(
+        total = direct_count + lifted_count,
+        direct = direct_count,
+        lifted = lifted_count,
+        self_loop_after_lift,
+        dropped_unreachable,
+        parent_collisions,
+        parent_index_size = parent_of.len(),
+        "layout loader: collected {} edges ({} direct + {} lifted via CONTAINS-parent)",
+        direct_count + lifted_count,
+        direct_count,
+        lifted_count,
+    );
+
+    // Per-edge-type split — useful under verbose logging to see which edge
+    // types benefit from src-side lift (expect CALLS/READS_FROM/PASSES_ARGUMENT
+    // dominant in lifted, HAS_METHOD/RETURNS dominant in direct).
+    for (ty, _) in edges_by_type {
+        let d = per_type_direct.get(ty).copied().unwrap_or(0);
+        let l = per_type_lifted.get(ty).copied().unwrap_or(0);
+        if d + l > 0 {
+            tracing::debug!(
+                edge_type = ty,
+                direct = d,
+                lifted = l,
+                total = d + l,
+                "layout loader per-type edge split"
+            );
         }
     }
 
@@ -310,7 +411,7 @@ mod tests {
 
     #[test]
     fn empty_inputs_produce_empty_layout_input() {
-        let input = build_layout_input(&[], &[]);
+        let input = build_layout_input(&[], &[], &[]);
         assert_eq!(input.n_nodes, 0);
         assert!(input.edges.is_empty());
         assert_eq!(input.rfdb_ids.as_ref().unwrap().len(), 0);
@@ -329,7 +430,7 @@ mod tests {
                 node("FUNCTION", "empty", Some("")),
             ],
         )];
-        let input = build_layout_input(&nodes, &[]);
+        let input = build_layout_input(&nodes, &[], &[]);
         assert_eq!(input.n_nodes, 1);
         assert_eq!(input.leaf_paths, vec!["a.rs"]);
     }
@@ -346,7 +447,7 @@ mod tests {
                 node("FUNCTION", "a.rs->FUNCTION->real", Some("a.rs")),
             ],
         )];
-        let input = build_layout_input(&nodes, &[]);
+        let input = build_layout_input(&nodes, &[], &[]);
         assert_eq!(input.n_nodes, 1);
         assert_eq!(
             input.semantic_ids.as_ref().unwrap()[0],
@@ -366,7 +467,7 @@ mod tests {
             "FUNCTION",
             vec![node("FUNCTION", "a.rs->FUNCTION->foo", Some("a.rs"))],
         )];
-        let input = build_layout_input(&nodes, &[]);
+        let input = build_layout_input(&nodes, &[], &[]);
         assert_eq!(input.n_nodes, 1);
     }
 
@@ -385,7 +486,7 @@ mod tests {
                 edge("a.rs->FUNCTION->unknown", "a.rs->FUNCTION->a"),
             ],
         )];
-        let input = build_layout_input(&nodes, &edges);
+        let input = build_layout_input(&nodes, &edges, &[]);
         assert!(input.edges.is_empty(), "edges to non-placeable dropped");
         // Degree on `a` stays 0 — no edge counted for it.
         assert_eq!(input.degrees.as_ref().unwrap()[0], 0);
@@ -410,7 +511,7 @@ mod tests {
             ("CALLS", vec![edge("f#a", "f#b"), edge("f#a", "f#c")]),
             ("READS_FROM", vec![edge("f#b", "f#c")]),
         ];
-        let input = build_layout_input(&nodes, &edges);
+        let input = build_layout_input(&nodes, &edges, &[]);
         let deg = input.degrees.as_ref().unwrap();
         // a: 2 out. b: 1 in + 1 out = 2. c: 2 in.
         assert_eq!(deg[0], 2);
@@ -433,7 +534,7 @@ mod tests {
             ("CLASS", vec![node("CLASS", "c#1", Some("a.rs"))]),
             ("METHOD", vec![node("METHOD", "m#1", Some("a.rs"))]),
         ];
-        let input = build_layout_input(&nodes, &[]);
+        let input = build_layout_input(&nodes, &[], &[]);
         assert_eq!(input.n_nodes, 3);
         assert_eq!(input.rfdb_ids.as_ref().unwrap().len(), 3);
         assert_eq!(input.semantic_ids.as_ref().unwrap().len(), 3);
@@ -451,7 +552,7 @@ mod tests {
             vec![node("FUNCTION", "f#a", Some("a.rs"))],
         )];
         let edges = vec![("CALLS", vec![edge("f#a", "f#a")])];
-        let input = build_layout_input(&nodes, &edges);
+        let input = build_layout_input(&nodes, &edges, &[]);
         assert!(input.edges.is_empty());
         assert_eq!(input.degrees.as_ref().unwrap()[0], 0);
     }
@@ -469,7 +570,7 @@ mod tests {
             "CALLS",
             vec![edge("f#a", "f#b"), edge("f#a", "f#b")],
         )];
-        let input = build_layout_input(&nodes, &edges);
+        let input = build_layout_input(&nodes, &edges, &[]);
         assert_eq!(input.edges.len(), 1);
         // Only one edge counted in degree.
         assert_eq!(input.degrees.as_ref().unwrap()[0], 1);
@@ -489,7 +590,254 @@ mod tests {
             ("CALLS", vec![edge("f#a", "f#b")]),
             ("READS_FROM", vec![edge("f#a", "f#b")]),
         ];
-        let input = build_layout_input(&nodes, &edges);
+        let input = build_layout_input(&nodes, &edges, &[]);
         assert_eq!(input.edges.len(), 2);
+    }
+
+    // ---------- Chunk-12: src-side CONTAINS-parent lift ----------
+
+    fn contains(src: &str, dst: &str) -> DatalogResult {
+        // Same wire shape as a CALLS/READS_FROM datalog row, just semantically
+        // reused as a CONTAINS row in the third build_layout_input argument.
+        edge(src, dst)
+    }
+
+    #[test]
+    fn lift_src_through_contains_promotes_call_to_parent_function() {
+        // FUNCTION A in a.rs CONTAINS a CALL node. That CALL CALLS FUNCTION B.
+        // Pre-Chunk-12: CALL is not in placeable set → edge dropped.
+        // Chunk-12: src is lifted from CALL → FUNCTION A, so we get A→B.
+        let nodes = vec![(
+            "FUNCTION",
+            vec![
+                node("FUNCTION", "a.rs->FUNCTION->A", Some("a.rs")),
+                node("FUNCTION", "b.rs->FUNCTION->B", Some("b.rs")),
+            ],
+        )];
+        // CALL node is NOT in the placeable set — that's the whole point.
+        let edges = vec![(
+            "CALLS",
+            vec![edge("a.rs->CALL->B_at_5:12", "b.rs->FUNCTION->B")],
+        )];
+        let contains = vec![contains(
+            "a.rs->FUNCTION->A",
+            "a.rs->CALL->B_at_5:12",
+        )];
+        let input = build_layout_input(&nodes, &edges, &contains);
+        assert_eq!(input.edges.len(), 1, "src-lift should rescue the edge");
+        // NodeIdx 0 = A, 1 = B (declaration order in input).
+        assert_eq!(input.edges[0].src, 0, "src lifted to FUNCTION A");
+        assert_eq!(input.edges[0].dst, 1, "dst unchanged: FUNCTION B");
+        // Degree accounting uses post-lift IDs.
+        let deg = input.degrees.as_ref().unwrap();
+        assert_eq!(deg[0], 1);
+        assert_eq!(deg[1], 1);
+    }
+
+    #[test]
+    fn lift_preserves_edge_type_through_rename() {
+        // CALLS stays CALLS, READS_FROM stays READS_FROM — dedup key uses
+        // edge type, so same (src, dst) across two types must yield two edges.
+        let nodes = vec![(
+            "FUNCTION",
+            vec![
+                node("FUNCTION", "a.rs->FUNCTION->A", Some("a.rs")),
+                node("FUNCTION", "b.rs->FUNCTION->B", Some("b.rs")),
+            ],
+        )];
+        let edges = vec![
+            ("CALLS", vec![edge("a.rs->CALL->x", "b.rs->FUNCTION->B")]),
+            (
+                "READS_FROM",
+                vec![edge("a.rs->REFERENCE->x", "b.rs->FUNCTION->B")],
+            ),
+        ];
+        let contains = vec![
+            contains("a.rs->FUNCTION->A", "a.rs->CALL->x"),
+            contains("a.rs->FUNCTION->A", "a.rs->REFERENCE->x"),
+        ];
+        let input = build_layout_input(&nodes, &edges, &contains);
+        // Two edges A→B, one per type — not collapsed.
+        assert_eq!(input.edges.len(), 2);
+        // Both have same src/dst post-lift; types differ internally but Edge
+        // struct doesn't carry type, so we just check the count + endpoints.
+        for e in &input.edges {
+            assert_eq!(e.src, 0);
+            assert_eq!(e.dst, 1);
+        }
+    }
+
+    #[test]
+    fn lift_drops_self_loop_after_rename() {
+        // FUNCTION A CONTAINS CALL c; CALL c CALLS FUNCTION A (recursion).
+        // After lift: A→A → dropped as self-loop.
+        let nodes = vec![(
+            "FUNCTION",
+            vec![node("FUNCTION", "a.rs->FUNCTION->A", Some("a.rs"))],
+        )];
+        let edges = vec![(
+            "CALLS",
+            vec![edge("a.rs->CALL->rec", "a.rs->FUNCTION->A")],
+        )];
+        let contains = vec![contains(
+            "a.rs->FUNCTION->A",
+            "a.rs->CALL->rec",
+        )];
+        let input = build_layout_input(&nodes, &edges, &contains);
+        assert!(
+            input.edges.is_empty(),
+            "post-lift self-loop must be dropped"
+        );
+        assert_eq!(input.degrees.as_ref().unwrap()[0], 0);
+    }
+
+    #[test]
+    fn lift_no_op_when_src_already_placeable() {
+        // FUNCTION A directly CALLS FUNCTION B (no intermediary). Even with
+        // a stray CONTAINS entry in the input, the src-lift path must NOT fire
+        // because the direct path resolves first.
+        let nodes = vec![(
+            "FUNCTION",
+            vec![
+                node("FUNCTION", "a.rs->FUNCTION->A", Some("a.rs")),
+                node("FUNCTION", "b.rs->FUNCTION->B", Some("b.rs")),
+            ],
+        )];
+        let edges = vec![(
+            "CALLS",
+            vec![edge("a.rs->FUNCTION->A", "b.rs->FUNCTION->B")],
+        )];
+        // Unrelated CONTAINS — proves it doesn't interfere.
+        let contains = vec![contains(
+            "a.rs->FUNCTION->A",
+            "a.rs->CALL->irrelevant",
+        )];
+        let input = build_layout_input(&nodes, &edges, &contains);
+        assert_eq!(input.edges.len(), 1);
+        assert_eq!(input.edges[0].src, 0);
+        assert_eq!(input.edges[0].dst, 1);
+    }
+
+    #[test]
+    fn lift_no_op_when_src_has_no_placeable_parent() {
+        // CALL with no CONTAINS parent in the index → edge dropped (pre-lift
+        // behaviour preserved when lift can't apply).
+        let nodes = vec![(
+            "FUNCTION",
+            vec![node("FUNCTION", "b.rs->FUNCTION->B", Some("b.rs"))],
+        )];
+        let edges = vec![(
+            "CALLS",
+            vec![edge("a.rs->CALL->orphan", "b.rs->FUNCTION->B")],
+        )];
+        // No CONTAINS edges at all.
+        let input = build_layout_input(&nodes, &edges, &[]);
+        assert!(input.edges.is_empty());
+    }
+
+    #[test]
+    fn lift_deduplicates_two_calls_in_same_function_sharing_target() {
+        // FUNCTION A contains two CALL nodes, both targeting FUNCTION B.
+        // After src-lift both become A→B — dedup must collapse to one edge.
+        let nodes = vec![(
+            "FUNCTION",
+            vec![
+                node("FUNCTION", "a.rs->FUNCTION->A", Some("a.rs")),
+                node("FUNCTION", "b.rs->FUNCTION->B", Some("b.rs")),
+            ],
+        )];
+        let edges = vec![(
+            "CALLS",
+            vec![
+                edge("a.rs->CALL->B_at_5", "b.rs->FUNCTION->B"),
+                edge("a.rs->CALL->B_at_9", "b.rs->FUNCTION->B"),
+            ],
+        )];
+        let contains = vec![
+            contains("a.rs->FUNCTION->A", "a.rs->CALL->B_at_5"),
+            contains("a.rs->FUNCTION->A", "a.rs->CALL->B_at_9"),
+        ];
+        let input = build_layout_input(&nodes, &edges, &contains);
+        assert_eq!(input.edges.len(), 1, "dedup collapses N CALLs → 1 A→B");
+        assert_eq!(input.degrees.as_ref().unwrap()[0], 1);
+        assert_eq!(input.degrees.as_ref().unwrap()[1], 1);
+    }
+
+    #[test]
+    fn lift_determinism() {
+        // Identical inputs must produce byte-identical outputs (edge order,
+        // degree vector, node order). Runs the same fixture twice and asserts
+        // field-by-field equality.
+        let nodes = vec![(
+            "FUNCTION",
+            vec![
+                node("FUNCTION", "a.rs->FUNCTION->A", Some("a.rs")),
+                node("FUNCTION", "b.rs->FUNCTION->B", Some("b.rs")),
+                node("FUNCTION", "c.rs->FUNCTION->C", Some("c.rs")),
+            ],
+        )];
+        let edges = vec![(
+            "CALLS",
+            vec![
+                edge("a.rs->CALL->to_B", "b.rs->FUNCTION->B"),
+                edge("a.rs->CALL->to_C", "c.rs->FUNCTION->C"),
+            ],
+        )];
+        let contains = vec![
+            contains("a.rs->FUNCTION->A", "a.rs->CALL->to_B"),
+            contains("a.rs->FUNCTION->A", "a.rs->CALL->to_C"),
+        ];
+
+        let a = build_layout_input(&nodes, &edges, &contains);
+        let b = build_layout_input(&nodes, &edges, &contains);
+
+        assert_eq!(a.n_nodes, b.n_nodes);
+        assert_eq!(a.leaf_paths, b.leaf_paths);
+        assert_eq!(a.semantic_ids, b.semantic_ids);
+        assert_eq!(a.rfdb_ids, b.rfdb_ids);
+        assert_eq!(a.degrees, b.degrees);
+        // Edge ordering must match exactly.
+        assert_eq!(a.edges.len(), b.edges.len());
+        for (ea, eb) in a.edges.iter().zip(b.edges.iter()) {
+            assert_eq!(ea.src, eb.src);
+            assert_eq!(ea.dst, eb.dst);
+            assert_eq!(ea.weight, eb.weight);
+        }
+    }
+
+    #[test]
+    fn lift_counter_breakdown() {
+        // Compose a fixture with 1 direct edge + 2 lifted edges + 1 dedup dup
+        // of a lifted edge. Assert the edge count matches (3 direct + lifted,
+        // 1 dropped as dedup). This indirectly exercises the counter logic
+        // that feeds the tracing::info! line.
+        let nodes = vec![(
+            "FUNCTION",
+            vec![
+                node("FUNCTION", "a.rs->FUNCTION->A", Some("a.rs")),
+                node("FUNCTION", "b.rs->FUNCTION->B", Some("b.rs")),
+                node("FUNCTION", "c.rs->FUNCTION->C", Some("c.rs")),
+            ],
+        )];
+        let edges = vec![(
+            "CALLS",
+            vec![
+                // 1 direct: A → B
+                edge("a.rs->FUNCTION->A", "b.rs->FUNCTION->B"),
+                // 2 lifted via different CALLs, same target C → dedup to 1
+                edge("a.rs->CALL->c1", "c.rs->FUNCTION->C"),
+                edge("a.rs->CALL->c2", "c.rs->FUNCTION->C"),
+            ],
+        )];
+        let contains = vec![
+            contains("a.rs->FUNCTION->A", "a.rs->CALL->c1"),
+            contains("a.rs->FUNCTION->A", "a.rs->CALL->c2"),
+        ];
+        let input = build_layout_input(&nodes, &edges, &contains);
+        // 1 direct A→B kept + 1 lifted A→C kept (second lifted A→C deduped)
+        assert_eq!(input.edges.len(), 2);
+        let mut pairs: Vec<_> = input.edges.iter().map(|e| (e.src, e.dst)).collect();
+        pairs.sort();
+        assert_eq!(pairs, vec![(0, 1), (0, 2)]);
     }
 }
