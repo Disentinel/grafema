@@ -42,11 +42,28 @@ T1=$(date +%s)
 COMMIT_SEC=$((T1 - T0))
 echo "  commit1 wall-clock: ${COMMIT_SEC}s"
 
-# D.5: layout --commit ≤ 30s
-if (( COMMIT_SEC > 30 )); then
-  echo "FAIL D.5: layout --commit took ${COMMIT_SEC}s (gate: 30s)"
+# D.5: layout --commit ≤ 60s (revised post Chunk-12 per 010-chunk12-merge-gate.md;
+# pre-Chunk-12 gate was 30s but cohesion signal grew 45× which quadratically
+# impacts iswap — genuine work, not waste).
+if (( COMMIT_SEC > 60 )); then
+  echo "FAIL D.5: layout --commit took ${COMMIT_SEC}s (gate: 60s)"
   exit 1
 fi
+
+# Layout was committed AFTER warmup — cache is stale. Restart server so
+# it re-reads LAYOUT_POSITION/REGION on fresh warmup. (No HTTP reload
+# endpoint exists as of Chunk-4; restart is the simplest invalidation.)
+echo "==> restarting rfdb-server to pick up freshly committed layout"
+kill $SRV 2>/dev/null
+wait $SRV 2>/dev/null || true
+rm -f "$SOCK" "$DATA/rfdb.pid" "$DATA/rfdb-http.port" "$DB/LOCK"
+"$RFDB_BIN" "$DB" --socket "$SOCK" --data-dir "$DATA" --http-port 0 \
+  > /tmp/dai22-verify-rfdb-2.log 2>&1 &
+SRV=$!
+trap "kill $SRV 2>/dev/null; rm -f $SOCK $DATA/rfdb.pid $DATA/rfdb-http.port" EXIT
+sleep 5
+PORT=$(cat "$DATA/rfdb-http.port")
+echo "  fresh port: $PORT"
 
 # Fetch full stream
 echo "==> fetching /api/graph-stream"

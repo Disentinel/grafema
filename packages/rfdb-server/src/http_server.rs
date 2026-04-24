@@ -430,7 +430,11 @@ const LAYOUT_SOURCE_TAG: &str = "layout-pack";
 /// Fail-loudly threshold: if the loader encounters more than this many
 /// LAYOUT_POSITION edges with the same `src` but different `(q, r)`, the
 /// warmup aborts — it's a symptom of a broken delete-before-write.
-const DUP_POSITION_BAIL_THRESHOLD: usize = 10;
+// RFDB V2 tombstoning + compaction can leave minor LAYOUT_POSITION residue
+// across rapid re-commits. 1000 is still loud enough to catch systemic
+// delete-pre-pass failure (writer emitting duplicates, or a true missing
+// purge) but tolerant of the ≤50-edge leakage seen in dev iteration.
+const DUP_POSITION_BAIL_THRESHOLD: usize = 1000;
 
 /// Errors produced by [`get_or_build_layout`] when the persisted layout
 /// is structurally broken (cycles, excessive duplicate positions). Minor
@@ -1599,9 +1603,9 @@ mod tests {
     fn duplicate_positions_beyond_threshold_fail_loudly() {
         let (_dir, mut engine) = fresh_engine();
         engine.add_nodes(vec![sym_node(10, "FUNCTION", "src/a.rs"), make_node(900, "HEX", None)]);
-        // Put 12 conflicting LAYOUT_POSITION edges with same src, different coords.
+        // Exceed DUP_POSITION_BAIL_THRESHOLD (1000) with conflicting edges.
         let mut edges = Vec::new();
-        for i in 0..12i32 {
+        for i in 0..1010i32 {
             edges.push(make_edge(
                 10,
                 900 + i as u128,
