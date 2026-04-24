@@ -1833,4 +1833,28 @@ mod tests {
         let file_children = grand[0]["children"].as_array().unwrap();
         assert!(file_children.is_empty());
     }
+
+    #[test]
+    fn build_graph_stream_body_returns_err_when_default_db_missing() {
+        // DAI-22 review-fix G2 regression: Uncle Bob's #1 replaced
+        // `.unwrap()` on `manager.get_database("default")` with a
+        // `map_err(...)?` that bubbles up to HTTP 500. Exercise that
+        // error branch directly — an empty DatabaseManager (no "default"
+        // registered) must return Err, not panic.
+        let tmp = TempDir::new().unwrap();
+        let manager = Arc::new(DatabaseManager::new(tmp.path().to_path_buf()));
+        let layout_cache = Arc::new(RwLock::new(None));
+        let file_to_nodes = Arc::new(RwLock::new(None));
+
+        let result = build_graph_stream_body(
+            manager, layout_cache, file_to_nodes,
+            100, None, None, None, None,
+        );
+
+        let err = result.err().expect("missing default db must not panic, must Err");
+        assert!(
+            err.contains("default") || err.contains("database"),
+            "error must reference the missing db: {err}"
+        );
+    }
 }

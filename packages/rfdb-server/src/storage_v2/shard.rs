@@ -3416,6 +3416,47 @@ mod tests {
     }
 
     #[test]
+    fn test_get_edges_by_type_l1_post_index_tombstone_filter() {
+        // DAI-22 regression — the L1 edge-type index is built once at
+        // set_l1_segments() time. Subsequent delete_edge calls add
+        // tombstones but don't rebuild the index; get_edges_by_type must
+        // therefore filter tombstoned edges on every L1 read, not trust
+        // the frozen index. Prior to the fix, tombstoned edges resurfaced
+        // from L1 and the warmup loader saw 1000+ duplicate LAYOUT_POSITION
+        // edges per re-commit on the grafema self-analysis graph.
+        use std::io::Cursor;
+        let mut shard = Shard::ephemeral();
+
+        // Build an L1 edge segment directly — mirrors what compaction
+        // produces post-promotion.
+        let mut writer = EdgeSegmentWriter::new();
+        let make = |src: &str, dst: &str, et: &str| crate::storage_v2::types::EdgeRecordV2 {
+            src: node_id(src),
+            dst: node_id(dst),
+            edge_type: et.to_string(),
+            metadata: String::new(),
+        };
+        writer.add(make("a", "b", "CALLS"));
+        writer.add(make("c", "d", "CALLS"));
+        let mut buf = Cursor::new(Vec::new());
+        writer.finish(&mut buf).unwrap();
+        let seg = EdgeSegmentV2::from_bytes(&buf.into_inner()).unwrap();
+
+        shard.set_l1_segments(None, None, Some(seg), None);
+        assert_eq!(shard.get_edges_by_type("CALLS").len(), 2);
+
+        // Now tombstone one of the edges — added AFTER the L1 index was built.
+        shard.set_tombstones(TombstoneSet::from_manifest(
+            vec![],
+            vec![(node_id("a"), node_id("b"), "CALLS".to_string())],
+        ));
+
+        let remaining = shard.get_edges_by_type("CALLS");
+        assert_eq!(remaining.len(), 1, "L1 read path must honour post-index tombstones");
+        assert_eq!(remaining[0].src, node_id("c"));
+    }
+
+    #[test]
     fn test_get_edges_by_type_empty() {
         let shard = Shard::ephemeral();
         let result = shard.get_edges_by_type("NONEXISTENT");
