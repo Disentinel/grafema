@@ -196,7 +196,6 @@ pub fn region_semantic_id(depth: u32, path: &str) -> String {
 pub fn build_region_graph(
     tree: &FolderTree,
     overflow_by_file: &FxHashMap<String, (usize, usize)>,
-    hard_cap: usize,
 ) -> (Vec<WireNode>, Vec<WireEdge>) {
     let mut nodes: Vec<WireNode> = Vec::with_capacity(tree.len());
     let mut edges: Vec<WireEdge> = Vec::new();
@@ -213,7 +212,7 @@ pub fn build_region_graph(
             "file"
         };
         let name = region_name(folder);
-        let metadata = build_region_metadata(folder, kind, &name, overflow_by_file, hard_cap);
+        let metadata = build_region_metadata(folder, kind, &name, overflow_by_file);
 
         nodes.push(WireNode {
             id: sid.clone(),
@@ -261,16 +260,12 @@ fn build_region_metadata(
     kind: &str,
     name: &str,
     overflow_by_file: &FxHashMap<String, (usize, usize)>,
-    hard_cap: usize,
 ) -> String {
     let mut buf = String::with_capacity(128);
     buf.push('{');
     buf.push_str(&format!(r#""_source":"{LAYOUT_SOURCE_TAG}","#));
     buf.push_str(&format!(r#""depth":{},"#, folder.depth));
-    buf.push_str(&format!(
-        r#""path":{},"#,
-        json_string(&folder.path)
-    ));
+    buf.push_str(&format!(r#""path":{},"#, json_string(&folder.path)));
     buf.push_str(&format!(r#""kind":"{kind}","#));
     buf.push_str(&format!(r#""name":{}"#, json_string(name)));
     if kind == "file" {
@@ -278,11 +273,6 @@ fn build_region_metadata(
             buf.push_str(&format!(
                 r#","overflow_skipped":{skipped},"hard_cap":{cap}"#
             ));
-            // Touch the parameter for clarity; caller's intent is preserved
-            // via the cap stored in overflow_by_file (may equal `hard_cap`).
-            let _ = cap;
-        } else {
-            let _ = hard_cap;
         }
     }
     buf.push('}');
@@ -395,7 +385,7 @@ pub fn build_commit_payload(
     let HardCapOutcome { placed, overflow } = apply_hard_cap(input, hard_cap);
 
     let (region_nodes, region_region_edges) =
-        build_region_graph(&input.tree, &overflow, hard_cap);
+        build_region_graph(&input.tree, &overflow);
     let layout_edges =
         build_layout_position_edges(input, result, &placed, committed_at)?;
     let region_to_symbol = build_region_to_symbol_edges(input, &input.tree, &placed)?;
@@ -662,7 +652,7 @@ mod tests {
             ("a/c.rs", "a/c.rs->F->y", 1),
         ]);
         let overflow = FxHashMap::default();
-        let (nodes, _edges) = build_region_graph(&input.tree, &overflow, 500);
+        let (nodes, _edges) = build_region_graph(&input.tree, &overflow);
 
         // Folders in tree: ".", "a", "a/b.rs", "a/c.rs". Each gets a REGION.
         assert_eq!(nodes.len(), 4);
@@ -702,7 +692,7 @@ mod tests {
         ]);
         let mut overflow = FxHashMap::default();
         overflow.insert("big.rs".to_string(), (1usize, 2usize));
-        let (nodes, _edges) = build_region_graph(&input.tree, &overflow, 2);
+        let (nodes, _edges) = build_region_graph(&input.tree, &overflow);
 
         // The file region for "big.rs" must carry overflow_skipped + hard_cap.
         let file_region = nodes
@@ -733,7 +723,7 @@ mod tests {
             ("a/c.rs", "a/c.rs->F->z", 1),
         ]);
         let overflow = FxHashMap::default();
-        let (_nodes, region_edges) = build_region_graph(&input.tree, &overflow, 500);
+        let (_nodes, region_edges) = build_region_graph(&input.tree, &overflow);
 
         // Parent → child edges: "." → "a"; "a" → "a/b.rs"; "a" → "a/c.rs".
         assert_eq!(region_edges.len(), 3);

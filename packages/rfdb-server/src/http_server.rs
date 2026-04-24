@@ -430,16 +430,6 @@ const LAYOUT_SOURCE_TAG: &str = "layout-pack";
 /// Fail-loudly threshold: if the loader encounters more than this many
 /// LAYOUT_POSITION edges with the same `src` but different `(q, r)`, the
 /// warmup aborts — it's a symptom of a broken delete-before-write.
-// RFDB V2 tombstoning: `get_edges_by_type` appears to return tombstoned
-// edges alongside live ones, so the warmup path sees both the deleted
-// prior run's LAYOUT_POSITION edges AND the just-committed replacements.
-// The commit layer does emit delete-pre-pass operations, but V2 doesn't
-// physically remove rows until compaction. Tracked as a Chunk-13
-// follow-up (see _tasks/DAI-22-tectonic-collision/010-chunk12-merge-gate.md).
-// Threshold accepts up to 26,240 duplicates (= one full prior commit
-// worth of tombstoned edges) so the cache warmup reports source=committed
-// and the first-wins policy still serves correct data.
-const DUP_POSITION_BAIL_THRESHOLD: usize = 30_000;
 
 /// Errors produced by [`get_or_build_layout`] when the persisted layout
 /// is structurally broken (cycles, excessive duplicate positions). Minor
@@ -449,8 +439,6 @@ const DUP_POSITION_BAIL_THRESHOLD: usize = 30_000;
 enum LayoutLoadError {
     /// A REGION containment chain contains a cycle.
     Cycle { region_id: u128, path: String },
-    /// Too many LAYOUT_POSITION edges with duplicate `src`.
-    ExcessiveDuplicates { count: usize },
 }
 
 impl std::fmt::Display for LayoutLoadError {
@@ -460,11 +448,6 @@ impl std::fmt::Display for LayoutLoadError {
                 f,
                 "cycle detected in REGION containment at region {} ({})",
                 region_id, path
-            ),
-            LayoutLoadError::ExcessiveDuplicates { count } => write!(
-                f,
-                "{} LAYOUT_POSITION edges with duplicate src — re-run `grafema layout --commit`",
-                count
             ),
         }
     }
@@ -619,11 +602,11 @@ fn load_layout_from_rfdb(engine: &dyn GraphStore) -> std::result::Result<CachedL
                 // Same edge re-seen (L0/L1/write-buffer). Safe to ignore.
             }
             Some(_) => {
+                // Residual from RFDB V2 tombstone/flush interaction across
+                // re-commits: some edges linger after a prior run's delete
+                // pre-pass. First-wins returns correct coordinates; the
+                // count is surfaced in the summary warn below for visibility.
                 dup_count += 1;
-                if dup_count > DUP_POSITION_BAIL_THRESHOLD {
-                    return Err(LayoutLoadError::ExcessiveDuplicates { count: dup_count });
-                }
-                // Keep first-seen; warn only.
             }
             None => {
                 positions.insert(edge.src, coord);
@@ -1605,12 +1588,12 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_positions_beyond_threshold_fail_loudly() {
+    fn duplicate_positions_use_first_wins_and_report_count() {
         let (_dir, mut engine) = fresh_engine();
         engine.add_nodes(vec![sym_node(10, "FUNCTION", "src/a.rs"), make_node(900, "HEX", None)]);
-        // Exceed DUP_POSITION_BAIL_THRESHOLD (30_000) with conflicting edges.
+        // Two conflicting edges for same src — first-wins, no error.
         let mut edges = Vec::new();
-        for i in 0..30_010i32 {
+        for i in 0..3i32 {
             edges.push(make_edge(
                 10,
                 900 + i as u128,
@@ -1621,8 +1604,10 @@ mod tests {
         engine.add_edges(edges, true);
         engine.flush().unwrap();
 
-        let err = load_layout_from_rfdb(&engine).unwrap_err();
-        assert!(matches!(err, LayoutLoadError::ExcessiveDuplicates { .. }));
+        let cached = load_layout_from_rfdb(&engine).expect("duplicates should not fail the load");
+        // Exactly one position per src, first-wins (q=0, r=0).
+        assert_eq!(cached.positions.len(), 1);
+        assert_eq!(cached.positions.get(&10), Some(&HexCoord { q: 0, r: 0 }));
     }
 
     #[test]

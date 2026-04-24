@@ -2007,7 +2007,16 @@ impl Shard {
             }
         }
 
-        // Step 3: L1 edge-type index — O(1) HashMap lookup
+        // Step 3: L1 edge-type index — O(1) HashMap lookup.
+        //
+        // The index is built once at `set_l1_segments()` time with the
+        // TombstoneSet snapshot available then. Subsequent `delete_edge`
+        // calls add tombstones but don't rebuild the index — so we must
+        // filter out post-index tombstones at read time, mirroring the
+        // L0 read path above. Without this, deletions to L1-resident
+        // edges are invisible to `get_edges_by_type` until compaction.
+        // (Observed in DAI-22 as LAYOUT_POSITION duplicates surviving
+        // across delete_edges_by_type_and_source + flush + reload.)
         if let Some(index) = &self.l1_edge_type_index {
             if let Some(pairs) = index.get(edge_type) {
                 for &(src, dst) in pairs {
@@ -2015,8 +2024,9 @@ impl Shard {
                     if seen_edge_keys.contains(&key) {
                         continue;
                     }
-                    // No tombstone check needed — L1 index is built with
-                    // tombstone filtering in build_l1_edge_type_index().
+                    if self.tombstones.contains_edge(src, dst, edge_type) {
+                        continue;
+                    }
                     results.push(EdgeRecordV2 {
                         src,
                         dst,
