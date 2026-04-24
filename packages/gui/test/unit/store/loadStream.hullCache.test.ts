@@ -67,6 +67,33 @@ describe('buildPlacedForBucketing', () => {
     assert.deepEqual(a, { regionId: 'fileA', q: 2, r: -1 });
     assert.deepEqual(b, { regionId: 'fileB', q: 5, r: 3 });
   });
+
+  // DAI-22 Chunk-10b regression: server emits node.region as a scope name
+  // (e.g. "FUNCTION:<expression>", "METHOD:render") for symbols nested in
+  // functions/methods, not always as a file path. Bucketing must use
+  // n.file (always the file path), not n.region (mixed scope names).
+  it('buckets by file even when region is a scope name like FUNCTION:<expression>', () => {
+    const tree = buildRegionTree([
+      {
+        id: 'root', depth: 0, path: 'src', kind: 'folder', name: 'src',
+        children: [
+          { id: 'fileA', depth: 1, path: 'src/a.ts', kind: 'file', name: 'a.ts' },
+        ],
+      },
+    ]);
+    const { x, z } = cubeToWorld(1, 2, 3.0);
+    const layout = {
+      nodes: [
+        // region is a scope name, not a file path — would break old impl
+        { id: 'n', type: 'FUNCTION', name: 'n', file: 'src/a.ts', region: 'FUNCTION:<expression>', x, z, degree: 0 },
+      ],
+      edges: [], regions: [], typeTable: [], edgeTypeTable: [],
+    } as unknown as LayoutResult;
+
+    const placed = buildPlacedForBucketing(layout, tree);
+    assert.equal(placed.length, 1);
+    assert.deepEqual(placed[0], { regionId: 'fileA', q: 1, r: 2 });
+  });
 });
 
 describe('filterOutDepthZero', () => {

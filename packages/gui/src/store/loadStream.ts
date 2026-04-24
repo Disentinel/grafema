@@ -423,9 +423,14 @@ export function hydrateLayoutStoreFromLayout(layout: LayoutResult): void {
     // dominates aggregation. Nested regions carry all the visual
     // hierarchy we need; the root is implicit.
     try {
-      const placed = buildPlacedForBucketing(layout, layoutStore.regionTree);
+      // Use layout.regionTree directly (not layoutStore.regionTree): the
+      // `layoutStore` variable is a snapshot captured at getState() time —
+      // before setRegionTree mutated state — so reading .regionTree off it
+      // would get the pre-update tree (empty on fresh load). This was the
+      // DAI-22 Chunk-10b WARN-#3 "hullCache empty" root cause.
+      const placed = buildPlacedForBucketing(layout, layout.regionTree);
       const symbolsByRegion = bucketSymbolsByRegion(placed);
-      const filteredTree = filterOutDepthZero(layoutStore.regionTree);
+      const filteredTree = filterOutDepthZero(layout.regionTree);
       const hulls = computeHullsForRegions(filteredTree, symbolsByRegion, {
         hexSize: TILE_SIZE,
       });
@@ -461,21 +466,24 @@ export function worldToAxial(
 
 /**
  * Build a flat placed-symbol list keyed by region id for hull bucketing.
- * Resolves each node's `region` path to a region id via the tree's
- * `byFile` index (which also covers non-file region kinds — see
- * layoutStore.buildRegionTree).
+ * Each symbol belongs to its containing file's REGION — looked up via
+ * `tree.byFile` keyed on the node's file path.
+ *
+ * History: an earlier version used `n.region`, but the server emits
+ * `region` as a mix of file paths (when the enclosing region is the file
+ * itself) and scope names like `"FUNCTION:<expression>"` / `"METHOD:render"`
+ * (when the symbol is nested in a function/method). `byFile` is keyed on
+ * actual file paths, so scope-name lookups always missed → hullCache was
+ * silently empty → HullLayer rendered zero hulls. Use `n.file` which is
+ * unambiguous (DAI-22 Chunk-10b WARN #3/#5 fix).
  */
 export function buildPlacedForBucketing(
   layout: LayoutResult,
   tree: RegionTree,
 ): Array<{ regionId: string; q: number; r: number }> {
   const out: Array<{ regionId: string; q: number; r: number }> = [];
-  // byFile is keyed by path, and node.region is the region path — the
-  // parser populated it from the server's `region` field verbatim. If a
-  // node's region isn't in the index, it's dropped (defensive: usually
-  // indicates stale nodes from an old stream).
   for (const n of layout.nodes) {
-    const regionId = tree.byFile.get(n.region);
+    const regionId = tree.byFile.get(n.file);
     if (regionId === undefined) continue;
     const { q, r } = worldToAxial(n.x, n.z);
     out.push({ regionId, q, r });
