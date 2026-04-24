@@ -139,9 +139,17 @@ export function Canvas() {
       nodes, edges, edgeLabelsRef, setTooltip, selectedConnectedRef,
     });
 
-    // Debug — DEV-only, gated to keep production `window` clean (P2.1).
-    if (import.meta.env?.DEV) {
+    // Debug — DEV mode OR opt-in via `?debug=1` query param (for Playwright
+    // verification against production bundle). Production hosts that don't
+    // set the flag stay clean. (P2.1; extended for DAI-22 Chunk-10b.)
+    const debugOptIn =
+      typeof window !== 'undefined' &&
+      typeof window.location !== 'undefined' &&
+      /[?&]debug=1\b/.test(window.location.search);
+    if (import.meta.env?.DEV || debugOptIn) {
       (window as unknown as Record<string, unknown>).debugScene = sm.scene;
+      (window as unknown as Record<string, unknown>).debugHexLayer = hexLayer;
+      (window as unknown as Record<string, unknown>).debugHullLayer = hullLayer;
     }
 
     // Autofit + SceneApi

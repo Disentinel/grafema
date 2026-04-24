@@ -38,7 +38,7 @@ import { useLayoutStore, type OverflowFile } from './store/layoutStore';
 import { OverflowBadge, meanPosition, placedNodesForFile } from './OverflowBadge';
 import { fetchLayout } from './layout/layoutClient';
 import { loadFixture } from './store/loadFixture';
-import { loadStream } from './store/loadStream';
+import { loadStream, hydrateLayoutStoreFromLayout } from './store/loadStream';
 import { loadLiveLayout } from './store/loadLiveLayout';
 import { initPostMessageAdapter } from './api/PostMessageAdapter';
 import { initWebSocketAdapter } from './api/WebSocketAdapter';
@@ -117,9 +117,14 @@ export async function loadFromSource(
   try {
     const result = await deps.fetchLayout({ source }, signal);
     deps.setGraphData(result);
+    // DAI-22 Chunk-10b: hydrate layoutStore so EmptyLayoutOverlay,
+    // OverflowBadge, and HullLayer render. Previously only the URL-
+    // param bootstrap path did this; the production SPA host at
+    // /ui/{db} passes a source prop and silently missed hydration.
+    hydrateLayoutStoreFromLayout(result);
   } catch (err) {
     // Intentional swallow — log for diagnostics but don't bubble.
-     
+
     console.error('[HexAtlas] fetchLayout failed:', err);
   }
 }
@@ -386,13 +391,23 @@ export function HexAtlas({ mode, source, className, skipCanvas }: HexAtlasProps)
 
     initPostMessageAdapter();
     initWebSocketAdapter();
-    // Expose controller + dataStore for console access. DEV-only — we
-    // do not leak globals into production hosts. (P2.1)
-    if (import.meta.env?.DEV) {
+  }, [source]);
+
+  // Debug-surface exposure — runs on mount regardless of whether the
+  // host passed `source`. DEV mode OR opt-in via `?debug=1` (for
+  // Playwright DAI-22 Chunk-10b verify). Production hosts without the
+  // flag stay clean. (P2.1; extended for browser-level assertions.)
+  useEffect(() => {
+    const debugOptIn =
+      typeof window !== 'undefined' &&
+      typeof window.location !== 'undefined' &&
+      /[?&]debug=1\b/.test(window.location.search);
+    if (import.meta.env?.DEV || debugOptIn) {
       (window as unknown as Record<string, unknown>).grafema = mapController;
       (window as unknown as Record<string, unknown>).dataStore = useDataStore;
+      (window as unknown as Record<string, unknown>).layoutStore = useLayoutStore;
     }
-  }, [source]);
+  }, []);
 
   // When no className is supplied we fall back to the `.app` class that
   // App.css provides: `display:flex; position:relative; width:100%;

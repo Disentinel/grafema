@@ -386,11 +386,29 @@ export async function loadStream(opts: StreamOptions = {}) {
     layout.regions.length, 'regions',
   );
   store.setGraphData(layout);
+  hydrateLayoutStoreFromLayout(layout);
 
-  // DAI-22 Chunk-6: feed layout_meta + regionTree into the layoutStore
-  // so HexAtlas (overlay) and OverflowBadge can subscribe without
-  // reaching into parseStream. `reset()` first to avoid stale values
-  // if a previous stream populated them.
+  // Clear routes (no routes from live data)
+  useRouteStore.getState().setRoutes([]);
+
+  opts.onProgress?.('complete', layout.nodes.length, layout.edges.length);
+}
+
+/**
+ * DAI-22 Chunk-6/8 — hydrate layoutStore (layoutMeta, regionTree,
+ * hullCache) from a parsed LayoutResult. Idempotent: `reset()` is
+ * called first so stale values from a previous stream don't leak.
+ *
+ * Called from both `loadStream` (URL-param bootstrap path) and
+ * `loadFromSource` (prop-driven path) so the EmptyLayoutOverlay,
+ * OverflowBadge layer, and HullLayer render in both cases.
+ *
+ * Split out of loadStream for Chunk-10b: prior to this split,
+ * `source={kind:'stream',...}` consumers (the production SPA host
+ * at /ui/{db}) had layoutMeta === null because only `setGraphData`
+ * was called. Badges and hulls silently never rendered.
+ */
+export function hydrateLayoutStoreFromLayout(layout: LayoutResult): void {
   const layoutStore = useLayoutStore.getState();
   layoutStore.reset();
   if (layout.layoutMeta !== undefined) {
@@ -408,9 +426,6 @@ export async function loadStream(opts: StreamOptions = {}) {
       const placed = buildPlacedForBucketing(layout, layoutStore.regionTree);
       const symbolsByRegion = bucketSymbolsByRegion(placed);
       const filteredTree = filterOutDepthZero(layoutStore.regionTree);
-      // hexSize=TILE_SIZE so polygon coordinates live in the same
-      // world-space frame as HexLayer tiles — Chunk-8b renderers can
-      // read from hullCache without an extra scaling pass.
       const hulls = computeHullsForRegions(filteredTree, symbolsByRegion, {
         hexSize: TILE_SIZE,
       });
@@ -418,14 +433,9 @@ export async function loadStream(opts: StreamOptions = {}) {
     } catch (err) {
       // Hull compute failure must not break the stream load — renderers
       // fall back to "no hulls" when the cache is empty.
-      console.warn('[loadStream] hull computation failed:', err);
+      console.warn('[hydrateLayoutStore] hull computation failed:', err);
     }
   }
-
-  // Clear routes (no routes from live data)
-  useRouteStore.getState().setRoutes([]);
-
-  opts.onProgress?.('complete', layout.nodes.length, layout.edges.length);
 }
 
 // ---------------------------------------------------------------------------
