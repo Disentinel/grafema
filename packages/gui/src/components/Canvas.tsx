@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import { SceneManager } from '../three/SceneManager';
-import type { HullLayer } from '../three/HullLayer';
 import type { FlowLayer } from '../three/FlowLayer';
 import type { RegionLayer } from '../three/RegionLayer';
 import type { RouteLayer } from '../three/RouteLayer';
@@ -116,7 +115,8 @@ export function Canvas() {
     const { layer: hexLayer, unsubscribe: unsubBuildSubs } =
       buildHexLayerWithSubscriptions(sm, nodes, () => flowLayerForLens);
     const regionLayer: RegionLayer = buildRegionLayer(sm, nodes, regions);
-    const hullLayer: HullLayer = buildHullLayer(sm, nodes, regions, abort.signal);
+    const { layer: hullLayer, unsubscribe: unsubHull } =
+      buildHullLayer(sm, nodes, regions, abort.signal);
     const flowLayer: FlowLayer = buildFlowLayer(sm, nodes, edges, hexLayer);
     flowLayerForLens = flowLayer;
 
@@ -170,6 +170,7 @@ export function Canvas() {
       window.removeEventListener('resize', onResize);
       unsubRoutes();
       unsubBuildSubs();
+      unsubHull();
       hullLayer.dispose();
       flowLayer.dispose();
       regionLayer.dispose();

@@ -20,7 +20,11 @@
 
 import * as THREE from 'three';
 import { HexLayer } from '../three/HexLayer';
-import { HullLayer, type HullRegion } from '../three/HullLayer';
+import {
+  HullLayer,
+  type HullRegion,
+  type HullRegionPrecomputed,
+} from '../three/HullLayer';
 import type { HexCoord } from '../geom/hex';
 import { RegionLayer } from '../three/RegionLayer';
 import { FlowLayer } from '../three/FlowLayer';
@@ -32,6 +36,8 @@ import { useDataStore } from '../store/dataStore';
 import { useViewStore } from '../store/viewStore';
 import { useRouteStore } from '../store/routeStore';
 import { useDiffStore, type NodeChange } from '../store/diffStore';
+import { useLayoutStore } from '../store/layoutStore';
+import { deriveLodVisibility, normalizeZoom } from '../lod/render';
 import { LENSES } from '../config/lenses';
 import { FLOWS } from '../config/flows';
 import { reduceSelection, type FocusIntent } from '../controller/focus';
@@ -177,6 +183,30 @@ export function buildHexLayerWithSubscriptions(
   });
 
   sm.onRender((dt) => layer.tick(dt));
+
+  // DAI-22 Chunk-8b — gate the instanced symbol mesh on the per-frame
+  // zoom level. Hidden below `symbolZoomThreshold` (default 0.9) so
+  // distant/package-level views skip the ~35k-instance draw entirely.
+  // Pin rings ride along so they stay coherent with tile visibility.
+  let lastVisible = true;
+  sm.onRender(() => {
+    const zoom01 = normalizeZoom(sm.getView());
+    const wantVisible = useLayoutStore.getState().hullCache.size === 0
+      // No precomputed hulls — we haven't been through the new layout
+      // pipeline; keep legacy behaviour and always show symbols.
+      ? true
+      : deriveLodVisibility({
+          regionTree: useLayoutStore.getState().regionTree,
+          hullCache: useLayoutStore.getState().hullCache,
+          zoom01,
+        }).symbolsVisible;
+    if (wantVisible === lastVisible) return;
+    lastVisible = wantVisible;
+    layer.mesh.visible = wantVisible;
+    // pinRings mode-driven visibility stays with HexLayer itself —
+    // not overridden here so 2D pin rings keep their own gating.
+  });
+
   return { layer, unsubscribe: () => { unsubLens(); unsubDiff(); } };
 }
 
@@ -194,22 +224,82 @@ export function buildRegionLayer(
 }
 
 /**
- * Build the hull layer and kick off the async `setRegions` call. The
- * hull rebuild respects `signal` so a mode-swap / unmount mid-rebuild
- * aborts cleanly without leaving disposed objects in the scene (E14).
+ * DAI-22 Chunk-8b — build the hull layer wired to `layoutStore.hullCache`.
+ *
+ * Reads precomputed polygons from the layout store (Chunk-7/8 populated
+ * by `computeHullsForRegions` on stream load), applies per-frame LOD
+ * filtering via `deriveLodVisibility`, and rebuilds hull meshes
+ * whenever either the camera zoom or the cache itself changes.
+ *
+ * The legacy `__grafemaTileCoords` + `buildHullRegions` path is no
+ * longer reached from Canvas — retained in this module for
+ * back-compat only (tests may still exercise it, and some downstream
+ * hosts read `buildHullRegions` directly).
+ *
+ * Returns both the layer and the teardown closure so Canvas can undo
+ * the store subscriptions on scene dispose. `signal` is accepted for
+ * API parity with the old builder — since the precomputed-polygon path
+ * is synchronous there is nothing to abort mid-flight, but the param
+ * is preserved so callers don't have to branch.
  */
 export function buildHullLayer(
   sm: SceneManager,
-  nodes: GraphNode[],
-  regions: ReadonlyArray<{ path: string }>,
-  signal?: AbortSignal,
-): HullLayer {
+  _nodes: GraphNode[],
+  _regions: ReadonlyArray<{ path: string }>,
+  _signal?: AbortSignal,
+): { layer: HullLayer; unsubscribe: () => void } {
   const hullLayer = new HullLayer(sm.scene);
-  const hullRegions = buildHullRegions(nodes, regions);
-  // Fire-and-forget — HullLayer handles generation tokens internally.
-  void hullLayer.setRegions(hullRegions, TILE_SIZE, signal);
   hullLayer.setStyle(useViewStore.getState().mode.hullStyle);
-  return hullLayer;
+
+  // Last-applied zoom bucket (quantised) so we skip rebuilds when the
+  // camera barely moved. 3 digits of precision ≈ 0.1% zoom steps —
+  // tight enough that boundary crossings still fire, loose enough to
+  // avoid rebuilding at 60Hz during a continuous pan.
+  let lastBucket = -1;
+  let lastCacheRef: unknown = null;
+
+  const applyFrame = () => {
+    const { regionTree, hullCache } = useLayoutStore.getState();
+    const zoom01 = normalizeZoom(sm.getView());
+    const bucket = Math.round(zoom01 * 1000);
+    // Cache identity change (new stream load) forces a rebuild even
+    // if the zoom bucket is the same.
+    if (bucket === lastBucket && hullCache === lastCacheRef) return;
+    lastBucket = bucket;
+    lastCacheRef = hullCache;
+
+    if (hullCache.size === 0) {
+      hullLayer.setRegionHulls([]);
+      return;
+    }
+    const { visibleHulls } = deriveLodVisibility({
+      regionTree,
+      hullCache,
+      zoom01,
+    });
+    const entries: HullRegionPrecomputed[] = visibleHulls.map((v) => ({
+      regionId: v.regionId,
+      depth: v.region.depth,
+      polygons: v.geometry.polygons,
+    }));
+    hullLayer.setRegionHulls(entries);
+  };
+
+  // Initial paint — covers the case where the hull cache is already
+  // populated at the time Canvas builds the scene (common: stream load
+  // finishes before data flows through to React).
+  applyFrame();
+
+  // Cache-change driver — stream-load hydration fires this.
+  const unsubLayout = useLayoutStore.subscribe((state, prev) => {
+    if (state.hullCache !== prev.hullCache) applyFrame();
+  });
+
+  // Per-frame driver — cheap: applyFrame short-circuits when the
+  // quantised zoom bucket and cache identity are unchanged.
+  sm.onRender(applyFrame);
+
+  return { layer: hullLayer, unsubscribe: unsubLayout };
 }
 
 /**

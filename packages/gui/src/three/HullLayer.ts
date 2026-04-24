@@ -41,6 +41,24 @@ export interface HullRegion {
   tiles: HexCoord[];
 }
 
+/**
+ * DAI-22 Chunk-8b — precomputed-polygon variant of `setRegions`.
+ * One entry per region, polygons already traced (from `computeHullsForRegions`
+ * via `layoutStore.hullCache`). Lets callers bypass the internal hull-
+ * tracing step and render directly from the per-region cache — the
+ * render layer becomes a thin polygon-to-mesh adaptor.
+ */
+export interface HullRegionPrecomputed {
+  /** Region identifier — stable, deterministic colour input for
+   *  depth-based palette (`depth` drives hue) and traceability. */
+  regionId: string;
+  /** Region depth in the tree. Colour warms with depth. */
+  depth: number;
+  /** Already-closed polygon loops in pixel/world coordinates (same
+   *  coordinate frame HullLayer emits for the internally-traced path). */
+  polygons: HullLoop[];
+}
+
 /** Rendering mode for the layer. `hidden` hides the root group
  *  (cheaper than disposing), `line` shows it. Reserved for
  *  C-SceneManager wiring — additional modes (dashed, filled) can be
@@ -156,6 +174,33 @@ export class HullLayer {
     this.group.visible = visible;
   }
 
+  /**
+   * DAI-22 Chunk-8b — synchronous rebuild from precomputed polygons.
+   *
+   * Replaces the async `setRegions` → `computeHullPolygonsBatched`
+   * pipeline for callers that already have polygons in hand (i.e. read
+   * them from `layoutStore.hullCache`). Per-region `depth` drives the
+   * colour palette: deeper nesting gets a warmer hue (sky-blue at
+   * depth 0, orange-red at the deepest end).
+   *
+   * Callers should supply `regions` already sorted by depth ASC so
+   * Three's insertion order aligns with the painter's-algorithm
+   * z-order (deeper meshes drawn last → on top).
+   *
+   * No batching / signal handling — this is O(polygon count) and runs
+   * in < 1ms for typical (< 500 regions × < 10 loops) atlases. For
+   * the cache-less path, callers should still use `setRegions`.
+   */
+  setRegionHulls(regions: readonly HullRegionPrecomputed[]): void {
+    this._generation++; // invalidate any in-flight async setRegions
+    this._clear();
+    for (const r of regions) {
+      for (const loop of r.polygons) {
+        this._appendLoopMeshDepthColored(loop, r.regionId, r.depth);
+      }
+    }
+  }
+
   /** Rendering mode — currently binary. Reserved for SceneManager
    *  wiring; additional styles (e.g. 'dashed', 'filled') can be added
    *  without changing call sites. */
@@ -201,6 +246,76 @@ export class HullLayer {
     }
     for (const m of this._materials) m.dispose();
     this._materials.length = 0;
+  }
+
+  /**
+   * Depth-warmed palette for precomputed-polygon rendering.
+   * Hue interpolates from sky-blue (shallow) to orange-red (deep) with a
+   * small path-hash perturbation so same-depth siblings stay visually
+   * distinguishable. Alpha in [0.15, 0.3] keeps the fill subtle so
+   * overlapping hulls read cleanly.
+   */
+  private _appendLoopMeshDepthColored(
+    loop: HullLoop,
+    regionId: string,
+    depth: number,
+  ): void {
+    if (loop.length < 2) return;
+    const flat: number[] = [];
+    const y = this._elevation;
+    for (let i = 0; i < loop.length - 1; i++) {
+      const a = loop[i];
+      const b = loop[i + 1];
+      flat.push(a.x, y, a.y, b.x, y, b.y);
+    }
+    if (flat.length === 0) return;
+
+    // Normalise depth against a soft ceiling (10 is the plan's practical
+    // max after effectiveDMax caps at 12). Linearly walk hue from 210°
+    // (sky blue) down to 15° (orange-red). Small per-region perturbation
+    // (±10°) keeps siblings distinct without breaking the gradient.
+    const depthNorm = Math.min(1, depth / 10);
+    const jitter = ((hueFromString(regionId) % 20) - 10) / 360;
+    const hue = ((210 - 195 * depthNorm) / 360 + jitter + 1) % 1;
+    const color = new THREE.Color().setHSL(hue, 0.65, 0.55);
+    const opacity = 0.15 + depthNorm * 0.15; // 0.15..0.30
+
+    try {
+      const geo = new LineSegmentsGeometry();
+      geo.setPositions(flat);
+      const mat = new LineMaterial({
+        color: color.getHex(),
+        linewidth: 2,
+        transparent: true,
+        opacity,
+        depthTest: false,
+        depthWrite: false,
+        worldUnits: false,
+      });
+      if (typeof window !== 'undefined') {
+        mat.resolution.set(window.innerWidth, window.innerHeight);
+      }
+      const mesh = new LineSegments2(geo, mat);
+      mesh.computeLineDistances();
+      // Deeper regions get a higher renderOrder — on top.
+      mesh.renderOrder = 100 + depth;
+      this.group.add(mesh);
+      this._materials.push(mat);
+    } catch {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(flat, 3));
+      const mat = new THREE.LineBasicMaterial({
+        color: color.getHex(),
+        transparent: true,
+        opacity,
+        depthTest: false,
+        depthWrite: false,
+      });
+      const mesh = new THREE.LineSegments(geo, mat);
+      mesh.renderOrder = 100 + depth;
+      this.group.add(mesh);
+      this._materials.push(mat);
+    }
   }
 
   /** Convert one 2-D hull loop → a LineSegments2 (or LineBasicMaterial

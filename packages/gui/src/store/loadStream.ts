@@ -408,7 +408,12 @@ export async function loadStream(opts: StreamOptions = {}) {
       const placed = buildPlacedForBucketing(layout, layoutStore.regionTree);
       const symbolsByRegion = bucketSymbolsByRegion(placed);
       const filteredTree = filterOutDepthZero(layoutStore.regionTree);
-      const hulls = computeHullsForRegions(filteredTree, symbolsByRegion);
+      // hexSize=TILE_SIZE so polygon coordinates live in the same
+      // world-space frame as HexLayer tiles — Chunk-8b renderers can
+      // read from hullCache without an extra scaling pass.
+      const hulls = computeHullsForRegions(filteredTree, symbolsByRegion, {
+        hexSize: TILE_SIZE,
+      });
       layoutStore.setHullCache(hulls);
     } catch (err) {
       // Hull compute failure must not break the stream load — renderers
