@@ -38,6 +38,7 @@ import { useRouteStore } from '../store/routeStore';
 import { useDiffStore, type NodeChange } from '../store/diffStore';
 import { useLayoutStore } from '../store/layoutStore';
 import { deriveLodVisibility, normalizeZoom } from '../lod/render';
+import { filterVisibleRoutes } from '../lod/routeGate';
 import { LENSES } from '../config/lenses';
 import { FLOWS } from '../config/flows';
 import { reduceSelection, type FocusIntent } from '../controller/focus';
@@ -358,7 +359,22 @@ export function setupRoutes(
   let prevRouteNodes = new Set<number>();
 
   function applyRoutes() {
-    routeLayer.update(useRouteStore.getState().routes, nodes, edges);
+    const { regionTree, hullCache } = useLayoutStore.getState();
+    const zoom01 = normalizeZoom(sm.getView());
+    const allRoutes = useRouteStore.getState().routes;
+    let routesToRender = allRoutes;
+    if (hullCache.size > 0 && regionTree.byId.size > 0) {
+      const { visibleHulls } = deriveLodVisibility({ regionTree, hullCache, zoom01 });
+      const visibleRegionIds = new Set(visibleHulls.map((h) => h.regionId));
+      const fileToRegionId = (file: string) => regionTree.byFile.get(file);
+      routesToRender = filterVisibleRoutes(
+        allRoutes,
+        nodes,
+        visibleRegionIds,
+        fileToRegionId,
+      );
+    }
+    routeLayer.update(routesToRender, nodes, edges);
     const newRouteNodes = routeLayer.activeNodeIndices;
     const selIdx = getSelectedIdx();
 
@@ -389,8 +405,33 @@ export function setupRoutes(
 
   applyRoutes();
   sm.onRender((dt) => routeLayer.tick(dt));
+
+  // Re-apply when zoom bucket changes so the LOD gate (DAI-22 §C.5)
+  // updates as the user zooms. Quantise to 1% zoom steps to avoid
+  // per-frame churn.
+  let lastRouteBucket = -1;
+  let lastRouteCacheRef: unknown = null;
+  sm.onRender(() => {
+    const { hullCache } = useLayoutStore.getState();
+    const z = normalizeZoom(sm.getView());
+    const bucket = Math.round(z * 100);
+    if (bucket === lastRouteBucket && hullCache === lastRouteCacheRef) return;
+    lastRouteBucket = bucket;
+    lastRouteCacheRef = hullCache;
+    applyRoutes();
+  });
+
   const unsubRoutes = useRouteStore.subscribe(applyRoutes);
-  return { routeLayer, unsubscribe: unsubRoutes };
+  const unsubLayoutForRoutes = useLayoutStore.subscribe((s, prev) => {
+    if (s.hullCache !== prev.hullCache) applyRoutes();
+  });
+  return {
+    routeLayer,
+    unsubscribe: () => {
+      unsubRoutes();
+      unsubLayoutForRoutes();
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
