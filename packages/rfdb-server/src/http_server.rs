@@ -366,18 +366,30 @@ async fn graph_stream(
     let manager = state.manager.clone();
     let layout_cache = state.layout_cache.clone();
     let file_to_nodes = state.file_to_nodes.clone();
-    let body = tokio::task::spawn_blocking(move || {
+    let result = tokio::task::spawn_blocking(move || {
         build_graph_stream_body(
             manager, layout_cache, file_to_nodes,
             max_nodes, want_packages, want_node_types, want_edge_types, lod_level,
         )
     }).await.unwrap();
 
-    Response::builder()
-        .header("Content-Type", "application/x-ndjson")
-        .header("Cache-Control", "no-cache")
-        .body(axum::body::Body::from(body))
-        .unwrap()
+    match result {
+        Ok(body) => Response::builder()
+            .header("Content-Type", "application/x-ndjson")
+            .header("Cache-Control", "no-cache")
+            .body(axum::body::Body::from(body))
+            .unwrap(),
+        Err(err) => {
+            eprintln!("[http] graph-stream failed: {}", err);
+            Response::builder()
+                .status(500)
+                .header("Content-Type", "application/json")
+                .body(axum::body::Body::from(
+                    serde_json::json!({ "error": err }).to_string(),
+                ))
+                .unwrap()
+        }
+    }
 }
 
 /// Build or reuse the cached file → node-ids index. Performs exactly one
@@ -783,6 +795,33 @@ fn detect_cycle(
     Ok(())
 }
 
+/// Edges that are "lifted" from hidden endpoints (CALL, REFERENCE, etc.)
+/// up to the closest visible node sharing their file. Order doesn't matter —
+/// stored as a slice so both the whitelist check and the "collect all" path
+/// can iterate deterministically.
+const LIFTABLE_EDGE_TYPES: &[&str] = &[
+    "CALLS", "READS_FROM", "IMPORTS_FROM", "WRITES_TO",
+    "PASSES_ARGUMENT", "AWAITS", "RETURNS", "ITERATES_OVER",
+    "DEPENDS_ON", "HAS_METHOD",
+    // Structural edges — needed for directory/file LOD views
+    "CONTAINS",
+];
+
+/// Visibility-lift index: maps every node id (visible + hidden) to the index
+/// of a visible node within `node_refs`. Non-visible nodes pick up the first
+/// visible node sharing their file. Populated by [`build_visibility_index`].
+struct VisibilityIndex {
+    nid_to_visible: HashMap<u128, u32>,
+}
+
+/// Projected view of the candidate nodes we decided to surface to the GUI —
+/// the basis for header tables, container tree, and per-node JSON emission.
+struct CandidateSet {
+    node_refs: Vec<NodeRef>,
+    type_table: Vec<String>,
+    type_idx: HashMap<String, usize>,
+}
+
 fn build_graph_stream_body(
     manager: Arc<DatabaseManager>,
     layout_cache_slot: Arc<RwLock<Option<CachedLayout>>>,
@@ -792,17 +831,139 @@ fn build_graph_stream_body(
     want_node_types: Option<Vec<String>>,
     want_edge_types: Option<Vec<String>>,
     lod_level: Option<String>,
-) -> String {
+) -> Result<String, String> {
     let start = std::time::Instant::now();
-    let db = manager.get_database("default").unwrap();
-    let engine = db.engine.read().unwrap();
+    let db = manager
+        .get_database("default")
+        .map_err(|e| format!("default database unavailable: {}", e))?;
+    let engine = db
+        .engine
+        .read()
+        .map_err(|e| format!("engine lock poisoned: {}", e))?;
 
-    // Fast-path: if a strict node-type filter is provided, use find_by_type
-    // for each type instead of scanning all 326k+ nodes. Falls back to full
-    // scan when no type filter is given. Deduplicated because find_by_type
-    // may return the same id across storage layers (write buffer + L0 + L1)
-    // after recent commits.
-    let candidate_ids: Vec<u128> = if let Some(ref types) = want_node_types {
+    let candidates = collect_candidate_nodes(
+        &**engine,
+        max_nodes,
+        want_packages.as_ref(),
+        want_node_types.as_ref(),
+    );
+    let node_count = candidates.node_refs.len();
+
+    let vis_index = build_visibility_index(
+        &candidates.node_refs,
+        &file_to_nodes_slot,
+        &**engine,
+    );
+    eprintln!(
+        "[http] edge-lift: {} visible, {} mapped via file grouping",
+        node_count,
+        vis_index.nid_to_visible.len(),
+    );
+
+    let (edge_refs, edge_type_table) = lift_edges_bulk(
+        &**engine,
+        &vis_index,
+        want_edge_types.as_ref(),
+    );
+
+    let degrees = compute_degrees(node_count, &edge_refs);
+
+    let t_tree = std::time::Instant::now();
+    let hierarchy = auto_hierarchy_from_nodes(&candidates.node_refs);
+    let mut tree = ContainerTree::build(&hierarchy, &candidates.node_refs, &edge_refs);
+    eprintln!(
+        "[http] tree build: {}ms ({} nodes, {} edges)",
+        t_tree.elapsed().as_millis(),
+        candidates.node_refs.len(),
+        edge_refs.len(),
+    );
+
+    let cached_layout = get_or_build_layout(&layout_cache_slot, &file_to_nodes_slot, &**engine);
+
+    if let Some(name) = lod_level.as_ref() {
+        if let Some(idx) = tree.level_names.iter().position(|n| n == name) {
+            tree.sa_region_level = idx;
+        }
+    }
+    let region_level = tree.sa_region_level;
+
+    let t_emit = std::time::Instant::now();
+    let mut lines: Vec<String> = Vec::new();
+
+    let regions_flat = build_regions_frame(&cached_layout, &tree, region_level);
+    emit_header_frames(
+        &mut lines,
+        &candidates.type_table,
+        &edge_type_table,
+        &regions_flat,
+        &cached_layout,
+    );
+
+    let layout_is_missing = matches!(cached_layout.source, LayoutSource::Missing);
+    for nr in &candidates.node_refs {
+        lines.push(emit_node_line(
+            nr,
+            &candidates.type_idx,
+            &tree,
+            &cached_layout,
+            layout_is_missing,
+            degrees[nr.idx as usize],
+        ));
+    }
+
+    lines.push(
+        serde_json::to_string(&serde_json::json!({
+            "type": "nodes_done",
+            "count": node_count,
+        }))
+        .unwrap(),
+    );
+
+    let edge_type_idx: HashMap<String, usize> = edge_type_table
+        .iter()
+        .enumerate()
+        .map(|(i, t)| (t.clone(), i))
+        .collect();
+    for e in &edge_refs {
+        lines.push(emit_edge_line(e, &edge_type_idx));
+    }
+
+    let elapsed = start.elapsed().as_millis();
+    lines.push(
+        serde_json::to_string(&serde_json::json!({
+            "type": "done",
+            "nodeCount": node_count,
+            "edgeCount": edge_refs.len(),
+            "elapsed": elapsed,
+        }))
+        .unwrap(),
+    );
+
+    eprintln!(
+        "[http] graph-stream: {} nodes, {} edges, {} regions, {}ms (emit: {}ms)",
+        node_count,
+        edge_refs.len(),
+        regions_flat.len(),
+        elapsed,
+        t_emit.elapsed().as_millis(),
+    );
+
+    Ok(lines.join("\n") + "\n")
+}
+
+/// Gather the node ids we will surface to the GUI and project them into
+/// [`NodeRef`]s. Applies the package + type filters and caps the result at
+/// `max_nodes`. Also dedups ids that `find_by_type` may return multiple times
+/// across storage layers (write buffer + L0 + L1).
+fn collect_candidate_nodes(
+    engine: &dyn GraphStore,
+    max_nodes: usize,
+    want_packages: Option<&Vec<String>>,
+    want_node_types: Option<&Vec<String>>,
+) -> CandidateSet {
+    // Fast-path: a strict node-type filter uses find_by_type per type instead
+    // of scanning all 326k+ nodes.
+    let candidate_ids: Vec<u128> = if let Some(types) = want_node_types {
         let mut seen: std::collections::HashSet<u128> = std::collections::HashSet::new();
         let mut ids: Vec<u128> = Vec::new();
         for t in types {
@@ -818,12 +979,13 @@ fn build_graph_stream_body(
     };
 
     let mut node_refs: Vec<NodeRef> = Vec::new();
-    let mut id_to_idx: HashMap<u128, u32> = HashMap::new();
     let mut type_table: Vec<String> = Vec::new();
     let mut type_idx: HashMap<String, usize> = HashMap::new();
 
     for &nid in &candidate_ids {
-        if node_refs.len() >= max_nodes { break; }
+        if node_refs.len() >= max_nodes {
+            break;
+        }
         let node = match engine.get_node(nid) {
             Some(n) => n,
             None => continue,
@@ -831,26 +993,24 @@ fn build_graph_stream_body(
         let ntype = node.node_type.as_deref().unwrap_or("UNKNOWN").to_string();
         let file = node.file.as_deref().unwrap_or("").to_string();
 
-        // Package filter
-        if let Some(ref pkgs) = want_packages {
+        if let Some(pkgs) = want_packages {
             if !pkgs.iter().any(|p| file.starts_with(p.as_str())) {
                 continue;
             }
         }
-        // Type filter
-        if let Some(ref types) = want_node_types {
+        if let Some(types) = want_node_types {
             if !types.iter().any(|t| t == &ntype) {
                 continue;
             }
         }
 
-        let ti = *type_idx.entry(ntype.clone()).or_insert_with(|| {
+        type_idx.entry(ntype.clone()).or_insert_with(|| {
             let idx = type_table.len();
             type_table.push(ntype.clone());
             idx
         });
 
-        // Clean name: strip absolute paths for MODULE nodes
+        // Clean name: strip absolute paths for MODULE nodes.
         let mut name = node.name.as_deref().unwrap_or("").to_string();
         if name.contains('/') && !file.is_empty() {
             if let Some(pos) = file.rfind('/') {
@@ -859,57 +1019,39 @@ fn build_graph_stream_body(
         }
 
         let idx = node_refs.len() as u32;
-        id_to_idx.insert(nid, idx);
         node_refs.push(NodeRef {
             idx,
             id: nid,
-            node_type: node.node_type.as_deref().unwrap_or("UNKNOWN").to_string(),
+            node_type: ntype,
             file,
             name,
             metadata: node.metadata.clone(),
         });
     }
 
-    let node_count = node_refs.len();
+    CandidateSet { node_refs, type_table, type_idx }
+}
 
-    // ── Edge aggregation via file-based grouping ──
-    // Group ALL nodes in the graph by file path. For each file, find the best
-    // visible node (FUNCTION > CLASS > MODULE) to "own" non-visible nodes.
-    // Then collect semantic edges and lift both endpoints to their file's owner.
-    //
-    // This handles graphs where CALL nodes have no CONTAINS parent but share
-    // the same file as their enclosing FUNCTION.
-
-    let liftable_types: std::collections::HashSet<&str> = [
-        "CALLS", "READS_FROM", "IMPORTS_FROM", "WRITES_TO",
-        "PASSES_ARGUMENT", "AWAITS", "RETURNS", "ITERATES_OVER",
-        "DEPENDS_ON", "HAS_METHOD",
-        // Structural edges — needed for directory/file LOD views
-        "CONTAINS",
-    ].into_iter().collect();
-
-    // Build file → visible nodes map
+/// Build the hidden→visible lookup used by [`lift_edges_bulk`]. Every visible
+/// node maps to itself; every hidden node in the same file as a visible one
+/// is absorbed by the first visible node in that file. Uses the process-wide
+/// cached file→nodes index so we never pay a full graph scan per request.
+fn build_visibility_index(
+    node_refs: &[NodeRef],
+    file_to_nodes_slot: &RwLock<Option<HashMap<String, Vec<u128>>>>,
+    engine: &dyn GraphStore,
+) -> VisibilityIndex {
     let mut file_to_visible: HashMap<String, Vec<u32>> = HashMap::new();
-    for nr in &node_refs {
+    for nr in node_refs {
         file_to_visible.entry(nr.file.clone()).or_default().push(nr.idx);
     }
 
-    // For each file that has visible nodes, collect ALL nodes in that file
-    // and map non-visible ones to the file's MODULE node (or first visible node)
     let mut nid_to_visible: HashMap<u128, u32> = HashMap::new();
-
-    // Visible nodes map to themselves
-    for nr in &node_refs {
+    for nr in node_refs {
         nid_to_visible.insert(nr.id, nr.idx);
     }
 
-    // Edge-lifting maps non-visible nodes to their containing visible
-    // node so that semantic edges (CALLS, IMPORTS_FROM, etc.) between
-    // them can be aggregated up to the visible level. Previously this
-    // required a per-request full scan of all nodes (~20–30s on 326k
-    // nodes). We now consult a process-wide cached file→node-ids index
-    // built exactly once per server lifetime.
-    let file_to_nodes_cache = get_or_build_file_to_nodes(&file_to_nodes_slot, &**engine);
+    let file_to_nodes_cache = get_or_build_file_to_nodes(file_to_nodes_slot, engine);
     for (file, visible_nodes) in file_to_visible.iter() {
         if let Some(node_ids) = file_to_nodes_cache.get(file) {
             for &nid in node_ids {
@@ -920,49 +1062,58 @@ fn build_graph_stream_body(
         }
     }
 
-    eprintln!("[http] edge-lift: {} visible, {} mapped via file grouping",
-        node_count, nid_to_visible.len());
+    VisibilityIndex { nid_to_visible }
+}
 
-    // Collect edges between mapped nodes.
-    //
-    // Iterating per-node via get_outgoing_edges is O(N) RPCs (each touches
-    // segments) and becomes ~minutes for 100k+ mapped nodes.
-    // Instead, fetch all edges of each liftable type in bulk and filter
-    // against nid_to_visible — this is O(E) over edges of those types and
-    // doesn't pay any per-node lookup cost.
-    let mut edge_refs: Vec<EdgeRef> = Vec::new();
-    let mut edge_type_table: Vec<String> = Vec::new();
-    let mut edge_type_idx: HashMap<String, usize> = HashMap::new();
-    let mut seen_edges: std::collections::HashSet<(u32, u32, String)> = std::collections::HashSet::new();
-
-    let edge_types_to_lift: Vec<&str> = if let Some(ref types) = want_edge_types {
-        liftable_types
+/// Fetch every edge whose type is in [`LIFTABLE_EDGE_TYPES`] (intersected
+/// with `want_edge_types` if supplied), translate endpoints through
+/// [`VisibilityIndex`], and dedup (src_vis, dst_vis, type) triples.
+///
+/// Bulk fetch is O(E) over the lifted types — per-node `get_outgoing_edges`
+/// was O(N) RPCs and took minutes on 100k+ mapped nodes.
+fn lift_edges_bulk(
+    engine: &dyn GraphStore,
+    vis: &VisibilityIndex,
+    want_edge_types: Option<&Vec<String>>,
+) -> (Vec<EdgeRef>, Vec<String>) {
+    let edge_types_to_lift: Vec<&str> = if let Some(types) = want_edge_types {
+        LIFTABLE_EDGE_TYPES
             .iter()
             .copied()
             .filter(|t| types.iter().any(|w| w == *t))
             .collect()
     } else {
-        liftable_types.iter().copied().collect()
+        LIFTABLE_EDGE_TYPES.to_vec()
     };
+
+    let mut edge_refs: Vec<EdgeRef> = Vec::new();
+    let mut edge_type_table: Vec<String> = Vec::new();
+    let mut edge_type_idx: HashMap<String, usize> = HashMap::new();
+    let mut seen_edges: std::collections::HashSet<(u32, u32, String)> =
+        std::collections::HashSet::new();
 
     for etype_str in &edge_types_to_lift {
         let bulk = engine.get_edges_by_type(etype_str);
         for edge in bulk {
-            let src_vis = match nid_to_visible.get(&edge.src) {
+            let src_vis = match vis.nid_to_visible.get(&edge.src) {
                 Some(&idx) => idx,
                 None => continue,
             };
-            let dst_vis = match nid_to_visible.get(&edge.dst) {
+            let dst_vis = match vis.nid_to_visible.get(&edge.dst) {
                 Some(&idx) => idx,
                 None => continue,
             };
-            if src_vis == dst_vis { continue; }
+            if src_vis == dst_vis {
+                continue;
+            }
 
             let etype = edge.edge_type.as_deref().unwrap_or("UNKNOWN").to_string();
             let edge_key = (src_vis, dst_vis, etype.clone());
-            if !seen_edges.insert(edge_key) { continue; }
+            if !seen_edges.insert(edge_key) {
+                continue;
+            }
 
-            let _eti = *edge_type_idx.entry(etype.clone()).or_insert_with(|| {
+            edge_type_idx.entry(etype.clone()).or_insert_with(|| {
                 let idx = edge_type_table.len();
                 edge_type_table.push(etype.clone());
                 idx
@@ -976,67 +1127,65 @@ fn build_graph_stream_body(
         }
     }
 
-    // Compute degrees
+    (edge_refs, edge_type_table)
+}
+
+/// Undirected degree count per visible-node index — both endpoints of each
+/// lifted edge are incremented.
+fn compute_degrees(node_count: usize, edge_refs: &[EdgeRef]) -> Vec<u32> {
     let mut degrees = vec![0u32; node_count];
-    for e in &edge_refs {
+    for e in edge_refs {
         degrees[e.src_idx as usize] += 1;
         degrees[e.dst_idx as usize] += 1;
     }
+    degrees
+}
 
-    let t_tree = std::time::Instant::now();
-    // Build container hierarchy from actual directory nesting in node paths
-    let hierarchy = auto_hierarchy_from_nodes(&node_refs);
-    let mut tree = ContainerTree::build(&hierarchy, &node_refs, &edge_refs);
-    eprintln!("[http] tree build: {}ms ({} nodes, {} edges)",
-        t_tree.elapsed().as_millis(), node_refs.len(), edge_refs.len());
-
-    // ── Tectonic layout pipeline (Phase G) ──
-    // Computed once per server lifetime on file-level atoms (MODULE
-    // nodes) and cached. Each non-MODULE node inherits its containing
-    // file's hex centroid at emit time — good enough for the demo.
-    let cached_layout = get_or_build_layout(&layout_cache_slot, &file_to_nodes_slot, &**engine);
-
-    // Override SA region level if the client requested a specific LOD
-    // (e.g. lodLevel=package gives top-level packages instead of the
-    // auto-picked deepest level).
-    if let Some(name) = lod_level.as_ref() {
-        if let Some(idx) = tree.level_names.iter().position(|n| n == name) {
-            tree.sa_region_level = idx;
-        }
-    }
-    let region_level = tree.sa_region_level;
-
-    let t_emit = std::time::Instant::now();
-    // Build JSONL output
-    let mut lines: Vec<String> = Vec::new();
-
-    // Header: emit the persisted REGION tree so the GUI can draw hulls.
-    // Falls back to the SA container tree's flat level list when no
-    // persisted layout exists (the GUI still has something to render).
-    let regions_tree = build_region_tree_json(&cached_layout);
-    let regions_flat: Vec<serde_json::Value> = if regions_tree.is_empty() {
+/// Choose the JSON payload for the `regions` field of the header frame:
+/// the persisted REGION tree when the layout is committed, otherwise a
+/// flat list derived from the in-memory container hierarchy.
+fn build_regions_frame(
+    cached_layout: &CachedLayout,
+    tree: &ContainerTree,
+    region_level: usize,
+) -> Vec<serde_json::Value> {
+    let regions_tree = build_region_tree_json(cached_layout);
+    if regions_tree.is_empty() {
         tree.containers_at_level(region_level)
             .values()
-            .map(|c| serde_json::json!({
-                "path": c.id,
-                "depth": c.level,
-                "tileCount": c.child_count,
-            }))
+            .map(|c| {
+                serde_json::json!({
+                    "path": c.id,
+                    "depth": c.level,
+                    "tileCount": c.child_count,
+                })
+            })
             .collect()
     } else {
         regions_tree
-    };
+    }
+}
 
-    lines.push(serde_json::to_string(&serde_json::json!({
-        "type": "header",
-        "typeTable": type_table,
-        "edgeTypeTable": edge_type_table,
-        "regions": regions_flat,
-    })).unwrap());
+/// Push the two framing frames that must precede every node frame:
+/// `header` (type tables + regions) and `layout_meta` (provenance +
+/// overflow summary). The GUI's `loadStream.ts` treats these as required.
+fn emit_header_frames(
+    lines: &mut Vec<String>,
+    type_table: &[String],
+    edge_type_table: &[String],
+    regions_flat: &[serde_json::Value],
+    cached_layout: &CachedLayout,
+) {
+    lines.push(
+        serde_json::to_string(&serde_json::json!({
+            "type": "header",
+            "typeTable": type_table,
+            "edgeTypeTable": edge_type_table,
+            "regions": regions_flat,
+        }))
+        .unwrap(),
+    );
 
-    // Layout-meta frame (DAI-22 Chunk-4) — carries provenance + overflow
-    // summary so the GUI can render the "Run `grafema layout --commit`"
-    // overlay and per-file red badges.
     let (meta_source, meta_committed_at, meta_symbol_count) = match &cached_layout.source {
         LayoutSource::Missing => ("missing", serde_json::Value::Null, 0usize),
         LayoutSource::Committed { committed_at, symbol_count } => (
@@ -1056,77 +1205,85 @@ fn build_graph_stream_body(
             })
         })
         .collect();
-    lines.push(serde_json::to_string(&serde_json::json!({
-        "type": "layout_meta",
-        "source": meta_source,
-        "symbol_count": meta_symbol_count,
-        "committed_at": meta_committed_at,
-        "overflow_files": overflow_files_json,
-    })).unwrap());
-
-    // Nodes — each carries `pos` from the persisted layout (or null) plus
-    // an `unplaced_reason` discriminator so the GUI can distinguish excluded
-    // node types from "layout not yet computed" from "hard-cap overflow".
-    let layout_is_missing = matches!(cached_layout.source, LayoutSource::Missing);
-    for nr in &node_refs {
-        let ti = type_idx.get(&nr.node_type).copied().unwrap_or(0);
-        let region = tree.sa_region(nr.idx).to_string();
-        let placeable = layout_types::is_placeable(&nr.node_type);
-        let placed = cached_layout.positions.get(&nr.id).copied();
-        let (pos, unplaced_reason) = match (placeable, placed, layout_is_missing) {
-            (false, _, _) => (serde_json::Value::Null, Some("excluded")),
-            (true, Some(c), _) => (serde_json::json!({ "q": c.q, "r": c.r }), None),
-            (true, None, true) => (serde_json::Value::Null, Some("missing_layout")),
-            (true, None, false) => (serde_json::Value::Null, Some("skipped_overflow")),
-        };
-        let unplaced_reason_json = match unplaced_reason {
-            Some(s) => serde_json::Value::String(s.to_string()),
-            None => serde_json::Value::Null,
-        };
-        lines.push(serde_json::to_string(&serde_json::json!({
-            "type": "node",
-            "i": nr.idx,
-            "t": ti,
-            "id": nr.id.to_string(),
-            "name": nr.name,
-            "file": nr.file,
-            "region": region,
-            "degree": degrees[nr.idx as usize],
-            "pos": pos,
-            "unplaced_reason": unplaced_reason_json,
-        })).unwrap());
-    }
-
-    lines.push(serde_json::to_string(&serde_json::json!({
-        "type": "nodes_done",
-        "count": node_count,
-    })).unwrap());
-
-    // Edges
-    for (_i, e) in edge_refs.iter().enumerate() {
-        let eti = edge_type_idx.get(&e.edge_type).copied().unwrap_or(0);
-        lines.push(serde_json::to_string(&serde_json::json!({
-            "type": "edge",
-            "s": e.src_idx,
-            "d": e.dst_idx,
-            "t": eti,
-        })).unwrap());
-    }
-
-    let elapsed = start.elapsed().as_millis();
-    lines.push(serde_json::to_string(&serde_json::json!({
-        "type": "done",
-        "nodeCount": node_count,
-        "edgeCount": edge_refs.len(),
-        "elapsed": elapsed,
-    })).unwrap());
-
-    eprintln!("[http] graph-stream: {} nodes, {} edges, {} regions, {}ms (emit: {}ms)",
-        node_count, edge_refs.len(), regions_flat.len(), elapsed,
-        t_emit.elapsed().as_millis());
-
-    lines.join("\n") + "\n"
+    lines.push(
+        serde_json::to_string(&serde_json::json!({
+            "type": "layout_meta",
+            "source": meta_source,
+            "symbol_count": meta_symbol_count,
+            "committed_at": meta_committed_at,
+            "overflow_files": overflow_files_json,
+        }))
+        .unwrap(),
+    );
 }
+
+/// Classify a single node for layout purposes. Returns `(pos, unplaced_reason)`:
+/// - `excluded`        — node type not placeable (e.g. CALL, REFERENCE).
+/// - placed            — layout committed AND placement exists.
+/// - `missing_layout`  — placeable but no layout on disk yet.
+/// - `skipped_overflow`— placeable, layout exists, but this symbol exceeded
+///                       the per-file hard cap during `layout --commit`.
+fn classify_node_visibility(
+    nr: &NodeRef,
+    cached_layout: &CachedLayout,
+    layout_is_missing: bool,
+) -> (serde_json::Value, Option<&'static str>) {
+    let placeable = layout_types::is_placeable(&nr.node_type);
+    let placed = cached_layout.positions.get(&nr.id).copied();
+    match (placeable, placed, layout_is_missing) {
+        (false, _, _)        => (serde_json::Value::Null, Some("excluded")),
+        (true, Some(c), _)   => (serde_json::json!({ "q": c.q, "r": c.r }), None),
+        (true, None, true)   => (serde_json::Value::Null, Some("missing_layout")),
+        (true, None, false)  => (serde_json::Value::Null, Some("skipped_overflow")),
+    }
+}
+
+/// Serialise a single visible node as a JSONL frame. Every node carries a
+/// `pos` (hex coord or `null`) plus an `unplaced_reason` discriminator so
+/// the GUI can distinguish `excluded` types from `missing_layout` from
+/// `skipped_overflow`.
+fn emit_node_line(
+    nr: &NodeRef,
+    type_idx: &HashMap<String, usize>,
+    tree: &ContainerTree,
+    cached_layout: &CachedLayout,
+    layout_is_missing: bool,
+    degree: u32,
+) -> String {
+    let ti = type_idx.get(&nr.node_type).copied().unwrap_or(0);
+    let region = tree.sa_region(nr.idx).to_string();
+    let (pos, unplaced_reason) = classify_node_visibility(nr, cached_layout, layout_is_missing);
+    let unplaced_reason_json = match unplaced_reason {
+        Some(s) => serde_json::Value::String(s.to_string()),
+        None => serde_json::Value::Null,
+    };
+    serde_json::to_string(&serde_json::json!({
+        "type": "node",
+        "i": nr.idx,
+        "t": ti,
+        "id": nr.id.to_string(),
+        "name": nr.name,
+        "file": nr.file,
+        "region": region,
+        "degree": degree,
+        "pos": pos,
+        "unplaced_reason": unplaced_reason_json,
+    }))
+    .unwrap()
+}
+
+/// Serialise a single lifted edge as a JSONL frame.
+fn emit_edge_line(e: &EdgeRef, edge_type_idx: &HashMap<String, usize>) -> String {
+    let eti = edge_type_idx.get(&e.edge_type).copied().unwrap_or(0);
+    serde_json::to_string(&serde_json::json!({
+        "type": "edge",
+        "s": e.src_idx,
+        "d": e.dst_idx,
+        "t": eti,
+    }))
+    .unwrap()
+}
+
 
 /// Serialise the persisted REGION tree as nested JSON for the header
 /// frame. Each node = `{id, depth, path, kind, name, children}`; files
