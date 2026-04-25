@@ -1,0 +1,197 @@
+# vscode (1.x) — VS Code Extension API
+# Generated: 2026-04-25
+# Method: Claude inference based on official @types/vscode and Grafema graph patterns
+# Taxonomy version: 1
+# purl: pkg:npm/vscode (bare module name; @types/vscode is dev-only)
+#
+# VS Code extension entry points are nested under the `vscode` namespace:
+# `vscode.commands.registerCommand(id, handler)`, `vscode.window.registerTreeDataProvider(...)`,
+# etc. The CALL nodes in the graph store the dotted name (e.g. `vscode.commands.registerCommand`)
+# so the libraryCallbackEnricher's substring `.registerCommand` suffix-match works.
+#
+# Only commands and view providers are annotated as ENTRY_POINT_CALLBACK below; other
+# methods are tagged with their effect categories for transitive propagation.
+# Coverage of the rest of the API surface can be filled in incrementally.
+
+vscode:
+  # ---------------------------------------------------------------------------
+  # commands.* — entry points
+  # ---------------------------------------------------------------------------
+  commands.registerCommand:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: COMMAND_NAME
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+  commands.registerTextEditorCommand:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: COMMAND_NAME
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+  commands.executeCommand: [IO, ASYNC]
+  commands.getCommands: [IO, ASYNC]
+
+  # ---------------------------------------------------------------------------
+  # window.register* — view / provider entry points
+  # ---------------------------------------------------------------------------
+  window.registerTreeDataProvider:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: COMMAND_NAME      # view ID, used as the domain node name
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+  window.registerWebviewViewProvider:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: COMMAND_NAME
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+  window.registerWebviewPanelSerializer:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: COMMAND_NAME
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+  window.registerCustomEditorProvider:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: COMMAND_NAME
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+  window.registerFileDecorationProvider:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ENTRY_POINT_CALLBACK
+  window.registerUriHandler:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ENTRY_POINT_CALLBACK
+
+  # window.* — UI-side IO
+  window.showInformationMessage: [IO, ASYNC]
+  window.showWarningMessage: [IO, ASYNC]
+  window.showErrorMessage: [IO, ASYNC]
+  window.showInputBox: [IO, ASYNC]
+  window.showQuickPick: [IO, ASYNC]
+  window.showOpenDialog: [IO, ASYNC]
+  window.showSaveDialog: [IO, ASYNC]
+  window.showTextDocument: [IO, ASYNC]
+  window.createOutputChannel: [IO]
+  window.createStatusBarItem: [MUTATION]
+  window.createWebviewPanel: [IO]
+  window.createTreeView: [MUTATION]
+  window.createTerminal: [IO]
+  window.withProgress: [IO, ASYNC]
+
+  # ---------------------------------------------------------------------------
+  # languages.register* — language feature entry points
+  # ---------------------------------------------------------------------------
+  languages.registerHoverProvider:
+    effects: [MUTATION]
+    args:
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+  languages.registerCodeLensProvider:
+    effects: [MUTATION]
+    args:
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+  languages.registerCompletionItemProvider:
+    effects: [MUTATION]
+    args:
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+  languages.registerDefinitionProvider:
+    effects: [MUTATION]
+    args:
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+  languages.registerReferenceProvider:
+    effects: [MUTATION]
+    args:
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+  languages.registerDocumentSymbolProvider:
+    effects: [MUTATION]
+    args:
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+  languages.registerCodeActionsProvider:
+    effects: [MUTATION]
+    args:
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+  languages.registerDocumentFormattingEditProvider:
+    effects: [MUTATION]
+    args:
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+
+  # ---------------------------------------------------------------------------
+  # workspace.* — filesystem & document IO
+  # ---------------------------------------------------------------------------
+  workspace.onDidChangeConfiguration:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ENTRY_POINT_CALLBACK
+  workspace.onDidChangeTextDocument:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ENTRY_POINT_CALLBACK
+  workspace.onDidSaveTextDocument:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ENTRY_POINT_CALLBACK
+  workspace.onDidOpenTextDocument:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ENTRY_POINT_CALLBACK
+  workspace.onDidCloseTextDocument:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ENTRY_POINT_CALLBACK
+  workspace.openTextDocument: [IO, ASYNC]
+  workspace.saveAll: [IO, ASYNC]
+  workspace.applyEdit: [IO, ASYNC, MUTATION]
+  workspace.getConfiguration: [IO]
+  workspace.findFiles: [IO, ASYNC]
+  workspace.fs.readFile: [IO, ASYNC]
+  workspace.fs.writeFile: [IO, ASYNC]
+  workspace.fs.delete: [IO, ASYNC]
+  workspace.fs.rename: [IO, ASYNC]
+  workspace.fs.stat: [IO, ASYNC]
+  workspace.fs.readDirectory: [IO, ASYNC]
+  workspace.fs.createDirectory: [IO, ASYNC]
+  workspace.fs.copy: [IO, ASYNC]
+
+  # ---------------------------------------------------------------------------
+  # Constructors / misc
+  # ---------------------------------------------------------------------------
+  EventEmitter.new: [PURE]
+  EventEmitter.fire: [MUTATION]
+  EventEmitter.dispose: [MUTATION]
+  Disposable.new: [PURE]
+  Disposable.dispose: [MUTATION]
+  Uri.file: [PURE]
+  Uri.parse: [PURE]
+  Uri.joinPath: [PURE]
+  Range.new: [PURE]
+  Position.new: [PURE]
+  Location.new: [PURE]
+  MarkdownString.new: [PURE]
+  ThemeIcon.new: [PURE]
+  TreeItem.new: [PURE]

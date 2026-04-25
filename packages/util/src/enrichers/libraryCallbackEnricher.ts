@@ -36,6 +36,7 @@ export interface EnrichResult {
 const LIBRARY_NODE_TYPE: Record<string, string> = {
   commander: 'cli:command',
   '@modelcontextprotocol/sdk': 'mcp:tool',
+  vscode: 'vscode:command',
 };
 
 interface Rule {
@@ -229,7 +230,12 @@ async function resolveReceiverLibrary(
   }
 
   // 2. Determine the receiver name from the origin call's `name`.
-  //    - "<obj>.method"    → can't continue; chained but we already walked.
+  //    - "<obj>.method"    → JS analyzer placeholder for chained receivers like
+  //                          `vscode.commands.registerCommand`. Follow the
+  //                          DERIVED_FROM[kind=callee] → PROPERTY_ACCESS chain
+  //                          via READS_FROM[kind=receiver] back to the root
+  //                          identifier (whose `base` metadata is the import
+  //                          binding name).
   //    - "Identifier"      → look up IMPORT_BINDING by that name (e.g. `new Command(...)`).
   //    - "receiver.method" → look up IMPORT_BINDING for `receiver`.
   const originName = current.name ?? '';
@@ -241,18 +247,78 @@ async function resolveReceiverLibrary(
     // identifier (e.g. "Command"). MemberExpression news ("new ns.Command()")
     // would produce "ns.Command" — handled by the dot-split branch below.
     bindingName = originName.includes('.') ? originName.split('.')[0] : originName;
+  } else if (originName.startsWith('<obj>')) {
+    // Chained namespace member access: walk the property-access chain.
+    bindingName = await resolveChainedReceiver(client, current.id);
   } else if (originName.includes('.')) {
     bindingName = originName.substring(0, originName.lastIndexOf('.'));
   } else {
     bindingName = originName;
   }
-  // "<obj>" indicates an unresolved chain (the JS analyzer's placeholder).
+  // "<obj>" / "<call>" indicate an unresolved chain (JS analyzer placeholder).
   if (!bindingName || bindingName === '<obj>' || bindingName === '<call>') return null;
 
   const library = await findImportSourceForName(client, current.file, bindingName);
   if (!library) return null;
 
   return { library, originCall: current };
+}
+
+/**
+ * Resolve the root receiver identifier for a CALL node whose `name` is
+ * "<obj>.method" — i.e. a chained namespace member access like
+ * `vscode.commands.registerCommand`.
+ *
+ * Graph shape produced by the JS analyzer:
+ *   CALL --DERIVED_FROM[kind=callee]-->  PROPERTY_ACCESS(name=method, base=<obj>)
+ *                                              |
+ *                                              READS_FROM[kind=receiver]
+ *                                              v
+ *                                        PROPERTY_ACCESS(name=mid, base=root)
+ *                                              |
+ *                                              READS_FROM[kind=receiver]
+ *                                              v
+ *                                        IDENTIFIER (the import binding)
+ *
+ * We walk back to the leftmost link whose `metadata.base` is a real identifier
+ * (i.e. not the "<obj>" placeholder) and return that base — that's the import
+ * binding's name.
+ */
+async function resolveChainedReceiver(
+  client: RFDBClient,
+  callId: string,
+): Promise<string | null> {
+  // Step 1: CALL → PROPERTY_ACCESS via DERIVED_FROM[kind=callee].
+  const derived = await client.getOutgoingEdges(callId, ['DERIVED_FROM'] as never);
+  let current: WireNode | null = null;
+  for (const e of derived) {
+    const kind = (e as Record<string, unknown>).kind;
+    if (kind !== 'callee') continue;
+    current = await client.getNode(String(e.dst));
+    if (current) break;
+  }
+  if (!current) return null;
+
+  // Step 2: walk READS_FROM[kind=receiver] until `metadata.base` is a real
+  // identifier (or we run out of receivers).
+  for (let i = 0; i < 32; i++) {
+    const meta = parseMeta(current);
+    const base = meta?.base;
+    if (typeof base === 'string' && base.length > 0 && base !== '<obj>' && base !== '<call>') {
+      return base;
+    }
+    const recv = await client.getOutgoingEdges(current.id, ['READS_FROM'] as never);
+    let next: WireNode | null = null;
+    for (const e of recv) {
+      const kind = (e as Record<string, unknown>).kind;
+      if (kind !== 'receiver') continue;
+      next = await client.getNode(String(e.dst));
+      if (next) break;
+    }
+    if (!next) return null;
+    current = next;
+  }
+  return null;
 }
 
 function isWireNewExpression(node: WireNode): boolean {
