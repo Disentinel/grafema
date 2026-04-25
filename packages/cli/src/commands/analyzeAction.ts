@@ -20,9 +20,12 @@ import {
   ensureBinary,
   ManifestGenerator,
   ManifestResolver,
+  EffectsLookup,
   GRAFEMA_VERSION,
   getSchemaVersion,
 } from '@grafema/util';
+import { enrichLibraryCallbacks } from '@grafema/util/enrichers/libraryCallbackEnricher';
+import { enrichMcpToolDefinitions } from '@grafema/util/enrichers/mcpToolDefinitionEnricher';
 import type { LogLevel } from '@grafema/util';
 import { scanExtensions, generateSmartConfig, writeConfig, updateGitignore, formatDetected } from '../utils/quickstart.js';
 
@@ -322,6 +325,44 @@ export async function analyzeAction(path: string, options: { service?: string; e
       info(`  Nodes: ${stats.nodeCount}`);
       info(`  Edges: ${stats.edgeCount}`);
 
+      // Run library-callback enricher before manifest generation.
+      // Creates domain nodes (cli:command, mcp:tool, ...) and HANDLES edges
+      // for callbacks passed to library entry points (Commander, MCP SDK, ...).
+      // Reuses the effects-db loaded for ManifestGenerator.
+      const effectsDbPath = resolveEffectsDbPath(projectPath);
+      try {
+        const effectsLookup = effectsDbPath
+          ? EffectsLookup.load(effectsDbPath)
+          : EffectsLookup.empty();
+        // RFDBServerBackend's RFDBClient field is private at compile time but
+        // accessible at runtime; the enricher only needs the wire-level client.
+        const client = (backend as unknown as { client: Parameters<typeof enrichLibraryCallbacks>[0] }).client;
+        if (client) {
+          const result = await enrichLibraryCallbacks(client, effectsLookup);
+          info(`  Library callbacks: ${result.domainNodesCreated} domain nodes, ${result.handlesEdgesCreated} HANDLES edges (unresolved: ${result.unresolvedCalls})`);
+        }
+      } catch (err) {
+        debug(`Library callback enricher skipped: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      // MCP tool definition enricher — scans `packages/mcp/src/definitions/*-tools.ts`
+      // (or any matching tree under projectPath) and creates `mcp:tool` nodes for
+      // each defined tool. Complements libraryCallbackEnricher: that one captures
+      // the high-level setRequestHandler calls; this one captures the ~30+ tools
+      // dispatched by the switch statement inside the CallTool handler.
+      try {
+        const client = (backend as unknown as { client: Parameters<typeof enrichMcpToolDefinitions>[0] }).client;
+        if (client) {
+          const definitionsDir = join(projectPath, 'packages/mcp/src/definitions');
+          const result = await enrichMcpToolDefinitions(client, { definitionsDir });
+          if (result.toolNodesCreated > 0) {
+            info(`  MCP tool defs: ${result.toolNodesCreated} mcp:tool nodes, ${result.handlesEdgesCreated} HANDLES edges (unresolved: ${result.unresolvedHandlers.length})`);
+          }
+        }
+      } catch (err) {
+        debug(`MCP tool definition enricher skipped: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
       // Generate manifest after successful analysis
       try {
         const manifestPath = await generateManifest(backend, projectPath, grafemaDir, debug);
@@ -379,6 +420,20 @@ export async function analyzeAction(path: string, options: { service?: string; e
     // Exit with appropriate code
     exitWithCode(exitCode);
   }
+}
+
+/**
+ * Resolve effects-db directory: prefer the one shipped next to the CLI package,
+ * fall back to a project-local effects-db. Returns undefined if neither exists.
+ * Shared by both the library-callback enricher and ManifestGenerator.
+ */
+function resolveEffectsDbPath(projectPath: string): string | undefined {
+  const cliDir = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+  const candidates = [
+    join(cliDir, 'effects-db'),
+    join(projectPath, 'effects-db'),
+  ];
+  return candidates.find(p => existsSync(p));
 }
 
 /**
