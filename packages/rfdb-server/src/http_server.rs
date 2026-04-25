@@ -1015,7 +1015,19 @@ fn build_graph_stream_body(
     }
 
     let layout_is_missing = matches!(cached_layout.source, LayoutSource::Missing);
+    // Phase 2 — partition into placed (per-frame) and excluded (one
+    // batch frame at the tail). Excluded nodes are still searchable on
+    // the GUI side via `unplacedNodes`, but shipping them as 300k
+    // individual JSON frames was the dominant parser cost on a real
+    // grafema-sized graph. One batch frame ≈ same payload, ≈1 JSON.parse.
+    let mut excluded_batch: Vec<(&NodeRef, &str)> = Vec::with_capacity(node_count / 2);
+    let mut emitted_count = 0usize;
     for nr in &candidates.node_refs {
+        let (_, reason) = classify_node_visibility(nr, &cached_layout, layout_is_missing);
+        if reason == Some("excluded") {
+            excluded_batch.push((nr, "excluded"));
+            continue;
+        }
         lines.push(emit_node_line(
             nr,
             &candidates.type_idx,
@@ -1024,15 +1036,25 @@ fn build_graph_stream_body(
             layout_is_missing,
             degrees[nr.idx as usize],
         ));
+        emitted_count += 1;
     }
 
     lines.push(
         serde_json::to_string(&serde_json::json!({
             "type": "nodes_done",
-            "count": node_count,
+            "count": emitted_count,
         }))
         .unwrap(),
     );
+
+    if !excluded_batch.is_empty() {
+        lines.push(emit_excluded_nodes_frame(
+            &excluded_batch,
+            &candidates.type_idx,
+            &tree,
+            &degrees,
+        ));
+    }
 
     let edge_type_idx: HashMap<String, usize> = edge_type_table
         .iter()
@@ -1411,6 +1433,56 @@ fn emit_hulls_frame(
         }))
         .unwrap(),
     );
+}
+
+/// Phase 2 — emit ONE `excluded_nodes` JSONL frame containing every
+/// node that `classify_node_visibility` flagged as `excluded` (= not
+/// placeable per `layout_types::is_placeable`). Replaces the legacy
+/// path of one `node` frame per excluded symbol — on the grafema repo
+/// that was 300k+ messages emitted only to be filtered out by the
+/// client.
+///
+/// Wire shape (short field names — this is the largest single message
+/// in the stream):
+/// ```json
+/// {"type":"excluded_nodes","nodes":[
+///   {"i":<idx>,"id":"<128bit>","t":<type_idx>,"n":"<name>",
+///    "f":"<file>","r":"<region>","d":<degree>,"reason":"excluded"},
+///   ...
+/// ]}
+/// ```
+/// `unplaced_reason` is folded into a single shared `"reason"` since
+/// every entry in this batch has the same value. Other reasons
+/// (`missing_layout`, `skipped_overflow`) keep their per-node frames so
+/// the GUI's existing reason-specific overlays don't need rewiring.
+fn emit_excluded_nodes_frame(
+    batch: &[(&NodeRef, &str)],
+    type_idx: &HashMap<String, usize>,
+    tree: &ContainerTree,
+    degrees: &[u32],
+) -> String {
+    let nodes: Vec<serde_json::Value> = batch
+        .iter()
+        .map(|(nr, reason)| {
+            let ti = type_idx.get(&nr.node_type).copied().unwrap_or(0);
+            let region = tree.sa_region(nr.idx).to_string();
+            serde_json::json!({
+                "i": nr.idx,
+                "id": nr.id.to_string(),
+                "t": ti,
+                "n": nr.name,
+                "f": nr.file,
+                "r": region,
+                "d": degrees[nr.idx as usize],
+                "reason": reason,
+            })
+        })
+        .collect();
+    serde_json::to_string(&serde_json::json!({
+        "type": "excluded_nodes",
+        "nodes": nodes,
+    }))
+    .unwrap()
 }
 
 fn emit_node_line(

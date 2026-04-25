@@ -105,6 +105,31 @@ interface DoneMsg {
 }
 
 /**
+ * Phase 2 of streaming overhaul — server now batches every
+ * `unplaced_reason="excluded"` node into one frame at the tail of the
+ * stream rather than emitting them as 300k+ individual `node` frames.
+ * Other reasons (`missing_layout`, `skipped_overflow`) still come
+ * through per-node so the existing overlay layers don't need rewiring.
+ *
+ * When present, parser populates `unplacedNodes` from this batch;
+ * when absent (older server) the legacy per-node `unplaced_reason`
+ * branch handles it.
+ */
+interface ExcludedNodesMsg {
+  type: 'excluded_nodes';
+  nodes: {
+    i: number;
+    id: string;
+    t: number;
+    n: string;
+    f: string;
+    r: string;
+    d: number;
+    reason: 'excluded';
+  }[];
+}
+
+/**
  * Phase 1 of streaming overhaul — server emits per-region hull polygons
  * as a single frame right after the header. Each loop is closed (first
  * vertex repeated at end). When this frame is present the client SKIPS
@@ -133,7 +158,8 @@ type StreamMsg =
   | NodesDoneMsg
   | DoneMsg
   | LayoutMetaMsg
-  | HullsMsg;
+  | HullsMsg
+  | ExcludedNodesMsg;
 
 /**
  * Detect whether a header's regions array is the new nested-tree shape
@@ -220,6 +246,11 @@ export async function parseStream(
   // `hulls` frame we skip the client-side `computeHullsForRegions`
   // pass and feed these polygons straight into the layoutStore.
   let precomputedHulls: HullsMsg | null = null;
+  // Phase 2 — server-batched excluded-node summary. Replaces 300k+
+  // per-node frames with one tail message; populated only when the
+  // stream actually carries the batch frame (older servers fall back
+  // to the per-node `unplaced_reason` branch).
+  let excludedBatch: ExcludedNodesMsg | null = null;
 
   const onProgress = opts.onProgress ?? (() => {});
 
@@ -256,6 +287,13 @@ export async function parseStream(
           console.log(`[parseStream] hulls frame: ${msg.regions.length} regions`);
         }
         onProgress('hulls', msg.regions.length);
+        break;
+      case 'excluded_nodes':
+        excludedBatch = msg;
+        if (import.meta.env?.DEV) {
+          console.log(`[parseStream] excluded_nodes batch: ${msg.nodes.length} nodes`);
+        }
+        onProgress('excluded_nodes', msg.nodes.length);
         break;
       case 'layout_meta': {
         // Strip the `type` discriminator before storing.
@@ -329,6 +367,26 @@ export async function parseStream(
 
   if (droppedNoPos > 0) {
     console.warn(`[parseStream] dropped ${droppedNoPos} nodes without server positions`);
+  }
+
+  // Phase 2 — fold the batched `excluded_nodes` frame into `unplacedNodes`
+  // alongside any per-node entries collected by the legacy path. Newer
+  // server only emits the batch, older server only emits per-node;
+  // running both unconditionally is safe because the partition is
+  // disjoint by construction.
+  if (excludedBatch) {
+    for (const n of excludedBatch.nodes) {
+      const typeName = header.typeTable[n.t] ?? 'UNKNOWN';
+      unplacedNodes.push({
+        id: n.id,
+        type: typeName,
+        name: n.n,
+        file: n.f,
+        region: n.r,
+        degree: n.d,
+        unplacedReason: n.reason,
+      });
+    }
   }
 
   // Pass 2: remap edges (skip edges touching excluded / positionless nodes).
