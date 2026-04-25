@@ -259,13 +259,41 @@ export function buildHullLayer(
   let lastBucket = -1;
   let lastCacheRef: unknown = null;
 
+  let frameCounter = 0;
+  let frameWindowStart = performance.now();
   const applyFrame = () => {
+    frameCounter++;
+    const now = performance.now();
+    if (now - frameWindowStart > 1000) {
+      if (frameCounter > 65) {
+        console.warn(`[perf] canvasBuild.applyFrame fired ${frameCounter}× in ${(now - frameWindowStart).toFixed(0)}ms`);
+      }
+      frameCounter = 0;
+      frameWindowStart = now;
+    }
     const { regionTree, hullCache } = useLayoutStore.getState();
     const zoom01 = normalizeZoom(sm.getView());
     const bucket = Math.round(zoom01 * 1000);
-    // Cache identity change (new stream load) forces a rebuild even
-    // if the zoom bucket is the same.
     if (bucket === lastBucket && hullCache === lastCacheRef) return;
+    console.warn(`[perf] canvasBuild bucket ${lastBucket}→${bucket} cache ${hullCache === lastCacheRef ? 'same' : 'changed'}`);
+    // Cache identity change (new stream load): drop the mesh pool and
+    // PRIME all region meshes up-front. Without priming, the first zoom
+    // into a previously-hidden region would lazy-allocate 5-20 meshes
+    // in one frame — triggers a GC pause visible as a freeze-then-jump
+    // cycle on continuous pan/zoom. Prime eats the cost once, then
+    // bucket changes only flip `mesh.visible`.
+    if (hullCache !== lastCacheRef) {
+      hullLayer.resetPool();
+      if (hullCache.size > 0) {
+        const allEntries: HullRegionPrecomputed[] = [];
+        for (const [regionId, geometry] of hullCache) {
+          const region = regionTree.byId.get(regionId);
+          if (!region) continue;
+          allEntries.push({ regionId, depth: region.depth, polygons: geometry.polygons });
+        }
+        hullLayer.primeRegions(allEntries);
+      }
+    }
     lastBucket = bucket;
     lastCacheRef = hullCache;
 
@@ -293,7 +321,10 @@ export function buildHullLayer(
 
   // Cache-change driver — stream-load hydration fires this.
   const unsubLayout = useLayoutStore.subscribe((state, prev) => {
-    if (state.hullCache !== prev.hullCache) applyFrame();
+    if (state.hullCache !== prev.hullCache) {
+      applyFrame();
+      sm.requestRender();
+    }
   });
 
   // Per-frame driver — cheap: applyFrame short-circuits when the
@@ -359,9 +390,14 @@ export function setupRoutes(
   let prevRouteNodes = new Set<number>();
 
   function applyRoutes() {
+    const allRoutes = useRouteStore.getState().routes;
+    // Fast path — no routes, nothing to highlight, no tweens to schedule.
+    // Without this, every zoom-bucket change still ran deriveLodVisibility
+    // + filterVisibleRoutes + a routeLayer.update on empty input, which
+    // showed up as 50-100ms of self-time during pan in the DAI-22 trace.
+    if (allRoutes.length === 0 && prevRouteNodes.size === 0) return;
     const { regionTree, hullCache } = useLayoutStore.getState();
     const zoom01 = normalizeZoom(sm.getView());
-    const allRoutes = useRouteStore.getState().routes;
     let routesToRender = allRoutes;
     if (hullCache.size > 0 && regionTree.byId.size > 0) {
       const { visibleHulls } = deriveLodVisibility({ regionTree, hullCache, zoom01 });
@@ -418,7 +454,10 @@ export function setupRoutes(
     if (bucket === lastRouteBucket && hullCache === lastRouteCacheRef) return;
     lastRouteBucket = bucket;
     lastRouteCacheRef = hullCache;
+    const tStart = performance.now();
     applyRoutes();
+    const dt = performance.now() - tStart;
+    if (dt > 4) console.warn(`[perf] applyRoutes ${dt.toFixed(1)}ms (bucket ${bucket})`);
   });
 
   const unsubRoutes = useRouteStore.subscribe(applyRoutes);
@@ -750,6 +789,10 @@ export function createSceneApi(deps: SceneApiDeps): SceneApi {
     setMode: (mode) => useViewStore.getState().setMode(mode),
     getMode: () => useViewStore.getState().mode,
     getView: () => sm.getView(),
+    projectWorldToNdc: (wx, wy, wz) => {
+      const v = new THREE.Vector3(wx, wy, wz).project(sm.camera);
+      return { x: v.x, y: v.y, z: v.z };
+    },
     flyTo: (x, z, ms) => sm.flyTo(x, z, ms),
     fitToScene: () => {
       sm.controls.target.set(cx, 0, cz);

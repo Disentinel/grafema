@@ -147,6 +147,7 @@ interface TweenEntry {
   to: number;
   elapsed: number;
   duration: number;
+  cancelled: boolean;
 }
 
 interface ColorTweenEntry {
@@ -156,6 +157,7 @@ interface ColorTweenEntry {
   to: THREE.Color;
   elapsed: number;
   duration: number;
+  cancelled: boolean;
 }
 
 /**
@@ -203,6 +205,13 @@ export class HexLayer {
 
   private _tweens: TweenEntry[] = [];
   private _colorTweens: ColorTweenEntry[] = [];
+  /** Index into `_tweens` by `${index}:${prop}` for O(1) cancellation.
+   *  `animateTo` previously did a linear scan over all active tweens to
+   *  evict the prior tween for the same (index, prop) — under heavy
+   *  route-highlight bursts (DAI-22 Chunk-9 stutter hunt) the cost was
+   *  ~100ms per applyRoutes call. Stays in sync via splice helper. */
+  private _tweenKey: Map<string, number> = new Map();
+  private _colorTweenKey: Map<string, number> = new Map();
 
   // Position lerp for progressive SA updates
   private _targetX: Float32Array | null = null;
@@ -475,27 +484,33 @@ export class HexLayer {
 
   /** Animate a scalar property to target over duration (ms). Cancels any existing tween for same (index, prop). */
   animateTo(i: number, prop: 'opacity' | 'elevation' | 'scale' | 'outlineWidth', to: number, duration: number) {
-    // Cancel existing tween for this (index, prop)
-    for (let t = this._tweens.length - 1; t >= 0; t--) {
-      if (this._tweens[t].index === i && this._tweens[t].prop === prop) {
-        this._tweens.splice(t, 1);
-      }
+    const key = `${i}:${prop}`;
+    const existingIdx = this._tweenKey.get(key);
+    if (existingIdx !== undefined) {
+      // Tombstone — actual array compaction happens in tick() so we
+      // don't pay splice O(N) per cancel during burst routes.
+      this._tweens[existingIdx].cancelled = true;
+      this._tweenKey.delete(key);
     }
     if (prop === 'elevation' && this._mode.tileElevation === 'flat') {
-      // Flat mode: skip the tween entirely. Update the cache so a later
-      // switch to 'on' mode will animate-in to this value, but keep the
-      // rendered elevation clamped to 0 right now.
       this._elevationCache[i] = to;
       this._elevation[i] = 0;
       this._elevationAttr.needsUpdate = true;
       return;
     }
     const arr = this._getArray(prop);
-    this._tweens.push({ index: i, prop, from: arr[i], to, elapsed: 0, duration: duration / 1000 });
+    this._tweens.push({ index: i, prop, from: arr[i], to, elapsed: 0, duration: duration / 1000, cancelled: false });
+    this._tweenKey.set(key, this._tweens.length - 1);
   }
 
   /** Animate color for tile i */
   animateColor(i: number, prop: 'color' | 'outlineColor', to: THREE.Color | number, duration: number) {
+    const key = `${i}:${prop}`;
+    const existingIdx = this._colorTweenKey.get(key);
+    if (existingIdx !== undefined) {
+      this._colorTweens[existingIdx].cancelled = true;
+      this._colorTweenKey.delete(key);
+    }
     const toColor = typeof to === 'number' ? new THREE.Color(to) : to.clone();
     const fromColor = new THREE.Color();
     if (prop === 'color') {
@@ -507,7 +522,8 @@ export class HexLayer {
         this._outlineColor[i * 3 + 2],
       );
     }
-    this._colorTweens.push({ index: i, prop, from: fromColor, to: toColor, elapsed: 0, duration: duration / 1000 });
+    this._colorTweens.push({ index: i, prop, from: fromColor, to: toColor, elapsed: 0, duration: duration / 1000, cancelled: false });
+    this._colorTweenKey.set(key, this._colorTweens.length - 1);
   }
 
   /** Must call after all setTile() calls */
@@ -568,29 +584,54 @@ export class HexLayer {
       }
     }
 
-    // Scalar tweens
-    for (let t = this._tweens.length - 1; t >= 0; t--) {
+    // Scalar tweens — per-prop dirty so we only re-upload Float32Arrays
+    // that actually changed. Compact in a single pass: live tweens copy
+    // forward, cancelled/finished entries drop out. Avoids splice O(N²)
+    // and avoids dirtying 5 attributes when only one moved. (DAI-22)
+    let dirtyOpacity = false;
+    let dirtyElevation = false;
+    let dirtyScale = false;
+    let dirtyOutlineWidth = false;
+    let writeIdx = 0;
+    for (let t = 0; t < this._tweens.length; t++) {
       const tw = this._tweens[t];
+      if (tw.cancelled) continue;
       tw.elapsed += dt;
       const progress = Math.min(tw.elapsed / tw.duration, 1);
       const eased = easeInOutQuad(progress);
       const arr = this._getArray(tw.prop);
       arr[tw.index] = tw.from + (tw.to - tw.from) * eased;
-      if (tw.prop === 'elevation') {
-        // Keep the cache in sync during/after the tween so later mode
-        // toggles see the current logical value. The tween is only
-        // queued in 'on' mode (flat mode short-circuits animateTo), so
-        // any hoverLift contribution is subtracted out before caching.
-        const hoverOffset = tw.index === this._hoveredIdx ? this._mode.hoverLift : 0;
-        this._elevationCache[tw.index] = arr[tw.index] - hoverOffset;
+      switch (tw.prop) {
+        case 'elevation': {
+          const hoverOffset = tw.index === this._hoveredIdx ? this._mode.hoverLift : 0;
+          this._elevationCache[tw.index] = arr[tw.index] - hoverOffset;
+          dirtyElevation = true;
+          break;
+        }
+        case 'opacity': dirtyOpacity = true; break;
+        case 'scale': dirtyScale = true; break;
+        case 'outlineWidth': dirtyOutlineWidth = true; break;
       }
       dirty = true;
-      if (progress >= 1) this._tweens.splice(t, 1);
+      if (progress >= 1) {
+        this._tweenKey.delete(`${tw.index}:${tw.prop}`);
+        continue; // drop from compacted array
+      }
+      if (writeIdx !== t) {
+        this._tweens[writeIdx] = tw;
+        this._tweenKey.set(`${tw.index}:${tw.prop}`, writeIdx);
+      }
+      writeIdx++;
     }
+    if (writeIdx !== this._tweens.length) this._tweens.length = writeIdx;
 
-    // Color tweens
-    for (let t = this._colorTweens.length - 1; t >= 0; t--) {
+    // Color tweens — same compaction strategy.
+    let dirtyColor = false;
+    let dirtyOutlineColor = false;
+    let cWriteIdx = 0;
+    for (let t = 0; t < this._colorTweens.length; t++) {
       const tw = this._colorTweens[t];
+      if (tw.cancelled) continue;
       tw.elapsed += dt;
       const progress = Math.min(tw.elapsed / tw.duration, 1);
       const eased = easeInOutQuad(progress);
@@ -598,23 +639,33 @@ export class HexLayer {
 
       if (tw.prop === 'color') {
         this.mesh.setColorAt(tw.index, this._tmpColor);
+        dirtyColor = true;
       } else {
         this._outlineColor[tw.index * 3] = this._tmpColor.r;
         this._outlineColor[tw.index * 3 + 1] = this._tmpColor.g;
         this._outlineColor[tw.index * 3 + 2] = this._tmpColor.b;
+        dirtyOutlineColor = true;
       }
       dirty = true;
-      if (progress >= 1) this._colorTweens.splice(t, 1);
+      if (progress >= 1) {
+        this._colorTweenKey.delete(`${tw.index}:${tw.prop}`);
+        continue;
+      }
+      if (cWriteIdx !== t) {
+        this._colorTweens[cWriteIdx] = tw;
+        this._colorTweenKey.set(`${tw.index}:${tw.prop}`, cWriteIdx);
+      }
+      cWriteIdx++;
     }
+    if (cWriteIdx !== this._colorTweens.length) this._colorTweens.length = cWriteIdx;
 
-    if (dirty) {
-      this._opacityAttr.needsUpdate = true;
-      this._elevationAttr.needsUpdate = true;
-      this._scaleAttr.needsUpdate = true;
-      this._outlineColorAttr.needsUpdate = true;
-      this._outlineWidthAttr.needsUpdate = true;
-      if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
-    }
+    if (dirtyOpacity) this._opacityAttr.needsUpdate = true;
+    if (dirtyElevation) this._elevationAttr.needsUpdate = true;
+    if (dirtyScale) this._scaleAttr.needsUpdate = true;
+    if (dirtyOutlineWidth) this._outlineWidthAttr.needsUpdate = true;
+    if (dirtyOutlineColor) this._outlineColorAttr.needsUpdate = true;
+    if (dirtyColor && this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+    void dirty;
   }
 
   private _getArray(prop: 'opacity' | 'elevation' | 'scale' | 'outlineWidth'): Float32Array {
