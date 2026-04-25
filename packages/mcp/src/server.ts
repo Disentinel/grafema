@@ -35,17 +35,17 @@ import { PROMPTS, getPrompt } from './prompts.js';
 
 import { TOOLS } from './definitions/index.js';
 import { initializeFromArgs, setupLogging, getProjectPath } from './state.js';
-import { textResult, errorResult, log } from './utils.js';
+import { errorResult, log } from './utils.js';
 import { getSocketPathOverride } from './state.js';
-import { discoverServices } from './analysis.js';
 import {
   handleQueryGraph,
   handleFindCalls,
   handleFindNodes,
   handleTraceAlias,
-  handleTraceDataFlow,
-  handleTraceCallChain,
+  handleTraceDataflow,
+  handleTraceCalls,
   handleCheckInvariant,
+  handleDiscoverServices,
   handleAnalyzeProject,
   handleGetAnalysisStatus,
   handleGetStats,
@@ -78,7 +78,7 @@ import {
   // handleGitOwnership,
   // handleGitArchaeology,
   handleDescribe,
-  handleGraphQLQuery,
+  handleQueryGraphql,
   handleQueryRegistry,
   handleExplain,
   handleTraceEffects,
@@ -249,11 +249,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
         break;
 
       case 'trace_dataflow':
-        result = await handleTraceDataFlow(asArgs<TraceDataFlowArgs>(args));
+        result = await handleTraceDataflow(asArgs<TraceDataFlowArgs>(args));
         break;
 
       case 'trace_calls':
-        result = await handleTraceCallChain(asArgs<TraceCallChainArgs>(args));
+        result = await handleTraceCalls(asArgs<TraceCallChainArgs>(args));
         break;
 
       case 'explain':
@@ -269,8 +269,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
         break;
 
       case 'discover_services':
-        const services = await discoverServices();
-        result = textResult(`Found ${services.length} service(s):\n${JSON.stringify(services, null, 2)}`);
+        result = await handleDiscoverServices();
         break;
 
       case 'analyze_project':
@@ -399,7 +398,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
         break;
 
       case 'query_graphql':
-        result = await handleGraphQLQuery(asArgs<GraphQLQueryArgs>(args));
+        result = await handleQueryGraphql(asArgs<GraphQLQueryArgs>(args));
         break;
 
       case 'query_registry':

@@ -108,7 +108,7 @@ export async function handleTraceAlias(args: TraceAliasArgs): Promise<ToolResult
 
 // === TRACE DATAFLOW ===
 
-export async function handleTraceDataFlow(args: TraceDataFlowArgs): Promise<ToolResult> {
+export async function handleTraceDataflow(args: TraceDataFlowArgs): Promise<ToolResult> {
   const db = await ensureAnalyzed();
   const { source, file, direction = 'forward', max_depth = 10, limit = 50, detail } = args;
 
@@ -164,7 +164,7 @@ export async function handleTraceDataFlow(args: TraceDataFlowArgs): Promise<Tool
 
 // === TRACE CALL CHAIN ===
 
-export async function handleTraceCallChain(args: TraceCallChainArgs): Promise<ToolResult> {
+export async function handleTraceCalls(args: TraceCallChainArgs): Promise<ToolResult> {
   const db = await ensureAnalyzed();
   const { source, file, direction = 'forward', max_depth = 10 } = args;
 
@@ -411,7 +411,7 @@ export async function handleTraceEffects(args: TraceEffectsArgs): Promise<ToolRe
   const db = await ensureAnalyzed();
   const { node, file, max_depth = 10 } = args;
 
-  // Find source node (same pattern as handleTraceCallChain)
+  // Find source node (same pattern as handleTraceCalls)
   let sourceNode: GraphNode | null = await db.getNode(node);
   if (!sourceNode) {
     let fallbackNode: GraphNode | null = null;

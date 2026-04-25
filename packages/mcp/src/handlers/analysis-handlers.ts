@@ -2,7 +2,7 @@
  * MCP Analysis Handlers
  */
 
-import { ensureAnalyzed } from '../analysis.js';
+import { ensureAnalyzed, discoverServices } from '../analysis.js';
 import { getAnalysisStatus, isAnalysisRunning } from '../state.js';
 import {
   textResult,
@@ -16,6 +16,11 @@ import type {
 import type { ServerStats } from '@grafema/types';
 
 // === ANALYSIS HANDLERS ===
+
+export async function handleDiscoverServices(): Promise<ToolResult> {
+  const services = await discoverServices();
+  return textResult(`Found ${services.length} service(s):\n${JSON.stringify(services, null, 2)}`);
+}
 
 export async function handleAnalyzeProject(args: AnalyzeProjectArgs): Promise<ToolResult> {
   const { service, force } = args;

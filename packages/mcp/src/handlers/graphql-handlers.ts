@@ -29,7 +29,7 @@ async function getYoga(backend: RFDBServerBackend) {
   return yogaInstance;
 }
 
-export async function handleGraphQLQuery(args: GraphQLQueryArgs): Promise<ToolResult> {
+export async function handleQueryGraphql(args: GraphQLQueryArgs): Promise<ToolResult> {
   const { query, variables, operationName } = args;
 
   if (!query || query.trim() === '') {
