@@ -273,10 +273,15 @@ async function findImportSourceForName(
   // Candidates: IMPORT_BINDING nodes in the same file whose name === bindingName.
   // Multiple matches are unlikely but possible (rare same-name shadowing); we
   // take the first that has a metadata.source.
+  // RFDB v2 has fuzzyNameFallback enabled by default; without disabling, an
+  // unresolved local `const server = new Server(...)` matches `Server` from
+  // `http` (or any near-name binding) and the rule matcher then rejects the
+  // bogus source. Force exact-name match.
   for await (const wn of client.queryNodes({
     type: 'IMPORT_BINDING',
     name,
     file,
+    fuzzyNameFallback: false,
   })) {
     const meta = parseMeta(wn);
     const source = meta?.source;
