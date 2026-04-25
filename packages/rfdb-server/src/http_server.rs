@@ -151,9 +151,12 @@ pub fn derive_workspace_name(db_path: &Path) -> Option<String> {
     }
     if let Some(name) = try_basename(db_path) { return Some(name); }
     // Pure-arithmetic miss for single-segment relative grandparents
-    // (e.g. `.grafema/x.rfdb` → `.grafema.parent() == ""`). Fall back to
-    // a lexical join with current_dir — single I/O hit at startup, only
-    // when the cheap path failed.
+    // (e.g. `.grafema/x.rfdb` — parent `.grafema` exists but its lexical
+    // parent is empty). Fall back to current_dir + lexical join, but
+    // only when db_path actually has a named parent — otherwise we'd
+    // happily resolve `bare.rfdb` against cwd and emit a misleading
+    // workspace name for a temp / pipe / unknown-context db.
+    let _named_parent = db_path.parent().filter(|p| p.file_name().is_some())?;
     let abs = std::env::current_dir().ok()?.join(db_path);
     try_basename(&abs)
 }
@@ -212,14 +215,34 @@ pub fn ui_config_from_env() -> UiConfig {
 /// Preferred entry point for the binary; tests pick [`build_router_with_ui`]
 /// directly to avoid racing on the process-global env.
 pub fn build_router(state: HttpState) -> Router {
-    #[cfg(feature = "ui")]
-    {
-        build_router_with_ui(state, ui_config_from_env())
-    }
-    #[cfg(not(feature = "ui"))]
-    {
-        build_api_router(state)
-    }
+    let inner = {
+        #[cfg(feature = "ui")]
+        {
+            build_router_with_ui(state, ui_config_from_env())
+        }
+        #[cfg(not(feature = "ui"))]
+        {
+            build_api_router(state)
+        }
+    };
+    apply_compression(inner)
+}
+
+/// Wrap any axum `Router` in transparent gzip/brotli compression. Lifted
+/// out of `build_router` so integration tests can exercise the same wire
+/// behaviour without touching the process-global UI env var.
+///
+/// The layer negotiates with the client's `Accept-Encoding` header
+/// (browsers send `gzip, br` by default) and falls back to the identity
+/// encoding when the client doesn't ask — backwards-compatible with curl
+/// or any consumer that omits the header.
+///
+/// On the NDJSON graph-stream this shrinks wire size ~10-20× since the
+/// payload is overwhelmingly repeated field names + UUIDs. Static UI
+/// assets (JS/CSS) also benefit; the `application/octet-stream` and
+/// pre-compressed asset paths are skipped automatically by tower-http.
+pub fn apply_compression(router: Router) -> Router {
+    router.layer(tower_http::compression::CompressionLayer::new())
 }
 
 /// API-only router shared by all code paths. Keeping it factored out means
@@ -1955,11 +1978,28 @@ mod tests {
     }
 
     #[test]
-    fn derive_workspace_name_returns_none_when_no_grandparent() {
-        // db_path = ".grafema/graph.rfdb" (relative) — parent is ".grafema"
-        // and its parent is "" (no real grandparent). file_name() of an
-        // empty path is None, so we return None.
-        let p = std::path::Path::new(".grafema/graph.rfdb");
+    fn derive_workspace_name_resolves_relative_via_cwd() {
+        // db_path = ".grafema/graph.rfdb" (relative). Pure arithmetic
+        // misses (`.grafema`'s lexical parent is empty), so the
+        // current_dir fallback kicks in — workspace_name should equal
+        // the basename of the test process's working directory.
+        // Skip the assertion if cwd basename can't be determined (CI
+        // edge cases like running from /), since the function would
+        // legitimately return None there too.
+        let cwd = std::env::current_dir().expect("current_dir for test");
+        if let Some(want) = cwd.file_name().map(|n| n.to_string_lossy().to_string()) {
+            let p = std::path::Path::new(".grafema/graph.rfdb");
+            assert_eq!(derive_workspace_name(p).as_deref(), Some(want.as_str()));
+        }
+    }
+
+    #[test]
+    fn derive_workspace_name_bare_filename_does_not_consult_cwd() {
+        // Regression for the cwd-fallback gate: a path with no parent at
+        // all (`graph.rfdb`) must NOT be resolved against current_dir
+        // because a workspace identity can't be inferred from a bare
+        // filename alone. Stays None.
+        let p = std::path::Path::new("graph.rfdb");
         assert_eq!(derive_workspace_name(p), None);
     }
 }

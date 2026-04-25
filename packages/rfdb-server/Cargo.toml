@@ -39,7 +39,7 @@ futures-util = "0.3"
 
 # HTTP server for visualization API
 axum = { version = "0.8", features = ["ws"] }
-tower-http = { version = "0.6", features = ["cors"] }
+tower-http = { version = "0.6", features = ["cors", "compression-gzip", "compression-br"] }
 
 # UI embedding (feature-gated via `ui`). The `interpolate-folder-path`
 # feature lets `#[folder = "$OUT_DIR/ui-dist"]` expand the env var at

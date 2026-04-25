@@ -19,7 +19,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use rfdb::database_manager::DatabaseManager;
-use rfdb::http_server::{build_router_with_ui, new_state, ui_config_from_env, HttpState, UiConfig};
+use rfdb::http_server::{
+    apply_compression, build_router_with_ui, new_state, ui_config_from_env, HttpState, UiConfig,
+};
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -41,6 +43,26 @@ fn spawn_server(state: HttpState, ui: UiConfig) -> (SocketAddr, tokio::task::Joi
     let handle = tokio::spawn(async move {
         // We expect this to keep running until the test shuts down tokio,
         // at which point `axum::serve` returns and the task completes.
+        let _ = axum::serve(listener, app).await;
+    });
+    (addr, handle)
+}
+
+/// Same as `spawn_server` but wraps the router in `apply_compression` so
+/// integration tests can verify gzip/brotli negotiation against a real
+/// `axum::serve` instance. The HTTP outer wrapper used by the binary is
+/// `build_router → apply_compression`; tests bypass the env-var-driven
+/// `build_router` to avoid racing on `RFDB_NO_UI` / `RFDB_STATIC_DIR`.
+fn spawn_server_compressed(
+    state: HttpState,
+    ui: UiConfig,
+) -> (SocketAddr, tokio::task::JoinHandle<()>) {
+    let std_listener = StdTcpListener::bind("127.0.0.1:0").expect("bind 127.0.0.1:0");
+    std_listener.set_nonblocking(true).unwrap();
+    let addr = std_listener.local_addr().unwrap();
+    let listener = tokio::net::TcpListener::from_std(std_listener).unwrap();
+    let app = apply_compression(build_router_with_ui(state, ui));
+    let handle = tokio::spawn(async move {
         let _ = axum::serve(listener, app).await;
     });
     (addr, handle)
@@ -476,4 +498,82 @@ fn ui_config_from_env_defaults_to_embedded() {
         }
     }
     assert!(matches!(cfg, UiConfig::Embedded), "got {:?}", cfg);
+}
+
+// ── Phase 0 — gzip / brotli compression on the outer router ─────────────
+
+/// `apply_compression` wraps the router in tower-http's CompressionLayer.
+/// When a client sends `Accept-Encoding: gzip`, the response body must be
+/// gzip-encoded and carry a `Content-Encoding: gzip` header. Verified
+/// against the SPA HTML route — small but big enough that gzip kicks in
+/// (CompressionLayer skips bodies below ~32 bytes by default).
+#[tokio::test]
+async fn compression_negotiates_gzip_when_client_accepts() {
+    let (addr, _srv) = spawn_server_compressed(test_state(), UiConfig::Embedded);
+    let resp = client()
+        .get(format!("http://{}/ui/", addr))
+        .header(reqwest::header::ACCEPT_ENCODING, "gzip")
+        .send()
+        .await
+        .expect("request send");
+
+    assert_eq!(resp.status(), 200, "status: {}", resp.status());
+    let enc = resp
+        .headers()
+        .get(reqwest::header::CONTENT_ENCODING)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    assert_eq!(enc, "gzip", "expected gzip Content-Encoding, got {:?}", enc);
+
+    // Reqwest doesn't decode here (no `gzip` feature enabled in deps), so
+    // we get the raw compressed bytes — assert the gzip magic header to
+    // prove the body is genuinely deflated and not a misleading header
+    // pinned on a plaintext body.
+    let bytes = resp.bytes().await.expect("body bytes");
+    assert!(
+        bytes.len() >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b,
+        "expected gzip magic 1f 8b at body start, got first bytes: {:?}",
+        &bytes[..bytes.len().min(8)],
+    );
+}
+
+/// Identity-encoded clients (no Accept-Encoding header at all, e.g.
+/// curl without `--compressed`) must keep getting plaintext bodies —
+/// CompressionLayer falls through cleanly. Regression guard: a future
+/// CompressionLayer config change that forces compression even when the
+/// client doesn't ask would break legacy consumers like the CLI's
+/// `grafema view` JSON pipe and any hand-rolled scripts.
+#[tokio::test]
+async fn compression_passthrough_when_client_declines() {
+    let (addr, _srv) = spawn_server_compressed(test_state(), UiConfig::Embedded);
+    // Reqwest sets Accept-Encoding by default when the gzip feature is on;
+    // here it isn't, but be explicit to make the regression intent
+    // obvious to anyone reading the test.
+    let resp = client()
+        .get(format!("http://{}/ui/", addr))
+        .header(reqwest::header::ACCEPT_ENCODING, "identity")
+        .send()
+        .await
+        .expect("request send");
+
+    assert_eq!(resp.status(), 200, "status: {}", resp.status());
+    let enc = resp
+        .headers()
+        .get(reqwest::header::CONTENT_ENCODING)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    assert!(
+        enc.is_empty() || enc == "identity",
+        "expected no compression for identity client, got {:?}",
+        enc,
+    );
+
+    let body = resp.text().await.expect("body text");
+    assert!(
+        body.contains("id=\"root\"") || body.contains("UI bundle not built"),
+        "body shape wrong (first 200): {}",
+        &body[..body.len().min(200)],
+    );
 }
