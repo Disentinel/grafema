@@ -1,8 +1,17 @@
 # Cognitive Debt, Feature Detection, and the Product–Code Rosetta Stone
 
 **Status:** Research / Active
-**Date:** 2026-04-04
+**Date:** 2026-04-04 (last refined 2026-04-25)
 **Origin:** Onboarding gap analysis — "Grafema is installed, now what?" → cognitive debt metrics + automatic feature/service discovery + product–technical vocabulary
+
+**2026-04-25 refinements** (after L0 entry-point detection shipped — cli:command, mcp:tool, vscode:command via libraryCallbackEnricher / mcpToolDefinitionEnricher):
+- §2.2 — separated FEATURE (named product unit) from BEHAVIOR (implementation region) and CONTRACT (interface). The original 5-tuple conflated the three.
+- §2.8 *(new)* — Feature variants and granularity. Features are fractal: top-level entry points, parameters, output formats, scheduling, flag-gated branches are all "features" by the product test. Multi-layer detection (L0/L1/L2/L3).
+- §3.4 *(new)* — Feature Request → Graph Operation mapping (the write-direction dual of §3.3 query templates).
+- §4.1 — Added BEHAVIOR and CONTRACT as auto-discovered entity types alongside FEATURE.
+- §4.2 — Added IMPLEMENTED_BY (FEATURE→BEHAVIOR), HAS_CONTRACT, EXPOSED_AS, COMPRISES, SHARES_BEHAVIOR_WITH edges. Removed PRODUCES_EFFECT from FEATURE (moved to BEHAVIOR).
+- §4.3 — Split monolithic Phase 2 into per-layer phases (L1 contract, L3 behavior, dedup linking). Original 8 phases → 10 phases mapped to detection layers.
+- §4.5 — Rollout aligned to detection layers (v0.2 = L0 SHIPPED, v0.3 = L1+L3, v0.5 = L2+human-labeled).
 
 ## Problem
 
@@ -377,10 +386,26 @@ None of these definitions is graph-native. We need one that is.
 
 ### 2.2 Formal Definition
 
-**Feature (graph-native):** A maximal connected subgraph activated by a specific entry condition, bounded by its side effects.
+**Feature (product-native):** A named, externally-addressable variant of behavior — an item a user can request to add, modify, or remove.
+
+The product test for "is X a feature?":
+1. Has a stable, externally-known name
+2. Is documented (or could be)
+3. A user could write a feature request for it
+
+This separates **FEATURE** (what the user sees) from **BEHAVIOR** (what the code does):
 
 ```
-Feature = ⟨ EntryPoint, ActivationCondition, ExecutionSubgraph, Effects, ExitPoints ⟩
+Feature   = ⟨ EntryPoint, ActivationCondition, Contract ⟩
+              ──IMPLEMENTED_BY→  Behavior
+              ──TOGGLED_BY→     FeatureFlag*
+
+Behavior  = ⟨ ExecutionSubgraph, Effects, ExitPoints ⟩
+
+Contract  = ⟨ Inputs, Outputs, Errors ⟩
+              Inputs  = parameters, body schema, query string, options
+              Outputs = return type(s), response shape, content-types
+              Errors  = thrown exception types, error codes
 
 EntryPoint ∈ { node : accepts_external_input(node) }
   = HTTP handler | CLI command | event listener | UI callback
@@ -398,13 +423,28 @@ Effects = { node ∈ ExecutionSubgraph : has_effect(node, IO ∪ MUTATION ∪ TH
 ExitPoints = { node ∈ ExecutionSubgraph : is_response(node) ∨ is_return_to_caller(node) }
 ```
 
+**Why Feature ≠ Behavior:**
+
+A single Behavior can be wrapped by multiple Features — different access modalities for the same logical action:
+
+```
+Feature: HTTP /api/parse        ─┐
+Feature: CLI grafema parse       ─┼─→ Behavior: parse algorithm
+Feature: parseFile() programmatic API ─┘
+Feature: scheduled-parse cron    ─┘
+```
+
+All four are independent feature requests (each has a name, doc page, lifecycle), but they share one Behavior. The dedup signal is structural: two Features that share a Behavior are *related*, not *duplicate* — they are intentional access variants.
+
+Conversely, one Feature can be backed by multiple Behaviors via FeatureFlag (A/B test, gradual rollout, kill switch). Same name, same contract, different implementations behind a config gate.
+
 **Connection to Program Slicing (Weiser, 1984):**
-- Forward slice from EntryPoint = all code this input can affect
+- Forward slice from EntryPoint = all code this input can affect (the Behavior subgraph)
 - Backward slice from Effects = all code that contributes to this effect
-- Feature ≈ forward_slice(EntryPoint) ∩ backward_slice(Effects)
+- Behavior ≈ forward_slice(EntryPoint) ∩ backward_slice(Effects)
 
 **Connection to Feature Location (Dit et al., 2013):**
-Feature location research identifies code implementing a feature using static analysis, dynamic traces, and IR techniques. Our definition is the **static** variant, enhanced by graph structure (vs. text-based IR).
+Feature location research identifies code implementing a feature using static analysis, dynamic traces, and IR techniques. Our definition is the **static** variant, enhanced by graph structure (vs. text-based IR), and explicitly separates the *named-product-unit* (Feature) from the *implementation-region* (Behavior).
 
 ### 2.3 Feature Taxonomy (from Graph Structure)
 
@@ -622,6 +662,66 @@ The algorithm is not purely theoretical — Grafema already has infrastructure f
 3. **Multi-language features beyond CALL_REMOTE** — shared-state coupling across languages (e.g., frontend writes to localStorage, backend reads from cookie) requires data-flow federation. CALL_REMOTE covers explicit API calls today.
 4. **External feature flags** — LaunchDarkly, ConfigCat, etc. are invisible without integration. Mitigation: detect `if (config.featureX)` patterns as FEATURE_FLAG candidates even without knowing the flag service.
 
+### 2.8 Feature Variants and Granularity
+
+Features are not monolithic — they decompose recursively. A top-level feature has sub-features (parameters, output formats, scheduling modes, flag-gated branches), and each sub-feature is itself a **named, externally-addressable variant of behavior** that satisfies the product test in §2.2.
+
+```
+parser tool                                      ← top-level feature (entry point modality)
+├── parameter: input encoding                   ← sub-feature (input dimension)
+├── parameter: max_depth                        ← sub-feature
+├── output: JSON                                 ← sub-feature (output dimension)
+├── output: markdown                             ← sub-feature
+├── output: graphviz                             ← sub-feature
+├── modality: CLI invocation                     ← sub-feature (sibling top-level)
+├── modality: programmatic API                   ← sub-feature (sibling top-level)
+├── modality: scheduled cron trigger             ← sub-feature (sibling top-level)
+├── flag: experimental_fast_path (5% rollout)   ← sub-feature (variation dimension)
+└── flag: legacy_compat                          ← sub-feature
+```
+
+Each is a separate request shape. "Add markdown output" is a feature request; "add programmatic API" is a feature request; "gate the fast path with a flag" is a feature request. They differ in *which dimension* of the feature tree they touch.
+
+#### Feature dimensions vs taxonomy types
+
+The taxonomy in §2.3 classifies features by **shape** of their execution subgraph (Linear, Branching, Saga, Event-Driven, Cross-Cutting, Toggle). Variation dimensions are **orthogonal** — any Linear feature can also be flag-gated, any Saga feature can have multiple output formats. Toggle Feature is a *taxonomic shape* (CFG with paired branches under a guard), but flag-gating itself is a dimension that applies across all shapes.
+
+Concrete decomposition for any feature:
+
+| Dimension | Variant examples | Detection layer |
+|-----------|------------------|-----------------|
+| **Entry-point modality** | HTTP / CLI / scheduled / programmatic / event | L0 (effects-db ENTRY_POINT_CALLBACK) |
+| **Inputs** | required / optional params, body schema, options | L1 (PARAMETER nodes + JSDoc/types) |
+| **Outputs** | return type, content-types, response shape | L1 (RETURNS edges + type annotations) |
+| **Errors** | exception types, error codes | L1 (THROWS edges, catch handlers) |
+| **Flag-gated paths** | A/B, kill switch, gradual rollout | L2 (FEATURE_FLAG, §4.1) |
+| **Implementation** | the BEHAVIOR subgraph(s) | L3 (forward slice, §2.2) |
+
+#### Feature-request → graph-operation mapping
+
+Real product feature requests map onto specific graph deltas. Examples:
+
+| Product request | Graph delta |
+|-----------------|-------------|
+| "Add a new MCP tool foo" | new ENTRY_POINT + FEATURE + CONTRACT + BEHAVIOR |
+| "Add markdown output to existing tool" | new Output variant in CONTRACT.outputs (no new BEHAVIOR if reusing) |
+| "Add programmatic API alongside CLI" | new FEATURE (different modality), IMPLEMENTED_BY → existing BEHAVIOR |
+| "Trigger dump on schedule" | new ENTRY_POINT (cron), new FEATURE, IMPLEMENTED_BY → existing BEHAVIOR |
+| "Gate the new fast path under a flag" | new FEATURE_FLAG node, second BEHAVIOR, TOGGLES → existing FEATURE |
+| "Deprecate the legacy modality" | mark FEATURE.lifecycle = deprecated (not a graph deletion) |
+
+This mapping enables AI agents (and humans) to translate product asks into specific code-graph changes — and inversely, to surface "what kind of feature request is your PR fulfilling?" from a diff.
+
+#### Implications for detection
+
+A monolithic "find FEATURE per entry point" enricher (Phase 2 in §4.3 original draft) misses sub-features. The pipeline (revised in §4.3) decomposes detection into:
+- **L0 ENTRY_POINT** — shipped (cli:command, mcp:tool, vscode:command)
+- **L1 CONTRACT** — extract params/returns/errors per entry; surface as sub-FEATUREs or as feature attributes (open design choice — see §4.3)
+- **L2 FEATURE_FLAG** — Phase 8 of §4.3
+- **L3 BEHAVIOR** — forward slice, dedup-keyed (Phase 2 in §4.3)
+
+Documentation generation requires L0 + L1. Dedup detection requires L3 (same Behavior under multiple Features = related access modalities). Cognitive-load metrics (C1–C6) operate on L3 Behaviors.
+
 ## Part 3: Product–Code Rosetta Stone
 
 ### 3.1 Vocabulary Mapping
@@ -730,6 +830,34 @@ For each product-level question, the exact graph query:
 → Output: knowledge gaps ranked by traffic/criticality
 ```
 
+### 3.4 Feature Request → Graph Operation
+
+Where §3.3 maps product *questions* to graph *queries* (read), this section maps product *requests* to graph *deltas* (write). The dual is essential for AI agents that translate user asks into specific code-graph changes — and inversely, surface "what kind of feature request is this PR fulfilling?" from a diff.
+
+| Product feature request | Graph delta | Touches dimension (§2.8) |
+|-------------------------|-------------|---------------------------|
+| "Add a new MCP tool `foo`" | new ENTRY_POINT node + new FEATURE + new CONTRACT + new BEHAVIOR | Entry-point modality |
+| "Add markdown output to the existing tool" | extend existing CONTRACT.outputs with new content-type | Outputs |
+| "Add a `--depth` parameter" | new PARAMETER on entry function + extend CONTRACT.inputs | Inputs |
+| "Add a programmatic API alongside the CLI" | new FEATURE (different modality) + IMPLEMENTED_BY → existing BEHAVIOR + SHARES_BEHAVIOR_WITH ↔ CLI feature | Entry-point modality (same behavior) |
+| "Trigger the dump on a schedule" | new ENTRY_POINT (cron) + new FEATURE + IMPLEMENTED_BY → existing BEHAVIOR | Entry-point modality (scheduled) |
+| "Gate the new fast path under a flag" | new FEATURE_FLAG node + second BEHAVIOR + TOGGLES → existing FEATURE | Flag-gated paths |
+| "Run 1% of traffic on the new code path" | as above, plus rollout-percent metadata on FEATURE_FLAG | Flag-gated paths |
+| "Deprecate the legacy access modality" | mark FEATURE.lifecycle = deprecated (no graph deletion) | Lifecycle |
+| "Remove the legacy access modality" | delete FEATURE node and EXPOSED_AS edge; BEHAVIOR is retained if any other FEATURE still references it | Lifecycle |
+| "Rename the tool from `foo` to `find_foo`" | update FEATURE.name; all EXPOSED_AS / IMPLEMENTED_BY edges preserved | Identity |
+| "Add a new error type" | extend CONTRACT.errors | Errors |
+| "Group `find_*` tools under one section in docs" | new CAPABILITY node + PROVIDES → existing FEATUREs (interview-driven) | Capability grouping |
+
+**Inverse direction: PR diff → request taxonomy.** Given a graph-delta from analyzing a PR, this table classifies what the PR *is*:
+- New ENTRY_POINT + FEATURE + CONTRACT + BEHAVIOR → **new top-level feature**
+- New BEHAVIOR + FEATURE_FLAG, no new FEATURE → **flag-gated rollout** (potential A/B or kill-switch)
+- New FEATURE pointing to existing BEHAVIOR → **new access modality** (HTTP/CLI/programmatic alias)
+- Extend CONTRACT only → **contract evolution** (output format, parameter, error type)
+- BEHAVIOR change without CONTRACT change → **internal refactor** (not a feature request)
+
+This dual mapping (request→delta, delta→request) is the foundation for `grafema review` — automated PR analysis that explains the change in product terms.
+
 ## Part 4: Graph Enrichment Strategy — Abstract Nodes
 
 ### 4.1 Entity Taxonomy — Separating Projections
@@ -740,12 +868,19 @@ The current document conflated "SERVICE" to mean four different things. The corr
 
 | Node type | Projection | What it IS | Derived from | How |
 |-----------|-----------|-----------|-------------|-----|
-| **FEATURE** | Intentional | Execution path from entry point to effects | Entry points + trace_dataflow | §2.4 algorithm |
-| **COMPONENT** | Semantic | Structural cluster of tightly-coupled modules | Community detection on feature subgraph overlap | Jaccard similarity clustering |
-| **CROSS_CUTTING** | Semantic | Code shared across many features | High in-degree from multiple feature subgraphs | Caller analysis with relative threshold |
-| **FEATURE_FLAG** | Operational | Config-conditional guard with two execution paths | CFG branches reading config/env values | Symbolic execution on partial ENUMs |
+| **FEATURE** | Intentional | Named, externally-addressable variant of behavior (entry + name + contract) | Entry points + naming | §2.4 + L0 entry-point detection |
+| **CONTRACT** | Intentional | Inputs / outputs / errors of a feature | PARAMETER, RETURNS, THROWS edges + type annotations | L1 enricher (Phase 2 in §4.3) |
+| **BEHAVIOR** | Semantic | Execution subgraph implementing one or more features | Forward slice from entry point | L3 enricher (Phase 3 in §4.3) |
+| **COMPONENT** | Semantic | Structural cluster of tightly-coupled modules | Community detection on behavior subgraph overlap | Jaccard similarity clustering |
+| **CROSS_CUTTING** | Semantic | Code shared across many features | High in-degree from multiple behavior subgraphs | Caller analysis with relative threshold |
+| **FEATURE_FLAG** | Operational | Config-conditional guard with two execution paths | CFG branches reading config/env values | Symbolic execution on partial ENUMs (L2) |
 | **BUSINESS_RULE** | Intentional | Named guard predicate constraining execution | Guard detection + naming analysis | `validate*`, `check*`, `assert*` patterns |
 | **DATA_PIPELINE** | Semantic | Linear chain of data transforms | DFG pattern matching | read → transform → ... → write pattern |
+
+**FEATURE / BEHAVIOR / CONTRACT separation** (introduced in §2.2, §2.8): a FEATURE is the *named product unit* a user can request; a BEHAVIOR is the *implementation region* (subgraph); a CONTRACT is the *interface specification* (inputs/outputs/errors). The cardinality is many-to-one-to-one in the typical case but supports:
+- 1 BEHAVIOR ← N FEATUREs (same behavior wrapped by HTTP / CLI / programmatic / scheduled access modalities)
+- 1 FEATURE → N BEHAVIORs (gated by FEATURE_FLAG — kill switch, A/B, gradual rollout)
+- 1 FEATURE → 1 CONTRACT (a feature has one effective contract per active code path; flagged behaviors may extend or restrict it)
 
 **COMPONENT** is the neutral structural term for "cluster of modules with high internal coupling." It carries no business, runtime, or organizational semantics — it's a fact about code structure. Community detection discovers it; the interview assigns meaning.
 
@@ -785,8 +920,11 @@ Each mismatch is a specific architectural signal:
 
 | Edge type | From → To | Meaning |
 |-----------|----------|---------|
-| **IMPLEMENTED_BY** | FEATURE → FUNCTION/MODULE | This feature uses this code |
-| **PRODUCES_EFFECT** | FEATURE → EFFECT_NODE | This feature has this side effect |
+| **IMPLEMENTED_BY** | FEATURE → BEHAVIOR | This feature is realised by this implementation region (one feature can point to multiple behaviors when flag-gated) |
+| **HAS_CONTRACT** | FEATURE → CONTRACT | This feature exposes this input/output/error specification |
+| **EXPOSED_AS** | FEATURE → cli:command \| mcp:tool \| http:route \| ... | The access-modality node for this feature (one feature, one modality) |
+| **PRODUCES_EFFECT** | BEHAVIOR → EFFECT_NODE | This behavior has this side effect |
+| **COMPRISES** | BEHAVIOR → FUNCTION/MODULE | This behavior includes this code node in its subgraph |
 | **GROUPS** | COMPONENT → FEATURE | This structural cluster contains this feature |
 | **PROVIDES** | CAPABILITY → FEATURE | This capability is delivered through this feature |
 | **PART_OF** | CAPABILITY → PRODUCT | This capability belongs to this product |
@@ -794,69 +932,113 @@ Each mismatch is a specific architectural signal:
 | **DEPLOYED_IN** | COMPONENT → DEPLOYMENT_UNIT | This code runs in this deployment |
 | **GUARDS** | BUSINESS_RULE → FEATURE | This rule constrains this feature |
 | **TOGGLES** | FEATURE_FLAG → FEATURE | This flag enables/disables this feature |
-| **COUPLED_WITH** | FEATURE → FEATURE | These features share core implementation |
+| **SHARES_BEHAVIOR_WITH** | FEATURE → FEATURE | Two features point to the same BEHAVIOR (different access modalities for one logical action — e.g. HTTP + CLI + programmatic API) |
 | **STRUCTURALLY_COUPLED** | COMPONENT → COMPONENT | These clusters share significant code |
 
 ### 4.3 Implementation as Enrichment Pipeline
 
 Following the existing Grafema pattern: **enricher that adds data + Datalog rules that query it**.
 
+The pipeline is organised into **detection layers** (L0–L3) corresponding to the granularity dimensions in §2.8. Each layer is a separate phase and can ship independently:
+
 ```
-Phase 1: Entry Point Detection (enricher)
-  - Scan for framework patterns (Express routes, React exports, CLI commands)
-  - Create ENTRY_POINT metadata on matching nodes
-  - Framework-specific: configurable via plugins
+Phase 1 — L0: Entry Point Detection (enricher) [SHIPPED for commander, MCP SDK, vscode]
+  - Read effects-db YAML for ENTRY_POINT_CALLBACK role annotations
+  - For each library method matching the index, create FEATURE + EXPOSED_AS edges
+    to the modality node (cli:command, mcp:tool, vscode:command, http:route, ...)
+  - Adding a framework = editing a YAML file (no per-library code)
+  - Reference implementation: packages/util/src/enrichers/libraryCallbackEnricher.ts
+                              packages/util/src/enrichers/mcpToolDefinitionEnricher.ts
 
-Phase 2: Feature Subgraph Extraction (enricher)
+Phase 2 — L1: Contract Extraction (enricher)
+  - For each FEATURE's entry-point function, collect:
+    * Inputs:  PARAMETER nodes + JSDoc/type annotations + Zod/JSON schemas
+    * Outputs: RETURNS edge target type(s) + response-builder PASSES_ARGUMENT chains
+    * Errors:  THROWS edges + caught exception types in the entry's scope
+  - Create CONTRACT node, FEATURE -HAS_CONTRACT-> CONTRACT
+  - Sub-features (per §2.8): each input parameter, output content-type, and error
+    type can optionally be promoted to its own FEATURE under the parent (composition)
+  - Output: enough metadata to auto-generate documentation pages
+
+Phase 3 — L3: Behavior Subgraph Extraction (enricher)
   - For each entry point: trace_dataflow(forward, max_depth=15)
-  - Collect subgraph nodes + effects
-  - Create FEATURE nodes + IMPLEMENTED_BY edges
+  - Collect the execution subgraph and effect set
+  - Create BEHAVIOR node, FEATURE -IMPLEMENTED_BY-> BEHAVIOR,
+    BEHAVIOR -COMPRISES-> {FUNCTION, MODULE, ...}
+  - When two FEATUREs trace to the same (or near-identical) subgraph, link them
+    via SHARES_BEHAVIOR_WITH — this is the dedup signal: same logical action
+    exposed via multiple access modalities (HTTP + CLI + programmatic API)
 
-Phase 3: Feature Clustering → COMPONENTs (enricher — graph-only)
-  - Compute pairwise Jaccard similarity of core feature subgraphs
-  - Community detection → COMPONENT nodes (structural clusters)
+Phase 4 — Behavior Identity & Dedup (enricher)
+  - Behavior identity = stable hash of {entry-anchored function set, effect set}
+  - Behaviors with Jaccard similarity ≥ threshold (e.g. 0.85) merge into one BEHAVIOR
+  - Surfaces:
+    * "different features, same behavior" → access-modality variants (often intentional)
+    * "different features, similar behavior" → potential consolidation target
+    * "same feature, very different behaviors" → flag-gated divergence (links to Phase 8)
+
+Phase 5: Component Clustering (enricher — graph-only)
+  - Compute pairwise Jaccard similarity of BEHAVIOR subgraphs (use core nodes only,
+    exclude library-shaped utility files per §2.5)
+  - Community detection → COMPONENT nodes
   - Auto-label from route prefixes / directory paths
-  - Create COMPONENT -GROUPS-> FEATURE edges
+  - COMPONENT -GROUPS-> FEATURE edges
 
-Phase 4: LLM-Assisted Naming + Refinement (optional, interactive)
+Phase 6: LLM-Assisted Naming + Refinement (optional, interactive)
   - LLM receives: component contents (entry points, routes, effects, key function names)
   - LLM proposes: component names, feature names, potential capability groupings
   - LLM identifies: ambiguous clusters that may need splitting/merging
   - Output: named components + confidence scores + questions for user
 
-Phase 5: User Interview (optional, interactive — see §6)
+Phase 7: User Interview (optional, interactive — see §6)
   - Present discovered COMPONENTs + FEATUREs to user for validation
   - Map structural COMPONENTs to semantic entities:
-    - CAPABILITY: "What business value does this cluster deliver?"
-    - DOMAIN: "Who owns this? What's your internal name for it?"
-    - PRODUCT: "Which product/offering does this belong to?"
-    - DEPLOYMENT_UNIT: "How is this deployed?"
+    * CAPABILITY: "What business value does this cluster deliver?"
+    * DOMAIN: "Who owns this? What's your internal name for it?"
+    * PRODUCT: "Which product/offering does this belong to?"
+    * DEPLOYMENT_UNIT: "How is this deployed?"
   - Extract organizational knowledge:
-    - Ownership: "Who maintains payments?"
-    - Intent: "Why is checkout split across 3 packages?"
-    - Domain vocabulary: "What do you call this internally?"
+    * Ownership: "Who maintains payments?"
+    * Intent: "Why is checkout split across 3 packages?"
+    * Domain vocabulary: "What do you call this internally?"
   - All answers flow into Knowledge Base:
-    - CAPABILITY / PRODUCT / DOMAIN / DEPLOYMENT_UNIT nodes
-    - DECISION nodes with rationale
-    - OWNERSHIP edges (team → component)
-    - Cross-entity mappings (which mismatches signal risk)
+    * CAPABILITY / PRODUCT / DOMAIN / DEPLOYMENT_UNIT nodes
+    * DECISION nodes with rationale
+    * OWNERSHIP edges (team → component)
+    * Cross-entity mappings (which mismatches signal risk)
 
-Phase 6: Cross-Cutting Detection (enricher)
-  - Functions participating in 5+ features → CROSS_CUTTING tag
+Phase 8: Cross-Cutting Detection (enricher)
+  - Functions participating in 5+ BEHAVIORs → CROSS_CUTTING tag
   - Functions with 10+ callers from different services → SHARED_SERVICE
 
-Phase 7: Metrics Computation (enricher)
+Phase 9: Metrics Computation (enricher)
   - Per module: C1–C6 cognitive load components
-  - Per feature: span, depth, effect_count
+  - Per feature: span, depth, effect_count (computed over BEHAVIOR.subgraph)
   - Store as METRIC nodes (existing infrastructure)
 
-Phase 8: FEATURE_FLAG Detection (enricher)
+Phase 10 — L2: FEATURE_FLAG Detection (enricher)
   - Guards with config/environment reads → FEATURE_FLAG candidates
   - Symbolic execution on partial ENUMs → branch activation conditions
-  - Connect to features they protect
+  - Connect FEATURE_FLAG -TOGGLES-> FEATURE
+  - When a flag selects between two BEHAVIORs of one FEATURE, both BEHAVIORs are
+    retained and linked: FEATURE -IMPLEMENTED_BY-> BEHAVIOR_A (gated by FLAG=on),
+    FEATURE -IMPLEMENTED_BY-> BEHAVIOR_B (gated by FLAG=off)
 ```
 
-**Key architectural decision:** Phases 1–3, 6–8 are fully automated (enrichers). Phases 4–5 are optional and interactive — they improve quality but aren't required. `grafema insights` works without them; `grafema onboard` triggers the full flow including interview.
+**Key architectural decision:** Phases 1–5, 8–10 are fully automated (enrichers). Phases 6–7 are optional and interactive — they improve quality but aren't required. `grafema insights` works without them; `grafema onboard` triggers the full flow including interview.
+
+**Detection-layer mapping to product use cases:**
+
+| Use case | Required layers |
+|----------|-----------------|
+| "What features does Grafema have?" — feature inventory | L0 (Phase 1) |
+| Auto-generated documentation (params, returns, errors) | L0 + L1 (Phases 1, 2) |
+| Dedup: same behavior under multiple access modalities | L0 + L3 + Phase 4 |
+| Dead-feature detection (entry point with no callers) | L0 + reachability analysis |
+| Name-vs-behavior validation (`get*` with MUTATION effects) | L0 + L3 + Phase 9 (C6) |
+| Cognitive-load metrics per feature | L0 + L3 + Phase 9 (C1–C6) |
+| Flag-gated divergence audit | L0 + L3 + L2 (Phases 1, 3, 10) |
+| Component clustering / Conway's-law analysis | L0 + L3 + Phases 5, 7 |
 
 ### 4.4 Relationship to 12 Projections
 
@@ -879,17 +1061,25 @@ This enrichment pipeline **derives** fragments of higher projections from the Se
 
 ### 4.5 Incremental Rollout
 
-```
-v0.2: METRIC enrichment (cognitive load scores on existing METRIC nodes)
-      → grafema insights — text report with scores and top issues
-      
-v0.3: FEATURE + SERVICE enrichment (abstract nodes in graph)
-      → grafema map — feature/service discovery, visual map
-      → grafema insights enhanced with feature-level metrics
-      → grafema onboard — LLM interview for validation + KB population
+Versions are anchored to *which detection layer ships*, not "which abstraction levels exist":
 
-v0.5: FEATURE_FLAG + BUSINESS_RULE + DOMAIN enrichment
+```
+v0.2: L0 ENTRY_POINT enrichment + METRIC scoring   [SHIPPED 2026-04]
+      → cli:command, mcp:tool, vscode:command nodes detected via effects-db
+      → libraryCallbackEnricher + mcpToolDefinitionEnricher in pipeline
+      → grafema insights — text report on cognitive load + entry-point inventory
+
+v0.3: L1 CONTRACT extraction + L3 BEHAVIOR + dedup linking
+      → CONTRACT nodes (params/returns/errors) → enables auto-doc generation
+      → BEHAVIOR nodes + SHARES_BEHAVIOR_WITH edges → enables dedup detection
+      → grafema map — feature/behavior visual map (one node per feature, edges
+        to shared behaviors and via TOGGLES to flags)
+      → grafema insights enhanced with feature-level metrics
+      → grafema onboard — LLM interview for COMPONENT validation + KB population
+
+v0.5: L2 FEATURE_FLAG + BUSINESS_RULE + DOMAIN enrichment
       → grafema insights with full product-level vocabulary
+      → Flag-gated divergence audit
       → Integration with external sources (Linear → features, Datadog → runtime)
       → Multi-role interview (tech lead / PM / SRE / new dev)
       → Coding agent that writes custom enrichment plugins based on interview
