@@ -456,6 +456,94 @@ describe('libraryCallbackEnricher', () => {
     assert.equal(cmds[0].name, 'analyze', 'command name should be extracted from inner literal');
   });
 
+  it('strips surrounding quotes from string-literal name (analyzer stores raw source)', async () => {
+    // Real grafema-analyze stores LITERAL.value with the source quotes intact,
+    // e.g. `'analyze'` rather than `analyze`. Domain-node names must not carry them.
+    await backend.addNode({
+      id: 'test::module',
+      type: 'MODULE',
+      name: 'cli.ts',
+      file: 'cli.ts',
+      relativePath: 'cli.ts',
+      contentHash: 'h1',
+    });
+    await backend.addNode({
+      id: 'test::scope',
+      type: 'SCOPE',
+      name: 'global',
+      file: 'cli.ts',
+      scopeType: 'module',
+    });
+    await backend.addEdge({ src: 'test::module', dst: 'test::scope', type: 'HAS_SCOPE' });
+
+    await backend.addNode({
+      id: 'test::ib-Command',
+      type: 'IMPORT_BINDING',
+      name: 'Command',
+      file: 'cli.ts',
+      importedName: 'Command',
+      source: 'commander',
+    });
+    await backend.addEdge({ src: 'test::scope', dst: 'test::ib-Command', type: 'DECLARES' });
+
+    await backend.addNode({
+      id: 'test::new-Command',
+      type: 'CALL',
+      name: 'Command',
+      file: 'cli.ts',
+      kind: 'new',
+      argCount: 1,
+    });
+    // Literal value carries surrounding single quotes — the bug we're fixing.
+    await backend.addNode({
+      id: 'test::name-arg',
+      type: 'LITERAL',
+      name: "'analyze'",
+      file: 'cli.ts',
+      value: "'analyze'",
+    });
+    await backend.addEdge({
+      src: 'test::new-Command',
+      dst: 'test::name-arg',
+      type: 'PASSES_ARGUMENT',
+      index: 0,
+    });
+
+    await backend.addNode({
+      id: 'test::call-action',
+      type: 'CALL',
+      name: '<obj>.action',
+      file: 'cli.ts',
+      argCount: 1,
+    });
+    await backend.addEdge({ src: 'test::call-action', dst: 'test::new-Command', type: 'RECEIVER_CALL' });
+
+    await backend.addNode({
+      id: 'test::handler',
+      type: 'FUNCTION',
+      name: 'analyzeAction',
+      file: 'cli.ts',
+      async: true,
+      generator: false,
+      exported: false,
+      arrowFunction: true,
+    });
+    await backend.addEdge({
+      src: 'test::call-action',
+      dst: 'test::handler',
+      type: 'PASSES_ARGUMENT',
+      index: 0,
+    });
+
+    const result = await enrichLibraryCallbacks(client, effectsLookup);
+    assert.equal(result.domainNodesCreated, 1);
+
+    const cmds = [];
+    for await (const wn of client.queryNodes({ type: 'cli:command' })) cmds.push(wn);
+    assert.equal(cmds.length, 1);
+    assert.equal(cmds[0].name, 'analyze', 'quotes stripped from domain node name');
+  });
+
   it('no match: receiver not from an annotated library leaves graph unchanged', async () => {
     await backend.addNode({
       id: 'test::module',

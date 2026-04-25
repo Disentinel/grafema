@@ -394,10 +394,24 @@ function readLiteralName(node: WireNode): string | null {
   // Literal: prefer `value`, fall back to `name`.
   const meta = parseMeta(node);
   if (meta) {
-    if (typeof meta.value === 'string' && meta.value.length > 0) return meta.value;
+    if (typeof meta.value === 'string' && meta.value.length > 0) return stripQuotes(meta.value);
   }
-  if (node.name && node.name.length > 0 && node.name !== '<call>') return node.name;
+  if (node.name && node.name.length > 0 && node.name !== '<call>') return stripQuotes(node.name);
   return null;
+}
+
+/** Strip a single matching pair of leading/trailing quotes (', ", `) from a
+ *  string literal value. The analyzer stores raw source text (e.g. `'analyze'`),
+ *  but graph consumers want the unquoted name. */
+function stripQuotes(s: string): string {
+  if (s.length < 2) return s;
+  const first = s.charCodeAt(0);
+  const last = s.charCodeAt(s.length - 1);
+  // 0x27 ', 0x22 ", 0x60 `
+  if ((first === 0x27 || first === 0x22 || first === 0x60) && first === last) {
+    return s.slice(1, -1);
+  }
+  return s;
 }
 
 /** ---------------------------------------------------------------------------
