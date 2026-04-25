@@ -55,6 +55,9 @@ if [ -f "$PKG_DIR/.build-hash" ]; then
   fi
 fi
 
+# Record start time so we can identify binaries produced by this build.
+BUILD_START=$(date +%s)
+
 # Run the build
 echo "Building in $PKG_DIR..."
 cd "$PKG_DIR"
@@ -63,3 +66,36 @@ cd "$PKG_DIR"
 # Write hash sidecar
 echo "$HASH" > .build-hash
 echo "Wrote .build-hash: $HASH"
+
+# Sync newly-installed cabal binaries to ~/.grafema/bin/.
+#
+# The orchestrator's resolve_binary checks ~/.grafema/bin/ BEFORE ~/.cabal/bin/
+# (see packages/grafema-orchestrator/src/config.rs::resolve_binary). Without
+# this sync, a stale ~/.grafema/bin/<binary> shadows the fresh cabal-install
+# output, leaving end-to-end runs silently using outdated binaries while unit
+# tests against the fresh binary pass.
+#
+# We only run for cabal-install builds; cargo builds keep their binaries in
+# target/release/ which the orchestrator reaches via dist-newstyle symlinks.
+if printf '%s\n' "$@" | grep -q '^install$'; then
+  SYNC_DIR="$HOME/.grafema/bin"
+  CABAL_BIN="$HOME/.cabal/bin"
+  if [ -d "$CABAL_BIN" ]; then
+    mkdir -p "$SYNC_DIR"
+    SYNCED=0
+    for f in "$CABAL_BIN"/*; do
+      [ -f "$f" ] || continue
+      # Portable mtime: BSD stat -f, fallback GNU stat -c.
+      mtime=$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null || echo 0)
+      if [ "$mtime" -ge "$BUILD_START" ]; then
+        base=$(basename "$f")
+        cp -f "$f" "$SYNC_DIR/$base"
+        echo "Synced ~/.grafema/bin/$base"
+        SYNCED=$((SYNCED + 1))
+      fi
+    done
+    if [ "$SYNCED" -eq 0 ]; then
+      echo "No new binaries detected in $CABAL_BIN; nothing to sync"
+    fi
+  fi
+fi
