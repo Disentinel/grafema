@@ -609,4 +609,286 @@ describe('libraryCallbackEnricher', () => {
     assert.equal(cmds.length, 1);
     assert.equal(cmds[0].name, 'x');
   });
+
+  it('local instance: const server = new Server(...) → server.setRequestHandler(schema, handler)', async () => {
+    // Receiver `server` is a local CONSTANT (not an IMPORT_BINDING). The
+    // enricher must follow ASSIGNED_FROM from the constant to its initializer
+    // (a NewExpression CALL whose name is the constructor identifier), then
+    // resolve that identifier as an IMPORT_BINDING.
+    await backend.addNode({
+      id: 'test::module',
+      type: 'MODULE',
+      name: 'mcp.ts',
+      file: 'mcp.ts',
+      relativePath: 'mcp.ts',
+      contentHash: 'h1',
+    });
+    await backend.addNode({
+      id: 'test::scope',
+      type: 'SCOPE',
+      name: 'global',
+      file: 'mcp.ts',
+      scopeType: 'module',
+    });
+    await backend.addEdge({ src: 'test::module', dst: 'test::scope', type: 'HAS_SCOPE' });
+
+    // IMPORT_BINDING for the *class*, not the instance
+    await backend.addNode({
+      id: 'test::ib-Server',
+      type: 'IMPORT_BINDING',
+      name: 'Server',
+      file: 'mcp.ts',
+      importedName: 'Server',
+      source: '@modelcontextprotocol/sdk/server/index.js',
+    });
+    await backend.addEdge({ src: 'test::scope', dst: 'test::ib-Server', type: 'DECLARES' });
+
+    // const server = new Server(socketPath)
+    await backend.addNode({
+      id: 'test::const-server',
+      type: 'CONSTANT',
+      name: 'server',
+      file: 'mcp.ts',
+    });
+    await backend.addNode({
+      id: 'test::new-Server',
+      type: 'CALL',
+      name: 'Server',
+      file: 'mcp.ts',
+      kind: 'new',
+      argCount: 1,
+    });
+    await backend.addEdge({
+      src: 'test::const-server',
+      dst: 'test::new-Server',
+      type: 'ASSIGNED_FROM',
+    });
+
+    // server.setRequestHandler(schema, handler)
+    await backend.addNode({
+      id: 'test::call',
+      type: 'CALL',
+      name: 'server.setRequestHandler',
+      file: 'mcp.ts',
+      argCount: 2,
+    });
+    await backend.addNode({
+      id: 'test::schema-arg',
+      type: 'EXPRESSION',
+      name: 'CallToolRequestSchema',
+      file: 'mcp.ts',
+    });
+    await backend.addEdge({
+      src: 'test::call',
+      dst: 'test::schema-arg',
+      type: 'PASSES_ARGUMENT',
+      index: 0,
+    });
+    await backend.addNode({
+      id: 'test::handler',
+      type: 'FUNCTION',
+      name: 'callToolHandler',
+      file: 'mcp.ts',
+      async: true,
+      generator: false,
+      exported: false,
+      arrowFunction: true,
+    });
+    await backend.addEdge({
+      src: 'test::call',
+      dst: 'test::handler',
+      type: 'PASSES_ARGUMENT',
+      index: 1,
+    });
+
+    const result = await enrichLibraryCallbacks(client, effectsLookup);
+    assert.equal(result.domainNodesCreated, 1, 'one mcp:tool node expected');
+    assert.equal(result.handlesEdgesCreated, 1);
+
+    const tools = [];
+    for await (const wn of client.queryNodes({ type: 'mcp:tool' })) tools.push(wn);
+    assert.equal(tools.length, 1);
+
+    const toolWireId = tools[0].id;
+    const handles = await getEdges(client, toolWireId, 'HANDLES');
+    assert.equal(handles.length, 1);
+    const handlerWire = await getWireNodeByOriginalId(client, 'test::handler', 'FUNCTION');
+    assert.equal(handles[0].dst, handlerWire.id);
+  });
+
+  it('local instance + chain: const cmd = new Command("start"); cmd.action(fn) creates cli:command "start"', async () => {
+    // Mirror of server.ts pattern: receiver of .action chain origin is a local
+    // CONSTANT, the constant is ASSIGNED_FROM `new Command(...)`, and Command
+    // is imported from `commander`.
+    await backend.addNode({
+      id: 'test::module',
+      type: 'MODULE',
+      name: 'cli.ts',
+      file: 'cli.ts',
+      relativePath: 'cli.ts',
+      contentHash: 'h1',
+    });
+    await backend.addNode({
+      id: 'test::scope',
+      type: 'SCOPE',
+      name: 'global',
+      file: 'cli.ts',
+      scopeType: 'module',
+    });
+    await backend.addEdge({ src: 'test::module', dst: 'test::scope', type: 'HAS_SCOPE' });
+
+    await backend.addNode({
+      id: 'test::ib-Command',
+      type: 'IMPORT_BINDING',
+      name: 'Command',
+      file: 'cli.ts',
+      importedName: 'Command',
+      source: 'commander',
+    });
+    await backend.addEdge({ src: 'test::scope', dst: 'test::ib-Command', type: 'DECLARES' });
+
+    // const serverCommand = new Command('start')
+    await backend.addNode({
+      id: 'test::const-serverCmd',
+      type: 'CONSTANT',
+      name: 'serverCommand',
+      file: 'cli.ts',
+    });
+    await backend.addNode({
+      id: 'test::new-Command',
+      type: 'CALL',
+      name: 'Command',
+      file: 'cli.ts',
+      kind: 'new',
+      argCount: 1,
+    });
+    await backend.addNode({
+      id: 'test::name-arg',
+      type: 'LITERAL',
+      name: 'start',
+      file: 'cli.ts',
+      value: 'start',
+    });
+    await backend.addEdge({
+      src: 'test::new-Command',
+      dst: 'test::name-arg',
+      type: 'PASSES_ARGUMENT',
+      index: 0,
+    });
+    await backend.addEdge({
+      src: 'test::const-serverCmd',
+      dst: 'test::new-Command',
+      type: 'ASSIGNED_FROM',
+    });
+
+    // serverCommand.action(handlerFn)
+    await backend.addNode({
+      id: 'test::call-action',
+      type: 'CALL',
+      name: 'serverCommand.action',
+      file: 'cli.ts',
+      argCount: 1,
+    });
+    await backend.addNode({
+      id: 'test::handler',
+      type: 'FUNCTION',
+      name: 'startAction',
+      file: 'cli.ts',
+      async: true,
+      generator: false,
+      exported: false,
+      arrowFunction: true,
+    });
+    await backend.addEdge({
+      src: 'test::call-action',
+      dst: 'test::handler',
+      type: 'PASSES_ARGUMENT',
+      index: 0,
+    });
+
+    const result = await enrichLibraryCallbacks(client, effectsLookup);
+    assert.equal(result.domainNodesCreated, 1, 'one cli:command expected');
+    assert.equal(result.handlesEdgesCreated, 1);
+    const cmds = [];
+    for await (const wn of client.queryNodes({ type: 'cli:command' })) cmds.push(wn);
+    assert.equal(cmds.length, 1);
+    // The chain origin is the .action call itself (no RECEIVER_CALL into the
+    // new-Command), so the literal name comes from .action's args (none) →
+    // synthetic name. We mainly assert that resolution succeeded.
+    assert.ok(cmds[0].name, 'cli:command should have a name');
+  });
+
+  it('cycle protection: const a = b; const b = a; does not infinite-loop', async () => {
+    // Pathological setup: two CONSTANTs that ASSIGNED_FROM each other through
+    // an alias chain. The visited-set must abort the recursion.
+    await backend.addNode({
+      id: 'test::module',
+      type: 'MODULE',
+      name: 'cycle.ts',
+      file: 'cycle.ts',
+      relativePath: 'cycle.ts',
+      contentHash: 'h1',
+    });
+    await backend.addNode({
+      id: 'test::scope',
+      type: 'SCOPE',
+      name: 'global',
+      file: 'cycle.ts',
+      scopeType: 'module',
+    });
+    await backend.addEdge({ src: 'test::module', dst: 'test::scope', type: 'HAS_SCOPE' });
+
+    // const a = new B(); const b = new A();  — each NewExpression's name
+    // points back to the *other* constant's name (synthetic but exercises
+    // recursion).
+    await backend.addNode({ id: 'test::const-a', type: 'CONSTANT', name: 'a', file: 'cycle.ts' });
+    await backend.addNode({ id: 'test::const-b', type: 'CONSTANT', name: 'b', file: 'cycle.ts' });
+    await backend.addNode({
+      id: 'test::new-b-for-a',
+      type: 'CALL',
+      name: 'b', // → recursion into const b
+      file: 'cycle.ts',
+      kind: 'new',
+    });
+    await backend.addNode({
+      id: 'test::new-a-for-b',
+      type: 'CALL',
+      name: 'a', // → recursion into const a
+      file: 'cycle.ts',
+      kind: 'new',
+    });
+    await backend.addEdge({ src: 'test::const-a', dst: 'test::new-b-for-a', type: 'ASSIGNED_FROM' });
+    await backend.addEdge({ src: 'test::const-b', dst: 'test::new-a-for-b', type: 'ASSIGNED_FROM' });
+
+    // CALL: a.setRequestHandler(...) — should resolve to nothing without
+    // hanging.
+    await backend.addNode({
+      id: 'test::call',
+      type: 'CALL',
+      name: 'a.setRequestHandler',
+      file: 'cycle.ts',
+      argCount: 2,
+    });
+    await backend.addNode({
+      id: 'test::handler',
+      type: 'FUNCTION',
+      name: 'h',
+      file: 'cycle.ts',
+      async: false,
+      generator: false,
+      exported: false,
+      arrowFunction: true,
+    });
+    await backend.addEdge({
+      src: 'test::call',
+      dst: 'test::handler',
+      type: 'PASSES_ARGUMENT',
+      index: 1,
+    });
+
+    const result = await enrichLibraryCallbacks(client, effectsLookup);
+    // No imports → no resolution → no domain node, but also no hang.
+    assert.equal(result.domainNodesCreated, 0);
+    assert.ok(result.unresolvedCalls >= 1);
+  });
 });

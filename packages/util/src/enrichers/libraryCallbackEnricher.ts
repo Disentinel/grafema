@@ -269,8 +269,15 @@ async function findImportSourceForName(
   client: RFDBClient,
   file: string,
   name: string,
+  visited: Set<string> = new Set(),
 ): Promise<string | null> {
-  // Candidates: IMPORT_BINDING nodes in the same file whose name === bindingName.
+  // Cycle protection: avoid infinite recursion on pathological alias loops
+  // like `const a = new B(); const b = new A();` where each NewExpression's
+  // constructor identifier resolves to the other constant's name.
+  if (visited.has(name)) return null;
+  visited.add(name);
+
+  // Step 1 — IMPORT_BINDING in the same file whose name === bindingName.
   // Multiple matches are unlikely but possible (rare same-name shadowing); we
   // take the first that has a metadata.source.
   // RFDB v2 has fuzzyNameFallback enabled by default; without disabling, an
@@ -287,6 +294,52 @@ async function findImportSourceForName(
     const source = meta?.source;
     if (typeof source === 'string' && source.length > 0) return source;
   }
+
+  // Step 2 — local CONSTANT or VARIABLE declaration that holds a class
+  // instance: `const server = new Server(...)`. Walk ASSIGNED_FROM to the
+  // initializer (a NewExpression CALL) and recurse on the constructor name.
+  // This covers the common pattern of class-instances whose receiver is a
+  // module-local binding rather than the import itself.
+  for (const declType of ['CONSTANT', 'VARIABLE'] as const) {
+    for await (const decl of client.queryNodes({
+      type: declType,
+      name,
+      file,
+      fuzzyNameFallback: false,
+    })) {
+      const out = await client.getOutgoingEdges(decl.id, ['ASSIGNED_FROM'] as never);
+      for (const edge of out) {
+        const initId = edge.dst;
+        if (!initId) continue;
+        const initNode = await client.getNode(String(initId));
+        if (!initNode) continue;
+        // Initializer must be a CALL. The analyzer records ASSIGNED_FROM to
+        // the *outermost* CALL of a chain (e.g. `const cmd = new Command('x')
+        // .description('y').addHelpText(...)` → ASSIGNED_FROM points at the
+        // .addHelpText call). Walk RECEIVER_CALL back to the chain origin
+        // before checking whether it's a NewExpression.
+        if (initNode.nodeType !== 'CALL') continue;
+        let origin = initNode;
+        for (let i = 0; i < 32; i++) {
+          const recv = await client.getOutgoingEdges(origin.id, ['RECEIVER_CALL'] as never);
+          if (recv.length === 0) break;
+          const inner = await client.getNode(String(recv[0].dst));
+          if (!inner) break;
+          origin = inner;
+        }
+        if (!isWireNewExpression(origin)) continue;
+        const className = origin.name;
+        if (typeof className !== 'string' || className.length === 0) continue;
+        // For `new ns.Klass()` the analyzer records `ns.Klass` as the call's
+        // name; we resolve via the leading identifier (the namespace's
+        // import binding).
+        const lookupName = className.includes('.') ? className.split('.')[0] : className;
+        const source = await findImportSourceForName(client, file, lookupName, visited);
+        if (source) return source;
+      }
+    }
+  }
+
   return null;
 }
 
