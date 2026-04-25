@@ -82,8 +82,23 @@ export class HullLayer {
   readonly group: THREE.Group;
 
   private _scene: THREE.Scene;
-  private _materials: Array<LineMaterial | THREE.LineBasicMaterial> = [];
+  private _materials: Array<LineMaterial | THREE.LineBasicMaterial | THREE.MeshBasicMaterial> = [];
   private _elevation = DEFAULT_ELEVATION;
+  /** Cached precomputed polygons by regionId. Populated by primeRegions
+   *  once when the hullCache identity changes; setRegionHulls reads from
+   *  here to assemble the merged geometries on each bucket change.
+   *  Replaces the per-region mesh pool — instead of 1000+ Object3Ds in
+   *  the scene graph (one per region per loop), we keep two single
+   *  merged meshes (one for outlines, one for fills) and rebuild their
+   *  buffers per bucket change. (DAI-22 architectural fix.) */
+  private _polygonCache: Map<string, { polygons: readonly HullLoop[]; depth: number }> = new Map();
+  /** Single merged outline mesh. `null` until the first non-empty
+   *  setRegionHulls call. Reused across rebuilds — only the underlying
+   *  position/color attributes change, the Three.Mesh stays the same so
+   *  scene-graph traversal stays cheap. */
+  private _lineMesh: LineSegments2 | THREE.LineSegments | null = null;
+  /** Single merged fill mesh. Same lifecycle as `_lineMesh`. */
+  private _fillMesh: THREE.Mesh | null = null;
   /** Monotonic token — any in-flight `setRegions` whose token is
    *  stale at the time of yield aborts before mutating the group.
    *  Guards against "call #2 clears scene mid-way through call #1". */
@@ -192,13 +207,195 @@ export class HullLayer {
    * the cache-less path, callers should still use `setRegions`.
    */
   setRegionHulls(regions: readonly HullRegionPrecomputed[]): void {
-    this._generation++; // invalidate any in-flight async setRegions
-    this._clear();
-    for (const r of regions) {
+    const tStart = performance.now();
+    this._rebuildMerged(regions);
+    const dt = performance.now() - tStart;
+    if (dt > 8) {
+      console.warn(
+        `[perf] HullLayer.setRegionHulls ${dt.toFixed(1)}ms (visible ${regions.length}, cache ${this._polygonCache.size})`,
+      );
+    }
+  }
+
+  /** Cache precomputed polygons + depth for every region in `all`. Call
+   *  ONCE per hullCache identity change (stream load / reload). After
+   *  this point `setRegionHulls(visible)` is a pure buffer-rewrite,
+   *  no Object3D allocation. */
+  primeRegions(all: readonly HullRegionPrecomputed[]): void {
+    const tStart = performance.now();
+    this._polygonCache.clear();
+    for (const r of all) {
+      this._polygonCache.set(r.regionId, { polygons: r.polygons, depth: r.depth });
+    }
+    console.warn(
+      `[perf] HullLayer.primeRegions ${(performance.now() - tStart).toFixed(1)}ms ` +
+      `(cached ${this._polygonCache.size} regions)`,
+    );
+  }
+
+  /** Build (or rebuild) a single merged outline mesh and a single
+   *  merged fill mesh from `regions`. Replaces what was previously
+   *  ~1500 Object3Ds with two — drops scene-graph traversal cost from
+   *  O(regions × loops) to O(1). The buffers themselves are O(verts),
+   *  but verts are typically ≤ 5000 across a viewport-visible set. */
+  private _rebuildMerged(regions: readonly HullRegionPrecomputed[]): void {
+    // Sort by depth so painter's-algorithm renders deeper hulls on top.
+    const sorted = [...regions].sort((a, b) => a.depth - b.depth);
+
+    // ── Outline lines (LineSegments2) ──
+    const linePositions: number[] = [];
+    const lineColors: number[] = [];
+    const yLine = this._elevation;
+    for (const r of sorted) {
+      const color = this._depthColor(r.regionId, r.depth, 0.55);
       for (const loop of r.polygons) {
-        this._appendLoopMeshDepthColored(loop, r.regionId, r.depth);
+        if (loop.length < 2) continue;
+        for (let i = 0; i < loop.length - 1; i++) {
+          const a = loop[i];
+          const b = loop[i + 1];
+          linePositions.push(a.x, yLine, a.y, b.x, yLine, b.y);
+          // LineSegmentsGeometry.setColors wants 3 floats per VERTEX,
+          // not per segment — 6 floats per segment pair.
+          lineColors.push(color.r, color.g, color.b, color.r, color.g, color.b);
+        }
       }
     }
+    this._updateLineMesh(linePositions, lineColors);
+
+    // ── Filled polygons (one merged BufferGeometry) ──
+    // For each loop, triangulate via THREE.ShapeUtils. Concatenate
+    // positions + colors into single buffers. Average loop is < 50 verts
+    // so triangulation is fast even with 100 visible regions.
+    const fillPositions: number[] = [];
+    const fillColors: number[] = [];
+    let vertOffset = 0;
+    const fillIndices: number[] = [];
+    for (const r of sorted) {
+      const color = this._depthColor(r.regionId, r.depth, 0.42);
+      const yFill = this._elevation - 0.02 - r.depth * 0.002;
+      for (const loop of r.polygons) {
+        if (loop.length < 4) continue; // closed loop = first==last; need ≥3 distinct
+        const pts: THREE.Vector2[] = [];
+        for (let i = 0; i < loop.length - 1; i++) {
+          pts.push(new THREE.Vector2(loop[i].x, loop[i].y));
+        }
+        const tris = THREE.ShapeUtils.triangulateShape(pts, []);
+        for (const p of pts) {
+          fillPositions.push(p.x, yFill, p.y);
+          fillColors.push(color.r, color.g, color.b);
+        }
+        for (const tri of tris) {
+          fillIndices.push(vertOffset + tri[0], vertOffset + tri[1], vertOffset + tri[2]);
+        }
+        vertOffset += pts.length;
+      }
+    }
+    this._updateFillMesh(fillPositions, fillColors, fillIndices);
+  }
+
+  private _updateLineMesh(positions: number[], colors: number[]): void {
+    if (positions.length === 0) {
+      if (this._lineMesh) this._lineMesh.visible = false;
+      return;
+    }
+    if (this._lineMesh === null) {
+      try {
+        const geo = new LineSegmentsGeometry();
+        geo.setPositions(positions);
+        geo.setColors(colors);
+        const mat = new LineMaterial({
+          vertexColors: true,
+          linewidth: 2,
+          transparent: true,
+          opacity: 0.75,
+          depthTest: false,
+          depthWrite: false,
+          worldUnits: false,
+        });
+        if (typeof window !== 'undefined') {
+          mat.resolution.set(window.innerWidth, window.innerHeight);
+        }
+        const mesh = new LineSegments2(geo, mat);
+        mesh.computeLineDistances();
+        mesh.renderOrder = 100;
+        this.group.add(mesh);
+        this._lineMesh = mesh;
+        this._materials.push(mat);
+      } catch {
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+        const mat = new THREE.LineBasicMaterial({
+          vertexColors: true,
+          transparent: true,
+          opacity: 0.75,
+          depthTest: false,
+          depthWrite: false,
+        });
+        const mesh = new THREE.LineSegments(geo, mat);
+        mesh.renderOrder = 100;
+        this.group.add(mesh);
+        this._lineMesh = mesh;
+        this._materials.push(mat);
+      }
+    } else if (this._lineMesh instanceof LineSegments2) {
+      const geo = new LineSegmentsGeometry();
+      geo.setPositions(positions);
+      geo.setColors(colors);
+      this._lineMesh.geometry.dispose();
+      this._lineMesh.geometry = geo;
+      this._lineMesh.computeLineDistances();
+    } else {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+      this._lineMesh.geometry.dispose();
+      this._lineMesh.geometry = geo;
+    }
+    this._lineMesh.visible = true;
+  }
+
+  private _updateFillMesh(positions: number[], colors: number[], indices: number[]): void {
+    if (positions.length === 0) {
+      if (this._fillMesh) this._fillMesh.visible = false;
+      return;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    geo.setIndex(indices);
+    if (this._fillMesh === null) {
+      const mat = new THREE.MeshBasicMaterial({
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.45,
+        depthTest: false,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+      // Rotate +π/2 around X so the loop's (x, y) maps to world (x, z),
+      // matching the line-mesh convention where loop.y → world Z.
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.rotation.x = Math.PI / 2;
+      mesh.renderOrder = 50;
+      this.group.add(mesh);
+      this._fillMesh = mesh;
+      this._materials.push(mat);
+    } else {
+      this._fillMesh.geometry.dispose();
+      this._fillMesh.geometry = geo;
+    }
+    this._fillMesh.visible = true;
+  }
+
+  /** Depth-warmed palette: hue interpolates from sky-blue (shallow) to
+   *  orange-red (deep), with a small per-region perturbation so siblings
+   *  stay visually distinguishable. */
+  private _depthColor(regionId: string, depth: number, lightness: number): THREE.Color {
+    const depthNorm = Math.min(1, depth / 10);
+    const jitter = ((hueFromString(regionId) % 20) - 10) / 360;
+    const hue = ((210 - 195 * depthNorm) / 360 + jitter + 1) % 1;
+    return new THREE.Color().setHSL(hue, 0.65, lightness);
   }
 
   /** Rendering mode — currently binary. Reserved for SceneManager
@@ -224,6 +421,14 @@ export class HullLayer {
     }
   }
 
+  /** Drop the persistent mesh pool + dispose all current meshes, but
+   *  keep the layer attached to the scene. Callers invoke this when
+   *  the underlying hullCache identity changes (new graph loaded) so
+   *  subsequent `setRegionHulls` doesn't leak stale entries. */
+  resetPool(): void {
+    this._clear();
+  }
+
   /** Remove all hull meshes, dispose their GPU resources, detach the
    *  root group from the scene. Safe to call multiple times. */
   dispose(): void {
@@ -233,12 +438,12 @@ export class HullLayer {
 
   // ── Internals ─────────────────────────────────────────────────
 
-  /** Clear children and dispose their geometry/materials. */
+  /** Clear children and dispose their geometry/materials. Also drops
+   *  the polygon cache so subsequent setRegionHulls calls show nothing
+   *  until primeRegions is called again. */
   private _clear(): void {
     for (const child of [...this.group.children]) {
       this.group.remove(child);
-      // Line meshes (both LineSegments2 and LineSegments) carry a
-      // BufferGeometry/LineSegmentsGeometry — both expose .dispose().
       const mesh = child as THREE.Object3D & {
         geometry?: { dispose?: () => void };
       };
@@ -246,76 +451,9 @@ export class HullLayer {
     }
     for (const m of this._materials) m.dispose();
     this._materials.length = 0;
-  }
-
-  /**
-   * Depth-warmed palette for precomputed-polygon rendering.
-   * Hue interpolates from sky-blue (shallow) to orange-red (deep) with a
-   * small path-hash perturbation so same-depth siblings stay visually
-   * distinguishable. Alpha in [0.15, 0.3] keeps the fill subtle so
-   * overlapping hulls read cleanly.
-   */
-  private _appendLoopMeshDepthColored(
-    loop: HullLoop,
-    regionId: string,
-    depth: number,
-  ): void {
-    if (loop.length < 2) return;
-    const flat: number[] = [];
-    const y = this._elevation;
-    for (let i = 0; i < loop.length - 1; i++) {
-      const a = loop[i];
-      const b = loop[i + 1];
-      flat.push(a.x, y, a.y, b.x, y, b.y);
-    }
-    if (flat.length === 0) return;
-
-    // Normalise depth against a soft ceiling (10 is the plan's practical
-    // max after effectiveDMax caps at 12). Linearly walk hue from 210°
-    // (sky blue) down to 15° (orange-red). Small per-region perturbation
-    // (±10°) keeps siblings distinct without breaking the gradient.
-    const depthNorm = Math.min(1, depth / 10);
-    const jitter = ((hueFromString(regionId) % 20) - 10) / 360;
-    const hue = ((210 - 195 * depthNorm) / 360 + jitter + 1) % 1;
-    const color = new THREE.Color().setHSL(hue, 0.65, 0.55);
-    const opacity = 0.15 + depthNorm * 0.15; // 0.15..0.30
-
-    try {
-      const geo = new LineSegmentsGeometry();
-      geo.setPositions(flat);
-      const mat = new LineMaterial({
-        color: color.getHex(),
-        linewidth: 2,
-        transparent: true,
-        opacity,
-        depthTest: false,
-        depthWrite: false,
-        worldUnits: false,
-      });
-      if (typeof window !== 'undefined') {
-        mat.resolution.set(window.innerWidth, window.innerHeight);
-      }
-      const mesh = new LineSegments2(geo, mat);
-      mesh.computeLineDistances();
-      // Deeper regions get a higher renderOrder — on top.
-      mesh.renderOrder = 100 + depth;
-      this.group.add(mesh);
-      this._materials.push(mat);
-    } catch {
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.Float32BufferAttribute(flat, 3));
-      const mat = new THREE.LineBasicMaterial({
-        color: color.getHex(),
-        transparent: true,
-        opacity,
-        depthTest: false,
-        depthWrite: false,
-      });
-      const mesh = new THREE.LineSegments(geo, mat);
-      mesh.renderOrder = 100 + depth;
-      this.group.add(mesh);
-      this._materials.push(mat);
-    }
+    this._polygonCache.clear();
+    this._lineMesh = null;
+    this._fillMesh = null;
   }
 
   /** Convert one 2-D hull loop → a LineSegments2 (or LineBasicMaterial
