@@ -60,6 +60,15 @@ interface HeaderMsg {
    * (DAI-22 Chunk-6+). We detect by probing for the `id` field.
    */
   regions: FlatRegionEntry[] | RegionNodeRaw[];
+  /**
+   * Phase 4 — string-table interning. Per-node frames carry `f` / `r` /
+   * `rs` indices into these tables instead of inlining the strings.
+   * Older server builds omit them; the parser then falls back to the
+   * raw `file` / `region` / `unplaced_reason` fields.
+   */
+  fileTable?: string[];
+  regionTable?: string[];
+  reasonTable?: string[];
 }
 
 interface NodeMsg {
@@ -68,8 +77,14 @@ interface NodeMsg {
   t: number;
   id: string;
   name: string;
-  file: string;
-  region: string;
+  /** Phase 4 — index into header.fileTable. Either this or `file`. */
+  f?: number;
+  /** Legacy back-compat — full file path. Either this or `f`. */
+  file?: string;
+  /** Phase 4 — index into header.regionTable. Either this or `region`. */
+  r?: number;
+  /** Legacy back-compat — full region id. Either this or `r`. */
+  region?: string;
   degree: number;
   metrics?: Record<string, number>;
   pos?: { q: number; r: number } | null;
@@ -77,8 +92,10 @@ interface NodeMsg {
    * DAI-22 §B.3 discriminator. When null the node is placed (render it);
    * otherwise caller decides whether to skip atlas rendering, surface
    * via the empty-layout overlay, or count toward the overflow badge.
+   * Phase 4 — `rs` (number) preferred; index into header.reasonTable.
    */
   unplaced_reason?: 'excluded' | 'missing_layout' | 'skipped_overflow' | null;
+  rs?: number;
 }
 
 interface LayoutMetaMsg extends LayoutMeta {
@@ -117,15 +134,21 @@ interface DoneMsg {
  */
 interface ExcludedNodesMsg {
   type: 'excluded_nodes';
+  /** Phase 4 — shared reason index (every entry in the batch is the
+   *  same reason — `"excluded"` — so it's hoisted to the envelope).
+   *  Older server builds omit `rs` and put `reason: "excluded"` per
+   *  entry; parser handles both. */
+  rs?: number;
   nodes: {
     i: number;
     id: string;
     t: number;
     n: string;
-    f: string;
-    r: string;
+    /** Phase 4 — index into header.fileTable, OR raw string for older server. */
+    f: number | string;
+    r: number | string;
     d: number;
-    reason: 'excluded';
+    reason?: 'excluded';
   }[];
 }
 
@@ -319,6 +342,27 @@ export async function parseStream(
   // §B.3: nodes with `unplaced_reason !== null` are excluded from the
   // atlas render set but surfaced via `unplacedNodes` so host search /
   // tooltip datasets keep them queryable.
+  //
+  // Phase 4 — header may carry fileTable/regionTable/reasonTable; node
+  // frames then reference them via numeric indices (`f`, `r`, `rs`).
+  // Older servers omit the tables and inline strings (`file`, `region`,
+  // `unplaced_reason`); both shapes are accepted via these resolvers.
+  const fileTable = header.fileTable ?? [];
+  const regionTable = header.regionTable ?? [];
+  const reasonTable = header.reasonTable ?? ['excluded', 'missing_layout', 'skipped_overflow'];
+  const resolveFile = (raw: NodeMsg): string =>
+    raw.f !== undefined ? (fileTable[raw.f] ?? '') : (raw.file ?? '');
+  const resolveRegion = (raw: NodeMsg): string =>
+    raw.r !== undefined ? (regionTable[raw.r] ?? '') : (raw.region ?? '');
+  const resolveReason = (raw: NodeMsg): NodeMsg['unplaced_reason'] => {
+    if (raw.unplaced_reason !== undefined) return raw.unplaced_reason;
+    if (raw.rs !== undefined) {
+      const s = reasonTable[raw.rs];
+      if (s === 'excluded' || s === 'missing_layout' || s === 'skipped_overflow') return s;
+    }
+    return null;
+  };
+
   const oldToLayout = new Map<number, number>();
   const nodes: GraphNode[] = [];
   const unplacedNodes: NonNullable<LayoutResult['unplacedNodes']> = [];
@@ -326,17 +370,17 @@ export async function parseStream(
   for (let i = 0; i < rawNodes.length; i++) {
     const raw = rawNodes[i];
     const typeName = header.typeTable[raw.t] ?? 'UNKNOWN';
-    const reason = raw.unplaced_reason ?? null;
+    const reason = resolveReason(raw);
+    const fileStr = resolveFile(raw);
+    const regionStr = resolveRegion(raw);
 
-    // Server-side hint wins. Fallback: legacy EXCLUDED_TYPES filter for
-    // back-compat with builds that don't emit `unplaced_reason`.
-    if (reason !== null) {
+    if (reason !== null && reason !== undefined) {
       unplacedNodes.push({
         id: raw.id,
         type: typeName,
         name: raw.name,
-        file: raw.file,
-        region: raw.region,
+        file: fileStr,
+        region: regionStr,
         degree: raw.degree,
         metrics: raw.metrics,
         unplacedReason: reason,
@@ -356,8 +400,8 @@ export async function parseStream(
       id: raw.id,
       type: typeName,
       name: raw.name,
-      file: raw.file,
-      region: raw.region,
+      file: fileStr,
+      region: regionStr,
       x,
       z,
       metrics: raw.metrics,
@@ -375,16 +419,27 @@ export async function parseStream(
   // running both unconditionally is safe because the partition is
   // disjoint by construction.
   if (excludedBatch) {
+    // Phase 4 — `f` / `r` may be table indices (number) or raw strings
+    // (legacy server build). `reason` is hoisted to the envelope (`rs`)
+    // when the server interns it; otherwise per-entry `reason` carries
+    // the literal string. Default to "excluded" since this batch only
+    // ever contains excluded nodes.
+    const batchReason: 'excluded' | 'missing_layout' | 'skipped_overflow' =
+      excludedBatch.rs !== undefined
+        ? ((reasonTable[excludedBatch.rs] as 'excluded') ?? 'excluded')
+        : 'excluded';
     for (const n of excludedBatch.nodes) {
       const typeName = header.typeTable[n.t] ?? 'UNKNOWN';
+      const fileStr = typeof n.f === 'number' ? (fileTable[n.f] ?? '') : (n.f ?? '');
+      const regionStr = typeof n.r === 'number' ? (regionTable[n.r] ?? '') : (n.r ?? '');
       unplacedNodes.push({
         id: n.id,
         type: typeName,
         name: n.n,
-        file: n.f,
-        region: n.r,
+        file: fileStr,
+        region: regionStr,
         degree: n.d,
-        unplacedReason: n.reason,
+        unplacedReason: n.reason ?? batchReason,
       });
     }
   }
