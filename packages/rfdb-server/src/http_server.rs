@@ -1041,7 +1041,18 @@ fn build_graph_stream_body(
     // the GUI side via `unplacedNodes`, but shipping them as 300k
     // individual JSON frames was the dominant parser cost on a real
     // grafema-sized graph. One batch frame ≈ same payload, ≈1 JSON.parse.
+    // Phase 3 — bucket placed nodes by file-path depth (number of `/`
+    // segments) so the wire emits shallow-folder nodes first. Renderers
+    // that progressively ingest can paint the top-level structure before
+    // the deep nesting arrives. Buckets are emitted in ascending-depth
+    // order; per-bucket frames carry `{depth, count, nodes:[...]}`.
+    //
+    // Excluded nodes don't get bucketed — they go into the existing
+    // single batched frame at the tail (Phase 2). Other unplaced
+    // reasons stay per-node (rare and overlay-specific).
     let mut excluded_batch: Vec<(&NodeRef, &str)> = Vec::with_capacity(node_count / 2);
+    // depth -> (lines, node_count)
+    let mut buckets: std::collections::BTreeMap<u32, Vec<String>> = std::collections::BTreeMap::new();
     let mut emitted_count = 0usize;
     for nr in &candidates.node_refs {
         let (_, reason) = classify_node_visibility(nr, &cached_layout, layout_is_missing);
@@ -1049,7 +1060,8 @@ fn build_graph_stream_body(
             excluded_batch.push((nr, "excluded"));
             continue;
         }
-        lines.push(emit_node_line(
+        let depth = file_path_depth(&nr.file);
+        let line = emit_node_line(
             nr,
             &candidates.type_idx,
             &tree,
@@ -1058,14 +1070,24 @@ fn build_graph_stream_body(
             degrees[nr.idx as usize],
             &file_idx,
             &region_idx,
-        ));
+        );
+        buckets.entry(depth).or_default().push(line);
         emitted_count += 1;
+    }
+    for (depth, bucket_lines) in &buckets {
+        lines.push(emit_nodes_bucket_open(*depth, bucket_lines.len()));
+        lines.extend(bucket_lines.iter().cloned());
+        lines.push(emit_nodes_bucket_close(*depth));
     }
 
     lines.push(
         serde_json::to_string(&serde_json::json!({
             "type": "nodes_done",
             "count": emitted_count,
+            // Phase 3 — surface bucket boundaries so the GUI parser can
+            // emit per-bucket progress events without parsing them out
+            // of order.
+            "bucketDepths": buckets.keys().copied().collect::<Vec<_>>(),
         }))
         .unwrap(),
     );
@@ -1511,6 +1533,40 @@ fn emit_hulls_frame(
         }))
         .unwrap(),
     );
+}
+
+/// Phase 3 — file-path depth (number of `/` segments) used as the
+/// bucketing key for `nodes_bucket` frames. Cheap, no tree lookup,
+/// and tracks the user's "shallow folders first" intent: depth-0 files
+/// are project-root scripts, depth-1 are package roots, deep nesting
+/// arrives later. Builtin / runtime virtual paths land in depth 0.
+fn file_path_depth(path: &str) -> u32 {
+    if path.is_empty() {
+        return 0;
+    }
+    path.bytes().filter(|&b| b == b'/').count() as u32
+}
+
+/// Phase 3 — open frame announcing a coming bucket of `node` lines at
+/// the named depth. The GUI parser uses this to emit a per-bucket
+/// progress event before draining the lines that follow.
+fn emit_nodes_bucket_open(depth: u32, count: usize) -> String {
+    serde_json::to_string(&serde_json::json!({
+        "type": "nodes_bucket_open",
+        "depth": depth,
+        "count": count,
+    }))
+    .unwrap()
+}
+
+/// Phase 3 — close frame for the bucket. Lets parser hand off the
+/// just-arrived nodes to incremental render hooks before continuing.
+fn emit_nodes_bucket_close(depth: u32) -> String {
+    serde_json::to_string(&serde_json::json!({
+        "type": "nodes_bucket_close",
+        "depth": depth,
+    }))
+    .unwrap()
 }
 
 /// Phase 2 — emit ONE `excluded_nodes` JSONL frame containing every

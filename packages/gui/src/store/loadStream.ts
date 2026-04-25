@@ -122,6 +122,22 @@ interface DoneMsg {
 }
 
 /**
+ * Phase 3 — nodes are emitted in depth-bucketed groups. Each bucket
+ * is wrapped by an `open` frame announcing depth + count, then the
+ * usual `node` frames, then a `close` frame so progressive renderers
+ * can hand off the just-arrived bucket to the GPU before continuing.
+ */
+interface NodesBucketOpenMsg {
+  type: 'nodes_bucket_open';
+  depth: number;
+  count: number;
+}
+interface NodesBucketCloseMsg {
+  type: 'nodes_bucket_close';
+  depth: number;
+}
+
+/**
  * Phase 2 of streaming overhaul — server now batches every
  * `unplaced_reason="excluded"` node into one frame at the tail of the
  * stream rather than emitting them as 300k+ individual `node` frames.
@@ -182,7 +198,9 @@ type StreamMsg =
   | DoneMsg
   | LayoutMetaMsg
   | HullsMsg
-  | ExcludedNodesMsg;
+  | ExcludedNodesMsg
+  | NodesBucketOpenMsg
+  | NodesBucketCloseMsg;
 
 /**
  * Detect whether a header's regions array is the new nested-tree shape
@@ -317,6 +335,18 @@ export async function parseStream(
           console.log(`[parseStream] excluded_nodes batch: ${msg.nodes.length} nodes`);
         }
         onProgress('excluded_nodes', msg.nodes.length);
+        break;
+      case 'nodes_bucket_open':
+        if (import.meta.env?.DEV) {
+          console.log(`[parseStream] bucket open: depth=${msg.depth} count=${msg.count}`);
+        }
+        onProgress('bucket_open', msg.depth, msg.count);
+        break;
+      case 'nodes_bucket_close':
+        if (import.meta.env?.DEV) {
+          console.log(`[parseStream] bucket close: depth=${msg.depth}`);
+        }
+        onProgress('bucket_close', msg.depth);
         break;
       case 'layout_meta': {
         // Strip the `type` discriminator before storing.
