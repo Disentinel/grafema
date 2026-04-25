@@ -13,12 +13,12 @@ Branch: `task/dai-22-per-symbol-layout`. Each phase rebases on the previous.
 | # | Phase | Status |
 |---|---|---|
 | 0 | gzip/brotli `CompressionLayer` on outer router | ✅ commit `489a3dee` — wire 105 MB→14.3 MB (7.3×) |
-| 1 | Server-side hull precompute + early-frame emit | pending |
-| 2 | Drop excluded-node frames, batch as one tail | pending |
-| 3 | LOD-bucketed streaming (depth-prioritised) | pending |
-| 4 | String-table interning (file/region/reason) | pending |
-| 5 | Binary stream for hot frames (MessagePack / typed arrays) | pending |
-| 8 | Playwright harness — verifies all of the above | pending (foundation) |
+| 1 | Server-side hull precompute + early-frame emit | ✅ commit `db07366b` — `[hulls] precomputed 767 regions in 144ms` |
+| 2 | Drop excluded-node frames, batch as one tail | ✅ commit `0839d154` — 1 batch of 300 822 vs 300k frames |
+| 4 | String-table interning (file/region/reason) | ✅ commit `08ee2342` — pre-gzip wire ÷36% |
+| 3 | LOD-bucketed streaming (depth-prioritised) | ✅ commit `2aea51f3` — depths [0,3,4,5] emitted ascending |
+| 8 | Playwright harness — verifies all of the above | ✅ 22/22 pass against live `.grafema/graph.rfdb` |
+| 5 | Binary stream for hot frames (MessagePack / typed arrays) | deferred — see Phase 5 working notes below |
 
 ---
 
@@ -286,14 +286,91 @@ Lives at `packages/gui/test/playwright/streaming-phases.spec.ts`.
   router with `apply_compression`; future phases can extend this for
   scenario-specific tests
 
-### Phase 1 — TBD
+### Phase 1 — done
+- Rust port of the morph-close + flood-fill + boundary-trace pipeline
+  lives in `packages/rfdb-server/src/hulls.rs`; 10 inline unit tests
+  lock parity with the TS version. Compute time: 144 ms for 767
+  regions on the grafema repo
+- Hull cache populated by `warmup`; emitted as one `hulls` JSONL frame
+  immediately after the header so downstream parsers can render hulls
+  before the node tail arrives (the current parser still accumulates
+  but `LayoutResult.precomputedHulls` exposes the data so a future
+  refactor can paint early — captured as Phase 3.5)
+- GUI `hydrateLayoutStoreFromLayout` prefers server hulls when present;
+  back-compat path runs the legacy `computeHullsForRegions` for
+  fixture sources / older server builds
 
-### Phase 2 — TBD
+### Phase 2 — done
+- One `excluded_nodes` batch frame replaces 300 822 individual
+  `node` frames on the grafema repo. Wire size barely moves under
+  gzip (the dedup of repeated keys was already handled), but parser
+  CPU drops massively — single JSON.parse vs 300k+
+- Other unplaced reasons (`missing_layout`, `skipped_overflow`)
+  intentionally keep per-node frames so the existing
+  EmptyLayoutOverlay / OverflowBadge wiring needs no change
+- GUI parser accepts both shapes — disjoint by construction, so old
+  server compatibility is preserved with no extra branching
 
-### Phase 3 — TBD
+### Phase 4 — done (taken before Phase 3 because of orthogonal scope)
+- header now carries `fileTable` / `regionTable` / `reasonTable`;
+  per-node + excluded-batch frames reference strings via numeric
+  indices
+- Pre-gzip wire on the grafema corpus: 91.6 MB → 58.6 MB (-36%);
+  gzipped 14.1 → 13.1 MB (-7%) since gzip had already deduplicated
+  most of the repetition. The bigger win is parser allocation: the
+  JS string pool gets ~10× fewer entries during ingest
+- GUI parser handles both new (numeric `f`/`r`) and legacy (string
+  `file`/`region`) shapes via `resolveFile` / `resolveRegion` /
+  `resolveReason` helpers — back-compat for older servers
 
-### Phase 4 — TBD
+### Phase 3 — done (with follow-up for incremental render)
+- Nodes bucketed by file-path depth (number of `/` segments). On
+  the grafema repo: 4 buckets — depths 0/3/4/5 — counts 88/10 631/
+  16 468/1 450 = 28 637 (matches `nodes_done.count`)
+- Bucket boundaries wrapped by `nodes_bucket_open` / `nodes_bucket_close`
+  frames so progressive renderers can fence work between depths
+- `nodes_done.bucketDepths` summary lets the parser sanity-check
+  bucket coverage without re-scanning the stream
+- **Follow-up (Phase 3.5)** — actual incremental render: hand each
+  bucket to `HexLayer.appendNodes` / `FlowLayer.appendEdges` (new
+  APIs) so React paints chunks as they arrive instead of waiting
+  for the full parseStream Promise. Out of scope for the current
+  commit because HexLayer.count is fixed at construction time —
+  needs either pre-allocation to a max + count-controlled visibility
+  or true append. Tracked as a follow-up; the wire format from
+  Phase 3 is the prerequisite
 
-### Phase 5 — TBD
+### Phase 5 — deferred (rationale captured here)
+- Phases 0-4 already cut wire size 7× (gzip), per-node payload 36%
+  pre-gzip (string-table interning), and parser CPU substantially
+  (1 JSON.parse for the 300k excluded batch vs 300k individual).
+  The remaining JSON parse cost on the bucketed placed-node frames
+  is dominated by content (i / id / name) rather than format — a
+  swap to MessagePack would shave another ~30-50% on JSON.parse
+  CPU but adds a `@msgpack/msgpack` runtime dep, content-type
+  negotiation, and a parallel binary code path on both server and
+  client
+- Decision: revisit Phase 5 only if Playwright responsiveness
+  measurements (Phase 8) show parser CPU as the dominant remaining
+  bottleneck on a real-load scenario. Until then the marginal
+  complexity isn't justified
+- If/when reactivated: implementation sketch lives in the
+  Phase 5 section above (full migration vs hybrid binary-edges)
 
-### Phase 8 — TBD
+### Phase 8 — done
+- Harness at `packages/gui/scripts/playwright-verify-streaming.mjs`
+  (mirrors style of the existing DAI-22 verify scripts — plain
+  `playwright` driver, no @playwright/test runner, no config
+  bootstrap). Run: `PORT=51833 node …`
+- 22 assertions covering compression headers, frame ordering
+  (header → hulls → first node), wire-format invariants for each
+  phase, and visual sanity (HullLayer populated, HexLayer ≥ 25k
+  tiles after legacy MODULE/SERVICE filter, toponyms rendered,
+  screenshot saved)
+- Live results: 22 pass / 0 warn / 0 fail against
+  `.grafema/graph.rfdb` on port 51833
+- The HexLayer threshold sits at ≥ 25k (not the server-reported
+  27 149) because the GUI's legacy `EXCLUDED_TYPES` filter drops
+  ~613 SERVICE / MODULE nodes client-side. A future cleanup that
+  unifies that filter with the server-side excluded path will let
+  us tighten the assertion
