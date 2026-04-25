@@ -78,6 +78,8 @@ main = hspec $ do
     interfaceTests
   describe "CALL argCount metadata"
     callArgCountTests
+  describe "Chained call receivers"
+    chainedCallTests
 
 
 scopeResolutionTests :: Spec
@@ -511,3 +513,104 @@ callArgCountTests = do
     callNode <- requireNode "CALL" "tag" fa
     Map.lookup "argCount" (gnMetadata callNode) `shouldBe` Just (MetaInt 2)
     Map.lookup "kind" (gnMetadata callNode) `shouldBe` Just (MetaText "tagged_template")
+
+
+-- ── Chained call receiver tests (RECEIVER_CALL edge) ─────────────────
+chainedCallTests :: Spec
+chainedCallTests = do
+
+  -- a().b()  -- two-deep chain: outer CALL "<obj>.b" must have RECEIVER_CALL → inner CALL "a"
+  it "emits RECEIVER_CALL from outer call to inner call in 2-deep chain" $ do
+    -- AST for: a().b()
+    -- Outer: CallExpression { callee: MemberExpression { object: CallExpression { callee: a }, property: b }, args: [] }
+    let fa = analyzeAST $ BL.concat
+          [ "{\"type\":\"Program\",\"start\":0,\"end\":10,\"body\":["
+          , "{\"type\":\"ExpressionStatement\",\"start\":0,\"end\":6,"
+          , "\"expression\":{\"type\":\"CallExpression\",\"start\":0,\"end\":6,"
+          , "\"callee\":{\"type\":\"MemberExpression\",\"start\":0,\"end\":5,"
+          , "\"object\":{\"type\":\"CallExpression\",\"start\":0,\"end\":3,"
+          , "\"callee\":{\"type\":\"Identifier\",\"start\":0,\"end\":1,\"name\":\"a\"},"
+          , "\"arguments\":[]},"
+          , "\"property\":{\"type\":\"Identifier\",\"start\":4,\"end\":5,\"name\":\"b\"},"
+          , "\"computed\":false},"
+          , "\"arguments\":[]}}"
+          , "]}"
+          ]
+    -- Both CALL nodes exist
+    let callNodes = filter (\n -> gnType n == "CALL") (faNodes fa)
+    length callNodes `shouldBe` 2
+    innerCall <- requireNode "CALL" "a" fa
+    -- Outer call has name "<obj>.b" because object is a CallExpression (no Identifier name)
+    let outerCalls = filter (\n -> gnType n == "CALL" && gnName n /= "a") callNodes
+    length outerCalls `shouldBe` 1
+    let outerCall = head outerCalls
+    -- RECEIVER_CALL edge: outer CALL → inner CALL
+    hasEdge "RECEIVER_CALL" (gnId outerCall) (gnId innerCall) fa `shouldBe` True
+
+  -- a().b().c()  -- three-deep chain: TWO RECEIVER_CALL edges (c→b, b→a)
+  it "emits two RECEIVER_CALL edges in 3-deep chain" $ do
+    -- AST for: a().b().c()
+    let fa = analyzeAST $ BL.concat
+          [ "{\"type\":\"Program\",\"start\":0,\"end\":12,\"body\":["
+          , "{\"type\":\"ExpressionStatement\",\"start\":0,\"end\":10,"
+          , "\"expression\":{\"type\":\"CallExpression\",\"start\":0,\"end\":10,"
+          , "\"callee\":{\"type\":\"MemberExpression\",\"start\":0,\"end\":9,"
+          , "\"object\":{\"type\":\"CallExpression\",\"start\":0,\"end\":7,"
+          , "\"callee\":{\"type\":\"MemberExpression\",\"start\":0,\"end\":5,"
+          , "\"object\":{\"type\":\"CallExpression\",\"start\":0,\"end\":3,"
+          , "\"callee\":{\"type\":\"Identifier\",\"start\":0,\"end\":1,\"name\":\"a\"},"
+          , "\"arguments\":[]},"
+          , "\"property\":{\"type\":\"Identifier\",\"start\":4,\"end\":5,\"name\":\"b\"},"
+          , "\"computed\":false},"
+          , "\"arguments\":[]},"
+          , "\"property\":{\"type\":\"Identifier\",\"start\":8,\"end\":9,\"name\":\"c\"},"
+          , "\"computed\":false},"
+          , "\"arguments\":[]}}"
+          , "]}"
+          ]
+    -- Three CALL nodes total
+    let callNodes = filter (\n -> gnType n == "CALL") (faNodes fa)
+    length callNodes `shouldBe` 3
+    -- Exactly two RECEIVER_CALL edges
+    let receiverEdges = filter (\e -> geType e == "RECEIVER_CALL") (faEdges fa)
+    length receiverEdges `shouldBe` 2
+
+  -- a()  -- single call, no chain → NO RECEIVER_CALL edge
+  it "does NOT emit RECEIVER_CALL for a non-chained call" $ do
+    let fa = analyzeAST $ BL.concat
+          [ "{\"type\":\"Program\",\"start\":0,\"end\":5,\"body\":["
+          , "{\"type\":\"ExpressionStatement\",\"start\":0,\"end\":4,"
+          , "\"expression\":{\"type\":\"CallExpression\",\"start\":0,\"end\":3,"
+          , "\"callee\":{\"type\":\"Identifier\",\"start\":0,\"end\":1,\"name\":\"a\"},"
+          , "\"arguments\":[]}}"
+          , "]}"
+          ]
+    let receiverEdges = filter (\e -> geType e == "RECEIVER_CALL") (faEdges fa)
+    length receiverEdges `shouldBe` 0
+
+  -- new Command('x').action(fn)  -- chain starting with NewExpression
+  it "emits RECEIVER_CALL from outer call to inner NewExpression CALL" $ do
+    -- AST for: new Command('x').action(fn)
+    let fa = analyzeAST $ BL.concat
+          [ "{\"type\":\"Program\",\"start\":0,\"end\":30,\"body\":["
+          , "{\"type\":\"ExpressionStatement\",\"start\":0,\"end\":25,"
+          , "\"expression\":{\"type\":\"CallExpression\",\"start\":0,\"end\":25,"
+          , "\"callee\":{\"type\":\"MemberExpression\",\"start\":0,\"end\":21,"
+          , "\"object\":{\"type\":\"NewExpression\",\"start\":0,\"end\":14,"
+          , "\"callee\":{\"type\":\"Identifier\",\"start\":4,\"end\":11,\"name\":\"Command\"},"
+          , "\"arguments\":["
+          , "{\"type\":\"Literal\",\"start\":12,\"end\":13,\"value\":\"x\",\"raw\":\"'x'\"}"
+          , "]},"
+          , "\"property\":{\"type\":\"Identifier\",\"start\":15,\"end\":21,\"name\":\"action\"},"
+          , "\"computed\":false},"
+          , "\"arguments\":["
+          , "{\"type\":\"Identifier\",\"start\":22,\"end\":24,\"name\":\"fn\"}"
+          , "]}}"
+          , "]}"
+          ]
+    innerCall <- requireNode "CALL" "Command" fa
+    -- Outer CALL: name comes from getCallName, which for object=NewExpression returns "<obj>.action"
+    let outerCalls = filter (\n -> gnType n == "CALL" && gnName n /= "Command") (faNodes fa)
+    length outerCalls `shouldBe` 1
+    let outerCall = head outerCalls
+    hasEdge "RECEIVER_CALL" (gnId outerCall) (gnId innerCall) fa `shouldBe` True

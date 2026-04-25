@@ -58,6 +58,15 @@ ruleCallExpression node = do
         []    -> ""
       hash   = contentHash [("a", T.pack (show arity)), ("l", firstLitArg), ("line", T.pack (show (spanStart sp)))]
       nodeId = semanticId file "CALL" callee parent (Just hash)
+      -- Detect chained call: callee is a MemberExpression whose `object` is itself a Call/New expression.
+      -- We mirror the semantic-id computation used in ruleCallExpression / ruleNewExpression so the inner
+      -- CALL node gets the same ID it will receive when walked via the member expression.
+      mInnerCallId = case getChildrenMaybe "callee" node of
+        Just (MemberExpressionNode _ _) -> case getChildrenMaybe "callee" node >>= getChildrenMaybe "object" of
+          Just inner@(CallExpressionNode _ _) -> Just (computeCallNodeId file parent inner)
+          Just inner@(NewExpressionNode  _ _) -> Just (computeCallNodeId file parent inner)
+          _                                   -> Nothing
+        _ -> Nothing
 
   emitNode GraphNode
     { gnId = nodeId, gnType = "CALL", gnName = callee
@@ -102,7 +111,34 @@ ruleCallExpression node = do
           }
     Nothing -> return ()
 
+  -- Chained method call (`a().b()`): emit RECEIVER_CALL from the outer CALL to
+  -- the inner CALL so that the chain is traversable in the graph. Without this,
+  -- the receiver of `.b()` is just an anonymous PROPERTY_ACCESS and chains
+  -- like `new Command('x').action(fn)` cannot be resolved back to their origin.
+  forM_ mInnerCallId $ \innerCallId ->
+    emitEdge GraphEdge
+      { geSource = nodeId, geTarget = innerCallId
+      , geType = "RECEIVER_CALL"
+      , geMetadata = Map.empty
+      }
+
   return (Just nodeId)
+
+-- | Compute the deterministic CALL node id for a CallExpression / NewExpression
+-- without walking it. Mirrors the formula used in 'ruleCallExpression' and
+-- 'ruleNewExpression'. Used to refer to inner calls from outside (e.g. the
+-- RECEIVER_CALL edge for chained calls).
+computeCallNodeId :: Text -> Maybe Text -> ASTNode -> Text
+computeCallNodeId file parent inner =
+  let sp     = astNodeSpan inner
+      callee = getCallName inner
+      args   = getChildren "arguments" inner
+      arity  = length args
+      firstLitArg = case args of
+        (a:_) -> getTextFieldOr "value" "" a
+        []    -> ""
+      hash   = contentHash [("a", T.pack (show arity)), ("l", firstLitArg), ("line", T.pack (show (spanStart sp)))]
+  in semanticId file "CALL" callee parent (Just hash)
 
 -- ── Member Expression ───────────────────────────────────────────────────
 
