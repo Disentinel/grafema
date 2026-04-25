@@ -373,10 +373,12 @@ export class HullLayer {
         depthWrite: false,
         side: THREE.DoubleSide,
       });
-      // Rotate +π/2 around X so the loop's (x, y) maps to world (x, z),
-      // matching the line-mesh convention where loop.y → world Z.
+      // Positions are already in world (x, y, z) frame — see
+      // _rebuildMerged where each vertex is pushed as `(p.x, yFill, p.y)`,
+      // mapping loop.y → world Z directly. No rotation needed (the old
+      // per-region path used THREE.Shape in XY and rotated the resulting
+      // XY geometry into XZ; we skip the intermediate frame).
       const mesh = new THREE.Mesh(geo, mat);
-      mesh.rotation.x = Math.PI / 2;
       mesh.renderOrder = 50;
       this.group.add(mesh);
       this._fillMesh = mesh;
