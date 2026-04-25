@@ -15,6 +15,7 @@ import { setLiveLayoutSink } from '../store/loadLiveLayout';
 import type { TooltipContent } from '../controller/tooltip';
 import { SceneApiProvider } from '../controller/SceneApiContext';
 import type { SceneApi } from '../controller/SceneApi';
+import { ToponymsLayer } from '../ToponymsLayer';
 import {
   buildHexLayerWithSubscriptions,
   buildRegionLayer,
@@ -135,7 +136,7 @@ export function Canvas() {
     setRouteLayerState(routeLayer);
 
     const detachInteraction = setupInteraction({
-      sm, container, hexLayer, flowLayer, routeLayer,
+      sm, container, hexLayer, flowLayer, routeLayer, hullLayer,
       nodes, edges, edgeLabelsRef, setTooltip, selectedConnectedRef,
     });
 
@@ -194,12 +195,15 @@ export function Canvas() {
         <CoordGrid sceneManager={sm} visible={showCoords} />
         <RouteLabels sceneManager={sm} routeLayer={routeLayerState} />
         <EdgeLabels sceneManager={sm} labels={edgeLabelsRef.current} />
+        <ToponymsLayer api={sceneApi} />
         {tooltip && (
           <div className="node-tooltip" style={{ left: tooltip.x + 14, top: tooltip.y - 10 }}>
             {tooltip.content.subtitle && <div className="tt-type">{tooltip.content.subtitle}</div>}
             <div className="tt-name">{tooltip.content.title}</div>
             {tooltip.content.rows.map((r, i) => (
-              <div key={i} className="tt-region">{r.value}</div>
+              <div key={i} className="tt-region">
+                <span className="tt-label">{r.label}:</span> {r.value}
+              </div>
             ))}
             {tooltip.edges.length > 0 && (
               <div className="tt-edges">

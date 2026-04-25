@@ -45,6 +45,17 @@ export interface LayoutMeta {
   symbol_count: number;
   committed_at: string | null;
   overflow_files: OverflowFile[];
+  /**
+   * Display name of the workspace that owns this database (e.g. `"grafema"`,
+   * `"my-project"`). Derived server-side from the db path's grandparent so
+   * the GUI can render the correct root region label instead of the
+   * meaningless `"/"` the layout pipeline emits for depth 0.
+   *
+   * `null` when the server can't derive a useful name (db at filesystem
+   * root, anonymous temp dir, etc.) — consumers should fall back to hiding
+   * the root label in that case.
+   */
+  workspace_name: string | null;
 }
 
 /**

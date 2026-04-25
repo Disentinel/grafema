@@ -338,6 +338,26 @@ export class FlowLayer {
   }
 
   /**
+   * Pointer hit-test against per-edge tube meshes. Returns the edge under
+   * the cursor (closest intersection) or null when no tube is hit. Only
+   * meaningful in `tube` style — line-style geometry is one merged
+   * `LineSegments2`, which would need per-segment hit math out of scope
+   * here. Visible flows only: hidden slots' children are ignored by the
+   * raycaster because their group.visible is false.
+   */
+  raycastEdge(raycaster: THREE.Raycaster): { srcIdx: number; dstIdx: number; edgeType: string } | null {
+    if (this._style !== 'tube') return null;
+    const hits = raycaster.intersectObject(this._group, true);
+    for (const h of hits) {
+      const tag = (h.object as THREE.Object3D).userData?.edge as
+        | { srcIdx: number; dstIdx: number; edgeType: string }
+        | undefined;
+      if (tag) return tag;
+    }
+    return null;
+  }
+
+  /**
    * Get edge info for edges connected to a node (for tooltip display).
    * Returns only edges from visible flows.
    */
@@ -463,6 +483,12 @@ export class FlowLayer {
     });
     const line = new THREE.Mesh(tubeGeo, tubeMat);
     line.renderOrder = FlowLayer.RENDER_ORDER;
+    // Tag the tube so a Raycaster hit can identify the underlying edge
+    // without an extra reverse-lookup table. canvasBuild's hover handler
+    // reads this on intersect to populate the edge tooltip.
+    line.userData = {
+      edge: { srcIdx: plan.srcIdx, dstIdx: plan.dstIdx, edgeType: plan.edgeType },
+    };
     slot.group.add(line);
 
     const lastSeg = points[points.length - 1].clone().sub(points[points.length - 2]).normalize();

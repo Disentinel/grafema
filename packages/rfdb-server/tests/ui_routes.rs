@@ -56,7 +56,7 @@ fn test_state() -> HttpState {
     let mgr = Arc::new(DatabaseManager::new(tmp.path().to_path_buf()));
     // Hold the tempdir alive by leaking it — test process is short-lived.
     std::mem::forget(tmp);
-    new_state(mgr)
+    new_state(mgr, None)
 }
 
 /// Serializes env-var mutating tests so they don't trample each other when

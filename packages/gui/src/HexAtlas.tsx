@@ -35,7 +35,7 @@ import { ModeToggle } from './components/ModeToggle';
 import { useViewStore } from './store/viewStore';
 import { useDataStore, type GraphNode } from './store/dataStore';
 import { useLayoutStore, type OverflowFile } from './store/layoutStore';
-import { OverflowBadge, meanPosition, placedNodesForFile } from './OverflowBadge';
+import { meanPosition, placedNodesForFile } from './OverflowBadge';
 import { fetchLayout } from './layout/layoutClient';
 import { loadFixture } from './store/loadFixture';
 import { loadStream, hydrateLayoutStoreFromLayout } from './store/loadStream';
@@ -270,22 +270,51 @@ export interface OverflowBadgeLayerProps {
 
 export function OverflowBadgeLayer({ overflowFiles, nodes }: OverflowBadgeLayerProps) {
   if (overflowFiles.length === 0) return null;
+  // World→screen projection requires a camera ref from the Three scene —
+  // placing <OverflowBadge> with raw world (x, z) as CSS px puts them
+  // off-map. Until the ScenApi projector is wired through (follow-up),
+  // surface overflow as a compact sidebar chip instead so the signal
+  // isn't lost but isn't visually misleading either.
+  void nodes;
+  void meanPosition;
+  void placedNodesForFile;
 
-  const layerStyle: React.CSSProperties = {
-    position: 'absolute',
-    inset: 0,
-    pointerEvents: 'none',
-    zIndex: 30,
+  const sideStyle: React.CSSProperties = {
+    position: 'fixed',
+    right: '340px',
+    bottom: '12px',
+    maxWidth: '320px',
+    background: 'rgba(20, 20, 26, 0.82)',
+    color: '#ffcccc',
+    padding: '8px 10px',
+    borderRadius: '6px',
+    font: '11px/1.35 monospace',
+    border: '1px solid #d32f2f',
+    zIndex: 40,
+    pointerEvents: 'auto',
+    boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
   };
 
   return (
-    <div className="grafema-overflow-badges" style={layerStyle}>
-      {overflowFiles.map((entry) => {
-        const placed = placedNodesForFile(nodes, entry.file);
-        const pos = meanPosition(placed);
-        if (pos === null) return null;
-        return <OverflowBadge key={entry.file} entry={entry} position={pos} />;
-      })}
+    <div className="grafema-overflow-sidebar" style={sideStyle} data-overflow-count={overflowFiles.length}>
+      <div style={{ fontWeight: 600, color: '#ff8080', marginBottom: 4 }}>
+        overflow: {overflowFiles.length} file{overflowFiles.length === 1 ? '' : 's'} over cap
+      </div>
+      {overflowFiles
+        .slice(0, 8)
+        .sort((a, b) => b.skipped - a.skipped)
+        .map((e) => (
+          <div key={e.file} title={`${e.skipped} skipped / cap ${e.cap}`}
+               style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            <span style={{ color: '#ff8080' }}>{e.skipped}</span>{' '}
+            <span style={{ color: '#aab' }}>{e.file.split('/').slice(-3).join('/')}</span>
+          </div>
+        ))}
+      {overflowFiles.length > 8 && (
+        <div style={{ color: '#889', marginTop: 4 }}>
+          +{overflowFiles.length - 8} more
+        </div>
+      )}
     </div>
   );
 }
@@ -428,6 +457,9 @@ export function HexAtlas({ mode, source, className, skipCanvas }: HexAtlasProps)
 
   const showEmptyLayout = layoutMeta?.source === 'missing';
   const overflowFiles = layoutMeta?.overflow_files ?? [];
+  const loaded = useDataStore((s) => s.loaded);
+  const nodeCount = useDataStore((s) => s.nodes.length);
+  const showLoadingOverlay = !loaded && !showEmptyLayout;
 
   return (
     <div className={className ?? 'app'} style={rootStyle}>
@@ -437,6 +469,55 @@ export function HexAtlas({ mode, source, className, skipCanvas }: HexAtlasProps)
       <ModeToggle />
       {overflowFiles.length > 0 && <ConnectedOverflowBadgeLayer overflowFiles={overflowFiles} />}
       {showEmptyLayout && <EmptyLayoutOverlay />}
+      {showLoadingOverlay && <LoadingOverlay status={status} nodeCount={nodeCount} />}
+    </div>
+  );
+}
+
+/**
+ * Full-screen progress indicator shown while the graph-stream is still
+ * populating the dataStore. Dismissed automatically once `loaded` flips
+ * true (via `setGraphData` in the loader). Mirrors the EmptyLayoutOverlay
+ * shape so the UX feels cohesive.
+ */
+function LoadingOverlay({ status, nodeCount }: { status: string; nodeCount: number }) {
+  const label = status || (nodeCount > 0
+    ? `Loading graph… ${nodeCount.toLocaleString()} nodes`
+    : 'Loading graph…');
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      style={{
+        position: 'fixed',
+        inset: 0,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: 'rgba(0, 0, 0, 0.55)',
+        backdropFilter: 'blur(2px)',
+        zIndex: 9999,
+        pointerEvents: 'none',
+      }}
+    >
+      <div style={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: '1rem',
+        color: '#cdeafd',
+        fontFamily: 'system-ui, -apple-system, sans-serif',
+      }}>
+        <div style={{
+          width: 40, height: 40,
+          borderRadius: '50%',
+          border: '3px solid rgba(0, 200, 255, 0.25)',
+          borderTopColor: 'rgba(0, 200, 255, 0.95)',
+          animation: 'hexatlas-spin 900ms linear infinite',
+        }} />
+        <div style={{ fontSize: '0.9rem', letterSpacing: 0.4 }}>{label}</div>
+      </div>
+      <style>{'@keyframes hexatlas-spin { to { transform: rotate(360deg); } }'}</style>
     </div>
   );
 }

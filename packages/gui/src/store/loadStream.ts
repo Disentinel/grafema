@@ -430,8 +430,14 @@ export function hydrateLayoutStoreFromLayout(layout: LayoutResult): void {
       // DAI-22 Chunk-10b WARN-#3 "hullCache empty" root cause.
       const placed = buildPlacedForBucketing(layout, layout.regionTree);
       const symbolsByRegion = bucketSymbolsByRegion(placed);
-      const filteredTree = filterOutDepthZero(layout.regionTree);
-      const hulls = computeHullsForRegions(filteredTree, symbolsByRegion, {
+      // Include the depth-0 root hull — it's the "continent" the user
+      // perceives at fit-all zoom. Chunk-7's 580ms perf concern was on
+      // a synthetic flat 1247-region tree; on real hierarchies (grafema:
+      // 767 regions, depth 6) the root hull compute is well under 200ms,
+      // and without it the map looks like scattered islands rather than
+      // one landmass even though 99.8% of symbols form a single
+      // connected hex component.
+      const hulls = computeHullsForRegions(layout.regionTree, symbolsByRegion, {
         hexSize: TILE_SIZE,
       });
       layoutStore.setHullCache(hulls);

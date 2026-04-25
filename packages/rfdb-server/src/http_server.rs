@@ -12,6 +12,7 @@
 //! - `GET /api/node/:id`     — single node details
 
 use std::collections::HashMap;
+use std::path::Path;
 #[cfg(feature = "ui")]
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
@@ -99,16 +100,62 @@ pub struct HttpState {
     /// single full scan of the graph, reused by edge-lifting in every
     /// subsequent request.
     pub file_to_nodes: Arc<RwLock<Option<HashMap<String, Vec<u128>>>>>,
+    /// Display name of the workspace that owns this database (e.g.
+    /// `"grafema"`, `"my-project"`). Computed once at startup from the DB
+    /// path's grandparent (typical layout: `<workspace>/.grafema/graph.rfdb`).
+    /// `None` when the parent has no useful basename (root `/`, anonymous
+    /// temp dir, etc.) so the GUI can fall back to its skip-root behaviour.
+    /// Surfaced verbatim in the `layout_meta` JSONL frame.
+    pub workspace_name: Option<String>,
 }
 
 /// Build a fresh `HttpState` with empty caches. Exposed so the binary can
 /// clone the state into a warmup task before `start` takes ownership.
-pub fn new_state(manager: Arc<DatabaseManager>) -> HttpState {
+///
+/// `workspace_name` is the human-readable label for the project that owns
+/// this database — typically derived via [`derive_workspace_name`] from the
+/// CLI db-path argument. Pass `None` for tests / cases where no meaningful
+/// workspace exists.
+pub fn new_state(manager: Arc<DatabaseManager>, workspace_name: Option<String>) -> HttpState {
     HttpState {
         manager,
         layout_cache: Arc::new(RwLock::new(None)),
         file_to_nodes: Arc::new(RwLock::new(None)),
+        workspace_name,
     }
+}
+
+/// Derive the workspace display name from the database path.
+///
+/// Convention: `grafema analyze` writes the graph to `<workspace>/.grafema/<db>.rfdb`,
+/// so the workspace folder is the **grandparent** of the db path (i.e. the
+/// parent of `.grafema/`). We take the basename of that grandparent.
+///
+/// Edge cases that yield `None` (so the GUI falls back to hiding the root
+/// label rather than showing a misleading one):
+///   * db path has no parent (`graph.rfdb` alone) — workspace unknown.
+///   * grandparent missing or has no basename (e.g. db lives directly under
+///     `/` or an anonymous temp root).
+///   * basename is empty (e.g. trailing slash artefact after canonicalisation).
+///
+/// Filesystem is NOT touched; this is pure path arithmetic so it can be
+/// called from any thread at startup without I/O cost.
+pub fn derive_workspace_name(db_path: &Path) -> Option<String> {
+    // db_path is typically `<workspace>/.grafema/<db>.rfdb`. We want
+    // `<workspace>` = parent of `.grafema/` = grandparent of db_path.
+    fn try_basename(p: &Path) -> Option<String> {
+        let workspace_dir = p.parent()?.parent()?;
+        let basename = workspace_dir.file_name()?;
+        let s = basename.to_string_lossy().to_string();
+        if s.is_empty() { None } else { Some(s) }
+    }
+    if let Some(name) = try_basename(db_path) { return Some(name); }
+    // Pure-arithmetic miss for single-segment relative grandparents
+    // (e.g. `.grafema/x.rfdb` → `.grafema.parent() == ""`). Fall back to
+    // a lexical join with current_dir — single I/O hit at startup, only
+    // when the cheap path failed.
+    let abs = std::env::current_dir().ok()?.join(db_path);
+    try_basename(&abs)
 }
 
 /// Populate `layout_cache` and `file_to_nodes` synchronously. Safe to call
@@ -366,10 +413,12 @@ async fn graph_stream(
     let manager = state.manager.clone();
     let layout_cache = state.layout_cache.clone();
     let file_to_nodes = state.file_to_nodes.clone();
+    let workspace_name = state.workspace_name.clone();
     let result = tokio::task::spawn_blocking(move || {
         build_graph_stream_body(
             manager, layout_cache, file_to_nodes,
             max_nodes, want_packages, want_node_types, want_edge_types, lod_level,
+            workspace_name,
         )
     }).await.unwrap();
 
@@ -831,6 +880,7 @@ fn build_graph_stream_body(
     want_node_types: Option<Vec<String>>,
     want_edge_types: Option<Vec<String>>,
     lod_level: Option<String>,
+    workspace_name: Option<String>,
 ) -> Result<String, String> {
     let start = std::time::Instant::now();
     let db = manager
@@ -897,6 +947,7 @@ fn build_graph_stream_body(
         &edge_type_table,
         &regions_flat,
         &cached_layout,
+        workspace_name.as_deref(),
     );
 
     let layout_is_missing = matches!(cached_layout.source, LayoutSource::Missing);
@@ -1175,6 +1226,7 @@ fn emit_header_frames(
     edge_type_table: &[String],
     regions_flat: &[serde_json::Value],
     cached_layout: &CachedLayout,
+    workspace_name: Option<&str>,
 ) {
     lines.push(
         serde_json::to_string(&serde_json::json!({
@@ -1205,6 +1257,10 @@ fn emit_header_frames(
             })
         })
         .collect();
+    let workspace_name_json = match workspace_name {
+        Some(name) => serde_json::Value::String(name.to_string()),
+        None => serde_json::Value::Null,
+    };
     lines.push(
         serde_json::to_string(&serde_json::json!({
             "type": "layout_meta",
@@ -1212,6 +1268,7 @@ fn emit_header_frames(
             "symbol_count": meta_symbol_count,
             "committed_at": meta_committed_at,
             "overflow_files": overflow_files_json,
+            "workspace_name": workspace_name_json,
         }))
         .unwrap(),
     );
@@ -1849,6 +1906,7 @@ mod tests {
         let result = build_graph_stream_body(
             manager, layout_cache, file_to_nodes,
             100, None, None, None, None,
+            None,
         );
 
         let err = result.err().expect("missing default db must not panic, must Err");
@@ -1856,5 +1914,52 @@ mod tests {
             err.contains("default") || err.contains("database"),
             "error must reference the missing db: {err}"
         );
+    }
+
+    #[test]
+    fn derive_workspace_name_typical_grafema_layout() {
+        // Real CLI invocation: rfdb-server <workspace>/.grafema/graph.rfdb
+        let p = std::path::Path::new("/Users/vadimr/grafema/.grafema/graph.rfdb");
+        assert_eq!(derive_workspace_name(p).as_deref(), Some("grafema"));
+    }
+
+    #[test]
+    fn derive_workspace_name_relative_path() {
+        // Same convention via relative path.
+        let p = std::path::Path::new("my-project/.grafema/graph.rfdb");
+        assert_eq!(derive_workspace_name(p).as_deref(), Some("my-project"));
+    }
+
+    #[test]
+    fn derive_workspace_name_handles_trailing_slash() {
+        // Trailing slashes don't add an extra empty path component on
+        // construction, but be explicit about the case where the file_name
+        // would be missing — this mostly guards against future refactors
+        // that canonicalise paths and end up with weird trailing artefacts.
+        let p = std::path::Path::new("workspace/.grafema/graph.rfdb/");
+        assert_eq!(derive_workspace_name(p).as_deref(), Some("workspace"));
+    }
+
+    #[test]
+    fn derive_workspace_name_returns_none_for_root() {
+        // db at filesystem root has no useful workspace.
+        let p = std::path::Path::new("/graph.rfdb");
+        assert_eq!(derive_workspace_name(p), None);
+    }
+
+    #[test]
+    fn derive_workspace_name_returns_none_for_bare_filename() {
+        // No parent at all — workspace unknown, fall back to None.
+        let p = std::path::Path::new("graph.rfdb");
+        assert_eq!(derive_workspace_name(p), None);
+    }
+
+    #[test]
+    fn derive_workspace_name_returns_none_when_no_grandparent() {
+        // db_path = ".grafema/graph.rfdb" (relative) — parent is ".grafema"
+        // and its parent is "" (no real grandparent). file_name() of an
+        // empty path is None, so we return None.
+        let p = std::path::Path::new(".grafema/graph.rfdb");
+        assert_eq!(derive_workspace_name(p), None);
     }
 }

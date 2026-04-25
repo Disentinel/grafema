@@ -28,6 +28,12 @@ export interface SceneApi {
   getMode(): SceneMode;
   /** Camera-kind-aware view; feeds LOD math in `lodFromView`. */
   getView(): CameraView;
+  /** Project a world-space point onto viewport NDC through the active
+   *  camera. `out.x/y` are in [-1, 1]; `out.z` is the normalized depth
+   *  (> 1 or < -1 means behind/past clip planes — caller should skip).
+   *  Used by the toponym overlay to position HTML labels at hull
+   *  centroids per frame without reaching into SceneManager internals. */
+  projectWorldToNdc(wx: number, wy: number, wz: number): { x: number; y: number; z: number };
 
   // --- Camera -------------------------------------------------------------
   /** Animate camera to world (x, z); ms optional (default chosen by impl). */

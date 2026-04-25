@@ -59,6 +59,21 @@ export function Sidebar() {
     [sceneApi],
   );
 
+  const setAllFlows = useCallback(
+    (next: Set<string>) => {
+      const prev = useViewStore.getState().enabledFlows;
+      useViewStore.getState().setEnabledFlows(next);
+      // Sync each preset whose visibility flipped — sceneApi is the only
+      // path into FlowLayer's per-preset visibility flag.
+      for (const name of new Set([...prev, ...next])) {
+        const wasOn = prev.has(name);
+        const nowOn = next.has(name);
+        if (wasOn !== nowOn) sceneApi?.setFlowVisible(name, nowOn);
+      }
+    },
+    [sceneApi],
+  );
+
   return (
     <div className="sidebar">
       <div>
@@ -88,7 +103,7 @@ export function Sidebar() {
           </div>
 
           <LensPanel />
-          <FlowPanel enabledFlows={enabledFlows} onToggle={toggleFlow} />
+          <FlowPanel enabledFlows={enabledFlows} onToggle={toggleFlow} onSetAll={setAllFlows} />
           <RoutePanel />
           <PinPanel />
           <DiffPanel />

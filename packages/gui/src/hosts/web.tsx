@@ -35,7 +35,16 @@ export function buildSource(): LayoutSource {
   // glue it onto our pre-built db= query so the order stays
   // `db=…&rust=1` which is the canonical form the server sees.
   const extra = search.startsWith('?') ? search.slice(1) : search;
-  const query = extra ? `db=${encodeURIComponent(db)}&${extra}` : `db=${encodeURIComponent(db)}`;
+  // Stream enough nodes to cover post-DAI-22 full placed-symbol sets
+  // (grafema self-analysis: ~27k placed, ~301k excluded = ~328k total).
+  // 500k gives headroom for larger bases. Server default (5000) only
+  // caught ~340 placed symbols via top-by-degree after EXCLUDED filter,
+  // which rendered the atlas as scattered outline-fragments.
+  const hasMax = /(^|&)maxNodes=/.test(extra);
+  const maxParam = hasMax ? '' : '&maxNodes=500000';
+  const query = extra
+    ? `db=${encodeURIComponent(db)}&${extra}${maxParam}`
+    : `db=${encodeURIComponent(db)}${maxParam}`;
   return { kind: 'stream', url: `/api/graph-stream?${query}` };
 }
 

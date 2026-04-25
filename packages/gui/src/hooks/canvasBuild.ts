@@ -36,13 +36,14 @@ import { useDataStore } from '../store/dataStore';
 import { useViewStore } from '../store/viewStore';
 import { useRouteStore } from '../store/routeStore';
 import { useDiffStore, type NodeChange } from '../store/diffStore';
-import { useLayoutStore } from '../store/layoutStore';
+import { useLayoutStore, type RegionInfo } from '../store/layoutStore';
+import { computeFolderHues } from '../hulls/folderHues';
 import { deriveLodVisibility, normalizeZoom } from '../lod/render';
 import { filterVisibleRoutes } from '../lod/routeGate';
 import { LENSES } from '../config/lenses';
 import { FLOWS } from '../config/flows';
 import { reduceSelection, type FocusIntent } from '../controller/focus';
-import { routeTooltip, type TooltipContent } from '../controller/tooltip';
+import { routeTooltip, type HoverTarget, type TooltipContent } from '../controller/tooltip';
 import type { SceneApi } from '../controller/SceneApi';
 
 export const TILE_SIZE = 3.0;
@@ -258,6 +259,11 @@ export function buildHullLayer(
   // avoid rebuilding at 60Hz during a continuous pan.
   let lastBucket = -1;
   let lastCacheRef: unknown = null;
+  // Tree-aware hue palette. Recomputed on regionTree identity change
+  // (a fresh stream load); read on every applyFrame so visible-bucket
+  // changes inherit the hue without re-walking the tree.
+  let huesByRegion: Map<string, number> = new Map();
+  let lastTreeRef: unknown = null;
 
   let frameCounter = 0;
   let frameWindowStart = performance.now();
@@ -274,6 +280,10 @@ export function buildHullLayer(
     const { regionTree, hullCache } = useLayoutStore.getState();
     const zoom01 = normalizeZoom(sm.getView());
     const bucket = Math.round(zoom01 * 1000);
+    if (regionTree !== lastTreeRef) {
+      huesByRegion = computeFolderHues(regionTree);
+      lastTreeRef = regionTree;
+    }
     if (bucket === lastBucket && hullCache === lastCacheRef) return;
     console.warn(`[perf] canvasBuild bucket ${lastBucket}→${bucket} cache ${hullCache === lastCacheRef ? 'same' : 'changed'}`);
     // Cache identity change (new stream load): drop the mesh pool and
@@ -289,7 +299,7 @@ export function buildHullLayer(
         for (const [regionId, geometry] of hullCache) {
           const region = regionTree.byId.get(regionId);
           if (!region) continue;
-          allEntries.push({ regionId, depth: region.depth, polygons: geometry.polygons });
+          allEntries.push({ regionId, depth: region.depth, polygons: geometry.polygons, hue: huesByRegion.get(regionId) });
         }
         hullLayer.primeRegions(allEntries);
       }
@@ -310,6 +320,7 @@ export function buildHullLayer(
       regionId: v.regionId,
       depth: v.region.depth,
       polygons: v.geometry.polygons,
+      hue: huesByRegion.get(v.regionId),
     }));
     hullLayer.setRegionHulls(entries);
   };
@@ -483,6 +494,10 @@ export interface InteractionDeps {
   hexLayer: HexLayer;
   flowLayer: FlowLayer;
   routeLayer: RouteLayer;
+  /** Optional — interaction handlers use it for hull tooltip hit-tests
+   *  (point-in-poly against cached region polygons). When absent, hull
+   *  hover is silently skipped (legacy callers / SSR pre-mount). */
+  hullLayer?: HullLayer;
   nodes: GraphNode[];
   edges: GraphEdge[];
   edgeLabelsRef: { current: EdgeLabelData[] };
@@ -511,11 +526,39 @@ export interface InteractionDeps {
  */
 export function setupInteraction(deps: InteractionDeps): () => void {
   const {
-    sm, container, hexLayer: layer, flowLayer, routeLayer,
+    sm, container, hexLayer: layer, flowLayer, routeLayer, hullLayer,
     nodes, edges, edgeLabelsRef, setTooltip, selectedConnectedRef,
   } = deps;
 
   let hoveredIdx = -1;
+  // True when the current edge highlight on FlowLayer was set by hover
+  // (not click selection / route activation). Used to avoid stomping
+  // those owners when hover leaves a node.
+  let hoverHighlightActive = false;
+
+  // Reused buffers for hull hover ray-plane intersection. Allocated
+  // once outside the hot path — onMouseMove fires on every pointer
+  // event and we don't want GC pressure from per-event Vector3 churn.
+  const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  const groundHit = new THREE.Vector3();
+
+  // Cached "leaf-files in subtree" count per regionId. Populated lazily
+  // on first hull-hover, invalidated when the regionTree identity flips
+  // (fresh stream load). The hover handler reads this for the hull
+  // tooltip's `files` row — a true count rather than direct-childIds.
+  let regionLeafCountTreeRef: unknown = null;
+  const regionLeafCount = new Map<string, number>();
+  function leafCount(regionId: string, byId: Map<string, RegionInfo>): number {
+    const cached = regionLeafCount.get(regionId);
+    if (cached !== undefined) return cached;
+    const info = byId.get(regionId);
+    if (!info) { regionLeafCount.set(regionId, 0); return 0; }
+    if (info.kind === 'file') { regionLeafCount.set(regionId, 1); return 1; }
+    let sum = 0;
+    for (const cid of info.childIds) sum += leafCount(cid, byId);
+    regionLeafCount.set(regionId, sum);
+    return sum;
+  }
 
   const edgeTypeToFlow = new Map<string, string>();
   for (const [name, preset] of Object.entries(FLOWS)) {
@@ -579,34 +622,87 @@ export function setupInteraction(deps: InteractionDeps): () => void {
     updateMouse(e);
     raycaster.setFromCamera(mouse, sm.camera);
     const newIdx = layer.raycast(raycaster);
-    if (newIdx === hoveredIdx) return;
-
     const selIdx = getSelectedIdx();
-    if (hoveredIdx >= 0 && hoveredIdx !== selIdx && !selectedConnectedRef.current.has(hoveredIdx)) {
-      const prevNode = nodes[hoveredIdx];
-      const pins = useViewStore.getState().pins;
-      if (prevNode && pins.has(prevNode.id)) {
-        layer.setOutlineColor(hoveredIdx, 0xff0044);
-        layer.setProperty(hoveredIdx, 'outlineWidth', 0.3);
-      } else {
-        layer.setProperty(hoveredIdx, 'outlineWidth', 0);
+
+    // ── Node-hover state machine (outline gets toggled even while the
+    //    other tooltip targets churn). Compares to previous hoveredIdx
+    //    so the work below only runs on actual node-membership changes. ──
+    if (newIdx !== hoveredIdx) {
+      if (hoveredIdx >= 0 && hoveredIdx !== selIdx && !selectedConnectedRef.current.has(hoveredIdx)) {
+        const prevNode = nodes[hoveredIdx];
+        const pins = useViewStore.getState().pins;
+        if (prevNode && pins.has(prevNode.id)) {
+          layer.setOutlineColor(hoveredIdx, 0xff0044);
+          layer.setProperty(hoveredIdx, 'outlineWidth', 0.3);
+        } else {
+          layer.setProperty(hoveredIdx, 'outlineWidth', 0);
+        }
       }
-    }
-
-    hoveredIdx = newIdx;
-
-    if (hoveredIdx >= 0) {
-      if (hoveredIdx !== selIdx && !selectedConnectedRef.current.has(hoveredIdx)) {
+      hoveredIdx = newIdx;
+      if (hoveredIdx >= 0 && hoveredIdx !== selIdx && !selectedConnectedRef.current.has(hoveredIdx)) {
         layer.setOutlineColor(hoveredIdx, 0x00e5ff);
         layer.setProperty(hoveredIdx, 'outlineWidth', 0.1);
       }
-      const rect = container.getBoundingClientRect();
-      const content = routeTooltip({ kind: 'node', nodeIdx: hoveredIdx }, nodes);
-      if (content) {
-        setTooltip({ x: e.clientX - rect.left, y: e.clientY - rect.top, content, edges: [] });
-      } else {
-        setTooltip(null);
+    }
+
+    // ── Hover incident-link highlight (sandbox D3). Only when nothing
+    //    is click-selected — click selection / route activation own the
+    //    flow highlight when present. ──
+    if (selIdx < 0) {
+      if (hoveredIdx >= 0) {
+        flowLayer.highlightEdges(new Set([hoveredIdx]));
+        hoverHighlightActive = true;
+      } else if (hoverHighlightActive) {
+        flowLayer.highlightEdges(null);
+        hoverHighlightActive = false;
       }
+    }
+
+    // ── Tooltip dispatch. Priority chain: node > edge > hull.
+    //    Node first because individual hexes are the primary affordance
+    //    and a node hit usually implies an edge passing through (we
+    //    don't want hovering a node to silently flip to an "edge"
+    //    tooltip). When no node is hit — try the per-edge tube raycast
+    //    (only meaningful in tube style); finally fall back to point-
+    //    in-poly against cached hull regions, deepest folder wins
+    //    (sandbox parity). ──
+    let target: HoverTarget = { kind: 'empty' };
+    if (hoveredIdx >= 0) {
+      target = { kind: 'node', nodeIdx: hoveredIdx };
+    } else {
+      const edgeHit = flowLayer.raycastEdge(raycaster);
+      if (edgeHit) {
+        target = { kind: 'edge', ...edgeHit };
+      } else if (hullLayer && raycaster.ray.intersectPlane(groundPlane, groundHit)) {
+        const hullHit = hullLayer.hitTestWorld(groundHit.x, groundHit.z);
+        if (hullHit) {
+          const tree = useLayoutStore.getState().regionTree;
+          if (tree !== regionLeafCountTreeRef) {
+            regionLeafCount.clear();
+            regionLeafCountTreeRef = tree;
+          }
+          const region = tree.byId.get(hullHit.regionId);
+          if (region) {
+            target = {
+              kind: 'hull',
+              regionId: hullHit.regionId,
+              path: region.path,
+              name: region.name,
+              depth: hullHit.depth,
+              // True leaf-file count via subtree walk (cached) — sandbox
+              // renders this as "tiles". childIds.length is direct-child
+              // regions only (sub-folders) and would mislead.
+              tileCount: leafCount(hullHit.regionId, tree.byId),
+            };
+          }
+        }
+      }
+    }
+
+    const content = routeTooltip(target, nodes);
+    if (content) {
+      const rect = container.getBoundingClientRect();
+      setTooltip({ x: e.clientX - rect.left, y: e.clientY - rect.top, content, edges: [] });
     } else {
       setTooltip(null);
     }
@@ -680,6 +776,9 @@ export function setupInteraction(deps: InteractionDeps): () => void {
     const activeSet = new Set(connected);
     activeSet.add(clickIdx);
     flowLayer.highlightEdges(activeSet);
+    // Click took ownership of the edge highlight — release the hover
+    // claim so a subsequent hover-leave won't clear what click set.
+    hoverHighlightActive = false;
 
     const edgeMidpoints = flowLayer.getHighlightedEdgeLabels(activeSet);
     edgeLabelsRef.current.length = 0;

@@ -3511,7 +3511,12 @@ async fn main() {
     // accepts requests but first one freezes".
     if let Some(port) = http_port {
         let manager_http = Arc::clone(&manager);
-        let http_state = rfdb::http_server::new_state(manager_http);
+        let workspace_name = rfdb::http_server::derive_workspace_name(&db_path);
+        eprintln!(
+            "[rfdb-server] workspace_name = {:?} (from db path {:?})",
+            workspace_name, db_path
+        );
+        let http_state = rfdb::http_server::new_state(manager_http, workspace_name);
         let warmup_state = http_state.clone();
         let t_warm = std::time::Instant::now();
         eprintln!("[rfdb-server] warmup: building file→nodes cache and loading persisted layout …");

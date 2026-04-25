@@ -89,38 +89,37 @@ describe('pixelThreshold', () => {
 });
 
 describe('visibleAtZoom (depth × zoom matrix)', () => {
-  // Isolate depth logic by neutralising the size gate
-  it('D_max=3: depth 0 visible from zoom=0, depth 1 from mid, depth 2 top', () => {
+  // Map convention: shallow (root/packages) visible at far zoom;
+  // deep (files) visible only at close zoom.
+  // Formula: minZoom = depthNorm * 0.9 - 0.4 (wider band than strict
+  // zoom01 mapping so packages/directories remain visible at mid-zoom).
+  it('D_max=3: depth 0 always visible, depth 2 from mid zoom', () => {
     const dMax = 3;
-    // depth 0: depthNorm = 0, minZoom = 0.9  → needs zoom >= 0.9
+    // depth 0: minZoom = -0.4 → always visible
+    assert.equal(visibleAtZoom({ depth: 0, leafCount: 100 }, 0.0, dMax, ALWAYS_PASS_SIZE), true);
     assert.equal(visibleAtZoom({ depth: 0, leafCount: 100 }, 1.0, dMax, ALWAYS_PASS_SIZE), true);
-    assert.equal(visibleAtZoom({ depth: 0, leafCount: 100 }, 0.9, dMax, ALWAYS_PASS_SIZE), true);
-    assert.equal(visibleAtZoom({ depth: 0, leafCount: 100 }, 0.5, dMax, ALWAYS_PASS_SIZE), false);
 
-    // depth 1 @ dMax=3: depthNorm = 1/3, minZoom = 1 - 0.333 - 0.1 ≈ 0.566
+    // depth 1 @ dMax=3: depthNorm=0.333, minZoom ≈ -0.1 → always visible
+    assert.equal(visibleAtZoom({ depth: 1, leafCount: 100 }, 0.0, dMax, ALWAYS_PASS_SIZE), true);
     assert.equal(visibleAtZoom({ depth: 1, leafCount: 100 }, 1.0, dMax, ALWAYS_PASS_SIZE), true);
-    assert.equal(visibleAtZoom({ depth: 1, leafCount: 100 }, 0.6, dMax, ALWAYS_PASS_SIZE), true);
-    assert.equal(visibleAtZoom({ depth: 1, leafCount: 100 }, 0.3, dMax, ALWAYS_PASS_SIZE), false);
 
-    // depth 2: depthNorm = 2/3, minZoom = 1 - 0.666 - 0.1 ≈ 0.233
-    assert.equal(visibleAtZoom({ depth: 2, leafCount: 100 }, 0.3, dMax, ALWAYS_PASS_SIZE), true);
-    assert.equal(visibleAtZoom({ depth: 2, leafCount: 100 }, 0.0, dMax, ALWAYS_PASS_SIZE), false);
+    // depth 2: depthNorm=0.667, minZoom ≈ 0.2
+    assert.equal(visibleAtZoom({ depth: 2, leafCount: 100 }, 0.25, dMax, ALWAYS_PASS_SIZE), true);
+    assert.equal(visibleAtZoom({ depth: 2, leafCount: 100 }, 0.1, dMax, ALWAYS_PASS_SIZE), false);
   });
 
-  it('D_max=9: deeper regions appear at lower zoom than D_max=3 case', () => {
-    // depth 5 @ dMax=9 (effective 9): depthNorm = 5/9 ≈ 0.555, minZoom ≈ 0.344
-    assert.equal(visibleAtZoom({ depth: 5, leafCount: 100 }, 0.4, 9, ALWAYS_PASS_SIZE), true);
-    assert.equal(visibleAtZoom({ depth: 5, leafCount: 100 }, 0.3, 9, ALWAYS_PASS_SIZE), false);
+  it('D_max=9: mid-depth regions visible from mid-far zoom', () => {
+    // depth 5 @ dMax=9: depthNorm ≈ 0.555, minZoom ≈ 0.1
+    assert.equal(visibleAtZoom({ depth: 5, leafCount: 100 }, 0.2, 9, ALWAYS_PASS_SIZE), true);
+    assert.equal(visibleAtZoom({ depth: 5, leafCount: 100 }, 0.0, 9, ALWAYS_PASS_SIZE), false);
   });
 
-  it('D_max=15: clamped to 12 — depth 5 visible from same zoom as D_max=12', () => {
-    // With effective dMax = 12, depth 5 depthNorm ≈ 0.416, minZoom ≈ 0.483
-    assert.equal(visibleAtZoom({ depth: 5, leafCount: 100 }, 0.5, 15, ALWAYS_PASS_SIZE), true);
-    assert.equal(visibleAtZoom({ depth: 5, leafCount: 100 }, 0.4, 15, ALWAYS_PASS_SIZE), false);
-    // Same result for D_max=12 and D_max=20 — clamp behavior.
+  it('D_max=15: clamp to 12 — same answer as D_max=12', () => {
+    // effective dMax = 12, depth 5 depthNorm ≈ 0.416, minZoom ≈ -0.025
+    assert.equal(visibleAtZoom({ depth: 5, leafCount: 100 }, 0.0, 15, ALWAYS_PASS_SIZE), true);
     assert.equal(
-      visibleAtZoom({ depth: 5, leafCount: 100 }, 0.5, 20, ALWAYS_PASS_SIZE),
-      visibleAtZoom({ depth: 5, leafCount: 100 }, 0.5, 12, ALWAYS_PASS_SIZE),
+      visibleAtZoom({ depth: 5, leafCount: 100 }, 0.0, 20, ALWAYS_PASS_SIZE),
+      visibleAtZoom({ depth: 5, leafCount: 100 }, 0.0, 12, ALWAYS_PASS_SIZE),
     );
   });
 
@@ -133,10 +132,12 @@ describe('visibleAtZoom (depth × zoom matrix)', () => {
     );
   });
 
-  it('shallow tree fallback: depth 0 still gated at top zoom only', () => {
-    // D_max=2 → effective 3. Depth 0 depthNorm = 0, minZoom = 0.9.
+  it('shallow tree fallback: depth 0 always visible', () => {
+    // D_max=2 → effective 3. Depth 0 depthNorm = 0, minZoom = -0.1.
+    // Root is the "continent" — visible at every zoom.
     assert.equal(visibleAtZoom({ depth: 0, leafCount: 50 }, 1.0, 2, ALWAYS_PASS_SIZE), true);
-    assert.equal(visibleAtZoom({ depth: 0, leafCount: 50 }, 0.5, 2, ALWAYS_PASS_SIZE), false);
+    assert.equal(visibleAtZoom({ depth: 0, leafCount: 50 }, 0.5, 2, ALWAYS_PASS_SIZE), true);
+    assert.equal(visibleAtZoom({ depth: 0, leafCount: 50 }, 0.0, 2, ALWAYS_PASS_SIZE), true);
   });
 });
 

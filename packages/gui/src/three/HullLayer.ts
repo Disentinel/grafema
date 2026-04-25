@@ -57,6 +57,12 @@ export interface HullRegionPrecomputed {
   /** Already-closed polygon loops in pixel/world coordinates (same
    *  coordinate frame HullLayer emits for the internally-traced path). */
   polygons: HullLoop[];
+  /** Optional precomputed hue (degrees, 0-360). When present, the
+   *  layer renders this hue with a depth-driven lightness ramp instead
+   *  of falling back to the internal `_depthColor` palette. Lets
+   *  callers inject a tree-aware palette (siblings get distinct hues)
+   *  without HullLayer needing access to the tree. */
+  hue?: number;
 }
 
 /** Rendering mode for the layer. `hidden` hides the root group
@@ -91,7 +97,7 @@ export class HullLayer {
    *  the scene graph (one per region per loop), we keep two single
    *  merged meshes (one for outlines, one for fills) and rebuild their
    *  buffers per bucket change. (DAI-22 architectural fix.) */
-  private _polygonCache: Map<string, { polygons: readonly HullLoop[]; depth: number }> = new Map();
+  private _polygonCache: Map<string, { polygons: readonly HullLoop[]; depth: number; hue?: number }> = new Map();
   /** Single merged outline mesh. `null` until the first non-empty
    *  setRegionHulls call. Reused across rebuilds — only the underlying
    *  position/color attributes change, the Three.Mesh stays the same so
@@ -190,6 +196,39 @@ export class HullLayer {
   }
 
   /**
+   * Point-in-polygon hit test in world (XZ) coordinates against every
+   * cached region. Returns the deepest matching region (sandbox
+   * priority — most specific folder wins) or null. The polygon cache is
+   * populated by `primeRegions`; if it's empty (no stream loaded yet),
+   * this returns null.
+   *
+   * O(regions × loop verts). Real-world ≤ 5 ms for 700 cached regions
+   * with mostly small loops. Called from the hover handler on
+   * mousemove, so it must be cheap; no allocation on the hot path.
+   */
+  hitTestWorld(worldX: number, worldZ: number): { regionId: string; depth: number } | null {
+    let best: { regionId: string; depth: number } | null = null;
+    for (const [regionId, entry] of this._polygonCache) {
+      if (best && entry.depth <= best.depth) continue; // already have a deeper hit
+      let inside = false;
+      for (const loop of entry.polygons) {
+        // Standard ray-cast (Jordan curve) — `loop` is a closed polygon
+        // (first === last); iterate edges as consecutive pairs. The
+        // hull cache writes loop vertices as {x, y} where y = world Z.
+        for (let i = 0, j = loop.length - 1; i < loop.length; j = i++) {
+          const xi = loop[i].x, zi = loop[i].y;
+          const xj = loop[j].x, zj = loop[j].y;
+          const intersects = ((zi > worldZ) !== (zj > worldZ)) &&
+            (worldX < ((xj - xi) * (worldZ - zi)) / (zj - zi || 1e-9) + xi);
+          if (intersects) inside = !inside;
+        }
+      }
+      if (inside) best = { regionId, depth: entry.depth };
+    }
+    return best;
+  }
+
+  /**
    * DAI-22 Chunk-8b — synchronous rebuild from precomputed polygons.
    *
    * Replaces the async `setRegions` → `computeHullPolygonsBatched`
@@ -225,7 +264,7 @@ export class HullLayer {
     const tStart = performance.now();
     this._polygonCache.clear();
     for (const r of all) {
-      this._polygonCache.set(r.regionId, { polygons: r.polygons, depth: r.depth });
+      this._polygonCache.set(r.regionId, { polygons: r.polygons, depth: r.depth, hue: r.hue });
     }
     console.warn(
       `[perf] HullLayer.primeRegions ${(performance.now() - tStart).toFixed(1)}ms ` +
@@ -247,7 +286,7 @@ export class HullLayer {
     const lineColors: number[] = [];
     const yLine = this._elevation;
     for (const r of sorted) {
-      const color = this._depthColor(r.regionId, r.depth, 0.55);
+      const color = this._regionColor(r, 'line');
       for (const loop of r.polygons) {
         if (loop.length < 2) continue;
         for (let i = 0; i < loop.length - 1; i++) {
@@ -271,7 +310,7 @@ export class HullLayer {
     let vertOffset = 0;
     const fillIndices: number[] = [];
     for (const r of sorted) {
-      const color = this._depthColor(r.regionId, r.depth, 0.42);
+      const color = this._regionColor(r, 'fill');
       const yFill = this._elevation - 0.02 - r.depth * 0.002;
       for (const loop of r.polygons) {
         if (loop.length < 4) continue; // closed loop = first==last; need ≥3 distinct
@@ -308,7 +347,11 @@ export class HullLayer {
           linewidth: 2,
           transparent: true,
           opacity: 0.75,
-          depthTest: false,
+          // Honour scene depth so elevated tiles (pinned y≈1.5) draw on
+          // top instead of being hidden behind hull lines (y≈0.35).
+          // depthWrite stays off — transparent meshes shouldn't pollute
+          // the depth buffer for downstream alpha-blended geometry.
+          depthTest: true,
           depthWrite: false,
           worldUnits: false,
         });
@@ -329,7 +372,7 @@ export class HullLayer {
           vertexColors: true,
           transparent: true,
           opacity: 0.75,
-          depthTest: false,
+          depthTest: true,
           depthWrite: false,
         });
         const mesh = new THREE.LineSegments(geo, mat);
@@ -368,8 +411,10 @@ export class HullLayer {
       const mat = new THREE.MeshBasicMaterial({
         vertexColors: true,
         transparent: true,
-        opacity: 0.45,
-        depthTest: false,
+        // Lower fill opacity + honour depth so elevated tiles read
+        // through the hull tint instead of being buried under it.
+        opacity: 0.30,
+        depthTest: true,
         depthWrite: false,
         side: THREE.DoubleSide,
       });
@@ -390,9 +435,26 @@ export class HullLayer {
     this._fillMesh.visible = true;
   }
 
+  /** Pick the colour for one region. Prefers a caller-injected hue
+   *  (tree-aware palette via `computeFolderHues`) and applies a
+   *  depth-driven lightness ramp so nested folders read as a hue-
+   *  preserving dark-light gradient. Falls back to the legacy depth-
+   *  warmed palette when no hue is provided. */
+  private _regionColor(r: HullRegionPrecomputed, layer: 'line' | 'fill'): THREE.Color {
+    if (r.hue !== undefined) {
+      const baseLight = layer === 'line' ? 0.62 : 0.45;
+      const floor = layer === 'line' ? 0.42 : 0.28;
+      const lightness = Math.max(floor, baseLight - r.depth * 0.05);
+      return new THREE.Color().setHSL(r.hue / 360, 0.65, lightness);
+    }
+    const lightness = layer === 'line' ? 0.55 : 0.42;
+    return this._depthColor(r.regionId, r.depth, lightness);
+  }
+
   /** Depth-warmed palette: hue interpolates from sky-blue (shallow) to
    *  orange-red (deep), with a small per-region perturbation so siblings
-   *  stay visually distinguishable. */
+   *  stay visually distinguishable. Used as fallback when callers don't
+   *  inject a hue (legacy / no regionTree available). */
   private _depthColor(regionId: string, depth: number, lightness: number): THREE.Color {
     const depthNorm = Math.min(1, depth / 10);
     const jitter = ((hueFromString(regionId) % 20) - 10) / 360;

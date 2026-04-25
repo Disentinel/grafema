@@ -106,9 +106,17 @@ export function visibleAtZoom(
   dMax: number,
   policy: LodPolicy = DEFAULT_LOD_POLICY,
 ): boolean {
+  // Map convention: shallow (countries) visible at far zoom, deep
+  // (cities) appear only as camera approaches. Scale factor 0.7 keeps
+  // mid-depth regions visible across a wide zoom band instead of
+  // compressing them all into the top 20% of zoom, which left the
+  // atlas looking empty at Playwright-default fit-all distances.
+  //   depth=0 (root):  minZoom = -0.4 → always visible
+  //   depth=D/2:       minZoom = 0.05 → visible from mid-far zoom
+  //   depth=D (leaf):  minZoom = 0.5  → visible only at close zoom
   const dMaxEff = effectiveDMax(dMax);
   const depthNorm = region.depth / dMaxEff;
-  const minZoom = 1.0 - depthNorm - 0.1;
+  const minZoom = depthNorm * 0.9 - 0.4;
   if (zoom < minZoom) return false;
   return pixelThreshold(zoom, region, policy);
 }

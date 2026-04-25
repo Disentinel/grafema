@@ -23,6 +23,9 @@ export interface ViewState {
 
   setLens: (name: string) => void;
   toggleFlow: (name: string) => void;
+  /** Replace the enabled-flows set wholesale (for "Show all" / "Hide all"
+   *  buttons in FlowPanel). Pass an empty Set to hide every flow. */
+  setEnabledFlows: (next: Set<string>) => void;
   setHoveredTile: (idx: number) => void;
   addPin: (id: string, color: string, label: string) => void;
   removePin: (id: string) => void;
@@ -56,6 +59,7 @@ export const useViewStore = create<ViewState>((set, get) => ({
       else next.add(name);
       return { enabledFlows: next };
     }),
+  setEnabledFlows: (next) => set({ enabledFlows: new Set(next) }),
   setHoveredTile: (idx) => set({ hoveredTile: idx }),
   addPin: (id, color, label) =>
     set((s) => {
