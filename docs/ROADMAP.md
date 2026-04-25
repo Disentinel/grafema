@@ -2,227 +2,150 @@
 
 Graph-Driven Development: from code graph to system guarantees.
 
----
-
-## Current State (v0.2.x)
-
-### Core Infrastructure ✅
-
-- **RFDB v2 Storage Engine** — columnar segments, manifest chain, compaction
-- **Monorepo architecture** — `types`, `core`, `cli`, `mcp`, `gui`, `api`, `lang-spec`
-- **Datalog engine** — declarative queries over the graph
-- **GuaranteeManager** — rule-based invariant checking
-- **Enrichment pipeline** — batch protocol for analysis passes
-- **Semantic IDs v2** — scope-aware, deterministic node identification
-
-### Analysis ✅
-
-- **JS/TS AST Analysis** — functions, classes, modules, variables, parameters
-- **core-v2 Declarative AST Walker** — in development, ~65% AST coverage
-- **Data Flow** — AliasTracker, ValueDomainAnalyzer, path-sensitive CFG
-- **Cross-service Tracing** — frontend <-> backend value flow
-- **Framework Plugins** — Express, Socket.IO, Database, Fetch
-- **Cross-file Resolution** — imports, exports, re-exports, call resolution
-
-### CLI ✅
-
-- `grafema init` — initialize project
-- `grafema analyze` — full project analysis
-- `grafema tldr <file>` — compact DSL file overview
-- `grafema wtf <symbol>` — backward dataflow trace
-- `grafema who <symbol>` — find callers/references
-- `grafema why <symbol>` — knowledge base decisions
-- `grafema doctor` — system health check
-- `grafema overview` — project stats
-
-### MCP Server (24+ tools) ✅
-
-- `query_graph`, `find_calls`, `find_nodes`, `find_guards`
-- `trace_alias`, `trace_dataflow`, `check_invariant`, `check_guarantees`
-- `get_file_overview`, `get_function_details`, `get_context`, `get_neighbors`
-- `get_stats`, `get_coverage`, `get_node`, `get_schema`
-- `analyze_project`, `discover_services`, `get_analysis_status`
-- `create_guarantee`, `delete_guarantee`, `list_guarantees`
-- `get_documentation`, `report_issue`, `read_project_structure`
-
-### VS Code Extension ✅
-
-- **Interactive graph navigation** — explore nodes and edges visually
-
-### GraphQL API (@grafema/api) ✅
-
-- **Programmatic graph access** — typed queries over the analysis graph
-
-### lang-spec Package ✅
-
-- **Automated language specification** — declarative AST node definitions
+*Last updated: 2026-04-25*
 
 ---
 
-## v0.1.x — Polish & Stability
+## Current State ✅
 
-Bug fixes and improvements for current functionality.
+### Core Infrastructure
+- **RFDB v2** — columnar storage engine, manifest chain, L1/L2 compaction, Datalog evaluator with edge-type index
+- **Rust orchestrator** (`grafema-orchestrator`) — replaces old JS pipeline, handles analysis + layout + BEAM
+- **Datalog engine** — declarative queries, numeric predicates, edge-type index for O(1) pattern matching
+- **GuaranteeManager** — `.grafema/guarantees.yaml`, `grafema check` CI gate
+- **Enrichment pipeline** — batch protocol, library callback enricher, manifest generator
+- **SemanticID → URI** — `grafema://owner/repo/path#symbol` format
 
-### AST Coverage Gaps
+### Language Support
+- **JS/TS** — full AST analysis, cross-file resolution, data flow, class/module graph
+- **Python** — parser + resolver (ClassInheritance, imports)
+- **Rust** — intra-file call resolution, struct/impl/trait graph
+- **Haskell** — module graph, type signatures
+- **BEAM/Elixir** — message passing (SENDS_MESSAGE, PUBLISHES), state fields, handler self-loops
+- **Java** — analysis (in progress)
 
-- [ ] Track `import.meta` (REG-300)
-- [ ] Track `new.target` (REG-301)
-- [ ] Track transitive closure captures (REG-302)
-- [ ] Track type parameter constraints (REG-303)
-- [ ] Track conditional types (REG-304)
-- [ ] Track mapped types (REG-305)
-- [ ] Track top-level await (REG-297)
-- [ ] Track await in loops — performance flag (REG-298)
-- [ ] Track `YieldExpression` (REG-299)
-- [ ] Track side-effect-only imports (REG-296)
-- [ ] Track `ImportExpression` with options (REG-295)
-- [x] Track getter/setter distinction (REG-293) — covered by core-v2
-- [x] Track `PrivateName` (#fields) (REG-292) — covered by core-v2
-- [x] Track `StaticBlock` (REG-291) — covered by core-v2
-- [~] Track `SequenceExpression` side effects (REG-289) — partially covered
+### Data Analysis
+- **Data Shape Inference** — object shapes through assignment chains, shape-verifier (5 phases)
+- **Cross-service tracing** — frontend ↔ backend value flow, CALLS_REMOTE edges
+- **Library Callback Enricher** — auto-detects MCP tools, CLI commands from YAML effects-db
+- **Effects-DB** — curated side-effect annotations for npm packages + Node.js builtins
 
----
+### Visualization
+- **HexAtlas** — unified React + Three.js hex map, 2D ⇄ 3D runtime switch
+- **Rust hex layout** — `grafema-orchestrator layout`, 10× faster than JS (503µs/1k nodes)
+- **VS Code extension** — Map panel iframes HexAtlas, dynamic port, auto-start RFDB
 
-## v0.2 — Data Flow & Early Access
-
-Features needed for production use on real codebases.
-
-### Data Flow
-
-- [x] Async error patterns — `Promise.reject`, reject callback (REG-311) — done in 0.2.5
-- [ ] Cardinality tracking — complexity guarantees via Datalog (REG-314)
-- [ ] Server-side scope filtering for query command (REG-310)
-- [x] Cross-service value tracing — frontend <-> backend (REG-252) — done in 0.2.0
-- [ ] Config-based cross-service routing rules (REG-256)
-
-### Tech Debt
-
-- [x] Extract shared expression handling in JSASTAnalyzer (REG-306) — done
-
-### Package-Specific Analyzers
-
-- [x] Architecture: plugin structure for npm/maven packages (REG-259) — done in 0.2.6
-- [ ] `npm/sqlite3` analyzer (REG-260)
-- [ ] DatabaseAnalyzer: sqlite3 API support (REG-258)
+### CLI & MCP
+- `grafema analyze`, `init`, `tldr`, `wtf`, `who`, `why`, `check`, `overview`, `doctor`
+- 24+ MCP tools: `find_nodes`, `find_calls`, `trace_dataflow`, `trace_alias`, `describe`, `get_shape`, `create_guarantee`, `query_graph`, …
 
 ---
 
-## v0.3 — Stability & Onboarding
+## v0.3 — Stability & Onboarding *(current)*
 
-Making Grafema easy to adopt for new projects.
+Making Grafema reliable enough for real project use.
 
-### AST Completeness
+### In Progress
+- [ ] Method call resolution — JS methods (0/478 callers, REG-688)
+- [ ] 78% parameters disconnected from callers (REG-690)
+- [ ] JS/TS MODULE names with absolute paths (REG-625)
+- [ ] Analysis pipeline test strategy — 5-layer coverage (REG-564)
+- [ ] Strict mode for analysis pipeline (REG-563)
 
-- [x] Track class static blocks and private fields (REG-271) — done via core-v2
-- [x] Track generator function yields — YIELDS edge (REG-270) — done in 0.2.5
-
-### Query Languages
-
-- [ ] Cypher query language support in RFDB (REG-255)
-
-### Research & Design
-
-- [ ] Design: Return value tracking — FUNCTION → RETURNS → value (REG-266)
-- [ ] Design: JSX support in Grafema graph (REG-264)
-
-### UX
-
-- [ ] Project onboarding wizard
-- [ ] Better error messages and suggestions
-- [ ] Better duplicate node differentiation in `ls` (REG-279)
-- [ ] Improve `ls` error message when --type missing (REG-278)
-- [ ] Performance optimization for large codebases
+### Backlog
+- [ ] METRIC guarantees: Datalog-based performance thresholds (REG-679)
+- [ ] METRIC enrichment plugin (REG-678)
+- [ ] ISSUE node count stable across runs (RFD-65)
+- [ ] JSX support design (REG-264)
+- [ ] Return value tracking design (REG-266)
+- [ ] Audit AST gaps REG-295–305 vs v3 orchestrator (REG-1109)
+- [ ] Standalone distribution: `install.sh` + bun compile (REG-1088)
+- [ ] `ls` UX improvements (REG-278, REG-279)
 
 ---
 
-## v0.5+ — Strategic
+## v0.4 — Visualization + Registry *(next)*
 
-Long-term vision features.
+Ship the code map and open the feedback loop with users.
 
-### Verification & Benchmarks
+### Demo
+- [ ] DEMO 1: Data trace end-to-end screencast (REG-654) ← **blocks landing page**
+- [ ] Demo gallery: compelling use cases (REG-92)
 
-- [ ] SWE-bench Lite: ABBA runs (10× MCP vs 10× baseline) with token logging (REG-245)
-- [ ] Strategy: Token savings as hook, understanding as product (REG-246)
+### Visualization
+- [ ] HexAtlas integration with live RFDB data (current worktree)
+- [ ] `@grafema/hexgraph` — publish layout+renderer as standalone npm package (REG-1093)
+- [ ] `@grafema/hex-atlas` — full package (REG-1101)
 
-### Research
-
-- [ ] Design: Expression tree granularity for data flow (REG-265)
-- [ ] Research: Auto-parse nginx.conf for cross-service routing (REG-257)
-
-### GUI ⭐
-
-- [ ] Graph visualization dashboard
-- [ ] Interactive node explorer
-- [ ] Query builder UI
-
-### Contract Discovery ⭐
-
-- [ ] Queue Contract Discovery — RabbitMQ, Kafka, SQS
-- [ ] Schema inference from destructuring
-- [ ] API Contract Discovery — request/response schemas
-- [ ] AWS SDK Analyzer — cloud API calls
-
-### Infrastructure Layer ⭐
-
-- [ ] Terraform Parser — IAM roles, policies, resources
-- [ ] IAM Policy Analyzer — permission extraction
-- [ ] Permission Path Tracer — code → role → policy validation
-- [ ] K8s manifest analysis
-
-### Guarantee System ⭐
-
-- [ ] Guarantee nodes as first-class graph objects
-- [ ] GOVERNS edge type
-- [ ] Guarantee lifecycle: discovered → reviewed → active
-- [ ] Change Request workflow
-- [ ] Impact analysis
-
-### Priority & Governance ⭐
-
-- [ ] Impact Score Calculator — auto-priority from graph reachability
-- [ ] Monitoring Config Parser — priority hints from alerts
-- [ ] Priority Aggregator — combine multiple sources
-
-### Advanced MCP Tools ⭐
-
-- [ ] `find_similar_patterns` — pattern matching for guarantees
-- [ ] `verify_no_regressions` — pre-commit checks
-- [ ] `get_implementation_context` — proactive AI guidance
+### Registry & Go-to-Market
+- [ ] **Landing page v2** — polish before launch (REG-510)
+- [ ] **Registry Server** — HTTP server for user requests to populate effects-db (REG-1106)
+- [ ] `grafema registry submit --package=@company/internal-lib` CLI command
+- [ ] Submit Grafema MCP to all MCP directories (REG-465)
 
 ---
 
-## Version Philosophy
+## v0.5 — Internal Deployment & Team Features
 
-| Version | Focus | Status |
-|---------|-------|--------|
-| **v0.1.x** | Works correctly | Done |
-| **v0.2** | Works on real projects + core-v2 | Done |
-| **v0.3** | Easy to adopt (unified `grafema` package) | Current |
-| **v0.5+** | Full GDD vision | Future |
+After Grafema is validated on a real project internally.
 
-⭐ = Planned for Grafema Pro (details TBA)
+### Internal Deployment
+- [ ] AI Agent Skills — high-level MCP workflows for typical tasks (REG-93, written post-deployment)
+- [ ] **Contract Discovery** — queue contracts (Kafka, RabbitMQ) + API schemas (REG-1108)
+- [ ] Feature detection for documentation improvement (current worktree)
+
+### Visualization
+- [ ] Bus Factor Map — knowledge concentration heatmap (REG-1095)
+- [ ] 3D octahedral grid visualization (REG-593)
+
+### Team Server *(after internal validation)*
+- [ ] Multi-user RFDB server with access control
+- [ ] Shared graph across team instances
+- [ ] Request workflow: developer → registry → effects-db update
+
+### Infrastructure
+- [ ] Context Graph: Git layer — blame, churn, authorship (REG-471)
+- [ ] Context Graph: GitHub PR & Code Review layer (REG-472)
+- [ ] RFDB scale benchmarks up to 1M nodes (RFD-32)
 
 ---
 
-## Success Metrics
+## v0.6 — Code Quality & Insights
 
-### Quality
+Graph-native code quality — deeper than SonarQube because graph has function-level granularity.
 
-- Analysis precision: >95% (nodes correctly represent code)
-- Query accuracy: >90% (Datalog returns expected results)
-- False positive rate: <5% for guarantees
+### Code Quality Metrics (REG-1107)
+- [ ] Cyclomatic complexity via CFG graph
+- [ ] Cardinality tracking (from REG-314)
+- [ ] Coupling: afferent/efferent via DEPENDS_ON
+- [ ] Hotspots: change frequency × complexity (needs git layer)
+- [ ] `grafema health` CLI command + quality gate
 
-### Performance
+### Context Graph
+- [ ] Task tracker integration: Linear → code (REG-473)
+- [ ] AI Session layer: CC decision traces (REG-476)
+- [ ] Tribal Knowledge layer: ADR, conventions (REG-475)
 
-- 1000 files: <30 seconds full analysis
-- Incremental: <5 seconds for changed files
-- MCP response: <2 seconds
+---
 
-### Adoption
+## v0.7+ — Strategic
 
-- Can analyze any JS/TS project without configuration
-- AI agents prefer graph queries over reading code
-- Guarantee violations caught before merge
+### Multi-language Expansion
+- Java (priority — large enterprise codebases)
+- C# (REG-662)
+- Scala (REG-664)
+- Go, Swift, OCaml, Clojure (REG-668, REG-669)
+
+### Advanced Features
+- gRPC connection analysis (REG-434)
+- Co-change pattern mining from git (REG-442)
+- Semantic similarity edges (REG-444)
+- Enox: federated knowledge graph (complementary product)
+
+### Infrastructure
+- Vector search in RFDB (RFD-50)
+- Federation router in Rust (RFD-54)
+- Node-level incremental reanalysis (REG-1090)
 
 ---
 
@@ -230,19 +153,29 @@ Long-term vision features.
 
 ### Reuse Before Build
 
-Before proposing a new subsystem, check if existing infrastructure can be extended:
-
 | Need | Don't Build | Extend Instead |
 |------|-------------|----------------|
-| "Check property X" | New analysis engine | Datalog rule |
-| "Track metadata Y" | New node type | `metadata` field |
-| "Report issue Z" | New warning system | ISSUE nodes |
+| "Check property X" | New analysis engine | Datalog rule + GuaranteeManager |
+| "Track metadata Y" | New node type | `metadata` field on existing nodes |
+| "Report issue Z" | New warning system | ISSUE nodes + existing reporters |
 | "Query pattern W" | Custom traversal | Datalog query |
 
 ### Core = Graph + Datalog + Guarantees
 
-Most features should be: **enricher** (adds data) + **Datalog rules** (query it) + **GuaranteeManager** (report violations).
+Most features: **enricher** (adds data) + **Datalog rules** (query it) + **GuaranteeManager** (report violations).
+
+### AI-First
+
+Every MCP tool documented for LLM agents. UX designed for agents, not just humans. AI should query the graph — not read code.
 
 ---
 
-*Last updated: 2026-03-13*
+## Success Metrics
+
+| Metric | Target |
+|--------|--------|
+| Analysis precision | >95% nodes correctly represent code |
+| MCP response time | <2 seconds |
+| Full analysis (1k files) | <30 seconds |
+| AI agents prefer graph over file reads | measurable via dogfooding |
+| Guarantee violations caught pre-merge | CI integration working |
