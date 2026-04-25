@@ -14,35 +14,131 @@
 commander:
   # Command class — core API
   Command.new: [PURE]
-  Command.name: [MUTATION]        # setter — mutates this
-  Command.description: [MUTATION]
-  Command.version: [MUTATION]
-  Command.option: [MUTATION]
-  Command.requiredOption: [MUTATION]
-  Command.addOption: [MUTATION]
-  Command.argument: [MUTATION]
-  Command.addArgument: [MUTATION]
-  Command.command: [MUTATION]      # registers subcommand
-  Command.addCommand: [MUTATION]
-  Command.action: [MUTATION]       # registers handler
-  Command.hook: [MUTATION]
-  Command.alias: [MUTATION]
-  Command.aliases: [MUTATION]
-  Command.usage: [MUTATION]
-  Command.addHelpText: [MUTATION]
-  Command.addHelpCommand: [MUTATION]
-  Command.helpOption: [MUTATION]
-  Command.configureHelp: [MUTATION]
-  Command.showHelpAfterError: [MUTATION]
-  Command.showSuggestionAfterError: [MUTATION]
-  Command.configureOutput: [MUTATION]
-  Command.exitOverride: [MUTATION]
-  Command.enablePositionalOptions: [MUTATION]
-  Command.passThroughOptions: [MUTATION]
-  Command.allowUnknownOption: [MUTATION]
-  Command.allowExcessArguments: [MUTATION]
-  Command.combineFlagAndOptionalValue: [MUTATION]
-  Command.storeOptionsAsProperties: [MUTATION]
+  Command.name:        # setter — mutates this
+    effects: [MUTATION]
+    returns:
+      type: Command
+  Command.description:
+    effects: [MUTATION]
+    returns:
+      type: Command
+  Command.version:
+    effects: [MUTATION]
+    returns:
+      type: Command
+  Command.option:
+    effects: [MUTATION]
+    returns:
+      type: Command
+  Command.requiredOption:
+    effects: [MUTATION]
+    returns:
+      type: Command
+  Command.addOption:
+    effects: [MUTATION]
+    returns:
+      type: Command
+  Command.argument:
+    effects: [MUTATION]
+    returns:
+      type: Command
+  Command.addArgument:
+    effects: [MUTATION]
+    returns:
+      type: Command
+  Command.command:      # registers subcommand
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: COMMAND_NAME
+    returns:
+      type: Command
+  Command.addCommand:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: COMMAND_NAME
+    returns:
+      type: Command
+  Command.action:       # registers handler
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Command
+  Command.hook:
+    effects: [MUTATION]
+    returns:
+      type: Command
+  Command.alias:
+    effects: [MUTATION]
+    returns:
+      type: Command
+  Command.aliases:
+    effects: [MUTATION]
+    returns:
+      type: Command
+  Command.usage:
+    effects: [MUTATION]
+    returns:
+      type: Command
+  Command.addHelpText:
+    effects: [MUTATION]
+    returns:
+      type: Command
+  Command.addHelpCommand:
+    effects: [MUTATION]
+    returns:
+      type: Command
+  Command.helpOption:
+    effects: [MUTATION]
+    returns:
+      type: Command
+  Command.configureHelp:
+    effects: [MUTATION]
+    returns:
+      type: Command
+  Command.showHelpAfterError:
+    effects: [MUTATION]
+    returns:
+      type: Command
+  Command.showSuggestionAfterError:
+    effects: [MUTATION]
+    returns:
+      type: Command
+  Command.configureOutput:
+    effects: [MUTATION]
+    returns:
+      type: Command
+  Command.exitOverride:
+    effects: [MUTATION]
+    returns:
+      type: Command
+  Command.enablePositionalOptions:
+    effects: [MUTATION]
+    returns:
+      type: Command
+  Command.passThroughOptions:
+    effects: [MUTATION]
+    returns:
+      type: Command
+  Command.allowUnknownOption:
+    effects: [MUTATION]
+    returns:
+      type: Command
+  Command.allowExcessArguments:
+    effects: [MUTATION]
+    returns:
+      type: Command
+  Command.combineFlagAndOptionalValue:
+    effects: [MUTATION]
+    returns:
+      type: Command
+  Command.storeOptionsAsProperties:
+    effects: [MUTATION]
+    returns:
+      type: Command
 
   # Execution — IO (reads process.argv, writes stdout/stderr, may call process.exit)
   # GRAFEMA FOUND: process.exit (3x), childProcess.spawn (2x), process.on, write/writeErr

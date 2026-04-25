@@ -287,6 +287,8 @@ export type {
   EffectType,
   EffectEntry,
   RawEffectValue,
+  ArgEntry,
+  ReturnEntry,
   FlowType,
   ExportKind,
   ResolveResult,

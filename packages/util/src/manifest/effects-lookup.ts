@@ -12,14 +12,34 @@ import { join } from 'path';
 import { parse as parseYaml } from 'yaml';
 import type { EffectType } from './types.js';
 
+/** Argument role annotation: marks which argument plays which semantic role */
+export interface ArgEntry {
+  index: number;
+  role: string;
+}
+
+/** Declared return type for chain tracking (e.g. Commander's fluent API) */
+export interface ReturnEntry {
+  type: string;
+}
+
 /** Extended effect entry (v2 format): effects array + optional channel metadata */
 export interface EffectEntry {
   effects: EffectType[];
   channel?: Record<string, string>;
+  args?: ArgEntry[];
+  returns?: ReturnEntry;
 }
 
 /** Raw YAML value: either a plain array (v1) or an object with effects key (v2) */
-export type RawEffectValue = EffectType[] | { effects: EffectType[]; channel?: Record<string, string> };
+export type RawEffectValue =
+  | EffectType[]
+  | {
+      effects: EffectType[];
+      channel?: Record<string, string>;
+      args?: ArgEntry[];
+      returns?: ReturnEntry;
+    };
 
 interface EffectsDB {
   runtimes: Record<string, Record<string, EffectEntry>>;
@@ -78,6 +98,18 @@ export class EffectsLookup {
   /** Create an empty (no-op) lookup */
   static empty(): EffectsLookup {
     return new EffectsLookup({ runtimes: {}, packages: {} });
+  }
+
+  /**
+   * Look up the full EffectEntry (effects + optional channel/args/returns)
+   * for a module.function pair. Returns null if not found.
+   */
+  getEntry(module: string, fn: string): EffectEntry | null {
+    const nodeModule = `node:${module}`;
+    if (this.db.runtimes[nodeModule]?.[fn]) return this.db.runtimes[nodeModule][fn];
+    if (this.db.runtimes[module]?.[fn]) return this.db.runtimes[module][fn];
+    if (this.db.packages[module]?.[fn]) return this.db.packages[module][fn];
+    return null;
   }
 
   /** Look up effects for a module.function pair */
@@ -230,7 +262,11 @@ export class EffectsLookup {
     if (Array.isArray(raw)) {
       return { effects: raw };
     }
-    return { effects: raw.effects, channel: raw.channel };
+    const entry: EffectEntry = { effects: raw.effects };
+    if (raw.channel !== undefined) entry.channel = raw.channel;
+    if (raw.args !== undefined) entry.args = raw.args;
+    if (raw.returns !== undefined) entry.returns = raw.returns;
+    return entry;
   }
 
   /** Normalize a raw function map (each value may be v1 array or v2 object) */

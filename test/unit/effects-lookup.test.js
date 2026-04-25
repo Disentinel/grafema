@@ -1,7 +1,9 @@
-import { describe, it } from 'node:test';
+import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { EffectsLookup } from '@grafema/util';
 import { join } from 'node:path';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 
 const EFFECTS_DB_PATH = join(import.meta.dirname, '..', '..', 'effects-db');
 
@@ -257,6 +259,141 @@ describe('EffectsLookup', () => {
         !effects.includes('ASYNC'),
         `Expected no ASYNC in effects for sync call, got: ${effects}`,
       );
+    });
+  });
+
+  describe('normalizeEffectValue() — args and returns', () => {
+    it('simple array form parses with no args/returns (backward compat)', () => {
+      const entry = EffectsLookup.normalizeEffectValue(['IO', 'MUTATION']);
+      assert.deepEqual(entry.effects, ['IO', 'MUTATION']);
+      assert.equal(entry.args, undefined);
+      assert.equal(entry.returns, undefined);
+      assert.equal(entry.channel, undefined);
+    });
+
+    it('object form preserves args and returns', () => {
+      const entry = EffectsLookup.normalizeEffectValue({
+        effects: ['MUTATION'],
+        args: [{ index: 0, role: 'ENTRY_POINT_CALLBACK' }],
+        returns: { type: 'Command' },
+      });
+      assert.deepEqual(entry.effects, ['MUTATION']);
+      assert.ok(entry.args, 'Expected args to be present');
+      assert.equal(entry.args.length, 1);
+      assert.equal(entry.args[0].index, 0);
+      assert.equal(entry.args[0].role, 'ENTRY_POINT_CALLBACK');
+      assert.ok(entry.returns, 'Expected returns to be present');
+      assert.equal(entry.returns.type, 'Command');
+    });
+
+    it('object form without args/returns leaves them undefined', () => {
+      const entry = EffectsLookup.normalizeEffectValue({
+        effects: ['IO'],
+        channel: { kind: 'fs' },
+      });
+      assert.deepEqual(entry.effects, ['IO']);
+      assert.deepEqual(entry.channel, { kind: 'fs' });
+      assert.equal(entry.args, undefined);
+      assert.equal(entry.returns, undefined);
+    });
+
+    it('object form with only args (no returns) parses correctly', () => {
+      const entry = EffectsLookup.normalizeEffectValue({
+        effects: ['MUTATION'],
+        args: [
+          { index: 0, role: 'TOOL_SCHEMA' },
+          { index: 1, role: 'ENTRY_POINT_CALLBACK' },
+        ],
+      });
+      assert.equal(entry.args.length, 2);
+      assert.equal(entry.args[1].role, 'ENTRY_POINT_CALLBACK');
+      assert.equal(entry.returns, undefined);
+    });
+
+    it('object form with only returns (no args) parses correctly', () => {
+      const entry = EffectsLookup.normalizeEffectValue({
+        effects: ['PURE'],
+        returns: { type: 'Command' },
+      });
+      assert.equal(entry.args, undefined);
+      assert.equal(entry.returns.type, 'Command');
+    });
+  });
+
+  describe('load() — args and returns from YAML', () => {
+    let tmpDir;
+
+    before(() => {
+      tmpDir = mkdtempSync(join(tmpdir(), 'grafema-effects-test-'));
+      mkdirSync(join(tmpDir, 'packages'), { recursive: true });
+      mkdirSync(join(tmpDir, 'runtimes'), { recursive: true });
+
+      // Mixed YAML: simple-array form for one method, full object form for another
+      const yaml = `commander:
+  Command.parse:
+    - IO
+    - MUTATION
+  Command.action:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Command
+  Command.command:
+    effects: [PURE]
+    args:
+      - index: 0
+        role: COMMAND_NAME
+    returns:
+      type: Command
+`;
+      writeFileSync(join(tmpDir, 'packages', 'commander.yaml'), yaml);
+    });
+
+    after(() => {
+      if (tmpDir) rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('simple array form loads as effects-only entry (backward compat)', () => {
+      const lookup = EffectsLookup.load(tmpDir);
+      const effects = lookup.lookup('commander', 'Command.parse');
+      assert.deepEqual(effects, ['IO', 'MUTATION']);
+    });
+
+    it('full object form loads with args and returns accessible via getEntry', () => {
+      const lookup = EffectsLookup.load(tmpDir);
+      const entry = lookup.getEntry('commander', 'Command.action');
+      assert.ok(entry, 'Expected entry for Command.action');
+      assert.deepEqual(entry.effects, ['MUTATION']);
+      assert.ok(entry.args, 'Expected args[] on Command.action');
+      assert.equal(entry.args.length, 1);
+      assert.equal(entry.args[0].index, 0);
+      assert.equal(entry.args[0].role, 'ENTRY_POINT_CALLBACK');
+      assert.ok(entry.returns, 'Expected returns on Command.action');
+      assert.equal(entry.returns.type, 'Command');
+    });
+
+    it('simple array form has no args/returns when retrieved via getEntry', () => {
+      const lookup = EffectsLookup.load(tmpDir);
+      const entry = lookup.getEntry('commander', 'Command.parse');
+      assert.ok(entry, 'Expected entry for Command.parse');
+      assert.deepEqual(entry.effects, ['IO', 'MUTATION']);
+      assert.equal(entry.args, undefined);
+      assert.equal(entry.returns, undefined);
+    });
+
+    it('getEntry returns null for unknown module/function', () => {
+      const lookup = EffectsLookup.load(tmpDir);
+      assert.equal(lookup.getEntry('commander', 'nonexistent'), null);
+      assert.equal(lookup.getEntry('nonexistent', 'whatever'), null);
+    });
+
+    it('mixed YAML: both simple and object forms parse without errors', () => {
+      const lookup = EffectsLookup.load(tmpDir);
+      assert.deepEqual(lookup.lookup('commander', 'Command.parse'), ['IO', 'MUTATION']);
+      assert.deepEqual(lookup.lookup('commander', 'Command.action'), ['MUTATION']);
+      assert.deepEqual(lookup.lookup('commander', 'Command.command'), ['PURE']);
     });
   });
 });

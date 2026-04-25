@@ -1,6 +1,6 @@
 export { ManifestGenerator } from './generator.js';
 export { EffectsLookup, parseCallTarget } from './effects-lookup.js';
-export type { EffectEntry, RawEffectValue } from './effects-lookup.js';
+export type { EffectEntry, RawEffectValue, ArgEntry, ReturnEntry } from './effects-lookup.js';
 export { ManifestResolver } from './resolver.js';
 export type { ResolveResult, ManifestSummary } from './resolver.js';
 export { RegistryBuilder, resolvePackageDir, detectSourceType, resolveEntryPoint } from './registry.js';

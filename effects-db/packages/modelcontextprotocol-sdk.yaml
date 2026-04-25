@@ -16,7 +16,13 @@
   Server.new: [PURE]
   Server.connect: [IO, ASYNC]
   Server.close: [IO, ASYNC]
-  Server.setRequestHandler: [MUTATION]
+  Server.setRequestHandler:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: TOOL_SCHEMA
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
   Server.removeRequestHandler: [MUTATION]
   Server.setNotificationHandler: [MUTATION]
   Server.removeNotificationHandler: [MUTATION]
