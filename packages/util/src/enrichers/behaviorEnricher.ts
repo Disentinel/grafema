@@ -1,0 +1,471 @@
+/**
+ * behaviorEnricher — L3 BEHAVIOR extraction.
+ *
+ * For every FEATURE-class node (cli:command, mcp:tool, vscode:command), walk
+ * the HANDLES edge to the entry function, run a forward-slice dataflow trace
+ * to collect the reachable subgraph, classify each reached node as core or
+ * periphery using per-file coupling/density heuristics, and capture the
+ * transitive effects. Each FEATURE then gets:
+ *
+ *   FEATURE -IMPLEMENTED_BY-> BEHAVIOR
+ *   BEHAVIOR -COMPRISES-> coreNode      (metadata: {"role":"core"})
+ *   BEHAVIOR -COMPRISES-> peripheryNode (metadata: {"role":"periphery"})
+ *   BEHAVIOR -PRODUCES_EFFECT-> __effects/IO  (metadata: {"effect":"IO"})
+ *
+ * Pass 2 deduplicates: BEHAVIORs whose core-set hash matches get linked via
+ * SHARES_BEHAVIOR_WITH edges between their FEATUREs (bidirectional).
+ *
+ * Idempotent: BEHAVIOR id is `${feature.id}::behavior`, COMPRISES/PRODUCES_EFFECT
+ * targets and edges form deterministic (src,dst,edgeType) tuples that RFDB
+ * dedupes.
+ *
+ * Like sibling enrichers, this uses direct addNodes/addEdges (not BatchHandle
+ * .commit) — see skill `rfdb-batchhandle-deletes-existing-nodes`.
+ */
+
+import { createHash } from 'crypto';
+import type { RFDBClient } from '@grafema/rfdb-client';
+import type { WireEdge, WireNode } from '@grafema/types';
+import type { EffectsLookup } from '../manifest/effects-lookup.js';
+import type { DataflowBackend, DataflowNode, DataflowEdge } from '../queries/traceDataflow.js';
+import { traceDataflow } from '../queries/traceDataflow.js';
+import { traceEffects } from '../queries/traceEffects.js';
+import type { EffectType } from '../manifest/types.js';
+
+/** ---------------------------------------------------------------------------
+ *  Public types
+ *  ------------------------------------------------------------------------ */
+
+export interface BehaviorEnrichResult {
+  /** Number of BEHAVIOR nodes created (one per FEATURE that had an entry). */
+  behaviorsCreated: number;
+  /** Total core COMPRISES edges across all behaviors. */
+  totalCoreNodes: number;
+  /** Total periphery COMPRISES edges across all behaviors (capped per-behavior). */
+  totalPeripheryNodes: number;
+  /** Total PRODUCES_EFFECT edges emitted. */
+  effectEdgesEmitted: number;
+  /** Total SHARES_BEHAVIOR_WITH edges emitted (bidirectional, so always even). */
+  sharesBehaviorEdges: number;
+  /** Diagnostic: features whose HANDLES edge was missing or pointed at a
+   *  non-existent target. */
+  featuresWithoutEntry: number;
+}
+
+export interface BehaviorEnrichOptions {
+  /** Forward-slice depth limit. Default 10. */
+  maxDepth?: number;
+  /** Cap on COMPRISES edges to periphery nodes per behavior. Default 50. */
+  peripheryEdgeCap?: number;
+}
+
+/** ---------------------------------------------------------------------------
+ *  Internal types
+ *  ------------------------------------------------------------------------ */
+
+interface FileMetrics {
+  coupling: number;
+  density: number;
+  isLibrary: boolean;
+}
+
+interface BehaviorRecord {
+  featureId: string;
+  hash: string;
+}
+
+/** FEATURE-class node types we extract behaviors for. */
+const FEATURE_TYPES: readonly string[] = ['cli:command', 'mcp:tool', 'vscode:command'];
+
+const ADD_BATCH_SIZE = 500;
+const DEFAULT_MAX_DEPTH = 10;
+const DEFAULT_PERIPHERY_CAP = 50;
+const LIBRARY_DENSITY_THRESHOLD = 0.3;
+
+/** ---------------------------------------------------------------------------
+ *  Public entry point
+ *  ------------------------------------------------------------------------ */
+
+export async function enrichBehaviors(
+  client: RFDBClient,
+  effectsLookup: EffectsLookup,
+  options?: BehaviorEnrichOptions,
+): Promise<BehaviorEnrichResult> {
+  const maxDepth = options?.maxDepth ?? DEFAULT_MAX_DEPTH;
+  const peripheryCap = options?.peripheryEdgeCap ?? DEFAULT_PERIPHERY_CAP;
+
+  const result: BehaviorEnrichResult = {
+    behaviorsCreated: 0,
+    totalCoreNodes: 0,
+    totalPeripheryNodes: 0,
+    effectEdgesEmitted: 0,
+    sharesBehaviorEdges: 0,
+    featuresWithoutEntry: 0,
+  };
+
+  // Wrap RFDBClient as a DataflowBackend for traceDataflow / traceEffects.
+  const dfDb = makeDataflowBackend(client);
+
+  const newNodes: WireNode[] = [];
+  const newEdges: WireEdge[] = [];
+  const seenBehaviorIds = new Set<string>();
+  const fileMetricsCache = new Map<string, FileMetrics>();
+  const behaviorRecords: BehaviorRecord[] = [];
+
+  // ── Pass 1: per-feature forward-slice + classify + emit ──
+  for (const featureType of FEATURE_TYPES) {
+    const features: WireNode[] = [];
+    for await (const f of client.queryNodes({ type: featureType })) features.push(f);
+
+    for (const feature of features) {
+      const behaviorId = `${feature.id}::behavior`;
+      if (seenBehaviorIds.has(behaviorId)) continue;
+      seenBehaviorIds.add(behaviorId);
+
+      // 1. Locate entry function via HANDLES.
+      const handlesEdges = await client.getOutgoingEdges(feature.id, ['HANDLES'] as never);
+      if (handlesEdges.length === 0) {
+        result.featuresWithoutEntry++;
+        continue;
+      }
+      const entryId = String(handlesEdges[0].dst);
+      const entry = await client.getNode(entryId);
+      if (!entry) {
+        result.featuresWithoutEntry++;
+        continue;
+      }
+
+      // 2. Forward-slice the entry. We combine two reachabilities:
+      //    a) traceDataflow forward — captures consumers of the entry's
+      //       return value, return-flow boundaries, etc.
+      //    b) call-graph BFS — captures everything the entry CALLS (transitive
+      //       callees + their bodies). traceDataflow forward from a FUNCTION
+      //       walks callers (not callees), so we add the call-graph leg
+      //       separately to honour the "forward slice = what this code
+      //       reaches" semantic.
+      const subgraph: DataflowNode[] = [];
+      const subgraphIds = new Set<string>();
+      const entryDf = await dfDb.getNode(entryId);
+      if (entryDf) {
+        subgraph.push(entryDf);
+        subgraphIds.add(entryDf.id);
+      }
+
+      const traces = await traceDataflow(dfDb, entryId, {
+        direction: 'forward',
+        maxDepth,
+      });
+      for (const t of traces) {
+        for (const n of t.reached) {
+          if (!subgraphIds.has(n.id)) {
+            subgraph.push(n);
+            subgraphIds.add(n.id);
+          }
+        }
+      }
+
+      // Call-graph forward BFS from entry (CALLS / CALL→CALLS chain).
+      const cgQueue: string[] = [entryId];
+      const cgVisited = new Set<string>([entryId]);
+      let cgIters = 0;
+      const cgIterCap = (maxDepth + 1) * 200;
+      while (cgQueue.length > 0 && cgIters < cgIterCap) {
+        cgIters++;
+        const cur = cgQueue.shift() as string;
+        const outs = await dfDb.getOutgoingEdges(cur, ['CALLS', 'HAS_SCOPE', 'CONTAINS']);
+        for (const e of outs) {
+          if (cgVisited.has(e.dst)) continue;
+          cgVisited.add(e.dst);
+          const nx = await dfDb.getNode(e.dst);
+          if (!nx) continue;
+          // Skip pure scope nodes from being COMPRISES targets — they're
+          // structural, not behavioural.
+          if (nx.type !== 'SCOPE' && !subgraphIds.has(nx.id)) {
+            subgraph.push(nx);
+            subgraphIds.add(nx.id);
+          }
+          cgQueue.push(nx.id);
+        }
+      }
+
+      // 3. Effects via traceEffects.
+      const effectSet = new Set<EffectType>();
+      const eff = await traceEffects(dfDb, entryId, effectsLookup, { maxDepth });
+      if (eff) {
+        for (const e of eff.transitive) effectSet.add(e);
+      }
+
+      // 4. Classify each subgraph node by file metrics (lazy per-file compute).
+      const coreIds: string[] = [];
+      const peripheryIds: string[] = [];
+      for (const n of subgraph) {
+        const file = n.file;
+        if (!file) {
+          // No file → treat as core (synthetic node, can't classify as library).
+          coreIds.push(n.id);
+          continue;
+        }
+        const metrics = await getFileMetrics(client, dfDb, file, fileMetricsCache);
+        if (metrics.isLibrary) {
+          peripheryIds.push(n.id);
+        } else {
+          coreIds.push(n.id);
+        }
+      }
+
+      // 5. Behavior identity hash from sorted core IDs.
+      const sortedCore = [...coreIds].sort();
+      const hash = createHash('sha256')
+        .update(sortedCore.join(','))
+        .digest('hex');
+
+      // 6. Emit BEHAVIOR node.
+      const effectsArr = [...effectSet].sort();
+      newNodes.push({
+        id: behaviorId,
+        nodeType: 'BEHAVIOR' as never,
+        name: feature.name,
+        file: feature.file,
+        exported: false,
+        metadata: JSON.stringify({
+          coreNodeCount: coreIds.length,
+          peripheryNodeCount: peripheryIds.length,
+          depth: maxDepth,
+          hash,
+          effects: effectsArr,
+          featureId: feature.id,
+        }),
+      });
+
+      // 7. FEATURE -IMPLEMENTED_BY-> BEHAVIOR
+      newEdges.push({
+        src: feature.id,
+        dst: behaviorId,
+        edgeType: 'IMPLEMENTED_BY' as never,
+        metadata: JSON.stringify({}),
+      });
+
+      // 8. BEHAVIOR -COMPRISES-> core nodes
+      for (const id of coreIds) {
+        newEdges.push({
+          src: behaviorId,
+          dst: id,
+          edgeType: 'COMPRISES' as never,
+          metadata: JSON.stringify({ role: 'core' }),
+        });
+      }
+      result.totalCoreNodes += coreIds.length;
+
+      // 9. BEHAVIOR -COMPRISES-> periphery (capped)
+      const peripherySliced = peripheryIds.slice(0, peripheryCap);
+      for (const id of peripherySliced) {
+        newEdges.push({
+          src: behaviorId,
+          dst: id,
+          edgeType: 'COMPRISES' as never,
+          metadata: JSON.stringify({ role: 'periphery' }),
+        });
+      }
+      result.totalPeripheryNodes += peripherySliced.length;
+
+      // 10. BEHAVIOR -PRODUCES_EFFECT-> synthetic effect target
+      for (const e of effectsArr) {
+        newEdges.push({
+          src: behaviorId,
+          dst: `__effects/${e}`,
+          edgeType: 'PRODUCES_EFFECT' as never,
+          metadata: JSON.stringify({ effect: e }),
+        });
+        result.effectEdgesEmitted++;
+      }
+
+      result.behaviorsCreated++;
+      behaviorRecords.push({ featureId: feature.id, hash });
+
+      if (newNodes.length >= ADD_BATCH_SIZE) {
+        await client.addNodes(newNodes.splice(0, newNodes.length));
+      }
+      if (newEdges.length >= ADD_BATCH_SIZE) {
+        await client.addEdges(newEdges.splice(0, newEdges.length));
+      }
+    }
+  }
+
+  // ── Pass 2: link FEATUREs that share a behavior hash ──
+  const byHash = new Map<string, string[]>();
+  for (const b of behaviorRecords) {
+    let arr = byHash.get(b.hash);
+    if (!arr) {
+      arr = [];
+      byHash.set(b.hash, arr);
+    }
+    arr.push(b.featureId);
+  }
+  for (const featureIds of byHash.values()) {
+    if (featureIds.length < 2) continue;
+    for (let i = 0; i < featureIds.length; i++) {
+      for (let j = i + 1; j < featureIds.length; j++) {
+        newEdges.push({
+          src: featureIds[i],
+          dst: featureIds[j],
+          edgeType: 'SHARES_BEHAVIOR_WITH' as never,
+          metadata: JSON.stringify({}),
+        });
+        newEdges.push({
+          src: featureIds[j],
+          dst: featureIds[i],
+          edgeType: 'SHARES_BEHAVIOR_WITH' as never,
+          metadata: JSON.stringify({}),
+        });
+        result.sharesBehaviorEdges += 2;
+      }
+    }
+  }
+
+  if (newNodes.length > 0) await client.addNodes(newNodes);
+  if (newEdges.length > 0) await client.addEdges(newEdges);
+
+  return result;
+}
+
+/** ---------------------------------------------------------------------------
+ *  File metrics (core/periphery classification)
+ *  ------------------------------------------------------------------------ */
+
+async function getFileMetrics(
+  client: RFDBClient,
+  dfDb: DataflowBackend,
+  file: string,
+  cache: Map<string, FileMetrics>,
+): Promise<FileMetrics> {
+  const cached = cache.get(file);
+  if (cached) return cached;
+
+  const fnIds: string[] = [];
+  const fnAsyncFlags = new Map<string, boolean>();
+  for await (const fn of client.queryNodes({ type: 'FUNCTION', file })) {
+    fnIds.push(fn.id);
+    const meta = parseMeta(fn);
+    fnAsyncFlags.set(fn.id, meta?.async === true);
+  }
+
+  const nFunctions = fnIds.length;
+
+  // Coupling = intra-file (CALLS|READS_FROM) edges between functions / total possible.
+  let intraEdges = 0;
+  for (const id of fnIds) {
+    const outs = await client.getOutgoingEdges(id, ['CALLS', 'READS_FROM'] as never);
+    for (const e of outs) {
+      const dstId = String(e.dst);
+      // Same-file targets only — fast path: check the in-memory fn list.
+      if (fnIds.includes(dstId) && dstId !== id) intraEdges++;
+    }
+  }
+  const coupling = nFunctions > 1 ? intraEdges / (nFunctions * (nFunctions - 1)) : 0;
+
+  // Effect density = fraction of fns with async:true OR any THROWS edge.
+  let withEffect = 0;
+  for (const id of fnIds) {
+    if (fnAsyncFlags.get(id)) {
+      withEffect++;
+      continue;
+    }
+    const throwsEdges = await dfDb.getOutgoingEdges(id, ['THROWS']);
+    if (throwsEdges.length > 0) withEffect++;
+  }
+  const density = nFunctions > 0 ? withEffect / nFunctions : 0;
+
+  const isLibrary = coupling === 0 && density < LIBRARY_DENSITY_THRESHOLD;
+
+  const metrics: FileMetrics = { coupling, density, isLibrary };
+  cache.set(file, metrics);
+  return metrics;
+}
+
+/** ---------------------------------------------------------------------------
+ *  RFDBClient → DataflowBackend adapter
+ *  ------------------------------------------------------------------------ */
+
+/**
+ * Wrap an RFDBClient as a DataflowBackend by parsing each WireNode's JSON
+ * metadata and projecting it onto the DataflowNode shape (type from nodeType,
+ * spread metadata fields). Edges already arrive flattened from the base client.
+ */
+function makeDataflowBackend(client: RFDBClient): DataflowBackend {
+  function parseNode(wn: WireNode | null): DataflowNode | null {
+    if (!wn) return null;
+    let meta: Record<string, unknown> = {};
+    if (wn.metadata) {
+      try {
+        meta = JSON.parse(wn.metadata) as Record<string, unknown>;
+      } catch {
+        meta = {};
+      }
+    }
+    // Strip wire-level fields from the metadata spread to avoid clobbering.
+    const {
+      id: _id,
+      type: _type,
+      name: _name,
+      file: _file,
+      exported: _exported,
+      nodeType: _nodeType,
+      ...rest
+    } = meta;
+    void _id; void _type; void _name; void _file; void _exported; void _nodeType;
+    return {
+      id: wn.id,
+      type: wn.nodeType,
+      name: wn.name,
+      file: wn.file,
+      ...rest,
+    };
+  }
+
+  function parseEdge(e: WireEdge & Record<string, unknown>): DataflowEdge {
+    // base-client.getOutgoingEdges already spreads metadata onto the edge and
+    // sets `type`; we just re-shape into DataflowEdge.
+    const top = e as unknown as Record<string, unknown>;
+    const idx = typeof top.index === 'number' ? top.index : undefined;
+    return {
+      src: e.src,
+      dst: e.dst,
+      type: (top.type as string) ?? e.edgeType,
+      ...(idx !== undefined ? { index: idx } : {}),
+      metadata: top,
+    };
+  }
+
+  return {
+    async getNode(id: string): Promise<DataflowNode | null> {
+      return parseNode(await client.getNode(id));
+    },
+    async *queryNodes(filter: Record<string, unknown>): AsyncIterable<DataflowNode> {
+      for await (const wn of client.queryNodes(filter as never)) {
+        const parsed = parseNode(wn);
+        if (parsed) yield parsed;
+      }
+    },
+    async getOutgoingEdges(id: string, types?: string[] | null): Promise<DataflowEdge[]> {
+      const edges = await client.getOutgoingEdges(id, (types ?? null) as never);
+      return edges.map(parseEdge);
+    },
+    async getIncomingEdges(id: string, types?: string[] | null): Promise<DataflowEdge[]> {
+      const edges = await client.getIncomingEdges(id, (types ?? null) as never);
+      return edges.map(parseEdge);
+    },
+  };
+}
+
+/** ---------------------------------------------------------------------------
+ *  Helpers
+ *  ------------------------------------------------------------------------ */
+
+function parseMeta(node: WireNode): Record<string, unknown> | null {
+  if (!node.metadata) return null;
+  try {
+    return JSON.parse(node.metadata) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
