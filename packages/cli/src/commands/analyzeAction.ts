@@ -24,6 +24,7 @@ import {
   GRAFEMA_VERSION,
   getSchemaVersion,
 } from '@grafema/util';
+import { enrichContracts } from '@grafema/util/enrichers/contractEnricher';
 import { enrichLibraryCallbacks } from '@grafema/util/enrichers/libraryCallbackEnricher';
 import { enrichMcpToolDefinitions } from '@grafema/util/enrichers/mcpToolDefinitionEnricher';
 import type { LogLevel } from '@grafema/util';
@@ -361,6 +362,23 @@ export async function analyzeAction(path: string, options: { service?: string; e
         }
       } catch (err) {
         debug(`MCP tool definition enricher skipped: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      // Contract enricher — for every FEATURE-class node (cli:command, mcp:tool,
+      // vscode:command) created by the L0 entry-point enrichers above, walk the
+      // HANDLES edge to the handler FUNCTION and extract a CONTRACT node carrying
+      // structured inputs/outputs/errors metadata. Must run AFTER the FEATURE
+      // creators (enrichLibraryCallbacks, enrichMcpToolDefinitions) so HANDLES
+      // edges already exist, and BEFORE generateManifest so contracts can flow
+      // into the manifest if needed.
+      try {
+        const client = (backend as unknown as { client: Parameters<typeof enrichContracts>[0] }).client;
+        if (client) {
+          const result = await enrichContracts(client);
+          info(`  Contracts: ${result.contractsCreated} contracts (${result.inputsTotal} inputs, ${result.outputsTotal} outputs, ${result.errorsTotal} errors); ${result.featuresWithoutEntry} features lacked HANDLES edge`);
+        }
+      } catch (err) {
+        debug(`Contract enricher skipped: ${err instanceof Error ? err.message : String(err)}`);
       }
 
       // Generate manifest after successful analysis
