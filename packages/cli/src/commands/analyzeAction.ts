@@ -26,6 +26,7 @@ import {
 } from '@grafema/util';
 import { enrichContracts } from '@grafema/util/enrichers/contractEnricher';
 import { enrichLibraryCallbacks } from '@grafema/util/enrichers/libraryCallbackEnricher';
+import { enrichPackageApis } from '@grafema/util/enrichers/packageApiEnricher';
 import { enrichMcpToolDefinitions } from '@grafema/util/enrichers/mcpToolDefinitionEnricher';
 import type { LogLevel } from '@grafema/util';
 import { scanExtensions, generateSmartConfig, writeConfig, updateGitignore, formatDetected } from '../utils/quickstart.js';
@@ -379,6 +380,24 @@ export async function analyzeAction(path: string, options: { service?: string; e
         }
       } catch (err) {
         debug(`Contract enricher skipped: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      // Package API enricher — for every monorepo package barrel
+      // (`packages/<pkg>/src/index.ts`), emit a `package:export` FEATURE node
+      // per EXPORT_BINDING and a HANDLES edge to the underlying definition.
+      // Surfaces inter-package public-API surfaces so the contract enricher
+      // (run already) can wire contracts onto these on the next pass; the
+      // benefit is realised by downstream consumers (manifest, GUI, agents).
+      try {
+        const client = (backend as unknown as { client: Parameters<typeof enrichPackageApis>[0] }).client;
+        if (client) {
+          const result = await enrichPackageApis(client);
+          if (result.apiNodesCreated > 0) {
+            info(`  Package APIs: ${result.apiNodesCreated} package:export nodes, ${result.handlesEdgesCreated} HANDLES edges across ${result.packagesScanned} barrels (unresolved: ${result.exportsWithoutHandler})`);
+          }
+        }
+      } catch (err) {
+        debug(`Package API enricher skipped: ${err instanceof Error ? err.message : String(err)}`);
       }
 
       // Generate manifest after successful analysis

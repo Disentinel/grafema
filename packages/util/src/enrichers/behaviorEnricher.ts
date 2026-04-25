@@ -57,6 +57,14 @@ export interface BehaviorEnrichOptions {
   maxDepth?: number;
   /** Cap on COMPRISES edges to periphery nodes per behavior. Default 50. */
   peripheryEdgeCap?: number;
+  /**
+   * Flush accumulated nodes/edges to RFDB after every N processed features.
+   * Default 10. Lower values reduce peak memory at the cost of more round-trips
+   * to the server. At Grafema scale (~150 features × hundreds of subgraph
+   * nodes/edges each), batching all writes until the end exhausts Node.js
+   * heap — chunked flushing keeps memory bounded.
+   */
+  flushBatchSize?: number;
 }
 
 /** ---------------------------------------------------------------------------
@@ -77,9 +85,10 @@ interface BehaviorRecord {
 /** FEATURE-class node types we extract behaviors for. */
 const FEATURE_TYPES: readonly string[] = ['cli:command', 'mcp:tool', 'vscode:command'];
 
-const ADD_BATCH_SIZE = 500;
 const DEFAULT_MAX_DEPTH = 10;
 const DEFAULT_PERIPHERY_CAP = 50;
+const DEFAULT_FLUSH_BATCH_SIZE = 10;
+const SHARES_EDGE_FLUSH_SIZE = 200;
 const LIBRARY_DENSITY_THRESHOLD = 0.3;
 
 /** ---------------------------------------------------------------------------
@@ -93,6 +102,7 @@ export async function enrichBehaviors(
 ): Promise<BehaviorEnrichResult> {
   const maxDepth = options?.maxDepth ?? DEFAULT_MAX_DEPTH;
   const peripheryCap = options?.peripheryEdgeCap ?? DEFAULT_PERIPHERY_CAP;
+  const flushBatchSize = Math.max(1, options?.flushBatchSize ?? DEFAULT_FLUSH_BATCH_SIZE);
 
   const result: BehaviorEnrichResult = {
     behaviorsCreated: 0,
@@ -106,11 +116,18 @@ export async function enrichBehaviors(
   // Wrap RFDBClient as a DataflowBackend for traceDataflow / traceEffects.
   const dfDb = makeDataflowBackend(client);
 
-  const newNodes: WireNode[] = [];
-  const newEdges: WireEdge[] = [];
+  // Per-batch accumulators. Reset to fresh arrays after each flush so the
+  // previous batch's WireNode/WireEdge objects become unreachable and
+  // available for GC. (Avoids holding ~150 features' worth of subgraph
+  // metadata in memory simultaneously.)
+  let batchNodes: WireNode[] = [];
+  let batchEdges: WireEdge[] = [];
   const seenBehaviorIds = new Set<string>();
   const fileMetricsCache = new Map<string, FileMetrics>();
+  // Small index — only featureId + 64-char hash per behavior, kept across
+  // the whole run to compute SHARES_BEHAVIOR_WITH in Pass 2.
   const behaviorRecords: BehaviorRecord[] = [];
+  let processedSinceFlush = 0;
 
   // ── Pass 1: per-feature forward-slice + classify + emit ──
   for (const featureType of FEATURE_TYPES) {
@@ -151,10 +168,11 @@ export async function enrichBehaviors(
         subgraphIds.add(entryDf.id);
       }
 
-      const traces = await traceDataflow(dfDb, entryId, {
-        direction: 'forward',
-        maxDepth,
-      });
+      let traces: Awaited<ReturnType<typeof traceDataflow>> | null =
+        await traceDataflow(dfDb, entryId, {
+          direction: 'forward',
+          maxDepth,
+        });
       for (const t of traces) {
         for (const n of t.reached) {
           if (!subgraphIds.has(n.id)) {
@@ -163,6 +181,9 @@ export async function enrichBehaviors(
           }
         }
       }
+      // Free the trace result eagerly — at scale this can hold thousands of
+      // DataflowNode references per feature. We only needed `reached`.
+      traces = null;
 
       // Call-graph forward BFS from entry (CALLS / CALL→CALLS chain).
       const cgQueue: string[] = [entryId];
@@ -221,7 +242,7 @@ export async function enrichBehaviors(
 
       // 6. Emit BEHAVIOR node.
       const effectsArr = [...effectSet].sort();
-      newNodes.push({
+      batchNodes.push({
         id: behaviorId,
         nodeType: 'BEHAVIOR' as never,
         name: feature.name,
@@ -238,7 +259,7 @@ export async function enrichBehaviors(
       });
 
       // 7. FEATURE -IMPLEMENTED_BY-> BEHAVIOR
-      newEdges.push({
+      batchEdges.push({
         src: feature.id,
         dst: behaviorId,
         edgeType: 'IMPLEMENTED_BY' as never,
@@ -247,7 +268,7 @@ export async function enrichBehaviors(
 
       // 8. BEHAVIOR -COMPRISES-> core nodes
       for (const id of coreIds) {
-        newEdges.push({
+        batchEdges.push({
           src: behaviorId,
           dst: id,
           edgeType: 'COMPRISES' as never,
@@ -259,7 +280,7 @@ export async function enrichBehaviors(
       // 9. BEHAVIOR -COMPRISES-> periphery (capped)
       const peripherySliced = peripheryIds.slice(0, peripheryCap);
       for (const id of peripherySliced) {
-        newEdges.push({
+        batchEdges.push({
           src: behaviorId,
           dst: id,
           edgeType: 'COMPRISES' as never,
@@ -270,7 +291,7 @@ export async function enrichBehaviors(
 
       // 10. BEHAVIOR -PRODUCES_EFFECT-> synthetic effect target
       for (const e of effectsArr) {
-        newEdges.push({
+        batchEdges.push({
           src: behaviorId,
           dst: `__effects/${e}`,
           edgeType: 'PRODUCES_EFFECT' as never,
@@ -281,17 +302,39 @@ export async function enrichBehaviors(
 
       result.behaviorsCreated++;
       behaviorRecords.push({ featureId: feature.id, hash });
+      processedSinceFlush++;
 
-      if (newNodes.length >= ADD_BATCH_SIZE) {
-        await client.addNodes(newNodes.splice(0, newNodes.length));
-      }
-      if (newEdges.length >= ADD_BATCH_SIZE) {
-        await client.addEdges(newEdges.splice(0, newEdges.length));
+      // Chunked flush — every flushBatchSize features, ship the accumulated
+      // nodes/edges and reset. Re-assigning to fresh arrays (instead of
+      // .splice / .length=0) guarantees the previous arrays' contents are
+      // GC-eligible immediately.
+      if (processedSinceFlush >= flushBatchSize) {
+        if (batchNodes.length > 0) {
+          await client.addNodes(batchNodes);
+          batchNodes = [];
+        }
+        if (batchEdges.length > 0) {
+          await client.addEdges(batchEdges);
+          batchEdges = [];
+        }
+        processedSinceFlush = 0;
       }
     }
   }
 
+  // Final flush of any leftover Pass-1 nodes/edges before we move to Pass 2.
+  if (batchNodes.length > 0) {
+    await client.addNodes(batchNodes);
+    batchNodes = [];
+  }
+  if (batchEdges.length > 0) {
+    await client.addEdges(batchEdges);
+    batchEdges = [];
+  }
+
   // ── Pass 2: link FEATUREs that share a behavior hash ──
+  // Pure in-memory bucketing: behaviorRecords is small (one record per
+  // feature, ~64 bytes hash + featureId).
   const byHash = new Map<string, string[]>();
   for (const b of behaviorRecords) {
     let arr = byHash.get(b.hash);
@@ -301,29 +344,39 @@ export async function enrichBehaviors(
     }
     arr.push(b.featureId);
   }
+
+  // Flush SHARES_BEHAVIOR_WITH edges in chunks of SHARES_EDGE_FLUSH_SIZE.
+  // For N features sharing a hash there are N*(N-1) directed edges, which
+  // can spike for large clusters — chunked emission keeps the buffer bounded.
+  let edgeBatch: WireEdge[] = [];
   for (const featureIds of byHash.values()) {
     if (featureIds.length < 2) continue;
     for (let i = 0; i < featureIds.length; i++) {
       for (let j = i + 1; j < featureIds.length; j++) {
-        newEdges.push({
+        edgeBatch.push({
           src: featureIds[i],
           dst: featureIds[j],
           edgeType: 'SHARES_BEHAVIOR_WITH' as never,
           metadata: JSON.stringify({}),
         });
-        newEdges.push({
+        edgeBatch.push({
           src: featureIds[j],
           dst: featureIds[i],
           edgeType: 'SHARES_BEHAVIOR_WITH' as never,
           metadata: JSON.stringify({}),
         });
         result.sharesBehaviorEdges += 2;
+        if (edgeBatch.length >= SHARES_EDGE_FLUSH_SIZE) {
+          await client.addEdges(edgeBatch);
+          edgeBatch = [];
+        }
       }
     }
   }
-
-  if (newNodes.length > 0) await client.addNodes(newNodes);
-  if (newEdges.length > 0) await client.addEdges(newEdges);
+  if (edgeBatch.length > 0) {
+    await client.addEdges(edgeBatch);
+    edgeBatch = [];
+  }
 
   return result;
 }
