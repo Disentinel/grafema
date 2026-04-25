@@ -107,6 +107,14 @@ pub struct HttpState {
     /// temp dir, etc.) so the GUI can fall back to its skip-root behaviour.
     /// Surfaced verbatim in the `layout_meta` JSONL frame.
     pub workspace_name: Option<String>,
+    /// Cached per-region hull polygons (Phase 1 of streaming overhaul).
+    /// Populated by `warmup` immediately after `layout_cache` is built so
+    /// `/api/graph-stream` can ship hulls in a header-adjacent frame
+    /// without recomputing per request. `None` until warmup completes;
+    /// `Some(empty)` when the layout has no placed symbols. The GUI uses
+    /// the precomputed polygons to render hulls + toponyms before the
+    /// node tail of the stream finishes parsing.
+    pub hull_cache: Arc<RwLock<Option<HashMap<u128, crate::hulls::RegionHull>>>>,
 }
 
 /// Build a fresh `HttpState` with empty caches. Exposed so the binary can
@@ -122,6 +130,7 @@ pub fn new_state(manager: Arc<DatabaseManager>, workspace_name: Option<String>) 
         layout_cache: Arc::new(RwLock::new(None)),
         file_to_nodes: Arc::new(RwLock::new(None)),
         workspace_name,
+        hull_cache: Arc::new(RwLock::new(None)),
     }
 }
 
@@ -175,7 +184,27 @@ pub fn warmup(state: &HttpState) {
     };
     let engine = db.engine.read().unwrap();
     let _ = get_or_build_file_to_nodes(&state.file_to_nodes, &**engine);
-    let _ = get_or_build_layout(&state.layout_cache, &state.file_to_nodes, &**engine);
+    let layout = get_or_build_layout(&state.layout_cache, &state.file_to_nodes, &**engine);
+    // Phase 1 of streaming overhaul — precompute hulls so the
+    // graph-stream handler can ship them in a header-adjacent frame
+    // instead of recomputing per request (and the GUI can render
+    // hulls + toponyms before the node tail arrives).
+    let t_hulls = std::time::Instant::now();
+    let region_ids: std::collections::HashSet<u128> =
+        layout.regions.iter().map(|r| r.id).collect();
+    let hulls = crate::hulls::compute_hulls_for_regions(
+        &region_ids,
+        &layout.containment,
+        &layout.positions,
+        crate::hulls::TILE_SIZE,
+        1,
+    );
+    eprintln!(
+        "[hulls] precomputed {} regions in {}ms",
+        hulls.len(),
+        t_hulls.elapsed().as_millis(),
+    );
+    *state.hull_cache.write().unwrap() = Some(hulls);
 }
 
 /// UI serving strategy for the `/ui/*` routes.
@@ -436,10 +465,11 @@ async fn graph_stream(
     let manager = state.manager.clone();
     let layout_cache = state.layout_cache.clone();
     let file_to_nodes = state.file_to_nodes.clone();
+    let hull_cache = state.hull_cache.clone();
     let workspace_name = state.workspace_name.clone();
     let result = tokio::task::spawn_blocking(move || {
         build_graph_stream_body(
-            manager, layout_cache, file_to_nodes,
+            manager, layout_cache, file_to_nodes, hull_cache,
             max_nodes, want_packages, want_node_types, want_edge_types, lod_level,
             workspace_name,
         )
@@ -898,6 +928,7 @@ fn build_graph_stream_body(
     manager: Arc<DatabaseManager>,
     layout_cache_slot: Arc<RwLock<Option<CachedLayout>>>,
     file_to_nodes_slot: Arc<RwLock<Option<HashMap<String, Vec<u128>>>>>,
+    hull_cache_slot: Arc<RwLock<Option<HashMap<u128, crate::hulls::RegionHull>>>>,
     max_nodes: usize,
     want_packages: Option<Vec<String>>,
     want_node_types: Option<Vec<String>>,
@@ -972,6 +1003,16 @@ fn build_graph_stream_body(
         &cached_layout,
         workspace_name.as_deref(),
     );
+
+    // Phase 1 — emit precomputed hulls right after the header so the GUI
+    // can render hulls + toponyms before parsing the node tail. When the
+    // cache hasn't been built yet (no warmup, missing layout, etc.) we
+    // skip the frame and the GUI falls back to client-side hull compute.
+    if let Some(hulls) = hull_cache_slot.read().ok().and_then(|g| g.clone()) {
+        if !hulls.is_empty() {
+            emit_hulls_frame(&mut lines, &hulls);
+        }
+    }
 
     let layout_is_missing = matches!(cached_layout.source, LayoutSource::Missing);
     for nr in &candidates.node_refs {
@@ -1322,6 +1363,56 @@ fn classify_node_visibility(
 /// `pos` (hex coord or `null`) plus an `unplaced_reason` discriminator so
 /// the GUI can distinguish `excluded` types from `missing_layout` from
 /// `skipped_overflow`.
+/// Phase 1 — emit ONE `hulls` JSONL frame containing every region's
+/// precomputed polygon loops. Region IDs are formatted as lowercase hex
+/// (`format!("{:x}", id)`) to match `build_region_tree_json` so the GUI
+/// can join hulls onto regionTree by string id.
+///
+/// Wire shape:
+/// ```json
+/// {"type":"hulls","regions":[
+///   {"rid":"<hex>","area":42,"polys":[[[x,y],[x,y],...],...]},
+///   ...
+/// ]}
+/// ```
+/// `polys` is an array of closed loops; each loop is an array of
+/// `[x, y]` pairs (first vertex repeated at the end). Empty entries
+/// are dropped — a region with zero placed descendants doesn't appear
+/// in the cache to begin with.
+fn emit_hulls_frame(
+    lines: &mut Vec<String>,
+    hulls: &HashMap<u128, crate::hulls::RegionHull>,
+) {
+    let regions: Vec<serde_json::Value> = hulls
+        .iter()
+        .map(|(rid, hull)| {
+            let polys: Vec<serde_json::Value> = hull
+                .polygons
+                .iter()
+                .map(|loop_pts| {
+                    let pairs: Vec<serde_json::Value> = loop_pts
+                        .iter()
+                        .map(|p| serde_json::json!([p.x, p.y]))
+                        .collect();
+                    serde_json::Value::Array(pairs)
+                })
+                .collect();
+            serde_json::json!({
+                "rid": format!("{:x}", rid),
+                "area": hull.area,
+                "polys": polys,
+            })
+        })
+        .collect();
+    lines.push(
+        serde_json::to_string(&serde_json::json!({
+            "type": "hulls",
+            "regions": regions,
+        }))
+        .unwrap(),
+    );
+}
+
 fn emit_node_line(
     nr: &NodeRef,
     type_idx: &HashMap<String, usize>,
@@ -1925,9 +2016,10 @@ mod tests {
         let manager = Arc::new(DatabaseManager::new(tmp.path().to_path_buf()));
         let layout_cache = Arc::new(RwLock::new(None));
         let file_to_nodes = Arc::new(RwLock::new(None));
+        let hull_cache = Arc::new(RwLock::new(None));
 
         let result = build_graph_stream_body(
-            manager, layout_cache, file_to_nodes,
+            manager, layout_cache, file_to_nodes, hull_cache,
             100, None, None, None, None,
             None,
         );

@@ -49,6 +49,7 @@ pub mod metrics;
 pub mod container_hierarchy;
 pub mod sa_layout;
 pub mod layout_types;
+pub mod hulls;
 pub mod http_server;
 
 #[cfg(feature = "ui")]

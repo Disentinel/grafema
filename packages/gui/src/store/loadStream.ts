@@ -104,13 +104,36 @@ interface DoneMsg {
   elapsed: number;
 }
 
+/**
+ * Phase 1 of streaming overhaul — server emits per-region hull polygons
+ * as a single frame right after the header. Each loop is closed (first
+ * vertex repeated at end). When this frame is present the client SKIPS
+ * its own client-side `computeHullsForRegions` pass and uses these
+ * polygons directly. When absent (older server, missing layout, etc.)
+ * the legacy client-side compute path runs as before.
+ */
+interface HullsMsg {
+  type: 'hulls';
+  regions: {
+    /** RegionId in lowercase hex (matches header.regions[].id). */
+    rid: string;
+    /** Cell count after morph-close + hole-fill. Used by the GUI for
+     *  label-size scaling (square-root of area drives font size). */
+    area: number;
+    /** Closed polygon loops in world (x, y) coordinates. Each pair is
+     *  `[x, y]`; first pair is repeated at the loop's end. */
+    polys: [number, number][][];
+  }[];
+}
+
 type StreamMsg =
   | HeaderMsg
   | NodeMsg
   | EdgeMsg
   | NodesDoneMsg
   | DoneMsg
-  | LayoutMetaMsg;
+  | LayoutMetaMsg
+  | HullsMsg;
 
 /**
  * Detect whether a header's regions array is the new nested-tree shape
@@ -193,6 +216,10 @@ export async function parseStream(
   let layoutMeta: LayoutMeta | null = null;
   const rawNodes: NodeMsg[] = [];
   const rawEdges: EdgeMsg[] = [];
+  // Phase 1 — server-precomputed hulls. When the stream carries a
+  // `hulls` frame we skip the client-side `computeHullsForRegions`
+  // pass and feed these polygons straight into the layoutStore.
+  let precomputedHulls: HullsMsg | null = null;
 
   const onProgress = opts.onProgress ?? (() => {});
 
@@ -222,6 +249,13 @@ export async function parseStream(
       case 'done':
         if (import.meta.env?.DEV) console.log('[parseStream] done:', msg.nodeCount, 'nodes,', msg.edgeCount, 'edges,', msg.elapsed, 'ms');
         onProgress('done', msg.nodeCount, msg.edgeCount);
+        break;
+      case 'hulls':
+        precomputedHulls = msg;
+        if (import.meta.env?.DEV) {
+          console.log(`[parseStream] hulls frame: ${msg.regions.length} regions`);
+        }
+        onProgress('hulls', msg.regions.length);
         break;
       case 'layout_meta': {
         // Strip the `type` discriminator before storing.
@@ -348,6 +382,18 @@ export async function parseStream(
 
   (globalThis as Record<string, unknown>).__grafemaTileSize = TILE_SIZE;
 
+  // Phase 1 — convert wire-format hulls (flat [x,y] pairs per loop) into
+  // the {x,y} object form the rest of the GUI uses. Only emitted when
+  // the server actually shipped a hulls frame; absent for fixture
+  // sources or older server builds.
+  const precomputedHullsResult = precomputedHulls
+    ? precomputedHulls.regions.map((r) => ({
+        regionId: r.rid,
+        area: r.area,
+        polygons: r.polys.map((loop) => loop.map(([x, y]) => ({ x, y }))),
+      }))
+    : undefined;
+
   return {
     nodes,
     edges,
@@ -357,6 +403,7 @@ export async function parseStream(
     layoutMeta,
     regionTree,
     unplacedNodes,
+    precomputedHulls: precomputedHullsResult,
   };
 }
 
@@ -417,30 +464,33 @@ export function hydrateLayoutStoreFromLayout(layout: LayoutResult): void {
   if (layout.regionTree !== undefined) {
     layoutStore.setRegionTree(layout.regionTree);
 
-    // DAI-22 Chunk-8: compute per-region hulls once per stream load.
-    // We skip depth 0 (root) per Chunk-7's 580ms flood-fill finding —
-    // the root hull would cover the entire atlas and its cost
-    // dominates aggregation. Nested regions carry all the visual
-    // hierarchy we need; the root is implicit.
+    // Phase 1 — prefer server-precomputed hulls when the stream carried
+    // the `hulls` frame. Building the cache is then a pure re-shape
+    // (zero geometry work) so HullLayer + ToponymsLayer can paint
+    // immediately after store hydration. Falls through to client-side
+    // compute when the stream didn't ship hulls (older server, fixture
+    // source, etc.) — preserves DAI-22 Chunk-8 behaviour for callers
+    // that haven't moved to the precompute path.
     try {
-      // Use layout.regionTree directly (not layoutStore.regionTree): the
-      // `layoutStore` variable is a snapshot captured at getState() time —
-      // before setRegionTree mutated state — so reading .regionTree off it
-      // would get the pre-update tree (empty on fresh load). This was the
-      // DAI-22 Chunk-10b WARN-#3 "hullCache empty" root cause.
-      const placed = buildPlacedForBucketing(layout, layout.regionTree);
-      const symbolsByRegion = bucketSymbolsByRegion(placed);
-      // Include the depth-0 root hull — it's the "continent" the user
-      // perceives at fit-all zoom. Chunk-7's 580ms perf concern was on
-      // a synthetic flat 1247-region tree; on real hierarchies (grafema:
-      // 767 regions, depth 6) the root hull compute is well under 200ms,
-      // and without it the map looks like scattered islands rather than
-      // one landmass even though 99.8% of symbols form a single
-      // connected hex component.
-      const hulls = computeHullsForRegions(layout.regionTree, symbolsByRegion, {
-        hexSize: TILE_SIZE,
-      });
-      layoutStore.setHullCache(hulls);
+      if (layout.precomputedHulls && layout.precomputedHulls.length > 0) {
+        const hulls = new Map<string, { polygons: { x: number; y: number }[][]; area: number }>();
+        for (const r of layout.precomputedHulls) {
+          hulls.set(r.regionId, { polygons: r.polygons, area: r.area });
+        }
+        layoutStore.setHullCache(hulls);
+      } else {
+        // Use layout.regionTree directly (not layoutStore.regionTree): the
+        // `layoutStore` variable is a snapshot captured at getState() time —
+        // before setRegionTree mutated state — so reading .regionTree off it
+        // would get the pre-update tree (empty on fresh load). This was the
+        // DAI-22 Chunk-10b WARN-#3 "hullCache empty" root cause.
+        const placed = buildPlacedForBucketing(layout, layout.regionTree);
+        const symbolsByRegion = bucketSymbolsByRegion(placed);
+        const hulls = computeHullsForRegions(layout.regionTree, symbolsByRegion, {
+          hexSize: TILE_SIZE,
+        });
+        layoutStore.setHullCache(hulls);
+      }
     } catch (err) {
       // Hull compute failure must not break the stream load — renderers
       // fall back to "no hulls" when the cache is empty.

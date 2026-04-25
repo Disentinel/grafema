@@ -48,4 +48,21 @@ export interface LayoutResult {
       unplacedReason: 'excluded' | 'missing_layout' | 'skipped_overflow';
     }
   >;
+  /**
+   * Phase 1 of streaming overhaul — server-precomputed hull polygons
+   * (one entry per region with at least one placed descendant). When
+   * present, `hydrateLayoutStoreFromLayout` skips the client-side
+   * `computeHullsForRegions` pass and feeds these polygons straight
+   * into `layoutStore.hullCache`. When absent (fixture sources, older
+   * server builds, missing layout) the legacy client-side compute path
+   * runs as before.
+   *
+   * Polygon points are in world (x, y) space at the same hex size the
+   * GUI renders tiles in (TILE_SIZE = 3.0) — no rescaling needed.
+   */
+  precomputedHulls?: Array<{
+    regionId: string;
+    area: number;
+    polygons: { x: number; y: number }[][];
+  }>;
 }
