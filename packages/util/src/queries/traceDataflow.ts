@@ -45,6 +45,61 @@ export interface TraceDataflowOptions {
   limit?: number;
 }
 
+/**
+ * Session-scoped cache for dataflow index structures that traceForwardBFS /
+ * traceBackwardBFS otherwise rebuild on every call. Pass the same cache
+ * instance across many traceDataflow calls (e.g., in an enricher loop) to
+ * amortise the index build cost.
+ *
+ * The cache is purely additive: callers must NOT mutate it directly. Each
+ * traceForwardBFS / traceBackwardBFS call lazily populates whichever index
+ * it needs and reuses any pre-populated index from previous calls.
+ *
+ * Lifetime: must NOT outlive the underlying graph snapshot. If the graph
+ * mutates between batches (e.g., another writer commits new PROPERTY_ACCESS
+ * or CALL nodes), discard the cache and create a fresh one — otherwise
+ * traces will miss those new nodes.
+ */
+export interface DataflowIndexCache {
+  /**
+   * Map<localName, PAEntry[]> — PROPERTY_ACCESS read nodes keyed by their
+   * local name. Built by traceForwardBFS for receiver-chain matching.
+   */
+  paReadByName?: Map<string, PAEntry[]>;
+  /**
+   * Map<localName, PAEntry[]> — PROPERTY_ACCESS writer nodes keyed by their
+   * local name. Built by traceBackwardBFS for receiver-chain matching.
+   */
+  paWriterByName?: Map<string, PAEntry[]>;
+  /**
+   * Map<"file::receiverName", CALL node IDs> — method calls keyed by the
+   * file + receiver-name pair. Built by traceForwardBFS for the method-call
+   * receiver heuristic when CALL→DERIVED_FROM→PA→READS_FROM edges are missing.
+   */
+  callsByReceiver?: Map<string, string[]>;
+  /**
+   * String[] — IDs of catch-clause PARAMETERs. Built by traceForwardBFS
+   * for THROWS propagation.
+   */
+  catchParamIds?: string[];
+}
+
+/**
+ * Create an empty DataflowIndexCache. Pass the returned object as the
+ * trailing argument of traceDataflow / traceForwardBFS / traceBackwardBFS
+ * across multiple calls within the same graph snapshot to avoid rebuilding
+ * the lazy indexes (paReadByName, callsByReceiver, etc.) on every call.
+ *
+ * @example
+ *   const cache = makeDataflowIndexCache();
+ *   for (const id of ids) {
+ *     await traceDataflow(db, id, { direction: 'forward' }, cache);
+ *   }
+ */
+export function makeDataflowIndexCache(): DataflowIndexCache {
+  return {};
+}
+
 export interface TraceDataflowResult {
   direction: 'forward' | 'backward';
   startNode: DataflowNode;
@@ -213,6 +268,7 @@ export async function traceForwardBFS(
   db: DataflowBackend,
   startId: string,
   maxIterations: number,
+  cache?: DataflowIndexCache,
 ): Promise<DataflowNode[]> {
   const visited = new Set<string>();
   const queue: string[] = [];
@@ -230,11 +286,12 @@ export async function traceForwardBFS(
   const processedFns = new Set<string>();
   const climbProcessed = new Set<string>();
 
-  // Lazy indexes
-  let paReadByName: Map<string, PAEntry[]> | null = null;
-  let catchParamIds: string[] | null = null;
+  // Lazy indexes — when `cache` is provided, populate it and reuse across calls.
+  // When `cache` is undefined, fall back to per-call local maps (legacy behaviour).
+  let paReadByName: Map<string, PAEntry[]> | null = cache?.paReadByName ?? null;
+  let catchParamIds: string[] | null = cache?.catchParamIds ?? null;
   /** Lazy index: "file::receiverName" → CALL node IDs for method calls on that receiver. */
-  let callsByReceiver: Map<string, string[]> | null = null;
+  let callsByReceiver: Map<string, string[]> | null = cache?.callsByReceiver ?? null;
 
   async function getPAReadByName(): Promise<Map<string, PAEntry[]>> {
     if (paReadByName) return paReadByName;
@@ -250,6 +307,7 @@ export async function traceForwardBFS(
         }
       }
     }
+    if (cache) cache.paReadByName = paReadByName;
     return paReadByName;
   }
 
@@ -263,6 +321,7 @@ export async function traceForwardBFS(
         if (scope?.name === 'catch') { catchParamIds.push(p.id); break; }
       }
     }
+    if (cache) cache.catchParamIds = catchParamIds;
     return catchParamIds;
   }
 
@@ -286,6 +345,7 @@ export async function traceForwardBFS(
         list.push(c.id);
       }
     }
+    if (cache) cache.callsByReceiver = callsByReceiver;
     return callsByReceiver;
   }
 
@@ -588,6 +648,7 @@ export async function traceBackwardBFS(
   db: DataflowBackend,
   startId: string,
   maxIterations: number,
+  cache?: DataflowIndexCache,
 ): Promise<DataflowNode[]> {
   const visited = new Set<string>();
   const queue: string[] = [];
@@ -600,8 +661,8 @@ export async function traceBackwardBFS(
     }
   }
 
-  // Lazy PA writer index
-  let paWriterByName: Map<string, PAEntry[]> | null = null;
+  // Lazy PA writer index — reused via cache when available.
+  let paWriterByName: Map<string, PAEntry[]> | null = cache?.paWriterByName ?? null;
 
   async function getPAWriterByName(): Promise<Map<string, PAEntry[]>> {
     if (paWriterByName) return paWriterByName;
@@ -617,6 +678,7 @@ export async function traceBackwardBFS(
         }
       }
     }
+    if (cache) cache.paWriterByName = paWriterByName;
     return paWriterByName;
   }
 
@@ -808,6 +870,7 @@ export async function traceDataflow(
   db: DataflowBackend,
   sourceId: string,
   options: TraceDataflowOptions = {},
+  cache?: DataflowIndexCache,
 ): Promise<TraceDataflowResult[]> {
   const { direction = 'forward', maxDepth = 10, limit } = options;
   const maxIterations = Math.min((maxDepth || 10) * 100, 5000);
@@ -826,7 +889,7 @@ export async function traceDataflow(
   const results: TraceDataflowResult[] = [];
 
   if (direction === 'forward' || direction === 'both') {
-    const nodes = await traceForwardBFS(db, startId, maxIterations);
+    const nodes = await traceForwardBFS(db, startId, maxIterations, cache);
     const reached = nodes.slice(1); // skip start node
     results.push({
       direction: 'forward',
@@ -837,7 +900,7 @@ export async function traceDataflow(
   }
 
   if (direction === 'backward' || direction === 'both') {
-    const nodes = await traceBackwardBFS(db, startId, maxIterations);
+    const nodes = await traceBackwardBFS(db, startId, maxIterations, cache);
     const reached = nodes.slice(1);
     results.push({
       direction: 'backward',

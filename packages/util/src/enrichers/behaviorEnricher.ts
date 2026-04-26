@@ -28,7 +28,7 @@ import type { RFDBClient } from '@grafema/rfdb-client';
 import type { WireEdge, WireNode } from '@grafema/types';
 import type { EffectsLookup } from '../manifest/effects-lookup.js';
 import type { DataflowBackend, DataflowNode, DataflowEdge } from '../queries/traceDataflow.js';
-import { traceDataflow } from '../queries/traceDataflow.js';
+import { traceDataflow, makeDataflowIndexCache } from '../queries/traceDataflow.js';
 import { traceEffects } from '../queries/traceEffects.js';
 import type { EffectType } from '../manifest/types.js';
 
@@ -120,6 +120,14 @@ export async function enrichBehaviors(
   // Wrap RFDBClient as a DataflowBackend for traceDataflow / traceEffects.
   const dfDb = makeDataflowBackend(client);
 
+  // Session-scoped index cache: traceForwardBFS would otherwise rebuild
+  // paReadByName (~18k PROPERTY_ACCESS entries), callsByReceiver (~28k
+  // CALL entries), and catchParamIds on every call. With 149 features that's
+  // 149× wasted scans + ~7M Map allocations that V8 can't reclaim fast enough,
+  // causing linear heap growth and OOM at 2GB. Sharing the cache across all
+  // traceDataflow invocations turns N rebuilds into 1. See REG-1093.
+  const indexCache = makeDataflowIndexCache();
+
   // Per-batch accumulators. Reset to fresh arrays after each flush so the
   // previous batch's WireNode/WireEdge objects become unreachable and
   // available for GC. (Avoids holding ~150 features' worth of subgraph
@@ -183,7 +191,7 @@ export async function enrichBehaviors(
         const traces = await traceDataflow(dfDb, entryId, {
           direction: 'forward',
           maxDepth,
-        });
+        }, indexCache);
         for (const t of traces) {
           for (const n of t.reached) {
             if (!subgraphIds.has(n.id)) {
@@ -351,6 +359,20 @@ export async function enrichBehaviors(
         // awaited RFDB roundtrips can keep the heap growing past the limit
         // before any GC pass runs.
         await new Promise<void>((resolve) => setImmediate(resolve));
+        // Force a major GC at every flush boundary when --expose-gc is on.
+        // Real Grafema features force traceForwardBFS to build large per-call
+        // lazy indexes (paReadByName ≈ 18k PROPERTY_ACCESS entries,
+        // callsByReceiver ≈ 28k CALL entries) plus a reachedNodes array of
+        // up to 1000 full DataflowNode objects per call. These are local to
+        // each traceForwardBFS invocation, so they're GC-eligible after the
+        // call returns — but V8 only runs major GC under heap pressure, and
+        // a long synchronous chain of CPU-bound BFS calls between awaits can
+        // balloon heap past the limit before any major GC cycle runs.
+        // Empirically, after `global.gc()` heap drops to ~11MB; without it,
+        // it climbs unboundedly and OOMs at 2GB on real Grafema (149
+        // features, ~7s/feature). See REG-1093.
+        const gc = (globalThis as { gc?: () => void }).gc;
+        if (typeof gc === 'function') gc();
       }
     }
   }

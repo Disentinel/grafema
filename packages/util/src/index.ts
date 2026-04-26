@@ -220,7 +220,7 @@ export type { ChurnEntry, CoChangeEntry, OwnershipEntry, ArchaeologyEntry } from
 
 // Graph Query Utilities
 export { findCallsInFunction, findContainingFunction, traceValues, aggregateValues, NONDETERMINISTIC_PATTERNS, NONDETERMINISTIC_OBJECTS } from './queries/index.js';
-export { traceDataflow, traceForwardBFS, traceBackwardBFS } from './queries/index.js';
+export { traceDataflow, traceForwardBFS, traceBackwardBFS, makeDataflowIndexCache } from './queries/index.js';
 export { traceCallChain } from './queries/index.js';
 export { traceEffects } from './queries/index.js';
 export { getShape } from './queries/index.js';
@@ -247,6 +247,7 @@ export type {
   DataflowBackend,
   TraceDataflowOptions,
   TraceDataflowResult,
+  DataflowIndexCache,
   TraceEffectsResult,
   BoundaryCrossing,
   LeafSource,

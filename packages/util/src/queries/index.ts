@@ -10,7 +10,7 @@
 export { findCallsInFunction } from './findCallsInFunction.js';
 export { findContainingFunction } from './findContainingFunction.js';
 export { traceValues, aggregateValues, NONDETERMINISTIC_PATTERNS, NONDETERMINISTIC_OBJECTS } from './traceValues.js';
-export { traceDataflow, traceForwardBFS, traceBackwardBFS } from './traceDataflow.js';
+export { traceDataflow, traceForwardBFS, traceBackwardBFS, makeDataflowIndexCache } from './traceDataflow.js';
 export { traceCallChain } from './traceCallChain.js';
 export { getShape } from './getShape.js';
 export type { ShapeResult, ShapeMember, ClassIndex } from './getShape.js';
@@ -44,6 +44,7 @@ export type {
   DataflowBackend,
   TraceDataflowOptions,
   TraceDataflowResult,
+  DataflowIndexCache,
 } from './traceDataflow.js';
 export { traceEffects } from './traceEffects.js';
 export type { TraceEffectsResult, BoundaryCrossing, LeafSource, TraceEffectsOptions } from './traceEffects.js';
