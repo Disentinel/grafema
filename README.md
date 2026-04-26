@@ -8,13 +8,29 @@
 
 > **v0.3.22** — Early access. [Changelog](./CHANGELOG.md) | [Known limitations](./KNOWN_LIMITATIONS.md)
 
-Graph-driven code analysis. AI should query the graph, not read code.
+Grafema turns your codebase, infrastructure, knowledge, and workflows around it — into one queryable graph.
+For humans and AI.
 
-Grafema builds a queryable graph from your codebase via static analysis. Instead of reading thousands of files, ask questions: "who calls this?", "where does this data come from?", "what does this file do?" — and get structured answers.
+---
 
-**Scale tested:** Grafema analyzes [microsoft/vscode](https://github.com/microsoft/vscode) (~5,600 TypeScript files in `src/`) into a 3.56M-node, 7.55M-edge graph in ~14 minutes. Self-analysis of its own 500+ file polyglot codebase (TypeScript + Haskell + Rust + Elixir) takes ~25 seconds.
+We treat code as text. But text is just a form. 
 
-**AI benchmark:** On 30 real questions from VS Code GitHub issues (Sillito taxonomy L1-L4), Claude Sonnet with Grafema graph tools scores **77% accuracy vs 67% baseline** — with 96% MCP tool adoption.
+What actually matters when you write code is the system you have in your head — its **structure**. Entities, invariants, limitations. Goals and purpose.
+And how all these things relate to each other.
+
+Software is naturally an executable graph — and so is everything around it: your services, your decisions, your team's knowledge. Grafema uses compiler-grade AST parsers — containing years of community-shared knowledge for each language — to excavate the deepest possible model of your system, and turn it into a transparent, queryable, enrichable map that grounds your understanding of it.
+
+We refuse to accept *"that's impossible to analyze statically."* You can read code and understand it — you have a mental model in your head. So it's a matter of good enough heuristics. Human brains are literally built on this.
+
+It's not magic and won't cover 100% of your system on day one. There will be gaps and *"Here be dragons"* signs. You will slay these dragons one by one — extend analysis with your own rules, fill up the knowledge base. And if you contribute, you slay one for everyone.
+
+Thinking in graphs is not easy.
+But once it clicks - you stop reading code and just navigate the system.
+And your AI minions too.
+
+Welcome to the party!
+
+---
 
 ## Quick Start
 
@@ -58,48 +74,65 @@ Add to `.mcp.json` in your project root:
 }
 ```
 
-For Claude Desktop (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
-
-```json
-{
-  "mcpServers": {
-    "grafema": {
-      "command": "npx",
-      "args": ["grafema-mcp", "--project", "/path/to/project"]
-    }
-  }
-}
-```
-
 30+ MCP tools available: `find_nodes`, `find_calls`, `trace_dataflow`, `get_file_overview`, `describe`, `query_graph`, and more. The AI agent queries the graph instead of reading files — faster, cheaper, more complete.
 
 `find_nodes` returns rich context in a single call: callers, members, parent, import/call counts. Fuzzy name matching via local embeddings means approximate queries like `find_nodes(name="PtyHostHeartbeatService")` find `HeartbeatService` even without exact match.
 
-## Why Grafema?
+## Capabilities
 
-**For AI agents:** A `describe` call returns a file overview in 10-20x fewer tokens than reading the source. `find_calls` finds ALL callers across the entire codebase in one query — no grep, no missed references.
+**Analyze**
+- ✅ Call graph — who calls what, across all files
+- ✅ Data flow — trace values source to sink, forward and backward
+- ✅ Control flow — CFG, reachability, branching paths
+- ✅ Data shapes — object structure through assignment chains
+- ✅ Effect propagation — transitive side-effect analysis through call graph
+- ✅ Symbolic execution
+- ✅ Cross-language & inter-process — service boundaries, message passing, remote calls
+- ⏳ Side effect chain analysis
+- ⏳ Inter-service contracts — message queue schemas, API schemas (OpenAPI, JSON Schema, gRPC)
+- ⏳ Infrastructure as Code — Terraform, Kubernetes, Docker
 
-**For legacy codebases:** Grafema targets untyped/loosely-typed code (JavaScript, Python, PHP) where type systems can't help. It builds type-system-level understanding for languages that don't have types.
+**Query**
+- ✅ CLI: `tldr`, `who`, `wtf`, `why`, `check`, `overview`
+- ✅ 30+ MCP tools for AI agents
+- ✅ Datalog for custom structural queries
+- ✅ Cypher query language
+- ✅ Programmatic API (`@grafema/util`)
+- ✅ HexAtlas — visual code map (2D/3D)
+- ✅ VS Code extension
 
-**For understanding:** Trace data flow from frontend `fetch()` to backend handler. Trace `res.json(data)` backward to where the data came from. Across files, across services.
+**Connect knowledge to code entities and flows**
+- ✅ Knowledge base — decisions, ADRs linked to code nodes
+- ✅ Effects-DB & Registry — curated database of side effects and contract mappings for popular third-party packages across ecosystems (npm, PyPI, and more)
+- ⏳ Git integration — blame, churn, authorship
+
+**Enforce your rules**
+- ✅ Architectural invariants as Datalog rules
+- ✅ `grafema check` — CI gate
+- ⏳ Code Quality Metrics — complexity, coupling, hotspots
+
+**Enrich with your own meaning**
+- ✅ Custom node types and edges via plugins
+- ✅ Library callback enricher — auto-detect MCP tools, CLI commands
+- ✅ Manifest generation — API surface with effect annotations
 
 ## Language Support
 
-| Language | Parse | Analyze | Resolve | Dataflow | Status |
-|----------|-------|---------|---------|----------|--------|
-| JavaScript/TypeScript | full | full | full | full | Production |
-| Rust | full | full | full | partial | Beta |
-| Haskell | full | full | full | partial | Beta |
-| Java | full | full | full | partial | Beta |
-| Kotlin | full | full | full | partial | Beta |
-| Python | full | full | full | full | Beta |
-| Go | full | full | full | partial | Beta |
-| C/C++ | full | full | full | partial | Beta |
-| Swift | full | full | full | - | Alpha |
-| Objective-C | full | full | full | - | Alpha |
-| Elixir/Erlang | full | full | full | - | Alpha |
+| Language | Parser | Analyze | Resolve | Dataflow | Status |
+|----------|--------|---------|---------|----------|--------|
+| JavaScript/TypeScript | [OXC](https://oxc.rs) | full | full | full | Production |
+| Rust | [syn](https://github.com/dtolnay/syn) | full | full | partial | Beta |
+| Haskell | [ghc-lib-parser](https://hackage.haskell.org/package/ghc-lib-parser) | full | full | partial | Beta |
+| Java | [JavaParser](https://javaparser.org) | full | full | partial | Beta |
+| Kotlin | kotlin-compiler-embeddable | full | full | partial | Beta |
+| Python | [rustpython-parser](https://github.com/RustPython/RustPython) | full | full | partial | Beta |
+| Go | go/ast (stdlib) | full | full | partial | Beta |
+| C/C++ | tree-sitter-c | full | full | partial | Beta |
+| Swift | [SwiftSyntax](https://github.com/apple/swift-syntax) | full | full | - | Alpha |
+| Objective-C | libclang | full | full | - | Alpha |
+| Elixir/Erlang | native BEAM AST | full | full | - | Alpha |
 
-JS/TS is the primary language with full dataflow support. Other languages have parsers, analyzers, and cross-file resolvers via Haskell-based analysis pipeline. `grafema init` includes all languages by default — analyzers for absent languages are simply skipped.
+JS/TS is the primary language with full dataflow support. Each language uses its community's canonical parser — not a generic tokenizer. `grafema init` includes all languages by default — analyzers for absent languages are simply skipped.
 
 ## CLI Commands
 
@@ -111,6 +144,7 @@ JS/TS is the primary language with full dataflow support. Other languages have p
 | `grafema why <symbol>` | "Why is it this way?" | Knowledge base decisions |
 | `grafema init` | | Initialize Grafema in a project |
 | `grafema analyze` | | Build/rebuild the code graph (`--quickstart` for zero-config) |
+| `grafema check` | "Are my rules still satisfied?" | Run architectural guarantees, exit 1 on violations |
 | `grafema doctor` | | Check system health |
 | `grafema overview` | | High-level project stats |
 
@@ -150,17 +184,6 @@ Grafema provides the biggest advantage on **L4 architecture questions** and **de
 
 The evaluation harness captures full tool interaction traces including MCP tool results, reasoning chains, and fallback patterns. See [`autoresearch/`](./autoresearch/) for methodology and raw data.
 
-### Prompt Engineering Findings (H012)
-
-We tested 20 prompt variants across 7 feature dimensions (60 runs) to determine what drives MCP tool adoption:
-
-- **Explicit routing rules** ("for call analysis, use find_calls") = 100% adoption
-- **Prohibition** ("avoid grep for structural questions") = 100% adoption, best accuracy
-- **Soft suggestions** ("consider using graph tools") = 0% adoption (worse than nothing)
-- **"Start with get_stats" instruction** = 100% adoption but no accuracy gain (forced adoption on easy questions wastes tokens)
-
-Key insight: **specificity > force**. Telling the model _which tool for which task_ works; telling it _you must use tools_ does not.
-
 ## Architecture
 
 Grafema uses a Rust orchestrator, Haskell per-language analyzers, and a custom columnar graph database (RFDB):
@@ -177,7 +200,7 @@ grafema analyze → Rust orchestrator → per-language analyzers → RFDB (graph
 
 - **RFDB** — columnar graph database optimized for code analysis workloads. Deferred indexing, L1 compaction, edge-type and by-name indexes. Includes **local embedding index** for fuzzy name search — approximate queries find structurally similar names without exact match (e.g., `PtyHostHeartbeatService` matches `HeartbeatService`). Automatic segment GC after compaction.
 - **Orchestrator** — Rust binary that coordinates discovery, parsing, RFDB ingestion, and resolution across languages. Streaming pipeline frees AST memory after ingestion.
-- **Analyzers** — Haskell binaries per language (JS/TS, Rust, Java, Kotlin, Python, Go, C/C++, Swift, Elixir/Erlang). Run as daemon pools with JSON-over-stdio protocol.
+- **Analyzers** — per-language binaries (Haskell + native parsers where needed: libclang for ObjC, tree-sitter for C/C++, SwiftSyntax for Swift). Run as daemon pools with JSON-over-stdio protocol.
 - **MCP Server** — 30+ tools for AI agent integration (find_nodes, find_calls, trace_dataflow, describe, query_graph, etc.)
 
 ## Environment Variables
