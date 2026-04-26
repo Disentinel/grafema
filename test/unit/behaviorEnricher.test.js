@@ -489,4 +489,66 @@ describe('behaviorEnricher', () => {
       `expected <=10 periphery edges, got ${result.totalPeripheryNodes}`,
     );
   });
+
+  it('flushBatchSize=1: flushes after every feature, results identical', async () => {
+    // Seed three independent FEATUREs, each with its own entry + callee.
+    // With flushBatchSize=1 the enricher must flush once per feature
+    // (3 addNodes + 3 addEdges calls in Pass 1) yet produce the same final
+    // graph state as the default batch size.
+    const file = 'multi.ts';
+    await seedModule(backend, file);
+
+    for (const tag of ['a', 'b', 'c']) {
+      await seedFunction(backend, { file, fnId: `test::entry-${tag}`, name: `entry${tag}`, async: false });
+      await seedFunction(backend, { file, fnId: `test::callee-${tag}`, name: `callee${tag}`, async: false });
+      await seedCall(backend, {
+        file,
+        callId: `test::call-${tag}`,
+        name: `callee${tag}`,
+        fnId: `test::entry-${tag}`,
+        calleeId: `test::callee-${tag}`,
+      });
+      await backend.addNode({
+        id: `test::feat-${tag}`,
+        type: 'cli:command',
+        name: `cmd-${tag}`,
+        file,
+        exported: false,
+      });
+      await backend.addEdge({ src: `test::feat-${tag}`, dst: `test::entry-${tag}`, type: 'HANDLES' });
+    }
+
+    // Spy on addNodes / addEdges to count flush calls.
+    const origAddNodes = client.addNodes.bind(client);
+    const origAddEdges = client.addEdges.bind(client);
+    let addNodesCalls = 0;
+    let addEdgesCalls = 0;
+    client.addNodes = async (nodes) => { addNodesCalls++; return origAddNodes(nodes); };
+    client.addEdges = async (edges) => { addEdgesCalls++; return origAddEdges(edges); };
+
+    try {
+      const result = await enrichBehaviors(client, emptyLookup, { flushBatchSize: 1 });
+      assert.equal(result.behaviorsCreated, 3);
+      // With flushBatchSize=1 we expect ≥3 addNodes calls (one per feature in
+      // Pass 1; the trailing final flush is a no-op when buffers are empty).
+      assert.ok(addNodesCalls >= 3, `expected >=3 addNodes calls, got ${addNodesCalls}`);
+      assert.ok(addEdgesCalls >= 3, `expected >=3 addEdges calls, got ${addEdgesCalls}`);
+
+      // Verify all three BEHAVIOR nodes landed in the graph.
+      const behaviors = [];
+      for await (const wn of client.queryNodes({ type: 'BEHAVIOR' })) behaviors.push(wn);
+      assert.equal(behaviors.length, 3, 'three BEHAVIOR nodes should be persisted');
+
+      // Each FEATURE → IMPLEMENTED_BY → BEHAVIOR.
+      for (const tag of ['a', 'b', 'c']) {
+        const featureWire = await getWireNodeByOriginalId(client, `test::feat-${tag}`, 'cli:command');
+        assert.ok(featureWire, `feature ${tag} should exist`);
+        const ib = await getOutgoing(client, featureWire.id, 'IMPLEMENTED_BY');
+        assert.equal(ib.length, 1, `feature ${tag} should have exactly one IMPLEMENTED_BY`);
+      }
+    } finally {
+      client.addNodes = origAddNodes;
+      client.addEdges = origAddEdges;
+    }
+  });
 });
