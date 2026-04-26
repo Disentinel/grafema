@@ -595,8 +595,12 @@ impl GraphStore for GraphEngineV2 {
         }
         // If skip_validation, silently ignore errors
 
-        // Auto-flush: edges also contribute to buffer pressure
-        self.maybe_auto_flush();
+        // Edge-only flush: only trigger on byte limit, never on memory-pressure path.
+        // The memory-pressure path checks total_write_buffer_nodes (nodes from the
+        // analysis phase), so an enricher's edge write storm would cause a massive
+        // node flush while holding the exclusive write lock — blocking all reads for
+        // seconds. Edge writes use a byte-only guard instead. (RFD-67)
+        self.maybe_auto_flush_edges();
     }
 
     fn delete_edge(&mut self, src: u128, dst: u128, edge_type: &str) {
@@ -1047,6 +1051,24 @@ impl GraphEngineV2 {
         if exceeds_limits || pressure_flush {
             if let Err(e) = self.store.flush_all(&mut self.manifest) {
                 tracing::warn!("auto-flush failed: {}", e);
+            }
+        }
+    }
+
+    /// Auto-flush for edge-only write paths.
+    ///
+    /// Checks the byte limit only — never the memory-pressure path. This avoids
+    /// the RFD-67 bug: if the pressure path ran here, an enricher's first addEdges
+    /// call would flush all analysis-phase nodes (which are still in the write buffer)
+    /// while holding the exclusive write lock, blocking reads for seconds.
+    ///
+    /// Edges are small (≈98 bytes each). The byte limit (100MB default) acts as a
+    /// genuine OOM safeguard. Callers that want guaranteed durability should call
+    /// flush() or compact() explicitly.
+    fn maybe_auto_flush_edges(&mut self) {
+        if self.store.any_shard_needs_flush(usize::MAX, self.cached_profile.write_buffer_byte_limit) {
+            if let Err(e) = self.store.flush_all(&mut self.manifest) {
+                tracing::warn!("auto-flush (edges) failed: {}", e);
             }
         }
     }
@@ -1808,6 +1830,73 @@ mod tests {
     }
 
     // ── Adaptive Shard Count ────────────────────────────────────────
+
+    /// Regression test for RFD-67: edge writes must not block concurrent reads.
+    ///
+    /// Before the fix, `add_edges` called `maybe_auto_flush` which triggered
+    /// `flush_all` under the exclusive write lock. This blocked reads for seconds
+    /// when the write buffer had many analysis nodes (memory-pressure path).
+    ///
+    /// This test wraps the engine in an RwLock (mirroring the production
+    /// `Database.engine` field) and verifies that read queries complete quickly
+    /// while edge writes are in progress.
+    #[test]
+    fn test_edge_writes_do_not_block_reads() {
+        use std::sync::{Arc, RwLock};
+        use std::time::{Duration, Instant};
+
+        // Build engine with many pre-loaded nodes (simulates post-analysis state).
+        let mut engine = GraphEngineV2::create_ephemeral();
+        for i in 0u128..600 {
+            engine.add_nodes(vec![make_v1_node(i, "FUNCTION", &format!("fn_{i}"), "src/a.js")]);
+        }
+        // Don't flush — leave nodes in write buffer so memory-pressure path could trigger.
+
+        let engine = Arc::new(RwLock::new(engine));
+
+        // Writer thread: adds edges in a tight loop (simulates an enricher write storm).
+        let writer_engine = Arc::clone(&engine);
+        let writer = std::thread::spawn(move || {
+            for i in 0u128..100 {
+                let src = i % 600;
+                let dst = (i + 1) % 600;
+                let mut eng = writer_engine.write().unwrap();
+                eng.add_edges(vec![EdgeRecord {
+                    src,
+                    dst,
+                    edge_type: Some("CALLS".to_string()),
+                    version: "main".to_string(),
+                    metadata: None,
+                    deleted: false,
+                }], true);
+            }
+        });
+
+        // Reader thread: queries nodes while the writer runs. Must not block.
+        let reader_engine = Arc::clone(&engine);
+        let reader = std::thread::spawn(move || {
+            let start = Instant::now();
+            for _ in 0..10 {
+                let eng = reader_engine.read().unwrap();
+                let _ = eng.find_by_type("FUNCTION");
+                drop(eng);
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            start.elapsed()
+        });
+
+        writer.join().unwrap();
+        let read_duration = reader.join().unwrap();
+
+        // 10 reads × 5ms sleep = 50ms minimum. Total should be well under 500ms.
+        // Before the fix, a single auto-flush could hold the write lock for
+        // hundreds of milliseconds, causing reads to queue up.
+        assert!(
+            read_duration < Duration::from_millis(1000),
+            "reads took {:?} — edge writes are blocking reads (RFD-67 regression)",
+            read_duration,
+        );
+    }
 
     #[test]
     fn test_adaptive_shard_count_on_disk() {
