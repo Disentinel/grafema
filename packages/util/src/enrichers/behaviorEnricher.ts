@@ -32,6 +32,10 @@ import { traceDataflow } from '../queries/traceDataflow.js';
 import { traceEffects } from '../queries/traceEffects.js';
 import type { EffectType } from '../manifest/types.js';
 
+/** Bound on per-file metrics cache. At 149-feature scale Grafema has <1k unique
+ *  files but on huge polyrepos this can grow. LRU eviction keeps memory flat. */
+const FILE_METRICS_CACHE_MAX = 200;
+
 /** ---------------------------------------------------------------------------
  *  Public types
  *  ------------------------------------------------------------------------ */
@@ -160,32 +164,42 @@ export async function enrichBehaviors(
       //       walks callers (not callees), so we add the call-graph leg
       //       separately to honour the "forward slice = what this code
       //       reaches" semantic.
-      const subgraph: DataflowNode[] = [];
+      //
+      // Memory note: at 149-FEATURE scale, traceDataflow's `reached` array holds
+      // thousands of full DataflowNode objects per feature. We only need
+      // `{id, file, type}` per node for classification — extract immediately and
+      // drop the heavy result so it becomes GC-eligible before the next call.
+      const subgraphMin: { id: string; file?: string; type: string }[] = [];
       const subgraphIds = new Set<string>();
       const entryDf = await dfDb.getNode(entryId);
       if (entryDf) {
-        subgraph.push(entryDf);
+        subgraphMin.push({ id: entryDf.id, file: entryDf.file, type: entryDf.type });
         subgraphIds.add(entryDf.id);
       }
 
-      let traces: Awaited<ReturnType<typeof traceDataflow>> | null =
-        await traceDataflow(dfDb, entryId, {
+      {
+        // Run traceDataflow inside a block so its result is unreferenced after
+        // we exit the block (no lingering closure binding).
+        const traces = await traceDataflow(dfDb, entryId, {
           direction: 'forward',
           maxDepth,
         });
-      for (const t of traces) {
-        for (const n of t.reached) {
-          if (!subgraphIds.has(n.id)) {
-            subgraph.push(n);
-            subgraphIds.add(n.id);
+        for (const t of traces) {
+          for (const n of t.reached) {
+            if (!subgraphIds.has(n.id)) {
+              subgraphMin.push({ id: n.id, file: n.file, type: n.type });
+              subgraphIds.add(n.id);
+            }
           }
         }
+        // Explicit clear of the per-result `reached` arrays helps V8 release
+        // memory under tight heap budgets even if the outer ref is still live
+        // for one more tick.
+        for (const t of traces) (t as { reached: DataflowNode[] }).reached = [];
       }
-      // Free the trace result eagerly — at scale this can hold thousands of
-      // DataflowNode references per feature. We only needed `reached`.
-      traces = null;
 
       // Call-graph forward BFS from entry (CALLS / CALL→CALLS chain).
+      // We also extract minimal records here, never retaining full nodes.
       const cgQueue: string[] = [entryId];
       const cgVisited = new Set<string>([entryId]);
       let cgIters = 0;
@@ -202,7 +216,7 @@ export async function enrichBehaviors(
           // Skip pure scope nodes from being COMPRISES targets — they're
           // structural, not behavioural.
           if (nx.type !== 'SCOPE' && !subgraphIds.has(nx.id)) {
-            subgraph.push(nx);
+            subgraphMin.push({ id: nx.id, file: nx.file, type: nx.type });
             subgraphIds.add(nx.id);
           }
           cgQueue.push(nx.id);
@@ -210,16 +224,24 @@ export async function enrichBehaviors(
       }
 
       // 3. Effects via traceEffects.
+      // Same pattern: capture only the EffectType set and drop the heavy result
+      // (LeafSource[] + BoundaryCrossing[] arrays can hold hundreds of records
+      // each per feature on real codebases).
       const effectSet = new Set<EffectType>();
-      const eff = await traceEffects(dfDb, entryId, effectsLookup, { maxDepth });
-      if (eff) {
-        for (const e of eff.transitive) effectSet.add(e);
+      {
+        const eff = await traceEffects(dfDb, entryId, effectsLookup, { maxDepth });
+        if (eff) {
+          for (const e of eff.transitive) effectSet.add(e);
+          // Free the heavy arrays before exiting the block.
+          eff.leaf_sources.length = 0;
+          eff.boundary_crossings.length = 0;
+        }
       }
 
       // 4. Classify each subgraph node by file metrics (lazy per-file compute).
       const coreIds: string[] = [];
       const peripheryIds: string[] = [];
-      for (const n of subgraph) {
+      for (const n of subgraphMin) {
         const file = n.file;
         if (!file) {
           // No file → treat as core (synthetic node, can't classify as library).
@@ -233,6 +255,12 @@ export async function enrichBehaviors(
           coreIds.push(n.id);
         }
       }
+      // subgraphMin / subgraphIds / cgVisited are loop-locals — GC reclaims them
+      // when the iteration ends. Explicitly truncate the largest one to make
+      // the release deterministic under heap pressure.
+      subgraphMin.length = 0;
+      subgraphIds.clear();
+      cgVisited.clear();
 
       // 5. Behavior identity hash from sorted core IDs.
       const sortedCore = [...coreIds].sort();
@@ -318,6 +346,11 @@ export async function enrichBehaviors(
           batchEdges = [];
         }
         processedSinceFlush = 0;
+        // Yield to event loop so V8 has an opportunity to run incremental GC
+        // between batches. Without this yield, a long synchronous chain of
+        // awaited RFDB roundtrips can keep the heap growing past the limit
+        // before any GC pass runs.
+        await new Promise<void>((resolve) => setImmediate(resolve));
       }
     }
   }
@@ -431,6 +464,12 @@ async function getFileMetrics(
   const isLibrary = coupling === 0 && density < LIBRARY_DENSITY_THRESHOLD;
 
   const metrics: FileMetrics = { coupling, density, isLibrary };
+  // LRU eviction — Map preserves insertion order, so deleting + re-inserting
+  // moves an entry to "most recent" and the oldest entry sits at the head.
+  if (cache.size >= FILE_METRICS_CACHE_MAX) {
+    const oldest = cache.keys().next().value;
+    if (oldest !== undefined) cache.delete(oldest);
+  }
   cache.set(file, metrics);
   return metrics;
 }
