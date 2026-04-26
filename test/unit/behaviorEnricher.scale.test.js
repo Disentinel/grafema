@@ -197,6 +197,21 @@ describe('behaviorEnricher scale', () => {
         heapDeltaMb < 400,
         `heap grew by ${heapDeltaMb.toFixed(0)}MB during enrichment — leak suspected`,
       );
+
+      // Premise-reset invariant: NO COMPRISES edges are emitted at scale.
+      // Sample a handful of BEHAVIORs and confirm zero COMPRISES outgoing.
+      const behaviors = [];
+      for await (const wn of db.backend.client.queryNodes({ type: 'BEHAVIOR' })) {
+        behaviors.push(wn);
+        if (behaviors.length >= 5) break;
+      }
+      assert.ok(behaviors.length > 0, 'expected at least one BEHAVIOR to inspect');
+      for (const b of behaviors) {
+        const comprises = await db.backend.client.getOutgoingEdges(b.id, ['COMPRISES']);
+        assert.equal(comprises.length, 0, `BEHAVIOR ${b.id} must have 0 COMPRISES edges`);
+        const peEdges = await db.backend.client.getOutgoingEdges(b.id, ['PRODUCES_EFFECT']);
+        assert.equal(peEdges.length, 0, `BEHAVIOR ${b.id} must have 0 PRODUCES_EFFECT edges`);
+      }
     } finally {
       await db.cleanup();
     }

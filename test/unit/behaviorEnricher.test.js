@@ -1,11 +1,12 @@
 /**
- * Tests for behaviorEnricher (plan: atomic-purring-rivest Phase C/D).
+ * Tests for behaviorEnricher (post-premise-reset, materialize-only-what-queries-need).
  *
  * The enricher walks every FEATURE-class node, follows HANDLES → entry
- * function, runs forward-slice dataflow to collect a subgraph, classifies
- * core/periphery via per-file metrics, captures effects via traceEffects,
- * emits a BEHAVIOR node + IMPLEMENTED_BY/COMPRISES/PRODUCES_EFFECT edges,
- * and links FEATUREs that share a behavior hash via SHARES_BEHAVIOR_WITH.
+ * function, walks the forward subgraph to collect a stable set of reachable
+ * IDs, hashes them, captures effects via traceEffects, emits a BEHAVIOR node
+ * with metadata = {hash, effects, coreNodeCount, depth, effectCount}, plus an
+ * IMPLEMENTED_BY edge from the FEATURE. NO COMPRISES, NO PRODUCES_EFFECT
+ * edges. FEATUREs with matching hashes are linked via SHARES_BEHAVIOR_WITH.
  */
 
 import { describe, it, before, after, beforeEach } from 'node:test';
@@ -31,7 +32,6 @@ before(() => {
   mkdirSync(join(effectsDbDir, 'packages'), { recursive: true });
   mkdirSync(join(effectsDbDir, 'runtimes'), { recursive: true });
 
-  // Annotate a couple of node:fs entries — that's enough for the IO test.
   writeFileSync(
     join(effectsDbDir, 'runtimes', 'node.yaml'),
     [
@@ -70,9 +70,6 @@ async function getOutgoing(client, srcWireId, edgeType) {
   return client.getOutgoingEdges(srcWireId, [edgeType]);
 }
 
-/**
- * Seed module + global scope for a file.
- */
 async function seedModule(backend, file) {
   await backend.addNode({
     id: `${file}::module`,
@@ -92,10 +89,6 @@ async function seedModule(backend, file) {
   await backend.addEdge({ src: `${file}::module`, dst: `${file}::scope`, type: 'HAS_SCOPE' });
 }
 
-/**
- * Seed a FUNCTION with a body scope, so findCallsInFunction (Layout A) can
- * walk HAS_SCOPE → CONTAINS → CALL.
- */
 async function seedFunction(backend, { file, fnId, name, async: isAsync = false }) {
   await backend.addNode({
     id: fnId,
@@ -117,10 +110,6 @@ async function seedFunction(backend, { file, fnId, name, async: isAsync = false 
   await backend.addEdge({ src: fnId, dst: `${fnId}::body`, type: 'HAS_SCOPE' });
 }
 
-/**
- * Seed a CALL inside fn's body scope, optionally linked to a callee FUNCTION
- * via CALLS.
- */
 async function seedCall(backend, { file, callId, name, fnId, calleeId }) {
   await backend.addNode({
     id: callId,
@@ -131,7 +120,6 @@ async function seedCall(backend, { file, callId, name, fnId, calleeId }) {
   await backend.addEdge({ src: `${fnId}::body`, dst: callId, type: 'CONTAINS' });
   if (calleeId) {
     await backend.addEdge({ src: callId, dst: calleeId, type: 'CALLS' });
-    // Also direct FUNCTION→CALLS→FUNCTION for traceEffects fallback (Strategy 2).
     await backend.addEdge({ src: fnId, dst: calleeId, type: 'CALLS' });
   }
 }
@@ -153,11 +141,10 @@ describe('behaviorEnricher', () => {
     client = backend.client;
   });
 
-  it('single feature, simple subgraph: BEHAVIOR + COMPRISES edges', async () => {
+  it('single feature: BEHAVIOR + IMPLEMENTED_BY, no COMPRISES, hash populated', async () => {
     const file = 'svc.ts';
     await seedModule(backend, file);
 
-    // FEATURE
     await backend.addNode({
       id: 'test::feat',
       type: 'cli:command',
@@ -194,64 +181,51 @@ describe('behaviorEnricher', () => {
     assert.ok(meta.coreNodeCount >= 2, `meta.coreNodeCount=${meta.coreNodeCount}`);
     assert.equal(typeof meta.hash, 'string');
     assert.equal(meta.hash.length, 64);
+    assert.equal(typeof meta.depth, 'number');
+    assert.equal(typeof meta.effectCount, 'number');
+    assert.ok(Array.isArray(meta.effects), 'effects must be an array');
 
+    // Premise-reset invariant: NO COMPRISES edges are emitted.
     const comprises = await getOutgoing(client, behaviorNode.id, 'COMPRISES');
-    assert.ok(comprises.length >= 2, `expected >=2 COMPRISES, got ${comprises.length}`);
+    assert.equal(comprises.length, 0, 'COMPRISES edges must not be emitted');
+    // And NO PRODUCES_EFFECT edges either — effects live in metadata.
+    const peEdges = await getOutgoing(client, behaviorNode.id, 'PRODUCES_EFFECT');
+    assert.equal(peEdges.length, 0, 'PRODUCES_EFFECT edges must not be emitted');
   });
 
-  it('core/periphery classification: library file goes to periphery', async () => {
-    // svc.ts: high-coupling, async/throwing functions → "domain" (core)
-    await seedModule(backend, 'svc.ts');
-    await seedFunction(backend, { file: 'svc.ts', fnId: 'test::entry', name: 'serve', async: true });
-    await seedFunction(backend, { file: 'svc.ts', fnId: 'test::svcB', name: 'helperB', async: true });
-    // intra-file CALLS to lift coupling above zero
-    await backend.addEdge({ src: 'test::entry', dst: 'test::svcB', type: 'CALLS' });
-    await backend.addEdge({ src: 'test::svcB', dst: 'test::entry', type: 'CALLS' });
-
-    // lib/utils.ts: zero coupling, synchronous, no throws → library (periphery)
-    await seedModule(backend, 'lib/utils.ts');
-    await seedFunction(backend, { file: 'lib/utils.ts', fnId: 'test::lib', name: 'format', async: false });
-
-    // FEATURE → entry → calls helperB and lib.format
+  it('hash is deterministic for fixed input', async () => {
+    const file = 'svc.ts';
+    await seedModule(backend, file);
+    await seedFunction(backend, { file, fnId: 'test::entry', name: 'main', async: false });
+    await seedFunction(backend, { file, fnId: 'test::callee', name: 'doIt', async: false });
     await backend.addNode({
       id: 'test::feat',
       type: 'cli:command',
-      name: 'serve-cmd',
-      file: 'svc.ts',
+      name: 'cmd',
+      file,
       exported: false,
     });
     await backend.addEdge({ src: 'test::feat', dst: 'test::entry', type: 'HANDLES' });
     await seedCall(backend, {
-      file: 'svc.ts',
-      callId: 'test::call-lib',
-      name: 'format',
+      file,
+      callId: 'test::call',
+      name: 'doIt',
       fnId: 'test::entry',
-      calleeId: 'test::lib',
+      calleeId: 'test::callee',
     });
 
-    const result = await enrichBehaviors(client, emptyLookup);
-    assert.equal(result.behaviorsCreated, 1);
-    assert.ok(result.totalPeripheryNodes >= 1, `expected >=1 periphery, got ${result.totalPeripheryNodes}`);
+    const r1 = await enrichBehaviors(client, emptyLookup);
+    assert.equal(r1.behaviorsCreated, 1);
 
     const featureWire = await getWireNodeByOriginalId(client, 'test::feat', 'cli:command');
     const ib = await getOutgoing(client, featureWire.id, 'IMPLEMENTED_BY');
-    const behaviorWireId = String(ib[0].dst);
-
-    const comprises = await getOutgoing(client, behaviorWireId, 'COMPRISES');
-    let coreCount = 0;
-    let peripheryCount = 0;
-    for (const e of comprises) {
-      const meta = e.metadata ? (typeof e.metadata === 'string' ? JSON.parse(e.metadata) : e.metadata) : {};
-      // role is at top-level after parseEdge spread, or in metadata
-      const role = e.role ?? meta.role;
-      if (role === 'core') coreCount++;
-      else if (role === 'periphery') peripheryCount++;
-    }
-    assert.ok(coreCount >= 1, `expected >=1 core role edge, got ${coreCount}`);
-    assert.ok(peripheryCount >= 1, `expected >=1 periphery role edge, got ${peripheryCount}`);
+    const behavior = await client.getNode(String(ib[0].dst));
+    const meta = JSON.parse(behavior.metadata);
+    // Hash is hex sha256 — 64 lowercase hex chars.
+    assert.match(meta.hash, /^[0-9a-f]{64}$/);
   });
 
-  it('effects propagation: PRODUCES_EFFECT edge with metadata.effect', async () => {
+  it('effects propagation: BEHAVIOR.metadata.effects includes IO (no PRODUCES_EFFECT edges)', async () => {
     const file = 'io.ts';
     await seedModule(backend, file);
     await backend.addNode({
@@ -261,9 +235,8 @@ describe('behaviorEnricher', () => {
       file,
       exported: false,
     });
-    // Mark entry as throwing so direct effects produce THROW.
     await seedFunction(backend, { file, fnId: 'test::entry', name: 'readAction', async: true });
-    // Add controlFlow.hasThrow to entry metadata via re-add
+    // Mark entry as throwing so direct effects produce THROW too.
     await backend.addNode({
       id: 'test::entry',
       type: 'FUNCTION',
@@ -276,7 +249,6 @@ describe('behaviorEnricher', () => {
       controlFlow: { hasThrow: true },
     });
 
-    // EXTERNAL_MODULE node "fs" so traceEffects looks it up via effects-db.
     await backend.addNode({
       id: 'test::fs',
       type: 'EXTERNAL_MODULE',
@@ -294,38 +266,29 @@ describe('behaviorEnricher', () => {
 
     const result = await enrichBehaviors(client, effectsLookup);
     assert.equal(result.behaviorsCreated, 1);
-    assert.ok(result.effectEdgesEmitted >= 1, `expected effect edges, got ${result.effectEdgesEmitted}`);
 
     const featureWire = await getWireNodeByOriginalId(client, 'test::feat', 'cli:command');
     const ib = await getOutgoing(client, featureWire.id, 'IMPLEMENTED_BY');
     const behaviorWireId = String(ib[0].dst);
 
-    const effects = await getOutgoing(client, behaviorWireId, 'PRODUCES_EFFECT');
-    assert.ok(effects.length >= 1);
-    const effectNames = new Set();
-    for (const e of effects) {
-      const meta = e.metadata ? (typeof e.metadata === 'string' ? JSON.parse(e.metadata) : e.metadata) : {};
-      const eff = e.effect ?? meta.effect;
-      if (eff) effectNames.add(eff);
-    }
-    assert.ok(effectNames.has('IO'), `expected IO effect, got ${[...effectNames]}`);
+    // No edge-side effect emission.
+    const peEdges = await getOutgoing(client, behaviorWireId, 'PRODUCES_EFFECT');
+    assert.equal(peEdges.length, 0);
 
-    // BEHAVIOR metadata.effects should also include IO.
+    // Effects live in BEHAVIOR.metadata.effects.
     const behavior = await client.getNode(behaviorWireId);
     const bmeta = JSON.parse(behavior.metadata);
     const effList = Array.isArray(bmeta.effects)
       ? bmeta.effects
       : (typeof bmeta.effects === 'string' ? JSON.parse(bmeta.effects) : []);
     assert.ok(effList.includes('IO'), `expected effects array to include IO, got ${effList}`);
+    assert.equal(bmeta.effectCount, effList.length);
   });
 
   it('two features same behavior: SHARES_BEHAVIOR_WITH bidirectional', async () => {
     const file = 'svc.ts';
     await seedModule(backend, file);
-    // Single shared callee — both entries reach the same set of nodes.
     await seedFunction(backend, { file, fnId: 'test::shared', name: 'shared', async: false });
-
-    // Entry A
     await seedFunction(backend, { file, fnId: 'test::entryA', name: 'entryA', async: false });
     await seedCall(backend, {
       file,
@@ -343,12 +306,7 @@ describe('behaviorEnricher', () => {
     });
     await backend.addEdge({ src: 'test::featA', dst: 'test::entryA', type: 'HANDLES' });
 
-    // Entry B — must reach the SAME set of nodes for hashes to match.
-    // Trick: make entryA and entryB both call only `shared`, AND have the same
-    // structure. Forward slice from entryA = {entryA, callA, shared}.
-    // Forward slice from entryB = {entryB, callB, shared}. Hashes will differ
-    // because callA/callB and entryA/entryB have different IDs. To force a
-    // collision, point both FEATURES to the same entry.
+    // Same entry → same hash → linked.
     await backend.addNode({
       id: 'test::featB',
       type: 'cli:command',
@@ -371,7 +329,6 @@ describe('behaviorEnricher', () => {
     const file = 'svc.ts';
     await seedModule(backend, file);
 
-    // Two completely separate slices.
     await seedFunction(backend, { file, fnId: 'test::entryA', name: 'a', async: false });
     await seedFunction(backend, { file, fnId: 'test::calleeA', name: 'aHelper', async: false });
     await seedCall(backend, {
@@ -449,52 +406,7 @@ describe('behaviorEnricher', () => {
     assert.equal(ib.length, 1, 'no duplicate IMPLEMENTED_BY');
   });
 
-  it('periphery cap: peripheryEdgeCap limits COMPRISES to periphery nodes', async () => {
-    const file = 'app.ts';
-    await seedModule(backend, file);
-    // app.ts: domain (entry has async:true and intra-file connections).
-    await seedFunction(backend, { file, fnId: 'test::entry', name: 'main', async: true });
-    await seedFunction(backend, { file, fnId: 'test::main2', name: 'main2', async: true });
-    await backend.addEdge({ src: 'test::entry', dst: 'test::main2', type: 'CALLS' });
-    await backend.addEdge({ src: 'test::main2', dst: 'test::entry', type: 'CALLS' });
-
-    // lib.ts: 100 zero-coupling, sync helpers → all periphery.
-    const libFile = 'lib.ts';
-    await seedModule(backend, libFile);
-    for (let i = 0; i < 60; i++) {
-      const id = `test::lib-${i}`;
-      await seedFunction(backend, { file: libFile, fnId: id, name: `helper${i}`, async: false });
-      await seedCall(backend, {
-        file,
-        callId: `test::call-${i}`,
-        name: `helper${i}`,
-        fnId: 'test::entry',
-        calleeId: id,
-      });
-    }
-
-    await backend.addNode({
-      id: 'test::feat',
-      type: 'cli:command',
-      name: 'cmd',
-      file,
-      exported: false,
-    });
-    await backend.addEdge({ src: 'test::feat', dst: 'test::entry', type: 'HANDLES' });
-
-    const result = await enrichBehaviors(client, emptyLookup, { peripheryEdgeCap: 10 });
-    assert.equal(result.behaviorsCreated, 1);
-    assert.ok(
-      result.totalPeripheryNodes <= 10,
-      `expected <=10 periphery edges, got ${result.totalPeripheryNodes}`,
-    );
-  });
-
   it('flushBatchSize=1: flushes after every feature, results identical', async () => {
-    // Seed three independent FEATUREs, each with its own entry + callee.
-    // With flushBatchSize=1 the enricher must flush once per feature
-    // (3 addNodes + 3 addEdges calls in Pass 1) yet produce the same final
-    // graph state as the default batch size.
     const file = 'multi.ts';
     await seedModule(backend, file);
 
@@ -518,7 +430,6 @@ describe('behaviorEnricher', () => {
       await backend.addEdge({ src: `test::feat-${tag}`, dst: `test::entry-${tag}`, type: 'HANDLES' });
     }
 
-    // Spy on addNodes / addEdges to count flush calls.
     const origAddNodes = client.addNodes.bind(client);
     const origAddEdges = client.addEdges.bind(client);
     let addNodesCalls = 0;
@@ -529,17 +440,13 @@ describe('behaviorEnricher', () => {
     try {
       const result = await enrichBehaviors(client, emptyLookup, { flushBatchSize: 1 });
       assert.equal(result.behaviorsCreated, 3);
-      // With flushBatchSize=1 we expect ≥3 addNodes calls (one per feature in
-      // Pass 1; the trailing final flush is a no-op when buffers are empty).
       assert.ok(addNodesCalls >= 3, `expected >=3 addNodes calls, got ${addNodesCalls}`);
       assert.ok(addEdgesCalls >= 3, `expected >=3 addEdges calls, got ${addEdgesCalls}`);
 
-      // Verify all three BEHAVIOR nodes landed in the graph.
       const behaviors = [];
       for await (const wn of client.queryNodes({ type: 'BEHAVIOR' })) behaviors.push(wn);
       assert.equal(behaviors.length, 3, 'three BEHAVIOR nodes should be persisted');
 
-      // Each FEATURE → IMPLEMENTED_BY → BEHAVIOR.
       for (const tag of ['a', 'b', 'c']) {
         const featureWire = await getWireNodeByOriginalId(client, `test::feat-${tag}`, 'cli:command');
         assert.ok(featureWire, `feature ${tag} should exist`);

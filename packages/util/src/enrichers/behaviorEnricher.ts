@@ -1,23 +1,32 @@
 /**
- * behaviorEnricher — L3 BEHAVIOR extraction.
+ * behaviorEnricher — L3 BEHAVIOR extraction (post-premise-reset).
  *
  * For every FEATURE-class node (cli:command, mcp:tool, vscode:command), walk
- * the HANDLES edge to the entry function, run a forward-slice dataflow trace
- * to collect the reachable subgraph, classify each reached node as core or
- * periphery using per-file coupling/density heuristics, and capture the
- * transitive effects. Each FEATURE then gets:
+ * the HANDLES edge to the entry function, walk the CALLS forward subgraph
+ * depth-bounded, hash the sorted reachable id set, and capture the transitive
+ * effects. Each FEATURE then gets:
  *
  *   FEATURE -IMPLEMENTED_BY-> BEHAVIOR
- *   BEHAVIOR -COMPRISES-> coreNode      (metadata: {"role":"core"})
- *   BEHAVIOR -COMPRISES-> peripheryNode (metadata: {"role":"periphery"})
- *   BEHAVIOR -PRODUCES_EFFECT-> __effects/IO  (metadata: {"effect":"IO"})
  *
- * Pass 2 deduplicates: BEHAVIORs whose core-set hash matches get linked via
+ * BEHAVIOR.metadata holds:
+ *   { hash, effects: ['IO', ...], coreNodeCount, depth, effectCount }
+ *
+ * Pass 2 deduplicates: BEHAVIORs whose hash matches get linked via
  * SHARES_BEHAVIOR_WITH edges between their FEATUREs (bidirectional).
  *
- * Idempotent: BEHAVIOR id is `${feature.id}::behavior`, COMPRISES/PRODUCES_EFFECT
- * targets and edges form deterministic (src,dst,edgeType) tuples that RFDB
- * dedupes.
+ * No COMPRISES edges are emitted. No PRODUCES_EFFECT edges are emitted.
+ * The materialized membership/effect edges that previous versions wrote
+ * (research doc §4.2) cost millions of edges + per-feature subgraph held
+ * in memory at real-codebase scale. None of the documented user queries
+ * actually need them — see skill `materialize-only-what-queries-need`:
+ *
+ *   - "What does feature X do?" → CONTRACT + BEHAVIOR.effects + size summary
+ *   - "Are these duplicates?"   → hash equality (Datalog rule)
+ *   - "What features serve fn Y?" → backward callers walk at runtime
+ *   - "Cognitive metrics for X" → counts + depth (aggregate, not membership)
+ *
+ * Idempotent: BEHAVIOR id is `${feature.id}::behavior`, IMPLEMENTED_BY edges
+ * are deterministic (src, dst, edgeType) tuples that RFDB dedupes.
  *
  * Like sibling enrichers, this uses direct addNodes/addEdges (not BatchHandle
  * .commit) — see skill `rfdb-batchhandle-deletes-existing-nodes`.
@@ -28,13 +37,8 @@ import type { RFDBClient } from '@grafema/rfdb-client';
 import type { WireEdge, WireNode } from '@grafema/types';
 import type { EffectsLookup } from '../manifest/effects-lookup.js';
 import type { DataflowBackend, DataflowNode, DataflowEdge } from '../queries/traceDataflow.js';
-import { traceDataflow, makeDataflowIndexCache } from '../queries/traceDataflow.js';
 import { traceEffects } from '../queries/traceEffects.js';
 import type { EffectType } from '../manifest/types.js';
-
-/** Bound on per-file metrics cache. At 149-feature scale Grafema has <1k unique
- *  files but on huge polyrepos this can grow. LRU eviction keeps memory flat. */
-const FILE_METRICS_CACHE_MAX = 200;
 
 /** ---------------------------------------------------------------------------
  *  Public types
@@ -43,12 +47,8 @@ const FILE_METRICS_CACHE_MAX = 200;
 export interface BehaviorEnrichResult {
   /** Number of BEHAVIOR nodes created (one per FEATURE that had an entry). */
   behaviorsCreated: number;
-  /** Total core COMPRISES edges across all behaviors. */
+  /** Total core node count across all behaviors (summary only — not edges). */
   totalCoreNodes: number;
-  /** Total periphery COMPRISES edges across all behaviors (capped per-behavior). */
-  totalPeripheryNodes: number;
-  /** Total PRODUCES_EFFECT edges emitted. */
-  effectEdgesEmitted: number;
   /** Total SHARES_BEHAVIOR_WITH edges emitted (bidirectional, so always even). */
   sharesBehaviorEdges: number;
   /** Diagnostic: features whose HANDLES edge was missing or pointed at a
@@ -59,14 +59,10 @@ export interface BehaviorEnrichResult {
 export interface BehaviorEnrichOptions {
   /** Forward-slice depth limit. Default 10. */
   maxDepth?: number;
-  /** Cap on COMPRISES edges to periphery nodes per behavior. Default 50. */
-  peripheryEdgeCap?: number;
   /**
    * Flush accumulated nodes/edges to RFDB after every N processed features.
    * Default 10. Lower values reduce peak memory at the cost of more round-trips
-   * to the server. At Grafema scale (~150 features × hundreds of subgraph
-   * nodes/edges each), batching all writes until the end exhausts Node.js
-   * heap — chunked flushing keeps memory bounded.
+   * to the server.
    */
   flushBatchSize?: number;
 }
@@ -74,12 +70,6 @@ export interface BehaviorEnrichOptions {
 /** ---------------------------------------------------------------------------
  *  Internal types
  *  ------------------------------------------------------------------------ */
-
-interface FileMetrics {
-  coupling: number;
-  density: number;
-  isLibrary: boolean;
-}
 
 interface BehaviorRecord {
   featureId: string;
@@ -90,10 +80,8 @@ interface BehaviorRecord {
 const FEATURE_TYPES: readonly string[] = ['cli:command', 'mcp:tool', 'vscode:command'];
 
 const DEFAULT_MAX_DEPTH = 10;
-const DEFAULT_PERIPHERY_CAP = 50;
 const DEFAULT_FLUSH_BATCH_SIZE = 10;
 const SHARES_EDGE_FLUSH_SIZE = 200;
-const LIBRARY_DENSITY_THRESHOLD = 0.3;
 
 /** ---------------------------------------------------------------------------
  *  Public entry point
@@ -105,43 +93,32 @@ export async function enrichBehaviors(
   options?: BehaviorEnrichOptions,
 ): Promise<BehaviorEnrichResult> {
   const maxDepth = options?.maxDepth ?? DEFAULT_MAX_DEPTH;
-  const peripheryCap = options?.peripheryEdgeCap ?? DEFAULT_PERIPHERY_CAP;
   const flushBatchSize = Math.max(1, options?.flushBatchSize ?? DEFAULT_FLUSH_BATCH_SIZE);
 
   const result: BehaviorEnrichResult = {
     behaviorsCreated: 0,
     totalCoreNodes: 0,
-    totalPeripheryNodes: 0,
-    effectEdgesEmitted: 0,
     sharesBehaviorEdges: 0,
     featuresWithoutEntry: 0,
   };
 
-  // Wrap RFDBClient as a DataflowBackend for traceDataflow / traceEffects.
+  // Wrap RFDBClient as a DataflowBackend for traceEffects (still needs the
+  // adapter shape). collectTransitiveCallTargets bypasses this entirely and
+  // uses the raw client to avoid hydrating heavy DataflowNode objects.
   const dfDb = makeDataflowBackend(client);
-
-  // Session-scoped index cache: traceForwardBFS would otherwise rebuild
-  // paReadByName (~18k PROPERTY_ACCESS entries), callsByReceiver (~28k
-  // CALL entries), and catchParamIds on every call. With 149 features that's
-  // 149× wasted scans + ~7M Map allocations that V8 can't reclaim fast enough,
-  // causing linear heap growth and OOM at 2GB. Sharing the cache across all
-  // traceDataflow invocations turns N rebuilds into 1. See REG-1093.
-  const indexCache = makeDataflowIndexCache();
 
   // Per-batch accumulators. Reset to fresh arrays after each flush so the
   // previous batch's WireNode/WireEdge objects become unreachable and
-  // available for GC. (Avoids holding ~150 features' worth of subgraph
-  // metadata in memory simultaneously.)
+  // available for GC.
   let batchNodes: WireNode[] = [];
   let batchEdges: WireEdge[] = [];
   const seenBehaviorIds = new Set<string>();
-  const fileMetricsCache = new Map<string, FileMetrics>();
   // Small index — only featureId + 64-char hash per behavior, kept across
   // the whole run to compute SHARES_BEHAVIOR_WITH in Pass 2.
   const behaviorRecords: BehaviorRecord[] = [];
   let processedSinceFlush = 0;
 
-  // ── Pass 1: per-feature forward-slice + classify + emit ──
+  // ── Pass 1: per-feature forward-slice + hash + emit BEHAVIOR ──
   for (const featureType of FEATURE_TYPES) {
     const features: WireNode[] = [];
     for await (const f of client.queryNodes({ type: featureType })) features.push(f);
@@ -164,120 +141,36 @@ export async function enrichBehaviors(
         continue;
       }
 
-      // 2. Forward-slice the entry. We combine two reachabilities:
-      //    a) traceDataflow forward — captures consumers of the entry's
-      //       return value, return-flow boundaries, etc.
-      //    b) call-graph BFS — captures everything the entry CALLS (transitive
-      //       callees + their bodies). traceDataflow forward from a FUNCTION
-      //       walks callers (not callees), so we add the call-graph leg
-      //       separately to honour the "forward slice = what this code
-      //       reaches" semantic.
-      //
-      // Memory note: at 149-FEATURE scale, traceDataflow's `reached` array holds
-      // thousands of full DataflowNode objects per feature. We only need
-      // `{id, file, type}` per node for classification — extract immediately and
-      // drop the heavy result so it becomes GC-eligible before the next call.
-      const subgraphMin: { id: string; file?: string; type: string }[] = [];
-      const subgraphIds = new Set<string>();
-      const entryDf = await dfDb.getNode(entryId);
-      if (entryDf) {
-        subgraphMin.push({ id: entryDf.id, file: entryDf.file, type: entryDf.type });
-        subgraphIds.add(entryDf.id);
-      }
+      // 2. Streaming hash: collect transitive call-target IDs into a Set,
+      //    sort + sha256 + drop the Set immediately. Direct CALLS-only BFS
+      //    over the raw client — no DataflowNode hydration, no PA/READS_FROM
+      //    indexes, no traceDataflow.
+      const callTargets = await collectTransitiveCallTargets(
+        client,
+        entryId,
+        maxDepth,
+      );
+      const sortedIds = Array.from(callTargets).sort();
+      const hash = createHash('sha256').update(sortedIds.join(',')).digest('hex');
+      const coreCount = callTargets.size;
+      callTargets.clear();
+      sortedIds.length = 0;
 
-      {
-        // Run traceDataflow inside a block so its result is unreferenced after
-        // we exit the block (no lingering closure binding).
-        const traces = await traceDataflow(dfDb, entryId, {
-          direction: 'forward',
-          maxDepth,
-        }, indexCache);
-        for (const t of traces) {
-          for (const n of t.reached) {
-            if (!subgraphIds.has(n.id)) {
-              subgraphMin.push({ id: n.id, file: n.file, type: n.type });
-              subgraphIds.add(n.id);
-            }
-          }
-        }
-        // Explicit clear of the per-result `reached` arrays helps V8 release
-        // memory under tight heap budgets even if the outer ref is still live
-        // for one more tick.
-        for (const t of traces) (t as { reached: DataflowNode[] }).reached = [];
-      }
-
-      // Call-graph forward BFS from entry (CALLS / CALL→CALLS chain).
-      // We also extract minimal records here, never retaining full nodes.
-      const cgQueue: string[] = [entryId];
-      const cgVisited = new Set<string>([entryId]);
-      let cgIters = 0;
-      const cgIterCap = (maxDepth + 1) * 200;
-      while (cgQueue.length > 0 && cgIters < cgIterCap) {
-        cgIters++;
-        const cur = cgQueue.shift() as string;
-        const outs = await dfDb.getOutgoingEdges(cur, ['CALLS', 'HAS_SCOPE', 'CONTAINS']);
-        for (const e of outs) {
-          if (cgVisited.has(e.dst)) continue;
-          cgVisited.add(e.dst);
-          const nx = await dfDb.getNode(e.dst);
-          if (!nx) continue;
-          // Skip pure scope nodes from being COMPRISES targets — they're
-          // structural, not behavioural.
-          if (nx.type !== 'SCOPE' && !subgraphIds.has(nx.id)) {
-            subgraphMin.push({ id: nx.id, file: nx.file, type: nx.type });
-            subgraphIds.add(nx.id);
-          }
-          cgQueue.push(nx.id);
-        }
-      }
-
-      // 3. Effects via traceEffects.
-      // Same pattern: capture only the EffectType set and drop the heavy result
-      // (LeafSource[] + BoundaryCrossing[] arrays can hold hundreds of records
-      // each per feature on real codebases).
+      // 3. Effects via traceEffects. We only retain the small Set<EffectType>
+      //    (≤7 distinct values); release the heavy leaf_sources /
+      //    boundary_crossings arrays before the next iteration.
       const effectSet = new Set<EffectType>();
       {
         const eff = await traceEffects(dfDb, entryId, effectsLookup, { maxDepth });
         if (eff) {
           for (const e of eff.transitive) effectSet.add(e);
-          // Free the heavy arrays before exiting the block.
           eff.leaf_sources.length = 0;
           eff.boundary_crossings.length = 0;
         }
       }
+      const effects = Array.from(effectSet).sort();
 
-      // 4. Classify each subgraph node by file metrics (lazy per-file compute).
-      const coreIds: string[] = [];
-      const peripheryIds: string[] = [];
-      for (const n of subgraphMin) {
-        const file = n.file;
-        if (!file) {
-          // No file → treat as core (synthetic node, can't classify as library).
-          coreIds.push(n.id);
-          continue;
-        }
-        const metrics = await getFileMetrics(client, dfDb, file, fileMetricsCache);
-        if (metrics.isLibrary) {
-          peripheryIds.push(n.id);
-        } else {
-          coreIds.push(n.id);
-        }
-      }
-      // subgraphMin / subgraphIds / cgVisited are loop-locals — GC reclaims them
-      // when the iteration ends. Explicitly truncate the largest one to make
-      // the release deterministic under heap pressure.
-      subgraphMin.length = 0;
-      subgraphIds.clear();
-      cgVisited.clear();
-
-      // 5. Behavior identity hash from sorted core IDs.
-      const sortedCore = [...coreIds].sort();
-      const hash = createHash('sha256')
-        .update(sortedCore.join(','))
-        .digest('hex');
-
-      // 6. Emit BEHAVIOR node.
-      const effectsArr = [...effectSet].sort();
+      // 4. Emit BEHAVIOR node. Metadata carries everything queries need.
       batchNodes.push({
         id: behaviorId,
         nodeType: 'BEHAVIOR' as never,
@@ -285,16 +178,16 @@ export async function enrichBehaviors(
         file: feature.file,
         exported: false,
         metadata: JSON.stringify({
-          coreNodeCount: coreIds.length,
-          peripheryNodeCount: peripheryIds.length,
-          depth: maxDepth,
           hash,
-          effects: effectsArr,
+          effects,
+          coreNodeCount: coreCount,
+          depth: maxDepth,
+          effectCount: effects.length,
           featureId: feature.id,
         }),
       });
 
-      // 7. FEATURE -IMPLEMENTED_BY-> BEHAVIOR
+      // 5. FEATURE -IMPLEMENTED_BY-> BEHAVIOR
       batchEdges.push({
         src: feature.id,
         dst: behaviorId,
@@ -302,48 +195,13 @@ export async function enrichBehaviors(
         metadata: JSON.stringify({}),
       });
 
-      // 8. BEHAVIOR -COMPRISES-> core nodes
-      for (const id of coreIds) {
-        batchEdges.push({
-          src: behaviorId,
-          dst: id,
-          edgeType: 'COMPRISES' as never,
-          metadata: JSON.stringify({ role: 'core' }),
-        });
-      }
-      result.totalCoreNodes += coreIds.length;
-
-      // 9. BEHAVIOR -COMPRISES-> periphery (capped)
-      const peripherySliced = peripheryIds.slice(0, peripheryCap);
-      for (const id of peripherySliced) {
-        batchEdges.push({
-          src: behaviorId,
-          dst: id,
-          edgeType: 'COMPRISES' as never,
-          metadata: JSON.stringify({ role: 'periphery' }),
-        });
-      }
-      result.totalPeripheryNodes += peripherySliced.length;
-
-      // 10. BEHAVIOR -PRODUCES_EFFECT-> synthetic effect target
-      for (const e of effectsArr) {
-        batchEdges.push({
-          src: behaviorId,
-          dst: `__effects/${e}`,
-          edgeType: 'PRODUCES_EFFECT' as never,
-          metadata: JSON.stringify({ effect: e }),
-        });
-        result.effectEdgesEmitted++;
-      }
-
       result.behaviorsCreated++;
+      result.totalCoreNodes += coreCount;
       behaviorRecords.push({ featureId: feature.id, hash });
       processedSinceFlush++;
 
       // Chunked flush — every flushBatchSize features, ship the accumulated
-      // nodes/edges and reset. Re-assigning to fresh arrays (instead of
-      // .splice / .length=0) guarantees the previous arrays' contents are
-      // GC-eligible immediately.
+      // nodes/edges and reset.
       if (processedSinceFlush >= flushBatchSize) {
         if (batchNodes.length > 0) {
           await client.addNodes(batchNodes);
@@ -354,23 +212,9 @@ export async function enrichBehaviors(
           batchEdges = [];
         }
         processedSinceFlush = 0;
-        // Yield to event loop so V8 has an opportunity to run incremental GC
-        // between batches. Without this yield, a long synchronous chain of
-        // awaited RFDB roundtrips can keep the heap growing past the limit
-        // before any GC pass runs.
+        // Yield to event loop so V8 has an opportunity to run incremental GC.
         await new Promise<void>((resolve) => setImmediate(resolve));
         // Force a major GC at every flush boundary when --expose-gc is on.
-        // Real Grafema features force traceForwardBFS to build large per-call
-        // lazy indexes (paReadByName ≈ 18k PROPERTY_ACCESS entries,
-        // callsByReceiver ≈ 28k CALL entries) plus a reachedNodes array of
-        // up to 1000 full DataflowNode objects per call. These are local to
-        // each traceForwardBFS invocation, so they're GC-eligible after the
-        // call returns — but V8 only runs major GC under heap pressure, and
-        // a long synchronous chain of CPU-bound BFS calls between awaits can
-        // balloon heap past the limit before any major GC cycle runs.
-        // Empirically, after `global.gc()` heap drops to ~11MB; without it,
-        // it climbs unboundedly and OOMs at 2GB on real Grafema (149
-        // features, ~7s/feature). See REG-1093.
         const gc = (globalThis as { gc?: () => void }).gc;
         if (typeof gc === 'function') gc();
       }
@@ -401,8 +245,6 @@ export async function enrichBehaviors(
   }
 
   // Flush SHARES_BEHAVIOR_WITH edges in chunks of SHARES_EDGE_FLUSH_SIZE.
-  // For N features sharing a hash there are N*(N-1) directed edges, which
-  // can spike for large clusters — chunked emission keeps the buffer bounded.
   let edgeBatch: WireEdge[] = [];
   for (const featureIds of byHash.values()) {
     if (featureIds.length < 2) continue;
@@ -437,63 +279,42 @@ export async function enrichBehaviors(
 }
 
 /** ---------------------------------------------------------------------------
- *  File metrics (core/periphery classification)
+ *  Transitive call-target collection
  *  ------------------------------------------------------------------------ */
 
-async function getFileMetrics(
+/**
+ * Direct CALLS-only forward BFS from `startId`. Returns the set of reached
+ * node IDs (strings only — no DataflowNode hydration, no metadata parsing).
+ *
+ * This deliberately avoids `traceDataflow`: at scale (149 features × ~tens of
+ * thousands of nodes per slice) traceDataflow's lazy paReadByName / callsByReceiver
+ * indexes plus full DataflowNode arrays in `result.reached[]` blew the 2GB
+ * heap. We don't need any of that for behavior hashing — we only need stable
+ * IDs of transitive callees.
+ */
+async function collectTransitiveCallTargets(
   client: RFDBClient,
-  dfDb: DataflowBackend,
-  file: string,
-  cache: Map<string, FileMetrics>,
-): Promise<FileMetrics> {
-  const cached = cache.get(file);
-  if (cached) return cached;
-
-  const fnIds: string[] = [];
-  const fnAsyncFlags = new Map<string, boolean>();
-  for await (const fn of client.queryNodes({ type: 'FUNCTION', file })) {
-    fnIds.push(fn.id);
-    const meta = parseMeta(fn);
-    fnAsyncFlags.set(fn.id, meta?.async === true);
-  }
-
-  const nFunctions = fnIds.length;
-
-  // Coupling = intra-file (CALLS|READS_FROM) edges between functions / total possible.
-  let intraEdges = 0;
-  for (const id of fnIds) {
-    const outs = await client.getOutgoingEdges(id, ['CALLS', 'READS_FROM'] as never);
-    for (const e of outs) {
-      const dstId = String(e.dst);
-      // Same-file targets only — fast path: check the in-memory fn list.
-      if (fnIds.includes(dstId) && dstId !== id) intraEdges++;
+  startId: string,
+  maxDepth: number,
+): Promise<Set<string>> {
+  const visited = new Set<string>();
+  visited.add(startId);
+  let frontier: string[] = [startId];
+  for (let depth = 0; depth < maxDepth && frontier.length > 0; depth++) {
+    const next: string[] = [];
+    for (const id of frontier) {
+      const edges = await client.getOutgoingEdges(id, ['CALLS'] as never);
+      for (const e of edges) {
+        const dst = e.dst as unknown as string;
+        if (typeof dst === 'string' && !visited.has(dst)) {
+          visited.add(dst);
+          next.push(dst);
+        }
+      }
     }
+    frontier = next;
   }
-  const coupling = nFunctions > 1 ? intraEdges / (nFunctions * (nFunctions - 1)) : 0;
-
-  // Effect density = fraction of fns with async:true OR any THROWS edge.
-  let withEffect = 0;
-  for (const id of fnIds) {
-    if (fnAsyncFlags.get(id)) {
-      withEffect++;
-      continue;
-    }
-    const throwsEdges = await dfDb.getOutgoingEdges(id, ['THROWS']);
-    if (throwsEdges.length > 0) withEffect++;
-  }
-  const density = nFunctions > 0 ? withEffect / nFunctions : 0;
-
-  const isLibrary = coupling === 0 && density < LIBRARY_DENSITY_THRESHOLD;
-
-  const metrics: FileMetrics = { coupling, density, isLibrary };
-  // LRU eviction — Map preserves insertion order, so deleting + re-inserting
-  // moves an entry to "most recent" and the oldest entry sits at the head.
-  if (cache.size >= FILE_METRICS_CACHE_MAX) {
-    const oldest = cache.keys().next().value;
-    if (oldest !== undefined) cache.delete(oldest);
-  }
-  cache.set(file, metrics);
-  return metrics;
+  return visited;
 }
 
 /** ---------------------------------------------------------------------------
@@ -537,8 +358,6 @@ function makeDataflowBackend(client: RFDBClient): DataflowBackend {
   }
 
   function parseEdge(e: WireEdge & Record<string, unknown>): DataflowEdge {
-    // base-client.getOutgoingEdges already spreads metadata onto the edge and
-    // sets `type`; we just re-shape into DataflowEdge.
     const top = e as unknown as Record<string, unknown>;
     const idx = typeof top.index === 'number' ? top.index : undefined;
     return {
@@ -569,17 +388,4 @@ function makeDataflowBackend(client: RFDBClient): DataflowBackend {
       return edges.map(parseEdge);
     },
   };
-}
-
-/** ---------------------------------------------------------------------------
- *  Helpers
- *  ------------------------------------------------------------------------ */
-
-function parseMeta(node: WireNode): Record<string, unknown> | null {
-  if (!node.metadata) return null;
-  try {
-    return JSON.parse(node.metadata) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
 }
