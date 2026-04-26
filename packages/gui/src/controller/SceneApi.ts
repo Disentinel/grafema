@@ -17,6 +17,7 @@
  * directly (camera moves, scene mode swap, flow recolor, ...).
  */
 
+import type * as THREE from 'three';
 import type { SceneMode } from '../three/types';
 import type { CameraView } from './lod';
 
@@ -34,6 +35,13 @@ export interface SceneApi {
    *  Used by the toponym overlay to position HTML labels at hull
    *  centroids per frame without reaching into SceneManager internals. */
   projectWorldToNdc(wx: number, wy: number, wz: number): { x: number; y: number; z: number };
+  /** Direct access to the live `THREE.Scene`. Used by overlay layers
+   *  (ToponymsLayer) that need to add/remove their own `THREE.Object3D`
+   *  group so the labels render in the same pipeline as the hex/hull
+   *  meshes — i.e. they tilt with the camera in 3D mode and follow
+   *  the same depth-buffer ordering. Tests stub this with a fresh
+   *  empty Scene. */
+  getScene(): THREE.Scene;
 
   // --- Camera -------------------------------------------------------------
   /** Animate camera to world (x, z); ms optional (default chosen by impl). */

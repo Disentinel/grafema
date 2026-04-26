@@ -223,6 +223,17 @@ async function* parseNDJSON(stream: ReadableStream<Uint8Array>): AsyncGenerator<
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  // ~487k edge frames + ~28k node frames + an excluded-nodes batch
+  // means JSON.parse runs hundreds of thousands of times — without
+  // periodic yields the main thread can't service input events
+  // (mouse cursor visibly freezes during ingest). Yielding every
+  // YIELD_EVERY parses gives the browser room to repaint cursors,
+  // tooltips, scroll, etc. The 8-bit cap is small enough that one
+  // batch is well under a frame budget on a modern laptop, large
+  // enough that the cumulative yield overhead stays trivial.
+  const YIELD_EVERY = 1024;
+  let parsedSinceYield = 0;
+  const yieldNow = () => new Promise<void>((r) => setTimeout(r, 0));
 
   try {
     while (true) {
@@ -236,6 +247,11 @@ async function* parseNDJSON(stream: ReadableStream<Uint8Array>): AsyncGenerator<
         buffer = buffer.slice(newlineIdx + 1);
         if (line.length > 0) {
           yield JSON.parse(line) as StreamMsg;
+          parsedSinceYield++;
+          if (parsedSinceYield >= YIELD_EVERY) {
+            parsedSinceYield = 0;
+            await yieldNow();
+          }
         }
       }
     }
@@ -250,8 +266,15 @@ async function* parseNDJSON(stream: ReadableStream<Uint8Array>): AsyncGenerator<
 }
 
 const TILE_SIZE = 3.0;
-// Exclude container types — they are region metadata, not code entities.
-const EXCLUDED_TYPES = new Set(['SERVICE', 'MODULE']);
+// MODULE / SERVICE used to be filtered here client-side because the
+// orchestrator placed them as visible tiles even though they're region
+// metadata, not code entities. The server now drops them in
+// `layout_types::PLACEABLE_TYPES`, so they arrive in the
+// `excluded_nodes` batch instead and the client filter is a no-op.
+// Keeping an empty set here so the loop guard below is a one-line
+// stable check (and so back-compat with older servers that still emit
+// MODULE as placed continues to work).
+const EXCLUDED_TYPES = new Set<string>();
 
 /**
  * Transport primitive: fetch an NDJSON graph stream and build a
@@ -607,13 +630,12 @@ export function hydrateLayoutStoreFromLayout(layout: LayoutResult): void {
   if (layout.regionTree !== undefined) {
     layoutStore.setRegionTree(layout.regionTree);
 
-    // Phase 1 — prefer server-precomputed hulls when the stream carried
-    // the `hulls` frame. Building the cache is then a pure re-shape
-    // (zero geometry work) so HullLayer + ToponymsLayer can paint
-    // immediately after store hydration. Falls through to client-side
-    // compute when the stream didn't ship hulls (older server, fixture
-    // source, etc.) — preserves DAI-22 Chunk-8 behaviour for callers
-    // that haven't moved to the precompute path.
+    // Phase 1 — server precomputes hulls and ships them in the header
+    // frame. The bucketing now mirrors `buildPlacedForBucketing` (every
+    // symbol → its file region), so the polygons match what the
+    // client-side compute would produce — fills no longer "разъезжаются".
+    // Falls back to client-side compute when the stream didn't ship
+    // hulls (older server, fixture source, missing layout).
     try {
       if (layout.precomputedHulls && layout.precomputedHulls.length > 0) {
         const hulls = new Map<string, { polygons: { x: number; y: number }[][]; area: number }>();

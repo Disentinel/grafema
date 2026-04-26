@@ -67,9 +67,13 @@ export function routeTooltip(
       if (!node) return null;
       const rows: TooltipContent['rows'] = [
         { label: 'region', value: node.region },
+        // File row added unconditionally — `node.region` can be a
+        // symbol-self slug for overflow nodes (server fallback), so the
+        // file path is the most reliable "where am I" anchor.
+        { label: 'file', value: node.file },
       ];
       if (node.line !== undefined) {
-        rows.push({ label: 'location', value: `${node.file}:${node.line}` });
+        rows.push({ label: 'line', value: String(node.line) });
       }
       return {
         title: node.name,

@@ -26,6 +26,7 @@ import {
   type HullRegionPrecomputed,
 } from '../three/HullLayer';
 import type { HexCoord } from '../geom/hex';
+import { worldToAxial } from '../store/loadStream';
 import { RegionLayer } from '../three/RegionLayer';
 import { FlowLayer } from '../three/FlowLayer';
 import { RouteLayer } from '../three/RouteLayer';
@@ -323,6 +324,14 @@ export function buildHullLayer(
       hue: huesByRegion.get(v.regionId),
     }));
     hullLayer.setRegionHulls(entries);
+    // LOD-aware fill opacity: at fit-all (zoom01≈0) the hull tint is
+    // the primary regional cue, so keep it visible; as the user zooms
+    // in to per-tile LOD (zoom01→1) the tiles become the focus and the
+    // overlay would just obscure them. Lerp 0.30 → 0.06 across the
+    // zoom range. Outline lines stay full opacity (border is useful
+    // at every level).
+    const fillOpacity = 0.30 - 0.24 * Math.min(1, Math.max(0, zoom01));
+    hullLayer.setFillOpacity(fillOpacity);
   };
 
   // Initial paint — covers the case where the hull cache is already
@@ -542,6 +551,18 @@ export function setupInteraction(deps: InteractionDeps): () => void {
   const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   const groundHit = new THREE.Vector3();
 
+  // axial(q,r) → node index. Built once at setup so the hover
+  // fallback (when HexLayer.raycast misses the inner-92% hex
+  // geometry but the cursor IS over the cell) can resolve the tile
+  // without a linear scan. Mirrors the axial conversion the layout
+  // emitter uses, so a node placed at (q,r) is found by hovering
+  // anywhere inside its hull cell.
+  const axialToNodeIdx = new Map<string, number>();
+  for (let i = 0; i < nodes.length; i++) {
+    const { q, r } = worldToAxial(nodes[i].x, nodes[i].z);
+    axialToNodeIdx.set(`${q},${r}`, i);
+  }
+
   // Cached "leaf-files in subtree" count per regionId. Populated lazily
   // on first hull-hover, invalidated when the regionTree identity flips
   // (fresh stream load). The hover handler reads this for the hull
@@ -618,10 +639,30 @@ export function setupInteraction(deps: InteractionDeps): () => void {
     selectedConnectedRef.current.clear();
   }
 
+  // Throttle the hull point-in-poly check — running it on every mouse
+  // tick makes pan/hover noticeably laggy with 700+ regions. 60ms is a
+  // good compromise: faster than human perception of stale tooltips,
+  // ≥3× cheaper than per-tick. Edge raycast is cheap (per-mesh
+  // intersection) so it stays per-tick.
+  let lastHullCheck = 0;
+  let lastHullTarget: HoverTarget = { kind: 'empty' };
+
   const onMouseMove = (e: MouseEvent) => {
     updateMouse(e);
     raycaster.setFromCamera(mouse, sm.camera);
-    const newIdx = layer.raycast(raycaster);
+    let newIdx = layer.raycast(raycaster);
+    // Fallback: HexLayer geometry is rendered at ~92% of TILE_SIZE so
+    // there's a small visual gap between adjacent tiles. The cursor
+    // can land in that 8% rim and miss the per-instance raycast,
+    // sending the user to the hull tooltip below — which feels
+    // wrong because there's clearly a tile right there. Project the
+    // ray onto the ground plane and look up by axial coord; this
+    // gives node priority back over the full hex cell area.
+    if (newIdx < 0 && raycaster.ray.intersectPlane(groundPlane, groundHit)) {
+      const { q, r } = worldToAxial(groundHit.x, groundHit.z);
+      const fallback = axialToNodeIdx.get(`${q},${r}`);
+      if (fallback !== undefined) newIdx = fallback;
+    }
     const selIdx = getSelectedIdx();
 
     // ── Node-hover state machine (outline gets toggled even while the
@@ -658,14 +699,14 @@ export function setupInteraction(deps: InteractionDeps): () => void {
       }
     }
 
-    // ── Tooltip dispatch. Priority chain: node > edge > hull.
-    //    Node first because individual hexes are the primary affordance
-    //    and a node hit usually implies an edge passing through (we
-    //    don't want hovering a node to silently flip to an "edge"
-    //    tooltip). When no node is hit — try the per-edge tube raycast
-    //    (only meaningful in tube style); finally fall back to point-
-    //    in-poly against cached hull regions, deepest folder wins
-    //    (sandbox parity). ──
+    // ── Tooltip dispatch. Priority chain: node > edge > nothing.
+    //    Hull tooltip was deliberately removed — when the cursor lands
+    //    on a phantom hex cell (one that morph-close added to make the
+    //    hull contiguous but where no symbol was actually placed),
+    //    a hull tooltip felt misleading: the user saw "files: 58"
+    //    while pointing at empty space. Toponym + outline still
+    //    convey region identity at a glance; tooltip stays silent
+    //    unless there's a real tile or edge under the cursor.
     let target: HoverTarget = { kind: 'empty' };
     if (hoveredIdx >= 0) {
       target = { kind: 'node', nodeIdx: hoveredIdx };
@@ -673,29 +714,6 @@ export function setupInteraction(deps: InteractionDeps): () => void {
       const edgeHit = flowLayer.raycastEdge(raycaster);
       if (edgeHit) {
         target = { kind: 'edge', ...edgeHit };
-      } else if (hullLayer && raycaster.ray.intersectPlane(groundPlane, groundHit)) {
-        const hullHit = hullLayer.hitTestWorld(groundHit.x, groundHit.z);
-        if (hullHit) {
-          const tree = useLayoutStore.getState().regionTree;
-          if (tree !== regionLeafCountTreeRef) {
-            regionLeafCount.clear();
-            regionLeafCountTreeRef = tree;
-          }
-          const region = tree.byId.get(hullHit.regionId);
-          if (region) {
-            target = {
-              kind: 'hull',
-              regionId: hullHit.regionId,
-              path: region.path,
-              name: region.name,
-              depth: hullHit.depth,
-              // True leaf-file count via subtree walk (cached) — sandbox
-              // renders this as "tiles". childIds.length is direct-child
-              // regions only (sub-folders) and would mislead.
-              tileCount: leafCount(hullHit.regionId, tree.byId),
-            };
-          }
-        }
       }
     }
 
@@ -892,6 +910,7 @@ export function createSceneApi(deps: SceneApiDeps): SceneApi {
       const v = new THREE.Vector3(wx, wy, wz).project(sm.camera);
       return { x: v.x, y: v.y, z: v.z };
     },
+    getScene: () => sm.scene,
     flyTo: (x, z, ms) => sm.flyTo(x, z, ms),
     fitToScene: () => {
       sm.controls.target.set(cx, 0, cz);

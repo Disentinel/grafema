@@ -195,6 +195,23 @@ export class HullLayer {
     this.group.visible = visible;
   }
 
+  /** Per-frame fill opacity. Caller (canvasBuild applyFrame) drives
+   *  this from `zoom01` so the hull tint fades out as the user zooms
+   *  in to the per-tile LOD — at deep zoom the hexes are the focus
+   *  and a tinted overlay obscures them; at far zoom the tint provides
+   *  the regional grouping signal. Cheap — material is shared, single
+   *  uniform write per call. Outline opacity stays constant since the
+   *  border lines remain useful at every LOD. */
+  setFillOpacity(opacity: number): void {
+    if (this._fillMesh) {
+      const mat = this._fillMesh.material as THREE.MeshBasicMaterial;
+      if (mat && typeof mat.opacity === 'number' && mat.opacity !== opacity) {
+        mat.opacity = opacity;
+        mat.needsUpdate = true;
+      }
+    }
+  }
+
   /**
    * Point-in-polygon hit test in world (XZ) coordinates against every
    * cached region. Returns the deepest matching region (sandbox

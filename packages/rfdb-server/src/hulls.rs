@@ -71,29 +71,45 @@ pub struct RegionHull {
 ///
 /// Mirrors `packages/gui/src/geom/hex.mjs::axialToPixel` — same
 /// coefficients (`size * 1.5 * q`, `size * sqrt(3) * (r + q/2)`).
+///
+/// Internal compute is f64 to match TS — two tiles sharing an edge
+/// must produce bit-identical corner positions for the boundary trace
+/// to find neighbours, and f32 arithmetic accumulates 1 ULP error per
+/// op which straddles the corner-key quantisation bucket and breaks
+/// the walker (visible as un-closed polygons + fan-out fills). Output
+/// `Point2` stays f32 so the wire payload is half-size.
 fn axial_to_pixel(q: i32, r: i32, size: f32) -> Point2 {
-    let qf = q as f32;
-    let rf = r as f32;
+    let qf = q as f64;
+    let rf = r as f64;
+    let s = size as f64;
     Point2 {
-        x: size * 1.5 * qf,
-        y: size * 3f32.sqrt() * (rf + qf * 0.5),
+        x: (s * 1.5 * qf) as f32,
+        y: (s * 3f64.sqrt() * (rf + qf * 0.5)) as f32,
     }
 }
 
-/// Stable string key for a corner — quantises to 1/1000 px so two hex
-/// tiles that nominally share a corner hash to the same bucket despite
-/// any float rounding drift in the `axial_to_pixel` chain.
-fn corner_key(p: Point2) -> u64 {
-    // Pack two i32 quantised coords into one u64 so we can use `HashMap`
-    // without an extra allocation per corner. Quantisation: round to
-    // 1/1000 px (matches TS's `Math.round(p * 1000)`).
-    let xi = (p.x * 1000.0).round() as i32 as u32;
-    let yi = (p.y * 1000.0).round() as i32 as u32;
+/// f64 corner-precise pixel position for a hex centre — used when
+/// summing corner offsets to build edge endpoints. Keeping the running
+/// sum in f64 avoids the f32 accumulator drift that desynchronises
+/// shared corners between adjacent tiles.
+fn axial_to_pixel_f64(q: i32, r: i32, size: f32) -> (f64, f64) {
+    let qf = q as f64;
+    let rf = r as f64;
+    let s = size as f64;
+    (s * 1.5 * qf, s * 3f64.sqrt() * (rf + qf * 0.5))
+}
+
+/// Stable key for a corner — quantises to 1/1000 px so two hex tiles
+/// that nominally share a corner hash to the same bucket despite any
+/// float rounding drift. Input is f64 — see `axial_to_pixel_f64`.
+fn corner_key(x: f64, y: f64) -> u64 {
+    let xi = (x * 1000.0).round() as i32 as u32;
+    let yi = (y * 1000.0).round() as i32 as u32;
     ((xi as u64) << 32) | (yi as u64)
 }
 
-fn same_point(a: Point2, b: Point2) -> bool {
-    (a.x - b.x).abs() < 0.005 && (a.y - b.y).abs() < 0.005
+fn same_point_f64(ax: f64, ay: f64, bx: f64, by: f64) -> bool {
+    (ax - bx).abs() < 0.005 && (ay - by).abs() < 0.005
 }
 
 /// Trace the outer boundary of a hex tile set as one or more closed
@@ -109,86 +125,89 @@ pub fn compute_hull_polygons(tiles: &HashSet<HexCoord>, size: f32) -> Vec<Polygo
         return Vec::new();
     }
 
-    // Precompute the 6 corner offsets for a flat-top hex.
-    let mut corners: [Point2; 6] = [Point2 { x: 0.0, y: 0.0 }; 6];
+    // Precompute the 6 corner offsets for a flat-top hex — kept in f64
+    // so the edge-endpoint sums (`center + offset`) below stay
+    // bit-identical between two tiles that share an edge.
+    let s = size as f64;
+    let mut corners_f64: [(f64, f64); 6] = [(0.0, 0.0); 6];
     for i in 0..6 {
-        let a = std::f32::consts::PI / 3.0 * i as f32;
-        corners[i] = Point2 {
-            x: size * a.cos(),
-            y: size * a.sin(),
-        };
+        let a = std::f64::consts::PI / 3.0 * i as f64;
+        corners_f64[i] = (s * a.cos(), s * a.sin());
     }
 
     // ── Collect boundary edges ────────────────────────────────────
-    let mut edges: Vec<(Point2, Point2)> = Vec::new();
-    // Sort tile iteration for determinism — HashSet order is
-    // non-deterministic across runs, which would produce different
-    // (but topologically equivalent) loops; tests assume stable
-    // output.
+    // Edge endpoints stored in f64 for the trace; they're cast down
+    // to f32 only when emitted into the output polygon, after the
+    // walker has matched corners by quantised key.
+    let mut edges_f64: Vec<((f64, f64), (f64, f64))> = Vec::new();
     let mut tile_list: Vec<HexCoord> = tiles.iter().copied().collect();
     tile_list.sort_by(|a, b| a.q.cmp(&b.q).then(a.r.cmp(&b.r)));
 
     for t in &tile_list {
-        let center = axial_to_pixel(t.q, t.r, size);
+        let (cx, cy) = axial_to_pixel_f64(t.q, t.r, size);
         for ei in 0..6 {
             let (dq, dr) = HEX_DIRS[EDGE_TO_DIR[ei]];
             let neigh = HexCoord { q: t.q + dq, r: t.r + dr };
             if tiles.contains(&neigh) {
                 continue;
             }
-            let a = Point2 {
-                x: center.x + corners[ei].x,
-                y: center.y + corners[ei].y,
-            };
-            let b = Point2 {
-                x: center.x + corners[(ei + 1) % 6].x,
-                y: center.y + corners[(ei + 1) % 6].y,
-            };
-            edges.push((a, b));
+            let (oax, oay) = corners_f64[ei];
+            let (obx, oby) = corners_f64[(ei + 1) % 6];
+            let a = (cx + oax, cy + oay);
+            let b = (cx + obx, cy + oby);
+            edges_f64.push((a, b));
         }
     }
-    if edges.is_empty() {
+    if edges_f64.is_empty() {
         return Vec::new();
     }
 
     // ── Corner → edge-index lookup ────────────────────────────────
     let mut by_corner: HashMap<u64, Vec<usize>> = HashMap::new();
-    for (i, (a, b)) in edges.iter().enumerate() {
-        by_corner.entry(corner_key(*a)).or_default().push(i);
-        by_corner.entry(corner_key(*b)).or_default().push(i);
+    for (i, (a, b)) in edges_f64.iter().enumerate() {
+        by_corner.entry(corner_key(a.0, a.1)).or_default().push(i);
+        by_corner.entry(corner_key(b.0, b.1)).or_default().push(i);
     }
 
     // ── Walk loops ────────────────────────────────────────────────
-    let mut used = vec![false; edges.len()];
+    let mut used = vec![false; edges_f64.len()];
     let mut loops: Vec<Polygon> = Vec::new();
-    let safety_cap = edges.len() * 4 + 8;
+    let safety_cap = edges_f64.len() * 4 + 8;
+    // Convert an f64 endpoint to the emitted Point2 (f32). Used both
+    // for the loop-vertex output and the closing-repeat check.
+    let to_p2 = |(x, y): (f64, f64)| Point2 { x: x as f32, y: y as f32 };
 
-    for start in 0..edges.len() {
+    for start in 0..edges_f64.len() {
         if used[start] {
             continue;
         }
         let mut loop_pts: Polygon = Vec::new();
         let mut cur_idx = start;
-        let mut cur_edge = edges[cur_idx];
+        let mut cur_edge = edges_f64[cur_idx];
         let mut cur_point = cur_edge.0;
-        loop_pts.push(cur_point);
+        loop_pts.push(to_p2(cur_point));
         used[cur_idx] = true;
 
         let mut safety = safety_cap;
         while safety > 0 {
             safety -= 1;
-            let other = if same_point(cur_point, cur_edge.0) {
+            let other = if same_point_f64(cur_point.0, cur_point.1, cur_edge.0.0, cur_edge.0.1) {
                 cur_edge.1
             } else {
                 cur_edge.0
             };
-            loop_pts.push(other);
+            loop_pts.push(to_p2(other));
 
-            if same_point(other, loop_pts[0]) {
+            // Compare using the SAME quantised key the byCorner table
+            // uses, not the raw float distance — otherwise two corners
+            // that hash to the same bucket but differ by < 0.005 might
+            // not register as "back to start".
+            let start_pt = edges_f64[start].0;
+            if corner_key(other.0, other.1) == corner_key(start_pt.0, start_pt.1) {
                 break;
             }
 
-            let neigh = match by_corner.get(&corner_key(other)) {
+            let neigh = match by_corner.get(&corner_key(other.0, other.1)) {
                 Some(v) => v,
                 None => break,
             };
@@ -209,7 +228,7 @@ pub fn compute_hull_polygons(tiles: &HashSet<HexCoord>, size: f32) -> Vec<Polygo
             let ni = next_idx as usize;
             used[ni] = true;
             cur_idx = ni;
-            cur_edge = edges[ni];
+            cur_edge = edges_f64[ni];
             cur_point = other;
         }
 
@@ -360,6 +379,59 @@ fn collect_member_cells(
                 }
             }
         }
+    }
+    out
+}
+
+/// File-path-bucketed hull compute — mirrors the GUI's TS pipeline
+/// (`packages/gui/src/store/loadStream.ts :: buildPlacedForBucketing` +
+/// `computeHullsForRegions`). For each region in `regions` (file or
+/// folder) we union the cells of every descendant FILE region from
+/// `cells_per_file_region`, then run the same morph-close + fill-holes
+/// + boundary-trace as `compute_hulls_for_regions`.
+///
+/// The `containment` map is the orchestrator's REGION-tree
+/// (parent_id → list of children, both regions and symbols mixed; we
+/// filter to keep only entries that map to known region ids via
+/// `region_ids`). This walk descends through folder regions to gather
+/// ALL leaf-file cells under any depth, so a top-level "grafema" hull
+/// covers the union of every file in the tree.
+pub fn compute_hulls_by_file(
+    regions: &[crate::http_server::RegionInfo],
+    containment: &HashMap<u128, Vec<u128>>,
+    cells_per_file_region: &HashMap<u128, Vec<HexCoord>>,
+    region_ids: &HashSet<u128>,
+    hex_size: f32,
+    morph_radius: u32,
+) -> HashMap<u128, RegionHull> {
+    let mut out: HashMap<u128, RegionHull> = HashMap::with_capacity(regions.len());
+    for r in regions {
+        let mut cells: HashSet<HexCoord> = HashSet::new();
+        let mut stack: Vec<u128> = vec![r.id];
+        let mut seen: HashSet<u128> = HashSet::new();
+        while let Some(id) = stack.pop() {
+            if !seen.insert(id) {
+                continue;
+            }
+            if let Some(direct) = cells_per_file_region.get(&id) {
+                cells.extend(direct.iter().copied());
+            }
+            if let Some(children) = containment.get(&id) {
+                for &child in children {
+                    if region_ids.contains(&child) {
+                        stack.push(child);
+                    }
+                }
+            }
+        }
+        if cells.is_empty() {
+            continue;
+        }
+        let hull = region_hull(&cells, hex_size, morph_radius);
+        if hull.polygons.is_empty() {
+            continue;
+        }
+        out.insert(r.id, hull);
     }
     out
 }

@@ -1,6 +1,8 @@
 import type { GraphNode } from '../store/dataStore';
 import * as THREE from 'three';
 import { hueFromString } from '../geom/color';
+import { useLayoutStore, type RegionTree } from '../store/layoutStore';
+import { computeFolderHues } from '../hulls/folderHues';
 
 export interface Lens {
   label: string;
@@ -66,31 +68,63 @@ function topSegments(path: string, n: number): string {
   return parts.slice(0, n).join('/');
 }
 
+// Tree-aware hue cache for the region lens. Keyed by region PATH so the
+// lens can look up by `node.region` (which is the immediate folder
+// path, not the UUID). Rebuilt when `regionTree` identity flips
+// (fresh stream load).
+let cachedPathHueTreeRef: unknown = null;
+let cachedPathHues: Map<string, number> = new Map();
+function pathHueFor(path: string): number | undefined {
+  const tree: RegionTree = useLayoutStore.getState().regionTree;
+  if (tree !== cachedPathHueTreeRef) {
+    cachedPathHueTreeRef = tree;
+    const idHues = computeFolderHues(tree);
+    cachedPathHues = new Map();
+    for (const info of tree.byId.values()) {
+      const hue = idHues.get(info.id);
+      if (hue !== undefined) cachedPathHues.set(info.path, hue);
+    }
+  }
+  return cachedPathHues.get(path);
+}
+
 export const LENSES: Record<string, Lens> = {
   region: {
     label: 'By Region',
     colorFn: (node) => {
-      // Two-level coloring:
-      //   * BASE HUE = top-2 path segments (e.g. "packages/util") — one
-      //     hue per package, identifies which package the tile belongs to.
-      //   * HUE WOBBLE = ±20° rotation derived from the file's sub-dir,
-      //     so adjacent sub-directories inside the same package show as
-      //     distinct color patches (e.g. teal/aqua/cyan all clearly
-      //     "packages/util" but obviously different sub-dirs).
-      //   * Lightness wobble adds extra contrast for sub-dirs that hash
-      //     to similar hues.
-      const top = topSegments(node.region, 2);
-      const baseHue = strHash(top); // 0..360
-      const subPath = node.file.includes('/')
+      // Tree-aware hue — looks up the same `computeFolderHues` map
+      // HullLayer paints the region outline with, so a tile's colour
+      // unambiguously matches its containing hull. Falls back to the
+      // legacy string-hash on top-2 segments for nodes whose region
+      // path isn't in the tree (excluded / synthetic / fixture data).
+      const treeHue = pathHueFor(node.region);
+      let hue: number;
+      if (treeHue !== undefined) {
+        // Per-file sub-shift inside the parent folder's hue so adjacent
+        // files don't render as a flat block of the same colour. ±10°
+        // is wide enough to read as variation, narrow enough that a
+        // file is unmistakably "in this folder's zone".
+        const subPath = node.file.includes('/')
+          ? node.file.slice(0, node.file.lastIndexOf('/'))
+          : node.file;
+        const subHash = strHash(subPath);
+        const hueShift = (subHash % 21) - 10;
+        hue = ((treeHue + hueShift) % 360 + 360) % 360;
+      } else {
+        const top = topSegments(node.region, 2);
+        hue = strHash(top);
+      }
+      // Lightness keyed off node type (TYPE_LIGHTNESS table) plus a
+      // small per-sub-path wobble so a folder full of identical-type
+      // nodes still has surface texture.
+      const subPath2 = node.file.includes('/')
         ? node.file.slice(0, node.file.lastIndexOf('/'))
         : node.file;
-      const subHash = strHash(subPath);
-      const hueShift = (subHash % 41) - 20; // ±20°
-      const finalHue = ((baseHue + hueShift) % 360 + 360) % 360;
-      const lightShift = (((subHash >> 4) % 17) - 8) / 100; // ±0.08
+      const subHash2 = strHash(subPath2);
+      const lightShift = (((subHash2 >> 4) % 17) - 8) / 100; // ±0.08
       const lightness = (TYPE_LIGHTNESS[node.type] ?? 30) / 100;
       return new THREE.Color().setHSL(
-        finalHue / 360,
+        hue / 360,
         0.85,
         Math.max(0.18, Math.min(0.6, lightness * 0.8 + lightShift)),
       );

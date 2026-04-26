@@ -251,6 +251,15 @@ export class HexLayer {
     this.mesh = new THREE.InstancedMesh(geo, mat, count);
     this.mesh.count = count;
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    // Disable frustum culling — InstancedMesh's per-instance frustum
+    // check uses the geometry's bounding sphere (centered at the mesh
+    // origin with radius ≈ hexSize). We don't recompute that sphere
+    // after `setTile` populates instance matrices, so tiles far from
+    // the mesh origin can be culled both for rendering AND for
+    // raycaster.intersectObject — visible as "I see the tile but
+    // hover gives me the hull tooltip below it". 28k tiles cost ~one
+    // draw call regardless of culling so the perf hit is irrelevant.
+    this.mesh.frustumCulled = false;
 
     // Allocate per-instance attribute arrays
     this._opacity = new Float32Array(count).fill(1.0);

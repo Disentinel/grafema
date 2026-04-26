@@ -11,7 +11,7 @@
 //! - `GET /api/stats`        — node/edge counts by type
 //! - `GET /api/node/:id`     — single node details
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 #[cfg(feature = "ui")]
 use std::path::PathBuf;
@@ -115,6 +115,14 @@ pub struct HttpState {
     /// the precomputed polygons to render hulls + toponyms before the
     /// node tail of the stream finishes parsing.
     pub hull_cache: Arc<RwLock<Option<HashMap<u128, crate::hulls::RegionHull>>>>,
+    /// Cached body of the default `/api/graph-stream` response. Rebuilt
+    /// once at warmup (and on `reload`); served immediately when a
+    /// subsequent request matches the canonical default flag set
+    /// (noEdges=1, noExcluded=1, no per-request filters). The full
+    /// build is 5-10s on a real graph because `tree build` +
+    /// candidate-classification dominates per-request work; serving
+    /// from cache turns subsequent requests into <50ms responses.
+    pub default_stream_body: Arc<RwLock<Option<String>>>,
 }
 
 /// Build a fresh `HttpState` with empty caches. Exposed so the binary can
@@ -131,6 +139,7 @@ pub fn new_state(manager: Arc<DatabaseManager>, workspace_name: Option<String>) 
         file_to_nodes: Arc::new(RwLock::new(None)),
         workspace_name,
         hull_cache: Arc::new(RwLock::new(None)),
+        default_stream_body: Arc::new(RwLock::new(None)),
     }
 }
 
@@ -185,26 +194,41 @@ pub fn warmup(state: &HttpState) {
     let engine = db.engine.read().unwrap();
     let _ = get_or_build_file_to_nodes(&state.file_to_nodes, &**engine);
     let layout = get_or_build_layout(&state.layout_cache, &state.file_to_nodes, &**engine);
-    // Phase 1 of streaming overhaul — precompute hulls so the
-    // graph-stream handler can ship them in a header-adjacent frame
-    // instead of recomputing per request (and the GUI can render
-    // hulls + toponyms before the node tail arrives).
-    let t_hulls = std::time::Instant::now();
-    let region_ids: std::collections::HashSet<u128> =
-        layout.regions.iter().map(|r| r.id).collect();
-    let hulls = crate::hulls::compute_hulls_for_regions(
-        &region_ids,
-        &layout.containment,
-        &layout.positions,
-        crate::hulls::TILE_SIZE,
-        1,
+    // Hull precompute is now done INSIDE `build_graph_stream_body`
+    // (file-path bucketing matches the TS pipeline). The default-stream
+    // body cache below absorbs the cost so live requests stay <100ms.
+    let _ = layout; // keep layout binding alive for the cache build below
+    let _hull_unused: HashMap<u128, crate::hulls::RegionHull> = HashMap::new();
+    let _ = state.hull_cache.write().map(|mut g| *g = Some(_hull_unused));
+
+    // Precompute the default `/api/graph-stream` response (the URL the
+    // GUI bootstrap fetches) so the first browser load skips the
+    // 5-10s tree-build / candidate-classify / intern-table work and
+    // hands back a ready string in <50ms. Other parameter
+    // combinations still pay the full cost on first hit.
+    let t_default = std::time::Instant::now();
+    let default_body = build_graph_stream_body(
+        Arc::clone(&state.manager),
+        Arc::clone(&state.layout_cache),
+        Arc::clone(&state.file_to_nodes),
+        Arc::clone(&state.hull_cache),
+        500_000,
+        None, None, None, None,
+        state.workspace_name.clone(),
+        true,  // no_edges
+        true,  // no_excluded
     );
-    eprintln!(
-        "[hulls] precomputed {} regions in {}ms",
-        hulls.len(),
-        t_hulls.elapsed().as_millis(),
-    );
-    *state.hull_cache.write().unwrap() = Some(hulls);
+    match default_body {
+        Ok(body) => {
+            eprintln!(
+                "[stream-cache] precomputed default response: {} bytes in {}ms",
+                body.len(),
+                t_default.elapsed().as_millis(),
+            );
+            *state.default_stream_body.write().unwrap() = Some(body);
+        }
+        Err(e) => eprintln!("[stream-cache] precompute skipped: {}", e),
+    }
 }
 
 /// UI serving strategy for the `/ui/*` routes.
@@ -376,6 +400,18 @@ struct StreamParams {
     packages: Option<String>,
     node_types: Option<String>,
     edge_types: Option<String>,
+    /// When set to `"1"` / `"true"`, the stream skips emitting any edges.
+    /// Lets the GUI keep its initial fetch tight (487k+ `edge` frames
+    /// dominate parser time even gzipped) and lazy-load edges per-flow
+    /// later via /api/edges. Default false → emit all liftable edges.
+    no_edges: Option<String>,
+    /// When set to `"1"` / `"true"`, the stream skips emitting the
+    /// `excluded_nodes` batch frame. The batch is one giant
+    /// JSON.parse on the client (300k+ entries) that blocks the main
+    /// thread for seconds — too expensive for the default load when
+    /// most users never trigger the unplaced-nodes search path.
+    /// Default false → emit the batch.
+    no_excluded: Option<String>,
     max_nodes: Option<usize>,
     /// Container hierarchy level for region grouping. Accepts a level
     /// name from the default hierarchy: `package` (top — first 2 path
@@ -459,7 +495,39 @@ async fn graph_stream(
         .map(|s| s.split(',').map(|p| p.trim().to_string()).collect());
     let want_edge_types: Option<Vec<String>> = params.edge_types
         .map(|s| s.split(',').map(|p| p.trim().to_string()).collect());
+    let no_edges = params
+        .no_edges
+        .as_deref()
+        .map(|s| matches!(s, "1" | "true" | "yes"))
+        .unwrap_or(false);
+    let no_excluded = params
+        .no_excluded
+        .as_deref()
+        .map(|s| matches!(s, "1" | "true" | "yes"))
+        .unwrap_or(false);
     let lod_level = params.lod_level;
+
+    // Fast path — the GUI bootstrap fetches with the canonical default
+    // flag set; warmup precomputed that exact body so the response is
+    // <50ms instead of the 5-10s a fresh build takes. Match conservatively:
+    // anything custom (filters / lod / non-default maxNodes) takes the
+    // build path so per-request semantics stay correct.
+    let is_canonical_default = no_edges
+        && no_excluded
+        && want_packages.is_none()
+        && want_node_types.is_none()
+        && want_edge_types.as_ref().map(|v| v.is_empty()).unwrap_or(true)
+        && lod_level.is_none()
+        && max_nodes >= 500_000;
+    if is_canonical_default {
+        if let Some(body) = state.default_stream_body.read().ok().and_then(|g| g.clone()) {
+            return Response::builder()
+                .header("Content-Type", "application/x-ndjson")
+                .header("Cache-Control", "no-cache")
+                .body(axum::body::Body::from(body))
+                .unwrap();
+        }
+    }
 
     // Load graph data from RFDB (blocking — graph engine is sync)
     let manager = state.manager.clone();
@@ -471,7 +539,7 @@ async fn graph_stream(
         build_graph_stream_body(
             manager, layout_cache, file_to_nodes, hull_cache,
             max_nodes, want_packages, want_node_types, want_edge_types, lod_level,
-            workspace_name,
+            workspace_name, no_edges, no_excluded,
         )
     }).await.unwrap();
 
@@ -935,6 +1003,8 @@ fn build_graph_stream_body(
     want_edge_types: Option<Vec<String>>,
     lod_level: Option<String>,
     workspace_name: Option<String>,
+    no_edges: bool,
+    no_excluded: bool,
 ) -> Result<String, String> {
     let start = std::time::Instant::now();
     let db = manager
@@ -964,11 +1034,20 @@ fn build_graph_stream_body(
         vis_index.nid_to_visible.len(),
     );
 
-    let (edge_refs, edge_type_table) = lift_edges_bulk(
-        &**engine,
-        &vis_index,
-        want_edge_types.as_ref(),
-    );
+    // `no_edges=1` short-circuits edge-lift entirely — saves the
+    // 60-80ms scan across 1.9M graph edges + skips the 487k per-edge
+    // emit at the tail of the stream. Default fetch from the GUI
+    // bootstrap uses this so the user sees nodes / hulls fast and
+    // pulls edges lazily when a flow toggle asks for them.
+    let (edge_refs, edge_type_table) = if no_edges {
+        (Vec::new(), Vec::new())
+    } else {
+        lift_edges_bulk(
+            &**engine,
+            &vis_index,
+            want_edge_types.as_ref(),
+        )
+    };
 
     let degrees = compute_degrees(node_count, &edge_refs);
 
@@ -1029,10 +1108,50 @@ fn build_graph_stream_body(
     // can render hulls + toponyms before parsing the node tail. When the
     // cache hasn't been built yet (no warmup, missing layout, etc.) we
     // skip the frame and the GUI falls back to client-side hull compute.
-    if let Some(hulls) = hull_cache_slot.read().ok().and_then(|g| g.clone()) {
-        if !hulls.is_empty() {
-            emit_hulls_frame(&mut lines, &hulls);
+    //
+    // Bucketing matches `packages/gui/src/store/loadStream.ts ::
+    // buildPlacedForBucketing` — every placed symbol is assigned to its
+    // FILE's REGION (kind == "file" with matching path). Earlier we
+    // tried walking the orchestrator's CONTAINS tree, but that can
+    // attach a symbol to a non-file ancestor, so the per-region cell
+    // sets diverged from what TS computes and the GUI's
+    // `THREE.ShapeUtils.triangulateShape` produced fan-out triangles
+    // crossing distant corners — visible as "fills разъехались".
+    // Doing the bucketing here keeps us in lock-step with TS at the
+    // cost of one O(N) scan over candidates plus an O(R) descendant
+    // pre-pass.
+    let _ = hull_cache_slot; // (legacy slot — bucketing now done inline)
+    let hulls_inline = if !cached_layout.positions.is_empty() {
+        // file-path → region_id  (kind == "file" only)
+        let mut file_path_to_region: HashMap<&str, u128> = HashMap::with_capacity(cached_layout.regions.len());
+        for r in &cached_layout.regions {
+            if r.kind == "file" {
+                file_path_to_region.insert(r.path.as_str(), r.id);
+            }
         }
+        // file_region_id → list of placed cells inside that file
+        let mut cells_per_file_region: HashMap<u128, Vec<HexCoord>> = HashMap::new();
+        for nr in &candidates.node_refs {
+            if let Some(pos) = cached_layout.positions.get(&nr.id) {
+                if let Some(file_rid) = file_path_to_region.get(nr.file.as_str()) {
+                    cells_per_file_region.entry(*file_rid).or_default().push(*pos);
+                }
+            }
+        }
+        let region_ids_set: HashSet<u128> = cached_layout.regions.iter().map(|r| r.id).collect();
+        crate::hulls::compute_hulls_by_file(
+            &cached_layout.regions,
+            &cached_layout.containment,
+            &cells_per_file_region,
+            &region_ids_set,
+            crate::hulls::TILE_SIZE,
+            1,
+        )
+    } else {
+        HashMap::new()
+    };
+    if !hulls_inline.is_empty() {
+        emit_hulls_frame(&mut lines, &hulls_inline);
     }
 
     let layout_is_missing = matches!(cached_layout.source, LayoutSource::Missing);
@@ -1092,7 +1211,7 @@ fn build_graph_stream_body(
         .unwrap(),
     );
 
-    if !excluded_batch.is_empty() {
+    if !excluded_batch.is_empty() && !no_excluded {
         lines.push(emit_excluded_nodes_frame(
             &excluded_batch,
             &candidates.type_idx,
@@ -1180,6 +1299,15 @@ fn collect_candidate_nodes(
         };
         let ntype = node.node_type.as_deref().unwrap_or("UNKNOWN").to_string();
         let file = node.file.as_deref().unwrap_or("").to_string();
+
+        // Skip REGION nodes — they're orchestrator-emitted layout
+        // metadata (with `<virtual>/layout-pack/...` synthetic file
+        // paths), not code entities. They were polluting the
+        // file/region intern tables and surfacing in tooltip /
+        // regionTable lookups as `<virtual>/...` strings.
+        if ntype == "REGION" {
+            continue;
+        }
 
         if let Some(pkgs) = want_packages {
             if !pkgs.iter().any(|p| file.starts_with(p.as_str())) {
@@ -1371,7 +1499,7 @@ fn build_regions_frame(
 /// final tables by first-seen order (the natural iteration order).
 fn build_intern_tables(
     node_refs: &[NodeRef],
-    tree: &ContainerTree,
+    _tree: &ContainerTree,
 ) -> (Vec<String>, Vec<String>, HashMap<String, u32>, HashMap<String, u32>) {
     let mut file_table: Vec<String> = Vec::new();
     let mut region_table: Vec<String> = Vec::new();
@@ -1382,7 +1510,14 @@ fn build_intern_tables(
             file_idx.insert(nr.file.clone(), file_table.len() as u32);
             file_table.push(nr.file.clone());
         }
-        let region = tree.sa_region(nr.idx).to_string();
+        // Region = parent folder of the node's file. Same string the
+        // emit_node_line / emit_excluded_nodes_frame writes — keeps the
+        // table indices consistent across emitter sites.
+        let region: String = if let Some(slash) = nr.file.rfind('/') {
+            nr.file[..slash].to_string()
+        } else {
+            nr.file.clone()
+        };
         if !region_idx.contains_key(&region) {
             region_idx.insert(region.clone(), region_table.len() as u32);
             region_table.push(region);
@@ -1606,7 +1741,14 @@ fn emit_excluded_nodes_frame(
         .iter()
         .map(|(nr, _reason)| {
             let ti = type_idx.get(&nr.node_type).copied().unwrap_or(0);
-            let region = tree.sa_region(nr.idx).to_string();
+            // Same folder-path region as `emit_node_line` — see comment
+            // there for why we ignore tree.sa_region's slugs/prefixed
+            // paths.
+            let region: String = if let Some(slash) = nr.file.rfind('/') {
+                nr.file[..slash].to_string()
+            } else {
+                nr.file.clone()
+            };
             let f = file_idx.get(&nr.file).copied().unwrap_or(0);
             let r = region_idx.get(&region).copied().unwrap_or(0);
             serde_json::json!({
@@ -1639,7 +1781,20 @@ fn emit_node_line(
     region_idx: &HashMap<String, u32>,
 ) -> String {
     let ti = type_idx.get(&nr.node_type).copied().unwrap_or(0);
-    let region = tree.sa_region(nr.idx).to_string();
+    // `region` field exposed on the wire = the parent folder of the
+    // node's file (e.g. "packages/api/src" for a node in
+    // "packages/api/src/foo.ts"). The container_hierarchy's
+    // `tree.sa_region` was returning either a `<virtual>/layout-pack/...`
+    // prefixed path OR a literal `TYPE:name` slug for nodes whose
+    // depth fell into a NodeType-rule level — both useless to the GUI
+    // for tooltip / lens.region hashing. Folder path is consistent
+    // across every placed symbol and matches the regionTree entries
+    // the GUI joins on.
+    let region: String = if let Some(slash) = nr.file.rfind('/') {
+        nr.file[..slash].to_string()
+    } else {
+        nr.file.clone()
+    };
     let (pos, unplaced_reason) = classify_node_visibility(nr, cached_layout, layout_is_missing);
     // Phase 4 — encode `file` and `region` as table indices (`f`, `r`)
     // instead of inlining the full strings. `unplaced_reason` becomes
@@ -2250,7 +2405,7 @@ mod tests {
         let result = build_graph_stream_body(
             manager, layout_cache, file_to_nodes, hull_cache,
             100, None, None, None, None,
-            None,
+            None, false, false,
         );
 
         let err = result.err().expect("missing default db must not panic, must Err");

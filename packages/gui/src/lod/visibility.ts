@@ -41,7 +41,11 @@ export interface LodPolicy {
 
 export const DEFAULT_LOD_POLICY: LodPolicy = {
   minVisiblePixels: 64,
-  symbolZoomThreshold: 0.9,
+  // Symbol (per-tile) layer kicks in earlier so the user sees individual
+  // hexes from a comfortable mid-zoom distance — at the previous 0.9
+  // threshold tiles only appeared past distance ≈57; this maps to
+  // distance ≈85, more breathing room before the per-tile detail jumps in.
+  symbolZoomThreshold: 0.78,
   hexPixelAtZoomZero: 1,
   hexPixelAtZoomOne: 24,
 };

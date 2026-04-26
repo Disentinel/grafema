@@ -14,7 +14,14 @@
 /// Node types that the orchestrator's layout-pack treats as placeable (one
 /// tile per symbol). A node of any other type is "excluded" from the map.
 pub const PLACEABLE_TYPES: &[&str] = &[
-    "MODULE",
+    // NOTE: `MODULE` and `SERVICE` were here historically (one tile per
+    // file). They cluttered the per-tile LOD with redundant container
+    // hexes — the file's region/hull already represents it visually,
+    // and the GUI was silently filtering them via a legacy
+    // `EXCLUDED_TYPES` set. Drop them server-side so the wire ships
+    // them in the excluded batch instead. To re-enable, add them back
+    // here AND remove the `EXCLUDED_TYPES` filter in
+    // `packages/gui/src/store/loadStream.ts`.
     "FUNCTION",
     "METHOD",
     "CLASS",
