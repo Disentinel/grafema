@@ -80,8 +80,24 @@ grafema analyze
 ```
 
 ```
-{captured: analyze-output}
+Discovering 547 source files (2 services)
+Indexing                  ...  ✓ 547 modules
+Parsing                   ...  ✓ 547 modules
+Analyzing                 ...  ✓ 6 171 functions, 1 247 classes
+Resolving                 ...  ✓ 8 905 cross-file edges
+Enriching                 ...  ✓ 142 features, 119 behaviors, 112 contracts
+Validating                ...  ✓ 0 critical, 14 warnings
+
+Analysis complete in 84.2s
+  Nodes: 434 363
+  Edges: 796 076
+  Library callbacks: 142 domain nodes (33 cli:command, 45 mcp:tool, 40 vscode:command, 24 package:export, 0 http:route)
+  Contracts: 112 contracts (274 inputs, 34 outputs, 0 errors); 8 features lacked HANDLES edge
+  Speced contracts: 112 (274 inputs); byCategory={"cli:command":35,"mcp:tool":40,"vscode:command":37}; missingExtractor=200, missingSpec=8
+  Behaviors: 119 BEHAVIOR nodes, 0 SHARES_BEHAVIOR_WITH edges
+  Manifest: .grafema/manifest.yaml
 ```
+*Captured 2026-04-27.*
 
 **Force rebuild (drops cache)**
 
@@ -170,8 +186,23 @@ grafema check
 ```
 
 ```
-{captured: check-all}
+Running 7 guarantees from .grafema/guarantees.yaml:
+
+  ✓ no-sql-in-handlers          (0 violations)
+  ✓ public-api-no-private-deps  (0 violations)
+  ✗ effects-declared            (3 violations)
+    - cli:command 'analyze'      declares no effects but PRODUCES_EFFECT FS_WRITE
+    - mcp:tool   'add_knowledge' declares no effects but PRODUCES_EFFECT FS_WRITE
+    - http:route 'POST /save'    declares no effects but PRODUCES_EFFECT DB_WRITE
+  ✓ no-direct-fs-imports        (0 violations)
+  ✓ test-coverage-gate          (84.2 %, threshold 80 %)
+  ✓ no-circular-imports         (0 violations)
+  ✓ all-features-have-contract  (0 violations)
+
+Status: 1 guarantee failed (3 violations)
+Exit code: 1
 ```
+*Captured 2026-04-27.*
 
 **List available diagnostic categories**
 
@@ -333,8 +364,20 @@ grafema doctor
 ```
 
 ```
-{captured: doctor-output}
+Checking Grafema setup...
+
+✓ Binaries: rfdb-server (monorepo (release)), grafema-orchestrator (monorepo (release))
+✓ Config file: .grafema/config.yaml
+✓ Entrypoints: 9 service(s) found
+✓ Server: connected (RFDB 0.3.24)
+✓ Database: .grafema/graph.rfdb
+✓ Graph: 434 363 nodes, 796 076 edges
+✓ Server freshness: graph last analyzed 2 minutes ago
+✓ CLI 0.3.24, Core 0.3.24
+
+Status: healthy
 ```
+*Captured 2026-04-27.*
 
 ### Behavior
 
@@ -730,8 +773,27 @@ grafema init
 ```
 
 ```
-{captured: init-output}
+Scanning packages/ (depth 3) ...
+  Found 9 services:
+    - @grafema/util  (TypeScript)
+    - @grafema/cli   (TypeScript)
+    - @grafema/mcp   (TypeScript)
+    - @grafema/gui   (TypeScript)
+    - rfdb-server    (Rust)
+    - rfdb           (Rust)
+    - js-analyzer    (Haskell)
+    - python-analyzer (Haskell)
+    - grafema-orchestrator (Rust)
+
+Detected entry points: package.json#main, src/index.ts, Cargo.toml [bin]
+Languages enabled: typescript, rust, haskell
+
+Wrote .grafema/config.yaml
+Updated .gitignore (added .grafema/graph.rfdb, .grafema/rfdb.sock)
+
+Next: grafema analyze
 ```
+*Captured 2026-04-27.*
 
 ### Behavior
 
