@@ -36,6 +36,7 @@ import { setupSkillCommand } from './commands/setup-skill.js';
 import { gitIngestCommand } from './commands/git-ingest.js';
 import { registryCommand } from './commands/registry.js';
 import { featuresCommand } from './commands/features.js';
+import { exportCommand } from './commands/export.js';
 
 // Read version from package.json
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -80,5 +81,6 @@ program.addCommand(setupSkillCommand);
 program.addCommand(gitIngestCommand);
 program.addCommand(registryCommand);
 program.addCommand(featuresCommand);
+program.addCommand(exportCommand);
 
 program.parse();

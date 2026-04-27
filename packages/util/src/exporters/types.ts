@@ -1,0 +1,83 @@
+/**
+ * Exporter types — shared shapes for `grafema export` output formats
+ * (REG-1116, REG-1118).
+ *
+ * The snapshot is the intermediate representation between the graph and the
+ * format-specific renderers. It carries only what at least one renderer needs
+ * (per skill `materialize-only-what-queries-need`): FEATURE identity,
+ * speced-contract data, behavior summary, and shared-behavior siblings.
+ *
+ * Formats currently supported:
+ *   - openapi-3.1   (http:route only)
+ *   - docs-md       (all FEATURE categories)
+ *
+ * Phase 2 formats (mcp-schema, asyncapi, json-schema, ts-declarations,
+ * mermaid) will plug in as additional Renderer implementations without
+ * changing the snapshot shape.
+ */
+import type { SpecedContractData } from '../enrichers/specedContractEnricher.js';
+
+/** Per-feature behavior summary, derived from BEHAVIOR node metadata. */
+export interface FeatureBehaviorSummary {
+  /** sha256 hash from BEHAVIOR.metadata.hash. */
+  hash: string;
+  /** Effects rolled up by behaviorEnricher (PURE, IO, THROW, …). */
+  effects: string[];
+  /** Forward-slice node count of the BEHAVIOR. */
+  coreNodeCount: number;
+  /** Maximum call-graph depth observed in the BEHAVIOR. */
+  depth: number;
+}
+
+/** A FEATURE that shares BEHAVIOR with the snapshot's feature. */
+export interface SharedFeatureRef {
+  /** Feature semantic id (== node id in the graph). */
+  id: string;
+  /** Feature node type — e.g. 'cli:command', 'mcp:tool'. */
+  category: string;
+  /** Feature display name. */
+  name: string;
+  /** Source file. */
+  file: string;
+}
+
+/** A single FEATURE in the form the renderers consume. */
+export interface FeatureExportSnapshot {
+  /** FEATURE node id. */
+  id: string;
+  /** FEATURE category — equal to the FEATURE node's `type` field. */
+  category: string;
+  /** FEATURE display name. */
+  name: string;
+  /** Source file. */
+  file: string;
+  /**
+   * SpecedContracts attached via HAS_SPECED_CONTRACT. Zero or more — extractors
+   * that returned null are simply absent.
+   */
+  contracts: SpecedContractData[];
+  /** Behavior summary, if BEHAVIOR linked via IMPLEMENTED_BY. */
+  behavior?: FeatureBehaviorSummary;
+  /** FEATURE ids in the same SHARES_BEHAVIOR_WITH cluster (excludes self). */
+  sharedBehaviorWith: SharedFeatureRef[];
+}
+
+/**
+ * Pluggable renderer for one output format. Pure function: in = snapshots,
+ * out = string. No I/O, no graph access — the orchestrator owns both.
+ */
+export interface Renderer {
+  /** Format identifier — '--as <format>' value. */
+  format: string;
+  /**
+   * Whether this renderer can emit a representation for `category`. Used by
+   * the orchestrator to validate the `--feature` × `--as` combination before
+   * collecting any snapshots.
+   */
+  supports(category: string): boolean;
+  /**
+   * Render the supplied snapshots in this format. The orchestrator is
+   * responsible for ensuring every snapshot's category is `supports(...)`.
+   */
+  render(snapshots: FeatureExportSnapshot[]): string;
+}

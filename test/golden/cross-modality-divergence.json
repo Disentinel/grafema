@@ -1,0 +1,4 @@
+{
+  "_comment": "Map of featureId-pair (sorted, joined by ' || ') -> { rationale: string }. Pairs listed here are intentional contract divergences within a SHARES_BEHAVIOR_WITH cluster and won't trigger crossModalityEquivalence test failures. Empty for v1.",
+  "divergences": {}
+}

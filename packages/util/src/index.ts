@@ -300,5 +300,23 @@ export type {
   BuildResult,
 } from './manifest/index.js';
 
+// Exporters — `grafema export` (REG-1116, REG-1118)
+export {
+  collectFeatureSnapshots,
+  parseFeaturePattern,
+  resolveCategories,
+  FEATURE_CATEGORIES,
+  openapiRenderer,
+  docsMdRenderer,
+  RENDERERS,
+} from './exporters/index.js';
+export type {
+  FeatureBehaviorSummary,
+  FeatureExportSnapshot,
+  SharedFeatureRef,
+  Renderer,
+  ExportBackendLike,
+} from './exporters/index.js';
+
 // Re-export types for convenience
 export type * from '@grafema/types';
