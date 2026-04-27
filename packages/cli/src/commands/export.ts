@@ -14,7 +14,7 @@ import { Command } from 'commander';
 import { resolve, join, dirname } from 'path';
 import { existsSync, mkdirSync, writeFileSync } from 'fs';
 
-import { RFDBServerBackend, RENDERERS, type ExportBackendLike } from '@grafema/util';
+import { RFDBServerBackend, RFDBClient, RENDERERS, type ExportBackendLike } from '@grafema/util';
 import { exitWithError } from '../utils/errorFormatter.js';
 import { runExport } from './exportAction.js';
 
@@ -57,8 +57,15 @@ json-schema, ts-declarations, mermaid — are tracked separately.
       exitWithError('No graph database found', ['Run: grafema analyze']);
     }
 
-    const backend = new RFDBServerBackend({ dbPath, clientName: 'cli' });
-    await backend.connect();
+    // RFDBServerBackend negotiates protocol v3, which returns semantic edge
+    // dst values that don't resolve via getNode(). Connect with a plain
+    // RFDBClient (protocol v2) so edges preserve raw numeric ids end-to-end.
+    // Still use RFDBServerBackend for its auto-start side effect.
+    const server = new RFDBServerBackend({ dbPath, clientName: 'cli-bootstrap' });
+    await server.connect();
+    const socketPath = (server as unknown as { socketPath: string }).socketPath;
+    const rawClient = new RFDBClient(socketPath, 'export');
+    await rawClient.connect();
 
     try {
       await runExport(
@@ -68,7 +75,7 @@ json-schema, ts-declarations, mermaid — are tracked separately.
           output: options.output,
         },
         {
-          backend: backend as unknown as ExportBackendLike,
+          backend: rawClient as unknown as ExportBackendLike,
           writeText: writeOutput,
           warn: (msg) => console.error(msg),
           fail: (msg, code) => {
@@ -78,7 +85,8 @@ json-schema, ts-declarations, mermaid — are tracked separately.
         },
       );
     } finally {
-      await backend.close();
+      rawClient.close();
+      await server.close();
     }
   });
 
