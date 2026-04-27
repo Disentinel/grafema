@@ -41,6 +41,13 @@ interface PropertySchema {
   type: string;
   description?: string;
   default?: unknown;
+  enum?: unknown[];
+  format?: string;
+  minimum?: number;
+  maximum?: number;
+  minLength?: number;
+  maxLength?: number;
+  pattern?: string;
 }
 
 interface XGrafemaExtension {
@@ -55,6 +62,7 @@ interface FeatureSchema {
   $schema: string;
   $id: string;
   title: string;
+  description?: string;
   type: 'object';
   properties: Record<string, PropertySchema>;
   required: string[];
@@ -105,7 +113,7 @@ function buildFeatureSchema(feature: FeatureExportSnapshot): FeatureSchema {
     xGrafema.note = 'no recovered contract';
   }
 
-  return {
+  const schema: FeatureSchema = {
     $schema: SCHEMA_DRAFT,
     $id: `grafema://feature/${feature.id}`,
     title: feature.name,
@@ -114,11 +122,22 @@ function buildFeatureSchema(feature: FeatureExportSnapshot): FeatureSchema {
     required,
     'x-grafema': xGrafema,
   };
+  // v2: top-level contract.description maps directly to schema-level
+  // `description` so JSON-Schema consumers see the human label.
+  if (contract?.description) schema.description = contract.description;
+  return schema;
 }
 
 function buildPropertySchema(input: SpecedContractInput): PropertySchema {
   const schema: PropertySchema = { type: input.type ?? 'string' };
   if (input.description) schema.description = input.description;
   if (input.default !== undefined) schema.default = input.default;
+  if (Array.isArray(input.enum)) schema.enum = input.enum;
+  if (typeof input.format === 'string') schema.format = input.format;
+  if (typeof input.minimum === 'number') schema.minimum = input.minimum;
+  if (typeof input.maximum === 'number') schema.maximum = input.maximum;
+  if (typeof input.minLength === 'number') schema.minLength = input.minLength;
+  if (typeof input.maxLength === 'number') schema.maxLength = input.maxLength;
+  if (typeof input.pattern === 'string') schema.pattern = input.pattern;
   return schema;
 }

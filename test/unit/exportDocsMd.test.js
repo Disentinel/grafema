@@ -178,4 +178,70 @@ describe('docsMdRenderer', () => {
     assert.match(text, /`AnalysisError`/);
     assert.match(text, /Analysis failed/);
   });
+
+  it('v2: top-level contract.description renders as a paragraph above the table', () => {
+    const snap = {
+      id: 'feat:cli:command:build',
+      category: 'cli:command',
+      name: 'build',
+      file: 'src/cli.ts',
+      contracts: [
+        {
+          source: 'commander',
+          name: 'build',
+          description: 'Compile the project',
+          inputs: [{ name: 'input', type: 'string', optional: false }],
+          outputs: [],
+          errors: [],
+        },
+      ],
+      sharedBehaviorWith: [],
+    };
+    const text = docsMdRenderer.render([snap]);
+    // Description appears between the contract heading and the table.
+    const headingIdx = text.indexOf('### Contract — commander');
+    const descIdx = text.indexOf('Compile the project');
+    const tableIdx = text.indexOf('| Input ');
+    assert.ok(headingIdx >= 0 && descIdx > headingIdx && tableIdx > descIdx);
+  });
+
+  it('v2: variadic input renders with trailing ellipsis suffix', () => {
+    const snap = {
+      id: 'feat:cli:command:lint',
+      category: 'cli:command',
+      name: 'lint',
+      file: 'src/cli.ts',
+      contracts: [
+        {
+          source: 'commander',
+          inputs: [{ name: 'files', type: 'string[]', optional: false, variadic: true }],
+          outputs: [],
+          errors: [],
+        },
+      ],
+      sharedBehaviorWith: [],
+    };
+    const text = docsMdRenderer.render([snap]);
+    assert.match(text, /\| `files…` \|/);
+  });
+
+  it('v2: enum values render as an "Allowed:" line below the table', () => {
+    const snap = {
+      id: 'feat:mcp:tool:filter',
+      category: 'mcp:tool',
+      name: 'filter',
+      file: 'src/mcp.ts',
+      contracts: [
+        {
+          source: 'mcp-inputSchema',
+          inputs: [{ name: 'kind', type: 'string', optional: false, enum: ['cli', 'mcp', 'http'] }],
+          outputs: [],
+          errors: [],
+        },
+      ],
+      sharedBehaviorWith: [],
+    };
+    const text = docsMdRenderer.render([snap]);
+    assert.match(text, /Allowed for `kind`: \[cli, mcp, http\]/);
+  });
 });

@@ -45,7 +45,10 @@ export const openapiRenderer: Renderer = {
       if (f.category !== 'http:route') continue;
       for (const c of f.contracts) {
         if (c.source !== 'http-route') continue;
-        const summary = c.outputs[0]?.description;
+        // v2: prefer the top-level `name` (e.g. "GET /users/:id"). v1 sources
+        // continue to set outputs[0].description with the same text — fall
+        // back so existing fixtures still parse.
+        const summary = c.name ?? c.outputs[0]?.description;
         if (!summary) continue;
         const parsed = parseRouteSummary(summary);
         if (!parsed) continue;
@@ -59,6 +62,7 @@ export const openapiRenderer: Renderer = {
 
 /**
  * Parse a route summary line like "GET /users/:id" into method + path.
+ * Accepts both the v1 outputs[0].description form and v2 contract.name form.
  * Returns null when malformed.
  */
 function parseRouteSummary(summary: string): { method: string; path: string } | null {
@@ -146,13 +150,38 @@ function emitParameter(lines: string[], input: SpecedContractInput): void {
   // `description` instead.
   lines.push('          required: true');
   const schemaType = input.type === 'string[]' ? 'array' : (input.type ?? 'string');
+  // v2 schema fields we forward into the parameter schema. None of them are
+  // mandatory; emit only those present so the resulting YAML stays compact
+  // and stable.
+  const extras: string[] = [];
+  if (typeof input.format === 'string') extras.push(`format: ${yamlString(input.format)}`);
+  if (typeof input.minimum === 'number') extras.push(`minimum: ${input.minimum}`);
+  if (typeof input.maximum === 'number') extras.push(`maximum: ${input.maximum}`);
+  if (typeof input.minLength === 'number') extras.push(`minLength: ${input.minLength}`);
+  if (typeof input.maxLength === 'number') extras.push(`maxLength: ${input.maxLength}`);
+  if (typeof input.pattern === 'string') extras.push(`pattern: ${yamlString(input.pattern)}`);
+  const enumVals = Array.isArray(input.enum) ? input.enum : null;
+
   if (schemaType === 'array') {
     lines.push('          schema:');
     lines.push('            type: array');
     lines.push('            items:');
     lines.push('              type: string');
-  } else {
+    for (const e of extras) lines.push(`            ${e}`);
+    if (enumVals) {
+      lines.push('            enum:');
+      for (const v of enumVals) lines.push(`              - ${yamlString(String(v))}`);
+    }
+  } else if (extras.length === 0 && !enumVals) {
     lines.push(`          schema: { type: ${schemaType} }`);
+  } else {
+    lines.push('          schema:');
+    lines.push(`            type: ${schemaType}`);
+    for (const e of extras) lines.push(`            ${e}`);
+    if (enumVals) {
+      lines.push('            enum:');
+      for (const v of enumVals) lines.push(`              - ${yamlString(String(v))}`);
+    }
   }
   if (input.description) {
     lines.push(`          description: ${yamlString(input.description)}`);

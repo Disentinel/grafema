@@ -2,10 +2,13 @@
  * contractDiff.test.js — Layer 2 of the regression-test infrastructure.
  *
  * Compares FEATURE → SPECED_CONTRACT data of a synthetic test-graph
- * fixture against `test/golden/contracts.json`. Empty golden ⇒ no
- * regressions detectable, test passes. With populated golden, fails on
- * any contract diff with an explicit BREAKING/MINOR severity tag plus a
- * regenerate hint.
+ * fixture against the COMMITTED fixture-golden at
+ * `test/golden/fixture/contracts.json`. Zero-diff is required — any drift
+ * indicates the diff infrastructure itself regressed.
+ *
+ * Production goldens (live-graph snapshot at `test/golden/contracts.json`)
+ * are a separate concern, owned by the regenerate-contracts.mjs script and
+ * CI release-gate flows.
  *
  * NOTE: this is the CI/test entry point that wraps the pure helper
  * `@grafema/util/regression/contractDiff`. The helper has its own focused
@@ -27,7 +30,7 @@ import { createTestDatabase, cleanupAllTestDatabases } from '../helpers/TestRFDB
 import { collectContracts } from './regression-helpers/collectContracts.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const GOLDEN_PATH = join(__dirname, '..', 'golden', 'contracts.json');
+const GOLDEN_PATH = join(__dirname, '..', 'golden', 'fixture', 'contracts.json');
 
 after(async () => {
   await cleanupAllTestDatabases();
@@ -46,7 +49,7 @@ describe('contractDiff (Layer 2)', () => {
     client = backend.client;
   });
 
-  it('current contracts match golden (empty golden ⇒ no regressions)', async () => {
+  it('fixture contracts match committed fixture-golden (zero diff)', async () => {
     await seedFeatureWithContract(backend, {
       file: 'cli.ts',
       featureId: 'cli:command:fixture',
@@ -60,22 +63,24 @@ describe('contractDiff (Layer 2)', () => {
       },
     });
 
-    const golden = loadGolden();
-    const goldenMap = mapFromObj(golden);
+    const goldenMap = mapFromObj(loadGolden());
     const { contracts: current, categories } = await collectContracts(client);
 
-    if (goldenMap.size === 0) {
-      assert.ok(current.size > 0, 'expected fixture to produce at least one contract');
-      return;
-    }
+    assert.ok(
+      goldenMap.size > 0,
+      `Fixture-golden ${GOLDEN_PATH} is empty. Run:\n` +
+        `  node test/golden/regenerate-fixture-goldens.mjs\n`,
+    );
 
     const diff = diffContracts(goldenMap, current, categories);
     if (contractDiffSize(diff) !== 0) {
       assert.fail(
-        `Contract regression detected vs test/golden/contracts.json:\n` +
+        `Fixture-projection drifted from test/golden/fixture/contracts.json:\n` +
           `${formatContractDiff(diff)}\n\n` +
-          `If this drift is intentional, regenerate the golden:\n` +
-          `  node test/golden/regenerate-contracts.mjs --rfdb .grafema/rfdb.sock\n`,
+          `This indicates a regression in the diff/projection infrastructure\n` +
+          `(collectContracts, contractDiff, or the fixture seeder). If the\n` +
+          `fixture itself was intentionally changed, regenerate:\n` +
+          `  node test/golden/regenerate-fixture-goldens.mjs\n`,
       );
     }
   });

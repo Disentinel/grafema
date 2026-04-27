@@ -87,8 +87,9 @@ export const httpRouteExtractor: SpecedContractExtractor = {
       description: 'Path parameter from route',
     }));
 
+    const summary = `${httpMethod.toUpperCase()} ${path}`;
     const outputs: SpecedContractOutput[] = [
-      { description: `${httpMethod.toUpperCase()} ${path}` },
+      { kind: 'http', description: summary },
     ];
 
     // v1: errors[] is empty. Future work — extract via taint over `throw new
@@ -97,6 +98,7 @@ export const httpRouteExtractor: SpecedContractExtractor = {
 
     return {
       source: 'http-route',
+      name: summary,
       inputs,
       outputs,
       errors,

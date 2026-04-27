@@ -66,11 +66,21 @@ interface MenuOrKeybindingEntry {
   win?: string;
 }
 
+/** Shape of a single contributes.views.<container>[] entry. */
+interface ContributesView {
+  id?: string;
+  name?: string;
+  when?: string;
+  visibility?: string;
+  contextualTitle?: string;
+}
+
 /** Subset of package.json#contributes we read. */
 interface Contributes {
   commands?: ContributesCommand[];
   menus?: Record<string, MenuOrKeybindingEntry[]>;
   keybindings?: MenuOrKeybindingEntry[];
+  views?: Record<string, ContributesView[]>;
 }
 
 interface PackageJson {
@@ -94,10 +104,21 @@ export const vscodeContributesExtractor: SpecedContractExtractor = {
     if (!featureFile) return null;
 
     const cache: PkgCache = new Map();
-    const found = findContributesForCommand(featureFile, commandId, cache);
-    if (!found) return null;
-
-    return buildContractData(found.command, found.contributes, commandId);
+    const cmdFound = findContributesForCommand(featureFile, commandId, cache);
+    if (cmdFound) {
+      return buildContractData(cmdFound.command, cmdFound.contributes, commandId);
+    }
+    // Fallback: the FEATURE may be a TreeView / WebviewView ID rather than a
+    // command. libraryCallbackEnricher currently classifies all
+    // vscode.window.register*Provider entry points as vscode:command (a
+    // categorisation gap — track as separate REG). Until then, look the id
+    // up in contributes.views.<container>[] so docs-md surfaces the view's
+    // user-facing name instead of "No speced contract recovered".
+    const viewFound = findContributesForView(featureFile, commandId, cache);
+    if (viewFound) {
+      return buildViewContractData(viewFound.view, viewFound.containerId);
+    }
+    return null;
   },
 };
 
@@ -146,6 +167,39 @@ function findContributesForCommand(
   return null;
 }
 
+/**
+ * Walk upward from feature.file searching for a package.json whose
+ * `contributes.views.<container>[]` contains an entry with `id === viewId`.
+ * Same closest-with-match tie-breaker as findContributesForCommand.
+ */
+function findContributesForView(
+  featureFile: string,
+  viewId: string,
+  cache: PkgCache,
+): { view: ContributesView; containerId: string; pkgPath: string } | null {
+  const startDir = dirname(isAbsolute(featureFile) ? featureFile : resolve(featureFile));
+  const root = parsePath(startDir).root;
+
+  let current = startDir;
+  for (let i = 0; i < 64; i++) {
+    const pkgPath = resolve(current, 'package.json');
+    const pkg = readPackageJson(pkgPath, cache);
+    const views = pkg?.contributes?.views;
+    if (views && typeof views === 'object') {
+      for (const [containerId, entries] of Object.entries(views)) {
+        if (!Array.isArray(entries)) continue;
+        const v = entries.find(e => typeof e?.id === 'string' && e.id === viewId);
+        if (v) return { view: v, containerId, pkgPath };
+      }
+    }
+    if (current === root) break;
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return null;
+}
+
 function readPackageJson(path: string, cache: PkgCache): PackageJson | null {
   const cached = cache.get(path);
   if (cached !== undefined) return cached;
@@ -177,12 +231,11 @@ function buildContractData(
 ): SpecedContractData {
   const outputs: SpecedContractOutput[] = [];
 
-  // Primary output row: the user-visible command label, qualified with
-  // category if present (matches how VS Code displays it in the palette).
+  // v2 schema: top-level description = the user-visible command label,
+  // qualified with category when present (matches the VS Code palette).
   const title = typeof command.title === 'string' ? command.title : commandId;
   const category = typeof command.category === 'string' ? command.category : undefined;
-  const description = category ? `${category}: ${title}` : title;
-  outputs.push({ description });
+  const topDescription = category ? `${category}: ${title}` : title;
 
   // Menu placements — one row per `menus.<location>[]` entry that targets
   // this command. Description carries the menu location and `when` clause so
@@ -195,7 +248,7 @@ function buildContractData(
       const parts = [`menu: ${location}`];
       if (typeof entry.when === 'string' && entry.when.length > 0) parts.push(`when: ${entry.when}`);
       if (typeof entry.group === 'string' && entry.group.length > 0) parts.push(`group: ${entry.group}`);
-      outputs.push({ description: parts.join(' | ') });
+      outputs.push({ kind: 'menu', description: parts.join(' | ') });
     }
   }
 
@@ -211,11 +264,38 @@ function buildContractData(
     if (typeof kb.linux === 'string') parts.push(`linux: ${kb.linux}`);
     if (typeof kb.win === 'string') parts.push(`win: ${kb.win}`);
     if (typeof kb.when === 'string' && kb.when.length > 0) parts.push(`when: ${kb.when}`);
-    outputs.push({ description: parts.join(' | ') });
+    outputs.push({ kind: 'keybinding', description: parts.join(' | ') });
   }
 
   return {
     source: 'vscode-contributes',
+    name: commandId,
+    description: topDescription,
+    inputs: [],
+    outputs,
+    errors: [],
+  };
+}
+
+/**
+ * Build SpecedContractData for a TreeView / WebviewView entry. Covers
+ * `contributes.views.<container>[]` matches when the FEATURE id is a view
+ * id (e.g., 'grafemaCallers') registered via window.registerTreeDataProvider
+ * or registerWebviewViewProvider.
+ */
+function buildViewContractData(view: ContributesView, containerId: string): SpecedContractData {
+  const outputs: SpecedContractOutput[] = [];
+  const name = typeof view.name === 'string' ? view.name : (view.id ?? '');
+  const topDescription = `view: ${name}`;
+  const meta: string[] = [`container: ${containerId}`];
+  if (typeof view.visibility === 'string') meta.push(`visibility: ${view.visibility}`);
+  if (typeof view.when === 'string' && view.when.length > 0) meta.push(`when: ${view.when}`);
+  if (typeof view.contextualTitle === 'string') meta.push(`contextualTitle: ${view.contextualTitle}`);
+  outputs.push({ kind: 'view', description: meta.join(' | ') });
+  return {
+    source: 'vscode-contributes',
+    name: view.id ?? '',
+    description: topDescription,
     inputs: [],
     outputs,
     errors: [],

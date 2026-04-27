@@ -27,7 +27,7 @@ import type {
   SpecedContractSource,
 } from '../enrichers/specedContractEnricher.js';
 
-export type DiffSeverity = 'BREAKING' | 'MINOR' | 'COSMETIC';
+export type DiffSeverity = 'BREAKING' | 'MINOR' | 'NOTE' | 'COSMETIC';
 
 export interface ContractDiff {
   /** Features present in current but not in golden. */
@@ -51,7 +51,15 @@ export interface ContractChange {
 }
 
 export interface InputDelta {
-  kind: 'added' | 'removed' | 'typeChanged' | 'optionalityChanged' | 'reordered';
+  kind:
+    | 'added'
+    | 'removed'
+    | 'typeChanged'
+    | 'optionalityChanged'
+    | 'reordered'
+    | 'defaultChanged'
+    | 'enumChanged'
+    | 'formatChanged';
   name: string;
   severity: DiffSeverity;
   oldType?: string;
@@ -60,6 +68,12 @@ export interface InputDelta {
   newOptional?: boolean;
   oldPosition?: number;
   newPosition?: number;
+  oldDefault?: unknown;
+  newDefault?: unknown;
+  oldEnum?: unknown[];
+  newEnum?: unknown[];
+  oldFormat?: string;
+  newFormat?: string;
 }
 
 export interface OutputDelta {
@@ -128,6 +142,37 @@ function diffOneContract(
         severity: sev,
         oldOptional: oOpt,
         newOptional: nOpt,
+      });
+    }
+    // v2: default / enum / format change tracking. Note-severity — they
+    // refine behavior but don't break callers' shape contract. Removing a
+    // required is still BREAKING; adding a default that flips required to
+    // optional shows up via optionalityChanged above.
+    if (!sameValue(oi.default, ni.default)) {
+      inputs.push({
+        kind: 'defaultChanged',
+        name: oi.name,
+        severity: 'NOTE',
+        oldDefault: oi.default,
+        newDefault: ni.default,
+      });
+    }
+    if (!sameEnum(oi.enum, ni.enum)) {
+      inputs.push({
+        kind: 'enumChanged',
+        name: oi.name,
+        severity: 'NOTE',
+        oldEnum: oi.enum,
+        newEnum: ni.enum,
+      });
+    }
+    if ((oi.format ?? '') !== (ni.format ?? '')) {
+      inputs.push({
+        kind: 'formatChanged',
+        name: oi.name,
+        severity: 'NOTE',
+        oldFormat: oi.format,
+        newFormat: ni.format,
       });
     }
   }
@@ -332,7 +377,37 @@ function positionalOrder(inputs: SpecedContractInput[]): string[] {
 function highestSeverity(list: DiffSeverity[]): DiffSeverity {
   if (list.includes('BREAKING')) return 'BREAKING';
   if (list.includes('MINOR')) return 'MINOR';
+  if (list.includes('NOTE')) return 'NOTE';
   return 'COSMETIC';
+}
+
+/** Strict structural equality for `default`-style payloads. */
+function sameValue(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a === undefined || b === undefined) return a === b;
+  // Cheap deep-equality for the small JSON-ish shapes we accept.
+  try {
+    return JSON.stringify(a) === JSON.stringify(b);
+  } catch {
+    return false;
+  }
+}
+
+/** Treat enum sets as unordered — a permutation is not a change. */
+function sameEnum(a: unknown[] | undefined, b: unknown[] | undefined): boolean {
+  if (a === undefined && b === undefined) return true;
+  if (a === undefined || b === undefined) return false;
+  if (a.length !== b.length) return false;
+  const stringify = (xs: unknown[]) =>
+    xs
+      .map((x) => {
+        try { return JSON.stringify(x); } catch { return String(x); }
+      })
+      .sort();
+  const sa = stringify(a);
+  const sb = stringify(b);
+  for (let i = 0; i < sa.length; i++) if (sa[i] !== sb[i]) return false;
+  return true;
 }
 
 function formatInputDelta(d: InputDelta): string {
@@ -348,6 +423,21 @@ function formatInputDelta(d: InputDelta): string {
       return `${sev} optional ${d.name}: ${d.oldOptional} → ${d.newOptional}`;
     case 'reordered':
       return `${sev} reorder ${d.name}: pos ${d.oldPosition} → ${d.newPosition}`;
+    case 'defaultChanged':
+      return `${sev} default ${d.name}: ${stringifySafe(d.oldDefault)} → ${stringifySafe(d.newDefault)}`;
+    case 'enumChanged':
+      return `${sev} enum ${d.name}: ${stringifySafe(d.oldEnum)} → ${stringifySafe(d.newEnum)}`;
+    case 'formatChanged':
+      return `${sev} format ${d.name}: ${d.oldFormat ?? '?'} → ${d.newFormat ?? '?'}`;
+  }
+}
+
+function stringifySafe(v: unknown): string {
+  if (v === undefined) return '∅';
+  try {
+    return JSON.stringify(v);
+  } catch {
+    return String(v);
   }
 }
 

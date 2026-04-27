@@ -76,9 +76,10 @@ describe('vscodeContributesExtractor', () => {
     assert.equal(data.source, 'vscode-contributes');
     assert.equal(data.inputs.length, 0);
     assert.equal(data.errors.length, 0);
-    assert.ok(data.outputs.length >= 1);
+    // v2: top-level fields carry the command id and human label.
+    assert.equal(data.name, 'graf.refresh');
     // Title qualified with category — matches how VS Code renders it.
-    assert.equal(data.outputs[0].description, 'Grafema: Refresh Graph');
+    assert.equal(data.description, 'Grafema: Refresh Graph');
   });
 
   it('feature.name with surrounding quotes is normalised before matching', async () => {
@@ -102,7 +103,7 @@ describe('vscodeContributesExtractor', () => {
       makeFeature({ name: "'graf.refresh'", file: featureFile }),
     );
     assert.ok(data, 'extractor should match after stripping quotes');
-    assert.equal(data.outputs[0].description, 'Refresh');
+    assert.equal(data.description, 'Refresh');
   });
 
   it('command not in package.json returns null', async () => {
@@ -156,8 +157,8 @@ describe('vscodeContributesExtractor', () => {
       makeFeature({ name: 'graf.refresh', file: featureFile }),
     );
     assert.ok(data);
-    // outputs[0] is the title row; menus follow.
-    const menuRows = data.outputs.filter(o => o.description?.startsWith('menu: '));
+    // v2: outputs are pure menu/keybinding rows — no title row anymore.
+    const menuRows = data.outputs.filter(o => o.kind === 'menu');
     assert.equal(menuRows.length, 2, 'exactly two menu placements target graf.refresh');
     assert.ok(menuRows.some(r => r.description.includes('view/title')));
     assert.ok(menuRows.some(r => r.description.includes('view/item/context')));
@@ -195,7 +196,7 @@ describe('vscodeContributesExtractor', () => {
       makeFeature({ name: 'graf.toggle', file: featureFile }),
     );
     assert.ok(data);
-    const kbRows = data.outputs.filter(o => o.description?.startsWith('keybinding'));
+    const kbRows = data.outputs.filter(o => o.kind === 'keybinding');
     assert.equal(kbRows.length, 1, 'exactly one keybinding targets graf.toggle');
     const desc = kbRows[0].description;
     assert.ok(desc.includes('key: ctrl+shift+g'));
@@ -256,7 +257,38 @@ describe('vscodeContributesExtractor', () => {
       makeFeature({ name: 'graf.refresh', file: featureFile }),
     );
     assert.ok(data, 'extractor must reach the sub-package despite root pkg.json having no contributes');
-    assert.equal(data.outputs[0].description, 'Refresh from Sub-package');
+    assert.equal(data.description, 'Refresh from Sub-package');
+  });
+
+  it('v2: top-level name = command id (no quotes), outputs carry kind tags', async () => {
+    const extDir = freshDir('ext');
+    const srcDir = join(extDir, 'src');
+    mkdirSync(srcDir);
+    writeFileSync(
+      join(extDir, 'package.json'),
+      JSON.stringify({
+        contributes: {
+          commands: [{ command: 'graf.ping', title: 'Ping' }],
+          menus: {
+            'view/title': [{ command: 'graf.ping', when: 'view == grafema' }],
+          },
+          keybindings: [{ command: 'graf.ping', key: 'ctrl+p' }],
+        },
+      }),
+    );
+    const featureFile = join(srcDir, 'extension.ts');
+    writeFileSync(featureFile, '// fake');
+
+    const data = await vscodeContributesExtractor.extract(
+      /** @type {any} */ (null),
+      makeFeature({ name: "'graf.ping'", file: featureFile }),
+    );
+    assert.ok(data);
+    assert.equal(data.name, 'graf.ping');
+    assert.equal(data.description, 'Ping');
+    const kinds = data.outputs.map((o) => o.kind);
+    assert.ok(kinds.includes('menu'));
+    assert.ok(kinds.includes('keybinding'));
   });
 
   it('closest package.json with matching command wins (sub-package over root)', async () => {
@@ -290,6 +322,6 @@ describe('vscodeContributesExtractor', () => {
       makeFeature({ name: 'graf.refresh', file: featureFile }),
     );
     assert.ok(data);
-    assert.equal(data.outputs[0].description, 'Sub Title');
+    assert.equal(data.description, 'Sub Title');
   });
 });

@@ -74,6 +74,7 @@ export const commanderExtractor: SpecedContractExtractor = {
     const outputs: SpecedContractOutput[] = [];
     const errors: SpecedContractError[] = [];
     let description: string | undefined;
+    let commandName: string | undefined;
     let foundOrigin = false;
 
     // Walk the chain in source order (origin → ... → anchor) so positional
@@ -91,10 +92,15 @@ export const commanderExtractor: SpecedContractExtractor = {
           const specStr = await readLiteralArg(client, call.id, 0);
           if (specStr !== null) {
             const parsed = parseCommandSpec(specStr);
+            if (parsed.name && commandName === undefined) commandName = parsed.name;
             for (const positional of parsed.positionals) {
               inputs.push(positional);
             }
           }
+          // Optional second arg of `.command(name, desc)` / `new Command(name, desc)`
+          // is the description. Both forms accept it.
+          const desc = await readLiteralArg(client, call.id, 1);
+          if (desc !== null && description === undefined) description = desc;
           foundOrigin = true;
           break;
         }
@@ -141,15 +147,13 @@ export const commanderExtractor: SpecedContractExtractor = {
     if (!foundOrigin) return null;
 
     // The result is the SpecedContract — empty inputs/outputs/errors are
-    // legitimate (a CLI command can have no args). Description goes in the
-    // first synthetic output for now to keep the schema flat; future work
-    // may add a top-level `description` field to SpecedContractData.
-    if (description) {
-      outputs.push({ description });
-    }
-
+    // legitimate (a CLI command can have no args). v2 schema: command name
+    // and description live as top-level fields. The synthetic outputs[0]
+    // workaround is dropped.
     return {
       source: 'commander',
+      ...(commandName !== undefined ? { name: commandName } : {}),
+      ...(description !== undefined ? { description } : {}),
       inputs,
       outputs,
       errors,
@@ -339,10 +343,7 @@ function parsePositionalSpec(token: string): SpecedContractInput | null {
     optional,
   };
   if (variadic) {
-    // No public field on the schema for "variadic" — encode via type and
-    // also persist a structured marker in `description` so consumers that
-    // care can recover it without parsing the type string.
-    result.description = 'variadic';
+    result.variadic = true;
   }
   return result;
 }
@@ -405,8 +406,8 @@ function parseOptionSpec(spec: string): SpecedContractInput | null {
     // were declared via `requiredOption(...)` (handled at the call site).
     optional: true,
   };
-  if (valuePlaceholder?.description === 'variadic') {
-    result.description = 'variadic';
+  if (valuePlaceholder?.variadic) {
+    result.variadic = true;
     result.type = 'string[]';
   }
   return result;

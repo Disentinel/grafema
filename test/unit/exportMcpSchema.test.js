@@ -181,4 +181,59 @@ describe('mcpSchemaRenderer.render', () => {
     const parsed = JSON.parse(out);
     assert.deepEqual(parsed, { tools: [] });
   });
+
+  it('v2: tool description read from top-level contract.description', () => {
+    const snap = makeSnapshot({
+      contracts: [
+        {
+          source: 'mcp-inputSchema',
+          description: 'top-level v2 description',
+          inputs: [{ name: 'q', type: 'string', optional: false }],
+          // outputs intentionally empty — v2 sources stop using the workaround.
+          outputs: [],
+          errors: [],
+        },
+      ],
+    });
+    const out = mcpSchemaRenderer.render([snap]);
+    const parsed = JSON.parse(out);
+    assert.equal(parsed.tools[0].description, 'top-level v2 description');
+  });
+
+  it('v2: input enum / format / validation pass through into property schema', () => {
+    const snap = makeSnapshot({
+      contracts: [
+        {
+          source: 'mcp-inputSchema',
+          description: 'd',
+          inputs: [
+            {
+              name: 'kind',
+              type: 'string',
+              optional: false,
+              enum: ['cli', 'mcp'],
+              format: 'email',
+              minLength: 3,
+              maxLength: 30,
+              pattern: '^[a-z]+$',
+            },
+            { name: 'age', type: 'integer', optional: true, minimum: 0, maximum: 150, default: 18 },
+          ],
+          outputs: [],
+          errors: [],
+        },
+      ],
+    });
+    const out = mcpSchemaRenderer.render([snap]);
+    const parsed = JSON.parse(out);
+    const props = parsed.tools[0].inputSchema.properties;
+    assert.deepEqual(props.kind.enum, ['cli', 'mcp']);
+    assert.equal(props.kind.format, 'email');
+    assert.equal(props.kind.minLength, 3);
+    assert.equal(props.kind.maxLength, 30);
+    assert.equal(props.kind.pattern, '^[a-z]+$');
+    assert.equal(props.age.minimum, 0);
+    assert.equal(props.age.maximum, 150);
+    assert.equal(props.age.default, 18);
+  });
 });

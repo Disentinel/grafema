@@ -1,0 +1,14 @@
+{
+  "cli:command:fixture": {
+    "source": "commander",
+    "inputs": [
+      {
+        "name": "--config",
+        "type": "string",
+        "optional": true
+      }
+    ],
+    "outputs": [],
+    "errors": []
+  }
+}

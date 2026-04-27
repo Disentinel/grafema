@@ -2,10 +2,12 @@
  * effectSurfaceDiff.test.js — Layer 4 of the regression-test infrastructure.
  *
  * Projects FEATURE → effects-array from BEHAVIOR.metadata, compares against
- * `test/golden/effect-surfaces.json`. Empty golden ⇒ no regressions
- * detectable, test passes. With populated golden, fails on any effect-set
- * change. ESCALATION-class diffs (added FS_WRITE / NETWORK_OUT / DB_WRITE)
- * are explicitly tagged in the failure message.
+ * the COMMITTED fixture-golden at `test/golden/fixture/effect-surfaces.json`.
+ * Zero-diff is required — drift means the diff infrastructure regressed.
+ *
+ * Production goldens (live-graph snapshot at
+ * `test/golden/effect-surfaces.json`) are owned by regenerate-effect-surfaces
+ * and CI release-gate flows.
  */
 
 import { describe, it, after, beforeEach } from 'node:test';
@@ -23,7 +25,7 @@ import { createTestDatabase, cleanupAllTestDatabases } from '../helpers/TestRFDB
 import { collectEffectSurfaces } from './regression-helpers/collectEffectSurfaces.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const GOLDEN_PATH = join(__dirname, '..', 'golden', 'effect-surfaces.json');
+const GOLDEN_PATH = join(__dirname, '..', 'golden', 'fixture', 'effect-surfaces.json');
 
 after(async () => {
   await cleanupAllTestDatabases();
@@ -42,7 +44,7 @@ describe('effectSurfaceDiff (Layer 4)', () => {
     client = backend.client;
   });
 
-  it('current effect-surfaces match golden (empty golden ⇒ no regressions)', async () => {
+  it('fixture effect-surfaces match committed fixture-golden (zero diff)', async () => {
     // Seed via a BEHAVIOR node — collectEffectSurfaces reuses
     // collectBehaviors so any FEATURE→IMPLEMENTED_BY→BEHAVIOR triple works.
     await seedFeatureWithBehavior(backend, {
@@ -53,22 +55,24 @@ describe('effectSurfaceDiff (Layer 4)', () => {
       effects: ['ASYNC', 'IO'],
     });
 
-    const golden = loadGolden();
-    const goldenMap = mapFromObj(golden);
+    const goldenMap = mapFromObj(loadGolden());
     const current = await collectEffectSurfaces(client);
 
-    if (goldenMap.size === 0) {
-      assert.ok(current.size > 0, 'expected fixture to produce at least one effect surface');
-      return;
-    }
+    assert.ok(
+      goldenMap.size > 0,
+      `Fixture-golden ${GOLDEN_PATH} is empty. Run:\n` +
+        `  node test/golden/regenerate-fixture-goldens.mjs\n`,
+    );
 
     const diff = diffEffects(goldenMap, current);
     if (effectDiffSize(diff) !== 0) {
       assert.fail(
-        `Effect-surface regression detected vs test/golden/effect-surfaces.json:\n` +
+        `Fixture-projection drifted from test/golden/fixture/effect-surfaces.json:\n` +
           `${formatEffectDiff(diff)}\n\n` +
-          `If this drift is intentional, regenerate the golden:\n` +
-          `  node test/golden/regenerate-effect-surfaces.mjs --rfdb .grafema/rfdb.sock\n`,
+          `This indicates a regression in the diff/projection infrastructure\n` +
+          `(collectEffectSurfaces, effectDiff, or the fixture seeder). If the\n` +
+          `fixture itself was intentionally changed, regenerate:\n` +
+          `  node test/golden/regenerate-fixture-goldens.mjs\n`,
       );
     }
   });

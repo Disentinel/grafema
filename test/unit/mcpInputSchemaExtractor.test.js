@@ -407,6 +407,122 @@ describe('mcpInputSchemaExtractor', () => {
     assert.match(data.inputs[0].description ?? '', /Max results/);
   });
 
+  it('handles TypeScript "as const" assertion on schema field (graphql-tools.ts pattern)', async () => {
+    // Regression: graphql-tools.ts wrote `type: 'object' as const,` which
+    // caused new Function() to throw a SyntaxError, returning null for the
+    // entire schema. The extractor must strip TypeScript-only suffixes
+    // (`as const`, `as Type`, `satisfies Type`) before evaluation.
+    const file = join(defsDir, 'asconst-tools.ts');
+    writeFileSync(file, buildToolsFile([
+      {
+        name: 'query_graphql_like',
+        inputSchemaLiteral: `{
+      type: 'object' as const,
+      properties: {
+        query: {
+          type: 'string',
+          description: 'GraphQL query string',
+        },
+        variables: {
+          type: 'object',
+          description: 'Optional variables (JSON object)',
+        },
+      },
+      required: ['query'],
+    }`,
+      },
+    ]));
+
+    await seedMcpTool(backend, {
+      id: 'test::tool::asconst',
+      name: 'query_graphql_like',
+      file: 'src/dummy.ts',
+      definitionFile: file,
+    });
+    const wire = await findWireByOriginalId(client, 'test::tool::asconst', 'mcp:tool');
+    const data = await mcpInputSchemaExtractor.extract(client, wire);
+    assert.ok(data, 'must not return null when schema uses `as const`');
+    assert.equal(data.source, 'mcp-inputSchema');
+    assert.equal(data.inputs.length, 2);
+    const byName = Object.fromEntries(data.inputs.map(i => [i.name, i]));
+    assert.equal(byName.query.type, 'string');
+    assert.equal(byName.query.optional, false);
+    assert.equal(byName.variables.type, 'object');
+    assert.equal(byName.variables.optional, true);
+  });
+
+  it('handles "satisfies" clause and broader "as Type" assertions', async () => {
+    // Future-proofing: any TS-only assertion suffix on a value must be
+    // tolerated. Includes `as 'union' | 'literal'` and `satisfies Schema`.
+    const file = join(defsDir, 'asgeneric-tools.ts');
+    writeFileSync(file, buildToolsFile([
+      {
+        name: 'broad_as',
+        inputSchemaLiteral: `{
+      type: 'object' as 'object',
+      properties: {
+        mode: {
+          type: 'string' as const,
+          description: 'Mode flag',
+        },
+      },
+      required: ['mode'],
+    } satisfies Record<string, unknown>`,
+      },
+    ]));
+
+    await seedMcpTool(backend, {
+      id: 'test::tool::broadas',
+      name: 'broad_as',
+      file: 'src/dummy.ts',
+      definitionFile: file,
+    });
+    const wire = await findWireByOriginalId(client, 'test::tool::broadas', 'mcp:tool');
+    const data = await mcpInputSchemaExtractor.extract(client, wire);
+    assert.ok(data, 'must tolerate `satisfies` and union/literal type assertions');
+    assert.equal(data.inputs.length, 1);
+    assert.equal(data.inputs[0].name, 'mode');
+    assert.equal(data.inputs[0].type, 'string');
+    assert.equal(data.inputs[0].optional, false);
+  });
+
+  it('does not strip the word "as" from inside string descriptions', async () => {
+    // Negative case: the word "as" inside a description string must be
+    // preserved (not stripped together with what follows).
+    const file = join(defsDir, 'as-in-desc-tools.ts');
+    writeFileSync(file, buildToolsFile([
+      {
+        name: 'as_in_desc',
+        inputSchemaLiteral: `{
+      type: 'object',
+      properties: {
+        kind: {
+          type: 'string',
+          description: 'Use this as a primary key when storing the value',
+        },
+      },
+      required: ['kind'],
+    }`,
+      },
+    ]));
+
+    await seedMcpTool(backend, {
+      id: 'test::tool::asindesc',
+      name: 'as_in_desc',
+      file: 'src/dummy.ts',
+      definitionFile: file,
+    });
+    const wire = await findWireByOriginalId(client, 'test::tool::asindesc', 'mcp:tool');
+    const data = await mcpInputSchemaExtractor.extract(client, wire);
+    assert.ok(data);
+    assert.equal(data.inputs.length, 1);
+    assert.match(
+      data.inputs[0].description ?? '',
+      /Use this as a primary key/,
+      'description text containing " as " must be preserved verbatim',
+    );
+  });
+
   it('returns null when definition_file does not exist on disk', async () => {
     await seedMcpTool(backend, {
       id: 'test::tool::missing',
@@ -417,5 +533,70 @@ describe('mcpInputSchemaExtractor', () => {
     const wire = await findWireByOriginalId(client, 'test::tool::missing', 'mcp:tool');
     const data = await mcpInputSchemaExtractor.extract(client, wire);
     assert.equal(data, null);
+  });
+
+  it('v2: top-level description populated from MCP tool definition description', async () => {
+    const file = join(defsDir, 'desc-tools.ts');
+    writeFileSync(file, buildToolsFile([
+      {
+        name: 'with_desc',
+        description: 'Search for nodes',
+        inputSchemaLiteral: `{
+      type: 'object',
+      properties: {
+        q: { type: 'string' },
+      },
+      required: ['q'],
+    }`,
+      },
+    ]));
+
+    await seedMcpTool(backend, {
+      id: 'test::tool::desc',
+      name: 'with_desc',
+      file: 'src/dummy.ts',
+      definitionFile: file,
+    });
+    const wire = await findWireByOriginalId(client, 'test::tool::desc', 'mcp:tool');
+    const data = await mcpInputSchemaExtractor.extract(client, wire);
+    assert.ok(data);
+    assert.equal(data.description, 'Search for nodes');
+  });
+
+  it('v2: enum / format / validation constraints carried into input', async () => {
+    const file = join(defsDir, 'validation-tools.ts');
+    writeFileSync(file, buildToolsFile([
+      {
+        name: 'validation_demo',
+        inputSchemaLiteral: `{
+      type: 'object',
+      properties: {
+        kind: { type: 'string', enum: ['cli', 'mcp', 'http'] },
+        age: { type: 'integer', minimum: 0, maximum: 150 },
+        email: { type: 'string', format: 'email' },
+        slug: { type: 'string', minLength: 3, maxLength: 30, pattern: '^[a-z0-9-]+$' },
+      },
+      required: ['kind'],
+    }`,
+      },
+    ]));
+
+    await seedMcpTool(backend, {
+      id: 'test::tool::validation',
+      name: 'validation_demo',
+      file: 'src/dummy.ts',
+      definitionFile: file,
+    });
+    const wire = await findWireByOriginalId(client, 'test::tool::validation', 'mcp:tool');
+    const data = await mcpInputSchemaExtractor.extract(client, wire);
+    assert.ok(data);
+    const byName = Object.fromEntries(data.inputs.map(i => [i.name, i]));
+    assert.deepEqual(byName.kind.enum, ['cli', 'mcp', 'http']);
+    assert.equal(byName.age.minimum, 0);
+    assert.equal(byName.age.maximum, 150);
+    assert.equal(byName.email.format, 'email');
+    assert.equal(byName.slug.minLength, 3);
+    assert.equal(byName.slug.maxLength, 30);
+    assert.equal(byName.slug.pattern, '^[a-z0-9-]+$');
   });
 });

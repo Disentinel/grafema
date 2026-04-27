@@ -1,0 +1,4 @@
+{
+  "_comment": "Fixture-allowlist for crossModalityEquivalence. The synthetic fixture seeds two structurally-identical contracts so no divergences are expected. Empty by design.",
+  "divergences": {}
+}

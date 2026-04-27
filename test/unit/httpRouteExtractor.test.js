@@ -349,6 +349,16 @@ describe('httpRouteExtractor', () => {
     assert.equal(data.outputs[0].description, 'DELETE /x/:id?');
   });
 
+  it('v2: top-level name = "<METHOD> <path>" and outputs carry kind="http"', async () => {
+    await seedRoute(backend, 'app.ts', 'get', '/users/:id');
+    const { data } = await runEnricherThenExtract(client);
+    assert.ok(data);
+    assert.equal(data.name, 'GET /users/:id');
+    assert.equal(data.outputs.length, 1);
+    assert.equal(data.outputs[0].kind, 'http');
+    assert.equal(data.outputs[0].description, 'GET /users/:id');
+  });
+
   it('returns null when the FEATURE has no anchorCall metadata', async () => {
     // Build a synthetic http:route FEATURE with no anchorCall metadata —
     // simulating a future code path that produces FEATUREs without the

@@ -39,6 +39,14 @@ interface McpToolDescriptor {
 interface McpPropertySchema {
   type: string;
   description?: string;
+  enum?: unknown[];
+  format?: string;
+  minimum?: number;
+  maximum?: number;
+  minLength?: number;
+  maxLength?: number;
+  pattern?: string;
+  default?: unknown;
 }
 
 export const mcpSchemaRenderer: Renderer = {
@@ -78,9 +86,13 @@ function buildToolDescriptor(
     if (inp.optional === false) required.push(inp.name);
   }
 
+  // v2: prefer top-level contract.description. Fall back to outputs[0] only
+  // for legacy contracts whose extractor still uses the v1 workaround.
+  const description = contract.description ?? contract.outputs[0]?.description ?? '';
+
   return {
     name: stripQuotes(feature.name),
-    description: contract.outputs[0]?.description ?? '',
+    description,
     inputSchema: {
       type: 'object',
       properties,
@@ -95,6 +107,14 @@ function buildPropertySchema(input: SpecedContractInput): McpPropertySchema {
   // when missing.
   const schema: McpPropertySchema = { type: input.type ?? 'string' };
   if (input.description) schema.description = input.description;
+  if (Array.isArray(input.enum)) schema.enum = input.enum;
+  if (typeof input.format === 'string') schema.format = input.format;
+  if (typeof input.minimum === 'number') schema.minimum = input.minimum;
+  if (typeof input.maximum === 'number') schema.maximum = input.maximum;
+  if (typeof input.minLength === 'number') schema.minLength = input.minLength;
+  if (typeof input.maxLength === 'number') schema.maxLength = input.maxLength;
+  if (typeof input.pattern === 'string') schema.pattern = input.pattern;
+  if (input.default !== undefined) schema.default = input.default;
   return schema;
 }
 

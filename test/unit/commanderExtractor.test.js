@@ -271,7 +271,9 @@ describe('commanderExtractor', () => {
     assert.equal(data.inputs[0].name, 'files');
     assert.equal(data.inputs[0].type, 'string[]');
     assert.equal(data.inputs[0].optional, false);
-    assert.equal(data.inputs[0].description, 'variadic');
+    // v2: variadic is a structured field, not a description workaround.
+    assert.equal(data.inputs[0].variadic, true);
+    assert.equal(data.inputs[0].description, undefined);
   });
 
   it('boolean flag -w, --watch produces option input named --watch with boolean type', async () => {
@@ -343,6 +345,39 @@ describe('commanderExtractor', () => {
     assert.ok(feature, 'cli:command FEATURE should exist');
     const data = await commanderExtractor.extract(client, feature);
     assert.equal(data, null);
+  });
+
+  it('v2: top-level name + description populated from .command(spec, desc)', async () => {
+    await seed(backend, 'cli.ts', [
+      {
+        method: 'command',
+        args: [
+          { kind: 'literal', value: 'build <input>' },
+          { kind: 'literal', value: 'Build the project' },
+        ],
+      },
+      { method: 'action', args: [{ kind: 'function' }] },
+    ]);
+
+    const data = await runEnricherThenExtract(client);
+    assert.ok(data);
+    assert.equal(data.name, 'build');
+    assert.equal(data.description, 'Build the project');
+    // v2: description is no longer encoded into outputs[0].
+    assert.equal(data.outputs.length, 0);
+  });
+
+  it('v2: top-level description populated from chained .description("…") call', async () => {
+    await seed(backend, 'cli.ts', [
+      { method: 'command', args: [{ kind: 'literal', value: 'analyze' }] },
+      { method: 'description', args: [{ kind: 'literal', value: 'Run analysis' }] },
+      { method: 'action', args: [{ kind: 'function' }] },
+    ]);
+
+    const data = await runEnricherThenExtract(client);
+    assert.ok(data);
+    assert.equal(data.description, 'Run analysis');
+    assert.equal(data.outputs.length, 0);
   });
 
   it('multi-command: two independent FEATUREs each yield their own spec', async () => {

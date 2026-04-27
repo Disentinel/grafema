@@ -34,6 +34,18 @@ export interface SpecedContractInput {
   optional?: boolean;
   default?: unknown;
   description?: string;
+  /** True for variadic positionals like commander '<files...>'. */
+  variadic?: boolean;
+  /** Enumerated allowed values when known (e.g., MCP inputSchema enum). */
+  enum?: unknown[];
+  /** JSON Schema format hint ('email', 'date-time', etc.) when present. */
+  format?: string;
+  /** Per-axis validation constraints. */
+  minimum?: number;
+  maximum?: number;
+  minLength?: number;
+  maxLength?: number;
+  pattern?: string;
   /** Where in source the input was declared. */
   sourceLocation?: { file: string; line: number };
 }
@@ -43,12 +55,17 @@ export interface SpecedContractOutput {
   name?: string;
   type?: string;
   description?: string;
+  /** HTTP status code when applicable (http:route renderer). */
+  statusCode?: number;
+  /** Output kind tag — 'menu' | 'keybinding' | 'http' | 'cli' | etc. Free-form for v2. */
+  kind?: string;
 }
 
 /** A single error declared by the FEATURE's spec. */
 export interface SpecedContractError {
   type: string;
   description?: string;
+  statusCode?: number;
 }
 
 /** Source of the speced contract — which library/file/spec it came from. */
@@ -61,6 +78,10 @@ export type SpecedContractSource =
 
 export interface SpecedContractData {
   source: SpecedContractSource;
+  /** Top-level identifier parsed from the spec (e.g., 'build' from 'build <input>'). Optional. */
+  name?: string;
+  /** One-line human description of the FEATURE. Optional. */
+  description?: string;
   inputs: SpecedContractInput[];
   outputs: SpecedContractOutput[];
   errors: SpecedContractError[];

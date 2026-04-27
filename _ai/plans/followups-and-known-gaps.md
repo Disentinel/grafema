@@ -1,9 +1,49 @@
 # Followups and known gaps
 
-**Created:** 2026-04-27 from autonomous polish session after Sprints 4-6.
+**Created:** 2026-04-27 after Sprints 4-6 + autonomous polish round.
+**Last updated:** 2026-04-27 after second polish round.
 
 Captured here so the next session has a clear picture of what's known but
 deferred. Each item links to the relevant Linear or notes "no Linear yet".
+
+## Resolved in second polish round (2026-04-27)
+
+- ✅ **RFDB write-throughput** — probed live (10/500/5000-node + 5000-edge writes,
+  read 5510 nodes). Healthy: 19k nodes/s write, 54k edges/s, 54k nodes/s read.
+  PR #258 (RFD-67) clearly fixed the write-storm issue. Local task closed.
+- ✅ **`query_graphql` extractor null bug** — diagnosed root cause:
+  `type: 'object' as const` TypeScript suffix made `new Function()` throw.
+  Fixed via `stripTypeAssertions()` helper in `mcpInputSchemaExtractor.ts`.
+  3 regression tests added.
+- ✅ **vscode programmatic-only commands** (`grafemaCallers`, `grafemaStatus`,
+  `grafemaDebug`, `grafemaValueTrace`) — extended `vscodeContributesExtractor`
+  to fall back to `contributes.views.<container>[]` lookup when `commands[]`
+  doesn't match. They render as `view: <name> | container: <id> |
+  visibility: <state>` instead of "No speced contract recovered".
+- ✅ **SpecedContractData v2 schema** — added top-level `name`, `description`,
+  `inputs[].variadic`, `inputs[].enum`, `inputs[].format`, `inputs[].minimum`,
+  `inputs[].maximum`, `inputs[].minLength`, `inputs[].maxLength`,
+  `inputs[].pattern`, `outputs[].statusCode`, `outputs[].kind`,
+  `errors[].statusCode`. All 4 extractors populate; all 4 renderers surface;
+  `contractDiff` v2 reports `default`/`enum`/`format` changes as `[NOTE]`
+  severity. Live: `mcp:tool find_nodes` now has full description, every
+  property carries `description`, `mcp-schema` renderer emits servable JSON.
+- ✅ **REG-1117 fixture-vs-production goldens** — split into two-tier:
+  `test/golden/fixture/*.json` committed (validated by layer tests), plus
+  separate `test/golden/regenerate-fixture-goldens.mjs` regen script.
+  Production goldens (`test/golden/*.json`) stay `{}` and are populated
+  on-demand by CI / live regen scripts. Layer tests now always assert
+  zero diff against fixture goldens (no skip-when-empty branch).
+
+## Live state on Grafema (after polish round)
+
+- 142 SPECED_CONTRACTs persisted (from 137 before polish — +5: 4 vscode views,
+  1 query_graphql)
+- `featuresWithoutSpec`: **8** (down from 13). Composition:
+  - 4 expected (`setRequestHandler` features — not tools)
+  - 1 stale orphan (`mcp:tool 'TEST' in a.ts` — disappears on `--clear`)
+  - 3 dynamic registrations (`<array>` ×2, `<arrow>`) — data-side limit
+- All real bugs cleared.
 
 ## Performance baseline (per-extractor, on Grafema's own graph)
 
@@ -26,62 +66,48 @@ query.
 **No Linear yet.** Open `REG-PERF: commanderExtractor chain-walk batching`
 when this becomes a hot path on a real project.
 
-## Diagnosed null-spec features (after Sprints 4-5 enrichment)
-
-13 of 150 live FEATUREs returned null from extractors. Categorised:
-
-| Cause | Count | Examples | Action |
-|---|---|---|---|
-| Expected (`setRequestHandler` is not a tool) | 4 | `CallToolRequestSchema`, `GetPromptRequestSchema`, `ListPromptsRequestSchema`, `ListToolsRequestSchema` | accept |
-| Stale orphan from old run | 1 | `mcp:tool 'TEST' in a.ts` | gone after `grafema analyze --clear` |
-| Real bug — file exists but `inputSchema` parse failed | 1 | `mcp:tool 'query_graphql'` in `graphql-tools.ts` | **investigate** |
-| vscode commands registered programmatically (no `contributes` entry) | 4 | `grafemaCallers`, `grafemaStatus`, `grafemaDebug`, `grafemaValueTrace` | gap — either add to `package.json#contributes` or extend extractor to fall back to programmatic context |
-| Dynamic registration expression (not a string literal) | 3 | `<array>` ×2, `<arrow>` | data-side limit; no fix needed |
-
-**No Linear yet.** Open `REG-EXTRACTOR-BUG: query_graphql inputSchema parse failure` (1)
-and `REG-VSCODE: programmatic-only commands without contributes entry` (1).
-
 ## Known shipped-code gaps (deferred to follow-up REGs)
 
-### `SpecedContractData` schema is too narrow
+### `libraryCallbackEnricher` mis-categorises view providers as `vscode:command`
 
-Boundary cases caught during extractor implementation that the current
-schema can't represent cleanly:
+`vscode.window.registerTreeDataProvider`, `registerWebviewViewProvider`,
+`registerWebviewPanelSerializer`, `registerCustomEditorProvider` all map to
+`vscode:command` in `LIBRARY_NODE_TYPE`. They're conceptually different
+entities (TreeView, WebviewView, WebviewPanel, CustomEditor — not commands).
+The polish round added a view-fallback in `vscodeContributesExtractor` to
+recover *something* for these features, but the L0 categorisation is still
+wrong. Proper fix: introduce per-method overrides in
+`LIBRARY_NODE_TYPE` (or a `node_type` field per CALL signature in
+effects-db YAML) to emit `vscode:treeView` / `vscode:webviewView` /
+`vscode:editor` distinctly. Will need new categories in
+`FEATURE_TYPES` across `specedContractEnricher`, `behaviorEnricher`,
+`contractEnricher`.
 
-- **Top-level `name`** — commander spec parses out a command name
-  (`build` from `'build <input>'`) but it's only stored as part of
-  `feature.name`. Currently the parsed name is lost.
-- **Top-level `description`** — commander `.description('text')`,
-  vscode title, MCP tool description. Currently encoded as a synthetic
-  `SpecedContractOutput[0]` workaround.
-- **`inputs[].variadic: boolean`** — commander `<files...>`. Currently
-  shoehorned into `description: 'variadic'` + `type: 'string[]'`.
-- **`inputs[].enum: unknown[]`** — JSON Schema enum constraints are
-  dropped by `mcpInputSchemaExtractor`.
-- **`inputs[].format`, `inputs[].minimum`, `inputs[].maximum`** — JSON
-  Schema validation constraints not extracted.
+**No Linear yet.** Open `REG-VSCODE-CATEGORIES: split vscode entity types
+beyond vscode:command`.
+
+### `SpecedContractData` schema v3 (after v2 lands)
+
+v2 (shipped this round) closed: top-level name/description, variadic,
+enum, format, min/max length, pattern, statusCode skeleton, output kind.
+Remaining for a future v3:
+
 - **`type` is a free-form string** — extractors emit `"string"`,
   `"string[]"`, `"int"`, `"object"` interchangeably. Strict downstream
-  validators (e.g. JSON Schema 2020-12) will reject `"string[]"`. Either
+  validators (JSON Schema 2020-12) will reject `"string[]"`. Either
   normalise on emit or use a richer union type.
-- **Nested object types** — `mcpInputSchemaExtractor` flattens to
-  `type: 'object'` without recursing into `properties`. Fine for shallow
-  MCP schemas, but limits future complex CLI / HTTP body shapes.
-- **No `default` change detection** — `contractDiff` (REG-1117) ignores
-  `inputs[].default` field. A silent default flip (`true → false`) won't
-  show up as breaking.
-- **`SpecedContractOutput` lacks structure** — no status code, body
-  shape, content type. Currently a free-form `description` string only.
-  Limits OpenAPI / docs-md output richness.
-- **Output identity by `name ?? type`** — both undefined silently
-  dropped from diffs. Should normalise or reject in extractor.
-- **Cross-modality output types** can differ (one extractor sets `type`,
-  the other doesn't); the equivalence test (REG-1117 Layer 3) flags
-  cosmetic differences as divergence.
+- **Nested object types** — `mcpInputSchemaExtractor` flattens nested
+  inputSchema properties to `type: 'object'` without recursion. Limits
+  rich JSON-Schema use cases.
+- **`statusCode` populated by no extractor** — schema has the field but
+  populating it requires handler-body taint dataflow (out of scope of
+  the basic extractors). Future `httpRouteExtractor` v2 with body-shape
+  inference would close this.
+- **Output identity by `name ?? type`** — `kind` not part of equivalence
+  key. Cosmetic kind flip on unnamed outputs won't be flagged in diff.
 
-**No Linear yet.** Open `REG-SCHEMA: SpecedContractData v2 — add name,
-description, variadic, enum, format, validation constraints, structured
-outputs`.
+**No Linear yet.** Open `REG-SCHEMA-V3: type normalisation + nested
+recursion + statusCode population`.
 
 ### `httpRouteExtractor` v1 limitations
 
@@ -101,8 +127,7 @@ outputs`.
   declare structured output schemas in tool definitions; would need AST
   inspection of the handler body to derive (`return { content: [...] }`
   patterns for outputs; `throw new XxxError(...)` for errors).
-- **`enum` / `format` constraints** dropped, see "Schema is too narrow"
-  above.
+- ~~`enum` / `format` constraints~~ — RESOLVED in v2.
 - **`items: SchemaProperty` for arrays** dropped — currently just
   `type: 'array'`.
 
@@ -128,59 +153,37 @@ Live graph has duplicate `cli:command` entries (`'overview'` quoted +
 
 The `mcp:tool 'TEST' in a.ts` orphan likewise.
 
-## REG-1117 layer tests vs populated goldens
+## What's working solidly end-to-end (post-polish)
 
-`test/unit/{behaviorGolden,contractDiff,crossModalityEquivalence,effectSurfaceDiff}.test.js`
-were designed to pass on **empty** goldens (initial state) and detect
-diffs once goldens are populated. They use a small synthetic graph
-fixture which doesn't match the live-graph populated golden — so once
-goldens have content from `regenerate-*.mjs`, the layer tests fail.
-
-Resolution paths:
-1. Use a fixture-specific golden (committed under `test/golden/fixture/`)
-   while production goldens live elsewhere.
-2. Layer tests scope diff to the fixture's feature subset only.
-3. Document that goldens stay empty in the repo and CI regenerates +
-   diffs against the same run's analysis — not against a synthetic
-   fixture.
-
-Goldens have been reset to `{}` in this commit. Rationale: option 3 — CI
-runs `regenerate-*.mjs` against a live analysis and the regen scripts
-emit diff into PR comments. Layer tests stay green on empty goldens for
-local dev. Not blocking release, but worth a clean redesign.
-
-**No Linear yet.** Open `REG-1117-FIX: separate fixture-goldens from
-production goldens` if/when CI integration goes live.
-
-## What's working solidly end-to-end
-
-The release-critical surface is good:
-
-- 4 SpecedContract extractors persist 137 contracts on Grafema's own
-  graph (66 cli + 38 mcp + 33 vscode).
-- `grafema export --as docs-md` renders feature catalogues with TOC and
-  single-feature mode (the REG-1118 path) correctly.
-- `grafema export --as openapi-3.1 --feature 'http:*'` emits valid
-  OpenAPI 3.1 (pending real http:route data after `--clear`).
+- **142 SpecedContracts** on Grafema's own graph (66 cli + 39 mcp + 37
+  vscode). Only 8 remaining nulls — all expected (4 setRequestHandler,
+  1 stale orphan, 3 dynamic).
+- `grafema export --as docs-md` renders feature catalogues with full
+  descriptions, variadic markers, allowed-values lines.
+- `grafema export --as openapi-3.1 --feature 'http:*'` will emit OpenAPI
+  3.1 with enum/format/min/max/pattern (pending real http:route data
+  after `--clear`).
 - `grafema export --as mcp-schema --feature 'mcp:tool:*'` emits
-  canonical JSON-RPC tool registry — directly servable by MCP runtime.
+  canonical JSON-RPC tool registry with full descriptions and validation
+  constraints — directly servable by MCP runtime.
 - `grafema export --as json-schema --feature <id>` emits Draft 2020-12
-  schemas with `x-grafema` extension.
+  schemas with `x-grafema` extension and full validation constraints.
 - `grafema features --duplicates` and MCP `find_shared_behaviors` —
-  cross-modality dedup surfaced (currently 0 clusters on Grafema, but
-  the surface works on synthetic fixtures).
-- 4-layer regression infra in place (helpers tested in isolation; layer
-  tests pass on empty goldens; regen scripts produce live snapshots).
+  cross-modality dedup surfaced (currently 0 clusters on Grafema).
+- 4-layer regression infra: production-goldens (`{}` in repo) +
+  fixture-goldens (committed, validated by layer tests).
 
 ## Recommended next session order
 
-1. RFDB write throughput stabilisation (separate Track 1 effort, blocks
-   live `--clear` runs)
-2. Live `grafema analyze --clear` to confirm http:route appears, prune
-   `Express.hs`, regenerate goldens against production state
-3. SpecedContractData v2 schema work (REG-SCHEMA above) — unblocks
-   richer downstream renderers
-4. Sociotechnical bridge research thread (prompt at
+1. Live `grafema analyze --clear` end-to-end on Grafema. Verify
+   http:route appears (Sprint 5 YAMLs do their job). Prune
+   `Express.hs` once parity confirmed.
+2. `commanderExtractor` chain-walk batching (perf — 89ms/feature)
+3. `vscode:command` category split (REG-VSCODE-CATEGORIES) — separate
+   TreeView / WebviewView entity types in libraryCallbackEnricher
+4. SpecedContractData v3 schema work (REG-SCHEMA-V3) — type
+   normalisation + nested object recursion + statusCode population
+5. Sociotechnical bridge research thread (prompt at
    `_ai/prompts/sociotechnical-bridge-session-prompt.md`)
-5. v0.5+ research issues (REG-1120 emergent contracts, REG-1121
+6. v0.5+ research issues (REG-1120 emergent contracts, REG-1121
    COMPONENT clustering, REG-1122 graph-diff, REG-1123 FEATURE_FLAG)

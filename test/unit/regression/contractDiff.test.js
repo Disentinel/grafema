@@ -285,6 +285,63 @@ describe('contractDiff: deterministic ordering', () => {
   });
 });
 
+describe('contractDiff: v2 default / enum / format tracking (NOTE severity)', () => {
+  it('default value flip → NOTE entry, no BREAKING/MINOR severity', () => {
+    const golden = new Map([
+      ['x', spec({ inputs: [{ name: '--watch', type: 'boolean', optional: true, default: true }] })],
+    ]);
+    const current = new Map([
+      ['x', spec({ inputs: [{ name: '--watch', type: 'boolean', optional: true, default: false }] })],
+    ]);
+    const d = diffContracts(golden, current);
+    const delta = d.changed[0].inputs.find((i) => i.kind === 'defaultChanged');
+    assert.ok(delta, 'expected a defaultChanged entry');
+    assert.equal(delta.severity, 'NOTE');
+    assert.equal(delta.oldDefault, true);
+    assert.equal(delta.newDefault, false);
+    // No breaking changes from a default flip alone.
+    assert.equal(contractBreakingCount(d), 0);
+  });
+
+  it('enum set changed → NOTE entry (order-insensitive)', () => {
+    const golden = new Map([
+      ['x', spec({ inputs: [{ name: 'kind', type: 'string', enum: ['a', 'b'] }] })],
+    ]);
+    const current = new Map([
+      ['x', spec({ inputs: [{ name: 'kind', type: 'string', enum: ['a', 'b', 'c'] }] })],
+    ]);
+    const d = diffContracts(golden, current);
+    const delta = d.changed[0].inputs.find((i) => i.kind === 'enumChanged');
+    assert.ok(delta);
+    assert.equal(delta.severity, 'NOTE');
+  });
+
+  it('enum permutation only → no diff (order-insensitive comparison)', () => {
+    const golden = new Map([
+      ['x', spec({ inputs: [{ name: 'kind', type: 'string', enum: ['a', 'b'] }] })],
+    ]);
+    const current = new Map([
+      ['x', spec({ inputs: [{ name: 'kind', type: 'string', enum: ['b', 'a'] }] })],
+    ]);
+    const d = diffContracts(golden, current);
+    assert.equal(d.changed.length, 0);
+  });
+
+  it('format changed → NOTE entry', () => {
+    const golden = new Map([
+      ['x', spec({ inputs: [{ name: 'email', type: 'string' }] })],
+    ]);
+    const current = new Map([
+      ['x', spec({ inputs: [{ name: 'email', type: 'string', format: 'email' }] })],
+    ]);
+    const d = diffContracts(golden, current);
+    const delta = d.changed[0].inputs.find((i) => i.kind === 'formatChanged');
+    assert.ok(delta);
+    assert.equal(delta.severity, 'NOTE');
+    assert.equal(delta.newFormat, 'email');
+  });
+});
+
 describe('contractDiff: contractBreakingCount counts only breaking', () => {
   it('breaking change + minor change → count = 1', () => {
     const golden = new Map([

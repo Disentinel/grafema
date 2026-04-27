@@ -105,6 +105,14 @@ function renderContract(lines: string[], c: SpecedContractData): void {
   lines.push(`### Contract — ${c.source}`);
   lines.push('');
 
+  // v2: top-level description is rendered as a paragraph above the contract
+  // table for readability. Fields like enum and validation constraints stay
+  // off the bulk view (json-schema renders them).
+  if (c.description) {
+    lines.push(c.description);
+    lines.push('');
+  }
+
   if (c.inputs.length > 0) {
     lines.push('| Input | Type | Optional | Default | Description |');
     lines.push('|-------|------|----------|---------|-------------|');
@@ -112,6 +120,16 @@ function renderContract(lines: string[], c: SpecedContractData): void {
       lines.push(renderInputRow(inp));
     }
     lines.push('');
+    // Per-input enum lines come after the table — keeps the table compact
+    // and lets multi-value enums wrap naturally.
+    for (const inp of c.inputs) {
+      if (Array.isArray(inp.enum) && inp.enum.length > 0) {
+        lines.push(`- Allowed for \`${inp.name}\`: [${inp.enum.map((v) => String(v)).join(', ')}]`);
+      }
+    }
+    if (c.inputs.some((i) => Array.isArray(i.enum) && i.enum.length > 0)) {
+      lines.push('');
+    }
   }
 
   if (c.outputs.length > 0) {
@@ -134,8 +152,12 @@ function renderContract(lines: string[], c: SpecedContractData): void {
 }
 
 function renderInputRow(inp: SpecedContractInput): string {
+  // v2: append a trailing ellipsis to the name when variadic so readers can
+  // see at a glance that it accepts multiple values without the verbose
+  // 'string[]' type leaking that detail.
+  const displayName = inp.variadic ? `${inp.name}…` : inp.name;
   const cells = [
-    backtick(inp.name),
+    backtick(displayName),
     inp.type ? backtick(inp.type) : '',
     inp.optional ? 'yes' : 'no',
     inp.default !== undefined ? backtick(String(inp.default)) : '',

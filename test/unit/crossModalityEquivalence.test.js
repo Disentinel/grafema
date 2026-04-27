@@ -1,18 +1,19 @@
 /**
  * crossModalityEquivalence.test.js — Layer 3 of the regression-test infra.
  *
- * For every cluster of FEATUREs that SHARES_BEHAVIOR_WITH each other,
- * assert their SPECED_CONTRACT inputs/outputs are equivalent (same field
- * names, types, optional flags). Errors are also compared by `type`.
+ * For every cluster of FEATUREs that SHARES_BEHAVIOR_WITH each other in the
+ * synthetic test fixture, assert their SPECED_CONTRACT inputs/outputs are
+ * equivalent (same field names, types, optional flags). Errors are also
+ * compared by `type`.
  *
- * Intentional divergences (e.g. CLI uses `--config` while MCP exposes
- * `configPath` for the same logical input) are listed in
- * `test/golden/cross-modality-divergence.json`. Pairs in that file are
- * skipped.
+ * The fixture is designed to produce ZERO mismatches against the COMMITTED
+ * fixture-divergence allowlist at
+ * `test/golden/fixture/cross-modality-divergence.json`. Any failure means
+ * the diff/equivalence infrastructure itself has regressed.
  *
- * When the divergence file is empty, ALL clusters are checked. The test
- * still passes if no clusters exist (no SHARES_BEHAVIOR_WITH edges in the
- * graph yet — initial state).
+ * Production divergence allowlist lives at
+ * `test/golden/cross-modality-divergence.json` (live-graph), used by CI
+ * release-gate flows — NOT by this test.
  */
 
 import { describe, it, after, beforeEach } from 'node:test';
@@ -25,7 +26,13 @@ import { createTestDatabase, cleanupAllTestDatabases } from '../helpers/TestRFDB
 import { collectContracts } from './regression-helpers/collectContracts.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const DIVERGENCE_PATH = join(__dirname, '..', 'golden', 'cross-modality-divergence.json');
+const DIVERGENCE_PATH = join(
+  __dirname,
+  '..',
+  'golden',
+  'fixture',
+  'cross-modality-divergence.json',
+);
 
 after(async () => {
   await cleanupAllTestDatabases();
@@ -47,17 +54,18 @@ describe('crossModalityEquivalence (Layer 3)', () => {
   it('SHARES_BEHAVIOR_WITH clusters have equivalent contracts (or are listed as divergences)', async () => {
     // Seed a cluster: cli:command + mcp:tool with same shape. The graph has
     // a single FEATURE pair sharing a behavior; their contracts are
-    // structurally identical so the test must pass.
+    // structurally identical so the test must pass with zero mismatches.
     await seedClusterPair(backend);
 
     const divergences = loadDivergences();
-    const { contracts, categories } = await collectContracts(client);
+    const { contracts } = await collectContracts(client);
     const clusters = await loadClusters(client);
 
-    // No clusters yet (initial state) ⇒ pass.
-    if (clusters.length === 0) {
-      return;
-    }
+    assert.ok(
+      clusters.length > 0,
+      'Fixture must produce at least one SHARES_BEHAVIOR_WITH cluster — ' +
+        'collectContracts/cluster traversal regressed.',
+    );
 
     /** @type {string[]} */
     const failures = [];
@@ -88,9 +96,11 @@ describe('crossModalityEquivalence (Layer 3)', () => {
       assert.fail(
         `Cross-modality contract equivalence violated for ${failures.length} pair(s):\n\n` +
           `${failures.join('\n\n')}\n\n` +
-          `If a divergence is intentional, add it to ` +
-          `test/golden/cross-modality-divergence.json under "divergences"\n` +
-          `with the sorted-pair key joined by " || " and a rationale field.\n`,
+          `Fixture-projection drifted from\n` +
+          `test/golden/fixture/cross-modality-divergence.json — this indicates\n` +
+          `a regression in the cluster/contract equivalence infrastructure.\n` +
+          `If the fixture was intentionally changed, regenerate:\n` +
+          `  node test/golden/regenerate-fixture-goldens.mjs\n`,
       );
     }
   });

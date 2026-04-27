@@ -164,6 +164,55 @@ describe('openapiRenderer', () => {
     assert.deepEqual(ops, [{ path: '/files/{rest}', method: 'get' }]);
   });
 
+  it('v2: route summary read from contract.name when present', () => {
+    const snap = snapshot({
+      contracts: [
+        {
+          source: 'http-route',
+          name: 'GET /users/:id',
+          inputs: [{ name: 'id', type: 'string', optional: false }],
+          // outputs intentionally empty — v2 path uses top-level name.
+          outputs: [],
+          errors: [],
+        },
+      ],
+    });
+    const text = openapiRenderer.render([snap]);
+    const ops = listOps(text);
+    assert.deepEqual(ops, [{ path: '/users/{id}', method: 'get' }]);
+  });
+
+  it('v2: input enum / format / minimum / maximum pass through into schema', () => {
+    const snap = snapshot({
+      contracts: [
+        {
+          source: 'http-route',
+          name: 'GET /users/:id',
+          inputs: [
+            {
+              name: 'id',
+              type: 'string',
+              optional: false,
+              enum: ['a', 'b'],
+              format: 'uuid',
+              minLength: 1,
+              maxLength: 36,
+            },
+          ],
+          outputs: [{ kind: 'http', description: 'GET /users/:id' }],
+          errors: [],
+        },
+      ],
+    });
+    const text = openapiRenderer.render([snap]);
+    assert.match(text, /format: uuid/);
+    assert.match(text, /minLength: 1/);
+    assert.match(text, /maxLength: 36/);
+    assert.match(text, /enum:/);
+    assert.match(text, /- a/);
+    assert.match(text, /- b/);
+  });
+
   it('optional path params still emit required: true (OpenAPI invariant)', () => {
     const opt = snapshot({
       contracts: [

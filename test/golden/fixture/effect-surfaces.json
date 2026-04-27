@@ -1,0 +1,6 @@
+{
+  "cli:command:fixture": [
+    "ASYNC",
+    "IO"
+  ]
+}

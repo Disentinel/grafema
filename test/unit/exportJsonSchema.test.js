@@ -176,3 +176,56 @@ describe('jsonSchemaRenderer.render — multiple features', () => {
     assert.match(out, /\n  "/);
   });
 });
+
+describe('jsonSchemaRenderer.render — v2 fields', () => {
+  it('top-level contract.description maps to schema-level description', () => {
+    const snap = makeSnapshot({
+      contracts: [
+        {
+          source: 'commander',
+          description: 'Build the project',
+          inputs: [{ name: 'input', type: 'string', optional: false }],
+          outputs: [],
+          errors: [],
+        },
+      ],
+    });
+    const out = jsonSchemaRenderer.render([snap]);
+    const parsed = JSON.parse(out);
+    assert.equal(parsed.description, 'Build the project');
+  });
+
+  it('input validation fields (enum/format/min/max/pattern) are forwarded', () => {
+    const snap = makeSnapshot({
+      contracts: [
+        {
+          source: 'mcp-inputSchema',
+          inputs: [
+            {
+              name: 'role',
+              type: 'string',
+              optional: false,
+              enum: ['admin', 'user'],
+              format: 'email',
+              minLength: 2,
+              maxLength: 32,
+              pattern: '^[a-z]+$',
+            },
+            { name: 'age', type: 'integer', optional: true, minimum: 0, maximum: 150 },
+          ],
+          outputs: [],
+          errors: [],
+        },
+      ],
+    });
+    const out = jsonSchemaRenderer.render([snap]);
+    const parsed = JSON.parse(out);
+    assert.deepEqual(parsed.properties.role.enum, ['admin', 'user']);
+    assert.equal(parsed.properties.role.format, 'email');
+    assert.equal(parsed.properties.role.minLength, 2);
+    assert.equal(parsed.properties.role.maxLength, 32);
+    assert.equal(parsed.properties.role.pattern, '^[a-z]+$');
+    assert.equal(parsed.properties.age.minimum, 0);
+    assert.equal(parsed.properties.age.maximum, 150);
+  });
+});

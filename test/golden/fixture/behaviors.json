@@ -1,0 +1,10 @@
+{
+  "cli:command:fixture": {
+    "hash": "fixture-hash-deadbeef",
+    "effects": [
+      "ASYNC"
+    ],
+    "coreNodeCount": 3,
+    "depth": 10
+  }
+}

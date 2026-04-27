@@ -2,15 +2,14 @@
  * behaviorGolden.test.js — Layer 1 of the regression-test infrastructure.
  *
  * Compares the FEATURE → BEHAVIOR.metadata projection of a synthetic
- * test-graph fixture against `test/golden/behaviors.json`. When the golden
- * file is empty `{}`, no regression is detectable — the test passes. When
- * the golden is populated (after a manual `regenerate-behaviors.mjs` run),
- * the test fails on any feature whose hash, effects, coreNodeCount, or depth
- * has drifted. Failure message includes a `regenerate-behaviors.mjs` hint.
+ * test-graph fixture against `test/golden/fixture/behaviors.json`. The
+ * fixture-golden is the COMMITTED reference for the synthetic fixture and
+ * MUST always match (zero-diff). Any non-empty diff means the diff
+ * infrastructure itself (helpers, collectors) has regressed.
  *
- * Fixture: a small synthetic graph seeded into a test DB. Real-world golden
- * regen runs against the live `.grafema/rfdb.sock` instead — see the
- * regen script for that flow.
+ * Production goldens at `test/golden/behaviors.json` are a separate concern:
+ * captured by `regenerate-behaviors.mjs` against the live Grafema graph and
+ * consumed by CI / release-gate flows — NOT by this test.
  */
 
 import { describe, it, after, beforeEach } from 'node:test';
@@ -28,7 +27,7 @@ import { createTestDatabase, cleanupAllTestDatabases } from '../helpers/TestRFDB
 import { collectBehaviors } from './regression-helpers/collectBehaviors.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const GOLDEN_PATH = join(__dirname, '..', 'golden', 'behaviors.json');
+const GOLDEN_PATH = join(__dirname, '..', 'golden', 'fixture', 'behaviors.json');
 
 after(async () => {
   await cleanupAllTestDatabases();
@@ -47,11 +46,10 @@ describe('behaviorGolden (Layer 1)', () => {
     client = backend.client;
   });
 
-  it('current behaviors match golden (empty golden ⇒ no regressions)', async () => {
+  it('fixture behaviors match committed fixture-golden (zero diff)', async () => {
     // Seed a tiny FEATURE + BEHAVIOR pair so collectBehaviors has something
-    // to traverse. The golden is `{}` initially: any drift between {} and
-    // the fixture would manifest as `added` entries — which the layer test
-    // tolerates when the golden is empty (initial-state semantics).
+    // to traverse. The fixture-golden is COMMITTED and must reflect exactly
+    // what this fixture produces. Any non-empty diff = diff-infra regressed.
     await seedFeatureWithBehavior(backend, {
       file: 'cli.ts',
       featureId: 'cli:command:fixture',
@@ -63,32 +61,30 @@ describe('behaviorGolden (Layer 1)', () => {
       depth: 10,
     });
 
-    const golden = loadGolden();
-    const goldenMap = mapFromObj(golden);
+    const goldenMap = mapFromObj(loadGolden());
     const current = await collectBehaviors(client);
 
+    assert.ok(
+      goldenMap.size > 0,
+      `Fixture-golden ${GOLDEN_PATH} is empty. Run:\n` +
+        `  node test/golden/regenerate-fixture-goldens.mjs\n`,
+    );
+
     const diff = diffBehaviors(goldenMap, current);
-
-    if (goldenMap.size === 0) {
-      // Initial state: golden not yet populated. We only verify the
-      // collection pipeline works (current.size > 0). No regression
-      // detection is possible yet.
-      assert.ok(current.size > 0, 'expected fixture to produce at least one behavior');
-      return;
-    }
-
     if (behaviorDiffSize(diff) !== 0) {
       assert.fail(
-        `Behavior regression detected vs test/golden/behaviors.json:\n` +
+        `Fixture-projection drifted from test/golden/fixture/behaviors.json:\n` +
           `${formatBehaviorDiff(diff)}\n\n` +
-          `If this drift is intentional, regenerate the golden:\n` +
-          `  node test/golden/regenerate-behaviors.mjs --rfdb .grafema/rfdb.sock\n`,
+          `This indicates a regression in the diff/projection infrastructure\n` +
+          `(collectBehaviors, behaviorDiff, or the fixture seeder). If the\n` +
+          `fixture itself was intentionally changed, regenerate:\n` +
+          `  node test/golden/regenerate-fixture-goldens.mjs\n`,
       );
     }
   });
 });
 
-/** Load test/golden/behaviors.json. Returns `{}` if file is empty. */
+/** Load test/golden/fixture/behaviors.json. Returns `{}` if file is missing/empty. */
 function loadGolden() {
   try {
     const raw = readFileSync(GOLDEN_PATH, 'utf8');
