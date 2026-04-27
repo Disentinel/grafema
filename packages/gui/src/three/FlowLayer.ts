@@ -235,7 +235,7 @@ export class FlowLayer {
         const points = curve.getPoints(CURVE_SEGMENTS);
         b.line.geometry.dispose();
         const tubePath = new THREE.CatmullRomCurve3(points);
-        b.line.geometry = new THREE.TubeGeometry(tubePath, CURVE_SEGMENTS, 0.12, 8, false);
+        b.line.geometry = new THREE.TubeGeometry(tubePath, CURVE_SEGMENTS, 0.4, 8, false);
 
         const last = points[points.length - 1];
         const prev = points[points.length - 2];
@@ -473,7 +473,7 @@ export class FlowLayer {
 
     const points = curve.getPoints(CURVE_SEGMENTS);
     const tubePath = new THREE.CatmullRomCurve3(points);
-    const tubeGeo = new THREE.TubeGeometry(tubePath, CURVE_SEGMENTS, 0.12, 8, false);
+    const tubeGeo = new THREE.TubeGeometry(tubePath, CURVE_SEGMENTS, 0.4, 8, false);
     const tubeMat = new THREE.MeshBasicMaterial({
       color: plan.presetColor.clone(),
       transparent: true,

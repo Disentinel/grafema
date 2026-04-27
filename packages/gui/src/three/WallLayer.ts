@@ -110,6 +110,19 @@ export class WallLayer {
     this._material.uniformsNeedUpdate = true;
   }
 
+  private _baseOpacity = 0.22;
+
+  /** Per-frame fade scalar (0..1). Applied to the wall's base opacity
+   *  so callers can drive a distance-based fade without rebuilding the
+   *  shader uniforms manually. 0 = invisible. Cheap; one uniform write. */
+  setOpacityScale(scale: number): void {
+    const v = this._baseOpacity * Math.max(0, Math.min(1, scale));
+    if (this._material.uniforms.uOpacity.value !== v) {
+      this._material.uniforms.uOpacity.value = v;
+      this._material.uniformsNeedUpdate = true;
+    }
+  }
+
   /**
    * Rebuild the wall geometry from a flat list of polygon loops. Each
    * loop is a closed Point2D[] (last point repeated). Multiple loops

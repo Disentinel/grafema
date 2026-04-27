@@ -374,6 +374,17 @@ export function buildHullLayer(
       huesByRegion = computeFolderHues(regionTree);
       lastTreeRef = regionTree;
     }
+    // Distance fade has to retick continuously (not just on bucket
+    // changes) since orbit-controls can shift distance without crossing
+    // a quantised zoom step. Apply it on every frame call BEFORE the
+    // bucket short-circuit so the fade is smooth.
+    {
+      const dist = sm.camera.position.distanceTo(sm.controls.target);
+      const distFade = Math.max(0, Math.min(1, (dist - 70) / 100));
+      const baseFill = 0.30 - 0.24 * Math.min(1, Math.max(0, zoom01));
+      hullLayer.setFillOpacity(baseFill * distFade);
+      wallLayer.setOpacityScale(distFade);
+    }
     if (bucket === lastBucket && hullCache === lastCacheRef) return;
     console.warn(`[perf] canvasBuild bucket ${lastBucket}→${bucket} cache ${hullCache === lastCacheRef ? 'same' : 'changed'}`);
     // Cache identity change (new stream load): drop the mesh pool and
@@ -419,8 +430,8 @@ export function buildHullLayer(
     // overlay would just obscure them. Lerp 0.30 → 0.06 across the
     // zoom range. Outline lines stay full opacity (border is useful
     // at every level).
-    const fillOpacity = 0.30 - 0.24 * Math.min(1, Math.max(0, zoom01));
-    hullLayer.setFillOpacity(fillOpacity);
+    // (Fill / wall fade applied above in the always-on prefix so the
+    // bucket short-circuit doesn't gate it.)
   };
 
   // Initial paint — covers the case where the hull cache is already
