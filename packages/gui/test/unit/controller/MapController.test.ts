@@ -78,6 +78,7 @@ function makeMockSceneApi(): {
     setShowCoords: () => {},
     setFlowVisible: () => {},
     recolorFlowsByNodes: () => {},
+    loadEdgesByTypes: async () => ({ added: 0, total: 0 }),
     applyLens: () => {},
     addRoute: () => {},
     removeRoute: () => {},

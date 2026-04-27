@@ -14,6 +14,13 @@ export interface GraphNode {
   degree: number;
   /** Metrics for lenses */
   metrics?: Record<string, number>;
+  /**
+   * The visibility-lifted index the server emitted for this node (the
+   * `i` field on `node` frames). Edges from /api/edges and the bootstrap
+   * stream are keyed against this same index space, so lazy edge fetches
+   * can map server `s`/`d` back to client `nodes[]` positions.
+   */
+  serverIdx: number;
 }
 
 export interface GraphEdge {

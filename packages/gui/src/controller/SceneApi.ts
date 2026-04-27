@@ -56,6 +56,16 @@ export interface SceneApi {
   setFlowVisible(name: string, visible: boolean): void;
   /** Recolor active flows; pass null to reset to preset defaults. */
   recolorFlowsByNodes(colorFn: ((nodeIdx: number) => number) | null): void;
+  /**
+   * Lazy-load edges of the given types (CALLS / IMPORTS_FROM / ...) and
+   * rebuild the FlowLayer so they're displayable. Edges already loaded
+   * are deduplicated by (source, target, type). Returns the count of
+   * edges newly added (so callers can show a toast / progress).
+   *
+   * Initial graph-stream bootstrap fetches with `noEdges=1`, so all
+   * flows other than the always-on Bridges land here on first toggle.
+   */
+  loadEdgesByTypes(types: string[]): Promise<{ added: number; total: number }>;
 
   // --- LensPanel ----------------------------------------------------------
   applyLens(lensName: string): void;

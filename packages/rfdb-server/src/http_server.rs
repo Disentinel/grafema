@@ -303,6 +303,7 @@ pub fn apply_compression(router: Router) -> Router {
 fn build_api_router(state: HttpState) -> Router {
     Router::new()
         .route("/api/graph-stream", get(graph_stream))
+        .route("/api/edges", get(edges_stream))
         .route("/api/layout-live", get(layout_live_ws))
         .route("/api/stats", get(stats))
         .route("/api/node/{id}", get(node_by_id))
@@ -551,6 +552,165 @@ async fn graph_stream(
             .unwrap(),
         Err(err) => {
             eprintln!("[http] graph-stream failed: {}", err);
+            Response::builder()
+                .status(500)
+                .header("Content-Type", "application/json")
+                .body(axum::body::Body::from(
+                    serde_json::json!({ "error": err }).to_string(),
+                ))
+                .unwrap()
+        }
+    }
+}
+
+// ── GET /api/edges ──────────────────────────────────────────────────────
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct EdgesParams {
+    /// Comma-separated edge types to fetch (CALLS, IMPORTS_FROM, ...).
+    /// Empty / omitted = lift everything liftable. Server filters against
+    /// LIFTABLE_EDGE_TYPES so unknown values are silently dropped.
+    types: Option<String>,
+    /// Same node-cap as graph_stream — keeps vis_index in sync with the
+    /// canonical-default candidates on the GUI side. Defaults to 500_000
+    /// (matches warmup's body cache).
+    max_nodes: Option<usize>,
+}
+
+/// Lazy edge fetch — used by the GUI when a flow toggles on. Wire format
+/// (NDJSON):
+///   {"type":"edges_header","edgeTypeTable":[...]}
+///   {"type":"totals","edges":N}
+///   {"type":"edge","s":SRC_VIS_IDX,"d":DST_VIS_IDX,"t":TYPE_TABLE_IDX}
+///   {"type":"done","edgeCount":N,"elapsed":MS}
+///
+/// `s`/`d` are visibility-lifted indices that already match the node
+/// indices the GUI received via /api/graph-stream — so the client can
+/// hand the result straight to FlowLayer.build(nodes, edges) with zero
+/// remapping. The vis_index is rebuilt per request (not cached); on a
+/// real graph this is ~1-2s vs 6-10s for the full graph-stream because
+/// hull computation, region tree, and per-node emission all skip.
+async fn edges_stream(
+    State(state): State<HttpState>,
+    Query(params): Query<EdgesParams>,
+) -> impl IntoResponse {
+    let want_types: Option<Vec<String>> = params
+        .types
+        .as_ref()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.split(',').map(|p| p.trim().to_string()).collect());
+    let max_nodes = params.max_nodes.unwrap_or(500_000);
+
+    let manager = state.manager.clone();
+    let layout_cache = state.layout_cache.clone();
+    let file_to_nodes = state.file_to_nodes.clone();
+    let result = tokio::task::spawn_blocking(move || -> Result<String, String> {
+        let start = std::time::Instant::now();
+        let db = manager
+            .get_database("default")
+            .map_err(|e| format!("default database unavailable: {}", e))?;
+        let engine = db.engine.read().map_err(|e| format!("engine lock poisoned: {}", e))?;
+
+        // Reuse the same candidate / vis pipeline graph_stream uses so
+        // emitted s/d indices line up with what the GUI's existing node
+        // table already keys on.
+        let cached_layout = get_or_build_layout(&layout_cache, &file_to_nodes, &**engine);
+        let candidates = collect_candidate_nodes(&**engine, max_nodes, None, None);
+
+        // Custom vis_index that ONLY redirects hidden nodes to PLACED
+        // candidates in the same file. The shared `build_visibility_index`
+        // walks all candidates and picks `visible_nodes[0]` — which can
+        // be a non-placeable / unplaced candidate. The GUI emits only
+        // placed nodes, so an edge endpoint redirected to such a target
+        // would silently drop on the client. This pass guarantees every
+        // emitted edge endpoint corresponds to a node the GUI actually
+        // displays.
+        let layout_is_missing = matches!(cached_layout.source, LayoutSource::Missing);
+        let mut placed_idx_set: HashSet<u32> = HashSet::with_capacity(candidates.node_refs.len());
+        for nr in &candidates.node_refs {
+            let (_, reason) = classify_node_visibility(nr, &cached_layout, layout_is_missing);
+            if reason.is_none() {
+                placed_idx_set.insert(nr.idx);
+            }
+        }
+        let mut file_to_placed: HashMap<String, Vec<u32>> = HashMap::new();
+        for nr in &candidates.node_refs {
+            if placed_idx_set.contains(&nr.idx) {
+                file_to_placed.entry(nr.file.clone()).or_default().push(nr.idx);
+            }
+        }
+        let mut nid_to_placed: HashMap<u128, u32> = HashMap::new();
+        for nr in &candidates.node_refs {
+            if placed_idx_set.contains(&nr.idx) {
+                nid_to_placed.insert(nr.id, nr.idx);
+            }
+        }
+        let file_to_nodes_cache = get_or_build_file_to_nodes(&file_to_nodes, &**engine);
+        for (file, placed_in_file) in file_to_placed.iter() {
+            if let Some(node_ids) = file_to_nodes_cache.get(file) {
+                for &nid in node_ids {
+                    if !nid_to_placed.contains_key(&nid) {
+                        nid_to_placed.insert(nid, placed_in_file[0]);
+                    }
+                }
+            }
+        }
+        let vis_index = VisibilityIndex { nid_to_visible: nid_to_placed };
+        let (edge_refs, edge_type_table) =
+            lift_edges_bulk(&**engine, &vis_index, want_types.as_ref());
+
+        let mut lines: Vec<String> = Vec::with_capacity(edge_refs.len() + 4);
+        lines.push(
+            serde_json::to_string(&serde_json::json!({
+                "type": "edges_header",
+                "edgeTypeTable": &edge_type_table,
+            }))
+            .unwrap(),
+        );
+        lines.push(
+            serde_json::to_string(&serde_json::json!({
+                "type": "totals",
+                "edges": edge_refs.len(),
+            }))
+            .unwrap(),
+        );
+        let edge_type_idx: HashMap<String, usize> = edge_type_table
+            .iter()
+            .enumerate()
+            .map(|(i, t)| (t.clone(), i))
+            .collect();
+        for e in &edge_refs {
+            lines.push(emit_edge_line(e, &edge_type_idx));
+        }
+        let elapsed = start.elapsed().as_millis();
+        lines.push(
+            serde_json::to_string(&serde_json::json!({
+                "type": "done",
+                "edgeCount": edge_refs.len(),
+                "elapsed": elapsed,
+            }))
+            .unwrap(),
+        );
+        eprintln!(
+            "[http] /api/edges: types={:?} → {} edges, {}ms",
+            want_types,
+            edge_refs.len(),
+            elapsed,
+        );
+        Ok(lines.join("\n") + "\n")
+    })
+    .await
+    .unwrap();
+
+    match result {
+        Ok(body) => Response::builder()
+            .header("Content-Type", "application/x-ndjson")
+            .header("Cache-Control", "no-cache")
+            .body(axum::body::Body::from(body))
+            .unwrap(),
+        Err(err) => {
+            eprintln!("[http] /api/edges failed: {}", err);
             Response::builder()
                 .status(500)
                 .header("Content-Type", "application/json")

@@ -456,6 +456,7 @@ export async function parseStream(
         region: regionStr,
         degree: raw.degree,
         metrics: raw.metrics,
+        serverIdx: raw.i,
         unplacedReason: reason,
       });
       continue;
@@ -468,7 +469,14 @@ export async function parseStream(
     }
     const { x, z } = cubeToWorld(raw.pos.q, raw.pos.r, TILE_SIZE);
     const li = nodes.length;
-    oldToLayout.set(i, li);
+    // Key oldToLayout off the SERVER-emitted index (`raw.i`), not the
+    // rawNodes loop counter — depth-bucketed emit means the loop counter
+    // and `nr.idx` diverge. Edges keyed against server indices were
+    // silently mis-remapping (the `noEdges=1` default fetch hid this for
+    // a long time). Same `raw.i` is stashed on the GraphNode below as
+    // `serverIdx` so lazy /api/edges fetches can rebuild this map on
+    // demand.
+    oldToLayout.set(raw.i, li);
     nodes.push({
       id: raw.id,
       type: typeName,
@@ -479,6 +487,7 @@ export async function parseStream(
       z,
       metrics: raw.metrics,
       degree: raw.degree,
+      serverIdx: raw.i,
     });
   }
 
@@ -512,6 +521,7 @@ export async function parseStream(
         file: fileStr,
         region: regionStr,
         degree: n.d,
+        serverIdx: n.i,
         unplacedReason: n.reason ?? batchReason,
       });
     }

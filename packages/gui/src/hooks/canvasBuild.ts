@@ -27,6 +27,7 @@ import {
 } from '../three/HullLayer';
 import type { HexCoord } from '../geom/hex';
 import { worldToAxial } from '../store/loadStream';
+import { loadEdges } from '../store/loadEdges';
 import { RegionLayer } from '../three/RegionLayer';
 import { FlowLayer } from '../three/FlowLayer';
 import { RouteLayer } from '../three/RouteLayer';
@@ -1119,6 +1120,47 @@ export function createSceneApi(deps: SceneApiDeps): SceneApi {
       } else {
         flowLayer.recolorByNodes((ni) => new THREE.Color(colorFn(ni)));
       }
+    },
+    loadEdgesByTypes: async (types) => {
+      // Lazy edge fetch — call /api/edges, dedup against current store
+      // edges, append new ones, and rebuild FlowLayer in place. Dedup
+      // key is `${source}|${target}|${type}` so re-toggling a flow
+      // doesn't double-load anything we already have.
+      const ds = useDataStore.getState();
+      const existing = new Set(
+        ds.edges.map((e) => `${e.source}|${e.target}|${e.type}`),
+      );
+      const result = await loadEdges(ds.nodes, { types });
+      let added = 0;
+      const merged = ds.edges.slice();
+      for (const e of result.edges) {
+        const k = `${e.source}|${e.target}|${e.type}`;
+        if (existing.has(k)) continue;
+        existing.add(k);
+        merged.push(e);
+        added++;
+      }
+      // Push merged edges back to the store and rebuild the FlowLayer
+      // so the new edge tubes appear. FlowLayer.build is destructive
+      // (clears the group + repools); cheap on the few-thousand-edge
+      // scale we cap at via the same downsampling as buildFlowLayer.
+      ds.setGraphData({
+        nodes: ds.nodes,
+        edges: merged,
+        regions: ds.regions,
+        typeTable: ds.typeTable,
+        edgeTypeTable: ds.edgeTypeTable,
+      });
+      const MAX_FLOW_EDGES = 2000;
+      let toRender = merged;
+      if (merged.length > MAX_FLOW_EDGES) {
+        const step = Math.ceil(merged.length / MAX_FLOW_EDGES);
+        toRender = merged.filter((_, i) => i % step === 0);
+      }
+      flowLayer.build(nodes, toRender);
+      flowLayer.setElevationSource(layer.elevationArray);
+      sm.requestRender();
+      return { added, total: merged.length };
     },
     applyLens: (lensName) => useViewStore.getState().setLens(lensName),
     addRoute: (id, nodeIndices, color, label) => {
