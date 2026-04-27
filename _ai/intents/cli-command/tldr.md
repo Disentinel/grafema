@@ -24,11 +24,5 @@ grafema tldr packages/cli/src/commands/doctor.ts
 ```
 
 ```
-{captured: doctor-tldr}
-```
-
-## Drilling into nested logic
-
-```sh
-grafema tldr packages/cli/src/commands/doctor.ts --depth 2
+{captured: compact-overview-of-a-single-command-file}
 ```

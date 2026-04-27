@@ -24,6 +24,10 @@ import type { SpecedContractData } from '../enrichers/specedContractEnricher.js'
 export interface SpecedExample {
   /** Shell command (or programmatic snippet) showing how to invoke. */
   input: string;
+  /** Code fence language for the input — `'sh' | 'bash' | 'json' | 'ts'…`.
+   *  When the input is a JSON payload (MCP tool inputs) this is `'json'`;
+   *  shell commands stay `'sh'`. Renderer surfaces it as the ```language tag. */
+  inputLanguage?: string;
   /** Captured stdout / response. May be elided / truncated for length. */
   output?: string;
   /** ISO date the output was captured — surfaces staleness. */

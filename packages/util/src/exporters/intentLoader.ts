@@ -257,10 +257,18 @@ function parseExamples(body: string, captured: Map<string, string> | null): Spec
       i++;
     }
 
-    // Extract first shell fence as input, first non-shell fence as output.
+    // First fence in a section is the input. We accept shell langs (sh, bash,
+    // shell, console) AND data langs (json, yaml, ts, js, http) — the latter
+    // are common for MCP / HTTP-route invocations where input is a JSON body.
+    // The next fence (any lang) is the output. Track the first fence's lang
+    // so the renderer can re-emit with the correct ```tag.
     let input: string | undefined;
+    let inputLanguage: string | undefined;
     let output: string | undefined;
     let capturedKey: string | undefined;
+
+    const SHELL_LANGS = new Set(['sh', 'bash', 'shell', 'console', 'zsh']);
+    const DATA_LANGS = new Set(['json', 'yaml', 'yml', 'ts', 'js', 'tsx', 'jsx', 'http']);
 
     for (let j = 0; j < section.length; j++) {
       const fenceMatch = section[j].match(/^```(\w*)/);
@@ -270,9 +278,11 @@ function parseExamples(body: string, captured: Map<string, string> | null): Spec
       let end = start;
       while (end < section.length && !section[end].startsWith('```')) end++;
       const code = section.slice(start, end).join('\n').trimEnd();
-      if (input === undefined && (lang === 'sh' || lang === 'bash' || lang === 'shell' || lang === 'console')) {
+      const isInputCandidate = SHELL_LANGS.has(lang) || DATA_LANGS.has(lang);
+      if (input === undefined && isInputCandidate) {
         input = code;
-      } else if (output === undefined && lang !== 'sh' && lang !== 'bash' && lang !== 'shell' && lang !== 'console') {
+        inputLanguage = lang || 'sh';
+      } else if (output === undefined && (input !== undefined || !isInputCandidate)) {
         output = code;
       }
       j = end;
@@ -290,6 +300,7 @@ function parseExamples(body: string, captured: Map<string, string> | null): Spec
 
     if (input !== undefined) {
       const ex: SpecedExample = { input };
+      if (inputLanguage && inputLanguage !== 'sh') ex.inputLanguage = inputLanguage;
       if (output !== undefined) ex.output = output;
       if (title) ex.title = title;
       if (capturedKey && captured?.has(`${capturedKey}@capturedAt`)) {

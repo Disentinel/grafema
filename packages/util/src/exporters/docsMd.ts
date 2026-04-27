@@ -95,7 +95,7 @@ function renderFeatureSection(feature: FeatureExportSnapshot): string {
     for (const ex of feature.intent.examples) {
       if (ex.title) lines.push(`**${ex.title}**`);
       lines.push('');
-      lines.push('```sh');
+      lines.push(`\`\`\`${ex.inputLanguage ?? 'sh'}`);
       lines.push(ex.input);
       lines.push('```');
       if (ex.output !== undefined) {
