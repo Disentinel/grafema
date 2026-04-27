@@ -82,6 +82,7 @@ import {
   handleQueryRegistry,
   handleExplain,
   handleTraceEffects,
+  handleFindSharedBehaviors,
 } from './handlers/index.js';
 import type { ExplainArgs } from './handlers/index.js';
 import type {
@@ -124,6 +125,7 @@ import type {
   DescribeArgs,
   GraphQLQueryArgs,
   QueryRegistryArgs,
+  FindSharedBehaviorsArgs,
 } from './types.js';
 
 /**
@@ -403,6 +405,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
 
       case 'query_registry':
         result = await handleQueryRegistry(asArgs<QueryRegistryArgs>(args));
+        break;
+
+      case 'find_shared_behaviors':
+        result = await handleFindSharedBehaviors(asArgs<FindSharedBehaviorsArgs>(args));
         break;
 
       default:

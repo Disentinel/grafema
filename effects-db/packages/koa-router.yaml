@@ -1,0 +1,129 @@
+# koa-router / @koa/router (12.x / 13.x) — Koa router
+# Generated: 2026-04-26 (REG-1115)
+# Method: Claude inference based on @koa/router docs + Grafema graph patterns
+# Taxonomy version: 1
+# purl: pkg:npm/koa-router  (also pkg:npm/@koa/router — covered by the
+#       parallel @koa/router.yaml; both packages export Router with the same
+#       method surface)
+#
+# Usage:
+#   import Router from '@koa/router'
+#   const router = new Router()
+#   router.get('/users/:id', async (ctx) => { ... })
+#   app.use(router.routes())
+#
+# args[0] is ROUTE_PATH; trailing positional args are ENTRY_POINT_CALLBACKs
+# (Koa middleware functions). We annotate index 1 as the canonical handler;
+# the httpRouteExtractor reads the path from PASSES_ARGUMENT[index=0].
+
+koa-router:
+  Router.new:
+    effects: [PURE]
+    returns:
+      type: Router
+
+  Router.get:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Router
+  Router.post:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Router
+  Router.put:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Router
+  Router.delete:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Router
+  Router.del:    # alias for delete
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Router
+  Router.patch:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Router
+  Router.head:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Router
+  Router.options:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Router
+  Router.all:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Router
+
+  # Sub-router mounting (path-prefix) — captured as MOUNTPOINT.
+  Router.use:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: MOUNTPOINT
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Router
+
+  # Compose all registered routes into a single Koa middleware function.
+  Router.routes: [PURE]
+  Router.allowedMethods: [PURE]
+  Router.prefix: [MUTATION]
+  Router.param:
+    effects: [MUTATION]
+    args:
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Router
+  Router.redirect: [MUTATION]

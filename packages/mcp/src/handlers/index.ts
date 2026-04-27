@@ -20,3 +20,4 @@ export { handleAddKnowledge, handleQueryKnowledge, handleQueryDecisions, handleS
 export { handleDescribe } from './notation-handlers.js';
 export { handleQueryGraphql } from './graphql-handlers.js';
 export { handleQueryRegistry } from './registry-handlers.js';
+export { handleFindSharedBehaviors } from './behavior-handlers.js';

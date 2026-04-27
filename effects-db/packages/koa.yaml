@@ -1,0 +1,46 @@
+# koa (2.x) — HTTP middleware framework
+# Generated: 2026-04-26 (REG-1115)
+# Method: Claude inference based on Koa docs + Grafema graph patterns
+# Taxonomy version: 1
+# purl: pkg:npm/koa
+#
+# Modern Koa apps use middleware (`app.use(async (ctx, next) => {...})`) for
+# routing logic; bare `koa` does not ship a router. Most route definitions go
+# through `koa-router` or `@koa/router`, which we annotate separately.
+#
+# We do NOT mark `app.use(handler)` as a route source here — Koa's `use` is
+# generic middleware, not a path-bound endpoint. Treating it as a route would
+# produce false positives for every middleware function. Route detection for
+# Koa happens via `koa-router` / `@koa/router` only.
+
+koa:
+  # Factory: `new Koa()`
+  Koa.new:
+    effects: [PURE]
+    returns:
+      type: Koa
+
+  # Middleware registration — annotate the callback so it shows up in the
+  # call graph, but do NOT tag args[0] as ROUTE_PATH (it's not a path).
+  Koa.use:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Koa
+
+  # Lifecycle — IO
+  Koa.listen: [IO, ASYNC]
+  Koa.callback: [PURE]
+
+  # Error handler — entry point
+  Koa.on:
+    effects: [MUTATION]
+    args:
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+
+  # Context helpers — IO when writing response, PURE for reads
+  Context.throw: [THROW]
+  Context.assert: [THROW]

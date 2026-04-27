@@ -114,6 +114,13 @@ export interface FindNodesArgs {
   offset?: number;
 }
 
+export interface FindSharedBehaviorsArgs {
+  /** Minimum cluster size to include. Default 2. */
+  minClusterSize?: number;
+  /** Maximum number of clusters to return. Default 100. */
+  limit?: number;
+}
+
 export interface AnalyzeProjectArgs {
   service?: string;
   force?: boolean;

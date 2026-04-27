@@ -63,10 +63,30 @@ export interface ContractEnrichResult {
   /** Diagnostic: features whose HANDLES edge was missing or pointed at a
    *  non-existent target. */
   featuresWithoutEntry: number;
+  /** Diagnostic: features whose HANDLES target is not a callable
+   *  (FUNCTION/METHOD) — e.g. `package:export` pointing at a CLASS, CONSTANT,
+   *  or VARIABLE. v1 skips these — contract semantics are ambiguous (which
+   *  signature? all methods?) and they have no callable behavior. */
+  nonCallableTargets: number;
 }
 
-/** FEATURE-class node types we extract contracts for. */
-const FEATURE_TYPES: readonly string[] = ['cli:command', 'mcp:tool', 'vscode:command'];
+/**
+ * FEATURE-class node types we extract contracts for.
+ *
+ * `package:export` was added in Sprint 3/A2 (packageApiEnricher). Its HANDLES
+ * targets vary by export kind — only FUNCTION/METHOD targets get contracts;
+ * CLASS / CONSTANT / VARIABLE targets are skipped via the `CALLABLE_TARGETS`
+ * gate below.
+ */
+const FEATURE_TYPES: readonly string[] = [
+  'cli:command',
+  'mcp:tool',
+  'vscode:command',
+  'package:export',
+];
+
+/** Node types whose contract semantics are well-defined for v1. */
+const CALLABLE_TARGETS: readonly string[] = ['FUNCTION', 'METHOD'];
 
 const ADD_BATCH_SIZE = 500;
 
@@ -87,6 +107,7 @@ export async function enrichContracts(
     outputsTotal: 0,
     errorsTotal: 0,
     featuresWithoutEntry: 0,
+    nonCallableTargets: 0,
   };
 
   const newNodes: WireNode[] = [];
@@ -117,6 +138,14 @@ export async function enrichContracts(
       const handler = await client.getNode(handlerId);
       if (!handler) {
         result.featuresWithoutEntry++;
+        continue;
+      }
+
+      // package:export features can HANDLE a CLASS / CONSTANT / VARIABLE — skip
+      // those: contract semantics are undefined for non-callable targets.
+      const handlerType = String(handler.nodeType);
+      if (!CALLABLE_TARGETS.includes(handlerType)) {
+        result.nonCallableTargets++;
         continue;
       }
 

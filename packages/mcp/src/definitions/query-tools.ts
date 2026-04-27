@@ -389,4 +389,37 @@ Returns: List of nodes violating the rule, with file and line info.`,
       required: ['rule'],
     },
   },
+  {
+    name: 'find_shared_behaviors',
+    description: `List clusters of FEATUREs whose entry-points share an identical BEHAVIOR (same forward-slice hash).
+
+Surfaces cross-modality duplication — e.g. "this CLI command is a thin wrapper around the
+same library function as that HTTP endpoint" or "this MCP tool and that VS Code command
+delegate to identical logic".
+
+Each cluster contains:
+  - hash:           sha256 of the shared transitive call set (BEHAVIOR.metadata.hash)
+  - effects:        transitive effects (IO, MUTATION, …) attributed to the shared behavior
+  - coreNodeCount:  size of the shared forward slice
+  - features:       array of { id, type, name, file } — the FEATUREs that share this behavior
+
+Cluster types are FEATURE node types: cli:command, mcp:tool, vscode:command (and any future
+domain types created by enrichers).
+
+Returns clusters ordered by size (largest first), then hash (deterministic tie-break).
+Empty result means every FEATURE has a unique implementation.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        minClusterSize: {
+          type: 'number',
+          description: 'Minimum FEATUREs per cluster (default: 2). Values below 2 are clamped to 2.',
+        },
+        limit: {
+          type: 'number',
+          description: 'Maximum clusters to return (default: 100).',
+        },
+      },
+    },
+  },
 ];

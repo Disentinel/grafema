@@ -1,0 +1,138 @@
+# hono (4.x) — Edge-first HTTP framework
+# Generated: 2026-04-26 (REG-1115)
+# Method: Claude inference based on Hono docs + Grafema graph patterns
+# Taxonomy version: 1
+# purl: pkg:npm/hono
+#
+# Hono's API mirrors Express:
+#   const app = new Hono()
+#   app.get('/users/:id', (c) => c.json(...))
+#   app.post('/users', handler)
+#
+# `app.route('/prefix', subApp)` mounts a sub-Hono — captured as MOUNTPOINT.
+
+hono:
+  Hono.new:
+    effects: [PURE]
+    returns:
+      type: Hono
+
+  Hono.get:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Hono
+  Hono.post:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Hono
+  Hono.put:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Hono
+  Hono.delete:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Hono
+  Hono.patch:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Hono
+  Hono.options:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Hono
+  Hono.all:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Hono
+  Hono.on:    # generic method registration: app.on(['GET','POST'], '/x', h)
+    effects: [MUTATION]
+    args:
+      - index: 1
+        role: ROUTE_PATH
+      - index: 2
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Hono
+
+  # Mount a sub-Hono at a prefix.
+  Hono.route:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: MOUNTPOINT
+    returns:
+      type: Hono
+
+  # Middleware
+  Hono.use:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Hono
+
+  # Lifecycle
+  Hono.fetch: [IO, ASYNC]
+  Hono.fire: [IO]
+  Hono.notFound:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Hono
+  Hono.onError:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Hono
+
+  # Context helpers (Hono's `c` object) — IO when writing response.
+  Context.json: [IO]
+  Context.text: [IO]
+  Context.html: [IO]
+  Context.redirect: [IO]
+  Context.notFound: [IO]
+  Context.body: [IO]
+  Context.req: [PURE]
+  Context.status: [MUTATION]
+  Context.header: [MUTATION]

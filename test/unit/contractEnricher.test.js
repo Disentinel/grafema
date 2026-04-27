@@ -298,6 +298,82 @@ describe('contractEnricher', () => {
     assert.equal(contracts.length, 0, 'no CONTRACT node should be created');
   });
 
+  it('package:export with FUNCTION target: contract extracted like cli:command', async () => {
+    await seedFeatureAndHandler(backend, {
+      file: 'pkg.ts',
+      featureType: 'package:export',
+      featureId: 'test::feat',
+      featureName: 'parseConfig',
+      handlerId: 'test::handler',
+      handlerName: 'parseConfig',
+    });
+
+    await backend.addNode({
+      id: 'test::param-input',
+      type: 'PARAMETER',
+      name: 'input',
+      file: 'pkg.ts',
+      typeAnnotation: 'string',
+    });
+    await backend.addEdge({ src: 'test::handler', dst: 'test::param-input', type: 'RECEIVES_ARGUMENT' });
+
+    const result = await enrichContracts(client);
+    assert.equal(result.contractsCreated, 1);
+    assert.equal(result.inputsTotal, 1);
+    assert.equal(result.nonCallableTargets, 0);
+
+    const featureWire = await getWireNodeByOriginalId(client, 'test::feat', 'package:export');
+    assert.ok(featureWire, 'package:export feature should exist');
+    const has = await getEdges(client, featureWire.id, 'HAS_CONTRACT');
+    assert.equal(has.length, 1);
+  });
+
+  it('package:export with CLASS target: skipped, nonCallableTargets incremented', async () => {
+    // Module + scope scaffold.
+    await backend.addNode({
+      id: 'cls.ts::module',
+      type: 'MODULE',
+      name: 'cls.ts',
+      file: 'cls.ts',
+      relativePath: 'cls.ts',
+      contentHash: 'h1',
+    });
+    await backend.addNode({
+      id: 'cls.ts::scope',
+      type: 'SCOPE',
+      name: 'global',
+      file: 'cls.ts',
+      scopeType: 'module',
+    });
+    await backend.addEdge({ src: 'cls.ts::module', dst: 'cls.ts::scope', type: 'HAS_SCOPE' });
+
+    // package:export → CLASS (ambiguous semantics; v1 skips).
+    await backend.addNode({
+      id: 'test::feat',
+      type: 'package:export',
+      name: 'MyClass',
+      file: 'cls.ts',
+      exported: true,
+    });
+    await backend.addNode({
+      id: 'test::cls',
+      type: 'CLASS',
+      name: 'MyClass',
+      file: 'cls.ts',
+      exported: true,
+    });
+    await backend.addEdge({ src: 'test::feat', dst: 'test::cls', type: 'HANDLES' });
+
+    const result = await enrichContracts(client);
+    assert.equal(result.contractsCreated, 0, 'CLASS target → no contract');
+    assert.equal(result.nonCallableTargets, 1);
+    assert.equal(result.featuresWithoutEntry, 0, 'entry exists, just non-callable');
+
+    const contracts = [];
+    for await (const wn of client.queryNodes({ type: 'CONTRACT' })) contracts.push(wn);
+    assert.equal(contracts.length, 0);
+  });
+
   it('idempotent: running twice does not duplicate CONTRACT nodes or HAS_CONTRACT edges', async () => {
     await seedFeatureAndHandler(backend, {
       file: 'cli.ts',

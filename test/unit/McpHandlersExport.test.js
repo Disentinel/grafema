@@ -56,17 +56,18 @@ const EXPECTED_HANDLERS = [
   'handleTraceCalls',
   'handleGetShape',
   'handleTraceEffects',
+  'handleFindSharedBehaviors',
 ];
 
 describe('MCP handlers export surface', () => {
-  it('should export exactly 39 handler functions', () => {
+  it('should export exactly 40 handler functions', () => {
     const exportedKeys = Object.keys(handlers).filter(
       k => typeof handlers[k] === 'function'
     );
     assert.equal(
       exportedKeys.length,
-      39,
-      `Expected 39 function exports, got ${exportedKeys.length}: ${exportedKeys.join(', ')}`
+      40,
+      `Expected 40 function exports, got ${exportedKeys.length}: ${exportedKeys.join(', ')}`
     );
   });
 

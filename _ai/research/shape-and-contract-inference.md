@@ -46,6 +46,67 @@ A CONTRACT is a SHAPE used at a boundary where it becomes a **requirement**:
 
 One SHAPE node type with contextual interpretation. No separate CONTRACT node needed.
 
+> **Cross-reference.** Where a SHAPE attaches to a *user-facing entry point* — CLI command, MCP tool, HTTP route, exported library function — the FEATURE/BEHAVIOR/CONTRACT decomposition lives in `_ai/research/cognitive-debt-and-feature-detection.md`. The canonical six-entity model (ENTRY_POINT / INTERFACE / CONTRACT / BEHAVIOR / FEATURE / COMPONENT) with edges, cardinalities, and registry interaction is in `_ai/research/feature-taxonomy.md`. Contracts are owned by **entry points**, not by features-as-such: one logical feature can be exposed as both `cli:command` and `mcp:tool` with two different contracts but a single shared BEHAVIOR.
+
+### Interface vs Contract
+
+In the Design-by-Contract sense (Meyer), **Contract ⊃ Interface**:
+
+- **Interface** — structural surface only: in-shape, out-shape, names and types.
+- **Contract** = Interface + **behavioral guarantees**: pre-conditions, post-conditions, effects, invariants, error semantics.
+
+In Grafema's graph, behavioral guarantees already live partly elsewhere — `EffectType` annotations on BEHAVIOR / FEATURE nodes (`PURE`, `IO`, `THROW`, `MUTATION`, …), `THROWS` edges, and the BEHAVIOR hash as identity of underlying logic. So a CONTRACT = SHAPE-at-boundary + linked effects/invariants. The SHAPE node carries the interface; the rest is composed via existing edges.
+
+### 2.5 Three classes of contract: Speced, Emergent, Synthesized
+
+A cross-paradigm survey (see Appendix A) shows that the {Speced, Emergent} pair is incomplete. There are **three** primary classes plus one degenerate fourth:
+
+**A. Speced — single declarative authority.** Callers conform to a spec declared at one site.
+- Examples: Express `app.get(...)`, MCP `inputSchema`, gRPC `.proto`, Haskell Servant route type, Python `@app.route` decorator, function signature, `package.json#contributes`.
+- Inference: read the declaration. Static.
+
+**B. Emergent — N producers / M consumers asymmetry.** Contract is the inferred shape from union of writers vs union of readers; mismatch = bug.
+- Examples: redis pub/sub topic, Node `EventEmitter`, Kafka raw topic, Akka classic untyped mailbox, shared mutable state, Go `chan T`, Rack env hash, `context.Value` bag, Spring `ApplicationEvent`, Symfony EventDispatcher (when listener count is dynamic).
+- Inference: collect shapes from all writer and reader sites in the graph; compare; emit ISSUE on mismatch.
+
+**C. Synthesized — contract produced by a transformation, not declared at any site.** Three sub-flavors:
+- **Build-time codegen:** Rust proc-macros, Swift macros, Scala 3 inline, Kotlin KSP/kapt, Java annotation processors (Lombok/MapStruct), C# Roslyn source generators, `go generate`. Inference: read post-transformation artifact, OR model the transformation.
+- **Resolution-time scope:** Haskell type classes (incl. orphan instances), Scala implicits / `given`, Rust trait blanket impls, Swift protocol extensions, Kotlin extension functions, Go structural interface satisfaction (no `implements` keyword), CLOS / Clojure multimethods. Inference: implement instance-resolution mimicking the compiler's coherence rules.
+- **Cross-cutting advice:** Spring AOP `@Around`/`@Aspect`, Rust `tower::Layer` middleware, Rack middleware, NestJS interceptors. Inference: model the intercept chain — contract isn't on the callable, it's around it.
+
+**D. Reflective — contract computed per-call, no enumerable surface.** Degenerate — analysis cannot enumerate without runtime instrumentation.
+- Examples: Ruby `method_missing` / `define_method` DSLs / ActiveRecord dynamic finders; Python `__getattr__` / `__getattribute__`; JS `Proxy` traps; PHP `__call` / `__get` / variable-variables / `eval`; Lua `__index`; Perl `AUTOLOAD` + symbol-table munging; C# `dynamic` / DLR; eval-based dispatch.
+- Inference: emit OPAQUE_BOUNDARY ISSUE listing the reflective sites; accept incomplete coverage; recommend manual annotation or runtime probing.
+
+### 2.6 Cross-cutting modifiers
+
+Orthogonal to the primary class, a contract may carry one or more modifiers:
+
+| Modifier | Adds | Examples |
+|---|---|---|
+| **Versioned / evolving** | contract = family of shapes + compat rules | Kafka + Schema Registry (BACKWARD/FORWARD/FULL), Avro reader/writer resolution, gRPC field additions, OpenAPI versioning |
+| **Compositional** | contract assembled at use site from primitives | GraphQL resolver tree, algebraic effects (Koka/Frank/Eff), monad transformer stacks, Erlang OTP behaviour + mailbox |
+| **Time-dependent** | depends on load-order / runtime patches | monkey-patching (`gevent.monkey`, Ruby refinements, JS prototype patching, Perl `*glob` assignment), hot-reload, plugin registration order |
+| **Conditional / build-flag** | function of build configuration | Cargo `cfg`, Go build tags, C preprocessor, conditional compilation in F# / Scala 3 |
+| **Open-world hook** | string-keyed, any participant can register | WordPress `add_action`/`add_filter`, Drupal `hook_*`, ActiveSupport::Notifications, Vim autocmd |
+
+A mechanism can stack modifiers (e.g., gRPC = Speced + Versioned; WordPress hooks = Emergent + Open-world + Time-dependent). Modifiers shape what "mismatch detection" means — for Versioned contracts, mismatch = compat-rule violation, not field difference.
+
+### 2.7 Implications for the inference pipeline
+
+The pipeline branches by class:
+
+| Class | Strategy | Output |
+|---|---|---|
+| **Speced** | Read the declaration directly. effects-db YAML marks the source. | SHAPE node with `binding: nominal` |
+| **Emergent** | Collect writer/reader sites, infer Σ-shape pair, compare. | SHAPE node with `binding: structural` + ISSUE on mismatch |
+| **Synthesized — codegen** | Read post-expansion artifact (e.g. gRPC generated stubs). | Same as Speced after expansion |
+| **Synthesized — resolution-time** | Mimic compiler instance resolution; emit per-resolved-instance edges. | SHAPE node with `binding: inferred`, lower confidence |
+| **Synthesized — advice** | Model the intercept chain; flatten to effective-handler shape. | SHAPE node + INTERCEPTED_BY edges |
+| **Reflective** | Mark site as OPAQUE_BOUNDARY; do not over-promise. | ISSUE node |
+
+For each language Grafema supports, an effects-db extension declares which constructs land in which class. This is the integration point with the **declarative effects YAML** the project already uses for Speced library entry-points (`commander.yaml`, `vscode.yaml`, `modelcontextprotocol-sdk.yaml`).
+
 ## 3. Sound Evidence for Shape Construction
 
 **Critical principle**: shapes are constructed from WRITES (definitions), not from READS (usage).
@@ -303,3 +364,144 @@ REG-1086 acceptance criteria updated:
 - [ ] Contract verification via Datalog guarantee
 - [ ] ISSUE nodes for shape violations
 - [ ] Cross-process shape checking via CALLS_REMOTE bridges
+
+## 12. Application to Grafema FEATURE categories
+
+For each FEATURE-class node produced by the L0 entry-point detection enrichers
+(`cognitive-debt-and-feature-detection.md` §4.3), the contract source is:
+
+| FEATURE category | Class | Interface source |
+|---|---|---|
+| `cli:command` | Speced | `program.command('build <input> --watch')` declarative string + effects-db YAML annotations on `commander` |
+| `mcp:tool` | Speced | `inputSchema.properties` JSON Schema on the tool definition |
+| `vscode:command` | Speced | `package.json#contributes.commands` + typing on the args registered with `vscode.commands.registerCommand` |
+| `http:route` (planned, A1) | Speced | route registration in express/fastify/koa/hono via effects-db YAML; Spring `@RestController` etc. via annotation processor reading |
+| `package:export` | Speced | exported function/method signature (PARAMETER + RETURNS + THROWS edges) |
+| internal channel (future) | Emergent | union of writer sites vs union of reader sites for a given queue / topic / shared variable |
+
+Cross-paradigm cases that don't fit cleanly (Synthesized / Reflective) — see §2.5
+and Appendix A. For polyglot codebases Grafema targets, language-specific
+mechanisms (decorators, annotation processors, AOP advice, type classes,
+multimethods, monkey-patching, hooks) need explicit per-language handling.
+
+### Note on the shipped contractEnricher.ts (Sprint 1)
+
+The current `packages/util/src/enrichers/contractEnricher.ts` extracts
+`{ inputs, outputs, errors }` only from the **handler function's JS signature**:
+PARAMETER nodes, RETURNS edges, THROWS edges. This is a minimal **interface
+scrape** (in the §2.4 sense), not a full contract:
+
+- For `package:export FUNCTION` targets — the JS signature **is** the interface,
+  so the scrape is correct.
+- For `cli:command`, `mcp:tool`, `vscode:command` — the JS signature carries
+  near-zero information (one anonymous parameter `args` / `options`); the real
+  interface lives in declarative library calls (commander, inputSchema,
+  package.json contributes) which this enricher does not read.
+
+**Honest renaming**: the shipped artifact should be called `IMPL_CONTRACT` or
+`HANDLER_SIGNATURE` (interface seen by the handler implementation), and the
+declarative-spec extraction is a separate enricher that produces the
+*user-facing* interface from the L0 detection sources. Both attach to the same
+FEATURE node via different edge types
+(`HAS_HANDLER_SIGNATURE` vs `HAS_LOGICAL_INTERFACE` — names TBD).
+
+For v0.3 this is captured as a follow-up; the existing CONTRACT node and
+`HAS_CONTRACT` edge remain in place under the current name to avoid graph churn.
+
+## Appendix A. Cross-paradigm contract-mechanism survey
+
+Compiled from three parallel surveys (static-typed / dynamic-scripting / functional+actor+IDL+broker) across ~30 languages and frameworks. Mechanisms that **don't fit** the {Speced, Emergent} dichotomy without contortions, grouped by failure mode.
+
+### A.1 Synthesized — build-time codegen
+
+Contract exists only after a transformation step; neither the input nor the output is "the" canonical contract.
+
+- Annotation processors (Lombok, MapStruct, Java JSR-269)
+- Source generators (Roslyn, KSP, kapt)
+- Macros (Rust proc-macros, Scala 3 `inline`, Swift macros)
+- `go generate`, gRPC/Thrift/protobuf code generation
+- Cargo `cfg` / Go build tags / C preprocessor — contract conditional on build flags
+
+### A.2 Synthesized — resolution-time scope
+
+Contract exists at every call site as a function of the local scope's available instances/conformances/specializations. No central declaration.
+
+- Type classes (Haskell, with orphan instances making coherence package-set-dependent)
+- Implicits / `given` (Scala)
+- Trait blanket impls (Rust)
+- Protocol extensions (Swift) and extension functions (Kotlin) — retroactive shape augmentation
+- Go structural interface satisfaction — no `implements` keyword; conformance discovered
+- CLOS / Clojure multimethods — one logical name, scattered `defmethod` sites
+
+### A.3 Synthesized — cross-cutting advice
+
+Contract isn't on the callable; it's around it. The advice has no callable signature of its own visible to consumers.
+
+- Spring AOP `@Around` / `@Aspect`
+- Rust `tower::Layer` middleware chains
+- Rack middleware, Express middleware (when used as wrappers, not handlers)
+- NestJS interceptors, Symfony event subscribers as wrappers
+- Property wrappers (`@Published`), result builders, attribute macros (`#[tokio::main]`) — entry point rewritten before user-code analysis sees it
+
+### A.4 Reflective — runtime-synthesized, no enumerable surface
+
+The contract is computed per access; analysis cannot enumerate without runtime instrumentation. Treat as OPAQUE_BOUNDARY.
+
+- Ruby `method_missing`, `define_method`, ActiveRecord dynamic finders, RSpec/FactoryBot DSLs
+- Python `__getattr__` / `__getattribute__`
+- JavaScript `Proxy` traps; `eval` / `new Function`
+- PHP `__call` / `__get`, variable-variables, `eval`, `create_function`
+- Lua `__index` / `__newindex` metatables
+- Perl `AUTOLOAD`, symbol-table munging
+- C# `dynamic` / DLR
+
+### A.5 Compositional — contract assembled at use site
+
+Spec is partial; effective contract emerges from composition.
+
+- Algebraic effects (Koka, Frank, Eff): effect signature is declared at function type but handlers reinterpret dynamically; effect stack determines actual semantics
+- GraphQL: schema is speced but execution = recursive resolver tree; per-field semantics + N+1 + DataLoader concerns are emergent
+- Erlang OTP `gen_server` behaviour: callback module shape is speced (init/handle_call/handle_cast/...), but mailbox payloads are emergent
+- Monad transformer stacks (mtl-style): each layer adds capability, total contract = stack-dependent
+- ZIO `R` capability environment: contract is the *requested environment*, satisfied by the caller's stack
+
+### A.6 Versioned / evolving
+
+Contract is a *family* of shapes plus compat rules — not one snapshot.
+
+- Kafka + Confluent Schema Registry (BACKWARD / FORWARD / FULL compat policies)
+- Avro reader/writer schema resolution at read time
+- gRPC field-add semver discipline
+- OpenAPI version negotiation
+
+### A.7 Time-dependent / open-world
+
+Contract changes as code loads / patches / hot-reloads.
+
+- Monkey-patching: `gevent.monkey`, Ruby refinements, JS prototype patching, Perl `*glob` assignment, Swift method swizzling
+- Hot reload (Rails, Webpack HMR, Erlang code_change/2)
+- WordPress `add_action`/`add_filter` and Drupal `hook_*`: hook tag is a free-form string; "spec" is community convention
+- Plugin systems where load order shapes effective dispatch
+
+### A.8 Stringly-typed bag passthroughs
+
+Typed languages with deliberate untyped escape hatches.
+
+- Go `context.Value(key)`
+- Akka classic `receive: Any => Unit`
+- C# `dynamic`
+- Rack `env` hash, Express `req` object as ambient state
+- Notification systems with `userInfo: [AnyHashable: Any]` (NotificationCenter), event payloads as opaque maps (ActiveSupport::Notifications, Symfony EventDispatcher with string keys)
+
+### A.9 Implication for Grafema's polyglot strategy
+
+Per-language extraction in effects-db YAML must declare the contract class for each construct. A starter mapping:
+
+```yaml
+# effects-db/packages/<lang-or-framework>.yaml — proposed extension
+contract_class: speced | emergent | synthesized-codegen | synthesized-resolution
+              | synthesized-advice | reflective
+modifiers: [versioned, compositional, time-dependent, conditional, open-world]
+```
+
+For Reflective sites, the extractor emits an OPAQUE_BOUNDARY ISSUE rather than a SHAPE; downstream tooling treats the ISSUE as a known incompleteness, not a bug.

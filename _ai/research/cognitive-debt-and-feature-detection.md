@@ -716,7 +716,7 @@ This mapping enables AI agents (and humans) to translate product asks into speci
 
 A monolithic "find FEATURE per entry point" enricher (Phase 2 in §4.3 original draft) misses sub-features. The pipeline (revised in §4.3) decomposes detection into:
 - **L0 ENTRY_POINT** — shipped (cli:command, mcp:tool, vscode:command)
-- **L1 CONTRACT** — extract params/returns/errors per entry; surface as sub-FEATUREs or as feature attributes (open design choice — see §4.3)
+- **L1 CONTRACT** — extract params/returns/errors per entry; surface as sub-FEATUREs or as feature attributes (open design choice — see §4.3). **Conceptual model, three-class taxonomy (Speced / Emergent / Synthesized + Reflective), per-paradigm survey, and per-FEATURE-category interface sources live in `_ai/research/shape-and-contract-inference.md` §2.4–§2.7 + Appendix A. The canonical six-entity taxonomy with edges, cardinalities, registry-extension schema, and query taxonomy is in `_ai/research/feature-taxonomy.md`.**
 - **L2 FEATURE_FLAG** — Phase 8 of §4.3
 - **L3 BEHAVIOR** — forward slice, dedup-keyed (Phase 2 in §4.3)
 

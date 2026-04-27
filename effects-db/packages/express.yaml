@@ -1,0 +1,261 @@
+# express (4.x / 5.x) — HTTP server framework
+# Generated: 2026-04-26 (REG-1115)
+# Method: Claude inference based on Express docs + Grafema graph patterns
+# Taxonomy version: 1
+# purl: pkg:npm/express
+#
+# Express's per-route handlers are the entry points: `app.get('/users', handler)`.
+# args[0] is the route-path string (ROUTE_PATH), args[1..N] are route handlers
+# (ENTRY_POINT_CALLBACK). Each handler reads/writes the express req/res objects,
+# so transitive effects bubble up through them.
+#
+# `app.use(handler)` and `app.use('/prefix', router)` are middleware mounts —
+# the path-prefix form is captured separately as a MOUNTPOINT for downstream
+# route-tree analysis. Bare `app.use(handler)` only annotates the callback.
+#
+# `express()` and `express.Router()` are factory functions; their returns are
+# annotated so subsequent `.get(...)` calls on the resulting object resolve
+# back to express via the receiver-tracing logic in libraryCallbackEnricher.
+
+express:
+  # ---------------------------------------------------------------------------
+  # Factory functions
+  # ---------------------------------------------------------------------------
+  express:
+    effects: [PURE]
+    returns:
+      type: Application
+  Router:
+    effects: [PURE]
+    returns:
+      type: Router
+
+  # ---------------------------------------------------------------------------
+  # Application — HTTP method route registrations
+  # Each receives (path, ...handlers); args[0] is ROUTE_PATH, the rest are
+  # ENTRY_POINT_CALLBACKs.
+  # ---------------------------------------------------------------------------
+  Application.get:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Application
+  Application.post:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Application
+  Application.put:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Application
+  Application.delete:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Application
+  Application.patch:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Application
+  Application.head:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Application
+  Application.options:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Application
+  Application.all:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Application
+
+  # ---------------------------------------------------------------------------
+  # Application.use — middleware/mountpoint
+  # `app.use(handler)`               → callback only
+  # `app.use('/prefix', router)`     → MOUNTPOINT (sub-router mount)
+  # The libraryCallbackEnricher will fan out on ENTRY_POINT_CALLBACK at index 1
+  # when a path is present; bare `app.use(handler)` falls back to index 0.
+  # The httpRouteExtractor returns null for `.use` calls (they aren't routes).
+  # ---------------------------------------------------------------------------
+  Application.use:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: MOUNTPOINT
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Application
+
+  # Server lifecycle — IO
+  Application.listen: [IO, ASYNC]
+  Application.set: [MUTATION]
+  Application.engine: [MUTATION]
+  Application.disable: [MUTATION]
+  Application.enable: [MUTATION]
+  Application.disabled: [PURE]
+  Application.enabled: [PURE]
+  Application.render: [IO, ASYNC]
+
+  # ---------------------------------------------------------------------------
+  # Router — same method set as Application (mounted via app.use('/prefix', r))
+  # ---------------------------------------------------------------------------
+  Router.get:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Router
+  Router.post:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Router
+  Router.put:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Router
+  Router.delete:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Router
+  Router.patch:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Router
+  Router.head:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Router
+  Router.options:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Router
+  Router.all:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Router
+  Router.use:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: MOUNTPOINT
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Router
+
+  # Response helpers — IO (writes HTTP response)
+  Response.send: [IO]
+  Response.json: [IO]
+  Response.status: [MUTATION]
+  Response.set: [MUTATION]
+  Response.header: [MUTATION]
+  Response.cookie: [MUTATION]
+  Response.clearCookie: [MUTATION]
+  Response.redirect: [IO]
+  Response.render: [IO, ASYNC]
+  Response.end: [IO]
+  Response.sendFile: [IO, ASYNC]
+  Response.download: [IO, ASYNC]
+  Response.type: [MUTATION]
+  Response.location: [MUTATION]
+  Response.attachment: [MUTATION]
+  Response.append: [MUTATION]
+  Response.vary: [MUTATION]
+  Response.format: [IO]
+  Response.sendStatus: [IO]
+
+  # Request helpers — PURE (read-only on the request)
+  Request.get: [PURE]
+  Request.header: [PURE]
+  Request.is: [PURE]
+  Request.accepts: [PURE]
+  Request.acceptsCharsets: [PURE]
+  Request.acceptsEncodings: [PURE]
+  Request.acceptsLanguages: [PURE]
+  Request.range: [PURE]
+  Request.param: [PURE]
+
+  # Built-in middleware — PURE (factories returning middleware functions)
+  json: [PURE]
+  urlencoded: [PURE]
+  raw: [PURE]
+  text: [PURE]
+  static: [PURE]

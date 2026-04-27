@@ -24,10 +24,16 @@ import {
   GRAFEMA_VERSION,
   getSchemaVersion,
 } from '@grafema/util';
+import { enrichBehaviors } from '@grafema/util/enrichers/behaviorEnricher';
 import { enrichContracts } from '@grafema/util/enrichers/contractEnricher';
 import { enrichLibraryCallbacks } from '@grafema/util/enrichers/libraryCallbackEnricher';
 import { enrichPackageApis } from '@grafema/util/enrichers/packageApiEnricher';
 import { enrichMcpToolDefinitions } from '@grafema/util/enrichers/mcpToolDefinitionEnricher';
+import { enrichSpecedContracts } from '@grafema/util/enrichers/specedContractEnricher';
+import { commanderExtractor } from '@grafema/util/enrichers/extractors/commanderExtractor';
+import { mcpInputSchemaExtractor } from '@grafema/util/enrichers/extractors/mcpInputSchemaExtractor';
+import { vscodeContributesExtractor } from '@grafema/util/enrichers/extractors/vscodeContributesExtractor';
+import { httpRouteExtractor } from '@grafema/util/enrichers/extractors/httpRouteExtractor';
 import type { LogLevel } from '@grafema/util';
 import { scanExtensions, generateSmartConfig, writeConfig, updateGitignore, formatDetected } from '../utils/quickstart.js';
 
@@ -332,10 +338,10 @@ export async function analyzeAction(path: string, options: { service?: string; e
       // for callbacks passed to library entry points (Commander, MCP SDK, ...).
       // Reuses the effects-db loaded for ManifestGenerator.
       const effectsDbPath = resolveEffectsDbPath(projectPath);
+      const effectsLookup = effectsDbPath
+        ? EffectsLookup.load(effectsDbPath)
+        : EffectsLookup.empty();
       try {
-        const effectsLookup = effectsDbPath
-          ? EffectsLookup.load(effectsDbPath)
-          : EffectsLookup.empty();
         // RFDBServerBackend's RFDBClient field is private at compile time but
         // accessible at runtime; the enricher only needs the wire-level client.
         const client = (backend as unknown as { client: Parameters<typeof enrichLibraryCallbacks>[0] }).client;
@@ -380,6 +386,41 @@ export async function analyzeAction(path: string, options: { service?: string; e
         }
       } catch (err) {
         debug(`Contract enricher skipped: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      // Speced-contract enricher — for every FEATURE node, run the registered
+      // per-category extractors (commander spec strings, MCP inputSchema, …)
+      // to produce SPECED_CONTRACT nodes carrying the user-facing interface.
+      // Distinct from the existing CONTRACT (handler signature scrape) which
+      // is implementation-side. See `_ai/research/feature-taxonomy.md` §1.3.
+      try {
+        const client = (backend as unknown as { client: Parameters<typeof enrichSpecedContracts>[0] }).client;
+        if (client) {
+          const result = await enrichSpecedContracts(client, [
+            commanderExtractor,
+            mcpInputSchemaExtractor,
+            vscodeContributesExtractor,
+            httpRouteExtractor,
+          ]);
+          info(`  Speced contracts: ${result.contractsCreated} (${result.inputsTotal} inputs); byCategory=${JSON.stringify(result.byCategory)}; missingExtractor=${result.featuresWithoutExtractor}, missingSpec=${result.featuresWithoutSpec}`);
+        }
+      } catch (err) {
+        debug(`Speced contract enricher skipped: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      // Behavior enricher — for every FEATURE-class node, walk the HANDLES
+      // edge to the entry function and compute a transitive CALLS closure.
+      // Stores BEHAVIOR with hash + effects + summary (no COMPRISES edges —
+      // see skill `materialize-only-what-queries-need`). Pass 2 emits
+      // SHARES_BEHAVIOR_WITH between behaviors with identical hash.
+      try {
+        const client = (backend as unknown as { client: Parameters<typeof enrichBehaviors>[0] }).client;
+        if (client) {
+          const result = await enrichBehaviors(client, effectsLookup);
+          info(`  Behaviors: ${result.behaviorsCreated} BEHAVIOR nodes, ${result.sharesBehaviorEdges} SHARES_BEHAVIOR_WITH edges (totalCoreNodes=${result.totalCoreNodes}, missingEntry=${result.featuresWithoutEntry})`);
+        }
+      } catch (err) {
+        debug(`Behavior enricher skipped: ${err instanceof Error ? err.message : String(err)}`);
       }
 
       // Package API enricher — for every monorepo package barrel

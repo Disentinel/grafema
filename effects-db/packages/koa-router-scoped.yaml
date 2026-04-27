@@ -1,0 +1,113 @@
+# @koa/router (12.x / 13.x) — scoped alias for koa-router
+# Generated: 2026-04-26 (REG-1115)
+# Note: This file's purl is pkg:npm/@koa/router. The YAML key uses the literal
+# package name as it appears in `import` statements, which matches the
+# subpath-prefix logic in libraryCallbackEnricher (`@scope/pkg` matches
+# imports of `@scope/pkg/...`). The method surface is identical to koa-router.
+
+"@koa/router":
+  Router.new:
+    effects: [PURE]
+    returns:
+      type: Router
+  Router.get:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Router
+  Router.post:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Router
+  Router.put:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Router
+  Router.delete:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Router
+  Router.del:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Router
+  Router.patch:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Router
+  Router.head:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Router
+  Router.options:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Router
+  Router.all:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Router
+  Router.use:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: MOUNTPOINT
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Router
+  Router.routes: [PURE]
+  Router.allowedMethods: [PURE]
+  Router.prefix: [MUTATION]
+  Router.param:
+    effects: [MUTATION]
+    args:
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: Router
+  Router.redirect: [MUTATION]

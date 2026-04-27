@@ -37,6 +37,14 @@ const LIBRARY_NODE_TYPE: Record<string, string> = {
   commander: 'cli:command',
   '@modelcontextprotocol/sdk': 'mcp:tool',
   vscode: 'vscode:command',
+  // HTTP frameworks (REG-1115). Each route registration call becomes one
+  // `http:route` FEATURE; httpRouteExtractor builds the SpecedContract.
+  express: 'http:route',
+  fastify: 'http:route',
+  koa: 'http:route',
+  'koa-router': 'http:route',
+  '@koa/router': 'http:route',
+  hono: 'http:route',
 };
 
 interface Rule {

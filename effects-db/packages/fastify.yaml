@@ -1,0 +1,166 @@
+# fastify (4.x / 5.x) — HTTP server framework
+# Generated: 2026-04-26 (REG-1115)
+# Method: Claude inference based on Fastify docs + Grafema graph patterns
+# Taxonomy version: 1
+# purl: pkg:npm/fastify
+#
+# Fastify supports two route registration styles:
+#   1) Method shorthand: `app.get('/path', handler)` or
+#                        `app.get('/path', { schema }, handler)`
+#   2) Generic: `app.route({ method, url, schema, handler })`
+#
+# For the shorthand form we annotate args[0] as ROUTE_PATH; the handler may sit
+# at args[1] (no options) or args[2] (options object precedes it). The current
+# enricher dispatches on a single ENTRY_POINT_CALLBACK index, so we annotate
+# the most common 2-arg form (path, handler) — the 3-arg form is captured by
+# the httpRouteExtractor walking PASSES_ARGUMENT edges, where the handler
+# function ID is recoverable regardless of its positional index.
+#
+# `app.register(plugin, opts)` mounts a sub-plugin tree. The plugin function
+# itself is an ENTRY_POINT_CALLBACK; its returned route registrations get
+# detected on their own.
+
+fastify:
+  # ---------------------------------------------------------------------------
+  # Factory
+  # ---------------------------------------------------------------------------
+  fastify:
+    effects: [PURE]
+    returns:
+      type: FastifyInstance
+
+  # ---------------------------------------------------------------------------
+  # Method shorthand routes — args[0] = ROUTE_PATH, args[1] = ENTRY_POINT_CALLBACK
+  # If the user passes a schema/options object at args[1], the handler shifts to
+  # args[2]; the httpRouteExtractor handles either layout when reading the path.
+  # ---------------------------------------------------------------------------
+  FastifyInstance.get:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: FastifyInstance
+  FastifyInstance.post:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: FastifyInstance
+  FastifyInstance.put:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: FastifyInstance
+  FastifyInstance.delete:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: FastifyInstance
+  FastifyInstance.patch:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: FastifyInstance
+  FastifyInstance.head:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: FastifyInstance
+  FastifyInstance.options:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: FastifyInstance
+  FastifyInstance.all:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ROUTE_PATH
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: FastifyInstance
+
+  # Generic route registration: app.route({ method, url, schema, handler })
+  # The single options-object form: handler is a property, not a positional
+  # arg, so we cannot annotate it with role. Effects only; httpRouteExtractor
+  # currently does not extract this form (deferred to v2).
+  FastifyInstance.route:
+    effects: [MUTATION]
+    returns:
+      type: FastifyInstance
+
+  # Plugin mounting
+  FastifyInstance.register:
+    effects: [MUTATION, ASYNC]
+    args:
+      - index: 0
+        role: ENTRY_POINT_CALLBACK
+    returns:
+      type: FastifyInstance
+
+  # Lifecycle / hooks — IO (start a real server)
+  FastifyInstance.listen: [IO, ASYNC]
+  FastifyInstance.close: [IO, ASYNC]
+  FastifyInstance.ready: [IO, ASYNC]
+  FastifyInstance.inject: [IO, ASYNC]
+
+  # Hooks
+  FastifyInstance.addHook:
+    effects: [MUTATION]
+    args:
+      - index: 1
+        role: ENTRY_POINT_CALLBACK
+  FastifyInstance.decorate: [MUTATION]
+  FastifyInstance.decorateRequest: [MUTATION]
+  FastifyInstance.decorateReply: [MUTATION]
+  FastifyInstance.addSchema: [MUTATION]
+  FastifyInstance.setErrorHandler:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ENTRY_POINT_CALLBACK
+  FastifyInstance.setNotFoundHandler:
+    effects: [MUTATION]
+    args:
+      - index: 0
+        role: ENTRY_POINT_CALLBACK
+
+  # Reply API — IO
+  FastifyReply.send: [IO]
+  FastifyReply.code: [MUTATION]
+  FastifyReply.status: [MUTATION]
+  FastifyReply.header: [MUTATION]
+  FastifyReply.headers: [MUTATION]
+  FastifyReply.type: [MUTATION]
+  FastifyReply.redirect: [IO]
+  FastifyReply.callNotFound: [IO]
+
+  # Request API — PURE
+  FastifyRequest.getValidationFunction: [PURE]
