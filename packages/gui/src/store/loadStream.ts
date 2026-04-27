@@ -122,6 +122,18 @@ interface DoneMsg {
 }
 
 /**
+ * Up-front denominators for the progress UI. Server emits this right
+ * after `header` so the GUI can render `loaded/total` from the first
+ * byte instead of only learning the total at `done`. `edges` is 0 when
+ * the request set `noEdges=1` (default GUI bootstrap).
+ */
+interface TotalsMsg {
+  type: 'totals';
+  nodes: number;
+  edges: number;
+}
+
+/**
  * Phase 3 — nodes are emitted in depth-bucketed groups. Each bucket
  * is wrapped by an `open` frame announcing depth + count, then the
  * usual `node` frames, then a `close` frame so progressive renderers
@@ -199,6 +211,7 @@ type StreamMsg =
   | LayoutMetaMsg
   | HullsMsg
   | ExcludedNodesMsg
+  | TotalsMsg
   | NodesBucketOpenMsg
   | NodesBucketCloseMsg;
 
@@ -328,6 +341,13 @@ export async function parseStream(
         header = msg;
         if (import.meta.env?.DEV) console.log('[parseStream] header received:', msg.typeTable.length, 'types,', msg.regions.length, 'regions');
         onProgress('header', 0);
+        break;
+      case 'totals':
+        // Up-front denominators. Tucked between header and the bucket
+        // open frames; client-side progress UI can switch from "starting"
+        // to "0 / N" the instant this lands.
+        if (import.meta.env?.DEV) console.log('[parseStream] totals:', msg.nodes, 'nodes,', msg.edges, 'edges');
+        onProgress('totals', msg.nodes, msg.edges);
         break;
       case 'node':
         rawNodes.push(msg);

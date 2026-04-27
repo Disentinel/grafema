@@ -1100,6 +1100,21 @@ fn build_graph_stream_body(
         &reason_table,
     );
 
+    // Up-front totals so the GUI progress UI can render N/M from the
+    // first byte of the stream instead of only learning the denominator
+    // at `done`. `nodes` is the total candidate count (placed +
+    // excluded); `edges` matches what the per-edge emit loop will
+    // produce when `no_edges=0`. Emitted right after `header` so any
+    // streaming consumer sees it before the bucketed node frames.
+    lines.push(
+        serde_json::to_string(&serde_json::json!({
+            "type": "totals",
+            "nodes": node_count,
+            "edges": if no_edges { 0u64 } else { edge_refs.len() as u64 },
+        }))
+        .unwrap(),
+    );
+
     // Phase 1 — emit precomputed hulls right after the header so the GUI
     // can render hulls + toponyms before parsing the node tail. When the
     // cache hasn't been built yet (no warmup, missing layout, etc.) we

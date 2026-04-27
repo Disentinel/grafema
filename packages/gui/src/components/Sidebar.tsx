@@ -39,8 +39,46 @@ export function formatViewReadout(
     : `Zoom: ${zoom.toFixed(2)}`;
 }
 
+/**
+ * Pure formatter for the streaming progress line. Pulled out so unit
+ * tests can pin the wording / clamp without standing up React.
+ *
+ * Format: `Loading: 12,300 / 28,023 nodes (44%)` while nodes still
+ * inbound; switches to edges once nodes are at 100% and edge total > 0.
+ */
+export function formatProgressLine(p: {
+  nodesLoaded: number;
+  nodesTotal: number;
+  edgesLoaded: number;
+  edgesTotal: number;
+}): string {
+  if (p.nodesTotal === 0) return 'Connecting…';
+  if (p.nodesLoaded < p.nodesTotal) {
+    const pct = Math.min(100, Math.round((p.nodesLoaded / p.nodesTotal) * 100));
+    return `${p.nodesLoaded.toLocaleString()} / ${p.nodesTotal.toLocaleString()} nodes (${pct}%)`;
+  }
+  if (p.edgesTotal > 0) {
+    const pct = Math.min(100, Math.round((p.edgesLoaded / p.edgesTotal) * 100));
+    return `${p.edgesLoaded.toLocaleString()} / ${p.edgesTotal.toLocaleString()} edges (${pct}%)`;
+  }
+  return 'Finalizing…';
+}
+
+/** Bar width 0..1 derived from progress. Same precedence as formatProgressLine. */
+export function progressFraction(p: {
+  nodesLoaded: number;
+  nodesTotal: number;
+  edgesLoaded: number;
+  edgesTotal: number;
+}): number {
+  if (p.nodesTotal === 0) return 0;
+  if (p.nodesLoaded < p.nodesTotal) return p.nodesLoaded / p.nodesTotal;
+  if (p.edgesTotal > 0) return p.edgesLoaded / p.edgesTotal;
+  return 1;
+}
+
 export function Sidebar() {
-  const { nodes, edges, regions, loaded, loading } = useDataStore();
+  const { nodes, edges, regions, loaded, loading, progress } = useDataStore();
   const { lodLevel, cameraDistance, zoom } = useMapStore();
   const { enabledFlows, mode } = useViewStore();
   // Optional: Sidebar renders under SSR (no provider) during the pure
@@ -81,7 +119,30 @@ export function Sidebar() {
         <div className="stats">Hex Map v2</div>
       </div>
 
-      {loading && <div className="stats">Loading graph...</div>}
+      {(loading || progress.phase === 'connecting' || progress.phase === 'streaming') && (
+        <div>
+          <h2>Loading</h2>
+          <div className="stats">{formatProgressLine(progress)}</div>
+          <div
+            style={{
+              marginTop: 6,
+              height: 4,
+              borderRadius: 2,
+              background: 'rgba(255,255,255,0.08)',
+              overflow: 'hidden',
+            }}
+          >
+            <div
+              style={{
+                height: '100%',
+                width: `${Math.round(progressFraction(progress) * 100)}%`,
+                background: '#00e5ff',
+                transition: 'width 120ms linear',
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       {loaded && (
         <>
