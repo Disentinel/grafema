@@ -25,6 +25,7 @@ import {
   type HullRegion,
   type HullRegionPrecomputed,
 } from '../three/HullLayer';
+import { WallLayer } from '../three/WallLayer';
 import type { HexCoord } from '../geom/hex';
 import { worldToAxial } from '../store/loadStream';
 import { loadEdges } from '../store/loadEdges';
@@ -336,6 +337,12 @@ export function buildHullLayer(
   const hullLayer = new HullLayer(sm.scene);
   hullLayer.setStyle(useViewStore.getState().mode.hullStyle);
 
+  // City-mode walls along hull borders. Built / refreshed alongside
+  // hulls in `applyFrame` below; height tracks `__hexMaxBase` so walls
+  // align with the tallest column. Hidden when heightMultiplier=0
+  // (Flat view) — flat hulls don't need walls.
+  const wallLayer = new WallLayer(sm.scene);
+
   // Last-applied zoom bucket (quantised) so we skip rebuilds when the
   // camera barely moved. 3 digits of precision ≈ 0.1% zoom steps —
   // tight enough that boundary crossings still fire, loose enough to
@@ -443,9 +450,44 @@ export function buildHullLayer(
     const maxBase = (globalThis as Record<string, unknown>).__hexMaxBase as
       | number
       | undefined;
-    hullLayer.group.position.y = (maxBase ?? 0) + 1.0;
+    const top = (maxBase ?? 0) + 1.0;
+    hullLayer.group.position.y = top;
+    // Walls extrude from y=0 to the same top so the outline sits at
+    // the wall's crown. Hide walls in Flat mode (mult=0) — the
+    // heightmap is off so there's nothing to enclose.
+    const mult = useViewStore.getState().heightMultiplier;
+    wallLayer.setHeight(top);
+    wallLayer.setVisible(mult > 0);
     sm.requestRender();
   }
+
+  // Walls follow the same precomputed polygons HullLayer uses. Rebuild
+  // happens on hullCache identity change OR heightmap recompute (via
+  // event) — same triggers as `liftHullsForHeightmap`. Folded into
+  // applyFrame's bucket-change branch would over-rebuild on every zoom
+  // bucket; we only need a rebuild when the polygon set changes.
+  let lastWallCacheRef: unknown = null;
+  function rebuildWalls() {
+    const { hullCache, regionTree } = useLayoutStore.getState();
+    if (hullCache === lastWallCacheRef) return;
+    lastWallCacheRef = hullCache;
+    if (hullCache.size === 0) {
+      wallLayer.setHullPolygons([]);
+      return;
+    }
+    // Skip file-level hulls (per-file fences would create one fence per
+    // tile cluster — visual noise). Keep package + sub-folder envelopes
+    // (depth ≤ 3) so the city reads as walled districts at every zoom.
+    const allPolys: Array<readonly import('../geom/hull').HullLoop[]> = [];
+    for (const [regionId, geometry] of hullCache) {
+      const region = regionTree.byId.get(regionId);
+      if (!region || region.depth > 3) continue;
+      allPolys.push(geometry.polygons);
+    }
+    wallLayer.setHullPolygons(allPolys);
+    sm.requestRender();
+  }
+  rebuildWalls();
   liftHullsForHeightmap();
   // Single source of truth: hex builder dispatches `heightmap-recomputed`
   // after every recomputeBase (initial setProperty + each animateTo
@@ -454,11 +496,22 @@ export function buildHullLayer(
   const onHeightmapEvent = () => liftHullsForHeightmap();
   window.addEventListener('grafema:heightmap-recomputed', onHeightmapEvent);
 
+  // Rebuild walls when stream-load hydration repopulates the hull
+  // cache (same trigger HullLayer uses to repaint).
+  const unsubWalls = useLayoutStore.subscribe((state, prev) => {
+    if (state.hullCache !== prev.hullCache) {
+      rebuildWalls();
+      liftHullsForHeightmap();
+    }
+  });
+
   return {
     layer: hullLayer,
     unsubscribe: () => {
       unsubLayout();
+      unsubWalls();
       window.removeEventListener('grafema:heightmap-recomputed', onHeightmapEvent);
+      wallLayer.dispose();
     },
   };
 }
