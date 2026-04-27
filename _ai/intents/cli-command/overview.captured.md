@@ -7,20 +7,20 @@
 📊 Project Overview
 
 Code Structure:
-├─ Modules: 547
-├─ Functions: 6171
-├─ Classes: 71
-├─ Variables: 982
-└─ Call sites: 28505
+├─ Modules: 567
+├─ Functions: 6352
+├─ Classes: 90
+├─ Variables: 1056
+└─ Call sites: 29505
 
 External Interactions:
 └─ External modules: 10
 
 Graph Statistics:
-├─ Total nodes: 443100
-├─ Total edges: 808827
-├─ Calls: 4089
-├─ Contains: 228392
+├─ Total nodes: 261761
+├─ Total edges: 519144
+├─ Calls: 11053
+├─ Contains: 237182
 └─ Imports: 0
 
 Next steps:
@@ -33,29 +33,29 @@ Next steps:
 ## json-output-for-scripting
 ```
 {
-  "nodeCount": 443100,
-  "edgeCount": 808827,
+  "nodeCount": 261761,
+  "edgeCount": 519144,
   "nodesByType": {
-    "IMPORT_BINDING": 4415,
-    "ISSUE": 26401,
-    "CLASS": 71,
-    "VARIABLE": 982,
-    "CONSTANT": 5340,
-    "CATCH_BLOCK": 156,
-    "CONTRACT": 79,
-    "ATTRIBUTE": 36,
-    "TRY_BLOCK": 179,
-    "INSTANCE": 216,
-    "IMPL_BLOCK": 5,
-    "CONSTRAINT": 8,
-    "PROPERTY_SIGNATURE": 2367,
-    "EXPORT_BINDING": 1555,
-    "METRIC": 4998,
-    "EXTERNAL_MODULE": 10,
+    "VARIANT": 65,
+    "CONSTANT": 5929,
+    "DO_BLOCK": 1362,
+    "PATTERN": 4693,
     "RECORD_FIELD": 2012,
-    "STRUCT": 19,
-    "LET_BLOCK": 400,
-    "FUNCTION": 6171,
-    "mcp:tool": 40,
-... (truncated, 90 more lines)
+    "CONSTRUCTOR": 1174,
+    "CONTRACT": 111,
+    "INSTANCE": 216,
+    "cli:command": 35,
+    "TYPE_ALIAS": 89,
+    "ENUM": 10,
+    "GUARANTEE": 51,
+    "METHOD_SIGNATURE": 225,
+    "EFFECT": 164,
+    "LITERAL": 18946,
+    "EXTERNAL_FUNCTION": 99,
+    "ATTRIBUTE": 36,
+    "CASE": 254,
+    "MODULE": 567,
+    "METRIC": 5190,
+    "CONSTRAINT": 8,
+... (truncated, 95 more lines)
 ```

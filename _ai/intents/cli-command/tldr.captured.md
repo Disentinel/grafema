@@ -4,29 +4,29 @@
 ## compact-overview-of-a-single-command-file
 ```
 /Users/vadimr/grafema-worker-1/packages/cli/src/commands/doctor.ts  (packages/cli/src/commands/doctor.ts:1) {
+  o- depends on /Users/vadimr/grafema-worker-1/packages/cli/src/commands/doctor/output.ts, /Users/vadimr/grafema-worker-1/packages/cli/src/commands/doctor/types.ts, /Users/vadimr/grafema-worker-1/packages/cli/src/commands/doctor/checks.ts
   ...+3 more <obj>.option
   doctorCommand < assigned from <obj>.action  (packages/cli/src/commands/doctor.ts:34)
-  <obj>.option  (packages/cli/src/commands/doctor.ts:34) {
-    > passes '-v, --verbose', 'Show detailed diagnostics'
-    > derived from option
-    > receiver call <obj>.option
-  }
-  ...+3 more calls
   action  (packages/cli/src/commands/doctor.ts:34) {
     < reads <obj>.addHelpText
   }
   ...+3 more property_access
-  [import: commander, path, ./doctor/checks.js, ./doctor/output.js, ./doctor/types.js]
-  [import_binding: Command, resolve, checkBinaries, checkGrafemaInitialized, checkServerStatus, checkConfigValidity, checkEntrypoints, checkDatabaseExists, checkGraphStats, checkConnectivity, checkFreshness, checkVersions, formatReport, buildJsonReport, DoctorOptions, DoctorCheckResult]
-  [literal: 'after', <template>, '-v, --verbose', 'Show detailed diagnostics', '-q, --quiet', 'Only show failures', '-j, --json', 'Output as JSON', '-p, --project <path>', 'Project path', '.', 'Diagnose Grafema setup issues', 'doctor']
-  named  (packages/cli/src/commands/doctor.ts:34) {
-    o- exports doctorCommand
+  checkBinaries  (packages/cli/src/commands/doctor.ts:20) {
+    o- imports from checkBinaries
   }
-  λ → <obj>.action  (packages/cli/src/commands/doctor.ts:47) {
-    < receives options
-    > awaits checkBinaries, checkGrafemaInitialized, checkConfigValidity, checkEntrypoints, checkServerStatus, checkDatabaseExists, checkGraphStats, checkConnectivity, checkFreshness, checkVersions
+  ...+13 more import_bindings
+  ./doctor/types.js  (packages/cli/src/commands/doctor.ts:32) {
+    o- imports from /Users/vadimr/grafema-worker-1/packages/cli/src/commands/doctor/types.ts
   }
-  Command  (packages/cli/src/commands/doctor.ts:34) {
-    > passes 'doctor'
-... (truncated, 11 more lines)
+  ...+3 more imports
+  [literal: '-j, --json', 'after', 'Show detailed diagnostics', '.', 'Project path', '-q, --quiet', 'doctor', '-p, --project <path>', 'Diagnose Grafema setup issues', 'Only show failures', '-v, --verbose', 'Output as JSON', <template>]
+  <obj>.option  (packages/cli/src/commands/doctor.ts:34) {
+    > receiver call <obj>.option
+    > derived from option
+    > passes 'Show detailed diagnostics', '-v, --verbose'
+    > calls METHOD:option@<builtin>
+  }
+  <obj>.addHelpText  (packages/cli/src/commands/doctor.ts:34) {
+    > receiver call <obj>.option
+... (truncated, 39 more lines)
 ```

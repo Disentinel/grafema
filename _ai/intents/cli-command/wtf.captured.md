@@ -3,44 +3,60 @@
 
 ## backward-trace-from-a-variable
 ```
-featureId (CONSTANT) — packages/cli/src/commands/featuresAction.ts:126
+featureId (CONSTANT) — packages/mcp/src/handlers/behavior-handlers.ts:109
 
-"featureId" ← chain (10 nodes reached)
+"featureId" ← fan-in from 3 modules (19 nodes reached)
 
-  packages/cli/src/commands/featuresAction.ts
-    < backend (PARAMETER)
+  packages/mcp/src/handlers/behavior-handlers.ts
+    < ensureAnalyzed (IMPORT_BINDING)
+    < db (PARAMETER)
     => bucket (CONSTANT)
     => beh (CONSTANT)
     => edges (CONSTANT)
-    < backend.getIncomingEdges (CALL)
+    < db.getIncomingEdges (CALL)
     < id (PROPERTY_ACCESS)
     < getIncomingEdges (PROPERTY_ACCESS)
     => edge (CONSTANT)
     < String (CALL)
     < src (PROPERTY_ACCESS)
+    < args (PARAMETER)
+    => db (CONSTANT)
+    < ensureAnalyzed (CALL)
 
-Legend: < reads  o- depends on  > calls  => writes  ~>> emits  >x throws  ?| guards  |= governs  {} contains
-Use --detail full for complete chain, --detail summary for overview
+  packages/mcp/src/analysis.ts
+    < getOrCreateBackend (IMPORT_BINDING)
+    => db (CONSTANT)
+    < getOrCreateBackend (CALL)
+
+... (truncated, 6 more lines)
 ```
 
 ## custom-depth
 ```
-featureId (CONSTANT) — packages/cli/src/commands/featuresAction.ts:126
+featureId (CONSTANT) — packages/mcp/src/handlers/behavior-handlers.ts:109
 
-"featureId" ← chain (10 nodes reached)
+"featureId" ← fan-in from 3 modules (19 nodes reached)
 
-  packages/cli/src/commands/featuresAction.ts
-    < backend (PARAMETER)
+  packages/mcp/src/handlers/behavior-handlers.ts
+    < ensureAnalyzed (IMPORT_BINDING)
+    < db (PARAMETER)
     => bucket (CONSTANT)
     => beh (CONSTANT)
     => edges (CONSTANT)
-    < backend.getIncomingEdges (CALL)
+    < db.getIncomingEdges (CALL)
     < id (PROPERTY_ACCESS)
     < getIncomingEdges (PROPERTY_ACCESS)
     => edge (CONSTANT)
     < String (CALL)
     < src (PROPERTY_ACCESS)
+    < args (PARAMETER)
+    => db (CONSTANT)
+    < ensureAnalyzed (CALL)
 
-Legend: < reads  o- depends on  > calls  => writes  ~>> emits  >x throws  ?| guards  |= governs  {} contains
-Use --detail full for complete chain, --detail summary for overview
+  packages/mcp/src/analysis.ts
+    < getOrCreateBackend (IMPORT_BINDING)
+    => db (CONSTANT)
+    < getOrCreateBackend (CALL)
+
+... (truncated, 6 more lines)
 ```

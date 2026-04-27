@@ -94,12 +94,20 @@ Add to `.mcp.json` in your project root:
 
 **Query**
 - ✅ CLI: `tldr`, `who`, `wtf`, `why`, `check`, `overview`
-- ✅ 30+ MCP tools for AI agents
+- ✅ 40+ MCP tools for AI agents (graph queries, navigation, dataflow, knowledge, git history)
 - ✅ Datalog for custom structural queries
 - ✅ Cypher query language
 - ✅ Programmatic API (`@grafema/util`)
 - ✅ HexAtlas — visual code map (2D/3D)
 - ✅ VS Code extension
+
+**Document**
+- ✅ `grafema export --as docs-md` — generate human-readable docs from the live graph
+- ✅ `grafema export --as openapi-3.1` — auto-generate OpenAPI for HTTP routes
+- ✅ `grafema export --as mcp-schema` — JSON-RPC tool registry, directly servable by any MCP runtime
+- ✅ `grafema export --as json-schema` — Draft 2020-12 schemas per FEATURE
+- ✅ Intent sidecars (`_ai/intents/...`) — handwritten "when to use" + captured examples that augment autogen output
+- ✅ `grafema features --duplicates` — cross-modality dedup ("which CLI commands are wrappers around the same library function as which MCP tools")
 
 **Connect knowledge to code entities and flows**
 - ✅ Knowledge base — decisions, ADRs linked to code nodes

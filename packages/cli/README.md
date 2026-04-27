@@ -1,85 +1,99 @@
 # @grafema/cli
 
-> Grafema command-line interface for building and querying the code graph.
+> Build a graph of your code, then query it like a database.
 
-**Warning: This package is in beta stage and the API may change between minor versions.**
+Grafema turns your codebase into a queryable graph: functions, calls,
+dataflow, types, exports, side effects. Use it to answer structural
+questions that grep can't reach: "who calls this", "where does this
+value come from", "did anyone change the contract of this endpoint".
 
-## Quick Start
+**Status: beta — APIs may shift between minor versions.**
 
-```bash
-npx @grafema/cli init
-npx @grafema/cli analyze
-npx @grafema/cli overview
-```
+---
 
-## Commands
-
-### Project setup
+## Five-minute tour
 
 ```bash
-npx @grafema/cli init           # Create .grafema/config.yaml
-npx @grafema/cli analyze         # Build the graph
-npx @grafema/cli overview        # Summary of nodes/edges found
-npx @grafema/cli schema          # List node and edge types
-npx @grafema/cli types           # List available node types
+npx @grafema/cli init                              # one-time setup
+npx @grafema/cli analyze                           # build the graph (1-2 min on a typical repo)
+npx @grafema/cli tldr packages/cli/src/cli.ts     # 30-second file overview
+npx @grafema/cli who handleRequest                # find every caller
+npx @grafema/cli wtf userId                       # backward dataflow trace
 ```
 
-### Querying the graph
+Install globally with `npm i -g @grafema/cli` to drop the `npx` prefix.
+
+---
+
+## Common workflows
+
+### "I just cloned this repo, what is it?"
 
 ```bash
-npx @grafema/cli query "auth"                    # Name search (partial match)
-npx @grafema/cli query "function login"          # Type + name
-npx @grafema/cli query "route /api"              # Route search
-npx @grafema/cli query "token in authenticate"   # Scope filtering
-npx @grafema/cli query --type http:request "/api" # Exact type
-npx @grafema/cli query --raw 'type(X, "FUNCTION")'
+grafema init                # writes .grafema/config.yaml
+grafema analyze             # populates the graph
+grafema overview            # node/edge counts, ISSUE summary
+grafema tldr <key file>     # structural overview, 10-20× shorter than source
 ```
 
-### Data flow tracing
+### "Where does this value come from?"
 
 ```bash
-npx @grafema/cli trace "userId"                   # Trace variable sources/sinks
-npx @grafema/cli trace "userId from authenticate" # Scoped trace
-npx @grafema/cli trace --to "addNode#0.type"       # Sink-based trace
-npx @grafema/cli trace --from-route "GET /status"  # Route response trace
+grafema wtf <symbol>            # backward dataflow
+grafema trace --to <sink-spec>  # all-paths-to a sink
 ```
 
-### Navigation helpers
+### "Who uses this function?"
 
 ```bash
-npx @grafema/cli ls --type FUNCTION        # List nodes by type
-npx @grafema/cli get <semantic-id>         # Get a single node by ID
-npx @grafema/cli explain <node-id>         # Explain a node (summary)
+grafema who <symbol>          # resolved call sites
+grafema impact <node>         # downstream impact set
 ```
 
-### Checks & diagnostics
+### "Why is the code structured this way?"
 
 ```bash
-npx @grafema/cli check                 # Run all guarantees
-npx @grafema/cli check dataflow        # Run a diagnostic category
-npx @grafema/cli check --list-categories
-npx @grafema/cli doctor                # Validate local setup
+grafema why <symbol>          # decisions / facts in the knowledge base
 ```
 
-### Server management
+### "Did I break anything?" (CI gate)
 
 ```bash
-npx @grafema/cli server start          # Start RFDB server
-npx @grafema/cli server stop           # Stop RFDB server
-npx @grafema/cli server status         # Check server status
+grafema check                 # runs every guarantee, exits non-zero on violations
+grafema doctor                # local environment health check
 ```
 
-### Misc
+### "Generate documentation from the graph"
 
 ```bash
-npx @grafema/cli coverage               # Coverage stats
-npx @grafema/cli impact                 # Impact analysis
-npx @grafema/cli explore                # Interactive explorer (TUI)
-npx @grafema/cli analyze --log-file analysis.log  # Log to file
+grafema export --feature 'cli:command' --as docs-md   > cli-reference.md
+grafema export --feature 'mcp:tool'    --as mcp-schema > mcp-tools.json
+grafema export --feature 'http:route'  --as openapi-3.1 > openapi.yaml
 ```
+
+---
+
+## All commands
+
+The full per-command catalogue with flags, defaults, examples, and
+captured output lives in **[docs/cli-reference.md](../../docs/cli-reference.md)**.
+
+That document is regenerated from the live graph on each release via:
+
+```bash
+grafema export --feature 'cli:command' --as docs-md --output docs/cli-reference.md
+```
+
+If you change a flag, description, or option in source, the reference
+updates automatically on next build. No drift between code and docs.
+
+---
 
 ## Notes
 
 - All commands accept `--project <path>` to point at a specific repo.
-- `npx @grafema/cli` works without global install and is preferred for docs/examples.
-- Unknown Datalog predicates in `--raw` queries will show a warning with suggestions.
+  Defaults to the current directory.
+- For AI integration via MCP, see [@grafema/mcp](../mcp/README.md).
+- For VS Code integration, see [@grafema/vscode](../vscode/README.md).
+- Datalog `--raw` queries fail open with a helpful warning if predicates
+  are unknown — typos won't crash a script.

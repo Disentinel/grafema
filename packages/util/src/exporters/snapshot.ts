@@ -152,9 +152,19 @@ export async function collectFeatureSnapshots(
 
   for (const category of categories) {
     const features: Array<Record<string, unknown>> = [];
+    // Dedup by (category, name) — analyze passes can produce multiple
+    // FEATURE nodes for the same logical command when the same name is
+    // detected in multiple places (e.g. an `addCommand(tldrCommand)` plus
+    // the original `new Command('tldr')` registration). We render a single
+    // entry per unique name; the first one queried wins. Underlying graph
+    // dedup is a follow-up REG.
+    const seenNames = new Set<string>();
     for await (const node of backend.queryNodes({ type: category })) {
       const name = readString(node.name) ?? '';
       if (!minimatch(name, nameGlob)) continue;
+      const dedupKey = stripQuotes(name);
+      if (seenNames.has(dedupKey)) continue;
+      seenNames.add(dedupKey);
       features.push(node);
     }
 
