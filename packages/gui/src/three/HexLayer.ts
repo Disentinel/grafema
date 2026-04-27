@@ -21,6 +21,11 @@ const VERT = /* glsl */ `
   attribute float aScale;
   attribute vec3 aOutlineColor;
   attribute float aOutlineWidth;
+  // Per-vertex (not per-instance) — 0 for bottom rim/center of the prism,
+  // 1 for the top. Geometry now extrudes a hex column from y=0 to y=1
+  // unscaled; the vertex shader stretches the top up to aElevation so
+  // the tile renders as a tower rather than a floating disc.
+  attribute float aIsTop;
 
   varying float vOpacity;
   varying vec3 vNormal;
@@ -28,6 +33,7 @@ const VERT = /* glsl */ `
   varying vec3 vOutlineColor;
   varying float vOutlineWidth;
   varying vec2 vLocalPos;
+  varying float vIsTop;
 
   void main() {
     vOpacity = aOpacity;
@@ -35,13 +41,17 @@ const VERT = /* glsl */ `
     vOutlineColor = aOutlineColor;
     vOutlineWidth = aOutlineWidth;
     vNormal = normalMatrix * normal;
+    vIsTop = aIsTop;
 
-    // Scale position within hex
-    vec3 scaled = position * aScale;
+    // Scale XZ only — Y stays at the geometry's 0/1 so aElevation alone
+    // controls column height. Scaling Y too would cause a degree-0 tile
+    // (aScale=1, aElevation=0) to collapse correctly, but a pinned tile
+    // (aScale=1.15) would be subtly taller, which we don't want.
+    vec3 scaled = vec3(position.x * aScale, position.y, position.z * aScale);
     vLocalPos = scaled.xz;
 
     vec4 wp = instanceMatrix * vec4(scaled, 1.0);
-    wp.y += aElevation;
+    wp.y += aIsTop * aElevation;
 
     gl_Position = projectionMatrix * modelViewMatrix * wp;
   }
@@ -54,27 +64,30 @@ const FRAG = /* glsl */ `
   varying vec3 vOutlineColor;
   varying float vOutlineWidth;
   varying vec2 vLocalPos;
+  varying float vIsTop;
 
   void main() {
     if (vOpacity < 0.01) discard;
 
-    // Top-down lighting — keep colors vivid
+    // Top-down lighting — sides receive less than tops by design (the
+    // up-facing dot product collapses on vertical walls), so columns
+    // get free shading without a separate side material.
     float light = max(dot(vNormal, vec3(0.0, 1.0, 0.0)), 0.4);
     vec3 baseColor = vInstanceColor * (0.6 + light * 0.3);
 
-    // Subtle inner glow — brighter center, darker edges
+    // Glow + rim are XZ-radial — they should only paint the top face.
+    // On side walls vLocalPos sits at corner radius (≈ size) which would
+    // trigger the rim everywhere; gate by vIsTop so sides stay flat.
     float dist = length(vLocalPos);
-    float innerGlow = 1.0 - smoothstep(0.0, 0.9, dist);
+    float innerGlow = (1.0 - smoothstep(0.0, 0.9, dist)) * vIsTop;
     baseColor += vInstanceColor * innerGlow * 0.15;
 
-    // Hex edge: subtle bright rim
-    float rimGlow = smoothstep(0.75, 0.95, dist) * (1.0 - smoothstep(0.95, 1.0, dist));
+    float rimGlow = smoothstep(0.75, 0.95, dist) * (1.0 - smoothstep(0.95, 1.0, dist)) * vIsTop;
     baseColor += vInstanceColor * rimGlow * 0.2;
 
-    // Outline — bright enough for bloom, colored by outline color
-    float hasOutline = step(0.001, vOutlineWidth);
+    // Outline (top face only — bottom is hidden, sides shade themselves).
+    float hasOutline = step(0.001, vOutlineWidth) * vIsTop;
     float edgeMix = smoothstep(1.0 - vOutlineWidth - 0.08, 1.0 - vOutlineWidth, dist);
-    // Also add a soft glow halo around the outline (wider, softer)
     float haloMix = smoothstep(1.0 - vOutlineWidth - 0.25, 1.0 - vOutlineWidth - 0.08, dist);
     baseColor = mix(baseColor, baseColor + vOutlineColor * 0.5, haloMix * hasOutline);
     vec3 color = mix(baseColor, vOutlineColor * 3.0, edgeMix * hasOutline);
@@ -84,15 +97,48 @@ const FRAG = /* glsl */ `
 `;
 
 function createHexGeometry(size: number): THREE.BufferGeometry {
-  const v: number[] = [0, 0, 0];
+  // Hex prism — bottom hex at y=0, top hex at y=1. Vertex shader scales
+  // the top up to aElevation per instance, so geometry can stay as a
+  // single shared unit-height prism. Bottom face is omitted (never seen
+  // from above, saves 6 triangles × 28k tiles per draw).
+  //
+  //   verts: 0     = bottom center
+  //          1..6  = bottom corners (CCW)
+  //          7     = top center
+  //          8..13 = top corners (CCW, same angles as bottom)
+  const v: number[] = [];
+  const isTop: number[] = [];
+  // Bottom center + corners
+  v.push(0, 0, 0); isTop.push(0);
   for (let i = 0; i < 6; i++) {
     const a = (Math.PI / 3) * i;
-    v.push(Math.cos(a) * size, 0, Math.sin(a) * size);
+    v.push(Math.cos(a) * size, 0, Math.sin(a) * size); isTop.push(0);
   }
+  // Top center + corners
+  v.push(0, 1, 0); isTop.push(1);
+  for (let i = 0; i < 6; i++) {
+    const a = (Math.PI / 3) * i;
+    v.push(Math.cos(a) * size, 1, Math.sin(a) * size); isTop.push(1);
+  }
+
   const idx: number[] = [];
-  for (let i = 0; i < 6; i++) idx.push(0, i + 1, ((i + 1) % 6) + 1);
+  // Top face — winding viewed from +Y so normals point up after computeVertexNormals
+  for (let i = 0; i < 6; i++) {
+    idx.push(7, 8 + i, 8 + ((i + 1) % 6));
+  }
+  // Side walls — 6 quads (2 tris each), outward winding
+  for (let i = 0; i < 6; i++) {
+    const next = (i + 1) % 6;
+    const bL = 1 + i;
+    const bR = 1 + next;
+    const tL = 8 + i;
+    const tR = 8 + next;
+    idx.push(bL, tR, tL);
+    idx.push(bL, bR, tR);
+  }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
+  geo.setAttribute('aIsTop', new THREE.Float32BufferAttribute(isTop, 1));
   geo.setIndex(idx);
   geo.computeVertexNormals();
   return geo;

@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { useViewStore } from '../store/viewStore';
-import { DEFAULT_2D_MODE, DEFAULT_3D_MODE, type SceneMode } from '../three/types';
 
 // isolatedModules quirk: under the classic JSX runtime used by the
 // node:test + tsx loader, JSX desugars to `React.createElement(...)`
@@ -8,40 +7,39 @@ import { DEFAULT_2D_MODE, DEFAULT_3D_MODE, type SceneMode } from '../three/types
 // implicitly, so the `void React` pattern is load-bearing for tests.
 void React;
 
+/** Heightmap multiplier applied when the user picks the City view. */
+const CITY_MULT = 1.5;
+
+/** Two view modes — Flat (heightmap off) vs City (columns on). */
+export type ViewKind = 'flat' | 'city';
+
 /**
- * Returns the active kind from a SceneMode — trivial accessor, kept
- * as a pure helper so tests don't need to mount the component to
- * verify the active-state visual contract.
+ * Map heightMultiplier → view kind. >0 means columns are extruded
+ * (City). Exactly 0 collapses every column to a flat disc (Flat).
  */
-export function resolveActiveKind(mode: SceneMode): '2d' | '3d' {
-  return mode.kind;
+export function resolveActiveKind(mult: number): ViewKind {
+  return mult > 0 ? 'city' : 'flat';
 }
 
 /**
- * Click handler body — the exact logic that fires when a user presses
- * the "2D" or "3D" button. Exported for unit tests so we can assert
- * store effects without mounting.
- *
- * Relies on viewStore.setMode's idempotent guard: passing the currently
- * active mode is a complete no-op (no subscriber notification). That
- * keeps the handler safe against re-renders / double-clicks.
+ * Click handler — flip heightMultiplier between 0 (Flat) and CITY_MULT
+ * (City). Exported for tests that want to assert store effects without
+ * mounting the component.
  */
-export function handleModeClick(kind: '2d' | '3d'): void {
-  const next = kind === '2d' ? DEFAULT_2D_MODE : DEFAULT_3D_MODE;
-  useViewStore.getState().setMode(next);
+export function handleViewClick(kind: ViewKind): void {
+  const next = kind === 'flat' ? 0 : CITY_MULT;
+  useViewStore.getState().setHeightMultiplier(next);
 }
 
 /**
- * Two-button 2D / 3D toggle. Positioned absolute top-right inside
- * HexAtlas; styling matches existing panels (translucent dark, cyan
- * accent) without introducing a new design system.
- *
- * No keyboard shortcut (yet) — the surface is small enough that
- * adding one is best left to the host page, which owns the key map.
+ * Two-button Flat / City toggle. Replaces the old 2D/3D mode switcher
+ * (which had per-mode bugs around camera + bloom that aren't worth
+ * fixing for the demo). Same position + styling as before so existing
+ * layout assumptions stay intact.
  */
 export function ModeToggle() {
-  const mode = useViewStore((s) => s.mode);
-  const active = resolveActiveKind(mode);
+  const mult = useViewStore((s) => s.heightMultiplier);
+  const active = resolveActiveKind(mult);
 
   const btnStyle = (isActive: boolean): React.CSSProperties => ({
     padding: '4px 10px',
@@ -70,23 +68,23 @@ export function ModeToggle() {
     >
       <button
         type="button"
-        onClick={() => handleModeClick('2d')}
-        style={btnStyle(active === '2d')}
-        data-active={active === '2d' ? 'true' : 'false'}
-        aria-pressed={active === '2d'}
-        aria-label="Switch to 2D"
+        onClick={() => handleViewClick('flat')}
+        style={btnStyle(active === 'flat')}
+        data-active={active === 'flat' ? 'true' : 'false'}
+        aria-pressed={active === 'flat'}
+        aria-label="Switch to Flat view"
       >
-        2D
+        Flat
       </button>
       <button
         type="button"
-        onClick={() => handleModeClick('3d')}
-        style={btnStyle(active === '3d')}
-        data-active={active === '3d' ? 'true' : 'false'}
-        aria-pressed={active === '3d'}
-        aria-label="Switch to 3D"
+        onClick={() => handleViewClick('city')}
+        style={btnStyle(active === 'city')}
+        data-active={active === 'city' ? 'true' : 'false'}
+        aria-pressed={active === 'city'}
+        aria-label="Switch to City view"
       >
-        3D
+        City
       </button>
     </div>
   );

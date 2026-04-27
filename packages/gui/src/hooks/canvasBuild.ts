@@ -115,6 +115,107 @@ export function buildHexLayerWithSubscriptions(
     layer.setTile(i, nodes[i].x, nodes[i].z, 0x000000);
   }
 
+  // Heightmap — per-tile base elevation derived from node degree.
+  // sqrt compresses the power-law tail (a few hubs at degree 100+,
+  // long tail at 1-3) so high-degree nodes don't dwarf the rest.
+  // baseElevation lives separately from pin/diff overrides so unpin
+  // restores it instead of clamping to 0 and erasing the heightmap.
+  const baseElevation = new Float32Array(nodes.length);
+  function recomputeBase(mult: number) {
+    let maxBase = 0;
+    for (let i = 0; i < nodes.length; i++) {
+      const v = Math.sqrt(Math.max(0, nodes[i].degree)) * mult;
+      baseElevation[i] = v;
+      if (v > maxBase) maxBase = v;
+    }
+    // Stashed on globalThis so HullLayer's heightmap subscriber can lift
+    // its group above the tallest column without a direct dep on this
+    // closure (HullLayer is built in a separate helper). Updated every
+    // recompute so a `__setElev` tweak relifts hulls in lockstep. The
+    // event covers the case where buildHullLayer runs BEFORE this hex
+    // builder — in that ordering, hull's initial liftHullsForHeightmap
+    // would have read undefined, leaving hulls buried.
+    (globalThis as Record<string, unknown>).__hexMaxBase = maxBase;
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('grafema:heightmap-recomputed'));
+    }
+  }
+  // SceneManager is render-on-demand: `_dirty=false` after each frame
+  // so a Zustand-subscriber-driven animation (no mouse / control events
+  // keeping the loop alive) freezes mid-tween. Pump `sm.requestRender`
+  // each frame for the animation's duration so `tick()` keeps running.
+  let pumpHandle: number | null = null;
+  function pumpRender(durationMs: number) {
+    const start = performance.now();
+    const step = () => {
+      sm.requestRender();
+      if (performance.now() - start < durationMs) {
+        pumpHandle = requestAnimationFrame(step);
+      } else {
+        pumpHandle = null;
+      }
+    };
+    if (pumpHandle !== null) cancelAnimationFrame(pumpHandle);
+    pumpHandle = requestAnimationFrame(step);
+  }
+  function applyHeightmap(mult: number, animate: boolean) {
+    recomputeBase(mult);
+    if (animate) {
+      for (let i = 0; i < nodes.length; i++) {
+        layer.animateTo(i, 'elevation', baseElevation[i], 600);
+      }
+      pumpRender(700);
+    } else {
+      for (let i = 0; i < nodes.length; i++) {
+        layer.setProperty(i, 'elevation', baseElevation[i]);
+      }
+      sm.requestRender();
+    }
+  }
+  applyHeightmap(useViewStore.getState().heightMultiplier, false);
+  // Expose elevation array so pin/unpin handlers (built later in
+  // setupPointerInteractions) can do additive offsets without a
+  // second store subscription.
+  (layer as unknown as { _baseElevation: Float32Array })._baseElevation = baseElevation;
+
+  // DevTools convenience — `__setElev(2.5)` to retune live without
+  // poking the store. Drops on dispose via the unsub closure below.
+  (globalThis as Record<string, unknown>).__setElev = (n: number) => {
+    useViewStore.getState().setHeightMultiplier(n);
+  };
+  // Debug: expose the layer + base array so we can verify the heightmap
+  // path end-to-end from a Playwright probe.
+  (globalThis as Record<string, unknown>).__hexLayer = layer;
+  (globalThis as Record<string, unknown>).__baseElev = baseElevation;
+  (globalThis as Record<string, unknown>).__heightmapDiag = () => {
+    const el = layer.elevationArray;
+    let max = 0, sum = 0, nonZero = 0;
+    for (let i = 0; i < el.length; i++) {
+      if (el[i] > max) max = el[i];
+      if (el[i] > 0) nonZero++;
+      sum += el[i];
+    }
+    let baseMax = 0, baseSum = 0, baseNonZero = 0;
+    for (let i = 0; i < baseElevation.length; i++) {
+      if (baseElevation[i] > baseMax) baseMax = baseElevation[i];
+      if (baseElevation[i] > 0) baseNonZero++;
+      baseSum += baseElevation[i];
+    }
+    return {
+      mult: useViewStore.getState().heightMultiplier,
+      mode: useViewStore.getState().mode,
+      nodeCount: nodes.length,
+      degreeSample: nodes.slice(0, 5).map((n) => n.degree),
+      baseElev: { max: baseMax, mean: baseSum / baseElevation.length, nonZero: baseNonZero },
+      liveElev: { max, mean: sum / el.length, nonZero },
+    };
+  };
+
+  const unsubHeightmap = useViewStore.subscribe((state, prev) => {
+    if (state.heightMultiplier === prev.heightMultiplier) return;
+    applyHeightmap(state.heightMultiplier, true);
+  });
+
   function applyLens(lensName: string) {
     const lens = LENSES[lensName] ?? LENSES.region;
     for (let i = 0; i < nodes.length; i++) {
@@ -187,30 +288,24 @@ export function buildHexLayerWithSubscriptions(
 
   sm.onRender((dt) => layer.tick(dt));
 
-  // DAI-22 Chunk-8b — gate the instanced symbol mesh on the per-frame
-  // zoom level. Hidden below `symbolZoomThreshold` (default 0.9) so
-  // distant/package-level views skip the ~35k-instance draw entirely.
-  // Pin rings ride along so they stay coherent with tile visibility.
-  let lastVisible = true;
-  sm.onRender(() => {
-    const zoom01 = normalizeZoom(sm.getView());
-    const wantVisible = useLayoutStore.getState().hullCache.size === 0
-      // No precomputed hulls — we haven't been through the new layout
-      // pipeline; keep legacy behaviour and always show symbols.
-      ? true
-      : deriveLodVisibility({
-          regionTree: useLayoutStore.getState().regionTree,
-          hullCache: useLayoutStore.getState().hullCache,
-          zoom01,
-        }).symbolsVisible;
-    if (wantVisible === lastVisible) return;
-    lastVisible = wantVisible;
-    layer.mesh.visible = wantVisible;
-    // pinRings mode-driven visibility stays with HexLayer itself —
-    // not overridden here so 2D pin rings keep their own gating.
-  });
+  // Heightmap demo (April 2026) — keep the instanced tile mesh visible
+  // at every zoom so per-tile elevation forms a 3D landscape even at
+  // package/region LOD. The DAI-22 LOD gate that hid tiles below
+  // `symbolZoomThreshold` saved a single instanced draw call (~35k
+  // instances) — cheap on modern GPUs, and losing the heightmap at
+  // zoomed-out views (the default load state) defeats the visual.
+  layer.mesh.visible = true;
+  void normalizeZoom; void deriveLodVisibility; // re-imported for hulls below.
 
-  return { layer, unsubscribe: () => { unsubLens(); unsubDiff(); } };
+  return {
+    layer,
+    unsubscribe: () => {
+      unsubLens();
+      unsubDiff();
+      unsubHeightmap();
+      if (pumpHandle !== null) cancelAnimationFrame(pumpHandle);
+    },
+  };
 }
 
 /** Build the region border layer (gap-fill quads). */
@@ -351,7 +446,34 @@ export function buildHullLayer(
   // quantised zoom bucket and cache identity are unchanged.
   sm.onRender(applyFrame);
 
-  return { layer: hullLayer, unsubscribe: unsubLayout };
+  // Heightmap-aware lift — keep hulls above the tallest column so the
+  // outline never sinks into the terrain. `__hexMaxBase` is written by
+  // buildHexLayerWithSubscriptions on every recompute (initial + each
+  // `__setElev` tweak); read it on the same subscription so the lift
+  // tracks the multiplier in lockstep. +1.0 buffer prevents Z-fighting
+  // when the tallest column happens to land on an integer height.
+  function liftHullsForHeightmap() {
+    const maxBase = (globalThis as Record<string, unknown>).__hexMaxBase as
+      | number
+      | undefined;
+    hullLayer.group.position.y = (maxBase ?? 0) + 1.0;
+    sm.requestRender();
+  }
+  liftHullsForHeightmap();
+  // Single source of truth: hex builder dispatches `heightmap-recomputed`
+  // after every recomputeBase (initial setProperty + each animateTo
+  // batch). Listening covers both the post-build initial sync and live
+  // tweaks via __setElev — no need to also subscribe to viewStore here.
+  const onHeightmapEvent = () => liftHullsForHeightmap();
+  window.addEventListener('grafema:heightmap-recomputed', onHeightmapEvent);
+
+  return {
+    layer: hullLayer,
+    unsubscribe: () => {
+      unsubLayout();
+      window.removeEventListener('grafema:heightmap-recomputed', onHeightmapEvent);
+    },
+  };
 }
 
 /**
@@ -434,15 +556,18 @@ export function setupRoutes(
     const newRouteNodes = routeLayer.activeNodeIndices;
     const selIdx = getSelectedIdx();
 
+    const baseElev = (hexLayer as unknown as { _baseElevation?: Float32Array })
+      ._baseElevation;
+    const baseOf = (i: number) => baseElev?.[i] ?? 0;
     for (const i of prevRouteNodes) {
       if (!newRouteNodes.has(i) && i !== selIdx && !selectedConnectedRef.current.has(i)) {
-        hexLayer.animateTo(i, 'elevation', 0, 300);
+        hexLayer.animateTo(i, 'elevation', baseOf(i), 300);
         hexLayer.animateTo(i, 'outlineWidth', 0, 200);
       }
     }
     for (const i of newRouteNodes) {
       if (i !== selIdx && !selectedConnectedRef.current.has(i)) {
-        hexLayer.animateTo(i, 'elevation', 1.5, 300);
+        hexLayer.animateTo(i, 'elevation', baseOf(i) + 1.5, 300);
         hexLayer.animateTo(i, 'outlineWidth', 0.1, 200);
         hexLayer.setOutlineColor(i, 0xffffff);
       }
@@ -616,19 +741,22 @@ export function setupInteraction(deps: InteractionDeps): () => void {
   function clearSelection() {
     const routeNodes = routeLayer.activeNodeIndices;
     const pins = useViewStore.getState().pins;
+    const baseElev = (layer as unknown as { _baseElevation?: Float32Array })
+      ._baseElevation;
+    const baseOf = (i: number) => baseElev?.[i] ?? 0;
     for (let i = 0; i < nodes.length; i++) {
       const isPinned = pins.has(nodes[i].id);
       if (routeNodes.has(i)) {
-        layer.animateTo(i, 'elevation', 1.5, 300);
+        layer.animateTo(i, 'elevation', baseOf(i) + 1.5, 300);
         layer.animateTo(i, 'outlineWidth', 0.1, 200);
         layer.setOutlineColor(i, 0xffffff);
       } else if (isPinned) {
-        layer.animateTo(i, 'elevation', 1.5, 300);
+        layer.animateTo(i, 'elevation', baseOf(i) + 1.5, 300);
         layer.animateTo(i, 'outlineWidth', 0.3, 200);
         layer.setOutlineColor(i, 0xff0044);
         layer.animateTo(i, 'scale', 1.15, 200);
       } else {
-        layer.animateTo(i, 'elevation', 0, 300);
+        layer.animateTo(i, 'elevation', baseOf(i), 300);
         layer.animateTo(i, 'outlineWidth', 0, 200);
         layer.animateTo(i, 'scale', 1.0, 200);
       }
@@ -760,14 +888,18 @@ export function setupInteraction(deps: InteractionDeps): () => void {
     const connected = getVisibleConnected(clickIdx);
     selectedConnectedRef.current = connected;
 
+    const baseElev = (layer as unknown as { _baseElevation?: Float32Array })
+      ._baseElevation;
+    const baseOf = (i: number) => baseElev?.[i] ?? 0;
+
     for (let i = 0; i < nodes.length; i++) {
       if (i === clickIdx) {
-        layer.animateTo(i, 'elevation', 2.0, 300);
+        layer.animateTo(i, 'elevation', baseOf(i) + 2.0, 300);
         layer.animateTo(i, 'outlineWidth', 0.2, 200);
         layer.setOutlineColor(i, 0x00e5ff);
         layer.animateTo(i, 'opacity', 1.0, 200);
       } else if (connected.has(i)) {
-        layer.animateTo(i, 'elevation', 1.0, 350);
+        layer.animateTo(i, 'elevation', baseOf(i) + 1.0, 350);
         layer.animateTo(i, 'outlineWidth', 0.12, 250);
         layer.setOutlineColor(i, 0x00aacc);
         layer.animateTo(i, 'opacity', 1.0, 200);
@@ -776,15 +908,15 @@ export function setupInteraction(deps: InteractionDeps): () => void {
         const currentPins = useViewStore.getState().pins;
         const isPinned = currentPins.has(nodes[i].id);
         if (routeNodes.has(i)) {
-          layer.animateTo(i, 'elevation', 1.5, 300);
+          layer.animateTo(i, 'elevation', baseOf(i) + 1.5, 300);
           layer.animateTo(i, 'outlineWidth', 0.1, 200);
           layer.setOutlineColor(i, 0xffffff);
         } else if (isPinned) {
-          layer.animateTo(i, 'elevation', 1.5, 300);
+          layer.animateTo(i, 'elevation', baseOf(i) + 1.5, 300);
           layer.animateTo(i, 'outlineWidth', 0.3, 200);
           layer.setOutlineColor(i, 0xff0044);
         } else {
-          layer.animateTo(i, 'elevation', 0, 300);
+          layer.animateTo(i, 'elevation', baseOf(i), 300);
           layer.animateTo(i, 'outlineWidth', 0, 200);
         }
         layer.animateTo(i, 'opacity', isPinned ? 1.0 : 0.25, 200);
@@ -830,18 +962,21 @@ export function setupInteraction(deps: InteractionDeps): () => void {
 
     const node = nodes[idx];
     const { pins, addPin, removePin } = useViewStore.getState();
+    const baseElev = (layer as unknown as { _baseElevation?: Float32Array })
+      ._baseElevation;
+    const baseOfIdx = baseElev?.[idx] ?? 0;
     if (pins.has(node.id)) {
       removePin(node.id);
       layer.animateTo(idx, 'outlineWidth', 0, 200);
       layer.animateTo(idx, 'scale', 1.0, 200);
-      layer.animateTo(idx, 'elevation', 0, 300);
+      layer.animateTo(idx, 'elevation', baseOfIdx, 300);
       setTooltip(null);
     } else {
       addPin(node.id, '#ff2222', node.name);
       layer.setOutlineColor(idx, 0xff0044);
       layer.animateTo(idx, 'outlineWidth', 0.3, 200);
       layer.animateTo(idx, 'scale', 1.15, 200);
-      layer.animateTo(idx, 'elevation', 1.5, 300);
+      layer.animateTo(idx, 'elevation', baseOfIdx + 1.5, 300);
       const rect = container.getBoundingClientRect();
       const pinContent = routeTooltip({ kind: 'node', nodeIdx: idx }, nodes);
       if (pinContent) {
@@ -856,10 +991,70 @@ export function setupInteraction(deps: InteractionDeps): () => void {
   sm.renderer.domElement.addEventListener('click', onClick);
   sm.renderer.domElement.addEventListener('dblclick', onDblClick);
 
+  // ──────────────────────────────────────────────────────────────────
+  // WSAD pan — strafe the camera+target in the camera's XZ plane.
+  // Continuous-hold via a key-state set + rAF loop; speed scales with
+  // current orbit distance so pan feels consistent at any zoom.
+  // Skipped while typing in an input/textarea so the keys don't fight
+  // form fields. Listener attached on `window` (not the canvas) so the
+  // map responds even when keyboard focus is on the sidebar.
+  // ──────────────────────────────────────────────────────────────────
+  const pressed = new Set<string>();
+  const tmpForward = new THREE.Vector3();
+  const tmpRight = new THREE.Vector3();
+  const tmpDelta = new THREE.Vector3();
+  let panRaf: number | null = null;
+  function isTypingTarget(t: EventTarget | null): boolean {
+    if (!t || !(t instanceof HTMLElement)) return false;
+    const tag = t.tagName;
+    return tag === 'INPUT' || tag === 'TEXTAREA' || t.isContentEditable;
+  }
+  function panLoop() {
+    if (pressed.size === 0) { panRaf = null; return; }
+    sm.camera.getWorldDirection(tmpForward);
+    tmpForward.y = 0;
+    if (tmpForward.lengthSq() < 1e-6) { panRaf = requestAnimationFrame(panLoop); return; }
+    tmpForward.normalize();
+    // Right vector in XZ plane (90° CW from forward seen from above).
+    tmpRight.set(tmpForward.z, 0, -tmpForward.x);
+    const distance = sm.camera.position.distanceTo(sm.controls.target);
+    const speed = Math.max(2, distance * 0.025); // world units per frame
+    tmpDelta.set(0, 0, 0);
+    if (pressed.has('w')) tmpDelta.addScaledVector(tmpForward, speed);
+    if (pressed.has('s')) tmpDelta.addScaledVector(tmpForward, -speed);
+    if (pressed.has('d')) tmpDelta.addScaledVector(tmpRight, speed);
+    if (pressed.has('a')) tmpDelta.addScaledVector(tmpRight, -speed);
+    if (tmpDelta.lengthSq() > 0) {
+      sm.camera.position.add(tmpDelta);
+      sm.controls.target.add(tmpDelta);
+      sm.controls.update();
+      sm.requestRender();
+    }
+    panRaf = requestAnimationFrame(panLoop);
+  }
+  function onKeyDown(e: KeyboardEvent) {
+    if (isTypingTarget(e.target)) return;
+    const k = e.key.toLowerCase();
+    if (k !== 'w' && k !== 'a' && k !== 's' && k !== 'd') return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    pressed.add(k);
+    e.preventDefault();
+    if (panRaf === null) panRaf = requestAnimationFrame(panLoop);
+  }
+  function onKeyUp(e: KeyboardEvent) {
+    pressed.delete(e.key.toLowerCase());
+  }
+  window.addEventListener('keydown', onKeyDown);
+  window.addEventListener('keyup', onKeyUp);
+
   return () => {
     sm.renderer.domElement.removeEventListener('mousemove', onMouseMove);
     sm.renderer.domElement.removeEventListener('click', onClick);
     sm.renderer.domElement.removeEventListener('dblclick', onDblClick);
+    window.removeEventListener('keydown', onKeyDown);
+    window.removeEventListener('keyup', onKeyUp);
+    if (panRaf !== null) cancelAnimationFrame(panRaf);
+    pressed.clear();
   };
 }
 
@@ -947,7 +1142,9 @@ export function createSceneApi(deps: SceneApiDeps): SceneApi {
       layer.setOutlineColor(nodeIdx, color);
       layer.setProperty(nodeIdx, 'outlineWidth', 0.3);
       layer.setProperty(nodeIdx, 'scale', 1.15);
-      layer.setProperty(nodeIdx, 'elevation', 1.5);
+      const base = (layer as unknown as { _baseElevation?: Float32Array })
+        ._baseElevation?.[nodeIdx] ?? 0;
+      layer.setProperty(nodeIdx, 'elevation', base + 1.5);
       layer.setPins(buildPinIndexMap(nodes, useViewStore.getState().pins));
     },
     unpin: (nodeIdx) => {
@@ -956,7 +1153,9 @@ export function createSceneApi(deps: SceneApiDeps): SceneApi {
       useViewStore.getState().removePin(node.id);
       layer.setProperty(nodeIdx, 'outlineWidth', 0);
       layer.setProperty(nodeIdx, 'scale', 1.0);
-      layer.setProperty(nodeIdx, 'elevation', 0);
+      const base = (layer as unknown as { _baseElevation?: Float32Array })
+        ._baseElevation?.[nodeIdx] ?? 0;
+      layer.setProperty(nodeIdx, 'elevation', base);
       layer.setPins(buildPinIndexMap(nodes, useViewStore.getState().pins));
     },
     enterDiff: (removed, changed) => {

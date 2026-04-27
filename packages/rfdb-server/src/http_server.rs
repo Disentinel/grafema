@@ -1034,20 +1034,16 @@ fn build_graph_stream_body(
         vis_index.nid_to_visible.len(),
     );
 
-    // `no_edges=1` short-circuits edge-lift entirely — saves the
-    // 60-80ms scan across 1.9M graph edges + skips the 487k per-edge
-    // emit at the tail of the stream. Default fetch from the GUI
-    // bootstrap uses this so the user sees nodes / hulls fast and
-    // pulls edges lazily when a flow toggle asks for them.
-    let (edge_refs, edge_type_table) = if no_edges {
-        (Vec::new(), Vec::new())
-    } else {
-        lift_edges_bulk(
-            &**engine,
-            &vis_index,
-            want_edge_types.as_ref(),
-        )
-    };
+    // Always lift edges so we can compute per-node degree (used by the
+    // GUI heightmap — `degree` field on every node). `no_edges=1` only
+    // skips the per-edge EMIT at the tail of the stream, not the lift
+    // itself. The lift is ~60-80ms on a 1.9M-edge graph; that's cheap
+    // versus losing the heightmap entirely on the default fetch path.
+    let (edge_refs, edge_type_table) = lift_edges_bulk(
+        &**engine,
+        &vis_index,
+        want_edge_types.as_ref(),
+    );
 
     let degrees = compute_degrees(node_count, &edge_refs);
 
@@ -1231,8 +1227,13 @@ fn build_graph_stream_body(
         .enumerate()
         .map(|(i, t)| (t.clone(), i))
         .collect();
-    for e in &edge_refs {
-        lines.push(emit_edge_line(e, &edge_type_idx));
+    // `no_edges=1` skips per-edge emit but the lift above still
+    // populated `degrees`, so the heightmap stays correct on the
+    // default GUI bootstrap.
+    if !no_edges {
+        for e in &edge_refs {
+            lines.push(emit_edge_line(e, &edge_type_idx));
+        }
     }
 
     let elapsed = start.elapsed().as_millis();
