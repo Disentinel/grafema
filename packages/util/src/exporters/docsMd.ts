@@ -70,12 +70,44 @@ function renderFeatureSection(feature: FeatureExportSnapshot): string {
   lines.push(`**Modality**: \`${feature.category}\``);
   lines.push('');
 
+  // Intent — when to use comes first if present, so readers see semantics
+  // before mechanics.
+  if (feature.intent?.whenToUse) {
+    lines.push('### When to use');
+    lines.push('');
+    lines.push(feature.intent.whenToUse);
+    lines.push('');
+  }
+
   if (feature.contracts.length === 0) {
     lines.push('_No speced contract recovered for this feature._');
     lines.push('');
   } else {
     for (const c of feature.contracts) {
       renderContract(lines, c);
+    }
+  }
+
+  // Examples — handwritten input, optional captured output.
+  if (feature.intent?.examples && feature.intent.examples.length > 0) {
+    lines.push('### Examples');
+    lines.push('');
+    for (const ex of feature.intent.examples) {
+      if (ex.title) lines.push(`**${ex.title}**`);
+      lines.push('');
+      lines.push('```sh');
+      lines.push(ex.input);
+      lines.push('```');
+      if (ex.output !== undefined) {
+        lines.push('');
+        lines.push('```');
+        lines.push(ex.output);
+        lines.push('```');
+        if (ex.capturedAt) {
+          lines.push(`*Captured ${ex.capturedAt}${ex.fixture ? ` against \`${ex.fixture}\`` : ''}.*`);
+        }
+      }
+      lines.push('');
     }
   }
 
@@ -86,6 +118,24 @@ function renderFeatureSection(feature: FeatureExportSnapshot): string {
     lines.push(`- Effects: ${eff}`);
     lines.push(`- Transitive calls: ${feature.behavior.coreNodeCount}`);
     lines.push(`- Depth: ${feature.behavior.depth}`);
+    lines.push('');
+  }
+
+  if (feature.intent?.gotchas && feature.intent.gotchas.length > 0) {
+    lines.push('### Gotchas');
+    lines.push('');
+    for (const g of feature.intent.gotchas) {
+      lines.push(`- ${g}`);
+    }
+    lines.push('');
+  }
+
+  if (feature.intent?.seeAlso && feature.intent.seeAlso.length > 0) {
+    lines.push('### See also');
+    lines.push('');
+    for (const s of feature.intent.seeAlso) {
+      lines.push(`- \`${s}\``);
+    }
     lines.push('');
   }
 

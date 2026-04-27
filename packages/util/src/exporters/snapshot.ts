@@ -27,6 +27,7 @@ import type {
   FeatureExportSnapshot,
   SharedFeatureRef,
 } from './types.js';
+import { findIntentsRoot, loadIntent } from './intentLoader.js';
 
 /** All known FEATURE categories — matches specedContractEnricher.FEATURE_TYPES. */
 export const FEATURE_CATEGORIES: readonly string[] = [
@@ -126,6 +127,7 @@ export function resolveCategories(categoryGlob: string): string[] {
 export async function collectFeatureSnapshots(
   backend: ExportBackendLike,
   pattern: string,
+  options?: { intentsRoot?: string | null; projectRoot?: string },
 ): Promise<FeatureExportSnapshot[]> {
   const parsed = parseFeaturePattern(pattern);
   if (!parsed) return [];
@@ -133,6 +135,18 @@ export async function collectFeatureSnapshots(
 
   const categories = resolveCategories(categoryGlob);
   if (categories.length === 0) return [];
+
+  // Resolve intents directory once for the run. Caller can override (tests
+  // pass a temp dir); explicit `null` disables intent loading entirely; if
+  // unset we walk up from projectRoot (or cwd) looking for `_ai/intents/`.
+  let intentsRoot: string | null;
+  if (options?.intentsRoot === null) {
+    intentsRoot = null;
+  } else if (typeof options?.intentsRoot === 'string') {
+    intentsRoot = options.intentsRoot;
+  } else {
+    intentsRoot = findIntentsRoot(options?.projectRoot ?? process.cwd());
+  }
 
   const snapshots: FeatureExportSnapshot[] = [];
 
@@ -155,6 +169,7 @@ export async function collectFeatureSnapshots(
       const sharedBehaviorWith = behavior
         ? await collectSharedFeatures(backend, id, behavior.hash)
         : [];
+      const intent = intentsRoot ? loadIntent(intentsRoot, category, name) : undefined;
 
       snapshots.push({
         id,
@@ -164,6 +179,7 @@ export async function collectFeatureSnapshots(
         contracts,
         behavior,
         sharedBehaviorWith,
+        ...(intent ? { intent } : {}),
       });
     }
   }
@@ -226,13 +242,29 @@ async function collectBehavior(
   for (const edge of edges) {
     const node = await backend.getNode(String(edge.dst));
     if (!node) continue;
-    const hash = readString(node.hash);
+    // Path A: RFDBServerBackend._parseNode spreads metadata onto the node.
+    let hash = readString(node.hash);
+    let effects = readStringArray(node.effects);
+    let coreNodeCount = readNumber(node.coreNodeCount);
+    let depth = readNumber(node.depth);
+    // Path B: raw RFDBClient leaves metadata as a JSON string. Parse it.
+    if (!hash && typeof node.metadata === 'string') {
+      try {
+        const parsed = JSON.parse(node.metadata) as Record<string, unknown>;
+        hash = readString(parsed.hash);
+        if (effects.length === 0) effects = readStringArray(parsed.effects);
+        if (coreNodeCount === undefined) coreNodeCount = readNumber(parsed.coreNodeCount);
+        if (depth === undefined) depth = readNumber(parsed.depth);
+      } catch {
+        // not JSON
+      }
+    }
     if (!hash) continue;
     return {
       hash,
-      effects: readStringArray(node.effects),
-      coreNodeCount: readNumber(node.coreNodeCount) ?? 0,
-      depth: readNumber(node.depth) ?? 0,
+      effects,
+      coreNodeCount: coreNodeCount ?? 0,
+      depth: depth ?? 0,
     };
   }
   return undefined;
