@@ -160,6 +160,7 @@ export function Canvas() {
 
     const api = createSceneApi({
       sm, hexLayer, flowLayer, nodes, cx, cz, dist, setShowCoords,
+      setTooltip, edgeLabelsRef,
     });
     setSceneApi(api);
     mapController.setScene(api);

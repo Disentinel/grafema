@@ -59,11 +59,13 @@ export function formatProgressLine(p: {
     const pct = Math.min(100, Math.round((p.nodesLoaded / p.nodesTotal) * 100));
     return `${p.nodesLoaded.toLocaleString()} / ${p.nodesTotal.toLocaleString()} nodes (${pct}%)`;
   }
-  if (p.edgesTotal > 0) {
-    const pct = Math.min(100, Math.round((p.edgesLoaded / p.edgesTotal) * 100));
-    return `${p.edgesLoaded.toLocaleString()} / ${p.edgesTotal.toLocaleString()} edges (${pct}%)`;
-  }
-  return 'Finalizing…';
+  // Lazy edge fetch path: server buffers the whole response so we don't
+  // see incremental edge counts on the wire — show a textual "loading"
+  // hint until the totals/done land instead of "Finalizing…" which
+  // misrepresents what's happening.
+  if (p.edgesTotal === 0) return 'Loading edges…';
+  const pct = Math.min(100, Math.round((p.edgesLoaded / p.edgesTotal) * 100));
+  return `${p.edgesLoaded.toLocaleString()} / ${p.edgesTotal.toLocaleString()} edges (${pct}%)`;
 }
 
 /** Bar width 0..1 derived from progress. Same precedence as formatProgressLine. */

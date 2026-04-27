@@ -1163,6 +1163,17 @@ export interface SceneApiDeps {
   nodes: GraphNode[];
   cx: number; cz: number; dist: number;
   setShowCoords: (v: boolean) => void;
+  /** Used by SceneApi.unpin to clear any pin-tooltip when the user
+   *  removes a pin via the PinPanel (the dblclick path already does
+   *  this; the panel-driven path needs the same hook to avoid leaving
+   *  a floating tooltip after the pinned node disappears). */
+  setTooltip: (t: {
+    x: number;
+    y: number;
+    content: TooltipContent;
+    edges: string[];
+  } | null) => void;
+  edgeLabelsRef: { current: EdgeLabelData[] };
 }
 
 /**
@@ -1171,7 +1182,7 @@ export interface SceneApiDeps {
  * returned object when layers are disposed.
  */
 export function createSceneApi(deps: SceneApiDeps): SceneApi {
-  const { sm, hexLayer: layer, flowLayer, nodes, cx, cz, dist, setShowCoords } = deps;
+  const { sm, hexLayer: layer, flowLayer, nodes, cx, cz, dist, setShowCoords, setTooltip, edgeLabelsRef } = deps;
   return {
     setMode: (mode) => useViewStore.getState().setMode(mode),
     getMode: () => useViewStore.getState().mode,
@@ -1212,7 +1223,22 @@ export function createSceneApi(deps: SceneApiDeps): SceneApi {
       const missing = types.filter((t) => !knownTypes.has(t));
       let result: { edges: GraphEdge[] } = { edges: [] };
       if (missing.length > 0) {
-        result = await loadEdges(ds.nodes, { types: missing });
+        // Drive the Sidebar's LOADING section through dataStore.progress
+        // so the user sees a bar instead of a silent 3-5s freeze while
+        // /api/edges runs the bulk lift. `phase: 'streaming'` is what
+        // Sidebar's render gate keys on — switched back to 'done' when
+        // the fetch resolves (or fails).
+        ds.setProgress({ phase: 'streaming', edgesLoaded: 0, edgesTotal: 0 });
+        try {
+          result = await loadEdges(ds.nodes, {
+            types: missing,
+            onProgress: (loaded, total) => {
+              ds.setProgress({ edgesLoaded: loaded, edgesTotal: total });
+            },
+          });
+        } finally {
+          ds.setProgress({ phase: 'done' });
+        }
       }
       const existing = new Set(
         ds.edges.map((e) => `${e.source}|${e.target}|${e.type}`),
@@ -1277,6 +1303,15 @@ export function createSceneApi(deps: SceneApiDeps): SceneApi {
         ._baseElevation?.[nodeIdx] ?? 0;
       layer.setProperty(nodeIdx, 'elevation', base);
       layer.setPins(buildPinIndexMap(nodes, useViewStore.getState().pins));
+      // Drop any tooltip + edge labels — the pin that anchored them is
+      // gone (PinPanel-driven unpin missed this; the dblclick handler
+      // already does it). Without this the tooltip floats over an
+      // empty tile and the edge labels stay glued to the now-hidden
+      // highlight.
+      setTooltip(null);
+      edgeLabelsRef.current.length = 0;
+      flowLayer.highlightEdges(null);
+      sm.requestRender();
     },
     enterDiff: (removed, changed) => {
       const changedMap = new Map<number, NodeChange[]>();
