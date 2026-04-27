@@ -1197,16 +1197,28 @@ export function createSceneApi(deps: SceneApiDeps): SceneApi {
     },
     loadEdgesByTypes: async (types) => {
       // Lazy edge fetch — call /api/edges, dedup against current store
-      // edges, append new ones, and rebuild FlowLayer in place. Dedup
-      // key is `${source}|${target}|${type}` so re-toggling a flow
-      // doesn't double-load anything we already have.
+      // edges, append new ones, and rebuild FlowLayer in place. Uses
+      // the lightweight `setEdges` setter (NOT setGraphData) so the
+      // Canvas main useEffect — which lives outside this closure —
+      // doesn't see a fresh `edges` reference and tear down the entire
+      // scene. The flow rebuild happens here directly.
+      //
+      // Filters out flow types we ALREADY have in the store before
+      // hitting the network, so re-toggling a flow is a no-op (the
+      // server takes 3s to lift edges; skipping that on a known flow
+      // keeps the toggle snappy).
       const ds = useDataStore.getState();
+      const knownTypes = new Set(ds.edges.map((e) => e.type));
+      const missing = types.filter((t) => !knownTypes.has(t));
+      let result: { edges: GraphEdge[] } = { edges: [] };
+      if (missing.length > 0) {
+        result = await loadEdges(ds.nodes, { types: missing });
+      }
       const existing = new Set(
         ds.edges.map((e) => `${e.source}|${e.target}|${e.type}`),
       );
-      const result = await loadEdges(ds.nodes, { types });
-      let added = 0;
       const merged = ds.edges.slice();
+      let added = 0;
       for (const e of result.edges) {
         const k = `${e.source}|${e.target}|${e.type}`;
         if (existing.has(k)) continue;
@@ -1214,26 +1226,18 @@ export function createSceneApi(deps: SceneApiDeps): SceneApi {
         merged.push(e);
         added++;
       }
-      // Push merged edges back to the store and rebuild the FlowLayer
-      // so the new edge tubes appear. FlowLayer.build is destructive
-      // (clears the group + repools); cheap on the few-thousand-edge
-      // scale we cap at via the same downsampling as buildFlowLayer.
-      ds.setGraphData({
-        nodes: ds.nodes,
-        edges: merged,
-        regions: ds.regions,
-        typeTable: ds.typeTable,
-        edgeTypeTable: ds.edgeTypeTable,
-      });
-      const MAX_FLOW_EDGES = 2000;
-      let toRender = merged;
-      if (merged.length > MAX_FLOW_EDGES) {
-        const step = Math.ceil(merged.length / MAX_FLOW_EDGES);
-        toRender = merged.filter((_, i) => i % step === 0);
+      if (added > 0) {
+        ds.setEdges(merged);
+        const MAX_FLOW_EDGES = 2000;
+        let toRender = merged;
+        if (merged.length > MAX_FLOW_EDGES) {
+          const step = Math.ceil(merged.length / MAX_FLOW_EDGES);
+          toRender = merged.filter((_, i) => i % step === 0);
+        }
+        flowLayer.build(nodes, toRender);
+        flowLayer.setElevationSource(layer.elevationArray);
+        sm.requestRender();
       }
-      flowLayer.build(nodes, toRender);
-      flowLayer.setElevationSource(layer.elevationArray);
-      sm.requestRender();
       return { added, total: merged.length };
     },
     applyLens: (lensName) => useViewStore.getState().setLens(lensName),

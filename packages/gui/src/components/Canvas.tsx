@@ -187,7 +187,13 @@ export function Canvas() {
       mapController.setScene(null);
       setSceneApi(null);
     };
-  }, [loaded, nodes, edges, regions]);
+    // `edges` deliberately omitted from the dep list. Lazy fetches via
+    // `SceneApi.loadEdgesByTypes` push new edges straight into the
+    // FlowLayer (`flowLayer.build(nodes, edges)`) without mutating the
+    // store, so the Canvas effect doesn't have to tear down + rebuild
+    // the whole scene on every flow toggle (which reset LOD and froze
+    // the browser for a couple of seconds on real graphs).
+  }, [loaded, nodes, regions]);
 
   return (
     <SceneApiProvider api={sceneApi}>

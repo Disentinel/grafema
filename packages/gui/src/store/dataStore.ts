@@ -77,6 +77,14 @@ export interface DataState {
   }) => void;
   setLoading: (v: boolean) => void;
   setProgress: (next: Partial<LoadProgress>) => void;
+  /**
+   * Lightweight edges setter for incremental lazy fetches. Replaces
+   * just the `edges` field — does NOT touch `loaded` / `loading` /
+   * `progress`, which keeps Canvas.tsx's main scene-build useEffect
+   * from re-firing (its deps are `[loaded, nodes, regions]`, edges
+   * intentionally omitted so flow toggles don't tear down the scene).
+   */
+  setEdges: (edges: GraphEdge[]) => void;
 }
 
 const INITIAL_PROGRESS: LoadProgress = {
@@ -108,4 +116,5 @@ export const useDataStore = create<DataState>((set) => ({
   })),
   setLoading: (v) => set({ loading: v }),
   setProgress: (next) => set((s) => ({ progress: { ...s.progress, ...next } })),
+  setEdges: (edges) => set({ edges }),
 }));
