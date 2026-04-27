@@ -213,6 +213,37 @@ export class SceneManager {
   }
 
   /**
+   * Keep the render loop dirty for `durationMs` so a tween initiated
+   * from a non-camera-event path (Zustand subscriber, pointer click,
+   * lazy fetch completion, etc.) actually advances each frame.
+   *
+   * Without this pump the render-on-demand loop exits after a single
+   * tick — `_dirty=false` — and any HexLayer / FlowLayer animateTo
+   * stays frozen mid-interpolation. Call this once with the slowest
+   * tween's duration (plus a small slack) right after pushing the
+   * batch of `animateTo` calls.
+   *
+   * Coalesces overlapping calls — a second `pumpRender` while one is
+   * already running cancels the previous handle and restarts with the
+   * new duration. Safe to call from anywhere that has a SceneManager
+   * reference; no-op once the duration elapses.
+   */
+  pumpRender(durationMs: number): void {
+    const start = performance.now();
+    if (this._pumpHandle !== null) cancelAnimationFrame(this._pumpHandle);
+    const step = () => {
+      this._dirty = true;
+      if (performance.now() - start < durationMs) {
+        this._pumpHandle = requestAnimationFrame(step);
+      } else {
+        this._pumpHandle = null;
+      }
+    };
+    this._pumpHandle = requestAnimationFrame(step);
+  }
+  private _pumpHandle: number | null = null;
+
+  /**
    * Register layer references so `setMode` can push its per-layer
    * slice (tile elevation, flow style, hull style) through to them.
    * Safe to call multiple times — later calls replace earlier ones.

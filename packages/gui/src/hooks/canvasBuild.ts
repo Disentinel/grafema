@@ -143,29 +143,16 @@ export function buildHexLayerWithSubscriptions(
   }
   // SceneManager is render-on-demand: `_dirty=false` after each frame
   // so a Zustand-subscriber-driven animation (no mouse / control events
-  // keeping the loop alive) freezes mid-tween. Pump `sm.requestRender`
-  // each frame for the animation's duration so `tick()` keeps running.
-  let pumpHandle: number | null = null;
-  function pumpRender(durationMs: number) {
-    const start = performance.now();
-    const step = () => {
-      sm.requestRender();
-      if (performance.now() - start < durationMs) {
-        pumpHandle = requestAnimationFrame(step);
-      } else {
-        pumpHandle = null;
-      }
-    };
-    if (pumpHandle !== null) cancelAnimationFrame(pumpHandle);
-    pumpHandle = requestAnimationFrame(step);
-  }
+  // keeping the loop alive) freezes mid-tween. `sm.pumpRender(ms)`
+  // keeps the loop dirty for the animation duration; same helper is
+  // reused by the click / select handlers downstream.
   function applyHeightmap(mult: number, animate: boolean) {
     recomputeBase(mult);
     if (animate) {
       for (let i = 0; i < nodes.length; i++) {
         layer.animateTo(i, 'elevation', baseElevation[i], 600);
       }
-      pumpRender(700);
+      sm.pumpRender(700);
     } else {
       for (let i = 0; i < nodes.length; i++) {
         layer.setProperty(i, 'elevation', baseElevation[i]);
@@ -304,7 +291,6 @@ export function buildHexLayerWithSubscriptions(
       unsubLens();
       unsubDiff();
       unsubHeightmap();
-      if (pumpHandle !== null) cancelAnimationFrame(pumpHandle);
     },
   };
 }
@@ -579,6 +565,11 @@ export function setupRoutes(
       flowLayer.highlightEdges(newRouteNodes, 'both');
     } else {
       flowLayer.highlightEdges(null);
+    }
+    // Render-on-demand pump for the elevation/outline animations
+    // queued above (longest 350ms).
+    if (prevRouteNodes.size > 0 || newRouteNodes.size > 0) {
+      sm.pumpRender(450);
     }
     // reference edges only to keep the closure capture live; the flow
     // layer reads edges through its own stored reference already.
@@ -882,6 +873,10 @@ export function setupInteraction(deps: InteractionDeps): () => void {
 
     if (nextSelection.size === 0) {
       clearSelection();
+      // Same render-on-demand reason as below — clearSelection writes
+      // 1.0 into the opacity tween targets, but without a pump those
+      // tweens never tick back up to the target.
+      sm.pumpRender(450);
       setTooltip(null);
       return;
     }
@@ -926,6 +921,14 @@ export function setupInteraction(deps: InteractionDeps): () => void {
 
     const activeSet = new Set(connected);
     activeSet.add(clickIdx);
+    // Pump renders for the duration of the per-tile fade animations
+    // (longest above is 350ms). Without this the loop above queues
+    // 28k tweens and `tick()` never advances them — non-connected
+    // tiles freeze at whatever opacity the single post-click frame
+    // happened to capture, and clearSelection later writes 1.0 into
+    // the same frozen array but again never tick-advances back to it.
+    sm.pumpRender(450);
+
     flowLayer.highlightEdges(activeSet);
     // Click took ownership of the edge highlight — release the hover
     // claim so a subsequent hover-leave won't clear what click set.
@@ -986,6 +989,8 @@ export function setupInteraction(deps: InteractionDeps): () => void {
         setTooltip(null);
       }
     }
+    // Render-on-demand pump for the per-tile animations queued above.
+    sm.pumpRender(450);
   };
 
   sm.renderer.domElement.addEventListener('mousemove', onMouseMove);
