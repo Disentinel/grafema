@@ -450,7 +450,10 @@ export function buildHullLayer(
     const maxBase = (globalThis as Record<string, unknown>).__hexMaxBase as
       | number
       | undefined;
-    const top = (maxBase ?? 0) + 1.0;
+    // +3.0 buffer puts the hull cloud well above the tallest column —
+    // +1.0 grazed the column tops and looked like the cloud was sitting
+    // on the city. The extra 2 units of air read as "ceiling".
+    const top = (maxBase ?? 0) + 3.0;
     hullLayer.group.position.y = top;
     // Walls extrude from y=0 to the same top so the outline sits at
     // the wall's crown. Hide walls in Flat mode (mult=0) — the
@@ -1074,8 +1077,10 @@ export function setupInteraction(deps: InteractionDeps): () => void {
     tmpForward.y = 0;
     if (tmpForward.lengthSq() < 1e-6) { panRaf = requestAnimationFrame(panLoop); return; }
     tmpForward.normalize();
-    // Right vector in XZ plane (90° CW from forward seen from above).
-    tmpRight.set(tmpForward.z, 0, -tmpForward.x);
+    // Right vector via right-hand rule: right = forward × up (Y-up).
+    // For forward=(fx,0,fz), up=(0,1,0): right = (-fz, 0, fx). The
+    // previous (fz, 0, -fx) flipped X — pressing D moved left.
+    tmpRight.set(-tmpForward.z, 0, tmpForward.x);
     const distance = sm.camera.position.distanceTo(sm.controls.target);
     const speed = Math.max(2, distance * 0.025); // world units per frame
     tmpDelta.set(0, 0, 0);
