@@ -127,7 +127,7 @@ describe('runExport', () => {
   it('unknown format → fail with exit code 2', async () => {
     const { deps, fails } = makeDeps(httpGraph());
     await assert.rejects(
-      runExport({ feature: 'http:*', as: 'mcp-schema' }, deps),
+      runExport({ feature: 'http:*', as: 'totally-bogus-format' }, deps),
       (err) => err instanceof TestExit && err.code === 2,
     );
     assert.equal(fails.length, 1);

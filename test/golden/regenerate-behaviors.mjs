@@ -32,7 +32,7 @@ async function main() {
   const sockPath = resolve(sockArg ?? process.env.GRAFEMA_RFDB_SOCK ?? '.grafema/rfdb.sock');
   console.error(`[regen-behaviors] connecting to ${sockPath}`);
 
-  const client = new RFDBClient({ socketPath: sockPath });
+  const client = new RFDBClient(sockPath, 'regen-behaviors');
   await client.connect();
 
   try {
@@ -43,7 +43,7 @@ async function main() {
     console.error(`[regen-behaviors] wrote ${map.size} entries → ${outPath}`);
   } finally {
     try {
-      await client.disconnect();
+      await client.close();
     } catch {
       /* ignore */
     }

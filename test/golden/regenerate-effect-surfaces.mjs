@@ -20,7 +20,7 @@ async function main() {
   const sockPath = resolve(sockArg ?? process.env.GRAFEMA_RFDB_SOCK ?? '.grafema/rfdb.sock');
   console.error(`[regen-effect-surfaces] connecting to ${sockPath}`);
 
-  const client = new RFDBClient({ socketPath: sockPath });
+  const client = new RFDBClient(sockPath, 'regen-effects');
   await client.connect();
 
   try {
@@ -31,7 +31,7 @@ async function main() {
     console.error(`[regen-effect-surfaces] wrote ${surfaces.size} entries → ${outPath}`);
   } finally {
     try {
-      await client.disconnect();
+      await client.close();
     } catch {
       /* ignore */
     }
