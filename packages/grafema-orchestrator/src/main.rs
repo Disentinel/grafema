@@ -481,7 +481,7 @@ async fn main() -> Result<()> {
                     binaries_to_check.push(cfg.analyzers.haskell_resolve_path());
                 }
                 if !rs_files.is_empty() {
-                    binaries_to_check.push(cfg.analyzers.rust_path());
+                    // Rust analyzer is in-process (grafema_orchestrator::rust_analyzer); only resolve daemon is external
                     binaries_to_check.push(cfg.analyzers.rust_resolve_path());
                 }
                 if !java_files.is_empty() {
