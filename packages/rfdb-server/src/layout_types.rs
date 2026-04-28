@@ -22,12 +22,17 @@ pub const PLACEABLE_TYPES: &[&str] = &[
     // them in the excluded batch instead. To re-enable, add them back
     // here AND remove the `EXCLUDED_TYPES` filter in
     // `packages/gui/src/store/loadStream.ts`.
+    // VARIABLE + CONSTANT removed (Apr 2026): together they were 60% of
+    // the placed tile set and almost entirely local — clutter on the
+    // map, drowned the heightmap (READS_FROM blew up degree of trivial
+    // accessors), and Data Flow became "function reads its own locals".
+    // INTERFACE removed for similar reasons — most are signatures of
+    // single methods rather than navigation targets; the implementing
+    // CLASS/STRUCT carries the design weight. Reintroduce if a
+    // module-level scope filter ever lands.
     "FUNCTION",
     "METHOD",
     "CLASS",
-    "VARIABLE",
-    "CONSTANT",
-    "INTERFACE",
     "TYPE_ALIAS",
     "TYPE_SYNONYM",
     "TYPE_CLASS",
@@ -45,6 +50,12 @@ pub const PLACEABLE_TYPES: &[&str] = &[
     "GLOBAL_DEFINITION",
     "EXTERNAL_FUNCTION",
     "EXTERNAL_MODULE",
+    // Added: anonymous functions + constructors are real design units
+    // (callbacks, factory entry points). Constructor in particular is
+    // the "how do you build this thing" anchor for any class/struct.
+    "CLOSURE",
+    "LAMBDA",
+    "CONSTRUCTOR",
 ];
 
 /// Cheap membership test. Keeps the callsite branch-free-ish for the hot

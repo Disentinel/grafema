@@ -59,9 +59,10 @@ pub(crate) const PLACEABLE_TYPES: &[&str] = &[
     "FUNCTION",
     "METHOD",
     "CLASS",
-    "VARIABLE",
-    "CONSTANT",
-    "INTERFACE",
+    // VARIABLE / CONSTANT / INTERFACE removed Apr 2026 — together they
+    // were 60% of the placed set and almost entirely local clutter. Keep
+    // the orchestrator in sync with rfdb-server::layout_types so a stale
+    // layout doesn't carry positions for nodes the server then drops.
     "TYPE_ALIAS",
     "TYPE_SYNONYM",
     "TYPE_CLASS",
@@ -79,6 +80,11 @@ pub(crate) const PLACEABLE_TYPES: &[&str] = &[
     "GLOBAL_DEFINITION",
     "EXTERNAL_FUNCTION",
     "EXTERNAL_MODULE",
+    // Real design units that were missing — anonymous functions are
+    // entry points for callbacks, constructors anchor object creation.
+    "CLOSURE",
+    "LAMBDA",
+    "CONSTRUCTOR",
 ];
 
 /// Edge types that contribute to the cohesion signal AND to per-symbol degree.
