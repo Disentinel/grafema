@@ -542,7 +542,7 @@ export function buildFlowLayer(
   hexLayer: HexLayer,
 ): FlowLayer {
   const flowLayer = new FlowLayer(sm.scene);
-  const MAX_FLOW_EDGES = 2000;
+  const MAX_FLOW_EDGES = 20000;
   let flowEdges = edges;
   if (edges.length > MAX_FLOW_EDGES) {
     const step = Math.ceil(edges.length / MAX_FLOW_EDGES);
@@ -1254,7 +1254,7 @@ export function createSceneApi(deps: SceneApiDeps): SceneApi {
       }
       if (added > 0) {
         ds.setEdges(merged);
-        const MAX_FLOW_EDGES = 2000;
+        const MAX_FLOW_EDGES = 20000;
         let toRender = merged;
         if (merged.length > MAX_FLOW_EDGES) {
           const step = Math.ceil(merged.length / MAX_FLOW_EDGES);
