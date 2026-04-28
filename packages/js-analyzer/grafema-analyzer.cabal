@@ -31,7 +31,6 @@ executable grafema-analyzer
     Rules.JSX
     Domain.LibraryDef
     Domain.Matcher
-    Domain.Libraries.Express
 
   build-depends:
     base           >= 4.17  && < 5,
@@ -72,7 +71,6 @@ test-suite spec
     Rules.JSX
     Domain.LibraryDef
     Domain.Matcher
-    Domain.Libraries.Express
 
   build-depends:
     base           >= 4.17  && < 5,
