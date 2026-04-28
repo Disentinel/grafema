@@ -646,6 +646,65 @@ async fn edges_stream(
                 nid_to_placed.insert(nr.id, nr.idx);
             }
         }
+
+        // CONTAINS-walk lift: for any hidden node, walk the analyzer's
+        // CONTAINS chain (parent → child) up to the first placed
+        // ancestor. Replaces the file-grouping fallback below for nodes
+        // that have a real lexical parent — gives correct attribution
+        // for files with multiple FUNCTIONs (the file-grouping pinned
+        // every CALL inside FUNCTION_2 to FUNCTION_1's idx because the
+        // first-placed-in-file heuristic doesn't know about scope).
+        //
+        // Only `analyzer CONTAINS` is followed — `layout-pack CONTAINS`
+        // (regions / virtual containers) would lift everything to the
+        // root and erase containment specificity. Filter is the negation
+        // of the layout-pack metadata stamp.
+        let mut parent_of: HashMap<u128, u128> = HashMap::new();
+        for edge in engine.get_edges_by_type("CONTAINS") {
+            if let Some(meta) = edge.metadata.as_deref() {
+                if meta.contains("\"_source\":\"layout-pack\"") {
+                    continue;
+                }
+            }
+            // analyzer CONTAINS: parent → child means child's parent = src.
+            // First parent wins — siblings shouldn't have multiple
+            // analyzer-CONTAINS parents in a sane AST.
+            parent_of.entry(edge.dst).or_insert(edge.src);
+        }
+        // Walk for every node id we might encounter on a lifted edge.
+        // Iterating engine-wide once is cheaper than the per-edge walk
+        // inside lift_edges_bulk, and the result is just a HashMap put.
+        let placed_ids_set: HashSet<u128> = nid_to_placed.keys().copied().collect();
+        for nr in &candidates.node_refs {
+            if nid_to_placed.contains_key(&nr.id) {
+                continue; // already a placed candidate
+            }
+            let mut cur = nr.id;
+            let mut steps = 0;
+            // Cap the walk so a malformed ring doesn't loop forever.
+            while steps < 32 {
+                steps += 1;
+                match parent_of.get(&cur) {
+                    Some(&p) => {
+                        if placed_ids_set.contains(&p) {
+                            // Land on placed ancestor — record idx.
+                            if let Some(&idx) = nid_to_placed.get(&p) {
+                                nid_to_placed.insert(nr.id, idx);
+                            }
+                            break;
+                        }
+                        cur = p;
+                    }
+                    None => break,
+                }
+            }
+        }
+
+        // File-grouping fallback for nodes that walk to the root without
+        // hitting a placed ancestor (orphans, top-level constants in
+        // header-only files, etc). Same heuristic the prior
+        // implementation used — kept as a last resort so we don't drop
+        // edges entirely on those.
         let file_to_nodes_cache = get_or_build_file_to_nodes(&file_to_nodes, &**engine);
         for (file, placed_in_file) in file_to_placed.iter() {
             if let Some(node_ids) = file_to_nodes_cache.get(file) {
