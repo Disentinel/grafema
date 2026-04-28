@@ -1,13 +1,5 @@
 # Grafema
 
-> Licensed under [FSL-1.1-Apache-2.0](./LICENSE) — free to use, source available, converts to Apache 2.0 after 2 years. [Details](./LICENSING.md)
-
-[![CI](https://github.com/Disentinel/grafema/actions/workflows/ci.yml/badge.svg)](https://github.com/Disentinel/grafema/actions/workflows/ci.yml)
-[![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/Disentinel/fb8ae29db701dd788e1beaffb159ffef/raw/grafema-coverage.json)](https://github.com/Disentinel/grafema/actions/workflows/ci.yml)
-[![Benchmark](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/Disentinel/fb8ae29db701dd788e1beaffb159ffef/raw/rfdb-benchmark.json)](https://github.com/Disentinel/grafema/actions/workflows/benchmark.yml)
-
-> **v0.3.22** — Early access. [Changelog](./CHANGELOG.md) | [Known limitations](./KNOWN_LIMITATIONS.md)
-
 Grafema turns your codebase, infrastructure, knowledge, and workflows around it — into one queryable graph.
 For humans and AI.
 
@@ -31,6 +23,14 @@ And your AI minions too.
 Welcome to the party!
 
 ---
+
+> Licensed under [FSL-1.1-Apache-2.0](./LICENSE) — free to use, source available, converts to Apache 2.0 after 2 years. [Details](./LICENSING.md)
+
+[![CI](https://github.com/Disentinel/grafema/actions/workflows/ci.yml/badge.svg)](https://github.com/Disentinel/grafema/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/Disentinel/fb8ae29db701dd788e1beaffb159ffef/raw/grafema-coverage.json)](https://github.com/Disentinel/grafema/actions/workflows/ci.yml)
+[![Benchmark](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/Disentinel/fb8ae29db701dd788e1beaffb159ffef/raw/rfdb-benchmark.json)](https://github.com/Disentinel/grafema/actions/workflows/benchmark.yml)
+
+> **v0.3.22** — Early access. [Changelog](./CHANGELOG.md) | [Known limitations](./KNOWN_LIMITATIONS.md)
 
 ## Quick Start
 
