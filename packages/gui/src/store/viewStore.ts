@@ -52,7 +52,7 @@ export interface ViewState {
 
 export const useViewStore = create<ViewState>((set, get) => ({
   lens: 'default',
-  enabledFlows: new Set(['bridges']),
+  enabledFlows: new Set(['data', 'calls', 'deps', 'bridges']),
   hoveredTile: -1,
   pins: new Map(),
   selection: new Set(),

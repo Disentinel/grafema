@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useCallback } from 'react';
+import { useCallback, useEffect } from 'react';
 import { useDataStore } from '../store/dataStore';
 import { useMapStore } from '../store/mapStore';
 import { useViewStore } from '../store/viewStore';
@@ -93,6 +93,28 @@ export function Sidebar() {
   // SSR / pre-mount tests where neither path is available yet.
   const ctxApi = useSceneApiOptional();
   const resolveSceneApi = () => ctxApi ?? mapController.getSceneApi();
+
+  // Initial flow autoload — defaults flip every flow ON in viewStore so
+  // the user sees a populated city skyline immediately. The bootstrap
+  // graph-stream uses noEdges=1 (fast first paint), so we issue one
+  // batched /api/edges fetch covering every default-enabled flow once
+  // both `loaded` (graph done) and the SceneApi reference resolve.
+  // Effect re-checks on every render but the SceneApi.loadEdgesByTypes
+  // call short-circuits when every requested type is already in the
+  // store, so the work runs exactly once per session.
+  useEffect(() => {
+    if (!loaded) return;
+    const api = resolveSceneApi();
+    if (!api) return;
+    const types: string[] = [];
+    for (const name of enabledFlows) {
+      const preset = FLOWS[name];
+      if (preset) types.push(...preset.types);
+    }
+    if (types.length === 0) return;
+    void api.loadEdgesByTypes(Array.from(new Set(types)))
+      .catch((e) => console.warn('[Sidebar] initial edge autoload failed:', e));
+  }, [loaded, ctxApi, enabledFlows]);
 
   const toggleFlow = useCallback(
     (name: string) => {

@@ -475,9 +475,12 @@ export class FlowLayer {
     const tubePath = new THREE.CatmullRomCurve3(points);
     const tubeGeo = new THREE.TubeGeometry(tubePath, CURVE_SEGMENTS, 0.4, 8, false);
     const tubeMat = new THREE.MeshBasicMaterial({
-      color: plan.presetColor.clone(),
+      // Brighten the base preset color so tubes pop against the dark
+      // tile/wall background (the original 0.6-opacity tube blended in
+      // with the city).
+      color: plan.presetColor.clone().multiplyScalar(1.4),
       transparent: true,
-      opacity: 0.6,
+      opacity: 0.95,
       depthWrite: false,
       depthTest: false,
     });
@@ -495,9 +498,9 @@ export class FlowLayer {
     const arrowGeo = new THREE.ConeGeometry(0.2, 0.5, 4);
     arrowGeo.rotateX(Math.PI / 2);
     const arrowMat = new THREE.MeshBasicMaterial({
-      color: plan.presetColor.clone(),
+      color: plan.presetColor.clone().multiplyScalar(1.4),
       transparent: true,
-      opacity: 0.7,
+      opacity: 1.0,
       depthTest: false,
     });
     const arrow = new THREE.Mesh(arrowGeo, arrowMat);
