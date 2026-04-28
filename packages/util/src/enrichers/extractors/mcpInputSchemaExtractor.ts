@@ -519,7 +519,6 @@ function findInterpolationEnd(s: string, from: number): number {
   let mode: M = 'c';
   while (i < s.length) {
     const ch = s[i];
-    const nx = s[i + 1];
     if (mode === 'sq') {
       if (ch === '\\') { i += 2; continue; }
       if (ch === "'") mode = 'c';
