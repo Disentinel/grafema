@@ -33,6 +33,18 @@ try {
   await client.connect();
   if (dbName) await client.openDatabase(dbName);
 
+  // Early-exit gate: skip if there are no unresolved CALL nodes.
+  // One Datalog round-trip beats walking the whole CALL set via N+1 IPC.
+  const unresolvedProbe = await client.executeDatalog(
+    'violation(C) :- node(C, "CALL"), \\+ edge(C, _, "CALLS").'
+  );
+  if (!unresolvedProbe || unresolvedProbe.length === 0) {
+    console.error('[method-call-resolver] No unresolved CALL nodes — skipping');
+    await client.close();
+    process.exit(0);
+  }
+  console.error(`[method-call-resolver] ${unresolvedProbe.length} unresolved CALL nodes`);
+
   // Step 1: Build method index — name → [METHOD nodes]
   console.error('[method-call-resolver] Building method index...');
   const methodIndex = new Map();
