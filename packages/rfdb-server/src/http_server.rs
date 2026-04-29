@@ -1199,6 +1199,7 @@ const LIFTABLE_EDGE_TYPES: &[&str] = &[
     "CO_DEPENDS_ON",
     "CO_CALLS",
     "DIRECT_CALLS",
+    "CALLS_TRANSITIVELY",
 ];
 
 /// Visibility-lift index: maps every node id (visible + hidden) to the index

@@ -94,15 +94,32 @@ rules:
       perHidden: 4
       perRule: 100000
 
-  # NOTE: trivial-wrappers rule was attempted but deferred. It would
-  # have depended on `direct-calls`-emitted DIRECT_CALLS edges via
-  # degree filter (`outDegreeEq DIRECT_CALLS = 1`), but the RFDB engine
-  # doesn't surface a writer's own writes back to itself in the same
-  # session — getOutgoingEdges / countEdgesByType return stale/empty
-  # results until the writer disconnects. The fix requires in-memory
-  # pipelining of rule outputs (each rule both writes RFDB AND
-  # populates a shared context the next rule reads from). Tracked as
-  # follow-up after V3 ships.
+  - name: trivial-wrappers
+    description: |
+      A FUNCTION/METHOD with exactly one outgoing DIRECT_CALLS and at
+      least one incoming DIRECT_CALLS — typical for currying utils,
+      decorator wrapping, re-export shims. Compose `caller → wrapper →
+      real` chains into direct `CALLS_TRANSITIVELY(caller → real)` so
+      the city map shows actual coupling instead of indirection.
+
+      Depends on `direct-calls` to have populated the FUNCTION→FUNCTION
+      DIRECT_CALLS edges first.
+    dependsOn: [direct-calls]
+    hidden:
+      types: [FUNCTION, METHOD, ASYNC_FUNCTION, CLOSURE, LAMBDA]
+      scope: all
+      filter:
+        outDegreeEq: { edgeType: DIRECT_CALLS, value: 1 }
+        inDegreeMin: { edgeType: DIRECT_CALLS, value: 1 }
+    pivot:
+      in:  { types: [DIRECT_CALLS], side: dst }
+      out: { types: [DIRECT_CALLS], side: src }
+    emit:
+      type: CALLS_TRANSITIVELY
+      direction: in.src -> out.dst
+    fanoutCap:
+      perHidden: 16
+      perRule: 30000
 
   - name: co-callers
     description: |

@@ -580,13 +580,24 @@ impl GraphStore for GraphEngineV2 {
         let v2_edges: Vec<EdgeRecordV2> = edges.iter().map(edge_v1_to_v2).collect();
         // Re-adding an edge in the same session must clear any pending tombstone
         // for the same (src, dst, type) triple.
-        for edge in &v2_edges {
-            let key = (edge.src, edge.dst, Arc::from(edge.edge_type.as_str()));
-            if self.pending_tombstone_edges.remove(&key) {
+        let keys: Vec<(u128, u128, Arc<str>)> = v2_edges
+            .iter()
+            .map(|e| (e.src, e.dst, Arc::from(e.edge_type.as_str())))
+            .collect();
+        for key in &keys {
+            if self.pending_tombstone_edges.remove(key) {
                 // Edge was deleted then re-added. Old segment version persists.
                 self.superseded_edge_count += 1;
             }
         }
+        // Also un-tombstone any keys whose deletion has already been
+        // committed to shards (typical for the rule-chain pattern in the
+        // compaction enricher: delete-by-source flushes tombstones to
+        // shards, then the same `(src, dst, type)` is re-emitted via
+        // addEdges). Without this the new edge persists in the write
+        // buffer but every read path filters it out via
+        // `tombstones.contains_edge`.
+        self.store.untombstone_edges(&keys);
         let result = self.store.upsert_edges(v2_edges);
         if !skip_validation {
             if let Err(e) = result {

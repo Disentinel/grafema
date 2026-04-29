@@ -74,6 +74,7 @@ pub struct ShardDiagnostics {
 ///
 /// Query paths check this set before returning any record.
 /// O(1) per check via HashSet.
+#[derive(Clone)]
 pub struct TombstoneSet {
     /// Deleted node IDs. Queries skip records with these IDs.
     pub node_ids: HashSet<u128>,
@@ -128,6 +129,27 @@ impl TombstoneSet {
     /// Add tombstoned edge keys (union with existing).
     pub fn add_edges(&mut self, keys: impl IntoIterator<Item = (u128, u128, Arc<str>)>) {
         self.edge_keys.extend(keys);
+    }
+
+    /// Remove tombstoned edge keys.
+    ///
+    /// Used when a previously-tombstoned edge is re-added (e.g. enricher
+    /// rules that delete-by-source then re-emit the same `(src, dst, type)`
+    /// triple). Without this the new edge is silently shadowed by the
+    /// stale tombstone and reads return empty even though `addEdges`
+    /// returned `ok`. Idempotent — missing keys are no-ops.
+    pub fn remove_edges<'a>(&mut self, keys: impl IntoIterator<Item = &'a (u128, u128, Arc<str>)>) {
+        for k in keys {
+            self.edge_keys.remove(k);
+        }
+    }
+
+    /// Remove a single tombstoned edge key by its components.
+    ///
+    /// Convenience wrapper that creates the lookup tuple. Same use case
+    /// as `remove_edges` for hot paths that iterate edges one-by-one.
+    pub fn remove_edge(&mut self, src: u128, dst: u128, edge_type: &str) -> bool {
+        self.edge_keys.remove(&(src, dst, Arc::from(edge_type)))
     }
 
     /// Number of tombstoned nodes.
