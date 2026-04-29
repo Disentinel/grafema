@@ -94,6 +94,16 @@ rules:
       perHidden: 4
       perRule: 100000
 
+  # NOTE: trivial-wrappers rule was attempted but deferred. It would
+  # have depended on `direct-calls`-emitted DIRECT_CALLS edges via
+  # degree filter (`outDegreeEq DIRECT_CALLS = 1`), but the RFDB engine
+  # doesn't surface a writer's own writes back to itself in the same
+  # session — getOutgoingEdges / countEdgesByType return stale/empty
+  # results until the writer disconnects. The fix requires in-memory
+  # pipelining of rule outputs (each rule both writes RFDB AND
+  # populates a shared context the next rule reads from). Tracked as
+  # follow-up after V3 ships.
+
   - name: co-callers
     description: |
       Mirror of `shared-readers` for the call-graph: pairs of functions

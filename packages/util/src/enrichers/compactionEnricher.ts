@@ -358,6 +358,14 @@ async function applyRule(client: RFDBClient, rule: Rule): Promise<RuleStats> {
       })),
       skipValidation: false,
     });
+    // Flush + rebuildIndexes so OTHER processes see the writes after
+    // this enricher exits. CAVEAT: this writer's own session does NOT
+    // see its writes via subsequent getOutgoingEdges/countEdgesByType
+    // calls — engine has session-level snapshot semantics. Rules that
+    // depend on a previous rule's emits via RFDB read won't work; for
+    // those, use in-memory chaining (TODO).
+    await sendRaw(client, 'flush', {});
+    await sendRaw(client, 'rebuildIndexes', {});
   }
 
   return {
