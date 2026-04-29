@@ -26,8 +26,7 @@ const DOWNLOADABLE_BINARIES = [
   // Haskell
   'haskell-analyzer',
   'haskell-resolve',
-  // Rust
-  'grafema-rust-analyzer',
+  // Rust (analyzer is native in-process inside orchestrator; only resolve daemon ships)
   'grafema-rust-resolve',
   // Java
   'grafema-java-analyzer',

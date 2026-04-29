@@ -106,8 +106,8 @@ const EXT_TO_BINARIES: Record<string, string[]> = {
   pyi: ['grafema-python-analyzer', 'python-resolve'],
   // Haskell
   hs: ['haskell-analyzer', 'haskell-resolve'],
-  // Rust
-  rs: ['grafema-rust-analyzer', 'grafema-rust-resolve'],
+  // Rust (analyzer is native in-process inside orchestrator)
+  rs: ['grafema-rust-resolve'],
   // Java
   java: ['grafema-java-analyzer', 'java-resolve', 'java-parser'],
   // Kotlin

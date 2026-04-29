@@ -1,8 +1,7 @@
 //! Native Rust analyzer — walks syn AST directly, no serialization.
 //!
-//! Replaces the Haskell grafema-rust-analyzer. Takes a `syn::File` (already
-//! parsed by `crate::rust_parser`) and produces `FileAnalysis` with the same
-//! node/edge types the rest of the pipeline expects.
+//! Takes a `syn::File` (already parsed by `crate::rust_parser`) and produces
+//! `FileAnalysis` with the same node/edge types the rest of the pipeline expects.
 //!
 //! FAIL-EARLY POLICY: unhandled syn node variants panic immediately.
 //! No silent skips, no "log and continue". If it crashes, we fix the handler.
@@ -262,8 +261,7 @@ impl Ctx {
 // Public entry point
 // ---------------------------------------------------------------------------
 
-/// Analyze a parsed Rust file, producing the same FileAnalysis as the
-/// Haskell grafema-rust-analyzer but without any serialization.
+/// Analyze a parsed Rust file, producing FileAnalysis directly without serialization.
 pub fn analyze_rust_file(file: &str, syntax: &syn::File) -> FileAnalysis {
     let mut ctx = Ctx::new(file);
 

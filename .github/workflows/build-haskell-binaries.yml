@@ -42,9 +42,7 @@ jobs:
             package: haskell-analyzer
           - name: haskell-resolve
             package: haskell-resolve
-          # Rust
-          - name: grafema-rust-analyzer
-            package: rust-analyzer
+          # Rust (note: Rust analysis is in-process in orchestrator; only the resolve daemon is Haskell)
           - name: grafema-rust-resolve
             package: rust-resolve
           # Java

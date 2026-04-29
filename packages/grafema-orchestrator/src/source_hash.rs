@@ -24,7 +24,6 @@ impl BinarySourceMap {
                 ("grafema-resolve".into(), "packages/grafema-resolve"),
                 ("haskell-resolve".into(), "packages/haskell-resolve"),
                 ("haskell-analyzer".into(), "packages/haskell-analyzer"),
-                ("grafema-rust-analyzer".into(), "packages/rust-analyzer"),
                 ("grafema-rust-resolve".into(), "packages/rust-resolve"),
                 ("grafema-java-analyzer".into(), "packages/java-analyzer"),
                 ("java-resolve".into(), "packages/java-resolve"),
