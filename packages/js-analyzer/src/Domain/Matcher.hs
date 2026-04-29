@@ -13,13 +13,12 @@ import Analysis.SemanticId (semanticId)
 import AST.Types
 import AST.Span (Span(..))
 import Domain.LibraryDef
-import Domain.Libraries.Express (expressLib)
 
--- | All registered library definitions
+-- | All registered library definitions.
+-- Library-specific detection (http routes, etc.) is handled at the TypeScript
+-- enricher layer via effects-db YAMLs + libraryCallbackEnricher.
 allLibraryDefs :: [LibraryDef]
-allLibraryDefs =
-  [ expressLib
-  ]
+allLibraryDefs = []
 
 -- | Check if a call expression matches any library definition.
 -- If it does, emit domain-specific nodes and edges.

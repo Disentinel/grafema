@@ -1054,6 +1054,11 @@ async fn main() -> Result<()> {
 
                         commit_resolve_output(&mut output, "js-resolution", generation, &mut rfdb).await?;
 
+                        // Release the first-pass worker handle before the second pass acquires it.
+                        // acquire_all() holds all pool slots; stream_and_resolve_single_worker needs
+                        // to acquire one — both would deadlock if handles is still live.
+                        drop(handles);
+
                         // Second pass: graph-traversal resolvers (this.method() + CALL-based globals)
                         let second_pass = plugin::stream_and_resolve_single_worker(
                             &mut rfdb,
@@ -1080,7 +1085,6 @@ async fn main() -> Result<()> {
                         eprintln!("  Resolution: JS complete ({} edges, {:.1}s)",
                             output.edges.len(), lang_ms as f64 / 1000.0);
 
-                        drop(handles);
                         resolve_pool.shutdown().await;
                     }
                     Err(e) => {
