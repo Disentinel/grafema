@@ -35,6 +35,11 @@ import { fileURLToPath } from 'url';
  * additional pivot.* fields, but V1 supports only the symmetric
  * "incoming on hidden + incoming on hidden → emit between sources" form.
  */
+interface DegreeFilter {
+  edgeType: string;
+  value: number;
+}
+
 interface Rule {
   name: string;
   description?: string;
@@ -48,6 +53,23 @@ interface Rule {
      * for rules where intra-procedure pass-throughs still matter).
      */
     scope: 'module' | 'all';
+    /**
+     * Optional degree-based predicates. Evaluated AND-wise; a hidden
+     * node passes only if every set predicate matches. Used by rules
+     * like `trivial-wrappers` where the pivot is a FUNCTION with exactly
+     * one outgoing CALLS edge — pure type-based filtering can't express
+     * that. All counts are computed via `getOutgoingEdges` /
+     * `getIncomingEdges` filtered by `edgeType` (one round-trip per
+     * predicate per node).
+     */
+    filter?: {
+      outDegreeEq?: DegreeFilter;
+      outDegreeMax?: DegreeFilter;
+      outDegreeMin?: DegreeFilter;
+      inDegreeEq?: DegreeFilter;
+      inDegreeMax?: DegreeFilter;
+      inDegreeMin?: DegreeFilter;
+    };
   };
   pivot: {
     in: { types: string[]; side: 'src' | 'dst' };
@@ -55,7 +77,7 @@ interface Rule {
   };
   emit: {
     type: string;
-    /** Free-form annotation, currently always `in.src -> out.src`. */
+    /** Free-form annotation. */
     direction: string;
   };
   fanoutCap: {
@@ -148,7 +170,7 @@ async function main(): Promise<void> {
     const elapsed = Date.now() - t0;
     console.error(
       `[compactionEnricher] rule "${rule.name}": ${stats.deleted} stale removed, ` +
-      `${stats.hiddenNodesScanned} hidden scanned (${stats.moduleScope} module-scope), ` +
+      `${stats.hiddenNodesScanned} hidden scanned (${stats.accepted} accepted), ` +
       `${stats.pairsEmitted} edges emitted in ${elapsed}ms`,
     );
   }
@@ -195,8 +217,44 @@ function topoSort(rules: Rule[]): Rule[] {
 interface RuleStats {
   deleted: number;
   hiddenNodesScanned: number;
-  moduleScope: number;
+  /** Hidden nodes that passed scope + filter predicates. */
+  accepted: number;
   pairsEmitted: number;
+}
+
+/**
+ * Run a rule's degree-based filter against a single hidden node. Each
+ * predicate is one network call (filtered getOutgoing/getIncomingEdges)
+ * — short-circuit on the first failure to avoid extra work.
+ */
+async function passesDegreeFilter(
+  client: RFDBClient,
+  hiddenId: string,
+  filter: NonNullable<Rule['hidden']['filter']>,
+): Promise<boolean> {
+  type Side = 'out' | 'in';
+  type Op = 'eq' | 'max' | 'min';
+  const checks: Array<{ key: keyof typeof filter; side: Side; op: Op }> = [
+    { key: 'outDegreeEq',  side: 'out', op: 'eq'  },
+    { key: 'outDegreeMax', side: 'out', op: 'max' },
+    { key: 'outDegreeMin', side: 'out', op: 'min' },
+    { key: 'inDegreeEq',   side: 'in',  op: 'eq'  },
+    { key: 'inDegreeMax',  side: 'in',  op: 'max' },
+    { key: 'inDegreeMin',  side: 'in',  op: 'min' },
+  ];
+  for (const { key, side, op } of checks) {
+    const cfg = filter[key];
+    if (!cfg) continue;
+    const edges =
+      side === 'out'
+        ? await client.getOutgoingEdges(hiddenId, [cfg.edgeType])
+        : await client.getIncomingEdges(hiddenId, [cfg.edgeType]);
+    const count = edges.length;
+    if (op === 'eq' && count !== cfg.value) return false;
+    if (op === 'max' && count > cfg.value) return false;
+    if (op === 'min' && count < cfg.value) return false;
+  }
+  return true;
 }
 
 async function applyRule(client: RFDBClient, rule: Rule): Promise<RuleStats> {
@@ -227,7 +285,7 @@ async function applyRule(client: RFDBClient, rule: Rule): Promise<RuleStats> {
   //    ID we observed for the pair (deterministic because hiddenIds order
   //    is stable across runs given the same engine state).
   const pairs = new Map<string, PendingEdge>();
-  let moduleScopeCount = 0;
+  let acceptedCount = 0;
   let perRuleCount = 0;
 
   for (const hid of hiddenIds) {
@@ -236,8 +294,12 @@ async function applyRule(client: RFDBClient, rule: Rule): Promise<RuleStats> {
     if (rule.hidden.scope === 'module') {
       const ms = await isModuleScope(client, hid);
       if (!ms) continue;
-      moduleScopeCount++;
     }
+    if (rule.hidden.filter) {
+      const ok = await passesDegreeFilter(client, hid, rule.hidden.filter);
+      if (!ok) continue;
+    }
+    acceptedCount++;
 
     // Both pivot.in and pivot.out are `side: dst` for state-flow → walk
     // INCOMING edges on the hidden node. The opposite-side endpoint
@@ -301,7 +363,7 @@ async function applyRule(client: RFDBClient, rule: Rule): Promise<RuleStats> {
   return {
     deleted,
     hiddenNodesScanned: hiddenIds.length,
-    moduleScope: moduleScopeCount,
+    accepted: acceptedCount,
     pairsEmitted: edges.length,
   };
 }

@@ -1197,6 +1197,7 @@ const LIFTABLE_EDGE_TYPES: &[&str] = &[
     // Compaction-enricher synthesized edges (stateless, idempotent;
     // see packages/util/src/enrichers/compactionEnricher.ts).
     "CO_DEPENDS_ON",
+    "CO_CALLS",
 ];
 
 /// Visibility-lift index: maps every node id (visible + hidden) to the index

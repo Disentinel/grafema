@@ -15,7 +15,10 @@ export const FLOWS: Record<string, FlowPreset> = {
     label: 'Data Flow',
   },
   calls: {
-    types: ['CALLS', 'CALLS_ON', 'HANDLED_BY', 'ROUTES_TO'],
+    // CO_CALLS is the compaction-enricher synthetic edge — pairs of
+    // functions that share a callee (mirror of CO_DEPENDS_ON for the
+    // call graph). Visualises behavioural co-dependency clusters.
+    types: ['CALLS', 'CALLS_ON', 'HANDLED_BY', 'ROUTES_TO', 'CO_CALLS'],
     color: 0xff4466,
     label: 'Call Flow',
   },

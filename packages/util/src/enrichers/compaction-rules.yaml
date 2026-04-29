@@ -52,3 +52,38 @@ rules:
       # explode the graph.
       perHidden: 6
       perRule: 50000
+
+  - name: co-callers
+    description: |
+      Mirror of `shared-readers` for the call-graph: pairs of functions
+      that call the SAME function share a behavioural dependency on
+      that callee. Useful for spotting clusters of consumers of a
+      shared utility. CALLS edges in this graph live on CALL-site
+      nodes (CALL → FUNCTION), so the pivot is the called FUNCTION
+      itself (placeable!) — incoming CALLS sources walk up the
+      analyzer-CONTAINS chain to the calling FUNCTION via the same
+      mechanism the lift uses elsewhere.
+
+      Filter to popular callees only (≥3 callsites) to keep emission
+      bounded. A leaf utility called by 5 functions emits at most 16
+      pairs (cap); a hot helper called by 100 emits 16 representative
+      ones.
+    dependsOn: []
+    hidden:
+      types: [FUNCTION, METHOD, ASYNC_FUNCTION]
+      scope: all
+      filter:
+        # Skip functions called from fewer than 3 sites — pairs of 1-2
+        # callers aren't worth the synthetic edge cost.
+        inDegreeMin: { edgeType: CALLS, value: 3 }
+    pivot:
+      # Both sides walk incoming CALLS — gives the same source set, the
+      # cross-product over distinct callers becomes the emitted pairs.
+      in:  { types: [CALLS], side: dst }
+      out: { types: [CALLS], side: dst }
+    emit:
+      type: CO_CALLS
+      direction: in.src -> out.src
+    fanoutCap:
+      perHidden: 16
+      perRule: 30000
