@@ -409,6 +409,15 @@ const parentCache = new Map<string, { id: string; type: string } | null>();
  */
 async function resolveToPlaced(client: RFDBClient, startId: string): Promise<string | null> {
   if (placedAncestorCache.has(startId)) return placedAncestorCache.get(startId)!;
+  // Self-check first: if startId is itself a placeable node (e.g. a
+  // FUNCTION that's the dst of a CALLS edge — already terminal), return
+  // its own id without walking. Walking up from a placeable node would
+  // jump past it to whatever contains it, which mis-attributes edges.
+  const startType = await getNodeType(client, startId);
+  if (startType && isPlaceable(startType)) {
+    placedAncestorCache.set(startId, startId);
+    return startId;
+  }
   let cur = startId;
   for (let i = 0; i < 32; i++) {
     const parent = await getAnalyzerParent(client, cur);
@@ -444,18 +453,36 @@ async function getAnalyzerParent(
   nodeId: string,
 ): Promise<{ id: string; type: string } | null> {
   if (parentCache.has(nodeId)) return parentCache.get(nodeId)!;
-  const incoming = await client.getIncomingEdges(nodeId, ['CONTAINS']);
-  for (const e of incoming) {
-    const meta = (e as Record<string, unknown>)._source ?? (e as Record<string, unknown>).source;
-    // Skip layout-pack CONTAINS — we only want the AST chain.
-    if (typeof meta === 'string' && meta.includes('layout-pack')) continue;
-    // First non-layout-pack parent wins.
-    const parentType = await getNodeType(client, e.src);
-    if (parentType) {
-      const v = { id: e.src, type: parentType };
-      parentCache.set(nodeId, v);
-      return v;
+  // The graph uses two parent-edge models depending on node type:
+  //   - VARIABLE / CONSTANT / CALL ← CONTAINS ← (SCOPE | FUNCTION | MODULE)
+  //   - SCOPE ← HAS_SCOPE ← (SCOPE | FUNCTION | MODULE)
+  // SCOPE itself has no incoming CONTAINS — only HAS_SCOPE — so walking
+  // up from a CALL through its SCOPE parent dead-ends unless we follow
+  // HAS_SCOPE too. Try CONTAINS first (the AST containment), then fall
+  // back to HAS_SCOPE if no CONTAINS parent surfaced. layout-pack
+  // CONTAINS is filtered out — we only follow analyzer edges.
+  const tryEdges = async (edgeType: string) => {
+    const incoming = await client.getIncomingEdges(nodeId, [edgeType]);
+    for (const e of incoming) {
+      const meta = (e as Record<string, unknown>)._source ?? (e as Record<string, unknown>).source;
+      if (typeof meta === 'string' && meta.includes('layout-pack')) continue;
+      const parentType = await getNodeType(client, e.src);
+      if (parentType) {
+        const v = { id: e.src, type: parentType };
+        return v;
+      }
     }
+    return null;
+  };
+  const viaContains = await tryEdges('CONTAINS');
+  if (viaContains) {
+    parentCache.set(nodeId, viaContains);
+    return viaContains;
+  }
+  const viaHasScope = await tryEdges('HAS_SCOPE');
+  if (viaHasScope) {
+    parentCache.set(nodeId, viaHasScope);
+    return viaHasScope;
   }
   parentCache.set(nodeId, null);
   return null;

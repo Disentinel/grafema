@@ -1198,6 +1198,7 @@ const LIFTABLE_EDGE_TYPES: &[&str] = &[
     // see packages/util/src/enrichers/compactionEnricher.ts).
     "CO_DEPENDS_ON",
     "CO_CALLS",
+    "DIRECT_CALLS",
 ];
 
 /// Visibility-lift index: maps every node id (visible + hidden) to the index
