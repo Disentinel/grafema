@@ -21,7 +21,7 @@
   ],
   "scripts": {
     "build": "tsc",
-    "postbuild": "cp -r src/instructions/*.md dist/instructions/",
+    "postbuild": "cp -r src/instructions/*.md dist/instructions/ && cp src/enrichers/*.yaml dist/enrichers/",
     "clean": "rm -rf dist"
   },
   "keywords": [

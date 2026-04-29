@@ -1194,6 +1194,9 @@ const LIFTABLE_EDGE_TYPES: &[&str] = &[
     "DEPENDS_ON", "HAS_METHOD",
     // Structural edges — needed for directory/file LOD views
     "CONTAINS",
+    // Compaction-enricher synthesized edges (stateless, idempotent;
+    // see packages/util/src/enrichers/compactionEnricher.ts).
+    "CO_DEPENDS_ON",
 ];
 
 /// Visibility-lift index: maps every node id (visible + hidden) to the index

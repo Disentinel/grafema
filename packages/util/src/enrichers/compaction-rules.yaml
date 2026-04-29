@@ -1,0 +1,54 @@
+# Compaction rules — viz-time edge synthesis for hidden node types.
+#
+# Each rule names a hidden node type and the edge types pivoting on it.
+# The enricher generates shortcut edges between the placed-ancestors of
+# those edges' opposite endpoints, capturing the semantic "A and B are
+# connected via this hidden node" relationship without keeping the
+# hidden node in the visualization.
+#
+# Persistence: each rule's emitted edges carry `_source: "compaction:<name>"`.
+# The enricher deletes prior emits by that tag before rewriting on each
+# `grafema analyze` — fully stateless, no array bloat across re-runs
+# (REG-1126 design).
+#
+# Confidence: V1 ships `may` only. The ranking that would upgrade pairs
+# to `must` requires control-flow reachability analysis (REG-1125 — blocked).
+
+rules:
+  # First rule lands on a graph topology that's actually populated in
+  # real TS/Rust codebases — `state-flow` (writer × reader of mutable
+  # module state via WRITES_TO+READS_FROM) was a theory-driven choice
+  # that produced zero edges on the Grafema self-graph because TS/Rust
+  # discourage module-level mutable bindings (mutations happen via
+  # CALLS_ON method calls on `const`-held containers, not WRITES_TO).
+  # Pick the dual instead — pairs of readers of the same module-level
+  # CONSTANT/VARIABLE — which captures shared-config / shared-state
+  # coupling that exists everywhere.
+  - name: shared-readers
+    description: |
+      Two functions reading the same module-scope CONSTANT or VARIABLE
+      share a configuration / dependency surface. Emit a CO_DEPENDS_ON
+      edge between every pair of distinct readers of the same hidden
+      node — captures implicit coupling that doesn't show up in the
+      direct call graph.
+    dependsOn: []
+    hidden:
+      types: [CONSTANT, VARIABLE]
+      scope: module
+    pivot:
+      # Same edge on both sides — readers are the SRC of READS_FROM
+      # incoming on the hidden node. The enricher's pair-emission step
+      # will form ordered (reader_i, reader_j) tuples, skipping the
+      # diagonal. Bidirectional emission (a→b AND b→a) is intentional:
+      # the relationship is symmetric, both arrows convey "co-dependency".
+      in:  { types: [READS_FROM], side: dst }
+      out: { types: [READS_FROM], side: dst }
+    emit:
+      type: CO_DEPENDS_ON
+      direction: in.src -> out.src
+    fanoutCap:
+      # Cap per hidden node — 6 means at most 6 ordered pairs from each
+      # const's reader set. Configs with hundreds of readers don't
+      # explode the graph.
+      perHidden: 6
+      perRule: 50000

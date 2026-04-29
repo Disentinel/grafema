@@ -7,7 +7,10 @@ export interface FlowPreset {
 
 export const FLOWS: Record<string, FlowPreset> = {
   data: {
-    types: ['ASSIGNED_FROM', 'FLOWS_INTO', 'READS_FROM', 'WRITES_TO', 'PASSES_ARGUMENT'],
+    // CO_DEPENDS_ON is the compaction-enricher synthetic edge — pairs of
+    // functions reading the same module-scope CONSTANT/VARIABLE. Lives
+    // under Data Flow because it captures implicit data coupling.
+    types: ['ASSIGNED_FROM', 'FLOWS_INTO', 'READS_FROM', 'WRITES_TO', 'PASSES_ARGUMENT', 'CO_DEPENDS_ON'],
     color: 0xaa66ff,
     label: 'Data Flow',
   },
