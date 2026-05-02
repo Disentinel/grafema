@@ -78,6 +78,7 @@ function makeMockSceneApi(): {
     setShowCoords: () => {},
     setFlowVisible: () => {},
     recolorFlowsByNodes: () => {},
+    loadEdgesByTypes: async () => ({ added: 0, total: 0 }),
     applyLens: () => {},
     addRoute: () => {},
     removeRoute: () => {},
@@ -88,6 +89,8 @@ function makeMockSceneApi(): {
     exitDiff: () => {},
     setTargetPositions: () => {},
     dispose: () => {},
+    projectWorldToNdc: () => ({ x: 0, y: 0, z: 0 }),
+    getScene: () => ({} as unknown as import('three').Scene),
   };
   return { api, flyTo: flyToSpy };
 }

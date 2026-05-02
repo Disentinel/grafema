@@ -62,6 +62,14 @@ pub struct LayoutInput {
     /// Required by [`super::commit::commit_layout`] — without it, we can't
     /// emit `LAYOUT_POSITION` edges keyed by MODULE id.
     pub semantic_ids: Option<Vec<String>>,
+    /// RFDB node ids (u128, BLAKE3 of semantic id) parallel to `semantic_ids`.
+    /// `Some(_)` for RFDB-loaded inputs; `None` for synthetic.
+    pub rfdb_ids: Option<Vec<u128>>,
+    /// Liftable-edge degree (incoming + outgoing, counted only over the edge
+    /// types defined in `loader::LIFTABLE_EDGE_TYPES`) parallel to
+    /// `semantic_ids`. Feeds the degree-desc hard-cap tiebreak in Chunk-2.
+    /// `Some(_)` for RFDB-loaded inputs; `None` for synthetic.
+    pub degrees: Option<Vec<u32>>,
 }
 
 impl LayoutInput {
@@ -183,6 +191,8 @@ pub fn generate(n_leaves: usize, seed: u64, edge_density: f32) -> LayoutInput {
         // synthesised from the folder vocabulary and don't correspond to any
         // MODULE node in any RFDB.
         semantic_ids: None,
+        rfdb_ids: None,
+        degrees: None,
     }
 }
 

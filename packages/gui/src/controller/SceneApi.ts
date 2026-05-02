@@ -17,6 +17,7 @@
  * directly (camera moves, scene mode swap, flow recolor, ...).
  */
 
+import type * as THREE from 'three';
 import type { SceneMode } from '../three/types';
 import type { CameraView } from './lod';
 
@@ -28,6 +29,19 @@ export interface SceneApi {
   getMode(): SceneMode;
   /** Camera-kind-aware view; feeds LOD math in `lodFromView`. */
   getView(): CameraView;
+  /** Project a world-space point onto viewport NDC through the active
+   *  camera. `out.x/y` are in [-1, 1]; `out.z` is the normalized depth
+   *  (> 1 or < -1 means behind/past clip planes — caller should skip).
+   *  Used by the toponym overlay to position HTML labels at hull
+   *  centroids per frame without reaching into SceneManager internals. */
+  projectWorldToNdc(wx: number, wy: number, wz: number): { x: number; y: number; z: number };
+  /** Direct access to the live `THREE.Scene`. Used by overlay layers
+   *  (ToponymsLayer) that need to add/remove their own `THREE.Object3D`
+   *  group so the labels render in the same pipeline as the hex/hull
+   *  meshes — i.e. they tilt with the camera in 3D mode and follow
+   *  the same depth-buffer ordering. Tests stub this with a fresh
+   *  empty Scene. */
+  getScene(): THREE.Scene;
 
   // --- Camera -------------------------------------------------------------
   /** Animate camera to world (x, z); ms optional (default chosen by impl). */
@@ -42,6 +56,16 @@ export interface SceneApi {
   setFlowVisible(name: string, visible: boolean): void;
   /** Recolor active flows; pass null to reset to preset defaults. */
   recolorFlowsByNodes(colorFn: ((nodeIdx: number) => number) | null): void;
+  /**
+   * Lazy-load edges of the given types (CALLS / IMPORTS_FROM / ...) and
+   * rebuild the FlowLayer so they're displayable. Edges already loaded
+   * are deduplicated by (source, target, type). Returns the count of
+   * edges newly added (so callers can show a toast / progress).
+   *
+   * Initial graph-stream bootstrap fetches with `noEdges=1`, so all
+   * flows other than the always-on Bridges land here on first toggle.
+   */
+  loadEdgesByTypes(types: string[]): Promise<{ added: number; total: number }>;
 
   // --- LensPanel ----------------------------------------------------------
   applyLens(lensName: string): void;

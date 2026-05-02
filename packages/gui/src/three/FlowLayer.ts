@@ -235,7 +235,7 @@ export class FlowLayer {
         const points = curve.getPoints(CURVE_SEGMENTS);
         b.line.geometry.dispose();
         const tubePath = new THREE.CatmullRomCurve3(points);
-        b.line.geometry = new THREE.TubeGeometry(tubePath, CURVE_SEGMENTS, 0.12, 8, false);
+        b.line.geometry = new THREE.TubeGeometry(tubePath, CURVE_SEGMENTS, 0.4, 8, false);
 
         const last = points[points.length - 1];
         const prev = points[points.length - 2];
@@ -335,6 +335,26 @@ export class FlowLayer {
         }
       }
     }
+  }
+
+  /**
+   * Pointer hit-test against per-edge tube meshes. Returns the edge under
+   * the cursor (closest intersection) or null when no tube is hit. Only
+   * meaningful in `tube` style — line-style geometry is one merged
+   * `LineSegments2`, which would need per-segment hit math out of scope
+   * here. Visible flows only: hidden slots' children are ignored by the
+   * raycaster because their group.visible is false.
+   */
+  raycastEdge(raycaster: THREE.Raycaster): { srcIdx: number; dstIdx: number; edgeType: string } | null {
+    if (this._style !== 'tube') return null;
+    const hits = raycaster.intersectObject(this._group, true);
+    for (const h of hits) {
+      const tag = (h.object as THREE.Object3D).userData?.edge as
+        | { srcIdx: number; dstIdx: number; edgeType: string }
+        | undefined;
+      if (tag) return tag;
+    }
+    return null;
   }
 
   /**
@@ -453,25 +473,34 @@ export class FlowLayer {
 
     const points = curve.getPoints(CURVE_SEGMENTS);
     const tubePath = new THREE.CatmullRomCurve3(points);
-    const tubeGeo = new THREE.TubeGeometry(tubePath, CURVE_SEGMENTS, 0.12, 8, false);
+    const tubeGeo = new THREE.TubeGeometry(tubePath, CURVE_SEGMENTS, 0.4, 8, false);
     const tubeMat = new THREE.MeshBasicMaterial({
-      color: plan.presetColor.clone(),
+      // Brighten the base preset color so tubes pop against the dark
+      // tile/wall background (the original 0.6-opacity tube blended in
+      // with the city).
+      color: plan.presetColor.clone().multiplyScalar(1.4),
       transparent: true,
-      opacity: 0.6,
+      opacity: 0.95,
       depthWrite: false,
       depthTest: false,
     });
     const line = new THREE.Mesh(tubeGeo, tubeMat);
     line.renderOrder = FlowLayer.RENDER_ORDER;
+    // Tag the tube so a Raycaster hit can identify the underlying edge
+    // without an extra reverse-lookup table. canvasBuild's hover handler
+    // reads this on intersect to populate the edge tooltip.
+    line.userData = {
+      edge: { srcIdx: plan.srcIdx, dstIdx: plan.dstIdx, edgeType: plan.edgeType },
+    };
     slot.group.add(line);
 
     const lastSeg = points[points.length - 1].clone().sub(points[points.length - 2]).normalize();
     const arrowGeo = new THREE.ConeGeometry(0.2, 0.5, 4);
     arrowGeo.rotateX(Math.PI / 2);
     const arrowMat = new THREE.MeshBasicMaterial({
-      color: plan.presetColor.clone(),
+      color: plan.presetColor.clone().multiplyScalar(1.4),
       transparent: true,
-      opacity: 0.7,
+      opacity: 1.0,
       depthTest: false,
     });
     const arrow = new THREE.Mesh(arrowGeo, arrowMat);

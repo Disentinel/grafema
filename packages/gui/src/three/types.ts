@@ -64,7 +64,7 @@ export const DEFAULT_3D_MODE: SceneMode = {
   tileElevation: 'on',
   hoverLift: 0.4,
   flowStyle: 'tube',
-  flowDensityCap: 500,
+  flowDensityCap: 20000,
   hullStyle: 'line',
   labelTier: 'package+region+file',
   background: 0x0a0a12,

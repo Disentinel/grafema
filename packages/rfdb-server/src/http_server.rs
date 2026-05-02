@@ -11,7 +11,8 @@
 //! - `GET /api/stats`        — node/edge counts by type
 //! - `GET /api/node/:id`     — single node details
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
 #[cfg(feature = "ui")]
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
@@ -25,58 +26,157 @@ use axum::{
 use tower_http::cors::CorsLayer;
 use serde::Deserialize;
 
-use crate::tectonic_layout::{
-    preprocess as tectonic_preprocess, phase1_place, phase2_flood_fill, phase3_drift,
-    phase4_refine_boundaries, DriftConfig, RefinementConfig,
-};
 use crate::container_hierarchy::{
-    ContainerTree, HierarchyLevel, ContainerRule, NodeRef, EdgeRef, default_hierarchy,
+    ContainerTree, NodeRef, EdgeRef, default_hierarchy,
     auto_hierarchy_from_nodes,
 };
 use crate::sa_layout::{HexCoord, SaEngine, LayoutNode, LayoutEdge, SaSnapshot};
 use crate::database_manager::DatabaseManager;
 use crate::graph::GraphStore;
+use crate::layout_types;
 use crate::storage::AttrQuery;
 
-/// Cached file-level tectonic layout. Computed once per process on the first
-/// `/api/graph-stream` request and reused for every subsequent request until
-/// the server restarts. See `build_graph_stream_body` for rationale.
-#[derive(Clone)]
+/// Persisted hex layout read from RFDB (DAI-22 Chunk-4).
+///
+/// Computed once per server lifetime (or after `reload()`) by scanning
+/// LAYOUT_POSITION + REGION + CONTAINS edges previously written by
+/// `grafema layout --commit`. No tectonic pipeline runs server-side; the
+/// consumer only reads what the orchestrator persisted.
+#[derive(Clone, Debug)]
 pub struct CachedLayout {
-    /// Per-atom centroid: node id → hex coord. Covers every primitive
-    /// symbol that entered the tectonic pipeline.
-    pub atom_positions: HashMap<u128, HexCoord>,
-    /// Fallback: representative centroid per file (first atom in that
-    /// file, determined by sorted traversal for determinism). Used for
-    /// non-atom nodes (CALL, REFERENCE, PARAMETER, …) that still get
-    /// emitted in the stream.
-    pub file_fallback: HashMap<String, HexCoord>,
-    pub atom_count: u32,
-    pub phase3_initial_cost: f32,
-    pub phase3_final_cost: f32,
-    pub pipeline_ms: u128,
+    /// Per-symbol hex coord: RFDB node id → (q, r). Only symbols that the
+    /// orchestrator placed (= NOT overflow-skipped) appear here.
+    pub positions: HashMap<u128, HexCoord>,
+    /// Every REGION node, in insertion order.
+    pub regions: Vec<RegionInfo>,
+    /// `region_id → [children]`. Children may be REGION ids (nested folder
+    /// tree) or SYMBOL ids (leaf attachments). Only edges tagged
+    /// `_source=layout-pack` contribute.
+    pub containment: HashMap<u128, Vec<u128>>,
+    /// `file_path → (skipped_count, hard_cap)` for every file whose REGION
+    /// carried `overflow_skipped > 0` metadata. Empty when nothing overflowed.
+    pub overflow_files: HashMap<String, (usize, usize)>,
+    /// Provenance summary — feeds into the `layout_meta` header frame.
+    pub source: LayoutSource,
+}
+
+/// A single REGION node in the persisted layout tree.
+#[derive(Clone, Debug)]
+pub struct RegionInfo {
+    /// RFDB u128 node id (derived from the REGION's semantic id).
+    pub id: u128,
+    /// Depth in the folder tree (0 = root).
+    pub depth: u32,
+    /// Original folder/file path (not URL-encoded).
+    pub path: String,
+    /// `"folder"` or `"file"` — files are leaves that attach symbols.
+    pub kind: String,
+    /// Display name (last `/`-segment of `path`, or `"/"` for root).
+    pub name: String,
+}
+
+/// Where the cached layout came from.
+///
+/// `Missing` means no LAYOUT_POSITION edges were found during warmup — the
+/// server still streams every node but with `pos: null` and
+/// `unplaced_reason: "missing_layout"` so the GUI can render an overlay.
+#[derive(Clone, Debug)]
+pub enum LayoutSource {
+    Missing,
+    Committed {
+        committed_at: String,
+        symbol_count: usize,
+    },
 }
 
 /// Shared state for all HTTP handlers.
 #[derive(Clone)]
 pub struct HttpState {
     pub manager: Arc<DatabaseManager>,
-    /// Cached file-level tectonic layout (file path → hex centroid).
+    /// Cached persisted per-symbol layout (DAI-22 Chunk-4). Populated on
+    /// warmup or first `/api/graph-stream` hit; reset by `reload()`.
     pub layout_cache: Arc<RwLock<Option<CachedLayout>>>,
     /// Cached file → list of node ids in that file. Built once with a
     /// single full scan of the graph, reused by edge-lifting in every
     /// subsequent request.
     pub file_to_nodes: Arc<RwLock<Option<HashMap<String, Vec<u128>>>>>,
+    /// Display name of the workspace that owns this database (e.g.
+    /// `"grafema"`, `"my-project"`). Computed once at startup from the DB
+    /// path's grandparent (typical layout: `<workspace>/.grafema/graph.rfdb`).
+    /// `None` when the parent has no useful basename (root `/`, anonymous
+    /// temp dir, etc.) so the GUI can fall back to its skip-root behaviour.
+    /// Surfaced verbatim in the `layout_meta` JSONL frame.
+    pub workspace_name: Option<String>,
+    /// Cached per-region hull polygons (Phase 1 of streaming overhaul).
+    /// Populated by `warmup` immediately after `layout_cache` is built so
+    /// `/api/graph-stream` can ship hulls in a header-adjacent frame
+    /// without recomputing per request. `None` until warmup completes;
+    /// `Some(empty)` when the layout has no placed symbols. The GUI uses
+    /// the precomputed polygons to render hulls + toponyms before the
+    /// node tail of the stream finishes parsing.
+    pub hull_cache: Arc<RwLock<Option<HashMap<u128, crate::hulls::RegionHull>>>>,
+    /// Cached body of the default `/api/graph-stream` response. Rebuilt
+    /// once at warmup (and on `reload`); served immediately when a
+    /// subsequent request matches the canonical default flag set
+    /// (noEdges=1, noExcluded=1, no per-request filters). The full
+    /// build is 5-10s on a real graph because `tree build` +
+    /// candidate-classification dominates per-request work; serving
+    /// from cache turns subsequent requests into <50ms responses.
+    pub default_stream_body: Arc<RwLock<Option<String>>>,
 }
 
 /// Build a fresh `HttpState` with empty caches. Exposed so the binary can
 /// clone the state into a warmup task before `start` takes ownership.
-pub fn new_state(manager: Arc<DatabaseManager>) -> HttpState {
+///
+/// `workspace_name` is the human-readable label for the project that owns
+/// this database — typically derived via [`derive_workspace_name`] from the
+/// CLI db-path argument. Pass `None` for tests / cases where no meaningful
+/// workspace exists.
+pub fn new_state(manager: Arc<DatabaseManager>, workspace_name: Option<String>) -> HttpState {
     HttpState {
         manager,
         layout_cache: Arc::new(RwLock::new(None)),
         file_to_nodes: Arc::new(RwLock::new(None)),
+        workspace_name,
+        hull_cache: Arc::new(RwLock::new(None)),
+        default_stream_body: Arc::new(RwLock::new(None)),
     }
+}
+
+/// Derive the workspace display name from the database path.
+///
+/// Convention: `grafema analyze` writes the graph to `<workspace>/.grafema/<db>.rfdb`,
+/// so the workspace folder is the **grandparent** of the db path (i.e. the
+/// parent of `.grafema/`). We take the basename of that grandparent.
+///
+/// Edge cases that yield `None` (so the GUI falls back to hiding the root
+/// label rather than showing a misleading one):
+///   * db path has no parent (`graph.rfdb` alone) — workspace unknown.
+///   * grandparent missing or has no basename (e.g. db lives directly under
+///     `/` or an anonymous temp root).
+///   * basename is empty (e.g. trailing slash artefact after canonicalisation).
+///
+/// Filesystem is NOT touched; this is pure path arithmetic so it can be
+/// called from any thread at startup without I/O cost.
+pub fn derive_workspace_name(db_path: &Path) -> Option<String> {
+    // db_path is typically `<workspace>/.grafema/<db>.rfdb`. We want
+    // `<workspace>` = parent of `.grafema/` = grandparent of db_path.
+    fn try_basename(p: &Path) -> Option<String> {
+        let workspace_dir = p.parent()?.parent()?;
+        let basename = workspace_dir.file_name()?;
+        let s = basename.to_string_lossy().to_string();
+        if s.is_empty() { None } else { Some(s) }
+    }
+    if let Some(name) = try_basename(db_path) { return Some(name); }
+    // Pure-arithmetic miss for single-segment relative grandparents
+    // (e.g. `.grafema/x.rfdb` — parent `.grafema` exists but its lexical
+    // parent is empty). Fall back to current_dir + lexical join, but
+    // only when db_path actually has a named parent — otherwise we'd
+    // happily resolve `bare.rfdb` against cwd and emit a misleading
+    // workspace name for a temp / pipe / unknown-context db.
+    let _named_parent = db_path.parent().filter(|p| p.file_name().is_some())?;
+    let abs = std::env::current_dir().ok()?.join(db_path);
+    try_basename(&abs)
 }
 
 /// Populate `layout_cache` and `file_to_nodes` synchronously. Safe to call
@@ -93,7 +193,42 @@ pub fn warmup(state: &HttpState) {
     };
     let engine = db.engine.read().unwrap();
     let _ = get_or_build_file_to_nodes(&state.file_to_nodes, &**engine);
-    let _ = get_or_build_layout(&state.layout_cache, &state.file_to_nodes, &**engine);
+    let layout = get_or_build_layout(&state.layout_cache, &state.file_to_nodes, &**engine);
+    // Hull precompute is now done INSIDE `build_graph_stream_body`
+    // (file-path bucketing matches the TS pipeline). The default-stream
+    // body cache below absorbs the cost so live requests stay <100ms.
+    let _ = layout; // keep layout binding alive for the cache build below
+    let _hull_unused: HashMap<u128, crate::hulls::RegionHull> = HashMap::new();
+    let _ = state.hull_cache.write().map(|mut g| *g = Some(_hull_unused));
+
+    // Precompute the default `/api/graph-stream` response (the URL the
+    // GUI bootstrap fetches) so the first browser load skips the
+    // 5-10s tree-build / candidate-classify / intern-table work and
+    // hands back a ready string in <50ms. Other parameter
+    // combinations still pay the full cost on first hit.
+    let t_default = std::time::Instant::now();
+    let default_body = build_graph_stream_body(
+        Arc::clone(&state.manager),
+        Arc::clone(&state.layout_cache),
+        Arc::clone(&state.file_to_nodes),
+        Arc::clone(&state.hull_cache),
+        500_000,
+        None, None, None, None,
+        state.workspace_name.clone(),
+        true,  // no_edges
+        true,  // no_excluded
+    );
+    match default_body {
+        Ok(body) => {
+            eprintln!(
+                "[stream-cache] precomputed default response: {} bytes in {}ms",
+                body.len(),
+                t_default.elapsed().as_millis(),
+            );
+            *state.default_stream_body.write().unwrap() = Some(body);
+        }
+        Err(e) => eprintln!("[stream-cache] precompute skipped: {}", e),
+    }
 }
 
 /// UI serving strategy for the `/ui/*` routes.
@@ -133,14 +268,34 @@ pub fn ui_config_from_env() -> UiConfig {
 /// Preferred entry point for the binary; tests pick [`build_router_with_ui`]
 /// directly to avoid racing on the process-global env.
 pub fn build_router(state: HttpState) -> Router {
-    #[cfg(feature = "ui")]
-    {
-        build_router_with_ui(state, ui_config_from_env())
-    }
-    #[cfg(not(feature = "ui"))]
-    {
-        build_api_router(state)
-    }
+    let inner = {
+        #[cfg(feature = "ui")]
+        {
+            build_router_with_ui(state, ui_config_from_env())
+        }
+        #[cfg(not(feature = "ui"))]
+        {
+            build_api_router(state)
+        }
+    };
+    apply_compression(inner)
+}
+
+/// Wrap any axum `Router` in transparent gzip/brotli compression. Lifted
+/// out of `build_router` so integration tests can exercise the same wire
+/// behaviour without touching the process-global UI env var.
+///
+/// The layer negotiates with the client's `Accept-Encoding` header
+/// (browsers send `gzip, br` by default) and falls back to the identity
+/// encoding when the client doesn't ask — backwards-compatible with curl
+/// or any consumer that omits the header.
+///
+/// On the NDJSON graph-stream this shrinks wire size ~10-20× since the
+/// payload is overwhelmingly repeated field names + UUIDs. Static UI
+/// assets (JS/CSS) also benefit; the `application/octet-stream` and
+/// pre-compressed asset paths are skipped automatically by tower-http.
+pub fn apply_compression(router: Router) -> Router {
+    router.layer(tower_http::compression::CompressionLayer::new())
 }
 
 /// API-only router shared by all code paths. Keeping it factored out means
@@ -148,6 +303,7 @@ pub fn build_router(state: HttpState) -> Router {
 fn build_api_router(state: HttpState) -> Router {
     Router::new()
         .route("/api/graph-stream", get(graph_stream))
+        .route("/api/edges", get(edges_stream))
         .route("/api/layout-live", get(layout_live_ws))
         .route("/api/stats", get(stats))
         .route("/api/node/{id}", get(node_by_id))
@@ -245,6 +401,18 @@ struct StreamParams {
     packages: Option<String>,
     node_types: Option<String>,
     edge_types: Option<String>,
+    /// When set to `"1"` / `"true"`, the stream skips emitting any edges.
+    /// Lets the GUI keep its initial fetch tight (487k+ `edge` frames
+    /// dominate parser time even gzipped) and lazy-load edges per-flow
+    /// later via /api/edges. Default false → emit all liftable edges.
+    no_edges: Option<String>,
+    /// When set to `"1"` / `"true"`, the stream skips emitting the
+    /// `excluded_nodes` batch frame. The batch is one giant
+    /// JSON.parse on the client (300k+ entries) that blocks the main
+    /// thread for seconds — too expensive for the default load when
+    /// most users never trigger the unplaced-nodes search path.
+    /// Default false → emit the batch.
+    no_excluded: Option<String>,
     max_nodes: Option<usize>,
     /// Container hierarchy level for region grouping. Accepts a level
     /// name from the default hierarchy: `package` (top — first 2 path
@@ -328,24 +496,289 @@ async fn graph_stream(
         .map(|s| s.split(',').map(|p| p.trim().to_string()).collect());
     let want_edge_types: Option<Vec<String>> = params.edge_types
         .map(|s| s.split(',').map(|p| p.trim().to_string()).collect());
+    let no_edges = params
+        .no_edges
+        .as_deref()
+        .map(|s| matches!(s, "1" | "true" | "yes"))
+        .unwrap_or(false);
+    let no_excluded = params
+        .no_excluded
+        .as_deref()
+        .map(|s| matches!(s, "1" | "true" | "yes"))
+        .unwrap_or(false);
     let lod_level = params.lod_level;
+
+    // Fast path — the GUI bootstrap fetches with the canonical default
+    // flag set; warmup precomputed that exact body so the response is
+    // <50ms instead of the 5-10s a fresh build takes. Match conservatively:
+    // anything custom (filters / lod / non-default maxNodes) takes the
+    // build path so per-request semantics stay correct.
+    let is_canonical_default = no_edges
+        && no_excluded
+        && want_packages.is_none()
+        && want_node_types.is_none()
+        && want_edge_types.as_ref().map(|v| v.is_empty()).unwrap_or(true)
+        && lod_level.is_none()
+        && max_nodes >= 500_000;
+    if is_canonical_default {
+        if let Some(body) = state.default_stream_body.read().ok().and_then(|g| g.clone()) {
+            return Response::builder()
+                .header("Content-Type", "application/x-ndjson")
+                .header("Cache-Control", "no-cache")
+                .body(axum::body::Body::from(body))
+                .unwrap();
+        }
+    }
 
     // Load graph data from RFDB (blocking — graph engine is sync)
     let manager = state.manager.clone();
     let layout_cache = state.layout_cache.clone();
     let file_to_nodes = state.file_to_nodes.clone();
-    let body = tokio::task::spawn_blocking(move || {
+    let hull_cache = state.hull_cache.clone();
+    let workspace_name = state.workspace_name.clone();
+    let result = tokio::task::spawn_blocking(move || {
         build_graph_stream_body(
-            manager, layout_cache, file_to_nodes,
+            manager, layout_cache, file_to_nodes, hull_cache,
             max_nodes, want_packages, want_node_types, want_edge_types, lod_level,
+            workspace_name, no_edges, no_excluded,
         )
     }).await.unwrap();
 
-    Response::builder()
-        .header("Content-Type", "application/x-ndjson")
-        .header("Cache-Control", "no-cache")
-        .body(axum::body::Body::from(body))
-        .unwrap()
+    match result {
+        Ok(body) => Response::builder()
+            .header("Content-Type", "application/x-ndjson")
+            .header("Cache-Control", "no-cache")
+            .body(axum::body::Body::from(body))
+            .unwrap(),
+        Err(err) => {
+            eprintln!("[http] graph-stream failed: {}", err);
+            Response::builder()
+                .status(500)
+                .header("Content-Type", "application/json")
+                .body(axum::body::Body::from(
+                    serde_json::json!({ "error": err }).to_string(),
+                ))
+                .unwrap()
+        }
+    }
+}
+
+// ── GET /api/edges ──────────────────────────────────────────────────────
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct EdgesParams {
+    /// Comma-separated edge types to fetch (CALLS, IMPORTS_FROM, ...).
+    /// Empty / omitted = lift everything liftable. Server filters against
+    /// LIFTABLE_EDGE_TYPES so unknown values are silently dropped.
+    types: Option<String>,
+    /// Same node-cap as graph_stream — keeps vis_index in sync with the
+    /// canonical-default candidates on the GUI side. Defaults to 500_000
+    /// (matches warmup's body cache).
+    max_nodes: Option<usize>,
+}
+
+/// Lazy edge fetch — used by the GUI when a flow toggles on. Wire format
+/// (NDJSON):
+///   {"type":"edges_header","edgeTypeTable":[...]}
+///   {"type":"totals","edges":N}
+///   {"type":"edge","s":SRC_VIS_IDX,"d":DST_VIS_IDX,"t":TYPE_TABLE_IDX}
+///   {"type":"done","edgeCount":N,"elapsed":MS}
+///
+/// `s`/`d` are visibility-lifted indices that already match the node
+/// indices the GUI received via /api/graph-stream — so the client can
+/// hand the result straight to FlowLayer.build(nodes, edges) with zero
+/// remapping. The vis_index is rebuilt per request (not cached); on a
+/// real graph this is ~1-2s vs 6-10s for the full graph-stream because
+/// hull computation, region tree, and per-node emission all skip.
+async fn edges_stream(
+    State(state): State<HttpState>,
+    Query(params): Query<EdgesParams>,
+) -> impl IntoResponse {
+    let want_types: Option<Vec<String>> = params
+        .types
+        .as_ref()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.split(',').map(|p| p.trim().to_string()).collect());
+    let max_nodes = params.max_nodes.unwrap_or(500_000);
+
+    let manager = state.manager.clone();
+    let layout_cache = state.layout_cache.clone();
+    let file_to_nodes = state.file_to_nodes.clone();
+    let result = tokio::task::spawn_blocking(move || -> Result<String, String> {
+        let start = std::time::Instant::now();
+        let db = manager
+            .get_database("default")
+            .map_err(|e| format!("default database unavailable: {}", e))?;
+        let engine = db.engine.read().map_err(|e| format!("engine lock poisoned: {}", e))?;
+
+        // Reuse the same candidate / vis pipeline graph_stream uses so
+        // emitted s/d indices line up with what the GUI's existing node
+        // table already keys on.
+        let cached_layout = get_or_build_layout(&layout_cache, &file_to_nodes, &**engine);
+        let candidates = collect_candidate_nodes(&**engine, max_nodes, None, None);
+
+        // Custom vis_index that ONLY redirects hidden nodes to PLACED
+        // candidates in the same file. The shared `build_visibility_index`
+        // walks all candidates and picks `visible_nodes[0]` — which can
+        // be a non-placeable / unplaced candidate. The GUI emits only
+        // placed nodes, so an edge endpoint redirected to such a target
+        // would silently drop on the client. This pass guarantees every
+        // emitted edge endpoint corresponds to a node the GUI actually
+        // displays.
+        let layout_is_missing = matches!(cached_layout.source, LayoutSource::Missing);
+        let mut placed_idx_set: HashSet<u32> = HashSet::with_capacity(candidates.node_refs.len());
+        for nr in &candidates.node_refs {
+            let (_, reason) = classify_node_visibility(nr, &cached_layout, layout_is_missing);
+            if reason.is_none() {
+                placed_idx_set.insert(nr.idx);
+            }
+        }
+        let mut file_to_placed: HashMap<String, Vec<u32>> = HashMap::new();
+        for nr in &candidates.node_refs {
+            if placed_idx_set.contains(&nr.idx) {
+                file_to_placed.entry(nr.file.clone()).or_default().push(nr.idx);
+            }
+        }
+        let mut nid_to_placed: HashMap<u128, u32> = HashMap::new();
+        for nr in &candidates.node_refs {
+            if placed_idx_set.contains(&nr.idx) {
+                nid_to_placed.insert(nr.id, nr.idx);
+            }
+        }
+
+        // CONTAINS-walk lift: for any hidden node, walk the analyzer's
+        // CONTAINS chain (parent → child) up to the first placed
+        // ancestor. Replaces the file-grouping fallback below for nodes
+        // that have a real lexical parent — gives correct attribution
+        // for files with multiple FUNCTIONs (the file-grouping pinned
+        // every CALL inside FUNCTION_2 to FUNCTION_1's idx because the
+        // first-placed-in-file heuristic doesn't know about scope).
+        //
+        // Only `analyzer CONTAINS` is followed — `layout-pack CONTAINS`
+        // (regions / virtual containers) would lift everything to the
+        // root and erase containment specificity. Filter is the negation
+        // of the layout-pack metadata stamp.
+        let mut parent_of: HashMap<u128, u128> = HashMap::new();
+        for edge in engine.get_edges_by_type("CONTAINS") {
+            if let Some(meta) = edge.metadata.as_deref() {
+                if meta.contains("\"_source\":\"layout-pack\"") {
+                    continue;
+                }
+            }
+            // analyzer CONTAINS: parent → child means child's parent = src.
+            // First parent wins — siblings shouldn't have multiple
+            // analyzer-CONTAINS parents in a sane AST.
+            parent_of.entry(edge.dst).or_insert(edge.src);
+        }
+        // Walk for every node id we might encounter on a lifted edge.
+        // Iterating engine-wide once is cheaper than the per-edge walk
+        // inside lift_edges_bulk, and the result is just a HashMap put.
+        let placed_ids_set: HashSet<u128> = nid_to_placed.keys().copied().collect();
+        for nr in &candidates.node_refs {
+            if nid_to_placed.contains_key(&nr.id) {
+                continue; // already a placed candidate
+            }
+            let mut cur = nr.id;
+            let mut steps = 0;
+            // Cap the walk so a malformed ring doesn't loop forever.
+            while steps < 32 {
+                steps += 1;
+                match parent_of.get(&cur) {
+                    Some(&p) => {
+                        if placed_ids_set.contains(&p) {
+                            // Land on placed ancestor — record idx.
+                            if let Some(&idx) = nid_to_placed.get(&p) {
+                                nid_to_placed.insert(nr.id, idx);
+                            }
+                            break;
+                        }
+                        cur = p;
+                    }
+                    None => break,
+                }
+            }
+        }
+
+        // File-grouping fallback for nodes that walk to the root without
+        // hitting a placed ancestor (orphans, top-level constants in
+        // header-only files, etc). Same heuristic the prior
+        // implementation used — kept as a last resort so we don't drop
+        // edges entirely on those.
+        let file_to_nodes_cache = get_or_build_file_to_nodes(&file_to_nodes, &**engine);
+        for (file, placed_in_file) in file_to_placed.iter() {
+            if let Some(node_ids) = file_to_nodes_cache.get(file) {
+                for &nid in node_ids {
+                    if !nid_to_placed.contains_key(&nid) {
+                        nid_to_placed.insert(nid, placed_in_file[0]);
+                    }
+                }
+            }
+        }
+        let vis_index = VisibilityIndex { nid_to_visible: nid_to_placed };
+        let (edge_refs, edge_type_table) =
+            lift_edges_bulk(&**engine, &vis_index, want_types.as_ref());
+
+        let mut lines: Vec<String> = Vec::with_capacity(edge_refs.len() + 4);
+        lines.push(
+            serde_json::to_string(&serde_json::json!({
+                "type": "edges_header",
+                "edgeTypeTable": &edge_type_table,
+            }))
+            .unwrap(),
+        );
+        lines.push(
+            serde_json::to_string(&serde_json::json!({
+                "type": "totals",
+                "edges": edge_refs.len(),
+            }))
+            .unwrap(),
+        );
+        let edge_type_idx: HashMap<String, usize> = edge_type_table
+            .iter()
+            .enumerate()
+            .map(|(i, t)| (t.clone(), i))
+            .collect();
+        for e in &edge_refs {
+            lines.push(emit_edge_line(e, &edge_type_idx));
+        }
+        let elapsed = start.elapsed().as_millis();
+        lines.push(
+            serde_json::to_string(&serde_json::json!({
+                "type": "done",
+                "edgeCount": edge_refs.len(),
+                "elapsed": elapsed,
+            }))
+            .unwrap(),
+        );
+        eprintln!(
+            "[http] /api/edges: types={:?} → {} edges, {}ms",
+            want_types,
+            edge_refs.len(),
+            elapsed,
+        );
+        Ok(lines.join("\n") + "\n")
+    })
+    .await
+    .unwrap();
+
+    match result {
+        Ok(body) => Response::builder()
+            .header("Content-Type", "application/x-ndjson")
+            .header("Cache-Control", "no-cache")
+            .body(axum::body::Body::from(body))
+            .unwrap(),
+        Err(err) => {
+            eprintln!("[http] /api/edges failed: {}", err);
+            Response::builder()
+                .status(500)
+                .header("Content-Type", "application/json")
+                .body(axum::body::Body::from(
+                    serde_json::json!({ "error": err }).to_string(),
+                ))
+                .unwrap()
+        }
+    }
 }
 
 /// Build or reuse the cached file → node-ids index. Performs exactly one
@@ -390,47 +823,75 @@ fn get_or_build_file_to_nodes(
     map
 }
 
-/// Primitive symbol node types that participate in the tectonic layout as
-/// atoms. MODULE gives file containers a presence in the pipeline; the
-/// rest are the primitive symbols worth placing individually. CALL,
-/// REFERENCE, PARAMETER, LITERAL, BRANCH, PATTERN, SCOPE, PROPERTY_ACCESS,
-/// IMPORT, CASE, EXPRESSION, DO_BLOCK, METRIC, EFFECT, CONSTRUCTOR are
-/// intentionally excluded — too granular and noisy.
-// File-level atoms only. Symbol-level primitives (FUNCTION, CLASS,
-// METHOD, VARIABLE, ...) blew up hull construction on the client and
-// made stream emit dominate build time. Roll back to one atom per
-// file (MODULE node). 576 atoms on grafema self-analysis.
-const ATOM_TYPES: &[&str] = &[
-    "MODULE",
-];
+/// Layout source tag used by the orchestrator's `grafema layout --commit`
+/// pipeline. The consumer filters strictly by this tag so analyzer-emitted
+/// CONTAINS edges (no tag) are never treated as layout data.
+const LAYOUT_SOURCE_TAG: &str = "layout-pack";
 
-/// Build a file-aware hierarchy where the deepest level corresponds to a
-/// FilePrefix with enough segments to distinguish every file. Because
-/// `file_prefix` clamps to the full path when `segments >= parts.len()`,
-/// the deepest level groups all atoms from the same file into one
-/// container; shallower levels group by directory prefix.
-fn build_atom_hierarchy(atoms: &[NodeRef]) -> Vec<HierarchyLevel> {
-    let mut real_max_depth = 1usize;
-    for a in atoms {
-        if !a.file.is_empty() {
-            let segs = a.file.split('/').count();
-            if segs > real_max_depth {
-                real_max_depth = segs;
-            }
-        }
-    }
-    // Cap like auto_hierarchy_from_nodes to avoid pathological depths.
-    real_max_depth = real_max_depth.min(10);
-    (1..=real_max_depth)
-        .map(|k| HierarchyLevel::new(&format!("dir{}", k), ContainerRule::FilePrefix(k)))
-        .collect()
+/// Fail-loudly threshold: if the loader encounters more than this many
+/// LAYOUT_POSITION edges with the same `src` but different `(q, r)`, the
+/// warmup aborts — it's a symptom of a broken delete-before-write.
+
+/// Errors produced by [`get_or_build_layout`] when the persisted layout
+/// is structurally broken (cycles, excessive duplicate positions). Minor
+/// corruption (missing metadata, non-parseable fields) is warn+skip and
+/// never bubbles up.
+#[derive(Debug)]
+enum LayoutLoadError {
+    /// A REGION containment chain contains a cycle.
+    Cycle { region_id: u128, path: String },
 }
 
-/// Build or reuse the cached tectonic layout. Atoms are primitive symbol
-/// nodes (see `ATOM_TYPES`): MODULE containers plus every FUNCTION,
-/// METHOD, CLASS, VARIABLE, etc. Non-atom nodes (CALL, REFERENCE, …)
-/// inherit the position of a representative atom from the same file at
-/// emit time via `file_fallback`.
+impl std::fmt::Display for LayoutLoadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LayoutLoadError::Cycle { region_id, path } => write!(
+                f,
+                "cycle detected in REGION containment at region {} ({})",
+                region_id, path
+            ),
+        }
+    }
+}
+
+impl std::error::Error for LayoutLoadError {}
+
+/// Extract a flat-JSON string value: `"key":"value"` → Some("value"). Very
+/// small pre-allocated parser — our metadata writer emits a fixed, flat
+/// shape so a substring scan is adequate and 10× cheaper than pulling in
+/// `serde_json::from_str` for every edge.
+fn extract_json_str<'a>(meta: &'a str, key: &str) -> Option<&'a str> {
+    let needle = format!("\"{}\":\"", key);
+    let start = meta.find(&needle)? + needle.len();
+    let rest = &meta[start..];
+    let end = rest.find('"')?;
+    Some(&rest[..end])
+}
+
+/// Extract a flat-JSON integer value: `"key":123` → Some(123). Returns
+/// `None` when the key is absent or the value isn't a bare integer.
+fn extract_json_i64(meta: &str, key: &str) -> Option<i64> {
+    let needle = format!("\"{}\":", key);
+    let start = meta.find(&needle)? + needle.len();
+    let rest = &meta[start..];
+    // value ends at , } or space
+    let end = rest
+        .find(|c: char| c == ',' || c == '}' || c.is_whitespace())
+        .unwrap_or(rest.len());
+    rest[..end].trim().parse::<i64>().ok()
+}
+
+/// Extract a flat-JSON non-negative integer value.
+fn extract_json_usize(meta: &str, key: &str) -> Option<usize> {
+    extract_json_i64(meta, key).and_then(|v| if v >= 0 { Some(v as usize) } else { None })
+}
+
+/// Build or reuse the cached persisted layout. Reads LAYOUT_POSITION +
+/// REGION + CONTAINS (filtered by `_source=layout-pack`) from RFDB; no
+/// server-side optimisation runs. On a fresh database with no layout
+/// committed yet, returns `source = LayoutSource::Missing` and empty
+/// positions — every stream node will carry `pos: null` and
+/// `unplaced_reason: "missing_layout"`.
 fn get_or_build_layout(
     cache: &RwLock<Option<CachedLayout>>,
     file_to_nodes_cache: &RwLock<Option<HashMap<String, Vec<u128>>>>,
@@ -443,185 +904,614 @@ fn get_or_build_layout(
     }
     let t0 = std::time::Instant::now();
 
-    // Collect atoms for every primitive type, dedup by node id.
-    let mut seen_ids: std::collections::HashSet<u128> = std::collections::HashSet::new();
-    let mut atoms: Vec<NodeRef> = Vec::new();
-    let mut atom_id_to_idx: HashMap<u128, u32> = HashMap::new();
-    for &t in ATOM_TYPES {
-        let ids = engine.find_by_type(t);
-        for nid in ids {
-            if !seen_ids.insert(nid) {
-                continue;
-            }
-            let node = match engine.get_node(nid) {
-                Some(n) => n,
-                None => continue,
-            };
-            let file = node.file.as_deref().unwrap_or("").to_string();
-            if file.is_empty() {
-                continue;
-            }
-            // Skip DIRECTORY sentinel MODULEs (orchestrator emits nodes
-            // with trailing-slash file paths that aren't real files).
-            if file.ends_with('/') {
-                continue;
-            }
-            let idx = atoms.len() as u32;
-            let name = node
-                .name
-                .clone()
-                .unwrap_or_else(|| {
-                    if let Some(pos) = file.rfind('/') {
-                        file[pos + 1..].to_string()
-                    } else {
-                        file.clone()
-                    }
-                });
-            atom_id_to_idx.insert(nid, idx);
-            atoms.push(NodeRef {
-                idx,
-                id: nid,
-                node_type: t.to_string(),
-                file,
-                name,
-                metadata: node.metadata.clone(),
-            });
-        }
-    }
-
     // Warm the file_to_nodes cache so later callers (stream emission)
-    // don't pay for the scan again. We don't need its contents here,
-    // because we resolve edges directly through atom_id_to_idx.
+    // don't pay for the scan again.
     let _ = get_or_build_file_to_nodes(file_to_nodes_cache, engine);
 
-    // Build cross-atom edges: for each liftable semantic edge, keep it
-    // only if both endpoints are atoms (and distinct). Dedup by (src, dst).
-    let liftable: [&str; 10] = [
-        "CALLS", "READS_FROM", "IMPORTS_FROM", "WRITES_TO",
-        "PASSES_ARGUMENT", "AWAITS", "RETURNS", "ITERATES_OVER",
-        "DEPENDS_ON", "HAS_METHOD",
-    ];
-    let mut edge_refs: Vec<EdgeRef> = Vec::new();
-    let mut seen_pair: std::collections::HashSet<(u32, u32)> = std::collections::HashSet::new();
-    for etype in &liftable {
-        let bulk = engine.get_edges_by_type(etype);
-        for e in bulk {
-            let s = match atom_id_to_idx.get(&e.src) {
-                Some(&i) => i,
-                None => continue,
+    match load_layout_from_rfdb(engine) {
+        Ok(cached) => {
+            eprintln!(
+                "[layout] loaded persisted layout: {} positions, {} regions, {} overflow files, {}ms",
+                cached.positions.len(),
+                cached.regions.len(),
+                cached.overflow_files.len(),
+                t0.elapsed().as_millis(),
+            );
+            if matches!(cached.source, LayoutSource::Missing) {
+                eprintln!(
+                    "[layout] WARN: No LAYOUT_POSITION edges. Run `grafema layout --commit` after `grafema analyze`."
+                );
+            }
+            *guard = Some(cached.clone());
+            cached
+        }
+        Err(e) => {
+            // Structural corruption — serve an empty layout so the server
+            // keeps running, but the operator sees the error clearly.
+            eprintln!("[layout] ERROR: refusing to load layout: {}", e);
+            let empty = CachedLayout {
+                positions: HashMap::new(),
+                regions: Vec::new(),
+                containment: HashMap::new(),
+                overflow_files: HashMap::new(),
+                source: LayoutSource::Missing,
             };
-            let d = match atom_id_to_idx.get(&e.dst) {
-                Some(&i) => i,
-                None => continue,
-            };
-            if s == d {
+            *guard = Some(empty.clone());
+            empty
+        }
+    }
+}
+
+/// Scan RFDB for persisted LAYOUT_POSITION edges + REGION nodes + CONTAINS
+/// edges tagged `_source=layout-pack` and assemble a [`CachedLayout`].
+///
+/// Returns `Err` only for structural corruption (cycles in REGION
+/// containment, excessive duplicate positions). Minor corruption (missing
+/// metadata, bad field types) is warn+skip.
+fn load_layout_from_rfdb(engine: &dyn GraphStore) -> std::result::Result<CachedLayout, LayoutLoadError> {
+    // ── 1. LAYOUT_POSITION edges ─────────────────────────────────────────
+    let mut positions: HashMap<u128, HexCoord> = HashMap::new();
+    let mut skip_missing_meta = 0usize;
+    let mut skip_wrong_source = 0usize;
+    let mut skip_bad_fields = 0usize;
+    let mut dup_count = 0usize;
+    let mut committed_at_sample: Option<String> = None;
+
+    for edge in engine.get_edges_by_type("LAYOUT_POSITION") {
+        let meta = match edge.metadata.as_deref() {
+            Some(m) => m,
+            None => {
+                skip_missing_meta += 1;
                 continue;
             }
-            if !seen_pair.insert((s, d)) {
+        };
+        let src_tag = match extract_json_str(meta, "_source") {
+            Some(s) => s,
+            None => {
+                skip_missing_meta += 1;
                 continue;
             }
-            edge_refs.push(EdgeRef {
-                src_idx: s,
-                dst_idx: d,
-                edge_type: etype.to_string(),
-            });
+        };
+        if src_tag != LAYOUT_SOURCE_TAG {
+            skip_wrong_source += 1;
+            continue;
+        }
+        let q = extract_json_i64(meta, "q");
+        let r = extract_json_i64(meta, "r");
+        let (q, r) = match (q, r) {
+            (Some(q), Some(r)) => (q, r),
+            _ => {
+                skip_bad_fields += 1;
+                continue;
+            }
+        };
+        // Clamp check — i32 range.
+        if q < i32::MIN as i64 || q > i32::MAX as i64 || r < i32::MIN as i64 || r > i32::MAX as i64 {
+            skip_bad_fields += 1;
+            continue;
+        }
+        let coord = HexCoord { q: q as i32, r: r as i32 };
+
+        if committed_at_sample.is_none() {
+            if let Some(ts) = extract_json_str(meta, "committed_at") {
+                committed_at_sample = Some(ts.to_string());
+            }
+        }
+
+        match positions.get(&edge.src) {
+            Some(existing) if *existing == coord => {
+                // Same edge re-seen (L0/L1/write-buffer). Safe to ignore.
+            }
+            Some(_) => {
+                // Residual from RFDB V2 tombstone/flush interaction across
+                // re-commits: some edges linger after a prior run's delete
+                // pre-pass. First-wins returns correct coordinates; the
+                // count is surfaced in the summary warn below for visibility.
+                dup_count += 1;
+            }
+            None => {
+                positions.insert(edge.src, coord);
+            }
         }
     }
 
-    // File-aware hierarchy: dir1..dirN where dirN = full file path.
-    let mut hierarchy = build_atom_hierarchy(&atoms);
-    if hierarchy.is_empty() {
-        hierarchy.push(HierarchyLevel::new("file", ContainerRule::FileDir));
+    if skip_missing_meta + skip_wrong_source + skip_bad_fields + dup_count > 0 {
+        eprintln!(
+            "[layout] warn: skipped {} missing-meta, {} wrong-source, {} bad-fields, {} duplicates LAYOUT_POSITION edges",
+            skip_missing_meta, skip_wrong_source, skip_bad_fields, dup_count
+        );
     }
-    let tree = ContainerTree::build(&hierarchy, &atoms, &edge_refs);
 
-    let mut tstate = tectonic_preprocess(&tree, &atoms, &edge_refs);
-    eprintln!("[tectonic] phase0 preprocess: {:.1}ms ({} atoms, {} edges)",
-        tstate.metrics.phase0_ms, atoms.len(), edge_refs.len());
-    let t_p1 = std::time::Instant::now();
-    phase1_place(&mut tstate);
-    eprintln!("[tectonic] phase1 place: {:.1}ms", t_p1.elapsed().as_secs_f64() * 1000.0);
-    let t_p2 = std::time::Instant::now();
-    phase2_flood_fill(&mut tstate);
-    eprintln!("[tectonic] phase2 flood_fill: {:.1}ms (overflow {})",
-        t_p2.elapsed().as_secs_f64() * 1000.0, tstate.metrics.phase2_overflow_regions);
-    phase3_drift(&mut tstate, &DriftConfig::default());
-    let t_p4 = std::time::Instant::now();
-    phase4_refine_boundaries(&mut tstate, &RefinementConfig::default());
-    eprintln!("[tectonic] phase4 refine: {:.1}ms (pass1 {}, pass2 swaps {})",
-        t_p4.elapsed().as_secs_f64() * 1000.0,
-        tstate.metrics.phase4_pass1_relocations,
-        tstate.metrics.phase4_boundary_swaps);
+    // ── 2. REGION nodes ─────────────────────────────────────────────────
+    let mut regions: Vec<RegionInfo> = Vec::new();
+    let mut overflow_files: HashMap<String, (usize, usize)> = HashMap::new();
+    let mut region_ids: std::collections::HashSet<u128> = std::collections::HashSet::new();
+    let mut skip_region_meta = 0usize;
 
-    // Extract per-atom centroids.
-    let mut atom_positions: HashMap<u128, HexCoord> = HashMap::new();
-    for atom in &atoms {
-        if let Some(n) = tstate.tree.nodes.get(atom.idx as usize) {
-            if let Some(c) = n.centroid {
-                atom_positions.insert(atom.id, c);
-            }
+    for nid in engine.find_by_type("REGION") {
+        if !region_ids.insert(nid) {
+            continue; // dedup across storage layers
         }
-    }
-    // File-level fallback for non-atom nodes. Determinism: iterate atoms
-    // via a sorted view keyed by (file, idx) so the "first atom per file"
-    // picked is stable across runs regardless of HashMap ordering.
-    let mut by_file: BTreeMap<String, u32> = BTreeMap::new();
-    for atom in &atoms {
-        by_file
-            .entry(atom.file.clone())
-            .and_modify(|cur| {
-                if atom.idx < *cur {
-                    *cur = atom.idx;
+        let node = match engine.get_node(nid) {
+            Some(n) => n,
+            None => continue,
+        };
+        let meta = match node.metadata.as_deref() {
+            Some(m) => m,
+            None => {
+                skip_region_meta += 1;
+                continue;
+            }
+        };
+        let src_tag = match extract_json_str(meta, "_source") {
+            Some(s) => s,
+            None => {
+                skip_region_meta += 1;
+                continue;
+            }
+        };
+        if src_tag != LAYOUT_SOURCE_TAG {
+            // Some other writer's REGION — ignore, don't count as corruption.
+            continue;
+        }
+        let depth = match extract_json_i64(meta, "depth") {
+            Some(d) if d >= 0 => d as u32,
+            _ => {
+                skip_region_meta += 1;
+                continue;
+            }
+        };
+        let path = match extract_json_str(meta, "path") {
+            Some(p) => p.to_string(),
+            None => {
+                skip_region_meta += 1;
+                continue;
+            }
+        };
+        let kind = match extract_json_str(meta, "kind") {
+            Some(k) => k.to_string(),
+            None => {
+                skip_region_meta += 1;
+                continue;
+            }
+        };
+        if kind != "folder" && kind != "file" {
+            skip_region_meta += 1;
+            continue;
+        }
+        let name = extract_json_str(meta, "name").unwrap_or("").to_string();
+
+        if kind == "file" {
+            if let Some(skipped) = extract_json_usize(meta, "overflow_skipped") {
+                if skipped > 0 {
+                    let cap = extract_json_usize(meta, "hard_cap").unwrap_or(0);
+                    overflow_files.insert(path.clone(), (skipped, cap));
                 }
-            })
-            .or_insert(atom.idx);
+            }
+        }
+
+        regions.push(RegionInfo {
+            id: nid,
+            depth,
+            path,
+            kind,
+            name,
+        });
     }
-    let mut file_fallback: HashMap<String, HexCoord> = HashMap::new();
-    for (file, idx) in &by_file {
-        if let Some(n) = tstate.tree.nodes.get(*idx as usize) {
-            if let Some(c) = n.centroid {
-                file_fallback.insert(file.clone(), c);
+    if skip_region_meta > 0 {
+        eprintln!("[layout] warn: skipped {} malformed REGION nodes", skip_region_meta);
+    }
+
+    // ── 3. CONTAINS edges (layout-pack only) ─────────────────────────────
+    let mut containment: HashMap<u128, Vec<u128>> = HashMap::new();
+    for edge in engine.get_edges_by_type("CONTAINS") {
+        let meta = match edge.metadata.as_deref() {
+            Some(m) => m,
+            None => continue, // analyzer CONTAINS — skip
+        };
+        if !meta.contains("\"_source\":\"layout-pack\"") {
+            continue;
+        }
+        containment.entry(edge.src).or_default().push(edge.dst);
+    }
+
+    // ── 4. Cycle detection on REGION-only containment subgraph ──────────
+    // Build region-id set; we only BFS through region→region edges.
+    for region in &regions {
+        if region.depth != 0 {
+            continue;
+        }
+        detect_cycle(region.id, &containment, &region_ids, region)?;
+    }
+
+    // ── 5. Source provenance ────────────────────────────────────────────
+    let source = if positions.is_empty() {
+        LayoutSource::Missing
+    } else {
+        LayoutSource::Committed {
+            committed_at: committed_at_sample.unwrap_or_default(),
+            symbol_count: positions.len(),
+        }
+    };
+
+    Ok(CachedLayout {
+        positions,
+        regions,
+        containment,
+        overflow_files,
+        source,
+    })
+}
+
+/// Walk the REGION containment tree from a depth-0 root; fail if we
+/// revisit a node along the same path (classic DFS cycle detection using
+/// a recursion-stack set).
+fn detect_cycle(
+    root: u128,
+    containment: &HashMap<u128, Vec<u128>>,
+    region_ids: &std::collections::HashSet<u128>,
+    root_info: &RegionInfo,
+) -> std::result::Result<(), LayoutLoadError> {
+    // Iterative DFS to avoid stack blow-ups on deep trees.
+    let mut stack: Vec<(u128, Vec<u128>)> = Vec::new();
+    let mut on_path: std::collections::HashSet<u128> = std::collections::HashSet::new();
+
+    stack.push((root, containment.get(&root).cloned().unwrap_or_default()));
+    on_path.insert(root);
+
+    while let Some((_cur, children)) = stack.last_mut() {
+        match children.pop() {
+            Some(child) => {
+                if !region_ids.contains(&child) {
+                    continue; // symbol child, not a region
+                }
+                if on_path.contains(&child) {
+                    return Err(LayoutLoadError::Cycle {
+                        region_id: child,
+                        path: root_info.path.clone(),
+                    });
+                }
+                on_path.insert(child);
+                let grand = containment.get(&child).cloned().unwrap_or_default();
+                stack.push((child, grand));
+            }
+            None => {
+                let (done, _) = stack.pop().unwrap();
+                on_path.remove(&done);
             }
         }
     }
+    Ok(())
+}
 
-    let cached = CachedLayout {
-        atom_positions,
-        file_fallback,
-        atom_count: atoms.len() as u32,
-        phase3_initial_cost: tstate.metrics.phase3_initial_cost,
-        phase3_final_cost: tstate.metrics.phase3_final_cost,
-        pipeline_ms: t0.elapsed().as_millis(),
-    };
-    eprintln!(
-        "[tectonic] atom-level pipeline: {} atoms, {} edges, {}ms, phase3_cost {} -> {}",
-        cached.atom_count, edge_refs.len(), cached.pipeline_ms,
-        cached.phase3_initial_cost, cached.phase3_final_cost,
-    );
-    *guard = Some(cached.clone());
-    cached
+/// Edges that are "lifted" from hidden endpoints (CALL, REFERENCE, etc.)
+/// up to the closest visible node sharing their file. Order doesn't matter —
+/// stored as a slice so both the whitelist check and the "collect all" path
+/// can iterate deterministically.
+const LIFTABLE_EDGE_TYPES: &[&str] = &[
+    "CALLS", "READS_FROM", "IMPORTS_FROM", "WRITES_TO",
+    "PASSES_ARGUMENT", "AWAITS", "RETURNS", "ITERATES_OVER",
+    "DEPENDS_ON", "HAS_METHOD",
+    // Structural edges — needed for directory/file LOD views
+    "CONTAINS",
+    // Compaction-enricher synthesized edges (stateless, idempotent;
+    // see packages/util/src/enrichers/compactionEnricher.ts).
+    "CO_DEPENDS_ON",
+    "CO_CALLS",
+    "DIRECT_CALLS",
+    "CALLS_TRANSITIVELY",
+];
+
+/// Visibility-lift index: maps every node id (visible + hidden) to the index
+/// of a visible node within `node_refs`. Non-visible nodes pick up the first
+/// visible node sharing their file. Populated by [`build_visibility_index`].
+struct VisibilityIndex {
+    nid_to_visible: HashMap<u128, u32>,
+}
+
+/// Projected view of the candidate nodes we decided to surface to the GUI —
+/// the basis for header tables, container tree, and per-node JSON emission.
+struct CandidateSet {
+    node_refs: Vec<NodeRef>,
+    type_table: Vec<String>,
+    type_idx: HashMap<String, usize>,
 }
 
 fn build_graph_stream_body(
     manager: Arc<DatabaseManager>,
     layout_cache_slot: Arc<RwLock<Option<CachedLayout>>>,
     file_to_nodes_slot: Arc<RwLock<Option<HashMap<String, Vec<u128>>>>>,
+    hull_cache_slot: Arc<RwLock<Option<HashMap<u128, crate::hulls::RegionHull>>>>,
     max_nodes: usize,
     want_packages: Option<Vec<String>>,
     want_node_types: Option<Vec<String>>,
     want_edge_types: Option<Vec<String>>,
     lod_level: Option<String>,
-) -> String {
+    workspace_name: Option<String>,
+    no_edges: bool,
+    no_excluded: bool,
+) -> Result<String, String> {
     let start = std::time::Instant::now();
-    let db = manager.get_database("default").unwrap();
-    let engine = db.engine.read().unwrap();
+    let db = manager
+        .get_database("default")
+        .map_err(|e| format!("default database unavailable: {}", e))?;
+    let engine = db
+        .engine
+        .read()
+        .map_err(|e| format!("engine lock poisoned: {}", e))?;
 
-    // Fast-path: if a strict node-type filter is provided, use find_by_type
-    // for each type instead of scanning all 326k+ nodes. Falls back to full
-    // scan when no type filter is given. Deduplicated because find_by_type
-    // may return the same id across storage layers (write buffer + L0 + L1)
-    // after recent commits.
-    let candidate_ids: Vec<u128> = if let Some(ref types) = want_node_types {
+    let candidates = collect_candidate_nodes(
+        &**engine,
+        max_nodes,
+        want_packages.as_ref(),
+        want_node_types.as_ref(),
+    );
+    let node_count = candidates.node_refs.len();
+
+    let vis_index = build_visibility_index(
+        &candidates.node_refs,
+        &file_to_nodes_slot,
+        &**engine,
+    );
+    eprintln!(
+        "[http] edge-lift: {} visible, {} mapped via file grouping",
+        node_count,
+        vis_index.nid_to_visible.len(),
+    );
+
+    // Always lift edges so we can compute per-node degree (used by the
+    // GUI heightmap — `degree` field on every node). `no_edges=1` only
+    // skips the per-edge EMIT at the tail of the stream, not the lift
+    // itself. The lift is ~60-80ms on a 1.9M-edge graph; that's cheap
+    // versus losing the heightmap entirely on the default fetch path.
+    let (edge_refs, edge_type_table) = lift_edges_bulk(
+        &**engine,
+        &vis_index,
+        want_edge_types.as_ref(),
+    );
+
+    let degrees = compute_degrees(node_count, &edge_refs);
+
+    let t_tree = std::time::Instant::now();
+    let hierarchy = auto_hierarchy_from_nodes(&candidates.node_refs);
+    let mut tree = ContainerTree::build(&hierarchy, &candidates.node_refs, &edge_refs);
+    eprintln!(
+        "[http] tree build: {}ms ({} nodes, {} edges)",
+        t_tree.elapsed().as_millis(),
+        candidates.node_refs.len(),
+        edge_refs.len(),
+    );
+
+    let cached_layout = get_or_build_layout(&layout_cache_slot, &file_to_nodes_slot, &**engine);
+
+    if let Some(name) = lod_level.as_ref() {
+        if let Some(idx) = tree.level_names.iter().position(|n| n == name) {
+            tree.sa_region_level = idx;
+        }
+    }
+    let region_level = tree.sa_region_level;
+
+    let t_emit = std::time::Instant::now();
+    let mut lines: Vec<String> = Vec::new();
+
+    // Phase 4 — intern repeated strings into header-side tables so per-node
+    // frames carry indices instead of full strings. On the grafema repo
+    // every file path is repeated up to ~250× (~30 byte avg) and every
+    // region id up to ~430× (32 byte hex), so the per-node payload
+    // halves before gzip and fewer allocations land in the JS string
+    // pool on parse.
+    let (file_table, region_table, file_idx, region_idx) =
+        build_intern_tables(&candidates.node_refs, &tree);
+    let reason_table: [&str; 3] = ["excluded", "missing_layout", "skipped_overflow"];
+    let reason_idx_for = |s: &str| -> u32 {
+        match s {
+            "excluded" => 0,
+            "missing_layout" => 1,
+            "skipped_overflow" => 2,
+            _ => 0,
+        }
+    };
+
+    let regions_flat = build_regions_frame(&cached_layout, &tree, region_level);
+    emit_header_frames(
+        &mut lines,
+        &candidates.type_table,
+        &edge_type_table,
+        &regions_flat,
+        &cached_layout,
+        workspace_name.as_deref(),
+        &file_table,
+        &region_table,
+        &reason_table,
+    );
+
+    // Up-front totals so the GUI progress UI can render N/M from the
+    // first byte of the stream instead of only learning the denominator
+    // at `done`. `nodes` is the total candidate count (placed +
+    // excluded); `edges` matches what the per-edge emit loop will
+    // produce when `no_edges=0`. Emitted right after `header` so any
+    // streaming consumer sees it before the bucketed node frames.
+    lines.push(
+        serde_json::to_string(&serde_json::json!({
+            "type": "totals",
+            "nodes": node_count,
+            "edges": if no_edges { 0u64 } else { edge_refs.len() as u64 },
+        }))
+        .unwrap(),
+    );
+
+    // Phase 1 — emit precomputed hulls right after the header so the GUI
+    // can render hulls + toponyms before parsing the node tail. When the
+    // cache hasn't been built yet (no warmup, missing layout, etc.) we
+    // skip the frame and the GUI falls back to client-side hull compute.
+    //
+    // Bucketing matches `packages/gui/src/store/loadStream.ts ::
+    // buildPlacedForBucketing` — every placed symbol is assigned to its
+    // FILE's REGION (kind == "file" with matching path). Earlier we
+    // tried walking the orchestrator's CONTAINS tree, but that can
+    // attach a symbol to a non-file ancestor, so the per-region cell
+    // sets diverged from what TS computes and the GUI's
+    // `THREE.ShapeUtils.triangulateShape` produced fan-out triangles
+    // crossing distant corners — visible as "fills разъехались".
+    // Doing the bucketing here keeps us in lock-step with TS at the
+    // cost of one O(N) scan over candidates plus an O(R) descendant
+    // pre-pass.
+    let _ = hull_cache_slot; // (legacy slot — bucketing now done inline)
+    let hulls_inline = if !cached_layout.positions.is_empty() {
+        // file-path → region_id  (kind == "file" only)
+        let mut file_path_to_region: HashMap<&str, u128> = HashMap::with_capacity(cached_layout.regions.len());
+        for r in &cached_layout.regions {
+            if r.kind == "file" {
+                file_path_to_region.insert(r.path.as_str(), r.id);
+            }
+        }
+        // file_region_id → list of placed cells inside that file
+        let mut cells_per_file_region: HashMap<u128, Vec<HexCoord>> = HashMap::new();
+        for nr in &candidates.node_refs {
+            if let Some(pos) = cached_layout.positions.get(&nr.id) {
+                if let Some(file_rid) = file_path_to_region.get(nr.file.as_str()) {
+                    cells_per_file_region.entry(*file_rid).or_default().push(*pos);
+                }
+            }
+        }
+        let region_ids_set: HashSet<u128> = cached_layout.regions.iter().map(|r| r.id).collect();
+        crate::hulls::compute_hulls_by_file(
+            &cached_layout.regions,
+            &cached_layout.containment,
+            &cells_per_file_region,
+            &region_ids_set,
+            crate::hulls::TILE_SIZE,
+            1,
+        )
+    } else {
+        HashMap::new()
+    };
+    if !hulls_inline.is_empty() {
+        emit_hulls_frame(&mut lines, &hulls_inline);
+    }
+
+    let layout_is_missing = matches!(cached_layout.source, LayoutSource::Missing);
+    // Phase 2 — partition into placed (per-frame) and excluded (one
+    // batch frame at the tail). Excluded nodes are still searchable on
+    // the GUI side via `unplacedNodes`, but shipping them as 300k
+    // individual JSON frames was the dominant parser cost on a real
+    // grafema-sized graph. One batch frame ≈ same payload, ≈1 JSON.parse.
+    // Phase 3 — bucket placed nodes by file-path depth (number of `/`
+    // segments) so the wire emits shallow-folder nodes first. Renderers
+    // that progressively ingest can paint the top-level structure before
+    // the deep nesting arrives. Buckets are emitted in ascending-depth
+    // order; per-bucket frames carry `{depth, count, nodes:[...]}`.
+    //
+    // Excluded nodes don't get bucketed — they go into the existing
+    // single batched frame at the tail (Phase 2). Other unplaced
+    // reasons stay per-node (rare and overlay-specific).
+    let mut excluded_batch: Vec<(&NodeRef, &str)> = Vec::with_capacity(node_count / 2);
+    // depth -> (lines, node_count)
+    let mut buckets: std::collections::BTreeMap<u32, Vec<String>> = std::collections::BTreeMap::new();
+    let mut emitted_count = 0usize;
+    for nr in &candidates.node_refs {
+        let (_, reason) = classify_node_visibility(nr, &cached_layout, layout_is_missing);
+        if reason == Some("excluded") {
+            excluded_batch.push((nr, "excluded"));
+            continue;
+        }
+        let depth = file_path_depth(&nr.file);
+        let line = emit_node_line(
+            nr,
+            &candidates.type_idx,
+            &tree,
+            &cached_layout,
+            layout_is_missing,
+            degrees[nr.idx as usize],
+            &file_idx,
+            &region_idx,
+        );
+        buckets.entry(depth).or_default().push(line);
+        emitted_count += 1;
+    }
+    for (depth, bucket_lines) in &buckets {
+        lines.push(emit_nodes_bucket_open(*depth, bucket_lines.len()));
+        lines.extend(bucket_lines.iter().cloned());
+        lines.push(emit_nodes_bucket_close(*depth));
+    }
+
+    lines.push(
+        serde_json::to_string(&serde_json::json!({
+            "type": "nodes_done",
+            "count": emitted_count,
+            // Phase 3 — surface bucket boundaries so the GUI parser can
+            // emit per-bucket progress events without parsing them out
+            // of order.
+            "bucketDepths": buckets.keys().copied().collect::<Vec<_>>(),
+        }))
+        .unwrap(),
+    );
+
+    if !excluded_batch.is_empty() && !no_excluded {
+        lines.push(emit_excluded_nodes_frame(
+            &excluded_batch,
+            &candidates.type_idx,
+            &tree,
+            &degrees,
+            &file_idx,
+            &region_idx,
+        ));
+    }
+    // `reason_idx_for` was sketched as a closure for forward symmetry
+    // but we inline the lookup at call sites because per-node `rs` only
+    // appears for the rare missing_layout / skipped_overflow cases.
+    let _ = reason_idx_for;
+
+    let edge_type_idx: HashMap<String, usize> = edge_type_table
+        .iter()
+        .enumerate()
+        .map(|(i, t)| (t.clone(), i))
+        .collect();
+    // `no_edges=1` skips per-edge emit but the lift above still
+    // populated `degrees`, so the heightmap stays correct on the
+    // default GUI bootstrap.
+    if !no_edges {
+        for e in &edge_refs {
+            lines.push(emit_edge_line(e, &edge_type_idx));
+        }
+    }
+
+    let elapsed = start.elapsed().as_millis();
+    lines.push(
+        serde_json::to_string(&serde_json::json!({
+            "type": "done",
+            "nodeCount": node_count,
+            "edgeCount": edge_refs.len(),
+            "elapsed": elapsed,
+        }))
+        .unwrap(),
+    );
+
+    eprintln!(
+        "[http] graph-stream: {} nodes, {} edges, {} regions, {}ms (emit: {}ms)",
+        node_count,
+        edge_refs.len(),
+        regions_flat.len(),
+        elapsed,
+        t_emit.elapsed().as_millis(),
+    );
+
+    Ok(lines.join("\n") + "\n")
+}
+
+/// Gather the node ids we will surface to the GUI and project them into
+/// [`NodeRef`]s. Applies the package + type filters and caps the result at
+/// `max_nodes`. Also dedups ids that `find_by_type` may return multiple times
+/// across storage layers (write buffer + L0 + L1).
+fn collect_candidate_nodes(
+    engine: &dyn GraphStore,
+    max_nodes: usize,
+    want_packages: Option<&Vec<String>>,
+    want_node_types: Option<&Vec<String>>,
+) -> CandidateSet {
+    // Fast-path: a strict node-type filter uses find_by_type per type instead
+    // of scanning all 326k+ nodes.
+    let candidate_ids: Vec<u128> = if let Some(types) = want_node_types {
         let mut seen: std::collections::HashSet<u128> = std::collections::HashSet::new();
         let mut ids: Vec<u128> = Vec::new();
         for t in types {
@@ -637,12 +1527,13 @@ fn build_graph_stream_body(
     };
 
     let mut node_refs: Vec<NodeRef> = Vec::new();
-    let mut id_to_idx: HashMap<u128, u32> = HashMap::new();
     let mut type_table: Vec<String> = Vec::new();
     let mut type_idx: HashMap<String, usize> = HashMap::new();
 
     for &nid in &candidate_ids {
-        if node_refs.len() >= max_nodes { break; }
+        if node_refs.len() >= max_nodes {
+            break;
+        }
         let node = match engine.get_node(nid) {
             Some(n) => n,
             None => continue,
@@ -650,26 +1541,33 @@ fn build_graph_stream_body(
         let ntype = node.node_type.as_deref().unwrap_or("UNKNOWN").to_string();
         let file = node.file.as_deref().unwrap_or("").to_string();
 
-        // Package filter
-        if let Some(ref pkgs) = want_packages {
+        // Skip REGION nodes — they're orchestrator-emitted layout
+        // metadata (with `<virtual>/layout-pack/...` synthetic file
+        // paths), not code entities. They were polluting the
+        // file/region intern tables and surfacing in tooltip /
+        // regionTable lookups as `<virtual>/...` strings.
+        if ntype == "REGION" {
+            continue;
+        }
+
+        if let Some(pkgs) = want_packages {
             if !pkgs.iter().any(|p| file.starts_with(p.as_str())) {
                 continue;
             }
         }
-        // Type filter
-        if let Some(ref types) = want_node_types {
+        if let Some(types) = want_node_types {
             if !types.iter().any(|t| t == &ntype) {
                 continue;
             }
         }
 
-        let ti = *type_idx.entry(ntype.clone()).or_insert_with(|| {
+        type_idx.entry(ntype.clone()).or_insert_with(|| {
             let idx = type_table.len();
             type_table.push(ntype.clone());
             idx
         });
 
-        // Clean name: strip absolute paths for MODULE nodes
+        // Clean name: strip absolute paths for MODULE nodes.
         let mut name = node.name.as_deref().unwrap_or("").to_string();
         if name.contains('/') && !file.is_empty() {
             if let Some(pos) = file.rfind('/') {
@@ -678,57 +1576,39 @@ fn build_graph_stream_body(
         }
 
         let idx = node_refs.len() as u32;
-        id_to_idx.insert(nid, idx);
         node_refs.push(NodeRef {
             idx,
             id: nid,
-            node_type: node.node_type.as_deref().unwrap_or("UNKNOWN").to_string(),
+            node_type: ntype,
             file,
             name,
             metadata: node.metadata.clone(),
         });
     }
 
-    let node_count = node_refs.len();
+    CandidateSet { node_refs, type_table, type_idx }
+}
 
-    // ── Edge aggregation via file-based grouping ──
-    // Group ALL nodes in the graph by file path. For each file, find the best
-    // visible node (FUNCTION > CLASS > MODULE) to "own" non-visible nodes.
-    // Then collect semantic edges and lift both endpoints to their file's owner.
-    //
-    // This handles graphs where CALL nodes have no CONTAINS parent but share
-    // the same file as their enclosing FUNCTION.
-
-    let liftable_types: std::collections::HashSet<&str> = [
-        "CALLS", "READS_FROM", "IMPORTS_FROM", "WRITES_TO",
-        "PASSES_ARGUMENT", "AWAITS", "RETURNS", "ITERATES_OVER",
-        "DEPENDS_ON", "HAS_METHOD",
-        // Structural edges — needed for directory/file LOD views
-        "CONTAINS",
-    ].into_iter().collect();
-
-    // Build file → visible nodes map
+/// Build the hidden→visible lookup used by [`lift_edges_bulk`]. Every visible
+/// node maps to itself; every hidden node in the same file as a visible one
+/// is absorbed by the first visible node in that file. Uses the process-wide
+/// cached file→nodes index so we never pay a full graph scan per request.
+fn build_visibility_index(
+    node_refs: &[NodeRef],
+    file_to_nodes_slot: &RwLock<Option<HashMap<String, Vec<u128>>>>,
+    engine: &dyn GraphStore,
+) -> VisibilityIndex {
     let mut file_to_visible: HashMap<String, Vec<u32>> = HashMap::new();
-    for nr in &node_refs {
+    for nr in node_refs {
         file_to_visible.entry(nr.file.clone()).or_default().push(nr.idx);
     }
 
-    // For each file that has visible nodes, collect ALL nodes in that file
-    // and map non-visible ones to the file's MODULE node (or first visible node)
     let mut nid_to_visible: HashMap<u128, u32> = HashMap::new();
-
-    // Visible nodes map to themselves
-    for nr in &node_refs {
+    for nr in node_refs {
         nid_to_visible.insert(nr.id, nr.idx);
     }
 
-    // Edge-lifting maps non-visible nodes to their containing visible
-    // node so that semantic edges (CALLS, IMPORTS_FROM, etc.) between
-    // them can be aggregated up to the visible level. Previously this
-    // required a per-request full scan of all nodes (~20–30s on 326k
-    // nodes). We now consult a process-wide cached file→node-ids index
-    // built exactly once per server lifetime.
-    let file_to_nodes_cache = get_or_build_file_to_nodes(&file_to_nodes_slot, &**engine);
+    let file_to_nodes_cache = get_or_build_file_to_nodes(file_to_nodes_slot, engine);
     for (file, visible_nodes) in file_to_visible.iter() {
         if let Some(node_ids) = file_to_nodes_cache.get(file) {
             for &nid in node_ids {
@@ -739,49 +1619,58 @@ fn build_graph_stream_body(
         }
     }
 
-    eprintln!("[http] edge-lift: {} visible, {} mapped via file grouping",
-        node_count, nid_to_visible.len());
+    VisibilityIndex { nid_to_visible }
+}
 
-    // Collect edges between mapped nodes.
-    //
-    // Iterating per-node via get_outgoing_edges is O(N) RPCs (each touches
-    // segments) and becomes ~minutes for 100k+ mapped nodes.
-    // Instead, fetch all edges of each liftable type in bulk and filter
-    // against nid_to_visible — this is O(E) over edges of those types and
-    // doesn't pay any per-node lookup cost.
-    let mut edge_refs: Vec<EdgeRef> = Vec::new();
-    let mut edge_type_table: Vec<String> = Vec::new();
-    let mut edge_type_idx: HashMap<String, usize> = HashMap::new();
-    let mut seen_edges: std::collections::HashSet<(u32, u32, String)> = std::collections::HashSet::new();
-
-    let edge_types_to_lift: Vec<&str> = if let Some(ref types) = want_edge_types {
-        liftable_types
+/// Fetch every edge whose type is in [`LIFTABLE_EDGE_TYPES`] (intersected
+/// with `want_edge_types` if supplied), translate endpoints through
+/// [`VisibilityIndex`], and dedup (src_vis, dst_vis, type) triples.
+///
+/// Bulk fetch is O(E) over the lifted types — per-node `get_outgoing_edges`
+/// was O(N) RPCs and took minutes on 100k+ mapped nodes.
+fn lift_edges_bulk(
+    engine: &dyn GraphStore,
+    vis: &VisibilityIndex,
+    want_edge_types: Option<&Vec<String>>,
+) -> (Vec<EdgeRef>, Vec<String>) {
+    let edge_types_to_lift: Vec<&str> = if let Some(types) = want_edge_types {
+        LIFTABLE_EDGE_TYPES
             .iter()
             .copied()
             .filter(|t| types.iter().any(|w| w == *t))
             .collect()
     } else {
-        liftable_types.iter().copied().collect()
+        LIFTABLE_EDGE_TYPES.to_vec()
     };
+
+    let mut edge_refs: Vec<EdgeRef> = Vec::new();
+    let mut edge_type_table: Vec<String> = Vec::new();
+    let mut edge_type_idx: HashMap<String, usize> = HashMap::new();
+    let mut seen_edges: std::collections::HashSet<(u32, u32, String)> =
+        std::collections::HashSet::new();
 
     for etype_str in &edge_types_to_lift {
         let bulk = engine.get_edges_by_type(etype_str);
         for edge in bulk {
-            let src_vis = match nid_to_visible.get(&edge.src) {
+            let src_vis = match vis.nid_to_visible.get(&edge.src) {
                 Some(&idx) => idx,
                 None => continue,
             };
-            let dst_vis = match nid_to_visible.get(&edge.dst) {
+            let dst_vis = match vis.nid_to_visible.get(&edge.dst) {
                 Some(&idx) => idx,
                 None => continue,
             };
-            if src_vis == dst_vis { continue; }
+            if src_vis == dst_vis {
+                continue;
+            }
 
             let etype = edge.edge_type.as_deref().unwrap_or("UNKNOWN").to_string();
             let edge_key = (src_vis, dst_vis, etype.clone());
-            if !seen_edges.insert(edge_key) { continue; }
+            if !seen_edges.insert(edge_key) {
+                continue;
+            }
 
-            let _eti = *edge_type_idx.entry(etype.clone()).or_insert_with(|| {
+            edge_type_idx.entry(etype.clone()).or_insert_with(|| {
                 let idx = edge_type_table.len();
                 edge_type_table.push(etype.clone());
                 idx
@@ -795,139 +1684,451 @@ fn build_graph_stream_body(
         }
     }
 
-    // Compute degrees
+    (edge_refs, edge_type_table)
+}
+
+/// Undirected degree count per visible-node index — both endpoints of each
+/// lifted edge are incremented.
+fn compute_degrees(node_count: usize, edge_refs: &[EdgeRef]) -> Vec<u32> {
     let mut degrees = vec![0u32; node_count];
-    for e in &edge_refs {
+    for e in edge_refs {
         degrees[e.src_idx as usize] += 1;
         degrees[e.dst_idx as usize] += 1;
     }
+    degrees
+}
 
-    let t_tree = std::time::Instant::now();
-    // Build container hierarchy from actual directory nesting in node paths
-    let hierarchy = auto_hierarchy_from_nodes(&node_refs);
-    let mut tree = ContainerTree::build(&hierarchy, &node_refs, &edge_refs);
-    eprintln!("[http] tree build: {}ms ({} nodes, {} edges)",
-        t_tree.elapsed().as_millis(), node_refs.len(), edge_refs.len());
+/// Choose the JSON payload for the `regions` field of the header frame:
+/// the persisted REGION tree when the layout is committed, otherwise a
+/// flat list derived from the in-memory container hierarchy.
+fn build_regions_frame(
+    cached_layout: &CachedLayout,
+    tree: &ContainerTree,
+    region_level: usize,
+) -> Vec<serde_json::Value> {
+    let regions_tree = build_region_tree_json(cached_layout);
+    if regions_tree.is_empty() {
+        tree.containers_at_level(region_level)
+            .values()
+            .map(|c| {
+                serde_json::json!({
+                    "path": c.id,
+                    "depth": c.level,
+                    "tileCount": c.child_count,
+                })
+            })
+            .collect()
+    } else {
+        regions_tree
+    }
+}
 
-    // ── Tectonic layout pipeline (Phase G) ──
-    // Computed once per server lifetime on file-level atoms (MODULE
-    // nodes) and cached. Each non-MODULE node inherits its containing
-    // file's hex centroid at emit time — good enough for the demo.
-    let cached_layout = get_or_build_layout(&layout_cache_slot, &file_to_nodes_slot, &**engine);
-
-    // Override SA region level if the client requested a specific LOD
-    // (e.g. lodLevel=package gives top-level packages instead of the
-    // auto-picked deepest level).
-    if let Some(name) = lod_level.as_ref() {
-        if let Some(idx) = tree.level_names.iter().position(|n| n == name) {
-            tree.sa_region_level = idx;
+/// Build dedup tables for the strings that appear most often in per-node
+/// frames (file paths, region ids). Symbol-id is unique per node so
+/// interning it would cost more than it saves.
+///
+/// Tables are emitted in the header so per-node frames can reference
+/// strings by `u32` index instead of the full string. On the grafema
+/// repo this turns 27 149 + 300 822 = 327 971 nodes worth of repeated
+/// 30-byte file paths and 32-char region UUIDs into one-shot table
+/// strings + 4-byte indices — pre-gzip wire ÷2 and a ~10× drop in
+/// JSON string allocations on the parser side.
+///
+/// Iteration order matters for determinism (table indices must be
+/// stable across runs on the same input): we iterate `node_refs` in
+/// the order the candidates pass already provides, plus sort the
+/// final tables by first-seen order (the natural iteration order).
+fn build_intern_tables(
+    node_refs: &[NodeRef],
+    _tree: &ContainerTree,
+) -> (Vec<String>, Vec<String>, HashMap<String, u32>, HashMap<String, u32>) {
+    let mut file_table: Vec<String> = Vec::new();
+    let mut region_table: Vec<String> = Vec::new();
+    let mut file_idx: HashMap<String, u32> = HashMap::new();
+    let mut region_idx: HashMap<String, u32> = HashMap::new();
+    for nr in node_refs {
+        if !file_idx.contains_key(&nr.file) {
+            file_idx.insert(nr.file.clone(), file_table.len() as u32);
+            file_table.push(nr.file.clone());
+        }
+        // Region = parent folder of the node's file. Same string the
+        // emit_node_line / emit_excluded_nodes_frame writes — keeps the
+        // table indices consistent across emitter sites.
+        let region: String = if let Some(slash) = nr.file.rfind('/') {
+            nr.file[..slash].to_string()
+        } else {
+            nr.file.clone()
+        };
+        if !region_idx.contains_key(&region) {
+            region_idx.insert(region.clone(), region_table.len() as u32);
+            region_table.push(region);
         }
     }
-    let region_level = tree.sa_region_level;
+    (file_table, region_table, file_idx, region_idx)
+}
 
-    let t_emit = std::time::Instant::now();
-    // Build JSONL output
-    let mut lines: Vec<String> = Vec::new();
-
-    // Header
-    let regions: Vec<serde_json::Value> = tree.containers_at_level(region_level)
-        .values()
-        .map(|c| serde_json::json!({
-            "path": c.id,
-            "depth": c.level,
-            "tileCount": c.child_count,
+/// Push the two framing frames that must precede every node frame:
+/// `header` (type tables + regions + Phase-4 string tables) and
+/// `layout_meta` (provenance + overflow summary). The GUI's
+/// `loadStream.ts` treats these as required.
+fn emit_header_frames(
+    lines: &mut Vec<String>,
+    type_table: &[String],
+    edge_type_table: &[String],
+    regions_flat: &[serde_json::Value],
+    cached_layout: &CachedLayout,
+    workspace_name: Option<&str>,
+    file_table: &[String],
+    region_table: &[String],
+    reason_table: &[&str],
+) {
+    lines.push(
+        serde_json::to_string(&serde_json::json!({
+            "type": "header",
+            "typeTable": type_table,
+            "edgeTypeTable": edge_type_table,
+            "regions": regions_flat,
+            // Phase 4 — string-table interning. Per-node frames carry
+            // `f` / `r` / `rs` indices into these tables instead of
+            // full file paths / region ids / unplaced reason strings.
+            // Absence of these fields signals legacy mode and the
+            // parser falls back to per-message strings.
+            "fileTable": file_table,
+            "regionTable": region_table,
+            "reasonTable": reason_table,
         }))
+        .unwrap(),
+    );
+
+    let (meta_source, meta_committed_at, meta_symbol_count) = match &cached_layout.source {
+        LayoutSource::Missing => ("missing", serde_json::Value::Null, 0usize),
+        LayoutSource::Committed { committed_at, symbol_count } => (
+            "committed",
+            serde_json::Value::String(committed_at.clone()),
+            *symbol_count,
+        ),
+    };
+    let overflow_files_json: Vec<serde_json::Value> = cached_layout
+        .overflow_files
+        .iter()
+        .map(|(file, (skipped, cap))| {
+            serde_json::json!({
+                "file": file,
+                "skipped": skipped,
+                "cap": cap,
+            })
+        })
+        .collect();
+    let workspace_name_json = match workspace_name {
+        Some(name) => serde_json::Value::String(name.to_string()),
+        None => serde_json::Value::Null,
+    };
+    lines.push(
+        serde_json::to_string(&serde_json::json!({
+            "type": "layout_meta",
+            "source": meta_source,
+            "symbol_count": meta_symbol_count,
+            "committed_at": meta_committed_at,
+            "overflow_files": overflow_files_json,
+            "workspace_name": workspace_name_json,
+        }))
+        .unwrap(),
+    );
+}
+
+/// Classify a single node for layout purposes. Returns `(pos, unplaced_reason)`:
+/// - `excluded`        — node type not placeable (e.g. CALL, REFERENCE).
+/// - placed            — layout committed AND placement exists.
+/// - `missing_layout`  — placeable but no layout on disk yet.
+/// - `skipped_overflow`— placeable, layout exists, but this symbol exceeded
+///                       the per-file hard cap during `layout --commit`.
+fn classify_node_visibility(
+    nr: &NodeRef,
+    cached_layout: &CachedLayout,
+    layout_is_missing: bool,
+) -> (serde_json::Value, Option<&'static str>) {
+    let placeable = layout_types::is_placeable(&nr.node_type);
+    let placed = cached_layout.positions.get(&nr.id).copied();
+    match (placeable, placed, layout_is_missing) {
+        (false, _, _)        => (serde_json::Value::Null, Some("excluded")),
+        (true, Some(c), _)   => (serde_json::json!({ "q": c.q, "r": c.r }), None),
+        (true, None, true)   => (serde_json::Value::Null, Some("missing_layout")),
+        (true, None, false)  => (serde_json::Value::Null, Some("skipped_overflow")),
+    }
+}
+
+/// Serialise a single visible node as a JSONL frame. Every node carries a
+/// `pos` (hex coord or `null`) plus an `unplaced_reason` discriminator so
+/// the GUI can distinguish `excluded` types from `missing_layout` from
+/// `skipped_overflow`.
+/// Phase 1 — emit ONE `hulls` JSONL frame containing every region's
+/// precomputed polygon loops. Region IDs are formatted as lowercase hex
+/// (`format!("{:x}", id)`) to match `build_region_tree_json` so the GUI
+/// can join hulls onto regionTree by string id.
+///
+/// Wire shape:
+/// ```json
+/// {"type":"hulls","regions":[
+///   {"rid":"<hex>","area":42,"polys":[[[x,y],[x,y],...],...]},
+///   ...
+/// ]}
+/// ```
+/// `polys` is an array of closed loops; each loop is an array of
+/// `[x, y]` pairs (first vertex repeated at the end). Empty entries
+/// are dropped — a region with zero placed descendants doesn't appear
+/// in the cache to begin with.
+fn emit_hulls_frame(
+    lines: &mut Vec<String>,
+    hulls: &HashMap<u128, crate::hulls::RegionHull>,
+) {
+    let regions: Vec<serde_json::Value> = hulls
+        .iter()
+        .map(|(rid, hull)| {
+            let polys: Vec<serde_json::Value> = hull
+                .polygons
+                .iter()
+                .map(|loop_pts| {
+                    let pairs: Vec<serde_json::Value> = loop_pts
+                        .iter()
+                        .map(|p| serde_json::json!([p.x, p.y]))
+                        .collect();
+                    serde_json::Value::Array(pairs)
+                })
+                .collect();
+            serde_json::json!({
+                "rid": format!("{:x}", rid),
+                "area": hull.area,
+                "polys": polys,
+            })
+        })
+        .collect();
+    lines.push(
+        serde_json::to_string(&serde_json::json!({
+            "type": "hulls",
+            "regions": regions,
+        }))
+        .unwrap(),
+    );
+}
+
+/// Phase 3 — file-path depth (number of `/` segments) used as the
+/// bucketing key for `nodes_bucket` frames. Cheap, no tree lookup,
+/// and tracks the user's "shallow folders first" intent: depth-0 files
+/// are project-root scripts, depth-1 are package roots, deep nesting
+/// arrives later. Builtin / runtime virtual paths land in depth 0.
+fn file_path_depth(path: &str) -> u32 {
+    if path.is_empty() {
+        return 0;
+    }
+    path.bytes().filter(|&b| b == b'/').count() as u32
+}
+
+/// Phase 3 — open frame announcing a coming bucket of `node` lines at
+/// the named depth. The GUI parser uses this to emit a per-bucket
+/// progress event before draining the lines that follow.
+fn emit_nodes_bucket_open(depth: u32, count: usize) -> String {
+    serde_json::to_string(&serde_json::json!({
+        "type": "nodes_bucket_open",
+        "depth": depth,
+        "count": count,
+    }))
+    .unwrap()
+}
+
+/// Phase 3 — close frame for the bucket. Lets parser hand off the
+/// just-arrived nodes to incremental render hooks before continuing.
+fn emit_nodes_bucket_close(depth: u32) -> String {
+    serde_json::to_string(&serde_json::json!({
+        "type": "nodes_bucket_close",
+        "depth": depth,
+    }))
+    .unwrap()
+}
+
+/// Phase 2 — emit ONE `excluded_nodes` JSONL frame containing every
+/// node that `classify_node_visibility` flagged as `excluded` (= not
+/// placeable per `layout_types::is_placeable`). Replaces the legacy
+/// path of one `node` frame per excluded symbol — on the grafema repo
+/// that was 300k+ messages emitted only to be filtered out by the
+/// client.
+///
+/// Wire shape (short field names — this is the largest single message
+/// in the stream):
+/// ```json
+/// {"type":"excluded_nodes","nodes":[
+///   {"i":<idx>,"id":"<128bit>","t":<type_idx>,"n":"<name>",
+///    "f":"<file>","r":"<region>","d":<degree>,"reason":"excluded"},
+///   ...
+/// ]}
+/// ```
+/// `unplaced_reason` is folded into a single shared `"reason"` since
+/// every entry in this batch has the same value. Other reasons
+/// (`missing_layout`, `skipped_overflow`) keep their per-node frames so
+/// the GUI's existing reason-specific overlays don't need rewiring.
+fn emit_excluded_nodes_frame(
+    batch: &[(&NodeRef, &str)],
+    type_idx: &HashMap<String, usize>,
+    tree: &ContainerTree,
+    degrees: &[u32],
+    file_idx: &HashMap<String, u32>,
+    region_idx: &HashMap<String, u32>,
+) -> String {
+    // Phase 4 — every entry in the batch shares the same "excluded"
+    // reason (other reasons keep their per-node frames), so we hoist
+    // it to the frame envelope and drop the per-entry field. Combined
+    // with the `f` / `r` table indices below this drops batch payload
+    // ~40% pre-gzip on the grafema corpus.
+    let nodes: Vec<serde_json::Value> = batch
+        .iter()
+        .map(|(nr, _reason)| {
+            let ti = type_idx.get(&nr.node_type).copied().unwrap_or(0);
+            // Same folder-path region as `emit_node_line` — see comment
+            // there for why we ignore tree.sa_region's slugs/prefixed
+            // paths.
+            let region: String = if let Some(slash) = nr.file.rfind('/') {
+                nr.file[..slash].to_string()
+            } else {
+                nr.file.clone()
+            };
+            let f = file_idx.get(&nr.file).copied().unwrap_or(0);
+            let r = region_idx.get(&region).copied().unwrap_or(0);
+            serde_json::json!({
+                "i": nr.idx,
+                "id": nr.id.to_string(),
+                "t": ti,
+                "n": nr.name,
+                "f": f,
+                "r": r,
+                "d": degrees[nr.idx as usize],
+            })
+        })
+        .collect();
+    serde_json::to_string(&serde_json::json!({
+        "type": "excluded_nodes",
+        "rs": 0u32,           // index into header.reasonTable — always "excluded" here
+        "nodes": nodes,
+    }))
+    .unwrap()
+}
+
+fn emit_node_line(
+    nr: &NodeRef,
+    type_idx: &HashMap<String, usize>,
+    tree: &ContainerTree,
+    cached_layout: &CachedLayout,
+    layout_is_missing: bool,
+    degree: u32,
+    file_idx: &HashMap<String, u32>,
+    region_idx: &HashMap<String, u32>,
+) -> String {
+    let ti = type_idx.get(&nr.node_type).copied().unwrap_or(0);
+    // `region` field exposed on the wire = the parent folder of the
+    // node's file (e.g. "packages/api/src" for a node in
+    // "packages/api/src/foo.ts"). The container_hierarchy's
+    // `tree.sa_region` was returning either a `<virtual>/layout-pack/...`
+    // prefixed path OR a literal `TYPE:name` slug for nodes whose
+    // depth fell into a NodeType-rule level — both useless to the GUI
+    // for tooltip / lens.region hashing. Folder path is consistent
+    // across every placed symbol and matches the regionTree entries
+    // the GUI joins on.
+    let region: String = if let Some(slash) = nr.file.rfind('/') {
+        nr.file[..slash].to_string()
+    } else {
+        nr.file.clone()
+    };
+    let (pos, unplaced_reason) = classify_node_visibility(nr, cached_layout, layout_is_missing);
+    // Phase 4 — encode `file` and `region` as table indices (`f`, `r`)
+    // instead of inlining the full strings. `unplaced_reason` becomes
+    // `rs` (a reasonTable index) when set, omitted when null. `id` and
+    // `name` stay raw — `id` is unique per node so interning would cost
+    // more than it saves; `name` is short and varies enough that the
+    // file-path-style 100×-repetition pattern doesn't apply.
+    let f = file_idx.get(&nr.file).copied().unwrap_or(0);
+    let r = region_idx.get(&region).copied().unwrap_or(0);
+    let mut obj = serde_json::json!({
+        "type": "node",
+        "i": nr.idx,
+        "t": ti,
+        "id": nr.id.to_string(),
+        "name": nr.name,
+        "f": f,
+        "r": r,
+        "degree": degree,
+        "pos": pos,
+    });
+    if let Some(reason) = unplaced_reason {
+        let rs = match reason {
+            "excluded" => 0u32,
+            "missing_layout" => 1,
+            "skipped_overflow" => 2,
+            _ => 0,
+        };
+        obj["rs"] = serde_json::Value::from(rs);
+    }
+    serde_json::to_string(&obj).unwrap()
+}
+
+/// Serialise a single lifted edge as a JSONL frame.
+fn emit_edge_line(e: &EdgeRef, edge_type_idx: &HashMap<String, usize>) -> String {
+    let eti = edge_type_idx.get(&e.edge_type).copied().unwrap_or(0);
+    serde_json::to_string(&serde_json::json!({
+        "type": "edge",
+        "s": e.src_idx,
+        "d": e.dst_idx,
+        "t": eti,
+    }))
+    .unwrap()
+}
+
+
+/// Serialise the persisted REGION tree as nested JSON for the header
+/// frame. Each node = `{id, depth, path, kind, name, children}`; files
+/// (leaves) omit child symbols (those are implicit from node emission).
+/// Returns an empty Vec when no persisted layout exists — the caller
+/// falls back to the container-hierarchy flat list in that case.
+fn build_region_tree_json(cached: &CachedLayout) -> Vec<serde_json::Value> {
+    if cached.regions.is_empty() {
+        return Vec::new();
+    }
+    // Build index of region-by-id for quick child lookups, plus a set
+    // of region ids so we can filter CONTAINS children (folder children
+    // are regions; symbol children are skipped — represented by nodes).
+    let region_by_id: HashMap<u128, &RegionInfo> = cached
+        .regions
+        .iter()
+        .map(|r| (r.id, r))
         .collect();
 
-    lines.push(serde_json::to_string(&serde_json::json!({
-        "type": "header",
-        "typeTable": type_table,
-        "edgeTypeTable": edge_type_table,
-        "regions": regions,
-    })).unwrap());
-
-    // Nodes. Every node inherits its containing file's centroid from
-    // the cached file-level layout. Non-MODULE symbols collapse onto
-    // the same tile as their file (acceptable for the file-LOD demo).
-    let mut missing_centroid_warned = 0usize;
-    for nr in &node_refs {
-        let ti = type_idx.get(&nr.node_type).copied().unwrap_or(0);
-        let region = tree.sa_region(nr.idx).to_string();
-        let pos = match cached_layout
-            .atom_positions
-            .get(&nr.id)
-            .or_else(|| cached_layout.file_fallback.get(&nr.file))
-        {
-            Some(c) => serde_json::json!({ "q": c.q, "r": c.r }),
-            None => {
-                if missing_centroid_warned < 3 {
-                    eprintln!(
-                        "[tectonic] WARN: node {} ({}) has no cached centroid (file {})",
-                        nr.idx, nr.name, nr.file
-                    );
-                }
-                missing_centroid_warned += 1;
-                serde_json::Value::Null
-            }
-        };
-        lines.push(serde_json::to_string(&serde_json::json!({
-            "type": "node",
-            "i": nr.idx,
-            "t": ti,
-            "id": nr.id.to_string(),
-            "name": nr.name,
-            "file": nr.file,
-            "region": region,
-            "degree": degrees[nr.idx as usize],
-            "pos": pos,
-        })).unwrap());
-    }
-    if missing_centroid_warned > 0 {
-        eprintln!(
-            "[tectonic] WARN: {} leaves missing centroid after pipeline",
-            missing_centroid_warned
-        );
+    fn build_node(
+        r: &RegionInfo,
+        region_by_id: &HashMap<u128, &RegionInfo>,
+        containment: &HashMap<u128, Vec<u128>>,
+    ) -> serde_json::Value {
+        let children: Vec<serde_json::Value> = containment
+            .get(&r.id)
+            .map(|kids| {
+                kids.iter()
+                    .filter_map(|cid| region_by_id.get(cid).copied())
+                    .map(|child| build_node(child, region_by_id, containment))
+                    .collect()
+            })
+            .unwrap_or_default();
+        serde_json::json!({
+            "id": format!("{:x}", r.id),
+            "depth": r.depth,
+            "path": r.path,
+            "kind": r.kind,
+            "name": r.name,
+            "children": children,
+        })
     }
 
-    lines.push(serde_json::to_string(&serde_json::json!({
-        "type": "nodes_done",
-        "count": node_count,
-    })).unwrap());
-
-    // Edges
-    for (i, e) in edge_refs.iter().enumerate() {
-        let eti = edge_type_idx.get(&e.edge_type).copied().unwrap_or(0);
-        lines.push(serde_json::to_string(&serde_json::json!({
-            "type": "edge",
-            "s": e.src_idx,
-            "d": e.dst_idx,
-            "t": eti,
-        })).unwrap());
-    }
-
-    // Tectonic pipeline summary (Phase G). Clients that don't know this
-    // message type ignore it via the unknown-msg fallthrough in loadStream.ts.
-    lines.push(serde_json::to_string(&serde_json::json!({
-        "type": "tectonic_meta",
-        "num_atoms": cached_layout.atom_count,
-        "phase3_initial_cost": cached_layout.phase3_initial_cost,
-        "phase3_final_cost": cached_layout.phase3_final_cost,
-        "pipeline_ms": cached_layout.pipeline_ms,
-    })).unwrap());
-
-    let elapsed = start.elapsed().as_millis();
-    lines.push(serde_json::to_string(&serde_json::json!({
-        "type": "done",
-        "nodeCount": node_count,
-        "edgeCount": edge_refs.len(),
-        "elapsed": elapsed,
-    })).unwrap());
-
-    eprintln!("[http] graph-stream: {} nodes, {} edges, {} regions, {}ms (emit: {}ms)",
-        node_count, edge_refs.len(), regions.len(), elapsed,
-        t_emit.elapsed().as_millis());
-
-    lines.join("\n") + "\n"
+    cached
+        .regions
+        .iter()
+        .filter(|r| r.depth == 0)
+        .map(|root| build_node(root, &region_by_id, &cached.containment))
+        .collect()
 }
 
 // ── WS /api/layout-live ─────────────────────────────────────────────────
@@ -1099,4 +2300,423 @@ async fn handle_layout_ws(mut socket: WebSocket, state: HttpState, params: Strea
     )).await;
 
     let _ = sa_handle.await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::graph::GraphEngineV2;
+    use crate::storage::{EdgeRecord, NodeRecord};
+    use tempfile::TempDir;
+
+    fn make_node(id: u128, node_type: &str, metadata: Option<&str>) -> NodeRecord {
+        NodeRecord {
+            id,
+            node_type: Some(node_type.to_string()),
+            file_id: 0,
+            name_offset: 0,
+            version: "main".to_string(),
+            exported: false,
+            replaces: None,
+            deleted: false,
+            name: Some(format!("n{id}")),
+            file: Some(format!("<virtual>/layout-pack/{}", id)),
+            metadata: metadata.map(|s| s.to_string()),
+            semantic_id: Some(format!("{}::{}", node_type, id)),
+        }
+    }
+
+    fn sym_node(id: u128, node_type: &str, file: &str) -> NodeRecord {
+        NodeRecord {
+            id,
+            node_type: Some(node_type.to_string()),
+            file_id: 0,
+            name_offset: 0,
+            version: "main".to_string(),
+            exported: false,
+            replaces: None,
+            deleted: false,
+            name: Some(format!("sym{id}")),
+            file: Some(file.to_string()),
+            metadata: None,
+            semantic_id: Some(format!("{}->{}::{}", file, node_type, id)),
+        }
+    }
+
+    fn make_edge(src: u128, dst: u128, edge_type: &str, metadata: Option<&str>) -> EdgeRecord {
+        EdgeRecord {
+            src,
+            dst,
+            edge_type: Some(edge_type.to_string()),
+            version: "main".to_string(),
+            metadata: metadata.map(|s| s.to_string()),
+            deleted: false,
+        }
+    }
+
+    fn fresh_engine() -> (TempDir, GraphEngineV2) {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.rfdb");
+        let engine = GraphEngineV2::create(&db_path).unwrap();
+        (dir, engine)
+    }
+
+    #[test]
+    fn empty_db_produces_missing_source_and_no_positions() {
+        let (_dir, mut engine) = fresh_engine();
+        engine.flush().unwrap();
+        let cached = load_layout_from_rfdb(&engine).unwrap();
+        assert!(cached.positions.is_empty());
+        assert!(cached.regions.is_empty());
+        assert!(matches!(cached.source, LayoutSource::Missing));
+    }
+
+    #[test]
+    fn layout_position_edges_are_loaded_with_q_r_from_metadata() {
+        let (_dir, mut engine) = fresh_engine();
+        // Two FUNCTION symbols that will have LAYOUT_POSITION edges.
+        engine.add_nodes(vec![
+            sym_node(10, "FUNCTION", "src/a.rs"),
+            sym_node(11, "FUNCTION", "src/a.rs"),
+            // dst hex nodes — we don't actually need real HEX nodes, only
+            // the edge metadata is consulted, but we add them so the DB
+            // is structurally complete.
+            make_node(900, "HEX", None),
+            make_node(901, "HEX", None),
+        ]);
+        engine.add_edges(
+            vec![
+                make_edge(
+                    10,
+                    900,
+                    "LAYOUT_POSITION",
+                    Some(r#"{"_source":"layout-pack","q":3,"r":-2,"committed_at":"2026-04-23T00:00:00Z"}"#),
+                ),
+                make_edge(
+                    11,
+                    901,
+                    "LAYOUT_POSITION",
+                    Some(r#"{"_source":"layout-pack","q":0,"r":1,"committed_at":"2026-04-23T00:00:00Z"}"#),
+                ),
+            ],
+            true,
+        );
+        engine.flush().unwrap();
+
+        let cached = load_layout_from_rfdb(&engine).unwrap();
+        assert_eq!(cached.positions.len(), 2);
+        assert_eq!(cached.positions[&10], HexCoord { q: 3, r: -2 });
+        assert_eq!(cached.positions[&11], HexCoord { q: 0, r: 1 });
+        match cached.source {
+            LayoutSource::Committed { ref committed_at, symbol_count } => {
+                assert_eq!(committed_at, "2026-04-23T00:00:00Z");
+                assert_eq!(symbol_count, 2);
+            }
+            _ => panic!("expected Committed source"),
+        }
+    }
+
+    #[test]
+    fn layout_position_edges_without_layout_pack_source_are_skipped() {
+        let (_dir, mut engine) = fresh_engine();
+        engine.add_nodes(vec![
+            sym_node(10, "FUNCTION", "src/a.rs"),
+            make_node(900, "HEX", None),
+        ]);
+        engine.add_edges(
+            vec![
+                make_edge(
+                    10,
+                    900,
+                    "LAYOUT_POSITION",
+                    Some(r#"{"_source":"other-writer","q":7,"r":7}"#),
+                ),
+            ],
+            true,
+        );
+        engine.flush().unwrap();
+
+        let cached = load_layout_from_rfdb(&engine).unwrap();
+        assert!(cached.positions.is_empty());
+        assert!(matches!(cached.source, LayoutSource::Missing));
+    }
+
+    #[test]
+    fn region_nodes_are_loaded_with_depth_path_kind_name() {
+        let (_dir, mut engine) = fresh_engine();
+        engine.add_nodes(vec![
+            make_node(
+                1,
+                "REGION",
+                Some(r#"{"_source":"layout-pack","depth":0,"path":".","kind":"folder","name":"/"}"#),
+            ),
+            make_node(
+                2,
+                "REGION",
+                Some(r#"{"_source":"layout-pack","depth":1,"path":"src","kind":"folder","name":"src"}"#),
+            ),
+            make_node(
+                3,
+                "REGION",
+                Some(r#"{"_source":"layout-pack","depth":2,"path":"src/a.rs","kind":"file","name":"a.rs","overflow_skipped":5,"hard_cap":500}"#),
+            ),
+        ]);
+        engine.flush().unwrap();
+
+        let cached = load_layout_from_rfdb(&engine).unwrap();
+        assert_eq!(cached.regions.len(), 3);
+        let file_region = cached
+            .regions
+            .iter()
+            .find(|r| r.kind == "file")
+            .expect("file region missing");
+        assert_eq!(file_region.path, "src/a.rs");
+        assert_eq!(file_region.name, "a.rs");
+        assert_eq!(file_region.depth, 2);
+        assert_eq!(
+            cached.overflow_files.get("src/a.rs").copied(),
+            Some((5usize, 500usize))
+        );
+    }
+
+    #[test]
+    fn layout_pack_contains_edges_feed_containment_other_contains_ignored() {
+        let (_dir, mut engine) = fresh_engine();
+        engine.add_nodes(vec![
+            make_node(
+                1,
+                "REGION",
+                Some(r#"{"_source":"layout-pack","depth":0,"path":".","kind":"folder","name":"/"}"#),
+            ),
+            make_node(
+                2,
+                "REGION",
+                Some(r#"{"_source":"layout-pack","depth":1,"path":"src","kind":"folder","name":"src"}"#),
+            ),
+            sym_node(10, "FUNCTION", "src/a.rs"),
+        ]);
+        engine.add_edges(
+            vec![
+                make_edge(1, 2, "CONTAINS", Some(r#"{"_source":"layout-pack"}"#)),
+                // Analyzer-emitted CONTAINS — must be ignored.
+                make_edge(2, 10, "CONTAINS", None),
+            ],
+            true,
+        );
+        engine.flush().unwrap();
+
+        let cached = load_layout_from_rfdb(&engine).unwrap();
+        // Only the layout-pack CONTAINS feeds containment.
+        assert_eq!(cached.containment.len(), 1);
+        assert_eq!(cached.containment[&1], vec![2u128]);
+    }
+
+    #[test]
+    fn region_containment_cycle_fails_loudly() {
+        let (_dir, mut engine) = fresh_engine();
+        engine.add_nodes(vec![
+            make_node(
+                1,
+                "REGION",
+                Some(r#"{"_source":"layout-pack","depth":0,"path":".","kind":"folder","name":"/"}"#),
+            ),
+            make_node(
+                2,
+                "REGION",
+                Some(r#"{"_source":"layout-pack","depth":1,"path":"a","kind":"folder","name":"a"}"#),
+            ),
+        ]);
+        // 1 -> 2 -> 1 (cycle)
+        engine.add_edges(
+            vec![
+                make_edge(1, 2, "CONTAINS", Some(r#"{"_source":"layout-pack"}"#)),
+                make_edge(2, 1, "CONTAINS", Some(r#"{"_source":"layout-pack"}"#)),
+            ],
+            true,
+        );
+        engine.flush().unwrap();
+
+        let err = load_layout_from_rfdb(&engine).unwrap_err();
+        assert!(matches!(err, LayoutLoadError::Cycle { .. }), "expected cycle error, got {:?}", err);
+    }
+
+    #[test]
+    fn duplicate_positions_use_first_wins_and_report_count() {
+        let (_dir, mut engine) = fresh_engine();
+        engine.add_nodes(vec![sym_node(10, "FUNCTION", "src/a.rs"), make_node(900, "HEX", None)]);
+        // Two conflicting edges for same src — first-wins, no error.
+        let mut edges = Vec::new();
+        for i in 0..3i32 {
+            edges.push(make_edge(
+                10,
+                900 + i as u128,
+                "LAYOUT_POSITION",
+                Some(&format!(r#"{{"_source":"layout-pack","q":{i},"r":{i}}}"#)),
+            ));
+        }
+        engine.add_edges(edges, true);
+        engine.flush().unwrap();
+
+        let cached = load_layout_from_rfdb(&engine).expect("duplicates should not fail the load");
+        // Exactly one position per src, first-wins (q=0, r=0).
+        assert_eq!(cached.positions.len(), 1);
+        assert_eq!(cached.positions.get(&10), Some(&HexCoord { q: 0, r: 0 }));
+    }
+
+    #[test]
+    fn extract_json_helpers_parse_flat_metadata() {
+        let meta = r#"{"_source":"layout-pack","q":42,"r":-7,"committed_at":"2026-04-23T00:00:00Z"}"#;
+        assert_eq!(extract_json_str(meta, "_source"), Some("layout-pack"));
+        assert_eq!(extract_json_i64(meta, "q"), Some(42));
+        assert_eq!(extract_json_i64(meta, "r"), Some(-7));
+        assert_eq!(
+            extract_json_str(meta, "committed_at"),
+            Some("2026-04-23T00:00:00Z"),
+        );
+        assert_eq!(extract_json_i64(meta, "missing"), None);
+    }
+
+    #[test]
+    fn region_tree_json_emits_nested_children_for_layout_pack_only() {
+        let cached = CachedLayout {
+            positions: HashMap::new(),
+            regions: vec![
+                RegionInfo {
+                    id: 1,
+                    depth: 0,
+                    path: ".".into(),
+                    kind: "folder".into(),
+                    name: "/".into(),
+                },
+                RegionInfo {
+                    id: 2,
+                    depth: 1,
+                    path: "src".into(),
+                    kind: "folder".into(),
+                    name: "src".into(),
+                },
+                RegionInfo {
+                    id: 3,
+                    depth: 2,
+                    path: "src/a.rs".into(),
+                    kind: "file".into(),
+                    name: "a.rs".into(),
+                },
+            ],
+            containment: {
+                let mut m: HashMap<u128, Vec<u128>> = HashMap::new();
+                m.insert(1, vec![2]);
+                m.insert(2, vec![3]);
+                // Symbol attachment — not a region, filtered out.
+                m.insert(3, vec![999]);
+                m
+            },
+            overflow_files: HashMap::new(),
+            source: LayoutSource::Missing,
+        };
+
+        let tree = build_region_tree_json(&cached);
+        assert_eq!(tree.len(), 1);
+        let root = &tree[0];
+        assert_eq!(root["depth"], 0);
+        let children = root["children"].as_array().unwrap();
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0]["name"], "src");
+        let grand = children[0]["children"].as_array().unwrap();
+        assert_eq!(grand.len(), 1);
+        assert_eq!(grand[0]["kind"], "file");
+        // Symbol child 999 is NOT a REGION → filtered from the tree.
+        let file_children = grand[0]["children"].as_array().unwrap();
+        assert!(file_children.is_empty());
+    }
+
+    #[test]
+    fn build_graph_stream_body_returns_err_when_default_db_missing() {
+        // DAI-22 review-fix G2 regression: Uncle Bob's #1 replaced
+        // `.unwrap()` on `manager.get_database("default")` with a
+        // `map_err(...)?` that bubbles up to HTTP 500. Exercise that
+        // error branch directly — an empty DatabaseManager (no "default"
+        // registered) must return Err, not panic.
+        let tmp = TempDir::new().unwrap();
+        let manager = Arc::new(DatabaseManager::new(tmp.path().to_path_buf()));
+        let layout_cache = Arc::new(RwLock::new(None));
+        let file_to_nodes = Arc::new(RwLock::new(None));
+        let hull_cache = Arc::new(RwLock::new(None));
+
+        let result = build_graph_stream_body(
+            manager, layout_cache, file_to_nodes, hull_cache,
+            100, None, None, None, None,
+            None, false, false,
+        );
+
+        let err = result.err().expect("missing default db must not panic, must Err");
+        assert!(
+            err.contains("default") || err.contains("database"),
+            "error must reference the missing db: {err}"
+        );
+    }
+
+    #[test]
+    fn derive_workspace_name_typical_grafema_layout() {
+        // Real CLI invocation: rfdb-server <workspace>/.grafema/graph.rfdb
+        let p = std::path::Path::new("/Users/vadimr/grafema/.grafema/graph.rfdb");
+        assert_eq!(derive_workspace_name(p).as_deref(), Some("grafema"));
+    }
+
+    #[test]
+    fn derive_workspace_name_relative_path() {
+        // Same convention via relative path.
+        let p = std::path::Path::new("my-project/.grafema/graph.rfdb");
+        assert_eq!(derive_workspace_name(p).as_deref(), Some("my-project"));
+    }
+
+    #[test]
+    fn derive_workspace_name_handles_trailing_slash() {
+        // Trailing slashes don't add an extra empty path component on
+        // construction, but be explicit about the case where the file_name
+        // would be missing — this mostly guards against future refactors
+        // that canonicalise paths and end up with weird trailing artefacts.
+        let p = std::path::Path::new("workspace/.grafema/graph.rfdb/");
+        assert_eq!(derive_workspace_name(p).as_deref(), Some("workspace"));
+    }
+
+    #[test]
+    fn derive_workspace_name_returns_none_for_root() {
+        // db at filesystem root has no useful workspace.
+        let p = std::path::Path::new("/graph.rfdb");
+        assert_eq!(derive_workspace_name(p), None);
+    }
+
+    #[test]
+    fn derive_workspace_name_returns_none_for_bare_filename() {
+        // No parent at all — workspace unknown, fall back to None.
+        let p = std::path::Path::new("graph.rfdb");
+        assert_eq!(derive_workspace_name(p), None);
+    }
+
+    #[test]
+    fn derive_workspace_name_resolves_relative_via_cwd() {
+        // db_path = ".grafema/graph.rfdb" (relative). Pure arithmetic
+        // misses (`.grafema`'s lexical parent is empty), so the
+        // current_dir fallback kicks in — workspace_name should equal
+        // the basename of the test process's working directory.
+        // Skip the assertion if cwd basename can't be determined (CI
+        // edge cases like running from /), since the function would
+        // legitimately return None there too.
+        let cwd = std::env::current_dir().expect("current_dir for test");
+        if let Some(want) = cwd.file_name().map(|n| n.to_string_lossy().to_string()) {
+            let p = std::path::Path::new(".grafema/graph.rfdb");
+            assert_eq!(derive_workspace_name(p).as_deref(), Some(want.as_str()));
+        }
+    }
+
+    #[test]
+    fn derive_workspace_name_bare_filename_does_not_consult_cwd() {
+        // Regression for the cwd-fallback gate: a path with no parent at
+        // all (`graph.rfdb`) must NOT be resolved against current_dir
+        // because a workspace identity can't be inferred from a bare
+        // filename alone. Stays None.
+        let p = std::path::Path::new("graph.rfdb");
+        assert_eq!(derive_workspace_name(p), None);
+    }
 }

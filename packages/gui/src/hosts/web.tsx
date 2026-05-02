@@ -35,7 +35,33 @@ export function buildSource(): LayoutSource {
   // glue it onto our pre-built db= query so the order stays
   // `db=…&rust=1` which is the canonical form the server sees.
   const extra = search.startsWith('?') ? search.slice(1) : search;
-  const query = extra ? `db=${encodeURIComponent(db)}&${extra}` : `db=${encodeURIComponent(db)}`;
+  // Stream enough nodes to cover post-DAI-22 full placed-symbol sets
+  // (grafema self-analysis: ~27k placed, ~301k excluded = ~328k total).
+  // 500k gives headroom for larger bases. Server default (5000) only
+  // caught ~340 placed symbols via top-by-degree after EXCLUDED filter,
+  // which rendered the atlas as scattered outline-fragments.
+  const hasMax = /(^|&)maxNodes=/.test(extra);
+  const maxParam = hasMax ? '' : '&maxNodes=500000';
+  // Skip edges in the initial stream — flow toggles default to
+  // "bridges" only and the user usually never enables the others, so
+  // shipping 487k+ `edge` frames upfront is parser overhead for
+  // nothing. When the user toggles a flow on, the GUI will fetch
+  // edges lazily (TODO: /api/edges endpoint). To force the legacy
+  // "ship all edges" behaviour, append `&noEdges=0` (or remove this
+  // line) in the query.
+  const hasEdges = /(^|&)noEdges=/.test(extra);
+  const noEdgesParam = hasEdges ? '' : '&noEdges=1';
+  // Same opt-out for the excluded_nodes batch — it's one giant
+  // JSON.parse on the client (300k+ entries) that blocks the main
+  // thread for seconds, observable as a frozen mouse cursor during
+  // ingest. Drop it from the default fetch; the unplaced-nodes
+  // search dataset can be re-fetched on demand if/when the user
+  // opens that path. Override with `&noExcluded=0` to restore.
+  const hasExcluded = /(^|&)noExcluded=/.test(extra);
+  const noExcludedParam = hasExcluded ? '' : '&noExcluded=1';
+  const query = extra
+    ? `db=${encodeURIComponent(db)}&${extra}${maxParam}${noEdgesParam}${noExcludedParam}`
+    : `db=${encodeURIComponent(db)}${maxParam}${noEdgesParam}${noExcludedParam}`;
   return { kind: 'stream', url: `/api/graph-stream?${query}` };
 }
 

@@ -1,15 +1,17 @@
 import * as React from 'react';
-import { useCallback } from 'react';
+import { useCallback, useEffect } from 'react';
 import { useDataStore } from '../store/dataStore';
 import { useMapStore } from '../store/mapStore';
 import { useViewStore } from '../store/viewStore';
 import type { SceneMode } from '../three/types';
 import { useSceneApiOptional } from '../controller/SceneApiContext';
+import { mapController } from '../controller/MapController';
 import { FlowPanel } from './FlowPanel';
 import { RoutePanel } from './RoutePanel';
 import { LensPanel } from './LensPanel';
 import { DiffPanel } from './DiffPanel';
 import { PinPanel } from './PinPanel';
+import { FLOWS } from '../config/flows';
 
 // Silence "React imported but unused" under isolatedModules: the JSX
 // output references React.createElement via the classic runtime that
@@ -39,24 +41,126 @@ export function formatViewReadout(
     : `Zoom: ${zoom.toFixed(2)}`;
 }
 
+/**
+ * Pure formatter for the streaming progress line. Pulled out so unit
+ * tests can pin the wording / clamp without standing up React.
+ *
+ * Format: `Loading: 12,300 / 28,023 nodes (44%)` while nodes still
+ * inbound; switches to edges once nodes are at 100% and edge total > 0.
+ */
+export function formatProgressLine(p: {
+  nodesLoaded: number;
+  nodesTotal: number;
+  edgesLoaded: number;
+  edgesTotal: number;
+}): string {
+  if (p.nodesTotal === 0) return 'Connecting…';
+  if (p.nodesLoaded < p.nodesTotal) {
+    const pct = Math.min(100, Math.round((p.nodesLoaded / p.nodesTotal) * 100));
+    return `${p.nodesLoaded.toLocaleString()} / ${p.nodesTotal.toLocaleString()} nodes (${pct}%)`;
+  }
+  // Lazy edge fetch path: server buffers the whole response so we don't
+  // see incremental edge counts on the wire — show a textual "loading"
+  // hint until the totals/done land instead of "Finalizing…" which
+  // misrepresents what's happening.
+  if (p.edgesTotal === 0) return 'Loading edges…';
+  const pct = Math.min(100, Math.round((p.edgesLoaded / p.edgesTotal) * 100));
+  return `${p.edgesLoaded.toLocaleString()} / ${p.edgesTotal.toLocaleString()} edges (${pct}%)`;
+}
+
+/** Bar width 0..1 derived from progress. Same precedence as formatProgressLine. */
+export function progressFraction(p: {
+  nodesLoaded: number;
+  nodesTotal: number;
+  edgesLoaded: number;
+  edgesTotal: number;
+}): number {
+  if (p.nodesTotal === 0) return 0;
+  if (p.nodesLoaded < p.nodesTotal) return p.nodesLoaded / p.nodesTotal;
+  if (p.edgesTotal > 0) return p.edgesLoaded / p.edgesTotal;
+  return 1;
+}
+
 export function Sidebar() {
-  const { nodes, edges, regions, loaded, loading } = useDataStore();
+  const { nodes, edges, regions, loaded, loading, progress } = useDataStore();
   const { lodLevel, cameraDistance, zoom } = useMapStore();
   const { enabledFlows, mode } = useViewStore();
-  // Optional: Sidebar renders under SSR (no provider) during the pure
-  // formatter smoke test. Falls back to store-only state when api is null.
-  const sceneApi = useSceneApiOptional();
+  // Sidebar renders OUTSIDE Canvas's SceneApiProvider (it's a sibling
+  // in HexAtlas, not a child), so the React-context lookup returns null
+  // in production. We resolve the api lazily inside each handler via
+  // mapController.getSceneApi() so a Canvas that mounts AFTER Sidebar
+  // (the usual order) still wires through. Context fallback covers
+  // SSR / pre-mount tests where neither path is available yet.
+  const ctxApi = useSceneApiOptional();
+  const resolveSceneApi = () => ctxApi ?? mapController.getSceneApi();
+
+  // Initial flow autoload — defaults flip every flow ON in viewStore so
+  // the user sees a populated city skyline immediately. The bootstrap
+  // graph-stream uses noEdges=1 (fast first paint), so we issue one
+  // batched /api/edges fetch covering every default-enabled flow once
+  // both `loaded` (graph done) and the SceneApi reference resolve.
+  // Effect re-checks on every render but the SceneApi.loadEdgesByTypes
+  // call short-circuits when every requested type is already in the
+  // store, so the work runs exactly once per session.
+  useEffect(() => {
+    if (!loaded) return;
+    const api = resolveSceneApi();
+    if (!api) return;
+    const types: string[] = [];
+    for (const name of enabledFlows) {
+      const preset = FLOWS[name];
+      if (preset) types.push(...preset.types);
+    }
+    if (types.length === 0) return;
+    void api.loadEdgesByTypes(Array.from(new Set(types)))
+      .catch((e) => console.warn('[Sidebar] initial edge autoload failed:', e));
+  }, [loaded, ctxApi, enabledFlows]);
 
   const toggleFlow = useCallback(
     (name: string) => {
       useViewStore.getState().toggleFlow(name);
-      // Push the new visibility into the scene through the imperative
-      // surface. When no api is attached (SSR / pre-mount) the toggle
-      // still lands in the store, which Canvas's mount effect reads.
       const next = useViewStore.getState().enabledFlows;
-      sceneApi?.setFlowVisible(name, next.has(name));
+      const api = resolveSceneApi();
+      api?.setFlowVisible(name, next.has(name));
+      // Lazy-load this flow's edge types on first enable. Bootstrap
+      // fetched with `noEdges=1` so anything other than the always-on
+      // Bridges has zero edges to display until we ask for them.
+      if (next.has(name) && api) {
+        const preset = FLOWS[name];
+        if (preset) {
+          void api.loadEdgesByTypes(preset.types).catch((e) => {
+            console.warn(`[Sidebar] loadEdgesByTypes failed for ${name}:`, e);
+          });
+        }
+      }
     },
-    [sceneApi],
+    // resolveSceneApi closes over ctxApi; recreate when ctx flips.
+    [ctxApi],
+  );
+
+  const setAllFlows = useCallback(
+    (next: Set<string>) => {
+      const prev = useViewStore.getState().enabledFlows;
+      useViewStore.getState().setEnabledFlows(next);
+      const api = resolveSceneApi();
+      const newlyEnabledTypes: string[] = [];
+      for (const name of new Set([...prev, ...next])) {
+        const wasOn = prev.has(name);
+        const nowOn = next.has(name);
+        if (wasOn !== nowOn) api?.setFlowVisible(name, nowOn);
+        if (!wasOn && nowOn) {
+          const preset = FLOWS[name];
+          if (preset) newlyEnabledTypes.push(...preset.types);
+        }
+      }
+      if (newlyEnabledTypes.length > 0 && api) {
+        // Single batched fetch covering every flow that just turned on
+        // — avoids N round-trips when the user clicks "All".
+        void api.loadEdgesByTypes(Array.from(new Set(newlyEnabledTypes)))
+          .catch((e) => console.warn('[Sidebar] batched loadEdgesByTypes failed:', e));
+      }
+    },
+    [ctxApi],
   );
 
   return (
@@ -66,7 +170,30 @@ export function Sidebar() {
         <div className="stats">Hex Map v2</div>
       </div>
 
-      {loading && <div className="stats">Loading graph...</div>}
+      {(loading || progress.phase === 'connecting' || progress.phase === 'streaming') && (
+        <div>
+          <h2>Loading</h2>
+          <div className="stats">{formatProgressLine(progress)}</div>
+          <div
+            style={{
+              marginTop: 6,
+              height: 4,
+              borderRadius: 2,
+              background: 'rgba(255,255,255,0.08)',
+              overflow: 'hidden',
+            }}
+          >
+            <div
+              style={{
+                height: '100%',
+                width: `${Math.round(progressFraction(progress) * 100)}%`,
+                background: '#00e5ff',
+                transition: 'width 120ms linear',
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       {loaded && (
         <>
@@ -88,7 +215,7 @@ export function Sidebar() {
           </div>
 
           <LensPanel />
-          <FlowPanel enabledFlows={enabledFlows} onToggle={toggleFlow} />
+          <FlowPanel enabledFlows={enabledFlows} onToggle={toggleFlow} onSetAll={setAllFlows} />
           <RoutePanel />
           <PinPanel />
           <DiffPanel />
@@ -98,7 +225,7 @@ export function Sidebar() {
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: '#888' }}>
               <input
                 type="checkbox"
-                onChange={(e) => sceneApi?.setShowCoords(e.target.checked)}
+                onChange={(e) => resolveSceneApi()?.setShowCoords(e.target.checked)}
                 style={{ accentColor: '#00e5ff' }}
               />
               Show coords (q,r)

@@ -48,11 +48,14 @@ pub mod session;
 pub mod metrics;
 pub mod container_hierarchy;
 pub mod sa_layout;
-pub mod tectonic_layout;
+pub mod layout_types;
+pub mod hulls;
 pub mod http_server;
 
 #[cfg(feature = "ui")]
 pub mod static_ui; // stub — C14b fills in
+
+pub mod deletion;
 
 pub use graph::{GraphStore, GraphEngineV2};
 pub use storage::{NodeRecord, EdgeRecord, AttrQuery, FieldDecl, FieldType};

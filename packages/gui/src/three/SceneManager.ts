@@ -74,6 +74,12 @@ export class SceneManager {
   private _container: HTMLElement | null;
   private _callbacks: ((dt: number) => void)[] = [];
   private _clock = new THREE.Clock();
+  /** Render-on-demand: skip the render pass when nothing changed.
+   *  Set true on user-driven camera change, layer mutation, fly tween,
+   *  resize, etc. Cleared after a successful render. Without this flag
+   *  the bloom composer ran 50-120ms per frame on a static scene,
+   *  spending the budget for nothing. (DAI-22 stutter hunt.) */
+  private _dirty = true;
   private _flyStart: THREE.Vector3 | null = null;
   private _flyTarget: THREE.Vector3 | null = null;
   private _flyProgress = 0;
@@ -93,7 +99,7 @@ export class SceneManager {
   private _orthoHalfExtent = 0;
   private _composer: EffectComposer | null;
   private _bloom: UnrealBloomPass | null;
-  private _bloomEnabled = true;
+  private _bloomEnabled = false;
   /** Layer handles — populated by `attachLayers`. `setMode` forwards
    *  its slice of SceneMode here, or silently skips when unattached. */
   private _layers: AttachedLayers = {};
@@ -158,6 +164,12 @@ export class SceneManager {
       MIDDLE: THREE.MOUSE.DOLLY,
       RIGHT: THREE.MOUSE.ROTATE,
     };
+    // Render-on-demand: any user-driven camera change marks the scene
+    // dirty so `_animate` will run a single render pass next frame
+    // instead of every frame.
+    this.controls.addEventListener('change', () => { this._dirty = true; });
+    this.controls.addEventListener('start', () => { this._dirty = true; });
+    this.controls.addEventListener('end', () => { this._dirty = true; });
 
     // Post-processing: bloom — only when we own a real WebGLRenderer.
     // Stubbed renderers in tests can't create an EffectComposer.
@@ -170,7 +182,8 @@ export class SceneManager {
         0.5,   // radius (wider spread)
         0.6,   // threshold (lower = more things glow)
       );
-      this._composer.addPass(this._bloom);
+      this._bloom.enabled = this._bloomEnabled;
+      if (this._bloomEnabled) this._composer.addPass(this._bloom);
     } else {
       this._composer = null;
       this._bloom = null;
@@ -191,6 +204,45 @@ export class SceneManager {
     this._callbacks.push(cb);
   }
 
+  /** Mark the scene as needing a render. Call this from any layer
+   *  that just mutated geometry / material / visibility. The next RAF
+   *  tick will render once and clear the flag. Idempotent within a
+   *  frame — multiple calls in the same tick coalesce. */
+  requestRender(): void {
+    this._dirty = true;
+  }
+
+  /**
+   * Keep the render loop dirty for `durationMs` so a tween initiated
+   * from a non-camera-event path (Zustand subscriber, pointer click,
+   * lazy fetch completion, etc.) actually advances each frame.
+   *
+   * Without this pump the render-on-demand loop exits after a single
+   * tick — `_dirty=false` — and any HexLayer / FlowLayer animateTo
+   * stays frozen mid-interpolation. Call this once with the slowest
+   * tween's duration (plus a small slack) right after pushing the
+   * batch of `animateTo` calls.
+   *
+   * Coalesces overlapping calls — a second `pumpRender` while one is
+   * already running cancels the previous handle and restarts with the
+   * new duration. Safe to call from anywhere that has a SceneManager
+   * reference; no-op once the duration elapses.
+   */
+  pumpRender(durationMs: number): void {
+    const start = performance.now();
+    if (this._pumpHandle !== null) cancelAnimationFrame(this._pumpHandle);
+    const step = () => {
+      this._dirty = true;
+      if (performance.now() - start < durationMs) {
+        this._pumpHandle = requestAnimationFrame(step);
+      } else {
+        this._pumpHandle = null;
+      }
+    };
+    this._pumpHandle = requestAnimationFrame(step);
+  }
+  private _pumpHandle: number | null = null;
+
   /**
    * Register layer references so `setMode` can push its per-layer
    * slice (tile elevation, flow style, hull style) through to them.
@@ -204,6 +256,7 @@ export class SceneManager {
    */
   attachLayers(layers: AttachedLayers): void {
     this._layers = { ...this._layers, ...layers };
+    this._dirty = true;
   }
 
   /**
@@ -446,6 +499,7 @@ export class SceneManager {
     }
     this.renderer.setSize(w, h);
     this._composer?.setSize(w, h);
+    this._dirty = true;
   }
 
   // ── Internals ───────────────────────────────────────────────────
@@ -512,19 +566,75 @@ export class SceneManager {
     }
   }
 
+  private _frameTimes: number[] = [];
+  private _lastPerfFlush = performance.now();
   private _animate = () => {
     if (this._disposed) return;
     requestAnimationFrame(this._animate);
+    const tStart = performance.now();
     const dt = this._clock.getDelta();
+    // Active fly tween keeps the scene dirty until it lands.
+    if (this._flyStart !== null) this._dirty = true;
     this._tickFly(dt);
-
+    // controls.update() only triggers a 'change' event (→ dirty) while
+    // damping inertia is decaying. After it stops, no event fires and
+    // we naturally idle.
     this.controls.update();
-    for (const cb of this._callbacks) cb(dt);
 
-    // Render — prefer the composer (bloom) when available; otherwise
-    // (injected renderer in tests) bail out, there's nothing to render.
+    if (!this._dirty) return; // ←─ render-on-demand: skip the entire
+                              //   callback + render pass when nothing
+                              //   has changed. This is the single
+                              //   biggest perf win on a static atlas:
+                              //   bloom composer was eating 50-120ms
+                              //   per idle frame.
+
+    const tCallbacks = performance.now();
+    let slowestCb = 0;
+    let slowestIdx = -1;
+    for (let i = 0; i < this._callbacks.length; i++) {
+      const tCb = performance.now();
+      this._callbacks[i](dt);
+      const cbDt = performance.now() - tCb;
+      if (cbDt > slowestCb) {
+        slowestCb = cbDt;
+        slowestIdx = i;
+      }
+    }
+    const cbTotal = performance.now() - tCallbacks;
+
+    let renderMs = 0;
     if (this._composer) {
+      const tRender = performance.now();
       this._composer.render();
+      renderMs = performance.now() - tRender;
+    }
+    this._dirty = false;
+
+    const total = performance.now() - tStart;
+    this._frameTimes.push(total);
+    if (total > 16) {
+      console.warn(
+        `[perf] SceneManager._animate ${total.toFixed(1)}ms ` +
+        `(callbacks ${cbTotal.toFixed(1)}ms slowest #${slowestIdx} ${slowestCb.toFixed(1)}ms, render ${renderMs.toFixed(1)}ms)`,
+      );
+    }
+    if (tStart - this._lastPerfFlush > 1000) {
+      if (this._frameTimes.length > 0) {
+        const sorted = this._frameTimes.slice().sort((a, b) => a - b);
+        const sum = sorted.reduce((a, b) => a + b, 0);
+        const avg = sum / sorted.length;
+        const p50 = sorted[Math.floor(sorted.length * 0.5)] ?? 0;
+        const p95 = sorted[Math.floor(sorted.length * 0.95)] ?? 0;
+        const p99 = sorted[Math.floor(sorted.length * 0.99)] ?? 0;
+        const max = sorted[sorted.length - 1] ?? 0;
+        console.warn(
+          `[perf] SceneManager ${sorted.length}fr/${((tStart - this._lastPerfFlush)/1000).toFixed(1)}s ` +
+          `avg ${avg.toFixed(1)} p50 ${p50.toFixed(1)} p95 ${p95.toFixed(1)} p99 ${p99.toFixed(1)} max ${max.toFixed(1)}ms ` +
+          `(${this._callbacks.length} cbs, bloom ${this._bloomEnabled ? 'ON' : 'OFF'})`,
+        );
+      }
+      this._frameTimes = [];
+      this._lastPerfFlush = tStart;
     }
   };
 }

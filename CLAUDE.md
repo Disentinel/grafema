@@ -195,6 +195,15 @@ Enox Smart Node (`mcp__enox__*` tools) is persistent knowledge graph shared acro
 
 **Plan must be exhaustive on first presentation.** No iterative "anything missing?" — think deeply during exploration, search the graph, present a plan that already answers: "What's missing? Siblings? Out of scope? Coverage gaps?"
 
+**Evidence Rule (MANDATORY for plans, Dijkstra tables, verification reports, implementation claims).** Every assertion about code / graph / edge contract / node-type set / API shape / "already implemented" carries evidence from one of:
+- (a) `file:line` in current HEAD (verified via Read/Grep, not from memory),
+- (b) shell command + its actual output, inlined,
+- (c) passing test reference (`test/path:test_name` with assertion covering the claim),
+- (d) live-query result (`mcp__grafema__*` / RFDB Datalog / HTTP `/api/*` with full response inlined),
+- (e) commit SHA where the claim was proven true.
+
+"Likely", "usually", "follows pattern X", "standard convention", "probably works" — **NOT evidence**. Assertion without evidence defaults to **UNCLEAR → REJECT** in Dijkstra review. For graph-shape claims (edge X connects node types A→B, field Y present on type Z, liftable type list complete, etc.) evidence MUST be a live query on the target RFDB — grepping analyzer source is not sufficient. Retrospective anchor: `_tasks/DAI-22-tectonic-collision/008-cohesion-gap-diagnosis.md`. Full rule in `_ai/agent-personas.md` Dijkstra section.
+
 - **Completeness** — search graph for ALL callers/usages, not just obvious ones. Real search, not assumptions.
 - **Siblings** — same bug pattern in other visitors/handlers/resolvers? Include in plan, don't split into N tasks.
 - **Scope bias: include > exclude.** Exclude only with explicit reasoning. "Different file" is not a reason.

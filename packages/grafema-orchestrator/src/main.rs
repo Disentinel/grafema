@@ -130,6 +130,14 @@ enum Commands {
         /// Print per-folder torn details in the validation report.
         #[arg(short, long)]
         verbose: bool,
+
+        /// Per-file hard-cap on placeable symbols. Files exceeding the cap
+        /// keep only the top-N by degree (ties broken by name, then semantic
+        /// id). Skipped symbols get no LAYOUT_POSITION edge; the GUI renders
+        /// a red badge on the file's hull. Raise at your own risk — very
+        /// large files saturate the atlas at high zoom.
+        #[arg(long, default_value_t = grafema_orchestrator::layout::DEFAULT_HARD_CAP)]
+        max_symbols_per_file: usize,
     },
 }
 
@@ -2689,6 +2697,7 @@ async fn main() -> Result<()> {
             dump_json,
             commit,
             verbose,
+            max_symbols_per_file,
         } => {
             let t_total = std::time::Instant::now();
             // Hold the RFDB client past the load step when --commit is set,
@@ -2809,12 +2818,36 @@ async fn main() -> Result<()> {
             // on while iterating on synthetic dry-runs.
             if commit {
                 if let Some(mut rfdb) = rfdb_for_commit {
-                    eprintln!("Committing LAYOUT_POSITION edges to RFDB...");
-                    let n = grafema_orchestrator::layout::commit_layout(
-                        &mut rfdb, &input, &result,
+                    eprintln!(
+                        "Committing per-symbol layout to RFDB (hard-cap {max_symbols_per_file})..."
+                    );
+                    let payload = grafema_orchestrator::layout::commit_layout(
+                        &mut rfdb,
+                        &input,
+                        &result,
+                        max_symbols_per_file,
                     )
                     .await?;
-                    eprintln!("Committed {} LAYOUT_POSITION edges", n);
+                    eprintln!(
+                        "Committed {} LAYOUT_POSITION edges, {} REGION nodes, {} CONTAINS edges",
+                        payload.layout_position_count,
+                        payload.region_node_count,
+                        payload.contains_count
+                    );
+                    if !payload.overflow_by_file.is_empty() {
+                        let worst = payload
+                            .overflow_by_file
+                            .iter()
+                            .max_by_key(|(_, (skipped, cap))| *skipped + *cap);
+                        if let Some((file, (skipped, cap))) = worst {
+                            eprintln!(
+                                "Overflow: {} files exceeded hard-cap (max {} symbols in {})",
+                                payload.overflow_by_file.len(),
+                                skipped + cap,
+                                file
+                            );
+                        }
+                    }
                 } else {
                     eprintln!(
                         "warning: --commit requires --socket; ignoring (synthetic mode)"

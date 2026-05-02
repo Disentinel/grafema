@@ -21,6 +21,11 @@ const VERT = /* glsl */ `
   attribute float aScale;
   attribute vec3 aOutlineColor;
   attribute float aOutlineWidth;
+  // Per-vertex (not per-instance) — 0 for bottom rim/center of the prism,
+  // 1 for the top. Geometry now extrudes a hex column from y=0 to y=1
+  // unscaled; the vertex shader stretches the top up to aElevation so
+  // the tile renders as a tower rather than a floating disc.
+  attribute float aIsTop;
 
   varying float vOpacity;
   varying vec3 vNormal;
@@ -28,6 +33,7 @@ const VERT = /* glsl */ `
   varying vec3 vOutlineColor;
   varying float vOutlineWidth;
   varying vec2 vLocalPos;
+  varying float vIsTop;
 
   void main() {
     vOpacity = aOpacity;
@@ -35,13 +41,17 @@ const VERT = /* glsl */ `
     vOutlineColor = aOutlineColor;
     vOutlineWidth = aOutlineWidth;
     vNormal = normalMatrix * normal;
+    vIsTop = aIsTop;
 
-    // Scale position within hex
-    vec3 scaled = position * aScale;
+    // Scale XZ only — Y stays at the geometry's 0/1 so aElevation alone
+    // controls column height. Scaling Y too would cause a degree-0 tile
+    // (aScale=1, aElevation=0) to collapse correctly, but a pinned tile
+    // (aScale=1.15) would be subtly taller, which we don't want.
+    vec3 scaled = vec3(position.x * aScale, position.y, position.z * aScale);
     vLocalPos = scaled.xz;
 
     vec4 wp = instanceMatrix * vec4(scaled, 1.0);
-    wp.y += aElevation;
+    wp.y += aIsTop * aElevation;
 
     gl_Position = projectionMatrix * modelViewMatrix * wp;
   }
@@ -54,27 +64,30 @@ const FRAG = /* glsl */ `
   varying vec3 vOutlineColor;
   varying float vOutlineWidth;
   varying vec2 vLocalPos;
+  varying float vIsTop;
 
   void main() {
     if (vOpacity < 0.01) discard;
 
-    // Top-down lighting — keep colors vivid
+    // Top-down lighting — sides receive less than tops by design (the
+    // up-facing dot product collapses on vertical walls), so columns
+    // get free shading without a separate side material.
     float light = max(dot(vNormal, vec3(0.0, 1.0, 0.0)), 0.4);
     vec3 baseColor = vInstanceColor * (0.6 + light * 0.3);
 
-    // Subtle inner glow — brighter center, darker edges
+    // Glow + rim are XZ-radial — they should only paint the top face.
+    // On side walls vLocalPos sits at corner radius (≈ size) which would
+    // trigger the rim everywhere; gate by vIsTop so sides stay flat.
     float dist = length(vLocalPos);
-    float innerGlow = 1.0 - smoothstep(0.0, 0.9, dist);
+    float innerGlow = (1.0 - smoothstep(0.0, 0.9, dist)) * vIsTop;
     baseColor += vInstanceColor * innerGlow * 0.15;
 
-    // Hex edge: subtle bright rim
-    float rimGlow = smoothstep(0.75, 0.95, dist) * (1.0 - smoothstep(0.95, 1.0, dist));
+    float rimGlow = smoothstep(0.75, 0.95, dist) * (1.0 - smoothstep(0.95, 1.0, dist)) * vIsTop;
     baseColor += vInstanceColor * rimGlow * 0.2;
 
-    // Outline — bright enough for bloom, colored by outline color
-    float hasOutline = step(0.001, vOutlineWidth);
+    // Outline (top face only — bottom is hidden, sides shade themselves).
+    float hasOutline = step(0.001, vOutlineWidth) * vIsTop;
     float edgeMix = smoothstep(1.0 - vOutlineWidth - 0.08, 1.0 - vOutlineWidth, dist);
-    // Also add a soft glow halo around the outline (wider, softer)
     float haloMix = smoothstep(1.0 - vOutlineWidth - 0.25, 1.0 - vOutlineWidth - 0.08, dist);
     baseColor = mix(baseColor, baseColor + vOutlineColor * 0.5, haloMix * hasOutline);
     vec3 color = mix(baseColor, vOutlineColor * 3.0, edgeMix * hasOutline);
@@ -84,15 +97,48 @@ const FRAG = /* glsl */ `
 `;
 
 function createHexGeometry(size: number): THREE.BufferGeometry {
-  const v: number[] = [0, 0, 0];
+  // Hex prism — bottom hex at y=0, top hex at y=1. Vertex shader scales
+  // the top up to aElevation per instance, so geometry can stay as a
+  // single shared unit-height prism. Bottom face is omitted (never seen
+  // from above, saves 6 triangles × 28k tiles per draw).
+  //
+  //   verts: 0     = bottom center
+  //          1..6  = bottom corners (CCW)
+  //          7     = top center
+  //          8..13 = top corners (CCW, same angles as bottom)
+  const v: number[] = [];
+  const isTop: number[] = [];
+  // Bottom center + corners
+  v.push(0, 0, 0); isTop.push(0);
   for (let i = 0; i < 6; i++) {
     const a = (Math.PI / 3) * i;
-    v.push(Math.cos(a) * size, 0, Math.sin(a) * size);
+    v.push(Math.cos(a) * size, 0, Math.sin(a) * size); isTop.push(0);
   }
+  // Top center + corners
+  v.push(0, 1, 0); isTop.push(1);
+  for (let i = 0; i < 6; i++) {
+    const a = (Math.PI / 3) * i;
+    v.push(Math.cos(a) * size, 1, Math.sin(a) * size); isTop.push(1);
+  }
+
   const idx: number[] = [];
-  for (let i = 0; i < 6; i++) idx.push(0, i + 1, ((i + 1) % 6) + 1);
+  // Top face — winding viewed from +Y so normals point up after computeVertexNormals
+  for (let i = 0; i < 6; i++) {
+    idx.push(7, 8 + i, 8 + ((i + 1) % 6));
+  }
+  // Side walls — 6 quads (2 tris each), outward winding
+  for (let i = 0; i < 6; i++) {
+    const next = (i + 1) % 6;
+    const bL = 1 + i;
+    const bR = 1 + next;
+    const tL = 8 + i;
+    const tR = 8 + next;
+    idx.push(bL, tR, tL);
+    idx.push(bL, bR, tR);
+  }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
+  geo.setAttribute('aIsTop', new THREE.Float32BufferAttribute(isTop, 1));
   geo.setIndex(idx);
   geo.computeVertexNormals();
   return geo;
@@ -147,6 +193,7 @@ interface TweenEntry {
   to: number;
   elapsed: number;
   duration: number;
+  cancelled: boolean;
 }
 
 interface ColorTweenEntry {
@@ -156,6 +203,7 @@ interface ColorTweenEntry {
   to: THREE.Color;
   elapsed: number;
   duration: number;
+  cancelled: boolean;
 }
 
 /**
@@ -203,6 +251,13 @@ export class HexLayer {
 
   private _tweens: TweenEntry[] = [];
   private _colorTweens: ColorTweenEntry[] = [];
+  /** Index into `_tweens` by `${index}:${prop}` for O(1) cancellation.
+   *  `animateTo` previously did a linear scan over all active tweens to
+   *  evict the prior tween for the same (index, prop) — under heavy
+   *  route-highlight bursts (DAI-22 Chunk-9 stutter hunt) the cost was
+   *  ~100ms per applyRoutes call. Stays in sync via splice helper. */
+  private _tweenKey: Map<string, number> = new Map();
+  private _colorTweenKey: Map<string, number> = new Map();
 
   // Position lerp for progressive SA updates
   private _targetX: Float32Array | null = null;
@@ -242,6 +297,15 @@ export class HexLayer {
     this.mesh = new THREE.InstancedMesh(geo, mat, count);
     this.mesh.count = count;
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    // Disable frustum culling — InstancedMesh's per-instance frustum
+    // check uses the geometry's bounding sphere (centered at the mesh
+    // origin with radius ≈ hexSize). We don't recompute that sphere
+    // after `setTile` populates instance matrices, so tiles far from
+    // the mesh origin can be culled both for rendering AND for
+    // raycaster.intersectObject — visible as "I see the tile but
+    // hover gives me the hull tooltip below it". 28k tiles cost ~one
+    // draw call regardless of culling so the perf hit is irrelevant.
+    this.mesh.frustumCulled = false;
 
     // Allocate per-instance attribute arrays
     this._opacity = new Float32Array(count).fill(1.0);
@@ -475,27 +539,33 @@ export class HexLayer {
 
   /** Animate a scalar property to target over duration (ms). Cancels any existing tween for same (index, prop). */
   animateTo(i: number, prop: 'opacity' | 'elevation' | 'scale' | 'outlineWidth', to: number, duration: number) {
-    // Cancel existing tween for this (index, prop)
-    for (let t = this._tweens.length - 1; t >= 0; t--) {
-      if (this._tweens[t].index === i && this._tweens[t].prop === prop) {
-        this._tweens.splice(t, 1);
-      }
+    const key = `${i}:${prop}`;
+    const existingIdx = this._tweenKey.get(key);
+    if (existingIdx !== undefined) {
+      // Tombstone — actual array compaction happens in tick() so we
+      // don't pay splice O(N) per cancel during burst routes.
+      this._tweens[existingIdx].cancelled = true;
+      this._tweenKey.delete(key);
     }
     if (prop === 'elevation' && this._mode.tileElevation === 'flat') {
-      // Flat mode: skip the tween entirely. Update the cache so a later
-      // switch to 'on' mode will animate-in to this value, but keep the
-      // rendered elevation clamped to 0 right now.
       this._elevationCache[i] = to;
       this._elevation[i] = 0;
       this._elevationAttr.needsUpdate = true;
       return;
     }
     const arr = this._getArray(prop);
-    this._tweens.push({ index: i, prop, from: arr[i], to, elapsed: 0, duration: duration / 1000 });
+    this._tweens.push({ index: i, prop, from: arr[i], to, elapsed: 0, duration: duration / 1000, cancelled: false });
+    this._tweenKey.set(key, this._tweens.length - 1);
   }
 
   /** Animate color for tile i */
   animateColor(i: number, prop: 'color' | 'outlineColor', to: THREE.Color | number, duration: number) {
+    const key = `${i}:${prop}`;
+    const existingIdx = this._colorTweenKey.get(key);
+    if (existingIdx !== undefined) {
+      this._colorTweens[existingIdx].cancelled = true;
+      this._colorTweenKey.delete(key);
+    }
     const toColor = typeof to === 'number' ? new THREE.Color(to) : to.clone();
     const fromColor = new THREE.Color();
     if (prop === 'color') {
@@ -507,7 +577,8 @@ export class HexLayer {
         this._outlineColor[i * 3 + 2],
       );
     }
-    this._colorTweens.push({ index: i, prop, from: fromColor, to: toColor, elapsed: 0, duration: duration / 1000 });
+    this._colorTweens.push({ index: i, prop, from: fromColor, to: toColor, elapsed: 0, duration: duration / 1000, cancelled: false });
+    this._colorTweenKey.set(key, this._colorTweens.length - 1);
   }
 
   /** Must call after all setTile() calls */
@@ -568,29 +639,54 @@ export class HexLayer {
       }
     }
 
-    // Scalar tweens
-    for (let t = this._tweens.length - 1; t >= 0; t--) {
+    // Scalar tweens — per-prop dirty so we only re-upload Float32Arrays
+    // that actually changed. Compact in a single pass: live tweens copy
+    // forward, cancelled/finished entries drop out. Avoids splice O(N²)
+    // and avoids dirtying 5 attributes when only one moved. (DAI-22)
+    let dirtyOpacity = false;
+    let dirtyElevation = false;
+    let dirtyScale = false;
+    let dirtyOutlineWidth = false;
+    let writeIdx = 0;
+    for (let t = 0; t < this._tweens.length; t++) {
       const tw = this._tweens[t];
+      if (tw.cancelled) continue;
       tw.elapsed += dt;
       const progress = Math.min(tw.elapsed / tw.duration, 1);
       const eased = easeInOutQuad(progress);
       const arr = this._getArray(tw.prop);
       arr[tw.index] = tw.from + (tw.to - tw.from) * eased;
-      if (tw.prop === 'elevation') {
-        // Keep the cache in sync during/after the tween so later mode
-        // toggles see the current logical value. The tween is only
-        // queued in 'on' mode (flat mode short-circuits animateTo), so
-        // any hoverLift contribution is subtracted out before caching.
-        const hoverOffset = tw.index === this._hoveredIdx ? this._mode.hoverLift : 0;
-        this._elevationCache[tw.index] = arr[tw.index] - hoverOffset;
+      switch (tw.prop) {
+        case 'elevation': {
+          const hoverOffset = tw.index === this._hoveredIdx ? this._mode.hoverLift : 0;
+          this._elevationCache[tw.index] = arr[tw.index] - hoverOffset;
+          dirtyElevation = true;
+          break;
+        }
+        case 'opacity': dirtyOpacity = true; break;
+        case 'scale': dirtyScale = true; break;
+        case 'outlineWidth': dirtyOutlineWidth = true; break;
       }
       dirty = true;
-      if (progress >= 1) this._tweens.splice(t, 1);
+      if (progress >= 1) {
+        this._tweenKey.delete(`${tw.index}:${tw.prop}`);
+        continue; // drop from compacted array
+      }
+      if (writeIdx !== t) {
+        this._tweens[writeIdx] = tw;
+        this._tweenKey.set(`${tw.index}:${tw.prop}`, writeIdx);
+      }
+      writeIdx++;
     }
+    if (writeIdx !== this._tweens.length) this._tweens.length = writeIdx;
 
-    // Color tweens
-    for (let t = this._colorTweens.length - 1; t >= 0; t--) {
+    // Color tweens — same compaction strategy.
+    let dirtyColor = false;
+    let dirtyOutlineColor = false;
+    let cWriteIdx = 0;
+    for (let t = 0; t < this._colorTweens.length; t++) {
       const tw = this._colorTweens[t];
+      if (tw.cancelled) continue;
       tw.elapsed += dt;
       const progress = Math.min(tw.elapsed / tw.duration, 1);
       const eased = easeInOutQuad(progress);
@@ -598,23 +694,33 @@ export class HexLayer {
 
       if (tw.prop === 'color') {
         this.mesh.setColorAt(tw.index, this._tmpColor);
+        dirtyColor = true;
       } else {
         this._outlineColor[tw.index * 3] = this._tmpColor.r;
         this._outlineColor[tw.index * 3 + 1] = this._tmpColor.g;
         this._outlineColor[tw.index * 3 + 2] = this._tmpColor.b;
+        dirtyOutlineColor = true;
       }
       dirty = true;
-      if (progress >= 1) this._colorTweens.splice(t, 1);
+      if (progress >= 1) {
+        this._colorTweenKey.delete(`${tw.index}:${tw.prop}`);
+        continue;
+      }
+      if (cWriteIdx !== t) {
+        this._colorTweens[cWriteIdx] = tw;
+        this._colorTweenKey.set(`${tw.index}:${tw.prop}`, cWriteIdx);
+      }
+      cWriteIdx++;
     }
+    if (cWriteIdx !== this._colorTweens.length) this._colorTweens.length = cWriteIdx;
 
-    if (dirty) {
-      this._opacityAttr.needsUpdate = true;
-      this._elevationAttr.needsUpdate = true;
-      this._scaleAttr.needsUpdate = true;
-      this._outlineColorAttr.needsUpdate = true;
-      this._outlineWidthAttr.needsUpdate = true;
-      if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
-    }
+    if (dirtyOpacity) this._opacityAttr.needsUpdate = true;
+    if (dirtyElevation) this._elevationAttr.needsUpdate = true;
+    if (dirtyScale) this._scaleAttr.needsUpdate = true;
+    if (dirtyOutlineWidth) this._outlineWidthAttr.needsUpdate = true;
+    if (dirtyOutlineColor) this._outlineColorAttr.needsUpdate = true;
+    if (dirtyColor && this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+    void dirty;
   }
 
   private _getArray(prop: 'opacity' | 'elevation' | 'scale' | 'outlineWidth'): Float32Array {

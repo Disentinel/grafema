@@ -450,6 +450,29 @@ impl MultiShardStore {
         if self.shards.is_empty() { return 0; }
         self.shards[0].tombstones().edge_count()
     }
+
+    /// Remove edge keys from the shared tombstone set across every shard.
+    ///
+    /// Used when a previously-deleted edge is re-added (e.g. enricher
+    /// rule chains: delete-by-source then re-emit the same `(src, dst,
+    /// type)` triple). Without this the upserted edge is silently
+    /// shadowed by the stale tombstone.
+    ///
+    /// Clone-on-write: clones the current tombstone set, removes the
+    /// keys, and re-broadcasts a fresh Arc to all shards. Cost is
+    /// O(|tombstones|) for the clone — same order as `set_tombstones`,
+    /// so consistent with the existing tombstone-mutation cost model.
+    pub fn untombstone_edges(&mut self, keys: &[(u128, u128, Arc<str>)]) {
+        if self.shards.is_empty() || keys.is_empty() { return; }
+        let mut ts: TombstoneSet = (*self.shards[0].tombstones()).clone();
+        let before = ts.edge_count();
+        ts.remove_edges(keys.iter());
+        if ts.edge_count() == before { return; } // no-op, skip rebroadcast
+        let shared = Arc::new(ts);
+        for shard in &mut self.shards {
+            shard.set_tombstones_shared(Arc::clone(&shared));
+        }
+    }
 }
 
 // ── Flush ──────────────────────────────────────────────────────────
