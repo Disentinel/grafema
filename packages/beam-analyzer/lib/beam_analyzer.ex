@@ -55,7 +55,12 @@ defmodule BeamAnalyzer do
   end
 
   defp daemon_loop do
-    case BeamAnalyzer.Protocol.read_frame(:stdio) do
+    {raw_in, raw_out} = BeamAnalyzer.Protocol.open_raw_stdio()
+    daemon_loop(raw_in, raw_out)
+  end
+
+  defp daemon_loop(raw_in, raw_out) do
+    case BeamAnalyzer.Protocol.read_frame(raw_in) do
       {:ok, data} ->
         response =
           case Jason.decode(data) do
@@ -67,8 +72,8 @@ defmodule BeamAnalyzer do
               %{status: "error", error: "Invalid JSON: #{inspect(reason)}"}
           end
 
-        BeamAnalyzer.Protocol.write_frame(:stdio, Jason.encode!(response))
-        daemon_loop()
+        BeamAnalyzer.Protocol.write_frame(raw_out, Jason.encode!(response))
+        daemon_loop(raw_in, raw_out)
 
       :eof ->
         :ok

@@ -16,6 +16,7 @@ import qualified SameFileCalls
 import qualified PropertyAccess
 import qualified JsLocalRefs
 import qualified JsThisMethodCalls
+import qualified ClassInheritance
 import Grafema.Types (GraphNode)
 import Grafema.Protocol (PluginCommand(..), readFrame, writeFrame, encodeMsgpack, decodeMsgpack, pluginCommandToMsgpack, readNodesFromStdin, writeCommandsToStdout)
 import Grafema.RuntimeGlobals (NameStrategy(..), NodeFilter(..), SymbolDB, loadSymbolDB, resolveAll)
@@ -169,7 +170,8 @@ daemonLoop symbolDb stateRef indexRef = do
               r5 <- ImportResolution.resolveAllWithWorkspace allNodes wsList
               let r6 = CrossFileCalls.resolveAll allNodes
               let r7 = PropertyAccess.resolveAll allNodes
-              let result = r1 ++ r2 ++ r3 ++ r4 ++ r5 ++ r6 ++ r7
+              let r8 = ClassInheritance.resolveAll allNodes
+              let result = r1 ++ r2 ++ r3 ++ r4 ++ r5 ++ r6 ++ r7 ++ r8
               -- Encode directly to msgpack, bypassing aeson intermediate
               let msgpackResult = MP.ObjectMap $ V.fromList
                     [ (MP.ObjectStr "status", MP.ObjectStr "ok")
@@ -210,7 +212,8 @@ daemonLoop symbolDb stateRef indexRef = do
                   -- For cross-file calls: use pre-built export index
                   let r6 = CrossFileCalls.resolveFileWithIndex (riExportIndex indexes) fileNodes
                   let r7 = PropertyAccess.resolveFileWithIndex (riExportIndex indexes) fileNodes
-                  let result = r1 ++ r2 ++ r3 ++ r4 ++ r5 ++ r6 ++ r7
+                  let r8 = ClassInheritance.resolveFileWithIndex (riExportIndex indexes) fileNodes
+                  let result = r1 ++ r2 ++ r3 ++ r4 ++ r5 ++ r6 ++ r7 ++ r8
                   -- Encode directly to msgpack, bypassing aeson intermediate
                   let msgpackResult = MP.ObjectMap $ V.fromList
                         [ (MP.ObjectStr "status", MP.ObjectStr "ok")
