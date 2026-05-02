@@ -27,6 +27,7 @@ import {
 } from '../three/HullLayer';
 import { WallLayer } from '../three/WallLayer';
 import type { HexCoord } from '../geom/hex';
+import type { HullLoop } from '../geom/hull';
 import { worldToAxial } from '../store/loadStream';
 import { loadEdges } from '../store/loadEdges';
 import { RegionLayer } from '../three/RegionLayer';
@@ -492,7 +493,7 @@ export function buildHullLayer(
     // Skip file-level hulls (per-file fences would create one fence per
     // tile cluster — visual noise). Keep package + sub-folder envelopes
     // (depth ≤ 3) so the city reads as walled districts at every zoom.
-    const allPolys: Array<readonly import('../geom/hull').HullLoop[]> = [];
+    const allPolys: Array<readonly HullLoop[]> = [];
     for (const [regionId, geometry] of hullCache) {
       const region = regionTree.byId.get(regionId);
       if (!region || region.depth > 3) continue;
@@ -719,7 +720,7 @@ export interface InteractionDeps {
  */
 export function setupInteraction(deps: InteractionDeps): () => void {
   const {
-    sm, container, hexLayer: layer, flowLayer, routeLayer, hullLayer,
+    sm, container, hexLayer: layer, flowLayer, routeLayer, hullLayer: _hullLayer,
     nodes, edges, edgeLabelsRef, setTooltip, selectedConnectedRef,
   } = deps;
 
@@ -751,17 +752,17 @@ export function setupInteraction(deps: InteractionDeps): () => void {
   // on first hull-hover, invalidated when the regionTree identity flips
   // (fresh stream load). The hover handler reads this for the hull
   // tooltip's `files` row — a true count rather than direct-childIds.
-  let regionLeafCountTreeRef: unknown = null;
-  const regionLeafCount = new Map<string, number>();
-  function leafCount(regionId: string, byId: Map<string, RegionInfo>): number {
-    const cached = regionLeafCount.get(regionId);
+  let _regionLeafCountTreeRef: unknown = null;
+  const _regionLeafCount = new Map<string, number>();
+  function _leafCount(regionId: string, byId: Map<string, RegionInfo>): number {
+    const cached = _regionLeafCount.get(regionId);
     if (cached !== undefined) return cached;
     const info = byId.get(regionId);
-    if (!info) { regionLeafCount.set(regionId, 0); return 0; }
-    if (info.kind === 'file') { regionLeafCount.set(regionId, 1); return 1; }
+    if (!info) { _regionLeafCount.set(regionId, 0); return 0; }
+    if (info.kind === 'file') { _regionLeafCount.set(regionId, 1); return 1; }
     let sum = 0;
-    for (const cid of info.childIds) sum += leafCount(cid, byId);
-    regionLeafCount.set(regionId, sum);
+    for (const cid of info.childIds) sum += _leafCount(cid, byId);
+    _regionLeafCount.set(regionId, sum);
     return sum;
   }
 
@@ -831,8 +832,8 @@ export function setupInteraction(deps: InteractionDeps): () => void {
   // good compromise: faster than human perception of stale tooltips,
   // ≥3× cheaper than per-tick. Edge raycast is cheap (per-mesh
   // intersection) so it stays per-tick.
-  let lastHullCheck = 0;
-  let lastHullTarget: HoverTarget = { kind: 'empty' };
+  let _lastHullCheck = 0;
+  let _lastHullTarget: HoverTarget = { kind: 'empty' };
 
   const onMouseMove = (e: MouseEvent) => {
     updateMouse(e);
