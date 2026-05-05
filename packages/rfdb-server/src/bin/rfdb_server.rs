@@ -1185,7 +1185,14 @@ fn handle_request_with_cancel(
 
             let access_mode = AccessMode::from_str(&mode);
 
-            match manager.get_database(&name) {
+            // If the database is being loaded in background, wait for it
+            let db_result = if manager.is_database_loading(&name) {
+                manager.wait_for_database(&name, std::time::Duration::from_secs(60))
+            } else {
+                manager.get_database(&name)
+            };
+
+            match db_result {
                 Ok(db) => {
                     // Track connection
                     db.add_connection();
@@ -2781,9 +2788,10 @@ fn handle_client_unix(
 
     let mut session = ClientSession::new(client_id);
 
-    // In legacy mode (protocol v1), auto-open "default" database
+    // In legacy mode (protocol v1), auto-open "default" database.
+    // wait_for_database blocks until background load finishes (up to 60s).
     if legacy_mode {
-        if let Ok(db) = manager.get_database("default") {
+        if let Ok(db) = manager.wait_for_database("default", std::time::Duration::from_secs(60)) {
             db.add_connection();
             session.set_database(db, AccessMode::ReadWrite);
         }
@@ -3362,31 +3370,13 @@ async fn main() {
     // Create database manager with data directory
     let manager = Arc::new(DatabaseManager::new(data_dir.clone()));
 
-    // Create "default" database from legacy db_path for backwards compatibility
-    eprintln!("[rfdb-server] Opening default database: {:?}", db_path);
-    match manager.create_default_from_path(&db_path) {
-        Ok(()) => {}
-        Err(rfdb::error::GraphError::DatabaseLocked(lock_path)) => {
-            eprintln!("[rfdb-server] ERROR: Database {:?} is already in use (lock held by another rfdb-server process).", db_path);
-            eprintln!("[rfdb-server] If you believe this is stale, remove: {}", lock_path);
-            std::process::exit(1);
-        }
-        Err(e) => {
-            eprintln!("[rfdb-server] Failed to create default database: {}", e);
-            std::process::exit(1);
-        }
-    }
-
     eprintln!("[rfdb-server] Data directory for multi-database: {:?}", data_dir);
 
-    // Get stats from default database
-    if let Ok(db) = manager.get_database("default") {
-        eprintln!("[rfdb-server] Default database: {} nodes, {} edges",
-            db.node_count(),
-            db.edge_count());
-    }
-
-    // Bind Unix socket (SUN_LEN limit: 104 on macOS, 108 on Linux)
+    // Bind Unix socket BEFORE loading database so clients can connect early.
+    // Ping/Hello work without a database; DB-dependent requests will block
+    // until background load completes (via wait_for_database).
+    //
+    // SUN_LEN limit: 104 on macOS, 108 on Linux
     let socket_len = socket_path.len();
     let sun_len: usize = if cfg!(target_os = "macos") { 104 } else { 108 };
     if socket_len >= sun_len {
@@ -3412,6 +3402,11 @@ async fn main() {
         }
     };
     eprintln!("[rfdb-server] Listening on {}", socket_path);
+
+    // Load default database in background so the server can respond to
+    // Ping/Hello while the (potentially large) DB is still being read.
+    eprintln!("[rfdb-server] Opening default database in background: {:?}", db_path);
+    manager.load_default_in_background(db_path.clone());
 
     // HTTP port lockfile path (written after HTTP bind succeeds, removed on
     // graceful shutdown). `data_dir` is the directory Grafema stores per-db

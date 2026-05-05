@@ -230,7 +230,7 @@ export class RFDBServerBackend {
       dbPath: this.dbPath,
       socketPath: this.socketPath,
       pidPath: join(dirname(this.socketPath), 'rfdb.pid'),
-      waitTimeoutMs: 5000,
+      waitTimeoutMs: 30_000,
       logger: this.silent ? undefined : { debug: (m: string) => this.log(m) },
     });
   }

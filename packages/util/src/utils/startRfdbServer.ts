@@ -9,8 +9,8 @@
  * not kill it).
  */
 
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
-import { dirname } from 'path';
+import { existsSync, readFileSync, unlinkSync, writeFileSync, openSync } from 'fs';
+import { dirname, join } from 'path';
 import { spawn, type ChildProcess } from 'child_process';
 import { setTimeout as sleep } from 'timers/promises';
 import { findRfdbBinary } from './findRfdbBinary.js';
@@ -22,8 +22,10 @@ export interface StartRfdbServerOptions {
   binaryPath?: string;
   /** If provided, PID file is written after spawn and checked before spawn */
   pidPath?: string;
-  /** Socket poll timeout in ms (default: 5000) */
+  /** Socket poll timeout in ms (default: 30000) */
   waitTimeoutMs?: number;
+  /** Extra CLI arguments to pass to rfdb-server */
+  extraArgs?: string[];
   /** Optional logger for debug messages */
   logger?: { debug(msg: string): void };
   /** Internal: dependency injection for testing */
@@ -102,7 +104,7 @@ export async function startRfdbServer(options: StartRfdbServerOptions): Promise<
     dbPath,
     socketPath,
     pidPath,
-    waitTimeoutMs = 5000,
+    waitTimeoutMs = 30_000,
     logger,
     _deps,
   } = options;
@@ -154,8 +156,15 @@ export async function startRfdbServer(options: StartRfdbServerOptions): Promise<
   // Mutable container to capture async spawn errors (Dijkstra amendment B)
   const state = { spawnError: null as Error | null };
 
-  const serverProcess = _spawn(binaryPath, [dbPath, '--socket', socketPath, '--data-dir', dataDir], {
-    stdio: ['ignore', 'ignore', process.stderr.isTTY ? 'inherit' : 'ignore'],
+  const baseArgs = [dbPath, '--socket', socketPath, '--data-dir', dataDir];
+  const args = options.extraArgs ? [...baseArgs, ...options.extraArgs] : baseArgs;
+
+  // Write server logs to rfdb.log in data directory (survives detach)
+  const logPath = join(dataDir, 'rfdb.log');
+  const logFd = openSync(logPath, 'a');
+
+  const serverProcess = _spawn(binaryPath, args, {
+    stdio: ['ignore', logFd, logFd],
     detached: true,
   });
 
