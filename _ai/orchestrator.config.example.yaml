@@ -1,0 +1,49 @@
+# orchestrator.config.example.yaml
+#
+# Template for .grafema/orchestrator.config.yaml
+# (.grafema/ is gitignored — every developer maintains their own copy)
+#
+# SETUP:
+#   cp _ai/orchestrator.config.example.yaml .grafema/orchestrator.config.yaml
+#   # Then replace <GRAFEMA_ROOT> with the absolute path to this repo, e.g.:
+#   sed -i '' "s|<GRAFEMA_ROOT>|$(pwd)|g" .grafema/orchestrator.config.yaml
+#
+# After editing, run:
+#   grafema analyze
+# City map should show synthesized edges (CO_DEPENDS_ON, DIRECT_CALLS, etc.)
+# in addition to raw edges. If "flow types = 0" — check the command path.
+
+root: ".."
+
+# Adjust include/exclude to match your project's source layout.
+include:
+  - "packages/*/src/**/*.ts"
+  - "packages/*/src/**/*.rs"
+  - "packages/*/src/**/*.hs"
+  - "packages/*/lib/**/*.ex"
+
+exclude:
+  - "**/*.test.ts"
+  - "**/__tests__/**"
+  - "**/node_modules/**"
+  - "**/dist/**"
+  - "**/target/**"
+
+rfdb_socket: "<GRAFEMA_ROOT>/.grafema/rfdb.sock"
+
+plugins:
+  # compaction-enricher: synthesizes shortcut edges between placed nodes
+  # connected through hidden pass-through nodes.
+  #
+  # Synthesized edge types: CO_DEPENDS_ON, DIRECT_CALLS, CALLS_TRANSITIVELY,
+  # CO_CALLS. Without this plugin, city map shows only raw parser edges.
+  #
+  # depends_on: list the last plugin in your resolver chain here so the
+  # enricher runs after graph population is complete. Leave empty ([]) if
+  # you have no other plugins.
+  - name: "compaction-enricher"
+    command: "node <GRAFEMA_ROOT>/packages/util/dist/enrichers/compactionEnricher.js"
+    mode: "batch"
+    depends_on: []
+    # If you have a resolver plugin (e.g. "ipc-resolver"), add it:
+    # depends_on: ["ipc-resolver"]

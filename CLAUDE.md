@@ -86,6 +86,19 @@ Query it before run explore agents. Save data once you have findings with eviden
 - Quick fixes or workarounds
 - Guessing when you can ask
 
+## Local Setup (fresh clone)
+
+`.grafema/orchestrator.config.yaml` is gitignored. Without it, `compaction-enricher`
+is skipped and city map shows only raw edges (synthesized flow types = 0).
+
+```bash
+cp _ai/orchestrator.config.example.yaml .grafema/orchestrator.config.yaml
+sed -i '' "s|<GRAFEMA_ROOT>|$(pwd)|g" .grafema/orchestrator.config.yaml
+```
+
+Then run `grafema analyze`. See `_ai/orchestrator.config.example.yaml` for comments
+on `depends_on` and include/exclude tuning.
+
 ## Reference (read when relevant)
 
 - **Workflow & review protocol:** `_ai/workflow.md`, `_ai/agent-personas.md`
