@@ -136,6 +136,46 @@ const MODULE_CONTAINERS = new Set([
 ]);
 
 // ---------------------------------------------------------------------------
+// Bulk parent-edge cache (populated once via getEdgesByType before rules run)
+// ---------------------------------------------------------------------------
+
+// Maps child node ID → src node IDs from pre-fetched CONTAINS/HAS_SCOPE edges.
+// null means the pre-fetch has not been done yet (falls back to per-node RPCs).
+let containsSrcByDst: Map<string, string[]> | null = null;
+let hasScopeSrcByDst: Map<string, string[]> | null = null;
+
+async function preFetchParentEdges(client: RFDBClient): Promise<void> {
+  const t0 = Date.now();
+  const [containsEdges, hasScopeEdges] = await Promise.all([
+    client.getEdgesByType('CONTAINS' as Parameters<typeof client.getEdgesByType>[0]),
+    client.getEdgesByType('HAS_SCOPE' as Parameters<typeof client.getEdgesByType>[0]),
+  ]);
+
+  containsSrcByDst = new Map();
+  for (const e of containsEdges) {
+    const meta = (e as Record<string, unknown>)._source ?? (e as Record<string, unknown>).source;
+    if (typeof meta === 'string' && meta.includes('layout-pack')) continue;
+    const list = containsSrcByDst.get(e.dst) ?? [];
+    list.push(e.src);
+    containsSrcByDst.set(e.dst, list);
+  }
+
+  hasScopeSrcByDst = new Map();
+  for (const e of hasScopeEdges) {
+    const meta = (e as Record<string, unknown>)._source ?? (e as Record<string, unknown>).source;
+    if (typeof meta === 'string' && meta.includes('layout-pack')) continue;
+    const list = hasScopeSrcByDst.get(e.dst) ?? [];
+    list.push(e.src);
+    hasScopeSrcByDst.set(e.dst, list);
+  }
+
+  console.error(
+    `[compactionEnricher] pre-fetched ${containsEdges.length} CONTAINS + ` +
+    `${hasScopeEdges.length} HAS_SCOPE edges in ${Date.now() - t0}ms`,
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Enricher entry point
 // ---------------------------------------------------------------------------
 
@@ -169,6 +209,8 @@ async function main(): Promise<void> {
   if (database !== 'default') {
     await sendRaw(client, 'openDatabase', { database });
   }
+
+  await preFetchParentEdges(client);
 
   for (const rule of ordered) {
     const t0 = Date.now();
@@ -482,28 +524,39 @@ async function getAnalyzerParent(
   //   - SCOPE ← HAS_SCOPE ← (SCOPE | FUNCTION | MODULE)
   // SCOPE itself has no incoming CONTAINS — only HAS_SCOPE — so walking
   // up from a CALL through its SCOPE parent dead-ends unless we follow
-  // HAS_SCOPE too. Try CONTAINS first (the AST containment), then fall
-  // back to HAS_SCOPE if no CONTAINS parent surfaced. layout-pack
-  // CONTAINS is filtered out — we only follow analyzer edges.
-  const tryEdges = async (edgeType: string) => {
-    const incoming = await client.getIncomingEdges(nodeId, [edgeType]);
-    for (const e of incoming) {
-      const meta = (e as Record<string, unknown>)._source ?? (e as Record<string, unknown>).source;
-      if (typeof meta === 'string' && meta.includes('layout-pack')) continue;
-      const parentType = await getNodeType(client, e.src);
-      if (parentType) {
-        const v = { id: e.src, type: parentType };
-        return v;
-      }
+  // HAS_SCOPE too. layout-pack CONTAINS is filtered out.
+  //
+  // Fast path: use the pre-fetched maps (O(1) lookup, no RPC).
+  // Slow path: fall back to per-node getIncomingEdges when maps not ready.
+  const tryEdgesFromMap = async (
+    edgeMap: Map<string, string[]> | null,
+    edgeType: string,
+  ): Promise<{ id: string; type: string } | null> => {
+    let srcIds: string[];
+    if (edgeMap !== null) {
+      srcIds = edgeMap.get(nodeId) ?? [];
+    } else {
+      const incoming = await client.getIncomingEdges(nodeId, [edgeType]);
+      srcIds = incoming
+        .filter(e => {
+          const meta = (e as Record<string, unknown>)._source ?? (e as Record<string, unknown>).source;
+          return !(typeof meta === 'string' && meta.includes('layout-pack'));
+        })
+        .map(e => e.src);
+    }
+    for (const srcId of srcIds) {
+      const parentType = await getNodeType(client, srcId);
+      if (parentType) return { id: srcId, type: parentType };
     }
     return null;
   };
-  const viaContains = await tryEdges('CONTAINS');
+
+  const viaContains = await tryEdgesFromMap(containsSrcByDst, 'CONTAINS');
   if (viaContains) {
     parentCache.set(nodeId, viaContains);
     return viaContains;
   }
-  const viaHasScope = await tryEdges('HAS_SCOPE');
+  const viaHasScope = await tryEdgesFromMap(hasScopeSrcByDst, 'HAS_SCOPE');
   if (viaHasScope) {
     parentCache.set(nodeId, viaHasScope);
     return viaHasScope;

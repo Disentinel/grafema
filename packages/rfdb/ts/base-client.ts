@@ -270,6 +270,36 @@ export abstract class BaseRFDBClient extends EventEmitter implements IRFDBClient
     });
   }
 
+  /**
+   * Get all edges of a given type across the entire graph.
+   * Uses the server-side edge-type index — one round-trip regardless of graph size.
+   * More efficient than per-node getOutgoingEdges for bulk analysis passes.
+   *
+   * @param edgeType  The edge type to fetch (e.g. 'CONTAINS', 'CALLS').
+   * @param srcFilter Optional allowlist of src node IDs; server drops other edges.
+   * @param limit     Optional cap on the number of returned edges.
+   */
+  async getEdgesByType(
+    edgeType: EdgeType,
+    srcFilter?: string[],
+    limit?: number,
+  ): Promise<(WireEdge & Record<string, unknown>)[]> {
+    const params: Record<string, unknown> = { edgeType };
+    if (srcFilter !== undefined) params['srcFilter'] = srcFilter;
+    if (limit !== undefined) params['limit'] = limit;
+    const response = await this._send('getEdgesByType', params);
+    const edges = (response as { edges?: WireEdge[] }).edges || [];
+    return edges.map(e => {
+      let meta = {};
+      try {
+        meta = e.metadata ? JSON.parse(e.metadata) : {};
+      } catch {
+        // Keep empty metadata on parse error
+      }
+      return { ...e, type: e.edgeType, ...meta };
+    });
+  }
+
   // ===========================================================================
   // Stats
   // ===========================================================================

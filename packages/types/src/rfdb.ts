@@ -31,6 +31,7 @@ export type RFDBCommand =
   | 'reachability'
   | 'getOutgoingEdges'
   | 'getIncomingEdges'
+  | 'getEdgesByType'
   // Stats
   | 'nodeCount'
   | 'edgeCount'
@@ -585,6 +586,7 @@ export interface IRFDBClient {
   reachability(startIds: string[], maxDepth: number, edgeTypes?: EdgeType[], backward?: boolean): Promise<string[]>;
   getOutgoingEdges(id: string, edgeTypes?: EdgeType[] | null): Promise<WireEdge[]>;
   getIncomingEdges(id: string, edgeTypes?: EdgeType[] | null): Promise<WireEdge[]>;
+  getEdgesByType(edgeType: EdgeType, srcFilter?: string[], limit?: number): Promise<WireEdge[]>;
 
   // Stats
   nodeCount(): Promise<number>;

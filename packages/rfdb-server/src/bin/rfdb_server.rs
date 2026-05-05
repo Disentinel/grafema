@@ -192,6 +192,17 @@ pub enum Request {
         #[serde(rename = "edgeTypes")]
         edge_types: Option<Vec<String>>,
     },
+    /// Get all edges of a given type, optionally filtered by src node IDs.
+    /// More efficient than per-node getOutgoingEdges for bulk analysis passes.
+    GetEdgesByType {
+        #[serde(rename = "edgeType")]
+        edge_type: String,
+        /// Optional allowlist of src node IDs; edges not in the set are dropped.
+        #[serde(rename = "srcFilter")]
+        src_filter: Option<Vec<String>>,
+        /// Cap the number of returned edges (applied after src_filter).
+        limit: Option<usize>,
+    },
 
     // Stats
     NodeCount,
@@ -1080,6 +1091,7 @@ fn get_operation_name(request: &Request) -> String {
         Request::CheckGuarantee { .. } => "CheckGuarantee".to_string(),
         Request::GetOutgoingEdges { .. } => "GetOutgoingEdges".to_string(),
         Request::GetIncomingEdges { .. } => "GetIncomingEdges".to_string(),
+        Request::GetEdgesByType { .. } => "GetEdgesByType".to_string(),
         Request::Flush => "Flush".to_string(),
         Request::Compact => "Compact".to_string(),
         Request::NodeCount => "NodeCount".to_string(),
@@ -1409,6 +1421,28 @@ fn handle_request_with_cancel(
                     .into_iter()
                     .map(|e| record_to_wire_edge(&e))
                     .collect();
+                if protocol >= 3 {
+                    resolve_edge_semantic_ids(&mut edges, engine);
+                }
+                Response::Edges { edges }
+            })
+        }
+
+        Request::GetEdgesByType { edge_type, src_filter, limit } => {
+            let protocol = session.protocol_version;
+            with_engine_read(session, |engine| {
+                let mut edges: Vec<WireEdge> = engine.get_edges_by_type(&edge_type)
+                    .into_iter()
+                    .map(|e| record_to_wire_edge(&e))
+                    .collect();
+                if let Some(filter) = src_filter.as_ref() {
+                    let filter_set: std::collections::HashSet<&str> =
+                        filter.iter().map(|s| s.as_str()).collect();
+                    edges.retain(|e| filter_set.contains(e.src.as_str()));
+                }
+                if let Some(lim) = limit {
+                    edges.truncate(lim);
+                }
                 if protocol >= 3 {
                     resolve_edge_semantic_ids(&mut edges, engine);
                 }
