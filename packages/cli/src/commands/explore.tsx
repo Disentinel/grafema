@@ -74,6 +74,7 @@ interface ExploreState {
   // Code preview
   showCodePreview: boolean;
   codePreviewLines: string[];
+  showHelp: boolean;
 }
 
 interface ExplorerProps {
@@ -108,6 +109,7 @@ function Explorer({ backend, startNode, projectPath }: ExplorerProps) {
     viewMode: 'function',
     showCodePreview: false,
     codePreviewLines: [],
+    showHelp: false,
   });
 
   // Load data when currentNode changes
@@ -214,7 +216,7 @@ function Explorer({ backend, startNode, projectPath }: ExplorerProps) {
     }
 
     if (input === '?') {
-      // TODO: show help
+      setState(s => ({ ...s, showHelp: !s.showHelp }))
       return;
     }
 
@@ -742,6 +744,25 @@ function Explorer({ backend, startNode, projectPath }: ExplorerProps) {
           <Text>Search: </Text>
           <Text color="cyan">{state.searchQuery}</Text>
           <Text color="gray">_</Text>
+        </Box>
+      )}
+
+      {/* Help overlay */}
+      {state.showHelp && (
+        <Box flexDirection="column" borderStyle="round" borderColor="yellow" padding={1}>
+          <Text bold color="yellow">Справка</Text>
+          <Text>  q        Выход</Text>
+          <Text>  /        Поиск</Text>
+          <Text>  ?        Эта справка</Text>
+          <Text>  m        Переключить режим</Text>
+          <Text>  Space    Предпросмотр кода</Text>
+          <Text>  ←/h      Callers / Fields / Sources</Text>
+          <Text>  →/l      Callees / Methods / Targets</Text>
+          <Text>  ↑/k      Вверх</Text>
+          <Text>  ↓/j      Вниз</Text>
+          <Text>  Enter    Перейти к узлу</Text>
+          <Text>  ⌫        Назад</Text>
+          <Text>  Tab      Toggle callers/callees</Text>
         </Box>
       )}
 
