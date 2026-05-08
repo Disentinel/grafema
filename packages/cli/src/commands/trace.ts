@@ -130,14 +130,20 @@ Examples:
       const { varName, scopeName } = parseTracePattern(pattern);
       const maxDepth = parseInt(options.depth, 10);
 
-      console.log(`Tracing ${varName}${scopeName ? ` from ${scopeName}` : ''}...`);
-      console.log('');
+      if (!options.json) {
+        console.log(`Tracing ${varName}${scopeName ? ` from ${scopeName}` : ''}...`);
+        console.log('');
+      }
 
       // Find starting variable(s)
       const variables = await findVariables(backend, varName, scopeName);
 
       if (variables.length === 0) {
-        console.log(`No variable "${varName}" found${scopeName ? ` in ${scopeName}` : ''}`);
+        if (options.json) {
+          console.log(JSON.stringify({ variables: [] }, null, 2));
+        } else {
+          console.log(`No variable "${varName}" found${scopeName ? ` in ${scopeName}` : ''}`);
+        }
         return;
       }
 
