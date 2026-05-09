@@ -749,27 +749,33 @@ function Explorer({ backend, startNode, projectPath }: ExplorerProps) {
 
       {/* Help overlay */}
       {state.showHelp && (
-        <Box flexDirection="column" borderStyle="round" borderColor="yellow" padding={1}>
-          <Text bold color="yellow">Справка</Text>
-          <Text>  q        Выход</Text>
-          <Text>  /        Поиск</Text>
-          <Text>  ?        Эта справка</Text>
-          <Text>  m        Переключить режим</Text>
-          <Text>  Space    Предпросмотр кода</Text>
-          <Text>  ←/h      Callers / Fields / Sources</Text>
-          <Text>  →/l      Callees / Methods / Targets</Text>
-          <Text>  ↑/k      Вверх</Text>
-          <Text>  ↓/j      Вниз</Text>
-          <Text>  Enter    Перейти к узлу</Text>
-          <Text>  ⌫        Назад</Text>
-          <Text>  Tab      Toggle callers/callees</Text>
+        <Box
+          flexDirection="column"
+          borderStyle="single"
+          borderColor="cyan"
+          paddingX={1}
+          marginBottom={1}
+        >
+          <Text bold color="cyan"> Клавиши управления </Text>
+          <Text>  q        — выход</Text>
+          <Text>  /        — поиск</Text>
+          <Text>  ?        — помощь (это окно)</Text>
+          <Text>  m        — переключить режим (модули/функции)</Text>
+          <Text>  Space    — предпросмотр кода</Text>
+          <Text>  ←/h      — callers / fields / sources</Text>
+          <Text>  →/l      — callees / methods / targets</Text>
+          <Text>  ↑/k      — предыдущий элемент</Text>
+          <Text>  ↓/j      — следующий элемент</Text>
+          <Text>  Enter    — перейти к узлу</Text>
+          <Text>  Bksp     — назад</Text>
+          <Text>  Tab      — toggle callers/callees</Text>
         </Box>
       )}
 
       {/* Help footer */}
       <Box marginTop={1} borderStyle="single" borderColor="gray" paddingX={1}>
         <Text color="gray">
-          ↑↓: Select | ←→: Panel | Enter: Open | Backspace: Back | /: Search | m: Modules | Space: Code | o: Editor | q: Quit
+          ↑↓: Select | ←→: Panel | Enter: Open | Backspace: Back | /: Search | m: Modules | Space: Code | o: Editor | ?: Help | q: Quit
         </Text>
       </Box>
     </Box>
