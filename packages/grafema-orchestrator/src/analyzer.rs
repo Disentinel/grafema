@@ -114,6 +114,7 @@ impl FileAnalysis {
         for node in &mut self.nodes {
             node.id = strip(&node.id);
             node.file = strip(&node.file);
+            node.name = strip(&node.name);
         }
         for edge in &mut self.edges {
             edge.src = strip(&edge.src);
@@ -5697,6 +5698,7 @@ mod tests {
         analysis.relativize_paths("/home/user/project");
 
         assert_eq!(analysis.nodes[0].id, "MODULE#src/app.ts");
+        assert_eq!(analysis.nodes[0].name, "src/app.ts");
         assert_eq!(analysis.nodes[0].file, "src/app.ts");
         assert_eq!(analysis.edges[0].src, "MODULE#src/app.ts");
         assert_eq!(analysis.edges[0].dst, "src/app.ts->FUNCTION->main");
