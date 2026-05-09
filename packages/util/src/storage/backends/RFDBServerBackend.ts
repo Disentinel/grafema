@@ -20,7 +20,7 @@
 
 import { RFDBClient, type BatchHandle } from '@grafema/rfdb-client';
 import type { ChildProcess } from 'child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { setTimeout as sleep } from 'timers/promises';
 import { join, dirname } from 'path';
 import { createHash } from 'crypto';
@@ -314,6 +314,10 @@ export class RFDBServerBackend {
     this.connected = false;
     this.serverProcess = null;
     await this._waitForPidExit(pidPath, 5000);
+    // Explicitly remove PID and socket so checkExistingServer returns 'none'
+    // and the subsequent connect() spawns a fresh server unconditionally.
+    try { unlinkSync(pidPath); } catch { /* already gone */ }
+    try { unlinkSync(this.socketPath); } catch { /* already gone */ }
   }
 
   /**
