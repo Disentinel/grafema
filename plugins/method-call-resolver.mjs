@@ -15,6 +15,8 @@
  * Environment:
  *   RFDB_SOCKET  — path to RFDB unix socket
  *   RFDB_DATABASE — database name
+ *   GRAFEMA_DATALOG_PLUGINS — comma-separated list; include "method-call-resolver"
+ *                             to use the Datalog-based implementation
  */
 
 import { RFDBClient } from '../packages/rfdb/dist/client.js';
@@ -45,6 +47,198 @@ try {
   }
   console.error(`[method-call-resolver] ${unresolvedProbe.length} unresolved CALL nodes`);
 
+  const useDatalog = process.env.GRAFEMA_DATALOG_PLUGINS?.split(',').includes('method-call-resolver');
+  if (useDatalog) {
+    await methodCallResolverDatalog(client);
+  } else {
+    await methodCallResolverLegacy(client);
+  }
+
+  await client.close();
+} catch (err) {
+  console.error(`[method-call-resolver] Error: ${err.message}`);
+  await client.close();
+  process.exit(1);
+}
+
+// ── Datalog implementation ────────────────────────────────────────────────────
+
+/**
+ * Datalog-based implementation of method call resolution.
+ *
+ * Replaces ~N_calls × 6-8 IPC calls with 4 Datalog round-trips:
+ *   Q1: all METHOD nodes (id, name, file)
+ *   Q2: method → parent CLASS name via incoming HAS_METHOD
+ *   Q3: unresolved CALL nodes (id, name, file)
+ *   Q4: call → receiver CLASS name via INSTANCE_OF paths (4 variants)
+ *
+ * Resolution priority order (same as legacy):
+ *   0. instance_of (Datalog-assisted)
+ *   1. unique_name
+ *   2. same_file
+ *   3. this_same_file
+ *   4. legacy disambiguate (IPC fallback, only for truly ambiguous cases)
+ */
+async function methodCallResolverDatalog(client) {
+  // Q1: All METHOD nodes with name and file
+  const allMethodRows = await client.executeDatalog(
+    'all_methods(M, Name, File) :- node(M, "METHOD"), attr(M, "name", Name), attr(M, "file", File).\n'
+  );
+
+  const methodById = new Map(); // id → {id, name, file, className}
+  for (const row of allMethodRows) {
+    const id = row.bindings['M'];
+    const name = row.bindings['Name'];
+    const file = row.bindings['File'] || '';
+    if (!id || !name) continue;
+    methodById.set(id, { id, name, file, className: null });
+  }
+
+  // Q2: Method → parent CLASS name via incoming HAS_METHOD edge
+  const methodClassRows = await client.executeDatalog(
+    'method_class(M, ClassName) :- incoming(M, P, "HAS_METHOD"), attr(P, "name", ClassName).\n'
+  );
+  for (const row of methodClassRows) {
+    const id = row.bindings['M'];
+    const className = row.bindings['ClassName'];
+    if (id && className && methodById.has(id)) {
+      methodById.get(id).className = className;
+    }
+  }
+
+  // Build name-indexed method map
+  const methodIndex = new Map(); // name → [{id, name, file, className}]
+  for (const method of methodById.values()) {
+    if (!methodIndex.has(method.name)) methodIndex.set(method.name, []);
+    methodIndex.get(method.name).push(method);
+  }
+  console.error(`[method-call-resolver/datalog] ${methodById.size} METHOD nodes indexed (${methodIndex.size} unique names)`);
+
+  // Q3: Unresolved CALL nodes with their name and file
+  const callRows = await client.executeDatalog(
+    'unresolved_call(C, CallName, File) :- node(C, "CALL"), attr(C, "name", CallName), attr(C, "file", File), \\+ edge(C, _, "CALLS"), \\+ edge(C, _, "CALLS_REMOTE").\n'
+  );
+
+  // Q4: Call → receiver CLASS name for instance_of strategy.
+  // Covers 4 receiver path variants from resolveReceiverType():
+  //   A: CALL -READS_FROM→ Decl -INSTANCE_OF→ Class
+  //   B: CALL -READS_FROM→ Ref -READS_FROM→ Decl -INSTANCE_OF→ Class
+  //   C: CALL -DERIVED_FROM→ PA -READS_FROM→ Decl -INSTANCE_OF→ Class
+  //   D: CALL -DERIVED_FROM→ PA -READS_FROM→ Ref -READS_FROM→ Decl -INSTANCE_OF→ Class
+  const callClassRows = await client.executeDatalog(
+    'call_class(C, ClassName) :- node(C, "CALL"), \\+ edge(C, _, "CALLS"), \\+ edge(C, _, "CALLS_REMOTE"), ' +
+      'edge(C, V, "READS_FROM"), edge(V, Cls, "INSTANCE_OF"), attr(Cls, "name", ClassName).\n' +
+    'call_class(C, ClassName) :- node(C, "CALL"), \\+ edge(C, _, "CALLS"), \\+ edge(C, _, "CALLS_REMOTE"), ' +
+      'edge(C, V, "READS_FROM"), edge(V, Ref, "READS_FROM"), edge(Ref, Cls, "INSTANCE_OF"), attr(Cls, "name", ClassName).\n' +
+    'call_class(C, ClassName) :- node(C, "CALL"), \\+ edge(C, _, "CALLS"), \\+ edge(C, _, "CALLS_REMOTE"), ' +
+      'edge(C, PA, "DERIVED_FROM"), edge(PA, V, "READS_FROM"), edge(V, Cls, "INSTANCE_OF"), attr(Cls, "name", ClassName).\n' +
+    'call_class(C, ClassName) :- node(C, "CALL"), \\+ edge(C, _, "CALLS"), \\+ edge(C, _, "CALLS_REMOTE"), ' +
+      'edge(C, PA, "DERIVED_FROM"), edge(PA, V, "READS_FROM"), edge(V, Ref, "READS_FROM"), edge(Ref, Cls, "INSTANCE_OF"), attr(Cls, "name", ClassName).\n'
+  );
+
+  // First match per call wins (simpler paths have higher priority via rule order)
+  const callClassMap = new Map(); // callId → className
+  for (const row of callClassRows) {
+    const c = row.bindings['C'];
+    const cls = row.bindings['ClassName'];
+    if (c && cls && !callClassMap.has(c)) callClassMap.set(c, cls);
+  }
+
+  // Resolve: cross-reference calls × methods
+  const batchEdges = [];
+  let resolved = 0, ambiguous = 0, processed = 0;
+
+  for (const row of callRows) {
+    const callId = row.bindings['C'];
+    const callName = row.bindings['CallName'];
+    const callFile = row.bindings['File'] || null;
+    if (!callId || !callName) continue;
+
+    const dotIdx = callName.lastIndexOf('.');
+    if (dotIdx === -1) continue;
+    const methodName = callName.substring(dotIdx + 1);
+    if (!methodName) continue;
+
+    processed++;
+
+    const candidates = methodIndex.get(methodName);
+    if (!candidates || candidates.length === 0) continue;
+
+    if (candidates.length === 1) {
+      batchEdges.push({
+        src: callId, dst: candidates[0].id, type: 'CALLS',
+        metadata: JSON.stringify({ _source: 'method-call-resolver', strategy: 'unique_name' }),
+      });
+      resolved++;
+      continue;
+    }
+
+    // Strategy 0 (highest priority): instance_of via Datalog-derived class
+    const receiverClass = callClassMap.get(callId);
+    if (receiverClass) {
+      const match = candidates.find(c => c.className === receiverClass);
+      if (match) {
+        batchEdges.push({
+          src: callId, dst: match.id, type: 'CALLS',
+          metadata: JSON.stringify({ _source: 'method-call-resolver', strategy: 'instance_of' }),
+        });
+        resolved++;
+        continue;
+      }
+    }
+
+    // Strategy 1: same file
+    if (callFile) {
+      const sameFile = candidates.filter(c => c.file === callFile);
+      if (sameFile.length === 1) {
+        batchEdges.push({
+          src: callId, dst: sameFile[0].id, type: 'CALLS',
+          metadata: JSON.stringify({ _source: 'method-call-resolver', strategy: 'same_file' }),
+        });
+        resolved++;
+        continue;
+      }
+
+      // Strategy 2: this/super → same file
+      const receiverName = callName.substring(0, dotIdx);
+      if ((receiverName === 'this' || receiverName === 'super') && sameFile.length === 1) {
+        batchEdges.push({
+          src: callId, dst: sameFile[0].id, type: 'CALLS',
+          metadata: JSON.stringify({ _source: 'method-call-resolver', strategy: 'this_same_file' }),
+        });
+        resolved++;
+        continue;
+      }
+    }
+
+    // Strategy 3: legacy disambiguate (IPC, only for remaining ambiguous cases)
+    const receiverName = callName.substring(0, dotIdx);
+    const target = await disambiguate(client, callId, receiverName, methodName, candidates, callFile);
+    if (target) {
+      batchEdges.push({
+        src: callId, dst: target.id, type: 'CALLS',
+        metadata: JSON.stringify({ _source: 'method-call-resolver', strategy: target.strategy }),
+      });
+      resolved++;
+    } else {
+      ambiguous++;
+    }
+  }
+
+  // Commit all edges in batches
+  if (batchEdges.length > 0) {
+    const BATCH_SIZE = 500;
+    for (let i = 0; i < batchEdges.length; i += BATCH_SIZE) {
+      await client.addEdges(batchEdges.slice(i, i + BATCH_SIZE));
+    }
+  }
+
+  console.error(`[method-call-resolver/datalog] Done: ${processed} method calls processed, ${resolved} resolved, ${ambiguous} ambiguous`);
+}
+
+// ── Legacy implementation ─────────────────────────────────────────────────────
+
+async function methodCallResolverLegacy(client) {
   // Step 1: Build method index — name → [METHOD nodes]
   console.error('[method-call-resolver] Building method index...');
   const methodIndex = new Map();
@@ -150,11 +344,6 @@ try {
   }
 
   console.error(`[method-call-resolver] Done: ${processed} method calls processed, ${resolved} resolved, ${ambiguous} ambiguous, ${skipped} already resolved`);
-  await client.close();
-} catch (err) {
-  console.error(`[method-call-resolver] Error: ${err.message}`);
-  await client.close();
-  process.exit(1);
 }
 
 // ── Disambiguation ──────────────────────────────────────────────────────────
