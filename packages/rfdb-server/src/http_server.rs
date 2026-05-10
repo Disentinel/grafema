@@ -728,18 +728,40 @@ fn build_graph_stream_body(
     // required a per-request full scan of all nodes (~20–30s on 326k
     // nodes). We now consult a process-wide cached file→node-ids index
     // built exactly once per server lifetime.
+    // Build CONTAINS parent map so non-visible nodes lift to their actual
+    // containing function/class rather than whichever visible node happens
+    // to be first in the file (REG-1132). Skips layout-pack synthetic edges.
+    let mut parent_of: HashMap<u128, u128> = HashMap::new();
+    for edge in engine.get_edges_by_type("CONTAINS") {
+        if edge.metadata.as_deref().map_or(false, |m| m.contains("\"_source\":\"layout-pack\"")) {
+            continue;
+        }
+        parent_of.entry(edge.dst).or_insert(edge.src);
+    }
+
     let file_to_nodes_cache = get_or_build_file_to_nodes(&file_to_nodes_slot, &**engine);
     for (file, visible_nodes) in file_to_visible.iter() {
         if let Some(node_ids) = file_to_nodes_cache.get(file) {
             for &nid in node_ids {
-                if !nid_to_visible.contains_key(&nid) {
-                    nid_to_visible.insert(nid, visible_nodes[0]);
-                }
+                if nid_to_visible.contains_key(&nid) { continue; }
+                // Walk CONTAINS ancestry to find a visible ancestor; fall back
+                // to the first visible node in the file if none is found.
+                let mut cur = nid;
+                let lift_to = loop {
+                    if let Some(&vis) = nid_to_visible.get(&cur) {
+                        break vis;
+                    }
+                    match parent_of.get(&cur) {
+                        Some(&parent) => cur = parent,
+                        None => break visible_nodes[0],
+                    }
+                };
+                nid_to_visible.insert(nid, lift_to);
             }
         }
     }
 
-    eprintln!("[http] edge-lift: {} visible, {} mapped via file grouping",
+    eprintln!("[http] edge-lift: {} visible, {} mapped via contains-walk",
         node_count, nid_to_visible.len());
 
     // Collect edges between mapped nodes.
