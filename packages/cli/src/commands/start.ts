@@ -154,7 +154,7 @@ export const startCommand = new Command('start')
         binaryPath,
         pidPath,
         waitTimeoutMs: 30_000,
-        extraArgs: ['--http-port', httpPort, '--no-ui'],
+        extraArgs: ['--http-port', httpPort],
       });
 
       if (serverProcess === null) {

@@ -919,7 +919,7 @@ fn get_or_build_layout(
             );
             if matches!(cached.source, LayoutSource::Missing) {
                 eprintln!(
-                    "[layout] WARN: No LAYOUT_POSITION edges. Run `grafema layout --commit` after `grafema analyze`."
+                    "[layout] WARN: No LAYOUT_POSITION edges. Run `grafema-orchestrator layout --socket <sock> --config <yaml> --commit` after `grafema analyze`."
                 );
             }
             *guard = Some(cached.clone());
