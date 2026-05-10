@@ -65,7 +65,7 @@ export class EffectsLookup {
     const db: EffectsDB = { runtimes: {}, packages: {} };
 
     // Load runtime builtins (node.yaml, rust.yaml, etc.)
-    const runtimeFiles = ['node.yaml', 'rust.yaml', 'haskell.yaml'];
+    const runtimeFiles = ['node.yaml', 'rust.yaml', 'haskell.yaml', 'python.yaml'];
     for (const runtimeFile of runtimeFiles) {
       const yamlPath = join(effectsDbPath, 'runtimes', runtimeFile);
       if (existsSync(yamlPath)) {
