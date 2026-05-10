@@ -239,12 +239,14 @@ walkDeclarations (ClassDef name bases keywords body decos sp) = do
     withNamedParent name $
       mapM_ walkDeclarations body
 
--- AssignStmt → VARIABLE nodes
-walkDeclarations (AssignStmt targets _value sp) = do
-  mapM_ (walkAssignTarget sp) targets
+-- AssignStmt → VARIABLE nodes (plus ASSIGNED_FROM edge to the value, when
+-- the value is an expression that gets its own graph node — see
+-- 'valueNodeId' below).
+walkDeclarations (AssignStmt targets value sp) = do
+  mapM_ (walkAssignTarget sp value) targets
 
 -- AnnAssignStmt → VARIABLE node with annotation
-walkDeclarations (AnnAssignStmt target annotation _value _simple sp) = do
+walkDeclarations (AnnAssignStmt target annotation mValue _simple sp) = do
   file    <- askFile
   scopeId <- askScopeId
   parent  <- askNamedParent
@@ -297,6 +299,9 @@ walkDeclarations (AnnAssignStmt target annotation _value _simple sp) = do
           }
         Nothing -> pure ()
 
+      -- ASSIGNED_FROM to value, if value is an expression that becomes a node
+      emitAssignedFromEdge file parent nodeId mValue
+
     -- self.x: int = ...
     AttributeExpr (NameExpr receiver _) attr _ | receiver == "self" -> do
       let hash   = contentHash [("line", T.pack (show line))]
@@ -334,6 +339,9 @@ walkDeclarations (AnnAssignStmt target annotation _value _simple sp) = do
           , geMetadata = Map.empty
           }
         Nothing -> pure ()
+
+      -- ASSIGNED_FROM to value, if any
+      emitAssignedFromEdge file parent nodeId mValue
 
     _ -> pure ()
 
@@ -378,9 +386,11 @@ walkMember = walkDeclarations
 
 -- ── Assignment target walker ─────────────────────────────────────────
 
--- | Walk a single assignment target, emitting VARIABLE nodes.
-walkAssignTarget :: Span -> PythonExpr -> Analyzer ()
-walkAssignTarget sp target = do
+-- | Walk a single assignment target, emitting VARIABLE nodes and an
+-- ASSIGNED_FROM edge to the value expression's node (when the value is an
+-- expression that gets its own graph node — see 'valueNodeId').
+walkAssignTarget :: Span -> PythonExpr -> PythonExpr -> Analyzer ()
+walkAssignTarget sp value target = do
   file    <- askFile
   scopeId <- askScopeId
   parent  <- askNamedParent
@@ -431,6 +441,9 @@ walkAssignTarget sp target = do
           }
         Nothing -> pure ()
 
+      -- ASSIGNED_FROM to value (Just value because AssignStmt always has one)
+      emitAssignedFromEdge file parent nodeId (Just value)
+
     -- self.x = ...
     AttributeExpr (NameExpr receiver _) attr _ | receiver == "self" -> do
       let hash   = contentHash [("line", T.pack (show line))]
@@ -468,13 +481,74 @@ walkAssignTarget sp target = do
           }
         Nothing -> pure ()
 
+      -- ASSIGNED_FROM to value
+      emitAssignedFromEdge file parent nodeId (Just value)
+
     -- Tuple unpacking: (a, b) = ... or [a, b] = ...
-    TupleExpr elts _ -> mapM_ (walkAssignTarget sp) elts
-    ListExpr  elts _ -> mapM_ (walkAssignTarget sp) elts
-    StarredExpr inner _ -> walkAssignTarget sp inner
+    -- We pass `value` through unchanged — every unpacked target gets the
+    -- same ASSIGNED_FROM target. That is imprecise (real semantics is
+    -- per-element), but matches what other analyzers do at this level
+    -- of resolution and keeps the edge useful for downstream consumers.
+    TupleExpr elts _ -> mapM_ (walkAssignTarget sp value) elts
+    ListExpr  elts _ -> mapM_ (walkAssignTarget sp value) elts
+    StarredExpr inner _ -> walkAssignTarget sp value inner
 
     -- Other targets (subscript, etc.) — skip
     _ -> pure ()
+
+-- ── ASSIGNED_FROM emission ───────────────────────────────────────────
+--
+-- Predict the semantic ID of the value-expression's graph node and emit
+-- an ASSIGNED_FROM edge from the freshly-emitted VARIABLE to it. The
+-- target node is emitted later by 'Rules.Calls.walkExpr' (Walker order:
+-- walkDeclarations runs before walkStmtExprs in walkStmt) — Grafema
+-- accepts forward-reference edges because semantic IDs are deterministic.
+--
+-- We only emit an edge when the value-expression-walker emits a node:
+--   CallExpr      → CALL
+--   AttributeExpr → PROPERTY_ACCESS
+--   NameExpr      → REFERENCE
+-- Other value forms (literals, lambdas, comprehensions, …) are skipped:
+--   Calls.walkExpr does not emit nodes for them today (e.g. ConstantExpr
+--   is explicitly a no-op), so there is nothing to point at. Adding
+--   LITERAL emission is a separate change.
+
+emitAssignedFromEdge :: Text -> Maybe Text -> Text -> Maybe PythonExpr -> Analyzer ()
+emitAssignedFromEdge _    _      _      Nothing      = pure ()
+emitAssignedFromEdge file parent srcVar (Just expr) =
+  case valueNodeId file parent expr of
+    Nothing  -> pure ()
+    Just dst -> emitEdge GraphEdge
+      { geSource   = srcVar
+      , geTarget   = dst
+      , geType     = "ASSIGNED_FROM"
+      , geMetadata = Map.empty
+      }
+
+valueNodeId :: Text -> Maybe Text -> PythonExpr -> Maybe Text
+valueNodeId file parent expr = case expr of
+  CallExpr func _ _ sp ->
+    let (line, col) = (posLine (spanStart sp), posCol (spanStart sp))
+        hash        = contentHash [("line", T.pack (show line)), ("col", T.pack (show col))]
+    in Just (semanticId file "CALL" (callFuncName func) parent (Just hash))
+  AttributeExpr _ attr sp ->
+    let (line, col) = (posLine (spanStart sp), posCol (spanStart sp))
+        hash        = contentHash [("line", T.pack (show line)), ("col", T.pack (show col))]
+    in Just (semanticId file "PROPERTY_ACCESS" attr parent (Just hash))
+  NameExpr name sp ->
+    let (line, col) = (posLine (spanStart sp), posCol (spanStart sp))
+        hash        = contentHash [("line", T.pack (show line)), ("col", T.pack (show col))]
+    in Just (semanticId file "REFERENCE" name parent (Just hash))
+  _ -> Nothing
+
+-- | Mirror of 'Rules.Calls.extractFuncName' — duplicated here to avoid a
+-- module-level import cycle (Calls already imports nothing from Declarations
+-- but a future shared helpers module would be a cleaner refactor).
+callFuncName :: PythonExpr -> Text
+callFuncName (NameExpr n _)        = n
+callFuncName (AttributeExpr _ a _) = a
+callFuncName (CallExpr func _ _ _) = callFuncName func
+callFuncName _                     = "<expr>"
 
 -- ── Lambda and expression declaration walker ─────────────────────────
 
