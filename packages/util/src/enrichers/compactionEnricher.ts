@@ -327,11 +327,16 @@ async function applyRule(client: RFDBClient, rule: Rule): Promise<RuleStats> {
     const ids = await client.findByType(t);
     hiddenIds.push(...ids);
   }
+  // REG-1136 #6: sort for deterministic pair ordering across runs.
+  // findByType return order varies with engine state; without sort the
+  // "primaryVia" chosen for each (writer, reader) pair is non-deterministic,
+  // causing stale-count divergence in shared-reader analyses.
+  hiddenIds.sort();
 
   // 3. Aggregate pairs across all hidden nodes. Map key is `${src}|${dst}`,
   //    value is `{primaryVia, viaCount}` — primaryVia is the first hidden
   //    ID we observed for the pair (deterministic because hiddenIds order
-  //    is stable across runs given the same engine state).
+  //    is stable across runs after sort).
   const pairs = new Map<string, PendingEdge>();
   let acceptedCount = 0;
   let perRuleCount = 0;
