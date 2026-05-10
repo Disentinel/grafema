@@ -8,7 +8,7 @@
  * - Level 4: Informational - checkVersions
  */
 
-import { existsSync, readFileSync, statSync } from 'fs';
+import { existsSync, readFileSync, statSync, unlinkSync } from 'fs';
 import { join, dirname, delimiter } from 'path';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
@@ -261,11 +261,12 @@ export async function checkServerStatus(
       details: { version, socketPath },
     };
   } catch {
+    try { unlinkSync(socketPath); } catch { /* already gone */ }
     return {
       name: 'server',
       status: 'warn',
-      message: 'Server socket exists but not responding (stale)',
-      recommendation: 'Run: grafema analyze (will restart server)',
+      message: 'Stale socket removed. Run grafema analyze to restart server.',
+      recommendation: 'Run: grafema analyze (starts fresh server)',
     };
   }
 }
