@@ -132,7 +132,7 @@ const MODULE_CONTAINERS = new Set([
   'IMPL_BLOCK',
   'NAMESPACE',
   'TRAIT',
-  'INTERFACE',
+  // INTERFACE removed: not placeable (layout_types.rs, Apr 2026)
 ]);
 
 // ---------------------------------------------------------------------------
