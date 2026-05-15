@@ -3,6 +3,7 @@ name = "grafema-orchestrator"
 version = "0.1.0"
 edition = "2021"
 description = "Orchestrator for Grafema per-file analysis pipeline"
+license = "UNLICENSED"
 
 [lib]
 name = "grafema_orchestrator"
