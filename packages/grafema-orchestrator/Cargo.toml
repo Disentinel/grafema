@@ -34,7 +34,7 @@ oxc_span = "0.116"
 syn = { version = "2", features = ["full", "extra-traits", "parsing"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = "1"
-rustpython-parser = { version = "0.4", features = ["all-nodes-with-ranges"] }
+rustpython-parser = { version = "0.4", default-features = false, features = ["all-nodes-with-ranges", "location", "num-bigint"] }
 clang-sys = { version = "1", features = ["clang_17_0", "runtime"] }
 ruby-prism = { version = "1.9", optional = true }
 stacker = "0.1"
