@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import {
   existsSync, readdirSync, lstatSync, unlinkSync, rmSync,
-  statSync, readFileSync, mkdirSync,
+  statSync, mkdirSync,
 } from 'fs';
 import { join, resolve } from 'path';
 import {
@@ -202,7 +202,6 @@ Available languages: ${Object.keys(LANG_BINARIES).join(', ')}`)
 
     if (toClean.length > 0) {
       console.log(`${COLORS.bold}Cleaning ~/.grafema/bin/${COLORS.reset}`);
-      let cleanedBytes = 0;
       for (const item of toClean) {
         console.log(`  ${prefix}${COLORS.red}✗${COLORS.reset} ${item.name} ${COLORS.dim}(${item.reason}, ${formatBytes(item.size)})${COLORS.reset}`);
         if (!dryRun) {
@@ -213,12 +212,9 @@ Available languages: ${Object.keys(LANG_BINARIES).join(', ')}`)
             } else {
               unlinkSync(item.path);
             }
-            cleanedBytes += item.size;
           } catch (err) {
             console.log(`    ${COLORS.yellow}warning: ${err instanceof Error ? err.message : err}${COLORS.reset}`);
           }
-        } else {
-          cleanedBytes += item.size;
         }
       }
       console.log();
