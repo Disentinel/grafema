@@ -18,7 +18,7 @@ import { GRAFEMA_VERSION } from '../version.js';
 const GITHUB_REPO = 'Disentinel/grafema';
 
 /** All analyzer binaries that can be lazy-downloaded. */
-const DOWNLOADABLE_BINARIES = [
+export const DOWNLOADABLE_BINARIES = [
   'grafema-orchestrator',
   // JS/TS
   'grafema-analyzer',
@@ -221,7 +221,7 @@ function semverGte(a: string, b: string): boolean {
  * Check if a cached binary in ~/.grafema/bin/ is from a release >= current version.
  * The .version file stores the release tag used for download (e.g. "binaries-v0.3.14").
  */
-function isBinaryCurrentVersion(binaryPath: string): boolean {
+export function isBinaryCurrentVersion(binaryPath: string): boolean {
   const versionFile = `${binaryPath}.version`;
   if (!existsSync(versionFile)) return false;
   try {

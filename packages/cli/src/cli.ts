@@ -38,6 +38,7 @@ import { registryCommand } from './commands/registry.js';
 import { featuresCommand } from './commands/features.js';
 import { exportCommand } from './commands/export.js';
 import { startCommand, stopCommand } from './commands/start.js';
+import { upgradeCommand } from './commands/upgrade.js';
 
 // Read version from package.json
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -79,6 +80,7 @@ program.addCommand(coverageCommand);
 program.addCommand(checkCommand);
 program.addCommand(serverCommand);
 program.addCommand(doctorCommand);
+program.addCommand(upgradeCommand);
 program.addCommand(schemaCommand);
 program.addCommand(explainCommand);
 program.addCommand(fileCommand);
