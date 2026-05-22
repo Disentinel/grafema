@@ -83,6 +83,19 @@ import {
   handleExplain,
   handleTraceEffects,
   handleFindSharedBehaviors,
+  handleRemember,
+  handleRecall,
+  handleSemanticSearch,
+  handleExploreEntity,
+  handleAddAssertion,
+  handleUpdateAssertion,
+  handleDeleteAssertion,
+  handleEnoxQuery,
+  handleEnoxTraverse,
+  handleEnoxStats,
+  handleRecentActivity,
+  handleUpdateNode,
+  handleSaveDocument,
 } from './handlers/index.js';
 import type { ExplainArgs } from './handlers/index.js';
 import type {
@@ -127,6 +140,20 @@ import type {
   QueryRegistryArgs,
   FindSharedBehaviorsArgs,
 } from './types.js';
+import type {
+  RememberArgs,
+  RecallArgs,
+  SemanticSearchArgs,
+  ExploreEntityArgs,
+  AddAssertionArgs,
+  UpdateAssertionArgs,
+  DeleteAssertionArgs,
+  QueryGraphKnowledgeArgs,
+  TraverseArgs as EnoxTraverseArgs,
+  RecentActivityArgs,
+  UpdateNodeArgs as EnoxUpdateNodeArgs,
+  SaveDocumentArgs,
+} from './handlers/enox-handlers.js';
 
 /**
  * Type-safe argument casting helper.
@@ -409,6 +436,59 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
 
       case 'find_shared_behaviors':
         result = await handleFindSharedBehaviors(asArgs<FindSharedBehaviorsArgs>(args));
+        break;
+
+      // === Enox knowledge graph ===
+      case 'remember':
+        result = await handleRemember(asArgs<RememberArgs>(args));
+        break;
+
+      case 'recall':
+        result = await handleRecall(asArgs<RecallArgs>(args));
+        break;
+
+      case 'semantic_search':
+        result = await handleSemanticSearch(asArgs<SemanticSearchArgs>(args));
+        break;
+
+      case 'enox_explore':
+        result = await handleExploreEntity(asArgs<ExploreEntityArgs>(args));
+        break;
+
+      case 'add_assertion':
+        result = await handleAddAssertion(asArgs<AddAssertionArgs>(args));
+        break;
+
+      case 'update_assertion':
+        result = await handleUpdateAssertion(asArgs<UpdateAssertionArgs>(args));
+        break;
+
+      case 'delete_assertion':
+        result = await handleDeleteAssertion(asArgs<DeleteAssertionArgs>(args));
+        break;
+
+      case 'enox_query':
+        result = await handleEnoxQuery(asArgs<QueryGraphKnowledgeArgs>(args));
+        break;
+
+      case 'enox_traverse':
+        result = await handleEnoxTraverse(asArgs<EnoxTraverseArgs>(args));
+        break;
+
+      case 'enox_stats':
+        result = await handleEnoxStats();
+        break;
+
+      case 'recent_activity':
+        result = await handleRecentActivity(asArgs<RecentActivityArgs>(args));
+        break;
+
+      case 'update_node':
+        result = await handleUpdateNode(asArgs<EnoxUpdateNodeArgs>(args));
+        break;
+
+      case 'save_document':
+        result = await handleSaveDocument(asArgs<SaveDocumentArgs>(args));
         break;
 
       default:

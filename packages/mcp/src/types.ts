@@ -428,6 +428,84 @@ export interface SupersedeFactArgs {
   new_slug?: string;
 }
 
+// === ENOX ARGS (knowledge graph) ===
+
+export interface EnoxRememberArgs {
+  subject: string;
+  fact: string;
+  domain?: string;
+  confidence?: number;
+  relation?: string;
+}
+
+export interface EnoxRecallArgs {
+  query: string;
+  depth?: number;
+}
+
+export interface EnoxSemanticSearchArgs {
+  query: string;
+  top_k?: number;
+  domain?: string;
+  include_edges?: boolean;
+}
+
+export interface EnoxExploreArgs {
+  entity: string;
+}
+
+export interface EnoxAddAssertionArgs {
+  from: string;
+  relation: string;
+  to: string;
+  context?: string;
+  confidence?: number;
+  domain?: string;
+}
+
+export interface EnoxUpdateAssertionArgs {
+  fact_id: string;
+  context?: string;
+  confidence?: number;
+}
+
+export interface EnoxDeleteAssertionArgs {
+  fact_id: string;
+}
+
+export interface EnoxQueryGraphArgs {
+  type?: string;
+  domain?: string;
+  name?: string;
+  limit?: number;
+}
+
+export interface EnoxTraverseArgs {
+  start: string;
+  direction?: string;
+  edge_types?: string[];
+  max_depth?: number;
+}
+
+export interface EnoxRecentActivityArgs {
+  since?: string;
+  limit?: number;
+}
+
+export interface EnoxUpdateNodeArgs {
+  node_id: string;
+  name?: string;
+  domain?: string;
+  description?: string;
+}
+
+export interface EnoxSaveDocumentArgs {
+  title: string;
+  content: string;
+  doc_type?: string;
+  relates_to?: string[];
+}
+
 // === DESCRIBE ARGS (DSL notation) ===
 
 export interface DescribeArgs {
