@@ -27,12 +27,57 @@ if (!hypothesis) {
   process.exit(1);
 }
 
+const GRAFEMA_SOCKET = `${PROJECT_ROOT}/.grafema/rfdb.sock`;
+
 const tools = [
   {
     type: 'function',
     function: {
+      name: 'graph_find',
+      description: 'Find nodes in the Grafema code graph by name and optional type. Returns node ID, type, file, line. Use this FIRST to locate code entities — much faster and more accurate than grep.',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Entity name to search (partial match)' },
+          type: { type: 'string', description: 'Node type filter: FUNCTION, CLASS, MODULE, STRUCT, VARIABLE, CALL, etc.' },
+        },
+        required: ['name'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'graph_callers',
+      description: 'Find all callers of a function/method. Returns call sites with file:line.',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Function or method name' },
+        },
+        required: ['name'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'graph_file_overview',
+      description: 'Get overview of a file: all functions, classes, imports, exports with line numbers. Use instead of reading entire file.',
+      parameters: {
+        type: 'object',
+        properties: {
+          file: { type: 'string', description: 'File path (relative, e.g. packages/rfdb-server/src/gc.rs)' },
+        },
+        required: ['file'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'read_file',
-      description: 'Read a file from the project. Returns first 200 lines.',
+      description: 'Read raw source code from a file. Use graph_file_overview first to find what you need, then read_file for specific sections.',
       parameters: {
         type: 'object',
         properties: {
@@ -108,9 +153,47 @@ const tools = [
   },
 ];
 
+function graphQuery(cmd, queryArgs) {
+  try {
+    const argsJson = JSON.stringify(queryArgs).replace(/'/g, "'\\''");
+    const script = `
+      const { RFDBServerBackend } = require('${PROJECT_ROOT}/packages/util/dist/index.js');
+      (async () => {
+        const backend = new RFDBServerBackend('${GRAFEMA_SOCKET}');
+        await backend.connect();
+        ${cmd}
+        await backend.close();
+      })().catch(e => { console.error(e.message); process.exit(1); });
+    `;
+    return execSync(`node -e "${script.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`, {
+      encoding: 'utf-8', timeout: 15000, cwd: PROJECT_ROOT,
+    }).trim();
+  } catch (e) {
+    return `Graph query error: ${e.message?.slice(0, 200) || e}`;
+  }
+}
+
 function executeTool(name, args) {
   try {
     switch (name) {
+      case 'graph_find': {
+        const typeFilter = args.type ? `--type ${args.type}` : '';
+        const cmd = `node ${PROJECT_ROOT}/packages/cli/dist/cli.js query "find_nodes(name=\\"${args.name}\\"${args.type ? `, type=\\"${args.type}\\"` : ''})" --project ${PROJECT_ROOT} 2>/dev/null | head -30`;
+        try {
+          return execSync(cmd, { encoding: 'utf-8', timeout: 15000 }).trim() || 'No nodes found';
+        } catch {
+          const grepCmd = `grep -rn "${args.name}" "${PROJECT_ROOT}/packages/" --include="*.rs" --include="*.ts" --include="*.hs" 2>/dev/null | head -15`;
+          return execSync(grepCmd, { encoding: 'utf-8', timeout: 10000 }).trim() || 'No matches';
+        }
+      }
+      case 'graph_callers': {
+        const grepCmd = `grep -rn "${args.name}" "${PROJECT_ROOT}/packages/" --include="*.rs" --include="*.ts" --include="*.hs" 2>/dev/null | grep -v "^.*:.*fn ${args.name}\\|^.*:.*function ${args.name}\\|^.*:.*def ${args.name}" | head -20`;
+        return execSync(grepCmd, { encoding: 'utf-8', timeout: 10000 }).trim() || 'No callers found';
+      }
+      case 'graph_file_overview': {
+        const grepCmd = `grep -n "^pub fn\\|^fn\\|^pub struct\\|^struct\\|^pub enum\\|^enum\\|^pub trait\\|^impl\\|^export function\\|^export class\\|^export const\\|^export interface\\|^export async" "${PROJECT_ROOT}/${args.file}" 2>/dev/null | head -40`;
+        return execSync(grepCmd, { encoding: 'utf-8', timeout: 5000 }).trim() || 'File not found or empty';
+      }
       case 'read_file': {
         const fullPath = `${PROJECT_ROOT}/${args.path}`;
         if (!existsSync(fullPath)) return `File not found: ${args.path}`;
@@ -167,16 +250,24 @@ async function verify() {
     {
       role: 'system',
       content: `/no_think
-You are a software architecture verification agent. Your job is to verify or refute a hypothesis about the Grafema codebase by examining source code.
+You are a software architecture verification agent for the Grafema project (code→graph tool).
 
-You have read-only tools: read_file, grep, find_files, list_dir.
-Use them to find evidence. Then call submit_verdict with your conclusion.
+TOOL PRIORITY (use in this order):
+1. graph_find — find code entities by name (fastest, most accurate)
+2. graph_file_overview — see all functions/structs in a file
+3. grep — text search when graph tools miss
+4. read_file — read specific lines when you know what to look for
+
+After gathering evidence, call submit_verdict.
 
 Rules:
-- ONLY look at code, not documentation or comments
+- Start with graph_find to locate entities, not grep
 - Cite specific file:line as evidence
-- If you can't find evidence after 3 tool calls, submit "unclear"
-- Never guess — only report what you can verify from source`,
+- You have up to 8 tool calls. If still unclear after that, submit "unclear" with what you found so far
+- When graph_file_overview shows functions, use read_file to check specific implementations
+- Never guess — only report what you can verify from source
+- The project root has packages/ with: rfdb-server (Rust), grafema-orchestrator (Rust), cli (TS), mcp (TS), util (TS), js-analyzer (Haskell)
+- IMPORTANT: when looking for a symbol, use grep across ALL packages first (path="packages/"), don't guess which package it's in`,
     },
     {
       role: 'user',
