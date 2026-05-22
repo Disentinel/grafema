@@ -34,7 +34,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{GraphError, Result};
 use crate::storage_v2::compaction::{CompactionConfig, CompactionResult};
 use crate::storage_v2::index::{build_inverted_indexes, GlobalIndex, IndexEntry, InvertedIndex};
-use crate::storage_v2::index::token::{TokenIndex, TokenMatch, tokenize_name};
+use crate::storage_v2::index::token::{TokenIndex, TokenMatch, tokenize_name, tokenize_text};
 use crate::storage_v2::manifest::{ManifestStore, SegmentDescriptor};
 use crate::storage_v2::segment::{self, EdgeSegmentV2, NodeSegmentV2};
 use crate::storage_v2::shard::{Shard, ShardDiagnostics, TombstoneSet};
@@ -757,7 +757,10 @@ impl MultiShardStore {
     ) -> Vec<TokenMatch> {
         let mut all_matches: Vec<TokenMatch> = Vec::new();
         let mut seen_ids: HashSet<u128> = HashSet::new();
-        let query_tokens: HashSet<String> = tokenize_name(query).into_iter().collect();
+        let mut query_tokens: HashSet<String> = tokenize_name(query).into_iter().collect();
+        for t in tokenize_text(query) {
+            query_tokens.insert(t);
+        }
 
         // Search L1 token indexes on each shard
         for shard in &self.shards {
@@ -798,7 +801,10 @@ impl MultiShardStore {
                             continue;
                         }
                     }
-                    let name_tokens: HashSet<String> = tokenize_name(&record.name).into_iter().collect();
+                    let mut name_tokens: HashSet<String> = tokenize_name(&record.name).into_iter().collect();
+                    for t in tokenize_text(&record.name) {
+                        name_tokens.insert(t);
+                    }
                     if name_tokens.is_empty() {
                         continue;
                     }

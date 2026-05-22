@@ -161,6 +161,22 @@ pub fn tokenize_name(name: &str) -> Vec<String> {
         .collect()
 }
 
+/// Split text into lowercase tokens by whitespace and punctuation.
+/// Handles natural language names (knowledge graph entities, sentences).
+/// Single-character and empty tokens are filtered.
+///
+/// ```text
+/// "cross-domain knowledge transfer" -> ["cross", "domain", "knowledge", "transfer"]
+/// "RFDB V2 engine (storage)"        -> ["rfdb", "v2", "engine", "storage"]
+/// ```
+pub fn tokenize_text(text: &str) -> Vec<String> {
+    text.split(|c: char| !c.is_alphanumeric())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_lowercase())
+        .filter(|s| s.len() > 1)
+        .collect()
+}
+
 // ── TokenMatch ─────────────────────────────────────────────────────
 
 /// A fuzzy search result from the token index.
@@ -345,7 +361,10 @@ impl TokenIndex {
     /// 3. Compute Jaccard similarity for each candidate
     /// 4. Filter by `min_score`, sort descending, take top `k`
     pub fn search(&self, query: &str, k: usize, min_score: f32) -> Vec<TokenMatch> {
-        let query_tokens: HashSet<String> = tokenize_name(query).into_iter().collect();
+        let mut query_tokens: HashSet<String> = tokenize_name(query).into_iter().collect();
+        for t in tokenize_text(query) {
+            query_tokens.insert(t);
+        }
         if query_tokens.is_empty() {
             return Vec::new();
         }
@@ -364,7 +383,10 @@ impl TokenIndex {
         let mut matches: Vec<TokenMatch> = Vec::new();
         for idx in candidate_indices {
             let (node_id, ref name) = self.names[idx];
-            let name_tokens: HashSet<String> = tokenize_name(name).into_iter().collect();
+            let mut name_tokens: HashSet<String> = tokenize_name(name).into_iter().collect();
+            for t in tokenize_text(name) {
+                name_tokens.insert(t);
+            }
 
             let intersection = query_tokens.intersection(&name_tokens).count();
             let union = query_tokens.union(&name_tokens).count();
@@ -438,8 +460,10 @@ pub fn build_token_index(
     let mut token_to_indices: HashMap<String, Vec<usize>> = HashMap::new();
 
     for (i, (_node_id, name)) in names.iter().enumerate() {
-        let tokens = tokenize_name(name);
-        for token in tokens {
+        for token in tokenize_name(name) {
+            token_to_indices.entry(token).or_default().push(i);
+        }
+        for token in tokenize_text(name) {
             token_to_indices.entry(token).or_default().push(i);
         }
     }
