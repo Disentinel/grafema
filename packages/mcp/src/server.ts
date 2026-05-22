@@ -67,11 +67,6 @@ import {
   handleGetNode,
   handleGetNeighbors,
   handleTraverseGraph,
-  handleAddKnowledge,
-  handleQueryKnowledge,
-  handleQueryDecisions,
-  handleSupersedeFact,
-  handleGetKnowledgeStats,
   // Disabled: requires git-ingest (US-17). See US-17 in AI-AGENT-STORIES.md
   // handleGitChurn,
   // handleGitCoChange,
@@ -125,10 +120,6 @@ import type {
   GetNodeArgs,
   GetNeighborsArgs,
   TraverseGraphArgs,
-  AddKnowledgeArgs,
-  QueryKnowledgeArgs,
-  QueryDecisionsArgs,
-  SupersedeFactArgs,
   // Disabled: requires git-ingest (US-17). See US-17 in AI-AGENT-STORIES.md
   // GitChurnArgs,
   // GitCoChangeArgs,
@@ -383,26 +374,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
 
       case 'traverse_graph':
         result = await handleTraverseGraph(asArgs<TraverseGraphArgs>(args));
-        break;
-
-      case 'add_knowledge':
-        result = await handleAddKnowledge(asArgs<AddKnowledgeArgs>(args));
-        break;
-
-      case 'query_knowledge':
-        result = await handleQueryKnowledge(asArgs<QueryKnowledgeArgs>(args));
-        break;
-
-      case 'query_decisions':
-        result = await handleQueryDecisions(asArgs<QueryDecisionsArgs>(args));
-        break;
-
-      case 'supersede_fact':
-        result = await handleSupersedeFact(asArgs<SupersedeFactArgs>(args));
-        break;
-
-      case 'get_knowledge_stats':
-        result = await handleGetKnowledgeStats();
         break;
 
       // Disabled: requires git-ingest (US-17). See US-17 in AI-AGENT-STORIES.md
