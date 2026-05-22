@@ -1,0 +1,35 @@
+{
+  "queue": [
+    {"entity": "WriteBuffer", "context": "Rust module in rfdb-server/src/storage_v2/write_buffer.rs. In-memory append buffer for new nodes/edges before compaction to L0 segments. Unsorted, scanned linearly for queries.", "depth": 3, "status": "inbox"},
+    {"entity": "SegmentWriter", "context": "Rust module in rfdb-server/src/storage_v2/writer.rs. Serializes nodes/edges into immutable columnar segment files (.seg). Builds bloom filters, zone maps, string tables during write.", "depth": 3, "status": "inbox"},
+    {"entity": "NodeSegmentV2", "context": "Rust struct in rfdb-server/src/storage_v2/segment.rs. Represents an immutable columnar segment of node records. Memory-mapped, zero-copy reads. Contains bloom filter for key lookup, zone maps for field filtering.", "depth": 3, "status": "inbox"},
+    {"entity": "ResourceManager", "context": "Rust module in rfdb-server/src/storage_v2/resource.rs. Auto-tunes shard count and memory limits based on system RAM and CPU. Called during database creation.", "depth": 3, "status": "inbox"},
+    {"entity": "DatabaseManager", "context": "Rust struct in rfdb-server/src/database_manager.rs. Manages multiple isolated RFDB databases per server process. Create/open/drop/list databases. Thread-safe via RwLock<HashMap>. File locking for exclusive access.", "depth": 2, "status": "inbox"},
+    {"entity": "behaviorEnricher", "context": "TypeScript enricher in packages/util/src/enrichers/behaviorEnricher.ts. Creates L3 BEHAVIOR nodes and SHARES_BEHAVIOR_WITH edges. Groups functions by shared call patterns. BFS on CALLS edges.", "depth": 3, "status": "inbox"},
+    {"entity": "contractEnricher", "context": "TypeScript enricher in packages/util/src/enrichers/contractEnricher.ts. Creates CONTRACT nodes (inputs/outputs/errors) per FEATURE. Reads FEATURE nodes from compactionEnricher output.", "depth": 3, "status": "inbox"},
+    {"entity": "libraryCallbackEnricher", "context": "TypeScript enricher reading effects-db YAML. Creates domain nodes (cli:command, mcp:tool, http:route) from library callback patterns (Express, Commander, MCP SDK). Traces callback chains.", "depth": 3, "status": "inbox"},
+    {"entity": "Haskell Walker", "context": "Haskell module in packages/js-analyzer/src/Analysis/Walker.hs. 864 child nodes in code graph — largest single Haskell module. Walks OXC AST and emits nodes/edges. Core of JS/TS analysis.", "depth": 3, "status": "inbox"},
+    {"entity": "Haskell Expressions Rules", "context": "Haskell module in packages/js-analyzer/src/Rules/Expressions.hs. Handles expression-level AST analysis: function calls, member access, assignments, binary operations. Emits CALL, PROPERTY_ACCESS, ASSIGNED_FROM nodes.", "depth": 3, "status": "inbox"},
+    {"entity": "grafema-common Protocol", "context": "Haskell module in packages/grafema-common/src/Grafema/Protocol.hs. Shared wire protocol between all Haskell analyzers and orchestrator. JSON serialization of FileAnalysis (nodes + edges per file).", "depth": 3, "status": "inbox"},
+    {"entity": "config.rs", "context": "Rust module in grafema-orchestrator/src/config.rs. Loads .grafema/config.yaml, discovers workspace packages, resolves binary paths, partitions files by language. Central configuration hub.", "depth": 3, "status": "inbox"}
+  ],
+  "processed": [
+    "rfdb-server", "grafema-orchestrator", "grafema-cli", "grafema-mcp-server",
+    "@grafema/util", "grafema-vs-code-extension", "grafema-gui", "@grafema/api",
+    "effects-database", "grafema-enrichment-pipeline", "grafema-guarantees-system",
+    "grafema-manifest-system", "haskell-analyzer-architecture", "grafema-language-support-matrix",
+    "grafema-binary-distribution", "grafema-architecture-pattern",
+    "analyzer-resolver-pair-convention", "three-phase-pipeline-convention",
+    "rfdb-storage-engine-v2", "rfdb-datalog-engine", "rfdb-http-websocket-server",
+    "rfdb-sa-layout-engine", "compactionEnricher", "OXC-parser-integration",
+    "GenerationTracker", "ShardPlanner", "ManifestStore"
+  ],
+  "stats": {
+    "total_processed": 27,
+    "total_in_queue": 12,
+    "confirmed": 14,
+    "refuted": 3,
+    "unclear": 8,
+    "gaps": 2
+  }
+}
