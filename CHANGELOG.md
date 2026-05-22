@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Features
+
+- feat(cli): `grafema upgrade` command — clean stale artifacts from `~/.grafema/bin/` and upgrade binaries to current version. Supports `--all`, `--lang`, `--project`, `--dry-run` flags.
+
 ## [0.3.23] - 2026-04-01
 
 ### Highlights

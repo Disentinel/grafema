@@ -154,6 +154,7 @@ JS/TS is the primary language with full dataflow support. Each language uses its
 | `grafema analyze` | | Build/rebuild the code graph (`--quickstart` for zero-config) |
 | `grafema check` | "Are my rules still satisfied?" | Run architectural guarantees, exit 1 on violations |
 | `grafema doctor` | | Check system health |
+| `grafema upgrade` | | Clean stale artifacts and upgrade binaries |
 | `grafema overview` | | High-level project stats |
 
 ## VS Code Extension

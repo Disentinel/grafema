@@ -55,7 +55,7 @@ Honest list of what works, what doesn't, and when we plan to fix it.
 
 ## Binary Delivery
 
-- **Haskell analyzers** — not included in `npm install`. Lazy-downloaded on first use to `~/.grafema/bin/`. Version-checked and re-downloaded when stale (since v0.3.15).
+- **Haskell analyzers** — not included in `npm install`. Lazy-downloaded on first use to `~/.grafema/bin/`. Version-checked and re-downloaded when stale (since v0.3.15). Run `grafema upgrade` to clean stale artifacts and force-refresh all binaries.
 
 ## MCP Server
 

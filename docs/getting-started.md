@@ -144,3 +144,7 @@ Grafema currently requires a `package.json`. Run `npm init -y` to create one.
 
 **Binaries not found**
 Run `grafema doctor` to check which binaries are available and where they're expected.
+Run `grafema upgrade` to clean stale artifacts and download fresh binaries.
+
+**Upgrading from an older version**
+Run `grafema upgrade` to remove stale binaries from `~/.grafema/bin/` and download the current versions. Use `grafema upgrade --lang js,python` to install only specific language analyzers.

@@ -46,7 +46,7 @@ The unified `grafema` package includes CLI, MCP server, and platform-specific bi
 - `@grafema/grafema-darwin-x64` — macOS Intel binaries (optional dep)
 - `@grafema/grafema-linux-x64` — Linux x64 binaries (optional dep)
 
-Haskell analyzers (JS/TS, Rust, Java, etc.) are downloaded on first use to `~/.grafema/bin/`.
+Haskell analyzers (JS/TS, Rust, Java, etc.) are downloaded on first use to `~/.grafema/bin/`. Users can run `grafema upgrade` to clean stale artifacts and force-refresh all binaries.
 
 ## Quick Start
 
@@ -118,6 +118,9 @@ When prompted, add entry to `CHANGELOG.md`:
 ```bash
 # Verify
 npx grafema@latest --version
+
+# Upgrade binaries on local machine
+grafema upgrade
 
 # Update Linear issues
 # Announce release
