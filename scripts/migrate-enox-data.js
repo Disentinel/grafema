@@ -15,7 +15,7 @@
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { createHash } from 'crypto';
-import { RFDBClient } from '@grafema/rfdb-client/client';
+import { RFDBClient } from '../packages/rfdb/dist/client.js';
 
 const args = process.argv.slice(2);
 const dataDir = args[0];
