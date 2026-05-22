@@ -183,8 +183,9 @@ async function ensureEntity(
 
 export interface RememberArgs {
   subject: string;
-  content: string;
+  fact: string;
   domain?: string;
+  confidence?: number;
   relation?: string;
 }
 
@@ -199,7 +200,7 @@ export async function handleRemember(args: RememberArgs): Promise<ToolResult> {
 
     // Create fact node
     const factId = createHash('sha256')
-      .update(`${subjectId}|${args.content}|${Date.now()}`)
+      .update(`${subjectId}|${args.fact}|${Date.now()}`)
       .digest('hex')
       .slice(0, 16);
     const factNodeId = `fact:${factId}`;
@@ -207,11 +208,11 @@ export async function handleRemember(args: RememberArgs): Promise<ToolResult> {
     await client.addNodes([{
       id: factNodeId,
       nodeType: 'FACT' as WireNode['nodeType'],
-      name: args.content.slice(0, 120),
+      name: args.fact.slice(0, 120),
       file: domain,
       exported: false,
       metadata: JSON.stringify({
-        content: args.content,
+        content: args.fact,
         domain,
         created_at: nowISO(),
       }),
