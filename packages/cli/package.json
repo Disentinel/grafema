@@ -1,6 +1,6 @@
 {
   "name": "@grafema/cli",
-  "version": "0.3.24",
+  "version": "0.3.25",
   "description": "CLI for Grafema code analysis toolkit",
   "type": "module",
   "main": "./dist/cli.js",
