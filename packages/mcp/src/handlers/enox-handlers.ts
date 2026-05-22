@@ -142,13 +142,29 @@ async function collectNodes(client: RFDBClient, query: AttrQuery): Promise<WireN
 
 async function findNodeByName(client: RFDBClient, name: string): Promise<WireNode | null> {
   const key = normalizeKey(name);
-  // Try exact match first
+
+  // Try exact match on normalized key
   const exact = await collectNodes(client, { name: key });
   if (exact.length > 0) return exact[0];
 
-  // Substring fallback
-  const fuzzy = await collectNodes(client, { name: key, substringMatch: true });
-  return fuzzy.length > 0 ? fuzzy[0] : null;
+  // Try original name (might have dashes/underscores)
+  if (name !== key) {
+    const orig = await collectNodes(client, { name: name.toLowerCase() });
+    if (orig.length > 0) return orig[0];
+  }
+
+  // Substring fallback — try each word
+  const words = key.split(' ').filter(w => w.length > 2);
+  for (const word of words) {
+    const matches = await collectNodes(client, { name: word, substringMatch: true });
+    if (matches.length > 0) {
+      // Pick the best match (shortest name = most specific)
+      matches.sort((a, b) => a.name.length - b.name.length);
+      return matches[0];
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -255,11 +271,26 @@ export async function handleRecall(args: RecallArgs): Promise<ToolResult> {
     const client = await getKnowledgeClient();
     const depth = args.depth ?? 2;
 
-    // Find entity by substring match
-    const nodes = await collectNodes(client, {
+    // Find entities: try full query first, then individual words
+    let nodes = await collectNodes(client, {
       name: args.query.toLowerCase(),
       substringMatch: true,
     });
+
+    if (nodes.length === 0) {
+      const words = args.query.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+      const seen = new Set<string>();
+      for (const word of words.sort((a, b) => b.length - a.length)) {
+        const matches = await collectNodes(client, { name: word, substringMatch: true });
+        for (const m of matches) {
+          if (!seen.has(m.id) && m.nodeType !== 'NPM_SYMBOL' && m.nodeType !== 'NPM_PACKAGE') {
+            seen.add(m.id);
+            nodes.push(m);
+          }
+        }
+        if (nodes.length >= 10) break;
+      }
+    }
 
     if (nodes.length === 0) {
       return textResult(`No knowledge found for "${args.query}".`);
