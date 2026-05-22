@@ -64,14 +64,23 @@ One per line, no numbering, no extra text.`,
 }
 
 async function verifyHypothesis(hypothesis) {
+  const useHaiku = process.env.VERIFY_WITH_HAIKU === '1' || VERIFY_MODEL === 'haiku';
   try {
-    const result = execSync(
-      `node ${PROJECT_ROOT}/scripts/crawl-verify.js ${JSON.stringify(hypothesis)} --model ${VERIFY_MODEL}`,
-      { encoding: 'utf-8', timeout: 180000, stdio: ['pipe', 'pipe', 'pipe'] }
-    );
+    let result;
+    if (useHaiku) {
+      result = execSync(
+        `${PROJECT_ROOT}/scripts/crawl-verify-haiku.sh ${JSON.stringify(hypothesis)}`,
+        { encoding: 'utf-8', timeout: 60000, stdio: ['pipe', 'pipe', 'pipe'] }
+      );
+    } else {
+      result = execSync(
+        `node ${PROJECT_ROOT}/scripts/crawl-verify.js ${JSON.stringify(hypothesis)} --model ${VERIFY_MODEL}`,
+        { encoding: 'utf-8', timeout: 180000, stdio: ['pipe', 'pipe', 'pipe'] }
+      );
+    }
     return JSON.parse(result.trim());
   } catch (e) {
-    return { verdict: 'unclear', evidence: `Verification failed: ${e.message}`, confidence: 0 };
+    return { verdict: 'unclear', evidence: `Verification failed: ${e.message?.slice(0, 200)}`, confidence: 0 };
   }
 }
 
