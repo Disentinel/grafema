@@ -29,6 +29,20 @@ If reading code gives better results than querying Grafema — that's a product 
 
 **AI-first tool:** Every function must be documented for LLM-based agents. UX is designed for agents, not just humans.
 
+## Thinking Disciplines
+
+Fundamental skills that shape how you reason about this project. Not optional — these are load-bearing cognitive tools.
+
+- **Reflection-in-and-on-action** (`.claude/skills/reflection-in-and-on-action.md`) — mid-turn self-correction. Triggers: 2nd patch attempt at same problem, user pushback, "I think that..." without evidence, about to report "done", >2× expected time. Fire DURING the turn, not after.
+
+- **Thinking Algebra** (`.claude/skills/thinking-algebra.md`) — audit your own reasoning. What filters did you apply? What did you discard? What alternative operations would yield different insight? Activate on "алгебра мышления", "какие фильтры", "смени перспективу".
+
+- **Ontological Crawler** (`.claude/skills/ontological-crawler.md`) — formalized curiosity for knowledge graph construction. "Why does this exist?" and "What breaks if we remove it?" For onboarding, postmortems, mapping unfamiliar systems.
+
+- **Theorist Mode** (`.claude/skills/theorist-mode.md`) — formal foundations context. Abstract interpretation, type theory, cognitive science, multi-language strategy. Activate for academic/formal discussions.
+
+- **Break New Abstractions** (`.claude/skills/break-new-abstractions.md`) — before publishing any new typology, dichotomy, or taxonomy: deliberately try to break it. Sample ≥10 cases. 2+ doesn't-fit = missing class.
+
 ## Evidence Rule
 
 **Every assertion about code / graph / API shape / "already implemented" MUST carry evidence:**
@@ -39,8 +53,6 @@ If reading code gives better results than querying Grafema — that's a product 
 - (e) commit SHA where the claim was proven true
 
 **"Likely", "usually", "follows pattern X", "probably works" — NOT evidence.** Assertion without evidence = UNCLEAR = don't trust it. For graph-shape claims, evidence MUST be a live query on the target RFDB — grepping analyzer source is not sufficient.
-
-This applies to: plans, verification reports, implementation claims, Dijkstra tables.
 
 ## Gap Discovery Protocol
 
@@ -69,7 +81,7 @@ A gap means the product is failing its core thesis. Do not silently fall back to
 ## Enox Long-Term Memory
 
 Enox (`mcp__enox__*`) is a persistent knowledge graph shared across sessions.
-Query it before run explore agents. Save data once you have findings with evidence. Save observations, if you see pattern - save it is mandatory.
+Query it before running explore agents. Save data once you have findings with evidence. Save observations — if you see a pattern, save it.
 
 ## Forbidden Patterns
 
@@ -86,24 +98,13 @@ Query it before run explore agents. Save data once you have findings with eviden
 - Quick fixes or workarounds
 - Guessing when you can ask
 
-## Local Setup (fresh clone)
-
-`.grafema/orchestrator.config.yaml` is gitignored. Without it, `compaction-enricher`
-is skipped and city map shows only raw edges (synthesized flow types = 0).
-
-```bash
-cp _ai/orchestrator.config.example.yaml .grafema/orchestrator.config.yaml
-sed -i '' "s|<GRAFEMA_ROOT>|$(pwd)|g" .grafema/orchestrator.config.yaml
-```
-
-Then run `grafema analyze`. See `_ai/orchestrator.config.example.yaml` for comments
-on `depends_on` and include/exclude tuning.
-
 ## Reference (read when relevant)
 
-- **Workflow & review protocol:** `_ai/workflow.md`, `_ai/agent-personas.md`
-- **Git worktrees:** `_ai/worktrees.md` — worker slots `grafema-worker-1` through `grafema-worker-8`
+- **Local setup:** `_ai/onboarding/` — fresh clone setup, orchestrator config
+- **Release:** `.claude/skills/grafema-release/` — release procedure, binaries, npm publish
+- **Workflow & review:** `_ai/workflow.md`, `_ai/agent-personas.md`
 - **Dogfooding:** `_ai/dogfooding.md` — graph-first exploration, MCP tool routing
-- **Performance profiling:** `_ai/profiling-guide.md`
-- **Linear teams:** `REG-*` → Reginaflow, `RFD-*` → RFDB. Project: Grafema. Labels required.
-- **Skills:** `.claude/skills/` — `/release`, `/gap-loop`, and others
+- **Performance:** `_ai/profiling-guide.md`
+- **Git worktrees:** `_ai/worktrees.md` — worker slots `grafema-worker-1` through `grafema-worker-8`
+- **Linear:** `REG-*` → Reginaflow, `RFD-*` → RFDB. Project: Grafema. Labels required.
+- **Skills:** `.claude/skills/` — `/release`, `/gap-loop`, `/verify`, `/upgrade` and others
