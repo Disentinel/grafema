@@ -49,6 +49,12 @@ Status: `inbox` → `in_progress` → `done` | `deferred`
 Depth tracks BFS level. Higher depth = more peripheral. Human decides
 when to stop — there is no algorithmic cutoff.
 
+Storage: `.grafema/crawl-backlog.json`. Persists across sessions.
+
+Auto-discovery: when a verified finding mentions an entity not already
+in the backlog or graph, push it automatically. This keeps the backlog
+growing organically from verified knowledge without manual curation.
+
 When to defer:
 - Entity is peripheral (high depth, low fan-in from known entities)
 - Verification sources exhausted without resolution but blast radius is low
@@ -58,8 +64,6 @@ When to defer:
 Deferred is not deleted. Periodically review deferred items — context
 from later processing may make them resolvable or reveal them as important.
 
-Storage: JSON files in a directory. No database needed.
-
 Operations: `push` (new entity), `pop` (take next), `defer` (skip for now).
 
 ## The Core Cycle
@@ -68,13 +72,15 @@ For each entity popped from the backlog:
 
 ### Step 1: Recall
 
-Search the graph for what is already known.
+**MANDATORY before hypothesis generation.** Query the knowledge graph
+for existing facts about this entity and its neighborhood.
 
 - Semantic search: is this entity or something similar already present?
 - If match found: consider merge or linking rather than creating new
 - If related entities exist: load them as context for hypothesis generation
-
-Read `references/recall.md` for detailed recall procedures.
+- Include all existing facts in the generation prompt — this prevents
+  duplicate hypotheses and enables incremental deepening instead of
+  re-discovering what is already known
 
 ### Step 2: Hypothesize
 
@@ -105,7 +111,18 @@ Each perspective generates specific testable hypotheses:
 "This imports Redis → it depends on a Redis instance"
 "This hasn't changed in 8 months but has fan-out 200 → suppressed volatility"
 
-Read `references/perspectives.md` for perspective catalog and hypothesis templates.
+When existing facts are available from Recall, generate hypotheses that
+**extend or challenge** existing knowledge, not repeat it. If we already
+know X depends on Redis, hypothesize about the nature of that dependency
+(caching? persistence? pubsub?) rather than re-discovering the link.
+
+Entity-specific prompts beat generic type templates. Instead of "generate
+hypotheses for a service", use "generate hypotheses for payment-service
+which is known to depend on Redis and be owned by team-checkout".
+
+Include `file:line` references from code graph (via `find_nodes`) in the
+prompt for grounding. Concrete source locations produce more precise and
+verifiable hypotheses than abstract descriptions.
 
 ### Step 3: Verify
 
@@ -124,7 +141,14 @@ Verification must produce evidence, not just a yes/no.
 "Confirmed: payment-service depends on Redis. Evidence: `import redis`
 in src/payment/cache.py, line 14. Last modified 2024-01-20."
 
-Read `references/verification.md` for source-specific verification procedures.
+Prefer graph-assisted verification (`find_nodes`, `get_file_overview`,
+`find_calls`, `trace_dataflow`) over raw grep. Graph tools are faster,
+more accurate, and follow aliases/re-exports that text search misses.
+
+For batch verification without `tool_use` (e.g., Ollama or batch API),
+pre-compute richer context per hypothesis: `file_overview` + function
+signatures + neighbor nodes, not just grep snippets. Richer context
+dramatically improves verification accuracy for non-tool-using models.
 
 ### Step 4: Classify
 
@@ -138,8 +162,6 @@ Each hypothesis after verification receives one of four classifications:
   dependency, an architectural surprise.
 - **Serendipitous** — found something unrelated but potentially valuable.
   New entity pushed to backlog for later processing.
-
-Read `references/classification.md` for classification decision tree.
 
 ### Step 5: Update Graph
 
@@ -155,6 +177,12 @@ Based on classification:
 - Serendipitous → push new entities to backlog.
 
 New entities discovered during verification → push to backlog.
+
+**Merge-on-record:** Before creating a new entity, search for existing
+similar entities via substring match (semantic_search or query_graph
+with partial name). If a matching entity is found, add edges to the
+existing entity rather than creating a duplicate. Duplicates fragment
+the graph and dilute fan-in/fan-out signals.
 
 ### Step 6: Meta-checks
 
@@ -175,8 +203,6 @@ the same edge? If yes — high confidence. If only one perspective
 predicted it — lower confidence, consider seeking second verification
 source. When possible, use different models for generation vs verification
 to ensure true independence.
-
-Read `references/meta-checks.md` for detailed procedures.
 
 ## Meta-Processes
 
@@ -446,13 +472,9 @@ This skill is subject to its own method. Ask:
 
 If you find gaps, extend the skill. It should grow through use.
 
-## Reference Files
+## Scripts
 
-Read these as needed, not upfront:
-
-- `references/perspectives.md` — catalog of perspectives with hypothesis templates
-- `references/verification.md` — source-specific verification procedures
-- `references/classification.md` — classification decision tree with examples
-- `references/meta-checks.md` — saturation, analogy, and triangulation procedures
-- `references/fragility-patterns.md` — detailed taxonomy of fragility types
-- `references/postmortem-protocol.md` — specific workflow for postmortem analysis
+- `crawl-v2.js` — main crawl loop (pop backlog, generate, verify, record)
+- `crawl-verify.js` — verification via Ollama (local, free, lower accuracy)
+- `crawl-verify-api.js` — verification via Haiku API (tool_use, higher accuracy)
+- `crawl-batch.js` — batch API verification (50% discount, parallel processing)
