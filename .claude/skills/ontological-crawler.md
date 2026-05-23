@@ -325,11 +325,97 @@ Human is oracle and immune regulator, not bottleneck.
 If escalation queue grows faster than human processes it:
 raise confidence threshold, defer more, focus on high-impact items.
 
+## Execution Tiers
+
+Not all crawl work costs the same. Match the tool to the task.
+
+### Tier 1: Local LLM (Ollama) — continuous, free
+- Hypothesis generation (creative, tolerates noise)
+- Entity description enrichment
+- Running overnight / unattended
+- Model: qwen3.6:35b for generation, qwen3:4b for classification
+- Speed: ~5 min/entity, 12 entities/hour
+- Requires: `/no_think` prefix, `num_predict: 4000+`
+- Limitation: verification accuracy ~35% (too speculative on DEP/FRAGILE)
+
+### Tier 2: Haiku API — fast, cheap ($0.02/entity)
+- Verification with native tool_use (grep, read, file_overview)
+- Batch API for mass crawl (50% discount, parallel processing)
+- Speed: ~30s/entity, 120 entities/hour
+- Best for: CONCEPT and PATTERN hypotheses (high confirmation rate)
+
+### Tier 3: Claude (this session) — precise, expensive
+- Manual crawl with full context
+- Architectural decisions, cross-entity analysis
+- Subagent delegation for parallel exploration
+- Best for: first pass, meta-analysis, actionable perspective
+
+### Recommended split:
+- **Generation**: Ollama 35b (free, continuous) OR Haiku (fast, cheap)
+- **Verification**: Haiku API with tools (accurate, fast)
+- **Recording + meta-analysis**: Claude orchestrates, writes to graph
+- **Overnight enrichment**: Ollama-only loop with JSONL output
+
+## Persistence Protocol
+
+**JSONL first, graph second.** All findings write to append-only JSONL
+before RFDB. If database crashes, JSONL survives for replay.
+
+File: `.grafema/crawl-findings.jsonl`
+Format: one JSON per line:
+```json
+{"entity":"X","type":"DEP","hypothesis":"...","verdict":"confirmed","evidence":"file:line","confidence":0.9,"timestamp":"ISO"}
+```
+
+Batch sizes: ≤50 nodes/edges per RFDB write. Larger batches can
+timeout and crash the server.
+
+Backup sources (recovery priority):
+1. `.grafema/crawl-findings.jsonl` — write-ahead log
+2. `/tmp/crawl-*.jsonl` — session crawl outputs
+3. Subagent output files — contain full MCP call history
+4. This conversation context — manual replay
+
+## Actionable Perspective
+
+Every finding belongs to one of three actionable states:
+
+- **domain=architecture** — confirmed knowledge, no action needed
+- **domain=anomalies** — OPEN item requiring action or mitigation
+- **domain=questions** — UNRESOLVED hypothesis needing investigation
+
+Query for TODO list: `enox_query(domain="anomalies")` returns all open items.
+An anomaly with an incoming `enables` edge = partially mitigated.
+An anomaly with no mitigation edges = fully open, highest priority.
+
+### Convention → Rule → Guarantee lifecycle:
+1. Convention detected (frequency >80%) → recorded as FACT
+2. Convention → proposed Datalog rule → recorded as UNENFORCED entity
+3. Rule implemented in `.grafema/guarantees.yaml` → ENFORCED
+4. `grafema check` validates → CI gate
+
+### Git as connector (not storage):
+Commit SHAs as dangling edge targets, resolved from git on-the-fly.
+Aggregates (bus factor, churn) cached as FACT with staleness timestamp.
+Don't store COMMIT nodes in RFDB — git is the canonical source.
+
 ## Lessons Learned
 
 This section grows through use. Each entry is a failure mode discovered
 during real application of the method. Add new ones as they emerge.
 
+- **Data loss from rm -rf**: 2026-05-23 incident. Deleted knowledge.rfdb
+  to "fix" a load error. Lost 120+ entities. Root cause: RFDB non-default
+  databases need explicit `openDatabase`, not auto-load. ALWAYS backup
+  before destructive action. See skill `backup-before-mass-updates`.
+- **Batch size kills server**: 5000+ edges in one batch timed out and
+  crashed RFDB. Cap at 50 per batch.
+- **LLM speculation on fragility**: Ollama generates plausible but wrong
+  DEP/FRAGILE hypotheses (~30% confirmation rate). Better for CONCEPT/PATTERN
+  (~60%+ rate). Use code tools for factual verification, LLM for
+  conceptual classification.
+- **Subagent outputs as backup**: Subagent JSONL transcripts contain full
+  MCP tool call history with arguments. Recoverable data source.
 - **Graph for graph's sake**: every edge must serve detection or understanding.
   If you can't explain why an edge matters, don't add it. The graph
   self-cleanup mechanism (see Graph Self-Cleanup) enforces this
