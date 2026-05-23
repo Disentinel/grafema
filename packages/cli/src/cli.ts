@@ -39,6 +39,7 @@ import { featuresCommand } from './commands/features.js';
 import { exportCommand } from './commands/export.js';
 import { startCommand, stopCommand } from './commands/start.js';
 import { upgradeCommand } from './commands/upgrade.js';
+import { crawlCommand } from './commands/crawl.js';
 
 // Read version from package.json
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -89,5 +90,6 @@ program.addCommand(gitIngestCommand);
 program.addCommand(registryCommand);
 program.addCommand(featuresCommand);
 program.addCommand(exportCommand);
+program.addCommand(crawlCommand);
 
 program.parse();
