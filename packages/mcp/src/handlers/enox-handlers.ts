@@ -912,7 +912,138 @@ export async function handleUpdateNode(args: UpdateNodeArgs): Promise<ToolResult
 }
 
 // ---------------------------------------------------------------------------
-// 13. handleSaveDocument
+// 13. handleCrawlEntity
+// ---------------------------------------------------------------------------
+
+export interface CrawlEntityArgs {
+  entity: string;
+  context?: string;
+  depth?: number;
+}
+
+/**
+ * Lightweight ontological crawl: query the code graph for an entity,
+ * generate graph-derived facts, and record them in the knowledge DB.
+ *
+ * No LLM, no child processes — pure graph introspection.
+ */
+export async function handleCrawlEntity(args: CrawlEntityArgs): Promise<ToolResult> {
+  try {
+    const knowledgeClient = await getKnowledgeClient();
+    const depth = args.depth ?? 3;
+
+    // 1. Recall: check knowledge DB for existing facts
+    const existingNodes = await collectNodes(knowledgeClient, {
+      name: args.entity.toLowerCase(),
+      substringMatch: true,
+    });
+
+    const existingFacts: string[] = [];
+    for (const node of existingNodes.slice(0, 10)) {
+      const meta = parseMeta(node);
+      if (meta.content) existingFacts.push(String(meta.content));
+    }
+
+    // 2. Code graph scan: connect to default DB and find the entity
+    const socketPath = deriveSocketPath();
+    const codeClient = new RFDBClient(socketPath, 'crawl-entity');
+    await codeClient.connect();
+    await codeClient.hello();
+
+    const codeNodes = await collectNodes(codeClient, { name: args.entity, substringMatch: true });
+
+    if (codeNodes.length === 0) {
+      await codeClient.close();
+      return textResult(
+        `No code entity found matching "${args.entity}".\n` +
+        (existingFacts.length > 0
+          ? `\nExisting knowledge (${existingFacts.length} facts):\n${existingFacts.map(f => `  - ${f}`).join('\n')}`
+          : 'No existing knowledge either.')
+      );
+    }
+
+    // 3. Generate graph-derived facts for each matched node
+    const facts: string[] = [];
+    const processedNodes = codeNodes.slice(0, depth);
+
+    for (const node of processedNodes) {
+      const outgoing = await codeClient.getOutgoingEdges(node.id);
+      const incoming = await codeClient.getIncomingEdges(node.id);
+
+      facts.push(`${node.name} is a ${node.nodeType} in file ${node.file}`);
+
+      if (outgoing.length > 0 || incoming.length > 0) {
+        facts.push(`${node.name} has ${outgoing.length} outgoing and ${incoming.length} incoming edges`);
+      }
+
+      // Callers (incoming CALLS edges)
+      const callers: string[] = [];
+      for (const edge of incoming) {
+        if (edge.edgeType === 'CALLS' || edge.edgeType === 'INVOKES') {
+          const src = await codeClient.getNode(edge.src);
+          if (src) callers.push(src.name);
+        }
+      }
+      if (callers.length > 0) {
+        facts.push(`${node.name} is called by: ${callers.slice(0, 10).join(', ')}${callers.length > 10 ? ` (+${callers.length - 10} more)` : ''}`);
+      }
+
+      // Children (outgoing CONTAINS edges)
+      const children: string[] = [];
+      for (const edge of outgoing) {
+        if (edge.edgeType === 'CONTAINS' || edge.edgeType === 'HAS_MEMBER') {
+          const dst = await codeClient.getNode(edge.dst);
+          if (dst) children.push(`${dst.name} (${dst.nodeType})`);
+        }
+      }
+      if (children.length > 0) {
+        facts.push(`${node.name} contains ${children.length} members: ${children.slice(0, 10).join(', ')}${children.length > 10 ? ` (+${children.length - 10} more)` : ''}`);
+      }
+
+      // Callees (outgoing CALLS edges)
+      const callees: string[] = [];
+      for (const edge of outgoing) {
+        if (edge.edgeType === 'CALLS' || edge.edgeType === 'INVOKES') {
+          const dst = await codeClient.getNode(edge.dst);
+          if (dst) callees.push(dst.name);
+        }
+      }
+      if (callees.length > 0) {
+        facts.push(`${node.name} calls: ${callees.slice(0, 10).join(', ')}${callees.length > 10 ? ` (+${callees.length - 10} more)` : ''}`);
+      }
+    }
+
+    await codeClient.close();
+
+    // 4. Return facts as context (NOT recorded — graph-derived data
+    //    is already in code graph, recording duplicates it)
+    //    Use remember() or add_assertion() to record interpretations.
+    const lines: string[] = [
+      `## Crawl: ${args.entity}`,
+      `Code graph matches: ${codeNodes.length}`,
+      `Facts generated: ${facts.length}`,
+      `Existing knowledge: ${existingFacts.length} fact(s)`,
+      '',
+      '### Graph-derived facts:',
+      ...facts.map(f => `  - ${f}`),
+    ];
+
+    if (existingFacts.length > 0) {
+      lines.push('', '### Prior knowledge:');
+      for (const f of existingFacts.slice(0, 10)) {
+        lines.push(`  - ${f}`);
+      }
+    }
+
+    return textResult(lines.join('\n'));
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return errorResult(`Failed to crawl entity: ${msg}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 14. handleSaveDocument
 // ---------------------------------------------------------------------------
 
 export interface SaveDocumentArgs {
