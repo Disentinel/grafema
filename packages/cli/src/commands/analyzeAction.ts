@@ -284,9 +284,12 @@ export async function analyzeAction(path: string, options: { service?: string; e
 
   const startTime = Date.now();
 
-  // Lean 4 project detection — uses Lean-specific pipeline instead of orchestrator
-  const isLeanProject = existsSync(join(projectPath, 'lakefile.lean')) ||
-                        existsSync(join(projectPath, 'lakefile.toml'));
+  // Lean 4 project detection — uses Lean-specific pipeline instead of orchestrator.
+  // Only triggers for pure Lean projects (lakefile present AND no JS/TS config).
+  // Mixed-language projects with both lakefile.lean and grafema config use the normal orchestrator.
+  const hasLakefile = existsSync(join(projectPath, 'lakefile.lean')) ||
+                      existsSync(join(projectPath, 'lakefile.toml'));
+  const isLeanProject = hasLakefile && !configPath;
   if (isLeanProject) {
     info('Detected Lean 4 project — using Lean analyzer pipeline');
     // From dist/commands/analyzeAction.js → up 3 levels to packages/ → lean-analyzer/

@@ -134,7 +134,18 @@ class RFDBClient {
   async connect() {
     await this._loadMsgpack();
     return new Promise((resolve, reject) => {
-      this.socket = createConnection(this.socketPath, () => resolve());
+      this.socket = createConnection(this.socketPath, () => {
+        // Replace connect-phase error handler with persistent one
+        this.socket.removeAllListeners('error');
+        this.socket.on('error', (err) => {
+          // Reject all pending requests on socket error
+          for (const [id, p] of this.pending) {
+            p.reject(new Error(`Socket error: ${err.message}`));
+          }
+          this.pending.clear();
+        });
+        resolve();
+      });
       this.socket.on('error', reject);
       this.socket.on('data', (chunk) => {
         this.buffer = Buffer.concat([this.buffer, chunk]);
@@ -265,6 +276,7 @@ async function main() {
 
   // Step 2: Connect to RFDB
   const client = new RFDBClient(opts.socket);
+  _client = client;
   await client.connect();
   await client.send('hello', { client: 'lean-analyzer', version: '1.0' });
 
@@ -293,4 +305,9 @@ async function main() {
   client.close();
 }
 
-main().catch(e => { console.error(e); process.exit(1); });
+let _client = null;
+main().catch(e => {
+  console.error(e);
+  if (_client) try { _client.close(); } catch {}
+  process.exit(1);
+});
