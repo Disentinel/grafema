@@ -224,6 +224,72 @@ export async function analyzeAction(path: string, options: { service?: string; e
 
     configPath = findConfigFile(projectPath);
   }
+  // Lean 4 project detection — BEFORE config validation.
+  // Pure Lean projects don't need grafema config — they use lake env lean pipeline.
+  const hasLakefile = existsSync(join(projectPath, 'lakefile.lean')) ||
+                      existsSync(join(projectPath, 'lakefile.toml'));
+  if (hasLakefile && !configPath) {
+    info('Detected Lean 4 project — using Lean analyzer pipeline');
+    const leanAnalyzer = join(dirname(fileURLToPath(import.meta.url)), '../../../lean-analyzer/analyze.mjs');
+    if (!existsSync(leanAnalyzer)) {
+      console.error(`Lean analyzer not found at ${leanAnalyzer}`);
+      process.exit(1);
+    }
+
+    // Detect Lean module name
+    let leanModule: string | null = null;
+    if (existsSync(join(projectPath, 'Mathlib'))) {
+      leanModule = 'Mathlib';
+    } else {
+      const lakefilePath = join(projectPath, 'lakefile.lean');
+      if (existsSync(lakefilePath)) {
+        const lakefileContent = readFileSync(lakefilePath, 'utf-8');
+        const libMatch = lakefileContent.match(/lean_lib\s+(\w+)/);
+        if (libMatch) leanModule = libMatch[1];
+        else {
+          const exeMatch = lakefileContent.match(/lean_exe\s+(\w+)/);
+          if (exeMatch) leanModule = exeMatch[1];
+        }
+      }
+    }
+
+    // Start RFDB backend for Lean analysis
+    const backend = new RFDBServerBackend({ dbPath, autoStart: options.autoStart ?? true, silent: !options.verbose, clientName: 'cli' });
+    try { await backend.connect(); } catch {
+      console.error('RFDB server failed to start. Run: grafema server start');
+      process.exit(1);
+    }
+    if (options.clear) { await backend.clear(); }
+
+    const startTime = Date.now();
+    const leanArgs = ['--project', projectPath, '--socket', backend.socketPath];
+    if (leanModule) { leanArgs.push('--module', leanModule); debug(`Detected Lean module: ${leanModule}`); }
+    if (options.clear) leanArgs.push('--clear');
+    debug(`Spawning Lean analyzer: node ${leanAnalyzer} ${leanArgs.join(' ')}`);
+
+    const leanExit = await new Promise<number>((res, rej) => {
+      const child = spawn(process.execPath, [leanAnalyzer, ...leanArgs], {
+        stdio: ['ignore', options.quiet ? 'ignore' : 'inherit', 'inherit'],
+      });
+      child.on('error', rej);
+      child.on('close', (code) => res(code ?? 1));
+    });
+
+    if (leanExit !== 0) {
+      console.error(`Lean analysis failed (exit code ${leanExit})`);
+      await backend.close();
+      process.exit(leanExit);
+    }
+    const elapsed = (Date.now() - startTime) / 1000;
+    const stats = await fetchNodeEdgeCounts(backend);
+    info('');
+    info(`Analysis complete in ${elapsed.toFixed(2)}s`);
+    info(`  Nodes: ${stats.nodeCount}`);
+    info(`  Edges: ${stats.edgeCount}`);
+    await backend.close();
+    return;
+  }
+
   if (!configPath) {
     console.error('');
     console.error('No grafema config file found.');
@@ -283,68 +349,6 @@ export async function analyzeAction(path: string, options: { service?: string; e
   }
 
   const startTime = Date.now();
-
-  // Lean 4 project detection — uses Lean-specific pipeline instead of orchestrator.
-  // Only triggers for pure Lean projects (lakefile present AND no JS/TS config).
-  // Mixed-language projects with both lakefile.lean and grafema config use the normal orchestrator.
-  const hasLakefile = existsSync(join(projectPath, 'lakefile.lean')) ||
-                      existsSync(join(projectPath, 'lakefile.toml'));
-  const isLeanProject = hasLakefile && !configPath;
-  if (isLeanProject) {
-    info('Detected Lean 4 project — using Lean analyzer pipeline');
-    // From dist/commands/analyzeAction.js → up 3 levels to packages/ → lean-analyzer/
-    const leanAnalyzer = join(dirname(fileURLToPath(import.meta.url)), '../../../lean-analyzer/analyze.mjs');
-    if (!existsSync(leanAnalyzer)) {
-      console.error(`Lean analyzer not found at ${leanAnalyzer}`);
-      process.exit(1);
-    }
-
-    // Detect Lean module name from lakefile or project structure
-    let leanModule: string | null = null;
-    if (existsSync(join(projectPath, 'Mathlib'))) {
-      leanModule = 'Mathlib';
-    } else {
-      const lakefilePath = join(projectPath, 'lakefile.lean');
-      if (existsSync(lakefilePath)) {
-        const lakefileContent = readFileSync(lakefilePath, 'utf-8');
-        const libMatch = lakefileContent.match(/lean_lib\s+(\w+)/);
-        if (libMatch) {
-          leanModule = libMatch[1];
-        } else {
-          const exeMatch = lakefileContent.match(/lean_exe\s+(\w+)/);
-          if (exeMatch) leanModule = exeMatch[1];
-        }
-      }
-    }
-
-    const leanArgs = ['--project', projectPath, '--socket', backend.socketPath];
-    if (leanModule) {
-      leanArgs.push('--module', leanModule);
-      debug(`Detected Lean module: ${leanModule}`);
-    }
-    if (options.clear) leanArgs.push('--clear');
-    debug(`Spawning Lean analyzer: node ${leanAnalyzer} ${leanArgs.join(' ')}`);
-    const leanExit = await new Promise<number>((res, rej) => {
-      const child = spawn(process.execPath, [leanAnalyzer, ...leanArgs], {
-        stdio: ['ignore', options.quiet ? 'ignore' : 'inherit', 'inherit'],
-      });
-      child.on('error', rej);
-      child.on('close', (code) => res(code ?? 1));
-    });
-    if (leanExit !== 0) {
-      console.error(`Lean analysis failed (exit code ${leanExit})`);
-      await backend.close();
-      process.exit(leanExit);
-    }
-    const elapsed = (Date.now() - startTime) / 1000;
-    const stats = await fetchNodeEdgeCounts(backend);
-    info('');
-    info(`Analysis complete in ${elapsed.toFixed(2)}s`);
-    info(`  Nodes: ${stats.nodeCount}`);
-    info(`  Edges: ${stats.edgeCount}`);
-    await backend.close();
-    return;
-  }
 
   // Build orchestrator args
   const args: string[] = ['analyze', '--config', configPath, '--socket', backend.socketPath];
