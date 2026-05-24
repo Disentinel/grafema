@@ -95,17 +95,17 @@ importers:
         version: 2.8.2
     optionalDependencies:
       '@grafema/grafema-darwin-arm64':
-        specifier: 0.3.16
-        version: 0.3.16
+        specifier: 0.3.28
+        version: 0.3.28
       '@grafema/grafema-darwin-x64':
-        specifier: 0.3.16
-        version: 0.3.16
+        specifier: 0.3.28
+        version: 0.3.28
       '@grafema/grafema-linux-arm64':
-        specifier: 0.3.16
-        version: 0.3.16
+        specifier: 0.3.28
+        version: 0.3.28
       '@grafema/grafema-linux-x64':
-        specifier: 0.3.16
-        version: 0.3.16
+        specifier: 0.3.28
+        version: 0.3.28
     devDependencies:
       '@types/node':
         specifier: ^25.0.8
@@ -166,17 +166,17 @@ importers:
         version: 2.8.2
     optionalDependencies:
       '@grafema/grafema-darwin-arm64':
-        specifier: 0.3.24
-        version: 0.3.24
+        specifier: 0.3.28
+        version: 0.3.28
       '@grafema/grafema-darwin-x64':
-        specifier: 0.3.24
-        version: 0.3.24
+        specifier: 0.3.28
+        version: 0.3.28
       '@grafema/grafema-linux-arm64':
-        specifier: 0.3.24
-        version: 0.3.24
+        specifier: 0.3.28
+        version: 0.3.28
       '@grafema/grafema-linux-x64':
-        specifier: 0.3.24
-        version: 0.3.24
+        specifier: 0.3.28
+        version: 0.3.28
     devDependencies:
       '@types/node':
         specifier: ^25.0.8
@@ -256,6 +256,12 @@ importers:
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
+
+  packages/lean-analyzer:
+    dependencies:
+      '@msgpack/msgpack':
+        specifier: ^3.0.0-beta2
+        version: 3.1.3
 
   packages/mcp:
     dependencies:
@@ -994,8 +1000,8 @@ packages:
     cpu: [arm64]
     os: [darwin]
 
-  '@grafema/grafema-darwin-arm64@0.3.24':
-    resolution: {integrity: sha512-ed7q30E5JSjhucHPHMgPTM+cUqMgvvFmoIdmwIUJRhA1FR9PS/qTeM5vF68QCFzZy9IzpqdXVOYrYsv5OLvefw==}
+  '@grafema/grafema-darwin-arm64@0.3.28':
+    resolution: {integrity: sha512-D1Wp7l8iwMJA66a9ZS0Z8LtEjH0bT3QGVkWWB68ZxgTjr9ZWRRlS0Sc42nP6PT389bqlJqiYcolblBa4/kEbZw==}
     engines: {node: '>= 18'}
     cpu: [arm64]
     os: [darwin]
@@ -1006,8 +1012,8 @@ packages:
     cpu: [x64]
     os: [darwin]
 
-  '@grafema/grafema-darwin-x64@0.3.24':
-    resolution: {integrity: sha512-OvkrLsOBtWIhh1BePZf0DeYepaOCJbCi35WruYv94CcxY6wXT7Tvx4CzZYi1KnNxenaAY8NG1o9MzE0XxPnelA==}
+  '@grafema/grafema-darwin-x64@0.3.28':
+    resolution: {integrity: sha512-rK/RSZb2Z4SVx9YCFtJEfMATlav3+i1ht3HBLeh7bUt2qJm8jvK2Rb9xRj7hz8ycd2AarkrRplLygr9dF3SUwQ==}
     engines: {node: '>= 18'}
     cpu: [x64]
     os: [darwin]
@@ -1018,8 +1024,8 @@ packages:
     cpu: [arm64]
     os: [linux]
 
-  '@grafema/grafema-linux-arm64@0.3.24':
-    resolution: {integrity: sha512-1gkSHvZVBDo5MoIBoQddm+HVtG6f+gPxJll9ng8oeLNZZsvulpnjwD30nyY0+vsOpXFGV6IB0Ik8rQ83+JFWsQ==}
+  '@grafema/grafema-linux-arm64@0.3.28':
+    resolution: {integrity: sha512-e3gnrf8auMZDd/RGs6op6ZEdT9gStUibU8gnqnJVycaUMxTIx4Rm5pXJ0jo0okD2DxYTwAvIc9/1ZB5bQEqQKg==}
     engines: {node: '>= 18'}
     cpu: [arm64]
     os: [linux]
@@ -1030,8 +1036,8 @@ packages:
     cpu: [x64]
     os: [linux]
 
-  '@grafema/grafema-linux-x64@0.3.24':
-    resolution: {integrity: sha512-oeqGbQomycpghFMRP51Tib7pFzcvdwo2EJzzhVr8/bdIz9cgeU9IlVhIULFK2iIMjXZzzKuTUG54Yctj9XUlEQ==}
+  '@grafema/grafema-linux-x64@0.3.28':
+    resolution: {integrity: sha512-OSxmkFKTFFN2yA8Lv8BwqKd3mWzSrq+cfzq9bHKTVzv7gk8qC2Nqd5Obx4WdDP3AM/jI+LLuEjXO20E8fBgEmg==}
     engines: {node: '>= 18'}
     cpu: [x64]
     os: [linux]
@@ -3017,25 +3023,25 @@ snapshots:
   '@grafema/grafema-darwin-arm64@0.3.16':
     optional: true
 
-  '@grafema/grafema-darwin-arm64@0.3.24':
+  '@grafema/grafema-darwin-arm64@0.3.28':
     optional: true
 
   '@grafema/grafema-darwin-x64@0.3.16':
     optional: true
 
-  '@grafema/grafema-darwin-x64@0.3.24':
+  '@grafema/grafema-darwin-x64@0.3.28':
     optional: true
 
   '@grafema/grafema-linux-arm64@0.3.16':
     optional: true
 
-  '@grafema/grafema-linux-arm64@0.3.24':
+  '@grafema/grafema-linux-arm64@0.3.28':
     optional: true
 
   '@grafema/grafema-linux-x64@0.3.16':
     optional: true
 
-  '@grafema/grafema-linux-x64@0.3.24':
+  '@grafema/grafema-linux-x64@0.3.28':
     optional: true
 
   '@graphql-tools/executor@1.5.1(graphql@16.12.0)':

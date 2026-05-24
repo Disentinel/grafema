@@ -1,0 +1,16 @@
+{
+  "name": "@grafema/lean-analyzer",
+  "version": "0.1.0",
+  "description": "Lean 4 code graph extractor for Grafema",
+  "type": "module",
+  "main": "analyze.mjs",
+  "bin": {
+    "grafema-lean-analyze": "./analyze.mjs"
+  },
+  "scripts": {
+    "test": "node test-extractor.mjs test-fixture/test-output.jsonl"
+  },
+  "dependencies": {
+    "@msgpack/msgpack": "^3.0.0-beta2"
+  }
+}

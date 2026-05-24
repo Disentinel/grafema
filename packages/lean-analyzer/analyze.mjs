@@ -13,7 +13,7 @@
  *   - Project has lean-toolchain and built .olean cache
  *   - RFDB server running on given socket
  */
-import { existsSync, createReadStream } from 'fs';
+import { existsSync, createReadStream, readFileSync } from 'fs';
 import { join, resolve, dirname } from 'path';
 import { spawn } from 'child_process';
 import { createInterface } from 'readline';
@@ -45,9 +45,11 @@ function isLeanProject(projectPath) {
 function detectModule(projectPath) {
   if (existsSync(join(projectPath, 'Mathlib'))) return 'Mathlib';
   if (existsSync(join(projectPath, 'lakefile.lean'))) {
-    const content = require('fs').readFileSync(join(projectPath, 'lakefile.lean'), 'utf8');
-    const match = content.match(/lean_lib\s+(\w+)/);
-    if (match) return match[1];
+    const content = readFileSync(join(projectPath, 'lakefile.lean'), 'utf8');
+    const libMatch = content.match(/lean_lib\s+(\w+)/);
+    if (libMatch) return libMatch[1];
+    const exeMatch = content.match(/lean_exe\s+(\w+)/);
+    if (exeMatch) return exeMatch[1];
   }
   return null;
 }
@@ -56,6 +58,14 @@ async function runExtractor(projectPath, module, outputPath) {
   const extractorPath = join(__dirname, 'GrafemaExtract.lean');
   if (!existsSync(extractorPath)) {
     throw new Error(`GrafemaExtract.lean not found at ${extractorPath}`);
+  }
+
+  // Check for .olean cache — Lean needs compiled .olean files to inspect the environment
+  const oleanDir = join(projectPath, '.lake', 'build', 'lib');
+  if (!existsSync(oleanDir)) {
+    console.error(`[lean] Warning: No .olean cache found at ${oleanDir}`);
+    console.error(`[lean] Run 'lake build' or 'lake exe cache get' first.`);
+    process.exit(1);
   }
 
   return new Promise((resolve, reject) => {
@@ -85,18 +95,34 @@ class RFDBClient {
   }
 
   async _loadMsgpack() {
-    const paths = [
-      join(__dirname, '../../node_modules/@msgpack/msgpack/dist.esm/index.mjs'),
-      join(__dirname, '../../packages/rfdb/node_modules/@msgpack/msgpack/dist.esm/index.mjs'),
-    ];
-    for (const p of paths) {
-      try {
-        const m = await import(p);
-        this._encoder = m.encode;
-        this._decoder = m.decode;
-        return;
-      } catch {}
+    // Strategy 1: try normal module resolution (works when installed as dependency)
+    try {
+      const m = await import('@msgpack/msgpack');
+      this._encoder = m.encode;
+      this._decoder = m.decode;
+      return;
+    } catch {}
+
+    // Strategy 2: walk up from __dirname looking for node_modules/@msgpack/msgpack
+    let dir = __dirname;
+    const root = dirname(dir); // stop condition
+    while (dir.length > 1) {
+      const candidate = join(dir, 'node_modules', '@msgpack', 'msgpack');
+      if (existsSync(candidate)) {
+        try {
+          const esmEntry = join(candidate, 'dist.esm', 'index.mjs');
+          const target = existsSync(esmEntry) ? esmEntry : candidate;
+          const m = await import(target);
+          this._encoder = m.encode;
+          this._decoder = m.decode;
+          return;
+        } catch {}
+      }
+      const parent = dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
     }
+
     throw new Error('Cannot find @msgpack/msgpack. Install it or run from grafema monorepo.');
   }
 

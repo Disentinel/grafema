@@ -502,12 +502,14 @@ const counts = {
   theorems: nodes.filter((n) => n.type === "THEOREM").length,
 };
 
+// Thresholds scale with input: small fixture (~18K nodes) vs full Mathlib (~487K)
+const isSmall = counts.declarations < 30000;
 const sanityChecks = [
-  ["declarations", 50000, counts.declarations],
-  ["edges", 100000, counts.edges],
-  ["CLASS nodes", 200, counts.classes],
-  ["INSTANCE nodes", 1000, counts.instances],
-  ["EXTENDS edges", 100, counts.extends],
+  ["declarations", isSmall ? 5000 : 50000, counts.declarations],
+  ["edges", isSmall ? 50000 : 100000, counts.edges],
+  ["CLASS nodes", isSmall ? 50 : 200, counts.classes],
+  ["INSTANCE nodes", isSmall ? 200 : 1000, counts.instances],
+  ["EXTENDS edges", isSmall ? 10 : 100, counts.extends],
   ["PROOF_USES edges", 1, counts.proofUses],
 ];
 

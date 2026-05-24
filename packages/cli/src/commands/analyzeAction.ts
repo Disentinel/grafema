@@ -294,7 +294,30 @@ export async function analyzeAction(path: string, options: { service?: string; e
       console.error(`Lean analyzer not found at ${leanAnalyzer}`);
       process.exit(1);
     }
+
+    // Detect Lean module name from lakefile or project structure
+    let leanModule: string | null = null;
+    if (existsSync(join(projectPath, 'Mathlib'))) {
+      leanModule = 'Mathlib';
+    } else {
+      const lakefilePath = join(projectPath, 'lakefile.lean');
+      if (existsSync(lakefilePath)) {
+        const lakefileContent = readFileSync(lakefilePath, 'utf-8');
+        const libMatch = lakefileContent.match(/lean_lib\s+(\w+)/);
+        if (libMatch) {
+          leanModule = libMatch[1];
+        } else {
+          const exeMatch = lakefileContent.match(/lean_exe\s+(\w+)/);
+          if (exeMatch) leanModule = exeMatch[1];
+        }
+      }
+    }
+
     const leanArgs = ['--project', projectPath, '--socket', backend.socketPath];
+    if (leanModule) {
+      leanArgs.push('--module', leanModule);
+      debug(`Detected Lean module: ${leanModule}`);
+    }
     if (options.clear) leanArgs.push('--clear');
     debug(`Spawning Lean analyzer: node ${leanAnalyzer} ${leanArgs.join(' ')}`);
     const leanExit = await new Promise<number>((res, rej) => {
