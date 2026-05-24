@@ -55,9 +55,14 @@ function detectModule(projectPath) {
 }
 
 async function runExtractor(projectPath, module, outputPath) {
-  const extractorPath = join(__dirname, 'GrafemaExtract.lean');
+  // Use full extractor (with Aesop/NormNum) for Mathlib projects,
+  // standalone extractor for non-Mathlib Lean projects
+  const isMathlib = existsSync(join(projectPath, 'Mathlib')) ||
+                    existsSync(join(projectPath, '.lake', 'packages', 'aesop'));
+  const extractorName = isMathlib ? 'GrafemaExtract.lean' : 'test-fixture/Extract.lean';
+  const extractorPath = join(__dirname, extractorName);
   if (!existsSync(extractorPath)) {
-    throw new Error(`GrafemaExtract.lean not found at ${extractorPath}`);
+    throw new Error(`${extractorName} not found at ${extractorPath}`);
   }
 
   // Check for .olean cache — Lean needs compiled .olean files to inspect the environment
@@ -246,7 +251,12 @@ async function main() {
   console.error(`[lean] Module: ${module}`);
   console.error(`[lean] Socket: ${opts.socket}`);
 
-  const outputPath = join(projectPath, '.grafema', 'lean-graph.jsonl');
+  const grafemaDir = join(projectPath, '.grafema');
+  if (!existsSync(grafemaDir)) {
+    const { mkdirSync } = await import('fs');
+    mkdirSync(grafemaDir, { recursive: true });
+  }
+  const outputPath = join(grafemaDir, 'lean-graph.jsonl');
 
   // Step 1: Extract
   const extractStart = Date.now();
