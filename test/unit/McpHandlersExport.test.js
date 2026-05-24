@@ -49,6 +49,19 @@ const EXPECTED_HANDLERS = [
   // 'handleGitCoChange',
   // 'handleGitOwnership',
   // 'handleGitArchaeology',
+  'handleRemember',
+  'handleRecall',
+  'handleSemanticSearch',
+  'handleExploreEntity',
+  'handleAddAssertion',
+  'handleUpdateAssertion',
+  'handleDeleteAssertion',
+  'handleEnoxQuery',
+  'handleEnoxTraverse',
+  'handleEnoxStats',
+  'handleRecentActivity',
+  'handleUpdateNode',
+  'handleSaveDocument',
   'handleDescribe',
   'handleQueryGraphql',
   'handleQueryRegistry',
@@ -60,14 +73,14 @@ const EXPECTED_HANDLERS = [
 ];
 
 describe('MCP handlers export surface', () => {
-  it('should export exactly 40 handler functions', () => {
+  it('should export exactly 53 handler functions', () => {
     const exportedKeys = Object.keys(handlers).filter(
       k => typeof handlers[k] === 'function'
     );
     assert.equal(
       exportedKeys.length,
-      40,
-      `Expected 40 function exports, got ${exportedKeys.length}: ${exportedKeys.join(', ')}`
+      EXPECTED_HANDLERS.length,
+      `Expected ${EXPECTED_HANDLERS.length} function exports, got ${exportedKeys.length}: ${exportedKeys.join(', ')}`
     );
   });
 
