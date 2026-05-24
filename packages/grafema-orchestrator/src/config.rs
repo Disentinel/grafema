@@ -731,6 +731,7 @@ pub enum Language {
     ObjectiveC,
     Beam,
     Ruby,
+    Lean,
 }
 
 /// Detect language from file extension.
@@ -759,6 +760,7 @@ pub fn detect_language(path: &Path) -> Option<Language> {
         "m" | "mm" => Some(Language::ObjectiveC),
         "ex" | "exs" | "erl" | "hrl" => Some(Language::Beam),
         "rb" | "rake" | "gemspec" => Some(Language::Ruby),
+        "lean" => Some(Language::Lean),
         _ => {
             // Handle case-sensitive extensions: .c++ .h++ .C .H
             let file_name = path.file_name()?.to_str()?;
@@ -801,6 +803,7 @@ pub fn partition_by_language(files: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>, 
             Some(Language::ObjectiveC) => objc_files.push(file.clone()),
             Some(Language::Beam) => beam_files.push(file.clone()),
             Some(Language::Ruby) => rb_files.push(file.clone()),
+            Some(Language::Lean) => {} // Lean uses whole-environment analysis, handled by CLI
             None => {} // skip unknown extensions
         }
     }
