@@ -289,7 +289,8 @@ export async function analyzeAction(path: string, options: { service?: string; e
                         existsSync(join(projectPath, 'lakefile.toml'));
   if (isLeanProject) {
     info('Detected Lean 4 project — using Lean analyzer pipeline');
-    const leanAnalyzer = join(dirname(fileURLToPath(import.meta.url)), '../../lean-analyzer/analyze.mjs');
+    // From dist/commands/analyzeAction.js → up 3 levels to packages/ → lean-analyzer/
+    const leanAnalyzer = join(dirname(fileURLToPath(import.meta.url)), '../../../lean-analyzer/analyze.mjs');
     if (!existsSync(leanAnalyzer)) {
       console.error(`Lean analyzer not found at ${leanAnalyzer}`);
       process.exit(1);
@@ -327,18 +328,19 @@ export async function analyzeAction(path: string, options: { service?: string; e
       child.on('error', rej);
       child.on('close', (code) => res(code ?? 1));
     });
-    if (leanExit === 0) {
-      const elapsed = (Date.now() - startTime) / 1000;
-      const stats = await fetchNodeEdgeCounts(backend);
-      info('');
-      info(`Analysis complete in ${elapsed.toFixed(2)}s`);
-      info(`  Nodes: ${stats.nodeCount}`);
-      info(`  Edges: ${stats.edgeCount}`);
-    } else {
+    if (leanExit !== 0) {
       console.error(`Lean analysis failed (exit code ${leanExit})`);
+      await backend.close();
+      process.exit(leanExit);
     }
+    const elapsed = (Date.now() - startTime) / 1000;
+    const stats = await fetchNodeEdgeCounts(backend);
+    info('');
+    info(`Analysis complete in ${elapsed.toFixed(2)}s`);
+    info(`  Nodes: ${stats.nodeCount}`);
+    info(`  Edges: ${stats.edgeCount}`);
     await backend.close();
-    process.exit(leanExit);
+    return;
   }
 
   // Build orchestrator args

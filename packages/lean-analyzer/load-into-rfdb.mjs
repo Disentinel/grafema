@@ -8,7 +8,7 @@
 import { createReadStream } from 'fs';
 import { createInterface } from 'readline';
 import { createConnection } from 'net';
-import { encode, decode } from '/Users/vadimr/grafema-worker-1/packages/rfdb/node_modules/@msgpack/msgpack/dist.esm/index.mjs';
+import { encode, decode } from '@msgpack/msgpack';
 
 const SOCKET = process.argv[2] || '/tmp/rfdb-mathlib.sock';
 const JSONL = process.argv[3] || 'mathlib-graph.jsonl';
