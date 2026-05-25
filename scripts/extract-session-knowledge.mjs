@@ -1,25 +1,21 @@
-#!/usr/bin/env node --input-type=module
 /**
  * Extract structured knowledge from Claude Code session logs.
  *
  * Reads JSONL session files, extracts user+assistant messages,
- * sends to Haiku for entity extraction across 12 projections.
- *
- * Output: JSONL with extracted entities and relations.
+ * sends to Haiku for entity extraction.
  *
  * Usage:
- *   node --input-type=module scripts/extract-session-knowledge.js <session.jsonl>
- *   node --input-type=module scripts/extract-session-knowledge.js --recent 5
- *   node --input-type=module scripts/extract-session-knowledge.js --all
+ *   node scripts/extract-session-knowledge.mjs <session.jsonl>
+ *   node scripts/extract-session-knowledge.mjs --recent 5
+ *   node scripts/extract-session-knowledge.mjs --all
  */
 
-import { readFileSync, writeFileSync, appendFileSync, readdirSync, statSync } from 'fs';
+import { readFileSync, appendFileSync, readdirSync, statSync } from 'fs';
 import { join, basename } from 'path';
-import { createHash } from 'crypto';
 
-const PROJECT = '/Users/vadimr/grafema';
+const PROJECT = process.env.GRAFEMA_PROJECT || process.cwd();
 const SESSIONS_DIR = `${process.env.HOME}/.claude/projects/-Users-vadimr-grafema`;
-const OUTPUT = `${PROJECT}/.grafema/session-knowledge.jsonl`;
+const OUTPUT = process.env.EXTRACTION_OUTPUT || `${PROJECT}/.grafema/session-knowledge.jsonl`;
 const MODEL = 'claude-haiku-4-5-20251001';
 
 let API_KEY = process.env.ANTHROPIC_API_KEY;
@@ -32,39 +28,39 @@ if (!API_KEY) {
 
 const EXTRACTION_PROMPT = `You extract structured knowledge from a Claude Code work session transcript.
 
-Extract entities and relations that represent NON-OBVIOUS knowledge — things you can't derive by reading the code:
+Extract ONLY non-obvious knowledge — things you cannot derive by reading the code or git history.
 
-ENTITY TYPES TO EXTRACT:
-- DECISION: architectural choice with rationale ("chose X because Y")
-- TASK: work item discussed/completed (with REG-/RFD- IDs if mentioned)
-- INCIDENT: something went wrong, root cause, fix
-- PATTERN: discovered convention or anti-pattern
-- ANOMALY: unexpected finding about the codebase
-- CONSTRAINT: discovered limitation or requirement
-- HYPOTHESIS: theory proposed but not fully verified
-- PIVOT: moment where approach fundamentally changed
-- DEBT: technical debt acknowledged
-- INSIGHT: non-obvious understanding gained
+ENTITY TYPES (strict — use only these):
+- DECISION: architectural choice with explicit rationale ("chose X because Y")
+- INCIDENT: something broke, root cause identified, fix applied
+- PIVOT: moment where approach fundamentally changed direction
+- REJECTED_ALTERNATIVE: option considered and deliberately rejected (with reason)
+- COGNITIVE_DEBT: known gap in understanding that affects future work
+- CONTRADICTION: two findings or decisions that conflict with each other
 
-RELATION TYPES:
-- caused_by, resulted_in, motivated, blocked_by, supersedes
-- depends_on, enables, contradicts, validates
-- relates_to (generic fallback)
+DO NOT EXTRACT:
+- Code structure facts, file paths, function names (those are in the code graph)
+- Task completions ("implemented X", "added Y") — that's in git history
+- Debugging steps without a conclusion
+- Routine operations (build, test, deploy)
 
-For each extracted entity, include:
+CRITICAL RULES:
+1. DO NOT assert what the user did outside the terminal (browser testing, manual checks, external conversations). You can only see terminal activity.
+2. If you suspect the user took an action you cannot verify, mark it as type "QUESTION" with confidence 0.5 and phrase as a question: "Did the user verify X in browser?"
+3. Every entity MUST have evidence from the transcript — quote or paraphrase the specific exchange.
+4. Confidence: 1.0 = explicit in transcript, 0.7 = strongly implied, 0.5 = inferred/uncertain.
+
+For each entity:
 - type: one of the types above
 - name: short descriptive name (3-8 words)
-- content: full description (1-3 sentences)
-- projection: which of the 12 projections it belongs to:
-  semantic, operational, causal, contractual, intentional,
-  organizational, temporal, epistemic, security, financial,
-  behavioral, risk
+- content: full description (1-3 sentences) with evidence from transcript
+- projection: semantic|operational|causal|contractual|intentional|organizational|temporal|epistemic|security|financial|behavioral|risk
 - confidence: 0.0-1.0
 - relations: [{to: "entity name", type: "relation_type"}]
 
-Output as JSON array. Extract 5-15 entities per session chunk.
-DO NOT extract: code structure facts, file paths, function names (those are in the code graph).
-DO extract: WHY decisions were made, WHAT went wrong, HOW approaches evolved.`;
+Relation types: caused_by, resulted_in, motivated, blocked_by, supersedes, depends_on, enables, contradicts, validates, relates_to
+
+Output as JSON array. Quality over quantity — 3 solid entities beat 15 weak ones.`;
 
 function extractMessages(jsonlPath) {
   const messages = [];
@@ -80,10 +76,19 @@ function extractMessages(jsonlPath) {
       if (typeof msg.content === 'string') {
         text = msg.content;
       } else if (Array.isArray(msg.content)) {
-        text = msg.content
-          .filter(c => c.type === 'text')
-          .map(c => c.text)
-          .join('\n');
+        const parts = [];
+        for (const c of msg.content) {
+          if (c.type === 'text') parts.push(c.text);
+          else if (c.type === 'tool_use') {
+            const inp = typeof c.input === 'string' ? c.input : JSON.stringify(c.input || '');
+            parts.push(`[tool:${c.name}] ${inp.slice(0, 200)}`);
+          }
+          else if (c.type === 'tool_result') {
+            const r = Array.isArray(c.content) ? c.content.filter(x => x.type === 'text').map(x => x.text).join('\n') : String(c.content || '');
+            if (r.length > 20) parts.push(`[result] ${r.slice(0, 300)}`);
+          }
+        }
+        text = parts.join('\n');
       }
 
       if (text.length > 20) {

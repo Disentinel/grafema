@@ -478,3 +478,23 @@ If you find gaps, extend the skill. It should grow through use.
 - `crawl-verify.js` — verification via Ollama (local, free, lower accuracy)
 - `crawl-verify-api.js` — verification via Haiku API (tool_use, higher accuracy)
 - `crawl-batch.js` — batch API verification (50% discount, parallel processing)
+- `extract-session-knowledge.mjs` — extract DECISION/INCIDENT/PIVOT/REJECTED_ALTERNATIVE/COGNITIVE_DEBT from Claude Code session logs via Haiku API
+
+## Session Knowledge Extraction
+
+Extracts structured knowledge from Claude Code work session transcripts.
+Not ontological crawl per se, but feeds the same knowledge graph.
+
+**Strict entity types**: DECISION, INCIDENT, PIVOT, REJECTED_ALTERNATIVE, COGNITIVE_DEBT, CONTRADICTION, QUESTION
+
+**Critical rule**: DO NOT assert what user did outside the terminal.
+If uncertain about user's action → type QUESTION, confidence 0.5.
+
+**Output**: `.grafema/session-knowledge.jsonl` (JSONL, same format as crawl findings)
+
+**Usage**:
+```bash
+node scripts/extract-session-knowledge.mjs --recent 5
+node scripts/extract-session-knowledge.mjs <session.jsonl>
+EXTRACTION_OUTPUT=custom.jsonl node scripts/extract-session-knowledge.mjs --all
+```
