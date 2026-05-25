@@ -14,11 +14,11 @@
  *   - Stats tracking with periodic summary
  *
  * Usage:
- *   node --input-type=module scripts/crawl-v2.js
- *   node --input-type=module scripts/crawl-v2.js --continuous
- *   node --input-type=module scripts/crawl-v2.js --model qwen3:30b-a3b --verify haiku
- *   node --input-type=module scripts/crawl-v2.js --sync-rfdb   # replay JSONL to RFDB
- *   node --input-type=module scripts/crawl-v2.js --entity "compactionEnricher"
+ *   node scripts/crawl-v2.js
+ *   node scripts/crawl-v2.js --continuous
+ *   node scripts/crawl-v2.js --model qwen3:30b-a3b --verify haiku
+ *   node scripts/crawl-v2.js --sync-rfdb   # replay JSONL to RFDB
+ *   node scripts/crawl-v2.js --entity "compactionEnricher"
  *
  * Environment:
  *   GEN_MODEL          Generation model (default: qwen3.6:35b)
@@ -214,20 +214,22 @@ function appendFinding(finding) {
 async function recallFromRFDB(entityName) {
   try {
     if (!existsSync(RFDB_SOCKET)) return [];
-    const script = `
-      import { RFDBClient } from '${PROJECT_ROOT}/packages/rfdb/dist/client.js';
-      const c = new RFDBClient('${RFDB_SOCKET}', 'crawl-v2-recall');
-      await c.connect();
-      await c.hello();
-      try { await c.openDatabase('knowledge', 'ro'); } catch { process.exit(0); }
-      const nodes = await c.getAllNodes({ name: '${entityName.replace(/'/g, "\\'")}', substringMatch: true });
-      for (const n of nodes.slice(0, 10)) {
-        const meta = typeof n.metadata === 'string' ? JSON.parse(n.metadata) : (n.metadata || {});
-        console.log(JSON.stringify({ name: n.name, content: meta.content || n.name, domain: meta.domain || n.file }));
-      }
-      await c.close();
-    `;
-    const result = execSync(`node --input-type=module -e ${JSON.stringify(script)}`, {
+    const tmpScript = resolve(GRAFEMA_DIR, '.crawl-recall-tmp.mjs');
+    const safeName = entityName.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    writeFileSync(tmpScript, [
+      `import { RFDBClient } from '${PROJECT_ROOT}/packages/rfdb/dist/client.js';`,
+      `const c = new RFDBClient('${RFDB_SOCKET}', 'crawl-v2-recall');`,
+      `await c.connect();`,
+      `await c.hello();`,
+      `try { await c.openDatabase('knowledge', 'ro'); } catch { await c.close(); process.exit(0); }`,
+      `const nodes = await c.getAllNodes({ name: '${safeName}', substringMatch: true });`,
+      `for (const n of nodes.slice(0, 10)) {`,
+      `  const meta = typeof n.metadata === 'string' ? JSON.parse(n.metadata) : (n.metadata || {});`,
+      `  console.log(JSON.stringify({ name: n.name, content: meta.content || n.name, domain: meta.domain || n.file }));`,
+      `}`,
+      `await c.close();`,
+    ].join('\n'));
+    const result = execSync(`node ${tmpScript}`, {
       encoding: 'utf-8', timeout: 10000, cwd: PROJECT_ROOT,
     }).trim();
     if (!result) return [];
@@ -903,26 +905,28 @@ async function syncToRFDB() {
     });
   }
 
-  // Batch write in chunks
+  // Write in chunks via direct addNodes (NOT beginBatch/commitBatch, which
+  // auto-populates changed_files and deletes existing nodes in those files).
   const chunkSize = BATCH_CAP;
+  const tmpScript = resolve(GRAFEMA_DIR, '.crawl-sync-tmp.mjs');
   for (let i = 0; i < nodes.length; i += chunkSize) {
     const chunk = nodes.slice(i, i + chunkSize);
-    const script = `
-      import { RFDBClient } from '${PROJECT_ROOT}/packages/rfdb/dist/client.js';
-      const c = new RFDBClient('${RFDB_SOCKET}', 'crawl-v2-sync');
-      await c.connect();
-      await c.hello();
-      try { await c.openDatabase('knowledge', 'rw'); } catch {
-        await c.createDatabase('knowledge');
-        await c.openDatabase('knowledge', 'rw');
-      }
-      await c.addNodes(${JSON.stringify(chunk)});
-      await c.commitBatch(['crawl-v2'], false, [], []);
-      await c.close();
-      console.log('ok');
-    `;
+    writeFileSync(tmpScript, [
+      `import { RFDBClient } from '${PROJECT_ROOT}/packages/rfdb/dist/client.js';`,
+      `const c = new RFDBClient('${RFDB_SOCKET}', 'crawl-v2-sync');`,
+      `await c.connect();`,
+      `await c.hello();`,
+      `try { await c.openDatabase('knowledge', 'rw'); } catch {`,
+      `  await c.createDatabase('knowledge');`,
+      `  await c.openDatabase('knowledge', 'rw');`,
+      `}`,
+      `const nodes = ${JSON.stringify(chunk)};`,
+      `await c.addNodes(nodes);`,
+      `console.log(JSON.stringify({ ok: true, added: nodes.length }));`,
+      `await c.close();`,
+    ].join('\n'));
     try {
-      execSync(`node --input-type=module -e ${JSON.stringify(script)}`, {
+      execSync(`node ${tmpScript}`, {
         encoding: 'utf-8', timeout: 15000, cwd: PROJECT_ROOT,
       });
       log('SYNC', `Wrote chunk ${Math.floor(i / chunkSize) + 1}/${Math.ceil(nodes.length / chunkSize)} (${chunk.length} nodes)`);

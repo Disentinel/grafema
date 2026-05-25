@@ -13,7 +13,7 @@
 import { readFileSync, existsSync } from 'fs';
 import { execSync } from 'child_process';
 
-const PROJECT_ROOT = '/Users/vadimr/grafema';
+const PROJECT_ROOT = process.env.GRAFEMA_PROJECT || process.cwd();
 const MODEL = 'claude-haiku-4-5-20251001';
 const MAX_TURNS = 6;
 

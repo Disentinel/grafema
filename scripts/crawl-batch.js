@@ -17,7 +17,7 @@
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { execSync } from 'child_process';
 
-const PROJECT = '/Users/vadimr/grafema';
+const PROJECT = process.env.GRAFEMA_PROJECT || process.cwd();
 const MODEL = 'claude-haiku-4-5-20251001';
 
 let API_KEY = process.env.ANTHROPIC_API_KEY;

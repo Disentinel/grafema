@@ -20,7 +20,7 @@ import { readFileSync, writeFileSync, existsSync } from 'fs';
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
 const GEN_MODEL = process.env.GEN_MODEL || 'qwen3.6:35b';
 const VERIFY_MODEL = process.env.VERIFY_MODEL || 'qwen3.6:35b';
-const PROJECT_ROOT = process.env.PROJECT_ROOT || '/Users/vadimr/grafema';
+const PROJECT_ROOT = process.env.PROJECT_ROOT || process.cwd();
 
 const args = process.argv.slice(2);
 const entityIdx = args.indexOf('--entity');

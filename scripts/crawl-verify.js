@@ -19,7 +19,7 @@ const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
 const MODEL = process.argv.includes('--model')
   ? process.argv[process.argv.indexOf('--model') + 1]
   : 'qwen3.6:35b';
-const PROJECT_ROOT = process.env.PROJECT_ROOT || '/Users/vadimr/grafema';
+const PROJECT_ROOT = process.env.PROJECT_ROOT || process.cwd();
 
 const hypothesis = process.argv[2];
 if (!hypothesis) {
