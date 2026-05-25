@@ -4997,7 +4997,7 @@ dependencies = [
 
 [[package]]
 name = "rfdb"
-version = "0.3.27"
+version = "0.3.28"
 dependencies = [
  "anyhow",
  "arrow-array",
