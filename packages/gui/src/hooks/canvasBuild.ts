@@ -154,7 +154,15 @@ export function buildHexLayerWithSubscriptions(
       for (let i = 0; i < nodes.length; i++) {
         layer.animateTo(i, 'elevation', baseElevation[i], 600);
       }
-      sm.pumpRender(700);
+      sm.pumpRender(800);
+      // Guarantee final state after animation — if any tweens miss their
+      // last tick due to frame budget pressure, this clamps them.
+      setTimeout(() => {
+        for (let i = 0; i < nodes.length; i++) {
+          layer.setProperty(i, 'elevation', baseElevation[i]);
+        }
+        sm.requestRender();
+      }, 850);
     } else {
       for (let i = 0; i < nodes.length; i++) {
         layer.setProperty(i, 'elevation', baseElevation[i]);
@@ -462,16 +470,12 @@ export function buildHullLayer(
     const maxBase = (globalThis as Record<string, unknown>).__hexMaxBase as
       | number
       | undefined;
-    // +3.0 buffer puts the hull cloud well above the tallest column —
-    // +1.0 grazed the column tops and looked like the cloud was sitting
-    // on the city. The extra 2 units of air read as "ceiling".
-    const top = (maxBase ?? 0) + 3.0;
-    hullLayer.group.position.y = top;
-    // Walls extrude from y=0 to the same top so the outline sits at
-    // the wall's crown. Hide walls in Flat mode (mult=0) — the
-    // heightmap is off so there's nothing to enclose.
     const mult = useViewStore.getState().heightMultiplier;
-    wallLayer.setHeight(top);
+    // In flat mode (mult=0) hulls sit just above the tiles (0.35).
+    // In city mode they float above the tallest column (+3.0 clearance).
+    const top = mult > 0 ? (maxBase ?? 0) + 3.0 : 0.35;
+    hullLayer.group.position.y = top;
+    wallLayer.setHeight(mult > 0 ? (maxBase ?? 0) + 3.0 : 0);
     wallLayer.setVisible(mult > 0);
     sm.requestRender();
   }
@@ -556,6 +560,15 @@ export function buildFlowLayer(
     }
   }
   flowLayer.build(nodes, flowEdges);
+
+  // Sync FlowLayer visibility with viewStore's enabledFlows.
+  // FlowLayer.build() defaults to preset.alwaysOn (only bridges),
+  // but viewStore initializes with all flows enabled.
+  const { enabledFlows } = useViewStore.getState();
+  for (const name of Object.keys(FLOWS)) {
+    flowLayer.setFlowVisible(name, enabledFlows.has(name));
+  }
+
   flowLayer.setElevationSource(hexLayer.elevationArray);
   sm.onRender(() => flowLayer.tick());
   return flowLayer;
