@@ -39,12 +39,13 @@ const EXPECTED_HANDLERS = [
   'handleGetNode',
   'handleGetNeighbors',
   'handleTraverseGraph',
-  'handleAddKnowledge',
-  'handleQueryKnowledge',
-  'handleQueryDecisions',
-  'handleSupersedeFact',
-  'handleGetKnowledgeStats',
-  // git-ingest handlers disabled (US-17), see handlers/index.ts
+  // knowledge handlers disabled (US-17), see handlers/index.ts
+  // 'handleAddKnowledge',
+  // 'handleQueryKnowledge',
+  // 'handleQueryDecisions',
+  // 'handleSupersedeFact',
+  // 'handleGetKnowledgeStats',
+  // git-ingest handlers disabled (US-17)
   // 'handleGitChurn',
   // 'handleGitCoChange',
   // 'handleGitOwnership',
@@ -61,6 +62,7 @@ const EXPECTED_HANDLERS = [
   'handleEnoxStats',
   'handleRecentActivity',
   'handleUpdateNode',
+  'handleCrawlEntity',
   'handleSaveDocument',
   'handleDescribe',
   'handleQueryGraphql',
