@@ -90,6 +90,7 @@ import {
   handleEnoxStats,
   handleRecentActivity,
   handleUpdateNode,
+  handleCrawlEntity,
   handleSaveDocument,
 } from './handlers/index.js';
 import type { ExplainArgs } from './handlers/index.js';
@@ -143,6 +144,7 @@ import type {
   TraverseArgs as EnoxTraverseArgs,
   RecentActivityArgs,
   UpdateNodeArgs as EnoxUpdateNodeArgs,
+  CrawlEntityArgs,
   SaveDocumentArgs,
 } from './handlers/enox-handlers.js';
 
@@ -456,6 +458,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
 
       case 'update_node':
         result = await handleUpdateNode(asArgs<EnoxUpdateNodeArgs>(args));
+        break;
+
+      case 'crawl_entity':
+        result = await handleCrawlEntity(asArgs<CrawlEntityArgs>(args));
         break;
 
       case 'save_document':

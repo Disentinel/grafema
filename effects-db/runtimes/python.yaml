@@ -1,0 +1,380 @@
+# Python Effects Database
+# Generated: 2026-05-12 (gs-115b, НИИ ЦВК)
+# Taxonomy version: 2
+#
+# Format (v1): module.function: [EFFECT, ...]
+# Format (v2): module.function: { effects: [EFFECT, ...], channel: { ... } }
+# For class methods: module.ClassName.method: [EFFECT, ...]
+#
+# Covers HTTP / IPC / process / socket surface needed by gs-115b
+# (dpc-messenger Tauri/FastAPI/Python analysis). Not an exhaustive
+# Python stdlib map — extend incrementally as new packages surface.
+#
+# NOTE: EffectsLookup.load() in packages/util/src/manifest/effects-lookup.ts
+# currently hardcodes runtimeFiles = ['node.yaml', 'rust.yaml', 'haskell.yaml'].
+# To consume this file, add 'python.yaml' to that list (one-line patch).
+# The detector plugin (http-ipc-detector.mjs) does NOT depend on
+# EffectsLookup — it carries its own pattern map — so the file remains
+# useful as documentation and a future-integration target.
+
+# ============================================================
+# python:requests — synchronous HTTP client
+# ============================================================
+python:requests:
+  get:
+    effects: [IO, IO:HTTP:REQUEST, THROW]
+    channel: { url: "arg[0]" }
+  post:
+    effects: [IO, IO:HTTP:REQUEST, THROW]
+    channel: { url: "arg[0]" }
+  put:
+    effects: [IO, IO:HTTP:REQUEST, THROW]
+    channel: { url: "arg[0]" }
+  delete:
+    effects: [IO, IO:HTTP:REQUEST, THROW]
+    channel: { url: "arg[0]" }
+  patch:
+    effects: [IO, IO:HTTP:REQUEST, THROW]
+    channel: { url: "arg[0]" }
+  head:
+    effects: [IO, IO:HTTP:REQUEST, THROW]
+    channel: { url: "arg[0]" }
+  options:
+    effects: [IO, IO:HTTP:REQUEST, THROW]
+    channel: { url: "arg[0]" }
+  request:
+    effects: [IO, IO:HTTP:REQUEST, THROW]
+    channel: { url: "arg[1]" }   # request(method, url, ...)
+  Session: [PURE]
+  Session.get:
+    effects: [IO, IO:HTTP:REQUEST, THROW]
+    channel: { url: "arg[0]" }
+  Session.post:
+    effects: [IO, IO:HTTP:REQUEST, THROW]
+    channel: { url: "arg[0]" }
+  Session.put:
+    effects: [IO, IO:HTTP:REQUEST, THROW]
+    channel: { url: "arg[0]" }
+  Session.delete:
+    effects: [IO, IO:HTTP:REQUEST, THROW]
+    channel: { url: "arg[0]" }
+  Session.patch:
+    effects: [IO, IO:HTTP:REQUEST, THROW]
+    channel: { url: "arg[0]" }
+  Session.head:
+    effects: [IO, IO:HTTP:REQUEST, THROW]
+    channel: { url: "arg[0]" }
+  Session.request:
+    effects: [IO, IO:HTTP:REQUEST, THROW]
+    channel: { url: "arg[1]" }
+  Session.close: [IO]
+  Response.json: [PURE, THROW]
+  Response.text: [PURE]
+  Response.content: [PURE]
+  Response.raise_for_status: [THROW]
+
+# ============================================================
+# python:httpx — sync + async HTTP client
+# ============================================================
+python:httpx:
+  get:
+    effects: [IO, IO:HTTP:REQUEST, THROW]
+    channel: { url: "arg[0]" }
+  post:
+    effects: [IO, IO:HTTP:REQUEST, THROW]
+    channel: { url: "arg[0]" }
+  put:
+    effects: [IO, IO:HTTP:REQUEST, THROW]
+    channel: { url: "arg[0]" }
+  delete:
+    effects: [IO, IO:HTTP:REQUEST, THROW]
+    channel: { url: "arg[0]" }
+  patch:
+    effects: [IO, IO:HTTP:REQUEST, THROW]
+    channel: { url: "arg[0]" }
+  head:
+    effects: [IO, IO:HTTP:REQUEST, THROW]
+    channel: { url: "arg[0]" }
+  options:
+    effects: [IO, IO:HTTP:REQUEST, THROW]
+    channel: { url: "arg[0]" }
+  request:
+    effects: [IO, IO:HTTP:REQUEST, THROW]
+    channel: { url: "arg[1]" }
+  stream:
+    effects: [IO, IO:HTTP:REQUEST, THROW]
+    channel: { url: "arg[1]" }
+  Client: [PURE]
+  Client.get:
+    effects: [IO, IO:HTTP:REQUEST, THROW]
+    channel: { url: "arg[0]" }
+  Client.post:
+    effects: [IO, IO:HTTP:REQUEST, THROW]
+    channel: { url: "arg[0]" }
+  Client.put:
+    effects: [IO, IO:HTTP:REQUEST, THROW]
+    channel: { url: "arg[0]" }
+  Client.delete:
+    effects: [IO, IO:HTTP:REQUEST, THROW]
+    channel: { url: "arg[0]" }
+  Client.patch:
+    effects: [IO, IO:HTTP:REQUEST, THROW]
+    channel: { url: "arg[0]" }
+  Client.head:
+    effects: [IO, IO:HTTP:REQUEST, THROW]
+    channel: { url: "arg[0]" }
+  Client.request:
+    effects: [IO, IO:HTTP:REQUEST, THROW]
+    channel: { url: "arg[1]" }
+  Client.close: [IO]
+  AsyncClient: [PURE]
+  AsyncClient.get:
+    effects: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
+    channel: { url: "arg[0]" }
+  AsyncClient.post:
+    effects: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
+    channel: { url: "arg[0]" }
+  AsyncClient.put:
+    effects: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
+    channel: { url: "arg[0]" }
+  AsyncClient.delete:
+    effects: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
+    channel: { url: "arg[0]" }
+  AsyncClient.patch:
+    effects: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
+    channel: { url: "arg[0]" }
+  AsyncClient.request:
+    effects: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
+    channel: { url: "arg[1]" }
+  AsyncClient.aclose: [IO, ASYNC]
+
+# ============================================================
+# python:aiohttp — asyncio HTTP client/server
+# ============================================================
+python:aiohttp:
+  ClientSession: [PURE]
+  ClientSession.get:
+    effects: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
+    channel: { url: "arg[0]" }
+  ClientSession.post:
+    effects: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
+    channel: { url: "arg[0]" }
+  ClientSession.put:
+    effects: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
+    channel: { url: "arg[0]" }
+  ClientSession.delete:
+    effects: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
+    channel: { url: "arg[0]" }
+  ClientSession.patch:
+    effects: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
+    channel: { url: "arg[0]" }
+  ClientSession.head:
+    effects: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
+    channel: { url: "arg[0]" }
+  ClientSession.request:
+    effects: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
+    channel: { url: "arg[1]" }
+  ClientSession.ws_connect:
+    effects: [IO, IO:SOCKET:CONNECT, ASYNC, THROW]
+    channel: { url: "arg[0]" }
+  ClientSession.close: [IO, ASYNC]
+  request:
+    effects: [IO, IO:HTTP:REQUEST, ASYNC, THROW]
+    channel: { url: "arg[1]" }
+  web.Application: [PURE]
+  web.run_app: [IO, IO:HTTP:LISTEN]
+  web.AppRunner: [PURE]
+  web.AppRunner.setup: [IO, ASYNC]
+  web.TCPSite:
+    effects: [PURE]
+  web.TCPSite.start: [IO, IO:HTTP:LISTEN, ASYNC]
+
+# ============================================================
+# python:subprocess — child processes (stdlib)
+# ============================================================
+python:subprocess:
+  run:
+    effects: [IO, IO:PROCESS:SPAWN, THROW]
+    channel: { binary: "arg[0]" }
+  call:
+    effects: [IO, IO:PROCESS:SPAWN, THROW]
+    channel: { binary: "arg[0]" }
+  check_call:
+    effects: [IO, IO:PROCESS:SPAWN, THROW]
+    channel: { binary: "arg[0]" }
+  check_output:
+    effects: [IO, IO:PROCESS:SPAWN, THROW]
+    channel: { binary: "arg[0]" }
+  Popen:
+    effects: [IO, IO:PROCESS:SPAWN, THROW]
+    channel: { binary: "arg[0]" }
+  getoutput:
+    effects: [IO, IO:PROCESS:SPAWN, THROW]
+    channel: { binary: "arg[0]" }
+  getstatusoutput:
+    effects: [IO, IO:PROCESS:SPAWN, THROW]
+    channel: { binary: "arg[0]" }
+  Popen.wait: [IO, THROW]
+  Popen.communicate: [IO, IO:PROCESS:STDIN_WRITE, IO:PROCESS:STDOUT_READ, THROW]
+  Popen.poll: [IO]
+  Popen.kill: [IO, MUTATION]
+  Popen.terminate: [IO, MUTATION]
+  Popen.send_signal: [IO, MUTATION]
+
+# ============================================================
+# python:asyncio — async runtime, subprocesses, sockets
+# ============================================================
+python:asyncio:
+  create_subprocess_exec:
+    effects: [IO, IO:PROCESS:SPAWN, ASYNC, THROW]
+    channel: { binary: "arg[0]" }
+  create_subprocess_shell:
+    effects: [IO, IO:PROCESS:SPAWN, ASYNC, THROW]
+    channel: { binary: "arg[0]" }
+  open_connection:
+    effects: [IO, IO:SOCKET:CONNECT, ASYNC, THROW]
+    channel: { host: "arg[0]", port: "arg[1]" }
+  open_unix_connection:
+    effects: [IO, IO:SOCKET:CONNECT, ASYNC, THROW]
+    channel: { path: "arg[0]" }
+  start_server:
+    effects: [IO, IO:SOCKET:LISTEN, ASYNC]
+    channel: { host: "arg[1]", port: "arg[2]" }
+  start_unix_server:
+    effects: [IO, IO:SOCKET:LISTEN, ASYNC]
+    channel: { path: "arg[1]" }
+  run: [IO, ASYNC]
+  gather: [PURE]
+  wait: [ASYNC]
+  wait_for: [ASYNC, THROW]
+  sleep: [ASYNC]
+  create_task: [PURE]
+  ensure_future: [PURE]
+  Queue: [PURE]
+  Queue.put: [ASYNC]
+  Queue.get: [ASYNC, THROW]
+
+# ============================================================
+# python:os — operating system interface (stdlib)
+# ============================================================
+python:os:
+  system:
+    effects: [IO, IO:PROCESS:SPAWN, THROW]
+    channel: { binary: "arg[0]" }
+  popen:
+    effects: [IO, IO:PROCESS:SPAWN, THROW]
+    channel: { binary: "arg[0]" }
+  execv:
+    effects: [IO, IO:PROCESS:SPAWN, THROW]
+    channel: { binary: "arg[0]" }
+  execve:
+    effects: [IO, IO:PROCESS:SPAWN, THROW]
+    channel: { binary: "arg[0]" }
+  execvp:
+    effects: [IO, IO:PROCESS:SPAWN, THROW]
+    channel: { binary: "arg[0]" }
+  execvpe:
+    effects: [IO, IO:PROCESS:SPAWN, THROW]
+    channel: { binary: "arg[0]" }
+  execl:
+    effects: [IO, IO:PROCESS:SPAWN, THROW]
+    channel: { binary: "arg[0]" }
+  execle:
+    effects: [IO, IO:PROCESS:SPAWN, THROW]
+    channel: { binary: "arg[0]" }
+  execlp:
+    effects: [IO, IO:PROCESS:SPAWN, THROW]
+    channel: { binary: "arg[0]" }
+  execlpe:
+    effects: [IO, IO:PROCESS:SPAWN, THROW]
+    channel: { binary: "arg[0]" }
+  spawnv: [IO, IO:PROCESS:SPAWN, THROW]
+  spawnve: [IO, IO:PROCESS:SPAWN, THROW]
+  spawnvp: [IO, IO:PROCESS:SPAWN, THROW]
+  spawnvpe: [IO, IO:PROCESS:SPAWN, THROW]
+  spawnl: [IO, IO:PROCESS:SPAWN, THROW]
+  spawnle: [IO, IO:PROCESS:SPAWN, THROW]
+  spawnlp: [IO, IO:PROCESS:SPAWN, THROW]
+  spawnlpe: [IO, IO:PROCESS:SPAWN, THROW]
+  fork: [IO, IO:PROCESS:SPAWN, THROW]
+  forkpty: [IO, IO:PROCESS:SPAWN, THROW]
+  kill: [IO, MUTATION, THROW]
+  killpg: [IO, MUTATION, THROW]
+  getenv: [IO, IO:ENV:READ]
+  environ: [IO, IO:ENV:READ]
+  putenv: [IO, IO:ENV:SET, MUTATION]
+  unsetenv: [IO, IO:ENV:SET, MUTATION]
+  remove: [IO, MUTATION, THROW]
+  unlink: [IO, MUTATION, THROW]
+  rename: [IO, MUTATION, THROW]
+  mkdir: [IO, MUTATION, THROW]
+  makedirs: [IO, MUTATION, THROW]
+  rmdir: [IO, MUTATION, THROW]
+
+# ============================================================
+# python:socket — low-level networking (stdlib)
+# ============================================================
+python:socket:
+  socket: [IO, IO:SOCKET:CONNECT]      # constructor — channel determined by later .connect/.bind
+  create_connection:
+    effects: [IO, IO:SOCKET:CONNECT, THROW]
+    channel: { addr: "arg[0]" }
+  create_server:
+    effects: [IO, IO:SOCKET:LISTEN, THROW]
+    channel: { addr: "arg[0]" }
+  socketpair: [IO, IO:SOCKET:CONNECT]
+  fromfd: [IO]
+  gethostname: [IO, NONDETERMINISTIC]
+  gethostbyname: [IO, NONDETERMINISTIC, THROW]
+  gethostbyaddr: [IO, NONDETERMINISTIC, THROW]
+  getaddrinfo: [IO, NONDETERMINISTIC, THROW]
+  getservbyname: [IO, THROW]
+  socket.connect:
+    effects: [IO, IO:SOCKET:CONNECT, THROW]
+    channel: { addr: "arg[0]" }
+  socket.bind:
+    effects: [IO, IO:SOCKET:LISTEN, THROW]
+    channel: { addr: "arg[0]" }
+  socket.listen: [IO, IO:SOCKET:LISTEN]
+  socket.accept: [IO, IO:SOCKET:ACCEPT, THROW]
+  socket.send: [IO, IO:SOCKET:WRITE, THROW]
+  socket.sendall: [IO, IO:SOCKET:WRITE, THROW]
+  socket.sendto: [IO, IO:SOCKET:WRITE, THROW]
+  socket.recv: [IO, IO:SOCKET:READ, MUTATION]
+  socket.recvfrom: [IO, IO:SOCKET:READ, MUTATION]
+  socket.close: [IO]
+  socket.shutdown: [IO]
+
+# ============================================================
+# python:paramiko — SSH client (third-party)
+# ============================================================
+python:paramiko:
+  SSHClient: [PURE]
+  SSHClient.connect:
+    effects: [IO, IO:SOCKET:CONNECT, THROW]
+    channel: { host: "arg[0]" }
+  SSHClient.exec_command: [IO, IO:PROCESS:SPAWN, THROW]
+  SSHClient.invoke_shell: [IO, IO:PROCESS:SPAWN, THROW]
+  SSHClient.open_sftp: [IO, THROW]
+  SSHClient.close: [IO]
+  SSHClient.set_missing_host_key_policy: [MUTATION]
+  SSHClient.load_system_host_keys: [IO]
+  Transport: [PURE]
+  Transport.connect: [IO, IO:SOCKET:CONNECT, THROW]
+  Transport.open_session: [IO, THROW]
+  Transport.open_channel: [IO, THROW]
+  SFTPClient.put: [IO, IO:FILE:WRITE, THROW]
+  SFTPClient.get: [IO, IO:FILE:READ, THROW]
+  SFTPClient.listdir: [IO, THROW]
+  SFTPClient.remove: [IO, MUTATION, THROW]
+
+# ============================================================
+# python:urllib — stdlib HTTP fallback
+# ============================================================
+python:urllib.request:
+  urlopen:
+    effects: [IO, IO:HTTP:REQUEST, THROW]
+    channel: { url: "arg[0]" }
+  Request: [PURE]
+  build_opener: [PURE]
+  install_opener: [MUTATION]

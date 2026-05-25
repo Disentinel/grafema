@@ -403,6 +403,21 @@ Example: update_node(node_id="node-abc123", description="V2 storage engine with 
     },
   },
   {
+    name: 'crawl_entity',
+    description: `Run ontological crawl on a code entity — generate hypotheses and verify against code graph.
+Uses the Grafema code graph for verification. Records findings in knowledge database.
+Example: crawl_entity(entity="compactionEnricher", context="TypeScript enricher creating FEATURE nodes")`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        entity: { type: 'string', description: 'Entity name to crawl' },
+        context: { type: 'string', description: 'Brief description of what this entity is' },
+        depth: { type: 'number', description: 'How many perspectives to explore (default: 3)' },
+      },
+      required: ['entity'],
+    },
+  },
+  {
     name: 'save_document',
     description: `Store a document or artifact as a node in the knowledge graph.
 
