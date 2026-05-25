@@ -781,7 +781,13 @@ impl GraphStore for GraphEngineV2 {
         // leaving old L1 + new L0 = double-counted nodes/edges.
         let config = CompactionConfig { segment_threshold: 1 };
         self.store.compact(&mut self.manifest, &config)?;
-        // GC: collect orphaned segments after compaction
+        // Manifest GC: remove old manifest files before segment GC so
+        // referenced_segments is recalculated and orphaned segments are detected.
+        let gc_manifests = self.manifest.gc_manifests(3)?;
+        if gc_manifests > 0 {
+            tracing::info!("GC: removed {} old manifest(s)", gc_manifests);
+        }
+        // Segment GC: collect orphaned segments after compaction + manifest GC
         let moved = self.manifest.gc_collect()?;
         if !moved.is_empty() {
             tracing::info!("GC: moved {} orphaned segment(s) to gc/", moved.len());

@@ -427,10 +427,7 @@ impl ManifestIndex {
         self.latest_version = manifest.version;
     }
 
-    /// Remove old snapshot from index (called during manifest GC, not segment GC).
-    ///
-    /// Note: Phase 1 does NOT implement manifest GC (keep all manifests).
-    /// This method included for completeness (T2.2 will use it).
+    /// Remove old snapshot from index (called during manifest GC).
     ///
     /// Complexity: O(M + T) where M = snapshots, T = tag entries
     pub fn remove_snapshot(&mut self, version: u64) {
@@ -440,6 +437,12 @@ impl ManifestIndex {
             tag_values.retain(|_, v| *v != version);
         }
         self.tag_index.retain(|_, values| !values.is_empty());
+    }
+
+    /// Recalculate referenced_segments from the remaining snapshots' segment data.
+    /// Must be called after removing snapshots to keep segment GC accurate.
+    pub fn set_referenced_segments(&mut self, segments: HashSet<u64>) {
+        self.referenced_segments = segments;
     }
 
     /// Find snapshot by tag (O(1) lookup).
@@ -889,6 +892,17 @@ impl ManifestStore {
         self.current.tombstoned_node_ids = Vec::new();
         self.current.tombstoned_edge_keys = Vec::new();
 
+        // 6. Periodic manifest GC — prevent unbounded growth during long analysis runs.
+        // Keep last 3 manifests (current + 2 for safety). Runs every 10 commits.
+        const MANIFEST_GC_INTERVAL: u64 = 10;
+        const MANIFEST_GC_KEEP: usize = 3;
+        if self.current.version % MANIFEST_GC_INTERVAL == 0 {
+            let removed = self.gc_manifests(MANIFEST_GC_KEEP)?;
+            if removed > 0 {
+                tracing::info!("Manifest GC: removed {} old manifest(s)", removed);
+            }
+        }
+
         Ok(())
     }
 
@@ -1071,6 +1085,70 @@ impl ManifestStore {
         }
 
         Ok(deleted)
+    }
+
+    /// Remove old manifest files, keeping only the last `keep_last` versions.
+    ///
+    /// 1. Remove old snapshot entries from index
+    /// 2. Delete manifest JSON files from disk
+    /// 3. Recalculate referenced_segments from remaining manifests
+    /// 4. Write updated index to disk
+    ///
+    /// Complexity: O(R + K*S) where R = removed manifests, K = kept manifests,
+    /// S = segments per manifest (for recalculating referenced set)
+    pub fn gc_manifests(&mut self, keep_last: usize) -> Result<usize> {
+        if self.db_path.is_none() {
+            return Ok(0);
+        }
+
+        let snapshot_count = self.index.snapshots.len();
+        if snapshot_count <= keep_last {
+            return Ok(0);
+        }
+
+        let db_path = self.db_path.as_ref().unwrap().clone();
+
+        let versions_to_remove: Vec<u64> = self
+            .index
+            .snapshots
+            .iter()
+            .take(snapshot_count - keep_last)
+            .map(|s| s.version)
+            .collect();
+
+        let mut removed = 0;
+        for version in &versions_to_remove {
+            self.index.remove_snapshot(*version);
+
+            let path = manifest_file_path(&db_path, *version);
+            if path.exists() {
+                std::fs::remove_file(&path)?;
+                removed += 1;
+            }
+        }
+
+        // Recalculate referenced_segments from remaining manifests
+        let mut referenced = HashSet::new();
+        for info in &self.index.snapshots {
+            if let Ok(manifest) = self.load_manifest(info.version) {
+                for seg in manifest
+                    .node_segments
+                    .iter()
+                    .chain(manifest.edge_segments.iter())
+                    .chain(manifest.l1_node_segments.iter())
+                    .chain(manifest.l1_edge_segments.iter())
+                {
+                    referenced.insert(seg.segment_id);
+                }
+            }
+        }
+        self.index.set_referenced_segments(referenced);
+
+        // Persist updated index
+        let index_path = db_path.join("manifest_index.json");
+        atomic_write_json(&index_path, &self.index, self.durability)?;
+
+        Ok(removed)
     }
 }
 
@@ -2135,6 +2213,95 @@ mod tests {
         let store = ManifestStore::ephemeral();
         assert!(store.gc_collect().unwrap().is_empty());
         assert_eq!(store.gc_purge().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_gc_manifests_removes_old_files() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.rfdb");
+        let mut store = ManifestStore::create(&db_path).unwrap();
+
+        // Commit versions 2..=6 (v1 is the initial empty manifest)
+        for i in 1..=5 {
+            let m = store
+                .create_manifest(vec![make_node_descriptor(i, 10)], vec![], None)
+                .unwrap();
+            store.commit(m).unwrap();
+        }
+
+        // Should have 6 manifests on disk (v1..=v6)
+        let manifests_dir = db_path.join("manifests");
+        let count_before = std::fs::read_dir(&manifests_dir)
+            .unwrap()
+            .filter(|e| e.as_ref().unwrap().path().extension().map_or(false, |ext| ext == "json"))
+            .count();
+        assert_eq!(count_before, 6);
+
+        // GC keeping last 2
+        let removed = store.gc_manifests(2).unwrap();
+        assert_eq!(removed, 4);
+
+        // Should have 2 manifest files remaining
+        let count_after = std::fs::read_dir(&manifests_dir)
+            .unwrap()
+            .filter(|e| e.as_ref().unwrap().path().extension().map_or(false, |ext| ext == "json"))
+            .count();
+        assert_eq!(count_after, 2);
+
+        // Latest manifest (v6) must still exist
+        assert!(manifest_file_path(&db_path, 6).exists());
+        assert!(manifest_file_path(&db_path, 5).exists());
+        assert!(!manifest_file_path(&db_path, 1).exists());
+
+        // Index should only have 2 snapshots
+        assert_eq!(store.index.snapshots.len(), 2);
+    }
+
+    #[test]
+    fn test_gc_manifests_recalculates_referenced_segments() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.rfdb");
+        let mut store = ManifestStore::create(&db_path).unwrap();
+
+        // v2: segment 1
+        let m2 = store
+            .create_manifest(vec![make_node_descriptor(1, 10)], vec![], None)
+            .unwrap();
+        store.commit(m2).unwrap();
+
+        // v3: segment 2 (replacing segment 1)
+        let m3 = store
+            .create_manifest(vec![make_node_descriptor(2, 20)], vec![], None)
+            .unwrap();
+        store.commit(m3).unwrap();
+
+        // Before GC: both segments 1 and 2 are referenced (union of all manifests)
+        assert!(store.index.referenced_segments.contains(&1));
+        assert!(store.index.referenced_segments.contains(&2));
+
+        // GC keeping only latest (v3)
+        store.gc_manifests(1).unwrap();
+
+        // After GC: only segment 2 is referenced (from v3 manifest)
+        assert!(!store.index.referenced_segments.contains(&1));
+        assert!(store.index.referenced_segments.contains(&2));
+    }
+
+    #[test]
+    fn test_gc_manifests_no_op_when_fewer_than_keep() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.rfdb");
+        let mut store = ManifestStore::create(&db_path).unwrap();
+
+        // Only v1 exists, keep_last=3 → no-op
+        let removed = store.gc_manifests(3).unwrap();
+        assert_eq!(removed, 0);
+    }
+
+    #[test]
+    fn test_gc_manifests_ephemeral_no_op() {
+        let mut store = ManifestStore::ephemeral();
+        assert_eq!(store.gc_manifests(3).unwrap(), 0);
     }
 
     // ── Phase 7: Index Consistency ────────────────────────────────
