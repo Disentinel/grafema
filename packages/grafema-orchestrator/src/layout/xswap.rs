@@ -131,7 +131,7 @@ pub fn xswap(
 
             // Cheap delta check first — skip the expensive BFS if no win.
             let delta = swap_delta(n_idx as NodeIdx, neigh_idx as NodeIdx, coords, incidence);
-            if delta >= 0.0 {
+            if delta >= -0.01 {
                 continue;
             }
 

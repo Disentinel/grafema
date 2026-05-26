@@ -121,11 +121,12 @@ export class FlowLayer {
     this._plans = [];
 
     const typeToFlow = new Map<string, string>();
+    const flowColorCache = new Map<string, THREE.Color>();
     for (const [name, preset] of Object.entries(FLOWS)) {
+      flowColorCache.set(name, new THREE.Color(preset.color));
       for (const t of preset.types) typeToFlow.set(t, name);
     }
 
-    // Build style-agnostic edge plans.
     for (const edge of edges) {
       const flowName = typeToFlow.get(edge.type);
       if (!flowName) continue;
@@ -133,7 +134,6 @@ export class FlowLayer {
       const dst = nodes[edge.target];
       if (!src || !dst) continue;
 
-      const preset = FLOWS[flowName];
       const dist = Math.sqrt((dst.x - src.x) ** 2 + (dst.z - src.z) ** 2);
       const lift = Math.min(dist * 0.15, 5);
 
@@ -145,11 +145,10 @@ export class FlowLayer {
         lift,
         srcWorld: { x: src.x, z: src.z },
         dstWorld: { x: dst.x, z: dst.z },
-        presetColor: new THREE.Color(preset.color),
+        presetColor: flowColorCache.get(flowName)!,
       });
     }
 
-    // Initialise a slot per flow present in plans, seeded with preset visibility.
     const seen = new Set<string>();
     for (const plan of this._plans) seen.add(plan.flowName);
     for (const flowName of seen) {

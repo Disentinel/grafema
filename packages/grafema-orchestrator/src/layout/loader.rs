@@ -265,11 +265,12 @@ pub(crate) fn build_layout_input(
         }
     }
 
-    // Resolve edges and collect them, dedup'd by (src, dst, type).
-    // Src-side lift: if edge.src is not itself placeable but has a placeable
-    // CONTAINS-parent, rewrite src → parent. Dst-side lift deferred (Chunk-12+).
-    let mut edges: Vec<Edge> = Vec::new();
+    // Resolve edges: aggregate by (src, dst) pair, weight = number of
+    // distinct edge types connecting them. Hub damping: final weight is
+    // divided by sqrt(max(degree_src, degree_dst)) so high-degree utility
+    // nodes don't dominate the cost function.
     let mut degree: Vec<u32> = vec![0; n_nodes];
+    let mut edge_counts: FxHashMap<(NodeIdx, NodeIdx), u32> = FxHashMap::default();
     let mut seen: FxHashSet<(NodeIdx, NodeIdx, &str)> = FxHashSet::default();
 
     let mut direct_count: u64 = 0;
@@ -317,7 +318,6 @@ pub(crate) fn build_layout_input(
             };
 
             if final_src == final_dst {
-                // Post-lift self-loop (e.g. A CONTAINS CALL, CALL CALLS A → A→A).
                 self_loop_after_lift += 1;
                 continue;
             }
@@ -328,11 +328,12 @@ pub(crate) fn build_layout_input(
             degree[final_src as usize] = degree[final_src as usize].saturating_add(1);
             degree[final_dst as usize] = degree[final_dst as usize].saturating_add(1);
 
-            edges.push(Edge {
-                src: final_src,
-                dst: final_dst,
-                weight: 1.0,
-            });
+            let key = if final_src < final_dst {
+                (final_src, final_dst)
+            } else {
+                (final_dst, final_src)
+            };
+            *edge_counts.entry(key).or_insert(0) += 1;
 
             if was_lifted {
                 lifted_count += 1;
@@ -342,6 +343,18 @@ pub(crate) fn build_layout_input(
                 *per_type_direct.entry(*ty).or_insert(0) += 1;
             }
         }
+    }
+
+    // Build aggregated weighted edges with hub damping.
+    let mut edges: Vec<Edge> = Vec::with_capacity(edge_counts.len());
+    for ((src, dst), count) in &edge_counts {
+        let hub_degree = std::cmp::max(degree[*src as usize], degree[*dst as usize]);
+        let damping = 1.0 / (hub_degree as f32).sqrt().max(1.0);
+        edges.push(Edge {
+            src: *src,
+            dst: *dst,
+            weight: (*count as f32) * damping,
+        });
     }
 
     tracing::info!(
@@ -597,7 +610,9 @@ mod tests {
             ("READS_FROM", vec![edge("f#a", "f#b")]),
         ];
         let input = build_layout_input(&nodes, &edges, &[]);
-        assert_eq!(input.edges.len(), 2);
+        // Aggregated: (a, b) with 2 edge types → 1 edge, weight > 1.
+        assert_eq!(input.edges.len(), 1);
+        assert!(input.edges[0].weight > 1.0);
     }
 
     // ---------- Chunk-12: src-side CONTAINS-parent lift ----------
@@ -663,14 +678,11 @@ mod tests {
             contains("a.rs->FUNCTION->A", "a.rs->REFERENCE->x"),
         ];
         let input = build_layout_input(&nodes, &edges, &contains);
-        // Two edges A→B, one per type — not collapsed.
-        assert_eq!(input.edges.len(), 2);
-        // Both have same src/dst post-lift; types differ internally but Edge
-        // struct doesn't carry type, so we just check the count + endpoints.
-        for e in &input.edges {
-            assert_eq!(e.src, 0);
-            assert_eq!(e.dst, 1);
-        }
+        // Aggregated: both lift to A→B, merged into 1 edge with weight > 1.
+        assert_eq!(input.edges.len(), 1);
+        assert_eq!(input.edges[0].src.min(input.edges[0].dst), 0);
+        assert_eq!(input.edges[0].src.max(input.edges[0].dst), 1);
+        assert!(input.edges[0].weight > 1.0);
     }
 
     #[test]

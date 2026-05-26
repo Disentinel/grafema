@@ -132,6 +132,7 @@ export async function loadFromSource(
 interface UrlParams {
   rust: boolean;
   live: boolean;
+  fixture: boolean;
   packages?: string;
   nodeTypes?: string;
   edgeTypes?: string;
@@ -141,7 +142,7 @@ interface UrlParams {
 
 function readUrlParams(): UrlParams {
   if (typeof window === 'undefined') {
-    return { rust: false, live: false };
+    return { rust: false, live: false, fixture: false };
   }
   const params = new URLSearchParams(window.location.search);
   return {
@@ -150,6 +151,7 @@ function readUrlParams(): UrlParams {
       params.get('live') === 'true' ||
       params.has('packages') ||
       params.has('nodeTypes'),
+    fixture: params.get('fixture') === 'true',
     packages: params.get('packages') || undefined,
     nodeTypes: params.get('nodeTypes') || undefined,
     edgeTypes: params.get('edgeTypes') || undefined,
@@ -331,6 +333,7 @@ function ConnectedOverflowBadgeLayer({ overflowFiles }: { overflowFiles: Overflo
 
 export function HexAtlas({ mode, source, className, skipCanvas }: HexAtlasProps) {
   const [status, setStatus] = useState('');
+  const [connectionError, setConnectionError] = useState<string | null>(null);
   const layoutMeta = useLayoutStore((s) => s.layoutMeta);
 
   // Bridge `mode` prop → viewStore. Runs on mount + whenever the prop
@@ -378,20 +381,26 @@ export function HexAtlas({ mode, source, className, skipCanvas }: HexAtlasProps)
       }
     };
 
-    if (params.rust || params.live) {
+    const PLACEABLE_TYPES = [
+      'FUNCTION', 'METHOD', 'CLASS', 'TYPE_ALIAS', 'TYPE_SYNONYM',
+      'TYPE_CLASS', 'DATA_TYPE', 'ENUM', 'STRUCT', 'TRAIT', 'IMPL_BLOCK',
+      'INSTANCE', 'NAMESPACE', 'MACRO', 'PROCESS', 'MESSAGE_TYPE',
+      'ASYNC_FUNCTION', 'GLOBAL_DEFINITION', 'EXTERNAL_FUNCTION',
+      'EXTERNAL_MODULE', 'CLOSURE', 'LAMBDA', 'CONSTRUCTOR',
+    ].join(',');
+
+    const loadFromRfdb = (useRust: boolean) => {
       setStatus('Connecting to RFDB...');
-      const loader = params.rust ? loadLiveLayout : loadStream;
+      const loader = useRust ? loadLiveLayout : loadStream;
       loader({
         packages: params.packages,
-        nodeTypes: params.nodeTypes,
+        nodeTypes: params.nodeTypes ?? PLACEABLE_TYPES,
         edgeTypes: params.edgeTypes,
-        // HullLayer is disabled; stream size is bounded by server build
-        // time + client HexLayer cost. 50k nodes → ~14s on the server
-        // stream but the client HexLayer (instanced) handles them.
         maxNodes: params.maxNodes ?? 50000,
+        noExcluded: true,
         lodLevel: params.lodLevel,
         onProgress: streamProgress,
-        ...(params.rust
+        ...(useRust
           ? {
               onSAProgress: (
                 iteration: number,
@@ -409,13 +418,28 @@ export function HexAtlas({ mode, source, className, skipCanvas }: HexAtlasProps)
           : {}),
       }).catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
-         
         console.error('Stream load failed:', err);
-        setStatus(`Error: ${msg}. Falling back to fixture.`);
-        void loadFixture();
+        setConnectionError(msg);
       });
-    } else {
+    };
+
+    if (params.fixture) {
       void loadFixture();
+    } else if (params.rust || params.live) {
+      loadFromRfdb(params.rust);
+    } else {
+      setStatus('Connecting to RFDB...');
+      fetch('/api/stats')
+        .then((r) => {
+          if (r.ok) {
+            loadFromRfdb(false);
+          } else {
+            setConnectionError(`RFDB returned ${r.status}`);
+          }
+        })
+        .catch(() => {
+          setConnectionError('RFDB server is not reachable');
+        });
     }
 
     initPostMessageAdapter();
@@ -459,17 +483,126 @@ export function HexAtlas({ mode, source, className, skipCanvas }: HexAtlasProps)
   const overflowFiles = layoutMeta?.overflow_files ?? [];
   const loaded = useDataStore((s) => s.loaded);
   const nodeCount = useDataStore((s) => s.nodes.length);
-  const showLoadingOverlay = !loaded && !showEmptyLayout;
+  const showLoadingOverlay = !loaded && !showEmptyLayout && !connectionError;
 
   return (
     <div className={className ?? 'app'} style={rootStyle}>
-      {status && <div className="status-bar">{status}</div>}
+      {status && !connectionError && <div className="status-bar">{status}</div>}
       {skipCanvas ? null : <Canvas />}
       <Sidebar />
       <ModeToggle />
       {overflowFiles.length > 0 && <ConnectedOverflowBadgeLayer overflowFiles={overflowFiles} />}
       {showEmptyLayout && <EmptyLayoutOverlay />}
       {showLoadingOverlay && <LoadingOverlay status={status} nodeCount={nodeCount} />}
+      {connectionError && (
+        <ConnectionErrorOverlay
+          error={connectionError}
+          onRetry={() => {
+            setConnectionError(null);
+            setStatus('');
+            window.location.reload();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function ConnectionErrorOverlay({ error, onRetry }: { error: string; onRetry: () => void }) {
+  const overlayStyle: React.CSSProperties = {
+    position: 'fixed',
+    inset: 0,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: 'rgba(0, 0, 0, 0.7)',
+    backdropFilter: 'blur(4px)',
+    zIndex: 10000,
+  };
+  const panelStyle: React.CSSProperties = {
+    background: '#1a1a24',
+    color: '#e0e0e0',
+    border: '1px solid #333',
+    borderRadius: 8,
+    padding: '24px 28px',
+    maxWidth: 480,
+    fontFamily: 'system-ui, -apple-system, sans-serif',
+    fontSize: 14,
+    lineHeight: 1.6,
+    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
+  };
+  const codeStyle: React.CSSProperties = {
+    display: 'block',
+    background: '#0d0d14',
+    color: '#9fefb3',
+    padding: '8px 10px',
+    borderRadius: 4,
+    fontFamily: 'monospace',
+    fontSize: 13,
+    margin: '6px 0',
+    userSelect: 'all',
+  };
+  const btnRow: React.CSSProperties = {
+    display: 'flex',
+    gap: 8,
+    justifyContent: 'flex-end',
+    marginTop: 16,
+  };
+  const primary: React.CSSProperties = {
+    background: '#2d7af6',
+    color: '#fff',
+    border: 0,
+    padding: '8px 16px',
+    borderRadius: 4,
+    cursor: 'pointer',
+    fontSize: 13,
+    fontWeight: 500,
+  };
+  const secondary: React.CSSProperties = {
+    background: 'transparent',
+    color: '#aaa',
+    border: '1px solid #444',
+    padding: '8px 16px',
+    borderRadius: 4,
+    cursor: 'pointer',
+    fontSize: 13,
+  };
+
+  return (
+    <div style={overlayStyle} role="dialog" aria-modal="true">
+      <div style={panelStyle}>
+        <div style={{ fontSize: 16, fontWeight: 600, color: '#ff8080', marginBottom: 12 }}>
+          Cannot connect to RFDB
+        </div>
+        <p style={{ margin: '0 0 12px', color: '#bbb' }}>
+          The graph server is not running or not reachable.
+        </p>
+        <div style={{ margin: '12px 0' }}>
+          <div style={{ color: '#888', fontSize: 12, marginBottom: 4 }}>1. Analyze your project:</div>
+          <code style={codeStyle}>grafema analyze</code>
+          <div style={{ color: '#888', fontSize: 12, marginBottom: 4, marginTop: 8 }}>2. Compute layout and start the server:</div>
+          <code style={codeStyle}>grafema layout --commit && grafema start --http-port 3333</code>
+          <div style={{ color: '#888', fontSize: 12, marginBottom: 4, marginTop: 8 }}>3. Reload this page</div>
+        </div>
+        <details style={{ margin: '12px 0 0', color: '#666', fontSize: 12 }}>
+          <summary style={{ cursor: 'pointer' }}>Error details</summary>
+          <pre style={{ margin: '6px 0 0', whiteSpace: 'pre-wrap', color: '#999' }}>{error}</pre>
+        </details>
+        <div style={btnRow}>
+          <button
+            type="button"
+            style={secondary}
+            onClick={() => {
+              window.location.href = window.location.pathname + '?fixture=true';
+            }}
+          >
+            Load demo fixture
+          </button>
+          <button type="button" style={primary} onClick={onRetry}>
+            Retry connection
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
