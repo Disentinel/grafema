@@ -94,7 +94,7 @@ impl TuningProfile {
     /// - `segment_threshold`: RAM < 4 GB -> 2, < 16 GB -> 4, else 8.
     /// - `write_buffer_byte_limit`: `clamp(available * 0.02, 10 MB, 100 MB)`.
     /// - `write_buffer_node_limit`: `buffer_bytes / 220`.
-    /// - `compaction_threads`: RAM < 4 GB -> 1, else `clamp(cpu / 2, 1, 4)`.
+    /// - `compaction_threads`: RAM < 4 GB -> 1, else `cpu / 2` (at least 1).
     pub fn from_resources(res: &SystemResources) -> Self {
         let total_gb = res.total_memory_bytes as f64 / GB as f64;
 
@@ -122,11 +122,11 @@ impl TuningProfile {
         // Write buffer node limit
         let write_buffer_node_limit = write_buffer_byte_limit / BYTES_PER_NODE;
 
-        // Compaction threads
+        // Compaction threads: half of logical CPUs, floored at 1
         let compaction_threads = if total_gb < 4.0 {
             1
         } else {
-            (res.cpu_count / 2).clamp(1, 4)
+            (res.cpu_count / 2).max(1)
         };
 
         Self {
@@ -213,13 +213,13 @@ mod tests {
 
     #[test]
     fn test_tuning_profile_high_memory() {
-        // 64 GB RAM, 16 CPUs -> shard=16, threshold=8, threads=4 (capped)
+        // 64 GB RAM, 16 CPUs -> shard=16, threshold=8, threads=8
         let res = make_resources(64.0, 32.0, 16);
         let profile = TuningProfile::from_resources(&res);
 
         assert_eq!(profile.shard_count, 16);
         assert_eq!(profile.segment_threshold, 8);
-        assert_eq!(profile.compaction_threads, 4);
+        assert_eq!(profile.compaction_threads, 8);
     }
 
     #[test]

@@ -11,6 +11,8 @@
 
 use std::io::Cursor;
 
+use rayon::prelude::*;
+
 use crate::error::Result;
 use crate::storage_v2::compaction::merge::{merge_edge_segments, merge_node_segments};
 use crate::storage_v2::compaction::types::CompactionConfig;
@@ -75,16 +77,34 @@ pub struct ShardCompactionResult {
 pub fn compact_shard(shard: &Shard) -> Result<ShardCompactionResult> {
     let tombstones = shard.tombstones();
 
-    // Count L0 segments being merged
     let l0_segments_merged =
         (shard.l0_node_segment_count() + shard.l0_edge_segment_count()) as u32;
 
     let tombstones_before =
         (tombstones.node_count() + tombstones.edge_count()) as u64;
 
-    // ── Merge Nodes ─────────────────────────────────────────────────
+    // Merge nodes and edges in parallel — they read different segment
+    // types from the same shard and produce independent results.
+    let (node_result, edge_result) = rayon::join(
+        || merge_and_write_nodes(shard),
+        || merge_and_write_edges(shard),
+    );
 
-    // Collect segment references: L0 newest-first, then L1 (oldest)
+    let (node_segment_bytes, node_meta) = node_result?;
+    let (edge_segment_bytes, edge_meta) = edge_result?;
+
+    Ok(ShardCompactionResult {
+        node_segment_bytes,
+        node_meta,
+        edge_segment_bytes,
+        edge_meta,
+        l0_segments_merged,
+        tombstones_removed: tombstones_before,
+    })
+}
+
+fn merge_and_write_nodes(shard: &Shard) -> Result<(Option<Vec<u8>>, Option<SegmentMeta>)> {
+    let tombstones = shard.tombstones();
     let l0_node_segs: Vec<&NodeSegmentV2> = shard
         .l0_node_segments()
         .iter()
@@ -96,22 +116,22 @@ pub fn compact_shard(shard: &Shard) -> Result<ShardCompactionResult> {
         all_node_segs.push(l1);
     }
 
-    let merged_nodes = merge_node_segments(&all_node_segs, tombstones);
+    let merged = merge_node_segments(&all_node_segs, tombstones);
+    if merged.is_empty() {
+        return Ok((None, None));
+    }
 
-    let (node_segment_bytes, node_meta) = if merged_nodes.is_empty() {
-        (None, None)
-    } else {
-        let mut writer = NodeSegmentWriter::new();
-        for record in merged_nodes {
-            writer.add(record);
-        }
-        let mut cursor = Cursor::new(Vec::new());
-        let meta = writer.finish(&mut cursor)?;
-        (Some(cursor.into_inner()), Some(meta))
-    };
+    let mut writer = NodeSegmentWriter::new();
+    for record in merged {
+        writer.add(record);
+    }
+    let mut cursor = Cursor::new(Vec::new());
+    let meta = writer.finish(&mut cursor)?;
+    Ok((Some(cursor.into_inner()), Some(meta)))
+}
 
-    // ── Merge Edges ─────────────────────────────────────────────────
-
+fn merge_and_write_edges(shard: &Shard) -> Result<(Option<Vec<u8>>, Option<SegmentMeta>)> {
+    let tombstones = shard.tombstones();
     let l0_edge_segs: Vec<&EdgeSegmentV2> = shard
         .l0_edge_segments()
         .iter()
@@ -123,28 +143,18 @@ pub fn compact_shard(shard: &Shard) -> Result<ShardCompactionResult> {
         all_edge_segs.push(l1);
     }
 
-    let merged_edges = merge_edge_segments(&all_edge_segs, tombstones);
+    let merged = merge_edge_segments(&all_edge_segs, tombstones);
+    if merged.is_empty() {
+        return Ok((None, None));
+    }
 
-    let (edge_segment_bytes, edge_meta) = if merged_edges.is_empty() {
-        (None, None)
-    } else {
-        let mut writer = EdgeSegmentWriter::new();
-        for record in merged_edges {
-            writer.add(record);
-        }
-        let mut cursor = Cursor::new(Vec::new());
-        let meta = writer.finish(&mut cursor)?;
-        (Some(cursor.into_inner()), Some(meta))
-    };
-
-    Ok(ShardCompactionResult {
-        node_segment_bytes,
-        node_meta,
-        edge_segment_bytes,
-        edge_meta,
-        l0_segments_merged,
-        tombstones_removed: tombstones_before,
-    })
+    let mut writer = EdgeSegmentWriter::new();
+    for record in merged {
+        writer.add(record);
+    }
+    let mut cursor = Cursor::new(Vec::new());
+    let meta = writer.finish(&mut cursor)?;
+    Ok((Some(cursor.into_inner()), Some(meta)))
 }
 
 /// Build a SegmentDescriptor from compaction metadata.
