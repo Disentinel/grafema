@@ -133,8 +133,8 @@ nodeToExportEntries node
   -- EXPORT node with name "named": skip (container node, children carry info)
   | gnType node == "EXPORT" = []
 
-  -- Directly exported declarations (FUNCTION, VARIABLE, CONSTANT, CLASS, INTERFACE, TYPE_ALIAS, ENUM)
-  | gnExported node && gnType node `elem` ["FUNCTION", "VARIABLE", "CONSTANT", "CLASS", "INTERFACE", "TYPE_ALIAS", "ENUM"] =
+  -- Directly exported declarations (FUNCTION, VARIABLE, CONSTANT, CLASS, INTERFACE, TYPE_ALIAS, ENUM, NAMESPACE)
+  | gnExported node && gnType node `elem` ["FUNCTION", "VARIABLE", "CONSTANT", "CLASS", "INTERFACE", "TYPE_ALIAS", "ENUM", "NAMESPACE"] =
       [(gnFile node, [ExportEntry (gnName node) (gnName node) (gnId node) (gnFile node) Nothing])]
 
   | otherwise = []
@@ -249,7 +249,9 @@ makeCandidates resolved =
       withExt = [resolved <> ext | ext <- extensions]
       -- Try as directory with index file
       indexFiles = [resolved <> "/index" <> ext | ext <- extensions]
-  in exact ++ swapped ++ withExt ++ indexFiles
+      -- .d.ts as last resort (type-declaration-only modules)
+      dtsExt = [resolved <> ".d.ts", resolved <> "/index.d.ts"]
+  in exact ++ swapped ++ withExt ++ indexFiles ++ dtsExt
 
 -- | If the path ends with a known extension, replace it with the target extension.
 -- Returns empty list if the path doesn't end with a known extension or the
@@ -257,7 +259,7 @@ makeCandidates resolved =
 swapExtension :: Text -> Text -> [Text]
 swapExtension path newExt =
   [ stripped <> newExt
-  | ext <- [".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts"]
+  | ext <- [".d.ts", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts"]
   , ext `T.isSuffixOf` path
   , let stripped = T.dropEnd (T.length ext) path
   , stripped <> newExt /= path  -- skip if same as original
@@ -266,7 +268,7 @@ swapExtension path newExt =
 -- | Check if a path already has a known JS/TS extension.
 hasKnownExtension :: Text -> Bool
 hasKnownExtension p = any (`T.isSuffixOf` p)
-  [".js", ".ts", ".tsx", ".jsx", ".mjs", ".cjs", ".mts", ".cts"]
+  [".d.ts", ".js", ".ts", ".tsx", ".jsx", ".mjs", ".cjs", ".mts", ".cts"]
 
 -- ---------------------------------------------------------------------------
 -- Import resolution
@@ -375,8 +377,10 @@ handleExportEntry exportIndex wsMap visited depth node entry =
           mResolvedFile = resolveModulePath exportFile reExportSource exportIndex wsMap
       in case mResolvedFile of
         Nothing -> do
-          hPutStrLn stderr $ "Warning: cannot resolve re-export source '"
-            ++ T.unpack reExportSource ++ "'"
+          if isRelativeSpecifier reExportSource || Map.member reExportSource wsMap || findWorkspacePrefix reExportSource wsMap /= Nothing
+            then hPutStrLn stderr $ "Warning: cannot resolve re-export source '"
+                   ++ T.unpack reExportSource ++ "'"
+            else return ()
           return []
         Just resolvedFile ->
           resolveFromFile exportIndex wsMap visited (depth + 1) node resolvedFile (eeLocalName entry)

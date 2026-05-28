@@ -12,6 +12,7 @@ import qualified PropertyAccess
 import qualified SameFileCalls
 import qualified JsThisMethodCalls
 import qualified ClassInheritance
+import qualified ImportResolution
 
 -- ---------------------------------------------------------------------------
 -- Test helpers
@@ -89,6 +90,12 @@ mkExportedFunction file name =
 mkExportedVariable :: Text -> Text -> GraphNode
 mkExportedVariable file name =
   (mkNode (file <> "->VARIABLE->" <> name) "VARIABLE" name file Map.empty)
+    { gnExported = True }
+
+-- | Create an exported NAMESPACE node.
+mkExportedNamespace :: Text -> Text -> GraphNode
+mkExportedNamespace file name =
+  (mkNode (file <> "->NAMESPACE->" <> name) "NAMESPACE" name file Map.empty)
     { gnExported = True }
 
 -- | Extract edges from plugin commands.
@@ -691,6 +698,67 @@ testCrossFileExtends =
     _ -> Fail $ "Expected 1 cross-file EXTENDS edge Dog→Animal, got: " ++ show edges
 
 -- ---------------------------------------------------------------------------
+-- ImportResolution unit tests
+-- ---------------------------------------------------------------------------
+
+-- | Exported NAMESPACE node appears in export index
+testNamespaceInExportIndex :: TestResult
+testNamespaceInExportIndex =
+  let schemasFile = "src/vs/base/common/network.ts"
+      nsNode = mkExportedNamespace schemasFile "Schemas"
+      idx = ImportResolution.buildExportIndex [nsNode]
+  in case Map.lookup schemasFile idx of
+    Just entries | any (\e -> ImportResolution.eeName e == "Schemas") entries -> Pass
+    Just entries -> Fail $ "Schemas not in entries: " ++ show (map ImportResolution.eeName entries)
+    Nothing -> Fail "File not found in export index"
+
+-- | Exported NAMESPACE resolves named import { Schemas } from './network'
+testNamespaceNamedImportResolves :: IO TestResult
+testNamespaceNamedImportResolves = do
+  let schemasFile = "src/vs/base/common/network.ts"
+      consumerFile = "src/vs/base/common/opener.ts"
+      nodes =
+        [ mkNamedImportBinding consumerFile "Schemas" "Schemas" "./network"
+        , mkExportedNamespace schemasFile "Schemas"
+        ]
+  cmds <- ImportResolution.resolveAll nodes
+  let edges = filter (\e -> geType e == "IMPORTS_FROM") (extractEdges cmds)
+  return $ case edges of
+    [e] | geTarget e == schemasFile <> "->NAMESPACE->Schemas" -> Pass
+    es -> Fail $ "Expected 1 IMPORTS_FROM edge to NAMESPACE, got: " ++ show es
+
+-- | ESM .js import resolves to .ts file (TS convention: import './foo.js' → foo.ts)
+testJsToTsResolution :: IO TestResult
+testJsToTsResolution = do
+  let targetFile = "src/vs/base/node/pfs.ts"
+      importerFile = "src/vs/platform/extensionManagement/node/extensionManagementService.ts"
+      nodes =
+        [ mkNamedImportBinding importerFile "Promises" "Promises" "../../../base/node/pfs.js"
+        , mkExportedVariable targetFile "Promises"
+        ]
+  cmds <- ImportResolution.resolveAll nodes
+  let edges = filter (\e -> geType e == "IMPORTS_FROM") (extractEdges cmds)
+  return $ case edges of
+    [e] | geTarget e == targetFile <> "->VARIABLE->Promises" -> Pass
+    es -> Fail $ "Expected 1 IMPORTS_FROM edge via .js→.ts swap, got: " ++ show es
+
+-- | .d.ts-only module resolves import (e.g., extensions/git/src/api/git.d.ts)
+testDtsOnlyModuleResolves :: IO TestResult
+testDtsOnlyModuleResolves = do
+  let dtsFile = "extensions/git/src/api/git.d.ts"
+      consumerFile = "extensions/git/src/api/consumer.ts"
+      nodes =
+        [ mkNamedImportBinding consumerFile "GitAPI" "GitAPI" "./git"
+        , (mkNode (dtsFile <> "->INTERFACE->GitAPI") "INTERFACE" "GitAPI" dtsFile Map.empty)
+            { gnExported = True }
+        ]
+  cmds <- ImportResolution.resolveAll nodes
+  let edges = filter (\e -> geType e == "IMPORTS_FROM") (extractEdges cmds)
+  return $ case edges of
+    [e] | geTarget e == dtsFile <> "->INTERFACE->GitAPI" -> Pass
+    es -> Fail $ "Expected 1 IMPORTS_FROM edge from .d.ts module, got: " ++ show es
+
+-- ---------------------------------------------------------------------------
 -- Main
 -- ---------------------------------------------------------------------------
 
@@ -741,7 +809,15 @@ main = do
     , runTest "unknown superClass produces no edge" testUnknownSuperClass
     , runTest "cross-file inheritance via import creates EXTENDS edge" testCrossFileExtends
     ]
-  let allResults = paResults ++ sfcResults ++ jsResults ++ ciResults
+  putStrLn ""
+  putStrLn "ImportResolution unit tests:"
+  irResults <- sequence
+    [ runTest "exported NAMESPACE in export index" testNamespaceInExportIndex
+    , runTestIO "NAMESPACE resolves named import" testNamespaceNamedImportResolves
+    , runTestIO ".js ESM import resolves to .ts file" testJsToTsResolution
+    , runTestIO ".d.ts-only module resolves import" testDtsOnlyModuleResolves
+    ]
+  let allResults = paResults ++ sfcResults ++ jsResults ++ ciResults ++ irResults
       total = length allResults
       passed = length (filter id allResults)
   putStrLn $ "\n" ++ show passed ++ "/" ++ show total ++ " tests passed"
