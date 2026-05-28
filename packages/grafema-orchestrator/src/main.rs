@@ -298,10 +298,14 @@ async fn commit_resolve_output(
     plugin::validate_plugin_output(output)?;
     plugin::stamp_metadata(output, name, generation);
     tag_virtual_nodes(output, name);
+    // Only include synthetic virtual files in changed_files — real source
+    // files must NOT be listed or commit_batch will tombstone all analysis
+    // nodes for those files before adding only the resolution nodes.
     let files: Vec<String> = output
         .nodes
         .iter()
         .filter_map(|n| n.file.clone())
+        .filter(|f| f.starts_with("__grafema_virtual/") || f.starts_with("<"))
         .collect::<HashSet<_>>()
         .into_iter()
         .collect();
