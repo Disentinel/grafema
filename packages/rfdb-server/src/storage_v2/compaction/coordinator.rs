@@ -11,8 +11,6 @@
 
 use std::io::Cursor;
 
-use rayon::prelude::*;
-
 use crate::error::Result;
 use crate::storage_v2::compaction::merge::{merge_edge_segments, merge_node_segments};
 use crate::storage_v2::compaction::types::CompactionConfig;
