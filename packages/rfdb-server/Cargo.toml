@@ -112,6 +112,14 @@ path = "src/bin/rfdb_server.rs"
 name = "bench_report"
 path = "src/bin/bench_report.rs"
 
+[[bin]]
+name = "bench_lock_contention"
+path = "src/bin/bench_lock_contention.rs"
+
+[[bin]]
+name = "bench_manifest_growth"
+path = "src/bin/bench_manifest_growth.rs"
+
 [[bench]]
 name = "graph_operations"
 harness = false
