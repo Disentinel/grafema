@@ -242,10 +242,10 @@ impl Manifest {
             self.last_compaction = edit.last_compaction.clone();
         }
 
-        // Tag merge.
-        for (k, v) in &edit.tags {
-            self.tags.insert(k.clone(), v.clone());
-        }
+        // Tags: an edit carries the FULL tag set for its version (not a delta),
+        // so replace — matching the legacy create_manifest reset-per-commit
+        // semantics and keeping live writes, replay, and checkpoints consistent.
+        self.tags = edit.tags.clone();
 
         // Version bookkeeping + precomputed stats.
         self.parent_version = Some(edit.parent_version);
@@ -1092,35 +1092,26 @@ impl ManifestStore {
     /// disk cost is O(Δ) (segments/tombstones changed this commit) instead of
     /// O(total segments).
     ///
-    /// `manifest` is the full resulting snapshot — kept in memory as `current`
-    /// and written verbatim at checkpoints, so it MUST carry the full
-    /// cumulative tombstone set (exactly as the legacy snapshot path does, via
-    /// `commit_batch_ext`). `edit` is the precomputed delta written at
-    /// non-checkpoint versions.
+    /// `edit` is the precomputed O(Δ) delta for this commit. `self.current` is
+    /// advanced in place by replaying it (no O(total-segments) clone), then
+    /// written verbatim at checkpoint boundaries. At a checkpoint the full
+    /// cumulative tombstone set must be on disk, so the caller passes it via
+    /// `checkpoint_tombstone_nodes`/`_edges` (it already holds them for the
+    /// shard TombstoneSet broadcast); between checkpoints the edit's tombstone
+    /// delta is what's persisted and replayed.
     ///
     /// Invariant: replaying the edit chain since the last checkpoint reproduces
-    /// `manifest` (covered by `Manifest::apply` round-trip + reopen tests).
-    pub fn commit_edit(&mut self, manifest: Manifest, edit: ManifestEdit) -> Result<()> {
-        debug_assert_eq!(
-            manifest.version, edit.version,
-            "manifest/edit version mismatch"
-        );
-
-        // Ephemeral: cache only, no disk artifacts.
-        if self.db_path.is_none() {
-            self.index.add_snapshot(&manifest);
-            self.current = manifest;
-            self.current.tombstoned_node_ids = Vec::new();
-            self.current.tombstoned_edge_keys = Vec::new();
-            return Ok(());
-        }
-
-        let db_path = self.db_path.as_ref().unwrap().clone();
-
-        if manifest.version != self.current.version + 1 {
+    /// the snapshot a full-write commit would have produced.
+    pub fn commit_edit(
+        &mut self,
+        mut edit: ManifestEdit,
+        checkpoint_tombstone_nodes: &[u128],
+        checkpoint_tombstone_edges: &[(u128, u128, String)],
+    ) -> Result<()> {
+        if edit.version != self.current.version + 1 {
             return Err(GraphError::InvalidFormat(format!(
                 "Cannot commit version {} (current: {})",
-                manifest.version, self.current.version
+                edit.version, self.current.version
             )));
         }
         if edit.parent_version != self.current.version {
@@ -1130,18 +1121,37 @@ impl ManifestStore {
             )));
         }
 
-        let is_checkpoint =
-            manifest.version == 1 || manifest.version % self.checkpoint_interval == 0;
+        edit.created_at = current_timestamp();
+        let version = edit.version;
+        let is_checkpoint = version == 1 || version % self.checkpoint_interval == 0;
+
+        // Advance the in-memory snapshot in place (O(Δ) segment splice). The
+        // edit's tombstone delta lands in self.current but is bogus as a
+        // cumulative set (we clear it every commit) — overwritten with the full
+        // set below at checkpoints, cleared otherwise.
+        self.current.apply(&edit);
+
+        // Ephemeral: cache only, no disk artifacts.
+        if self.db_path.is_none() {
+            self.index.add_snapshot(&self.current);
+            self.current.tombstoned_node_ids = Vec::new();
+            self.current.tombstoned_edge_keys = Vec::new();
+            return Ok(());
+        }
+
+        let db_path = self.db_path.as_ref().unwrap().clone();
 
         if is_checkpoint {
-            // Full snapshot — identical on-disk artifact to the legacy path,
-            // and the replay base for the following edits.
-            let manifest_path = manifest_file_path(&db_path, manifest.version);
-            atomic_write_json(&manifest_path, &manifest, self.durability)?;
-            self.index.add_snapshot(&manifest);
+            // Materialize the full cumulative tombstone set for the snapshot,
+            // then write self.current verbatim (the replay base for later edits).
+            self.current.tombstoned_node_ids = checkpoint_tombstone_nodes.to_vec();
+            self.current.tombstoned_edge_keys = checkpoint_tombstone_edges.to_vec();
+            let manifest_path = manifest_file_path(&db_path, version);
+            atomic_write_json(&manifest_path, &self.current, self.durability)?;
+            self.index.add_snapshot(&self.current);
         } else {
             // Delta only — O(Δ) write.
-            let edit_path = manifest_edit_file_path(&db_path, manifest.version);
+            let edit_path = manifest_edit_file_path(&db_path, version);
             atomic_write_json(&edit_path, &edit, self.durability)?;
             // Keep the index coherent so open() does not see a stale
             // latest_version and trigger a (correct but costly) rebuild.
@@ -1152,26 +1162,25 @@ impl ManifestStore {
             {
                 self.index.referenced_segments.insert(seg.segment_id);
             }
-            self.index.latest_version = manifest.version;
+            self.index.latest_version = version;
         }
+
+        // Free tombstone memory (shard TombstoneSet is the runtime source of truth).
+        self.current.tombstoned_node_ids = Vec::new();
+        self.current.tombstoned_edge_keys = Vec::new();
 
         // Persist index (updated in both branches).
         let index_path = db_path.join("manifest_index.json");
         atomic_write_json(&index_path, &self.index, self.durability)?;
 
         // Commit marker (atomic rename).
-        let current_pointer = CurrentPointer::new(manifest.version);
+        let current_pointer = CurrentPointer::new(version);
         current_pointer.write_to(&db_path, self.durability)?;
-
-        // Update cache + free tombstone memory (shard TombstoneSet is truth).
-        self.current = manifest;
-        self.current.tombstoned_node_ids = Vec::new();
-        self.current.tombstoned_edge_keys = Vec::new();
 
         // Periodic checkpoint-aware GC (also reaps orphaned edit files).
         const MANIFEST_GC_INTERVAL: u64 = 10;
         const MANIFEST_GC_KEEP: usize = 3;
-        if self.current.version % MANIFEST_GC_INTERVAL == 0 {
+        if version % MANIFEST_GC_INTERVAL == 0 {
             let removed = self.gc_manifests(MANIFEST_GC_KEEP)?;
             if removed > 0 {
                 tracing::info!("Manifest GC: removed {} old manifest(s)", removed);
@@ -1864,18 +1873,18 @@ mod tests {
     // ── commit_edit + open() replay (on-disk) ─────────────────────
 
     /// Commit `count` versions via the delta path, each adding one node
-    /// segment (segment_id = version*10). Each commit's `manifest` is the full
-    /// resulting snapshot; the `edit` carries just that commit's delta.
+    /// segment (segment_id = version*10). The `edit` carries just that commit's
+    /// delta; `commit_edit` advances the in-memory snapshot incrementally.
     fn commit_n_edits(store: &mut ManifestStore, count: u64) {
         for _ in 0..count {
             let v = store.current().version + 1;
             let mut e = empty_edit(v, v - 1);
             e.added_node_segments = vec![make_node_descriptor(v * 10, 100)];
+            // Resulting stats for the edit (compute on a throwaway clone).
             let mut m = store.current().clone();
             m.apply(&e);
-            m.stats = ManifestStats::from_segments(&m.node_segments, &m.edge_segments);
-            e.stats = m.stats.clone();
-            store.commit_edit(m, e).unwrap();
+            e.stats = ManifestStats::from_segments(&m.node_segments, &m.edge_segments);
+            store.commit_edit(e, &[], &[]).unwrap();
         }
     }
 
@@ -1947,9 +1956,10 @@ mod tests {
         e.added_tombstone_nodes = vec![777];
         let mut m = store.current().clone();
         m.apply(&e);
-        m.stats = ManifestStats::from_segments(&m.node_segments, &m.edge_segments);
-        e.stats = m.stats.clone();
-        store.commit_edit(m, e).unwrap();
+        e.stats = ManifestStats::from_segments(&m.node_segments, &m.edge_segments);
+        // v2 is an edit (interval 8): the tombstone delta in the edit replays on
+        // reopen, so no checkpoint tombstone set is needed here.
+        store.commit_edit(e, &[], &[]).unwrap();
 
         // Reopen reconstructs the cumulative tombstone set from the delta so
         // open() can feed it into the shard TombstoneSet.

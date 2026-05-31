@@ -1345,36 +1345,35 @@ impl MultiShardStore {
         // ── Phase 8: Build and commit manifest WITH tombstones ──
         let t_phase8 = Instant::now();
 
-        let mut all_node_segs = manifest_store.current().node_segments.clone();
-        let mut all_edge_segs = manifest_store.current().edge_segments.clone();
-        all_node_segs.extend(new_node_descs.iter().cloned());
-        all_edge_segs.extend(new_edge_descs.iter().cloned());
+        // O(Δ) commit: build only the delta, never the full segment list.
+        // `commit_edit` advances the in-memory snapshot in place via replay and
+        // writes a full checkpoint only every `checkpoint_interval` versions.
+        let manifest_version = manifest_store.current().version + 1;
 
-        let mut manifest = manifest_store.create_manifest(
-            all_node_segs,
-            all_edge_segs,
-            Some(tags),
-        )?;
+        // Resulting stats computed incrementally from current + this commit's
+        // added segments (a normal re-analysis commit removes no segments).
+        let mut stats = manifest_store.current().stats.clone();
+        for s in &new_node_descs {
+            stats.total_nodes += s.record_count;
+            stats.node_segment_count += 1;
+        }
+        for s in &new_edge_descs {
+            stats.total_edges += s.record_count;
+            stats.edge_segment_count += 1;
+        }
 
-        // Inject full cumulative tombstones — used when this version is
-        // persisted as a checkpoint (the delta-manifest write path writes the
-        // full snapshot at checkpoint boundaries).
-        manifest.tombstoned_node_ids = all_tomb_nodes.into_iter().collect();
-        manifest.tombstoned_edge_keys = all_tomb_edges
+        // Full cumulative tombstone set — passed for checkpoint snapshots only.
+        let cp_tomb_nodes: Vec<u128> = all_tomb_nodes.into_iter().collect();
+        let cp_tomb_edges: Vec<(u128, u128, String)> = all_tomb_edges
             .into_iter()
             .map(|(s, d, t)| (s, d, t.to_string()))
             .collect();
 
-        let manifest_version = manifest.version;
-
-        // Build the O(Δ) manifest edit (written at non-checkpoint versions).
-        // A normal re-analysis commit only ADDS segments; segment removal is a
-        // compaction-only concern, handled on its own path.
         let edit = ManifestEdit {
             version: manifest_version,
             parent_version: manifest_version.saturating_sub(1),
             base_checkpoint: 0, // advisory; open() locates the base by dir scan
-            created_at: manifest.created_at,
+            created_at: 0,      // stamped by commit_edit
             added_node_segments: new_node_descs,
             added_edge_segments: new_edge_descs,
             removed_node_segment_ids: Vec::new(),
@@ -1389,11 +1388,11 @@ impl MultiShardStore {
             l1_node_segments: None,
             l1_edge_segments: None,
             last_compaction: None,
-            tags: manifest.tags.clone(),
-            stats: manifest.stats.clone(),
+            tags,
+            stats,
         };
 
-        manifest_store.commit_edit(manifest, edit)?;
+        manifest_store.commit_edit(edit, &cp_tomb_nodes, &cp_tomb_edges)?;
 
         tracing::debug!(
             "commit_batch phase8_manifest: {}ms",
