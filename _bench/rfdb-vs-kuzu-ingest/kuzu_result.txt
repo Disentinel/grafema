@@ -1,0 +1,23 @@
+# Kuzu 0.11.3 ingest benchmark
+python 3.12.13
+
+## COPY FROM CSV (fast path)
+| N nodes | edges | node COPY s | edge COPY s | total s | nodes/s (COPY) | elems/s |
+|--------:|------:|------------:|------------:|--------:|---------------:|--------:|
+|   10000 | 20000 |      0.1005 |      0.0530 |  0.1535 |         99,497 | 195,478 |
+|   50000 | 100000 |      0.1841 |      0.0785 |  0.2626 |        271,562 | 571,110 |
+|  100000 | 200000 |      0.2795 |      0.1380 |  0.4174 |        357,832 | 718,671 |
+|  500000 | 1000000 |      0.7004 |      0.4876 |  1.1881 |        713,854 | 1,262,556 |
+
+## Per-bucket batched CREATE curve (single txn), N=60000, bucket=10000
+(NOTE: batched CREATE is NOT Kuzu's COPY fast path; used only to test
+ whether per-node cost rises as the graph grows.)
+
+| graph size after | bucket nodes | bucket s | nodes/s |
+|-----------------:|-------------:|---------:|--------:|
+|            10000 |        10000 |   2.6602 |   3,759 |
+|            20000 |        10000 |   2.6745 |   3,739 |
+|            30000 |        10000 |   2.6569 |   3,764 |
+|            40000 |        10000 |   2.6935 |   3,713 |
+|            50000 |        10000 |   2.7064 |   3,695 |
+|            60000 |        10000 |   2.6696 |   3,746 |
