@@ -163,12 +163,6 @@ pub struct GraphEngineV2 {
     /// Uses Arc<str> for edge type deduplication — ~15 distinct values
     /// shared across millions of tombstone entries.
     pending_tombstone_edges: HashSet<(u128, u128, Arc<str>)>,
-    /// Count of nodes deleted then re-added (old segment version persists
-    /// alongside new write buffer version). Used to correct node_count().
-    /// Reset on compact() when segment dedup removes old versions.
-    superseded_node_count: usize,
-    /// Count of edges deleted then re-added. Same purpose as above.
-    superseded_edge_count: usize,
     /// Declared metadata fields for indexing (v1 compat).
     declared_fields: Vec<FieldDecl>,
     /// Cached tuning profile — avoids re-probing sysinfo on every write.
@@ -201,8 +195,6 @@ impl GraphEngineV2 {
             ephemeral: false,
             pending_tombstone_nodes: HashSet::new(),
             pending_tombstone_edges: HashSet::new(),
-            superseded_node_count: 0,
-            superseded_edge_count: 0,
             declared_fields: Vec::new(),
             cached_profile: profile,
             last_resource_check: Instant::now(),
@@ -220,8 +212,6 @@ impl GraphEngineV2 {
             ephemeral: true,
             pending_tombstone_nodes: HashSet::new(),
             pending_tombstone_edges: HashSet::new(),
-            superseded_node_count: 0,
-            superseded_edge_count: 0,
             declared_fields: Vec::new(),
             cached_profile: TuningProfile::default(),
             last_resource_check: Instant::now(),
@@ -258,8 +248,6 @@ impl GraphEngineV2 {
             ephemeral: false,
             pending_tombstone_nodes: HashSet::new(),
             pending_tombstone_edges: HashSet::new(),
-            superseded_node_count: 0,
-            superseded_edge_count: 0,
             declared_fields: Vec::new(),
             cached_profile: profile,
             last_resource_check: Instant::now(),
@@ -331,13 +319,11 @@ impl GraphStore for GraphEngineV2 {
         let v2_nodes: Vec<NodeRecordV2> = nodes.iter().map(node_v1_to_v2).collect();
         // Re-adding a node in the same session must resurrect it immediately.
         // Without this, delete->add keeps the node hidden until flush.
+        // The old version may persist in a flushed segment alongside the new
+        // write-buffer version, but node_count() deduplicates ids across
+        // segments, so no separate "superseded" bookkeeping is needed.
         for node in &v2_nodes {
-            if self.pending_tombstone_nodes.remove(&node.id) {
-                // Node was deleted then re-added. The old version persists in
-                // a flushed segment alongside the new write-buffer version.
-                // Track this so node_count() subtracts the stale segment copy.
-                self.superseded_node_count += 1;
-            }
+            self.pending_tombstone_nodes.remove(&node.id);
         }
         self.store.add_nodes(v2_nodes);
 
@@ -585,10 +571,9 @@ impl GraphStore for GraphEngineV2 {
             .map(|e| (e.src, e.dst, Arc::from(e.edge_type.as_str())))
             .collect();
         for key in &keys {
-            if self.pending_tombstone_edges.remove(key) {
-                // Edge was deleted then re-added. Old segment version persists.
-                self.superseded_edge_count += 1;
-            }
+            // Edge was deleted then re-added; the old segment version may
+            // persist, but edge_count() deduplicates keys across segments.
+            self.pending_tombstone_edges.remove(key);
         }
         // Also un-tombstone any keys whose deletion has already been
         // committed to shards (typical for the rule-chain pattern in the
@@ -797,9 +782,6 @@ impl GraphStore for GraphEngineV2 {
         if purged > 0 {
             tracing::info!("GC: purged {} segment file(s)", purged);
         }
-        // Compaction deduplicates segments — old superseded versions are removed.
-        self.superseded_node_count = 0;
-        self.superseded_edge_count = 0;
         Ok(())
     }
 
@@ -810,21 +792,30 @@ impl GraphStore for GraphEngineV2 {
     }
 
     fn node_count(&self) -> usize {
+        // `store.node_count()` already reports LIVE nodes: each id counted
+        // once (deduped across segments) and shard tombstones excluded.
+        // The only ids it does NOT yet exclude are pending tombstones from
+        // `delete_node` that haven't been flushed into the shard
+        // TombstoneSet — those nodes are still present in the store and thus
+        // counted, so subtract them here. (Superseded re-adds are already
+        // deduplicated inside `store.node_count()`, so no extra correction.)
         let total = self.store.node_count();
-        // Shard tombstones (from commit_batch_ext/flush) and pending tombstones
-        // (from delete_node, not yet flushed) are disjoint sets.
-        let shard_tombstones = self.store.tombstone_node_count();
-        total.saturating_sub(shard_tombstones)
-             .saturating_sub(self.pending_tombstone_nodes.len())
-             .saturating_sub(self.superseded_node_count)
+        let pending_live = self
+            .pending_tombstone_nodes
+            .iter()
+            .filter(|id| self.store.node_exists(**id))
+            .count();
+        total.saturating_sub(pending_live)
     }
 
     fn edge_count(&self) -> usize {
         let total = self.store.edge_count();
-        let shard_tombstones = self.store.tombstone_edge_count();
-        total.saturating_sub(shard_tombstones)
-             .saturating_sub(self.pending_tombstone_edges.len())
-             .saturating_sub(self.superseded_edge_count)
+        let pending_live = self
+            .pending_tombstone_edges
+            .iter()
+            .filter(|(src, dst, et)| self.store.edge_exists(*src, *dst, et))
+            .count();
+        total.saturating_sub(pending_live)
     }
 
     fn clear(&mut self) {
@@ -832,8 +823,6 @@ impl GraphStore for GraphEngineV2 {
         self.manifest = ManifestStore::ephemeral();
         self.pending_tombstone_nodes.clear();
         self.pending_tombstone_edges.clear();
-        self.superseded_node_count = 0;
-        self.superseded_edge_count = 0;
         self.declared_fields.clear();
     }
 
@@ -990,8 +979,6 @@ impl GraphEngineV2 {
         self.flush()?;
         let config = CompactionConfig { segment_threshold: 1 };
         let result = self.store.compact(&mut self.manifest, &config)?;
-        self.superseded_node_count = 0;
-        self.superseded_edge_count = 0;
         Ok(result)
     }
 
@@ -1530,6 +1517,191 @@ mod tests {
         assert_eq!(delta.changed_files, vec!["src/app.js"]);
         assert!(delta.nodes_added > 0 || delta.nodes_modified == 0);
         assert!(engine.node_exists(node_id));
+    }
+
+    /// Re-analysis of a file (80 nodes → 30 same-id nodes) must report 30 live
+    /// nodes, not 60. The 50 dropped ids are tombstoned; the 30 re-added ids
+    /// live in BOTH the old flushed segment and the new segment, so a naive
+    /// "sum of segment record counts" double-counts them.
+    fn count_re_added_setup() -> (GraphEngineV2, Vec<u128>) {
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let file = "src/big.js";
+
+        // First analysis: 80 FUNCTION nodes for the file.
+        let mut nodes_v1 = Vec::with_capacity(80);
+        let mut ids = Vec::with_capacity(80);
+        for i in 0..80u32 {
+            let n = make_v2_node(
+                &format!("FUNCTION:f{i}@{file}"),
+                "FUNCTION",
+                &format!("f{i}"),
+                file,
+            );
+            ids.push(n.id);
+            nodes_v1.push(n);
+        }
+        engine
+            .commit_batch(nodes_v1, vec![], &[file.to_string()], HashMap::new())
+            .unwrap();
+        assert_eq!(engine.node_count(), 80, "after first commit");
+
+        // Re-analysis: same file, only the first 30 ids survive (different
+        // content), the other 50 are dropped → tombstoned.
+        let mut nodes_v2 = Vec::with_capacity(30);
+        for i in 0..30u32 {
+            let mut n = make_v2_node(
+                &format!("FUNCTION:f{i}@{file}"),
+                "FUNCTION",
+                &format!("f{i}"),
+                file,
+            );
+            n.content_hash = (i as u64) + 1; // different content
+            assert_eq!(n.id, ids[i as usize], "same semantic_id → same id");
+            nodes_v2.push(n);
+        }
+        engine
+            .commit_batch(nodes_v2, vec![], &[file.to_string()], HashMap::new())
+            .unwrap();
+
+        (engine, ids)
+    }
+
+    #[test]
+    fn test_node_count_excludes_tombstoned_and_re_added_duplicates() {
+        let (engine, ids) = count_re_added_setup();
+
+        // 30 live, 50 tombstoned. Per-id liveness is already correct.
+        for (i, id) in ids.iter().enumerate() {
+            if i < 30 {
+                assert!(engine.node_exists(*id), "f{i} should be live");
+            } else {
+                assert!(!engine.node_exists(*id), "f{i} should be tombstoned");
+            }
+        }
+
+        // The aggregate counter must match per-id liveness.
+        assert_eq!(
+            engine.node_count(),
+            30,
+            "node_count must report 30 live nodes (not double-count re-added ids)"
+        );
+
+        // count_by_type must be consistent with node_count.
+        let by_type = engine.count_nodes_by_type(None);
+        let total: usize = by_type.values().sum();
+        assert_eq!(total, 30, "count_by_type total must equal node_count");
+        assert_eq!(by_type.get("FUNCTION").copied(), Some(30));
+    }
+
+    #[test]
+    fn test_node_count_after_delete_via_commit_and_reopen() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("recount.rfdb");
+        let file = "src/big.js";
+        let kept: Vec<u128>;
+
+        {
+            let mut engine = GraphEngineV2::create(&db_path).unwrap();
+            let mut nodes_v1 = Vec::with_capacity(80);
+            for i in 0..80u32 {
+                nodes_v1.push(make_v2_node(
+                    &format!("FUNCTION:f{i}@{file}"),
+                    "FUNCTION",
+                    &format!("f{i}"),
+                    file,
+                ));
+            }
+            engine
+                .commit_batch(nodes_v1, vec![], &[file.to_string()], HashMap::new())
+                .unwrap();
+
+            let mut nodes_v2 = Vec::with_capacity(30);
+            let mut k = Vec::with_capacity(30);
+            for i in 0..30u32 {
+                let mut n = make_v2_node(
+                    &format!("FUNCTION:f{i}@{file}"),
+                    "FUNCTION",
+                    &format!("f{i}"),
+                    file,
+                );
+                n.content_hash = (i as u64) + 1;
+                k.push(n.id);
+                nodes_v2.push(n);
+            }
+            kept = k;
+            engine
+                .commit_batch(nodes_v2, vec![], &[file.to_string()], HashMap::new())
+                .unwrap();
+            engine.flush().unwrap();
+            assert_eq!(engine.node_count(), 30, "before reopen");
+        }
+
+        // Reopen from disk: tombstones come from the manifest, not pending sets.
+        let engine = GraphEngineV2::open(&db_path).unwrap();
+        assert_eq!(engine.node_count(), 30, "after reopen");
+        for id in &kept {
+            assert!(engine.node_exists(*id));
+        }
+        let by_type = engine.count_nodes_by_type(None);
+        assert_eq!(by_type.values().sum::<usize>(), 30, "by_type after reopen");
+    }
+
+    #[test]
+    fn test_edge_count_excludes_tombstoned_and_re_added_duplicates() {
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let file = "src/e.js";
+
+        // Two endpoint nodes that always survive (separate file, untouched).
+        let a = make_v2_node("FUNCTION:a@src/lib.js", "FUNCTION", "a", "src/lib.js");
+        let b = make_v2_node("FUNCTION:b@src/lib.js", "FUNCTION", "b", "src/lib.js");
+        engine
+            .commit_batch(
+                vec![a.clone(), b.clone()],
+                vec![],
+                &["src/lib.js".to_string()],
+                HashMap::new(),
+            )
+            .unwrap();
+
+        // First analysis of file e.js: source node s with 4 CALLS edges to a.
+        let s = make_v2_node("FUNCTION:s@src/e.js", "FUNCTION", "s", file);
+        let mk_edge = |src: u128, dst: u128, idx: u32| EdgeRecordV2 {
+            src,
+            dst,
+            edge_type: "CALLS".to_string(),
+            metadata: format!("{{\"i\":{idx}}}"),
+        };
+        engine
+            .commit_batch(
+                vec![s.clone()],
+                vec![mk_edge(s.id, a.id, 0), mk_edge(s.id, b.id, 1)],
+                &[file.to_string()],
+                HashMap::new(),
+            )
+            .unwrap();
+        assert_eq!(engine.edge_count(), 2, "after first edge commit");
+
+        // Re-analysis: same source node, only ONE of the two edges remains
+        // (s→a re-emitted, s→b dropped).
+        engine
+            .commit_batch(
+                vec![s.clone()],
+                vec![mk_edge(s.id, a.id, 0)],
+                &[file.to_string()],
+                HashMap::new(),
+            )
+            .unwrap();
+
+        assert_eq!(
+            engine.get_outgoing_edges(s.id, None).len(),
+            1,
+            "only s->a should be live"
+        );
+        assert_eq!(
+            engine.edge_count(),
+            1,
+            "edge_count must report 1 live edge (not double-count re-added edge)"
+        );
     }
 
     #[test]

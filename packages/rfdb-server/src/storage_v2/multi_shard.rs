@@ -607,6 +607,19 @@ impl MultiShardStore {
 
         self.shards.iter().any(|s| s.node_exists(id))
     }
+
+    /// Check if a specific live edge exists (tombstone-aware).
+    ///
+    /// Mirrors `node_exists` liveness semantics for edges: returns true only
+    /// if the `(src, dst, edge_type)` triple resolves to a live (non-tombstoned)
+    /// edge in the source node's shard. Used by the engine to determine which
+    /// pending (not-yet-flushed) edge tombstones still cover a live edge.
+    pub fn edge_exists(&self, src: u128, dst: u128, edge_type: &str) -> bool {
+        let types = [edge_type];
+        self.get_outgoing_edges(src, Some(&types))
+            .iter()
+            .any(|e| e.dst == dst && e.edge_type == edge_type)
+    }
 }
 
 // ── Type Counts ───────────────────────────────────────────────────
