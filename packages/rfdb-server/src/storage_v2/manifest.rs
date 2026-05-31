@@ -126,6 +126,162 @@ pub struct Manifest {
     pub last_compaction: Option<CompactionInfo>,
 }
 
+// ── Manifest Edit (incremental / delta) ────────────────────────────
+
+/// Commits between full checkpoints. Between checkpoints each commit writes
+/// only a `ManifestEdit` (O(Δ)); `open()` replays at most this many edits on
+/// top of the latest checkpoint to rebuild the full snapshot.
+pub const MANIFEST_CHECKPOINT_INTERVAL: u64 = 32;
+
+/// One incremental manifest change — Delta-Lake / LevelDB VersionEdit style.
+///
+/// Written per commit as `manifests/{version:06}.edit.json` instead of a full
+/// `Manifest` snapshot, so per-commit write cost is O(Δ) (segments and
+/// tombstones changed *this* commit) rather than O(total segments). The full
+/// active state is reconstructed by replaying edits on top of the latest
+/// checkpoint (a full `Manifest` written every `MANIFEST_CHECKPOINT_INTERVAL`).
+///
+/// Backward compatible: a database whose every version is a full snapshot
+/// (pre-delta format) is just a degenerate chain where every version is a
+/// checkpoint and no edits exist.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ManifestEdit {
+    /// Version this edit produces.
+    pub version: u64,
+    /// Parent version (must equal the manifest version this edit applies to).
+    pub parent_version: u64,
+    /// Advisory: checkpoint version this edit chain replays from. `open()`
+    /// locates the actual base by directory scan, so this is a debug hint only.
+    pub base_checkpoint: u64,
+    /// Creation timestamp (Unix epoch seconds).
+    pub created_at: u64,
+
+    /// L0 segments added this commit.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub added_node_segments: Vec<SegmentDescriptor>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub added_edge_segments: Vec<SegmentDescriptor>,
+    /// Segment ids removed this commit (e.g. compacted away).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub removed_node_segment_ids: Vec<u64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub removed_edge_segment_ids: Vec<u64>,
+
+    /// Tombstone deltas. `added_*` newly tombstoned this commit; `removed_*`
+    /// un-tombstoned (a deleted id re-added, or cleared by compaction).
+    /// Replayed onto the checkpoint's cumulative tombstone set.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub added_tombstone_nodes: Vec<u128>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub removed_tombstone_nodes: Vec<u128>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub added_tombstone_edges: Vec<(u128, u128, String)>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub removed_tombstone_edges: Vec<(u128, u128, String)>,
+
+    /// Full L1 segment lists when compaction rewrote them (None = unchanged).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub l1_node_segments: Option<Vec<SegmentDescriptor>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub l1_edge_segments: Option<Vec<SegmentDescriptor>>,
+    /// Compaction metadata when this commit was a compaction (None = unchanged).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_compaction: Option<CompactionInfo>,
+
+    /// Tags merged into the snapshot at this version.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub tags: HashMap<String, String>,
+    /// Aggregate stats for the resulting snapshot (computed by the caller).
+    pub stats: ManifestStats,
+}
+
+impl Manifest {
+    /// Apply an incremental edit in place, advancing this manifest to
+    /// `edit.version`. Replaying the full edit chain on top of a checkpoint
+    /// reproduces exactly the snapshot a full-write commit would have produced.
+    pub fn apply(&mut self, edit: &ManifestEdit) {
+        // Segment removals (by segment_id) then additions.
+        if !edit.removed_node_segment_ids.is_empty() {
+            let rm: HashSet<u64> = edit.removed_node_segment_ids.iter().copied().collect();
+            self.node_segments.retain(|s| !rm.contains(&s.segment_id));
+        }
+        if !edit.removed_edge_segment_ids.is_empty() {
+            let rm: HashSet<u64> = edit.removed_edge_segment_ids.iter().copied().collect();
+            self.edge_segments.retain(|s| !rm.contains(&s.segment_id));
+        }
+        self.node_segments.extend(edit.added_node_segments.iter().cloned());
+        self.edge_segments.extend(edit.added_edge_segments.iter().cloned());
+
+        // Tombstone delta replay onto cumulative set.
+        if !edit.added_tombstone_nodes.is_empty() || !edit.removed_tombstone_nodes.is_empty() {
+            let mut set: HashSet<u128> = self.tombstoned_node_ids.iter().copied().collect();
+            set.extend(edit.added_tombstone_nodes.iter().copied());
+            for id in &edit.removed_tombstone_nodes {
+                set.remove(id);
+            }
+            self.tombstoned_node_ids = set.into_iter().collect();
+        }
+        if !edit.added_tombstone_edges.is_empty() || !edit.removed_tombstone_edges.is_empty() {
+            let mut set: HashSet<(u128, u128, String)> =
+                self.tombstoned_edge_keys.iter().cloned().collect();
+            set.extend(edit.added_tombstone_edges.iter().cloned());
+            for k in &edit.removed_tombstone_edges {
+                set.remove(k);
+            }
+            self.tombstoned_edge_keys = set.into_iter().collect();
+        }
+
+        // L1 / compaction: full replace when present.
+        if let Some(l1n) = &edit.l1_node_segments {
+            self.l1_node_segments = l1n.clone();
+        }
+        if let Some(l1e) = &edit.l1_edge_segments {
+            self.l1_edge_segments = l1e.clone();
+        }
+        if edit.last_compaction.is_some() {
+            self.last_compaction = edit.last_compaction.clone();
+        }
+
+        // Tag merge.
+        for (k, v) in &edit.tags {
+            self.tags.insert(k.clone(), v.clone());
+        }
+
+        // Version bookkeeping + precomputed stats.
+        self.parent_version = Some(edit.parent_version);
+        self.version = edit.version;
+        self.created_at = edit.created_at;
+        self.stats = edit.stats.clone();
+    }
+}
+
+/// Reconstruct the full manifest at `target_version` by replaying `edits`
+/// (ascending, contiguous by version) on top of `checkpoint`. Errors if the
+/// chain is non-contiguous or does not reach `target_version`.
+pub fn reconstruct_manifest(
+    checkpoint: Manifest,
+    edits: &[ManifestEdit],
+    target_version: u64,
+) -> Result<Manifest> {
+    let mut m = checkpoint;
+    for edit in edits {
+        if edit.parent_version != m.version {
+            return Err(GraphError::InvalidFormat(format!(
+                "manifest edit chain broken: edit v{} parent {} != current v{}",
+                edit.version, edit.parent_version, m.version
+            )));
+        }
+        m.apply(edit);
+    }
+    if m.version != target_version {
+        return Err(GraphError::InvalidFormat(format!(
+            "manifest replay reached v{} but target is v{}",
+            m.version, target_version
+        )));
+    }
+    Ok(m)
+}
+
 // ── Segment Descriptor ─────────────────────────────────────────────
 
 /// Segment descriptor: segment identity + zone map summary.
@@ -631,6 +787,11 @@ pub struct ManifestStore {
 
     /// Durability mode (Strict = fsync, Relaxed = no fsync)
     durability: DurabilityMode,
+
+    /// Commits between full checkpoints for the delta-manifest write path
+    /// (`commit_edit`). Default `MANIFEST_CHECKPOINT_INTERVAL`; overridable
+    /// for tests via `set_checkpoint_interval`.
+    checkpoint_interval: u64,
 }
 
 // ── ManifestStore: Constructors ────────────────────────────────────
@@ -648,7 +809,15 @@ impl ManifestStore {
     /// Complexity: O(S + I) where S = segments in current manifest, I = index size
     pub fn open_with_config(db_path: &Path, durability: DurabilityMode) -> Result<Self> {
         let current_pointer = CurrentPointer::read_from(db_path)?;
-        let current = load_manifest_file(db_path, current_pointer.version)?;
+
+        // Delta-manifest reconstruction: locate the latest checkpoint (full
+        // snapshot file whose stem parses as a bare version) at or below the
+        // current version, then replay any `.edit.json` deltas on top.
+        //
+        // Backward compatible: a pre-delta database has a full snapshot at
+        // every version, so the checkpoint == current version and zero edits
+        // are replayed — identical to the old single-file load.
+        let current = load_current_with_replay(db_path, current_pointer.version)?;
 
         let index_path = db_path.join("manifest_index.json");
         let mut index: ManifestIndex = read_json(&index_path)?;
@@ -670,6 +839,7 @@ impl ManifestStore {
             index,
             next_segment_id,
             durability,
+            checkpoint_interval: MANIFEST_CHECKPOINT_INTERVAL,
         })
     }
 
@@ -733,6 +903,7 @@ impl ManifestStore {
             index,
             next_segment_id: AtomicU64::new(1),
             durability,
+            checkpoint_interval: MANIFEST_CHECKPOINT_INTERVAL,
         })
     }
 
@@ -777,7 +948,15 @@ impl ManifestStore {
             index,
             next_segment_id: AtomicU64::new(1),
             durability: DurabilityMode::Strict,
+            checkpoint_interval: MANIFEST_CHECKPOINT_INTERVAL,
         }
+    }
+
+    /// Override the checkpoint interval (commits between full snapshots) for
+    /// the delta-manifest write path. Primarily for tests.
+    pub fn set_checkpoint_interval(&mut self, interval: u64) {
+        assert!(interval > 0, "checkpoint_interval must be > 0");
+        self.checkpoint_interval = interval;
     }
 }
 
@@ -906,12 +1085,110 @@ impl ManifestStore {
         Ok(())
     }
 
+    /// Commit a new version using the delta-manifest write path.
+    ///
+    /// Writes a full checkpoint snapshot every `checkpoint_interval` versions
+    /// (and at v1) and a compact `.edit.json` delta otherwise, so per-commit
+    /// disk cost is O(Δ) (segments/tombstones changed this commit) instead of
+    /// O(total segments).
+    ///
+    /// `manifest` is the full resulting snapshot — kept in memory as `current`
+    /// and written verbatim at checkpoints, so it MUST carry the full
+    /// cumulative tombstone set (exactly as the legacy snapshot path does, via
+    /// `commit_batch_ext`). `edit` is the precomputed delta written at
+    /// non-checkpoint versions.
+    ///
+    /// Invariant: replaying the edit chain since the last checkpoint reproduces
+    /// `manifest` (covered by `Manifest::apply` round-trip + reopen tests).
+    pub fn commit_edit(&mut self, manifest: Manifest, edit: ManifestEdit) -> Result<()> {
+        debug_assert_eq!(
+            manifest.version, edit.version,
+            "manifest/edit version mismatch"
+        );
+
+        // Ephemeral: cache only, no disk artifacts.
+        if self.db_path.is_none() {
+            self.index.add_snapshot(&manifest);
+            self.current = manifest;
+            self.current.tombstoned_node_ids = Vec::new();
+            self.current.tombstoned_edge_keys = Vec::new();
+            return Ok(());
+        }
+
+        let db_path = self.db_path.as_ref().unwrap().clone();
+
+        if manifest.version != self.current.version + 1 {
+            return Err(GraphError::InvalidFormat(format!(
+                "Cannot commit version {} (current: {})",
+                manifest.version, self.current.version
+            )));
+        }
+        if edit.parent_version != self.current.version {
+            return Err(GraphError::InvalidFormat(format!(
+                "Edit parent {} != current version {}",
+                edit.parent_version, self.current.version
+            )));
+        }
+
+        let is_checkpoint =
+            manifest.version == 1 || manifest.version % self.checkpoint_interval == 0;
+
+        if is_checkpoint {
+            // Full snapshot — identical on-disk artifact to the legacy path,
+            // and the replay base for the following edits.
+            let manifest_path = manifest_file_path(&db_path, manifest.version);
+            atomic_write_json(&manifest_path, &manifest, self.durability)?;
+            self.index.add_snapshot(&manifest);
+        } else {
+            // Delta only — O(Δ) write.
+            let edit_path = manifest_edit_file_path(&db_path, manifest.version);
+            atomic_write_json(&edit_path, &edit, self.durability)?;
+            // Keep the index coherent so open() does not see a stale
+            // latest_version and trigger a (correct but costly) rebuild.
+            for seg in edit
+                .added_node_segments
+                .iter()
+                .chain(edit.added_edge_segments.iter())
+            {
+                self.index.referenced_segments.insert(seg.segment_id);
+            }
+            self.index.latest_version = manifest.version;
+        }
+
+        // Persist index (updated in both branches).
+        let index_path = db_path.join("manifest_index.json");
+        atomic_write_json(&index_path, &self.index, self.durability)?;
+
+        // Commit marker (atomic rename).
+        let current_pointer = CurrentPointer::new(manifest.version);
+        current_pointer.write_to(&db_path, self.durability)?;
+
+        // Update cache + free tombstone memory (shard TombstoneSet is truth).
+        self.current = manifest;
+        self.current.tombstoned_node_ids = Vec::new();
+        self.current.tombstoned_edge_keys = Vec::new();
+
+        // Periodic checkpoint-aware GC (also reaps orphaned edit files).
+        const MANIFEST_GC_INTERVAL: u64 = 10;
+        const MANIFEST_GC_KEEP: usize = 3;
+        if self.current.version % MANIFEST_GC_INTERVAL == 0 {
+            let removed = self.gc_manifests(MANIFEST_GC_KEEP)?;
+            if removed > 0 {
+                tracing::info!("Manifest GC: removed {} old manifest(s)", removed);
+            }
+        }
+
+        Ok(())
+    }
+
     /// Load specific manifest version from disk.
     ///
     /// Complexity: O(S) where S = segments in manifest (JSON deserialization)
     pub fn load_manifest(&self, version: u64) -> Result<Manifest> {
         if let Some(db_path) = &self.db_path {
-            load_manifest_file(db_path, version)
+            // Reconstruct via replay so edit (non-checkpoint) versions resolve
+            // too. For pre-delta DBs this loads the single checkpoint file.
+            load_current_with_replay(db_path, version)
         } else if version == self.current.version {
             Ok(self.current.clone())
         } else {
@@ -963,10 +1240,12 @@ impl ManifestStore {
             ));
         }
 
-        let db_path = self.db_path.as_ref().unwrap();
-        let manifest_path = manifest_file_path(db_path, version);
+        let db_path = self.db_path.as_ref().unwrap().clone();
+        let manifest_path = manifest_file_path(&db_path, version);
 
-        let mut manifest: Manifest = read_json(&manifest_path)?;
+        // Reconstruct via replay so an edit (non-checkpoint) version can be
+        // tagged; writing the full .json below materialises it as a checkpoint.
+        let mut manifest = self.load_manifest(version)?;
 
         for (key, value) in &tags {
             manifest.tags.insert(key.clone(), value.clone());
@@ -1127,6 +1406,27 @@ impl ManifestStore {
             }
         }
 
+        // Reap orphaned edit (.edit.json) deltas below the oldest kept
+        // checkpoint — they are unreachable for replay, since open() always
+        // replays from the latest checkpoint <= current version.
+        let oldest_kept = self.index.snapshots.first().map(|s| s.version).unwrap_or(0);
+        if oldest_kept > 0 {
+            if let Ok(entries) = std::fs::read_dir(db_path.join("manifests")) {
+                for entry in entries.flatten() {
+                    let name = entry.file_name();
+                    let name = name.to_string_lossy();
+                    if let Some(prefix) = name.strip_suffix(".edit.json") {
+                        if let Ok(v) = prefix.parse::<u64>() {
+                            if v < oldest_kept {
+                                let _ = std::fs::remove_file(entry.path());
+                                removed += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Recalculate referenced_segments from remaining manifests
         let mut referenced = HashSet::new();
         for info in &self.index.snapshots {
@@ -1226,6 +1526,71 @@ fn load_manifest_file(db_path: &Path, version: u64) -> Result<Manifest> {
     Ok(manifest)
 }
 
+/// Edit (delta) file path: {db_path}/manifests/{version:06}.edit.json
+fn manifest_edit_file_path(db_path: &Path, version: u64) -> PathBuf {
+    db_path
+        .join("manifests")
+        .join(format!("{:06}.edit.json", version))
+}
+
+/// Highest checkpoint version (full snapshot) at or below `version`.
+///
+/// Checkpoint files are `{v:06}.json` whose stem parses as a bare u64; edit
+/// files `{v:06}.edit.json` have stem `{v:06}.edit` and are naturally skipped.
+fn highest_checkpoint_at_or_below(db_path: &Path, version: u64) -> Result<u64> {
+    let manifests_dir = db_path.join("manifests");
+    let mut best: Option<u64> = None;
+    for entry in std::fs::read_dir(&manifests_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("json") {
+            continue;
+        }
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        if let Ok(v) = stem.parse::<u64>() {
+            if v <= version && best.map_or(true, |b| v > b) {
+                best = Some(v);
+            }
+        }
+    }
+    best.ok_or_else(|| {
+        GraphError::InvalidFormat(format!(
+            "no checkpoint manifest at or below version {}",
+            version
+        ))
+    })
+}
+
+/// Load the full manifest at `version` by loading the latest checkpoint at or
+/// below it and replaying the `.edit.json` deltas on top.
+///
+/// Backward compatible: a pre-delta database has a checkpoint at every version,
+/// so the base equals `version` and zero edits are replayed (single-file load).
+fn load_current_with_replay(db_path: &Path, version: u64) -> Result<Manifest> {
+    let base = highest_checkpoint_at_or_below(db_path, version)?;
+    let mut manifest = load_manifest_file(db_path, base)?;
+    for v in (base + 1)..=version {
+        let edit_path = manifest_edit_file_path(db_path, v);
+        let edit: ManifestEdit = read_json(&edit_path)?;
+        if edit.parent_version != manifest.version {
+            return Err(GraphError::InvalidFormat(format!(
+                "manifest edit chain broken at v{}: parent {} != current v{}",
+                v, edit.parent_version, manifest.version
+            )));
+        }
+        manifest.apply(&edit);
+    }
+    if manifest.version != version {
+        return Err(GraphError::InvalidFormat(format!(
+            "manifest replay reached v{} but current pointer is v{}",
+            manifest.version, version
+        )));
+    }
+    Ok(manifest)
+}
+
 /// Parse segment ID from filename: seg_000123_nodes.seg -> 123
 fn parse_segment_id_from_filename(filename: &str) -> Option<u64> {
     let parts: Vec<&str> = filename.split('_').collect();
@@ -1320,6 +1685,298 @@ mod tests {
             file_paths: HashSet::new(),
             edge_types: HashSet::from(["CALLS".to_string()]),
         }
+    }
+
+    // ── Manifest Edit (delta) helpers + tests ─────────────────────
+
+    fn checkpoint_v1() -> Manifest {
+        let nodes = vec![make_node_descriptor(1, 100)];
+        Manifest {
+            version: 1,
+            created_at: 1000,
+            node_segments: nodes.clone(),
+            edge_segments: Vec::new(),
+            tags: HashMap::new(),
+            stats: ManifestStats::from_segments(&nodes, &[]),
+            parent_version: None,
+            tombstoned_node_ids: Vec::new(),
+            tombstoned_edge_keys: Vec::new(),
+            l1_node_segments: Vec::new(),
+            l1_edge_segments: Vec::new(),
+            last_compaction: None,
+        }
+    }
+
+    fn empty_edit(version: u64, parent: u64) -> ManifestEdit {
+        ManifestEdit {
+            version,
+            parent_version: parent,
+            base_checkpoint: 1,
+            created_at: 1000 + version,
+            added_node_segments: Vec::new(),
+            added_edge_segments: Vec::new(),
+            removed_node_segment_ids: Vec::new(),
+            removed_edge_segment_ids: Vec::new(),
+            added_tombstone_nodes: Vec::new(),
+            removed_tombstone_nodes: Vec::new(),
+            added_tombstone_edges: Vec::new(),
+            removed_tombstone_edges: Vec::new(),
+            l1_node_segments: None,
+            l1_edge_segments: None,
+            last_compaction: None,
+            tags: HashMap::new(),
+            stats: ManifestStats {
+                total_nodes: 0,
+                total_edges: 0,
+                node_segment_count: 0,
+                edge_segment_count: 0,
+            },
+        }
+    }
+
+    /// Canonicalize unordered fields (segments by id, tombstones sorted) so
+    /// two logically-equal manifests compare equal under derived PartialEq.
+    fn norm(m: &mut Manifest) {
+        m.node_segments.sort_by_key(|s| s.segment_id);
+        m.edge_segments.sort_by_key(|s| s.segment_id);
+        m.l1_node_segments.sort_by_key(|s| s.segment_id);
+        m.l1_edge_segments.sort_by_key(|s| s.segment_id);
+        m.tombstoned_node_ids.sort();
+        m.tombstoned_edge_keys.sort();
+    }
+
+    #[test]
+    fn test_edit_serde_roundtrip() {
+        let mut e = empty_edit(7, 6);
+        e.added_node_segments = vec![make_node_descriptor(9, 10)];
+        e.removed_edge_segment_ids = vec![3, 4];
+        e.added_tombstone_nodes = vec![1, 2, 3];
+        e.added_tombstone_edges = vec![(1, 2, "CALLS".to_string())];
+        e.tags = HashMap::from([("k".to_string(), "v".to_string())]);
+        let json = serde_json::to_string_pretty(&e).unwrap();
+        let back: ManifestEdit = serde_json::from_str(&json).unwrap();
+        assert_eq!(e, back);
+    }
+
+    #[test]
+    fn test_apply_add_and_remove_segments() {
+        let mut m = checkpoint_v1(); // node seg 1
+        let mut e = empty_edit(2, 1);
+        e.added_node_segments = vec![make_node_descriptor(2, 200)];
+        e.added_edge_segments = vec![make_edge_descriptor(3, 50)];
+        e.removed_node_segment_ids = vec![1];
+        m.apply(&e);
+
+        assert_eq!(m.version, 2);
+        assert_eq!(m.parent_version, Some(1));
+        let node_ids: Vec<u64> = m.node_segments.iter().map(|s| s.segment_id).collect();
+        assert_eq!(node_ids, vec![2], "seg 1 removed, seg 2 added");
+        let edge_ids: Vec<u64> = m.edge_segments.iter().map(|s| s.segment_id).collect();
+        assert_eq!(edge_ids, vec![3]);
+    }
+
+    #[test]
+    fn test_apply_tombstone_delta() {
+        let mut m = checkpoint_v1();
+        m.tombstoned_node_ids = vec![1, 2];
+        let mut e = empty_edit(2, 1);
+        e.added_tombstone_nodes = vec![3];
+        e.removed_tombstone_nodes = vec![1]; // re-added → un-tombstoned
+        m.apply(&e);
+        m.tombstoned_node_ids.sort();
+        assert_eq!(m.tombstoned_node_ids, vec![2, 3]);
+    }
+
+    #[test]
+    fn test_apply_l1_compaction_replace() {
+        let mut m = checkpoint_v1();
+        let mut e = empty_edit(2, 1);
+        e.l1_node_segments = Some(vec![make_node_descriptor(100, 999)]);
+        e.last_compaction = None; // stays None
+        m.apply(&e);
+        assert_eq!(m.l1_node_segments.len(), 1);
+        assert_eq!(m.l1_node_segments[0].segment_id, 100);
+    }
+
+    #[test]
+    fn test_reconstruct_chain_equals_full_snapshot() {
+        // checkpoint v1: node seg 1
+        // v2: + node seg 2, + tombstone node 10
+        // v3: + edge seg 3, - node seg 1, + tombstone node 20, - tombstone node 10
+        let mut e2 = empty_edit(2, 1);
+        e2.added_node_segments = vec![make_node_descriptor(2, 200)];
+        e2.added_tombstone_nodes = vec![10];
+
+        let mut e3 = empty_edit(3, 2);
+        e3.added_edge_segments = vec![make_edge_descriptor(3, 50)];
+        e3.removed_node_segment_ids = vec![1];
+        e3.added_tombstone_nodes = vec![20];
+        e3.removed_tombstone_nodes = vec![10];
+
+        // Final segment set drives stats.
+        let final_nodes = vec![make_node_descriptor(2, 200)];
+        let final_edges = vec![make_edge_descriptor(3, 50)];
+        e3.stats = ManifestStats::from_segments(&final_nodes, &final_edges);
+
+        let mut got =
+            reconstruct_manifest(checkpoint_v1(), &[e2, e3], 3).expect("replay ok");
+
+        let mut expected = Manifest {
+            version: 3,
+            created_at: 1003,
+            node_segments: final_nodes.clone(),
+            edge_segments: final_edges.clone(),
+            tags: HashMap::new(),
+            stats: ManifestStats::from_segments(&final_nodes, &final_edges),
+            parent_version: Some(2),
+            tombstoned_node_ids: vec![20],
+            tombstoned_edge_keys: Vec::new(),
+            l1_node_segments: Vec::new(),
+            l1_edge_segments: Vec::new(),
+            last_compaction: None,
+        };
+
+        norm(&mut got);
+        norm(&mut expected);
+        assert_eq!(got, expected, "replayed chain must equal full snapshot");
+    }
+
+    #[test]
+    fn test_reconstruct_broken_chain_errors() {
+        let e3 = empty_edit(3, 2); // parent 2, but checkpoint is v1 → gap
+        let err = reconstruct_manifest(checkpoint_v1(), std::slice::from_ref(&e3), 3);
+        assert!(err.is_err(), "non-contiguous chain must error");
+    }
+
+    #[test]
+    fn test_reconstruct_wrong_target_errors() {
+        let e2 = empty_edit(2, 1);
+        let err = reconstruct_manifest(checkpoint_v1(), std::slice::from_ref(&e2), 5);
+        assert!(err.is_err(), "target not reached must error");
+    }
+
+    #[test]
+    fn test_reconstruct_empty_chain_is_checkpoint() {
+        let got = reconstruct_manifest(checkpoint_v1(), &[], 1).expect("ok");
+        assert_eq!(got, checkpoint_v1(), "no edits → checkpoint unchanged");
+    }
+
+    // ── commit_edit + open() replay (on-disk) ─────────────────────
+
+    /// Commit `count` versions via the delta path, each adding one node
+    /// segment (segment_id = version*10). Each commit's `manifest` is the full
+    /// resulting snapshot; the `edit` carries just that commit's delta.
+    fn commit_n_edits(store: &mut ManifestStore, count: u64) {
+        for _ in 0..count {
+            let v = store.current().version + 1;
+            let mut e = empty_edit(v, v - 1);
+            e.added_node_segments = vec![make_node_descriptor(v * 10, 100)];
+            let mut m = store.current().clone();
+            m.apply(&e);
+            m.stats = ManifestStats::from_segments(&m.node_segments, &m.edge_segments);
+            e.stats = m.stats.clone();
+            store.commit_edit(m, e).unwrap();
+        }
+    }
+
+    fn sorted_node_ids(m: &Manifest) -> Vec<u64> {
+        let mut v: Vec<u64> = m.node_segments.iter().map(|s| s.segment_id).collect();
+        v.sort_unstable();
+        v
+    }
+
+    #[test]
+    fn test_commit_edit_reopen_at_edit_version() {
+        let dir = TempDir::new().unwrap();
+        let mut store = ManifestStore::create(dir.path()).unwrap();
+        store.set_checkpoint_interval(8); // v2,v3,v4 are all edits
+        commit_n_edits(&mut store, 3);
+        assert_eq!(store.current().version, 4);
+        assert_eq!(store.current().node_segments.len(), 3);
+
+        // Reopen must replay edits v2..v4 on top of the v1 checkpoint.
+        let store2 = ManifestStore::open(dir.path()).unwrap();
+        assert_eq!(store2.current().version, 4);
+        assert_eq!(sorted_node_ids(store2.current()), vec![20, 30, 40]);
+    }
+
+    #[test]
+    fn test_commit_edit_reopen_at_checkpoint_version() {
+        let dir = TempDir::new().unwrap();
+        let mut store = ManifestStore::create(dir.path()).unwrap();
+        store.set_checkpoint_interval(4); // v4 is a checkpoint
+        commit_n_edits(&mut store, 4); // v2,v3 edits, v4 checkpoint, v5 edit
+        assert_eq!(store.current().version, 5);
+
+        let store2 = ManifestStore::open(dir.path()).unwrap();
+        assert_eq!(store2.current().version, 5);
+        assert_eq!(sorted_node_ids(store2.current()), vec![20, 30, 40, 50]);
+    }
+
+    #[test]
+    fn test_open_legacy_snapshot_format_still_works() {
+        // Database written entirely via the legacy full-snapshot commit().
+        let dir = TempDir::new().unwrap();
+        let mut store = ManifestStore::create(dir.path()).unwrap();
+        let m2 = store
+            .create_manifest(vec![make_node_descriptor(5, 100)], vec![], None)
+            .unwrap();
+        store.commit(m2).unwrap();
+        let m3 = store
+            .create_manifest(
+                vec![make_node_descriptor(5, 100), make_node_descriptor(6, 100)],
+                vec![],
+                None,
+            )
+            .unwrap();
+        store.commit(m3).unwrap();
+
+        let store2 = ManifestStore::open(dir.path()).unwrap();
+        assert_eq!(store2.current().version, 3);
+        assert_eq!(sorted_node_ids(store2.current()), vec![5, 6]);
+    }
+
+    #[test]
+    fn test_commit_edit_tombstones_survive_reopen() {
+        let dir = TempDir::new().unwrap();
+        let mut store = ManifestStore::create(dir.path()).unwrap();
+        store.set_checkpoint_interval(8); // v2 is an edit
+
+        let mut e = empty_edit(2, 1);
+        e.added_node_segments = vec![make_node_descriptor(20, 100)];
+        e.added_tombstone_nodes = vec![777];
+        let mut m = store.current().clone();
+        m.apply(&e);
+        m.stats = ManifestStats::from_segments(&m.node_segments, &m.edge_segments);
+        e.stats = m.stats.clone();
+        store.commit_edit(m, e).unwrap();
+
+        // Reopen reconstructs the cumulative tombstone set from the delta so
+        // open() can feed it into the shard TombstoneSet.
+        let store2 = ManifestStore::open(dir.path()).unwrap();
+        assert_eq!(store2.current().version, 2);
+        assert!(
+            store2.current().tombstoned_node_ids.contains(&777),
+            "tombstone delta must replay into the reopened manifest"
+        );
+    }
+
+    #[test]
+    fn test_gc_with_edits_preserves_replay() {
+        let dir = TempDir::new().unwrap();
+        let mut store = ManifestStore::create(dir.path()).unwrap();
+        store.set_checkpoint_interval(4); // checkpoints at v4,8,12,16,20
+        commit_n_edits(&mut store, 21); // through v22; GC fires at v10, v20
+
+        // v22 is an edit on top of checkpoint v20; old checkpoints (1,4,8) and
+        // their edits were GC'd, but replay base v20 + edits 21,22 still works.
+        let store2 = ManifestStore::open(dir.path()).unwrap();
+        assert_eq!(store2.current().version, 22);
+        assert_eq!(
+            store2.current().node_segments.len(),
+            21,
+            "all 21 added segments (v2..v22) must survive GC + replay"
+        );
     }
 
     // ── Phase 1: Data Structures + Serde ──────────────────────────

@@ -35,7 +35,7 @@ use crate::error::{GraphError, Result};
 use crate::storage_v2::compaction::{CompactionConfig, CompactionResult};
 use crate::storage_v2::index::{build_inverted_indexes, GlobalIndex, IndexEntry, InvertedIndex};
 use crate::storage_v2::index::token::{TokenIndex, TokenMatch, tokenize_name, tokenize_text};
-use crate::storage_v2::manifest::{ManifestStore, SegmentDescriptor};
+use crate::storage_v2::manifest::{ManifestEdit, ManifestStore, SegmentDescriptor};
 use crate::storage_v2::segment::{self, EdgeSegmentV2, NodeSegmentV2};
 use crate::storage_v2::shard::{Shard, ShardDiagnostics, TombstoneSet};
 use crate::storage_v2::shard_planner::ShardPlanner;
@@ -1233,13 +1233,22 @@ impl MultiShardStore {
         );
 
         // ── Phase 5.5: Remove re-added IDs from tombstones ──
-        // New data supersedes tombstones for the same IDs.
+        // New data supersedes tombstones for the same IDs. Collect the IDs we
+        // actually un-tombstone so the manifest edit carries the precise
+        // O(batch) delta (replay removes exactly these from the cumulative set).
+        let mut untombstoned_nodes: Vec<u128> = Vec::new();
         for node in &nodes {
-            all_tomb_nodes.remove(&node.id);
+            if all_tomb_nodes.remove(&node.id) {
+                untombstoned_nodes.push(node.id);
+            }
         }
+        let mut untombstoned_edges: Vec<(u128, u128, String)> = Vec::new();
         for edge in &edges_clone {
             let interned_type = self.intern_edge_type(&edge.edge_type);
-            all_tomb_edges.remove(&(edge.src, edge.dst, interned_type));
+            let key = (edge.src, edge.dst, interned_type);
+            if all_tomb_edges.remove(&key) {
+                untombstoned_edges.push((key.0, key.1, key.2.to_string()));
+            }
         }
 
         // Re-apply updated tombstones to shards (Arc-shared)
@@ -1325,8 +1334,8 @@ impl MultiShardStore {
 
         let mut all_node_segs = manifest_store.current().node_segments.clone();
         let mut all_edge_segs = manifest_store.current().edge_segments.clone();
-        all_node_segs.extend(new_node_descs);
-        all_edge_segs.extend(new_edge_descs);
+        all_node_segs.extend(new_node_descs.iter().cloned());
+        all_edge_segs.extend(new_edge_descs.iter().cloned());
 
         let mut manifest = manifest_store.create_manifest(
             all_node_segs,
@@ -1334,7 +1343,9 @@ impl MultiShardStore {
             Some(tags),
         )?;
 
-        // Inject tombstones into manifest before commit
+        // Inject full cumulative tombstones — used when this version is
+        // persisted as a checkpoint (the delta-manifest write path writes the
+        // full snapshot at checkpoint boundaries).
         manifest.tombstoned_node_ids = all_tomb_nodes.into_iter().collect();
         manifest.tombstoned_edge_keys = all_tomb_edges
             .into_iter()
@@ -1342,7 +1353,34 @@ impl MultiShardStore {
             .collect();
 
         let manifest_version = manifest.version;
-        manifest_store.commit(manifest)?;
+
+        // Build the O(Δ) manifest edit (written at non-checkpoint versions).
+        // A normal re-analysis commit only ADDS segments; segment removal is a
+        // compaction-only concern, handled on its own path.
+        let edit = ManifestEdit {
+            version: manifest_version,
+            parent_version: manifest_version.saturating_sub(1),
+            base_checkpoint: 0, // advisory; open() locates the base by dir scan
+            created_at: manifest.created_at,
+            added_node_segments: new_node_descs,
+            added_edge_segments: new_edge_descs,
+            removed_node_segment_ids: Vec::new(),
+            removed_edge_segment_ids: Vec::new(),
+            added_tombstone_nodes: tombstone_node_ids.iter().copied().collect(),
+            removed_tombstone_nodes: untombstoned_nodes,
+            added_tombstone_edges: tombstone_edge_keys
+                .iter()
+                .map(|(s, d, t)| (*s, *d, t.to_string()))
+                .collect(),
+            removed_tombstone_edges: untombstoned_edges,
+            l1_node_segments: None,
+            l1_edge_segments: None,
+            last_compaction: None,
+            tags: manifest.tags.clone(),
+            stats: manifest.stats.clone(),
+        };
+
+        manifest_store.commit_edit(manifest, edit)?;
 
         tracing::debug!(
             "commit_batch phase8_manifest: {}ms",
