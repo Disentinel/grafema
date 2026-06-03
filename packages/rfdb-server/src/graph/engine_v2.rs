@@ -226,8 +226,12 @@ impl GraphEngineV2 {
         let manifest = ManifestStore::open(path)?;
         let mut store = MultiShardStore::open(path, &manifest)?;
 
-        // Restore tombstones from manifest into shard TombstoneSet (single source of truth).
-        // Engine's pending_tombstone_* stays empty — queries delegate to store shards.
+        // MVCC B3: the manifest version is the snapshot/tombstone authority and
+        // `ManifestStore::open` already reconstructed its cumulative set (replay
+        // into current.tombstoned_* → derived current_tombstones Arc). Here we
+        // ALSO mirror that set into the per-shard TombstoneSet for the legacy
+        // live-read and compaction-merge paths (B3 Option A). Engine's
+        // pending_tombstone_* stays empty — committed deletes live in the version.
         let current = manifest.current();
         if !current.tombstoned_node_ids.is_empty() || !current.tombstoned_edge_keys.is_empty() {
             let tombstone_nodes: HashSet<u128> =
@@ -305,9 +309,14 @@ impl GraphStore for GraphEngineV2 {
         // The old version may persist in a flushed segment alongside the new
         // write-buffer version, but node_count() deduplicates ids across
         // segments, so no separate "superseded" bookkeeping is needed.
-        for node in &v2_nodes {
-            self.pending_tombstone_nodes.remove(&node.id);
+        let readded_ids: HashSet<u128> = v2_nodes.iter().map(|n| n.id).collect();
+        for id in &readded_ids {
+            self.pending_tombstone_nodes.remove(id);
         }
+        // MVCC B3: a re-added node must un-tombstone in the version authority
+        // (the manifest), or a previously-COMMITTED delete would re-shadow it on
+        // the next flush and after reopen. Mirrors add_edges → remove_tombstone_edges.
+        self.manifest.remove_tombstone_nodes(&readded_ids);
         self.store.add_nodes(v2_nodes);
 
         // Auto-flush: check if any shard's write buffer exceeds adaptive limits
@@ -531,12 +540,16 @@ impl GraphStore for GraphEngineV2 {
             self.pending_tombstone_edges.remove(key);
         }
         // Also un-tombstone any keys whose deletion has already been
-        // committed to shards (typical for the rule-chain pattern in the
-        // compaction enricher: delete-by-source flushes tombstones to
-        // shards, then the same `(src, dst, type)` is re-emitted via
-        // addEdges). Without this the new edge persists in the write
-        // buffer but every read path filters it out via
-        // `tombstones.contains_edge`.
+        // committed (typical for the rule-chain pattern in the compaction
+        // enricher: delete-by-source flushes tombstones, then the same
+        // `(src, dst, type)` is re-emitted via addEdges). Without this the
+        // new edge persists in the write buffer but every read path filters
+        // it out via `tombstones.contains_edge`.
+        // MVCC B3: the version authority is the manifest — un-tombstone there
+        // (so snapshots immediately see the edge live and the next flush does
+        // not re-broadcast the stale tombstone) AND in the per-shard mirror
+        // (for the legacy live-read paths).
+        self.manifest.remove_tombstone_edges(&keys);
         self.store.untombstone_edges(&keys);
         let result = self.store.upsert_edges(v2_edges);
         if !skip_validation {
@@ -694,17 +707,44 @@ impl GraphStore for GraphEngineV2 {
     }
 
     fn flush(&mut self) -> Result<()> {
-        // Apply pending tombstones to shards before flushing to disk.
-        // This ensures delete_node/delete_edge operations are persisted.
+        // Apply pending tombstones before flushing to disk so delete_node /
+        // delete_edge operations are persisted.
+        let mut tombstones_changed = false;
         if !self.pending_tombstone_nodes.is_empty() || !self.pending_tombstone_edges.is_empty() {
-            self.store.set_tombstones(
+            // MVCC B3: deletions are version state. Merge them into the current
+            // manifest version's cumulative tombstone set so the imminent commit
+            // carries them forward and writes them to disk (snapshot authority +
+            // reopen fidelity). extend_tombstones also refreshes the version's
+            // derived Arc, so reads see the delete immediately.
+            tombstones_changed = self.manifest.extend_tombstones(
                 &self.pending_tombstone_nodes,
                 &self.pending_tombstone_edges,
             );
+            // Keep the per-shard TombstoneSet in sync for the legacy live-read
+            // and compaction-merge paths that still consult it (B3 Option A:
+            // relocate the snapshot authority to the version; the per-shard
+            // field is no longer the authority but still backs those paths).
+            // Broadcast the FULL cumulative set (not just this batch's pending)
+            // so the per-shard set matches the version — set_tombstones replaces.
+            let cur = self.manifest.current();
+            let full_nodes: HashSet<u128> =
+                cur.tombstoned_node_ids.iter().copied().collect();
+            let full_edges: HashSet<(u128, u128, Arc<str>)> = cur
+                .tombstoned_edge_keys
+                .iter()
+                .map(|(s, d, t)| (*s, *d, Arc::from(t.as_str())))
+                .collect();
+            self.store.set_tombstones(&full_nodes, &full_edges);
             self.pending_tombstone_nodes.clear();
             self.pending_tombstone_edges.clear();
         }
-        self.store.flush_all(&mut self.manifest)?;
+        let flushed = self.store.flush_all(&mut self.manifest)?;
+        // If tombstones changed but there were no segments to flush (write
+        // buffers already drained by a prior commit), flush_all advanced no
+        // version. Force a tombstone-only version so the delete is persisted.
+        if tombstones_changed && flushed == 0 {
+            self.manifest.commit_tombstone_only()?;
+        }
         Ok(())
     }
 
@@ -898,9 +938,10 @@ impl GraphEngineV2 {
         let delta = self.store
             .commit_batch_ext(nodes, edges, changed_files, tags, &mut self.manifest, protected_types)?;
 
-        // After commit_batch_ext, all tombstones live in the store's shard TombstoneSet
-        // (set via set_tombstones_shared). The engine's pending sets are cleared —
-        // is_node/edge_tombstoned() delegates to the store for persisted tombstones.
+        // MVCC B3: after commit_batch_ext the new version's cumulative tombstone
+        // set lives in the manifest VERSION (the authority that snapshots read);
+        // the per-shard mirror was refreshed once at the commit point for the
+        // legacy live-read paths. The engine's pending sets are cleared.
         self.pending_tombstone_nodes.clear();
         self.pending_tombstone_edges.clear();
 
@@ -1597,6 +1638,126 @@ mod tests {
         }
         let by_type = engine.count_nodes_by_type(None);
         assert_eq!(by_type.values().sum::<usize>(), 30, "by_type after reopen");
+    }
+
+    /// MVCC B3 acceptance #1 — per-version tombstone isolation.
+    ///
+    /// A snapshot captured at version V freezes V's cumulative tombstone set
+    /// (now sourced from the manifest VERSION, not a per-shard broadcast). A
+    /// later commit that tombstones a node changes the LIVE version's visible
+    /// set but MUST NOT change the already-captured old snapshot — and a fresh
+    /// snapshot MUST see the new tombstone. This is the property B4 concurrency
+    /// depends on (tombstones immutable-per-version, no shared-mutable race).
+    #[test]
+    fn test_b3_version_tombstone_isolation() {
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let file = "src/iso.js";
+
+        let keep = make_v2_node("FUNCTION:keep@src/iso.js", "FUNCTION", "keep", file);
+        let doomed = make_v2_node("FUNCTION:doomed@src/iso.js", "FUNCTION", "doomed", file);
+        let keep_id = keep.id;
+        let doomed_id = doomed.id;
+
+        // Commit 1: both nodes live.
+        engine
+            .commit_batch(vec![keep, doomed], vec![], &[file.to_string()], HashMap::new())
+            .unwrap();
+
+        // Pin a snapshot of version V1 (both nodes present, none tombstoned).
+        let snap_v1 = engine.store.snapshot(&engine.manifest);
+        assert!(engine.store.node_exists_at(&snap_v1, doomed_id), "V1 sees doomed");
+        assert!(engine.store.node_exists_at(&snap_v1, keep_id), "V1 sees keep");
+        assert!(
+            !snap_v1.tombstones.contains_node(doomed_id),
+            "V1 snapshot tombstone set is empty for doomed"
+        );
+
+        // Commit 2: re-analyze the file dropping `doomed` (tombstoned), keeping `keep`.
+        let keep_v2 = make_v2_node("FUNCTION:keep@src/iso.js", "FUNCTION", "keep", file);
+        engine
+            .commit_batch(vec![keep_v2], vec![], &[file.to_string()], HashMap::new())
+            .unwrap();
+
+        // OLD snapshot is frozen: still sees `doomed` (tombstoned only in V2).
+        assert!(
+            engine.store.node_exists_at(&snap_v1, doomed_id),
+            "old snapshot must STILL see doomed — version-pinned tombstones"
+        );
+        assert!(
+            !snap_v1.tombstones.contains_node(doomed_id),
+            "old snapshot's frozen tombstone Arc must be unaffected by V2"
+        );
+
+        // FRESH snapshot sees the new version: `doomed` is tombstoned.
+        let snap_v2 = engine.store.snapshot(&engine.manifest);
+        assert!(snap_v2.version > snap_v1.version, "V2 is a later version");
+        assert!(
+            snap_v2.tombstones.contains_node(doomed_id),
+            "fresh snapshot's tombstone set (from the manifest version) includes doomed"
+        );
+        assert!(
+            !engine.store.node_exists_at(&snap_v2, doomed_id),
+            "fresh snapshot must NOT see tombstoned doomed"
+        );
+        assert!(engine.store.node_exists_at(&snap_v2, keep_id), "keep survives in V2");
+
+        // Live engine reads (newest version) agree.
+        assert!(!engine.node_exists(doomed_id), "live read: doomed gone");
+        assert!(engine.node_exists(keep_id), "live read: keep present");
+    }
+
+    /// MVCC B3 acceptance #2 — reopen fidelity through the flush() delete path.
+    ///
+    /// `delete_node` + `flush()` (not `commit_batch`) is a deletion path that
+    /// previously persisted tombstones only to the per-shard set. B3 routes the
+    /// deletion into the manifest VERSION (the authority), so the delete is on
+    /// disk and survives reopen — verified here against a SECOND delete in the
+    /// same session (the replace-not-merge shard mirror would otherwise drop the
+    /// first delete).
+    #[test]
+    fn test_b3_delete_via_flush_survives_reopen() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("flush_del.rfdb");
+
+        let a = make_v2_node("FUNCTION:a@src/f.js", "FUNCTION", "a", "src/f.js");
+        let b = make_v2_node("FUNCTION:b@src/f.js", "FUNCTION", "b", "src/f.js");
+        let c = make_v2_node("FUNCTION:c@src/f.js", "FUNCTION", "c", "src/f.js");
+        let a_id = a.id;
+        let b_id = b.id;
+        let c_id = c.id;
+
+        {
+            let mut engine = GraphEngineV2::create(&db_path).unwrap();
+            engine
+                .commit_batch(
+                    vec![a, b, c],
+                    vec![],
+                    &["src/f.js".to_string()],
+                    HashMap::new(),
+                )
+                .unwrap();
+            assert_eq!(engine.node_count(), 3);
+
+            // Two separate delete+flush cycles. Each flush merges the deletion
+            // into the manifest version (not a replace), so BOTH survive.
+            engine.delete_node(a_id);
+            engine.flush().unwrap();
+            assert!(!engine.node_exists(a_id), "a deleted after first flush");
+
+            engine.delete_node(b_id);
+            engine.flush().unwrap();
+            assert!(!engine.node_exists(b_id), "b deleted after second flush");
+            assert!(!engine.node_exists(a_id), "a STILL deleted after second flush");
+            assert!(engine.node_exists(c_id), "c survives");
+            assert_eq!(engine.node_count(), 1, "only c live before reopen");
+        }
+
+        // Reopen: tombstones come from the manifest version, deletes stay deleted.
+        let engine = GraphEngineV2::open(&db_path).unwrap();
+        assert!(!engine.node_exists(a_id), "a stays deleted after reopen");
+        assert!(!engine.node_exists(b_id), "b stays deleted after reopen");
+        assert!(engine.node_exists(c_id), "c stays live after reopen");
+        assert_eq!(engine.node_count(), 1, "only c live after reopen");
     }
 
     #[test]

@@ -253,13 +253,13 @@ fn commit_batch_tombstones_survive_restart() {
 }
 
 #[test]
-fn flush_tombstone_limitation_documented() {
-    // KNOWN LIMITATION: flush() does not persist tombstones for
-    // previously-flushed segments. This test documents the behavior.
-    //
-    // Tombstone persistence requires commit_batch(), which handles
-    // the 9-phase atomic commit protocol including tombstone tracking
-    // in the manifest.
+fn flush_tombstone_persists_after_reopen() {
+    // MVCC B3 (RFD-71): flush()-path deletes are now version state — the
+    // deletion is merged into the manifest VERSION's cumulative tombstone set
+    // and written to disk, so it survives reopen. (Previously this was a known
+    // limitation: flush()-based tombstones did NOT persist; only commit_batch()
+    // tracked them. B3 makes the manifest version the tombstone authority and
+    // routes the flush deletion through it.)
     let dir = TempDir::new().unwrap();
     let db_path = dir.path().join("test.rfdb");
 
@@ -277,16 +277,17 @@ fn flush_tombstone_limitation_documented() {
         // the tombstone is observable in-session.
         engine.flush().unwrap();
         assert!(!engine.node_exists(41), "node should be hidden after flush");
+        assert!(engine.node_exists(40), "untouched node stays live");
     }
 
     {
         let engine = GraphEngineV2::open(&db_path).unwrap();
-        // NOTE: This documents that flush()-based tombstones do NOT persist.
-        // The node reappears after restart because the original segment
-        // still contains it and no manifest-level tombstone was written.
-        // Use commit_batch() for persistent deletes.
-        let exists = engine.node_exists(41);
-        assert!(exists, "flush-based tombstones do not persist (known limitation)");
+        // B3: the manifest version carries the tombstone → delete stays deleted.
+        assert!(
+            !engine.node_exists(41),
+            "flush-path tombstone must persist across reopen (B3)"
+        );
+        assert!(engine.node_exists(40), "untouched node survives reopen");
     }
 }
 

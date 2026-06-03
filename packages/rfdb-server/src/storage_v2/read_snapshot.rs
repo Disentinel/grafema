@@ -122,9 +122,9 @@ impl std::fmt::Debug for SegmentCache {
 ///
 /// Captured atomically from `ManifestStore::current()` (segment descriptors,
 /// newest-last per shard, matching the live shard's append order) plus the
-/// version's cumulative tombstone set (`Arc::clone` of the runtime
-/// `Shard` tombstones — the source of truth, since the manifest clears its
-/// tombstone fields after each commit to save memory).
+/// version's cumulative tombstone set (`Arc::clone` of the manifest's
+/// `current_tombstones` — the version authority, MVCC B3; the manifest holds
+/// the cumulative set in memory and snapshots freeze its Arc immutably).
 ///
 /// Holding a `ReadSnapshot` pins the version: the descriptors reference
 /// immutable segments, and the tombstone `Arc` is frozen at capture time. Later
@@ -149,9 +149,8 @@ pub struct ReadSnapshot {
 impl ReadSnapshot {
     /// Capture the current published version's descriptor set + tombstones.
     ///
-    /// `tombstones` is the runtime source of truth (the shard's shared
-    /// `Arc<TombstoneSet>`); the manifest's own tombstone fields are cleared
-    /// after each commit and must NOT be used.
+    /// `tombstones` is the version authority (MVCC B3) — the manifest's
+    /// `current_tombstones` Arc, frozen here for the life of the snapshot.
     pub fn capture(manifest: &ManifestStore, tombstones: Arc<TombstoneSet>) -> Self {
         let m = manifest.current();
         Self {

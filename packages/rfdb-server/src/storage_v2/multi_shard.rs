@@ -433,15 +433,18 @@ impl MultiShardStore {
         }
     }
 
-    /// Check if a node is tombstoned in the shard TombstoneSet.
+    /// Check if a node is tombstoned in the per-shard mirror.
     ///
-    /// All shards share the same Arc<TombstoneSet>, so checking shard 0 is sufficient.
+    /// MVCC B3: the version authority is the manifest; this consults the
+    /// per-shard mirror, which `commit_batch_ext`/`flush` keep equal to the
+    /// current version's cumulative set. All shards share one Arc, so shard 0
+    /// is representative.
     pub fn is_node_tombstoned(&self, id: u128) -> bool {
         if self.shards.is_empty() { return false; }
         self.shards[0].tombstones().contains_node(id)
     }
 
-    /// Check if an edge is tombstoned in the shard TombstoneSet.
+    /// Check if an edge is tombstoned in the per-shard mirror.
     ///
     /// All shards share the same Arc<TombstoneSet>, so checking shard 0 is sufficient.
     pub fn is_edge_tombstoned(&self, src: u128, dst: u128, edge_type: &str) -> bool {
@@ -643,9 +646,11 @@ impl MultiShardStore {
     /// through it (the `*_at` methods below) never observe the live, uncommitted
     /// `Shard.write_buffer` — only the version's committed, immutable segments.
     pub fn snapshot(&self, manifest: &ManifestStore) -> ReadSnapshot {
-        // All shards share one Arc<TombstoneSet> after commit_batch; shard 0 is
-        // representative. An empty store still has a valid (empty) set.
-        let tombstones = self.shards[0].tombstones_arc();
+        // MVCC B3: tombstones are version state. Take the current published
+        // version's cumulative tombstone set from the manifest authority (the
+        // derived Arc), NOT from any per-shard broadcast set. Cloning the Arc is
+        // O(1) and freezes the version's tombstones immutably into the snapshot.
+        let tombstones = manifest.current_tombstones();
         ReadSnapshot::capture(manifest, tombstones)
     }
 
@@ -2033,37 +2038,32 @@ impl MultiShardStore {
             changed_edge_types.insert(edge.edge_type.clone());
         }
 
-        // ── Phase 4: Apply tombstones to shards ──
+        // ── Phase 4: Compute the next version's cumulative tombstone set ──
         let t_phase4 = Instant::now();
 
-        // Build combined tombstone set (existing shard tombstones + new).
-        // Read from shard TombstoneSet (single source of truth), not manifest.
-        // Manifest tombstone Vecs may be cleared after commit to save memory.
-        let mut all_tomb_nodes: HashSet<u128> = if !self.shards.is_empty() {
-            self.shards[0].tombstones().node_ids.clone()
-        } else {
-            HashSet::new()
-        };
+        // MVCC B3: the BASE cumulative set comes from the manifest VERSION (the
+        // authority), not from a per-shard broadcast. next = base + this commit's
+        // additions (phase 5.5 below subtracts re-added ids). No per-shard
+        // broadcast here — the snapshot reads the manifest, and the legacy
+        // shard mirror is published ONCE at the commit point (phase 5.5).
+        let mut all_tomb_nodes: HashSet<u128> = manifest_store
+            .current()
+            .tombstoned_node_ids
+            .iter()
+            .copied()
+            .collect();
         all_tomb_nodes.extend(&tombstone_node_ids);
 
-        let mut all_tomb_edges: HashSet<(u128, u128, Arc<str>)> = if !self.shards.is_empty() {
-            self.shards[0].tombstones().edge_keys.clone()
-        } else {
-            HashSet::new()
-        };
+        let mut all_tomb_edges: HashSet<(u128, u128, Arc<str>)> = manifest_store
+            .current()
+            .tombstoned_edge_keys
+            .iter()
+            .map(|(s, d, t)| (*s, *d, Arc::from(t.as_str())))
+            .collect();
         all_tomb_edges.extend(tombstone_edge_keys.iter().cloned());
 
-        // Arc-share tombstones across shards (O(1) per shard instead of O(N) clone)
-        let shared_tombstones = Arc::new(TombstoneSet {
-            node_ids: all_tomb_nodes.clone(),
-            edge_keys: all_tomb_edges.clone(),
-        });
-        for shard in &mut self.shards {
-            shard.set_tombstones_shared(Arc::clone(&shared_tombstones));
-        }
-
         tracing::debug!(
-            "commit_batch phase4_apply_tombstones: {}ms",
+            "commit_batch phase4_compute_tombstones: {}ms",
             t_phase4.elapsed().as_millis()
         );
 
@@ -2108,7 +2108,12 @@ impl MultiShardStore {
             }
         }
 
-        // Re-apply updated tombstones to shards (Arc-shared)
+        // MVCC B3: publish the next version's cumulative set to the per-shard
+        // mirror ONCE, at the serialized commit point. This is NOT the snapshot
+        // authority (snapshots read the manifest version) — it only backs the
+        // legacy live-read paths in Shard and the compaction-merge filter that
+        // still consult `Shard.tombstones`. Single broadcast, no intermediate
+        // shared-mutable race window.
         let shared_tombstones = Arc::new(TombstoneSet {
             node_ids: all_tomb_nodes.clone(),
             edge_keys: all_tomb_edges.clone(),
@@ -3798,23 +3803,37 @@ mod tests {
             &mut manifest_store,
         ).unwrap();
 
-        // Manifest tombstone Vecs are cleared after commit to save memory.
-        // Tombstones now live in the shard TombstoneSet (single source of truth).
+        // MVCC B3: the manifest VERSION is the tombstone authority and KEEPS its
+        // cumulative set in memory (previously these were cleared after commit;
+        // the per-shard set was the source of truth). The re-analysis of
+        // a/file.js dropped fn1 + fn2 + the CALLS edge → all tombstoned.
         let manifest = manifest_store.current();
         assert!(
-            manifest.tombstoned_node_ids.is_empty(),
-            "Manifest tombstone Vecs should be cleared after commit"
+            manifest.tombstoned_node_ids.contains(&a.id),
+            "manifest version must hold the cumulative node tombstones (B3 authority)"
         );
         assert!(
-            manifest.tombstoned_edge_keys.is_empty(),
-            "Manifest tombstone Vecs should be cleared after commit"
+            manifest.tombstoned_node_ids.contains(&b.id),
+            "manifest version must hold the cumulative node tombstones (B3 authority)"
+        );
+        assert!(
+            manifest
+                .tombstoned_edge_keys
+                .iter()
+                .any(|(s, d, t)| *s == edge.src && *d == edge.dst && t == &edge.edge_type),
+            "manifest version must hold the cumulative edge tombstones (B3 authority)"
         );
 
-        // Shard TombstoneSet should contain tombstones for old nodes
+        // The derived current_tombstones Arc (what snapshots read) agrees.
+        let cur_tomb = manifest_store.current_tombstones();
+        assert!(cur_tomb.contains_node(a.id));
+        assert!(cur_tomb.contains_node(b.id));
+        assert!(cur_tomb.contains_edge(edge.src, edge.dst, &edge.edge_type));
+
+        // The per-shard mirror is kept consistent with the version for the
+        // legacy live-read paths.
         assert!(store.is_node_tombstoned(a.id));
         assert!(store.is_node_tombstoned(b.id));
-
-        // Shard TombstoneSet should contain tombstones for old edges
         assert!(store.is_edge_tombstoned(edge.src, edge.dst, &edge.edge_type));
     }
 

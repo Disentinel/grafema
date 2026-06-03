@@ -37,12 +37,14 @@ use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{GraphError, Result};
 use crate::storage_v2::compaction::CompactionInfo;
+use crate::storage_v2::shard::TombstoneSet;
 use crate::storage_v2::types::{SegmentMeta, SegmentType};
 
 // ── Durability Mode ────────────────────────────────────────────────
@@ -792,6 +794,17 @@ pub struct ManifestStore {
     /// (`commit_edit`). Default `MANIFEST_CHECKPOINT_INTERVAL`; overridable
     /// for tests via `set_checkpoint_interval`.
     checkpoint_interval: u64,
+
+    /// MVCC (RFD-71 B3): the current published version's cumulative tombstone
+    /// set, as the authoritative source of truth — a derived `Arc<TombstoneSet>`
+    /// mirror of `self.current.tombstoned_node_ids` / `tombstoned_edge_keys`.
+    ///
+    /// Rebuilt at every commit (and on open) from the in-memory current version.
+    /// Snapshots clone this `Arc` (O(1)) so a `ReadSnapshot` freezes exactly the
+    /// version's tombstones — no per-shard broadcast, no shared-mutable set. This
+    /// is what replaces the old per-shard `Shard.tombstones` broadcast as the
+    /// snapshot/version authority.
+    current_tombstones: Arc<TombstoneSet>,
 }
 
 // ── ManifestStore: Constructors ────────────────────────────────────
@@ -833,6 +846,14 @@ impl ManifestStore {
         let max_segment_id = index.referenced_segments.iter().max().copied().unwrap_or(0);
         let next_segment_id = AtomicU64::new(max_segment_id + 1);
 
+        // MVCC B3: derive the authoritative version tombstone set from the
+        // replayed current manifest (load_current_with_replay reconstructs the
+        // cumulative set into current.tombstoned_*).
+        let current_tombstones = Arc::new(TombstoneSet::from_manifest(
+            current.tombstoned_node_ids.clone(),
+            current.tombstoned_edge_keys.clone(),
+        ));
+
         Ok(Self {
             db_path: Some(db_path.to_path_buf()),
             current,
@@ -840,6 +861,7 @@ impl ManifestStore {
             next_segment_id,
             durability,
             checkpoint_interval: MANIFEST_CHECKPOINT_INTERVAL,
+            current_tombstones,
         })
     }
 
@@ -904,6 +926,8 @@ impl ManifestStore {
             next_segment_id: AtomicU64::new(1),
             durability,
             checkpoint_interval: MANIFEST_CHECKPOINT_INTERVAL,
+            // Fresh database: no tombstones yet.
+            current_tombstones: Arc::new(TombstoneSet::new()),
         })
     }
 
@@ -949,6 +973,8 @@ impl ManifestStore {
             next_segment_id: AtomicU64::new(1),
             durability: DurabilityMode::Strict,
             checkpoint_interval: MANIFEST_CHECKPOINT_INTERVAL,
+            // Fresh ephemeral store: no tombstones yet.
+            current_tombstones: Arc::new(TombstoneSet::new()),
         }
     }
 
@@ -968,6 +994,135 @@ impl ManifestStore {
     /// Complexity: O(1) (cached in memory)
     pub fn current(&self) -> &Manifest {
         &self.current
+    }
+
+    /// The current published version's cumulative tombstone set (MVCC B3).
+    ///
+    /// This is the authoritative version-state tombstone set. A snapshot clones
+    /// the returned `Arc` (O(1)) to freeze the version's tombstones immutably;
+    /// later commits build a fresh `Arc`, so old snapshots are unaffected.
+    ///
+    /// Complexity: O(1) (cached `Arc`)
+    pub fn current_tombstones(&self) -> Arc<TombstoneSet> {
+        Arc::clone(&self.current_tombstones)
+    }
+
+    /// Rebuild the cached `current_tombstones` `Arc` from `self.current`'s
+    /// in-memory cumulative tombstone fields. Called after every commit that
+    /// changes the cumulative set, and on open. Produces a fresh `Arc` so any
+    /// snapshot still holding the previous `Arc` keeps its own immutable view.
+    fn rebuild_current_tombstones(&mut self) {
+        self.current_tombstones = Arc::new(TombstoneSet::from_manifest(
+            self.current.tombstoned_node_ids.clone(),
+            self.current.tombstoned_edge_keys.clone(),
+        ));
+    }
+
+    /// Merge new tombstone deltas into the current version's cumulative set
+    /// in memory, ahead of the next commit (MVCC B3).
+    ///
+    /// Used by the `flush()` path, which persists buffered `delete_node` /
+    /// `delete_edge` tombstones. The subsequent `flush_all` → `create_manifest`
+    /// carries the updated cumulative set forward into the new version, and
+    /// `commit` writes it to disk — so flush-path deletions become part of the
+    /// version authority (and survive reopen), not only the per-shard set.
+    ///
+    /// `added_*` are newly tombstoned. Refreshes the derived `Arc` so a snapshot
+    /// taken before the next version commit already sees the new tombstones
+    /// (in-session delete visibility). Returns `true` if the cumulative set
+    /// actually changed (the caller uses this to decide whether to force a
+    /// version commit even when no segments were flushed).
+    pub fn extend_tombstones(
+        &mut self,
+        added_nodes: &HashSet<u128>,
+        added_edges: &HashSet<(u128, u128, Arc<str>)>,
+    ) -> bool {
+        if added_nodes.is_empty() && added_edges.is_empty() {
+            return false;
+        }
+        let before_nodes = self.current.tombstoned_node_ids.len();
+        let before_edges = self.current.tombstoned_edge_keys.len();
+
+        let mut node_set: HashSet<u128> =
+            self.current.tombstoned_node_ids.iter().copied().collect();
+        node_set.extend(added_nodes.iter().copied());
+        self.current.tombstoned_node_ids = node_set.into_iter().collect();
+
+        let mut edge_set: HashSet<(u128, u128, String)> =
+            self.current.tombstoned_edge_keys.iter().cloned().collect();
+        edge_set.extend(
+            added_edges
+                .iter()
+                .map(|(s, d, t)| (*s, *d, t.to_string())),
+        );
+        self.current.tombstoned_edge_keys = edge_set.into_iter().collect();
+
+        let changed = self.current.tombstoned_node_ids.len() != before_nodes
+            || self.current.tombstoned_edge_keys.len() != before_edges;
+        if changed {
+            self.rebuild_current_tombstones();
+        }
+        changed
+    }
+
+    /// Commit a tombstone-only new version (MVCC B3).
+    ///
+    /// The `flush()` deletion path stages tombstones into the current version
+    /// via `extend_tombstones`, but `flush_all` only advances the version when
+    /// it flushes segments. When a delete+flush has nothing to flush (write
+    /// buffers already drained by a prior commit), the deletion would otherwise
+    /// never be persisted as its own version. This advances the version with no
+    /// segment changes, carrying the (already-updated) cumulative tombstone set
+    /// onto disk so the delete survives reopen.
+    pub fn commit_tombstone_only(&mut self) -> Result<()> {
+        let node_segments = self.current.node_segments.clone();
+        let edge_segments = self.current.edge_segments.clone();
+        // create_manifest carries forward L1 + the cumulative tombstone set
+        // (already updated by extend_tombstones), so the new version persists it.
+        let manifest = self.create_manifest(node_segments, edge_segments, None)?;
+        self.commit(manifest)
+    }
+
+    /// Remove node ids from the current version's cumulative tombstone set in
+    /// memory (MVCC B3). Used when a previously-deleted node is re-added: the
+    /// un-tombstone must reach the version authority, or the next flush would
+    /// re-persist the stale tombstone and the re-added node would stay hidden
+    /// (and disappear after reopen). Refreshes the derived `Arc`. Idempotent.
+    pub fn remove_tombstone_nodes(&mut self, ids: &HashSet<u128>) {
+        if ids.is_empty() || self.current.tombstoned_node_ids.is_empty() {
+            return;
+        }
+        let before = self.current.tombstoned_node_ids.len();
+        self.current.tombstoned_node_ids.retain(|id| !ids.contains(id));
+        if self.current.tombstoned_node_ids.len() != before {
+            self.rebuild_current_tombstones();
+        }
+    }
+
+    /// Remove edge keys from the current version's cumulative tombstone set in
+    /// memory (MVCC B3). Used when a previously-deleted edge is re-added (the
+    /// enricher delete-by-source then re-emit pattern): the un-tombstone must
+    /// reach the version authority, not only the per-shard mirror, or the next
+    /// flush would re-broadcast the stale tombstone and snapshots would keep
+    /// filtering the live edge.
+    ///
+    /// Refreshes the derived `Arc` so any snapshot taken before the next commit
+    /// already sees the edge as live. Idempotent — missing keys are no-ops.
+    pub fn remove_tombstone_edges(&mut self, keys: &[(u128, u128, Arc<str>)]) {
+        if keys.is_empty() || self.current.tombstoned_edge_keys.is_empty() {
+            return;
+        }
+        let rm: HashSet<(u128, u128, String)> = keys
+            .iter()
+            .map(|(s, d, t)| (*s, *d, t.to_string()))
+            .collect();
+        let before = self.current.tombstoned_edge_keys.len();
+        self.current
+            .tombstoned_edge_keys
+            .retain(|k| !rm.contains(k));
+        if self.current.tombstoned_edge_keys.len() != before {
+            self.rebuild_current_tombstones();
+        }
     }
 
     /// Create new manifest (not yet committed).
@@ -1003,6 +1158,14 @@ impl ManifestStore {
         let l1_node_segments = self.current.l1_node_segments.clone();
         let l1_edge_segments = self.current.l1_edge_segments.clone();
 
+        // MVCC B3: carry forward the cumulative tombstone set. The manifest
+        // version is the authority for tombstones now, so a plain flush commit
+        // (which adds no deletions) must preserve the current version's set.
+        // Compaction overrides these to empty explicitly after this call (the
+        // merged L1 segments no longer contain the tombstoned records).
+        let tombstoned_node_ids = self.current.tombstoned_node_ids.clone();
+        let tombstoned_edge_keys = self.current.tombstoned_edge_keys.clone();
+
         Ok(Manifest {
             version,
             created_at: current_timestamp(),
@@ -1011,8 +1174,8 @@ impl ManifestStore {
             tags: tags.unwrap_or_default(),
             stats,
             parent_version: Some(self.current.version),
-            tombstoned_node_ids: Vec::new(),
-            tombstoned_edge_keys: Vec::new(),
+            tombstoned_node_ids,
+            tombstoned_edge_keys,
             l1_node_segments,
             l1_edge_segments,
             last_compaction: None,
@@ -1034,9 +1197,9 @@ impl ManifestStore {
         if self.db_path.is_none() {
             self.index.add_snapshot(&manifest);
             self.current = manifest;
-            // Free tombstone memory — shard TombstoneSet is the source of truth.
-            self.current.tombstoned_node_ids = Vec::new();
-            self.current.tombstoned_edge_keys = Vec::new();
+            // MVCC B3: the in-memory current version is the tombstone authority;
+            // keep its cumulative set and refresh the derived Arc.
+            self.rebuild_current_tombstones();
             return Ok(());
         }
 
@@ -1065,11 +1228,12 @@ impl ManifestStore {
         // 4. Update cache
         self.current = manifest;
 
-        // 5. Free tombstone memory — data is persisted on disk.
-        // Tombstones are loaded fresh on open() and live in shard TombstoneSet
-        // during runtime. Keeping them in manifest wastes memory (copy #1 of 3+).
-        self.current.tombstoned_node_ids = Vec::new();
-        self.current.tombstoned_edge_keys = Vec::new();
+        // 5. MVCC B3: the in-memory current version is the tombstone authority
+        // (snapshots read its derived Arc). The full set was just persisted to
+        // disk in the manifest file above, so keep it in memory and refresh the
+        // derived Arc — do NOT clear it (clearing would make snapshots blind to
+        // the version's deletions).
+        self.rebuild_current_tombstones();
 
         // 6. Periodic manifest GC — prevent unbounded growth during long analysis runs.
         // Keep last 3 manifests (current + 2 for safety). Runs every 10 commits.
@@ -1126,16 +1290,18 @@ impl ManifestStore {
         let is_checkpoint = version == 1 || version % self.checkpoint_interval == 0;
 
         // Advance the in-memory snapshot in place (O(Δ) segment splice). The
-        // edit's tombstone delta lands in self.current but is bogus as a
-        // cumulative set (we clear it every commit) — overwritten with the full
-        // set below at checkpoints, cleared otherwise.
+        // edit's tombstone delta is replayed onto self.current's cumulative set
+        // by apply(), so after this self.current.tombstoned_* IS the version's
+        // authoritative cumulative tombstone set (MVCC B3 — we no longer clear
+        // it). At checkpoints we re-materialise the full set from the caller's
+        // copy (identical, but it is what we persist verbatim to disk).
         self.current.apply(&edit);
 
-        // Ephemeral: cache only, no disk artifacts.
+        // Ephemeral: cache only, no disk artifacts. Keep the cumulative set in
+        // memory (apply already maintained it) and refresh the derived Arc.
         if self.db_path.is_none() {
             self.index.add_snapshot(&self.current);
-            self.current.tombstoned_node_ids = Vec::new();
-            self.current.tombstoned_edge_keys = Vec::new();
+            self.rebuild_current_tombstones();
             return Ok(());
         }
 
@@ -1165,9 +1331,12 @@ impl ManifestStore {
             self.index.latest_version = version;
         }
 
-        // Free tombstone memory (shard TombstoneSet is the runtime source of truth).
-        self.current.tombstoned_node_ids = Vec::new();
-        self.current.tombstoned_edge_keys = Vec::new();
+        // MVCC B3: keep the cumulative tombstone set in memory (it is the
+        // version authority that snapshots read) and refresh the derived Arc.
+        // Between checkpoints the on-disk artifact is the O(Δ) edit delta; the
+        // full set is reconstructed on open by replaying edits onto the latest
+        // checkpoint, so memory and disk stay consistent.
+        self.rebuild_current_tombstones();
 
         // Persist index (updated in both branches).
         let index_path = db_path.join("manifest_index.json");

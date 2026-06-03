@@ -483,15 +483,6 @@ impl Shard {
         &self.tombstones
     }
 
-    /// Clone the shared tombstone `Arc` (zero-copy, refcount bump).
-    ///
-    /// Used by the MVCC read path to freeze the current version's cumulative
-    /// tombstone set into a `ReadSnapshot`. All shards share the same `Arc`
-    /// during `commit_batch`, so any shard's clone is the version's set.
-    pub fn tombstones_arc(&self) -> Arc<TombstoneSet> {
-        Arc::clone(&self.tombstones)
-    }
-
     /// Find edge keys (src, dst, edge_type) where src is in the given ID set.
     ///
     /// Uses bloom filter on each edge segment for pre-filtering:
