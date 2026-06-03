@@ -43,7 +43,7 @@ import Rules.Types (walkType)
 --   * CONTAINS edge from the module to the function
 --
 -- The match group is ignored in Phase 2 (no body walking yet).
-walkFunBind :: LIdP GhcPs -> MatchGroup GhcPs (LHsExpr GhcPs) -> Analyzer ()
+walkFunBind :: LIdP GhcPs -> MatchGroup GhcPs (LHsExpr GhcPs) -> Analyzer T.Text
 walkFunBind funId _matches = do
   file     <- askFile
   moduleId <- askModuleId
@@ -68,6 +68,7 @@ walkFunBind funId _matches = do
     , geType     = "CONTAINS"
     , geMetadata = Map.empty
     }
+  pure nodeId
 
 -- | Walk a pattern binding ('PatBind'), emitting a VARIABLE node for simple
 -- variable patterns.

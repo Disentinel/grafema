@@ -25,8 +25,8 @@ import GHC.Types.SrcLoc (GenLocated(..))
 import GHC.Parser.Annotation (SrcSpanAnnA)
 import GHC.Unit.Module (moduleNameString)
 
-import Analysis.Context (emitNode, askFile, askModuleId, Analyzer)
-import Analysis.Types (GraphNode(..))
+import Analysis.Context (emitNode, askFile, askModuleId, Analyzer, withScope, withEnclosingFn)
+import Analysis.Types (GraphNode(..), Scope(Scope), ScopeKind(..))
 import Loc (getLoc)
 
 import Rules.Declarations (walkFunBind, walkPatBind, walkTypeSig)
@@ -92,8 +92,12 @@ walkDecl :: GenLocated SrcSpanAnnA (HsDecl GhcPs) -> Analyzer ()
 walkDecl (L _ decl) = case decl of
   -- Value declarations: function bindings
   ValD _ (FunBind { fun_id = funId, fun_matches = matches }) -> do
-    walkFunBind funId matches
-    walkMatchGroup matches  -- Phase 4: walk into function body
+    fnId <- walkFunBind funId matches
+    -- Phase 4: walk the body INSIDE the function's scope, so calls/refs
+    -- emitted by Rules.Expressions attach to this FUNCTION (via askScopeId)
+    -- instead of the module. Mirrors the JS analyzer's withScope wrapping.
+    let fnScope = Scope fnId FunctionScope Map.empty Nothing
+    withEnclosingFn fnId $ withScope fnScope $ walkMatchGroup matches
 
   -- Value declarations: pattern bindings
   ValD _ (PatBind { pat_lhs = pat, pat_rhs = rhs }) -> do
