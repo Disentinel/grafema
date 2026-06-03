@@ -281,35 +281,18 @@ impl GraphEngineV2 {
     }
 }
 
-// ── Helper: tombstone filtering ─────────────────────────────────────
+// ── Helper: snapshot capture ────────────────────────────────────────
 
 impl GraphEngineV2 {
-    /// Check if a node is tombstoned.
-    ///
-    /// Checks both engine-level pending tombstones (from delete_node, not yet flushed)
-    /// and store shard tombstones (persisted via commit_batch_ext or flush).
-    fn is_node_tombstoned(&self, id: u128) -> bool {
-        self.pending_tombstone_nodes.contains(&id)
-            || self.store.is_node_tombstoned(id)
+    /// Capture a version-pinned read snapshot of the current PUBLISHED manifest
+    /// version (RFD-71 B2). Every public read on this engine resolves through
+    /// such a snapshot via the store's `*_at` methods, so it observes ONLY
+    /// committed/published data — never the live `Shard.write_buffer` (uncommitted
+    /// adds) and never the engine's `pending_tombstone_*` (uncommitted deletes).
+    /// Visibility therefore flips exactly at the phase-8 manifest publish.
+    fn snapshot(&self) -> crate::storage_v2::read_snapshot::ReadSnapshot {
+        self.store.snapshot(&self.manifest)
     }
-
-    /// Check if an edge is tombstoned.
-    ///
-    /// Checks both engine-level pending tombstones (from delete_edge, not yet flushed)
-    /// and store shard tombstones (persisted via commit_batch_ext or flush).
-    fn is_edge_tombstoned(&self, src: u128, dst: u128, edge_type: &str) -> bool {
-        self.pending_tombstone_edges.contains(&(src, dst, Arc::from(edge_type)))
-            || self.store.is_edge_tombstoned(src, dst, edge_type)
-    }
-
-    /// Filter tombstoned edges from a list of v2 edge records.
-    fn filter_edges(&self, edges: Vec<EdgeRecordV2>) -> Vec<EdgeRecordV2> {
-        edges
-            .into_iter()
-            .filter(|e| !self.is_edge_tombstoned(e.src, e.dst, &e.edge_type))
-            .collect()
-    }
-
 }
 
 // ── GraphStore Implementation ───────────────────────────────────────
@@ -356,17 +339,15 @@ impl GraphStore for GraphEngineV2 {
     }
 
     fn get_node(&self, id: u128) -> Option<NodeRecord> {
-        if self.is_node_tombstoned(id) {
-            return None;
-        }
-        self.store.get_node(id).map(|v2| node_v2_to_v1(&v2))
+        // B2: version-pinned read. The snapshot's tombstone set is authoritative
+        // for the published version; uncommitted pending tombstones are invisible.
+        let snap = self.snapshot();
+        self.store.get_node_at(&snap, id).map(|v2| node_v2_to_v1(&v2))
     }
 
     fn node_exists(&self, id: u128) -> bool {
-        if self.is_node_tombstoned(id) {
-            return false;
-        }
-        self.store.node_exists(id)
+        let snap = self.snapshot();
+        self.store.node_exists_at(&snap, id)
     }
 
     fn get_node_identifier(&self, id: u128) -> Option<String> {
@@ -387,7 +368,10 @@ impl GraphStore for GraphEngineV2 {
             other => (other, None),
         };
 
-        let mut ids = self.store.find_node_ids_by_attr(
+        // B2: version-pinned read through the published snapshot.
+        let snap = self.snapshot();
+        let mut ids = self.store.find_node_ids_by_attr_at(
+            &snap,
             exact_type,
             wildcard_prefix,
             query.file.as_deref(),
@@ -397,10 +381,6 @@ impl GraphStore for GraphEngineV2 {
             query.substring_match,
         );
 
-        if !self.pending_tombstone_nodes.is_empty() {
-            ids.retain(|id| !self.is_node_tombstoned(*id));
-        }
-
         // Fuzzy name fallback: when name is specified, 0 exact results,
         // and fuzzy is not explicitly disabled
         if ids.is_empty()
@@ -408,16 +388,15 @@ impl GraphStore for GraphEngineV2 {
             && query.fuzzy_name_fallback != Some(false)
         {
             let name = query.name.as_deref().unwrap();
-            let fuzzy_matches = self.store.find_similar_names(
+            let fuzzy_matches = self.store.find_similar_names_at(
+                &snap,
                 name,
                 exact_type,
                 20,  // top-K
                 0.3, // min Jaccard score
             );
             for m in &fuzzy_matches {
-                if !self.is_node_tombstoned(m.node_id) {
-                    ids.push(m.node_id);
-                }
+                ids.push(m.node_id);
             }
         }
 
@@ -432,7 +411,7 @@ impl GraphStore for GraphEngineV2 {
                 if let Ok(handle) = tokio::runtime::Handle::try_current() {
                     let matches = handle.block_on(engine.search(name, exact_type, 10, 0.5));
                     for m in matches {
-                        if !self.is_node_tombstoned(m.node_id) {
+                        if !snap.tombstones.contains_node(m.node_id) {
                             ids.push(m.node_id);
                         }
                     }
@@ -457,43 +436,23 @@ impl GraphStore for GraphEngineV2 {
 
         let mut found_any = false;
 
-        if self.pending_tombstone_nodes.is_empty() {
-            self.store.find_node_ids_by_attr_chunked(
-                exact_type,
-                wildcard_prefix,
-                query.file.as_deref(),
-                query.name.as_deref(),
-                query.exported,
-                &query.metadata_filters,
-                query.substring_match,
-                chunk_size,
-                &mut |ids| {
-                    if !ids.is_empty() { found_any = true; }
-                    callback(ids)
-                },
-            );
-        } else {
-            self.store.find_node_ids_by_attr_chunked(
-                exact_type,
-                wildcard_prefix,
-                query.file.as_deref(),
-                query.name.as_deref(),
-                query.exported,
-                &query.metadata_filters,
-                query.substring_match,
-                chunk_size,
-                &mut |ids| {
-                    let filtered: Vec<u128> = ids.iter()
-                        .filter(|&&id| !self.is_node_tombstoned(id))
-                        .copied()
-                        .collect();
-                    if filtered.is_empty() { true } else {
-                        found_any = true;
-                        callback(&filtered)
-                    }
-                },
-            );
-        }
+        // B2: version-pinned read through the published snapshot.
+        let snap = self.snapshot();
+        self.store.find_node_ids_by_attr_chunked_at(
+            &snap,
+            exact_type,
+            wildcard_prefix,
+            query.file.as_deref(),
+            query.name.as_deref(),
+            query.exported,
+            &query.metadata_filters,
+            query.substring_match,
+            chunk_size,
+            &mut |ids| {
+                if !ids.is_empty() { found_any = true; }
+                callback(ids)
+            },
+        );
 
         // Fuzzy name fallback for streaming path (same logic as find_by_attr)
         if !found_any
@@ -501,14 +460,14 @@ impl GraphStore for GraphEngineV2 {
             && query.fuzzy_name_fallback != Some(false)
         {
             let name = query.name.as_deref().unwrap();
-            let fuzzy_matches = self.store.find_similar_names(
+            let fuzzy_matches = self.store.find_similar_names_at(
+                &snap,
                 name,
                 exact_type,
                 20,
                 0.3,
             );
             let fuzzy_ids: Vec<u128> = fuzzy_matches.iter()
-                .filter(|m| !self.is_node_tombstoned(m.node_id))
                 .map(|m| m.node_id)
                 .collect();
             if !fuzzy_ids.is_empty() {
@@ -528,7 +487,7 @@ impl GraphStore for GraphEngineV2 {
                 if let Ok(handle) = tokio::runtime::Handle::try_current() {
                     let matches = handle.block_on(engine.search(name, exact_type, 10, 0.5));
                     let emb_ids: Vec<u128> = matches.iter()
-                        .filter(|m| !self.is_node_tombstoned(m.node_id))
+                        .filter(|m| !snap.tombstones.contains_node(m.node_id))
                         .map(|m| m.node_id)
                         .collect();
                     if !emb_ids.is_empty() {
@@ -540,8 +499,11 @@ impl GraphStore for GraphEngineV2 {
     }
 
     fn find_by_type(&self, node_type: &str) -> Vec<u128> {
-        let mut ids = if node_type.ends_with('*') {
-            self.store.find_node_ids_by_attr(
+        // B2: version-pinned read through the published snapshot.
+        let snap = self.snapshot();
+        if node_type.ends_with('*') {
+            self.store.find_node_ids_by_attr_at(
+                &snap,
                 None,
                 Some(node_type.trim_end_matches('*')),
                 None,
@@ -551,15 +513,8 @@ impl GraphStore for GraphEngineV2 {
                 false,
             )
         } else {
-            self.store.find_node_ids_by_type(node_type)
-        };
-
-        if self.pending_tombstone_nodes.is_empty() {
-            return ids;
+            self.store.find_node_ids_by_type_at(&snap, node_type)
         }
-
-        ids.retain(|id| !self.is_node_tombstoned(*id));
-        ids
     }
 
     fn add_edges(&mut self, edges: Vec<EdgeRecord>, skip_validation: bool) {
@@ -608,52 +563,53 @@ impl GraphStore for GraphEngineV2 {
     }
 
     fn neighbors(&self, id: u128, edge_types: &[&str]) -> Vec<u128> {
-        let edge_types_opt = if edge_types.is_empty() {
-            None
-        } else {
-            Some(edge_types)
-        };
-        let edges = self.store.get_outgoing_edges(id, edge_types_opt);
-        self.filter_edges(edges)
+        // B2: version-pinned read. `*_at` edge queries already drop tombstoned
+        // edges via the snapshot; also drop edges whose dst no longer exists in
+        // the published version.
+        let snap = self.snapshot();
+        let edge_types_opt = if edge_types.is_empty() { None } else { Some(edge_types) };
+        self.store.get_outgoing_edges_at(&snap, id, edge_types_opt)
             .into_iter()
-            .filter(|e| !self.is_node_tombstoned(e.dst))
+            .filter(|e| self.store.node_exists_at(&snap, e.dst))
             .map(|e| e.dst)
             .collect()
     }
 
     fn get_outgoing_edges(&self, node_id: u128, edge_types: Option<&[&str]>) -> Vec<EdgeRecord> {
-        let edges = self.store.get_outgoing_edges(node_id, edge_types);
-        self.filter_edges(edges)
+        let snap = self.snapshot();
+        self.store.get_outgoing_edges_at(&snap, node_id, edge_types)
             .iter()
             .map(edge_v2_to_v1)
             .collect()
     }
 
     fn get_incoming_edges(&self, node_id: u128, edge_types: Option<&[&str]>) -> Vec<EdgeRecord> {
-        let edges = self.store.get_incoming_edges(node_id, edge_types);
-        self.filter_edges(edges)
+        let snap = self.snapshot();
+        self.store.get_incoming_edges_at(&snap, node_id, edge_types)
             .iter()
             .map(edge_v2_to_v1)
             .collect()
     }
 
     fn get_all_edges(&self) -> Vec<EdgeRecord> {
-        self.store.iter_all_edges()
+        let snap = self.snapshot();
+        self.store.iter_all_edges_at(&snap)
             .iter()
-            .filter(|e| !self.is_edge_tombstoned(e.src, e.dst, &e.edge_type))
             .map(edge_v2_to_v1)
             .collect()
     }
 
     fn get_edges_by_type(&self, edge_type: &str) -> Vec<EdgeRecord> {
-        self.store.get_edges_by_type(edge_type)
+        let snap = self.snapshot();
+        self.store.get_edges_by_type_at(&snap, edge_type)
             .iter()
-            .filter(|e| !self.is_edge_tombstoned(e.src, e.dst, &e.edge_type))
             .map(edge_v2_to_v1)
             .collect()
     }
 
     fn count_nodes_by_type(&self, types: Option<&[String]>) -> HashMap<String, usize> {
+        // B2: version-pinned read through the published snapshot.
+        let snap = self.snapshot();
         let mut counts: HashMap<String, usize> = HashMap::new();
 
         match types {
@@ -662,18 +618,14 @@ impl GraphStore for GraphEngineV2 {
                     if t.ends_with('*') {
                         // Wildcard
                         let prefix = t.trim_end_matches('*');
-                        let nodes = self.store.find_nodes(None, None);
+                        let nodes = self.store.find_nodes_at(&snap, None, None);
                         for n in nodes {
-                            if n.node_type.starts_with(prefix) && !self.is_node_tombstoned(n.id) {
+                            if n.node_type.starts_with(prefix) {
                                 *counts.entry(n.node_type).or_insert(0) += 1;
                             }
                         }
                     } else {
-                        let nodes = self.store.find_nodes(Some(t), None);
-                        let count = nodes
-                            .iter()
-                            .filter(|n| !self.is_node_tombstoned(n.id))
-                            .count();
+                        let count = self.store.find_nodes_at(&snap, Some(t), None).len();
                         if count > 0 {
                             counts.insert(t.clone(), count);
                         }
@@ -681,7 +633,7 @@ impl GraphStore for GraphEngineV2 {
                 }
             }
             None => {
-                return self.store.count_by_type();
+                return self.store.count_by_type_at(&snap);
             }
         }
 
@@ -792,30 +744,18 @@ impl GraphStore for GraphEngineV2 {
     }
 
     fn node_count(&self) -> usize {
-        // `store.node_count()` already reports LIVE nodes: each id counted
-        // once (deduped across segments) and shard tombstones excluded.
-        // The only ids it does NOT yet exclude are pending tombstones from
-        // `delete_node` that haven't been flushed into the shard
-        // TombstoneSet — those nodes are still present in the store and thus
-        // counted, so subtract them here. (Superseded re-adds are already
-        // deduplicated inside `store.node_count()`, so no extra correction.)
-        let total = self.store.node_count();
-        let pending_live = self
-            .pending_tombstone_nodes
-            .iter()
-            .filter(|id| self.store.node_exists(**id))
-            .count();
-        total.saturating_sub(pending_live)
+        // B2: version-pinned count over the published snapshot. Each id is
+        // counted once (deduped across the version's segments) and the version's
+        // tombstones are excluded. Uncommitted pending tombstones from
+        // `delete_node` are NOT reflected until flush publishes them.
+        let snap = self.snapshot();
+        self.store.node_count_at(&snap)
     }
 
     fn edge_count(&self) -> usize {
-        let total = self.store.edge_count();
-        let pending_live = self
-            .pending_tombstone_edges
-            .iter()
-            .filter(|(src, dst, et)| self.store.edge_exists(*src, *dst, et))
-            .count();
-        total.saturating_sub(pending_live)
+        // B2: version-pinned count over the published snapshot.
+        let snap = self.snapshot();
+        self.store.edge_count_at(&snap)
     }
 
     fn clear(&mut self) {
@@ -872,11 +812,9 @@ impl GraphEngineV2 {
     /// Endpoint types: db:query, http:request, http:endpoint,
     /// EXTERNAL, fs:operation, SIDE_EFFECT, exported FUNCTION.
     pub fn is_endpoint(&self, id: u128) -> bool {
-        if let Some(v2) = self.store.get_node(id) {
-            if self.is_node_tombstoned(id) {
-                return false;
-            }
-
+        // B2: version-pinned read through the published snapshot.
+        let snap = self.snapshot();
+        if let Some(v2) = self.store.get_node_at(&snap, id) {
             let node_type = v2.node_type.as_str();
 
             if matches!(
@@ -1079,15 +1017,12 @@ impl GraphEngineV2 {
 
     /// Get incoming neighbors (src nodes of incoming edges).
     fn reverse_neighbors(&self, id: u128, edge_types: &[&str]) -> Vec<u128> {
-        let edge_types_opt = if edge_types.is_empty() {
-            None
-        } else {
-            Some(edge_types)
-        };
-        let edges = self.store.get_incoming_edges(id, edge_types_opt);
-        self.filter_edges(edges)
+        // B2: version-pinned read through the published snapshot.
+        let snap = self.snapshot();
+        let edge_types_opt = if edge_types.is_empty() { None } else { Some(edge_types) };
+        self.store.get_incoming_edges_at(&snap, id, edge_types_opt)
             .into_iter()
-            .filter(|e| !self.is_node_tombstoned(e.src))
+            .filter(|e| self.store.node_exists_at(&snap, e.src))
             .map(|e| e.src)
             .collect()
     }
@@ -1095,15 +1030,12 @@ impl GraphEngineV2 {
     /// Internal neighbors helper (same as GraphStore::neighbors but
     /// callable without trait dispatch, avoids borrow issues).
     fn neighbors_internal(&self, id: u128, edge_types: &[&str]) -> Vec<u128> {
-        let edge_types_opt = if edge_types.is_empty() {
-            None
-        } else {
-            Some(edge_types)
-        };
-        let edges = self.store.get_outgoing_edges(id, edge_types_opt);
-        self.filter_edges(edges)
+        // B2: version-pinned read through the published snapshot.
+        let snap = self.snapshot();
+        let edge_types_opt = if edge_types.is_empty() { None } else { Some(edge_types) };
+        self.store.get_outgoing_edges_at(&snap, id, edge_types_opt)
             .into_iter()
-            .filter(|e| !self.is_node_tombstoned(e.dst))
+            .filter(|e| self.store.node_exists_at(&snap, e.dst))
             .map(|e| e.dst)
             .collect()
     }
@@ -1262,6 +1194,8 @@ mod tests {
         let node = make_v1_node(100, "FUNCTION", "foo", "src/main.js");
 
         engine.add_nodes(vec![node]);
+        // B2 (RFD-71): reads see only published data — flush the staged add.
+        engine.flush().unwrap();
 
         assert!(engine.node_exists(100));
         let retrieved = engine.get_node(100).unwrap();
@@ -1276,9 +1210,13 @@ mod tests {
         let mut engine = GraphEngineV2::create_ephemeral();
         let node = make_v1_node(200, "CLASS", "Bar", "src/bar.js");
         engine.add_nodes(vec![node]);
+        // B2 (RFD-71): publish the add before reading it back.
+        engine.flush().unwrap();
 
         assert!(engine.node_exists(200));
         engine.delete_node(200);
+        // B2 (RFD-71): a delete is invisible until flushed — publish the tombstone.
+        engine.flush().unwrap();
         assert!(!engine.node_exists(200));
         assert!(engine.get_node(200).is_none());
     }
@@ -1291,6 +1229,8 @@ mod tests {
             make_v1_node(2, "FUNCTION", "b", "src/b.js"),
             make_v1_node(3, "CLASS", "C", "src/c.js"),
         ]);
+        // B2 (RFD-71): reads see only published data — flush the staged adds.
+        engine.flush().unwrap();
 
         let funcs = engine.find_by_type("FUNCTION");
         assert_eq!(funcs.len(), 2);
@@ -1310,6 +1250,8 @@ mod tests {
             make_v1_node(11, "http:endpoint", "ep1", "src/b.js"),
             make_v1_node(12, "db:query", "q1", "src/c.js"),
         ]);
+        // B2 (RFD-71): reads see only published data — flush the staged adds.
+        engine.flush().unwrap();
 
         let http_nodes = engine.find_by_type("http:*");
         assert_eq!(http_nodes.len(), 2);
@@ -1328,6 +1270,8 @@ mod tests {
             node,
             make_v1_node(21, "FUNCTION", "helper", "src/utils.js"),
         ]);
+        // B2 (RFD-71): reads see only published data — flush the staged adds.
+        engine.flush().unwrap();
 
         // Find by name
         let query = AttrQuery::new().name("handler");
@@ -1383,6 +1327,8 @@ mod tests {
             deleted: false,
         };
         engine.add_edges(vec![edge], false);
+        // B2 (RFD-71): reads see only published data — flush the staged add+edge.
+        engine.flush().unwrap();
 
         let outgoing = engine.get_outgoing_edges(30, None);
         assert_eq!(outgoing.len(), 1);
@@ -1420,6 +1366,8 @@ mod tests {
             ],
             false,
         );
+        // B2 (RFD-71): reads see only published data — flush the staged adds.
+        engine.flush().unwrap();
 
         // All neighbors
         let all = engine.neighbors(40, &[]);
@@ -1464,6 +1412,8 @@ mod tests {
             ],
             false,
         );
+        // B2 (RFD-71): reads see only published data — flush the staged adds.
+        engine.flush().unwrap();
 
         // Full BFS
         let result = engine.bfs(&[50], 10, &["CALLS"]);
@@ -1489,11 +1439,14 @@ mod tests {
         engine.store.add_nodes(vec![live, dead]);
 
         engine.delete_node(dead_id);
+
+        // B2 (RFD-71): the delete is invisible to reads until flushed — publish
+        // it, then both the tombstone and the surviving node are observable.
+        engine.flush().unwrap();
         assert!(!engine.node_exists(dead_id));
         assert!(engine.node_exists(live_id));
 
         // Flush clears pending tombstones
-        engine.flush().unwrap();
         assert!(engine.pending_tombstone_nodes.is_empty());
         assert!(engine.pending_tombstone_edges.is_empty());
     }
@@ -1726,6 +1679,8 @@ mod tests {
         };
 
         engine.add_nodes(vec![original.clone()]);
+        // B2 (RFD-71): reads see only published data — flush the staged add.
+        engine.flush().unwrap();
         let retrieved = engine.get_node(999).unwrap();
 
         // Core fields must match
@@ -1818,6 +1773,8 @@ mod tests {
     fn test_clear_resets_engine() {
         let mut engine = GraphEngineV2::create_ephemeral();
         engine.add_nodes(vec![make_v1_node(70, "FUNCTION", "x", "src/x.js")]);
+        // B2 (RFD-71): reads see only published data — flush the staged add.
+        engine.flush().unwrap();
         assert_eq!(engine.node_count(), 1);
 
         engine.clear();
@@ -1834,6 +1791,8 @@ mod tests {
             make_v1_node(82, "db:query", "q", "src/a.js"),
             make_v1_node(83, "EXTERNAL", "ext", "src/a.js"),
         ]);
+        // B2 (RFD-71): reads see only published data — flush the staged adds.
+        engine.flush().unwrap();
 
         assert!(engine.is_endpoint(80));  // http:request
         assert!(!engine.is_endpoint(81)); // regular FUNCTION
@@ -1867,6 +1826,8 @@ mod tests {
             ],
             false,
         );
+        // B2 (RFD-71): reads see only published data — flush the staged adds.
+        engine.flush().unwrap();
 
         // Forward from 90
         let fwd = engine.reachability(&[90], 10, &["CALLS"], false);
@@ -1908,10 +1869,14 @@ mod tests {
             }],
             false,
         );
+        // B2 (RFD-71): publish the staged add+edge before reading.
+        engine.flush().unwrap();
 
         assert_eq!(engine.get_outgoing_edges(100, None).len(), 1);
 
         engine.delete_edge(100, 101, "CALLS");
+        // B2 (RFD-71): the edge delete is invisible until flushed — publish it.
+        engine.flush().unwrap();
         assert_eq!(engine.get_outgoing_edges(100, None).len(), 0);
     }
 
@@ -1921,14 +1886,16 @@ mod tests {
         let node = make_v1_node(102, "FUNCTION", "foo", "src/a.js");
 
         engine.add_nodes(vec![node.clone()]);
+        // B2 (RFD-71): publish the add before reading it back.
+        engine.flush().unwrap();
         assert!(engine.node_exists(102));
 
+        // Delete then re-add the same ID in the same session: the re-add must
+        // clear the pending tombstone so that, once published, the node is live.
+        // (Reads between the staged ops are invisible under B2, so we only
+        // assert the published outcome.)
         engine.delete_node(102);
-        assert!(!engine.node_exists(102));
-
-        // Re-adding the same ID in the same session should resurrect the node.
         engine.add_nodes(vec![node]);
-        assert!(engine.node_exists(102));
 
         engine.flush().unwrap();
         assert!(engine.node_exists(102));
@@ -1952,16 +1919,16 @@ mod tests {
         };
 
         engine.add_edges(vec![edge.clone()], false);
+        // B2 (RFD-71): publish the staged nodes+edge before reading.
+        engine.flush().unwrap();
         assert_eq!(engine.get_outgoing_edges(103, None).len(), 1);
 
+        // Delete then re-add the same edge key in the same session: the re-add
+        // must clear the pending tombstone so the published edge stays live.
+        // Reads between the staged ops are invisible under B2, so we only assert
+        // the published outcome.
         engine.delete_edge(103, 104, "FLOWS_INTO");
-        assert_eq!(engine.get_outgoing_edges(103, None).len(), 0);
-
-        // Re-adding the same edge key in the same session should resurrect it.
         engine.add_edges(vec![edge.clone()], false);
-        let outgoing = engine.get_outgoing_edges(103, None);
-        assert_eq!(outgoing.len(), 1);
-        assert_eq!(outgoing[0].metadata, edge.metadata);
 
         engine.flush().unwrap();
         let outgoing_after_flush = engine.get_outgoing_edges(103, None);
@@ -1977,6 +1944,8 @@ mod tests {
             make_v1_node(111, "FUNCTION", "b", "src/b.js"),
             make_v1_node(112, "CLASS", "C", "src/c.js"),
         ]);
+        // B2 (RFD-71): reads see only published data — flush the staged adds.
+        engine.flush().unwrap();
 
         let counts = engine.count_nodes_by_type(None);
         assert_eq!(counts.get("FUNCTION"), Some(&2));
@@ -2013,6 +1982,8 @@ mod tests {
             ],
             false,
         );
+        // B2 (RFD-71): reads see only published data — flush the staged adds.
+        engine.flush().unwrap();
 
         let all = engine.get_all_edges();
         assert_eq!(all.len(), 2);
@@ -2172,24 +2143,21 @@ mod tests {
             metadata: None, deleted: false,
         }], false);
 
-        // flush_data_only should be a no-op — no segments written
+        // flush_data_only is a no-op below the size threshold — no segments
+        // written, nothing published. Under B2 (RFD-71) the staged write buffer
+        // is invisible to reads, so the data is NOT observable yet (no mid-test
+        // write-buffer read — that would be a dirty read B2 forbids).
         engine.flush_data_only().unwrap();
 
-        // Data still readable from write buffers
+        // Now flush() actually persists + publishes a new manifest version.
+        engine.flush().unwrap();
+
+        // Data readable after the real flush (from the published segments).
         assert!(engine.node_exists(id_a));
         assert!(engine.node_exists(id_b));
         let outgoing = engine.get_outgoing_edges(id_a, None);
         assert_eq!(outgoing.len(), 1);
         assert_eq!(outgoing[0].dst, id_b);
-
-        // Now flush() should actually persist
-        engine.flush().unwrap();
-
-        // Data still readable after real flush (from segments)
-        assert!(engine.node_exists(id_a));
-        assert!(engine.node_exists(id_b));
-        let outgoing = engine.get_outgoing_edges(id_a, None);
-        assert_eq!(outgoing.len(), 1);
     }
 
     #[test]
@@ -2221,10 +2189,13 @@ mod tests {
             }
             engine.add_nodes(nodes);
 
-            // flush_data_only is a no-op — should succeed
+            // flush_data_only is a no-op below threshold; flush() publishes.
+            // B2 (RFD-71): reads see only published data, so publish before the
+            // read-back.
             engine.flush_data_only().unwrap();
+            engine.flush().unwrap();
 
-            // All nodes for this file should be readable (from write buffer)
+            // All nodes for this file should be readable (from published segments)
             let found = engine.find_by_attr(
                 &AttrQuery { file: Some(file.clone()), ..AttrQuery::default() },
             );
@@ -2247,5 +2218,137 @@ mod tests {
             &AttrQuery { file: Some("src/file_42.js".to_string()), ..AttrQuery::default() },
         );
         assert_eq!(found.len(), 5);
+    }
+
+    // ── B2 (RFD-71) MVCC acceptance tests ────────────────────────────
+
+    /// B2 core property: visibility flips exactly at the manifest publish.
+    /// An add WITHOUT flush is invisible to every public read; after flush
+    /// (which publishes a new manifest version) the same read observes it.
+    /// Proves the public read path no longer consults the live write buffer.
+    #[test]
+    fn test_b2_visibility_equals_publish() {
+        let mut engine = GraphEngineV2::create_ephemeral();
+
+        let n = make_v2_node("FUNCTION:vis@src/v.js", "FUNCTION", "vis", "src/v.js");
+        let id = n.id;
+        let v1 = NodeRecord {
+            id,
+            node_type: Some("FUNCTION".to_string()),
+            file_id: 0,
+            name_offset: 0,
+            version: "main".to_string(),
+            exported: false,
+            replaces: None,
+            deleted: false,
+            name: Some("vis".to_string()),
+            file: Some("src/v.js".to_string()),
+            metadata: None,
+            semantic_id: Some("FUNCTION:vis@src/v.js".to_string()),
+        };
+
+        // Add WITHOUT flush → uncommitted → invisible to all public reads.
+        engine.add_nodes(vec![v1]);
+        assert!(
+            !engine.node_exists(id),
+            "uncommitted add must be invisible (no dirty reads)"
+        );
+        assert!(engine.get_node(id).is_none(), "uncommitted add must be invisible");
+        assert_eq!(engine.node_count(), 0, "uncommitted add must not count");
+        assert!(
+            engine.find_by_type("FUNCTION").is_empty(),
+            "uncommitted add must not appear in find_by_type"
+        );
+        let q = AttrQuery::new().name("vis");
+        assert!(
+            engine.find_by_attr(&q).is_empty(),
+            "uncommitted add must not appear in find_by_attr"
+        );
+
+        // Flush publishes a new manifest version → visibility flips ON.
+        engine.flush().unwrap();
+        assert!(engine.node_exists(id), "after publish the add is visible");
+        assert_eq!(engine.get_node(id).unwrap().id, id);
+        assert_eq!(engine.node_count(), 1);
+        assert_eq!(engine.find_by_type("FUNCTION"), vec![id]);
+        assert_eq!(engine.find_by_attr(&q), vec![id]);
+    }
+
+    /// B2: an edge added without flush is invisible; after publish it appears,
+    /// and a delete is likewise invisible until its tombstone is published.
+    #[test]
+    fn test_b2_edge_visibility_and_delete_publish() {
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let a = make_v2_node("FUNCTION:a@src/a.js", "FUNCTION", "a", "src/a.js");
+        let b = make_v2_node("FUNCTION:b@src/a.js", "FUNCTION", "b", "src/a.js");
+        let (ida, idb) = (a.id, b.id);
+        engine.store.add_nodes(vec![a, b]);
+        engine.add_edges(vec![EdgeRecord {
+            src: ida, dst: idb,
+            edge_type: Some("CALLS".to_string()),
+            version: "main".to_string(),
+            metadata: None, deleted: false,
+        }], false);
+
+        // Uncommitted: edge + endpoints invisible.
+        assert!(engine.get_outgoing_edges(ida, None).is_empty());
+        assert_eq!(engine.edge_count(), 0);
+
+        engine.flush().unwrap();
+        assert_eq!(engine.get_outgoing_edges(ida, None).len(), 1);
+        assert_eq!(engine.edge_count(), 1);
+
+        // Delete WITHOUT flush → invisible (edge still observable).
+        engine.delete_edge(ida, idb, "CALLS");
+        assert_eq!(
+            engine.get_outgoing_edges(ida, None).len(),
+            1,
+            "uncommitted delete must be invisible"
+        );
+
+        // Publish the tombstone → delete becomes visible.
+        engine.flush().unwrap();
+        assert!(engine.get_outgoing_edges(ida, None).is_empty());
+        assert_eq!(engine.edge_count(), 0);
+    }
+
+    /// B2 equivalence: public reads through the snapshot path return exactly the
+    /// committed state, identical to the B1 `*_at` reads on the same version.
+    #[test]
+    fn test_b2_post_commit_equivalence_with_at_reads() {
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let n1 = make_v2_node("FUNCTION:f1@src/a.js", "FUNCTION", "f1", "src/a.js");
+        let n2 = make_v2_node("CLASS:C@src/b.js", "CLASS", "C", "src/b.js");
+        let (id1, id2) = (n1.id, n2.id);
+        engine.store.add_nodes(vec![n1, n2]);
+        engine.add_edges(vec![EdgeRecord {
+            src: id1, dst: id2,
+            edge_type: Some("CALLS".to_string()),
+            version: "main".to_string(),
+            metadata: None, deleted: false,
+        }], false);
+        engine.flush().unwrap();
+
+        // Public engine reads.
+        let pub_node = engine.get_node(id1).unwrap();
+        let pub_count = engine.node_count();
+        let pub_edges = engine.get_outgoing_edges(id1, None);
+        let pub_funcs = engine.find_by_type("FUNCTION");
+
+        // Direct B1 `*_at` reads on the same published snapshot.
+        let snap = engine.snapshot();
+        let at_node = engine.store.get_node_at(&snap, id1).unwrap();
+        let at_count = engine.store.node_count_at(&snap);
+        let at_edges = engine.store.get_outgoing_edges_at(&snap, id1, None);
+        let at_funcs = engine.store.find_node_ids_by_type_at(&snap, "FUNCTION");
+
+        assert_eq!(pub_node.id, at_node.id);
+        assert_eq!(pub_node.name.as_deref(), Some(at_node.name.as_str()));
+        assert_eq!(pub_count, at_count);
+        assert_eq!(pub_count, 2);
+        assert_eq!(pub_edges.len(), at_edges.len());
+        assert_eq!(pub_edges.len(), 1);
+        assert_eq!(pub_funcs, at_funcs);
+        assert_eq!(pub_funcs, vec![id1]);
     }
 }

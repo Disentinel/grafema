@@ -1112,7 +1112,11 @@ impl Shard {
     }
 
     /// Match node fields against AttrQuery-compatible filters.
-    fn matches_attr_filters(
+    ///
+    /// `pub(crate)` so the MVCC snapshot read path (`MultiShardStore::*_at`)
+    /// can reuse the exact same filter semantics when scanning version-pinned
+    /// segments instead of the live shard.
+    pub(crate) fn matches_attr_filters(
         node_type_value: &str,
         file_value: &str,
         name_value: &str,

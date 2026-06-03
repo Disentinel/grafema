@@ -718,6 +718,9 @@ mod executor_tests {
             true, // skip_validation for test speed
         );
 
+        // B2 (RFD-71): public reads see only the published manifest version, so
+        // flush/commit the staged write buffer before the test queries it.
+        engine.flush().unwrap();
         engine
     }
 
@@ -1861,6 +1864,9 @@ mod integration_tests {
             true, // skip_validation for test speed
         );
 
+        // B2 (RFD-71): public reads see only the published manifest version, so
+        // flush/commit the staged write buffer before the test queries it.
+        engine.flush().unwrap();
         engine
     }
 

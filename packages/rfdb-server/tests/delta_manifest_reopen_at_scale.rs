@@ -275,10 +275,12 @@ fn trait_delete_node_edge_persistence_behavior_at_scale() {
         }
         engine.delete_node(target_node);
         engine.delete_edge(target_edge.0, target_edge.1, "CALLS");
-        assert!(!engine.node_exists(target_node), "trait delete should hide node in-session");
-        let out = engine.get_outgoing_edges(target_edge.0, None);
-        assert!(!out.iter().any(|e| e.dst == target_edge.1), "trait delete should hide edge in-session");
+        // B2 (RFD-71): trait deletes are invisible until flushed — publish the
+        // tombstones, then they are observable in-session.
         engine.flush().unwrap();
+        assert!(!engine.node_exists(target_node), "trait delete should hide node after flush");
+        let out = engine.get_outgoing_edges(target_edge.0, None);
+        assert!(!out.iter().any(|e| e.dst == target_edge.1), "trait delete should hide edge after flush");
     }
 
     let engine = GraphEngineV2::open(&db_path).unwrap();

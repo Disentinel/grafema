@@ -62,8 +62,10 @@ fn unflushed_nodes_lost_on_restart() {
             make_node(1, "FUNCTION", "foo", "src/a.js"),
             make_node(2, "FUNCTION", "bar", "src/b.js"),
         ]);
-        assert_eq!(engine.node_count(), 2);
-        // Drop without flush — data only in write buffer
+        // B2 (RFD-71): uncommitted adds are invisible to reads (no dirty reads),
+        // so the in-memory count is 0 until a flush publishes them.
+        assert_eq!(engine.node_count(), 0);
+        // Drop without flush — data only in the (unpublished) write buffer
     }
 
     {
@@ -271,9 +273,10 @@ fn flush_tombstone_limitation_documented() {
 
         // Delete via GraphStore trait (pending tombstone)
         engine.delete_node(41);
-        assert!(!engine.node_exists(41), "node should be hidden in-session");
-
+        // B2 (RFD-71): the delete is invisible until flushed — publish it, then
+        // the tombstone is observable in-session.
         engine.flush().unwrap();
+        assert!(!engine.node_exists(41), "node should be hidden after flush");
     }
 
     {

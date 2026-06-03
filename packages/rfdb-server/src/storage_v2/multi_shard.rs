@@ -1227,6 +1227,243 @@ impl MultiShardStore {
         }
         results
     }
+
+    /// Existence check for a live edge resolved through `snap`. MVCC twin of
+    /// [`Self::edge_exists`] — never consults the write buffer.
+    pub fn edge_exists_at(
+        &self,
+        snap: &ReadSnapshot,
+        src: u128,
+        dst: u128,
+        edge_type: &str,
+    ) -> bool {
+        let types = [edge_type];
+        self.get_outgoing_edges_at(snap, src, Some(&types))
+            .iter()
+            .any(|e| e.dst == dst && e.edge_type == edge_type)
+    }
+
+    /// Live edge count resolved through `snap`. MVCC twin of
+    /// [`Self::edge_count`]: dedups `(src,dst,type)` across the version's
+    /// segments and excludes tombstoned edges, never reading the write buffer.
+    pub fn edge_count_at(&self, snap: &ReadSnapshot) -> usize {
+        // iter_all_edges_at already dedups by (src,dst,type) and filters
+        // tombstones, so its length is the live edge count for the version.
+        self.iter_all_edges_at(snap).len()
+    }
+
+    /// Node IDs of exact `node_type` resolved through `snap`. MVCC twin of
+    /// [`Self::find_node_ids_by_type`], scanning version-pinned segments
+    /// (L0 newest→oldest, then L1) instead of the live shard.
+    pub fn find_node_ids_by_type_at(&self, snap: &ReadSnapshot, node_type: &str) -> Vec<u128> {
+        self.find_node_ids_by_attr_at(
+            snap,
+            Some(node_type),
+            None,
+            None,
+            None,
+            None,
+            &[],
+            false,
+        )
+    }
+
+    /// Node IDs matching AttrQuery-compatible filters resolved through `snap`.
+    /// MVCC twin of [`Self::find_node_ids_by_attr`]: replicates
+    /// `Shard::for_each_matching_id` filter + dedup + tombstone semantics
+    /// against the version's segment set, never the write buffer.
+    #[allow(clippy::too_many_arguments)]
+    pub fn find_node_ids_by_attr_at(
+        &self,
+        snap: &ReadSnapshot,
+        node_type: Option<&str>,
+        node_type_prefix: Option<&str>,
+        file: Option<&str>,
+        name: Option<&str>,
+        exported: Option<bool>,
+        metadata_filters: &[(String, String)],
+        substring_match: bool,
+    ) -> Vec<u128> {
+        let mut results: Vec<u128> = Vec::new();
+        self.find_node_ids_by_attr_chunked_at(
+            snap,
+            node_type,
+            node_type_prefix,
+            file,
+            name,
+            exported,
+            metadata_filters,
+            substring_match,
+            usize::MAX,
+            &mut |chunk| {
+                results.extend_from_slice(chunk);
+                true
+            },
+        );
+        results
+    }
+
+    /// Chunked variant of [`Self::find_node_ids_by_attr_at`]. MVCC twin of
+    /// [`Self::find_node_ids_by_attr_chunked`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn find_node_ids_by_attr_chunked_at(
+        &self,
+        snap: &ReadSnapshot,
+        node_type: Option<&str>,
+        node_type_prefix: Option<&str>,
+        file: Option<&str>,
+        name: Option<&str>,
+        exported: Option<bool>,
+        metadata_filters: &[(String, String)],
+        substring_match: bool,
+        chunk_size: usize,
+        callback: &mut dyn FnMut(&[u128]) -> bool,
+    ) {
+        let mut seen: HashSet<u128> = HashSet::new();
+        let mut buffer: Vec<u128> = Vec::with_capacity(chunk_size.min(65536));
+        let mut stopped = false;
+
+        // Substring file matching can't use the exact-path zone map.
+        let prune_file = if substring_match { None } else { file };
+
+        // Scan one segment, emitting matching ids into the chunk buffer.
+        let mut scan_seg = |seg: &NodeSegmentV2,
+                            seen: &mut HashSet<u128>,
+                            buffer: &mut Vec<u128>,
+                            stopped: &mut bool| {
+            for j in 0..seg.record_count() {
+                let id = seg.get_id(j);
+                if !seen.insert(id) {
+                    continue; // newer segment / buffer-equivalent already won
+                }
+                if snap.tombstones.contains_node(id) {
+                    continue;
+                }
+                if !Shard::matches_attr_filters(
+                    seg.get_node_type(j),
+                    seg.get_file(j),
+                    seg.get_name(j),
+                    seg.get_metadata(j),
+                    node_type,
+                    node_type_prefix,
+                    file,
+                    name,
+                    exported,
+                    metadata_filters,
+                    substring_match,
+                ) {
+                    continue;
+                }
+                buffer.push(id);
+                if buffer.len() >= chunk_size {
+                    if !callback(buffer) {
+                        *stopped = true;
+                        return;
+                    }
+                    buffer.clear();
+                }
+            }
+        };
+
+        // L0 newest→oldest (descriptors are oldest-first ⇒ iterate reversed).
+        for desc in snap.node_segments.iter().rev() {
+            if stopped {
+                break;
+            }
+            // Descriptor-level zone-map pruning (no I/O).
+            if let Some(nt) = node_type {
+                if !desc.may_contain(Some(nt), prune_file, None) {
+                    continue;
+                }
+            } else if !desc.may_contain(None, prune_file, None) {
+                continue;
+            }
+            if let Some(prefix) = node_type_prefix {
+                if !desc.node_types.is_empty()
+                    && !desc.node_types.iter().any(|t| t.starts_with(prefix))
+                {
+                    continue;
+                }
+            }
+            self.with_node_segment(desc, |seg| {
+                scan_seg(seg, &mut seen, &mut buffer, &mut stopped);
+            });
+        }
+
+        // L1 (oldest, compacted).
+        for desc in &snap.l1_node_segments {
+            if stopped {
+                break;
+            }
+            if let Some(nt) = node_type {
+                if !desc.may_contain(Some(nt), prune_file, None) {
+                    continue;
+                }
+            } else if !desc.may_contain(None, prune_file, None) {
+                continue;
+            }
+            if let Some(prefix) = node_type_prefix {
+                if !desc.node_types.is_empty()
+                    && !desc.node_types.iter().any(|t| t.starts_with(prefix))
+                {
+                    continue;
+                }
+            }
+            self.with_node_segment(desc, |seg| {
+                scan_seg(seg, &mut seen, &mut buffer, &mut stopped);
+            });
+        }
+
+        if !stopped && !buffer.is_empty() {
+            callback(&buffer);
+        }
+    }
+
+    /// Fuzzy name search resolved through `snap`. MVCC twin of
+    /// [`Self::find_similar_names`] — searches each shard's committed L1 token
+    /// index (the last published compaction) but NEVER scans the live write
+    /// buffer, filters by the version's tombstone set, and resolves the
+    /// optional `node_type` filter via `get_node_at` (version-pinned).
+    pub fn find_similar_names_at(
+        &self,
+        snap: &ReadSnapshot,
+        query: &str,
+        node_type: Option<&str>,
+        k: usize,
+        min_score: f32,
+    ) -> Vec<TokenMatch> {
+        let mut all_matches: Vec<TokenMatch> = Vec::new();
+        let mut seen_ids: HashSet<u128> = HashSet::new();
+
+        for shard in &self.shards {
+            if let Some(token_idx) = shard.l1_token_index() {
+                let matches = token_idx.search(query, k * 2, min_score); // over-fetch for dedup
+                for m in matches {
+                    if snap.tombstones.contains_node(m.node_id) {
+                        continue;
+                    }
+                    if !seen_ids.insert(m.node_id) {
+                        continue;
+                    }
+                    if let Some(nt) = node_type {
+                        match self.get_node_at(snap, m.node_id) {
+                            Some(node) if node.node_type == nt => {}
+                            _ => continue,
+                        }
+                    }
+                    all_matches.push(m);
+                }
+            }
+        }
+
+        all_matches.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        all_matches.truncate(k);
+        all_matches
+    }
 }
 
 // ── Type Counts ───────────────────────────────────────────────────
