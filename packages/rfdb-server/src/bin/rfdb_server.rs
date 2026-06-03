@@ -1736,18 +1736,52 @@ fn handle_request_with_cancel(
         }
 
         Request::CommitBatch { changed_files, nodes, edges, tags: _, file_context, defer_index, protected_types } => {
-            with_engine_write(session, |engine| {
-                // Try V2 native path (O(batch_size) via file_to_node_ids index)
-                match engine.as_any_mut().downcast_mut::<GraphEngineV2>() {
-                    Some(v2) => handle_commit_batch_v2(
-                        v2, changed_files, nodes, edges, file_context, defer_index, protected_types,
-                    ),
-                    // Fallback to V1-style individual operations
-                    None => handle_commit_batch(
-                        engine, changed_files, nodes, edges, file_context, defer_index, protected_types,
-                    ),
+            // MVCC B4: prefer the CONCURRENT V2 commit path. It runs under a
+            // SHARED read() lock (so N commits proceed in parallel; only the
+            // short manifest commit-point is serialized inside the engine) and
+            // requires a disk-backed V2 engine. If the engine is not a
+            // disk-backed V2 (ephemeral / V1), fall back to the exclusive
+            // write()-lock serial path.
+            let concurrent_ok = match &session.current_db {
+                Some(db) => {
+                    let engine = db.engine.read().unwrap();
+                    engine
+                        .as_any()
+                        .downcast_ref::<GraphEngineV2>()
+                        .map(|v2| v2.supports_concurrent_commit())
+                        .unwrap_or(false)
                 }
-            })
+                None => false,
+            };
+
+            if concurrent_ok {
+                if !session.can_write() {
+                    Response::ErrorWithCode {
+                        error: "Operation not allowed in read-only mode".to_string(),
+                        code: "READ_ONLY_MODE".to_string(),
+                    }
+                } else {
+                    let db = session.current_db.as_ref().unwrap();
+                    let engine = db.engine.read().unwrap();
+                    let v2 = engine.as_any().downcast_ref::<GraphEngineV2>().unwrap();
+                    handle_commit_batch_v2_concurrent(
+                        v2, changed_files, nodes, edges, file_context, defer_index, protected_types,
+                    )
+                }
+            } else {
+                with_engine_write(session, |engine| {
+                    // Try V2 native path (O(batch_size) via file_to_node_ids index)
+                    match engine.as_any_mut().downcast_mut::<GraphEngineV2>() {
+                        Some(v2) => handle_commit_batch_v2(
+                            v2, changed_files, nodes, edges, file_context, defer_index, protected_types,
+                        ),
+                        // Fallback to V1-style individual operations
+                        None => handle_commit_batch(
+                            engine, changed_files, nodes, edges, file_context, defer_index, protected_types,
+                        ),
+                    }
+                })
+            }
         }
 
         Request::RebuildIndexes => {
@@ -2355,6 +2389,141 @@ fn handle_commit_batch_v2(
         Err(e) => Response::Error {
             error: format!("V2 commit_batch failed: {}", e),
         },
+    }
+}
+
+/// MVCC B4: CONCURRENT V2 commit handler (runs under a SHARED read lock).
+///
+/// Mirrors `handle_commit_batch_v2` but calls the `&self` concurrent commit and
+/// retries on a write-write conflict (strict abort-retry, bounded). The retry
+/// re-attempts the SAME records: the conflict means another commit published a
+/// newer version touching one of our `changed_files` after our snapshot, so we
+/// re-snapshot (inside `commit_batch_concurrent`) and recompute. Bounded at
+/// `MAX_COMMIT_RETRIES`; on exhaustion returns a hard error (pathological
+/// same-file contention — an alarm, not a silent drop).
+fn handle_commit_batch_v2_concurrent(
+    engine: &GraphEngineV2,
+    mut changed_files: Vec<String>,
+    nodes: Vec<WireNode>,
+    edges: Vec<WireEdge>,
+    file_context: Option<String>,
+    _defer_index: bool,
+    protected_types: Vec<String>,
+) -> Response {
+    use rfdb::storage_v2::types::{NodeRecordV2, EdgeRecordV2, enrichment_edge_metadata};
+
+    const MAX_COMMIT_RETRIES: u32 = 8;
+
+    if let Some(ref ctx) = file_context {
+        if !changed_files.contains(ctx) {
+            changed_files.push(ctx.clone());
+        }
+    }
+
+    let edges_added = edges.len() as u64;
+
+    let v2_nodes: Vec<NodeRecordV2> = nodes
+        .into_iter()
+        .map(|node| {
+            let semantic_id = node.semantic_id.clone().unwrap_or_else(|| node.id.clone());
+            let id = string_to_id(&semantic_id);
+            let mut metadata = node.metadata.unwrap_or_default();
+            if node.exported {
+                if metadata.is_empty() || metadata == "{}" {
+                    metadata = r#"{"__exported":true}"#.to_string();
+                } else if !metadata.contains("__exported") {
+                    if let Some(pos) = metadata.rfind('}') {
+                        let comma = if metadata[..pos].trim_end().ends_with('{') { "" } else { "," };
+                        metadata.insert_str(pos, &format!("{comma}\"__exported\":true"));
+                    }
+                }
+            }
+            NodeRecordV2 {
+                semantic_id,
+                id,
+                node_type: node.node_type.unwrap_or_default(),
+                name: node.name.unwrap_or_default(),
+                file: node.file.unwrap_or_default(),
+                content_hash: 0,
+                metadata,
+            }
+        })
+        .collect();
+
+    let v2_edges: Vec<EdgeRecordV2> = edges
+        .into_iter()
+        .map(|edge| {
+            let metadata = if let Some(ref ctx) = file_context {
+                let existing = edge.metadata.as_deref().unwrap_or("");
+                enrichment_edge_metadata(ctx, existing)
+            } else {
+                edge.metadata.unwrap_or_default()
+            };
+            EdgeRecordV2 {
+                src: string_to_id(&edge.src),
+                dst: string_to_id(&edge.dst),
+                edge_type: edge.edge_type.unwrap_or_default(),
+                metadata,
+            }
+        })
+        .collect();
+
+    let mut attempt: u32 = 0;
+    loop {
+        // Records are re-cloned each attempt (a conflict retry re-runs the
+        // whole commit against a fresh snapshot).
+        let result = engine.commit_batch_concurrent(
+            v2_nodes.clone(),
+            v2_edges.clone(),
+            &changed_files,
+            HashMap::new(),
+            &protected_types,
+        );
+
+        match result {
+            Ok(delta) => {
+                if is_verbose() {
+                    eprintln!(
+                        "[rfdb]   commitBatch(v2,concurrent): +{}n -{}n +{}e, files={}, mod={}, attempt={}",
+                        delta.nodes_added, delta.nodes_removed, edges_added,
+                        changed_files.len(), delta.nodes_modified, attempt,
+                    );
+                }
+                let wire_delta = WireCommitDelta {
+                    changed_files: delta.changed_files,
+                    nodes_added: delta.nodes_added,
+                    nodes_removed: delta.nodes_removed,
+                    edges_added,
+                    edges_removed: delta.edges_removed,
+                    changed_node_types: delta.changed_node_types.into_iter().collect(),
+                    changed_edge_types: delta.changed_edge_types.into_iter().collect(),
+                };
+                return Response::BatchCommitted { ok: true, delta: wire_delta };
+            }
+            Err(rfdb::error::GraphError::ConflictedCommit { files, snapshot_version, conflicting_version }) => {
+                attempt += 1;
+                if attempt >= MAX_COMMIT_RETRIES {
+                    tracing::warn!(
+                        "commit_conflict_exhausted: files={:?} after {} retries (snapshot v{} < committed v{}) — hard error",
+                        files, attempt, snapshot_version, conflicting_version,
+                    );
+                    return Response::Error {
+                        error: format!(
+                            "Commit conflict on {:?}: exhausted {} retries (same-file concurrent writes — partition work by file)",
+                            files, MAX_COMMIT_RETRIES,
+                        ),
+                    };
+                }
+                // Loud per-retry alarm already emitted inside the store; loop to
+                // re-snapshot + recompute + re-commit.
+                continue;
+            }
+            Err(e) => {
+                return Response::Error {
+                    error: format!("V2 commit_batch (concurrent) failed: {}", e),
+                };
+            }
+        }
     }
 }
 

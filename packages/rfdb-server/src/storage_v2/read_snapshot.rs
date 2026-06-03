@@ -91,6 +91,21 @@ impl SegmentCache {
         Ok(seg)
     }
 
+    /// Register an already-opened node segment under `segment_id` (MVCC B4).
+    ///
+    /// The concurrent commit path writes a private segment file, opens it once,
+    /// and registers the `Arc` here so the first post-publish read is a cache
+    /// hit instead of a re-open. Idempotent: inserting the same immutable
+    /// segment id twice is harmless (segments are content-stable).
+    pub fn insert_node_segment(&self, segment_id: u64, seg: Arc<NodeSegmentV2>) {
+        self.node_cache.write().unwrap().insert(segment_id, seg);
+    }
+
+    /// Edge companion to [`Self::insert_node_segment`].
+    pub fn insert_edge_segment(&self, segment_id: u64, seg: Arc<EdgeSegmentV2>) {
+        self.edge_cache.write().unwrap().insert(segment_id, seg);
+    }
+
     /// Number of cached (node, edge) segments. For diagnostics/tests.
     pub fn len(&self) -> (usize, usize) {
         (

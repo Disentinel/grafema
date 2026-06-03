@@ -152,7 +152,11 @@ fn edge_v1_to_v2(v1: &EdgeRecord) -> EdgeRecordV2 {
 /// on flush.
 pub struct GraphEngineV2 {
     store: MultiShardStore,
-    manifest: ManifestStore,
+    /// MVCC B4: the manifest is the single commit-point serialization handle.
+    /// Behind a `Mutex` so concurrent `commit_batch` calls (running under the
+    /// server's shared `read()` lock) can take the short commit-point lock while
+    /// the exclusive `&mut self` paths use `get_mut()` (no contention).
+    manifest: std::sync::Mutex<ManifestStore>,
     #[allow(dead_code)]
     path: Option<PathBuf>,
     #[allow(dead_code)]
@@ -190,7 +194,7 @@ impl GraphEngineV2 {
 
         Ok(Self {
             store,
-            manifest,
+            manifest: std::sync::Mutex::new(manifest),
             path: Some(path.to_path_buf()),
             ephemeral: false,
             pending_tombstone_nodes: HashSet::new(),
@@ -207,7 +211,7 @@ impl GraphEngineV2 {
     pub fn create_ephemeral() -> Self {
         Self {
             store: MultiShardStore::ephemeral(DEFAULT_SHARD_COUNT),
-            manifest: ManifestStore::ephemeral(),
+            manifest: std::sync::Mutex::new(ManifestStore::ephemeral()),
             path: None,
             ephemeral: true,
             pending_tombstone_nodes: HashSet::new(),
@@ -247,7 +251,7 @@ impl GraphEngineV2 {
 
         Ok(Self {
             store,
-            manifest,
+            manifest: std::sync::Mutex::new(manifest),
             path: Some(path.to_path_buf()),
             ephemeral: false,
             pending_tombstone_nodes: HashSet::new(),
@@ -295,7 +299,11 @@ impl GraphEngineV2 {
     /// adds) and never the engine's `pending_tombstone_*` (uncommitted deletes).
     /// Visibility therefore flips exactly at the phase-8 manifest publish.
     fn snapshot(&self) -> crate::storage_v2::read_snapshot::ReadSnapshot {
-        self.store.snapshot(&self.manifest)
+        // MVCC B4: the manifest is behind a Mutex; the snapshot capture is a
+        // short critical section (clone descriptors + tombstone Arc), released
+        // immediately — never held across a read's segment I/O.
+        let m = self.manifest.lock().unwrap();
+        self.store.snapshot(&m)
     }
 }
 
@@ -316,7 +324,7 @@ impl GraphStore for GraphEngineV2 {
         // MVCC B3: a re-added node must un-tombstone in the version authority
         // (the manifest), or a previously-COMMITTED delete would re-shadow it on
         // the next flush and after reopen. Mirrors add_edges → remove_tombstone_edges.
-        self.manifest.remove_tombstone_nodes(&readded_ids);
+        self.manifest.get_mut().unwrap().remove_tombstone_nodes(&readded_ids);
         self.store.add_nodes(v2_nodes);
 
         // Auto-flush: check if any shard's write buffer exceeds adaptive limits
@@ -549,7 +557,7 @@ impl GraphStore for GraphEngineV2 {
         // (so snapshots immediately see the edge live and the next flush does
         // not re-broadcast the stale tombstone) AND in the per-shard mirror
         // (for the legacy live-read paths).
-        self.manifest.remove_tombstone_edges(&keys);
+        self.manifest.get_mut().unwrap().remove_tombstone_edges(&keys);
         self.store.untombstone_edges(&keys);
         let result = self.store.upsert_edges(v2_edges);
         if !skip_validation {
@@ -701,7 +709,7 @@ impl GraphStore for GraphEngineV2 {
         // Threshold: flush when any shard has >50K nodes or >128MB in buffers.
         // Lowered from 100K/256MB to reduce peak RSS on large graphs (4M+ nodes).
         if self.store.any_shard_needs_flush(50_000, 128 * 1024 * 1024) {
-            self.store.flush_all(&mut self.manifest)?;
+            self.store.flush_all(self.manifest.get_mut().unwrap())?;
         }
         Ok(())
     }
@@ -716,7 +724,7 @@ impl GraphStore for GraphEngineV2 {
             // carries them forward and writes them to disk (snapshot authority +
             // reopen fidelity). extend_tombstones also refreshes the version's
             // derived Arc, so reads see the delete immediately.
-            tombstones_changed = self.manifest.extend_tombstones(
+            tombstones_changed = self.manifest.get_mut().unwrap().extend_tombstones(
                 &self.pending_tombstone_nodes,
                 &self.pending_tombstone_edges,
             );
@@ -726,24 +734,28 @@ impl GraphStore for GraphEngineV2 {
             // field is no longer the authority but still backs those paths).
             // Broadcast the FULL cumulative set (not just this batch's pending)
             // so the per-shard set matches the version — set_tombstones replaces.
-            let cur = self.manifest.current();
-            let full_nodes: HashSet<u128> =
-                cur.tombstoned_node_ids.iter().copied().collect();
-            let full_edges: HashSet<(u128, u128, Arc<str>)> = cur
-                .tombstoned_edge_keys
-                .iter()
-                .map(|(s, d, t)| (*s, *d, Arc::from(t.as_str())))
-                .collect();
+            let (full_nodes, full_edges) = {
+                let m = self.manifest.lock().unwrap();
+                let cur = m.current();
+                let full_nodes: HashSet<u128> =
+                    cur.tombstoned_node_ids.iter().copied().collect();
+                let full_edges: HashSet<(u128, u128, Arc<str>)> = cur
+                    .tombstoned_edge_keys
+                    .iter()
+                    .map(|(s, d, t)| (*s, *d, Arc::from(t.as_str())))
+                    .collect();
+                (full_nodes, full_edges)
+            };
             self.store.set_tombstones(&full_nodes, &full_edges);
             self.pending_tombstone_nodes.clear();
             self.pending_tombstone_edges.clear();
         }
-        let flushed = self.store.flush_all(&mut self.manifest)?;
+        let flushed = self.store.flush_all(self.manifest.get_mut().unwrap())?;
         // If tombstones changed but there were no segments to flush (write
         // buffers already drained by a prior commit), flush_all advanced no
         // version. Force a tombstone-only version so the delete is persisted.
         if tombstones_changed && flushed == 0 {
-            self.manifest.commit_tombstone_only()?;
+            self.manifest.get_mut().unwrap().commit_tombstone_only()?;
         }
         Ok(())
     }
@@ -757,20 +769,20 @@ impl GraphStore for GraphEngineV2 {
         // The default threshold (4) skips shards with few L0 segments,
         // leaving old L1 + new L0 = double-counted nodes/edges.
         let config = CompactionConfig { segment_threshold: 1 };
-        self.store.compact(&mut self.manifest, &config)?;
+        self.store.compact(self.manifest.get_mut().unwrap(), &config)?;
         // Manifest GC: remove old manifest files before segment GC so
         // referenced_segments is recalculated and orphaned segments are detected.
-        let gc_manifests = self.manifest.gc_manifests(3)?;
+        let gc_manifests = self.manifest.get_mut().unwrap().gc_manifests(3)?;
         if gc_manifests > 0 {
             tracing::info!("GC: removed {} old manifest(s)", gc_manifests);
         }
         // Segment GC: collect orphaned segments after compaction + manifest GC
-        let moved = self.manifest.gc_collect()?;
+        let moved = self.manifest.get_mut().unwrap().gc_collect()?;
         if !moved.is_empty() {
             tracing::info!("GC: moved {} orphaned segment(s) to gc/", moved.len());
         }
         // Purge: permanently delete collected segments
-        let purged = self.manifest.gc_purge()?;
+        let purged = self.manifest.get_mut().unwrap().gc_purge()?;
         if purged > 0 {
             tracing::info!("GC: purged {} segment file(s)", purged);
         }
@@ -800,7 +812,7 @@ impl GraphStore for GraphEngineV2 {
 
     fn clear(&mut self) {
         self.store = MultiShardStore::ephemeral(DEFAULT_SHARD_COUNT);
-        self.manifest = ManifestStore::ephemeral();
+        self.manifest = std::sync::Mutex::new(ManifestStore::ephemeral());
         self.pending_tombstone_nodes.clear();
         self.pending_tombstone_edges.clear();
         self.declared_fields.clear();
@@ -936,7 +948,7 @@ impl GraphEngineV2 {
         protected_types: &[String],
     ) -> Result<CommitDelta> {
         let delta = self.store
-            .commit_batch_ext(nodes, edges, changed_files, tags, &mut self.manifest, protected_types)?;
+            .commit_batch_ext(nodes, edges, changed_files, tags, self.manifest.get_mut().unwrap(), protected_types)?;
 
         // MVCC B3: after commit_batch_ext the new version's cumulative tombstone
         // set lives in the manifest VERSION (the authority that snapshots read);
@@ -948,6 +960,51 @@ impl GraphEngineV2 {
         Ok(delta)
     }
 
+    /// MVCC B4: CONCURRENT atomic batch commit (`&self`).
+    ///
+    /// Runs the deadlock-free private-buffer commit path: lock-free snapshot
+    /// read + build + flush, with only the short manifest commit-point
+    /// serialized. Many of these may run in parallel (the server holds a SHARED
+    /// `read()` lock for them). Returns `GraphError::ConflictedCommit` on a
+    /// write-write conflict (caller retries with a fresh snapshot).
+    ///
+    /// Disk-backed only — ephemeral engines must use the serial `&mut self`
+    /// `commit_batch_ext` (see `store.supports_concurrent_commit()`).
+    pub fn commit_batch_concurrent(
+        &self,
+        nodes: Vec<NodeRecordV2>,
+        edges: Vec<EdgeRecordV2>,
+        changed_files: &[String],
+        tags: HashMap<String, String>,
+        protected_types: &[String],
+    ) -> Result<CommitDelta> {
+        self.store.commit_batch_private(
+            nodes,
+            edges,
+            changed_files,
+            tags,
+            &self.manifest,
+            protected_types,
+        )
+    }
+
+    /// Whether this engine can take the concurrent commit path (disk-backed).
+    pub fn supports_concurrent_commit(&self) -> bool {
+        self.store.supports_concurrent_commit()
+    }
+
+    /// MVCC B4: count of conflict-driven commit retries (diagnostics / tests).
+    pub fn commit_conflict_retries(&self) -> u64 {
+        self.store.commit_conflict_retries()
+    }
+
+    /// MVCC B4: peak simultaneous occupancy of the LOCK-FREE commit build/flush
+    /// region — the rigorous parallelism witness (`> 1` ⇒ real overlap that the
+    /// 2PL path could not produce). Diagnostics / the B4 acceptance test.
+    pub fn commit_build_peak(&self) -> u64 {
+        self.store.commit_build_peak()
+    }
+
     /// Compact with statistics returned (for benchmarks and diagnostics).
     ///
     /// Unlike `GraphStore::compact()` which returns `Result<()>`, this method
@@ -957,7 +1014,7 @@ impl GraphEngineV2 {
         // Flush write buffers to L0 first (same reason as compact()).
         self.flush()?;
         let config = CompactionConfig { segment_threshold: 1 };
-        let result = self.store.compact(&mut self.manifest, &config)?;
+        let result = self.store.compact(self.manifest.get_mut().unwrap(), &config)?;
         Ok(result)
     }
 
@@ -967,17 +1024,17 @@ impl GraphEngineV2 {
         version: u64,
         tags: HashMap<String, String>,
     ) -> Result<()> {
-        self.manifest.tag_snapshot(version, tags)
+        self.manifest.get_mut().unwrap().tag_snapshot(version, tags)
     }
 
     /// Find a snapshot by tag key/value.
     pub fn find_snapshot(&self, tag_key: &str, tag_value: &str) -> Option<u64> {
-        self.manifest.find_snapshot(tag_key, tag_value)
+        self.manifest.lock().unwrap().find_snapshot(tag_key, tag_value)
     }
 
     /// List snapshots, optionally filtered by tag key.
     pub fn list_snapshots(&self, filter_tag: Option<&str>) -> Vec<SnapshotInfo> {
-        self.manifest.list_snapshots(filter_tag)
+        self.manifest.lock().unwrap().list_snapshots(filter_tag)
     }
 
     /// Diff two snapshots.
@@ -986,7 +1043,7 @@ impl GraphEngineV2 {
         from_version: u64,
         to_version: u64,
     ) -> Result<SnapshotDiff> {
-        self.manifest.diff_snapshots(from_version, to_version)
+        self.manifest.lock().unwrap().diff_snapshots(from_version, to_version)
     }
 
     /// Whether this engine is ephemeral (in-memory only).
@@ -1032,7 +1089,7 @@ impl GraphEngineV2 {
             && self.store.total_write_buffer_nodes() >= 500;
 
         if exceeds_limits || pressure_flush {
-            if let Err(e) = self.store.flush_all(&mut self.manifest) {
+            if let Err(e) = self.store.flush_all(self.manifest.get_mut().unwrap()) {
                 tracing::warn!("auto-flush failed: {}", e);
             }
         }
@@ -1050,7 +1107,7 @@ impl GraphEngineV2 {
     /// flush() or compact() explicitly.
     fn maybe_auto_flush_edges(&mut self) {
         if self.store.any_shard_needs_flush(usize::MAX, self.cached_profile.write_buffer_byte_limit) {
-            if let Err(e) = self.store.flush_all(&mut self.manifest) {
+            if let Err(e) = self.store.flush_all(self.manifest.get_mut().unwrap()) {
                 tracing::warn!("auto-flush (edges) failed: {}", e);
             }
         }
@@ -1664,7 +1721,7 @@ mod tests {
             .unwrap();
 
         // Pin a snapshot of version V1 (both nodes present, none tombstoned).
-        let snap_v1 = engine.store.snapshot(&engine.manifest);
+        let snap_v1 = engine.store.snapshot(&engine.manifest.lock().unwrap());
         assert!(engine.store.node_exists_at(&snap_v1, doomed_id), "V1 sees doomed");
         assert!(engine.store.node_exists_at(&snap_v1, keep_id), "V1 sees keep");
         assert!(
@@ -1689,7 +1746,7 @@ mod tests {
         );
 
         // FRESH snapshot sees the new version: `doomed` is tombstoned.
-        let snap_v2 = engine.store.snapshot(&engine.manifest);
+        let snap_v2 = engine.store.snapshot(&engine.manifest.lock().unwrap());
         assert!(snap_v2.version > snap_v1.version, "V2 is a later version");
         assert!(
             snap_v2.tombstones.contains_node(doomed_id),

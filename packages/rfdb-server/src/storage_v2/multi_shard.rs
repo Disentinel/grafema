@@ -132,6 +132,34 @@ pub struct MultiShardStore {
     /// the segment open. Disk-backed only; ephemeral stores resolve via the live
     /// shard. Thread-safe (interior `RwLock`s) so reads stay `&self`.
     segment_cache: SegmentCache,
+
+    /// MVCC B4: `file -> last-committed manifest version` for write-write
+    /// conflict detection at the concurrent commit point. Interior-mutable so
+    /// `commit_batch_private(&self)` can read it (lock-free build is unaffected)
+    /// and update it under the manifest mutex (the single serialized section).
+    /// Empty on open; reconstructed lazily as commits flow (a missing entry
+    /// means "no committed version has touched this file since open" — which is
+    /// conflict-free for any snapshot, the correct conservative default).
+    file_last_committed_version: std::sync::Mutex<HashMap<String, u64>>,
+
+    /// MVCC B4: monotonic count of conflict-driven commit retries (every abort
+    /// at the commit point increments this). Exposed for diagnostics / the B4
+    /// acceptance test; a rising value is a work-distribution alarm.
+    commit_conflict_retries: Arc<std::sync::atomic::AtomicU64>,
+
+    /// MVCC B4: live count of commits currently inside the LOCK-FREE build/flush
+    /// region (phases 1–7 of `commit_batch_private`) — i.e. NOT holding the
+    /// manifest commit-point mutex. Incremented on entry to the lock-free region
+    /// and decremented before the phase-8 commit point.
+    commit_build_in_flight: Arc<std::sync::atomic::AtomicU64>,
+    /// Peak value ever observed for `commit_build_in_flight`. This is the
+    /// rigorous parallelism witness: peak > 1 PROVES two commits executed the
+    /// no-lock build/flush phase SIMULTANEOUSLY — structurally impossible under
+    /// the abandoned 2PL path (which held a global + per-shard lock across the
+    /// whole commit, so at most one commit body ran at a time). Distinct from a
+    /// probe wrapping the whole call, which 2PL would also trip (3 threads block
+    /// on the lock while 1 runs). This counter excludes the serialized region.
+    commit_build_peak: Arc<std::sync::atomic::AtomicU64>,
 }
 
 // ── Constructors ───────────────────────────────────────────────────
@@ -166,6 +194,10 @@ impl MultiShardStore {
             file_to_node_ids: HashMap::new(),
             edge_type_intern: HashMap::new(),
             segment_cache: SegmentCache::new(),
+            file_last_committed_version: std::sync::Mutex::new(HashMap::new()),
+            commit_conflict_retries: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            commit_build_in_flight: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            commit_build_peak: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         })
     }
 
@@ -292,6 +324,10 @@ impl MultiShardStore {
             file_to_node_ids,
             edge_type_intern: HashMap::new(),
             segment_cache: SegmentCache::new(),
+            file_last_committed_version: std::sync::Mutex::new(HashMap::new()),
+            commit_conflict_retries: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            commit_build_in_flight: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            commit_build_peak: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         })
     }
 
@@ -313,6 +349,10 @@ impl MultiShardStore {
             file_to_node_ids: HashMap::new(),
             edge_type_intern: HashMap::new(),
             segment_cache: SegmentCache::new(),
+            file_last_committed_version: std::sync::Mutex::new(HashMap::new()),
+            commit_conflict_retries: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            commit_build_in_flight: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            commit_build_peak: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
 }
@@ -439,6 +479,15 @@ impl MultiShardStore {
     /// per-shard mirror, which `commit_batch_ext`/`flush` keep equal to the
     /// current version's cumulative set. All shards share one Arc, so shard 0
     /// is representative.
+    ///
+    /// MVCC B4 (residual closed): the CONCURRENT commit path
+    /// (`commit_batch_private`) reads tombstones from the version snapshot and
+    /// NEVER writes this mirror. The mirror is therefore mutated ONLY by the
+    /// exclusive `&mut self` paths (`commit_batch_ext` / `flush`, which run under
+    /// the server's exclusive `write()` lock) and read ONLY by exclusive-path or
+    /// dead callers. No path that runs concurrently with a `commit_batch_private`
+    /// either reads or writes it ⇒ no race window remains. (The snapshot authority
+    /// is the only tombstone source on the concurrent path.)
     pub fn is_node_tombstoned(&self, id: u128) -> bool {
         if self.shards.is_empty() { return false; }
         self.shards[0].tombstones().contains_node(id)
@@ -1871,6 +1920,79 @@ impl MultiShardStore {
         }
         keys
     }
+
+    // ── MVCC B4: snapshot-pinned edge-key finders ──────────────────────
+    //
+    // These mirror the live-shard finders above but resolve through a
+    // version-pinned `ReadSnapshot` (immutable segments via the SegmentCache).
+    // The concurrent commit path (`commit_batch_private`) uses ONLY these so a
+    // commit never reads the live, concurrently-mutated `Shard` state.
+
+    /// Snapshot-pinned variant of [`Self::find_edge_keys_by_src_ids`] /
+    /// [`Self::find_non_enrichment_edge_keys_by_src_ids`]. Scans the version's
+    /// L0 + L1 edge segments only (no live write buffer — committed data only).
+    fn find_edge_keys_by_src_ids_at(
+        &self,
+        snap: &ReadSnapshot,
+        src_ids: &HashSet<u128>,
+        exclude_enrichment: bool,
+    ) -> Vec<(u128, u128, String)> {
+        let mut keys = Vec::new();
+        if src_ids.is_empty() {
+            return keys;
+        }
+        let descs = snap.edge_segments.iter().chain(snap.l1_edge_segments.iter());
+        for desc in descs {
+            self.with_edge_segment(desc, |seg| {
+                let may_match = src_ids.iter().any(|id| seg.maybe_contains_src(*id));
+                if !may_match {
+                    return;
+                }
+                for j in 0..seg.record_count() {
+                    let src = seg.get_src(j);
+                    if !src_ids.contains(&src) {
+                        continue;
+                    }
+                    if exclude_enrichment {
+                        let metadata = seg.get_metadata(j);
+                        if crate::storage_v2::types::extract_file_context(metadata).is_some() {
+                            continue;
+                        }
+                    }
+                    let dst = seg.get_dst(j);
+                    let edge_type = seg.get_edge_type(j).to_string();
+                    keys.push((src, dst, edge_type));
+                }
+            });
+        }
+        keys
+    }
+
+    /// Snapshot-pinned variant of [`Self::find_edge_keys_by_file_context`].
+    fn find_edge_keys_by_file_context_at(
+        &self,
+        snap: &ReadSnapshot,
+        file_context: &str,
+    ) -> Vec<(u128, u128, String)> {
+        let mut keys = Vec::new();
+        let descs = snap.edge_segments.iter().chain(snap.l1_edge_segments.iter());
+        for desc in descs {
+            self.with_edge_segment(desc, |seg| {
+                for j in 0..seg.record_count() {
+                    let metadata = seg.get_metadata(j);
+                    if let Some(ctx) = crate::storage_v2::types::extract_file_context(metadata) {
+                        if ctx == file_context {
+                            let src = seg.get_src(j);
+                            let dst = seg.get_dst(j);
+                            let edge_type = seg.get_edge_type(j).to_string();
+                            keys.push((src, dst, edge_type));
+                        }
+                    }
+                }
+            });
+        }
+        keys
+    }
 }
 
 // ── Batch Commit ───────────────────────────────────────────────────
@@ -2249,6 +2371,469 @@ impl MultiShardStore {
         );
 
         // ── Phase 9: Build CommitDelta ──
+        Ok(CommitDelta {
+            changed_files: changed_files.to_vec(),
+            nodes_added: purely_new,
+            nodes_removed: tombstone_node_ids.len() as u64,
+            nodes_modified,
+            removed_node_ids: tombstone_node_ids.into_iter().collect(),
+            edges_removed,
+            changed_node_types,
+            changed_edge_types,
+            manifest_version,
+        })
+    }
+}
+
+// ── MVCC B4: concurrent commit (private buffers, lock-free build/flush) ──
+//
+// `commit_batch_private(&self)` is the concurrency payoff. Unlike
+// `commit_batch_ext(&mut self)` it:
+//   - reads ALL old state through a version-pinned snapshot (immutable
+//     segments via the SegmentCache) — never the live, concurrently-mutated
+//     `Shard`;
+//   - builds this commit's output into PRIVATE per-shard segment writers and
+//     flushes them to NEW immutable segment files — never the shared
+//     `Shard.write_buffer` / `Shard.node_segments`;
+//   - holds NO lock across the build/flush (phases 0–7);
+//   - serializes ONLY phase 8 (conflict-check + manifest version append) under
+//     the one manifest mutex supplied by the caller.
+//
+// Because no lock spans the build/flush, two concurrent commits on disjoint
+// files run fully in parallel and cannot form a lock cycle — deadlock-free by
+// construction. Same-file concurrent commits collide at the conflict check and
+// one aborts (strict abort-retry, §4 of the MVCC design).
+//
+// Disk-backed only: the private-flush + SegmentCache path needs real segment
+// files. Ephemeral (in-memory) stores fall back to the serial `commit_batch_ext`
+// (single-threaded tests), so this method asserts a `db_path`.
+impl MultiShardStore {
+    /// Number of conflict-driven commit retries observed so far (MVCC B4).
+    pub fn commit_conflict_retries(&self) -> u64 {
+        self.commit_conflict_retries
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// MVCC B4 parallelism witness: peak number of commits that executed the
+    /// LOCK-FREE build/flush region (phases 1–7 of `commit_batch_private`)
+    /// SIMULTANEOUSLY. `> 1` proves real disjoint-commit overlap that the 2PL
+    /// path structurally could not produce.
+    pub fn commit_build_peak(&self) -> u64 {
+        self.commit_build_peak
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// True if this store can take the concurrent commit path (disk-backed).
+    pub fn supports_concurrent_commit(&self) -> bool {
+        self.db_path.is_some()
+    }
+
+    /// Concurrent, deadlock-free commit. See module-level B4 notes.
+    ///
+    /// `manifest` is the engine's shared `Mutex<ManifestStore>`; this method
+    /// locks it ONLY for the short phase-8 commit point. `protected_types`
+    /// matches `commit_batch_ext`. On a write-write conflict it returns
+    /// `GraphError::ConflictedCommit` (the caller retries with a fresh
+    /// snapshot); the private segment files written for the aborted attempt are
+    /// orphaned (unreferenced by any version) and reaped by manifest GC.
+    pub fn commit_batch_private(
+        &self,
+        nodes: Vec<NodeRecordV2>,
+        edges: Vec<EdgeRecordV2>,
+        changed_files: &[String],
+        tags: HashMap<String, String>,
+        manifest: &std::sync::Mutex<ManifestStore>,
+        protected_types: &[String],
+    ) -> Result<CommitDelta> {
+        use std::io::BufWriter;
+        use crate::storage_v2::writer::{EdgeSegmentWriter, NodeSegmentWriter};
+
+        let db_path = self
+            .db_path
+            .as_ref()
+            .expect("commit_batch_private requires a disk-backed store");
+
+        // ── Phase 0: capture a version-pinned snapshot (atomic, short lock) ──
+        // Lock the manifest only long enough to clone the current version's
+        // descriptors + tombstone Arc. Released immediately — NOT held across
+        // build/flush.
+        let snap = {
+            let m = manifest.lock().unwrap();
+            self.snapshot(&m)
+        };
+        let snapshot_version = snap.version;
+
+        // MVCC B4 parallelism witness: mark entry into the LOCK-FREE build/flush
+        // region (phases 1–7, which hold NO shared lock) and track the peak
+        // simultaneous occupancy. peak>1 proves two commit bodies ran the no-lock
+        // phase at the same time — the property 2PL structurally could not have.
+        // A guard ensures we always decrement (even on the `?`/conflict early
+        // returns below) so the in-flight gauge never leaks.
+        struct BuildGuard<'a>(&'a std::sync::atomic::AtomicU64);
+        impl Drop for BuildGuard<'_> {
+            fn drop(&mut self) {
+                self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        let _build_guard = {
+            use std::sync::atomic::Ordering::SeqCst;
+            let cur = self.commit_build_in_flight.fetch_add(1, SeqCst) + 1;
+            let mut p = self.commit_build_peak.load(SeqCst);
+            while cur > p {
+                match self
+                    .commit_build_peak
+                    .compare_exchange(p, cur, SeqCst, SeqCst)
+                {
+                    Ok(_) => break,
+                    Err(actual) => p = actual,
+                }
+            }
+            BuildGuard(&self.commit_build_in_flight)
+        };
+
+        // ── Phase 1: old state of changed_files, from the snapshot ──
+        // No file_to_node_ids dependency: scan the snapshot's segments by file.
+        let mut old_nodes_by_id: HashMap<u128, NodeRecordV2> = HashMap::new();
+        for file in changed_files {
+            for node in self.find_nodes_at(&snap, None, Some(file.as_str())) {
+                old_nodes_by_id.insert(node.id, node);
+            }
+        }
+        let old_node_ids: HashSet<u128> = old_nodes_by_id.keys().copied().collect();
+
+        // Separate enrichment file contexts from normal files.
+        let enrichment_contexts: Vec<&String> = changed_files
+            .iter()
+            .filter(|f| f.starts_with("__enrichment__/"))
+            .collect();
+
+        // ── Phase 2: compute tombstones (snapshot-pinned edge finders) ──
+        let tombstone_node_ids: HashSet<u128> = if protected_types.is_empty() {
+            old_node_ids.clone()
+        } else {
+            old_nodes_by_id
+                .iter()
+                .filter(|(_, node)| !protected_types.contains(&node.node_type))
+                .map(|(id, _)| *id)
+                .collect()
+        };
+
+        let normal_file_node_ids: HashSet<u128> = old_nodes_by_id
+            .iter()
+            .filter(|(_, n)| !n.file.starts_with("__enrichment__/"))
+            .filter(|(id, _)| tombstone_node_ids.contains(id))
+            .map(|(id, _)| *id)
+            .collect();
+        let enrichment_file_node_ids: HashSet<u128> = old_nodes_by_id
+            .iter()
+            .filter(|(_, n)| n.file.starts_with("__enrichment__/"))
+            .filter(|(id, _)| tombstone_node_ids.contains(id))
+            .map(|(id, _)| *id)
+            .collect();
+
+        let mut raw_tombstone_edge_keys: Vec<(u128, u128, String)> =
+            self.find_edge_keys_by_src_ids_at(&snap, &normal_file_node_ids, true);
+        if !enrichment_file_node_ids.is_empty() {
+            raw_tombstone_edge_keys
+                .extend(self.find_edge_keys_by_src_ids_at(&snap, &enrichment_file_node_ids, false));
+        }
+        for ctx in &enrichment_contexts {
+            raw_tombstone_edge_keys
+                .extend(self.find_edge_keys_by_file_context_at(&snap, ctx));
+        }
+        let edges_removed = raw_tombstone_edge_keys.len() as u64;
+
+        // Intern edge types locally (no shared edge_type_intern mutation on the
+        // concurrent path — a per-commit map is enough for dedup here).
+        let mut local_intern: HashMap<String, Arc<str>> = HashMap::new();
+        let mut intern = |t: &str| -> Arc<str> {
+            if let Some(a) = local_intern.get(t) {
+                return Arc::clone(a);
+            }
+            let a: Arc<str> = Arc::from(t);
+            local_intern.insert(t.to_string(), Arc::clone(&a));
+            a
+        };
+        let tombstone_edge_keys: Vec<(u128, u128, Arc<str>)> = raw_tombstone_edge_keys
+            .into_iter()
+            .map(|(s, d, t)| {
+                let it = intern(&t);
+                (s, d, it)
+            })
+            .collect();
+
+        // ── Phase 3: changed types (for the CommitDelta) ──
+        let mut changed_node_types: HashSet<String> = HashSet::new();
+        let mut changed_edge_types: HashSet<String> = HashSet::new();
+        for node in old_nodes_by_id.values() {
+            changed_node_types.insert(node.node_type.clone());
+        }
+        for (_, _, et) in &tombstone_edge_keys {
+            changed_edge_types.insert(et.to_string());
+        }
+        for node in &nodes {
+            changed_node_types.insert(node.node_type.clone());
+        }
+        for edge in &edges {
+            changed_edge_types.insert(edge.edge_type.clone());
+        }
+
+        // ── Phase 4: tombstone-removal delta for re-added entities ──
+        // A re-added node/edge supersedes ANY tombstone on its id. The published
+        // edit replays as `set.extend(added_tombstones); set.remove(removed)`
+        // (Manifest::apply), so `removed_tombstone_*` (this var) must cancel a
+        // tombstone whether it came from (a) the prior cumulative set OR (b) THIS
+        // commit's own `tombstone_*_ids` (added in the same edit — phase 1/2
+        // tombstones the file's OLD nodes, which for a re-analysis share ids with
+        // the NEW nodes). Restricting to the snapshot base alone (case a) lost
+        // re-added rows under same-file re-analysis: the edit added the id to
+        // tombstones and never removed it, so replay/reopen (and even the
+        // in-memory non-checkpoint version) hid the freshly re-added node.
+        // Listing EVERY re-added id as removed is always correct — a re-added
+        // entity is live by definition, and conflict detection guarantees no
+        // other commit owns these files after our snapshot. (apply's order
+        // extend-then-remove makes the remove authoritative.)
+        let untombstoned_nodes: Vec<u128> = nodes.iter().map(|n| n.id).collect();
+        let untombstoned_edges: Vec<(u128, u128, String)> = edges
+            .iter()
+            .map(|e| (e.src, e.dst, e.edge_type.clone()))
+            .collect();
+
+        // ── Phase 5–7: build PRIVATE per-shard segments, flush to NEW files ──
+        // Route nodes by file; edges by source-node's shard (local map first,
+        // then snapshot lookup). NO shared Shard / routing-map mutation.
+        let mut local_node_shard: HashMap<u128, u16> = HashMap::new();
+        let mut nodes_by_shard: HashMap<u16, Vec<NodeRecordV2>> = HashMap::new();
+        for node in &nodes {
+            let shard_id = self.planner.compute_shard_id(&node.file);
+            local_node_shard.insert(node.id, shard_id);
+            nodes_by_shard
+                .entry(shard_id)
+                .or_default()
+                .push(node.clone());
+        }
+
+        let mut edges_by_shard: HashMap<u16, Vec<EdgeRecordV2>> = HashMap::new();
+        for edge in &edges {
+            let shard_id = if let Some(ctx) = extract_file_context(&edge.metadata) {
+                // Enrichment edge: route by file_context.
+                self.planner.compute_shard_id(&ctx)
+            } else if let Some(&sid) = local_node_shard.get(&edge.src) {
+                sid
+            } else if let Some(src_node) = self.get_node_at(&snap, edge.src) {
+                self.planner.compute_shard_id(&src_node.file)
+            } else {
+                // Source unknown in this commit and in the snapshot — skip
+                // (matches upsert_edges' skip-unknown-source behavior).
+                continue;
+            };
+            edges_by_shard
+                .entry(shard_id)
+                .or_default()
+                .push(edge.clone());
+        }
+
+        // Allocate IDs + write private segment files. Segment IDs come from the
+        // lock-free atomic counter (no manifest lock needed for allocation).
+        let mut new_node_descs: Vec<SegmentDescriptor> = Vec::new();
+        let mut new_edge_descs: Vec<SegmentDescriptor> = Vec::new();
+        // Opened segments to register in the cache AFTER a successful publish.
+        let mut opened_nodes: Vec<(u64, Arc<NodeSegmentV2>)> = Vec::new();
+        let mut opened_edges: Vec<(u64, Arc<EdgeSegmentV2>)> = Vec::new();
+
+        let next_seg_id = || -> u64 {
+            let g = manifest.lock().unwrap();
+            g.next_segment_id()
+        };
+
+        for (shard_id, shard_nodes) in &nodes_by_shard {
+            if shard_nodes.is_empty() {
+                continue;
+            }
+            let seg_id = next_seg_id();
+            let mut writer = NodeSegmentWriter::new();
+            for n in shard_nodes {
+                writer.add(n.clone());
+            }
+            let shard_path = shard_dir(db_path, *shard_id);
+            let seg_path = shard_path.join(format!("seg_{:06}_nodes.seg", seg_id));
+            let file = std::fs::File::create(&seg_path)?;
+            let mut bw = BufWriter::new(file);
+            let meta = writer.finish(&mut bw)?;
+            drop(bw);
+            let seg = Arc::new(NodeSegmentV2::open(&seg_path)?);
+            let desc = SegmentDescriptor::from_meta(
+                seg_id,
+                SegmentType::Nodes,
+                Some(*shard_id),
+                meta,
+            );
+            opened_nodes.push((seg_id, seg));
+            new_node_descs.push(desc);
+        }
+
+        for (shard_id, shard_edges) in &edges_by_shard {
+            if shard_edges.is_empty() {
+                continue;
+            }
+            let seg_id = next_seg_id();
+            let mut writer = EdgeSegmentWriter::new();
+            for e in shard_edges {
+                writer.add(e.clone());
+            }
+            let shard_path = shard_dir(db_path, *shard_id);
+            let seg_path = shard_path.join(format!("seg_{:06}_edges.seg", seg_id));
+            let file = std::fs::File::create(&seg_path)?;
+            let mut bw = BufWriter::new(file);
+            let meta = writer.finish(&mut bw)?;
+            drop(bw);
+            let seg = Arc::new(EdgeSegmentV2::open(&seg_path)?);
+            let desc = SegmentDescriptor::from_meta(
+                seg_id,
+                SegmentType::Edges,
+                Some(*shard_id),
+                meta,
+            );
+            opened_edges.push((seg_id, seg));
+            new_edge_descs.push(desc);
+        }
+
+        // ── Phase 6: modified-vs-new counts (vs snapshot old state) ──
+        let new_nodes_by_id: HashMap<u128, &NodeRecordV2> =
+            nodes.iter().map(|n| (n.id, n)).collect();
+        let mut nodes_modified: u64 = 0;
+        let mut purely_new: u64 = 0;
+        for (id, new_node) in &new_nodes_by_id {
+            if let Some(old_node) = old_nodes_by_id.get(id) {
+                if old_node.content_hash != 0
+                    && new_node.content_hash != 0
+                    && old_node.content_hash != new_node.content_hash
+                {
+                    nodes_modified += 1;
+                }
+            } else {
+                purely_new += 1;
+            }
+        }
+
+        // Leave the LOCK-FREE region BEFORE taking the commit-point mutex: a
+        // thread blocked on `manifest.lock()` is serialized, NOT overlapping, so
+        // it must not inflate the build/flush parallelism witness.
+        drop(_build_guard);
+
+        // ── Phase 8: commit point (serialized under the manifest mutex) ──
+        let manifest_version = {
+            let mut m = manifest.lock().unwrap();
+
+            // 8a. Conflict check: did a version published AFTER our snapshot
+            // touch any of our changed_files? (strict abort-retry, §4)
+            {
+                let conflict_map = self.file_last_committed_version.lock().unwrap();
+                for file in changed_files {
+                    if let Some(&last_v) = conflict_map.get(file.as_str()) {
+                        if last_v > snapshot_version {
+                            drop(conflict_map);
+                            self.commit_conflict_retries
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            tracing::warn!(
+                                "commit_conflict: file={}, last_committed_version={}, my_snapshot={} — aborting for retry",
+                                file, last_v, snapshot_version
+                            );
+                            return Err(GraphError::ConflictedCommit {
+                                files: vec![file.clone()],
+                                snapshot_version,
+                                conflicting_version: last_v,
+                            });
+                        }
+                    }
+                }
+            }
+
+            // 8b. Recompute the published cumulative tombstone set from the
+            // THEN-current version (not our snapshot) so disjoint concurrent
+            // commits compose correctly.
+            let manifest_version = m.current().version + 1;
+            let mut all_tomb_nodes: HashSet<u128> =
+                m.current().tombstoned_node_ids.iter().copied().collect();
+            all_tomb_nodes.extend(&tombstone_node_ids);
+            let mut all_tomb_edges: HashSet<(u128, u128, Arc<str>)> = m
+                .current()
+                .tombstoned_edge_keys
+                .iter()
+                .map(|(s, d, t)| (*s, *d, Arc::from(t.as_str())))
+                .collect();
+            all_tomb_edges.extend(tombstone_edge_keys.iter().cloned());
+            // Re-added nodes/edges supersede their tombstones.
+            for n in &nodes {
+                all_tomb_nodes.remove(&n.id);
+            }
+            for e in &edges {
+                let key = (e.src, e.dst, intern(&e.edge_type));
+                all_tomb_edges.remove(&key);
+            }
+
+            // 8c. Incremental stats.
+            let mut stats = m.current().stats.clone();
+            for s in &new_node_descs {
+                stats.total_nodes += s.record_count;
+                stats.node_segment_count += 1;
+            }
+            for s in &new_edge_descs {
+                stats.total_edges += s.record_count;
+                stats.edge_segment_count += 1;
+            }
+
+            let cp_tomb_nodes: Vec<u128> = all_tomb_nodes.into_iter().collect();
+            let cp_tomb_edges: Vec<(u128, u128, String)> = all_tomb_edges
+                .into_iter()
+                .map(|(s, d, t)| (s, d, t.to_string()))
+                .collect();
+
+            let edit = ManifestEdit {
+                version: manifest_version,
+                parent_version: manifest_version.saturating_sub(1),
+                base_checkpoint: 0,
+                created_at: 0,
+                added_node_segments: new_node_descs.clone(),
+                added_edge_segments: new_edge_descs.clone(),
+                removed_node_segment_ids: Vec::new(),
+                removed_edge_segment_ids: Vec::new(),
+                added_tombstone_nodes: tombstone_node_ids.iter().copied().collect(),
+                removed_tombstone_nodes: untombstoned_nodes.clone(),
+                added_tombstone_edges: tombstone_edge_keys
+                    .iter()
+                    .map(|(s, d, t)| (*s, *d, t.to_string()))
+                    .collect(),
+                removed_tombstone_edges: untombstoned_edges.clone(),
+                l1_node_segments: None,
+                l1_edge_segments: None,
+                last_compaction: None,
+                tags,
+                stats,
+            };
+
+            m.commit_edit(edit, &cp_tomb_nodes, &cp_tomb_edges)?;
+
+            // 8d. Update the conflict map for our changed_files → new version.
+            {
+                let mut conflict_map = self.file_last_committed_version.lock().unwrap();
+                for file in changed_files {
+                    conflict_map.insert(file.clone(), manifest_version);
+                }
+            }
+
+            manifest_version
+        };
+
+        // 8e. Register the freshly-written segments in the cache (post-publish,
+        // so a reader at V+1 gets a hit instead of re-opening).
+        for (id, seg) in opened_nodes {
+            self.segment_cache.insert_node_segment(id, seg);
+        }
+        for (id, seg) in opened_edges {
+            self.segment_cache.insert_edge_segment(id, seg);
+        }
+
         Ok(CommitDelta {
             changed_files: changed_files.to_vec(),
             nodes_added: purely_new,
@@ -5427,5 +6012,350 @@ mod tests {
 
         // SegmentCache actually opened segments (disk path exercised).
         assert!(!store.segment_cache.is_empty());
+    }
+
+    // ── MVCC B4: concurrent commit (commit_batch_private) ──────────────
+
+    /// Single-thread sanity: a `commit_batch_private` re-analysis tombstones the
+    /// old node and adds the new one, exactly like the serial path, with reads
+    /// resolved through a fresh snapshot.
+    #[test]
+    fn b4_private_commit_single_thread_replaces_node() {
+        use std::sync::Mutex;
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("b4_single.rfdb");
+        std::fs::create_dir_all(&db_path).unwrap();
+
+        let store = MultiShardStore::create(&db_path, 4).unwrap();
+        let manifest = Mutex::new(ManifestStore::create(&db_path).unwrap());
+
+        let file = "src/x.js".to_string();
+        let v1 = make_node("FUNCTION:old@src/x.js", "FUNCTION", "old", &file);
+        store
+            .commit_batch_private(vec![v1.clone()], vec![], &[file.clone()], HashMap::new(), &manifest, &[])
+            .unwrap();
+
+        // Re-analyze the file: drop `old`, add `new`.
+        let v2 = make_node("FUNCTION:new@src/x.js", "FUNCTION", "new", &file);
+        let delta = store
+            .commit_batch_private(vec![v2.clone()], vec![], &[file.clone()], HashMap::new(), &manifest, &[])
+            .unwrap();
+        assert_eq!(delta.nodes_added, 1, "new node is purely new");
+        assert_eq!(delta.nodes_removed, 1, "old node tombstoned");
+
+        let snap = store.snapshot(&manifest.lock().unwrap());
+        assert!(!store.node_exists_at(&snap, v1.id), "old node gone");
+        assert!(store.node_exists_at(&snap, v2.id), "new node present");
+        assert_eq!(store.node_count_at(&snap), 1);
+    }
+
+    /// Concurrency integrity + liveness: N threads each repeatedly commit their
+    /// OWN disjoint file via `commit_batch_private`. After the storm the live
+    /// node count == an independent oracle and no deadlock/hang occurred.
+    ///
+    /// MANDATORY in-process watchdog: aborts the process after a hard timeout so
+    /// a deadlock FAILS LOUD instead of hanging (per B4 acceptance).
+    #[test]
+    fn b4_private_commit_concurrent_disjoint_integrity() {
+        use std::sync::{Arc as StdArc, Mutex};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::thread;
+        use std::time::{Duration, Instant};
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("b4_concurrent.rfdb");
+        std::fs::create_dir_all(&db_path).unwrap();
+
+        let store = StdArc::new(MultiShardStore::create(&db_path, 8).unwrap());
+        let manifest = StdArc::new(Mutex::new(ManifestStore::create(&db_path).unwrap()));
+
+        // ── Watchdog ──
+        let done = StdArc::new(AtomicBool::new(false));
+        let done_w = StdArc::clone(&done);
+        let watchdog = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(60);
+            while Instant::now() < deadline {
+                if done_w.load(Ordering::Relaxed) {
+                    return;
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+            eprintln!("B4 WATCHDOG: concurrent disjoint test exceeded 60s — DEADLOCK. Aborting.");
+            std::process::abort();
+        });
+
+        const THREADS: usize = 12;
+        const ROUNDS: usize = 8;
+
+        let handles: Vec<_> = (0..THREADS)
+            .map(|t| {
+                let store = StdArc::clone(&store);
+                let manifest = StdArc::clone(&manifest);
+                thread::spawn(move || {
+                    let file = format!("src/dir{}/file{}.js", t, t);
+                    for r in 0..ROUNDS {
+                        // Each round re-analyzes this thread's file with 1 fresh node.
+                        let node = make_node(
+                            &format!("FUNCTION:f{}_{}@{}", t, r, file),
+                            "FUNCTION",
+                            &format!("f{}_{}", t, r),
+                            &file,
+                        );
+                        // Disjoint files ⇒ never conflicts; .unwrap() asserts that.
+                        store
+                            .commit_batch_private(
+                                vec![node],
+                                vec![],
+                                &[file.clone()],
+                                HashMap::new(),
+                                &manifest,
+                                &[],
+                            )
+                            .expect("disjoint-file commit must not conflict");
+                    }
+                })
+            })
+            .collect();
+
+        for h in handles {
+            h.join().unwrap();
+        }
+        done.store(true, Ordering::Relaxed);
+        watchdog.join().unwrap();
+
+        // Oracle: each thread re-analyzed its file ROUNDS times, each commit
+        // tombstones the prior round's node and adds one ⇒ exactly THREADS live
+        // nodes survive (the last round of each file).
+        let snap = store.snapshot(&manifest.lock().unwrap());
+        assert_eq!(
+            store.node_count_at(&snap),
+            THREADS,
+            "live node count must equal #threads (one surviving node per disjoint file)"
+        );
+        // No conflicts on disjoint files.
+        assert_eq!(store.commit_conflict_retries(), 0, "disjoint files must not conflict");
+
+        // Reopen fidelity ×1: the published version replays bit-faithfully.
+        drop(snap);
+        let reopened_manifest = ManifestStore::open(&db_path).unwrap();
+        let reopened = MultiShardStore::open(&db_path, &reopened_manifest).unwrap();
+        let rsnap = reopened.snapshot(&reopened_manifest);
+        assert_eq!(
+            reopened.node_count_at(&rsnap),
+            THREADS,
+            "reopen must preserve the live node count"
+        );
+    }
+
+    /// Conflict-retry: two threads hammer the SAME file concurrently. The store
+    /// must detect write-write conflicts (counter increments), exactly one wins
+    /// per round, and the final state is correct (no corruption, no lost file).
+    #[test]
+    fn b4_private_commit_same_file_conflict_retry() {
+        use std::sync::{Arc as StdArc, Mutex};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::thread;
+        use std::time::{Duration, Instant};
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("b4_conflict.rfdb");
+        std::fs::create_dir_all(&db_path).unwrap();
+
+        let store = StdArc::new(MultiShardStore::create(&db_path, 4).unwrap());
+        let manifest = StdArc::new(Mutex::new(ManifestStore::create(&db_path).unwrap()));
+
+        // Seed the file once so a conflict-map entry exists.
+        let file = "src/hot.js".to_string();
+        store
+            .commit_batch_private(
+                vec![make_node("FUNCTION:seed@src/hot.js", "FUNCTION", "seed", &file)],
+                vec![],
+                &[file.clone()],
+                HashMap::new(),
+                &manifest,
+                &[],
+            )
+            .unwrap();
+
+        let done = StdArc::new(AtomicBool::new(false));
+        let done_w = StdArc::clone(&done);
+        let watchdog = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(60);
+            while Instant::now() < deadline {
+                if done_w.load(Ordering::Relaxed) {
+                    return;
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+            eprintln!("B4 WATCHDOG: same-file conflict test exceeded 60s — DEADLOCK. Aborting.");
+            std::process::abort();
+        });
+
+        const THREADS: usize = 4;
+        const ROUNDS: usize = 10;
+
+        let handles: Vec<_> = (0..THREADS)
+            .map(|t| {
+                let store = StdArc::clone(&store);
+                let manifest = StdArc::clone(&manifest);
+                let file = file.clone();
+                thread::spawn(move || {
+                    for r in 0..ROUNDS {
+                        let node = make_node(
+                            &format!("FUNCTION:w{}_{}@{}", t, r, file),
+                            "FUNCTION",
+                            &format!("w{}_{}", t, r),
+                            &file,
+                        );
+                        // Bounded retry-on-conflict (the caller contract).
+                        let mut attempt = 0;
+                        loop {
+                            match store.commit_batch_private(
+                                vec![node.clone()],
+                                vec![],
+                                &[file.clone()],
+                                HashMap::new(),
+                                &manifest,
+                                &[],
+                            ) {
+                                Ok(_) => break,
+                                Err(GraphError::ConflictedCommit { .. }) => {
+                                    attempt += 1;
+                                    assert!(attempt < 64, "retry bound exceeded — livelock");
+                                    continue;
+                                }
+                                Err(e) => panic!("unexpected commit error: {}", e),
+                            }
+                        }
+                    }
+                })
+            })
+            .collect();
+
+        for h in handles {
+            h.join().unwrap();
+        }
+        done.store(true, Ordering::Relaxed);
+        watchdog.join().unwrap();
+
+        // Same-file contention ⇒ the conflict counter MUST have fired.
+        assert!(
+            store.commit_conflict_retries() > 0,
+            "concurrent same-file commits must produce conflict-retries (got 0)"
+        );
+
+        // Final state correct: exactly ONE live node remains for the file (each
+        // commit tombstones the file's prior node and adds one — last writer
+        // wins per round, no corruption, no lost file).
+        let snap = store.snapshot(&manifest.lock().unwrap());
+        assert_eq!(
+            store.node_count_at(&snap),
+            1,
+            "exactly one surviving node for the single hot file"
+        );
+    }
+
+    /// REAL parallelism measurement (B4 acceptance #2). N threads each commit
+    /// DISJOINT files repeatedly; compare wall-clock to the SAME work serialized
+    /// on one thread. Prints the speedup. The build+flush (segment I/O) runs
+    /// fully outside any lock, so it should overlap across cores. Asserts a
+    /// modest lower bound to guard against accidental re-serialization.
+    ///
+    /// `#[ignore]` by default (it's a timing probe; run with `--ignored`).
+    #[test]
+    #[ignore]
+    fn b4_private_commit_parallelism_speedup() {
+        use std::sync::{Arc as StdArc, Mutex};
+        use std::thread;
+        use std::time::Instant;
+        use crate::storage_v2::manifest::DurabilityMode;
+
+        const THREADS: usize = 8;
+        const COMMITS_PER_THREAD: usize = 8;
+        const NODES_PER_COMMIT: usize = 4000;
+        // Production uses Strict (fsync per commit). The fsync'd commit-point
+        // append serializes, but the lock-free build+flush (the bulk of a real
+        // whole-file re-analysis commit) overlaps across cores. With realistic
+        // commit sizes the build dominates ⇒ real speedup even under Strict.
+        let durability = DurabilityMode::Strict;
+
+        // Build the per-thread workload up front (excluded from timing).
+        let make_workload = |t: usize| -> Vec<(String, Vec<NodeRecordV2>)> {
+            (0..COMMITS_PER_THREAD)
+                .map(|c| {
+                    let file = format!("src/d{}/f{}_{}.js", t, t, c);
+                    let nodes: Vec<NodeRecordV2> = (0..NODES_PER_COMMIT)
+                        .map(|n| {
+                            make_node(
+                                &format!("FUNCTION:t{}c{}n{}@{}", t, c, n, file),
+                                "FUNCTION",
+                                &format!("t{}c{}n{}", t, c, n),
+                                &file,
+                            )
+                        })
+                        .collect();
+                    (file, nodes)
+                })
+                .collect()
+        };
+
+        // ── Serial baseline ──
+        let serial = {
+            let dir = tempfile::TempDir::new().unwrap();
+            let db_path = dir.path().join("b4_serial.rfdb");
+            std::fs::create_dir_all(&db_path).unwrap();
+            let store = MultiShardStore::create(&db_path, THREADS as u16).unwrap();
+            let manifest = Mutex::new(ManifestStore::create_with_config(&db_path, durability).unwrap());
+            let workloads: Vec<_> = (0..THREADS).map(make_workload).collect();
+            let t0 = Instant::now();
+            for wl in &workloads {
+                for (file, nodes) in wl {
+                    store
+                        .commit_batch_private(nodes.clone(), vec![], &[file.clone()], HashMap::new(), &manifest, &[])
+                        .unwrap();
+                }
+            }
+            t0.elapsed()
+        };
+
+        // ── Concurrent ──
+        let concurrent = {
+            let dir = tempfile::TempDir::new().unwrap();
+            let db_path = dir.path().join("b4_par.rfdb");
+            std::fs::create_dir_all(&db_path).unwrap();
+            let store = StdArc::new(MultiShardStore::create(&db_path, THREADS as u16).unwrap());
+            let manifest = StdArc::new(Mutex::new(ManifestStore::create_with_config(&db_path, durability).unwrap()));
+            let workloads: Vec<_> = (0..THREADS).map(make_workload).collect();
+            let t0 = Instant::now();
+            let handles: Vec<_> = workloads
+                .into_iter()
+                .map(|wl| {
+                    let store = StdArc::clone(&store);
+                    let manifest = StdArc::clone(&manifest);
+                    thread::spawn(move || {
+                        for (file, nodes) in wl {
+                            store
+                                .commit_batch_private(nodes, vec![], &[file], HashMap::new(), &manifest, &[])
+                                .unwrap();
+                        }
+                    })
+                })
+                .collect();
+            for h in handles {
+                h.join().unwrap();
+            }
+            t0.elapsed()
+        };
+
+        let speedup = serial.as_secs_f64() / concurrent.as_secs_f64();
+        eprintln!(
+            "B4 parallelism: serial={:?}, concurrent={:?}, speedup={:.2}x ({} threads, {} commits/thread, {} nodes/commit)",
+            serial, concurrent, speedup, THREADS, COMMITS_PER_THREAD, NODES_PER_COMMIT,
+        );
+        assert!(
+            speedup > 1.3,
+            "expected >1.3x speedup from concurrent commits, got {:.2}x (serial={:?}, concurrent={:?})",
+            speedup, serial, concurrent
+        );
     }
 }
