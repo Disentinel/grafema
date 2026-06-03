@@ -6358,4 +6358,340 @@ mod tests {
             speedup, serial, concurrent
         );
     }
+
+    // ── MVCC B5: segment GC vs live readers ────────────────────────────
+
+    /// Count `.seg` files under a database's `segments/` dir, recursing into the
+    /// per-shard `segments/NN/` subdirectories (the multi-shard disk layout).
+    fn count_seg_files(db_path: &std::path::Path) -> usize {
+        fn walk(dir: &std::path::Path) -> usize {
+            let mut n = 0;
+            if let Ok(rd) = std::fs::read_dir(dir) {
+                for e in rd.flatten() {
+                    let p = e.path();
+                    if p.is_dir() {
+                        n += walk(&p);
+                    } else if p.extension().and_then(|s| s.to_str()) == Some("seg") {
+                        n += 1;
+                    }
+                }
+            }
+            n
+        }
+        walk(&db_path.join("segments"))
+    }
+
+    /// B5.1 unit: a captured `ReadSnapshot` pins its version; the pin is released
+    /// exactly on drop (and a clone holds an independent pin).
+    #[test]
+    fn b5_snapshot_pins_version_until_drop() {
+        use std::sync::Mutex;
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("b5_pin.rfdb");
+        std::fs::create_dir_all(&db_path).unwrap();
+
+        let store = MultiShardStore::create(&db_path, 4).unwrap();
+        let manifest = Mutex::new(ManifestStore::create(&db_path).unwrap());
+
+        store
+            .commit_batch_private(
+                vec![make_node("FUNCTION:a@x.js", "FUNCTION", "a", "x.js")],
+                vec![],
+                &["x.js".to_string()],
+                HashMap::new(),
+                &manifest,
+                &[],
+            )
+            .unwrap();
+
+        // No live reader yet.
+        assert_eq!(manifest.lock().unwrap().min_pinned_version(), None);
+
+        let snap = store.snapshot(&manifest.lock().unwrap());
+        let v = snap.version;
+        assert_eq!(manifest.lock().unwrap().min_pinned_version(), Some(v));
+
+        // A clone is an independent live view ⇒ same min, two distinct pins.
+        let snap2 = snap.clone();
+        assert_eq!(manifest.lock().unwrap().min_pinned_version(), Some(v));
+
+        drop(snap);
+        // Still pinned by the clone.
+        assert_eq!(manifest.lock().unwrap().min_pinned_version(), Some(v));
+
+        drop(snap2);
+        // All readers gone ⇒ nothing pinned.
+        assert_eq!(manifest.lock().unwrap().min_pinned_version(), None);
+    }
+
+    /// B5 acceptance #1 — long reader vs churn (the core B5 property).
+    ///
+    /// A reader thread captures a `ReadSnapshot` of version V (content_hash 11,
+    /// node B alive, 1 edge) and reads through it continuously while OTHER
+    /// threads run many commits (re-analysing the file: new hash, B tombstoned)
+    /// + manifest GC (gc_manifests/gc_collect/gc_purge — the segment-file
+    /// deletion path). Throughout the storm the reader MUST keep observing its
+    /// own version's data — no panic, no missing segment, no wrong value. Then a
+    /// fresh snapshot sees the churned state.
+    ///
+    /// MANDATORY in-process watchdog: aborts the process at 60s so a hang/UAF
+    /// FAILS LOUD instead of hanging.
+    #[test]
+    fn b5_long_reader_vs_churn_keeps_pinned_data() {
+        use std::sync::{Arc as StdArc, Mutex};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::thread;
+        use std::time::{Duration, Instant};
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("b5_churn.rfdb");
+        std::fs::create_dir_all(&db_path).unwrap();
+
+        let store = StdArc::new(MultiShardStore::create(&db_path, 4).unwrap());
+        let manifest = {
+            let mut m = ManifestStore::create(&db_path).unwrap();
+            // Small checkpoint interval ⇒ frequent checkpoints ⇒ GC actually
+            // reclaims unpinned versions during churn, exercising the B5
+            // replay-chain retention floor (`checkpoint_at_or_below`) under
+            // concurrent reads — not just the trivial "keep everything" path.
+            m.set_checkpoint_interval(4);
+            StdArc::new(Mutex::new(m))
+        };
+
+        let file = "src/churn.js".to_string();
+        let a_v1 = make_node_with_hash("a/A", "FUNCTION", "A", &file, 11);
+        let b = make_node_with_hash("a/B", "FUNCTION", "B", &file, 22);
+        store
+            .commit_batch_private(
+                vec![a_v1.clone(), b.clone()],
+                vec![make_edge("a/A", "a/B", "CALLS")],
+                &[file.clone()],
+                HashMap::new(),
+                &manifest,
+                &[],
+            )
+            .unwrap();
+
+        // The long reader pins this version.
+        let snap_pinned = store.snapshot(&manifest.lock().unwrap());
+        let pinned_version = snap_pinned.version;
+        assert_eq!(store.node_count_at(&snap_pinned), 2);
+        assert_eq!(
+            store.get_node_at(&snap_pinned, a_v1.id).unwrap().content_hash,
+            11
+        );
+
+        // ── Watchdog ──
+        let done = StdArc::new(AtomicBool::new(false));
+        let done_w = StdArc::clone(&done);
+        let watchdog = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(60);
+            while Instant::now() < deadline {
+                if done_w.load(Ordering::Relaxed) {
+                    return;
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+            eprintln!("B5 WATCHDOG: long-reader-vs-churn exceeded 60s — HANG/UAF. Aborting.");
+            std::process::abort();
+        });
+
+        // ── Reader thread: read through the pinned snapshot continuously ──
+        let store_r = StdArc::clone(&store);
+        let snap_for_reader = snap_pinned.clone(); // independent pin for the thread
+        let a_id = a_v1.id;
+        let b_id = b.id;
+        let reader_done = StdArc::new(AtomicBool::new(false));
+        let reader_done_w = StdArc::clone(&reader_done);
+        let reader = thread::spawn(move || {
+            // Read for a wall-clock window so the churn+GC loop runs many rounds
+            // concurrently (a fixed iteration count finishes in microseconds and
+            // would barely overlap the churn).
+            let deadline = Instant::now() + Duration::from_millis(1_500);
+            let mut reads = 0u64;
+            while Instant::now() < deadline {
+                // The pinned version: A=11, B alive, 1 edge — ALWAYS, despite churn.
+                assert_eq!(store_r.node_count_at(&snap_for_reader), 2, "pinned node count");
+                let a = store_r
+                    .get_node_at(&snap_for_reader, a_id)
+                    .expect("pinned node A must remain readable");
+                assert_eq!(a.content_hash, 11, "pinned snapshot must see A=11");
+                assert!(
+                    store_r.node_exists_at(&snap_for_reader, b_id),
+                    "pinned snapshot must still see B"
+                );
+                assert_eq!(
+                    store_r.iter_all_edges_at(&snap_for_reader).len(),
+                    1,
+                    "pinned snapshot must still see the 1 edge"
+                );
+                reads += 1;
+            }
+            reader_done_w.store(true, Ordering::Relaxed);
+            reads
+        });
+
+        // ── Churn: many re-analysis commits + manifest GC underneath the reader ──
+        // Keep churning until the reader has done its full pass (so GC has run
+        // many times WHILE the reader pins the old version).
+        let mut round = 0u32;
+        while !reader_done.load(Ordering::Relaxed) {
+            let hash = 100 + round as u64;
+            let a_new = make_node_with_hash("a/A", "FUNCTION", "A", &file, hash);
+            store
+                .commit_batch_private(
+                    vec![a_new],
+                    vec![],
+                    &[file.clone()],
+                    HashMap::new(),
+                    &manifest,
+                    &[],
+                )
+                .expect("churn commit");
+
+            // Run the full GC pipeline (the segment-file deletion path). With a
+            // live reader pinning `pinned_version`, gc_manifests must retain it.
+            {
+                let mut m = manifest.lock().unwrap();
+                m.gc_manifests(2).expect("gc_manifests");
+                m.gc_collect().expect("gc_collect");
+                m.gc_purge().expect("gc_purge");
+                // The pinned version must NEVER drop below the reader's version.
+                let mp = m.min_pinned_version();
+                assert!(
+                    mp.is_some() && mp.unwrap() <= pinned_version,
+                    "reader's version {pinned_version} must stay pinned during churn (min_pinned={mp:?})"
+                );
+            }
+            round += 1;
+            if round > 5_000 {
+                break; // safety: reader should finish well before this
+            }
+        }
+
+        let reads = reader.join().unwrap();
+        done.store(true, Ordering::Relaxed);
+        watchdog.join().unwrap();
+
+        // The reader saw correct pinned data throughout (asserted in-thread).
+        // The pinned snapshot in THIS thread still reads correctly post-churn.
+        assert_eq!(store.node_count_at(&snap_pinned), 2);
+        assert_eq!(
+            store.get_node_at(&snap_pinned, a_v1.id).unwrap().content_hash,
+            11
+        );
+
+        // A fresh snapshot sees the churned state: A=last-hash, B tombstoned.
+        let snap_fresh = store.snapshot(&manifest.lock().unwrap());
+        assert!(snap_fresh.version > pinned_version);
+        assert_eq!(store.node_count_at(&snap_fresh), 1, "fresh: only A survives");
+        assert!(
+            !store.node_exists_at(&snap_fresh, b.id),
+            "fresh: B is tombstoned"
+        );
+
+        eprintln!(
+            "B5 churn: {round} commit+GC rounds vs {reads} pinned reads while reader pinned v{pinned_version}"
+        );
+        assert!(round > 10, "churn must run many rounds concurrently (ran {round})");
+    }
+
+    /// B5 acceptance #2 — GC reclaims once unpinned.
+    ///
+    /// While a snapshot pins the old version, compaction + GC must NOT delete
+    /// the segment files it references (count stays). After the snapshot drops,
+    /// compaction + GC DO reclaim the now-unreferenced segments (count drops).
+    #[test]
+    fn b5_gc_reclaims_after_unpin() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("b5_reclaim.rfdb");
+        std::fs::create_dir_all(&db_path).unwrap();
+
+        let mut store = MultiShardStore::create(&db_path, 2).unwrap();
+        let mut manifest = ManifestStore::create(&db_path).unwrap();
+
+        // Several commits → several L0 segment files.
+        for r in 0..4 {
+            let n = make_node_with_hash(
+                "a/A",
+                "FUNCTION",
+                "A",
+                "src/r.js",
+                10 + r as u64,
+            );
+            store
+                .commit_batch(
+                    vec![n],
+                    vec![],
+                    &["src/r.js".to_string()],
+                    HashMap::new(),
+                    &mut manifest,
+                )
+                .unwrap();
+        }
+        let segs_before = count_seg_files(&db_path);
+        assert!(segs_before > 0, "expected L0 segment files on disk");
+
+        // Pin the current version with a live snapshot.
+        let snap = store.snapshot(&manifest);
+        let pinned_version = snap.version;
+        assert_eq!(manifest.min_pinned_version(), Some(pinned_version));
+
+        // Compaction orphans the old L0 files; GC tries to reclaim them. But the
+        // live reader pins them ⇒ files must survive.
+        let config = CompactionConfig { segment_threshold: 1 };
+        store.compact(&mut manifest, &config).unwrap();
+        manifest.gc_manifests(1).unwrap();
+        manifest.gc_collect().unwrap();
+        manifest.gc_purge().unwrap();
+
+        let segs_pinned = count_seg_files(&db_path);
+        // Every segment the pinned snapshot references must still be on disk and
+        // openable — prove by reading through the pinned snapshot.
+        assert_eq!(
+            store.get_node_at(&snap, snap_node_id()).map(|n| n.content_hash),
+            Some(13),
+            "pinned snapshot reads its version's data (A=last committed hash 13)"
+        );
+        assert!(
+            segs_pinned >= 1,
+            "pinned segment files must survive GC (had {segs_before}, now {segs_pinned})"
+        );
+
+        // Drop the reader → version unpinned.
+        drop(snap);
+        assert_eq!(manifest.min_pinned_version(), None);
+
+        // Now GC may reclaim the orphaned pre-compaction L0 segments.
+        store.compact(&mut manifest, &config).unwrap();
+        manifest.gc_manifests(1).unwrap();
+        manifest.gc_collect().unwrap();
+        let purged = manifest.gc_purge().unwrap();
+
+        let segs_after = count_seg_files(&db_path);
+        eprintln!(
+            "B5 reclaim: before={segs_before} pinned={segs_pinned} after={segs_after} purged={purged}"
+        );
+        assert!(
+            segs_after < segs_pinned,
+            "after unpin, GC must reclaim orphaned segments ({segs_pinned} -> {segs_after})"
+        );
+
+        // The live store is still consistent (1 node, last hash) after reclaim.
+        let snap_fresh = store.snapshot(&manifest);
+        assert_eq!(store.node_count_at(&snap_fresh), 1);
+        assert_eq!(
+            store.get_node_at(&snap_fresh, snap_node_id()).unwrap().content_hash,
+            13
+        );
+    }
+
+    /// Helper: id of the single `a/A` node used in the reclaim test.
+    fn snap_node_id() -> u128 {
+        u128::from_le_bytes(
+            blake3::hash("a/A".as_bytes()).as_bytes()[0..16]
+                .try_into()
+                .unwrap(),
+        )
+    }
 }

@@ -65,6 +65,73 @@ pub enum DurabilityMode {
     Relaxed,
 }
 
+// ── VersionPins (MVCC B5) ──────────────────────────────────────────
+
+/// Live-reader version pin registry (MVCC B5).
+///
+/// Every live [`ReadSnapshot`](crate::storage_v2::read_snapshot::ReadSnapshot)
+/// pins the manifest version it captured. GC/compaction must NEVER reclaim a
+/// segment file referenced by a version that a live reader still pins
+/// (deleting a segment under a live `mmap` is a use-after-free / UB hazard).
+///
+/// Implementation: a refcount per pinned version. A snapshot increments its
+/// version's count on capture (and clone) and decrements on drop. The store
+/// queries [`Self::min_pinned`] — the smallest version with a non-zero count —
+/// and the GC retention rule keeps every version `>= min_pinned`.
+///
+/// Shared via `Arc` between the `ManifestStore` (which the GC runs on) and
+/// every `ReadSnapshot` (which may outlive any borrow of the store), so the
+/// pin survives independently of the manifest lock.
+#[derive(Debug, Default)]
+pub struct VersionPins {
+    /// version -> live-reader refcount. Only non-zero entries are retained;
+    /// a count that reaches zero removes the key (so `keys().min()` is the
+    /// minimum live-pinned version directly).
+    counts: std::sync::Mutex<std::collections::BTreeMap<u64, usize>>,
+}
+
+impl VersionPins {
+    /// Create an empty registry.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register one live reader on `version` (called by `ReadSnapshot::capture`
+    /// and its `Clone`). Saturating add: a refcount overflow is treated as
+    /// "pinned forever" (conservative — never under-counts a live pin).
+    pub fn pin(&self, version: u64) {
+        let mut g = self.counts.lock().unwrap();
+        let c = g.entry(version).or_insert(0);
+        *c = c.saturating_add(1);
+    }
+
+    /// Release one live reader on `version` (called by `ReadSnapshot::drop`).
+    /// Removes the entry when the count reaches zero. Underflow (more unpins
+    /// than pins) is impossible by construction (every unpin pairs with a pin),
+    /// but is handled defensively by removing the entry — never wraps to a huge
+    /// count that would pin forever.
+    pub fn unpin(&self, version: u64) {
+        let mut g = self.counts.lock().unwrap();
+        if let Some(c) = g.get_mut(&version) {
+            *c = c.saturating_sub(1);
+            if *c == 0 {
+                g.remove(&version);
+            }
+        }
+    }
+
+    /// The smallest version still pinned by a live reader, or `None` if no
+    /// reader is live. GC retains every version `>= min_pinned`.
+    pub fn min_pinned(&self) -> Option<u64> {
+        self.counts.lock().unwrap().keys().next().copied()
+    }
+
+    /// Total number of distinct pinned versions (diagnostics/tests).
+    pub fn pinned_version_count(&self) -> usize {
+        self.counts.lock().unwrap().len()
+    }
+}
+
 // ── Manifest ───────────────────────────────────────────────────────
 
 /// Manifest: immutable snapshot descriptor.
@@ -805,6 +872,12 @@ pub struct ManifestStore {
     /// is what replaces the old per-shard `Shard.tombstones` broadcast as the
     /// snapshot/version authority.
     current_tombstones: Arc<TombstoneSet>,
+
+    /// MVCC B5: live-reader version pin registry. Shared (`Arc`) with every
+    /// `ReadSnapshot` so a pin outlives any borrow of this store. GC consults
+    /// `min_pinned()` and retains every version `>= min_pinned`, guaranteeing a
+    /// segment file referenced by a live reader's version is never reclaimed.
+    version_pins: Arc<VersionPins>,
 }
 
 // ── ManifestStore: Constructors ────────────────────────────────────
@@ -862,6 +935,7 @@ impl ManifestStore {
             durability,
             checkpoint_interval: MANIFEST_CHECKPOINT_INTERVAL,
             current_tombstones,
+            version_pins: Arc::new(VersionPins::new()),
         })
     }
 
@@ -928,6 +1002,7 @@ impl ManifestStore {
             checkpoint_interval: MANIFEST_CHECKPOINT_INTERVAL,
             // Fresh database: no tombstones yet.
             current_tombstones: Arc::new(TombstoneSet::new()),
+            version_pins: Arc::new(VersionPins::new()),
         })
     }
 
@@ -975,6 +1050,7 @@ impl ManifestStore {
             checkpoint_interval: MANIFEST_CHECKPOINT_INTERVAL,
             // Fresh ephemeral store: no tombstones yet.
             current_tombstones: Arc::new(TombstoneSet::new()),
+            version_pins: Arc::new(VersionPins::new()),
         }
     }
 
@@ -1005,6 +1081,39 @@ impl ManifestStore {
     /// Complexity: O(1) (cached `Arc`)
     pub fn current_tombstones(&self) -> Arc<TombstoneSet> {
         Arc::clone(&self.current_tombstones)
+    }
+
+    /// Shared handle to the live-reader version pin registry (MVCC B5).
+    ///
+    /// A `ReadSnapshot` clones this `Arc` at capture so its pin (and the unpin
+    /// on drop) outlive any borrow of the store / hold of the manifest lock.
+    pub fn version_pins(&self) -> Arc<VersionPins> {
+        Arc::clone(&self.version_pins)
+    }
+
+    /// The smallest manifest version still pinned by a live reader, or `None`
+    /// if no reader is live (MVCC B5). The GC retains every version `>= this`.
+    pub fn min_pinned_version(&self) -> Option<u64> {
+        self.version_pins.min_pinned()
+    }
+
+    /// The latest delta-manifest CHECKPOINT version at or below `version` (MVCC
+    /// B5 retention). A checkpoint is a full-snapshot manifest (`{v}.json`);
+    /// `load_current_with_replay` replays edit deltas on top of it. To keep an
+    /// edit version `version` loadable, its base checkpoint must survive — this
+    /// computes that base. Mirrors the `is_checkpoint` rule in `commit_edit`
+    /// (`v == 1 || v % checkpoint_interval == 0`).
+    fn checkpoint_at_or_below(&self, version: u64) -> u64 {
+        if version <= 1 {
+            return 1;
+        }
+        let ci = self.checkpoint_interval;
+        let floor = (version / ci) * ci;
+        if floor == 0 {
+            1
+        } else {
+            floor
+        }
     }
 
     /// Rebuild the cached `current_tombstones` `Arc` from `self.current`'s
@@ -1486,12 +1595,67 @@ impl ManifestStore {
 
         std::fs::create_dir_all(&gc_dir)?;
 
-        let referenced_ids = &self.index.referenced_segments;
+        // MVCC B5: the live retained set is every segment referenced by a
+        // retained manifest version PLUS every segment referenced by a version
+        // a live reader still pins. `gc_manifests` already refuses to drop
+        // pinned versions from the index (so their segments stay in
+        // `referenced_segments`), but compute the pinned union explicitly here
+        // as defense-in-depth: even if `gc_collect` is called without a prior
+        // `gc_manifests`, a pinned reader's segment file is never reclaimed.
+        let mut referenced_ids: HashSet<u64> = self.index.referenced_segments.clone();
+        if let Some(min_pinned) = self.version_pins.min_pinned() {
+            for info in &self.index.snapshots {
+                if info.version >= min_pinned {
+                    if let Ok(manifest) = self.load_manifest(info.version) {
+                        for seg in manifest
+                            .node_segments
+                            .iter()
+                            .chain(manifest.edge_segments.iter())
+                            .chain(manifest.l1_node_segments.iter())
+                            .chain(manifest.l1_edge_segments.iter())
+                        {
+                            referenced_ids.insert(seg.segment_id);
+                        }
+                    }
+                }
+            }
+        }
         let mut moved = Vec::new();
 
+        // Multi-shard disk layout writes per-shard segment files under
+        // `segments/NN/` (see `SegmentDescriptor::file_path`); legacy/unsharded
+        // layout writes directly under `segments/`. Scan BOTH: top-level `.seg`
+        // files and one level of shard subdirectories. Orphaned files are moved
+        // into a mirrored `gc/` (or `gc/NN/`) tree, preserving the relative
+        // path so `gc_purge` and any recovery keep the shard association.
         for entry in std::fs::read_dir(&segments_dir)? {
             let entry = entry?;
             let path = entry.path();
+            let file_type = entry.file_type()?;
+
+            if file_type.is_dir() {
+                // Shard subdirectory: scan its `.seg` files.
+                let shard_name = entry.file_name();
+                for sub in std::fs::read_dir(&path)? {
+                    let sub = sub?;
+                    let sub_path = sub.path();
+                    if sub_path.extension().and_then(|s| s.to_str()) != Some("seg") {
+                        continue;
+                    }
+                    if let Some(segment_id) = parse_segment_id_from_filename(
+                        sub_path.file_name().unwrap().to_str().unwrap(),
+                    ) {
+                        if !referenced_ids.contains(&segment_id) {
+                            let gc_shard_dir = gc_dir.join(&shard_name);
+                            std::fs::create_dir_all(&gc_shard_dir)?;
+                            let gc_path = gc_shard_dir.join(sub_path.file_name().unwrap());
+                            std::fs::rename(&sub_path, &gc_path)?;
+                            moved.push(gc_path.to_string_lossy().to_string());
+                        }
+                    }
+                }
+                continue;
+            }
 
             if path.extension().and_then(|s| s.to_str()) != Some("seg") {
                 continue;
@@ -1529,9 +1693,28 @@ impl ManifestStore {
 
         let mut deleted = 0;
 
+        // Purge both top-level `gc/*.seg` and shard-mirrored `gc/NN/*.seg`
+        // (gc_collect stages per-shard orphans under `gc/NN/`). Unlinking a
+        // file here is safe ONLY because gc_collect's pin guard already ensured
+        // no live reader's version references it (MVCC B5 — no unlink under a
+        // live mmap).
         for entry in std::fs::read_dir(&gc_dir)? {
             let entry = entry?;
             let path = entry.path();
+            let file_type = entry.file_type()?;
+
+            if file_type.is_dir() {
+                for sub in std::fs::read_dir(&path)? {
+                    let sub = sub?;
+                    let sub_path = sub.path();
+                    if sub_path.extension().and_then(|s| s.to_str()) != Some("seg") {
+                        continue;
+                    }
+                    std::fs::remove_file(&sub_path)?;
+                    deleted += 1;
+                }
+                continue;
+            }
 
             if path.extension().and_then(|s| s.to_str()) != Some("seg") {
                 continue;
@@ -1565,13 +1748,40 @@ impl ManifestStore {
 
         let db_path = self.db_path.as_ref().unwrap().clone();
 
+        // MVCC B5: never remove a manifest version that a live reader pins (or
+        // anything newer than the minimum live-pinned version). Keeping the
+        // manifest JSON keeps that version's segments in `referenced_segments`
+        // after the recalculation below, so `gc_collect`/`gc_purge` will not
+        // reclaim a pinned reader's segment files. Conservative: retain MORE
+        // (every version >= the retention floor) rather than risk deleting a
+        // pinned one.
+        //
+        // The delta-manifest write path stores most versions as `.edit.json`
+        // deltas replayed on top of the latest checkpoint `<= version`. So a
+        // pinned EDIT version V is only loadable if its base checkpoint (and the
+        // edits between it and V) survive. The retention floor is therefore the
+        // latest checkpoint `<= min_pinned`, NOT min_pinned itself — otherwise
+        // gc_collect's `load_manifest(pinned)` fails and the pin guard silently
+        // misses the pinned version's segments (a use-after-free hazard, since
+        // the segment is then GC'd while a live reader's mmap is open).
+        let min_pinned = self.version_pins.min_pinned();
+        let retention_floor = min_pinned.map(|mp| self.checkpoint_at_or_below(mp));
+
         let versions_to_remove: Vec<u64> = self
             .index
             .snapshots
             .iter()
             .take(snapshot_count - keep_last)
             .map(|s| s.version)
+            .filter(|v| match retention_floor {
+                Some(floor) => *v < floor,
+                None => true,
+            })
             .collect();
+
+        if versions_to_remove.is_empty() {
+            return Ok(0);
+        }
 
         let mut removed = 0;
         for version in &versions_to_remove {

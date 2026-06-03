@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
 use crate::error::Result;
-use crate::storage_v2::manifest::{ManifestStore, SegmentDescriptor};
+use crate::storage_v2::manifest::{ManifestStore, SegmentDescriptor, VersionPins};
 use crate::storage_v2::segment::{EdgeSegmentV2, NodeSegmentV2};
 use crate::storage_v2::shard::TombstoneSet;
 
@@ -145,7 +145,16 @@ impl std::fmt::Debug for SegmentCache {
 /// immutable segments, and the tombstone `Arc` is frozen at capture time. Later
 /// commits produce new segments / new tombstone `Arc`s that this snapshot does
 /// not see.
-#[derive(Clone)]
+///
+/// ## MVCC B5 — version pinning
+/// Construction registers a live-reader pin on `version` with the store's
+/// shared [`VersionPins`] registry; [`Drop`] releases it. While ANY snapshot
+/// pins a version, GC/compaction must not reclaim that version's segment files
+/// (deleting a file under a live `mmap` is undefined behaviour). Cloning a
+/// snapshot registers an additional pin (it is another live view of the same
+/// version). The `Clone` and `Drop` impls are hand-written for exactly this
+/// reason — a derived `Clone` would copy the `Arc` without bumping the
+/// refcount, and the segment could be reclaimed while a clone is still live.
 pub struct ReadSnapshot {
     /// Manifest version this snapshot is pinned to.
     pub version: u64,
@@ -159,22 +168,41 @@ pub struct ReadSnapshot {
     pub l1_edge_segments: Vec<SegmentDescriptor>,
     /// The version's cumulative tombstone set (frozen at capture).
     pub tombstones: Arc<TombstoneSet>,
+    /// MVCC B5: shared pin registry. `Some` for snapshots captured from a real
+    /// store (the common path); the pin on `version` is held for the life of
+    /// this snapshot and released on drop. `None` only for synthetic snapshots
+    /// constructed without a store (none exist in current code, but the field
+    /// is an `Option` so a future test helper need not fabricate a registry).
+    pins: Option<Arc<VersionPins>>,
 }
 
 impl ReadSnapshot {
-    /// Capture the current published version's descriptor set + tombstones.
+    /// Capture the current published version's descriptor set + tombstones, and
+    /// register a live-reader pin on that version (MVCC B5).
     ///
     /// `tombstones` is the version authority (MVCC B3) — the manifest's
-    /// `current_tombstones` Arc, frozen here for the life of the snapshot.
+    /// `current_tombstones` Arc, frozen here for the life of the snapshot. The
+    /// pin (cloned from the manifest's shared [`VersionPins`]) guarantees the
+    /// version's segment files survive until this snapshot (and all its clones)
+    /// drop.
     pub fn capture(manifest: &ManifestStore, tombstones: Arc<TombstoneSet>) -> Self {
         let m = manifest.current();
+        let version = m.version;
+        let pins = manifest.version_pins();
+        // Pin BEFORE the snapshot is observable to any GC: capture runs inside
+        // the manifest lock (see `MultiShardStore::snapshot`), and GC also takes
+        // the manifest mutably, so registering here is serialized w.r.t. GC's
+        // min_pinned read — no window where GC sees version V eligible while a
+        // reader is mid-capture of V.
+        pins.pin(version);
         Self {
-            version: m.version,
+            version,
             node_segments: m.node_segments.clone(),
             edge_segments: m.edge_segments.clone(),
             l1_node_segments: m.l1_node_segments.clone(),
             l1_edge_segments: m.l1_edge_segments.clone(),
             tombstones,
+            pins: Some(pins),
         }
     }
 
@@ -221,6 +249,38 @@ impl ReadSnapshot {
         let mut v: Vec<u16> = set.into_iter().collect();
         v.sort_unstable();
         v
+    }
+}
+
+/// MVCC B5: a clone is another live view of the same version — it must register
+/// an ADDITIONAL pin so the version is not reclaimed while the clone is alive.
+/// (A derived `Clone` would copy the `Arc<VersionPins>` without incrementing the
+/// per-version refcount, under-counting live readers.)
+impl Clone for ReadSnapshot {
+    fn clone(&self) -> Self {
+        if let Some(pins) = &self.pins {
+            pins.pin(self.version);
+        }
+        Self {
+            version: self.version,
+            node_segments: self.node_segments.clone(),
+            edge_segments: self.edge_segments.clone(),
+            l1_node_segments: self.l1_node_segments.clone(),
+            l1_edge_segments: self.l1_edge_segments.clone(),
+            tombstones: Arc::clone(&self.tombstones),
+            pins: self.pins.clone(),
+        }
+    }
+}
+
+/// MVCC B5: releasing the live-reader pin is the whole point — once the last
+/// snapshot (and clones) of a version drop, GC may reclaim that version's
+/// segments.
+impl Drop for ReadSnapshot {
+    fn drop(&mut self) {
+        if let Some(pins) = &self.pins {
+            pins.unpin(self.version);
+        }
     }
 }
 
