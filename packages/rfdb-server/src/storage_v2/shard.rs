@@ -483,6 +483,15 @@ impl Shard {
         &self.tombstones
     }
 
+    /// Clone the shared tombstone `Arc` (zero-copy, refcount bump).
+    ///
+    /// Used by the MVCC read path to freeze the current version's cumulative
+    /// tombstone set into a `ReadSnapshot`. All shards share the same `Arc`
+    /// during `commit_batch`, so any shard's clone is the version's set.
+    pub fn tombstones_arc(&self) -> Arc<TombstoneSet> {
+        Arc::clone(&self.tombstones)
+    }
+
     /// Find edge keys (src, dst, edge_type) where src is in the given ID set.
     ///
     /// Uses bloom filter on each edge segment for pre-filtering:
@@ -775,6 +784,42 @@ impl Shard {
     /// Iterator over write buffer nodes (for fuzzy search fallback).
     pub fn write_buffer_iter_nodes(&self) -> impl Iterator<Item = &NodeRecordV2> {
         self.write_buffer.iter_nodes()
+    }
+
+    /// Borrow a live, already-opened L0/L1 node segment by its `segment_id`.
+    ///
+    /// Used by the MVCC read path (`ReadSnapshot`) for ephemeral stores, where
+    /// segments live only in memory and have no file to open via `SegmentCache`.
+    /// Scans descriptors (small Vecs) to map `segment_id` → opened segment.
+    /// Returns None if this shard does not currently hold that segment open.
+    pub fn node_segment_by_id(&self, segment_id: u64) -> Option<&NodeSegmentV2> {
+        if let Some(d) = &self.l1_node_descriptor {
+            if d.segment_id == segment_id {
+                return self.l1_node_segment.as_ref();
+            }
+        }
+        for (i, d) in self.node_descriptors.iter().enumerate() {
+            if d.segment_id == segment_id {
+                return self.node_segments.get(i);
+            }
+        }
+        None
+    }
+
+    /// Borrow a live, already-opened L0/L1 edge segment by its `segment_id`.
+    /// Companion to `node_segment_by_id` for the MVCC ephemeral read path.
+    pub fn edge_segment_by_id(&self, segment_id: u64) -> Option<&EdgeSegmentV2> {
+        if let Some(d) = &self.l1_edge_descriptor {
+            if d.segment_id == segment_id {
+                return self.l1_edge_segment.as_ref();
+            }
+        }
+        for (i, d) in self.edge_descriptors.iter().enumerate() {
+            if d.segment_id == segment_id {
+                return self.edge_segments.get(i);
+            }
+        }
+        None
     }
 
     /// Clear L0 segments after compaction (they've been merged into L1).

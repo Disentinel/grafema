@@ -36,6 +36,7 @@ use crate::storage_v2::compaction::{CompactionConfig, CompactionResult};
 use crate::storage_v2::index::{build_inverted_indexes, GlobalIndex, IndexEntry, InvertedIndex};
 use crate::storage_v2::index::token::{TokenIndex, TokenMatch, tokenize_name, tokenize_text};
 use crate::storage_v2::manifest::{ManifestEdit, ManifestStore, SegmentDescriptor};
+use crate::storage_v2::read_snapshot::{ReadSnapshot, SegmentCache};
 use crate::storage_v2::segment::{self, EdgeSegmentV2, NodeSegmentV2};
 use crate::storage_v2::shard::{Shard, ShardDiagnostics, TombstoneSet};
 use crate::storage_v2::shard_planner::ShardPlanner;
@@ -125,6 +126,12 @@ pub struct MultiShardStore {
     /// Intern pool for edge type strings. Edge types have ~15 distinct values,
     /// so interning saves ~40 bytes per tombstone entry (4M+ entries on large graphs).
     edge_type_intern: HashMap<String, Arc<str>>,
+
+    /// MVCC segment cache (RFD-71 B1): `segment_id -> Arc<opened immutable segment>`.
+    /// Decouples version-pinned reads from whether the owning `Shard` still holds
+    /// the segment open. Disk-backed only; ephemeral stores resolve via the live
+    /// shard. Thread-safe (interior `RwLock`s) so reads stay `&self`.
+    segment_cache: SegmentCache,
 }
 
 // ── Constructors ───────────────────────────────────────────────────
@@ -158,6 +165,7 @@ impl MultiShardStore {
             enrichment_edge_to_shard: HashMap::new(),
             file_to_node_ids: HashMap::new(),
             edge_type_intern: HashMap::new(),
+            segment_cache: SegmentCache::new(),
         })
     }
 
@@ -283,6 +291,7 @@ impl MultiShardStore {
             enrichment_edge_to_shard,
             file_to_node_ids,
             edge_type_intern: HashMap::new(),
+            segment_cache: SegmentCache::new(),
         })
     }
 
@@ -303,6 +312,7 @@ impl MultiShardStore {
             enrichment_edge_to_shard: HashMap::new(),
             file_to_node_ids: HashMap::new(),
             edge_type_intern: HashMap::new(),
+            segment_cache: SegmentCache::new(),
         }
     }
 }
@@ -619,6 +629,603 @@ impl MultiShardStore {
         self.get_outgoing_edges(src, Some(&types))
             .iter()
             .any(|e| e.dst == dst && e.edge_type == edge_type)
+    }
+}
+
+// ── MVCC Snapshot Reads (RFD-71 B1) ────────────────────────────────
+
+impl MultiShardStore {
+    /// Capture a version-pinned [`ReadSnapshot`] of the current published
+    /// manifest version: its segment descriptor set + that version's cumulative
+    /// tombstones (the runtime shard set, since the manifest clears its own).
+    ///
+    /// The snapshot is immutable; later commits do not affect it. Reads resolved
+    /// through it (the `*_at` methods below) never observe the live, uncommitted
+    /// `Shard.write_buffer` — only the version's committed, immutable segments.
+    pub fn snapshot(&self, manifest: &ManifestStore) -> ReadSnapshot {
+        // All shards share one Arc<TombstoneSet> after commit_batch; shard 0 is
+        // representative. An empty store still has a valid (empty) set.
+        let tombstones = self.shards[0].tombstones_arc();
+        ReadSnapshot::capture(manifest, tombstones)
+    }
+
+    /// Resolve a node segment descriptor to an opened segment and run `f`.
+    ///
+    /// Disk store: open (or hit cache) via [`SegmentCache`]. Ephemeral store:
+    /// borrow the live in-memory segment from the owning shard. Returns `None`
+    /// (treated as "segment absent / skip") if the segment cannot be resolved.
+    fn with_node_segment<R>(
+        &self,
+        desc: &SegmentDescriptor,
+        f: impl FnOnce(&NodeSegmentV2) -> R,
+    ) -> Option<R> {
+        if let Some(db_path) = &self.db_path {
+            match self.segment_cache.get_node_segment(db_path, desc) {
+                Ok(seg) => Some(f(&seg)),
+                Err(_) => None,
+            }
+        } else {
+            let shard_id = desc.shard_id.unwrap_or(0) as usize;
+            self.shards
+                .get(shard_id)
+                .and_then(|s| s.node_segment_by_id(desc.segment_id))
+                .map(f)
+        }
+    }
+
+    /// Edge-segment companion to [`Self::with_node_segment`].
+    fn with_edge_segment<R>(
+        &self,
+        desc: &SegmentDescriptor,
+        f: impl FnOnce(&EdgeSegmentV2) -> R,
+    ) -> Option<R> {
+        if let Some(db_path) = &self.db_path {
+            match self.segment_cache.get_edge_segment(db_path, desc) {
+                Ok(seg) => Some(f(&seg)),
+                Err(_) => None,
+            }
+        } else {
+            let shard_id = desc.shard_id.unwrap_or(0) as usize;
+            self.shards
+                .get(shard_id)
+                .and_then(|s| s.edge_segment_by_id(desc.segment_id))
+                .map(f)
+        }
+    }
+
+    /// Get a node by id resolved through `snap` (version-pinned).
+    ///
+    /// Mirrors `Shard::get_node` EXACTLY except it never consults the write
+    /// buffer: tombstone-first, then L0 newest→oldest (reverse of the snapshot's
+    /// oldest-first descriptor list, with bloom short-circuit), then L1.
+    pub fn get_node_at(&self, snap: &ReadSnapshot, id: u128) -> Option<NodeRecordV2> {
+        // Step 0: tombstone check (definitive).
+        if snap.tombstones.contains_node(id) {
+            return None;
+        }
+
+        // Step 1: L0 segments newest→oldest. Descriptors are oldest-first, so
+        // iterate in reverse; gather this shard-agnostic id across all shards.
+        for desc in snap.node_segments.iter().rev() {
+            let found = self.with_node_segment(desc, |seg| {
+                if !seg.maybe_contains(id) {
+                    return None;
+                }
+                for j in 0..seg.record_count() {
+                    if seg.get_id(j) == id {
+                        return Some(seg.get_record(j));
+                    }
+                }
+                None
+            });
+            if let Some(Some(rec)) = found {
+                return Some(rec);
+            }
+        }
+
+        // Step 2: L1 segments (oldest, compacted).
+        for desc in &snap.l1_node_segments {
+            let found = self.with_node_segment(desc, |seg| {
+                if !seg.maybe_contains(id) {
+                    return None;
+                }
+                for j in 0..seg.record_count() {
+                    if seg.get_id(j) == id {
+                        return Some(seg.get_record(j));
+                    }
+                }
+                None
+            });
+            if let Some(Some(rec)) = found {
+                return Some(rec);
+            }
+        }
+
+        None
+    }
+
+    /// Existence check resolved through `snap`. Mirrors `Shard::node_exists`
+    /// minus the write-buffer step.
+    pub fn node_exists_at(&self, snap: &ReadSnapshot, id: u128) -> bool {
+        if snap.tombstones.contains_node(id) {
+            return false;
+        }
+        for desc in snap.node_segments.iter().rev() {
+            let hit = self.with_node_segment(desc, |seg| {
+                if !seg.maybe_contains(id) {
+                    return false;
+                }
+                (0..seg.record_count()).any(|j| seg.get_id(j) == id)
+            });
+            if matches!(hit, Some(true)) {
+                return true;
+            }
+        }
+        for desc in &snap.l1_node_segments {
+            let hit = self.with_node_segment(desc, |seg| {
+                if !seg.maybe_contains(id) {
+                    return false;
+                }
+                (0..seg.record_count()).any(|j| seg.get_id(j) == id)
+            });
+            if matches!(hit, Some(true)) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Find nodes matching optional `node_type` / `file` filters, resolved
+    /// through `snap`. Reproduces `Shard::find_nodes` dedup + tombstone +
+    /// zone-map semantics across all shards, minus the write buffer.
+    pub fn find_nodes_at(
+        &self,
+        snap: &ReadSnapshot,
+        node_type: Option<&str>,
+        file: Option<&str>,
+    ) -> Vec<NodeRecordV2> {
+        let mut seen: HashSet<u128> = HashSet::new();
+        let mut results: Vec<NodeRecordV2> = Vec::new();
+
+        // L0 newest→oldest.
+        for desc in snap.node_segments.iter().rev() {
+            // Descriptor-level zone-map pruning (no I/O).
+            if !desc.may_contain(node_type, file, None) {
+                continue;
+            }
+            self.with_node_segment(desc, |seg| {
+                if let Some(nt) = node_type {
+                    if !seg.contains_node_type(nt) {
+                        return;
+                    }
+                }
+                if let Some(f) = file {
+                    if !seg.contains_file(f) {
+                        return;
+                    }
+                }
+                for j in 0..seg.record_count() {
+                    let id = seg.get_id(j);
+                    if seen.contains(&id) {
+                        continue;
+                    }
+                    if snap.tombstones.contains_node(id) {
+                        seen.insert(id);
+                        continue;
+                    }
+                    if let Some(nt) = node_type {
+                        if seg.get_node_type(j) != nt {
+                            continue;
+                        }
+                    }
+                    if let Some(f) = file {
+                        if seg.get_file(j) != f {
+                            continue;
+                        }
+                    }
+                    seen.insert(id);
+                    results.push(seg.get_record(j));
+                }
+            });
+        }
+
+        // L1 (oldest). No inverted-index path here — snapshot reads scan the
+        // descriptor's segment directly (indexes live on the live Shard).
+        for desc in &snap.l1_node_segments {
+            if !desc.may_contain(node_type, file, None) {
+                continue;
+            }
+            self.with_node_segment(desc, |seg| {
+                if let Some(nt) = node_type {
+                    if !seg.contains_node_type(nt) {
+                        return;
+                    }
+                }
+                if let Some(f) = file {
+                    if !seg.contains_file(f) {
+                        return;
+                    }
+                }
+                for j in 0..seg.record_count() {
+                    let id = seg.get_id(j);
+                    if seen.contains(&id) {
+                        continue;
+                    }
+                    if snap.tombstones.contains_node(id) {
+                        seen.insert(id);
+                        continue;
+                    }
+                    if let Some(nt) = node_type {
+                        if seg.get_node_type(j) != nt {
+                            continue;
+                        }
+                    }
+                    if let Some(f) = file {
+                        if seg.get_file(j) != f {
+                            continue;
+                        }
+                    }
+                    seen.insert(id);
+                    results.push(seg.get_record(j));
+                }
+            });
+        }
+
+        results
+    }
+
+    /// Count of LIVE nodes resolved through `snap`. Reproduces
+    /// `Shard::node_count` dedup + tombstone semantics across all shards, minus
+    /// the write buffer (full O(records) scan).
+    pub fn node_count_at(&self, snap: &ReadSnapshot) -> usize {
+        let mut seen: HashSet<u128> = HashSet::new();
+        let mut count = 0usize;
+
+        for desc in snap.node_segments.iter().rev() {
+            self.with_node_segment(desc, |seg| {
+                for j in 0..seg.record_count() {
+                    let id = seg.get_id(j);
+                    if !seen.insert(id) {
+                        continue;
+                    }
+                    if snap.tombstones.contains_node(id) {
+                        continue;
+                    }
+                    count += 1;
+                }
+            });
+        }
+        for desc in &snap.l1_node_segments {
+            self.with_node_segment(desc, |seg| {
+                for j in 0..seg.record_count() {
+                    let id = seg.get_id(j);
+                    if !seen.insert(id) {
+                        continue;
+                    }
+                    if snap.tombstones.contains_node(id) {
+                        continue;
+                    }
+                    count += 1;
+                }
+            });
+        }
+        count
+    }
+
+    /// Per-type live node counts resolved through `snap`. Reproduces
+    /// `Shard::count_by_type` minus the write buffer.
+    pub fn count_by_type_at(&self, snap: &ReadSnapshot) -> HashMap<String, usize> {
+        let mut seen: HashSet<u128> = HashSet::new();
+        let mut counts: HashMap<String, usize> = HashMap::new();
+
+        for desc in snap.node_segments.iter().rev() {
+            self.with_node_segment(desc, |seg| {
+                for j in 0..seg.record_count() {
+                    let id = seg.get_id(j);
+                    if !seen.insert(id) {
+                        continue;
+                    }
+                    if snap.tombstones.contains_node(id) {
+                        continue;
+                    }
+                    *counts.entry(seg.get_node_type(j).to_string()).or_insert(0) += 1;
+                }
+            });
+        }
+        for desc in &snap.l1_node_segments {
+            self.with_node_segment(desc, |seg| {
+                for j in 0..seg.record_count() {
+                    let id = seg.get_id(j);
+                    if !seen.insert(id) {
+                        continue;
+                    }
+                    if snap.tombstones.contains_node(id) {
+                        continue;
+                    }
+                    *counts.entry(seg.get_node_type(j).to_string()).or_insert(0) += 1;
+                }
+            });
+        }
+        counts
+    }
+
+    /// Outgoing edges from `node_id` resolved through `snap`, optionally
+    /// filtered by `edge_types`. Mirrors `Shard::get_outgoing_edges` (L0 forward,
+    /// then L1; bloom + zone-map short-circuits; dedup by `(src,dst,type)`,
+    /// tombstone filter) across all shards, minus the write buffer.
+    pub fn get_outgoing_edges_at(
+        &self,
+        snap: &ReadSnapshot,
+        node_id: u128,
+        edge_types: Option<&[&str]>,
+    ) -> Vec<EdgeRecordV2> {
+        let mut results: Vec<EdgeRecordV2> = Vec::new();
+        let mut seen: HashSet<(u128, u128, String)> = HashSet::new();
+
+        // L0 in descriptor (oldest-first) order, matching the live shard which
+        // scans its L0 Vec forward.
+        for desc in &snap.edge_segments {
+            self.with_edge_segment(desc, |seg| {
+                if !seg.maybe_contains_src(node_id) {
+                    return;
+                }
+                if let Some(types) = edge_types {
+                    if !types.iter().any(|t| seg.contains_edge_type(t)) {
+                        return;
+                    }
+                }
+                for j in 0..seg.record_count() {
+                    if seg.get_src(j) != node_id {
+                        continue;
+                    }
+                    let dst = seg.get_dst(j);
+                    let et = seg.get_edge_type(j);
+                    let key = (node_id, dst, et.to_string());
+                    if seen.contains(&key) {
+                        continue;
+                    }
+                    seen.insert(key);
+                    if snap.tombstones.contains_edge(node_id, dst, et) {
+                        continue;
+                    }
+                    if let Some(types) = edge_types {
+                        if !types.contains(&et) {
+                            continue;
+                        }
+                    }
+                    results.push(seg.get_record(j));
+                }
+            });
+        }
+
+        for desc in &snap.l1_edge_segments {
+            self.with_edge_segment(desc, |seg| {
+                if !seg.maybe_contains_src(node_id) {
+                    return;
+                }
+                if let Some(types) = edge_types {
+                    if !types.iter().any(|t| seg.contains_edge_type(t)) {
+                        return;
+                    }
+                }
+                for j in 0..seg.record_count() {
+                    if seg.get_src(j) != node_id {
+                        continue;
+                    }
+                    let dst = seg.get_dst(j);
+                    let et = seg.get_edge_type(j);
+                    let key = (node_id, dst, et.to_string());
+                    if seen.contains(&key) {
+                        continue;
+                    }
+                    seen.insert(key);
+                    if snap.tombstones.contains_edge(node_id, dst, et) {
+                        continue;
+                    }
+                    if let Some(types) = edge_types {
+                        if !types.contains(&et) {
+                            continue;
+                        }
+                    }
+                    results.push(seg.get_record(j));
+                }
+            });
+        }
+
+        results
+    }
+
+    /// Incoming edges to `node_id` resolved through `snap`. Mirrors
+    /// `Shard::get_incoming_edges` (bloom on dst) across all shards, minus the
+    /// write buffer.
+    pub fn get_incoming_edges_at(
+        &self,
+        snap: &ReadSnapshot,
+        node_id: u128,
+        edge_types: Option<&[&str]>,
+    ) -> Vec<EdgeRecordV2> {
+        let mut results: Vec<EdgeRecordV2> = Vec::new();
+        let mut seen: HashSet<(u128, u128, String)> = HashSet::new();
+
+        for desc in &snap.edge_segments {
+            self.with_edge_segment(desc, |seg| {
+                if !seg.maybe_contains_dst(node_id) {
+                    return;
+                }
+                if let Some(types) = edge_types {
+                    if !types.iter().any(|t| seg.contains_edge_type(t)) {
+                        return;
+                    }
+                }
+                for j in 0..seg.record_count() {
+                    if seg.get_dst(j) != node_id {
+                        continue;
+                    }
+                    let src = seg.get_src(j);
+                    let et = seg.get_edge_type(j);
+                    let key = (src, node_id, et.to_string());
+                    if seen.contains(&key) {
+                        continue;
+                    }
+                    seen.insert(key);
+                    if snap.tombstones.contains_edge(src, node_id, et) {
+                        continue;
+                    }
+                    if let Some(types) = edge_types {
+                        if !types.contains(&et) {
+                            continue;
+                        }
+                    }
+                    results.push(seg.get_record(j));
+                }
+            });
+        }
+
+        for desc in &snap.l1_edge_segments {
+            self.with_edge_segment(desc, |seg| {
+                if !seg.maybe_contains_dst(node_id) {
+                    return;
+                }
+                if let Some(types) = edge_types {
+                    if !types.iter().any(|t| seg.contains_edge_type(t)) {
+                        return;
+                    }
+                }
+                for j in 0..seg.record_count() {
+                    if seg.get_dst(j) != node_id {
+                        continue;
+                    }
+                    let src = seg.get_src(j);
+                    let et = seg.get_edge_type(j);
+                    let key = (src, node_id, et.to_string());
+                    if seen.contains(&key) {
+                        continue;
+                    }
+                    seen.insert(key);
+                    if snap.tombstones.contains_edge(src, node_id, et) {
+                        continue;
+                    }
+                    if let Some(types) = edge_types {
+                        if !types.contains(&et) {
+                            continue;
+                        }
+                    }
+                    results.push(seg.get_record(j));
+                }
+            });
+        }
+
+        results
+    }
+
+    /// All live edges resolved through `snap`. Mirrors `Shard::iter_all_edges`
+    /// (L0 newest→oldest, then L1; dedup by key; tombstone filter) across all
+    /// shards, minus the write buffer.
+    pub fn iter_all_edges_at(&self, snap: &ReadSnapshot) -> Vec<EdgeRecordV2> {
+        let mut results: Vec<EdgeRecordV2> = Vec::new();
+        let mut seen: HashSet<(u128, u128, String)> = HashSet::new();
+
+        for desc in snap.edge_segments.iter().rev() {
+            self.with_edge_segment(desc, |seg| {
+                for j in 0..seg.record_count() {
+                    let src = seg.get_src(j);
+                    let dst = seg.get_dst(j);
+                    let et = seg.get_edge_type(j);
+                    let key = (src, dst, et.to_string());
+                    if seen.contains(&key) {
+                        continue;
+                    }
+                    seen.insert(key);
+                    if snap.tombstones.contains_edge(src, dst, et) {
+                        continue;
+                    }
+                    results.push(seg.get_record(j));
+                }
+            });
+        }
+        for desc in &snap.l1_edge_segments {
+            self.with_edge_segment(desc, |seg| {
+                for j in 0..seg.record_count() {
+                    let src = seg.get_src(j);
+                    let dst = seg.get_dst(j);
+                    let et = seg.get_edge_type(j);
+                    let key = (src, dst, et.to_string());
+                    if seen.contains(&key) {
+                        continue;
+                    }
+                    seen.insert(key);
+                    if snap.tombstones.contains_edge(src, dst, et) {
+                        continue;
+                    }
+                    results.push(seg.get_record(j));
+                }
+            });
+        }
+        results
+    }
+
+    /// Edges of one `edge_type` resolved through `snap`. Mirrors
+    /// `Shard::get_edges_by_type` (L0 newest→oldest, then L1) across all shards,
+    /// minus the write buffer.
+    pub fn get_edges_by_type_at(&self, snap: &ReadSnapshot, edge_type: &str) -> Vec<EdgeRecordV2> {
+        let mut results: Vec<EdgeRecordV2> = Vec::new();
+        let mut seen: HashSet<(u128, u128, String)> = HashSet::new();
+
+        for desc in snap.edge_segments.iter().rev() {
+            if !desc.edge_types.is_empty() && !desc.edge_types.contains(edge_type) {
+                continue;
+            }
+            self.with_edge_segment(desc, |seg| {
+                if !seg.contains_edge_type(edge_type) {
+                    return;
+                }
+                for j in 0..seg.record_count() {
+                    let et = seg.get_edge_type(j);
+                    if et != edge_type {
+                        continue;
+                    }
+                    let src = seg.get_src(j);
+                    let dst = seg.get_dst(j);
+                    let key = (src, dst, et.to_string());
+                    if seen.contains(&key) {
+                        continue;
+                    }
+                    seen.insert(key);
+                    if snap.tombstones.contains_edge(src, dst, et) {
+                        continue;
+                    }
+                    results.push(seg.get_record(j));
+                }
+            });
+        }
+        for desc in &snap.l1_edge_segments {
+            if !desc.edge_types.is_empty() && !desc.edge_types.contains(edge_type) {
+                continue;
+            }
+            self.with_edge_segment(desc, |seg| {
+                if !seg.contains_edge_type(edge_type) {
+                    return;
+                }
+                for j in 0..seg.record_count() {
+                    let et = seg.get_edge_type(j);
+                    if et != edge_type {
+                        continue;
+                    }
+                    let src = seg.get_src(j);
+                    let dst = seg.get_dst(j);
+                    let key = (src, dst, et.to_string());
+                    if seen.contains(&key) {
+                        continue;
+                    }
+                    seen.insert(key);
+                    if snap.tombstones.contains_edge(src, dst, et) {
+                        continue;
+                    }
+                    results.push(seg.get_record(j));
+                }
+            });
+        }
+        results
     }
 }
 
@@ -4318,5 +4925,251 @@ mod tests {
             last,
             first,
         );
+    }
+
+    // -- MVCC Snapshot Reads (RFD-71 B1) ----------------------------------------
+
+    /// Equivalence: snapshot reads on the CURRENT version must match the live
+    /// read path for all committed data (nodes, edges, counts, by-type).
+    /// The only difference (write-buffer freshness) is invisible here because
+    /// commit_batch flushes the buffer to immutable segments before publishing.
+    #[test]
+    fn test_snapshot_reads_equivalent_to_live() {
+        let mut store = MultiShardStore::ephemeral(4);
+        let mut manifest = ManifestStore::ephemeral();
+
+        let n1 = make_node("a/fn1", "FUNCTION", "fn1", "a/file.js");
+        let n2 = make_node("a/fn2", "FUNCTION", "fn2", "a/file.js");
+        let n3 = make_node("b/cls1", "CLASS", "cls1", "b/file.js");
+        let e1 = make_edge("a/fn1", "a/fn2", "CALLS");
+        let e2 = make_edge("a/fn1", "b/cls1", "CONTAINS");
+
+        store
+            .commit_batch(
+                vec![n1.clone(), n2.clone(), n3.clone()],
+                vec![e1.clone(), e2.clone()],
+                &["a/file.js".to_string(), "b/file.js".to_string()],
+                HashMap::new(),
+                &mut manifest,
+            )
+            .unwrap();
+
+        let snap = store.snapshot(&manifest);
+
+        // get_node / node_exists
+        for n in [&n1, &n2, &n3] {
+            assert_eq!(store.get_node_at(&snap, n.id), store.get_node(n.id));
+            assert!(store.get_node_at(&snap, n.id).is_some());
+            assert_eq!(store.node_exists_at(&snap, n.id), store.node_exists(n.id));
+        }
+        assert!(store.get_node_at(&snap, 0xdead_beef).is_none());
+        assert!(!store.node_exists_at(&snap, 0xdead_beef));
+
+        // node_count + count_by_type
+        let live_total: usize = store.count_by_type().values().sum();
+        assert_eq!(store.node_count_at(&snap), 3);
+        assert_eq!(store.node_count_at(&snap), live_total);
+        assert_eq!(store.count_by_type_at(&snap), store.count_by_type());
+
+        // find_nodes (all, by type, by file)
+        let mut snap_all: Vec<u128> =
+            store.find_nodes_at(&snap, None, None).iter().map(|n| n.id).collect();
+        let mut live_all: Vec<u128> =
+            store.find_nodes(None, None).iter().map(|n| n.id).collect();
+        snap_all.sort_unstable();
+        live_all.sort_unstable();
+        assert_eq!(snap_all, live_all);
+
+        let snap_fns = store.find_nodes_at(&snap, Some("FUNCTION"), None);
+        assert_eq!(snap_fns.len(), 2);
+        assert!(snap_fns.iter().all(|n| n.node_type == "FUNCTION"));
+        let snap_b = store.find_nodes_at(&snap, None, Some("b/file.js"));
+        assert_eq!(snap_b.len(), 1);
+        assert_eq!(snap_b[0].id, n3.id);
+
+        // outgoing / incoming / by-type / iter_all
+        let mut snap_out: Vec<u128> = store
+            .get_outgoing_edges_at(&snap, n1.id, None)
+            .iter()
+            .map(|e| e.dst)
+            .collect();
+        let mut live_out: Vec<u128> =
+            store.get_outgoing_edges(n1.id, None).iter().map(|e| e.dst).collect();
+        snap_out.sort_unstable();
+        live_out.sort_unstable();
+        assert_eq!(snap_out, live_out);
+        assert_eq!(snap_out.len(), 2);
+
+        let calls_only = store.get_outgoing_edges_at(&snap, n1.id, Some(&["CALLS"]));
+        assert_eq!(calls_only.len(), 1);
+        assert_eq!(calls_only[0].edge_type, "CALLS");
+
+        let incoming = store.get_incoming_edges_at(&snap, n2.id, None);
+        assert_eq!(incoming.len(), 1);
+        assert_eq!(incoming[0].src, n1.id);
+
+        assert_eq!(store.get_edges_by_type_at(&snap, "CALLS").len(), 1);
+        assert_eq!(store.get_edges_by_type_at(&snap, "CONTAINS").len(), 1);
+        assert_eq!(store.iter_all_edges_at(&snap).len(), 2);
+    }
+
+    /// The CORE MVCC property: a captured snapshot is version-pinned. After more
+    /// commits (add + re-analyze/tombstone), reads through the OLD snapshot still
+    /// return the OLD version's state; a FRESH snapshot returns the new state.
+    #[test]
+    fn test_snapshot_version_isolation() {
+        let mut store = MultiShardStore::ephemeral(4);
+        let mut manifest = ManifestStore::ephemeral();
+
+        // Commit 1: file a/file.js has nodeA + nodeB, with an edge A->B.
+        let a_v1 = make_node_with_hash("a/nodeA", "FUNCTION", "nodeA", "a/file.js", 11);
+        let b = make_node_with_hash("a/nodeB", "FUNCTION", "nodeB", "a/file.js", 22);
+        let ab = make_edge("a/nodeA", "a/nodeB", "CALLS");
+        store
+            .commit_batch(
+                vec![a_v1.clone(), b.clone()],
+                vec![ab.clone()],
+                &["a/file.js".to_string()],
+                HashMap::new(),
+                &mut manifest,
+            )
+            .unwrap();
+
+        // Pin the snapshot of version V (2 nodes, 1 edge, A has hash 11).
+        let snap_v1 = store.snapshot(&manifest);
+        assert_eq!(store.node_count_at(&snap_v1), 2);
+        assert_eq!(store.get_node_at(&snap_v1, a_v1.id).unwrap().content_hash, 11);
+        assert_eq!(store.iter_all_edges_at(&snap_v1).len(), 1);
+
+        // Commit 2: re-analyze a/file.js — nodeA gets a NEW content hash (33),
+        // nodeB is DROPPED (so it must be tombstoned), edge A->B removed, and a
+        // brand-new file b/file.js adds nodeC.
+        let a_v2 = make_node_with_hash("a/nodeA", "FUNCTION", "nodeA", "a/file.js", 33);
+        let c = make_node_with_hash("b/nodeC", "CLASS", "nodeC", "b/file.js", 44);
+        store
+            .commit_batch(
+                vec![a_v2.clone(), c.clone()],
+                vec![],
+                &["a/file.js".to_string(), "b/file.js".to_string()],
+                HashMap::new(),
+                &mut manifest,
+            )
+            .unwrap();
+
+        // ── OLD snapshot is UNCHANGED (version isolation) ──
+        assert_eq!(
+            store.node_count_at(&snap_v1),
+            2,
+            "old snapshot must still see exactly the v1 node set"
+        );
+        // A still has the OLD hash; B is still alive; C does not exist yet.
+        assert_eq!(
+            store.get_node_at(&snap_v1, a_v1.id).unwrap().content_hash,
+            11,
+            "old snapshot must see A's v1 content hash, not the re-analyzed one"
+        );
+        assert!(
+            store.node_exists_at(&snap_v1, b.id),
+            "old snapshot must still see nodeB (tombstoned only in the new version)"
+        );
+        assert!(
+            store.get_node_at(&snap_v1, c.id).is_none(),
+            "old snapshot must NOT see nodeC from the later commit"
+        );
+        assert_eq!(
+            store.iter_all_edges_at(&snap_v1).len(),
+            1,
+            "old snapshot must still see the A->B edge"
+        );
+
+        // ── FRESH snapshot sees the NEW state ──
+        let snap_v2 = store.snapshot(&manifest);
+        assert!(snap_v2.version > snap_v1.version, "new snapshot is a later version");
+        assert_eq!(
+            store.node_count_at(&snap_v2),
+            2,
+            "new version: A (re-analyzed) + C; B tombstoned"
+        );
+        assert_eq!(
+            store.get_node_at(&snap_v2, a_v1.id).unwrap().content_hash,
+            33,
+            "new snapshot sees A's re-analyzed content hash"
+        );
+        assert!(
+            !store.node_exists_at(&snap_v2, b.id),
+            "new snapshot must NOT see tombstoned nodeB"
+        );
+        assert!(
+            store.node_exists_at(&snap_v2, c.id),
+            "new snapshot sees the newly added nodeC"
+        );
+        assert_eq!(
+            store.iter_all_edges_at(&snap_v2).len(),
+            0,
+            "new version dropped the A->B edge"
+        );
+
+        // Sanity: the FRESH snapshot matches the LIVE read path.
+        let live_total: usize = store.count_by_type().values().sum();
+        assert_eq!(store.node_count_at(&snap_v2), live_total);
+        assert_eq!(store.get_node_at(&snap_v2, a_v1.id), store.get_node(a_v1.id));
+        assert_eq!(store.node_exists_at(&snap_v2, b.id), store.node_exists(b.id));
+    }
+
+    /// Disk-backed equivalent of version isolation: exercises the SegmentCache
+    /// (real `NodeSegmentV2::open` from files) rather than the ephemeral live-shard
+    /// fallback, and proves the captured snapshot stays pinned across commits.
+    #[test]
+    fn test_snapshot_version_isolation_disk() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path();
+        let mut store = MultiShardStore::create(db_path, 4).unwrap();
+        let mut manifest = ManifestStore::create(db_path).unwrap();
+
+        let a_v1 = make_node_with_hash("a/nodeA", "FUNCTION", "nodeA", "a/file.js", 11);
+        let b = make_node_with_hash("a/nodeB", "FUNCTION", "nodeB", "a/file.js", 22);
+        store
+            .commit_batch(
+                vec![a_v1.clone(), b.clone()],
+                vec![make_edge("a/nodeA", "a/nodeB", "CALLS")],
+                &["a/file.js".to_string()],
+                HashMap::new(),
+                &mut manifest,
+            )
+            .unwrap();
+
+        let snap_v1 = store.snapshot(&manifest);
+        assert_eq!(store.node_count_at(&snap_v1), 2);
+        assert_eq!(store.get_node_at(&snap_v1, a_v1.id).unwrap().content_hash, 11);
+        assert_eq!(store.get_node_at(&snap_v1, a_v1.id), store.get_node(a_v1.id));
+
+        // Re-analyze: A new hash, B dropped (tombstoned).
+        let a_v2 = make_node_with_hash("a/nodeA", "FUNCTION", "nodeA", "a/file.js", 33);
+        store
+            .commit_batch(
+                vec![a_v2.clone()],
+                vec![],
+                &["a/file.js".to_string()],
+                HashMap::new(),
+                &mut manifest,
+            )
+            .unwrap();
+
+        // Old snapshot pinned: A=11, B alive, 1 edge.
+        assert_eq!(store.node_count_at(&snap_v1), 2);
+        assert_eq!(store.get_node_at(&snap_v1, a_v1.id).unwrap().content_hash, 11);
+        assert!(store.node_exists_at(&snap_v1, b.id));
+        assert_eq!(store.iter_all_edges_at(&snap_v1).len(), 1);
+
+        // Fresh snapshot: A=33, B tombstoned, edge gone.
+        let snap_v2 = store.snapshot(&manifest);
+        assert!(snap_v2.version > snap_v1.version);
+        assert_eq!(store.get_node_at(&snap_v2, a_v1.id).unwrap().content_hash, 33);
+        assert!(!store.node_exists_at(&snap_v2, b.id));
+        assert_eq!(store.node_count_at(&snap_v2), 1);
+        assert_eq!(store.iter_all_edges_at(&snap_v2).len(), 0);
+
+        // SegmentCache actually opened segments (disk path exercised).
+        assert!(!store.segment_cache.is_empty());
     }
 }
