@@ -5226,6 +5226,11 @@ mod loe_tests {
             },
         ], false);
 
+        // MVCC (B2: visibility = publish): reads resolve through the published
+        // manifest version, NOT the staged write buffer. Flush so the fixture is
+        // visible to the builtins' get_node/get_edges_by_type before querying.
+        engine.flush().unwrap();
+
         engine
     }
 
