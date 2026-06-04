@@ -1005,6 +1005,23 @@ impl GraphEngineV2 {
         self.store.commit_build_peak()
     }
 
+    /// MVCC C1: mean group-commit batch size (commits folded per durable
+    /// `commit_edit`). `> 1.0` ⇒ fsync amortization is firing. Diagnostics / the
+    /// C1 acceptance test.
+    pub fn group_commit_batch_size(&self) -> f64 {
+        self.store.group_commit_batch_size()
+    }
+
+    /// MVCC C1: number of group-commit batches (leader publishes) so far.
+    pub fn group_commit_batches(&self) -> u64 {
+        self.store.group_commit_batches()
+    }
+
+    /// MVCC C1: peak single-batch fan-in (largest batch a leader drained).
+    pub fn group_commit_batch_size_max(&self) -> u64 {
+        self.store.group_commit_batch_size_max()
+    }
+
     /// Compact with statistics returned (for benchmarks and diagnostics).
     ///
     /// Unlike `GraphStore::compact()` which returns `Result<()>`, this method

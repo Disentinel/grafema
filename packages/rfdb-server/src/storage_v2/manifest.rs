@@ -1072,6 +1072,15 @@ impl ManifestStore {
         &self.current
     }
 
+    /// The configured durability mode (Strict = fsync, Relaxed = no fsync).
+    ///
+    /// Exposed so the lock-free segment-write phase (MVCC C1) can fsync the
+    /// immutable segment files BEFORE they become visible via the manifest
+    /// commit, without re-serializing the build path through the manifest mutex.
+    pub fn durability(&self) -> DurabilityMode {
+        self.durability
+    }
+
     /// The current published version's cumulative tombstone set (MVCC B3).
     ///
     /// This is the authoritative version-state tombstone set. A snapshot clones

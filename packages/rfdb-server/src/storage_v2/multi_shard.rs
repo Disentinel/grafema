@@ -160,6 +160,87 @@ pub struct MultiShardStore {
     /// probe wrapping the whole call, which 2PL would also trip (3 threads block
     /// on the lock while 1 runs). This counter excludes the serialized region.
     commit_build_peak: Arc<std::sync::atomic::AtomicU64>,
+
+    /// MVCC C1 (group-commit): the batch queue + leader flag that amortize the
+    /// commit-point durable write (manifest edit + index + current.json, each an
+    /// fsync under `DurabilityMode::Strict`) across a BATCH of concurrent
+    /// commits. Each commit finishes its LOCK-FREE build/flush (phases 0–7),
+    /// then enqueues its prepared output here; one thread becomes LEADER and
+    /// performs ONE `commit_edit` for the whole non-conflicting batch (one set of
+    /// fsyncs instead of N). Followers wait on their own private result slot — no
+    /// lock held while waiting. This `Mutex` is a strict LEAF: it is acquired
+    /// only to enqueue / drain, and is ALWAYS released before the manifest mutex
+    /// (the single serialization point) is taken, so it introduces no lock-order
+    /// cycle. See `commit_batch_private` phase 8.
+    group_commit: Arc<GroupCommitQueue>,
+
+    /// MVCC C1: running sum of batch sizes ever drained by a leader, and the
+    /// number of batches (leader publishes). `sum / count` is the observed mean
+    /// group-commit batch size — the amortization witness (`> 1` ⇒ real batching;
+    /// `== 1` ⇒ no merging happened and C1 gave no fsync savings). Exposed via
+    /// `group_commit_batch_size()` / `group_commit_batches()`.
+    group_commit_batch_size_sum: Arc<std::sync::atomic::AtomicU64>,
+    group_commit_batches: Arc<std::sync::atomic::AtomicU64>,
+    /// MVCC C1: largest single batch a leader ever drained (peak fan-in).
+    group_commit_batch_size_max: Arc<std::sync::atomic::AtomicU64>,
+}
+
+// ── MVCC C1: group-commit batch protocol ───────────────────────────
+
+/// A commit that has finished its LOCK-FREE build/flush (phases 0–7 of
+/// `commit_batch_private`) and is waiting at the commit point to be published by
+/// the batch leader. Carries everything the leader needs to fold this commit
+/// into the single batched `ManifestEdit`, plus a private result slot the leader
+/// writes and signals once the batch is durable.
+struct PendingCommit {
+    /// Conflict key: the files this commit (re-)analysed.
+    changed_files: Vec<String>,
+    /// Snapshot version this commit was built against (inter-batch conflict key).
+    snapshot_version: u64,
+    /// Immutable segment descriptors written privately in phase 7.
+    new_node_descs: Vec<SegmentDescriptor>,
+    new_edge_descs: Vec<SegmentDescriptor>,
+    /// Tombstone delta this commit adds (file's old nodes/edges).
+    tombstone_node_ids: Vec<u128>,
+    tombstone_edge_keys: Vec<(u128, u128, Arc<str>)>,
+    /// Re-added ids that supersede (un-tombstone) any matching tombstone.
+    untombstoned_nodes: Vec<u128>,
+    /// String form for the on-disk O(Δ) `removed_tombstone_edges` edit record.
+    untombstoned_edges: Vec<(u128, u128, String)>,
+    /// Arc<str>-interned form for removing from the leader's cumulative
+    /// Arc-keyed tombstone set (avoids a per-commit intern pool in the leader).
+    untombstoned_edges_arc: Vec<(u128, u128, Arc<str>)>,
+    /// Opened segments to register in the cache after a successful publish.
+    opened_nodes: Vec<(u64, Arc<NodeSegmentV2>)>,
+    opened_edges: Vec<(u64, Arc<EdgeSegmentV2>)>,
+    /// Tags this commit carries (the batched edit takes the leader's union;
+    /// here we keep them so the FIRST non-conflicting commit's tags are applied
+    /// — RFDB tags are rarely set on the hot ingest path).
+    tags: HashMap<String, String>,
+    /// CommitDelta scaffolding the leader echoes back to this commit verbatim
+    /// (only `manifest_version` is filled in by the leader at publish time).
+    delta_template: CommitDelta,
+    /// Private wake slot: `(result, woken)` guarded by a mutex + condvar. The
+    /// leader writes `Some(result)` then notifies; the owner waits on it. NOT
+    /// shared with any other commit ⇒ no cross-commit lock contention / cycle.
+    result: Arc<(std::sync::Mutex<Option<Result<CommitDelta>>>, std::sync::Condvar)>,
+}
+
+/// The shared group-commit queue. `pending` collects commits that have reached
+/// the commit point; `leader_active` is the single-leader flag. Guarded by one
+/// `Mutex` (a leaf — never held across the manifest mutex or any I/O).
+#[derive(Default)]
+struct GroupCommitInner {
+    pending: std::collections::VecDeque<PendingCommit>,
+    /// True while a leader is in its drain→publish→wake cycle. A second arrival
+    /// that sees this becomes a FOLLOWER (enqueue + wait); the active leader will
+    /// drain it in a subsequent round before clearing the flag.
+    leader_active: bool,
+}
+
+#[derive(Default)]
+struct GroupCommitQueue {
+    inner: std::sync::Mutex<GroupCommitInner>,
 }
 
 // ── Constructors ───────────────────────────────────────────────────
@@ -198,6 +279,10 @@ impl MultiShardStore {
             commit_conflict_retries: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             commit_build_in_flight: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             commit_build_peak: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            group_commit: Arc::new(GroupCommitQueue::default()),
+            group_commit_batch_size_sum: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            group_commit_batches: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            group_commit_batch_size_max: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         })
     }
 
@@ -328,6 +413,10 @@ impl MultiShardStore {
             commit_conflict_retries: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             commit_build_in_flight: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             commit_build_peak: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            group_commit: Arc::new(GroupCommitQueue::default()),
+            group_commit_batch_size_sum: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            group_commit_batches: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            group_commit_batch_size_max: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         })
     }
 
@@ -353,6 +442,10 @@ impl MultiShardStore {
             commit_conflict_retries: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             commit_build_in_flight: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             commit_build_peak: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            group_commit: Arc::new(GroupCommitQueue::default()),
+            group_commit_batch_size_sum: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            group_commit_batches: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            group_commit_batch_size_max: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
 }
@@ -2423,6 +2516,32 @@ impl MultiShardStore {
             .load(std::sync::atomic::Ordering::SeqCst)
     }
 
+    /// MVCC C1 amortization witness: mean group-commit batch size (commits
+    /// drained per leader publish). `> 1.0` ⇒ real batching is folding multiple
+    /// commits into one durable `commit_edit` (fsync amortized); `== 1.0` ⇒ no
+    /// merging happened (each commit published alone — C1 gave no fsync savings,
+    /// the bottleneck is elsewhere). Returns `0.0` before any batch.
+    pub fn group_commit_batch_size(&self) -> f64 {
+        use std::sync::atomic::Ordering::Relaxed;
+        let batches = self.group_commit_batches.load(Relaxed);
+        if batches == 0 {
+            return 0.0;
+        }
+        self.group_commit_batch_size_sum.load(Relaxed) as f64 / batches as f64
+    }
+
+    /// MVCC C1: number of leader publishes (batches) so far.
+    pub fn group_commit_batches(&self) -> u64 {
+        self.group_commit_batches
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// MVCC C1: largest single batch a leader ever drained (peak fan-in).
+    pub fn group_commit_batch_size_max(&self) -> u64 {
+        self.group_commit_batch_size_max
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     /// True if this store can take the concurrent commit path (disk-backed).
     pub fn supports_concurrent_commit(&self) -> bool {
         self.db_path.is_some()
@@ -2457,9 +2576,9 @@ impl MultiShardStore {
         // Lock the manifest only long enough to clone the current version's
         // descriptors + tombstone Arc. Released immediately — NOT held across
         // build/flush.
-        let snap = {
+        let (snap, durability) = {
             let m = manifest.lock().unwrap();
-            self.snapshot(&m)
+            (self.snapshot(&m), m.durability())
         };
         let snapshot_version = snap.version;
 
@@ -2640,6 +2759,9 @@ impl MultiShardStore {
         // Opened segments to register in the cache AFTER a successful publish.
         let mut opened_nodes: Vec<(u64, Arc<NodeSegmentV2>)> = Vec::new();
         let mut opened_edges: Vec<(u64, Arc<EdgeSegmentV2>)> = Vec::new();
+        // Shard dirs whose new segment dir-entries must be fsync'd (Strict only)
+        // so a crash cannot lose the directory entry of a just-fsync'd segment.
+        let mut shard_dirs_to_fsync: HashSet<PathBuf> = HashSet::new();
 
         let next_seg_id = || -> u64 {
             let g = manifest.lock().unwrap();
@@ -2660,7 +2782,21 @@ impl MultiShardStore {
             let file = std::fs::File::create(&seg_path)?;
             let mut bw = BufWriter::new(file);
             let meta = writer.finish(&mut bw)?;
-            drop(bw);
+            // MVCC C1 / durability invariant (design §1): the segment must be on
+            // STABLE storage BEFORE the manifest commit makes it visible. The
+            // commit point only fsyncs the manifest + current.json; without this
+            // the atomic current.json swap could reference a segment still in the
+            // page cache (torn publish: visibility advances past durability). We
+            // recover the fd from the BufWriter and fsync it here, in the
+            // lock-free build phase (still fully parallel — no manifest lock).
+            let inner = bw
+                .into_inner()
+                .map_err(|e| GraphError::Io(e.into_error()))?;
+            if durability == crate::storage_v2::manifest::DurabilityMode::Strict {
+                inner.sync_all()?;
+                shard_dirs_to_fsync.insert(shard_path);
+            }
+            drop(inner);
             let seg = Arc::new(NodeSegmentV2::open(&seg_path)?);
             let desc = SegmentDescriptor::from_meta(
                 seg_id,
@@ -2686,7 +2822,16 @@ impl MultiShardStore {
             let file = std::fs::File::create(&seg_path)?;
             let mut bw = BufWriter::new(file);
             let meta = writer.finish(&mut bw)?;
-            drop(bw);
+            // Durability invariant: fsync the edge segment to stable storage
+            // before the manifest commit can reference it (see node loop above).
+            let inner = bw
+                .into_inner()
+                .map_err(|e| GraphError::Io(e.into_error()))?;
+            if durability == crate::storage_v2::manifest::DurabilityMode::Strict {
+                inner.sync_all()?;
+                shard_dirs_to_fsync.insert(shard_path);
+            }
+            drop(inner);
             let seg = Arc::new(EdgeSegmentV2::open(&seg_path)?);
             let desc = SegmentDescriptor::from_meta(
                 seg_id,
@@ -2696,6 +2841,16 @@ impl MultiShardStore {
             );
             opened_edges.push((seg_id, seg));
             new_edge_descs.push(desc);
+        }
+
+        // Durability invariant: fsync each shard directory that gained a new
+        // segment dir-entry, so a crash after the manifest commit cannot find a
+        // fsync'd segment whose directory entry was never flushed (ext4/XFS).
+        // No-op on macOS/Windows. Still lock-free — no manifest lock held.
+        if durability == crate::storage_v2::manifest::DurabilityMode::Strict {
+            for dir in &shard_dirs_to_fsync {
+                fsync_dir(dir)?;
+            }
         }
 
         // ── Phase 6: modified-vs-new counts (vs snapshot old state) ──
@@ -2717,134 +2872,400 @@ impl MultiShardStore {
         }
 
         // Leave the LOCK-FREE region BEFORE taking the commit-point mutex: a
-        // thread blocked on `manifest.lock()` is serialized, NOT overlapping, so
-        // it must not inflate the build/flush parallelism witness.
+        // thread blocked on the group-commit queue / manifest mutex is
+        // serialized, NOT overlapping, so it must not inflate the build/flush
+        // parallelism witness.
         drop(_build_guard);
 
-        // ── Phase 8: commit point (serialized under the manifest mutex) ──
-        let manifest_version = {
-            let mut m = manifest.lock().unwrap();
+        // ── Phase 8: commit point (MVCC C1 — group-commit) ──
+        //
+        // Up to here every commit ran fully lock-free and in parallel (phases
+        // 0–7, the BuildGuard witness above). Now, instead of each commit taking
+        // `manifest.lock()` and paying its own `commit_edit` (3 fsyncs), commits
+        // converge on the group-commit queue: one becomes LEADER and publishes
+        // the whole non-conflicting batch with ONE `commit_edit` (3 fsyncs
+        // amortized over the batch); the rest are FOLLOWERS that wait on a
+        // private result slot. The leader is the ONLY thread that touches the
+        // manifest mutex, so the durable write is still serialized — but once
+        // per batch, not once per commit.
 
-            // 8a. Conflict check: did a version published AFTER our snapshot
-            // touch any of our changed_files? (strict abort-retry, §4)
-            {
-                let conflict_map = self.file_last_committed_version.lock().unwrap();
-                for file in changed_files {
-                    if let Some(&last_v) = conflict_map.get(file.as_str()) {
-                        if last_v > snapshot_version {
-                            drop(conflict_map);
-                            self.commit_conflict_retries
-                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            tracing::warn!(
-                                "commit_conflict: file={}, last_committed_version={}, my_snapshot={} — aborting for retry",
-                                file, last_v, snapshot_version
-                            );
-                            return Err(GraphError::ConflictedCommit {
-                                files: vec![file.clone()],
-                                snapshot_version,
-                                conflicting_version: last_v,
-                            });
-                        }
-                    }
-                }
-            }
+        // Pre-intern this commit's re-added edge keys so the leader can
+        // un-tombstone them without needing this commit's local intern pool.
+        let untombstoned_edges_interned: Vec<(u128, u128, Arc<str>)> = edges
+            .iter()
+            .map(|e| (e.src, e.dst, intern(&e.edge_type)))
+            .collect();
 
-            // 8b. Recompute the published cumulative tombstone set from the
-            // THEN-current version (not our snapshot) so disjoint concurrent
-            // commits compose correctly.
-            let manifest_version = m.current().version + 1;
-            let mut all_tomb_nodes: HashSet<u128> =
-                m.current().tombstoned_node_ids.iter().copied().collect();
-            all_tomb_nodes.extend(&tombstone_node_ids);
-            let mut all_tomb_edges: HashSet<(u128, u128, Arc<str>)> = m
-                .current()
-                .tombstoned_edge_keys
-                .iter()
-                .map(|(s, d, t)| (*s, *d, Arc::from(t.as_str())))
-                .collect();
-            all_tomb_edges.extend(tombstone_edge_keys.iter().cloned());
-            // Re-added nodes/edges supersede their tombstones.
-            for n in &nodes {
-                all_tomb_nodes.remove(&n.id);
-            }
-            for e in &edges {
-                let key = (e.src, e.dst, intern(&e.edge_type));
-                all_tomb_edges.remove(&key);
-            }
-
-            // 8c. Incremental stats.
-            let mut stats = m.current().stats.clone();
-            for s in &new_node_descs {
-                stats.total_nodes += s.record_count;
-                stats.node_segment_count += 1;
-            }
-            for s in &new_edge_descs {
-                stats.total_edges += s.record_count;
-                stats.edge_segment_count += 1;
-            }
-
-            let cp_tomb_nodes: Vec<u128> = all_tomb_nodes.into_iter().collect();
-            let cp_tomb_edges: Vec<(u128, u128, String)> = all_tomb_edges
-                .into_iter()
-                .map(|(s, d, t)| (s, d, t.to_string()))
-                .collect();
-
-            let edit = ManifestEdit {
-                version: manifest_version,
-                parent_version: manifest_version.saturating_sub(1),
-                base_checkpoint: 0,
-                created_at: 0,
-                added_node_segments: new_node_descs.clone(),
-                added_edge_segments: new_edge_descs.clone(),
-                removed_node_segment_ids: Vec::new(),
-                removed_edge_segment_ids: Vec::new(),
-                added_tombstone_nodes: tombstone_node_ids.iter().copied().collect(),
-                removed_tombstone_nodes: untombstoned_nodes.clone(),
-                added_tombstone_edges: tombstone_edge_keys
-                    .iter()
-                    .map(|(s, d, t)| (*s, *d, t.to_string()))
-                    .collect(),
-                removed_tombstone_edges: untombstoned_edges.clone(),
-                l1_node_segments: None,
-                l1_edge_segments: None,
-                last_compaction: None,
-                tags,
-                stats,
-            };
-
-            m.commit_edit(edit, &cp_tomb_nodes, &cp_tomb_edges)?;
-
-            // 8d. Update the conflict map for our changed_files → new version.
-            {
-                let mut conflict_map = self.file_last_committed_version.lock().unwrap();
-                for file in changed_files {
-                    conflict_map.insert(file.clone(), manifest_version);
-                }
-            }
-
-            manifest_version
-        };
-
-        // 8e. Register the freshly-written segments in the cache (post-publish,
-        // so a reader at V+1 gets a hit instead of re-opening).
-        for (id, seg) in opened_nodes {
-            self.segment_cache.insert_node_segment(id, seg);
-        }
-        for (id, seg) in opened_edges {
-            self.segment_cache.insert_edge_segment(id, seg);
-        }
-
-        Ok(CommitDelta {
+        let delta_template = CommitDelta {
             changed_files: changed_files.to_vec(),
             nodes_added: purely_new,
             nodes_removed: tombstone_node_ids.len() as u64,
             nodes_modified,
-            removed_node_ids: tombstone_node_ids.into_iter().collect(),
+            removed_node_ids: tombstone_node_ids.iter().copied().collect(),
             edges_removed,
             changed_node_types,
             changed_edge_types,
-            manifest_version,
-        })
+            // Filled in by the leader at publish time (the batch version).
+            manifest_version: 0,
+        };
+
+        let pending = PendingCommit {
+            changed_files: changed_files.to_vec(),
+            snapshot_version,
+            new_node_descs,
+            new_edge_descs,
+            tombstone_node_ids: tombstone_node_ids.into_iter().collect(),
+            tombstone_edge_keys,
+            untombstoned_nodes,
+            untombstoned_edges,
+            untombstoned_edges_arc: untombstoned_edges_interned,
+            opened_nodes,
+            opened_edges,
+            tags,
+            delta_template,
+            result: Arc::new((std::sync::Mutex::new(None), std::sync::Condvar::new())),
+        };
+
+        self.group_commit_publish(pending, manifest)
+    }
+
+    /// MVCC C1: the group-commit leader/follower publish path.
+    ///
+    /// `pending` is THIS commit's prepared output (already built + flushed,
+    /// lock-free). It is enqueued on the group-commit queue; the caller either
+    /// becomes the LEADER (drains the queue and performs ONE durable
+    /// `commit_edit` for the whole non-conflicting batch) or a FOLLOWER (waits on
+    /// its private result slot). Returns this commit's `CommitDelta`, or
+    /// `GraphError::ConflictedCommit` if it lost an intra- or inter-batch
+    /// conflict (caller retries from a fresh snapshot).
+    ///
+    /// Locking (deadlock-free by construction):
+    /// 1. `group_commit.inner` (LEAF) — held only to enqueue and to drain; never
+    ///    held across `manifest.lock()` nor across any I/O.
+    /// 2. `manifest` (the single serialization point) — held only by the leader,
+    ///    only for the batched `commit_edit`.
+    /// 3. each commit's private `result` mutex/condvar — not shared with any
+    ///    other commit.
+    /// No cycle: queue → manifest → (private slot). Followers wait OUTSIDE every
+    /// critical section.
+    fn group_commit_publish(
+        &self,
+        pending: PendingCommit,
+        manifest: &std::sync::Mutex<ManifestStore>,
+    ) -> Result<CommitDelta> {
+        use std::sync::atomic::Ordering;
+
+        let result_slot = Arc::clone(&pending.result);
+        let am_i_leader;
+        {
+            let mut q = self.group_commit.inner.lock().unwrap();
+            q.pending.push_back(pending);
+            if !q.leader_active {
+                q.leader_active = true;
+                am_i_leader = true;
+            } else {
+                am_i_leader = false;
+            }
+            // Queue lock released here — BEFORE any manifest lock / wait.
+        }
+
+        if !am_i_leader {
+            // FOLLOWER: wait on the private slot. No other lock held. A bounded
+            // wait makes a leader crash detectable instead of an eternal hang.
+            let (lock, cvar) = &*result_slot;
+            let mut guard = lock.lock().unwrap();
+            let mut waited = std::time::Duration::ZERO;
+            let step = std::time::Duration::from_secs(5);
+            while guard.is_none() {
+                let (g, timeout) = cvar.wait_timeout(guard, step).unwrap();
+                guard = g;
+                if guard.is_some() {
+                    break;
+                }
+                if timeout.timed_out() {
+                    waited += step;
+                    if waited >= std::time::Duration::from_secs(45) {
+                        // Leader vanished (panicked before waking us). Surface a
+                        // hard error rather than hang; the caller's bounded retry
+                        // loop re-attempts from a fresh snapshot.
+                        return Err(GraphError::ConflictedCommit {
+                            files: Vec::new(),
+                            snapshot_version: 0,
+                            conflicting_version: 0,
+                        });
+                    }
+                }
+            }
+            return guard.take().unwrap();
+        }
+
+        // LEADER: drain → publish (ONE durable write) → wake followers. Loop so a
+        // commit that arrived after we set leader_active but is still in the
+        // queue gets published in a follow-up round before we clear the flag.
+        let mut my_result: Option<Result<CommitDelta>> = None;
+        loop {
+            // 8.1 Drain the current pending set under the LEAF queue lock.
+            let batch: Vec<PendingCommit> = {
+                let mut q = self.group_commit.inner.lock().unwrap();
+                if q.pending.is_empty() {
+                    q.leader_active = false;
+                    break;
+                }
+                q.pending.drain(..).collect()
+            };
+
+            // 8.2 Publish the batch with ONE durable commit_edit (under the
+            // manifest mutex — the single serialization point).
+            let mut wakeups: Vec<(
+                Arc<(std::sync::Mutex<Option<Result<CommitDelta>>>, std::sync::Condvar)>,
+                Result<CommitDelta>,
+                bool, // is_self
+            )> = Vec::new();
+
+            {
+                let mut m = manifest.lock().unwrap();
+                let base_version = m.current().version;
+                let batch_version = base_version + 1;
+
+                // Cumulative tombstone sets start from the THEN-current version.
+                let mut all_tomb_nodes: HashSet<u128> =
+                    m.current().tombstoned_node_ids.iter().copied().collect();
+                let mut all_tomb_edges: HashSet<(u128, u128, Arc<str>)> = m
+                    .current()
+                    .tombstoned_edge_keys
+                    .iter()
+                    .map(|(s, d, t)| (*s, *d, Arc::from(t.as_str())))
+                    .collect();
+
+                let mut stats = m.current().stats.clone();
+
+                // Merged edit accumulators.
+                let mut merged_node_descs: Vec<SegmentDescriptor> = Vec::new();
+                let mut merged_edge_descs: Vec<SegmentDescriptor> = Vec::new();
+                let mut merged_added_tomb_nodes: Vec<u128> = Vec::new();
+                let mut merged_removed_tomb_nodes: Vec<u128> = Vec::new();
+                let mut merged_added_tomb_edges: Vec<(u128, u128, String)> = Vec::new();
+                let mut merged_removed_tomb_edges: Vec<(u128, u128, String)> = Vec::new();
+                let mut merged_tags: HashMap<String, String> = HashMap::new();
+                let mut committed_files: Vec<String> = Vec::new();
+                let mut opened_nodes_all: Vec<(u64, Arc<NodeSegmentV2>)> = Vec::new();
+                let mut opened_edges_all: Vec<(u64, Arc<EdgeSegmentV2>)> = Vec::new();
+
+                // Intra-batch conflict tracking: the FIRST commit to claim a file
+                // wins; any later commit in this batch touching the same file is
+                // a loser (abort+retry — loud counter). Inter-batch conflict via
+                // the file_last_committed_version check.
+                //
+                // file_last_committed_version is written ONLY by a leader holding
+                // THIS manifest mutex, so while we hold it the map is stable — we
+                // read it directly (no clone) under its own short leaf lock.
+                let mut seen_files: HashSet<String> = HashSet::new();
+                let mut winner_count: u64 = 0;
+
+                for pc in batch.into_iter() {
+                    let is_self = Arc::ptr_eq(&pc.result, &result_slot);
+
+                    // Conflict 1: intra-batch same-file overlap.
+                    let intra_conflict: Vec<String> = pc
+                        .changed_files
+                        .iter()
+                        .filter(|f| seen_files.contains(f.as_str()))
+                        .cloned()
+                        .collect();
+
+                    // Conflict 2: inter-batch — a committed version AFTER this
+                    // commit's snapshot already touched one of its files.
+                    let inter_conflict: Option<(String, u64)> = {
+                        let cm = self.file_last_committed_version.lock().unwrap();
+                        pc.changed_files.iter().find_map(|f| {
+                            cm.get(f.as_str())
+                                .filter(|&&last_v| last_v > pc.snapshot_version)
+                                .map(|&last_v| (f.clone(), last_v))
+                        })
+                    };
+
+                    if !intra_conflict.is_empty() || inter_conflict.is_some() {
+                        self.commit_conflict_retries.fetch_add(1, Ordering::Relaxed);
+                        let (files, conflicting_version) = if let Some((f, v)) = inter_conflict {
+                            tracing::warn!(
+                                "commit_conflict (inter-batch): file={}, last_committed_version={}, my_snapshot={} — aborting for retry",
+                                f, v, pc.snapshot_version
+                            );
+                            (vec![f], v)
+                        } else {
+                            tracing::warn!(
+                                "commit_conflict (intra-batch): files={:?} already claimed in this batch — aborting for retry",
+                                intra_conflict
+                            );
+                            (intra_conflict, batch_version)
+                        };
+                        let err = Err(GraphError::ConflictedCommit {
+                            files,
+                            snapshot_version: pc.snapshot_version,
+                            conflicting_version,
+                        });
+                        wakeups.push((Arc::clone(&pc.result), err, is_self));
+                        continue;
+                    }
+
+                    // Winner: claim its files and fold its deltas into the batch.
+                    winner_count += 1;
+                    for f in &pc.changed_files {
+                        seen_files.insert(f.clone());
+                    }
+                    committed_files.extend(pc.changed_files.iter().cloned());
+
+                    for s in &pc.new_node_descs {
+                        stats.total_nodes += s.record_count;
+                        stats.node_segment_count += 1;
+                    }
+                    for s in &pc.new_edge_descs {
+                        stats.total_edges += s.record_count;
+                        stats.edge_segment_count += 1;
+                    }
+
+                    merged_node_descs.extend(pc.new_node_descs.iter().cloned());
+                    merged_edge_descs.extend(pc.new_edge_descs.iter().cloned());
+
+                    // Tombstone cumulative-set replay (add then remove re-added).
+                    all_tomb_nodes.extend(pc.tombstone_node_ids.iter().copied());
+                    all_tomb_edges.extend(pc.tombstone_edge_keys.iter().cloned());
+                    for id in &pc.untombstoned_nodes {
+                        all_tomb_nodes.remove(id);
+                    }
+                    for key in &pc.untombstoned_edges_arc {
+                        all_tomb_edges.remove(key);
+                    }
+
+                    // Edit-level tombstone deltas (the on-disk O(Δ) record).
+                    merged_added_tomb_nodes.extend(pc.tombstone_node_ids.iter().copied());
+                    merged_removed_tomb_nodes.extend(pc.untombstoned_nodes.iter().copied());
+                    merged_added_tomb_edges.extend(
+                        pc.tombstone_edge_keys
+                            .iter()
+                            .map(|(s, d, t)| (*s, *d, t.to_string())),
+                    );
+                    merged_removed_tomb_edges.extend(pc.untombstoned_edges.iter().cloned());
+
+                    for (k, v) in &pc.tags {
+                        merged_tags.entry(k.clone()).or_insert_with(|| v.clone());
+                    }
+
+                    opened_nodes_all.extend(pc.opened_nodes.into_iter());
+                    opened_edges_all.extend(pc.opened_edges.into_iter());
+
+                    let mut delta = pc.delta_template;
+                    delta.manifest_version = batch_version;
+                    wakeups.push((Arc::clone(&pc.result), Ok(delta), is_self));
+                }
+
+                // If the WHOLE batch conflicted (no winner), there is nothing to
+                // publish — skip the durable write entirely (no empty version).
+                // Any winner ⇒ advance one version (even a no-op winner gets an
+                // honest version so its CommitDelta.manifest_version is real).
+                if winner_count > 0 {
+                    let cp_tomb_nodes: Vec<u128> = all_tomb_nodes.into_iter().collect();
+                    let cp_tomb_edges: Vec<(u128, u128, String)> = all_tomb_edges
+                        .into_iter()
+                        .map(|(s, d, t)| (s, d, t.to_string()))
+                        .collect();
+
+                    let edit = ManifestEdit {
+                        version: batch_version,
+                        parent_version: base_version,
+                        base_checkpoint: 0,
+                        created_at: 0,
+                        added_node_segments: merged_node_descs,
+                        added_edge_segments: merged_edge_descs,
+                        removed_node_segment_ids: Vec::new(),
+                        removed_edge_segment_ids: Vec::new(),
+                        added_tombstone_nodes: merged_added_tomb_nodes,
+                        removed_tombstone_nodes: merged_removed_tomb_nodes,
+                        added_tombstone_edges: merged_added_tomb_edges,
+                        removed_tombstone_edges: merged_removed_tomb_edges,
+                        l1_node_segments: None,
+                        l1_edge_segments: None,
+                        last_compaction: None,
+                        tags: merged_tags,
+                        stats,
+                    };
+
+                    // ONE durable commit for the whole batch (fsync amortized).
+                    if let Err(e) = m.commit_edit(edit, &cp_tomb_nodes, &cp_tomb_edges) {
+                        // commit_edit failed durably: fail EVERY winner in this
+                        // batch (their segments are orphaned + GC'd). Surface the
+                        // error to self; wake others with a conflict so they
+                        // retry. We re-map Ok(...) wakeups → error.
+                        let msg = e.to_string();
+                        for (slot, res, is_self_w) in wakeups.iter_mut() {
+                            if res.is_ok() {
+                                *res = Err(GraphError::ConflictedCommit {
+                                    files: Vec::new(),
+                                    snapshot_version: 0,
+                                    conflicting_version: 0,
+                                });
+                            }
+                            let _ = slot;
+                            let _ = is_self_w;
+                        }
+                        tracing::error!("group_commit: durable commit_edit failed: {msg}");
+                    } else {
+                        // Update the conflict map for every committed file → V.
+                        let mut cm = self.file_last_committed_version.lock().unwrap();
+                        for f in &committed_files {
+                            cm.insert(f.clone(), batch_version);
+                        }
+                        drop(cm);
+
+                        // Register all batch segments in the cache (post-publish).
+                        for (id, seg) in opened_nodes_all {
+                            self.segment_cache.insert_node_segment(id, seg);
+                        }
+                        for (id, seg) in opened_edges_all {
+                            self.segment_cache.insert_edge_segment(id, seg);
+                        }
+                    }
+                }
+
+                // Manifest mutex released at the end of this block.
+                drop(m);
+
+                // Record batch-size metrics (winners + losers = drained count).
+                let batch_len = wakeups.len() as u64;
+                self.group_commit_batch_size_sum
+                    .fetch_add(batch_len, Ordering::Relaxed);
+                self.group_commit_batches.fetch_add(1, Ordering::Relaxed);
+                let mut mx = self.group_commit_batch_size_max.load(Ordering::Relaxed);
+                while batch_len > mx {
+                    match self.group_commit_batch_size_max.compare_exchange(
+                        mx,
+                        batch_len,
+                        Ordering::Relaxed,
+                        Ordering::Relaxed,
+                    ) {
+                        Ok(_) => break,
+                        Err(actual) => mx = actual,
+                    }
+                }
+            }
+
+            // 8.3 Wake followers (outside the manifest mutex). Each writes its
+            // own private slot + notifies. The leader keeps its OWN result to
+            // return directly (no self-wakeup needed).
+            for (slot, res, is_self) in wakeups.into_iter() {
+                if is_self {
+                    my_result = Some(res);
+                } else {
+                    let (lock, cvar) = &*slot;
+                    *lock.lock().unwrap() = Some(res);
+                    cvar.notify_one();
+                }
+            }
+            // Loop: drain any commits that queued while we published.
+        }
+
+        // The leader's own commit is always part of the FIRST drained batch.
+        my_result.expect("leader must produce its own result in the first batch")
     }
 }
 
@@ -3217,6 +3638,24 @@ impl MultiShardStore {
 /// Compute shard directory path: `<db_path>/segments/<shard_id>/`
 fn shard_dir(db_path: &Path, shard_id: u16) -> PathBuf {
     db_path.join("segments").join(format!("{:02}", shard_id))
+}
+
+/// Fsync a directory so newly-created entries (segment files) are durable.
+///
+/// On ext4/XFS a freshly created file's directory entry is not guaranteed to be
+/// on stable storage just because the file's data was `sync_all`'d — the parent
+/// directory must be fsync'd too. No-op on macOS/Windows (directory metadata is
+/// auto-persisted there).
+#[cfg(target_os = "linux")]
+fn fsync_dir(path: &Path) -> Result<()> {
+    let dir = std::fs::File::open(path)?;
+    dir.sync_all()?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn fsync_dir(_path: &Path) -> Result<()> {
+    Ok(())
 }
 
 // ── Tests ──────────────────────────────────────────────────────────
@@ -6355,6 +6794,158 @@ mod tests {
         assert!(
             speedup > 1.3,
             "expected >1.3x speedup from concurrent commits, got {:.2}x (serial={:?}, concurrent={:?})",
+            speedup, serial, concurrent
+        );
+    }
+
+    /// MVCC C1 acceptance (group-commit). The B4 probe above uses BIG commits so
+    /// the lock-free build dominates and arrivals at the commit point are
+    /// staggered (batch size ≈ 1). C1's win is amortizing the commit-point fsync,
+    /// which is only the bottleneck when commits are SMALL and MANY (the
+    /// fsync-per-commit cost dominates the per-commit build). This probe uses
+    /// small commits under `Strict` durability so the durable manifest write is
+    /// the serial cost C1 batches away. It reports the wall speedup AND the
+    /// observed `group_commit_batch_size` (the amortization witness). Concurrent
+    /// ⇒ MANDATORY in-process watchdog (abort @60s) so a deadlock fails LOUD.
+    ///
+    /// `#[ignore]` by default (timing probe; run with `--ignored`).
+    #[test]
+    #[ignore]
+    fn c1_group_commit_speedup() {
+        use std::sync::{Arc as StdArc, Mutex};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::thread;
+        use std::time::{Duration, Instant};
+        use crate::storage_v2::manifest::DurabilityMode;
+
+        const THREADS: usize = 16;
+        const COMMITS_PER_THREAD: usize = 60;
+        const NODES_PER_COMMIT: usize = 4; // SMALL ⇒ fsync-per-commit dominates.
+        let durability = DurabilityMode::Strict;
+
+        let make_workload = |t: usize| -> Vec<(String, Vec<NodeRecordV2>)> {
+            (0..COMMITS_PER_THREAD)
+                .map(|c| {
+                    let file = format!("src/d{}/f{}_{}.js", t, t, c);
+                    let nodes: Vec<NodeRecordV2> = (0..NODES_PER_COMMIT)
+                        .map(|n| {
+                            make_node(
+                                &format!("FUNCTION:t{}c{}n{}@{}", t, c, n, file),
+                                "FUNCTION",
+                                &format!("t{}c{}n{}", t, c, n),
+                                &file,
+                            )
+                        })
+                        .collect();
+                    (file, nodes)
+                })
+                .collect()
+        };
+
+        // ── Serial baseline ──
+        let serial = {
+            let dir = tempfile::TempDir::new().unwrap();
+            let db_path = dir.path().join("c1_serial.rfdb");
+            std::fs::create_dir_all(&db_path).unwrap();
+            let store = MultiShardStore::create(&db_path, THREADS as u16).unwrap();
+            let manifest = Mutex::new(ManifestStore::create_with_config(&db_path, durability).unwrap());
+            let workloads: Vec<_> = (0..THREADS).map(make_workload).collect();
+            let t0 = Instant::now();
+            for wl in &workloads {
+                for (file, nodes) in wl {
+                    store
+                        .commit_batch_private(nodes.clone(), vec![], &[file.clone()], HashMap::new(), &manifest, &[])
+                        .unwrap();
+                }
+            }
+            t0.elapsed()
+        };
+
+        // In-process watchdog: covers ONLY the concurrent section (where a
+        // deadlock could occur). A hang must abort LOUD, never wait. The serial
+        // baseline above is excluded — it cannot deadlock and is just slow under
+        // many Strict fsyncs.
+        let done = StdArc::new(AtomicBool::new(false));
+        let done_w = StdArc::clone(&done);
+        let watchdog = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(60);
+            while Instant::now() < deadline {
+                if done_w.load(Ordering::Relaxed) {
+                    return;
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+            eprintln!("C1 WATCHDOG: group-commit concurrent section exceeded 60s — DEADLOCK. Aborting.");
+            std::process::abort();
+        });
+
+        // ── Concurrent (group-commit) ──
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("c1_par.rfdb");
+        std::fs::create_dir_all(&db_path).unwrap();
+        let store = StdArc::new(MultiShardStore::create(&db_path, THREADS as u16).unwrap());
+        let manifest = StdArc::new(Mutex::new(ManifestStore::create_with_config(&db_path, durability).unwrap()));
+        let workloads: Vec<_> = (0..THREADS).map(make_workload).collect();
+        let t0 = Instant::now();
+        let handles: Vec<_> = workloads
+            .into_iter()
+            .map(|wl| {
+                let store = StdArc::clone(&store);
+                let manifest = StdArc::clone(&manifest);
+                thread::spawn(move || {
+                    for (file, nodes) in wl {
+                        // Disjoint files ⇒ no conflicts; bounded retry just in case.
+                        let mut attempt = 0;
+                        loop {
+                            match store.commit_batch_private(
+                                nodes.clone(), vec![], &[file.clone()], HashMap::new(), &manifest, &[],
+                            ) {
+                                Ok(_) => break,
+                                Err(GraphError::ConflictedCommit { .. }) => {
+                                    attempt += 1;
+                                    assert!(attempt < 64, "retry bound exceeded");
+                                    continue;
+                                }
+                                Err(e) => panic!("unexpected commit error: {}", e),
+                            }
+                        }
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        let concurrent = t0.elapsed();
+        done.store(true, Ordering::Relaxed);
+        watchdog.join().unwrap();
+
+        let speedup = serial.as_secs_f64() / concurrent.as_secs_f64();
+        eprintln!(
+            "C1 group-commit: serial={:?}, concurrent={:?}, speedup={:.2}x | \
+             batches={}, mean_batch_size={:.2}, max_batch_size={}, conflict_retries={} \
+             ({} threads, {} commits/thread, {} nodes/commit, Strict)",
+            serial, concurrent, speedup,
+            store.group_commit_batches(),
+            store.group_commit_batch_size(),
+            store.group_commit_batch_size_max(),
+            store.commit_conflict_retries(),
+            THREADS, COMMITS_PER_THREAD, NODES_PER_COMMIT,
+        );
+
+        // Integrity: every disjoint file committed exactly its nodes, no loss.
+        let snap = store.snapshot(&manifest.lock().unwrap());
+        let expected = THREADS * COMMITS_PER_THREAD * NODES_PER_COMMIT;
+        assert_eq!(
+            store.node_count_at(&snap) as usize, expected,
+            "all disjoint nodes must survive (no lost update)"
+        );
+        assert_eq!(store.commit_conflict_retries(), 0, "disjoint files must not conflict");
+
+        // C1 headline: amortized fsync ⇒ materially better than the B4 baseline.
+        assert!(
+            speedup > 2.5,
+            "C1 group-commit expected >2.5x speedup, got {:.2}x (serial={:?}, concurrent={:?})",
             speedup, serial, concurrent
         );
     }
