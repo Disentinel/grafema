@@ -982,7 +982,7 @@ pub async fn clear_context_on_workers(
 /// Index-worthy node types: these form the export index for cross-file resolution.
 const INDEX_NODE_TYPES: &[&str] = &[
     "EXPORT_BINDING", "EXPORT", "MODULE",
-    "FUNCTION", "VARIABLE", "CONSTANT", "CLASS", "INTERFACE", "TYPE_ALIAS", "ENUM",
+    "FUNCTION", "VARIABLE", "CONSTANT", "CLASS", "INTERFACE", "TYPE_ALIAS", "ENUM", "NAMESPACE",
 ];
 
 /// Per-file resolve: builds an export index on the worker, then resolves each
@@ -1032,7 +1032,7 @@ pub async fn resolve_per_file(
             // For declarations, only include exported ones in the index.
             // Note: JS analyzer's `exported` flag may be false for `export function foo()`
             // due to OXC AST walking order. We also check the file's exports list below.
-            if matches!(*node_type, "FUNCTION" | "VARIABLE" | "CONSTANT" | "CLASS" | "INTERFACE" | "TYPE_ALIAS" | "ENUM") {
+            if matches!(*node_type, "FUNCTION" | "VARIABLE" | "CONSTANT" | "CLASS" | "INTERFACE" | "TYPE_ALIAS" | "ENUM" | "NAMESPACE") {
                 if !node.exported {
                     continue;
                 }
@@ -1547,5 +1547,27 @@ mod tests {
             serde_json::from_str(output.nodes[0].metadata.as_ref().unwrap()).unwrap();
         assert_eq!(meta["_source"], "plugin-x");
         assert_eq!(meta["_generation"], 1);
+    }
+
+    /// Regression for REG-1139: every exported-declaration node type that the
+    /// grafema-resolve export index recognizes (see `nodeToExportEntries` /
+    /// `gnExported` arm in `packages/grafema-resolve/src/ImportResolution.hs`)
+    /// MUST also be queried by the orchestrator and sent to `build-index` — else
+    /// those exports are dark in the index and imports of them fail with
+    /// "no matching export" (e.g. `export namespace X {}`).
+    #[test]
+    fn index_node_types_cover_exported_declarations() {
+        // Mirrors grafema-resolve ImportResolution.hs `gnExported` export arm.
+        let resolver_exported_decl_types = [
+            "FUNCTION", "VARIABLE", "CONSTANT", "CLASS", "INTERFACE", "TYPE_ALIAS", "ENUM",
+            "NAMESPACE",
+        ];
+        for t in resolver_exported_decl_types {
+            assert!(
+                INDEX_NODE_TYPES.contains(&t),
+                "INDEX_NODE_TYPES is missing exported-declaration type {t:?} that the \
+                 resolver indexes — its exports become unresolvable (REG-1139)"
+            );
+        }
     }
 }
