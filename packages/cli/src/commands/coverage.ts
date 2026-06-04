@@ -68,8 +68,31 @@ function printCoverageReport(result: CoverageResult, verbose: boolean): void {
   console.log('File breakdown:');
   console.log(`  Total files:     ${result.total}`);
   console.log(`  Analyzed:        ${result.analyzed.count} (${result.percentages.analyzed}%) - in graph`);
+  if (result.failed.count > 0) {
+    console.log(`  Failed:          ${result.failed.count} (${result.percentages.failed}%) - skipped/failed during analysis`);
+  }
   console.log(`  Unsupported:     ${result.unsupported.count} (${result.percentages.unsupported}%) - no indexer available`);
   console.log(`  Unreachable:     ${result.unreachable.count} (${result.percentages.unreachable}%) - not imported from entrypoints`);
+
+  // Failed files breakdown (skipped/failed during analysis)
+  if (result.failed.count > 0) {
+    console.log('');
+    console.log('Failed files by reason:');
+    const sortedCategories = Object.entries(result.failed.byCategory)
+      .sort((a, b) => b[1].length - a[1].length);
+
+    for (const [category, files] of sortedCategories) {
+      console.log(`  ${category}: ${files.length} files`);
+      if (verbose) {
+        for (const file of files.slice(0, 10)) {
+          console.log(`    - ${file}`);
+        }
+        if (files.length > 10) {
+          console.log(`    ... and ${files.length - 10} more`);
+        }
+      }
+    }
+  }
 
   // Unsupported files breakdown
   if (result.unsupported.count > 0) {

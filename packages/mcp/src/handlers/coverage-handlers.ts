@@ -31,8 +31,18 @@ export async function handleGetCoverage(args: GetCoverageArgs): Promise<ToolResu
     output += `File breakdown:\n`;
     output += `  Total files:     ${result.total}\n`;
     output += `  Analyzed:        ${result.analyzed.count} (${result.percentages.analyzed}%) - in graph\n`;
+    if (result.failed.count > 0) {
+      output += `  Failed:          ${result.failed.count} (${result.percentages.failed}%) - skipped/failed during analysis\n`;
+    }
     output += `  Unsupported:     ${result.unsupported.count} (${result.percentages.unsupported}%) - no indexer available\n`;
     output += `  Unreachable:     ${result.unreachable.count} (${result.percentages.unreachable}%) - not imported from entrypoints\n`;
+
+    if (result.failed.count > 0) {
+      output += `\nFailed files by reason:\n`;
+      for (const [category, files] of Object.entries(result.failed.byCategory)) {
+        output += `  ${category}: ${files.length} files\n`;
+      }
+    }
 
     if (result.unsupported.count > 0) {
       output += `\nUnsupported files by extension:\n`;
