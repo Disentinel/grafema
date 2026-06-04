@@ -459,6 +459,19 @@ async fn main() -> Result<()> {
                 return Ok(());
             }
 
+            // RFDB MVCC C2/C3: a FULL analysis is a bulk ingest — defer per-commit
+            // fsync to a single barrier (EndBulkLoad) and let the server route
+            // CommitBatch through the serial auto-compacting path that bounds the
+            // live segment count. Incremental runs are small and deliberately skip
+            // compaction, so they stay on the normal concurrent path.
+            let use_bulk = changed_files.len() == files.len();
+            if use_bulk {
+                rfdb.begin_bulk_load()
+                    .await
+                    .context("Failed to enter RFDB bulk-load mode")?;
+                tracing::info!(files = changed_files.len(), "RFDB bulk-load mode armed (full analysis)");
+            }
+
             // 3b. Partition by language
             let (js_files, hs_files, rs_files, java_files, kotlin_files, py_files, go_files, cpp_files, swift_files, objc_files, beam_files, rb_files) = config::partition_by_language(&changed_files);
             tracing::info!(
@@ -1786,6 +1799,17 @@ async fn main() -> Result<()> {
             // remain queryable; full compaction runs on next full analysis or when
             // L0 accumulation triggers it. This avoids O(total_graph) compaction
             // cost for small changes.
+            // RFDB MVCC C2/C3: leave bulk-load mode before the post-analysis
+            // compaction — runs the single durable barrier (fsync the whole
+            // current version once) + bounded reclaim and restores per-commit
+            // durability, so the subsequent compact()/rebuild_indexes run Strict.
+            if use_bulk {
+                rfdb.end_bulk_load()
+                    .await
+                    .context("Failed to leave RFDB bulk-load mode (durable barrier)")?;
+                tracing::info!("RFDB bulk-load barrier complete (state durable)");
+            }
+
             let compact_start = std::time::Instant::now();
             profile!("compact_start", "analysis_nodes" => total_nodes, "analysis_edges" => total_edges);
             let is_incremental = changed_files.len() < files.len();

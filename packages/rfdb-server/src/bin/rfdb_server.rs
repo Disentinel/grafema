@@ -1773,7 +1773,11 @@ fn handle_request_with_cancel(
                     engine
                         .as_any()
                         .downcast_ref::<GraphEngineV2>()
-                        .map(|v2| v2.supports_concurrent_commit())
+                        // MVCC C3.a: while bulk-load is armed, force the serial
+                        // &mut self path (handle_commit_batch_v2 → commit_batch_ext)
+                        // so per-commit auto-compaction fires and bounds the live
+                        // segment count. The concurrent &self path cannot compact.
+                        .map(|v2| v2.supports_concurrent_commit() && !v2.bulk_load_active())
                         .unwrap_or(false)
                 }
                 None => false,

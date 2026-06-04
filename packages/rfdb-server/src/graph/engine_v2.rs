@@ -1163,6 +1163,15 @@ impl GraphEngineV2 {
         self.store.supports_concurrent_commit()
     }
 
+    /// MVCC C3.a: is bulk-load mode currently armed? While bulk-load is active
+    /// the server routes `CommitBatch` through the serial `&mut self`
+    /// (`commit_batch_ext`) path so per-commit auto-compaction can bound the
+    /// live segment count — the concurrent `&self` path cannot auto-compact
+    /// (compaction mutates live shard state in place, no interior locks).
+    pub fn bulk_load_active(&self) -> bool {
+        self.bulk_load_active
+    }
+
     /// MVCC B4: count of conflict-driven commit retries (diagnostics / tests).
     pub fn commit_conflict_retries(&self) -> u64 {
         self.store.commit_conflict_retries()
