@@ -12,7 +12,9 @@ use std::time::Instant;
 
 use crate::error::Result;
 use crate::storage::{AttrQuery, EdgeRecord, FieldDecl, NodeRecord};
-use crate::storage_v2::manifest::{ManifestStore, SnapshotDiff, SnapshotInfo};
+use crate::storage_v2::manifest::{
+    DurabilityMode, ManifestStore, SnapshotDiff, SnapshotInfo,
+};
 use crate::storage_v2::multi_shard::MultiShardStore;
 use crate::storage_v2::resource::{ResourceManager, SystemResources, TuningProfile};
 use crate::storage_v2::compaction::{CompactionConfig, CompactionResult};
@@ -756,6 +758,37 @@ impl GraphStore for GraphEngineV2 {
         // version. Force a tombstone-only version so the delete is persisted.
         if tombstones_changed && flushed == 0 {
             self.manifest.get_mut().unwrap().commit_tombstone_only()?;
+        }
+        Ok(())
+    }
+
+    fn begin_bulk_load(&mut self) -> Result<()> {
+        // MVCC C2.3: flip the manifest durability flag to Relaxed. The commit
+        // point reads `m.durability()` under the manifest Mutex, so every
+        // commit that grabs the lock after this runs with deferred fsync. This
+        // method is reached only via the engine write lock (with_engine_write),
+        // which serializes against in-flight commits — no race on the flag.
+        self.manifest
+            .lock()
+            .unwrap()
+            .set_durability(DurabilityMode::Relaxed)
+    }
+
+    fn end_bulk_load(&mut self) -> Result<()> {
+        // MVCC C2.3 / C2.2: first flush any data still in write buffers so the
+        // published manifest version reflects all bulk commits, THEN run the
+        // durable barrier over that published version, THEN restore Strict.
+        //
+        // Crash contract (C2.4): if make_durable returns Err, we do NOT flip
+        // back to Strict — the barrier is incomplete, and the caller surfaces
+        // the error so the operator re-runs (deferred-durability data may be
+        // partially on disk; a reopen sees a consistent older-or-equal version,
+        // never corruption — current.json is swapped atomically and last).
+        self.flush()?;
+        {
+            let mut m = self.manifest.lock().unwrap();
+            m.make_durable()?;
+            m.set_durability(DurabilityMode::Strict)?;
         }
         Ok(())
     }

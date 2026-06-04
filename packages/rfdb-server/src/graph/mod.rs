@@ -110,6 +110,25 @@ pub trait GraphStore: Send + Sync {
     /// Rebuild all secondary indexes from current segment (called after bulk load).
     fn rebuild_indexes(&mut self) -> Result<()>;
 
+    /// Enter bulk-load mode (MVCC C2): defer per-commit fsync until the durable
+    /// barrier. Commits after this run with deferred durability — faster, but a
+    /// crash before [`end_bulk_load`](Self::end_bulk_load) may lose recent
+    /// commits (the documented "crash mid-bulk ⇒ re-run analysis" contract).
+    ///
+    /// Default: no-op (engines without a runtime durability switch ignore it).
+    fn begin_bulk_load(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    /// Exit bulk-load mode (MVCC C2): run the durable barrier (fsync the entire
+    /// current published state), then restore per-commit durability. After this
+    /// returns `Ok`, a reopen from disk sees the full bulk-loaded state.
+    ///
+    /// Default: no-op.
+    fn end_bulk_load(&mut self) -> Result<()> {
+        Ok(())
+    }
+
     /// Компактировать delta log в immutable segments
     fn compact(&mut self) -> Result<()>;
 

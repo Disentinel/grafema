@@ -215,6 +215,11 @@ pub enum Request {
 
     // Control
     Flush,
+    /// MVCC C2: enter bulk-load mode — defer per-commit fsync until EndBulkLoad.
+    BeginBulkLoad,
+    /// MVCC C2: run the durable barrier (fsync the full published state) and
+    /// restore per-commit durability.
+    EndBulkLoad,
     Compact,
     Clear,
     Ping,
@@ -1138,6 +1143,8 @@ fn get_operation_name(request: &Request) -> String {
         Request::GetNodeIdentifier { .. } => "GetNodeIdentifier".to_string(),
         Request::UpdateNodeVersion { .. } => "UpdateNodeVersion".to_string(),
         Request::DeclareFields { .. } => "DeclareFields".to_string(),
+        Request::BeginBulkLoad => "BeginBulkLoad".to_string(),
+        Request::EndBulkLoad => "EndBulkLoad".to_string(),
     }
 }
 
@@ -1477,6 +1484,24 @@ fn handle_request_with_cancel(
         Request::Flush => {
             with_engine_write(session, |engine| {
                 match engine.flush() {
+                    Ok(()) => Response::Ok { ok: true },
+                    Err(e) => Response::Error { error: e.to_string() },
+                }
+            })
+        }
+
+        Request::BeginBulkLoad => {
+            with_engine_write(session, |engine| {
+                match engine.begin_bulk_load() {
+                    Ok(()) => Response::Ok { ok: true },
+                    Err(e) => Response::Error { error: e.to_string() },
+                }
+            })
+        }
+
+        Request::EndBulkLoad => {
+            with_engine_write(session, |engine| {
+                match engine.end_bulk_load() {
                     Ok(()) => Response::Ok { ok: true },
                     Err(e) => Response::Error { error: e.to_string() },
                 }

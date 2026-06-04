@@ -1081,6 +1081,165 @@ impl ManifestStore {
         self.durability
     }
 
+    /// Runtime durability switch (MVCC C2.1 — bulk-load mode).
+    ///
+    /// Flips `self.durability`, which the commit/publish point reads under the
+    /// manifest Mutex (`multi_shard.rs` reads `m.durability()` while holding the
+    /// lock). Always invoked via the engine write lock (`with_engine_write`),
+    /// which serializes against all in-flight commits — so there is no race on
+    /// the field: any commit that grabs the lock AFTER this call observes the
+    /// new mode; a commit already past its `durability()` read finishes in its
+    /// old mode (at worst one extra/skipped fsync at the boundary — never a
+    /// correctness issue, since `make_durable` re-fsyncs everything anyway).
+    ///
+    /// `&mut self`: exclusive borrow (callers hold `manifest.get_mut()` or an
+    /// engine write lock), so the mutation needs no further synchronization.
+    pub fn set_durability(&mut self, mode: DurabilityMode) -> Result<()> {
+        self.durability = mode;
+        Ok(())
+    }
+
+    /// Durable barrier (MVCC C2.2 — end of bulk load).
+    ///
+    /// Makes the ENTIRE current published manifest version durable in one pass,
+    /// regardless of what `Relaxed` mode skipped during the bulk phase. After
+    /// this returns `Ok`, a reopen from disk sees the full current state,
+    /// bit-faithful (the C2.4 guarantee for "crash AFTER EndBulkLoad").
+    ///
+    /// Steps (in stable-storage dependency order — data before pointer):
+    /// 1. Fsync every segment file referenced by the CURRENT published version
+    ///    (all shards, L0 + L1, nodes + edges). These files were already written
+    ///    during the bulk phase (only their fsync was deferred).
+    /// 2. Re-persist the manifest-chain artifacts of the current version under
+    ///    `Strict` (the checkpoint `{v}.json`, every replayed `{v}.edit.json`,
+    ///    and `manifest_index.json`) — in `Relaxed` these were written with the
+    ///    rename but without the fsync, so their bytes may still be in page cache.
+    /// 3. Fsync each unique shard directory + the manifests directory + db root
+    ///    (dir-entry durability on ext4/XFS; no-op on macOS/Windows).
+    /// 4. Re-persist the manifest pointer `current.json` under `Strict` (one
+    ///    fsync) so the version pointer itself is on stable storage.
+    ///
+    /// O(segments + chain-length), but ONCE. Conservative on partial failure:
+    /// it does NOT early-return on the first segment fsync error — it records
+    /// the first error, continues fsyncing the rest (so a single missing/corrupt
+    /// segment does not leave most of the state un-flushed), and returns the
+    /// aggregate failure at the end. The caller (`end_bulk_load`) must NOT flip
+    /// the mode back to `Strict` if this returns `Err`.
+    ///
+    /// Risk note (C2 risk #1): segments are enumerated from `self.current()` —
+    /// the immutable published snapshot — NOT from live shard write buffers.
+    /// Unflushed live writes are intentionally ignored; only the published
+    /// version is made durable. Safe because this runs under an exclusive borrow
+    /// (engine write lock), so no commit can publish a new version concurrently.
+    pub fn make_durable(&mut self) -> Result<()> {
+        // Ephemeral store: nothing on disk to fsync.
+        let Some(db_path) = self.db_path.clone() else {
+            return Ok(());
+        };
+
+        let mut first_err: Option<GraphError> = None;
+        let mut shard_dirs: HashSet<u16> = HashSet::new();
+
+        // Step 1: fsync every segment of the current published version.
+        // Enumerate from the immutable snapshot (risk #1: not live shard state).
+        let current = &self.current;
+        let all_segments = current
+            .node_segments
+            .iter()
+            .chain(current.edge_segments.iter())
+            .chain(current.l1_node_segments.iter())
+            .chain(current.l1_edge_segments.iter());
+
+        for desc in all_segments {
+            let shard_id = desc.shard_id.unwrap_or(0);
+            shard_dirs.insert(shard_id);
+            let suffix = match desc.segment_type {
+                SegmentType::Nodes => "nodes",
+                SegmentType::Edges => "edges",
+            };
+            let seg_path = db_path
+                .join("segments")
+                .join(format!("{:02}", shard_id))
+                .join(format!("seg_{:06}_{}.seg", desc.segment_id, suffix));
+            // Conservative (risk #2 / #6): on a per-segment fsync failure, record
+            // the first error and keep going — do NOT early-return, so the rest
+            // of the state still reaches stable storage.
+            if let Err(e) = fsync_path(&seg_path) {
+                if first_err.is_none() {
+                    first_err = Some(e);
+                }
+            }
+        }
+
+        // Step 2: re-persist the manifest-chain artifacts of the current version
+        // under Strict (in Relaxed they were renamed but not fsync'd). Re-write
+        // by reading + atomic_write_json(Strict) so the on-disk tail is durable.
+        let version = current.version;
+        let checkpoint = highest_checkpoint_at_or_below(&db_path, version)?;
+        // The checkpoint full-snapshot file.
+        if let Err(e) =
+            resync_json_strict(&manifest_file_path(&db_path, checkpoint))
+        {
+            if first_err.is_none() {
+                first_err = Some(e);
+            }
+        }
+        // Every replayed edit file on top of the checkpoint.
+        for v in (checkpoint + 1)..=version {
+            if let Err(e) =
+                resync_json_strict(&manifest_edit_file_path(&db_path, v))
+            {
+                if first_err.is_none() {
+                    first_err = Some(e);
+                }
+            }
+        }
+        // The manifest index.
+        if let Err(e) =
+            resync_json_strict(&db_path.join("manifest_index.json"))
+        {
+            if first_err.is_none() {
+                first_err = Some(e);
+            }
+        }
+
+        // Step 3: fsync each unique shard dir + manifests dir + db root.
+        for shard_id in &shard_dirs {
+            let dir = db_path.join("segments").join(format!("{:02}", shard_id));
+            if let Err(e) = fsync_directory(&dir) {
+                if first_err.is_none() {
+                    first_err = Some(e);
+                }
+            }
+        }
+        if let Err(e) = fsync_directory(&db_path.join("manifests")) {
+            if first_err.is_none() {
+                first_err = Some(e);
+            }
+        }
+        if let Err(e) = fsync_directory(&db_path) {
+            if first_err.is_none() {
+                first_err = Some(e);
+            }
+        }
+
+        // Step 4: re-persist the version pointer under Strict (one fsync). Do
+        // this LAST so current.json is only durable once everything it points at
+        // is durable — preserving the "visibility never advances past
+        // durability" invariant even across the barrier.
+        let pointer = CurrentPointer::new(version);
+        if let Err(e) = pointer.write_to(&db_path, DurabilityMode::Strict) {
+            if first_err.is_none() {
+                first_err = Some(e);
+            }
+        }
+
+        match first_err {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
+    }
+
     /// The current published version's cumulative tombstone set (MVCC B3).
     ///
     /// This is the authoritative version-state tombstone set. A snapshot clones
@@ -1877,6 +2036,28 @@ fn atomic_write_json<T: Serialize>(
 fn read_json<T: DeserializeOwned>(path: &Path) -> Result<T> {
     let file = File::open(path)?;
     Ok(serde_json::from_reader(file)?)
+}
+
+/// Fsync a single file's data to stable storage (MVCC C2 durable barrier).
+///
+/// Opens the existing file read-only and `sync_all`s it. Used by
+/// `make_durable` to flush segment files whose fsync was deferred in
+/// `Relaxed` mode.
+fn fsync_path(path: &Path) -> Result<()> {
+    let file = File::open(path)?;
+    file.sync_all()?;
+    Ok(())
+}
+
+/// Re-fsync an already-written JSON artifact in place (MVCC C2 durable barrier).
+///
+/// In `Relaxed` mode `atomic_write_json` renamed the file into place but did
+/// not fsync its data, so the bytes may still be in page cache. Opening it and
+/// `sync_all`-ing flushes the existing on-disk file to stable storage without
+/// rewriting it (no temp/rename — the content is already correct, only its
+/// durability was deferred).
+fn resync_json_strict(path: &Path) -> Result<()> {
+    fsync_path(path)
 }
 
 /// Fsync directory to persist directory entry changes.
