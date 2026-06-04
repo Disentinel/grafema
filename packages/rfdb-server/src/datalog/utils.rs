@@ -268,6 +268,48 @@ fn positive_can_place_and_provides(
             });
             (all_bound, HashSet::new())
         }
+        "resolved_import" => {
+            // resolved_import(ModFile, TargetFn): placeable if either arg is bound; provides the other.
+            if args.len() < 2 {
+                return (true, HashSet::new());
+            }
+            let a0 = is_bound_or_const(&args[0], bound);
+            let a1 = is_bound_or_const(&args[1], bound);
+            if a0 || a1 {
+                let provides = free_vars(args, bound);
+                (true, provides)
+            } else {
+                (false, HashSet::new()) // both unbound — defer until one is bound
+            }
+        }
+        "same_dir_module" => {
+            // same_dir_module(AnchorFile, SiblingFile): AnchorFile (arg0) must be bound; provides arg1.
+            let can = !args.is_empty() && is_bound_or_const(&args[0], bound);
+            let mut provides = HashSet::new();
+            if can {
+                if let Some(Term::Var(v)) = args.get(1) {
+                    if !bound.contains(v) {
+                        provides.insert(v.clone());
+                    }
+                }
+            }
+            (can, provides)
+        }
+        "shared_import_count" => {
+            // shared_import_count(FileA, FileB, N): FileA and FileB must be bound; provides N.
+            let can = args.len() >= 2
+                && is_bound_or_const(&args[0], bound)
+                && is_bound_or_const(&args[1], bound);
+            let mut provides = HashSet::new();
+            if can {
+                if let Some(Term::Var(v)) = args.get(2) {
+                    if !bound.contains(v) {
+                        provides.insert(v.clone());
+                    }
+                }
+            }
+            (can, provides)
+        }
         _ => {
             // Unknown/derived predicate — always placeable, provides all free Var args.
             // Derived predicates bind variables via their rule head projection,

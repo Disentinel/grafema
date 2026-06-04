@@ -586,6 +586,9 @@ impl<'a> EvaluatorExplain<'a> {
             "not_starts_with" => self.eval_not_starts_with(atom),
             "string_contains" => self.eval_string_contains(atom),
             "parent_function" => self.eval_parent_function(atom),
+            "resolved_import" => self.eval_resolved_import(atom),
+            "same_dir_module" => self.eval_same_dir_module(atom),
+            "shared_import_count" => self.eval_shared_import_count(atom),
             _ => self.eval_derived_checked(atom)?,
         };
 
@@ -611,6 +614,9 @@ impl<'a> EvaluatorExplain<'a> {
             "not_starts_with" => self.eval_not_starts_with(atom),
             "string_contains" => self.eval_string_contains(atom),
             "parent_function" => self.eval_parent_function(atom),
+            "resolved_import" => self.eval_resolved_import(atom),
+            "same_dir_module" => self.eval_same_dir_module(atom),
+            "shared_import_count" => self.eval_shared_import_count(atom),
             _ => self.eval_derived(atom),
         };
 
@@ -1236,6 +1242,183 @@ impl<'a> EvaluatorExplain<'a> {
     ///
     /// Mirror of Evaluator::eval_parent_function with stat tracking.
     /// See eval.rs for full documentation.
+    fn eval_resolved_import(&mut self, atom: &Atom) -> Vec<Bindings> {
+        let args = atom.args();
+        if args.len() < 2 {
+            return vec![];
+        }
+        let mod_term = &args[0];
+        let fn_term = &args[1];
+
+        self.stats.edges_by_type_calls += 1;
+        let edges = self.engine.get_edges_by_type("IMPORTS_FROM");
+        let mut out = Vec::new();
+
+        match fn_term {
+            Term::Const(fn_str) => {
+                let fid: u128 = match fn_str.parse() {
+                    Ok(v) => v,
+                    Err(_) => return vec![],
+                };
+                for e in &edges {
+                    if e.dst != fid {
+                        continue;
+                    }
+                    self.stats.get_node_calls += 1;
+                    if let Some(src) = self.engine.get_node(e.src) {
+                        self.stats.nodes_visited += 1;
+                        if let Some(f) = src.file {
+                            out.extend(Self::bind_str(mod_term, &f));
+                        }
+                    }
+                }
+            }
+            _ => {
+                let mod_file = match mod_term {
+                    Term::Const(s) => s.as_str(),
+                    _ => return vec![],
+                };
+                for e in &edges {
+                    self.stats.get_node_calls += 1;
+                    if let Some(src) = self.engine.get_node(e.src) {
+                        self.stats.nodes_visited += 1;
+                        if src.file.as_deref() == Some(mod_file) {
+                            out.extend(Self::bind_id(fn_term, e.dst));
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    fn eval_same_dir_module(&mut self, atom: &Atom) -> Vec<Bindings> {
+        let args = atom.args();
+        if args.len() < 2 {
+            return vec![];
+        }
+        let anchor_file = match &args[0] {
+            Term::Const(s) => s.clone(),
+            _ => return vec![],
+        };
+        let sibling_term = &args[1];
+        let anchor_dir = anchor_file
+            .rsplit_once('/')
+            .map(|(dir, _)| dir)
+            .unwrap_or("");
+
+        self.stats.find_by_type_calls += 1;
+        let module_ids = self.engine.find_by_type("MODULE");
+        let mut out = Vec::new();
+        for id in module_ids {
+            self.stats.get_node_calls += 1;
+            if let Some(node) = self.engine.get_node(id) {
+                self.stats.nodes_visited += 1;
+                if let Some(f) = node.file {
+                    if f == anchor_file {
+                        continue;
+                    }
+                    let sibling_dir = f.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+                    if sibling_dir == anchor_dir {
+                        out.extend(Self::bind_str(sibling_term, &f));
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    fn eval_shared_import_count(&mut self, atom: &Atom) -> Vec<Bindings> {
+        let args = atom.args();
+        if args.len() < 3 {
+            return vec![];
+        }
+        let file_a = match &args[0] {
+            Term::Const(s) => s.clone(),
+            _ => return vec![],
+        };
+        let file_b = match &args[1] {
+            Term::Const(s) => s.clone(),
+            _ => return vec![],
+        };
+        let n_term = &args[2];
+
+        let mut names_for = |file: &str| -> HashSet<String> {
+            let query = crate::storage::AttrQuery {
+                node_type: Some("IMPORT_BINDING".to_string()),
+                file: Some(file.to_string()),
+                ..Default::default()
+            };
+            let ids = self.engine.find_by_attr(&query);
+            self.stats.find_by_type_calls += 1;
+            ids.into_iter()
+                .filter_map(|id| {
+                    self.stats.get_node_calls += 1;
+                    let n = self.engine.get_node(id)?;
+                    self.stats.nodes_visited += 1;
+                    n.name
+                })
+                .collect()
+        };
+
+        let names_a = names_for(&file_a);
+        let names_b = names_for(&file_b);
+        let count = names_a.intersection(&names_b).count();
+        let count_str = count.to_string();
+
+        match n_term {
+            Term::Var(v) => {
+                let mut b = Bindings::new();
+                b.set(v, Value::Str(count_str));
+                vec![b]
+            }
+            Term::Const(expected) => {
+                if expected == &count_str {
+                    vec![Bindings::new()]
+                } else {
+                    vec![]
+                }
+            }
+            Term::Wildcard => vec![Bindings::new()],
+        }
+    }
+
+    fn bind_str(term: &Term, val: &str) -> Vec<Bindings> {
+        match term {
+            Term::Var(v) => {
+                let mut b = Bindings::new();
+                b.set(v, Value::Str(val.to_string()));
+                vec![b]
+            }
+            Term::Const(c) => {
+                if c.as_str() == val {
+                    vec![Bindings::new()]
+                } else {
+                    vec![]
+                }
+            }
+            Term::Wildcard => vec![Bindings::new()],
+        }
+    }
+
+    fn bind_id(term: &Term, id: u128) -> Vec<Bindings> {
+        match term {
+            Term::Var(v) => {
+                let mut b = Bindings::new();
+                b.set(v, Value::Id(id));
+                vec![b]
+            }
+            Term::Const(c) => {
+                if c.parse::<u128>().ok() == Some(id) {
+                    vec![Bindings::new()]
+                } else {
+                    vec![]
+                }
+            }
+            Term::Wildcard => vec![Bindings::new()],
+        }
+    }
+
     fn eval_parent_function(&mut self, atom: &Atom) -> Vec<Bindings> {
         let args = atom.args();
         if args.len() < 2 {

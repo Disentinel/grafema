@@ -4939,3 +4939,388 @@ mod numeric_cmp_tests {
         assert_eq!(result[2].atom().predicate(), "gt");
     }
 }
+
+// ============================================================================
+// LoE (Locus-of-Enforcement) built-in predicate tests
+// ============================================================================
+
+mod loe_tests {
+    use super::*;
+    use crate::graph::{GraphEngineV2, GraphStore};
+    use crate::storage::{NodeRecord, EdgeRecord};
+    use crate::datalog::eval::{Evaluator, Value};
+    use crate::datalog::eval_explain::EvaluatorExplain;
+    use crate::datalog::parser::{parse_rule, parse_atom};
+
+    /// Build a 3-module fixture for LoE detection:
+    ///
+    ///   helperFile: src/helpers/authHelpers.ts
+    ///     FUNCTION(100, "guard", exported=true)
+    ///
+    ///   serviceA: src/services/serviceA.ts  — MODULE(200)
+    ///     IMPORT_BINDING(401, "guard")       → IMPORTS_FROM → FUNCTION(100)
+    ///     IMPORT_BINDING(402, "WebSocket")
+    ///     IMPORT_BINDING(403, "raceTimeout")
+    ///     IMPORT_BINDING(404, "ILogService")
+    ///
+    ///   serviceB: src/services/serviceB.ts  — MODULE(300) — SAME DIR as serviceA
+    ///     IMPORT_BINDING(501, "WebSocket")
+    ///     IMPORT_BINDING(502, "raceTimeout")
+    ///     IMPORT_BINDING(503, "ILogService")
+    ///     (NO import of "guard" — this is the shed sibling)
+    ///
+    ///   otherModule: src/other/otherModule.ts — MODULE(600) — different dir
+    ///     IMPORT_BINDING(601, "WebSocket")
+    ///     (should not appear in loe_shed results)
+    fn setup_loe_graph() -> GraphEngineV2 {
+        let mut engine = GraphEngineV2::create_ephemeral();
+
+        engine.add_nodes(vec![
+            // The guard function (exported helper)
+            NodeRecord {
+                id: 100,
+                node_type: Some("FUNCTION".to_string()),
+                name: Some("guard".to_string()),
+                file: Some("src/helpers/authHelpers.ts".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: true,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+                semantic_id: None,
+            },
+            // MODULE for serviceA (the importing sibling)
+            NodeRecord {
+                id: 200,
+                node_type: Some("MODULE".to_string()),
+                name: Some("serviceA.ts".to_string()),
+                file: Some("src/services/serviceA.ts".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+                semantic_id: None,
+            },
+            // MODULE for serviceB (the shedding sibling — same dir, doesn't import guard)
+            NodeRecord {
+                id: 300,
+                node_type: Some("MODULE".to_string()),
+                name: Some("serviceB.ts".to_string()),
+                file: Some("src/services/serviceB.ts".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+                semantic_id: None,
+            },
+            // MODULE in a different directory (must NOT appear in results)
+            NodeRecord {
+                id: 600,
+                node_type: Some("MODULE".to_string()),
+                name: Some("otherModule.ts".to_string()),
+                file: Some("src/other/otherModule.ts".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+                semantic_id: None,
+            },
+            // IMPORT_BINDING nodes for serviceA
+            NodeRecord {
+                id: 401,
+                node_type: Some("IMPORT_BINDING".to_string()),
+                name: Some("guard".to_string()),
+                file: Some("src/services/serviceA.ts".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+                semantic_id: None,
+            },
+            NodeRecord {
+                id: 402,
+                node_type: Some("IMPORT_BINDING".to_string()),
+                name: Some("WebSocket".to_string()),
+                file: Some("src/services/serviceA.ts".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+                semantic_id: None,
+            },
+            NodeRecord {
+                id: 403,
+                node_type: Some("IMPORT_BINDING".to_string()),
+                name: Some("raceTimeout".to_string()),
+                file: Some("src/services/serviceA.ts".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+                semantic_id: None,
+            },
+            NodeRecord {
+                id: 404,
+                node_type: Some("IMPORT_BINDING".to_string()),
+                name: Some("ILogService".to_string()),
+                file: Some("src/services/serviceA.ts".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+                semantic_id: None,
+            },
+            // IMPORT_BINDING nodes for serviceB (WebSocket, raceTimeout, ILogService — no guard)
+            NodeRecord {
+                id: 501,
+                node_type: Some("IMPORT_BINDING".to_string()),
+                name: Some("WebSocket".to_string()),
+                file: Some("src/services/serviceB.ts".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+                semantic_id: None,
+            },
+            NodeRecord {
+                id: 502,
+                node_type: Some("IMPORT_BINDING".to_string()),
+                name: Some("raceTimeout".to_string()),
+                file: Some("src/services/serviceB.ts".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+                semantic_id: None,
+            },
+            NodeRecord {
+                id: 503,
+                node_type: Some("IMPORT_BINDING".to_string()),
+                name: Some("ILogService".to_string()),
+                file: Some("src/services/serviceB.ts".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+                semantic_id: None,
+            },
+            // IMPORT_BINDING node for otherModule
+            NodeRecord {
+                id: 601,
+                node_type: Some("IMPORT_BINDING".to_string()),
+                name: Some("WebSocket".to_string()),
+                file: Some("src/other/otherModule.ts".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+                semantic_id: None,
+            },
+        ]);
+
+        // IMPORTS_FROM: serviceA's "guard" binding → guard function node
+        engine.add_edges(vec![
+            EdgeRecord {
+                src: 401, // IMPORT_BINDING "guard" in serviceA
+                dst: 100, // FUNCTION "guard"
+                edge_type: Some("IMPORTS_FROM".to_string()),
+                version: "main".into(),
+                metadata: None,
+                deleted: false,
+            },
+        ], false);
+
+        engine
+    }
+
+    #[test]
+    fn test_resolved_import_target_bound_yields_importer_file() {
+        let engine = setup_loe_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        // resolved_import(ModFile, 100): with TargetFn=100 bound, should yield serviceA.ts
+        let atom = parse_atom("resolved_import(F, \"100\")").unwrap();
+        let results = evaluator.query(&atom).unwrap();
+
+        assert_eq!(results.len(), 1, "expected exactly one importer");
+        assert_eq!(
+            results[0].get("F"),
+            Some(&Value::Str("src/services/serviceA.ts".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_resolved_import_modfile_bound_yields_target() {
+        let engine = setup_loe_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        // resolved_import("src/services/serviceA.ts", T): should yield TargetFn=100
+        let atom = parse_atom("resolved_import(\"src/services/serviceA.ts\", T)").unwrap();
+        let results = evaluator.query(&atom).unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].get("T"), Some(&Value::Id(100)));
+    }
+
+    #[test]
+    fn test_same_dir_module_yields_sibling_not_other_dir() {
+        let engine = setup_loe_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        // same_dir_module("src/services/serviceA.ts", S): should yield serviceB.ts only
+        let atom = parse_atom("same_dir_module(\"src/services/serviceA.ts\", S)").unwrap();
+        let results = evaluator.query(&atom).unwrap();
+
+        assert_eq!(results.len(), 1, "expected exactly one sibling in same dir");
+        assert_eq!(
+            results[0].get("S"),
+            Some(&Value::Str("src/services/serviceB.ts".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_shared_import_count_intersection() {
+        let engine = setup_loe_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        // serviceA has: guard, WebSocket, raceTimeout, ILogService
+        // serviceB has: WebSocket, raceTimeout, ILogService
+        // intersection = 3
+        let atom = parse_atom(
+            "shared_import_count(\"src/services/serviceA.ts\", \"src/services/serviceB.ts\", N)"
+        ).unwrap();
+        let results = evaluator.query(&atom).unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].get("N"), Some(&Value::Str("3".to_string())));
+    }
+
+    #[test]
+    fn test_loe_shed_flags_exactly_shedding_sibling() {
+        let engine = setup_loe_graph();
+        let mut evaluator = Evaluator::new(&engine);
+
+        // Load the loe_shed derived rule
+        let rule = parse_rule(
+            r#"loe_shed(Helper, Importer, Shedder) :-
+                node(Helper, "FUNCTION"),
+                attr(Helper, "exported", "true"),
+                attr(Helper, "file", HFile),
+                string_contains(HFile, "Helpers"),
+                resolved_import(Importer, Helper),
+                same_dir_module(Importer, Shedder),
+                neq(Importer, Shedder),
+                shared_import_count(Importer, Shedder, N),
+                gte(N, "3"),
+                \+ resolved_import(Shedder, Helper)."#
+        ).unwrap();
+        evaluator.add_rule(rule);
+
+        let query = parse_atom("loe_shed(H, I, S)").unwrap();
+        let results = evaluator.query(&query).unwrap();
+
+        // Must fire exactly once, with S = serviceB.ts file path
+        assert_eq!(results.len(), 1, "loe_shed should fire exactly once; got: {:?}", results);
+
+        let shedder = results[0].get("S").expect("S must be bound");
+        assert_eq!(
+            *shedder,
+            Value::Str("src/services/serviceB.ts".to_string()),
+            "shedder must be serviceB.ts"
+        );
+
+        let importer = results[0].get("I").expect("I must be bound");
+        assert_eq!(
+            *importer,
+            Value::Str("src/services/serviceA.ts".to_string()),
+            "importer must be serviceA.ts"
+        );
+
+        let helper = results[0].get("H").expect("H must be bound");
+        assert_eq!(
+            *helper,
+            Value::Id(100),
+            "helper must be FUNCTION node 100"
+        );
+    }
+
+    #[test]
+    fn test_loe_shed_explain_mirror() {
+        // Verify the EvaluatorExplain path produces the same result and records stats.
+        let engine = setup_loe_graph();
+        let mut evaluator = EvaluatorExplain::new(&engine, true);
+
+        let rule = parse_rule(
+            r#"loe_shed(Helper, Importer, Shedder) :-
+                node(Helper, "FUNCTION"),
+                attr(Helper, "exported", "true"),
+                attr(Helper, "file", HFile),
+                string_contains(HFile, "Helpers"),
+                resolved_import(Importer, Helper),
+                same_dir_module(Importer, Shedder),
+                neq(Importer, Shedder),
+                shared_import_count(Importer, Shedder, N),
+                gte(N, "3"),
+                \+ resolved_import(Shedder, Helper)."#
+        ).unwrap();
+        evaluator.add_rule(rule);
+
+        let query = parse_atom("loe_shed(H, I, S)").unwrap();
+        let result = evaluator.query(&query);
+
+        assert_eq!(result.bindings.len(), 1, "explain path must find exactly one loe_shed row");
+
+        let row = &result.bindings[0];
+        assert_eq!(
+            row.get("S").map(|s| s.as_str()),
+            Some("src/services/serviceB.ts"),
+            "explain path: shedder must be serviceB.ts"
+        );
+        assert_eq!(
+            row.get("I").map(|s| s.as_str()),
+            Some("src/services/serviceA.ts"),
+            "explain path: importer must be serviceA.ts"
+        );
+
+        // edges_by_type_calls must be > 0 (resolved_import was exercised via explain path)
+        assert!(
+            result.stats.edges_by_type_calls > 0,
+            "explain stats must record edges_by_type_calls > 0"
+        );
+    }
+}

@@ -1000,9 +1000,13 @@ const INDEX_NODE_TYPES: &[&str] = &[
 pub async fn resolve_per_file(
     rfdb: &mut RfdbClient,
     lang: crate::config::Language,
-    handle: &WorkerHandle<'_>,
+    handles: &[WorkerHandle<'_>],
     workspace_packages: &[WorkspacePackageWire],
 ) -> Result<PluginOutput> {
+    use futures::future::try_join_all;
+
+    let worker_count = handles.len().max(1);
+
     // Step 1: Get all MODULE nodes to find files for this language
     let module_nodes = rfdb.query_nodes_by_type("MODULE").await?;
     let files: Vec<String> = module_nodes.iter()
@@ -1014,9 +1018,11 @@ pub async fn resolve_per_file(
         .filter_map(|n| n.file.clone())
         .collect();
 
-    tracing::info!(files = files.len(), "Per-file resolve: discovered files");
+    tracing::info!(files = files.len(), workers = worker_count, "Per-file resolve: discovered files");
 
-    // Step 2: Collect index-worthy nodes and send build-index
+    // Step 2: Collect index-worthy nodes and send build-index to EVERY handle.
+    // build-index seeds each daemon process with the cross-file symbol table; the
+    // resolve-file pass needs every worker to share that view.
     let mut index_json_nodes: Vec<serde_json::Value> = Vec::new();
     for node_type in INDEX_NODE_TYPES {
         let nodes = rfdb.query_nodes_by_type(node_type).await?;
@@ -1041,7 +1047,7 @@ pub async fn resolve_per_file(
         }
     }
 
-    tracing::info!(nodes = index_json_nodes.len(), "Per-file resolve: sending build-index");
+    tracing::info!(nodes = index_json_nodes.len(), "Per-file resolve: sending build-index to all workers");
 
     let build_index_request = ResolveRequest {
         cmd: "build-index".to_string(),
@@ -1049,50 +1055,94 @@ pub async fn resolve_per_file(
         workspace_packages: workspace_packages.to_vec(),
         edges: vec![],
     };
-    let payload = rmp_serde::to_vec_named(&build_index_request)
-        .context("Failed to encode build-index request")?;
-    let response_bytes = handle.request(&payload).await
-        .context("build-index request failed")?;
-    let response: ResolveResponse = rmp_serde::from_slice(&response_bytes)
-        .context("Failed to decode build-index response")?;
-    if response.status != "ok" {
-        let msg = response.error.unwrap_or_else(|| "unknown error".to_string());
-        bail!("build-index failed: {msg}");
-    }
-    drop(build_index_request); // Free memory
+    let build_index_payload = std::sync::Arc::new(
+        rmp_serde::to_vec_named(&build_index_request)
+            .context("Failed to encode build-index request")?
+    );
+    drop(build_index_request);
 
-    // Step 3: For each file, query nodes and send resolve-file
-    let mut all_output = PluginOutput::default();
+    let build_index_futures = handles.iter().enumerate().map(|(i, handle)| {
+        let payload = build_index_payload.clone();
+        async move {
+            let response_bytes = handle.request(&payload).await
+                .with_context(|| format!("build-index request failed on worker {i}"))?;
+            let response: ResolveResponse = rmp_serde::from_slice(&response_bytes)
+                .with_context(|| format!("Failed to decode build-index response from worker {i}"))?;
+            if response.status != "ok" {
+                let msg = response.error.unwrap_or_else(|| "unknown error".to_string());
+                bail!("build-index failed on worker {i}: {msg}");
+            }
+            Ok::<(), anyhow::Error>(())
+        }
+    }).collect::<Vec<_>>();
+    try_join_all(build_index_futures).await?;
+    drop(build_index_payload);
+
+    // Step 3: Pre-fetch per-file nodes serially (RfdbClient is &mut, can't share
+    // across parallel async branches). Skip files with no nodes — empty work units
+    // would otherwise create RPC overhead with no payload.
     let total_files = files.len();
-
-    for (i, file) in files.iter().enumerate() {
+    let mut file_units: Vec<(String, Vec<serde_json::Value>)> = Vec::with_capacity(total_files);
+    for file in &files {
         let file_nodes = rfdb.query_nodes_by_file(file).await?;
         if file_nodes.is_empty() { continue; }
-
         let json_nodes: Vec<serde_json::Value> = file_nodes
             .iter()
             .map(|n| crate::analyzer::wire_node_to_resolve_json(n))
             .collect();
+        file_units.push((file.clone(), json_nodes));
+    }
+    let total_units = file_units.len();
+    let ws_packages_owned = workspace_packages.to_vec();
 
-        let request = ResolveRequest {
-            cmd: "resolve-file".to_string(),
-            nodes: json_nodes,
-            workspace_packages: workspace_packages.to_vec(),
-            edges: vec![],
-        };
-        let payload = rmp_serde::to_vec_named(&request)
-            .context("Failed to encode resolve-file request")?;
-        let response_bytes = handle.request(&payload).await
-            .with_context(|| format!("resolve-file failed for '{file}'"))?;
-        let output = parse_resolve_response(&response_bytes, "resolve-file")?;
+    // Step 4: Partition file units into worker_count chunks, dispatch each chunk
+    // to its own worker handle. Within a chunk, files are processed sequentially
+    // (preserves the per-handle ordering invariants the daemon protocol assumes);
+    // across chunks, work runs concurrently via try_join_all on the same task.
+    let chunk_size = total_units.div_ceil(worker_count).max(1);
+    let chunks: Vec<Vec<(String, Vec<serde_json::Value>)>> = file_units
+        .chunks(chunk_size)
+        .map(|c| c.to_vec())
+        .collect();
 
-        all_output.nodes.extend(output.nodes);
-        all_output.edges.extend(output.edges);
+    let progress = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
-        if (i + 1) % 500 == 0 || i + 1 == total_files {
-            eprintln!("    Per-file resolve: {}/{} files ({} edges so far)",
-                i + 1, total_files, all_output.edges.len());
+    let chunk_futures = chunks.into_iter().enumerate().map(|(chunk_idx, chunk)| {
+        let handle = &handles[chunk_idx.min(worker_count - 1)];
+        let ws_packages_for_chunk = ws_packages_owned.clone();
+        let progress = progress.clone();
+        async move {
+            let mut local_output = PluginOutput::default();
+            for (file, json_nodes) in chunk {
+                let request = ResolveRequest {
+                    cmd: "resolve-file".to_string(),
+                    nodes: json_nodes,
+                    workspace_packages: ws_packages_for_chunk.clone(),
+                    edges: vec![],
+                };
+                let payload = rmp_serde::to_vec_named(&request)
+                    .context("Failed to encode resolve-file request")?;
+                let response_bytes = handle.request(&payload).await
+                    .with_context(|| format!("resolve-file failed for '{file}' on worker {chunk_idx}"))?;
+                let output = parse_resolve_response(&response_bytes, "resolve-file")?;
+                local_output.nodes.extend(output.nodes);
+                local_output.edges.extend(output.edges);
+
+                let done = progress.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                if done % 500 == 0 || done == total_units {
+                    eprintln!("    Per-file resolve: {}/{} files ({} workers)",
+                        done, total_units, worker_count);
+                }
+            }
+            Ok::<PluginOutput, anyhow::Error>(local_output)
         }
+    }).collect::<Vec<_>>();
+
+    let chunk_outputs = try_join_all(chunk_futures).await?;
+    let mut all_output = PluginOutput::default();
+    for chunk_output in chunk_outputs {
+        all_output.nodes.extend(chunk_output.nodes);
+        all_output.edges.extend(chunk_output.edges);
     }
 
     deduplicate_virtual_nodes(&mut all_output);

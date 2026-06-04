@@ -343,8 +343,9 @@ async fn main() -> Result<()> {
             socket,
             jobs,
             force,
-            resolve_jobs: _resolve_jobs,
+            resolve_jobs,
         } => {
+            let resolve_workers = resolve_jobs.unwrap_or_else(num_cpus).max(1);
             let cfg = config::load(&config_path)?.with_defaults();
 
             // Resolve RFDB socket path: CLI flag > config > default
@@ -1031,8 +1032,9 @@ async fn main() -> Result<()> {
             // 8. Run JS resolution with per-file streaming (build-index + resolve-file)
             if js_file_count > 0 {
                 let lang_start = std::time::Instant::now();
-                eprintln!("  Resolution: JS/TS (per-file streaming, 1 worker)...");
-                profile!("js_resolve_start", "workers" => 1);
+                eprintln!("  Resolution: JS/TS (per-file streaming, {} worker{})...",
+                    resolve_workers, if resolve_workers == 1 { "" } else { "s" });
+                profile!("js_resolve_start", "workers" => resolve_workers);
 
                 let resolve_pool_config = process_pool::PoolConfig {
                     command: cfg.analyzers.js_resolve_path(),
@@ -1042,14 +1044,14 @@ async fn main() -> Result<()> {
                     effects_db_path: effects_db_path.clone(),
                 };
 
-                match process_pool::ProcessPool::new(resolve_pool_config, 1) {
+                match process_pool::ProcessPool::new(resolve_pool_config, resolve_workers) {
                     Ok(resolve_pool) => {
                         let handles = resolve_pool.acquire_all().await?;
 
                         let mut output = plugin::resolve_per_file(
                             &mut rfdb,
                             config::Language::JavaScript,
-                            &handles[0],
+                            &handles,
                             &ws_packages,
                         ).await?;
 
@@ -1889,8 +1891,9 @@ async fn main() -> Result<()> {
         Commands::Resolve {
             config: config_path,
             socket,
-            jobs: _jobs,
+            jobs,
         } => {
+            let resolve_workers = jobs.unwrap_or_else(num_cpus).max(1);
             let cfg = config::load(&config_path)?.with_defaults();
 
             // Resolve RFDB socket path: CLI flag > config > default
@@ -1989,14 +1992,14 @@ async fn main() -> Result<()> {
                     effects_db_path: effects_db_path.clone(),
                 };
 
-                match process_pool::ProcessPool::new(resolve_pool_config, 1) {
+                match process_pool::ProcessPool::new(resolve_pool_config, resolve_workers) {
                     Ok(resolve_pool) => {
                         let handles = resolve_pool.acquire_all().await?;
 
                         let mut output = plugin::resolve_per_file(
                             &mut rfdb,
                             config::Language::JavaScript,
-                            &handles[0],
+                            &handles,
                             &ws_packages,
                         ).await?;
 

@@ -31,6 +31,8 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use rayon::prelude::*;
+
 use crate::error::{GraphError, Result};
 use crate::storage_v2::compaction::{CompactionConfig, CompactionResult};
 use crate::storage_v2::index::{build_inverted_indexes, GlobalIndex, IndexEntry, InvertedIndex};
@@ -345,10 +347,22 @@ impl MultiShardStore {
             by_shard.entry(shard_id).or_default().push(node);
         }
 
-        // Dispatch to each shard
+        // Dispatch to each shard in parallel. Each shard's add_nodes
+        // mutates only its own state — disjoint `&mut Shard` borrows are safe
+        // via par_iter_mut.
+        let shard_count = self.shards.len();
+        let mut work_per_shard: Vec<Option<Vec<NodeRecordV2>>> = (0..shard_count).map(|_| None).collect();
         for (shard_id, nodes) in by_shard {
-            self.shards[shard_id as usize].add_nodes(nodes);
+            work_per_shard[shard_id as usize] = Some(nodes);
         }
+        self.shards
+            .par_iter_mut()
+            .zip(work_per_shard.into_par_iter())
+            .for_each(|(shard, work)| {
+                if let Some(nodes) = work {
+                    shard.add_nodes(nodes);
+                }
+            });
     }
 
     /// Upsert edges, routing each to the appropriate shard.
@@ -392,9 +406,22 @@ impl MultiShardStore {
             tracing::warn!("upsert_edges: skipped {} edges with unknown source node", skipped);
         }
 
+        // Dispatch to each shard in parallel. Each shard's upsert_edges
+        // mutates only its own state — disjoint `&mut Shard` borrows are safe
+        // via par_iter_mut.
+        let shard_count = self.shards.len();
+        let mut work_per_shard: Vec<Option<Vec<EdgeRecordV2>>> = (0..shard_count).map(|_| None).collect();
         for (shard_id, edges) in by_shard {
-            self.shards[shard_id as usize].upsert_edges(edges);
+            work_per_shard[shard_id as usize] = Some(edges);
         }
+        self.shards
+            .par_iter_mut()
+            .zip(work_per_shard.into_par_iter())
+            .for_each(|(shard, work)| {
+                if let Some(edges) = work {
+                    shard.upsert_edges(edges);
+                }
+            });
 
         Ok(())
     }
