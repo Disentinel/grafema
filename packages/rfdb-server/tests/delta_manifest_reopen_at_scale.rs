@@ -250,10 +250,12 @@ fn delta_manifest_reopen_at_scale_with_deletes() {
 // ---------------------------------------------------------------------------
 // Separate probe: delete_node / delete_edge via the GraphStore trait.
 //
-// Documents that trait-level delete + flush does NOT persist a manifest
-// tombstone for already-flushed segments (the persistence-correct delete path
-// is commit_batch, exercised above). Pins the behavior so a change in either
-// direction is caught loudly.
+// MVCC B3 (RFD-71): trait-level delete + flush NOW persists across reopen. The
+// deletion is merged into the manifest VERSION's cumulative tombstone set (the
+// authority) and written to disk, so it survives restart — same persistence
+// guarantee as commit_batch. (Pre-B3 this was a documented limitation: only
+// commit_batch tracked manifest tombstones; flush-path deletes were lost on
+// reopen.) Pins the new behavior so a regression is caught loudly.
 // ---------------------------------------------------------------------------
 #[test]
 fn trait_delete_node_edge_persistence_behavior_at_scale() {
@@ -275,10 +277,12 @@ fn trait_delete_node_edge_persistence_behavior_at_scale() {
         }
         engine.delete_node(target_node);
         engine.delete_edge(target_edge.0, target_edge.1, "CALLS");
-        assert!(!engine.node_exists(target_node), "trait delete should hide node in-session");
-        let out = engine.get_outgoing_edges(target_edge.0, None);
-        assert!(!out.iter().any(|e| e.dst == target_edge.1), "trait delete should hide edge in-session");
+        // B2 (RFD-71): trait deletes are invisible until flushed — publish the
+        // tombstones, then they are observable in-session.
         engine.flush().unwrap();
+        assert!(!engine.node_exists(target_node), "trait delete should hide node after flush");
+        let out = engine.get_outgoing_edges(target_edge.0, None);
+        assert!(!out.iter().any(|e| e.dst == target_edge.1), "trait delete should hide edge after flush");
     }
 
     let engine = GraphEngineV2::open(&db_path).unwrap();
@@ -287,8 +291,9 @@ fn trait_delete_node_edge_persistence_behavior_at_scale() {
     eprintln!("TRAIT-DELETE PROBE after reopen: node persisted-deleted={}, edge persisted-deleted={}",
         !node_back, !edge_back);
 
-    assert!(node_back,
-        "CHANGE: trait delete_node now PERSISTS across reopen (was documented non-persistent). Update docs.");
-    assert!(edge_back,
-        "CHANGE: trait delete_edge now PERSISTS across reopen (was documented non-persistent). Update docs.");
+    // MVCC B3: the manifest version carries the tombstones → deletes stay deleted.
+    assert!(!node_back,
+        "B3: trait delete_node must persist across reopen (version-state tombstone)");
+    assert!(!edge_back,
+        "B3: trait delete_edge must persist across reopen (version-state tombstone)");
 }

@@ -777,6 +777,42 @@ impl Shard {
         self.write_buffer.iter_nodes()
     }
 
+    /// Borrow a live, already-opened L0/L1 node segment by its `segment_id`.
+    ///
+    /// Used by the MVCC read path (`ReadSnapshot`) for ephemeral stores, where
+    /// segments live only in memory and have no file to open via `SegmentCache`.
+    /// Scans descriptors (small Vecs) to map `segment_id` → opened segment.
+    /// Returns None if this shard does not currently hold that segment open.
+    pub fn node_segment_by_id(&self, segment_id: u64) -> Option<&NodeSegmentV2> {
+        if let Some(d) = &self.l1_node_descriptor {
+            if d.segment_id == segment_id {
+                return self.l1_node_segment.as_ref();
+            }
+        }
+        for (i, d) in self.node_descriptors.iter().enumerate() {
+            if d.segment_id == segment_id {
+                return self.node_segments.get(i);
+            }
+        }
+        None
+    }
+
+    /// Borrow a live, already-opened L0/L1 edge segment by its `segment_id`.
+    /// Companion to `node_segment_by_id` for the MVCC ephemeral read path.
+    pub fn edge_segment_by_id(&self, segment_id: u64) -> Option<&EdgeSegmentV2> {
+        if let Some(d) = &self.l1_edge_descriptor {
+            if d.segment_id == segment_id {
+                return self.l1_edge_segment.as_ref();
+            }
+        }
+        for (i, d) in self.edge_descriptors.iter().enumerate() {
+            if d.segment_id == segment_id {
+                return self.edge_segments.get(i);
+            }
+        }
+        None
+    }
+
     /// Clear L0 segments after compaction (they've been merged into L1).
     /// Also clears tombstones since they were applied during merge.
     pub fn clear_l0_after_compaction(&mut self) {
@@ -1067,7 +1103,11 @@ impl Shard {
     }
 
     /// Match node fields against AttrQuery-compatible filters.
-    fn matches_attr_filters(
+    ///
+    /// `pub(crate)` so the MVCC snapshot read path (`MultiShardStore::*_at`)
+    /// can reuse the exact same filter semantics when scanning version-pinned
+    /// segments instead of the live shard.
+    pub(crate) fn matches_attr_filters(
         node_type_value: &str,
         file_value: &str,
         name_value: &str,

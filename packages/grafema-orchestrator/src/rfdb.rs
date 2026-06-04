@@ -626,6 +626,25 @@ impl RfdbClient {
         Ok(())
     }
 
+    /// Enter bulk-load mode (RFDB MVCC C2/C3). Per-commit fsync is deferred and
+    /// the server routes `CommitBatch` through the serial auto-compacting path
+    /// that bounds the live segment count. Call once before a large ingest;
+    /// always pair with [`end_bulk_load`](Self::end_bulk_load), which runs the
+    /// single durable barrier + reclaim and restores per-commit durability.
+    pub async fn begin_bulk_load(&mut self) -> Result<()> {
+        self.send_command("beginBulkLoad", serde_json::json!({}))
+            .await?;
+        Ok(())
+    }
+
+    /// Leave bulk-load mode: durable barrier (fsync the whole current version
+    /// once) + bounded reclaim, then per-commit durability is restored.
+    pub async fn end_bulk_load(&mut self) -> Result<()> {
+        self.send_command("endBulkLoad", serde_json::json!({}))
+            .await?;
+        Ok(())
+    }
+
     /// Delete all edges of `edge_type` whose metadata carries
     /// `"_source": "<source_tag>"`. Fails loudly on a `_source` collision
     /// (another value for the same edge type). Edges without a `_source`

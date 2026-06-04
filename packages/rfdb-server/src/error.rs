@@ -66,6 +66,18 @@ pub enum GraphError {
 
     #[error("Embedding error: {0}")]
     Embedding(String),
+
+    /// MVCC B4: write-write conflict detected at the commit point — another
+    /// commit published a newer version touching one of this commit's
+    /// `changed_files` after this commit's read-snapshot. The caller must
+    /// re-snapshot/recompute/retry; on bounded-retry exhaustion this surfaces
+    /// as a hard error (pathological same-file contention).
+    #[error("Commit conflict on file(s) {files:?}: snapshot v{snapshot_version} < last-committed v{conflicting_version}")]
+    ConflictedCommit {
+        files: Vec<String>,
+        snapshot_version: u64,
+        conflicting_version: u64,
+    },
 }
 
 impl GraphError {
@@ -82,6 +94,7 @@ impl GraphError {
             GraphError::QueryTimeout(_) => "QUERY_TIMEOUT",
             GraphError::QueryCancelled => "QUERY_CANCELLED",
             GraphError::QueryLimitExceeded(_) => "QUERY_LIMIT_EXCEEDED",
+            GraphError::ConflictedCommit { .. } => "COMMIT_CONFLICT",
             _ => "INTERNAL_ERROR",
         }
     }

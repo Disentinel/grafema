@@ -12,7 +12,9 @@ use std::time::Instant;
 
 use crate::error::Result;
 use crate::storage::{AttrQuery, EdgeRecord, FieldDecl, NodeRecord};
-use crate::storage_v2::manifest::{ManifestStore, SnapshotDiff, SnapshotInfo};
+use crate::storage_v2::manifest::{
+    DurabilityMode, ManifestStore, SnapshotDiff, SnapshotInfo,
+};
 use crate::storage_v2::multi_shard::MultiShardStore;
 use crate::storage_v2::resource::{ResourceManager, SystemResources, TuningProfile};
 use crate::storage_v2::compaction::{CompactionConfig, CompactionResult};
@@ -152,7 +154,11 @@ fn edge_v1_to_v2(v1: &EdgeRecord) -> EdgeRecordV2 {
 /// on flush.
 pub struct GraphEngineV2 {
     store: MultiShardStore,
-    manifest: ManifestStore,
+    /// MVCC B4: the manifest is the single commit-point serialization handle.
+    /// Behind a `Mutex` so concurrent `commit_batch` calls (running under the
+    /// server's shared `read()` lock) can take the short commit-point lock while
+    /// the exclusive `&mut self` paths use `get_mut()` (no contention).
+    manifest: std::sync::Mutex<ManifestStore>,
     #[allow(dead_code)]
     path: Option<PathBuf>,
     #[allow(dead_code)]
@@ -172,6 +178,19 @@ pub struct GraphEngineV2 {
     /// Embedding engine for semantic search (None when feature disabled or not initialized).
     #[cfg(feature = "embedding")]
     embedding_engine: Option<std::sync::Arc<crate::embedding::EmbeddingEngine>>,
+    /// MVCC C3.a: `true` between `begin_bulk_load` and `end_bulk_load`. While set,
+    /// the serial `&mut self` commit path auto-triggers L0→L1 compaction once the
+    /// live L0 segment count per shard crosses [`Self::auto_compact_threshold`],
+    /// so the live segment count stays bounded (and the O(segments) per-commit
+    /// capture/append cost stays ~flat). Disk-for-speed: superseded L0 files are
+    /// left on disk in-run and reclaimed at `end_bulk_load` (C3.c).
+    bulk_load_active: bool,
+    /// MVCC C3.a: per-shard live L0 segment count that triggers auto-compaction
+    /// during bulk-load. Reasonable default (8); tuning is out of scope.
+    auto_compact_threshold: usize,
+    /// MVCC C3.a: count of auto-compaction rounds fired during bulk-load
+    /// (diagnostics / acceptance bench).
+    auto_compactions: u64,
 }
 
 // ── Constructors ────────────────────────────────────────────────────
@@ -190,7 +209,7 @@ impl GraphEngineV2 {
 
         Ok(Self {
             store,
-            manifest,
+            manifest: std::sync::Mutex::new(manifest),
             path: Some(path.to_path_buf()),
             ephemeral: false,
             pending_tombstone_nodes: HashSet::new(),
@@ -198,6 +217,9 @@ impl GraphEngineV2 {
             declared_fields: Vec::new(),
             cached_profile: profile,
             last_resource_check: Instant::now(),
+            bulk_load_active: false,
+            auto_compact_threshold: 8,
+            auto_compactions: 0,
             #[cfg(feature = "embedding")]
             embedding_engine: Self::init_embedding_engine(Some(path)),
         })
@@ -207,7 +229,7 @@ impl GraphEngineV2 {
     pub fn create_ephemeral() -> Self {
         Self {
             store: MultiShardStore::ephemeral(DEFAULT_SHARD_COUNT),
-            manifest: ManifestStore::ephemeral(),
+            manifest: std::sync::Mutex::new(ManifestStore::ephemeral()),
             path: None,
             ephemeral: true,
             pending_tombstone_nodes: HashSet::new(),
@@ -215,6 +237,9 @@ impl GraphEngineV2 {
             declared_fields: Vec::new(),
             cached_profile: TuningProfile::default(),
             last_resource_check: Instant::now(),
+            bulk_load_active: false,
+            auto_compact_threshold: 8,
+            auto_compactions: 0,
             #[cfg(feature = "embedding")]
             embedding_engine: None,
         }
@@ -226,8 +251,12 @@ impl GraphEngineV2 {
         let manifest = ManifestStore::open(path)?;
         let mut store = MultiShardStore::open(path, &manifest)?;
 
-        // Restore tombstones from manifest into shard TombstoneSet (single source of truth).
-        // Engine's pending_tombstone_* stays empty — queries delegate to store shards.
+        // MVCC B3: the manifest version is the snapshot/tombstone authority and
+        // `ManifestStore::open` already reconstructed its cumulative set (replay
+        // into current.tombstoned_* → derived current_tombstones Arc). Here we
+        // ALSO mirror that set into the per-shard TombstoneSet for the legacy
+        // live-read and compaction-merge paths (B3 Option A). Engine's
+        // pending_tombstone_* stays empty — committed deletes live in the version.
         let current = manifest.current();
         if !current.tombstoned_node_ids.is_empty() || !current.tombstoned_edge_keys.is_empty() {
             let tombstone_nodes: HashSet<u128> =
@@ -243,7 +272,7 @@ impl GraphEngineV2 {
 
         Ok(Self {
             store,
-            manifest,
+            manifest: std::sync::Mutex::new(manifest),
             path: Some(path.to_path_buf()),
             ephemeral: false,
             pending_tombstone_nodes: HashSet::new(),
@@ -251,6 +280,9 @@ impl GraphEngineV2 {
             declared_fields: Vec::new(),
             cached_profile: profile,
             last_resource_check: Instant::now(),
+            bulk_load_active: false,
+            auto_compact_threshold: 8,
+            auto_compactions: 0,
             #[cfg(feature = "embedding")]
             embedding_engine: Self::init_embedding_engine(Some(path)),
         })
@@ -281,35 +313,22 @@ impl GraphEngineV2 {
     }
 }
 
-// ── Helper: tombstone filtering ─────────────────────────────────────
+// ── Helper: snapshot capture ────────────────────────────────────────
 
 impl GraphEngineV2 {
-    /// Check if a node is tombstoned.
-    ///
-    /// Checks both engine-level pending tombstones (from delete_node, not yet flushed)
-    /// and store shard tombstones (persisted via commit_batch_ext or flush).
-    fn is_node_tombstoned(&self, id: u128) -> bool {
-        self.pending_tombstone_nodes.contains(&id)
-            || self.store.is_node_tombstoned(id)
+    /// Capture a version-pinned read snapshot of the current PUBLISHED manifest
+    /// version (RFD-71 B2). Every public read on this engine resolves through
+    /// such a snapshot via the store's `*_at` methods, so it observes ONLY
+    /// committed/published data — never the live `Shard.write_buffer` (uncommitted
+    /// adds) and never the engine's `pending_tombstone_*` (uncommitted deletes).
+    /// Visibility therefore flips exactly at the phase-8 manifest publish.
+    fn snapshot(&self) -> crate::storage_v2::read_snapshot::ReadSnapshot {
+        // MVCC B4: the manifest is behind a Mutex; the snapshot capture is a
+        // short critical section (clone descriptors + tombstone Arc), released
+        // immediately — never held across a read's segment I/O.
+        let m = self.manifest.lock().unwrap();
+        self.store.snapshot(&m)
     }
-
-    /// Check if an edge is tombstoned.
-    ///
-    /// Checks both engine-level pending tombstones (from delete_edge, not yet flushed)
-    /// and store shard tombstones (persisted via commit_batch_ext or flush).
-    fn is_edge_tombstoned(&self, src: u128, dst: u128, edge_type: &str) -> bool {
-        self.pending_tombstone_edges.contains(&(src, dst, Arc::from(edge_type)))
-            || self.store.is_edge_tombstoned(src, dst, edge_type)
-    }
-
-    /// Filter tombstoned edges from a list of v2 edge records.
-    fn filter_edges(&self, edges: Vec<EdgeRecordV2>) -> Vec<EdgeRecordV2> {
-        edges
-            .into_iter()
-            .filter(|e| !self.is_edge_tombstoned(e.src, e.dst, &e.edge_type))
-            .collect()
-    }
-
 }
 
 // ── GraphStore Implementation ───────────────────────────────────────
@@ -322,9 +341,14 @@ impl GraphStore for GraphEngineV2 {
         // The old version may persist in a flushed segment alongside the new
         // write-buffer version, but node_count() deduplicates ids across
         // segments, so no separate "superseded" bookkeeping is needed.
-        for node in &v2_nodes {
-            self.pending_tombstone_nodes.remove(&node.id);
+        let readded_ids: HashSet<u128> = v2_nodes.iter().map(|n| n.id).collect();
+        for id in &readded_ids {
+            self.pending_tombstone_nodes.remove(id);
         }
+        // MVCC B3: a re-added node must un-tombstone in the version authority
+        // (the manifest), or a previously-COMMITTED delete would re-shadow it on
+        // the next flush and after reopen. Mirrors add_edges → remove_tombstone_edges.
+        self.manifest.get_mut().unwrap().remove_tombstone_nodes(&readded_ids);
         self.store.add_nodes(v2_nodes);
 
         // Auto-flush: check if any shard's write buffer exceeds adaptive limits
@@ -356,17 +380,15 @@ impl GraphStore for GraphEngineV2 {
     }
 
     fn get_node(&self, id: u128) -> Option<NodeRecord> {
-        if self.is_node_tombstoned(id) {
-            return None;
-        }
-        self.store.get_node(id).map(|v2| node_v2_to_v1(&v2))
+        // B2: version-pinned read. The snapshot's tombstone set is authoritative
+        // for the published version; uncommitted pending tombstones are invisible.
+        let snap = self.snapshot();
+        self.store.get_node_at(&snap, id).map(|v2| node_v2_to_v1(&v2))
     }
 
     fn node_exists(&self, id: u128) -> bool {
-        if self.is_node_tombstoned(id) {
-            return false;
-        }
-        self.store.node_exists(id)
+        let snap = self.snapshot();
+        self.store.node_exists_at(&snap, id)
     }
 
     fn get_node_identifier(&self, id: u128) -> Option<String> {
@@ -387,7 +409,10 @@ impl GraphStore for GraphEngineV2 {
             other => (other, None),
         };
 
-        let mut ids = self.store.find_node_ids_by_attr(
+        // B2: version-pinned read through the published snapshot.
+        let snap = self.snapshot();
+        let mut ids = self.store.find_node_ids_by_attr_at(
+            &snap,
             exact_type,
             wildcard_prefix,
             query.file.as_deref(),
@@ -397,10 +422,6 @@ impl GraphStore for GraphEngineV2 {
             query.substring_match,
         );
 
-        if !self.pending_tombstone_nodes.is_empty() {
-            ids.retain(|id| !self.is_node_tombstoned(*id));
-        }
-
         // Fuzzy name fallback: when name is specified, 0 exact results,
         // and fuzzy is not explicitly disabled
         if ids.is_empty()
@@ -408,16 +429,15 @@ impl GraphStore for GraphEngineV2 {
             && query.fuzzy_name_fallback != Some(false)
         {
             let name = query.name.as_deref().unwrap();
-            let fuzzy_matches = self.store.find_similar_names(
+            let fuzzy_matches = self.store.find_similar_names_at(
+                &snap,
                 name,
                 exact_type,
                 20,  // top-K
                 0.3, // min Jaccard score
             );
             for m in &fuzzy_matches {
-                if !self.is_node_tombstoned(m.node_id) {
-                    ids.push(m.node_id);
-                }
+                ids.push(m.node_id);
             }
         }
 
@@ -432,7 +452,7 @@ impl GraphStore for GraphEngineV2 {
                 if let Ok(handle) = tokio::runtime::Handle::try_current() {
                     let matches = handle.block_on(engine.search(name, exact_type, 10, 0.5));
                     for m in matches {
-                        if !self.is_node_tombstoned(m.node_id) {
+                        if !snap.tombstones.contains_node(m.node_id) {
                             ids.push(m.node_id);
                         }
                     }
@@ -457,43 +477,23 @@ impl GraphStore for GraphEngineV2 {
 
         let mut found_any = false;
 
-        if self.pending_tombstone_nodes.is_empty() {
-            self.store.find_node_ids_by_attr_chunked(
-                exact_type,
-                wildcard_prefix,
-                query.file.as_deref(),
-                query.name.as_deref(),
-                query.exported,
-                &query.metadata_filters,
-                query.substring_match,
-                chunk_size,
-                &mut |ids| {
-                    if !ids.is_empty() { found_any = true; }
-                    callback(ids)
-                },
-            );
-        } else {
-            self.store.find_node_ids_by_attr_chunked(
-                exact_type,
-                wildcard_prefix,
-                query.file.as_deref(),
-                query.name.as_deref(),
-                query.exported,
-                &query.metadata_filters,
-                query.substring_match,
-                chunk_size,
-                &mut |ids| {
-                    let filtered: Vec<u128> = ids.iter()
-                        .filter(|&&id| !self.is_node_tombstoned(id))
-                        .copied()
-                        .collect();
-                    if filtered.is_empty() { true } else {
-                        found_any = true;
-                        callback(&filtered)
-                    }
-                },
-            );
-        }
+        // B2: version-pinned read through the published snapshot.
+        let snap = self.snapshot();
+        self.store.find_node_ids_by_attr_chunked_at(
+            &snap,
+            exact_type,
+            wildcard_prefix,
+            query.file.as_deref(),
+            query.name.as_deref(),
+            query.exported,
+            &query.metadata_filters,
+            query.substring_match,
+            chunk_size,
+            &mut |ids| {
+                if !ids.is_empty() { found_any = true; }
+                callback(ids)
+            },
+        );
 
         // Fuzzy name fallback for streaming path (same logic as find_by_attr)
         if !found_any
@@ -501,14 +501,14 @@ impl GraphStore for GraphEngineV2 {
             && query.fuzzy_name_fallback != Some(false)
         {
             let name = query.name.as_deref().unwrap();
-            let fuzzy_matches = self.store.find_similar_names(
+            let fuzzy_matches = self.store.find_similar_names_at(
+                &snap,
                 name,
                 exact_type,
                 20,
                 0.3,
             );
             let fuzzy_ids: Vec<u128> = fuzzy_matches.iter()
-                .filter(|m| !self.is_node_tombstoned(m.node_id))
                 .map(|m| m.node_id)
                 .collect();
             if !fuzzy_ids.is_empty() {
@@ -528,7 +528,7 @@ impl GraphStore for GraphEngineV2 {
                 if let Ok(handle) = tokio::runtime::Handle::try_current() {
                     let matches = handle.block_on(engine.search(name, exact_type, 10, 0.5));
                     let emb_ids: Vec<u128> = matches.iter()
-                        .filter(|m| !self.is_node_tombstoned(m.node_id))
+                        .filter(|m| !snap.tombstones.contains_node(m.node_id))
                         .map(|m| m.node_id)
                         .collect();
                     if !emb_ids.is_empty() {
@@ -540,8 +540,11 @@ impl GraphStore for GraphEngineV2 {
     }
 
     fn find_by_type(&self, node_type: &str) -> Vec<u128> {
-        let mut ids = if node_type.ends_with('*') {
-            self.store.find_node_ids_by_attr(
+        // B2: version-pinned read through the published snapshot.
+        let snap = self.snapshot();
+        if node_type.ends_with('*') {
+            self.store.find_node_ids_by_attr_at(
+                &snap,
                 None,
                 Some(node_type.trim_end_matches('*')),
                 None,
@@ -551,15 +554,8 @@ impl GraphStore for GraphEngineV2 {
                 false,
             )
         } else {
-            self.store.find_node_ids_by_type(node_type)
-        };
-
-        if self.pending_tombstone_nodes.is_empty() {
-            return ids;
+            self.store.find_node_ids_by_type_at(&snap, node_type)
         }
-
-        ids.retain(|id| !self.is_node_tombstoned(*id));
-        ids
     }
 
     fn add_edges(&mut self, edges: Vec<EdgeRecord>, skip_validation: bool) {
@@ -576,12 +572,16 @@ impl GraphStore for GraphEngineV2 {
             self.pending_tombstone_edges.remove(key);
         }
         // Also un-tombstone any keys whose deletion has already been
-        // committed to shards (typical for the rule-chain pattern in the
-        // compaction enricher: delete-by-source flushes tombstones to
-        // shards, then the same `(src, dst, type)` is re-emitted via
-        // addEdges). Without this the new edge persists in the write
-        // buffer but every read path filters it out via
-        // `tombstones.contains_edge`.
+        // committed (typical for the rule-chain pattern in the compaction
+        // enricher: delete-by-source flushes tombstones, then the same
+        // `(src, dst, type)` is re-emitted via addEdges). Without this the
+        // new edge persists in the write buffer but every read path filters
+        // it out via `tombstones.contains_edge`.
+        // MVCC B3: the version authority is the manifest — un-tombstone there
+        // (so snapshots immediately see the edge live and the next flush does
+        // not re-broadcast the stale tombstone) AND in the per-shard mirror
+        // (for the legacy live-read paths).
+        self.manifest.get_mut().unwrap().remove_tombstone_edges(&keys);
         self.store.untombstone_edges(&keys);
         let result = self.store.upsert_edges(v2_edges);
         if !skip_validation {
@@ -608,52 +608,53 @@ impl GraphStore for GraphEngineV2 {
     }
 
     fn neighbors(&self, id: u128, edge_types: &[&str]) -> Vec<u128> {
-        let edge_types_opt = if edge_types.is_empty() {
-            None
-        } else {
-            Some(edge_types)
-        };
-        let edges = self.store.get_outgoing_edges(id, edge_types_opt);
-        self.filter_edges(edges)
+        // B2: version-pinned read. `*_at` edge queries already drop tombstoned
+        // edges via the snapshot; also drop edges whose dst no longer exists in
+        // the published version.
+        let snap = self.snapshot();
+        let edge_types_opt = if edge_types.is_empty() { None } else { Some(edge_types) };
+        self.store.get_outgoing_edges_at(&snap, id, edge_types_opt)
             .into_iter()
-            .filter(|e| !self.is_node_tombstoned(e.dst))
+            .filter(|e| self.store.node_exists_at(&snap, e.dst))
             .map(|e| e.dst)
             .collect()
     }
 
     fn get_outgoing_edges(&self, node_id: u128, edge_types: Option<&[&str]>) -> Vec<EdgeRecord> {
-        let edges = self.store.get_outgoing_edges(node_id, edge_types);
-        self.filter_edges(edges)
+        let snap = self.snapshot();
+        self.store.get_outgoing_edges_at(&snap, node_id, edge_types)
             .iter()
             .map(edge_v2_to_v1)
             .collect()
     }
 
     fn get_incoming_edges(&self, node_id: u128, edge_types: Option<&[&str]>) -> Vec<EdgeRecord> {
-        let edges = self.store.get_incoming_edges(node_id, edge_types);
-        self.filter_edges(edges)
+        let snap = self.snapshot();
+        self.store.get_incoming_edges_at(&snap, node_id, edge_types)
             .iter()
             .map(edge_v2_to_v1)
             .collect()
     }
 
     fn get_all_edges(&self) -> Vec<EdgeRecord> {
-        self.store.iter_all_edges()
+        let snap = self.snapshot();
+        self.store.iter_all_edges_at(&snap)
             .iter()
-            .filter(|e| !self.is_edge_tombstoned(e.src, e.dst, &e.edge_type))
             .map(edge_v2_to_v1)
             .collect()
     }
 
     fn get_edges_by_type(&self, edge_type: &str) -> Vec<EdgeRecord> {
-        self.store.get_edges_by_type(edge_type)
+        let snap = self.snapshot();
+        self.store.get_edges_by_type_at(&snap, edge_type)
             .iter()
-            .filter(|e| !self.is_edge_tombstoned(e.src, e.dst, &e.edge_type))
             .map(edge_v2_to_v1)
             .collect()
     }
 
     fn count_nodes_by_type(&self, types: Option<&[String]>) -> HashMap<String, usize> {
+        // B2: version-pinned read through the published snapshot.
+        let snap = self.snapshot();
         let mut counts: HashMap<String, usize> = HashMap::new();
 
         match types {
@@ -662,18 +663,14 @@ impl GraphStore for GraphEngineV2 {
                     if t.ends_with('*') {
                         // Wildcard
                         let prefix = t.trim_end_matches('*');
-                        let nodes = self.store.find_nodes(None, None);
+                        let nodes = self.store.find_nodes_at(&snap, None, None);
                         for n in nodes {
-                            if n.node_type.starts_with(prefix) && !self.is_node_tombstoned(n.id) {
+                            if n.node_type.starts_with(prefix) {
                                 *counts.entry(n.node_type).or_insert(0) += 1;
                             }
                         }
                     } else {
-                        let nodes = self.store.find_nodes(Some(t), None);
-                        let count = nodes
-                            .iter()
-                            .filter(|n| !self.is_node_tombstoned(n.id))
-                            .count();
+                        let count = self.store.find_nodes_at(&snap, Some(t), None).len();
                         if count > 0 {
                             counts.insert(t.clone(), count);
                         }
@@ -681,7 +678,7 @@ impl GraphStore for GraphEngineV2 {
                 }
             }
             None => {
-                return self.store.count_by_type();
+                return self.store.count_by_type_at(&snap);
             }
         }
 
@@ -736,23 +733,109 @@ impl GraphStore for GraphEngineV2 {
         // Threshold: flush when any shard has >50K nodes or >128MB in buffers.
         // Lowered from 100K/256MB to reduce peak RSS on large graphs (4M+ nodes).
         if self.store.any_shard_needs_flush(50_000, 128 * 1024 * 1024) {
-            self.store.flush_all(&mut self.manifest)?;
+            self.store.flush_all(self.manifest.get_mut().unwrap())?;
         }
         Ok(())
     }
 
     fn flush(&mut self) -> Result<()> {
-        // Apply pending tombstones to shards before flushing to disk.
-        // This ensures delete_node/delete_edge operations are persisted.
+        // Apply pending tombstones before flushing to disk so delete_node /
+        // delete_edge operations are persisted.
+        let mut tombstones_changed = false;
         if !self.pending_tombstone_nodes.is_empty() || !self.pending_tombstone_edges.is_empty() {
-            self.store.set_tombstones(
+            // MVCC B3: deletions are version state. Merge them into the current
+            // manifest version's cumulative tombstone set so the imminent commit
+            // carries them forward and writes them to disk (snapshot authority +
+            // reopen fidelity). extend_tombstones also refreshes the version's
+            // derived Arc, so reads see the delete immediately.
+            tombstones_changed = self.manifest.get_mut().unwrap().extend_tombstones(
                 &self.pending_tombstone_nodes,
                 &self.pending_tombstone_edges,
             );
+            // Keep the per-shard TombstoneSet in sync for the legacy live-read
+            // and compaction-merge paths that still consult it (B3 Option A:
+            // relocate the snapshot authority to the version; the per-shard
+            // field is no longer the authority but still backs those paths).
+            // Broadcast the FULL cumulative set (not just this batch's pending)
+            // so the per-shard set matches the version — set_tombstones replaces.
+            let (full_nodes, full_edges) = {
+                let m = self.manifest.lock().unwrap();
+                let cur = m.current();
+                let full_nodes: HashSet<u128> =
+                    cur.tombstoned_node_ids.iter().copied().collect();
+                let full_edges: HashSet<(u128, u128, Arc<str>)> = cur
+                    .tombstoned_edge_keys
+                    .iter()
+                    .map(|(s, d, t)| (*s, *d, Arc::from(t.as_str())))
+                    .collect();
+                (full_nodes, full_edges)
+            };
+            self.store.set_tombstones(&full_nodes, &full_edges);
             self.pending_tombstone_nodes.clear();
             self.pending_tombstone_edges.clear();
         }
-        self.store.flush_all(&mut self.manifest)?;
+        let flushed = self.store.flush_all(self.manifest.get_mut().unwrap())?;
+        // If tombstones changed but there were no segments to flush (write
+        // buffers already drained by a prior commit), flush_all advanced no
+        // version. Force a tombstone-only version so the delete is persisted.
+        if tombstones_changed && flushed == 0 {
+            self.manifest.get_mut().unwrap().commit_tombstone_only()?;
+        }
+        Ok(())
+    }
+
+    fn begin_bulk_load(&mut self) -> Result<()> {
+        // MVCC C2.3: flip the manifest durability flag to Relaxed. The commit
+        // point reads `m.durability()` under the manifest Mutex, so every
+        // commit that grabs the lock after this runs with deferred fsync. This
+        // method is reached only via the engine write lock (with_engine_write),
+        // which serializes against in-flight commits — no race on the flag.
+        //
+        // MVCC C3.a: arm auto-compaction. While bulk-load is active the serial
+        // commit path bounds the live L0 segment count by compacting once a shard
+        // crosses the threshold — keeping per-commit capture/append ~flat.
+        self.bulk_load_active = true;
+        self.auto_compactions = 0;
+        self.manifest
+            .lock()
+            .unwrap()
+            .set_durability(DurabilityMode::Relaxed)
+    }
+
+    fn end_bulk_load(&mut self) -> Result<()> {
+        // MVCC C2.3 / C2.2: first flush any data still in write buffers so the
+        // published manifest version reflects all bulk commits, THEN run the
+        // durable barrier over that published version, THEN restore Strict.
+        //
+        // Crash contract (C2.4): if make_durable returns Err, we do NOT flip
+        // back to Strict — the barrier is incomplete, and the caller surfaces
+        // the error so the operator re-runs (deferred-durability data may be
+        // partially on disk; a reopen sees a consistent older-or-equal version,
+        // never corruption — current.json is swapped atomically and last).
+        self.flush()?;
+
+        // MVCC C3.a: stop arming per-commit auto-compaction, then run ONE final
+        // compaction barrier so every shard's bulk L0 is folded into L1 before
+        // the durable barrier (bounds the published live segment count).
+        self.bulk_load_active = false;
+        {
+            let config = CompactionConfig { segment_threshold: 1 };
+            self.store
+                .compact(self.manifest.get_mut().unwrap(), &config)?;
+        }
+
+        // MVCC C3.c: bounded disk reclaim. The B5 pin-aware GC retains every
+        // segment referenced by a version >= min_pinned (live readers) and by the
+        // current published version; everything else (superseded bulk L0 left on
+        // disk in-run, disk-for-speed) is moved to gc/ and purged. Disk grows
+        // during bulk, drops here to a bounded multiple of logical size.
+        self.reclaim_superseded_segments()?;
+
+        {
+            let mut m = self.manifest.lock().unwrap();
+            m.make_durable()?;
+            m.set_durability(DurabilityMode::Strict)?;
+        }
         Ok(())
     }
 
@@ -765,20 +848,20 @@ impl GraphStore for GraphEngineV2 {
         // The default threshold (4) skips shards with few L0 segments,
         // leaving old L1 + new L0 = double-counted nodes/edges.
         let config = CompactionConfig { segment_threshold: 1 };
-        self.store.compact(&mut self.manifest, &config)?;
+        self.store.compact(self.manifest.get_mut().unwrap(), &config)?;
         // Manifest GC: remove old manifest files before segment GC so
         // referenced_segments is recalculated and orphaned segments are detected.
-        let gc_manifests = self.manifest.gc_manifests(3)?;
+        let gc_manifests = self.manifest.get_mut().unwrap().gc_manifests(3)?;
         if gc_manifests > 0 {
             tracing::info!("GC: removed {} old manifest(s)", gc_manifests);
         }
         // Segment GC: collect orphaned segments after compaction + manifest GC
-        let moved = self.manifest.gc_collect()?;
+        let moved = self.manifest.get_mut().unwrap().gc_collect()?;
         if !moved.is_empty() {
             tracing::info!("GC: moved {} orphaned segment(s) to gc/", moved.len());
         }
         // Purge: permanently delete collected segments
-        let purged = self.manifest.gc_purge()?;
+        let purged = self.manifest.get_mut().unwrap().gc_purge()?;
         if purged > 0 {
             tracing::info!("GC: purged {} segment file(s)", purged);
         }
@@ -792,35 +875,23 @@ impl GraphStore for GraphEngineV2 {
     }
 
     fn node_count(&self) -> usize {
-        // `store.node_count()` already reports LIVE nodes: each id counted
-        // once (deduped across segments) and shard tombstones excluded.
-        // The only ids it does NOT yet exclude are pending tombstones from
-        // `delete_node` that haven't been flushed into the shard
-        // TombstoneSet — those nodes are still present in the store and thus
-        // counted, so subtract them here. (Superseded re-adds are already
-        // deduplicated inside `store.node_count()`, so no extra correction.)
-        let total = self.store.node_count();
-        let pending_live = self
-            .pending_tombstone_nodes
-            .iter()
-            .filter(|id| self.store.node_exists(**id))
-            .count();
-        total.saturating_sub(pending_live)
+        // B2: version-pinned count over the published snapshot. Each id is
+        // counted once (deduped across the version's segments) and the version's
+        // tombstones are excluded. Uncommitted pending tombstones from
+        // `delete_node` are NOT reflected until flush publishes them.
+        let snap = self.snapshot();
+        self.store.node_count_at(&snap)
     }
 
     fn edge_count(&self) -> usize {
-        let total = self.store.edge_count();
-        let pending_live = self
-            .pending_tombstone_edges
-            .iter()
-            .filter(|(src, dst, et)| self.store.edge_exists(*src, *dst, et))
-            .count();
-        total.saturating_sub(pending_live)
+        // B2: version-pinned count over the published snapshot.
+        let snap = self.snapshot();
+        self.store.edge_count_at(&snap)
     }
 
     fn clear(&mut self) {
         self.store = MultiShardStore::ephemeral(DEFAULT_SHARD_COUNT);
-        self.manifest = ManifestStore::ephemeral();
+        self.manifest = std::sync::Mutex::new(ManifestStore::ephemeral());
         self.pending_tombstone_nodes.clear();
         self.pending_tombstone_edges.clear();
         self.declared_fields.clear();
@@ -867,16 +938,100 @@ fn dir_size_bytes(path: &Path) -> u64 {
 // ── Engine-specific Methods (NOT on GraphStore trait) ────────────────
 
 impl GraphEngineV2 {
+    /// MVCC C3.a: auto-compaction trigger for the serial (`&mut self`) commit
+    /// path during bulk-load. Bounds the live L0 segment count so per-commit
+    /// `ReadSnapshot::capture` / descriptor-append cost stays ~flat instead of
+    /// climbing with `O(commits)` segments.
+    ///
+    /// SAFETY / FALLBACK (deliberate, reported): this runs ONLY at the serial
+    /// single-writer commit point — it takes `&mut self`, the same exclusive
+    /// access the legacy `compact()` requires (compaction reads AND mutates live
+    /// in-memory shard state: `set_l1_segments` / `clear_l0_after_compaction` /
+    /// the global index). There is NO concurrent commit in flight here (the
+    /// engine write lock / `&mut self` excludes them), so this is deadlock-free
+    /// and reader-safe BY CONSTRUCTION: the slow L1 rewrite never overlaps a
+    /// concurrent `commit_batch_private`, and the B5 pins keep any live reader's
+    /// older-version segments alive (compaction publishes new L1 + leaves old L0
+    /// on disk; reclaim is deferred to `end_bulk_load`). The fully-concurrent
+    /// background-compactor-as-writer variant is NOT taken here because the
+    /// existing compaction path is structurally `&mut self` (in-place shard
+    /// mutation), so a `&self` background writer would race concurrent appenders
+    /// on unguarded shard `Vec`s — a UAF/lost-update surface out of this scope.
+    fn maybe_auto_compact(&mut self) -> Result<()> {
+        if !self.bulk_load_active {
+            return Ok(());
+        }
+        // Live L0 segment count per shard, from the published version mirrored in
+        // shard state. Trigger when ANY shard crosses the threshold.
+        let max_l0 = self
+            .store
+            .shard_diagnostics()
+            .iter()
+            .map(|d| d.l0_node_segment_count.max(d.l0_edge_segment_count))
+            .max()
+            .unwrap_or(0);
+        if max_l0 < self.auto_compact_threshold {
+            return Ok(());
+        }
+        // Compact every shard with >= threshold L0 segments. Slow L1 rewrite runs
+        // here under exclusive `&mut self` — never holding the manifest mutex
+        // across the rewrite (compact() publishes via a short commit at the end).
+        let config = CompactionConfig {
+            segment_threshold: self.auto_compact_threshold,
+        };
+        self.store
+            .compact(self.manifest.get_mut().unwrap(), &config)?;
+        self.auto_compactions += 1;
+        Ok(())
+    }
+
+    /// MVCC C3.c: bounded reclaim of superseded segment files via the B5
+    /// pin-aware GC. Removes stale manifest versions (keep last 3), moves
+    /// orphaned segments to `gc/` (retaining every segment referenced by a
+    /// version `>= min_pinned`, so a live reader's pinned segments survive), then
+    /// purges them. Called at `end_bulk_load`; safe to call any time.
+    fn reclaim_superseded_segments(&mut self) -> Result<()> {
+        let m = self.manifest.get_mut().unwrap();
+        let gc_manifests = m.gc_manifests(3)?;
+        if gc_manifests > 0 {
+            tracing::info!("C3.c reclaim: removed {} old manifest(s)", gc_manifests);
+        }
+        let moved = m.gc_collect()?;
+        if !moved.is_empty() {
+            tracing::info!(
+                "C3.c reclaim: moved {} orphaned segment(s) to gc/",
+                moved.len()
+            );
+        }
+        let purged = m.gc_purge()?;
+        if purged > 0 {
+            tracing::info!("C3.c reclaim: purged {} segment file(s)", purged);
+        }
+        Ok(())
+    }
+
+    /// MVCC C3.a: number of auto-compaction rounds fired during the last
+    /// bulk-load (diagnostics / acceptance bench).
+    pub fn auto_compactions(&self) -> u64 {
+        self.auto_compactions
+    }
+
+    /// MVCC C3.a: set the per-shard live-L0 threshold that triggers auto-compaction
+    /// during bulk-load. Larger ⇒ compaction fires less often (more amortization of
+    /// the O(total) L1 rewrite, at the cost of a higher live-segment ceiling).
+    /// Tuning is out of scope (spec §8); the bench uses this to report sensitivity.
+    pub fn set_auto_compact_threshold(&mut self, threshold: usize) {
+        self.auto_compact_threshold = threshold.max(1);
+    }
+
     /// Check if a node is an endpoint (for PathValidator).
     ///
     /// Endpoint types: db:query, http:request, http:endpoint,
     /// EXTERNAL, fs:operation, SIDE_EFFECT, exported FUNCTION.
     pub fn is_endpoint(&self, id: u128) -> bool {
-        if let Some(v2) = self.store.get_node(id) {
-            if self.is_node_tombstoned(id) {
-                return false;
-            }
-
+        // B2: version-pinned read through the published snapshot.
+        let snap = self.snapshot();
+        if let Some(v2) = self.store.get_node_at(&snap, id) {
             let node_type = v2.node_type.as_str();
 
             if matches!(
@@ -958,15 +1113,92 @@ impl GraphEngineV2 {
         protected_types: &[String],
     ) -> Result<CommitDelta> {
         let delta = self.store
-            .commit_batch_ext(nodes, edges, changed_files, tags, &mut self.manifest, protected_types)?;
+            .commit_batch_ext(nodes, edges, changed_files, tags, self.manifest.get_mut().unwrap(), protected_types)?;
 
-        // After commit_batch_ext, all tombstones live in the store's shard TombstoneSet
-        // (set via set_tombstones_shared). The engine's pending sets are cleared —
-        // is_node/edge_tombstoned() delegates to the store for persisted tombstones.
+        // MVCC B3: after commit_batch_ext the new version's cumulative tombstone
+        // set lives in the manifest VERSION (the authority that snapshots read);
+        // the per-shard mirror was refreshed once at the commit point for the
+        // legacy live-read paths. The engine's pending sets are cleared.
         self.pending_tombstone_nodes.clear();
         self.pending_tombstone_edges.clear();
 
+        // MVCC C3.a: bound the live L0 segment count during bulk-load. No-op
+        // outside bulk-load and below threshold. Runs under exclusive `&mut self`
+        // (single-writer) so the L1 rewrite never overlaps a concurrent commit.
+        self.maybe_auto_compact()?;
+
         Ok(delta)
+    }
+
+    /// MVCC B4: CONCURRENT atomic batch commit (`&self`).
+    ///
+    /// Runs the deadlock-free private-buffer commit path: lock-free snapshot
+    /// read + build + flush, with only the short manifest commit-point
+    /// serialized. Many of these may run in parallel (the server holds a SHARED
+    /// `read()` lock for them). Returns `GraphError::ConflictedCommit` on a
+    /// write-write conflict (caller retries with a fresh snapshot).
+    ///
+    /// Disk-backed only — ephemeral engines must use the serial `&mut self`
+    /// `commit_batch_ext` (see `store.supports_concurrent_commit()`).
+    pub fn commit_batch_concurrent(
+        &self,
+        nodes: Vec<NodeRecordV2>,
+        edges: Vec<EdgeRecordV2>,
+        changed_files: &[String],
+        tags: HashMap<String, String>,
+        protected_types: &[String],
+    ) -> Result<CommitDelta> {
+        self.store.commit_batch_private(
+            nodes,
+            edges,
+            changed_files,
+            tags,
+            &self.manifest,
+            protected_types,
+        )
+    }
+
+    /// Whether this engine can take the concurrent commit path (disk-backed).
+    pub fn supports_concurrent_commit(&self) -> bool {
+        self.store.supports_concurrent_commit()
+    }
+
+    /// MVCC C3.a: is bulk-load mode currently armed? While bulk-load is active
+    /// the server routes `CommitBatch` through the serial `&mut self`
+    /// (`commit_batch_ext`) path so per-commit auto-compaction can bound the
+    /// live segment count — the concurrent `&self` path cannot auto-compact
+    /// (compaction mutates live shard state in place, no interior locks).
+    pub fn bulk_load_active(&self) -> bool {
+        self.bulk_load_active
+    }
+
+    /// MVCC B4: count of conflict-driven commit retries (diagnostics / tests).
+    pub fn commit_conflict_retries(&self) -> u64 {
+        self.store.commit_conflict_retries()
+    }
+
+    /// MVCC B4: peak simultaneous occupancy of the LOCK-FREE commit build/flush
+    /// region — the rigorous parallelism witness (`> 1` ⇒ real overlap that the
+    /// 2PL path could not produce). Diagnostics / the B4 acceptance test.
+    pub fn commit_build_peak(&self) -> u64 {
+        self.store.commit_build_peak()
+    }
+
+    /// MVCC C1: mean group-commit batch size (commits folded per durable
+    /// `commit_edit`). `> 1.0` ⇒ fsync amortization is firing. Diagnostics / the
+    /// C1 acceptance test.
+    pub fn group_commit_batch_size(&self) -> f64 {
+        self.store.group_commit_batch_size()
+    }
+
+    /// MVCC C1: number of group-commit batches (leader publishes) so far.
+    pub fn group_commit_batches(&self) -> u64 {
+        self.store.group_commit_batches()
+    }
+
+    /// MVCC C1: peak single-batch fan-in (largest batch a leader drained).
+    pub fn group_commit_batch_size_max(&self) -> u64 {
+        self.store.group_commit_batch_size_max()
     }
 
     /// Compact with statistics returned (for benchmarks and diagnostics).
@@ -978,7 +1210,7 @@ impl GraphEngineV2 {
         // Flush write buffers to L0 first (same reason as compact()).
         self.flush()?;
         let config = CompactionConfig { segment_threshold: 1 };
-        let result = self.store.compact(&mut self.manifest, &config)?;
+        let result = self.store.compact(self.manifest.get_mut().unwrap(), &config)?;
         Ok(result)
     }
 
@@ -988,17 +1220,17 @@ impl GraphEngineV2 {
         version: u64,
         tags: HashMap<String, String>,
     ) -> Result<()> {
-        self.manifest.tag_snapshot(version, tags)
+        self.manifest.get_mut().unwrap().tag_snapshot(version, tags)
     }
 
     /// Find a snapshot by tag key/value.
     pub fn find_snapshot(&self, tag_key: &str, tag_value: &str) -> Option<u64> {
-        self.manifest.find_snapshot(tag_key, tag_value)
+        self.manifest.lock().unwrap().find_snapshot(tag_key, tag_value)
     }
 
     /// List snapshots, optionally filtered by tag key.
     pub fn list_snapshots(&self, filter_tag: Option<&str>) -> Vec<SnapshotInfo> {
-        self.manifest.list_snapshots(filter_tag)
+        self.manifest.lock().unwrap().list_snapshots(filter_tag)
     }
 
     /// Diff two snapshots.
@@ -1007,7 +1239,7 @@ impl GraphEngineV2 {
         from_version: u64,
         to_version: u64,
     ) -> Result<SnapshotDiff> {
-        self.manifest.diff_snapshots(from_version, to_version)
+        self.manifest.lock().unwrap().diff_snapshots(from_version, to_version)
     }
 
     /// Whether this engine is ephemeral (in-memory only).
@@ -1053,7 +1285,7 @@ impl GraphEngineV2 {
             && self.store.total_write_buffer_nodes() >= 500;
 
         if exceeds_limits || pressure_flush {
-            if let Err(e) = self.store.flush_all(&mut self.manifest) {
+            if let Err(e) = self.store.flush_all(self.manifest.get_mut().unwrap()) {
                 tracing::warn!("auto-flush failed: {}", e);
             }
         }
@@ -1071,7 +1303,7 @@ impl GraphEngineV2 {
     /// flush() or compact() explicitly.
     fn maybe_auto_flush_edges(&mut self) {
         if self.store.any_shard_needs_flush(usize::MAX, self.cached_profile.write_buffer_byte_limit) {
-            if let Err(e) = self.store.flush_all(&mut self.manifest) {
+            if let Err(e) = self.store.flush_all(self.manifest.get_mut().unwrap()) {
                 tracing::warn!("auto-flush (edges) failed: {}", e);
             }
         }
@@ -1079,15 +1311,12 @@ impl GraphEngineV2 {
 
     /// Get incoming neighbors (src nodes of incoming edges).
     fn reverse_neighbors(&self, id: u128, edge_types: &[&str]) -> Vec<u128> {
-        let edge_types_opt = if edge_types.is_empty() {
-            None
-        } else {
-            Some(edge_types)
-        };
-        let edges = self.store.get_incoming_edges(id, edge_types_opt);
-        self.filter_edges(edges)
+        // B2: version-pinned read through the published snapshot.
+        let snap = self.snapshot();
+        let edge_types_opt = if edge_types.is_empty() { None } else { Some(edge_types) };
+        self.store.get_incoming_edges_at(&snap, id, edge_types_opt)
             .into_iter()
-            .filter(|e| !self.is_node_tombstoned(e.src))
+            .filter(|e| self.store.node_exists_at(&snap, e.src))
             .map(|e| e.src)
             .collect()
     }
@@ -1095,15 +1324,12 @@ impl GraphEngineV2 {
     /// Internal neighbors helper (same as GraphStore::neighbors but
     /// callable without trait dispatch, avoids borrow issues).
     fn neighbors_internal(&self, id: u128, edge_types: &[&str]) -> Vec<u128> {
-        let edge_types_opt = if edge_types.is_empty() {
-            None
-        } else {
-            Some(edge_types)
-        };
-        let edges = self.store.get_outgoing_edges(id, edge_types_opt);
-        self.filter_edges(edges)
+        // B2: version-pinned read through the published snapshot.
+        let snap = self.snapshot();
+        let edge_types_opt = if edge_types.is_empty() { None } else { Some(edge_types) };
+        self.store.get_outgoing_edges_at(&snap, id, edge_types_opt)
             .into_iter()
-            .filter(|e| !self.is_node_tombstoned(e.dst))
+            .filter(|e| self.store.node_exists_at(&snap, e.dst))
             .map(|e| e.dst)
             .collect()
     }
@@ -1262,6 +1488,8 @@ mod tests {
         let node = make_v1_node(100, "FUNCTION", "foo", "src/main.js");
 
         engine.add_nodes(vec![node]);
+        // B2 (RFD-71): reads see only published data — flush the staged add.
+        engine.flush().unwrap();
 
         assert!(engine.node_exists(100));
         let retrieved = engine.get_node(100).unwrap();
@@ -1276,9 +1504,13 @@ mod tests {
         let mut engine = GraphEngineV2::create_ephemeral();
         let node = make_v1_node(200, "CLASS", "Bar", "src/bar.js");
         engine.add_nodes(vec![node]);
+        // B2 (RFD-71): publish the add before reading it back.
+        engine.flush().unwrap();
 
         assert!(engine.node_exists(200));
         engine.delete_node(200);
+        // B2 (RFD-71): a delete is invisible until flushed — publish the tombstone.
+        engine.flush().unwrap();
         assert!(!engine.node_exists(200));
         assert!(engine.get_node(200).is_none());
     }
@@ -1291,6 +1523,8 @@ mod tests {
             make_v1_node(2, "FUNCTION", "b", "src/b.js"),
             make_v1_node(3, "CLASS", "C", "src/c.js"),
         ]);
+        // B2 (RFD-71): reads see only published data — flush the staged adds.
+        engine.flush().unwrap();
 
         let funcs = engine.find_by_type("FUNCTION");
         assert_eq!(funcs.len(), 2);
@@ -1310,6 +1544,8 @@ mod tests {
             make_v1_node(11, "http:endpoint", "ep1", "src/b.js"),
             make_v1_node(12, "db:query", "q1", "src/c.js"),
         ]);
+        // B2 (RFD-71): reads see only published data — flush the staged adds.
+        engine.flush().unwrap();
 
         let http_nodes = engine.find_by_type("http:*");
         assert_eq!(http_nodes.len(), 2);
@@ -1328,6 +1564,8 @@ mod tests {
             node,
             make_v1_node(21, "FUNCTION", "helper", "src/utils.js"),
         ]);
+        // B2 (RFD-71): reads see only published data — flush the staged adds.
+        engine.flush().unwrap();
 
         // Find by name
         let query = AttrQuery::new().name("handler");
@@ -1383,6 +1621,8 @@ mod tests {
             deleted: false,
         };
         engine.add_edges(vec![edge], false);
+        // B2 (RFD-71): reads see only published data — flush the staged add+edge.
+        engine.flush().unwrap();
 
         let outgoing = engine.get_outgoing_edges(30, None);
         assert_eq!(outgoing.len(), 1);
@@ -1420,6 +1660,8 @@ mod tests {
             ],
             false,
         );
+        // B2 (RFD-71): reads see only published data — flush the staged adds.
+        engine.flush().unwrap();
 
         // All neighbors
         let all = engine.neighbors(40, &[]);
@@ -1464,6 +1706,8 @@ mod tests {
             ],
             false,
         );
+        // B2 (RFD-71): reads see only published data — flush the staged adds.
+        engine.flush().unwrap();
 
         // Full BFS
         let result = engine.bfs(&[50], 10, &["CALLS"]);
@@ -1489,11 +1733,14 @@ mod tests {
         engine.store.add_nodes(vec![live, dead]);
 
         engine.delete_node(dead_id);
+
+        // B2 (RFD-71): the delete is invisible to reads until flushed — publish
+        // it, then both the tombstone and the surviving node are observable.
+        engine.flush().unwrap();
         assert!(!engine.node_exists(dead_id));
         assert!(engine.node_exists(live_id));
 
         // Flush clears pending tombstones
-        engine.flush().unwrap();
         assert!(engine.pending_tombstone_nodes.is_empty());
         assert!(engine.pending_tombstone_edges.is_empty());
     }
@@ -1646,6 +1893,126 @@ mod tests {
         assert_eq!(by_type.values().sum::<usize>(), 30, "by_type after reopen");
     }
 
+    /// MVCC B3 acceptance #1 — per-version tombstone isolation.
+    ///
+    /// A snapshot captured at version V freezes V's cumulative tombstone set
+    /// (now sourced from the manifest VERSION, not a per-shard broadcast). A
+    /// later commit that tombstones a node changes the LIVE version's visible
+    /// set but MUST NOT change the already-captured old snapshot — and a fresh
+    /// snapshot MUST see the new tombstone. This is the property B4 concurrency
+    /// depends on (tombstones immutable-per-version, no shared-mutable race).
+    #[test]
+    fn test_b3_version_tombstone_isolation() {
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let file = "src/iso.js";
+
+        let keep = make_v2_node("FUNCTION:keep@src/iso.js", "FUNCTION", "keep", file);
+        let doomed = make_v2_node("FUNCTION:doomed@src/iso.js", "FUNCTION", "doomed", file);
+        let keep_id = keep.id;
+        let doomed_id = doomed.id;
+
+        // Commit 1: both nodes live.
+        engine
+            .commit_batch(vec![keep, doomed], vec![], &[file.to_string()], HashMap::new())
+            .unwrap();
+
+        // Pin a snapshot of version V1 (both nodes present, none tombstoned).
+        let snap_v1 = engine.store.snapshot(&engine.manifest.lock().unwrap());
+        assert!(engine.store.node_exists_at(&snap_v1, doomed_id), "V1 sees doomed");
+        assert!(engine.store.node_exists_at(&snap_v1, keep_id), "V1 sees keep");
+        assert!(
+            !snap_v1.tombstones.contains_node(doomed_id),
+            "V1 snapshot tombstone set is empty for doomed"
+        );
+
+        // Commit 2: re-analyze the file dropping `doomed` (tombstoned), keeping `keep`.
+        let keep_v2 = make_v2_node("FUNCTION:keep@src/iso.js", "FUNCTION", "keep", file);
+        engine
+            .commit_batch(vec![keep_v2], vec![], &[file.to_string()], HashMap::new())
+            .unwrap();
+
+        // OLD snapshot is frozen: still sees `doomed` (tombstoned only in V2).
+        assert!(
+            engine.store.node_exists_at(&snap_v1, doomed_id),
+            "old snapshot must STILL see doomed — version-pinned tombstones"
+        );
+        assert!(
+            !snap_v1.tombstones.contains_node(doomed_id),
+            "old snapshot's frozen tombstone Arc must be unaffected by V2"
+        );
+
+        // FRESH snapshot sees the new version: `doomed` is tombstoned.
+        let snap_v2 = engine.store.snapshot(&engine.manifest.lock().unwrap());
+        assert!(snap_v2.version > snap_v1.version, "V2 is a later version");
+        assert!(
+            snap_v2.tombstones.contains_node(doomed_id),
+            "fresh snapshot's tombstone set (from the manifest version) includes doomed"
+        );
+        assert!(
+            !engine.store.node_exists_at(&snap_v2, doomed_id),
+            "fresh snapshot must NOT see tombstoned doomed"
+        );
+        assert!(engine.store.node_exists_at(&snap_v2, keep_id), "keep survives in V2");
+
+        // Live engine reads (newest version) agree.
+        assert!(!engine.node_exists(doomed_id), "live read: doomed gone");
+        assert!(engine.node_exists(keep_id), "live read: keep present");
+    }
+
+    /// MVCC B3 acceptance #2 — reopen fidelity through the flush() delete path.
+    ///
+    /// `delete_node` + `flush()` (not `commit_batch`) is a deletion path that
+    /// previously persisted tombstones only to the per-shard set. B3 routes the
+    /// deletion into the manifest VERSION (the authority), so the delete is on
+    /// disk and survives reopen — verified here against a SECOND delete in the
+    /// same session (the replace-not-merge shard mirror would otherwise drop the
+    /// first delete).
+    #[test]
+    fn test_b3_delete_via_flush_survives_reopen() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("flush_del.rfdb");
+
+        let a = make_v2_node("FUNCTION:a@src/f.js", "FUNCTION", "a", "src/f.js");
+        let b = make_v2_node("FUNCTION:b@src/f.js", "FUNCTION", "b", "src/f.js");
+        let c = make_v2_node("FUNCTION:c@src/f.js", "FUNCTION", "c", "src/f.js");
+        let a_id = a.id;
+        let b_id = b.id;
+        let c_id = c.id;
+
+        {
+            let mut engine = GraphEngineV2::create(&db_path).unwrap();
+            engine
+                .commit_batch(
+                    vec![a, b, c],
+                    vec![],
+                    &["src/f.js".to_string()],
+                    HashMap::new(),
+                )
+                .unwrap();
+            assert_eq!(engine.node_count(), 3);
+
+            // Two separate delete+flush cycles. Each flush merges the deletion
+            // into the manifest version (not a replace), so BOTH survive.
+            engine.delete_node(a_id);
+            engine.flush().unwrap();
+            assert!(!engine.node_exists(a_id), "a deleted after first flush");
+
+            engine.delete_node(b_id);
+            engine.flush().unwrap();
+            assert!(!engine.node_exists(b_id), "b deleted after second flush");
+            assert!(!engine.node_exists(a_id), "a STILL deleted after second flush");
+            assert!(engine.node_exists(c_id), "c survives");
+            assert_eq!(engine.node_count(), 1, "only c live before reopen");
+        }
+
+        // Reopen: tombstones come from the manifest version, deletes stay deleted.
+        let engine = GraphEngineV2::open(&db_path).unwrap();
+        assert!(!engine.node_exists(a_id), "a stays deleted after reopen");
+        assert!(!engine.node_exists(b_id), "b stays deleted after reopen");
+        assert!(engine.node_exists(c_id), "c stays live after reopen");
+        assert_eq!(engine.node_count(), 1, "only c live after reopen");
+    }
+
     #[test]
     fn test_edge_count_excludes_tombstoned_and_re_added_duplicates() {
         let mut engine = GraphEngineV2::create_ephemeral();
@@ -1726,6 +2093,8 @@ mod tests {
         };
 
         engine.add_nodes(vec![original.clone()]);
+        // B2 (RFD-71): reads see only published data — flush the staged add.
+        engine.flush().unwrap();
         let retrieved = engine.get_node(999).unwrap();
 
         // Core fields must match
@@ -1818,6 +2187,8 @@ mod tests {
     fn test_clear_resets_engine() {
         let mut engine = GraphEngineV2::create_ephemeral();
         engine.add_nodes(vec![make_v1_node(70, "FUNCTION", "x", "src/x.js")]);
+        // B2 (RFD-71): reads see only published data — flush the staged add.
+        engine.flush().unwrap();
         assert_eq!(engine.node_count(), 1);
 
         engine.clear();
@@ -1834,6 +2205,8 @@ mod tests {
             make_v1_node(82, "db:query", "q", "src/a.js"),
             make_v1_node(83, "EXTERNAL", "ext", "src/a.js"),
         ]);
+        // B2 (RFD-71): reads see only published data — flush the staged adds.
+        engine.flush().unwrap();
 
         assert!(engine.is_endpoint(80));  // http:request
         assert!(!engine.is_endpoint(81)); // regular FUNCTION
@@ -1867,6 +2240,8 @@ mod tests {
             ],
             false,
         );
+        // B2 (RFD-71): reads see only published data — flush the staged adds.
+        engine.flush().unwrap();
 
         // Forward from 90
         let fwd = engine.reachability(&[90], 10, &["CALLS"], false);
@@ -1908,10 +2283,14 @@ mod tests {
             }],
             false,
         );
+        // B2 (RFD-71): publish the staged add+edge before reading.
+        engine.flush().unwrap();
 
         assert_eq!(engine.get_outgoing_edges(100, None).len(), 1);
 
         engine.delete_edge(100, 101, "CALLS");
+        // B2 (RFD-71): the edge delete is invisible until flushed — publish it.
+        engine.flush().unwrap();
         assert_eq!(engine.get_outgoing_edges(100, None).len(), 0);
     }
 
@@ -1921,14 +2300,16 @@ mod tests {
         let node = make_v1_node(102, "FUNCTION", "foo", "src/a.js");
 
         engine.add_nodes(vec![node.clone()]);
+        // B2 (RFD-71): publish the add before reading it back.
+        engine.flush().unwrap();
         assert!(engine.node_exists(102));
 
+        // Delete then re-add the same ID in the same session: the re-add must
+        // clear the pending tombstone so that, once published, the node is live.
+        // (Reads between the staged ops are invisible under B2, so we only
+        // assert the published outcome.)
         engine.delete_node(102);
-        assert!(!engine.node_exists(102));
-
-        // Re-adding the same ID in the same session should resurrect the node.
         engine.add_nodes(vec![node]);
-        assert!(engine.node_exists(102));
 
         engine.flush().unwrap();
         assert!(engine.node_exists(102));
@@ -1952,16 +2333,16 @@ mod tests {
         };
 
         engine.add_edges(vec![edge.clone()], false);
+        // B2 (RFD-71): publish the staged nodes+edge before reading.
+        engine.flush().unwrap();
         assert_eq!(engine.get_outgoing_edges(103, None).len(), 1);
 
+        // Delete then re-add the same edge key in the same session: the re-add
+        // must clear the pending tombstone so the published edge stays live.
+        // Reads between the staged ops are invisible under B2, so we only assert
+        // the published outcome.
         engine.delete_edge(103, 104, "FLOWS_INTO");
-        assert_eq!(engine.get_outgoing_edges(103, None).len(), 0);
-
-        // Re-adding the same edge key in the same session should resurrect it.
         engine.add_edges(vec![edge.clone()], false);
-        let outgoing = engine.get_outgoing_edges(103, None);
-        assert_eq!(outgoing.len(), 1);
-        assert_eq!(outgoing[0].metadata, edge.metadata);
 
         engine.flush().unwrap();
         let outgoing_after_flush = engine.get_outgoing_edges(103, None);
@@ -1977,6 +2358,8 @@ mod tests {
             make_v1_node(111, "FUNCTION", "b", "src/b.js"),
             make_v1_node(112, "CLASS", "C", "src/c.js"),
         ]);
+        // B2 (RFD-71): reads see only published data — flush the staged adds.
+        engine.flush().unwrap();
 
         let counts = engine.count_nodes_by_type(None);
         assert_eq!(counts.get("FUNCTION"), Some(&2));
@@ -2013,6 +2396,8 @@ mod tests {
             ],
             false,
         );
+        // B2 (RFD-71): reads see only published data — flush the staged adds.
+        engine.flush().unwrap();
 
         let all = engine.get_all_edges();
         assert_eq!(all.len(), 2);
@@ -2172,24 +2557,21 @@ mod tests {
             metadata: None, deleted: false,
         }], false);
 
-        // flush_data_only should be a no-op — no segments written
+        // flush_data_only is a no-op below the size threshold — no segments
+        // written, nothing published. Under B2 (RFD-71) the staged write buffer
+        // is invisible to reads, so the data is NOT observable yet (no mid-test
+        // write-buffer read — that would be a dirty read B2 forbids).
         engine.flush_data_only().unwrap();
 
-        // Data still readable from write buffers
+        // Now flush() actually persists + publishes a new manifest version.
+        engine.flush().unwrap();
+
+        // Data readable after the real flush (from the published segments).
         assert!(engine.node_exists(id_a));
         assert!(engine.node_exists(id_b));
         let outgoing = engine.get_outgoing_edges(id_a, None);
         assert_eq!(outgoing.len(), 1);
         assert_eq!(outgoing[0].dst, id_b);
-
-        // Now flush() should actually persist
-        engine.flush().unwrap();
-
-        // Data still readable after real flush (from segments)
-        assert!(engine.node_exists(id_a));
-        assert!(engine.node_exists(id_b));
-        let outgoing = engine.get_outgoing_edges(id_a, None);
-        assert_eq!(outgoing.len(), 1);
     }
 
     #[test]
@@ -2221,10 +2603,13 @@ mod tests {
             }
             engine.add_nodes(nodes);
 
-            // flush_data_only is a no-op — should succeed
+            // flush_data_only is a no-op below threshold; flush() publishes.
+            // B2 (RFD-71): reads see only published data, so publish before the
+            // read-back.
             engine.flush_data_only().unwrap();
+            engine.flush().unwrap();
 
-            // All nodes for this file should be readable (from write buffer)
+            // All nodes for this file should be readable (from published segments)
             let found = engine.find_by_attr(
                 &AttrQuery { file: Some(file.clone()), ..AttrQuery::default() },
             );
@@ -2247,5 +2632,137 @@ mod tests {
             &AttrQuery { file: Some("src/file_42.js".to_string()), ..AttrQuery::default() },
         );
         assert_eq!(found.len(), 5);
+    }
+
+    // ── B2 (RFD-71) MVCC acceptance tests ────────────────────────────
+
+    /// B2 core property: visibility flips exactly at the manifest publish.
+    /// An add WITHOUT flush is invisible to every public read; after flush
+    /// (which publishes a new manifest version) the same read observes it.
+    /// Proves the public read path no longer consults the live write buffer.
+    #[test]
+    fn test_b2_visibility_equals_publish() {
+        let mut engine = GraphEngineV2::create_ephemeral();
+
+        let n = make_v2_node("FUNCTION:vis@src/v.js", "FUNCTION", "vis", "src/v.js");
+        let id = n.id;
+        let v1 = NodeRecord {
+            id,
+            node_type: Some("FUNCTION".to_string()),
+            file_id: 0,
+            name_offset: 0,
+            version: "main".to_string(),
+            exported: false,
+            replaces: None,
+            deleted: false,
+            name: Some("vis".to_string()),
+            file: Some("src/v.js".to_string()),
+            metadata: None,
+            semantic_id: Some("FUNCTION:vis@src/v.js".to_string()),
+        };
+
+        // Add WITHOUT flush → uncommitted → invisible to all public reads.
+        engine.add_nodes(vec![v1]);
+        assert!(
+            !engine.node_exists(id),
+            "uncommitted add must be invisible (no dirty reads)"
+        );
+        assert!(engine.get_node(id).is_none(), "uncommitted add must be invisible");
+        assert_eq!(engine.node_count(), 0, "uncommitted add must not count");
+        assert!(
+            engine.find_by_type("FUNCTION").is_empty(),
+            "uncommitted add must not appear in find_by_type"
+        );
+        let q = AttrQuery::new().name("vis");
+        assert!(
+            engine.find_by_attr(&q).is_empty(),
+            "uncommitted add must not appear in find_by_attr"
+        );
+
+        // Flush publishes a new manifest version → visibility flips ON.
+        engine.flush().unwrap();
+        assert!(engine.node_exists(id), "after publish the add is visible");
+        assert_eq!(engine.get_node(id).unwrap().id, id);
+        assert_eq!(engine.node_count(), 1);
+        assert_eq!(engine.find_by_type("FUNCTION"), vec![id]);
+        assert_eq!(engine.find_by_attr(&q), vec![id]);
+    }
+
+    /// B2: an edge added without flush is invisible; after publish it appears,
+    /// and a delete is likewise invisible until its tombstone is published.
+    #[test]
+    fn test_b2_edge_visibility_and_delete_publish() {
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let a = make_v2_node("FUNCTION:a@src/a.js", "FUNCTION", "a", "src/a.js");
+        let b = make_v2_node("FUNCTION:b@src/a.js", "FUNCTION", "b", "src/a.js");
+        let (ida, idb) = (a.id, b.id);
+        engine.store.add_nodes(vec![a, b]);
+        engine.add_edges(vec![EdgeRecord {
+            src: ida, dst: idb,
+            edge_type: Some("CALLS".to_string()),
+            version: "main".to_string(),
+            metadata: None, deleted: false,
+        }], false);
+
+        // Uncommitted: edge + endpoints invisible.
+        assert!(engine.get_outgoing_edges(ida, None).is_empty());
+        assert_eq!(engine.edge_count(), 0);
+
+        engine.flush().unwrap();
+        assert_eq!(engine.get_outgoing_edges(ida, None).len(), 1);
+        assert_eq!(engine.edge_count(), 1);
+
+        // Delete WITHOUT flush → invisible (edge still observable).
+        engine.delete_edge(ida, idb, "CALLS");
+        assert_eq!(
+            engine.get_outgoing_edges(ida, None).len(),
+            1,
+            "uncommitted delete must be invisible"
+        );
+
+        // Publish the tombstone → delete becomes visible.
+        engine.flush().unwrap();
+        assert!(engine.get_outgoing_edges(ida, None).is_empty());
+        assert_eq!(engine.edge_count(), 0);
+    }
+
+    /// B2 equivalence: public reads through the snapshot path return exactly the
+    /// committed state, identical to the B1 `*_at` reads on the same version.
+    #[test]
+    fn test_b2_post_commit_equivalence_with_at_reads() {
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let n1 = make_v2_node("FUNCTION:f1@src/a.js", "FUNCTION", "f1", "src/a.js");
+        let n2 = make_v2_node("CLASS:C@src/b.js", "CLASS", "C", "src/b.js");
+        let (id1, id2) = (n1.id, n2.id);
+        engine.store.add_nodes(vec![n1, n2]);
+        engine.add_edges(vec![EdgeRecord {
+            src: id1, dst: id2,
+            edge_type: Some("CALLS".to_string()),
+            version: "main".to_string(),
+            metadata: None, deleted: false,
+        }], false);
+        engine.flush().unwrap();
+
+        // Public engine reads.
+        let pub_node = engine.get_node(id1).unwrap();
+        let pub_count = engine.node_count();
+        let pub_edges = engine.get_outgoing_edges(id1, None);
+        let pub_funcs = engine.find_by_type("FUNCTION");
+
+        // Direct B1 `*_at` reads on the same published snapshot.
+        let snap = engine.snapshot();
+        let at_node = engine.store.get_node_at(&snap, id1).unwrap();
+        let at_count = engine.store.node_count_at(&snap);
+        let at_edges = engine.store.get_outgoing_edges_at(&snap, id1, None);
+        let at_funcs = engine.store.find_node_ids_by_type_at(&snap, "FUNCTION");
+
+        assert_eq!(pub_node.id, at_node.id);
+        assert_eq!(pub_node.name.as_deref(), Some(at_node.name.as_str()));
+        assert_eq!(pub_count, at_count);
+        assert_eq!(pub_count, 2);
+        assert_eq!(pub_edges.len(), at_edges.len());
+        assert_eq!(pub_edges.len(), 1);
+        assert_eq!(pub_funcs, at_funcs);
+        assert_eq!(pub_funcs, vec![id1]);
     }
 }

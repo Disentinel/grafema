@@ -453,6 +453,9 @@ mod eval_tests {
             },
         ], false);
 
+        // B2 (RFD-71): public reads see only the published manifest version, so
+        // flush/commit the staged write buffer before the test queries it.
+        engine.flush().unwrap();
         engine
     }
 
@@ -815,6 +818,8 @@ mod eval_tests {
             },
         ], false);
 
+        // B2 (RFD-71): flush staged writes so the snapshot read sees them.
+        engine.flush().unwrap();
         let mut evaluator = Evaluator::new(&engine);
 
         let rule = parse_rule(
@@ -922,6 +927,8 @@ mod eval_tests {
             },
         ], false);
 
+        // B2 (RFD-71): flush staged writes so the snapshot read sees them.
+        engine.flush().unwrap();
         let mut evaluator = Evaluator::new(&engine);
 
         // Guarantee: violation(X) :- node(X, "VARIABLE"), \+ incoming(X, _, "ASSIGNED_FROM").
@@ -1044,6 +1051,8 @@ mod eval_tests {
             },
         ]);
 
+        // B2 (RFD-71): flush staged writes so the snapshot read sees them.
+        engine.flush().unwrap();
         let evaluator = Evaluator::new(&engine);
 
         // attr(100, "object", X) - get object from metadata
@@ -1108,6 +1117,8 @@ mod eval_tests {
             },
         ]);
 
+        // B2 (RFD-71): flush staged writes so the snapshot read sees them.
+        engine.flush().unwrap();
         let evaluator = Evaluator::new(&engine);
 
         // Query nested path: attr(200, "config.host", X)
@@ -1144,6 +1155,8 @@ mod eval_tests {
             },
         ]);
 
+        // B2 (RFD-71): flush staged writes so the snapshot read sees them.
+        engine.flush().unwrap();
         let evaluator = Evaluator::new(&engine);
 
         // Query nested number: attr(300, "connection.timeout", X)
@@ -1182,6 +1195,8 @@ mod eval_tests {
             },
         ]);
 
+        // B2 (RFD-71): flush staged writes so the snapshot read sees them.
+        engine.flush().unwrap();
         let evaluator = Evaluator::new(&engine);
 
         // Query "app.name" - should match literal key, not nested path
@@ -1313,6 +1328,8 @@ mod eval_tests {
             },
         ], false);
 
+        // B2 (RFD-71): flush staged writes so the snapshot read sees them.
+        engine.flush().unwrap();
         let mut evaluator = Evaluator::new(&engine);
 
         // Guarantee: CALL_SITE (no "object" attr) must have CALLS edge
@@ -1498,6 +1515,8 @@ mod eval_tests {
             },
         ]);
 
+        // B2 (RFD-71): flush staged writes so the snapshot read sees them.
+        engine.flush().unwrap();
         let mut evaluator = Evaluator::new(&engine);
 
         // Find functions that are NOT constructors AND don't start with <
@@ -1654,6 +1673,8 @@ mod eval_tests {
             },
         ]);
 
+        // B2 (RFD-71): flush staged writes so the snapshot read sees them.
+        engine.flush().unwrap();
         let evaluator = Evaluator::new(&engine);
 
         // Query: node(X, "http:request"), attr(X, "url", U)
@@ -1715,6 +1736,8 @@ mod eval_tests {
             },
         ]);
 
+        // B2 (RFD-71): flush staged writes so the snapshot read sees them.
+        engine.flush().unwrap();
         let evaluator = Evaluator::new(&engine);
 
         // Query: filter by specific attribute value
@@ -1794,6 +1817,8 @@ mod eval_tests {
             },
         ], false);
 
+        // B2 (RFD-71): flush staged writes so the snapshot read sees them.
+        engine.flush().unwrap();
         let evaluator = Evaluator::new(&engine);
 
         // attr_edge(1, 2, "ITERATES_OVER", "scale", X)
@@ -1857,6 +1882,8 @@ mod eval_tests {
             },
         ], false);
 
+        // B2 (RFD-71): flush staged writes so the snapshot read sees them.
+        engine.flush().unwrap();
         let evaluator = Evaluator::new(&engine);
 
         // attr_edge(10, 20, "ITERATES_OVER", "cardinality.scale", X)
@@ -1920,6 +1947,8 @@ mod eval_tests {
             },
         ], false);
 
+        // B2 (RFD-71): flush staged writes so the snapshot read sees them.
+        engine.flush().unwrap();
         let evaluator = Evaluator::new(&engine);
 
         // Match: attr_edge(100, 200, "ITERATES_OVER", "scale", "nodes")
@@ -2308,6 +2337,8 @@ mod eval_tests {
             },
         ], false);
 
+        // B2 (RFD-71): flush staged writes so the snapshot read sees them.
+        engine.flush().unwrap();
         let mut evaluator = Evaluator::new(&engine);
 
         // Rule: Find loops that iterate over large collections
@@ -2521,6 +2552,9 @@ mod eval_tests {
             },
         ], false);
 
+        // B2 (RFD-71): public reads see only the published manifest version, so
+        // flush/commit the staged write buffer before the test queries it.
+        engine.flush().unwrap();
         engine
     }
 
@@ -3207,6 +3241,9 @@ mod eval_tests {
                 },
             ], false);
 
+            // B2 (RFD-71): public reads see only the published manifest version,
+            // so flush/commit the staged write buffer before the test queries it.
+            engine.flush().unwrap();
             engine
         }
 
@@ -3589,6 +3626,9 @@ mod attr_reverse_lookup_tests {
             },
         ], false);
 
+        // B2 (RFD-71): public reads see only the published manifest version, so
+        // flush/commit the staged write buffer before the test queries it.
+        engine.flush().unwrap();
         engine
     }
 
@@ -3789,6 +3829,9 @@ mod attr_first_class_field_tests {
             },
         ]);
 
+        // B2 (RFD-71): public reads see only the published manifest version, so
+        // flush/commit the staged write buffer before the test queries it.
+        engine.flush().unwrap();
         engine
     }
 
@@ -3992,6 +4035,9 @@ mod edge_type_index_tests {
             },
         ], false);
 
+        // B2 (RFD-71): public reads see only the published manifest version, so
+        // flush/commit the staged write buffer before the test queries it.
+        engine.flush().unwrap();
         engine
     }
 
@@ -4115,6 +4161,9 @@ mod hash_join_tests {
         }).collect();
         engine.add_edges(edges, false);
 
+        // B2 (RFD-71): public reads see only the published manifest version, so
+        // flush/commit the staged write buffer before the test queries it.
+        engine.flush().unwrap();
         engine
     }
 
@@ -4292,6 +4341,8 @@ mod hash_join_tests {
         });
         engine.add_edges(bk, false);
 
+        // B2 (RFD-71): flush staged writes so the snapshot read sees them.
+        engine.flush().unwrap();
         let evaluator = Evaluator::new(&engine);
         // Anchor A via node/1 so the planner can place `incoming` with at
         // least one bound var; then `incoming(A, B, "G")` binds B while
@@ -4387,6 +4438,8 @@ mod hash_join_tests {
         });
         engine.add_edges(sends, false);
 
+        // B2 (RFD-71): flush staged writes so the snapshot read sees them.
+        engine.flush().unwrap();
         let evaluator = Evaluator::new(&engine);
         // Self-loop rule: `edge(M, C, CONTAINS), edge(C, M, SENDS_MESSAGE)`
         let literals = parse_query(
@@ -4433,6 +4486,8 @@ mod hash_join_tests {
         }
         engine.add_nodes(orphan_nodes);
 
+        // B2 (RFD-71): flush staged writes so the snapshot read sees them.
+        engine.flush().unwrap();
         let mut evaluator = Evaluator::new(&engine);
         let rule = parse_rule(
             "no_calls(F) :- node(F, \"FUNCTION\"), \\+ edge(F, _, \"CALLS\")."
@@ -4486,6 +4541,8 @@ mod hash_join_tests {
         }
         engine.add_edges(edges, false);
 
+        // B2 (RFD-71): flush staged writes so the snapshot read sees them.
+        engine.flush().unwrap();
         let mut evaluator = Evaluator::new(&engine);
         let rule = parse_rule(
             r#"orphan(X) :- node(X, "FUNCTION"), \+ edge(_, X, "CONTAINS")."#
@@ -4558,6 +4615,8 @@ mod hash_join_tests {
         engine.add_nodes(db_nodes);
         engine.add_edges(db_edges, false);
 
+        // B2 (RFD-71): flush staged writes so the snapshot read sees them.
+        engine.flush().unwrap();
         let mut evaluator = Evaluator::new(&engine);
         let program = parse_program(
             "db_caller(F, Q) :- node(F, \"FUNCTION\"), edge(F, C, \"CALLS\"), edge(C, Q, \"QUERIES_DB\")."
@@ -4897,6 +4956,8 @@ mod numeric_cmp_tests {
             },
         ]);
 
+        // B2 (RFD-71): flush staged writes so the snapshot read sees them.
+        engine.flush().unwrap();
         let mut evaluator = Evaluator::new(&engine);
 
         let rule = parse_rule(

@@ -37,12 +37,14 @@ use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{GraphError, Result};
 use crate::storage_v2::compaction::CompactionInfo;
+use crate::storage_v2::shard::TombstoneSet;
 use crate::storage_v2::types::{SegmentMeta, SegmentType};
 
 // ── Durability Mode ────────────────────────────────────────────────
@@ -63,7 +65,81 @@ pub enum DurabilityMode {
     Relaxed,
 }
 
+// ── VersionPins (MVCC B5) ──────────────────────────────────────────
+
+/// Live-reader version pin registry (MVCC B5).
+///
+/// Every live [`ReadSnapshot`](crate::storage_v2::read_snapshot::ReadSnapshot)
+/// pins the manifest version it captured. GC/compaction must NEVER reclaim a
+/// segment file referenced by a version that a live reader still pins
+/// (deleting a segment under a live `mmap` is a use-after-free / UB hazard).
+///
+/// Implementation: a refcount per pinned version. A snapshot increments its
+/// version's count on capture (and clone) and decrements on drop. The store
+/// queries [`Self::min_pinned`] — the smallest version with a non-zero count —
+/// and the GC retention rule keeps every version `>= min_pinned`.
+///
+/// Shared via `Arc` between the `ManifestStore` (which the GC runs on) and
+/// every `ReadSnapshot` (which may outlive any borrow of the store), so the
+/// pin survives independently of the manifest lock.
+#[derive(Debug, Default)]
+pub struct VersionPins {
+    /// version -> live-reader refcount. Only non-zero entries are retained;
+    /// a count that reaches zero removes the key (so `keys().min()` is the
+    /// minimum live-pinned version directly).
+    counts: std::sync::Mutex<std::collections::BTreeMap<u64, usize>>,
+}
+
+impl VersionPins {
+    /// Create an empty registry.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register one live reader on `version` (called by `ReadSnapshot::capture`
+    /// and its `Clone`). Saturating add: a refcount overflow is treated as
+    /// "pinned forever" (conservative — never under-counts a live pin).
+    pub fn pin(&self, version: u64) {
+        let mut g = self.counts.lock().unwrap();
+        let c = g.entry(version).or_insert(0);
+        *c = c.saturating_add(1);
+    }
+
+    /// Release one live reader on `version` (called by `ReadSnapshot::drop`).
+    /// Removes the entry when the count reaches zero. Underflow (more unpins
+    /// than pins) is impossible by construction (every unpin pairs with a pin),
+    /// but is handled defensively by removing the entry — never wraps to a huge
+    /// count that would pin forever.
+    pub fn unpin(&self, version: u64) {
+        let mut g = self.counts.lock().unwrap();
+        if let Some(c) = g.get_mut(&version) {
+            *c = c.saturating_sub(1);
+            if *c == 0 {
+                g.remove(&version);
+            }
+        }
+    }
+
+    /// The smallest version still pinned by a live reader, or `None` if no
+    /// reader is live. GC retains every version `>= min_pinned`.
+    pub fn min_pinned(&self) -> Option<u64> {
+        self.counts.lock().unwrap().keys().next().copied()
+    }
+
+    /// Total number of distinct pinned versions (diagnostics/tests).
+    pub fn pinned_version_count(&self) -> usize {
+        self.counts.lock().unwrap().len()
+    }
+}
+
 // ── Manifest ───────────────────────────────────────────────────────
+
+/// serde `skip_serializing_if` predicate for `Arc<Vec<_>>` fields (MVCC C3.b).
+/// Matches the prior `Vec::is_empty` behaviour so the on-disk JSON is byte-for-byte
+/// identical to the pre-Arc format (empty L1 lists are omitted).
+fn arc_vec_is_empty<T>(v: &Arc<Vec<T>>) -> bool {
+    v.is_empty()
+}
 
 /// Manifest: immutable snapshot descriptor.
 ///
@@ -78,11 +154,18 @@ pub struct Manifest {
     /// Creation timestamp (Unix epoch seconds)
     pub created_at: u64,
 
-    /// Active node segments in this snapshot
-    pub node_segments: Vec<SegmentDescriptor>,
+    /// Active node segments in this snapshot.
+    ///
+    /// MVCC C3.b: held behind `Arc` so `ReadSnapshot::capture` is O(1)
+    /// (`Arc::clone`, no deep clone of the descriptor `Vec` + its per-descriptor
+    /// zone-map `HashSet`s). Copy-on-write: a version that changes the segment
+    /// set rebuilds a fresh `Arc<Vec>` (via `Arc::make_mut`), so older snapshots
+    /// that hold an `Arc::clone` keep observing their own immutable set.
+    pub node_segments: Arc<Vec<SegmentDescriptor>>,
 
-    /// Active edge segments in this snapshot
-    pub edge_segments: Vec<SegmentDescriptor>,
+    /// Active edge segments in this snapshot (see [`Self::node_segments`] for the
+    /// MVCC C3.b `Arc` copy-on-write rationale).
+    pub edge_segments: Arc<Vec<SegmentDescriptor>>,
 
     /// Optional tags for snapshot identification.
     /// Empty HashMap = no tags. Common tags:
@@ -114,12 +197,14 @@ pub struct Manifest {
 
     /// L1 (compacted) node segment descriptors — at most one per shard.
     /// Populated by compaction, empty before first compaction.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub l1_node_segments: Vec<SegmentDescriptor>,
+    /// MVCC C3.b: `Arc` for O(1) snapshot capture (see [`Self::node_segments`]).
+    #[serde(default, skip_serializing_if = "arc_vec_is_empty")]
+    pub l1_node_segments: Arc<Vec<SegmentDescriptor>>,
 
     /// L1 (compacted) edge segment descriptors — at most one per shard.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub l1_edge_segments: Vec<SegmentDescriptor>,
+    /// MVCC C3.b: `Arc` for O(1) snapshot capture (see [`Self::node_segments`]).
+    #[serde(default, skip_serializing_if = "arc_vec_is_empty")]
+    pub l1_edge_segments: Arc<Vec<SegmentDescriptor>>,
 
     /// Metadata about the last compaction (None if never compacted).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -201,16 +286,28 @@ impl Manifest {
     /// reproduces exactly the snapshot a full-write commit would have produced.
     pub fn apply(&mut self, edit: &ManifestEdit) {
         // Segment removals (by segment_id) then additions.
-        if !edit.removed_node_segment_ids.is_empty() {
-            let rm: HashSet<u64> = edit.removed_node_segment_ids.iter().copied().collect();
-            self.node_segments.retain(|s| !rm.contains(&s.segment_id));
+        // MVCC C3.b: copy-on-write. `Arc::make_mut` clones the inner Vec only when
+        // another snapshot still shares this Arc (so that snapshot keeps its own
+        // immutable descriptor set); when this manifest holds the sole reference
+        // it mutates in place. Only touched when this edit actually changes the
+        // node/edge segment set — a tombstone-/tag-only edit leaves the Arc shared
+        // (and an unrelated snapshot's capture stays O(1)).
+        if !edit.removed_node_segment_ids.is_empty() || !edit.added_node_segments.is_empty() {
+            let v = Arc::make_mut(&mut self.node_segments);
+            if !edit.removed_node_segment_ids.is_empty() {
+                let rm: HashSet<u64> = edit.removed_node_segment_ids.iter().copied().collect();
+                v.retain(|s| !rm.contains(&s.segment_id));
+            }
+            v.extend(edit.added_node_segments.iter().cloned());
         }
-        if !edit.removed_edge_segment_ids.is_empty() {
-            let rm: HashSet<u64> = edit.removed_edge_segment_ids.iter().copied().collect();
-            self.edge_segments.retain(|s| !rm.contains(&s.segment_id));
+        if !edit.removed_edge_segment_ids.is_empty() || !edit.added_edge_segments.is_empty() {
+            let v = Arc::make_mut(&mut self.edge_segments);
+            if !edit.removed_edge_segment_ids.is_empty() {
+                let rm: HashSet<u64> = edit.removed_edge_segment_ids.iter().copied().collect();
+                v.retain(|s| !rm.contains(&s.segment_id));
+            }
+            v.extend(edit.added_edge_segments.iter().cloned());
         }
-        self.node_segments.extend(edit.added_node_segments.iter().cloned());
-        self.edge_segments.extend(edit.added_edge_segments.iter().cloned());
 
         // Tombstone delta replay onto cumulative set.
         if !edit.added_tombstone_nodes.is_empty() || !edit.removed_tombstone_nodes.is_empty() {
@@ -231,12 +328,13 @@ impl Manifest {
             self.tombstoned_edge_keys = set.into_iter().collect();
         }
 
-        // L1 / compaction: full replace when present.
+        // L1 / compaction: full replace when present (fresh Arc — old snapshots
+        // keep their prior L1 set, MVCC C3.b copy-on-write).
         if let Some(l1n) = &edit.l1_node_segments {
-            self.l1_node_segments = l1n.clone();
+            self.l1_node_segments = Arc::new(l1n.clone());
         }
         if let Some(l1e) = &edit.l1_edge_segments {
-            self.l1_edge_segments = l1e.clone();
+            self.l1_edge_segments = Arc::new(l1e.clone());
         }
         if edit.last_compaction.is_some() {
             self.last_compaction = edit.last_compaction.clone();
@@ -792,6 +890,23 @@ pub struct ManifestStore {
     /// (`commit_edit`). Default `MANIFEST_CHECKPOINT_INTERVAL`; overridable
     /// for tests via `set_checkpoint_interval`.
     checkpoint_interval: u64,
+
+    /// MVCC (RFD-71 B3): the current published version's cumulative tombstone
+    /// set, as the authoritative source of truth — a derived `Arc<TombstoneSet>`
+    /// mirror of `self.current.tombstoned_node_ids` / `tombstoned_edge_keys`.
+    ///
+    /// Rebuilt at every commit (and on open) from the in-memory current version.
+    /// Snapshots clone this `Arc` (O(1)) so a `ReadSnapshot` freezes exactly the
+    /// version's tombstones — no per-shard broadcast, no shared-mutable set. This
+    /// is what replaces the old per-shard `Shard.tombstones` broadcast as the
+    /// snapshot/version authority.
+    current_tombstones: Arc<TombstoneSet>,
+
+    /// MVCC B5: live-reader version pin registry. Shared (`Arc`) with every
+    /// `ReadSnapshot` so a pin outlives any borrow of this store. GC consults
+    /// `min_pinned()` and retains every version `>= min_pinned`, guaranteeing a
+    /// segment file referenced by a live reader's version is never reclaimed.
+    version_pins: Arc<VersionPins>,
 }
 
 // ── ManifestStore: Constructors ────────────────────────────────────
@@ -833,6 +948,14 @@ impl ManifestStore {
         let max_segment_id = index.referenced_segments.iter().max().copied().unwrap_or(0);
         let next_segment_id = AtomicU64::new(max_segment_id + 1);
 
+        // MVCC B3: derive the authoritative version tombstone set from the
+        // replayed current manifest (load_current_with_replay reconstructs the
+        // cumulative set into current.tombstoned_*).
+        let current_tombstones = Arc::new(TombstoneSet::from_manifest(
+            current.tombstoned_node_ids.clone(),
+            current.tombstoned_edge_keys.clone(),
+        ));
+
         Ok(Self {
             db_path: Some(db_path.to_path_buf()),
             current,
@@ -840,6 +963,8 @@ impl ManifestStore {
             next_segment_id,
             durability,
             checkpoint_interval: MANIFEST_CHECKPOINT_INTERVAL,
+            current_tombstones,
+            version_pins: Arc::new(VersionPins::new()),
         })
     }
 
@@ -868,8 +993,8 @@ impl ManifestStore {
         let manifest = Manifest {
             version: 1,
             created_at: current_timestamp(),
-            node_segments: Vec::new(),
-            edge_segments: Vec::new(),
+            node_segments: Arc::new(Vec::new()),
+            edge_segments: Arc::new(Vec::new()),
             tags: HashMap::new(),
             stats: ManifestStats {
                 total_nodes: 0,
@@ -880,8 +1005,8 @@ impl ManifestStore {
             parent_version: None,
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: Arc::new(Vec::new()),
+            l1_edge_segments: Arc::new(Vec::new()),
             last_compaction: None,
         };
 
@@ -904,6 +1029,9 @@ impl ManifestStore {
             next_segment_id: AtomicU64::new(1),
             durability,
             checkpoint_interval: MANIFEST_CHECKPOINT_INTERVAL,
+            // Fresh database: no tombstones yet.
+            current_tombstones: Arc::new(TombstoneSet::new()),
+            version_pins: Arc::new(VersionPins::new()),
         })
     }
 
@@ -922,8 +1050,8 @@ impl ManifestStore {
         let manifest = Manifest {
             version: 1,
             created_at: current_timestamp(),
-            node_segments: Vec::new(),
-            edge_segments: Vec::new(),
+            node_segments: Arc::new(Vec::new()),
+            edge_segments: Arc::new(Vec::new()),
             tags: HashMap::new(),
             stats: ManifestStats {
                 total_nodes: 0,
@@ -934,8 +1062,8 @@ impl ManifestStore {
             parent_version: None,
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: Arc::new(Vec::new()),
+            l1_edge_segments: Arc::new(Vec::new()),
             last_compaction: None,
         };
 
@@ -949,6 +1077,9 @@ impl ManifestStore {
             next_segment_id: AtomicU64::new(1),
             durability: DurabilityMode::Strict,
             checkpoint_interval: MANIFEST_CHECKPOINT_INTERVAL,
+            // Fresh ephemeral store: no tombstones yet.
+            current_tombstones: Arc::new(TombstoneSet::new()),
+            version_pins: Arc::new(VersionPins::new()),
         }
     }
 
@@ -968,6 +1099,340 @@ impl ManifestStore {
     /// Complexity: O(1) (cached in memory)
     pub fn current(&self) -> &Manifest {
         &self.current
+    }
+
+    /// The configured durability mode (Strict = fsync, Relaxed = no fsync).
+    ///
+    /// Exposed so the lock-free segment-write phase (MVCC C1) can fsync the
+    /// immutable segment files BEFORE they become visible via the manifest
+    /// commit, without re-serializing the build path through the manifest mutex.
+    pub fn durability(&self) -> DurabilityMode {
+        self.durability
+    }
+
+    /// Runtime durability switch (MVCC C2.1 — bulk-load mode).
+    ///
+    /// Flips `self.durability`, which the commit/publish point reads under the
+    /// manifest Mutex (`multi_shard.rs` reads `m.durability()` while holding the
+    /// lock). Always invoked via the engine write lock (`with_engine_write`),
+    /// which serializes against all in-flight commits — so there is no race on
+    /// the field: any commit that grabs the lock AFTER this call observes the
+    /// new mode; a commit already past its `durability()` read finishes in its
+    /// old mode (at worst one extra/skipped fsync at the boundary — never a
+    /// correctness issue, since `make_durable` re-fsyncs everything anyway).
+    ///
+    /// `&mut self`: exclusive borrow (callers hold `manifest.get_mut()` or an
+    /// engine write lock), so the mutation needs no further synchronization.
+    pub fn set_durability(&mut self, mode: DurabilityMode) -> Result<()> {
+        self.durability = mode;
+        Ok(())
+    }
+
+    /// Durable barrier (MVCC C2.2 — end of bulk load).
+    ///
+    /// Makes the ENTIRE current published manifest version durable in one pass,
+    /// regardless of what `Relaxed` mode skipped during the bulk phase. After
+    /// this returns `Ok`, a reopen from disk sees the full current state,
+    /// bit-faithful (the C2.4 guarantee for "crash AFTER EndBulkLoad").
+    ///
+    /// Steps (in stable-storage dependency order — data before pointer):
+    /// 1. Fsync every segment file referenced by the CURRENT published version
+    ///    (all shards, L0 + L1, nodes + edges). These files were already written
+    ///    during the bulk phase (only their fsync was deferred).
+    /// 2. Re-persist the manifest-chain artifacts of the current version under
+    ///    `Strict` (the checkpoint `{v}.json`, every replayed `{v}.edit.json`,
+    ///    and `manifest_index.json`) — in `Relaxed` these were written with the
+    ///    rename but without the fsync, so their bytes may still be in page cache.
+    /// 3. Fsync each unique shard directory + the manifests directory + db root
+    ///    (dir-entry durability on ext4/XFS; no-op on macOS/Windows).
+    /// 4. Re-persist the manifest pointer `current.json` under `Strict` (one
+    ///    fsync) so the version pointer itself is on stable storage.
+    ///
+    /// O(segments + chain-length), but ONCE. Conservative on partial failure:
+    /// it does NOT early-return on the first segment fsync error — it records
+    /// the first error, continues fsyncing the rest (so a single missing/corrupt
+    /// segment does not leave most of the state un-flushed), and returns the
+    /// aggregate failure at the end. The caller (`end_bulk_load`) must NOT flip
+    /// the mode back to `Strict` if this returns `Err`.
+    ///
+    /// Risk note (C2 risk #1): segments are enumerated from `self.current()` —
+    /// the immutable published snapshot — NOT from live shard write buffers.
+    /// Unflushed live writes are intentionally ignored; only the published
+    /// version is made durable. Safe because this runs under an exclusive borrow
+    /// (engine write lock), so no commit can publish a new version concurrently.
+    pub fn make_durable(&mut self) -> Result<()> {
+        // Ephemeral store: nothing on disk to fsync.
+        let Some(db_path) = self.db_path.clone() else {
+            return Ok(());
+        };
+
+        let mut first_err: Option<GraphError> = None;
+        let mut shard_dirs: HashSet<u16> = HashSet::new();
+
+        // Step 1: fsync every segment of the current published version.
+        // Enumerate from the immutable snapshot (risk #1: not live shard state).
+        let current = &self.current;
+        let all_segments = current
+            .node_segments
+            .iter()
+            .chain(current.edge_segments.iter())
+            .chain(current.l1_node_segments.iter())
+            .chain(current.l1_edge_segments.iter());
+
+        for desc in all_segments {
+            let shard_id = desc.shard_id.unwrap_or(0);
+            shard_dirs.insert(shard_id);
+            let suffix = match desc.segment_type {
+                SegmentType::Nodes => "nodes",
+                SegmentType::Edges => "edges",
+            };
+            let seg_path = db_path
+                .join("segments")
+                .join(format!("{:02}", shard_id))
+                .join(format!("seg_{:06}_{}.seg", desc.segment_id, suffix));
+            // Conservative (risk #2 / #6): on a per-segment fsync failure, record
+            // the first error and keep going — do NOT early-return, so the rest
+            // of the state still reaches stable storage.
+            if let Err(e) = fsync_path(&seg_path) {
+                if first_err.is_none() {
+                    first_err = Some(e);
+                }
+            }
+        }
+
+        // Step 2: re-persist the manifest-chain artifacts of the current version
+        // under Strict (in Relaxed they were renamed but not fsync'd). Re-write
+        // by reading + atomic_write_json(Strict) so the on-disk tail is durable.
+        let version = current.version;
+        let checkpoint = highest_checkpoint_at_or_below(&db_path, version)?;
+        // The checkpoint full-snapshot file.
+        if let Err(e) =
+            resync_json_strict(&manifest_file_path(&db_path, checkpoint))
+        {
+            if first_err.is_none() {
+                first_err = Some(e);
+            }
+        }
+        // Every replayed edit file on top of the checkpoint.
+        for v in (checkpoint + 1)..=version {
+            if let Err(e) =
+                resync_json_strict(&manifest_edit_file_path(&db_path, v))
+            {
+                if first_err.is_none() {
+                    first_err = Some(e);
+                }
+            }
+        }
+        // The manifest index.
+        if let Err(e) =
+            resync_json_strict(&db_path.join("manifest_index.json"))
+        {
+            if first_err.is_none() {
+                first_err = Some(e);
+            }
+        }
+
+        // Step 3: fsync each unique shard dir + manifests dir + db root.
+        for shard_id in &shard_dirs {
+            let dir = db_path.join("segments").join(format!("{:02}", shard_id));
+            if let Err(e) = fsync_directory(&dir) {
+                if first_err.is_none() {
+                    first_err = Some(e);
+                }
+            }
+        }
+        if let Err(e) = fsync_directory(&db_path.join("manifests")) {
+            if first_err.is_none() {
+                first_err = Some(e);
+            }
+        }
+        if let Err(e) = fsync_directory(&db_path) {
+            if first_err.is_none() {
+                first_err = Some(e);
+            }
+        }
+
+        // Step 4: re-persist the version pointer under Strict (one fsync). Do
+        // this LAST so current.json is only durable once everything it points at
+        // is durable — preserving the "visibility never advances past
+        // durability" invariant even across the barrier.
+        let pointer = CurrentPointer::new(version);
+        if let Err(e) = pointer.write_to(&db_path, DurabilityMode::Strict) {
+            if first_err.is_none() {
+                first_err = Some(e);
+            }
+        }
+
+        match first_err {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
+    }
+
+    /// The current published version's cumulative tombstone set (MVCC B3).
+    ///
+    /// This is the authoritative version-state tombstone set. A snapshot clones
+    /// the returned `Arc` (O(1)) to freeze the version's tombstones immutably;
+    /// later commits build a fresh `Arc`, so old snapshots are unaffected.
+    ///
+    /// Complexity: O(1) (cached `Arc`)
+    pub fn current_tombstones(&self) -> Arc<TombstoneSet> {
+        Arc::clone(&self.current_tombstones)
+    }
+
+    /// Shared handle to the live-reader version pin registry (MVCC B5).
+    ///
+    /// A `ReadSnapshot` clones this `Arc` at capture so its pin (and the unpin
+    /// on drop) outlive any borrow of the store / hold of the manifest lock.
+    pub fn version_pins(&self) -> Arc<VersionPins> {
+        Arc::clone(&self.version_pins)
+    }
+
+    /// The smallest manifest version still pinned by a live reader, or `None`
+    /// if no reader is live (MVCC B5). The GC retains every version `>= this`.
+    pub fn min_pinned_version(&self) -> Option<u64> {
+        self.version_pins.min_pinned()
+    }
+
+    /// The latest delta-manifest CHECKPOINT version at or below `version` (MVCC
+    /// B5 retention). A checkpoint is a full-snapshot manifest (`{v}.json`);
+    /// `load_current_with_replay` replays edit deltas on top of it. To keep an
+    /// edit version `version` loadable, its base checkpoint must survive — this
+    /// computes that base. Mirrors the `is_checkpoint` rule in `commit_edit`
+    /// (`v == 1 || v % checkpoint_interval == 0`).
+    fn checkpoint_at_or_below(&self, version: u64) -> u64 {
+        if version <= 1 {
+            return 1;
+        }
+        let ci = self.checkpoint_interval;
+        let floor = (version / ci) * ci;
+        if floor == 0 {
+            1
+        } else {
+            floor
+        }
+    }
+
+    /// Rebuild the cached `current_tombstones` `Arc` from `self.current`'s
+    /// in-memory cumulative tombstone fields. Called after every commit that
+    /// changes the cumulative set, and on open. Produces a fresh `Arc` so any
+    /// snapshot still holding the previous `Arc` keeps its own immutable view.
+    fn rebuild_current_tombstones(&mut self) {
+        self.current_tombstones = Arc::new(TombstoneSet::from_manifest(
+            self.current.tombstoned_node_ids.clone(),
+            self.current.tombstoned_edge_keys.clone(),
+        ));
+    }
+
+    /// Merge new tombstone deltas into the current version's cumulative set
+    /// in memory, ahead of the next commit (MVCC B3).
+    ///
+    /// Used by the `flush()` path, which persists buffered `delete_node` /
+    /// `delete_edge` tombstones. The subsequent `flush_all` → `create_manifest`
+    /// carries the updated cumulative set forward into the new version, and
+    /// `commit` writes it to disk — so flush-path deletions become part of the
+    /// version authority (and survive reopen), not only the per-shard set.
+    ///
+    /// `added_*` are newly tombstoned. Refreshes the derived `Arc` so a snapshot
+    /// taken before the next version commit already sees the new tombstones
+    /// (in-session delete visibility). Returns `true` if the cumulative set
+    /// actually changed (the caller uses this to decide whether to force a
+    /// version commit even when no segments were flushed).
+    pub fn extend_tombstones(
+        &mut self,
+        added_nodes: &HashSet<u128>,
+        added_edges: &HashSet<(u128, u128, Arc<str>)>,
+    ) -> bool {
+        if added_nodes.is_empty() && added_edges.is_empty() {
+            return false;
+        }
+        let before_nodes = self.current.tombstoned_node_ids.len();
+        let before_edges = self.current.tombstoned_edge_keys.len();
+
+        let mut node_set: HashSet<u128> =
+            self.current.tombstoned_node_ids.iter().copied().collect();
+        node_set.extend(added_nodes.iter().copied());
+        self.current.tombstoned_node_ids = node_set.into_iter().collect();
+
+        let mut edge_set: HashSet<(u128, u128, String)> =
+            self.current.tombstoned_edge_keys.iter().cloned().collect();
+        edge_set.extend(
+            added_edges
+                .iter()
+                .map(|(s, d, t)| (*s, *d, t.to_string())),
+        );
+        self.current.tombstoned_edge_keys = edge_set.into_iter().collect();
+
+        let changed = self.current.tombstoned_node_ids.len() != before_nodes
+            || self.current.tombstoned_edge_keys.len() != before_edges;
+        if changed {
+            self.rebuild_current_tombstones();
+        }
+        changed
+    }
+
+    /// Commit a tombstone-only new version (MVCC B3).
+    ///
+    /// The `flush()` deletion path stages tombstones into the current version
+    /// via `extend_tombstones`, but `flush_all` only advances the version when
+    /// it flushes segments. When a delete+flush has nothing to flush (write
+    /// buffers already drained by a prior commit), the deletion would otherwise
+    /// never be persisted as its own version. This advances the version with no
+    /// segment changes, carrying the (already-updated) cumulative tombstone set
+    /// onto disk so the delete survives reopen.
+    pub fn commit_tombstone_only(&mut self) -> Result<()> {
+        // No segment change ⇒ create_manifest's fresh Arc will share nothing with
+        // older snapshots, but the descriptor set is identical. Clone the inner
+        // Vec (the set is unchanged so correctness is unaffected; this path is
+        // rare — only an empty-flush delete commit).
+        let node_segments = (*self.current.node_segments).clone();
+        let edge_segments = (*self.current.edge_segments).clone();
+        // create_manifest carries forward L1 + the cumulative tombstone set
+        // (already updated by extend_tombstones), so the new version persists it.
+        let manifest = self.create_manifest(node_segments, edge_segments, None)?;
+        self.commit(manifest)
+    }
+
+    /// Remove node ids from the current version's cumulative tombstone set in
+    /// memory (MVCC B3). Used when a previously-deleted node is re-added: the
+    /// un-tombstone must reach the version authority, or the next flush would
+    /// re-persist the stale tombstone and the re-added node would stay hidden
+    /// (and disappear after reopen). Refreshes the derived `Arc`. Idempotent.
+    pub fn remove_tombstone_nodes(&mut self, ids: &HashSet<u128>) {
+        if ids.is_empty() || self.current.tombstoned_node_ids.is_empty() {
+            return;
+        }
+        let before = self.current.tombstoned_node_ids.len();
+        self.current.tombstoned_node_ids.retain(|id| !ids.contains(id));
+        if self.current.tombstoned_node_ids.len() != before {
+            self.rebuild_current_tombstones();
+        }
+    }
+
+    /// Remove edge keys from the current version's cumulative tombstone set in
+    /// memory (MVCC B3). Used when a previously-deleted edge is re-added (the
+    /// enricher delete-by-source then re-emit pattern): the un-tombstone must
+    /// reach the version authority, not only the per-shard mirror, or the next
+    /// flush would re-broadcast the stale tombstone and snapshots would keep
+    /// filtering the live edge.
+    ///
+    /// Refreshes the derived `Arc` so any snapshot taken before the next commit
+    /// already sees the edge as live. Idempotent — missing keys are no-ops.
+    pub fn remove_tombstone_edges(&mut self, keys: &[(u128, u128, Arc<str>)]) {
+        if keys.is_empty() || self.current.tombstoned_edge_keys.is_empty() {
+            return;
+        }
+        let rm: HashSet<(u128, u128, String)> = keys
+            .iter()
+            .map(|(s, d, t)| (*s, *d, t.to_string()))
+            .collect();
+        let before = self.current.tombstoned_edge_keys.len();
+        self.current
+            .tombstoned_edge_keys
+            .retain(|k| !rm.contains(k));
+        if self.current.tombstoned_edge_keys.len() != before {
+            self.rebuild_current_tombstones();
+        }
     }
 
     /// Create new manifest (not yet committed).
@@ -1000,19 +1465,29 @@ impl ManifestStore {
         // this, every commit after compaction silently drops L1 data and
         // open() loads only the new delta — making post-compaction data
         // disappear from queries.
-        let l1_node_segments = self.current.l1_node_segments.clone();
-        let l1_edge_segments = self.current.l1_edge_segments.clone();
+        // MVCC C3.b: `Arc::clone` shares the current version's immutable L1 set
+        // (O(1)). Compaction overrides these with a fresh Arc after this call.
+        let l1_node_segments = Arc::clone(&self.current.l1_node_segments);
+        let l1_edge_segments = Arc::clone(&self.current.l1_edge_segments);
+
+        // MVCC B3: carry forward the cumulative tombstone set. The manifest
+        // version is the authority for tombstones now, so a plain flush commit
+        // (which adds no deletions) must preserve the current version's set.
+        // Compaction overrides these to empty explicitly after this call (the
+        // merged L1 segments no longer contain the tombstoned records).
+        let tombstoned_node_ids = self.current.tombstoned_node_ids.clone();
+        let tombstoned_edge_keys = self.current.tombstoned_edge_keys.clone();
 
         Ok(Manifest {
             version,
             created_at: current_timestamp(),
-            node_segments,
-            edge_segments,
+            node_segments: Arc::new(node_segments),
+            edge_segments: Arc::new(edge_segments),
             tags: tags.unwrap_or_default(),
             stats,
             parent_version: Some(self.current.version),
-            tombstoned_node_ids: Vec::new(),
-            tombstoned_edge_keys: Vec::new(),
+            tombstoned_node_ids,
+            tombstoned_edge_keys,
             l1_node_segments,
             l1_edge_segments,
             last_compaction: None,
@@ -1034,9 +1509,9 @@ impl ManifestStore {
         if self.db_path.is_none() {
             self.index.add_snapshot(&manifest);
             self.current = manifest;
-            // Free tombstone memory — shard TombstoneSet is the source of truth.
-            self.current.tombstoned_node_ids = Vec::new();
-            self.current.tombstoned_edge_keys = Vec::new();
+            // MVCC B3: the in-memory current version is the tombstone authority;
+            // keep its cumulative set and refresh the derived Arc.
+            self.rebuild_current_tombstones();
             return Ok(());
         }
 
@@ -1065,11 +1540,12 @@ impl ManifestStore {
         // 4. Update cache
         self.current = manifest;
 
-        // 5. Free tombstone memory — data is persisted on disk.
-        // Tombstones are loaded fresh on open() and live in shard TombstoneSet
-        // during runtime. Keeping them in manifest wastes memory (copy #1 of 3+).
-        self.current.tombstoned_node_ids = Vec::new();
-        self.current.tombstoned_edge_keys = Vec::new();
+        // 5. MVCC B3: the in-memory current version is the tombstone authority
+        // (snapshots read its derived Arc). The full set was just persisted to
+        // disk in the manifest file above, so keep it in memory and refresh the
+        // derived Arc — do NOT clear it (clearing would make snapshots blind to
+        // the version's deletions).
+        self.rebuild_current_tombstones();
 
         // 6. Periodic manifest GC — prevent unbounded growth during long analysis runs.
         // Keep last 3 manifests (current + 2 for safety). Runs every 10 commits.
@@ -1126,16 +1602,18 @@ impl ManifestStore {
         let is_checkpoint = version == 1 || version % self.checkpoint_interval == 0;
 
         // Advance the in-memory snapshot in place (O(Δ) segment splice). The
-        // edit's tombstone delta lands in self.current but is bogus as a
-        // cumulative set (we clear it every commit) — overwritten with the full
-        // set below at checkpoints, cleared otherwise.
+        // edit's tombstone delta is replayed onto self.current's cumulative set
+        // by apply(), so after this self.current.tombstoned_* IS the version's
+        // authoritative cumulative tombstone set (MVCC B3 — we no longer clear
+        // it). At checkpoints we re-materialise the full set from the caller's
+        // copy (identical, but it is what we persist verbatim to disk).
         self.current.apply(&edit);
 
-        // Ephemeral: cache only, no disk artifacts.
+        // Ephemeral: cache only, no disk artifacts. Keep the cumulative set in
+        // memory (apply already maintained it) and refresh the derived Arc.
         if self.db_path.is_none() {
             self.index.add_snapshot(&self.current);
-            self.current.tombstoned_node_ids = Vec::new();
-            self.current.tombstoned_edge_keys = Vec::new();
+            self.rebuild_current_tombstones();
             return Ok(());
         }
 
@@ -1165,9 +1643,12 @@ impl ManifestStore {
             self.index.latest_version = version;
         }
 
-        // Free tombstone memory (shard TombstoneSet is the runtime source of truth).
-        self.current.tombstoned_node_ids = Vec::new();
-        self.current.tombstoned_edge_keys = Vec::new();
+        // MVCC B3: keep the cumulative tombstone set in memory (it is the
+        // version authority that snapshots read) and refresh the derived Arc.
+        // Between checkpoints the on-disk artifact is the O(Δ) edit delta; the
+        // full set is reconstructed on open by replaying edits onto the latest
+        // checkpoint, so memory and disk stay consistent.
+        self.rebuild_current_tombstones();
 
         // Persist index (updated in both branches).
         let index_path = db_path.join("manifest_index.json");
@@ -1317,12 +1798,67 @@ impl ManifestStore {
 
         std::fs::create_dir_all(&gc_dir)?;
 
-        let referenced_ids = &self.index.referenced_segments;
+        // MVCC B5: the live retained set is every segment referenced by a
+        // retained manifest version PLUS every segment referenced by a version
+        // a live reader still pins. `gc_manifests` already refuses to drop
+        // pinned versions from the index (so their segments stay in
+        // `referenced_segments`), but compute the pinned union explicitly here
+        // as defense-in-depth: even if `gc_collect` is called without a prior
+        // `gc_manifests`, a pinned reader's segment file is never reclaimed.
+        let mut referenced_ids: HashSet<u64> = self.index.referenced_segments.clone();
+        if let Some(min_pinned) = self.version_pins.min_pinned() {
+            for info in &self.index.snapshots {
+                if info.version >= min_pinned {
+                    if let Ok(manifest) = self.load_manifest(info.version) {
+                        for seg in manifest
+                            .node_segments
+                            .iter()
+                            .chain(manifest.edge_segments.iter())
+                            .chain(manifest.l1_node_segments.iter())
+                            .chain(manifest.l1_edge_segments.iter())
+                        {
+                            referenced_ids.insert(seg.segment_id);
+                        }
+                    }
+                }
+            }
+        }
         let mut moved = Vec::new();
 
+        // Multi-shard disk layout writes per-shard segment files under
+        // `segments/NN/` (see `SegmentDescriptor::file_path`); legacy/unsharded
+        // layout writes directly under `segments/`. Scan BOTH: top-level `.seg`
+        // files and one level of shard subdirectories. Orphaned files are moved
+        // into a mirrored `gc/` (or `gc/NN/`) tree, preserving the relative
+        // path so `gc_purge` and any recovery keep the shard association.
         for entry in std::fs::read_dir(&segments_dir)? {
             let entry = entry?;
             let path = entry.path();
+            let file_type = entry.file_type()?;
+
+            if file_type.is_dir() {
+                // Shard subdirectory: scan its `.seg` files.
+                let shard_name = entry.file_name();
+                for sub in std::fs::read_dir(&path)? {
+                    let sub = sub?;
+                    let sub_path = sub.path();
+                    if sub_path.extension().and_then(|s| s.to_str()) != Some("seg") {
+                        continue;
+                    }
+                    if let Some(segment_id) = parse_segment_id_from_filename(
+                        sub_path.file_name().unwrap().to_str().unwrap(),
+                    ) {
+                        if !referenced_ids.contains(&segment_id) {
+                            let gc_shard_dir = gc_dir.join(&shard_name);
+                            std::fs::create_dir_all(&gc_shard_dir)?;
+                            let gc_path = gc_shard_dir.join(sub_path.file_name().unwrap());
+                            std::fs::rename(&sub_path, &gc_path)?;
+                            moved.push(gc_path.to_string_lossy().to_string());
+                        }
+                    }
+                }
+                continue;
+            }
 
             if path.extension().and_then(|s| s.to_str()) != Some("seg") {
                 continue;
@@ -1360,9 +1896,28 @@ impl ManifestStore {
 
         let mut deleted = 0;
 
+        // Purge both top-level `gc/*.seg` and shard-mirrored `gc/NN/*.seg`
+        // (gc_collect stages per-shard orphans under `gc/NN/`). Unlinking a
+        // file here is safe ONLY because gc_collect's pin guard already ensured
+        // no live reader's version references it (MVCC B5 — no unlink under a
+        // live mmap).
         for entry in std::fs::read_dir(&gc_dir)? {
             let entry = entry?;
             let path = entry.path();
+            let file_type = entry.file_type()?;
+
+            if file_type.is_dir() {
+                for sub in std::fs::read_dir(&path)? {
+                    let sub = sub?;
+                    let sub_path = sub.path();
+                    if sub_path.extension().and_then(|s| s.to_str()) != Some("seg") {
+                        continue;
+                    }
+                    std::fs::remove_file(&sub_path)?;
+                    deleted += 1;
+                }
+                continue;
+            }
 
             if path.extension().and_then(|s| s.to_str()) != Some("seg") {
                 continue;
@@ -1396,13 +1951,40 @@ impl ManifestStore {
 
         let db_path = self.db_path.as_ref().unwrap().clone();
 
+        // MVCC B5: never remove a manifest version that a live reader pins (or
+        // anything newer than the minimum live-pinned version). Keeping the
+        // manifest JSON keeps that version's segments in `referenced_segments`
+        // after the recalculation below, so `gc_collect`/`gc_purge` will not
+        // reclaim a pinned reader's segment files. Conservative: retain MORE
+        // (every version >= the retention floor) rather than risk deleting a
+        // pinned one.
+        //
+        // The delta-manifest write path stores most versions as `.edit.json`
+        // deltas replayed on top of the latest checkpoint `<= version`. So a
+        // pinned EDIT version V is only loadable if its base checkpoint (and the
+        // edits between it and V) survive. The retention floor is therefore the
+        // latest checkpoint `<= min_pinned`, NOT min_pinned itself — otherwise
+        // gc_collect's `load_manifest(pinned)` fails and the pin guard silently
+        // misses the pinned version's segments (a use-after-free hazard, since
+        // the segment is then GC'd while a live reader's mmap is open).
+        let min_pinned = self.version_pins.min_pinned();
+        let retention_floor = min_pinned.map(|mp| self.checkpoint_at_or_below(mp));
+
         let versions_to_remove: Vec<u64> = self
             .index
             .snapshots
             .iter()
             .take(snapshot_count - keep_last)
             .map(|s| s.version)
+            .filter(|v| match retention_floor {
+                Some(floor) => *v < floor,
+                None => true,
+            })
             .collect();
+
+        if versions_to_remove.is_empty() {
+            return Ok(0);
+        }
 
         let mut removed = 0;
         for version in &versions_to_remove {
@@ -1489,6 +2071,28 @@ fn atomic_write_json<T: Serialize>(
 fn read_json<T: DeserializeOwned>(path: &Path) -> Result<T> {
     let file = File::open(path)?;
     Ok(serde_json::from_reader(file)?)
+}
+
+/// Fsync a single file's data to stable storage (MVCC C2 durable barrier).
+///
+/// Opens the existing file read-only and `sync_all`s it. Used by
+/// `make_durable` to flush segment files whose fsync was deferred in
+/// `Relaxed` mode.
+fn fsync_path(path: &Path) -> Result<()> {
+    let file = File::open(path)?;
+    file.sync_all()?;
+    Ok(())
+}
+
+/// Re-fsync an already-written JSON artifact in place (MVCC C2 durable barrier).
+///
+/// In `Relaxed` mode `atomic_write_json` renamed the file into place but did
+/// not fsync its data, so the bytes may still be in page cache. Opening it and
+/// `sync_all`-ing flushes the existing on-disk file to stable storage without
+/// rewriting it (no temp/rename — the content is already correct, only its
+/// durability was deferred).
+fn resync_json_strict(path: &Path) -> Result<()> {
+    fsync_path(path)
 }
 
 /// Fsync directory to persist directory entry changes.
@@ -1703,15 +2307,15 @@ mod tests {
         Manifest {
             version: 1,
             created_at: 1000,
-            node_segments: nodes.clone(),
-            edge_segments: Vec::new(),
+            node_segments: Arc::new(nodes.clone()),
+            edge_segments: Arc::new(Vec::new()),
             tags: HashMap::new(),
             stats: ManifestStats::from_segments(&nodes, &[]),
             parent_version: None,
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: Arc::new(Vec::new()),
+            l1_edge_segments: Arc::new(Vec::new()),
             last_compaction: None,
         }
     }
@@ -1746,10 +2350,10 @@ mod tests {
     /// Canonicalize unordered fields (segments by id, tombstones sorted) so
     /// two logically-equal manifests compare equal under derived PartialEq.
     fn norm(m: &mut Manifest) {
-        m.node_segments.sort_by_key(|s| s.segment_id);
-        m.edge_segments.sort_by_key(|s| s.segment_id);
-        m.l1_node_segments.sort_by_key(|s| s.segment_id);
-        m.l1_edge_segments.sort_by_key(|s| s.segment_id);
+        Arc::make_mut(&mut m.node_segments).sort_by_key(|s| s.segment_id);
+        Arc::make_mut(&mut m.edge_segments).sort_by_key(|s| s.segment_id);
+        Arc::make_mut(&mut m.l1_node_segments).sort_by_key(|s| s.segment_id);
+        Arc::make_mut(&mut m.l1_edge_segments).sort_by_key(|s| s.segment_id);
         m.tombstoned_node_ids.sort();
         m.tombstoned_edge_keys.sort();
     }
@@ -1833,15 +2437,15 @@ mod tests {
         let mut expected = Manifest {
             version: 3,
             created_at: 1003,
-            node_segments: final_nodes.clone(),
-            edge_segments: final_edges.clone(),
+            node_segments: Arc::new(final_nodes.clone()),
+            edge_segments: Arc::new(final_edges.clone()),
             tags: HashMap::new(),
             stats: ManifestStats::from_segments(&final_nodes, &final_edges),
             parent_version: Some(2),
             tombstoned_node_ids: vec![20],
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: Arc::new(Vec::new()),
+            l1_edge_segments: Arc::new(Vec::new()),
             last_compaction: None,
         };
 
@@ -1996,8 +2600,8 @@ mod tests {
         let manifest = Manifest {
             version: 5,
             created_at: 1707826800,
-            node_segments: vec![make_node_descriptor(1, 100)],
-            edge_segments: vec![make_edge_descriptor(2, 50)],
+            node_segments: std::sync::Arc::new(vec![make_node_descriptor(1, 100)]),
+            edge_segments: std::sync::Arc::new(vec![make_edge_descriptor(2, 50)]),
             tags: HashMap::from([("commit_sha".to_string(), "abc123".to_string())]),
             stats: ManifestStats {
                 total_nodes: 100,
@@ -2008,8 +2612,8 @@ mod tests {
             parent_version: Some(4),
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: std::sync::Arc::new(Vec::new()),
+            l1_edge_segments: std::sync::Arc::new(Vec::new()),
             last_compaction: None,
         };
 
@@ -2116,15 +2720,15 @@ mod tests {
         let m1 = Manifest {
             version: 1,
             created_at: 100,
-            node_segments: vec![make_node_descriptor(1, 10)],
-            edge_segments: vec![],
+            node_segments: std::sync::Arc::new(vec![make_node_descriptor(1, 10)]),
+            edge_segments: std::sync::Arc::new(vec![]),
             tags: HashMap::new(),
             stats: ManifestStats::from_segments(&[make_node_descriptor(1, 10)], &[]),
             parent_version: None,
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: std::sync::Arc::new(Vec::new()),
+            l1_edge_segments: std::sync::Arc::new(Vec::new()),
             last_compaction: None,
         };
         index.add_snapshot(&m1);
@@ -2135,8 +2739,8 @@ mod tests {
         let m2 = Manifest {
             version: 2,
             created_at: 200,
-            node_segments: vec![make_node_descriptor(1, 10), make_node_descriptor(2, 20)],
-            edge_segments: vec![make_edge_descriptor(3, 5)],
+            node_segments: std::sync::Arc::new(vec![make_node_descriptor(1, 10), make_node_descriptor(2, 20)]),
+            edge_segments: std::sync::Arc::new(vec![make_edge_descriptor(3, 5)]),
             tags: HashMap::from([("tag".to_string(), "val".to_string())]),
             stats: ManifestStats::from_segments(
                 &[make_node_descriptor(1, 10), make_node_descriptor(2, 20)],
@@ -2145,8 +2749,8 @@ mod tests {
             parent_version: Some(1),
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: std::sync::Arc::new(Vec::new()),
+            l1_edge_segments: std::sync::Arc::new(Vec::new()),
             last_compaction: None,
         };
         index.add_snapshot(&m2);
@@ -2164,15 +2768,15 @@ mod tests {
         let m = Manifest {
             version: 5,
             created_at: 500,
-            node_segments: vec![],
-            edge_segments: vec![],
+            node_segments: std::sync::Arc::new(vec![]),
+            edge_segments: std::sync::Arc::new(vec![]),
             tags: HashMap::from([("commit_sha".to_string(), "abc123".to_string())]),
             stats: ManifestStats::from_segments(&[], &[]),
             parent_version: Some(4),
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: std::sync::Arc::new(Vec::new()),
+            l1_edge_segments: std::sync::Arc::new(Vec::new()),
             last_compaction: None,
         };
         index.add_snapshot(&m);
@@ -2195,15 +2799,15 @@ mod tests {
             let m = Manifest {
                 version: v,
                 created_at: v * 100,
-                node_segments: vec![],
-                edge_segments: vec![],
+                node_segments: std::sync::Arc::new(vec![]),
+                edge_segments: std::sync::Arc::new(vec![]),
                 tags,
                 stats: ManifestStats::from_segments(&[], &[]),
                 parent_version: if v > 1 { Some(v - 1) } else { None },
                 tombstoned_node_ids: Vec::new(),
                 tombstoned_edge_keys: Vec::new(),
-                l1_node_segments: Vec::new(),
-                l1_edge_segments: Vec::new(),
+                l1_node_segments: std::sync::Arc::new(Vec::new()),
+                l1_edge_segments: std::sync::Arc::new(Vec::new()),
                 last_compaction: None,
             };
             index.add_snapshot(&m);
@@ -2221,15 +2825,15 @@ mod tests {
         let m = Manifest {
             version: 1,
             created_at: 100,
-            node_segments: vec![],
-            edge_segments: vec![],
+            node_segments: std::sync::Arc::new(vec![]),
+            edge_segments: std::sync::Arc::new(vec![]),
             tags: HashMap::from([("key".to_string(), "val".to_string())]),
             stats: ManifestStats::from_segments(&[], &[]),
             parent_version: None,
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: std::sync::Arc::new(Vec::new()),
+            l1_edge_segments: std::sync::Arc::new(Vec::new()),
             last_compaction: None,
         };
         index.add_snapshot(&m);
@@ -2441,15 +3045,15 @@ mod tests {
         let bad_manifest = Manifest {
             version: 1, // same as current, should fail
             created_at: current_timestamp(),
-            node_segments: vec![],
-            edge_segments: vec![],
+            node_segments: std::sync::Arc::new(vec![]),
+            edge_segments: std::sync::Arc::new(vec![]),
             tags: HashMap::new(),
             stats: ManifestStats::from_segments(&[], &[]),
             parent_version: None,
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: std::sync::Arc::new(Vec::new()),
+            l1_edge_segments: std::sync::Arc::new(Vec::new()),
             last_compaction: None,
         };
 
@@ -2639,15 +3243,15 @@ mod tests {
         let from = Manifest {
             version: 1,
             created_at: 100,
-            node_segments: vec![],
-            edge_segments: vec![],
+            node_segments: std::sync::Arc::new(vec![]),
+            edge_segments: std::sync::Arc::new(vec![]),
             tags: HashMap::new(),
             stats: ManifestStats::from_segments(&[], &[]),
             parent_version: None,
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: std::sync::Arc::new(Vec::new()),
+            l1_edge_segments: std::sync::Arc::new(Vec::new()),
             last_compaction: None,
         };
 
@@ -2656,15 +3260,15 @@ mod tests {
         let to = Manifest {
             version: 2,
             created_at: 200,
-            node_segments: to_nodes.clone(),
-            edge_segments: to_edges.clone(),
+            node_segments: std::sync::Arc::new(to_nodes.clone()),
+            edge_segments: std::sync::Arc::new(to_edges.clone()),
             tags: HashMap::new(),
             stats: ManifestStats::from_segments(&to_nodes, &to_edges),
             parent_version: Some(1),
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: std::sync::Arc::new(Vec::new()),
+            l1_edge_segments: std::sync::Arc::new(Vec::new()),
             last_compaction: None,
         };
 
@@ -2683,15 +3287,15 @@ mod tests {
         let m = Manifest {
             version: 1,
             created_at: 100,
-            node_segments: nodes.clone(),
-            edge_segments: vec![],
+            node_segments: std::sync::Arc::new(nodes.clone()),
+            edge_segments: std::sync::Arc::new(vec![]),
             tags: HashMap::new(),
             stats: ManifestStats::from_segments(&nodes, &[]),
             parent_version: None,
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: std::sync::Arc::new(Vec::new()),
+            l1_edge_segments: std::sync::Arc::new(Vec::new()),
             last_compaction: None,
         };
 
@@ -2706,15 +3310,15 @@ mod tests {
         let from = Manifest {
             version: 1,
             created_at: 100,
-            node_segments: from_nodes.clone(),
-            edge_segments: vec![],
+            node_segments: std::sync::Arc::new(from_nodes.clone()),
+            edge_segments: std::sync::Arc::new(vec![]),
             tags: HashMap::new(),
             stats: ManifestStats::from_segments(&from_nodes, &[]),
             parent_version: None,
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: std::sync::Arc::new(Vec::new()),
+            l1_edge_segments: std::sync::Arc::new(Vec::new()),
             last_compaction: None,
         };
 
@@ -2724,15 +3328,15 @@ mod tests {
         let to = Manifest {
             version: 2,
             created_at: 200,
-            node_segments: to_nodes.clone(),
-            edge_segments: to_edges.clone(),
+            node_segments: std::sync::Arc::new(to_nodes.clone()),
+            edge_segments: std::sync::Arc::new(to_edges.clone()),
             tags: HashMap::new(),
             stats: ManifestStats::from_segments(&to_nodes, &to_edges),
             parent_version: Some(1),
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: std::sync::Arc::new(Vec::new()),
+            l1_edge_segments: std::sync::Arc::new(Vec::new()),
             last_compaction: None,
         };
 
@@ -2751,15 +3355,15 @@ mod tests {
         let from = Manifest {
             version: 1,
             created_at: 100,
-            node_segments: from_nodes.clone(),
-            edge_segments: vec![],
+            node_segments: std::sync::Arc::new(from_nodes.clone()),
+            edge_segments: std::sync::Arc::new(vec![]),
             tags: HashMap::new(),
             stats: ManifestStats::from_segments(&from_nodes, &[]),
             parent_version: None,
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: std::sync::Arc::new(Vec::new()),
+            l1_edge_segments: std::sync::Arc::new(Vec::new()),
             last_compaction: None,
         };
 
@@ -2767,15 +3371,15 @@ mod tests {
         let to = Manifest {
             version: 2,
             created_at: 200,
-            node_segments: to_nodes.clone(),
-            edge_segments: vec![],
+            node_segments: std::sync::Arc::new(to_nodes.clone()),
+            edge_segments: std::sync::Arc::new(vec![]),
             tags: HashMap::new(),
             stats: ManifestStats::from_segments(&to_nodes, &[]),
             parent_version: Some(1),
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: std::sync::Arc::new(Vec::new()),
+            l1_edge_segments: std::sync::Arc::new(Vec::new()),
             last_compaction: None,
         };
 
@@ -3036,15 +3640,15 @@ mod tests {
         let m = Manifest {
             version: 3,
             created_at: 300,
-            node_segments: vec![make_node_descriptor(1, 100)],
-            edge_segments: vec![],
+            node_segments: std::sync::Arc::new(vec![make_node_descriptor(1, 100)]),
+            edge_segments: std::sync::Arc::new(vec![]),
             tags: HashMap::from([("env".to_string(), "test".to_string())]),
             stats: ManifestStats::from_segments(&[make_node_descriptor(1, 100)], &[]),
             parent_version: Some(2),
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: std::sync::Arc::new(Vec::new()),
+            l1_edge_segments: std::sync::Arc::new(Vec::new()),
             last_compaction: None,
         };
 
@@ -3126,8 +3730,8 @@ mod tests {
         let manifest_v3 = Manifest {
             version: 3,
             created_at: current_timestamp(),
-            node_segments: vec![make_node_descriptor(2, 200)],
-            edge_segments: vec![],
+            node_segments: std::sync::Arc::new(vec![make_node_descriptor(2, 200)]),
+            edge_segments: std::sync::Arc::new(vec![]),
             tags: HashMap::from([("run".into(), "third".into())]),
             stats: ManifestStats::from_segments(
                 &[make_node_descriptor(2, 200)],
@@ -3136,8 +3740,8 @@ mod tests {
             parent_version: Some(2),
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: std::sync::Arc::new(Vec::new()),
+            l1_edge_segments: std::sync::Arc::new(Vec::new()),
             last_compaction: None,
         };
         let manifest_path = manifest_file_path(&db_path, 3);
@@ -3335,8 +3939,8 @@ mod tests {
         let manifest = Manifest {
             version: 10,
             created_at: 1707826800,
-            node_segments: vec![make_node_descriptor(1, 50)],
-            edge_segments: vec![],
+            node_segments: std::sync::Arc::new(vec![make_node_descriptor(1, 50)]),
+            edge_segments: std::sync::Arc::new(vec![]),
             tags: HashMap::new(),
             stats: ManifestStats::from_segments(&[make_node_descriptor(1, 50)], &[]),
             parent_version: Some(9),
@@ -3345,8 +3949,8 @@ mod tests {
                 (10, 20, "CALLS".to_string()),
                 (30, 40, "IMPORTS".to_string()),
             ],
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: std::sync::Arc::new(Vec::new()),
+            l1_edge_segments: std::sync::Arc::new(Vec::new()),
             last_compaction: None,
         };
 
@@ -3465,8 +4069,8 @@ mod tests {
         let manifest = Manifest {
             version: 6,
             created_at: 1707826900,
-            node_segments: vec![make_node_descriptor(10, 50)],
-            edge_segments: vec![make_edge_descriptor(11, 25)],
+            node_segments: std::sync::Arc::new(vec![make_node_descriptor(10, 50)]),
+            edge_segments: std::sync::Arc::new(vec![make_edge_descriptor(11, 25)]),
             tags: HashMap::new(),
             stats: ManifestStats {
                 total_nodes: 550,
@@ -3477,8 +4081,8 @@ mod tests {
             parent_version: Some(5),
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: vec![l1_node],
-            l1_edge_segments: vec![l1_edge],
+            l1_node_segments: std::sync::Arc::new(vec![l1_node]),
+            l1_edge_segments: std::sync::Arc::new(vec![l1_edge]),
             last_compaction: Some(compaction_info),
         };
 
@@ -3511,15 +4115,15 @@ mod tests {
         let manifest = Manifest {
             version: 1,
             created_at: 100,
-            node_segments: vec![],
-            edge_segments: vec![],
+            node_segments: std::sync::Arc::new(vec![]),
+            edge_segments: std::sync::Arc::new(vec![]),
             tags: HashMap::new(),
             stats: ManifestStats::from_segments(&[], &[]),
             parent_version: None,
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: std::sync::Arc::new(Vec::new()),
+            l1_edge_segments: std::sync::Arc::new(Vec::new()),
             last_compaction: None,
         };
 
