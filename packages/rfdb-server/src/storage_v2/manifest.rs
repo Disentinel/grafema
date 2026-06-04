@@ -134,6 +134,13 @@ impl VersionPins {
 
 // ── Manifest ───────────────────────────────────────────────────────
 
+/// serde `skip_serializing_if` predicate for `Arc<Vec<_>>` fields (MVCC C3.b).
+/// Matches the prior `Vec::is_empty` behaviour so the on-disk JSON is byte-for-byte
+/// identical to the pre-Arc format (empty L1 lists are omitted).
+fn arc_vec_is_empty<T>(v: &Arc<Vec<T>>) -> bool {
+    v.is_empty()
+}
+
 /// Manifest: immutable snapshot descriptor.
 ///
 /// Each manifest represents a consistent point-in-time view of the database.
@@ -147,11 +154,18 @@ pub struct Manifest {
     /// Creation timestamp (Unix epoch seconds)
     pub created_at: u64,
 
-    /// Active node segments in this snapshot
-    pub node_segments: Vec<SegmentDescriptor>,
+    /// Active node segments in this snapshot.
+    ///
+    /// MVCC C3.b: held behind `Arc` so `ReadSnapshot::capture` is O(1)
+    /// (`Arc::clone`, no deep clone of the descriptor `Vec` + its per-descriptor
+    /// zone-map `HashSet`s). Copy-on-write: a version that changes the segment
+    /// set rebuilds a fresh `Arc<Vec>` (via `Arc::make_mut`), so older snapshots
+    /// that hold an `Arc::clone` keep observing their own immutable set.
+    pub node_segments: Arc<Vec<SegmentDescriptor>>,
 
-    /// Active edge segments in this snapshot
-    pub edge_segments: Vec<SegmentDescriptor>,
+    /// Active edge segments in this snapshot (see [`Self::node_segments`] for the
+    /// MVCC C3.b `Arc` copy-on-write rationale).
+    pub edge_segments: Arc<Vec<SegmentDescriptor>>,
 
     /// Optional tags for snapshot identification.
     /// Empty HashMap = no tags. Common tags:
@@ -183,12 +197,14 @@ pub struct Manifest {
 
     /// L1 (compacted) node segment descriptors — at most one per shard.
     /// Populated by compaction, empty before first compaction.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub l1_node_segments: Vec<SegmentDescriptor>,
+    /// MVCC C3.b: `Arc` for O(1) snapshot capture (see [`Self::node_segments`]).
+    #[serde(default, skip_serializing_if = "arc_vec_is_empty")]
+    pub l1_node_segments: Arc<Vec<SegmentDescriptor>>,
 
     /// L1 (compacted) edge segment descriptors — at most one per shard.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub l1_edge_segments: Vec<SegmentDescriptor>,
+    /// MVCC C3.b: `Arc` for O(1) snapshot capture (see [`Self::node_segments`]).
+    #[serde(default, skip_serializing_if = "arc_vec_is_empty")]
+    pub l1_edge_segments: Arc<Vec<SegmentDescriptor>>,
 
     /// Metadata about the last compaction (None if never compacted).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -270,16 +286,28 @@ impl Manifest {
     /// reproduces exactly the snapshot a full-write commit would have produced.
     pub fn apply(&mut self, edit: &ManifestEdit) {
         // Segment removals (by segment_id) then additions.
-        if !edit.removed_node_segment_ids.is_empty() {
-            let rm: HashSet<u64> = edit.removed_node_segment_ids.iter().copied().collect();
-            self.node_segments.retain(|s| !rm.contains(&s.segment_id));
+        // MVCC C3.b: copy-on-write. `Arc::make_mut` clones the inner Vec only when
+        // another snapshot still shares this Arc (so that snapshot keeps its own
+        // immutable descriptor set); when this manifest holds the sole reference
+        // it mutates in place. Only touched when this edit actually changes the
+        // node/edge segment set — a tombstone-/tag-only edit leaves the Arc shared
+        // (and an unrelated snapshot's capture stays O(1)).
+        if !edit.removed_node_segment_ids.is_empty() || !edit.added_node_segments.is_empty() {
+            let v = Arc::make_mut(&mut self.node_segments);
+            if !edit.removed_node_segment_ids.is_empty() {
+                let rm: HashSet<u64> = edit.removed_node_segment_ids.iter().copied().collect();
+                v.retain(|s| !rm.contains(&s.segment_id));
+            }
+            v.extend(edit.added_node_segments.iter().cloned());
         }
-        if !edit.removed_edge_segment_ids.is_empty() {
-            let rm: HashSet<u64> = edit.removed_edge_segment_ids.iter().copied().collect();
-            self.edge_segments.retain(|s| !rm.contains(&s.segment_id));
+        if !edit.removed_edge_segment_ids.is_empty() || !edit.added_edge_segments.is_empty() {
+            let v = Arc::make_mut(&mut self.edge_segments);
+            if !edit.removed_edge_segment_ids.is_empty() {
+                let rm: HashSet<u64> = edit.removed_edge_segment_ids.iter().copied().collect();
+                v.retain(|s| !rm.contains(&s.segment_id));
+            }
+            v.extend(edit.added_edge_segments.iter().cloned());
         }
-        self.node_segments.extend(edit.added_node_segments.iter().cloned());
-        self.edge_segments.extend(edit.added_edge_segments.iter().cloned());
 
         // Tombstone delta replay onto cumulative set.
         if !edit.added_tombstone_nodes.is_empty() || !edit.removed_tombstone_nodes.is_empty() {
@@ -300,12 +328,13 @@ impl Manifest {
             self.tombstoned_edge_keys = set.into_iter().collect();
         }
 
-        // L1 / compaction: full replace when present.
+        // L1 / compaction: full replace when present (fresh Arc — old snapshots
+        // keep their prior L1 set, MVCC C3.b copy-on-write).
         if let Some(l1n) = &edit.l1_node_segments {
-            self.l1_node_segments = l1n.clone();
+            self.l1_node_segments = Arc::new(l1n.clone());
         }
         if let Some(l1e) = &edit.l1_edge_segments {
-            self.l1_edge_segments = l1e.clone();
+            self.l1_edge_segments = Arc::new(l1e.clone());
         }
         if edit.last_compaction.is_some() {
             self.last_compaction = edit.last_compaction.clone();
@@ -964,8 +993,8 @@ impl ManifestStore {
         let manifest = Manifest {
             version: 1,
             created_at: current_timestamp(),
-            node_segments: Vec::new(),
-            edge_segments: Vec::new(),
+            node_segments: Arc::new(Vec::new()),
+            edge_segments: Arc::new(Vec::new()),
             tags: HashMap::new(),
             stats: ManifestStats {
                 total_nodes: 0,
@@ -976,8 +1005,8 @@ impl ManifestStore {
             parent_version: None,
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: Arc::new(Vec::new()),
+            l1_edge_segments: Arc::new(Vec::new()),
             last_compaction: None,
         };
 
@@ -1021,8 +1050,8 @@ impl ManifestStore {
         let manifest = Manifest {
             version: 1,
             created_at: current_timestamp(),
-            node_segments: Vec::new(),
-            edge_segments: Vec::new(),
+            node_segments: Arc::new(Vec::new()),
+            edge_segments: Arc::new(Vec::new()),
             tags: HashMap::new(),
             stats: ManifestStats {
                 total_nodes: 0,
@@ -1033,8 +1062,8 @@ impl ManifestStore {
             parent_version: None,
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: Arc::new(Vec::new()),
+            l1_edge_segments: Arc::new(Vec::new()),
             last_compaction: None,
         };
 
@@ -1352,8 +1381,12 @@ impl ManifestStore {
     /// segment changes, carrying the (already-updated) cumulative tombstone set
     /// onto disk so the delete survives reopen.
     pub fn commit_tombstone_only(&mut self) -> Result<()> {
-        let node_segments = self.current.node_segments.clone();
-        let edge_segments = self.current.edge_segments.clone();
+        // No segment change ⇒ create_manifest's fresh Arc will share nothing with
+        // older snapshots, but the descriptor set is identical. Clone the inner
+        // Vec (the set is unchanged so correctness is unaffected; this path is
+        // rare — only an empty-flush delete commit).
+        let node_segments = (*self.current.node_segments).clone();
+        let edge_segments = (*self.current.edge_segments).clone();
         // create_manifest carries forward L1 + the cumulative tombstone set
         // (already updated by extend_tombstones), so the new version persists it.
         let manifest = self.create_manifest(node_segments, edge_segments, None)?;
@@ -1432,8 +1465,10 @@ impl ManifestStore {
         // this, every commit after compaction silently drops L1 data and
         // open() loads only the new delta — making post-compaction data
         // disappear from queries.
-        let l1_node_segments = self.current.l1_node_segments.clone();
-        let l1_edge_segments = self.current.l1_edge_segments.clone();
+        // MVCC C3.b: `Arc::clone` shares the current version's immutable L1 set
+        // (O(1)). Compaction overrides these with a fresh Arc after this call.
+        let l1_node_segments = Arc::clone(&self.current.l1_node_segments);
+        let l1_edge_segments = Arc::clone(&self.current.l1_edge_segments);
 
         // MVCC B3: carry forward the cumulative tombstone set. The manifest
         // version is the authority for tombstones now, so a plain flush commit
@@ -1446,8 +1481,8 @@ impl ManifestStore {
         Ok(Manifest {
             version,
             created_at: current_timestamp(),
-            node_segments,
-            edge_segments,
+            node_segments: Arc::new(node_segments),
+            edge_segments: Arc::new(edge_segments),
             tags: tags.unwrap_or_default(),
             stats,
             parent_version: Some(self.current.version),
@@ -2272,15 +2307,15 @@ mod tests {
         Manifest {
             version: 1,
             created_at: 1000,
-            node_segments: nodes.clone(),
-            edge_segments: Vec::new(),
+            node_segments: Arc::new(nodes.clone()),
+            edge_segments: Arc::new(Vec::new()),
             tags: HashMap::new(),
             stats: ManifestStats::from_segments(&nodes, &[]),
             parent_version: None,
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: Arc::new(Vec::new()),
+            l1_edge_segments: Arc::new(Vec::new()),
             last_compaction: None,
         }
     }
@@ -2315,10 +2350,10 @@ mod tests {
     /// Canonicalize unordered fields (segments by id, tombstones sorted) so
     /// two logically-equal manifests compare equal under derived PartialEq.
     fn norm(m: &mut Manifest) {
-        m.node_segments.sort_by_key(|s| s.segment_id);
-        m.edge_segments.sort_by_key(|s| s.segment_id);
-        m.l1_node_segments.sort_by_key(|s| s.segment_id);
-        m.l1_edge_segments.sort_by_key(|s| s.segment_id);
+        Arc::make_mut(&mut m.node_segments).sort_by_key(|s| s.segment_id);
+        Arc::make_mut(&mut m.edge_segments).sort_by_key(|s| s.segment_id);
+        Arc::make_mut(&mut m.l1_node_segments).sort_by_key(|s| s.segment_id);
+        Arc::make_mut(&mut m.l1_edge_segments).sort_by_key(|s| s.segment_id);
         m.tombstoned_node_ids.sort();
         m.tombstoned_edge_keys.sort();
     }
@@ -2402,15 +2437,15 @@ mod tests {
         let mut expected = Manifest {
             version: 3,
             created_at: 1003,
-            node_segments: final_nodes.clone(),
-            edge_segments: final_edges.clone(),
+            node_segments: Arc::new(final_nodes.clone()),
+            edge_segments: Arc::new(final_edges.clone()),
             tags: HashMap::new(),
             stats: ManifestStats::from_segments(&final_nodes, &final_edges),
             parent_version: Some(2),
             tombstoned_node_ids: vec![20],
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: Arc::new(Vec::new()),
+            l1_edge_segments: Arc::new(Vec::new()),
             last_compaction: None,
         };
 
@@ -2565,8 +2600,8 @@ mod tests {
         let manifest = Manifest {
             version: 5,
             created_at: 1707826800,
-            node_segments: vec![make_node_descriptor(1, 100)],
-            edge_segments: vec![make_edge_descriptor(2, 50)],
+            node_segments: std::sync::Arc::new(vec![make_node_descriptor(1, 100)]),
+            edge_segments: std::sync::Arc::new(vec![make_edge_descriptor(2, 50)]),
             tags: HashMap::from([("commit_sha".to_string(), "abc123".to_string())]),
             stats: ManifestStats {
                 total_nodes: 100,
@@ -2577,8 +2612,8 @@ mod tests {
             parent_version: Some(4),
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: std::sync::Arc::new(Vec::new()),
+            l1_edge_segments: std::sync::Arc::new(Vec::new()),
             last_compaction: None,
         };
 
@@ -2685,15 +2720,15 @@ mod tests {
         let m1 = Manifest {
             version: 1,
             created_at: 100,
-            node_segments: vec![make_node_descriptor(1, 10)],
-            edge_segments: vec![],
+            node_segments: std::sync::Arc::new(vec![make_node_descriptor(1, 10)]),
+            edge_segments: std::sync::Arc::new(vec![]),
             tags: HashMap::new(),
             stats: ManifestStats::from_segments(&[make_node_descriptor(1, 10)], &[]),
             parent_version: None,
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: std::sync::Arc::new(Vec::new()),
+            l1_edge_segments: std::sync::Arc::new(Vec::new()),
             last_compaction: None,
         };
         index.add_snapshot(&m1);
@@ -2704,8 +2739,8 @@ mod tests {
         let m2 = Manifest {
             version: 2,
             created_at: 200,
-            node_segments: vec![make_node_descriptor(1, 10), make_node_descriptor(2, 20)],
-            edge_segments: vec![make_edge_descriptor(3, 5)],
+            node_segments: std::sync::Arc::new(vec![make_node_descriptor(1, 10), make_node_descriptor(2, 20)]),
+            edge_segments: std::sync::Arc::new(vec![make_edge_descriptor(3, 5)]),
             tags: HashMap::from([("tag".to_string(), "val".to_string())]),
             stats: ManifestStats::from_segments(
                 &[make_node_descriptor(1, 10), make_node_descriptor(2, 20)],
@@ -2714,8 +2749,8 @@ mod tests {
             parent_version: Some(1),
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: std::sync::Arc::new(Vec::new()),
+            l1_edge_segments: std::sync::Arc::new(Vec::new()),
             last_compaction: None,
         };
         index.add_snapshot(&m2);
@@ -2733,15 +2768,15 @@ mod tests {
         let m = Manifest {
             version: 5,
             created_at: 500,
-            node_segments: vec![],
-            edge_segments: vec![],
+            node_segments: std::sync::Arc::new(vec![]),
+            edge_segments: std::sync::Arc::new(vec![]),
             tags: HashMap::from([("commit_sha".to_string(), "abc123".to_string())]),
             stats: ManifestStats::from_segments(&[], &[]),
             parent_version: Some(4),
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: std::sync::Arc::new(Vec::new()),
+            l1_edge_segments: std::sync::Arc::new(Vec::new()),
             last_compaction: None,
         };
         index.add_snapshot(&m);
@@ -2764,15 +2799,15 @@ mod tests {
             let m = Manifest {
                 version: v,
                 created_at: v * 100,
-                node_segments: vec![],
-                edge_segments: vec![],
+                node_segments: std::sync::Arc::new(vec![]),
+                edge_segments: std::sync::Arc::new(vec![]),
                 tags,
                 stats: ManifestStats::from_segments(&[], &[]),
                 parent_version: if v > 1 { Some(v - 1) } else { None },
                 tombstoned_node_ids: Vec::new(),
                 tombstoned_edge_keys: Vec::new(),
-                l1_node_segments: Vec::new(),
-                l1_edge_segments: Vec::new(),
+                l1_node_segments: std::sync::Arc::new(Vec::new()),
+                l1_edge_segments: std::sync::Arc::new(Vec::new()),
                 last_compaction: None,
             };
             index.add_snapshot(&m);
@@ -2790,15 +2825,15 @@ mod tests {
         let m = Manifest {
             version: 1,
             created_at: 100,
-            node_segments: vec![],
-            edge_segments: vec![],
+            node_segments: std::sync::Arc::new(vec![]),
+            edge_segments: std::sync::Arc::new(vec![]),
             tags: HashMap::from([("key".to_string(), "val".to_string())]),
             stats: ManifestStats::from_segments(&[], &[]),
             parent_version: None,
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: std::sync::Arc::new(Vec::new()),
+            l1_edge_segments: std::sync::Arc::new(Vec::new()),
             last_compaction: None,
         };
         index.add_snapshot(&m);
@@ -3010,15 +3045,15 @@ mod tests {
         let bad_manifest = Manifest {
             version: 1, // same as current, should fail
             created_at: current_timestamp(),
-            node_segments: vec![],
-            edge_segments: vec![],
+            node_segments: std::sync::Arc::new(vec![]),
+            edge_segments: std::sync::Arc::new(vec![]),
             tags: HashMap::new(),
             stats: ManifestStats::from_segments(&[], &[]),
             parent_version: None,
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: std::sync::Arc::new(Vec::new()),
+            l1_edge_segments: std::sync::Arc::new(Vec::new()),
             last_compaction: None,
         };
 
@@ -3208,15 +3243,15 @@ mod tests {
         let from = Manifest {
             version: 1,
             created_at: 100,
-            node_segments: vec![],
-            edge_segments: vec![],
+            node_segments: std::sync::Arc::new(vec![]),
+            edge_segments: std::sync::Arc::new(vec![]),
             tags: HashMap::new(),
             stats: ManifestStats::from_segments(&[], &[]),
             parent_version: None,
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: std::sync::Arc::new(Vec::new()),
+            l1_edge_segments: std::sync::Arc::new(Vec::new()),
             last_compaction: None,
         };
 
@@ -3225,15 +3260,15 @@ mod tests {
         let to = Manifest {
             version: 2,
             created_at: 200,
-            node_segments: to_nodes.clone(),
-            edge_segments: to_edges.clone(),
+            node_segments: std::sync::Arc::new(to_nodes.clone()),
+            edge_segments: std::sync::Arc::new(to_edges.clone()),
             tags: HashMap::new(),
             stats: ManifestStats::from_segments(&to_nodes, &to_edges),
             parent_version: Some(1),
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: std::sync::Arc::new(Vec::new()),
+            l1_edge_segments: std::sync::Arc::new(Vec::new()),
             last_compaction: None,
         };
 
@@ -3252,15 +3287,15 @@ mod tests {
         let m = Manifest {
             version: 1,
             created_at: 100,
-            node_segments: nodes.clone(),
-            edge_segments: vec![],
+            node_segments: std::sync::Arc::new(nodes.clone()),
+            edge_segments: std::sync::Arc::new(vec![]),
             tags: HashMap::new(),
             stats: ManifestStats::from_segments(&nodes, &[]),
             parent_version: None,
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: std::sync::Arc::new(Vec::new()),
+            l1_edge_segments: std::sync::Arc::new(Vec::new()),
             last_compaction: None,
         };
 
@@ -3275,15 +3310,15 @@ mod tests {
         let from = Manifest {
             version: 1,
             created_at: 100,
-            node_segments: from_nodes.clone(),
-            edge_segments: vec![],
+            node_segments: std::sync::Arc::new(from_nodes.clone()),
+            edge_segments: std::sync::Arc::new(vec![]),
             tags: HashMap::new(),
             stats: ManifestStats::from_segments(&from_nodes, &[]),
             parent_version: None,
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: std::sync::Arc::new(Vec::new()),
+            l1_edge_segments: std::sync::Arc::new(Vec::new()),
             last_compaction: None,
         };
 
@@ -3293,15 +3328,15 @@ mod tests {
         let to = Manifest {
             version: 2,
             created_at: 200,
-            node_segments: to_nodes.clone(),
-            edge_segments: to_edges.clone(),
+            node_segments: std::sync::Arc::new(to_nodes.clone()),
+            edge_segments: std::sync::Arc::new(to_edges.clone()),
             tags: HashMap::new(),
             stats: ManifestStats::from_segments(&to_nodes, &to_edges),
             parent_version: Some(1),
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: std::sync::Arc::new(Vec::new()),
+            l1_edge_segments: std::sync::Arc::new(Vec::new()),
             last_compaction: None,
         };
 
@@ -3320,15 +3355,15 @@ mod tests {
         let from = Manifest {
             version: 1,
             created_at: 100,
-            node_segments: from_nodes.clone(),
-            edge_segments: vec![],
+            node_segments: std::sync::Arc::new(from_nodes.clone()),
+            edge_segments: std::sync::Arc::new(vec![]),
             tags: HashMap::new(),
             stats: ManifestStats::from_segments(&from_nodes, &[]),
             parent_version: None,
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: std::sync::Arc::new(Vec::new()),
+            l1_edge_segments: std::sync::Arc::new(Vec::new()),
             last_compaction: None,
         };
 
@@ -3336,15 +3371,15 @@ mod tests {
         let to = Manifest {
             version: 2,
             created_at: 200,
-            node_segments: to_nodes.clone(),
-            edge_segments: vec![],
+            node_segments: std::sync::Arc::new(to_nodes.clone()),
+            edge_segments: std::sync::Arc::new(vec![]),
             tags: HashMap::new(),
             stats: ManifestStats::from_segments(&to_nodes, &[]),
             parent_version: Some(1),
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: std::sync::Arc::new(Vec::new()),
+            l1_edge_segments: std::sync::Arc::new(Vec::new()),
             last_compaction: None,
         };
 
@@ -3605,15 +3640,15 @@ mod tests {
         let m = Manifest {
             version: 3,
             created_at: 300,
-            node_segments: vec![make_node_descriptor(1, 100)],
-            edge_segments: vec![],
+            node_segments: std::sync::Arc::new(vec![make_node_descriptor(1, 100)]),
+            edge_segments: std::sync::Arc::new(vec![]),
             tags: HashMap::from([("env".to_string(), "test".to_string())]),
             stats: ManifestStats::from_segments(&[make_node_descriptor(1, 100)], &[]),
             parent_version: Some(2),
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: std::sync::Arc::new(Vec::new()),
+            l1_edge_segments: std::sync::Arc::new(Vec::new()),
             last_compaction: None,
         };
 
@@ -3695,8 +3730,8 @@ mod tests {
         let manifest_v3 = Manifest {
             version: 3,
             created_at: current_timestamp(),
-            node_segments: vec![make_node_descriptor(2, 200)],
-            edge_segments: vec![],
+            node_segments: std::sync::Arc::new(vec![make_node_descriptor(2, 200)]),
+            edge_segments: std::sync::Arc::new(vec![]),
             tags: HashMap::from([("run".into(), "third".into())]),
             stats: ManifestStats::from_segments(
                 &[make_node_descriptor(2, 200)],
@@ -3705,8 +3740,8 @@ mod tests {
             parent_version: Some(2),
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: std::sync::Arc::new(Vec::new()),
+            l1_edge_segments: std::sync::Arc::new(Vec::new()),
             last_compaction: None,
         };
         let manifest_path = manifest_file_path(&db_path, 3);
@@ -3904,8 +3939,8 @@ mod tests {
         let manifest = Manifest {
             version: 10,
             created_at: 1707826800,
-            node_segments: vec![make_node_descriptor(1, 50)],
-            edge_segments: vec![],
+            node_segments: std::sync::Arc::new(vec![make_node_descriptor(1, 50)]),
+            edge_segments: std::sync::Arc::new(vec![]),
             tags: HashMap::new(),
             stats: ManifestStats::from_segments(&[make_node_descriptor(1, 50)], &[]),
             parent_version: Some(9),
@@ -3914,8 +3949,8 @@ mod tests {
                 (10, 20, "CALLS".to_string()),
                 (30, 40, "IMPORTS".to_string()),
             ],
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: std::sync::Arc::new(Vec::new()),
+            l1_edge_segments: std::sync::Arc::new(Vec::new()),
             last_compaction: None,
         };
 
@@ -4034,8 +4069,8 @@ mod tests {
         let manifest = Manifest {
             version: 6,
             created_at: 1707826900,
-            node_segments: vec![make_node_descriptor(10, 50)],
-            edge_segments: vec![make_edge_descriptor(11, 25)],
+            node_segments: std::sync::Arc::new(vec![make_node_descriptor(10, 50)]),
+            edge_segments: std::sync::Arc::new(vec![make_edge_descriptor(11, 25)]),
             tags: HashMap::new(),
             stats: ManifestStats {
                 total_nodes: 550,
@@ -4046,8 +4081,8 @@ mod tests {
             parent_version: Some(5),
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: vec![l1_node],
-            l1_edge_segments: vec![l1_edge],
+            l1_node_segments: std::sync::Arc::new(vec![l1_node]),
+            l1_edge_segments: std::sync::Arc::new(vec![l1_edge]),
             last_compaction: Some(compaction_info),
         };
 
@@ -4080,15 +4115,15 @@ mod tests {
         let manifest = Manifest {
             version: 1,
             created_at: 100,
-            node_segments: vec![],
-            edge_segments: vec![],
+            node_segments: std::sync::Arc::new(vec![]),
+            edge_segments: std::sync::Arc::new(vec![]),
             tags: HashMap::new(),
             stats: ManifestStats::from_segments(&[], &[]),
             parent_version: None,
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
-            l1_node_segments: Vec::new(),
-            l1_edge_segments: Vec::new(),
+            l1_node_segments: std::sync::Arc::new(Vec::new()),
+            l1_edge_segments: std::sync::Arc::new(Vec::new()),
             last_compaction: None,
         };
 

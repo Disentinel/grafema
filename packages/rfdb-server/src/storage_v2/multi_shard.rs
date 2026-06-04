@@ -302,14 +302,14 @@ impl MultiShardStore {
         let mut node_descs_by_shard: HashMap<u16, Vec<SegmentDescriptor>> = HashMap::new();
         let mut edge_descs_by_shard: HashMap<u16, Vec<SegmentDescriptor>> = HashMap::new();
 
-        for desc in &current.node_segments {
+        for desc in current.node_segments.iter() {
             let shard_id = desc.shard_id.unwrap_or(0);
             node_descs_by_shard
                 .entry(shard_id)
                 .or_default()
                 .push(desc.clone());
         }
-        for desc in &current.edge_segments {
+        for desc in current.edge_segments.iter() {
             let shard_id = desc.shard_id.unwrap_or(0);
             edge_descs_by_shard
                 .entry(shard_id)
@@ -321,11 +321,11 @@ impl MultiShardStore {
         let mut l1_node_descs_by_shard: HashMap<u16, SegmentDescriptor> = HashMap::new();
         let mut l1_edge_descs_by_shard: HashMap<u16, SegmentDescriptor> = HashMap::new();
 
-        for desc in &current.l1_node_segments {
+        for desc in current.l1_node_segments.iter() {
             let shard_id = desc.shard_id.unwrap_or(0);
             l1_node_descs_by_shard.insert(shard_id, desc.clone());
         }
-        for desc in &current.l1_edge_segments {
+        for desc in current.l1_edge_segments.iter() {
             let shard_id = desc.shard_id.unwrap_or(0);
             l1_edge_descs_by_shard.insert(shard_id, desc.clone());
         }
@@ -695,8 +695,12 @@ impl MultiShardStore {
 
         // Two-step ManifestStore protocol:
         // Step 1: Start with current segments
-        let mut all_node_segs = manifest_store.current().node_segments.clone();
-        let mut all_edge_segs = manifest_store.current().edge_segments.clone();
+        // MVCC C3.b: deref-clone the Arc'd descriptor Vecs into owned Vecs so we
+        // can extend them; create_manifest re-wraps in a fresh Arc.
+        let mut all_node_segs: Vec<SegmentDescriptor> =
+            (*manifest_store.current().node_segments).clone();
+        let mut all_edge_segs: Vec<SegmentDescriptor> =
+            (*manifest_store.current().edge_segments).clone();
 
         // Step 2: Extend with NEW segments
         all_node_segs.extend(new_node_descs);
@@ -871,7 +875,7 @@ impl MultiShardStore {
         }
 
         // Step 2: L1 segments (oldest, compacted).
-        for desc in &snap.l1_node_segments {
+        for desc in snap.l1_node_segments.iter() {
             let found = self.with_node_segment(desc, |seg| {
                 if !seg.maybe_contains(id) {
                     return None;
@@ -908,7 +912,7 @@ impl MultiShardStore {
                 return true;
             }
         }
-        for desc in &snap.l1_node_segments {
+        for desc in snap.l1_node_segments.iter() {
             let hit = self.with_node_segment(desc, |seg| {
                 if !seg.maybe_contains(id) {
                     return false;
@@ -978,7 +982,7 @@ impl MultiShardStore {
 
         // L1 (oldest). No inverted-index path here — snapshot reads scan the
         // descriptor's segment directly (indexes live on the live Shard).
-        for desc in &snap.l1_node_segments {
+        for desc in snap.l1_node_segments.iter() {
             if !desc.may_contain(node_type, file, None) {
                 continue;
             }
@@ -1042,7 +1046,7 @@ impl MultiShardStore {
                 }
             });
         }
-        for desc in &snap.l1_node_segments {
+        for desc in snap.l1_node_segments.iter() {
             self.with_node_segment(desc, |seg| {
                 for j in 0..seg.record_count() {
                     let id = seg.get_id(j);
@@ -1079,7 +1083,7 @@ impl MultiShardStore {
                 }
             });
         }
-        for desc in &snap.l1_node_segments {
+        for desc in snap.l1_node_segments.iter() {
             self.with_node_segment(desc, |seg| {
                 for j in 0..seg.record_count() {
                     let id = seg.get_id(j);
@@ -1111,7 +1115,7 @@ impl MultiShardStore {
 
         // L0 in descriptor (oldest-first) order, matching the live shard which
         // scans its L0 Vec forward.
-        for desc in &snap.edge_segments {
+        for desc in snap.edge_segments.iter() {
             self.with_edge_segment(desc, |seg| {
                 if !seg.maybe_contains_src(node_id) {
                     return;
@@ -1145,7 +1149,7 @@ impl MultiShardStore {
             });
         }
 
-        for desc in &snap.l1_edge_segments {
+        for desc in snap.l1_edge_segments.iter() {
             self.with_edge_segment(desc, |seg| {
                 if !seg.maybe_contains_src(node_id) {
                     return;
@@ -1194,7 +1198,7 @@ impl MultiShardStore {
         let mut results: Vec<EdgeRecordV2> = Vec::new();
         let mut seen: HashSet<(u128, u128, String)> = HashSet::new();
 
-        for desc in &snap.edge_segments {
+        for desc in snap.edge_segments.iter() {
             self.with_edge_segment(desc, |seg| {
                 if !seg.maybe_contains_dst(node_id) {
                     return;
@@ -1228,7 +1232,7 @@ impl MultiShardStore {
             });
         }
 
-        for desc in &snap.l1_edge_segments {
+        for desc in snap.l1_edge_segments.iter() {
             self.with_edge_segment(desc, |seg| {
                 if !seg.maybe_contains_dst(node_id) {
                     return;
@@ -1290,7 +1294,7 @@ impl MultiShardStore {
                 }
             });
         }
-        for desc in &snap.l1_edge_segments {
+        for desc in snap.l1_edge_segments.iter() {
             self.with_edge_segment(desc, |seg| {
                 for j in 0..seg.record_count() {
                     let src = seg.get_src(j);
@@ -1345,7 +1349,7 @@ impl MultiShardStore {
                 }
             });
         }
-        for desc in &snap.l1_edge_segments {
+        for desc in snap.l1_edge_segments.iter() {
             if !desc.edge_types.is_empty() && !desc.edge_types.contains(edge_type) {
                 continue;
             }
@@ -1538,7 +1542,7 @@ impl MultiShardStore {
         }
 
         // L1 (oldest, compacted).
-        for desc in &snap.l1_node_segments {
+        for desc in snap.l1_node_segments.iter() {
             if stopped {
                 break;
             }
@@ -3550,9 +3554,9 @@ impl MultiShardStore {
             None,
         )?;
 
-        // Inject L1 descriptors and compaction info
-        manifest.l1_node_segments = l1_node_descs;
-        manifest.l1_edge_segments = l1_edge_descs;
+        // Inject L1 descriptors and compaction info (MVCC C3.b: fresh Arc).
+        manifest.l1_node_segments = std::sync::Arc::new(l1_node_descs);
+        manifest.l1_edge_segments = std::sync::Arc::new(l1_edge_descs);
         manifest.last_compaction = Some(CompactionInfo {
             manifest_version: manifest.version,
             timestamp_ms: std::time::SystemTime::now()

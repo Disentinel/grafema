@@ -178,6 +178,19 @@ pub struct GraphEngineV2 {
     /// Embedding engine for semantic search (None when feature disabled or not initialized).
     #[cfg(feature = "embedding")]
     embedding_engine: Option<std::sync::Arc<crate::embedding::EmbeddingEngine>>,
+    /// MVCC C3.a: `true` between `begin_bulk_load` and `end_bulk_load`. While set,
+    /// the serial `&mut self` commit path auto-triggers L0→L1 compaction once the
+    /// live L0 segment count per shard crosses [`Self::auto_compact_threshold`],
+    /// so the live segment count stays bounded (and the O(segments) per-commit
+    /// capture/append cost stays ~flat). Disk-for-speed: superseded L0 files are
+    /// left on disk in-run and reclaimed at `end_bulk_load` (C3.c).
+    bulk_load_active: bool,
+    /// MVCC C3.a: per-shard live L0 segment count that triggers auto-compaction
+    /// during bulk-load. Reasonable default (8); tuning is out of scope.
+    auto_compact_threshold: usize,
+    /// MVCC C3.a: count of auto-compaction rounds fired during bulk-load
+    /// (diagnostics / acceptance bench).
+    auto_compactions: u64,
 }
 
 // ── Constructors ────────────────────────────────────────────────────
@@ -204,6 +217,9 @@ impl GraphEngineV2 {
             declared_fields: Vec::new(),
             cached_profile: profile,
             last_resource_check: Instant::now(),
+            bulk_load_active: false,
+            auto_compact_threshold: 8,
+            auto_compactions: 0,
             #[cfg(feature = "embedding")]
             embedding_engine: Self::init_embedding_engine(Some(path)),
         })
@@ -221,6 +237,9 @@ impl GraphEngineV2 {
             declared_fields: Vec::new(),
             cached_profile: TuningProfile::default(),
             last_resource_check: Instant::now(),
+            bulk_load_active: false,
+            auto_compact_threshold: 8,
+            auto_compactions: 0,
             #[cfg(feature = "embedding")]
             embedding_engine: None,
         }
@@ -261,6 +280,9 @@ impl GraphEngineV2 {
             declared_fields: Vec::new(),
             cached_profile: profile,
             last_resource_check: Instant::now(),
+            bulk_load_active: false,
+            auto_compact_threshold: 8,
+            auto_compactions: 0,
             #[cfg(feature = "embedding")]
             embedding_engine: Self::init_embedding_engine(Some(path)),
         })
@@ -768,6 +790,12 @@ impl GraphStore for GraphEngineV2 {
         // commit that grabs the lock after this runs with deferred fsync. This
         // method is reached only via the engine write lock (with_engine_write),
         // which serializes against in-flight commits — no race on the flag.
+        //
+        // MVCC C3.a: arm auto-compaction. While bulk-load is active the serial
+        // commit path bounds the live L0 segment count by compacting once a shard
+        // crosses the threshold — keeping per-commit capture/append ~flat.
+        self.bulk_load_active = true;
+        self.auto_compactions = 0;
         self.manifest
             .lock()
             .unwrap()
@@ -785,6 +813,24 @@ impl GraphStore for GraphEngineV2 {
         // partially on disk; a reopen sees a consistent older-or-equal version,
         // never corruption — current.json is swapped atomically and last).
         self.flush()?;
+
+        // MVCC C3.a: stop arming per-commit auto-compaction, then run ONE final
+        // compaction barrier so every shard's bulk L0 is folded into L1 before
+        // the durable barrier (bounds the published live segment count).
+        self.bulk_load_active = false;
+        {
+            let config = CompactionConfig { segment_threshold: 1 };
+            self.store
+                .compact(self.manifest.get_mut().unwrap(), &config)?;
+        }
+
+        // MVCC C3.c: bounded disk reclaim. The B5 pin-aware GC retains every
+        // segment referenced by a version >= min_pinned (live readers) and by the
+        // current published version; everything else (superseded bulk L0 left on
+        // disk in-run, disk-for-speed) is moved to gc/ and purged. Disk grows
+        // during bulk, drops here to a bounded multiple of logical size.
+        self.reclaim_superseded_segments()?;
+
         {
             let mut m = self.manifest.lock().unwrap();
             m.make_durable()?;
@@ -892,6 +938,92 @@ fn dir_size_bytes(path: &Path) -> u64 {
 // ── Engine-specific Methods (NOT on GraphStore trait) ────────────────
 
 impl GraphEngineV2 {
+    /// MVCC C3.a: auto-compaction trigger for the serial (`&mut self`) commit
+    /// path during bulk-load. Bounds the live L0 segment count so per-commit
+    /// `ReadSnapshot::capture` / descriptor-append cost stays ~flat instead of
+    /// climbing with `O(commits)` segments.
+    ///
+    /// SAFETY / FALLBACK (deliberate, reported): this runs ONLY at the serial
+    /// single-writer commit point — it takes `&mut self`, the same exclusive
+    /// access the legacy `compact()` requires (compaction reads AND mutates live
+    /// in-memory shard state: `set_l1_segments` / `clear_l0_after_compaction` /
+    /// the global index). There is NO concurrent commit in flight here (the
+    /// engine write lock / `&mut self` excludes them), so this is deadlock-free
+    /// and reader-safe BY CONSTRUCTION: the slow L1 rewrite never overlaps a
+    /// concurrent `commit_batch_private`, and the B5 pins keep any live reader's
+    /// older-version segments alive (compaction publishes new L1 + leaves old L0
+    /// on disk; reclaim is deferred to `end_bulk_load`). The fully-concurrent
+    /// background-compactor-as-writer variant is NOT taken here because the
+    /// existing compaction path is structurally `&mut self` (in-place shard
+    /// mutation), so a `&self` background writer would race concurrent appenders
+    /// on unguarded shard `Vec`s — a UAF/lost-update surface out of this scope.
+    fn maybe_auto_compact(&mut self) -> Result<()> {
+        if !self.bulk_load_active {
+            return Ok(());
+        }
+        // Live L0 segment count per shard, from the published version mirrored in
+        // shard state. Trigger when ANY shard crosses the threshold.
+        let max_l0 = self
+            .store
+            .shard_diagnostics()
+            .iter()
+            .map(|d| d.l0_node_segment_count.max(d.l0_edge_segment_count))
+            .max()
+            .unwrap_or(0);
+        if max_l0 < self.auto_compact_threshold {
+            return Ok(());
+        }
+        // Compact every shard with >= threshold L0 segments. Slow L1 rewrite runs
+        // here under exclusive `&mut self` — never holding the manifest mutex
+        // across the rewrite (compact() publishes via a short commit at the end).
+        let config = CompactionConfig {
+            segment_threshold: self.auto_compact_threshold,
+        };
+        self.store
+            .compact(self.manifest.get_mut().unwrap(), &config)?;
+        self.auto_compactions += 1;
+        Ok(())
+    }
+
+    /// MVCC C3.c: bounded reclaim of superseded segment files via the B5
+    /// pin-aware GC. Removes stale manifest versions (keep last 3), moves
+    /// orphaned segments to `gc/` (retaining every segment referenced by a
+    /// version `>= min_pinned`, so a live reader's pinned segments survive), then
+    /// purges them. Called at `end_bulk_load`; safe to call any time.
+    fn reclaim_superseded_segments(&mut self) -> Result<()> {
+        let m = self.manifest.get_mut().unwrap();
+        let gc_manifests = m.gc_manifests(3)?;
+        if gc_manifests > 0 {
+            tracing::info!("C3.c reclaim: removed {} old manifest(s)", gc_manifests);
+        }
+        let moved = m.gc_collect()?;
+        if !moved.is_empty() {
+            tracing::info!(
+                "C3.c reclaim: moved {} orphaned segment(s) to gc/",
+                moved.len()
+            );
+        }
+        let purged = m.gc_purge()?;
+        if purged > 0 {
+            tracing::info!("C3.c reclaim: purged {} segment file(s)", purged);
+        }
+        Ok(())
+    }
+
+    /// MVCC C3.a: number of auto-compaction rounds fired during the last
+    /// bulk-load (diagnostics / acceptance bench).
+    pub fn auto_compactions(&self) -> u64 {
+        self.auto_compactions
+    }
+
+    /// MVCC C3.a: set the per-shard live-L0 threshold that triggers auto-compaction
+    /// during bulk-load. Larger ⇒ compaction fires less often (more amortization of
+    /// the O(total) L1 rewrite, at the cost of a higher live-segment ceiling).
+    /// Tuning is out of scope (spec §8); the bench uses this to report sensitivity.
+    pub fn set_auto_compact_threshold(&mut self, threshold: usize) {
+        self.auto_compact_threshold = threshold.max(1);
+    }
+
     /// Check if a node is an endpoint (for PathValidator).
     ///
     /// Endpoint types: db:query, http:request, http:endpoint,
@@ -989,6 +1121,11 @@ impl GraphEngineV2 {
         // legacy live-read paths. The engine's pending sets are cleared.
         self.pending_tombstone_nodes.clear();
         self.pending_tombstone_edges.clear();
+
+        // MVCC C3.a: bound the live L0 segment count during bulk-load. No-op
+        // outside bulk-load and below threshold. Runs under exclusive `&mut self`
+        // (single-writer) so the L1 rewrite never overlaps a concurrent commit.
+        self.maybe_auto_compact()?;
 
         Ok(delta)
     }

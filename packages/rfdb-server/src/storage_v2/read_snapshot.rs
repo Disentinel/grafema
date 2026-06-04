@@ -159,13 +159,18 @@ pub struct ReadSnapshot {
     /// Manifest version this snapshot is pinned to.
     pub version: u64,
     /// L0 node segment descriptors (oldest-first, as in the manifest).
-    pub node_segments: Vec<SegmentDescriptor>,
-    /// L0 edge segment descriptors (oldest-first).
-    pub edge_segments: Vec<SegmentDescriptor>,
-    /// L1 (compacted) node segment descriptors — at most one per shard.
-    pub l1_node_segments: Vec<SegmentDescriptor>,
-    /// L1 (compacted) edge segment descriptors — at most one per shard.
-    pub l1_edge_segments: Vec<SegmentDescriptor>,
+    ///
+    /// MVCC C3.b: `Arc<Vec>` shared with the manifest version, so capture is an
+    /// O(1) `Arc::clone` instead of a deep clone of the descriptor `Vec` (each
+    /// descriptor carries heavy zone-map `HashSet`s). The set is immutable for
+    /// the life of the version; a later commit publishes a fresh Arc.
+    pub node_segments: Arc<Vec<SegmentDescriptor>>,
+    /// L0 edge segment descriptors (oldest-first). MVCC C3.b: shared `Arc`.
+    pub edge_segments: Arc<Vec<SegmentDescriptor>>,
+    /// L1 (compacted) node segment descriptors — at most one per shard. C3.b Arc.
+    pub l1_node_segments: Arc<Vec<SegmentDescriptor>>,
+    /// L1 (compacted) edge segment descriptors — at most one per shard. C3.b Arc.
+    pub l1_edge_segments: Arc<Vec<SegmentDescriptor>>,
     /// The version's cumulative tombstone set (frozen at capture).
     pub tombstones: Arc<TombstoneSet>,
     /// MVCC B5: shared pin registry. `Some` for snapshots captured from a real
@@ -195,12 +200,14 @@ impl ReadSnapshot {
         // min_pinned read — no window where GC sees version V eligible while a
         // reader is mid-capture of V.
         pins.pin(version);
+        // MVCC C3.b: O(1) capture — share the version's immutable descriptor Arcs
+        // rather than deep-cloning the Vecs (+ their per-descriptor zone maps).
         Self {
             version,
-            node_segments: m.node_segments.clone(),
-            edge_segments: m.edge_segments.clone(),
-            l1_node_segments: m.l1_node_segments.clone(),
-            l1_edge_segments: m.l1_edge_segments.clone(),
+            node_segments: Arc::clone(&m.node_segments),
+            edge_segments: Arc::clone(&m.edge_segments),
+            l1_node_segments: Arc::clone(&m.l1_node_segments),
+            l1_edge_segments: Arc::clone(&m.l1_edge_segments),
             tombstones,
             pins: Some(pins),
         }
@@ -263,10 +270,10 @@ impl Clone for ReadSnapshot {
         }
         Self {
             version: self.version,
-            node_segments: self.node_segments.clone(),
-            edge_segments: self.edge_segments.clone(),
-            l1_node_segments: self.l1_node_segments.clone(),
-            l1_edge_segments: self.l1_edge_segments.clone(),
+            node_segments: Arc::clone(&self.node_segments),
+            edge_segments: Arc::clone(&self.edge_segments),
+            l1_node_segments: Arc::clone(&self.l1_node_segments),
+            l1_edge_segments: Arc::clone(&self.l1_edge_segments),
             tombstones: Arc::clone(&self.tombstones),
             pins: self.pins.clone(),
         }
