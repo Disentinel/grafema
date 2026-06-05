@@ -115,6 +115,38 @@ describe('findContainingFunction', () => {
     });
 
     /**
+     * WHY: a CALL inside a class METHOD is contained by that METHOD, not the
+     * enclosing CLASS. METHOD is a callable and the most-specific container, so
+     * it must be recognized (was skipped, returning the CLASS — which breaks
+     * `impact` internal-call exclusion and mislabels callers).
+     *
+     * Graph:
+     * ```
+     * CLASS -[HAS_SCOPE]-> class_body -[CONTAINS]-> METHOD
+     *                       METHOD -[HAS_SCOPE]-> method_body -[CONTAINS]-> CALL
+     * ```
+     */
+    it('should find the containing METHOD for a CALL inside a class method', async () => {
+      await backend.addNode({ id: 'class-1', type: 'CLASS', name: 'Repo', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'class-scope', type: 'SCOPE', name: 'class_body', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'method-1', type: 'METHOD', name: 'save', file: 'file.js', line: 2 });
+      await backend.addNode({ id: 'method-scope', type: 'SCOPE', name: 'method_body', file: 'file.js', line: 2 });
+      await backend.addNode({ id: 'call-1', type: 'CALL', name: 'helper', file: 'file.js', line: 3 });
+
+      await backend.addEdge({ src: 'class-1', dst: 'class-scope', type: 'HAS_SCOPE' });
+      await backend.addEdge({ src: 'class-scope', dst: 'method-1', type: 'CONTAINS' });
+      await backend.addEdge({ src: 'method-1', dst: 'method-scope', type: 'HAS_SCOPE' });
+      await backend.addEdge({ src: 'method-scope', dst: 'call-1', type: 'CONTAINS' });
+
+      const container = await findContainingFunction(backend, 'call-1');
+
+      assert.ok(container, 'Should find a container');
+      assert.strictEqual(container.type, 'METHOD', `expected METHOD, got ${container?.type}`);
+      assert.strictEqual(container.id, 'method-1');
+      assert.strictEqual(container.name, 'save');
+    });
+
+    /**
      * WHY: CALL nested inside multiple scopes (if-block, loop, etc.)
      * Must traverse up through all nested scopes.
      *
