@@ -15,13 +15,13 @@
  *     cannot run these suites at all.
  *   - PR #281 (RFD-40 follow-up) fixed this exact DRY violation in the shared
  *     `test/helpers/TestRFDB.js` harness (covered by
- *     `TestRFDBBinaryResolution.test.js`). The four opt-in suites listed below
+ *     `FindRfdbBinary.test.js`). The four opt-in suites listed below
  *     were the last remaining sibling instances, filed as follow-ups.
  *
  * This test encodes the invariant structurally so a future suite cannot
  * silently reintroduce the hardcoded list. The discriminating behavior of the
  * fix (env override is honored) is proven separately by
- * `TestRFDBBinaryResolution.test.js`, which exercises the live resolver.
+ * `FindRfdbBinary.test.js`, which exercises the live resolver.
  */
 
 import test from 'node:test';
