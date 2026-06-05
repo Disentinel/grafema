@@ -137,7 +137,11 @@ async function findTarget(
   type: string | null,
   name: string
 ): Promise<NodeInfo | null> {
-  const searchTypes = type ? [type] : ['FUNCTION', 'CLASS'];
+  // METHOD is searched too: `impact greet` should resolve a bare method name to
+  // its METHOD node (consistent with `who`). The downstream flow derives
+  // methodName via extractMethodName(target.name) and the findByAttr CALL-by-method
+  // fallback surfaces unresolved `obj.greet()` call sites as affected callers.
+  const searchTypes = type ? [type] : ['FUNCTION', 'CLASS', 'METHOD'];
 
   for (const nodeType of searchTypes) {
     for await (const node of backend.queryNodes({ nodeType: nodeType as any })) {
@@ -564,6 +568,34 @@ async function findCallsToNode(
     } catch (err) {
       process.stderr.write(`[grafema impact] Warning: findByAttr fallback failed for '${methodName}': ${err}\n`);
 
+    }
+
+    // Additional fallback: match CALL nodes by the method part of their name
+    // (e.g. `s.greet` -> `greet`). The `method` attribute is not populated for
+    // every `receiver.method()` form, so findByAttr alone misses those call
+    // sites; matching on the call name (as `who` does) recovers them. Runs once
+    // (methodName is only set for the depth-0 target). Bare `greet()` (no dot)
+    // also matches. Same cross-class imprecision as the findByAttr fallback.
+    try {
+      const lowerMethod = methodName.toLowerCase();
+      for await (const callNode of backend.queryNodes({ nodeType: 'CALL' as any })) {
+        if (seen.has(callNode.id)) continue;
+        const callName = callNode.name || '';
+        const dotIdx = callName.lastIndexOf('.');
+        const part = dotIdx >= 0 ? callName.slice(dotIdx + 1) : callName;
+        if (part.toLowerCase() === lowerMethod) {
+          seen.add(callNode.id);
+          calls.push({
+            id: callNode.id,
+            type: callNode.type || 'CALL',
+            name: callName,
+            file: callNode.file || '',
+            line: callNode.line,
+          });
+        }
+      }
+    } catch (err) {
+      process.stderr.write(`[grafema impact] Warning: name-scan fallback failed for '${methodName}': ${err}\n`);
     }
   }
 
