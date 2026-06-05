@@ -874,6 +874,7 @@ version = "0.4.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eb7b51a7d9c967fc26773061ba86150f19c50c0d65c887cb1fbe295fd16619b7"
 dependencies = [
+ "brotli",
  "compression-core",
  "flate2",
  "memchr",
@@ -4996,7 +4997,7 @@ dependencies = [
 
 [[package]]
 name = "rfdb"
-version = "0.3.24"
+version = "0.3.29"
 dependencies = [
  "anyhow",
  "arrow-array",

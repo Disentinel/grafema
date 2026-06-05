@@ -12,7 +12,7 @@ import { isAbsolute, resolve, join } from 'path';
 import { existsSync } from 'fs';
 import { RFDBServerBackend, parseSemanticId, parseSemanticIdV2, traceValues, traceDataflow, renderTraceNarrative, type ValueSource, type DataflowBackend } from '@grafema/util';
 import { formatNodeDisplay } from '../utils/formatNode.js';
-import { exitWithError } from '../utils/errorFormatter.js';
+import { exitWithError, emitJsonNotFound } from '../utils/errorFormatter.js';
 
 interface TraceOptions {
   project: string;
@@ -130,14 +130,20 @@ Examples:
       const { varName, scopeName } = parseTracePattern(pattern);
       const maxDepth = parseInt(options.depth, 10);
 
-      console.log(`Tracing ${varName}${scopeName ? ` from ${scopeName}` : ''}...`);
-      console.log('');
+      if (!options.json) {
+        console.log(`Tracing ${varName}${scopeName ? ` from ${scopeName}` : ''}...`);
+        console.log('');
+      }
 
       // Find starting variable(s)
       const variables = await findVariables(backend, varName, scopeName);
 
       if (variables.length === 0) {
-        console.log(`No variable "${varName}" found${scopeName ? ` in ${scopeName}` : ''}`);
+        if (options.json) {
+          console.log(JSON.stringify({ variables: [] }, null, 2));
+        } else {
+          console.log(`No variable "${varName}" found${scopeName ? ` in ${scopeName}` : ''}`);
+        }
         return;
       }
 
@@ -145,47 +151,61 @@ Examples:
       const dfDb = backend as unknown as DataflowBackend;
 
       // Trace each variable using shared BFS
-      for (const variable of variables) {
-        console.log(formatNodeDisplay(variable, { projectPath }));
-        console.log('');
+      const jsonEntries: object[] = [];
 
+      for (const variable of variables) {
         const results = await traceDataflow(dfDb, variable.id, {
           direction: 'both',
           maxDepth,
         });
 
-        const narrative = renderTraceNarrative(results, variable.name || variable.id, {
-          detail: options.detail || 'normal',
-          hintStyle: 'cli',
-        });
-        console.log(narrative);
-
-        // Show value domain if available
         const sources = await getValueSources(backend, variable.id);
-        if (sources.length > 0) {
+
+        if (options.json) {
+          jsonEntries.push({
+            id: variable.id,
+            type: variable.type,
+            name: variable.name,
+            file: variable.file,
+            line: variable.line,
+            dataflow: results,
+            possibleValues: sources,
+          });
+        } else {
+          console.log(formatNodeDisplay(variable, { projectPath }));
           console.log('');
-          console.log('Possible values:');
-          for (const src of sources) {
-            if (src.type === 'LITERAL' && src.value !== undefined) {
-              console.log(`  • ${JSON.stringify(src.value)} (literal)`);
-            } else if (src.type === 'PARAMETER') {
-              console.log(`  • <parameter ${src.name}> (runtime input)`);
-            } else if (src.type === 'CALL') {
-              console.log(`  • <return from ${src.name || 'call'}> (computed)`);
-            } else {
-              console.log(`  • <${src.type.toLowerCase()}> ${src.name || ''}`);
+
+          const narrative = renderTraceNarrative(results, variable.name || variable.id, {
+            detail: options.detail || 'normal',
+            hintStyle: 'cli',
+          });
+          console.log(narrative);
+
+          if (sources.length > 0) {
+            console.log('');
+            console.log('Possible values:');
+            for (const src of sources) {
+              if (src.type === 'LITERAL' && src.value !== undefined) {
+                console.log(`  • ${JSON.stringify(src.value)} (literal)`);
+              } else if (src.type === 'PARAMETER') {
+                console.log(`  • <parameter ${src.name}> (runtime input)`);
+              } else if (src.type === 'CALL') {
+                console.log(`  • <return from ${src.name || 'call'}> (computed)`);
+              } else {
+                console.log(`  • <${src.type.toLowerCase()}> ${src.name || ''}`);
+              }
             }
           }
-        }
 
-        if (variables.length > 1) {
-          console.log('');
-          console.log('---');
+          if (variables.length > 1) {
+            console.log('');
+            console.log('---');
+          }
         }
       }
 
       if (options.json) {
-        // TODO: structured JSON output
+        console.log(JSON.stringify({ variables: jsonEntries }, null, 2));
       }
 
     } finally {
@@ -703,6 +723,12 @@ async function handleRouteTrace(
   const route = await findRouteByPattern(backend, pattern);
 
   if (!route) {
+    if (jsonOutput) {
+      // --json contract: stdout is always parseable JSON. Mirror the success
+      // shape (route + responses) with a null route; human note to stderr.
+      emitJsonNotFound({ route: null, responses: [] }, `Route not found: ${pattern}`);
+      return;
+    }
     console.log(`Route not found: ${pattern}`);
     console.log('');
     console.log('Hint: Use "grafema query" to list available routes');

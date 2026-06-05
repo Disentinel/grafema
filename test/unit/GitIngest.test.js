@@ -200,6 +200,11 @@ describe('GitIngest', () => {
 
     // Create a test git repo with some commits
     execSync('git init', { cwd: repoDir });
+    // Hermeticity: disable commit signing locally so the fixture commits below
+    // never invoke the host's gpg/ssh signing program. Hosts with a global
+    // `commit.gpgsign=true` (Verified-badge / managed CI setups) would
+    // otherwise fail every `git commit` for these synthetic identities.
+    execSync('git config commit.gpgsign false', { cwd: repoDir });
     execSync('git config user.email "alice@test.com"', { cwd: repoDir });
     execSync('git config user.name "Alice"', { cwd: repoDir });
 
@@ -697,6 +702,9 @@ describe('GitIngest → KnowledgeBase → query round-trip', () => {
 
     // Create test repo with 2 authors
     execSync('git init', { cwd: repoDir });
+    // Hermeticity: disable commit signing locally (see note in the GitIngest
+    // suite above) so fixture commits do not depend on the host signing config.
+    execSync('git config commit.gpgsign false', { cwd: repoDir });
     execSync('git config user.email "alice@test.com"', { cwd: repoDir });
     execSync('git config user.name "Alice"', { cwd: repoDir });
 

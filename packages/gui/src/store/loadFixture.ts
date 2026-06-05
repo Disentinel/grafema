@@ -135,6 +135,10 @@ function buildLayoutFromFixture(data: FixtureData): { layout: LayoutResult; layo
       z,
       metrics: fn.metrics,
       degree: fn.degree,
+      // Fixture has no server-side index — use the local layout index
+      // so /api/edges-style consumers can still build a self-consistent
+      // remap (fixture → fixture, no remote edges in flight).
+      serverIdx: li,
     };
   }
 
@@ -148,6 +152,9 @@ function buildLayoutFromFixture(data: FixtureData): { layout: LayoutResult; layo
     regions,
     typeTable: [...typeSet],
     edgeTypeTable: [...edgeTypeSet],
+    layoutMeta: null,
+    regionTree: { roots: [], byId: new Map(), byFile: new Map() },
+    unplacedNodes: [],
   };
   return { layout, layoutNodes };
 }

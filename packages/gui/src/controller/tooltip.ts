@@ -15,6 +15,7 @@ export type HoverTarget =
   | { kind: 'node'; nodeIdx: number }
   | { kind: 'edge'; srcIdx: number; dstIdx: number; edgeType: string }
   | { kind: 'route'; routeId: string; waypointIdx: number }
+  | { kind: 'hull'; regionId: string; path: string; name: string; depth: number; tileCount: number }
   | { kind: 'empty' };
 
 /** Minimal view of a graph node needed to build a tooltip. */
@@ -66,9 +67,13 @@ export function routeTooltip(
       if (!node) return null;
       const rows: TooltipContent['rows'] = [
         { label: 'region', value: node.region },
+        // File row added unconditionally — `node.region` can be a
+        // symbol-self slug for overflow nodes (server fallback), so the
+        // file path is the most reliable "where am I" anchor.
+        { label: 'file', value: node.file },
       ];
       if (node.line !== undefined) {
-        rows.push({ label: 'location', value: `${node.file}:${node.line}` });
+        rows.push({ label: 'line', value: String(node.line) });
       }
       return {
         title: node.name,
@@ -89,6 +94,22 @@ export function routeTooltip(
           { label: 'from', value: `${src.region} — ${src.file}` },
           { label: 'to', value: `${dst.region} — ${dst.file}` },
         ],
+      };
+    }
+
+    case 'hull': {
+      // Hull / folder hover (sandbox parity §B.5). Title = leaf folder
+      // name; subtitle = full path so the user can locate the folder
+      // even when the toponym renders only the short name; rows expose
+      // the tree-fact triple (depth / leaf files / direct sub-folders).
+      const rows: TooltipContent['rows'] = [
+        { label: 'files', value: String(target.tileCount) },
+        { label: 'depth', value: String(target.depth) },
+      ];
+      return {
+        title: target.name || target.path || target.regionId,
+        subtitle: target.path && target.path !== target.name ? target.path : 'folder',
+        rows,
       };
     }
 

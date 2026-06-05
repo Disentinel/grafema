@@ -33,10 +33,11 @@
 //! manager.cleanup_ephemeral_if_unused("test-123");
 //! ```
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
 use crate::graph::{GraphEngineV2, GraphStore};
 use crate::error::{GraphError, Result};
@@ -217,6 +218,10 @@ pub struct DatabaseManager {
     databases: RwLock<HashMap<String, Arc<Database>>>,
     /// Base path for persistent databases
     base_path: PathBuf,
+    /// Names of databases currently being loaded in background
+    loading: Mutex<HashSet<String>>,
+    /// Signaled when any database finishes loading
+    loaded_signal: Condvar,
 }
 
 impl DatabaseManager {
@@ -228,6 +233,8 @@ impl DatabaseManager {
         Self {
             databases: RwLock::new(HashMap::new()),
             base_path,
+            loading: Mutex::new(HashSet::new()),
+            loaded_signal: Condvar::new(),
         }
     }
 
@@ -345,6 +352,85 @@ impl DatabaseManager {
                 databases.remove(name);
             }
         }
+    }
+
+    /// Mark a database as loading (background load in progress).
+    pub fn mark_database_loading(&self, name: &str) {
+        self.loading.lock().unwrap().insert(name.to_string());
+    }
+
+    /// Check if a database is currently being loaded in background.
+    pub fn is_database_loading(&self, name: &str) -> bool {
+        self.loading.lock().unwrap().contains(name)
+    }
+
+    /// Called when background load finishes (success or failure).
+    /// Wakes all threads blocked in `wait_for_database`.
+    fn mark_database_loaded(&self, name: &str) {
+        self.loading.lock().unwrap().remove(name);
+        self.loaded_signal.notify_all();
+    }
+
+    /// Block until a database becomes available or timeout expires.
+    ///
+    /// If the database already exists, returns immediately.
+    /// If it's being loaded in background, waits for the load to finish.
+    /// Returns Err on timeout.
+    pub fn wait_for_database(&self, name: &str, timeout: Duration) -> Result<Arc<Database>> {
+        if let Ok(db) = self.get_database(name) {
+            return Ok(db);
+        }
+
+        let start = Instant::now();
+        let mut guard = self.loading.lock().unwrap();
+
+        loop {
+            if let Ok(db) = self.get_database(name) {
+                return Ok(db);
+            }
+
+            let remaining = timeout.checked_sub(start.elapsed())
+                .unwrap_or(Duration::ZERO);
+
+            if remaining.is_zero() {
+                return Err(GraphError::DatabaseNotFound(
+                    format!("{} (timed out waiting for background load)", name)
+                ));
+            }
+
+            let (new_guard, timeout_result) = self.loaded_signal.wait_timeout(guard, remaining).unwrap();
+            guard = new_guard;
+
+            if timeout_result.timed_out() {
+                return Err(GraphError::DatabaseNotFound(
+                    format!("{} (timed out waiting for background load)", name)
+                ));
+            }
+        }
+    }
+
+    /// Load default database in background. Returns immediately.
+    ///
+    /// Marks "default" as loading, spawns a thread to call
+    /// `create_default_from_path`, then clears the loading flag.
+    pub fn load_default_in_background(self: &Arc<Self>, db_path: PathBuf) {
+        self.mark_database_loading("default");
+        let manager = Arc::clone(self);
+        std::thread::spawn(move || {
+            eprintln!("[rfdb-server] Background: loading default database from {:?}", db_path);
+            match manager.create_default_from_path(&db_path) {
+                Ok(()) => {
+                    if let Ok(db) = manager.get_database("default") {
+                        eprintln!("[rfdb-server] Background: default database loaded ({} nodes, {} edges)",
+                            db.node_count(), db.edge_count());
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[rfdb-server] Background: failed to load default database: {}", e);
+                }
+            }
+            manager.mark_database_loaded("default");
+        });
     }
 
     /// Create default database from legacy db_path
@@ -778,6 +864,84 @@ mod manager_tests {
         assert!(manager.database_exists("default"));
         let db = manager.get_database("default").unwrap();
         assert!(!db.ephemeral);
+    }
+
+    // ============================================================================
+    // Background Loading (wait_for_database)
+    // ============================================================================
+
+    #[test]
+    fn test_wait_for_database_already_loaded() {
+        let dir = tempdir().unwrap();
+        let manager = Arc::new(DatabaseManager::new(dir.path().to_path_buf()));
+
+        manager.create_database("mydb", false).unwrap();
+
+        let db = manager.wait_for_database("mydb", std::time::Duration::from_secs(1));
+        assert!(db.is_ok(), "wait_for_database should return immediately for already-loaded DB");
+    }
+
+    #[test]
+    fn test_wait_for_database_loaded_in_background() {
+        let dir = tempdir().unwrap();
+        let manager = Arc::new(DatabaseManager::new(dir.path().to_path_buf()));
+
+        manager.mark_database_loading("delayed");
+
+        let manager_clone = Arc::clone(&manager);
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            manager_clone.create_database("delayed", false).unwrap();
+            manager_clone.mark_database_loaded("delayed");
+        });
+
+        let start = std::time::Instant::now();
+        let db = manager.wait_for_database("delayed", std::time::Duration::from_secs(5));
+        let elapsed = start.elapsed();
+
+        assert!(db.is_ok(), "wait_for_database should succeed after background load");
+        assert!(
+            elapsed >= std::time::Duration::from_millis(150),
+            "Should have waited for background load (took {:?})",
+            elapsed
+        );
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "Should not wait longer than necessary (took {:?})",
+            elapsed
+        );
+    }
+
+    #[test]
+    fn test_wait_for_database_timeout() {
+        let dir = tempdir().unwrap();
+        let manager = Arc::new(DatabaseManager::new(dir.path().to_path_buf()));
+
+        let start = std::time::Instant::now();
+        let db = manager.wait_for_database("nonexistent", std::time::Duration::from_millis(500));
+        let elapsed = start.elapsed();
+
+        assert!(db.is_err(), "wait_for_database should fail after timeout");
+        assert!(
+            elapsed >= std::time::Duration::from_millis(450),
+            "Should wait for the full timeout (took {:?})",
+            elapsed
+        );
+    }
+
+    #[test]
+    fn test_is_database_loading() {
+        let dir = tempdir().unwrap();
+        let manager = DatabaseManager::new(dir.path().to_path_buf());
+
+        assert!(!manager.is_database_loading("default"));
+
+        manager.mark_database_loading("default");
+        assert!(manager.is_database_loading("default"));
+
+        manager.create_database("default", false).unwrap();
+        // Once DB is in the databases map, loading status doesn't matter for callers
+        assert!(manager.database_exists("default"));
     }
 }
 

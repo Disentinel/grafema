@@ -52,10 +52,24 @@ For EVERY filter, condition, or classification rule in the plan:
 - [What assumption is unverified]
 ```
 
-**Rules:**
+**Evidence Rule (mandatory).** Every row in a completeness table and every claim in a precondition/gap must carry evidence from one of:
+- (a) `file:line` in current HEAD (verified via Read/Grep, not recalled from memory)
+- (b) shell command + its actual output, inlined in the report
+- (c) passing test reference: `test/path:test_name` with assertion covering the claim
+- (d) live-query result: `mcp__grafema__*` / RFDB Datalog / HTTP `/api/*` with full response inlined
+- (e) commit SHA where the claim was proven true (for "already implemented" claims)
+
+"Likely", "usually", "follows pattern X", "standard convention" — **NOT evidence**. A row without evidence defaults to **UNCLEAR → REJECT**.
+
+Applies with particular force to: liftable sets, node-type enumerations, schema claims, API contracts, "already handled by existing code" claims. For any enumeration of graph shape (e.g. "edge X connects node types A→B") the evidence MUST be a live-query on the target RFDB, not a grep of analyzer source.
+
+**Other rules:**
 - NEVER say "looks correct" without showing your enumeration
 - If you cannot enumerate all input categories for a condition → REJECT (you don't understand it well enough)
+- Lost evidence (tool result truncated, server went down) → re-verify before approving; do not fabricate
 - Run on **Opus** model
+
+**Retrospective anchor — DAI-22 (2026-04-24):** three Dijkstra passes approved a plan whose liftable edge list included `CALLS`, `READS_FROM`, `PASSES_ARGUMENT`, `RETURNS`. On live data, 99%+ of those edges had at least one endpoint in an excluded type (CALL / REFERENCE / PROPERTY_ACCESS as intermediaries) — so the layout loader fed the packer 1,502 mostly-structural edges out of 145k claimed liftable. Cohesion signal silently inert. Root cause: no sample-query on live RFDB validated the claim before approval. Evidence Rule is the concrete mechanism to prevent this class of failure.
 
 ## For Steve Jobs (Vision Review)
 

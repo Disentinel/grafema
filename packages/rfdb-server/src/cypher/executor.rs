@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
+use crate::cypher::aggregate::AggAcc;
 use crate::cypher::ast::*;
 use crate::cypher::values::{CypherValue, Record};
 use crate::cypher::CypherError;
@@ -672,6 +673,10 @@ pub struct AggregateItem {
     pub alias: String,
 }
 
+/// Per-group state accumulated by `HashAggregate`: the group-key column
+/// values (name + value pairs) plus one accumulator per aggregate expression.
+type GroupState = (Vec<(String, CypherValue)>, Vec<AggAcc>);
+
 /// BLOCKING operator: groups records by non-aggregate RETURN items,
 /// computes aggregate functions, then yields result records.
 pub struct HashAggregate<'a> {
@@ -702,13 +707,19 @@ impl<'a> HashAggregate<'a> {
 
     /// Consume all input, group by keys, compute aggregates.
     fn materialize(&mut self) -> Result<(), CypherError> {
-        // group_key_string -> (group_key_values, per-aggregate counters)
-        let mut groups: HashMap<Vec<String>, (Vec<(String, CypherValue)>, Vec<i64>)> =
-            HashMap::new();
+        // Build a template of fresh accumulators, one per aggregate. This
+        // validates every function name up front (AggAcc::new errors on an
+        // unsupported function) so we fail before consuming input instead of
+        // silently returning a count. Each new group clones this template.
+        let mut acc_template: Vec<AggAcc> = Vec::with_capacity(self.aggregates.len());
+        for agg in &self.aggregates {
+            acc_template.push(AggAcc::new(&agg.function)?);
+        }
+
+        // group_key_string -> (group_key_values, per-aggregate accumulators)
+        let mut groups: HashMap<Vec<String>, GroupState> = HashMap::new();
         // Maintain insertion order for deterministic output.
         let mut order: Vec<Vec<String>> = Vec::new();
-
-        let agg_count = self.aggregates.len();
 
         let mut input_count: usize = 0;
         while let Some(rec) = self.input.next()? {
@@ -734,60 +745,50 @@ impl<'a> HashAggregate<'a> {
             }
 
             let entry = groups.entry(key_strings.clone());
-            let counters = &mut entry
+            let accs = &mut entry
                 .or_insert_with(|| {
                     order.push(key_strings.clone());
-                    (key_values, vec![0i64; agg_count])
+                    (key_values, acc_template.clone())
                 })
                 .1;
 
-            // Update aggregates.
+            // Fold this row into each aggregate accumulator.
             for (i, agg) in self.aggregates.iter().enumerate() {
-                match agg.function.to_uppercase().as_str() {
-                    "COUNT" => {
-                        let should_count = match &agg.arg {
-                            Expr::Star => true,
-                            other => {
-                                let v = eval_expr(other, &rec);
-                                !matches!(v, CypherValue::Null)
-                            }
-                        };
-                        if should_count {
-                            counters[i] += 1;
-                        }
-                    }
-                    _ => {
-                        // Unsupported aggregate — treat as COUNT for now.
-                        counters[i] += 1;
-                    }
-                }
+                let is_star = matches!(agg.arg, Expr::Star);
+                let value = if is_star {
+                    CypherValue::Null
+                } else {
+                    eval_expr(&agg.arg, &rec)
+                };
+                accs[i].update(&value, is_star)?;
             }
         }
 
         // Build result records in insertion order.
         let mut result = Vec::with_capacity(order.len());
 
-        // Handle the edge case of pure aggregation with no group keys and no input:
-        // COUNT(*) with no input should return one row with 0.
+        // Edge case: pure aggregation with no group keys and no input rows.
+        // Finalize the empty template so each function returns its identity
+        // (COUNT/SUM -> 0, AVG/MIN/MAX -> NULL).
         if order.is_empty() && self.group_keys.is_empty() && !self.aggregates.is_empty() {
             let mut rec = Record::new();
-            for agg in &self.aggregates {
-                rec.insert(agg.alias.clone(), CypherValue::Int(0));
+            for (agg, acc) in self.aggregates.iter().zip(acc_template) {
+                rec.insert(agg.alias.clone(), acc.finalize());
             }
             result.push(rec);
         } else {
             for key_strings in &order {
-                let (key_values, counters) = groups.get(key_strings).unwrap();
+                let (key_values, accs) = groups.remove(key_strings).unwrap();
                 let mut rec = Record::new();
 
                 // Group key columns.
                 for (col_name, val) in key_values {
-                    rec.insert(col_name.clone(), val.clone());
+                    rec.insert(col_name, val);
                 }
 
                 // Aggregate columns.
-                for (i, agg) in self.aggregates.iter().enumerate() {
-                    rec.insert(agg.alias.clone(), CypherValue::Int(counters[i]));
+                for (agg, acc) in self.aggregates.iter().zip(accs) {
+                    rec.insert(agg.alias.clone(), acc.finalize());
                 }
 
                 result.push(rec);

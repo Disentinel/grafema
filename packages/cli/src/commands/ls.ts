@@ -15,7 +15,7 @@ import { resolve, join } from 'path';
 import { toRelativeDisplay } from '../utils/pathUtils.js';
 import { existsSync } from 'fs';
 import { RFDBServerBackend } from '@grafema/util';
-import { exitWithError } from '../utils/errorFormatter.js';
+import { exitWithError, emitJsonNotFound } from '../utils/errorFormatter.js';
 import { Spinner } from '../utils/spinner.js';
 
 interface LsOptions {
@@ -79,6 +79,10 @@ Discover available types:
       const typeCounts = await backend.countNodesByType();
       if (!typeCounts[nodeType]) {
         spinner.stop();
+        if (options.json) {
+          emitJsonNotFound({ type: nodeType, nodes: [], showing: 0, total: 0 }, `No nodes of type "${nodeType}" found`);
+          return;
+        }
         const availableTypes = Object.keys(typeCounts).sort();
         exitWithError(`No nodes of type "${nodeType}" found`, [
           'Available types:',

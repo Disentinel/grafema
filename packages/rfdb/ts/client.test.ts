@@ -306,6 +306,64 @@ describe('RFDBClient.addNodes() Metadata Preservation', () => {
 });
 
 // ============================================================================
+// Connection Error Hints — removed auto-start flag (follow-up of PR #295)
+// ============================================================================
+
+/**
+ * WHY: `_enhanceConnectionError()` rewrites low-level socket errors into a
+ * human-readable hint that tells the user how to get the RFDB server running.
+ * It historically told them to use the opt-in auto-start flag — but that CLI
+ * flag was removed (auto-start is now the DEFAULT; only `--no-auto-start`
+ * remains, see packages/cli/src/commands/analyze.ts). Commander rejects unknown
+ * options, so a user who follows the stale hint and re-runs `grafema analyze`
+ * with that flag gets `error: unknown option` — the guidance actively breaks.
+ *
+ * Invariant: the connection-error hint must never name the removed auto-start
+ * flag, and must still point the user at a working remedy (`rfdb-server start`).
+ */
+describe('RFDBClient connection-error hints (removed auto-start flag)', () => {
+  // Assemble the removed flag from parts so a source scan of THIS test file
+  // does not flag itself (mirrors test/unit/AnalyzeAutoStartFlag.test.js).
+  const REMOVED_FLAG = '--auto' + '-start';
+
+  function hintFor(code: string): string {
+    const client = new RFDBClient('/tmp/test-nonexistent.sock');
+    const err = Object.assign(new Error('boom'), { code }) as NodeJS.ErrnoException;
+    // _enhanceConnectionError is private; access via the runtime instance.
+    return (client as unknown as {
+      _enhanceConnectionError(e: NodeJS.ErrnoException): Error;
+    })._enhanceConnectionError(err).message;
+  }
+
+  for (const code of ['ENOENT', 'ECONNREFUSED', 'EPIPE', 'ECONNRESET']) {
+    it(`${code}: hint does not name the removed auto-start flag`, () => {
+      const msg = hintFor(code);
+      assert.ok(
+        !msg.includes(REMOVED_FLAG),
+        `hint for ${code} must not reference the removed ${REMOVED_FLAG} flag; got:\n${msg}`,
+      );
+    });
+
+    it(`${code}: hint points at a working remedy (rfdb-server start)`, () => {
+      const msg = hintFor(code);
+      assert.ok(
+        msg.includes('rfdb-server start'),
+        `hint for ${code} should tell the user how to start the server; got:\n${msg}`,
+      );
+    });
+  }
+
+  it('unknown error codes are passed through unchanged', () => {
+    const client = new RFDBClient('/tmp/test-nonexistent.sock');
+    const original = Object.assign(new Error('weird'), { code: 'ESOMETHING' }) as NodeJS.ErrnoException;
+    const out = (client as unknown as {
+      _enhanceConnectionError(e: NodeJS.ErrnoException): Error;
+    })._enhanceConnectionError(original);
+    assert.strictEqual(out, original, 'non-connection errors should be returned as-is');
+  });
+});
+
+// ============================================================================
 // Snapshot API Tests
 // ============================================================================
 

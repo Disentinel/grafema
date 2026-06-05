@@ -1,0 +1,157 @@
+# Compaction rules — viz-time edge synthesis for hidden node types.
+#
+# Each rule names a hidden node type and the edge types pivoting on it.
+# The enricher generates shortcut edges between the placed-ancestors of
+# those edges' opposite endpoints, capturing the semantic "A and B are
+# connected via this hidden node" relationship without keeping the
+# hidden node in the visualization.
+#
+# Persistence: each rule's emitted edges carry `_source: "compaction:<name>"`.
+# The enricher deletes prior emits by that tag before rewriting on each
+# `grafema analyze` — fully stateless, no array bloat across re-runs
+# (REG-1126 design).
+#
+# Confidence: V1 ships `may` only. The ranking that would upgrade pairs
+# to `must` requires control-flow reachability analysis (REG-1125 — blocked).
+
+rules:
+  # First rule lands on a graph topology that's actually populated in
+  # real TS/Rust codebases — `state-flow` (writer × reader of mutable
+  # module state via WRITES_TO+READS_FROM) was a theory-driven choice
+  # that produced zero edges on the Grafema self-graph because TS/Rust
+  # discourage module-level mutable bindings (mutations happen via
+  # CALLS_ON method calls on `const`-held containers, not WRITES_TO).
+  # Pick the dual instead — pairs of readers of the same module-level
+  # CONSTANT/VARIABLE — which captures shared-config / shared-state
+  # coupling that exists everywhere.
+  - name: shared-readers
+    description: |
+      Two functions reading the same module-scope CONSTANT or VARIABLE
+      share a configuration / dependency surface. Emit a CO_DEPENDS_ON
+      edge between every pair of distinct readers of the same hidden
+      node — captures implicit coupling that doesn't show up in the
+      direct call graph.
+    dependsOn: []
+    hidden:
+      types: [CONSTANT, VARIABLE]
+      scope: module
+    pivot:
+      # Same edge on both sides — readers are the SRC of READS_FROM
+      # incoming on the hidden node. The enricher's pair-emission step
+      # will form ordered (reader_i, reader_j) tuples, skipping the
+      # diagonal. Bidirectional emission (a→b AND b→a) is intentional:
+      # the relationship is symmetric, both arrows convey "co-dependency".
+      in:  { types: [READS_FROM], side: dst }
+      out: { types: [READS_FROM], side: dst }
+    emit:
+      type: CO_DEPENDS_ON
+      direction: in.src -> out.src
+    fanoutCap:
+      # Cap per hidden node — 6 means at most 6 ordered pairs from each
+      # const's reader set. Configs with hundreds of readers don't
+      # explode the graph.
+      perHidden: 6
+      perRule: 50000
+
+  - name: direct-calls
+    description: |
+      Eliminate the CALL-site indirection from the call graph: every
+      `FUNCTION_X CONTAINS CALL_node → CALLS FUNCTION_Y` chain becomes
+      a direct `FUNCTION_X DIRECT_CALLS FUNCTION_Y` edge. The graph
+      gains a first-class call-graph view that any consumer (Datalog
+      rules, MCP traversals, dataflow analysers, the GUI's /api/edges
+      lift) can use without re-doing the CONTAINS-walk hop themselves.
+
+      Pivot is the CALL node itself. Multiple CALL-sites in the same
+      caller targeting the same callee aggregate into one edge with
+      `viaCount` reflecting the call-site multiplicity (a hot inner
+      loop with 5 calls to log() shows up as a single DIRECT_CALLS
+      edge with viaCount=5).
+
+      Idempotent across re-runs (delete-by-source then upsert).
+      Single most expensive rule by hidden count (~55k CALLs) but
+      walk depth is short (1-3) so total runtime stays bounded.
+    dependsOn: []
+    hidden:
+      types: [CALL]
+      scope: all
+    pivot:
+      # CALL has CONTAINS incoming from SCOPE (lexical parent). Walking
+      # the opposite endpoint (src) through resolveToPlaced gives the
+      # CONTAINING placeable — typically FUNCTION/METHOD/CLOSURE.
+      in:  { types: [CONTAINS], side: dst }
+      # CALL has CALLS outgoing to the called FUNCTION (already
+      # placeable, the walk passes through trivially).
+      out: { types: [CALLS],    side: src }
+    emit:
+      type: DIRECT_CALLS
+      direction: in.src -> out.dst
+    fanoutCap:
+      # A CALL almost always has one parent + one callee; cap of 4 is a
+      # safety belt for dynamic-dispatch sites resolved to multiple
+      # candidates. Per-rule cap deliberately high — we want to cover
+      # most calls.
+      perHidden: 4
+      perRule: 100000
+
+  - name: trivial-wrappers
+    description: |
+      A FUNCTION/METHOD with exactly one outgoing DIRECT_CALLS and at
+      least one incoming DIRECT_CALLS — typical for currying utils,
+      decorator wrapping, re-export shims. Compose `caller → wrapper →
+      real` chains into direct `CALLS_TRANSITIVELY(caller → real)` so
+      the city map shows actual coupling instead of indirection.
+
+      Depends on `direct-calls` to have populated the FUNCTION→FUNCTION
+      DIRECT_CALLS edges first.
+    dependsOn: [direct-calls]
+    hidden:
+      types: [FUNCTION, METHOD, ASYNC_FUNCTION, CLOSURE, LAMBDA]
+      scope: all
+      filter:
+        outDegreeEq: { edgeType: DIRECT_CALLS, value: 1 }
+        inDegreeMin: { edgeType: DIRECT_CALLS, value: 1 }
+    pivot:
+      in:  { types: [DIRECT_CALLS], side: dst }
+      out: { types: [DIRECT_CALLS], side: src }
+    emit:
+      type: CALLS_TRANSITIVELY
+      direction: in.src -> out.dst
+    fanoutCap:
+      perHidden: 16
+      perRule: 30000
+
+  - name: co-callers
+    description: |
+      Mirror of `shared-readers` for the call-graph: pairs of functions
+      that call the SAME function share a behavioural dependency on
+      that callee. Useful for spotting clusters of consumers of a
+      shared utility. CALLS edges in this graph live on CALL-site
+      nodes (CALL → FUNCTION), so the pivot is the called FUNCTION
+      itself (placeable!) — incoming CALLS sources walk up the
+      analyzer-CONTAINS chain to the calling FUNCTION via the same
+      mechanism the lift uses elsewhere.
+
+      Filter to popular callees only (≥3 callsites) to keep emission
+      bounded. A leaf utility called by 5 functions emits at most 16
+      pairs (cap); a hot helper called by 100 emits 16 representative
+      ones.
+    dependsOn: []
+    hidden:
+      types: [FUNCTION, METHOD, ASYNC_FUNCTION]
+      scope: all
+      filter:
+        # Skip functions called from fewer than 3 sites — pairs of 1-2
+        # callers aren't worth the synthetic edge cost.
+        inDegreeMin: { edgeType: CALLS, value: 3 }
+    pivot:
+      # Both sides walk incoming CALLS — gives the same source set, the
+      # cross-product over distinct callers becomes the emitted pairs.
+      in:  { types: [CALLS], side: dst }
+      out: { types: [CALLS], side: dst }
+    emit:
+      type: CO_CALLS
+      direction: in.src -> out.src
+    fanoutCap:
+      perHidden: 16
+      perRule: 30000

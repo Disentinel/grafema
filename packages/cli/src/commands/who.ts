@@ -11,7 +11,7 @@
 import { Command } from 'commander';
 import { resolve, join, isAbsolute, relative } from 'path';
 import { existsSync } from 'fs';
-import { RFDBServerBackend } from '@grafema/util';
+import { RFDBServerBackend, parseSemanticIdV2 } from '@grafema/util';
 import { exitWithError } from '../utils/errorFormatter.js';
 import { Spinner } from '../utils/spinner.js';
 
@@ -88,17 +88,12 @@ Examples:
         const edges = await backend.getOutgoingEdges(node.id, ['CALLS']);
         const resolved = edges.length > 0;
 
-        // Extract caller name from semantic ID
-        // Format: "file->SCOPE->TYPE->name" — parent scope is the caller
-        const idParts = node.id.split('->');
-        let callerName = '<anonymous>';
-        // Walk up the scope chain to find a FUNCTION or METHOD parent
-        for (let i = idParts.length - 3; i >= 1; i--) {
-          if (idParts[i] === 'FUNCTION' || idParts[i] === 'METHOD') {
-            callerName = idParts[i + 1] || callerName;
-            break;
-          }
-        }
+        // Extract the enclosing function/method from the v2 semantic ID's
+        // `[in:<parent>]` annotation, e.g. `…#CALL->helper[in:caller,h:5e14]`
+        // (parseSemanticIdV2 also decodes the `grafema://` URI form). The old
+        // `->`-split walk targeted the v1 id shape and never matched v2 ids, so
+        // every caller printed as `<anonymous>`.
+        const callerName = parseSemanticIdV2(node.id)?.namedParent || '<anonymous>';
 
         const file = node.file || '';
 
@@ -127,7 +122,10 @@ Examples:
       }
 
       if (funcNode) {
-        const incomingEdges = await backend.getIncomingEdges(funcNode.id, ['CALLS', 'READS_FROM', 'IMPORTS_FROM']);
+        // CALLS / READS_FROM are real uses-as-caller. IMPORTS_FROM is an import,
+        // not a caller — importers are reported separately (Strategy 3, labelled
+        // "imports …"); including them here mislabelled the import as a bare caller.
+        const incomingEdges = await backend.getIncomingEdges(funcNode.id, ['CALLS', 'READS_FROM']);
         for (const edge of incomingEdges) {
           const srcNode = await backend.getNode(edge.src);
           if (!srcNode) continue;

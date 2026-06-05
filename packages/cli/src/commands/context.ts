@@ -26,7 +26,7 @@ import type { NodeContext, EdgeGroup } from '@grafema/util';
 import type { BaseNodeRecord } from '@grafema/types';
 import { getCodePreview, formatCodePreview } from '../utils/codePreview.js';
 import { formatLocation } from '../utils/formatNode.js';
-import { exitWithError } from '../utils/errorFormatter.js';
+import { exitWithError, emitJsonNotFound } from '../utils/errorFormatter.js';
 import { Spinner } from '../utils/spinner.js';
 
 interface ContextOptions {
@@ -95,6 +95,16 @@ Examples:
       const node = await backend.getNode(semanticId);
       if (!node) {
         spinner.stop();
+        if (options.json) {
+          // Mirror the success NodeContext shape ({ node, source, outgoing,
+          // incoming }) so consumers reading result.outgoing / result.incoming
+          // on success don't crash on not-found (sibling of the get fix #308).
+          emitJsonNotFound(
+            { node: null, source: null, outgoing: [], incoming: [] },
+            `Node not found: "${semanticId}"`,
+          );
+          return;
+        }
         exitWithError(`Node not found: "${semanticId}"`, [
           'Use: grafema query "<name>" to find the correct semantic ID',
         ]);

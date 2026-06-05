@@ -74,6 +74,7 @@ pub struct ShardDiagnostics {
 ///
 /// Query paths check this set before returning any record.
 /// O(1) per check via HashSet.
+#[derive(Clone)]
 pub struct TombstoneSet {
     /// Deleted node IDs. Queries skip records with these IDs.
     pub node_ids: HashSet<u128>,
@@ -128,6 +129,27 @@ impl TombstoneSet {
     /// Add tombstoned edge keys (union with existing).
     pub fn add_edges(&mut self, keys: impl IntoIterator<Item = (u128, u128, Arc<str>)>) {
         self.edge_keys.extend(keys);
+    }
+
+    /// Remove tombstoned edge keys.
+    ///
+    /// Used when a previously-tombstoned edge is re-added (e.g. enricher
+    /// rules that delete-by-source then re-emit the same `(src, dst, type)`
+    /// triple). Without this the new edge is silently shadowed by the
+    /// stale tombstone and reads return empty even though `addEdges`
+    /// returned `ok`. Idempotent — missing keys are no-ops.
+    pub fn remove_edges<'a>(&mut self, keys: impl IntoIterator<Item = &'a (u128, u128, Arc<str>)>) {
+        for k in keys {
+            self.edge_keys.remove(k);
+        }
+    }
+
+    /// Remove a single tombstoned edge key by its components.
+    ///
+    /// Convenience wrapper that creates the lookup tuple. Same use case
+    /// as `remove_edges` for hot paths that iterate edges one-by-one.
+    pub fn remove_edge(&mut self, src: u128, dst: u128, edge_type: &str) -> bool {
+        self.edge_keys.remove(&(src, dst, Arc::from(edge_type)))
     }
 
     /// Number of tombstoned nodes.
@@ -2007,7 +2029,16 @@ impl Shard {
             }
         }
 
-        // Step 3: L1 edge-type index — O(1) HashMap lookup
+        // Step 3: L1 edge-type index — O(1) HashMap lookup.
+        //
+        // The index is built once at `set_l1_segments()` time with the
+        // TombstoneSet snapshot available then. Subsequent `delete_edge`
+        // calls add tombstones but don't rebuild the index — so we must
+        // filter out post-index tombstones at read time, mirroring the
+        // L0 read path above. Without this, deletions to L1-resident
+        // edges are invisible to `get_edges_by_type` until compaction.
+        // (Observed in DAI-22 as LAYOUT_POSITION duplicates surviving
+        // across delete_edges_by_type_and_source + flush + reload.)
         if let Some(index) = &self.l1_edge_type_index {
             if let Some(pairs) = index.get(edge_type) {
                 for &(src, dst) in pairs {
@@ -2015,8 +2046,9 @@ impl Shard {
                     if seen_edge_keys.contains(&key) {
                         continue;
                     }
-                    // No tombstone check needed — L1 index is built with
-                    // tombstone filtering in build_l1_edge_type_index().
+                    if self.tombstones.contains_edge(src, dst, edge_type) {
+                        continue;
+                    }
                     results.push(EdgeRecordV2 {
                         src,
                         dst,
@@ -3403,6 +3435,47 @@ mod tests {
         // Only the non-tombstoned edge should remain
         assert_eq!(calls[0].src, node_id("c"));
         assert_eq!(calls[0].dst, node_id("d"));
+    }
+
+    #[test]
+    fn test_get_edges_by_type_l1_post_index_tombstone_filter() {
+        // DAI-22 regression — the L1 edge-type index is built once at
+        // set_l1_segments() time. Subsequent delete_edge calls add
+        // tombstones but don't rebuild the index; get_edges_by_type must
+        // therefore filter tombstoned edges on every L1 read, not trust
+        // the frozen index. Prior to the fix, tombstoned edges resurfaced
+        // from L1 and the warmup loader saw 1000+ duplicate LAYOUT_POSITION
+        // edges per re-commit on the grafema self-analysis graph.
+        use std::io::Cursor;
+        let mut shard = Shard::ephemeral();
+
+        // Build an L1 edge segment directly — mirrors what compaction
+        // produces post-promotion.
+        let mut writer = EdgeSegmentWriter::new();
+        let make = |src: &str, dst: &str, et: &str| crate::storage_v2::types::EdgeRecordV2 {
+            src: node_id(src),
+            dst: node_id(dst),
+            edge_type: et.to_string(),
+            metadata: String::new(),
+        };
+        writer.add(make("a", "b", "CALLS"));
+        writer.add(make("c", "d", "CALLS"));
+        let mut buf = Cursor::new(Vec::new());
+        writer.finish(&mut buf).unwrap();
+        let seg = EdgeSegmentV2::from_bytes(&buf.into_inner()).unwrap();
+
+        shard.set_l1_segments(None, None, Some(seg), None);
+        assert_eq!(shard.get_edges_by_type("CALLS").len(), 2);
+
+        // Now tombstone one of the edges — added AFTER the L1 index was built.
+        shard.set_tombstones(TombstoneSet::from_manifest(
+            vec![],
+            vec![(node_id("a"), node_id("b"), "CALLS".to_string())],
+        ));
+
+        let remaining = shard.get_edges_by_type("CALLS");
+        assert_eq!(remaining.len(), 1, "L1 read path must honour post-index tombstones");
+        assert_eq!(remaining[0].src, node_id("c"));
     }
 
     #[test]

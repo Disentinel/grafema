@@ -11,7 +11,7 @@ import assert from 'node:assert';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { handleReadProjectStructure, handleWriteConfig } from '../dist/handlers.js';
+import { handleReadProjectStructure, handleWriteConfig } from '../dist/handlers/index.js';
 import { setProjectPath } from '../dist/state.js';
 
 describe('Onboarding Tools', () => {

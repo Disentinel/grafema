@@ -1,8 +1,7 @@
 //! Native Rust analyzer — walks syn AST directly, no serialization.
 //!
-//! Replaces the Haskell grafema-rust-analyzer. Takes a `syn::File` (already
-//! parsed by `crate::rust_parser`) and produces `FileAnalysis` with the same
-//! node/edge types the rest of the pipeline expects.
+//! Takes a `syn::File` (already parsed by `crate::rust_parser`) and produces
+//! `FileAnalysis` with the same node/edge types the rest of the pipeline expects.
 //!
 //! FAIL-EARLY POLICY: unhandled syn node variants panic immediately.
 //! No silent skips, no "log and continue". If it crashes, we fix the handler.
@@ -262,8 +261,7 @@ impl Ctx {
 // Public entry point
 // ---------------------------------------------------------------------------
 
-/// Analyze a parsed Rust file, producing the same FileAnalysis as the
-/// Haskell grafema-rust-analyzer but without any serialization.
+/// Analyze a parsed Rust file, producing FileAnalysis directly without serialization.
 pub fn analyze_rust_file(file: &str, syntax: &syn::File) -> FileAnalysis {
     let mut ctx = Ctx::new(file);
 
@@ -1693,9 +1691,37 @@ fn path_to_string(path: &syn::Path) -> String {
         .join("::")
 }
 
+/// If `path` is a single-segment `Box<T>`, `Rc<T>`, or `Arc<T>` (optionally
+/// fully qualified, e.g. `std::boxed::Box<T>`), return the inner type `T`.
+///
+/// These are the canonical Deref-transparent owning smart pointers: a method
+/// call on a `Box<T>` / `Rc<T>` / `Arc<T>` receiver auto-derefs to `T`, and
+/// unsized trait objects (`dyn Trait`) can only exist behind such a pointer.
+/// Treating the inner type as the receiver type is therefore what method- and
+/// dyn-dispatch resolution needs. Other generic containers (`Vec`, `Option`,
+/// `RefCell`, …) are intentionally NOT unwrapped — a method on them belongs to
+/// the container, not the element.
+fn unwrap_smart_pointer(path: &syn::Path) -> Option<&syn::Type> {
+    let seg = path.segments.last()?;
+    if !matches!(seg.ident.to_string().as_str(), "Box" | "Rc" | "Arc") {
+        return None;
+    }
+    if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
+        for arg in &args.args {
+            if let syn::GenericArgument::Type(inner) = arg {
+                return Some(inner);
+            }
+        }
+    }
+    None
+}
+
 fn type_to_name(ty: &syn::Type) -> String {
     match ty {
-        syn::Type::Path(p) => path_to_string(&p.path),
+        syn::Type::Path(p) => match unwrap_smart_pointer(&p.path) {
+            Some(inner) => type_to_name(inner),
+            None => path_to_string(&p.path),
+        },
         syn::Type::Reference(r) => type_to_name(&r.elem),
         syn::Type::Paren(p) => type_to_name(&p.elem),
         syn::Type::Group(g) => type_to_name(&g.elem),
@@ -1796,6 +1822,56 @@ mod tests {
         assert_eq!(seg.metadata.get("typeAnnotation"), Some(&serde_json::json!("NodeSegmentV2")));
     }
 
+    // Trait objects in idiomatic Rust are unsized, so they always appear behind
+    // a pointer: `&dyn T`, `Box<dyn T>`, `Rc<dyn T>`, `Arc<dyn T>`. References are
+    // already peeled, but the Deref-transparent owning smart pointers must be
+    // unwrapped too, otherwise `Box<dyn Draw>` collapses to `"Box"` and the trait
+    // name needed for dyn-dispatch resolution is lost.
+    #[test]
+    fn test_type_annotation_box_dyn_trait() {
+        let fa = parse_and_analyze("fn render(x: Box<dyn Draw>) {}");
+        let x = fa.nodes.iter().find(|n| n.node_type == "PARAMETER" && n.name == "x").unwrap();
+        assert_eq!(x.metadata.get("typeAnnotation"), Some(&serde_json::json!("dyn Draw")));
+    }
+
+    #[test]
+    fn test_type_annotation_rc_dyn_trait() {
+        let fa = parse_and_analyze("fn render(x: Rc<dyn Shape>) {}");
+        let x = fa.nodes.iter().find(|n| n.node_type == "PARAMETER" && n.name == "x").unwrap();
+        assert_eq!(x.metadata.get("typeAnnotation"), Some(&serde_json::json!("dyn Shape")));
+    }
+
+    #[test]
+    fn test_type_annotation_arc_dyn_trait() {
+        let fa = parse_and_analyze("fn handle(x: Arc<dyn Handler>) {}");
+        let x = fa.nodes.iter().find(|n| n.node_type == "PARAMETER" && n.name == "x").unwrap();
+        assert_eq!(x.metadata.get("typeAnnotation"), Some(&serde_json::json!("dyn Handler")));
+    }
+
+    #[test]
+    fn test_type_annotation_fully_qualified_box_dyn_trait() {
+        let fa = parse_and_analyze("fn render(x: std::boxed::Box<dyn Draw>) {}");
+        let x = fa.nodes.iter().find(|n| n.node_type == "PARAMETER" && n.name == "x").unwrap();
+        assert_eq!(x.metadata.get("typeAnnotation"), Some(&serde_json::json!("dyn Draw")));
+    }
+
+    #[test]
+    fn test_type_annotation_box_concrete_type() {
+        // Box<Foo> derefs to Foo, so a method call on it resolves to Foo's impl.
+        let fa = parse_and_analyze("fn take(x: Box<Foo>) {}");
+        let x = fa.nodes.iter().find(|n| n.node_type == "PARAMETER" && n.name == "x").unwrap();
+        assert_eq!(x.metadata.get("typeAnnotation"), Some(&serde_json::json!("Foo")));
+    }
+
+    #[test]
+    fn test_type_annotation_vec_not_unwrapped() {
+        // Vec is NOT a Deref-transparent owning pointer: `v.push()` is a Vec method,
+        // not a method on the element type. Vec<String> must stay "Vec".
+        let fa = parse_and_analyze("fn take(v: Vec<String>) {}");
+        let v = fa.nodes.iter().find(|n| n.node_type == "PARAMETER" && n.name == "v").unwrap();
+        assert_eq!(v.metadata.get("typeAnnotation"), Some(&serde_json::json!("Vec")));
+    }
+
     #[test]
     fn test_struct_with_fields() {
         let fa = parse_and_analyze("pub struct Foo { pub bar: i32, baz: String }");
@@ -1815,8 +1891,9 @@ mod tests {
         let make_shard = fa.nodes.iter().find(|n| n.node_type == "FUNCTION" && n.name == "make_shard").unwrap();
         assert_eq!(make_shard.metadata.get("returnType"), Some(&serde_json::json!("Shard")));
 
+        // Box<Vec<u8>> derefs to Vec<u8>, so the receiver type is the inner Vec.
         let make_box = fa.nodes.iter().find(|n| n.node_type == "FUNCTION" && n.name == "make_box").unwrap();
-        assert_eq!(make_box.metadata.get("returnType"), Some(&serde_json::json!("Box")));
+        assert_eq!(make_box.metadata.get("returnType"), Some(&serde_json::json!("Vec")));
 
         let unit_fn = fa.nodes.iter().find(|n| n.node_type == "FUNCTION" && n.name == "unit_fn").unwrap();
         assert!(unit_fn.metadata.get("returnType").is_none());

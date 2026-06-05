@@ -1955,6 +1955,82 @@ const apiRoutes = {
 
     res.end();
   },
+
+  '/api/edges': async (req, res) => {
+    const startMs = Date.now();
+    const db = await connectRFDB();
+    const q = parseQuery(req.url);
+    const wantEdgeTypes = q.types ? q.types.split(',').map(s => s.trim()).filter(Boolean) : null;
+
+    if (currentNodeIds.length === 0) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'No graph loaded. Call /api/graph-binary first.' }));
+      return;
+    }
+
+    const nodeIdMap = new Map();
+    for (let i = 0; i < currentNodeIds.length; i++) {
+      nodeIdMap.set(currentNodeIds[i], i);
+    }
+
+    // Collect all edges first so we can emit accurate totals
+    const edgeTypeTable = [];
+    const edgeTypeMap = new Map();
+    const edgeSrc = [];
+    const edgeDst = [];
+    const edgeTypesArr = [];
+    const seenEdges = new Set();
+
+    const EDGE_BATCH = 50;
+    for (let b = 0; b < currentNodeIds.length; b += EDGE_BATCH) {
+      const batch = currentNodeIds.slice(b, b + EDGE_BATCH);
+      const outResults = await Promise.all(
+        batch.map(nodeId => db.getOutgoingEdges(nodeId, wantEdgeTypes))
+      );
+      for (let k = 0; k < batch.length; k++) {
+        const si = b + k;
+        for (const edge of outResults[k]) {
+          const di = nodeIdMap.get(edge.dst);
+          if (di === undefined) continue;
+          const et = edge.edgeType || edge.type;
+          if (wantEdgeTypes && !wantEdgeTypes.includes(et)) continue;
+          const ek = `${si}|${di}|${et}`;
+          if (seenEdges.has(ek)) continue;
+          seenEdges.add(ek);
+          let eti = edgeTypeMap.get(et);
+          if (eti === undefined) { eti = edgeTypeTable.length; edgeTypeTable.push(et); edgeTypeMap.set(et, eti); }
+          edgeSrc.push(si);
+          edgeDst.push(di);
+          edgeTypesArr.push(eti);
+        }
+      }
+    }
+
+    const edgeCount = edgeSrc.length;
+    const elapsed = Date.now() - startMs;
+
+    res.writeHead(200, {
+      'Content-Type': 'application/x-ndjson',
+      'Cache-Control': 'no-cache',
+      'Access-Control-Allow-Origin': '*',
+      'Transfer-Encoding': 'chunked',
+    });
+
+    function writeLine(obj) {
+      res.write(JSON.stringify(obj) + '\n');
+    }
+
+    writeLine({ type: 'edges_header', edgeTypeTable });
+    writeLine({ type: 'totals', edges: edgeCount });
+
+    for (let i = 0; i < edgeCount; i++) {
+      writeLine({ type: 'edge', s: edgeSrc[i], d: edgeDst[i], t: edgeTypesArr[i] });
+    }
+
+    writeLine({ type: 'done', edgeCount, elapsed });
+    console.log(`api/edges: ${edgeCount} edges, ${elapsed}ms`);
+    res.end();
+  },
 };
 
 async function serveStatic(req, res) {

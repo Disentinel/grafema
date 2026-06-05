@@ -39,7 +39,9 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
-  z-index: 10;
+  /* Above ToponymsLayer (z=20) so hull labels can't bleed over the
+   *  side panel chrome. Stays below ModeToggle (z=40) and tooltips. */
+  z-index: 30;
   box-shadow: -4px 0 30px rgba(0, 0, 0, 0.5);
 }
 
@@ -118,7 +120,8 @@
 }
 .tt-type { color: #00e5ff; font-weight: 600; font-size: 10px; letter-spacing: 0.08em; }
 .tt-name { color: #fff; margin: 2px 0; font-size: 13px; }
-.tt-region { color: #666; font-size: 10px; }
+.tt-region { color: #888; font-size: 10px; }
+.tt-label { color: #555; }
 .tt-edges { margin-top: 6px; border-top: 1px solid #ffffff11; padding-top: 4px; color: #999; font-size: 10px; line-height: 1.6; }
 
 /* Route waypoint labels */

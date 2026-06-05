@@ -9,6 +9,7 @@
 //! 4. Without aggregates: `Sort` → `Project` → `Limit`
 //!    With aggregates: `HashAggregate` → `Sort` → `Limit`
 
+use crate::cypher::aggregate::is_aggregate_function;
 use crate::cypher::ast::*;
 use crate::cypher::executor::*;
 use crate::cypher::CypherError;
@@ -115,11 +116,30 @@ pub fn plan<'a>(
     //   HashAggregate already produces named columns, so Sort works on those.
     //   No separate Project is needed after HashAggregate.
 
+    // Reject non-aggregate functions in RETURN. The executor implements only
+    // aggregate functions (COUNT/SUM/AVG/MIN/MAX); a scalar function such as
+    // toUpper(...) must fail loudly here rather than be silently routed through
+    // HashAggregate (which would mislabel it as an aggregate) or projected to
+    // NULL. Scalar-function support is a separate feature.
+    for item in &query.return_clause.items {
+        if let Expr::FunctionCall(name, _) = &item.expr {
+            if !is_aggregate_function(name) {
+                return Err(CypherError::Plan(format!(
+                    "Unsupported function '{}' in RETURN (supported: COUNT, SUM, AVG, MIN, MAX)",
+                    name
+                )));
+            }
+        }
+    }
+
     let has_aggregates = query
         .return_clause
         .items
         .iter()
-        .any(|item| matches!(item.expr, Expr::FunctionCall(_, _)));
+        .any(|item| match &item.expr {
+            Expr::FunctionCall(name, _) => is_aggregate_function(name),
+            _ => false,
+        });
 
     if has_aggregates {
         let (group_keys, aggregates) = split_return_items(&query.return_clause);

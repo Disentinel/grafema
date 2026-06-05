@@ -1,6 +1,6 @@
 {
   "name": "@grafema/types",
-  "version": "0.3.24",
+  "version": "0.3.29",
   "description": "Type definitions for Grafema code analysis toolkit",
   "type": "module",
   "main": "./dist/index.js",
@@ -17,7 +17,8 @@
   ],
   "scripts": {
     "build": "tsc",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "test": "node --import tsx --test --test-concurrency=1 test/*.test.ts"
   },
   "keywords": [
     "grafema",

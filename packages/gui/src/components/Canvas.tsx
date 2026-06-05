@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import { SceneManager } from '../three/SceneManager';
-import type { HullLayer } from '../three/HullLayer';
 import type { FlowLayer } from '../three/FlowLayer';
 import type { RegionLayer } from '../three/RegionLayer';
 import type { RouteLayer } from '../three/RouteLayer';
@@ -16,6 +15,7 @@ import { setLiveLayoutSink } from '../store/loadLiveLayout';
 import type { TooltipContent } from '../controller/tooltip';
 import { SceneApiProvider } from '../controller/SceneApiContext';
 import type { SceneApi } from '../controller/SceneApi';
+import { ToponymsLayer } from '../ToponymsLayer';
 import {
   buildHexLayerWithSubscriptions,
   buildRegionLayer,
@@ -116,7 +116,8 @@ export function Canvas() {
     const { layer: hexLayer, unsubscribe: unsubBuildSubs } =
       buildHexLayerWithSubscriptions(sm, nodes, () => flowLayerForLens);
     const regionLayer: RegionLayer = buildRegionLayer(sm, nodes, regions);
-    const hullLayer: HullLayer = buildHullLayer(sm, nodes, regions, abort.signal);
+    const { layer: hullLayer, unsubscribe: unsubHull } =
+      buildHullLayer(sm, nodes, regions, abort.signal);
     const flowLayer: FlowLayer = buildFlowLayer(sm, nodes, edges, hexLayer);
     flowLayerForLens = flowLayer;
 
@@ -135,13 +136,21 @@ export function Canvas() {
     setRouteLayerState(routeLayer);
 
     const detachInteraction = setupInteraction({
-      sm, container, hexLayer, flowLayer, routeLayer,
+      sm, container, hexLayer, flowLayer, routeLayer, hullLayer,
       nodes, edges, edgeLabelsRef, setTooltip, selectedConnectedRef,
     });
 
-    // Debug — DEV-only, gated to keep production `window` clean (P2.1).
-    if (import.meta.env?.DEV) {
+    // Debug — DEV mode OR opt-in via `?debug=1` query param (for Playwright
+    // verification against production bundle). Production hosts that don't
+    // set the flag stay clean. (P2.1; extended for DAI-22 Chunk-10b.)
+    const debugOptIn =
+      typeof window !== 'undefined' &&
+      typeof window.location !== 'undefined' &&
+      /[?&]debug=1\b/.test(window.location.search);
+    if (import.meta.env?.DEV || debugOptIn) {
       (window as unknown as Record<string, unknown>).debugScene = sm.scene;
+      (window as unknown as Record<string, unknown>).debugHexLayer = hexLayer;
+      (window as unknown as Record<string, unknown>).debugHullLayer = hullLayer;
     }
 
     // Autofit + SceneApi
@@ -151,6 +160,7 @@ export function Canvas() {
 
     const api = createSceneApi({
       sm, hexLayer, flowLayer, nodes, cx, cz, dist, setShowCoords,
+      setTooltip, edgeLabelsRef,
     });
     setSceneApi(api);
     mapController.setScene(api);
@@ -170,6 +180,7 @@ export function Canvas() {
       window.removeEventListener('resize', onResize);
       unsubRoutes();
       unsubBuildSubs();
+      unsubHull();
       hullLayer.dispose();
       flowLayer.dispose();
       regionLayer.dispose();
@@ -177,7 +188,13 @@ export function Canvas() {
       mapController.setScene(null);
       setSceneApi(null);
     };
-  }, [loaded, nodes, edges, regions]);
+    // `edges` deliberately omitted from the dep list. Lazy fetches via
+    // `SceneApi.loadEdgesByTypes` push new edges straight into the
+    // FlowLayer (`flowLayer.build(nodes, edges)`) without mutating the
+    // store, so the Canvas effect doesn't have to tear down + rebuild
+    // the whole scene on every flow toggle (which reset LOD and froze
+    // the browser for a couple of seconds on real graphs).
+  }, [loaded, nodes, regions]);
 
   return (
     <SceneApiProvider api={sceneApi}>
@@ -185,12 +202,15 @@ export function Canvas() {
         <CoordGrid sceneManager={sm} visible={showCoords} />
         <RouteLabels sceneManager={sm} routeLayer={routeLayerState} />
         <EdgeLabels sceneManager={sm} labels={edgeLabelsRef.current} />
+        <ToponymsLayer api={sceneApi} />
         {tooltip && (
           <div className="node-tooltip" style={{ left: tooltip.x + 14, top: tooltip.y - 10 }}>
             {tooltip.content.subtitle && <div className="tt-type">{tooltip.content.subtitle}</div>}
             <div className="tt-name">{tooltip.content.title}</div>
             {tooltip.content.rows.map((r, i) => (
-              <div key={i} className="tt-region">{r.value}</div>
+              <div key={i} className="tt-region">
+                <span className="tt-label">{r.label}:</span> {r.value}
+              </div>
             ))}
             {tooltip.edges.length > 0 && (
               <div className="tt-edges">

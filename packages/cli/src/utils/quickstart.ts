@@ -29,6 +29,8 @@ export const SUPPORTED_EXTENSIONS = [
   'swift', 'm', 'mm',
   // BEAM (Elixir / Erlang)
   'ex', 'exs', 'erl', 'hrl',
+  // Lean 4
+  'lean',
 ];
 
 /** Directories to skip during project scanning. */

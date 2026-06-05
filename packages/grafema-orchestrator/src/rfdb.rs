@@ -241,6 +241,14 @@ struct RawResponse {
     done: Option<bool>,
     #[serde(default)]
     chunk_index: Option<u32>,
+
+    // Delete-by-source RPC reply fields (DAI-22 Chunk-0)
+    #[serde(default)]
+    deleted: Option<u64>,
+    #[serde(default)]
+    deleted_nodes: Option<u64>,
+    #[serde(default)]
+    deleted_outgoing_edges: Option<u64>,
 }
 
 impl RawResponse {
@@ -296,6 +304,19 @@ pub struct CommitDelta {
     pub changed_node_types: Vec<String>,
     #[serde(default)]
     pub changed_edge_types: Vec<String>,
+}
+
+/// Result of `delete_edges_by_type_and_source`.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DeleteEdgesResult {
+    pub deleted: u64,
+}
+
+/// Result of `delete_nodes_by_type_and_source`.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DeleteNodesResult {
+    pub deleted_nodes: u64,
+    pub deleted_outgoing_edges: u64,
 }
 
 /// A single result row from a Datalog query.
@@ -603,6 +624,47 @@ impl RfdbClient {
         self.send_command("compact", serde_json::json!({}))
             .await?;
         Ok(())
+    }
+
+    /// Delete all edges of `edge_type` whose metadata carries
+    /// `"_source": "<source_tag>"`. Fails loudly on a `_source` collision
+    /// (another value for the same edge type). Edges without a `_source`
+    /// key are left untouched.
+    ///
+    /// Returns the number of edges deleted.
+    pub async fn delete_edges_by_type_and_source(
+        &mut self,
+        edge_type: &str,
+        source_tag: &str,
+    ) -> Result<DeleteEdgesResult> {
+        let params = serde_json::json!({
+            "edgeType": edge_type,
+            "sourceTag": source_tag,
+        });
+        let resp = self.send_command("deleteEdgesByTypeAndSource", params).await?;
+        Ok(DeleteEdgesResult {
+            deleted: resp.deleted.unwrap_or(0),
+        })
+    }
+
+    /// Delete all nodes of `node_type` whose metadata carries
+    /// `"_source": "<source_tag>"`, along with each matched node's
+    /// outgoing edges. Same collision semantics as
+    /// `delete_edges_by_type_and_source`.
+    pub async fn delete_nodes_by_type_and_source(
+        &mut self,
+        node_type: &str,
+        source_tag: &str,
+    ) -> Result<DeleteNodesResult> {
+        let params = serde_json::json!({
+            "nodeType": node_type,
+            "sourceTag": source_tag,
+        });
+        let resp = self.send_command("deleteNodesByTypeAndSource", params).await?;
+        Ok(DeleteNodesResult {
+            deleted_nodes: resp.deleted_nodes.unwrap_or(0),
+            deleted_outgoing_edges: resp.deleted_outgoing_edges.unwrap_or(0),
+        })
     }
 
     /// Send a single CommitBatch chunk to the server.
@@ -953,6 +1015,9 @@ mod tests {
             nodes: None,
             done: None,
             chunk_index: None,
+            deleted: None,
+            deleted_nodes: None,
+            deleted_outgoing_edges: None,
         };
         assert!(resp.check_error().is_ok());
     }
@@ -977,6 +1042,9 @@ mod tests {
             nodes: None,
             done: None,
             chunk_index: None,
+            deleted: None,
+            deleted_nodes: None,
+            deleted_outgoing_edges: None,
         };
         let err = resp.check_error().unwrap_err();
         let msg = err.to_string();

@@ -1,6 +1,6 @@
 {
   "name": "@grafema/mcp",
-  "version": "0.3.24",
+  "version": "0.3.29",
   "description": "MCP server for Grafema code analysis toolkit",
   "type": "module",
   "main": "./dist/server.js",
@@ -14,8 +14,8 @@
       "import": "./dist/server.js"
     },
     "./handlers": {
-      "types": "./dist/handlers.d.ts",
-      "import": "./dist/handlers.js"
+      "types": "./dist/handlers/index.d.ts",
+      "import": "./dist/handlers/index.js"
     }
   },
   "files": [
@@ -26,8 +26,8 @@
     "build": "tsc",
     "clean": "rm -rf dist",
     "start": "node dist/server.js",
-    "test": "node --import tsx --test test/*.test.ts",
-    "test:watch": "node --import tsx --test --watch test/*.test.ts"
+    "test": "node --import tsx --experimental-test-module-mocks --test --test-concurrency=1 test/*.test.ts",
+    "test:watch": "node --import tsx --experimental-test-module-mocks --test --test-concurrency=1 --watch test/*.test.ts"
   },
   "keywords": [
     "grafema",
@@ -51,10 +51,10 @@
     "yaml": "^2.8.2"
   },
   "optionalDependencies": {
-    "@grafema/grafema-darwin-arm64": "0.3.16",
-    "@grafema/grafema-darwin-x64": "0.3.16",
-    "@grafema/grafema-linux-arm64": "0.3.16",
-    "@grafema/grafema-linux-x64": "0.3.16"
+    "@grafema/grafema-darwin-arm64": "0.3.29",
+    "@grafema/grafema-darwin-x64": "0.3.29",
+    "@grafema/grafema-linux-arm64": "0.3.29",
+    "@grafema/grafema-linux-x64": "0.3.29"
   },
   "devDependencies": {
     "@types/node": "^25.0.8",

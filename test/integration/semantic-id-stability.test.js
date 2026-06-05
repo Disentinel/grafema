@@ -10,7 +10,8 @@
  * 3. grafema analyze --clear again (no code changes) → collect all node IDs
  * 4. Assert: all IDs identical between runs
  *
- * Requirements: RFDB server running (or use --auto-start), grafema-orchestrator binary.
+ * Requirements: grafema-orchestrator binary. The RFDB server is auto-started
+ * by `grafema analyze` by default (pass --no-auto-start to require a manual server).
  * This is an integration test — not run in CI by default.
  */
 
@@ -138,7 +139,7 @@ export function buildUrl(base, path) {
 
   it('should produce identical node IDs on re-analysis of unchanged code', () => {
     // First analysis
-    execSync(`node "${cliPath}" analyze --auto-start`, {
+    execSync(`node "${cliPath}" analyze`, {
       cwd: tempDir,
       stdio: 'pipe',
       timeout: 120000,
@@ -148,7 +149,7 @@ export function buildUrl(base, path) {
     assert.ok(idsFirstRun.length > 0, `First run should produce nodes, got ${idsFirstRun.length}`);
 
     // Second analysis — clear and re-analyze same code
-    execSync(`node "${cliPath}" analyze --clear --auto-start`, {
+    execSync(`node "${cliPath}" analyze --clear`, {
       cwd: tempDir,
       stdio: 'pipe',
       timeout: 120000,

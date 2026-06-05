@@ -1,0 +1,174 @@
+{
+  "queue": [
+    {
+      "entity": "process_pool.rs",
+      "context": "Rust module in grafema-orchestrator. Manages pool of child processes for parallel analysis. Spawns/kills Haskell analyzer workers.",
+      "depth": 3,
+      "status": "inbox"
+    },
+    {
+      "entity": "discovery.rs",
+      "context": "Rust module in grafema-orchestrator. Discovers files to analyze based on include/exclude patterns from config.",
+      "depth": 3,
+      "status": "inbox"
+    },
+    {
+      "entity": "plugin.rs",
+      "context": "Rust module in grafema-orchestrator. Validates plugin output, stamps metadata on nodes/edges. Enricher integration point.",
+      "depth": 3,
+      "status": "inbox"
+    },
+    {
+      "entity": "source_hash.rs",
+      "context": "Rust module in grafema-orchestrator. Computes SHA-256 of source files to detect stale binaries at runtime.",
+      "depth": 3,
+      "status": "inbox"
+    },
+    {
+      "entity": "rust_parser.rs",
+      "context": "Rust module in grafema-orchestrator. Native Rust parsing using syn crate. In-process, no child process needed.",
+      "depth": 3,
+      "status": "inbox"
+    },
+    {
+      "entity": "python_parser.rs",
+      "context": "Rust module in grafema-orchestrator. Python parsing via rustpython-parser crate. In-process.",
+      "depth": 3,
+      "status": "inbox"
+    },
+    {
+      "entity": "cpp_parser.rs",
+      "context": "Rust module in grafema-orchestrator. C/C++ parsing. Native in orchestrator.",
+      "depth": 3,
+      "status": "inbox"
+    },
+    {
+      "entity": "lang-defs",
+      "context": "Package with language definition files. Maps file extensions to analyzer binaries and node types.",
+      "depth": 3,
+      "status": "inbox"
+    },
+    {
+      "entity": "static_ui.rs",
+      "context": "Rust module in rfdb-server. Serves embedded GUI assets via rust-embed. Part of HTTP server.",
+      "depth": 4,
+      "status": "inbox"
+    },
+    {
+      "entity": "GraphConnectivityValidator",
+      "context": "TypeScript plugin checking graph connectivity. Validates that analysis produced a connected graph, not orphaned islands.",
+      "depth": 4,
+      "status": "inbox"
+    },
+    {
+      "entity": "DataFlowValidator",
+      "context": "TypeScript plugin validating data flow edges. Checks READS_FROM, WRITES_TO, ASSIGNED_FROM correctness.",
+      "depth": 4,
+      "status": "inbox"
+    },
+    {
+      "entity": "MethodCallResolver",
+      "context": "TypeScript enrichment plugin resolving obj.method() calls to METHOD definitions. The broken one (REG-688).",
+      "depth": 3,
+      "status": "inbox"
+    },
+    {
+      "entity": "AliasTracker",
+      "context": "TypeScript enrichment plugin tracking variable aliases through assignment chains.",
+      "depth": 4,
+      "status": "inbox"
+    },
+    {
+      "entity": "ValueDomainAnalyzer",
+      "context": "TypeScript enrichment plugin analyzing value domains and types for variables.",
+      "depth": 4,
+      "status": "inbox"
+    },
+    {
+      "entity": "ManifestResolver",
+      "context": "TypeScript class resolving package manifests for cross-project understanding. Loads from file, workspace, node_modules, registry.",
+      "depth": 3,
+      "status": "inbox"
+    },
+    {
+      "entity": "RustCrossMethodCalls",
+      "context": "Haskell resolver module for Rust cross-file method resolution via type inference.",
+      "depth": 3,
+      "status": "inbox"
+    },
+    {
+      "entity": "BeamWrapperResolution",
+      "context": "Haskell resolver module for Elixir wrapper functions and GenServer handlers.",
+      "depth": 3,
+      "status": "inbox"
+    },
+    {
+      "entity": "PythonResolver",
+      "context": "Haskell resolver for Python cross-module imports and class inheritance.",
+      "depth": 3,
+      "status": "inbox"
+    }
+  ],
+  "processed": [
+    "rfdb-server",
+    "grafema-orchestrator",
+    "grafema-cli",
+    "grafema-mcp-server",
+    "@grafema/util",
+    "grafema-vs-code-extension",
+    "grafema-gui",
+    "@grafema/api",
+    "effects-database",
+    "grafema-enrichment-pipeline",
+    "grafema-guarantees-system",
+    "grafema-manifest-system",
+    "haskell-analyzer-architecture",
+    "grafema-language-support-matrix",
+    "grafema-binary-distribution",
+    "grafema-architecture-pattern",
+    "analyzer-resolver-pair-convention",
+    "three-phase-pipeline-convention",
+    "rfdb-storage-engine-v2",
+    "rfdb-datalog-engine",
+    "rfdb-http-websocket-server",
+    "rfdb-sa-layout-engine",
+    "compactionEnricher",
+    "OXC-parser-integration",
+    "GenerationTracker",
+    "ShardPlanner",
+    "ManifestStore",
+    "RFDBServerBackend",
+    "WriteBuffer",
+    "DatabaseManager",
+    "behaviorEnricher",
+    "libraryCallbackEnricher",
+    "config.rs",
+    "Walker.hs",
+    "contractEnricher",
+    "grafema-common-Protocol",
+    "NodeSegmentV2",
+    "SegmentWriter",
+    "specedContractEnricher",
+    "mcpToolDefinitionEnricher",
+    "packageApiEnricher",
+    "GraphFreshnessChecker",
+    "ResourceManager",
+    "container_hierarchy.rs",
+    "hulls.rs",
+    "deletion.rs",
+    "session.rs",
+    "Expressions.hs",
+    "Declarations.hs"
+  ],
+  "stats": {
+    "total_processed": 49,
+    "total_in_queue": 18,
+    "generated": 0,
+    "confirmed": 0,
+    "refuted": 0,
+    "unclear": 0,
+    "skipped": 0,
+    "discovered": 0,
+    "errors": 1
+  }
+}

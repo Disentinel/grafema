@@ -182,7 +182,7 @@ impl SizeLimits {
 /// When not specified, defaults are used:
 /// - JS/TS: "grafema-analyzer" / "grafema-resolve"
 /// - Haskell: "haskell-analyzer" / "haskell-resolve"
-/// - Rust: "grafema-rust-analyzer" / "grafema-rust-resolve"
+/// - Rust: in-process analyzer (grafema_orchestrator::rust_analyzer), "grafema-rust-resolve" daemon
 #[derive(Debug, Clone, Deserialize)]
 pub struct AnalyzerBinaries {
     /// Path to JS/TS analyzer binary (default: "grafema-analyzer")
@@ -192,10 +192,6 @@ pub struct AnalyzerBinaries {
     /// Path to Haskell analyzer binary (default: "haskell-analyzer")
     #[serde(default = "default_haskell_analyzer")]
     pub haskell: String,
-
-    /// Path to Rust analyzer binary (default: "grafema-rust-analyzer")
-    #[serde(default = "default_rust_analyzer")]
-    pub rust: String,
 
     /// Path to JS/TS resolve binary (default: "grafema-resolve")
     #[serde(default = "default_js_resolve")]
@@ -303,7 +299,6 @@ impl Default for AnalyzerBinaries {
         Self {
             js: default_js_analyzer(),
             haskell: default_haskell_analyzer(),
-            rust: default_rust_analyzer(),
             js_resolve: default_js_resolve(),
             haskell_resolve: default_haskell_resolve(),
             rust_resolve: default_rust_resolve(),
@@ -394,11 +389,6 @@ impl AnalyzerBinaries {
     /// Resolved path for the Haskell analyzer binary.
     pub fn haskell_path(&self) -> String {
         resolve_binary(&self.haskell)
-    }
-
-    /// Resolved path for the Rust analyzer binary.
-    pub fn rust_path(&self) -> String {
-        resolve_binary(&self.rust)
     }
 
     /// Resolved path for the JS/TS resolve binary.
@@ -626,10 +616,6 @@ fn default_haskell_analyzer() -> String {
     "haskell-analyzer".to_string()
 }
 
-fn default_rust_analyzer() -> String {
-    "grafema-rust-analyzer".to_string()
-}
-
 fn default_js_resolve() -> String {
     "grafema-resolve".to_string()
 }
@@ -745,6 +731,7 @@ pub enum Language {
     ObjectiveC,
     Beam,
     Ruby,
+    Lean,
 }
 
 /// Detect language from file extension.
@@ -773,6 +760,7 @@ pub fn detect_language(path: &Path) -> Option<Language> {
         "m" | "mm" => Some(Language::ObjectiveC),
         "ex" | "exs" | "erl" | "hrl" => Some(Language::Beam),
         "rb" | "rake" | "gemspec" => Some(Language::Ruby),
+        "lean" => Some(Language::Lean),
         _ => {
             // Handle case-sensitive extensions: .c++ .h++ .C .H
             let file_name = path.file_name()?.to_str()?;
@@ -815,6 +803,7 @@ pub fn partition_by_language(files: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>, 
             Some(Language::ObjectiveC) => objc_files.push(file.clone()),
             Some(Language::Beam) => beam_files.push(file.clone()),
             Some(Language::Ruby) => rb_files.push(file.clone()),
+            Some(Language::Lean) => {} // Lean uses whole-environment analysis, handled by CLI
             None => {} // skip unknown extensions
         }
     }
@@ -1344,7 +1333,6 @@ include:
 analyzers:
   js: "/usr/local/bin/my-js-analyzer"
   haskell: "/usr/local/bin/my-hs-analyzer"
-  rust: "/usr/local/bin/my-rust-analyzer"
 "#,
             dir.display()
         );
@@ -1352,7 +1340,6 @@ analyzers:
         let cfg = load(&config_path).unwrap();
         assert_eq!(cfg.analyzers.js, "/usr/local/bin/my-js-analyzer");
         assert_eq!(cfg.analyzers.haskell, "/usr/local/bin/my-hs-analyzer");
-        assert_eq!(cfg.analyzers.rust, "/usr/local/bin/my-rust-analyzer");
         cleanup(&dir);
     }
 
@@ -1369,7 +1356,6 @@ analyzers:
         let cfg = load(&config_path).unwrap();
         assert_eq!(cfg.analyzers.js, "grafema-analyzer");
         assert_eq!(cfg.analyzers.haskell, "haskell-analyzer");
-        assert_eq!(cfg.analyzers.rust, "grafema-rust-analyzer");
         assert_eq!(cfg.analyzers.js_resolve, "grafema-resolve");
         assert_eq!(cfg.analyzers.haskell_resolve, "haskell-resolve");
         assert_eq!(cfg.analyzers.rust_resolve, "grafema-rust-resolve");
@@ -1397,7 +1383,6 @@ analyzers:
         let defaults = AnalyzerBinaries::default();
         assert_eq!(defaults.js, "grafema-analyzer");
         assert_eq!(defaults.haskell, "haskell-analyzer");
-        assert_eq!(defaults.rust, "grafema-rust-analyzer");
         assert_eq!(defaults.js_resolve, "grafema-resolve");
         assert_eq!(defaults.haskell_resolve, "haskell-resolve");
         assert_eq!(defaults.rust_resolve, "grafema-rust-resolve");
@@ -1451,7 +1436,6 @@ analyzers:
         let bins = AnalyzerBinaries {
             js: "/abs/grafema-analyzer".to_string(),
             haskell: "/abs/haskell-analyzer".to_string(),
-            rust: "/abs/grafema-rust-analyzer".to_string(),
             js_resolve: "/abs/grafema-resolve".to_string(),
             haskell_resolve: "/abs/haskell-resolve".to_string(),
             rust_resolve: "/abs/grafema-rust-resolve".to_string(),
@@ -1480,7 +1464,6 @@ analyzers:
         };
         assert_eq!(bins.js_path(), "/abs/grafema-analyzer");
         assert_eq!(bins.haskell_path(), "/abs/haskell-analyzer");
-        assert_eq!(bins.rust_path(), "/abs/grafema-rust-analyzer");
         assert_eq!(bins.js_resolve_path(), "/abs/grafema-resolve");
         assert_eq!(bins.haskell_resolve_path(), "/abs/haskell-resolve");
         assert_eq!(bins.rust_resolve_path(), "/abs/grafema-rust-resolve");

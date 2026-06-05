@@ -7,12 +7,18 @@ export interface FlowPreset {
 
 export const FLOWS: Record<string, FlowPreset> = {
   data: {
-    types: ['ASSIGNED_FROM', 'FLOWS_INTO', 'READS_FROM', 'WRITES_TO', 'PASSES_ARGUMENT'],
+    // CO_DEPENDS_ON is the compaction-enricher synthetic edge — pairs of
+    // functions reading the same module-scope CONSTANT/VARIABLE. Lives
+    // under Data Flow because it captures implicit data coupling.
+    types: ['ASSIGNED_FROM', 'FLOWS_INTO', 'READS_FROM', 'WRITES_TO', 'PASSES_ARGUMENT', 'CO_DEPENDS_ON'],
     color: 0xaa66ff,
     label: 'Data Flow',
   },
   calls: {
-    types: ['CALLS', 'CALLS_ON', 'HANDLED_BY', 'ROUTES_TO'],
+    // CO_CALLS is the compaction-enricher synthetic edge — pairs of
+    // functions that share a callee (mirror of CO_DEPENDS_ON for the
+    // call graph). Visualises behavioural co-dependency clusters.
+    types: ['CALLS', 'CALLS_ON', 'HANDLED_BY', 'ROUTES_TO', 'CO_CALLS', 'DIRECT_CALLS', 'CALLS_TRANSITIVELY'],
     color: 0xff4466,
     label: 'Call Flow',
   },

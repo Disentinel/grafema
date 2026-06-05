@@ -2,6 +2,11 @@
 
 use napi_derive::napi;
 
+pub const MAX_NODES: usize = 1024;
+const MAGIC_HEADER: &str = "GRFM";
+pub const VERSION: u32 = 2;
+const DOUBLE_MAX: usize = MAX_NODES * 2;
+
 #[napi]
 pub struct GraphEngine {
     nodes: Vec<String>,

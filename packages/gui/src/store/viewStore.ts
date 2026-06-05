@@ -20,9 +20,18 @@ export interface ViewState {
    * readout) without reaching into the Three.js layer.
    */
   mode: SceneMode;
+  /**
+   * Heightmap multiplier — per-tile elevation = sqrt(node.degree) * multiplier.
+   * sqrt compresses the power-law degree distribution so a few high-degree
+   * hubs don't dwarf everything else. 0 = flat map (heightmap off).
+   */
+  heightMultiplier: number;
 
   setLens: (name: string) => void;
   toggleFlow: (name: string) => void;
+  /** Replace the enabled-flows set wholesale (for "Show all" / "Hide all"
+   *  buttons in FlowPanel). Pass an empty Set to hide every flow. */
+  setEnabledFlows: (next: Set<string>) => void;
   setHoveredTile: (idx: number) => void;
   addPin: (id: string, color: string, label: string) => void;
   removePin: (id: string) => void;
@@ -38,15 +47,17 @@ export interface ViewState {
    * does not thrash subscribers.
    */
   setMode: (mode: SceneMode) => void;
+  setHeightMultiplier: (mult: number) => void;
 }
 
 export const useViewStore = create<ViewState>((set, get) => ({
   lens: 'default',
-  enabledFlows: new Set(['bridges']),
+  enabledFlows: new Set(['data', 'calls', 'deps', 'bridges']),
   hoveredTile: -1,
   pins: new Map(),
   selection: new Set(),
   mode: DEFAULT_3D_MODE,
+  heightMultiplier: 1.5,
 
   setLens: (name) => set({ lens: name }),
   toggleFlow: (name) =>
@@ -56,6 +67,7 @@ export const useViewStore = create<ViewState>((set, get) => ({
       else next.add(name);
       return { enabledFlows: next };
     }),
+  setEnabledFlows: (next) => set({ enabledFlows: new Set(next) }),
   setHoveredTile: (idx) => set({ hoveredTile: idx }),
   addPin: (id, color, label) =>
     set((s) => {
@@ -74,6 +86,11 @@ export const useViewStore = create<ViewState>((set, get) => ({
   setMode: (mode) => {
     if (sceneModesEqual(get().mode, mode)) return;
     set({ mode });
+  },
+  setHeightMultiplier: (mult) => {
+    const clamped = Math.max(0, Math.min(10, mult));
+    if (get().heightMultiplier === clamped) return;
+    set({ heightMultiplier: clamped });
   },
 }));
 

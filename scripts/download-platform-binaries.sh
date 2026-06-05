@@ -89,8 +89,7 @@ OPTIONAL_BINARIES=(
   # Haskell
   "haskell-analyzer"
   "haskell-resolve"
-  # Rust
-  "grafema-rust-analyzer"
+  # Rust (analyzer is native in-process inside orchestrator)
   "grafema-rust-resolve"
   # Java
   "grafema-java-analyzer"

@@ -90,8 +90,9 @@ walkValBinds (XValBindsLR _) = pure ()  -- Post-renaming: not applicable to GhcP
 
 -- | Walk a single local binding (from a where/let block).
 walkLocalBind :: GenLocated l (HsBindLR GhcPs GhcPs) -> Analyzer ()
-walkLocalBind (L _ (FunBind { fun_id = funId, fun_matches = matches })) =
-  walkFunBind funId matches
+walkLocalBind (L _ (FunBind { fun_id = funId, fun_matches = matches })) = do
+  _ <- walkFunBind funId matches
+  pure ()
 walkLocalBind (L _ (PatBind { pat_lhs = pat, pat_rhs = rhs })) =
   walkPatBind pat rhs
 walkLocalBind _ = pure ()  -- VarBind, PatSynBind, etc: skip

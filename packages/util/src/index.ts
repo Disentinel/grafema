@@ -104,7 +104,7 @@ export { findBinary, findAnalyzerBinary, findRfdbBinary, findOrchestratorBinary,
 export type { FindBinaryOptions, BinaryName } from './utils/findRfdbBinary.js';
 
 // Lazy download
-export { ensureBinary, downloadBinary, isDownloadable, findInGrafemaBin, getGrafemaBinDir } from './utils/lazyDownload.js';
+export { ensureBinary, downloadBinary, isDownloadable, findInGrafemaBin, getGrafemaBinDir, DOWNLOADABLE_BINARIES, isBinaryCurrentVersion } from './utils/lazyDownload.js';
 
 // RFDB server lifecycle
 export { startRfdbServer, checkExistingServer } from './utils/startRfdbServer.js';

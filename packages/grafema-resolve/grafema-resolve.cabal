@@ -17,6 +17,7 @@ executable grafema-resolve
     PropertyAccess
     JsLocalRefs
     JsThisMethodCalls
+    ClassInheritance
     ResolveUtil
 
   build-depends:
@@ -44,6 +45,8 @@ test-suite grafema-resolve-test
     ImportResolution
     SameFileCalls
     JsThisMethodCalls
+    ClassInheritance
+    CrossFileCalls
     ResolveUtil
 
   build-depends:

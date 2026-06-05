@@ -75,6 +75,68 @@ impl FolderTree {
         tree
     }
 
+    /// Build a tree from `(node_idx, folder_path, opaque_leaf_id)` triples.
+    ///
+    /// Unlike [`build_from_paths`] (where the file path IS the leaf locator and
+    /// its parent directory becomes the folder), here the `folder_path` is
+    /// itself the deepest folder — the file becomes the innermost folder
+    /// (last `/`-segment). The `leaf_id` is OPAQUE and used only for
+    /// deterministic intra-folder lex ordering and debug logging; it is never
+    /// parsed or split. This lets RFDB V2 semantic IDs (which may contain `/`
+    /// as part of the id) survive intact.
+    ///
+    /// If two triples share the same `leaf_id` within a folder, a warning is
+    /// logged and the later entry is silently dropped (defensive; globally
+    /// unique semantic IDs should make this unreachable in healthy inputs).
+    ///
+    /// NodeIdx values are the caller's responsibility — they should be dense
+    /// `0..N` over the placeable-symbol set passed in; this builder does not
+    /// renumber.
+    pub fn build_from_paths_with_leaves(
+        leaf_pairs: &[(NodeIdx, &str, &str)],
+    ) -> Self {
+        let mut tree = FolderTree {
+            folders: Vec::new(),
+            by_path: FxHashMap::default(),
+        };
+        tree.ensure_folder(".".to_string(), 0, None);
+
+        // Folder id → set of leaf_ids already seen, for dedup.
+        let mut seen_per_folder: FxHashMap<FolderId, FxHashMap<String, NodeIdx>> =
+            FxHashMap::default();
+        // Parallel leaf_id vector indexed by NodeIdx, for lex sort tiebreak.
+        let max_idx = leaf_pairs.iter().map(|(i, _, _)| *i).max().unwrap_or(0);
+        let mut leaf_ids_by_idx: Vec<String> = vec![String::new(); (max_idx as usize) + 1];
+
+        for (node_idx, folder_path, leaf_id) in leaf_pairs {
+            let folder_id = if *folder_path == "." || folder_path.is_empty() {
+                0
+            } else {
+                tree.ensure_path_chain(folder_path)
+            };
+            let seen = seen_per_folder.entry(folder_id).or_default();
+            if let Some(&prior_idx) = seen.get(*leaf_id) {
+                tracing::warn!(
+                    leaf_id = %leaf_id,
+                    folder_path = %folder_path,
+                    prior_idx = prior_idx,
+                    dup_idx = *node_idx,
+                    "duplicate leaf_id in folder — keeping first, dropping duplicate"
+                );
+                continue;
+            }
+            seen.insert(leaf_id.to_string(), *node_idx);
+            if (*node_idx as usize) < leaf_ids_by_idx.len() {
+                leaf_ids_by_idx[*node_idx as usize] = leaf_id.to_string();
+            }
+            tree.folders[folder_id as usize].direct_leaves.push(*node_idx);
+        }
+
+        tree.compute_transitive_sizes();
+        tree.sort_for_determinism_with_leaves(&leaf_ids_by_idx);
+        tree
+    }
+
     /// Root folder id (always 0).
     pub fn root(&self) -> FolderId {
         0
@@ -205,6 +267,23 @@ impl FolderTree {
         let paths: Vec<String> = self.folders.iter().map(|f| f.path.clone()).collect();
         for f in &mut self.folders {
             f.direct_leaves.sort_unstable();
+            f.child_folders
+                .sort_by(|a, b| paths[*a as usize].cmp(&paths[*b as usize]));
+        }
+    }
+
+    /// Like `sort_for_determinism`, but lex-sorts `direct_leaves` by their
+    /// opaque `leaf_id` (tiebroken by `NodeIdx`) rather than purely by
+    /// `NodeIdx`. Used when the caller carries RFDB semantic ids as the
+    /// canonical stable order.
+    fn sort_for_determinism_with_leaves(&mut self, leaf_ids: &[String]) {
+        let paths: Vec<String> = self.folders.iter().map(|f| f.path.clone()).collect();
+        for f in &mut self.folders {
+            f.direct_leaves.sort_by(|a, b| {
+                let ka = leaf_ids.get(*a as usize).map(String::as_str).unwrap_or("");
+                let kb = leaf_ids.get(*b as usize).map(String::as_str).unwrap_or("");
+                ka.cmp(kb).then_with(|| a.cmp(b))
+            });
             f.child_folders
                 .sort_by(|a, b| paths[*a as usize].cmp(&paths[*b as usize]));
         }
@@ -373,6 +452,53 @@ mod tests {
         assert_eq!(mapping[1], a_id);
         assert_eq!(mapping[2], x_id);
         assert_eq!(mapping[3], root_id);
+    }
+
+    #[test]
+    fn build_from_paths_with_leaves_handles_slash_in_leaf_id() {
+        // Grafema V2 semantic IDs may contain `/` (e.g. "pkg/path->FUNCTION->foo").
+        // The opaque leaf_id must survive intact — we must NOT split it into
+        // folders. Folders come solely from folder_path.
+        let id_with_slash = "packages/util/src/index.ts->FUNCTION->foo";
+        let pairs: &[(NodeIdx, &str, &str)] = &[
+            (0, "packages/util/src", id_with_slash),
+            (1, "packages/util/src", "packages/util/src/index.ts->FUNCTION->bar"),
+        ];
+        let tree = FolderTree::build_from_paths_with_leaves(pairs);
+
+        // Folders: . + packages + packages/util + packages/util/src.
+        assert_eq!(tree.len(), 4);
+        let src = tree.get(tree.folder_id("packages/util/src").unwrap());
+        // Both leaves placed in that single folder — leaf_id was not split.
+        assert_eq!(src.direct_leaves.len(), 2);
+    }
+
+    #[test]
+    fn build_from_paths_with_leaves_dedupes_duplicate_leaf_ids_with_warn() {
+        // Two triples sharing the same leaf_id → only the first survives.
+        let pairs: &[(NodeIdx, &str, &str)] = &[
+            (0, "a", "same-id"),
+            (1, "a", "same-id"),
+            (2, "a", "different-id"),
+        ];
+        let tree = FolderTree::build_from_paths_with_leaves(pairs);
+        let a = tree.get(tree.folder_id("a").unwrap());
+        // Only NodeIdx 0 and 2 should land; 1 dedup'd out.
+        assert_eq!(a.direct_leaves.len(), 2);
+        assert!(a.direct_leaves.contains(&0));
+        assert!(a.direct_leaves.contains(&2));
+        assert!(!a.direct_leaves.contains(&1));
+    }
+
+    #[test]
+    fn build_from_paths_with_leaves_empty_folder_path_is_root() {
+        let pairs: &[(NodeIdx, &str, &str)] = &[
+            (0, ".", "leaf-a"),
+            (1, "", "leaf-b"),
+        ];
+        let tree = FolderTree::build_from_paths_with_leaves(pairs);
+        assert_eq!(tree.len(), 1);
+        assert_eq!(tree.get(tree.root()).direct_leaves.len(), 2);
     }
 
     #[test]

@@ -15,18 +15,16 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { realpathSync } from 'node:fs';
 import { RFDBClient } from '../../packages/rfdb/dist/client.js';
 import { ShardDiscovery } from '../../packages/util/dist/federation/ShardDiscovery.js';
+import { findRfdbBinary } from '@grafema/util';
 
 // ── Helpers ─────────────────────────────────────────────────────
 
+// Resolve rfdb-server via the canonical production resolver so the suite
+// honors GRAFEMA_RFDB_SERVER, the platform npm package, PATH, ~/.grafema/bin,
+// etc. — not just the two monorepo `cargo`-build paths. See
+// test/unit/RfdbBinaryResolutionSiblings.test.js for the rationale.
 function findServerBinary() {
-  const candidates = [
-    join(process.cwd(), 'packages/rfdb-server/target/release/rfdb-server'),
-    join(process.cwd(), 'packages/rfdb-server/target/debug/rfdb-server'),
-  ];
-  for (const path of candidates) {
-    if (existsSync(path)) return path;
-  }
-  return null;
+  return findRfdbBinary();
 }
 
 async function startFederatedServer(name, dbDir, socketPath, rootPath) {

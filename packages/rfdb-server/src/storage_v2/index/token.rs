@@ -1,8 +1,9 @@
 //! Token-based fuzzy name index for RFDB.
 //!
 //! When exact `find_nodes(name=...)` returns 0 results, this index enables
-//! fuzzy fallback: split names into tokens (CamelCase, snake_case, dots,
-//! hyphens), compute Jaccard similarity, and return ranked matches.
+//! fuzzy fallback: split names into tokens (CamelCase, snake_case, and any
+//! non-alphanumeric separator — dots, hyphens, whitespace, punctuation),
+//! compute Jaccard similarity, and return ranked matches.
 //!
 //! # Example
 //!
@@ -57,8 +58,15 @@ const TOKEN_INDEX_VERSION: u32 = 1;
 
 // ── Tokenizer ──────────────────────────────────────────────────────
 
-/// Split a name into lowercase tokens by CamelCase boundaries, underscores,
-/// hyphens, and dots. Single-character tokens and empty strings are filtered.
+/// Split a name into lowercase tokens by CamelCase boundaries and any
+/// non-alphanumeric separator (underscores, hyphens, dots, whitespace,
+/// punctuation). Single-character tokens and empty strings are filtered.
+///
+/// Because the separator set is "every non-alphanumeric character", this one
+/// tokenizer handles both code identifiers (CamelCase / snake_case) and
+/// natural-language knowledge-graph entity names ("RFDB V2 engine (storage)")
+/// without emitting a coarse whole-string token that would distort Jaccard
+/// scoring.
 ///
 /// # CamelCase rules
 ///
@@ -69,15 +77,18 @@ const TOKEN_INDEX_VERSION: u32 = 1;
 /// # Examples
 ///
 /// ```text
-/// "PtyHostHeartbeatService" -> ["pty", "host", "heartbeat", "service"]
-/// "get_user_by_id"          -> ["get", "user", "by", "id"]
-/// "HTTPClient"              -> ["http", "client"]
-/// "parseJSON"               -> ["parse", "json"]
-/// "XMLParser"               -> ["xml", "parser"]
-/// "getHTTPSUrl"             -> ["get", "https", "url"]
-/// "MyClass.method"          -> ["my", "class", "method"]
-/// "a"                       -> []  (single char filtered)
-/// ""                        -> []
+/// "PtyHostHeartbeatService"         -> ["pty", "host", "heartbeat", "service"]
+/// "get_user_by_id"                  -> ["get", "user", "by", "id"]
+/// "getUserById"                     -> ["get", "user", "by", "id"]
+/// "HTTPClient"                      -> ["http", "client"]
+/// "parseJSON"                       -> ["parse", "json"]
+/// "XMLParser"                       -> ["xml", "parser"]
+/// "getHTTPSUrl"                     -> ["get", "https", "url"]
+/// "MyClass.method"                  -> ["my", "class", "method"]
+/// "cross-domain knowledge transfer" -> ["cross", "domain", "knowledge", "transfer"]
+/// "RFDB V2 engine (storage)"        -> ["rfdb", "v2", "engine", "storage"]
+/// "a"                               -> []  (single char filtered)
+/// ""                                -> []
 /// ```
 pub fn tokenize_name(name: &str) -> Vec<String> {
     let mut raw_tokens: Vec<String> = Vec::new();
@@ -90,8 +101,10 @@ pub fn tokenize_name(name: &str) -> Vec<String> {
     while i < len {
         let c = chars[i];
 
-        // Separators: underscore, hyphen, dot
-        if c == '_' || c == '-' || c == '.' {
+        // Separators: any non-alphanumeric character (underscore, hyphen, dot,
+        // whitespace, punctuation). Keeps CamelCase splitting for the
+        // alphanumeric runs below.
+        if !c.is_alphanumeric() {
             if !current.is_empty() {
                 raw_tokens.push(std::mem::take(&mut current));
             }
@@ -438,8 +451,7 @@ pub fn build_token_index(
     let mut token_to_indices: HashMap<String, Vec<usize>> = HashMap::new();
 
     for (i, (_node_id, name)) in names.iter().enumerate() {
-        let tokens = tokenize_name(name);
-        for token in tokens {
+        for token in tokenize_name(name) {
             token_to_indices.entry(token).or_default().push(i);
         }
     }
@@ -627,6 +639,30 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_tokenize_natural_language_whitespace() {
+        // Natural-language knowledge-graph entity names split on whitespace and
+        // punctuation, NOT into a coarse whole-string token (which would
+        // distort Jaccard scoring).
+        assert_eq!(
+            tokenize_name("cross-domain knowledge transfer"),
+            vec!["cross", "domain", "knowledge", "transfer"]
+        );
+        assert_eq!(
+            tokenize_name("RFDB V2 engine (storage)"),
+            vec!["rfdb", "v2", "engine", "storage"]
+        );
+    }
+
+    #[test]
+    fn test_tokenize_no_whole_string_token_for_identifier() {
+        // Regression guard: a CamelCase identifier must NOT yield the whole
+        // concatenated string as a token (the bug that broke Jaccard scoring).
+        let tokens = tokenize_name("getUserById");
+        assert_eq!(tokens, vec!["get", "user", "by", "id"]);
+        assert!(!tokens.contains(&"getuserbyid".to_string()));
+    }
+
     // ── Build + from_bytes Roundtrip ───────────────────────────────
 
     #[test]
@@ -722,6 +758,26 @@ mod tests {
         assert_eq!(results[0].name, "get_user_by_id");
         // Jaccard: tokens are identical sets -> 1.0
         assert!((results[0].score - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_search_natural_language() {
+        // The unified tokenizer also answers natural-language entity names:
+        // a whitespace-separated query matches a punctuation-separated name on
+        // their shared fine-grained tokens.
+        let records = vec![
+            make_node("cross-domain knowledge transfer"),
+            make_node("HTTPClient"),
+        ];
+
+        let bytes = build_token_index(&records, 0, 1).unwrap();
+        let index = TokenIndex::from_bytes(&bytes).unwrap();
+
+        let results = index.search("knowledge transfer", 10, 0.0);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "cross-domain knowledge transfer");
+        // Jaccard: {knowledge, transfer} / {cross, domain, knowledge, transfer} = 2/4 = 0.5
+        assert!((results[0].score - 0.5).abs() < f32::EPSILON);
     }
 
     #[test]

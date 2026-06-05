@@ -67,11 +67,6 @@ import {
   handleGetNode,
   handleGetNeighbors,
   handleTraverseGraph,
-  handleAddKnowledge,
-  handleQueryKnowledge,
-  handleQueryDecisions,
-  handleSupersedeFact,
-  handleGetKnowledgeStats,
   // Disabled: requires git-ingest (US-17). See US-17 in AI-AGENT-STORIES.md
   // handleGitChurn,
   // handleGitCoChange,
@@ -83,6 +78,20 @@ import {
   handleExplain,
   handleTraceEffects,
   handleFindSharedBehaviors,
+  handleRemember,
+  handleRecall,
+  handleSemanticSearch,
+  handleExploreEntity,
+  handleAddAssertion,
+  handleUpdateAssertion,
+  handleDeleteAssertion,
+  handleEnoxQuery,
+  handleEnoxTraverse,
+  handleEnoxStats,
+  handleRecentActivity,
+  handleUpdateNode,
+  handleCrawlEntity,
+  handleSaveDocument,
 } from './handlers/index.js';
 import type { ExplainArgs } from './handlers/index.js';
 import type {
@@ -112,10 +121,6 @@ import type {
   GetNodeArgs,
   GetNeighborsArgs,
   TraverseGraphArgs,
-  AddKnowledgeArgs,
-  QueryKnowledgeArgs,
-  QueryDecisionsArgs,
-  SupersedeFactArgs,
   // Disabled: requires git-ingest (US-17). See US-17 in AI-AGENT-STORIES.md
   // GitChurnArgs,
   // GitCoChangeArgs,
@@ -127,6 +132,21 @@ import type {
   QueryRegistryArgs,
   FindSharedBehaviorsArgs,
 } from './types.js';
+import type {
+  RememberArgs,
+  RecallArgs,
+  SemanticSearchArgs,
+  ExploreEntityArgs,
+  AddAssertionArgs,
+  UpdateAssertionArgs,
+  DeleteAssertionArgs,
+  QueryGraphKnowledgeArgs,
+  TraverseArgs as EnoxTraverseArgs,
+  RecentActivityArgs,
+  UpdateNodeArgs as EnoxUpdateNodeArgs,
+  CrawlEntityArgs,
+  SaveDocumentArgs,
+} from './handlers/enox-handlers.js';
 
 /**
  * Type-safe argument casting helper.
@@ -358,26 +378,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
         result = await handleTraverseGraph(asArgs<TraverseGraphArgs>(args));
         break;
 
-      case 'add_knowledge':
-        result = await handleAddKnowledge(asArgs<AddKnowledgeArgs>(args));
-        break;
-
-      case 'query_knowledge':
-        result = await handleQueryKnowledge(asArgs<QueryKnowledgeArgs>(args));
-        break;
-
-      case 'query_decisions':
-        result = await handleQueryDecisions(asArgs<QueryDecisionsArgs>(args));
-        break;
-
-      case 'supersede_fact':
-        result = await handleSupersedeFact(asArgs<SupersedeFactArgs>(args));
-        break;
-
-      case 'get_knowledge_stats':
-        result = await handleGetKnowledgeStats();
-        break;
-
       // Disabled: requires git-ingest (US-17). See US-17 in AI-AGENT-STORIES.md
       // case 'git_churn':
       //   result = await handleGitChurn(asArgs<GitChurnArgs>(args));
@@ -409,6 +409,63 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
 
       case 'find_shared_behaviors':
         result = await handleFindSharedBehaviors(asArgs<FindSharedBehaviorsArgs>(args));
+        break;
+
+      // === Enox knowledge graph ===
+      case 'remember':
+        result = await handleRemember(asArgs<RememberArgs>(args));
+        break;
+
+      case 'recall':
+        result = await handleRecall(asArgs<RecallArgs>(args));
+        break;
+
+      case 'semantic_search':
+        result = await handleSemanticSearch(asArgs<SemanticSearchArgs>(args));
+        break;
+
+      case 'enox_explore':
+        result = await handleExploreEntity(asArgs<ExploreEntityArgs>(args));
+        break;
+
+      case 'add_assertion':
+        result = await handleAddAssertion(asArgs<AddAssertionArgs>(args));
+        break;
+
+      case 'update_assertion':
+        result = await handleUpdateAssertion(asArgs<UpdateAssertionArgs>(args));
+        break;
+
+      case 'delete_assertion':
+        result = await handleDeleteAssertion(asArgs<DeleteAssertionArgs>(args));
+        break;
+
+      case 'enox_query':
+        result = await handleEnoxQuery(asArgs<QueryGraphKnowledgeArgs>(args));
+        break;
+
+      case 'enox_traverse':
+        result = await handleEnoxTraverse(asArgs<EnoxTraverseArgs>(args));
+        break;
+
+      case 'enox_stats':
+        result = await handleEnoxStats();
+        break;
+
+      case 'recent_activity':
+        result = await handleRecentActivity(asArgs<RecentActivityArgs>(args));
+        break;
+
+      case 'update_node':
+        result = await handleUpdateNode(asArgs<EnoxUpdateNodeArgs>(args));
+        break;
+
+      case 'crawl_entity':
+        result = await handleCrawlEntity(asArgs<CrawlEntityArgs>(args));
+        break;
+
+      case 'save_document':
+        result = await handleSaveDocument(asArgs<SaveDocumentArgs>(args));
         break;
 
       default:

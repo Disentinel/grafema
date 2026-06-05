@@ -1,6 +1,6 @@
 {
   "name": "@grafema/util",
-  "version": "0.3.24",
+  "version": "0.3.29",
   "description": "Query, config, and guarantee utilities for Grafema",
   "type": "module",
   "main": "./dist/index.js",
@@ -21,7 +21,7 @@
   ],
   "scripts": {
     "build": "tsc",
-    "postbuild": "cp -r src/instructions/*.md dist/instructions/",
+    "postbuild": "cp -r src/instructions/*.md dist/instructions/ && cp src/enrichers/*.yaml dist/enrichers/",
     "clean": "rm -rf dist"
   },
   "keywords": [

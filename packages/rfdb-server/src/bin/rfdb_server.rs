@@ -192,6 +192,17 @@ pub enum Request {
         #[serde(rename = "edgeTypes")]
         edge_types: Option<Vec<String>>,
     },
+    /// Get all edges of a given type, optionally filtered by src node IDs.
+    /// More efficient than per-node getOutgoingEdges for bulk analysis passes.
+    GetEdgesByType {
+        #[serde(rename = "edgeType")]
+        edge_type: String,
+        /// Optional allowlist of src node IDs; edges not in the set are dropped.
+        #[serde(rename = "srcFilter")]
+        src_filter: Option<Vec<String>>,
+        /// Cap the number of returned edges (applied after src_filter).
+        limit: Option<usize>,
+    },
 
     // Stats
     NodeCount,
@@ -277,6 +288,28 @@ pub enum Request {
     /// Rebuild all secondary indexes from current segment.
     /// Send after a series of deferIndex=true CommitBatch commands.
     RebuildIndexes,
+
+    /// Delete all edges of a given type whose metadata contains
+    /// `_source == sourceTag`. Fails if any other `_source` value is
+    /// found for that edge type (collision). Used to clear prior output
+    /// from secondary writers (e.g. `layout-pack`) before a re-run.
+    DeleteEdgesByTypeAndSource {
+        #[serde(rename = "edgeType")]
+        edge_type: String,
+        #[serde(rename = "sourceTag")]
+        source_tag: String,
+    },
+
+    /// Delete all nodes of a given type whose metadata contains
+    /// `_source == sourceTag`. Also deletes outgoing edges from each
+    /// matched node. Same collision semantics as
+    /// `DeleteEdgesByTypeAndSource`.
+    DeleteNodesByTypeAndSource {
+        #[serde(rename = "nodeType")]
+        node_type: String,
+        #[serde(rename = "sourceTag")]
+        source_tag: String,
+    },
 
     // ========================================================================
     // Protocol v3 Commands
@@ -424,6 +457,21 @@ pub enum Response {
     BatchCommitted {
         ok: bool,
         delta: WireCommitDelta,
+    },
+
+    /// Reply for `DeleteEdgesByTypeAndSource`.
+    EdgesDeleted {
+        ok: bool,
+        deleted: u64,
+    },
+
+    /// Reply for `DeleteNodesByTypeAndSource`.
+    NodesDeleted {
+        ok: bool,
+        #[serde(rename = "deletedNodes")]
+        deleted_nodes: u64,
+        #[serde(rename = "deletedOutgoingEdges")]
+        deleted_outgoing_edges: u64,
     },
 
     Ok { ok: bool },
@@ -1043,6 +1091,7 @@ fn get_operation_name(request: &Request) -> String {
         Request::CheckGuarantee { .. } => "CheckGuarantee".to_string(),
         Request::GetOutgoingEdges { .. } => "GetOutgoingEdges".to_string(),
         Request::GetIncomingEdges { .. } => "GetIncomingEdges".to_string(),
+        Request::GetEdgesByType { .. } => "GetEdgesByType".to_string(),
         Request::Flush => "Flush".to_string(),
         Request::Compact => "Compact".to_string(),
         Request::NodeCount => "NodeCount".to_string(),
@@ -1050,6 +1099,8 @@ fn get_operation_name(request: &Request) -> String {
         Request::GetStats => "GetStats".to_string(),
         Request::CommitBatch { .. } => "CommitBatch".to_string(),
         Request::RebuildIndexes => "RebuildIndexes".to_string(),
+        Request::DeleteEdgesByTypeAndSource { .. } => "DeleteEdgesByTypeAndSource".to_string(),
+        Request::DeleteNodesByTypeAndSource { .. } => "DeleteNodesByTypeAndSource".to_string(),
         Request::TagSnapshot { .. } => "TagSnapshot".to_string(),
         Request::FindSnapshot { .. } => "FindSnapshot".to_string(),
         Request::ListSnapshots { .. } => "ListSnapshots".to_string(),
@@ -1146,7 +1197,14 @@ fn handle_request_with_cancel(
 
             let access_mode = AccessMode::from_str(&mode);
 
-            match manager.get_database(&name) {
+            // If the database is being loaded in background, wait for it
+            let db_result = if manager.is_database_loading(&name) {
+                manager.wait_for_database(&name, std::time::Duration::from_secs(60))
+            } else {
+                manager.get_database(&name)
+            };
+
+            match db_result {
                 Ok(db) => {
                     // Track connection
                     db.add_connection();
@@ -1363,6 +1421,28 @@ fn handle_request_with_cancel(
                     .into_iter()
                     .map(|e| record_to_wire_edge(&e))
                     .collect();
+                if protocol >= 3 {
+                    resolve_edge_semantic_ids(&mut edges, engine);
+                }
+                Response::Edges { edges }
+            })
+        }
+
+        Request::GetEdgesByType { edge_type, src_filter, limit } => {
+            let protocol = session.protocol_version;
+            with_engine_read(session, |engine| {
+                let mut edges: Vec<WireEdge> = engine.get_edges_by_type(&edge_type)
+                    .into_iter()
+                    .map(|e| record_to_wire_edge(&e))
+                    .collect();
+                if let Some(filter) = src_filter.as_ref() {
+                    let filter_set: std::collections::HashSet<&str> =
+                        filter.iter().map(|s| s.as_str()).collect();
+                    edges.retain(|e| filter_set.contains(e.src.as_str()));
+                }
+                if let Some(lim) = limit {
+                    edges.truncate(lim);
+                }
                 if protocol >= 3 {
                     resolve_edge_semantic_ids(&mut edges, engine);
                 }
@@ -1676,6 +1756,28 @@ fn handle_request_with_cancel(
                     return Response::Error { error: format!("Index rebuild failed: {}", e) };
                 }
                 Response::Ok { ok: true }
+            })
+        }
+
+        Request::DeleteEdgesByTypeAndSource { edge_type, source_tag } => {
+            with_engine_write(session, |engine| {
+                match rfdb::deletion::delete_edges_by_type_and_source(engine, &edge_type, &source_tag) {
+                    Ok(out) => Response::EdgesDeleted { ok: true, deleted: out.deleted as u64 },
+                    Err(e) => Response::Error { error: e },
+                }
+            })
+        }
+
+        Request::DeleteNodesByTypeAndSource { node_type, source_tag } => {
+            with_engine_write(session, |engine| {
+                match rfdb::deletion::delete_nodes_by_type_and_source(engine, &node_type, &source_tag) {
+                    Ok(out) => Response::NodesDeleted {
+                        ok: true,
+                        deleted_nodes: out.deleted_nodes as u64,
+                        deleted_outgoing_edges: out.deleted_outgoing_edges as u64,
+                    },
+                    Err(e) => Response::Error { error: e },
+                }
             })
         }
 
@@ -2720,9 +2822,10 @@ fn handle_client_unix(
 
     let mut session = ClientSession::new(client_id);
 
-    // In legacy mode (protocol v1), auto-open "default" database
+    // In legacy mode (protocol v1), auto-open "default" database.
+    // wait_for_database blocks until background load finishes (up to 60s).
     if legacy_mode {
-        if let Ok(db) = manager.get_database("default") {
+        if let Ok(db) = manager.wait_for_database("default", std::time::Duration::from_secs(60)) {
             db.add_connection();
             session.set_database(db, AccessMode::ReadWrite);
         }
@@ -3301,31 +3404,13 @@ async fn main() {
     // Create database manager with data directory
     let manager = Arc::new(DatabaseManager::new(data_dir.clone()));
 
-    // Create "default" database from legacy db_path for backwards compatibility
-    eprintln!("[rfdb-server] Opening default database: {:?}", db_path);
-    match manager.create_default_from_path(&db_path) {
-        Ok(()) => {}
-        Err(rfdb::error::GraphError::DatabaseLocked(lock_path)) => {
-            eprintln!("[rfdb-server] ERROR: Database {:?} is already in use (lock held by another rfdb-server process).", db_path);
-            eprintln!("[rfdb-server] If you believe this is stale, remove: {}", lock_path);
-            std::process::exit(1);
-        }
-        Err(e) => {
-            eprintln!("[rfdb-server] Failed to create default database: {}", e);
-            std::process::exit(1);
-        }
-    }
-
     eprintln!("[rfdb-server] Data directory for multi-database: {:?}", data_dir);
 
-    // Get stats from default database
-    if let Ok(db) = manager.get_database("default") {
-        eprintln!("[rfdb-server] Default database: {} nodes, {} edges",
-            db.node_count(),
-            db.edge_count());
-    }
-
-    // Bind Unix socket (SUN_LEN limit: 104 on macOS, 108 on Linux)
+    // Bind Unix socket BEFORE loading database so clients can connect early.
+    // Ping/Hello work without a database; DB-dependent requests will block
+    // until background load completes (via wait_for_database).
+    //
+    // SUN_LEN limit: 104 on macOS, 108 on Linux
     let socket_len = socket_path.len();
     let sun_len: usize = if cfg!(target_os = "macos") { 104 } else { 108 };
     if socket_len >= sun_len {
@@ -3351,6 +3436,11 @@ async fn main() {
         }
     };
     eprintln!("[rfdb-server] Listening on {}", socket_path);
+
+    // Load default database in background so the server can respond to
+    // Ping/Hello while the (potentially large) DB is still being read.
+    eprintln!("[rfdb-server] Opening default database in background: {:?}", db_path);
+    manager.load_default_in_background(db_path.clone());
 
     // HTTP port lockfile path (written after HTTP bind succeeds, removed on
     // graceful shutdown). `data_dir` is the directory Grafema stores per-db
@@ -3450,10 +3540,15 @@ async fn main() {
     // accepts requests but first one freezes".
     if let Some(port) = http_port {
         let manager_http = Arc::clone(&manager);
-        let http_state = rfdb::http_server::new_state(manager_http);
+        let workspace_name = rfdb::http_server::derive_workspace_name(&db_path);
+        eprintln!(
+            "[rfdb-server] workspace_name = {:?} (from db path {:?})",
+            workspace_name, db_path
+        );
+        let http_state = rfdb::http_server::new_state(manager_http, workspace_name);
         let warmup_state = http_state.clone();
         let t_warm = std::time::Instant::now();
-        eprintln!("[rfdb-server] warmup: building file→nodes cache and tectonic layout …");
+        eprintln!("[rfdb-server] warmup: building file→nodes cache and loading persisted layout …");
         let warmup_res = tokio::task::spawn_blocking(move || {
             rfdb::http_server::warmup(&warmup_state);
         })

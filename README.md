@@ -1,13 +1,5 @@
 # Grafema
 
-> Licensed under [FSL-1.1-Apache-2.0](./LICENSE) — free to use, source available, converts to Apache 2.0 after 2 years. [Details](./LICENSING.md)
-
-[![CI](https://github.com/Disentinel/grafema/actions/workflows/ci.yml/badge.svg)](https://github.com/Disentinel/grafema/actions/workflows/ci.yml)
-[![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/Disentinel/fb8ae29db701dd788e1beaffb159ffef/raw/grafema-coverage.json)](https://github.com/Disentinel/grafema/actions/workflows/ci.yml)
-[![Benchmark](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/Disentinel/fb8ae29db701dd788e1beaffb159ffef/raw/rfdb-benchmark.json)](https://github.com/Disentinel/grafema/actions/workflows/benchmark.yml)
-
-> **v0.3.22** — Early access. [Changelog](./CHANGELOG.md) | [Known limitations](./KNOWN_LIMITATIONS.md)
-
 Grafema turns your codebase, infrastructure, knowledge, and workflows around it — into one queryable graph.
 For humans and AI.
 
@@ -31,6 +23,14 @@ And your AI minions too.
 Welcome to the party!
 
 ---
+
+> Licensed under [FSL-1.1-Apache-2.0](./LICENSE) — free to use, source available, converts to Apache 2.0 after 2 years. [Details](./LICENSING.md)
+
+[![CI](https://github.com/Disentinel/grafema/actions/workflows/ci.yml/badge.svg)](https://github.com/Disentinel/grafema/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/Disentinel/fb8ae29db701dd788e1beaffb159ffef/raw/grafema-coverage.json)](https://github.com/Disentinel/grafema/actions/workflows/ci.yml)
+[![Benchmark](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/Disentinel/fb8ae29db701dd788e1beaffb159ffef/raw/rfdb-benchmark.json)](https://github.com/Disentinel/grafema/actions/workflows/benchmark.yml)
+
+> **v0.3.22** — Early access. [Changelog](./CHANGELOG.md) | [Known limitations](./KNOWN_LIMITATIONS.md)
 
 ## Quick Start
 
@@ -154,6 +154,7 @@ JS/TS is the primary language with full dataflow support. Each language uses its
 | `grafema analyze` | | Build/rebuild the code graph (`--quickstart` for zero-config) |
 | `grafema check` | "Are my rules still satisfied?" | Run architectural guarantees, exit 1 on violations |
 | `grafema doctor` | | Check system health |
+| `grafema upgrade` | | Clean stale artifacts and upgrade binaries |
 | `grafema overview` | | High-level project stats |
 
 ## VS Code Extension

@@ -37,6 +37,14 @@ class MapControllerImpl {
     this._sceneApi = api;
   }
 
+  /** Read-only accessor for the active scene api. Used by panels that
+   *  live OUTSIDE Canvas's `<SceneApiProvider>` (e.g. Sidebar) and
+   *  therefore can't reach the api through React context. Returns null
+   *  before mount / after dispose; callers must guard. */
+  getSceneApi(): SceneApi | null {
+    return this._sceneApi;
+  }
+
   /** Fly camera to a node by name or ID. Silent no-op on camera when no
    *  scene is attached; the node lookup still runs so the ok/err result
    *  reflects whether the target exists. */

@@ -2,6 +2,38 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Features
+
+- feat(cli): `grafema upgrade` command — clean stale artifacts from `~/.grafema/bin/` and upgrade binaries to current version. Supports `--all`, `--lang`, `--project`, `--dry-run` flags.
+- feat(cypher): SUM/AVG/MIN/MAX aggregates in Cypher queries (RFD-70) — real typed accumulators with Cypher NULL semantics and Int→Float promotion; unsupported aggregate functions now error instead of silently returning a row count (#274)
+- feat(orchestrator): emit `resolve_progress` profiler events during per-file JS/TS resolve (files_done / total_files / edges_so_far, every 500 files + at completion) — closes the silent profiler gap between `js_resolve_start` and `js_resolve_complete` (#296)
+
+### Bug Fixes
+
+- fix(coverage): exclude skipped/failed files from the analyzed count — oversized files that the orchestrator silently skips are reclassified from "analyzed" into a new "Failed" bucket, so `grafema coverage` reports an accurate (no longer inflated) percentage (REG-1140, #276)
+- fix(rfdb): correct token fuzzy-search Jaccard scores by unifying the tokenizer — removes the phantom whole-string token that inflated the union denominator and distorted `find_nodes` fuzzy-fallback ranking (#275)
+- fix(rust-analyzer): unwrap `Box`/`Rc`/`Arc` receiver types so `Box<dyn Trait>` resolves to the inner trait, restoring dyn-dispatch CALLS edges that were previously dropped (#273)
+- fix(orchestrator): index exported `namespace` declarations so `export namespace X {}` resolves cross-file and gets an IMPORTS_FROM edge — keeps `INDEX_NODE_TYPES` in sync with the resolver's exported-declaration list (REG-1139, #277)
+- fix(cypher): route only real aggregates (COUNT/SUM/AVG/MIN/MAX) through HashAggregate — a scalar function in `RETURN` (e.g. `toUpper(n.name)`) now fails loudly at plan time instead of being mislabeled as an aggregate and erroring at execution (RFD-70 follow-up, #282)
+- fix(orchestrator): checkpoint JS/TS resolve every 500 files instead of a single end-of-phase commit, so a crash or SIGTERM mid-resolve loses at most ~500 files of work rather than the entire (multi-hour on large monorepos) resolution phase (REG-1138, #286)
+- fix(cli): `grafema analyze --resolve-jobs N` / `grafema resolve --jobs N` no longer silently ignore the requested worker count — resolution currently runs single-worker, so any value other than 1 now prints a clear notice that the flag has no effect and proceeds with 1 worker; help text updated to match (REG-563, #287)
+- fix(cli): `grafema who` attributes each call to its enclosing named function (via the v2 `[in:…]` semantic-id annotation) instead of `<anonymous>`; import statements are no longer mislabelled as bare callers (#292)
+- fix(cli): `file`/`explain` resolve files correctly when the project root is a symlink (e.g. `--project` at a symlinked checkout, or a root under macOS `/tmp`→`/private/tmp`) — previously reported `NOT_ANALYZED` for analyzed files because the project-relative path was computed against a non-realpath'd root (#293)
+- fix(cli): `grafema impact <method>` resolves a bare method name to its METHOD node and finds its callers (previously reported "No node found") — recovers `receiver.method()` call sites whose `method` attribute is unpopulated via a name-based CALL scan, consistent with `grafema who` (#297)
+- fix(util): `findContainingFunction` attributes a call inside a class method to that METHOD instead of the enclosing CLASS — fixes caller labelling and impact's internal-call exclusion for method-to-method calls (REG-254, #300)
+- fix(cli): `grafema impact <Class>` aggregates callers of all the class's methods (enumerated via `HAS_METHOD`) and excludes the class's own method-to-method internal calls from the external-impact count (REG-543, #303)
+- fix(cli): `grafema impact <symbol> --json` emits valid JSON (zero-impact object with `target: null`) instead of empty stdout when the target is not found; the human-readable note stays on stderr (#304)
+- fix(cli): `grafema wtf <symbol> --json` emits valid JSON (`{ symbol, node: null, results: [] }`) instead of empty stdout when the symbol is not found; human note moves to stderr (#307)
+- fix(cli): `--json` always emits parseable JSON on not-found for `get`/`context`/`describe`/`ls` via a shared `emitJsonNotFound` helper (each shape mirrors its success output); previously these printed empty stdout, breaking `JSON.parse` for scripts/agents (#308)
+- fix(cli): `file`/`explain --json` emit parseable JSON on a missing file (object mirroring each command's success shape with `status: "NOT_FOUND"` and empty collections) instead of empty stdout; human note moves to stderr, exit stays 0 (#311)
+- fix(cli): `grafema context <missing> --json` not-found payload mirrors the success `NodeContext` shape (`{ node: null, source: null, outgoing: [], incoming: [] }`) instead of a degenerate `{ node: null }` (#313)
+- fix(mcp): `semantic_search` honors its advertised `top_k` parameter — the handler read `args.limit` (default 20) while the tool schema advertises `top_k` (default 10), so callers passing `top_k` were silently ignored; now respected with the schema default (#314)
+- fix(mcp): `semantic_search` no longer prints a fabricated similarity score — results were rendered with a purely positional `[0.95]`-style score (embeddings not yet wired; matching is substring-based) that an agent reads as a real confidence metric; results are now listed by rank + name without the fake score (#319)
+- fix(mcp): `semantic_search` tool schema is honest — drops the advertised-but-ignored `include_edges` parameter and rewrites the description to state case-insensitive substring matching on node names (embedding ranking not yet wired) instead of claiming embedding-based similarity (REG-1152, #323)
+- fix(cli): `check --json` and `trace --from-route --json` emit parseable JSON on not-found via the shared `emitJsonNotFound` helper (each payload mirrors its command's success shape — `check` returns the full `{total,passed,failed,errors,results}` with zero counts); previously `check` exited with empty stdout and `trace --from-route` printed plain text, breaking `JSON.parse` for scripts/agents (REG-1149, #321)
+
 ## [0.3.23] - 2026-04-01
 
 ### Highlights

@@ -39,16 +39,31 @@ const EXPECTED_HANDLERS = [
   'handleGetNode',
   'handleGetNeighbors',
   'handleTraverseGraph',
-  'handleAddKnowledge',
-  'handleQueryKnowledge',
-  'handleQueryDecisions',
-  'handleSupersedeFact',
-  'handleGetKnowledgeStats',
-  // git-ingest handlers disabled (US-17), see handlers/index.ts
+  // knowledge handlers disabled (US-17), see handlers/index.ts
+  // 'handleAddKnowledge',
+  // 'handleQueryKnowledge',
+  // 'handleQueryDecisions',
+  // 'handleSupersedeFact',
+  // 'handleGetKnowledgeStats',
+  // git-ingest handlers disabled (US-17)
   // 'handleGitChurn',
   // 'handleGitCoChange',
   // 'handleGitOwnership',
   // 'handleGitArchaeology',
+  'handleRemember',
+  'handleRecall',
+  'handleSemanticSearch',
+  'handleExploreEntity',
+  'handleAddAssertion',
+  'handleUpdateAssertion',
+  'handleDeleteAssertion',
+  'handleEnoxQuery',
+  'handleEnoxTraverse',
+  'handleEnoxStats',
+  'handleRecentActivity',
+  'handleUpdateNode',
+  'handleCrawlEntity',
+  'handleSaveDocument',
   'handleDescribe',
   'handleQueryGraphql',
   'handleQueryRegistry',
@@ -60,14 +75,14 @@ const EXPECTED_HANDLERS = [
 ];
 
 describe('MCP handlers export surface', () => {
-  it('should export exactly 40 handler functions', () => {
+  it('should export exactly 53 handler functions', () => {
     const exportedKeys = Object.keys(handlers).filter(
       k => typeof handlers[k] === 'function'
     );
     assert.equal(
       exportedKeys.length,
-      40,
-      `Expected 40 function exports, got ${exportedKeys.length}: ${exportedKeys.join(', ')}`
+      EXPECTED_HANDLERS.length,
+      `Expected ${EXPECTED_HANDLERS.length} function exports, got ${exportedKeys.length}: ${exportedKeys.join(', ')}`
     );
   });
 
