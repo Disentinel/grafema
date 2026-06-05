@@ -17,6 +17,7 @@
  */
 
 import type { WireNode, WireEdge } from '@grafema/types';
+import { parseSemanticIdV2 } from '../core/SemanticId.js';
 import type { ShardDiscovery, ShardRegistration } from './ShardDiscovery.js';
 import type { ManifestResolver } from '../manifest/index.js';
 import type { ResolveResult } from '../manifest/resolver.js';
@@ -400,10 +401,23 @@ function parseEdgeMetadata(metadata?: string): Record<string, string> {
   }
 }
 
-/** Extract symbol name from the last segment of a semantic ID. */
-function extractSymbolFromId(semanticId: string): string | null {
+/**
+ * Extract symbol name from a semantic ID.
+ *
+ * Handles both formats edges can carry (mirrors `extractFilePath`):
+ * - grafema:// URI: "grafema://host/file.ts#FUNCTION-%3EmyFunc" → "myFunc"
+ *   (after `to_uri_format()`, the "->" separator is percent-encoded as "-%3E",
+ *   so a naive split('->') would return the whole string — delegate to the
+ *   canonical parser instead).
+ * - Legacy arrow: "file.ts->FUNCTION->myFunc" → "myFunc".
+ */
+export function extractSymbolFromId(semanticId: string): string | null {
   if (!semanticId) return null;
-  // "file.ts->FUNCTION->myFunc" → "myFunc"
+  // URI form: canonical parser decodes the fragment and strips disambiguators.
+  if (semanticId.startsWith('grafema://')) {
+    return parseSemanticIdV2(semanticId)?.name ?? null;
+  }
+  // Arrow form: "file.ts->FUNCTION->myFunc" → "myFunc"
   const parts = semanticId.split('->');
   return parts.length >= 3 ? parts[parts.length - 1] : null;
 }
@@ -412,7 +426,7 @@ function extractSymbolFromId(semanticId: string): string | null {
  * Extract absolute file path from a semantic ID or grafema URI.
  * Handles both formats:
  * - Arrow format: "path/to/file.ts->FUNCTION->name"
- * - URI format: "grafema://path/to/file.ts#FUNCTION%3Aname"
+ * - URI format: "grafema://host/path/to/file.ts#FUNCTION-%3Ename"
  */
 function extractFilePath(semanticId: string): string | null {
   if (!semanticId) return null;
