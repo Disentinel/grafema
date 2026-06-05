@@ -58,10 +58,16 @@ describe('CLI --json not-found contract (get/context/describe/ls)', { timeout: 9
     assert.deepStrictEqual(parsed.stats, { incomingCount: 0, outgoingCount: 0 }, `stats shape:\n${out}`);
   });
 
-  it('context <missing> --json → parseable JSON, node:null', () => {
+  it('context <missing> --json → parseable JSON, shape mirrors success', () => {
     const out = runCli(['context', '__missing__', '--json'], tempDir).stdout;
     const parsed = JSON.parse(out); // must not throw
     assert.strictEqual(parsed.node, null, `node should be null:\n${out}`);
+    // Must mirror the success NodeContext shape ({ node, source, outgoing,
+    // incoming }) so consumers reading source / outgoing / incoming on success
+    // don't crash on not-found (regression guard for the context shape mismatch).
+    assert.strictEqual(parsed.source, null, `source should be null:\n${out}`);
+    assert.deepStrictEqual(parsed.outgoing, [], `outgoing shape:\n${out}`);
+    assert.deepStrictEqual(parsed.incoming, [], `incoming shape:\n${out}`);
   });
 
   it('describe <missing> --json → parseable JSON, target:null', () => {

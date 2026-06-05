@@ -96,7 +96,13 @@ Examples:
       if (!node) {
         spinner.stop();
         if (options.json) {
-          emitJsonNotFound({ node: null }, `Node not found: "${semanticId}"`);
+          // Mirror the success NodeContext shape ({ node, source, outgoing,
+          // incoming }) so consumers reading result.outgoing / result.incoming
+          // on success don't crash on not-found (sibling of the get fix #308).
+          emitJsonNotFound(
+            { node: null, source: null, outgoing: [], incoming: [] },
+            `Node not found: "${semanticId}"`,
+          );
           return;
         }
         exitWithError(`Node not found: "${semanticId}"`, [
