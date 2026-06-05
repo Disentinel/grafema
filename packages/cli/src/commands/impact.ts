@@ -9,7 +9,7 @@
 import { Command } from 'commander';
 import { isAbsolute, resolve, join, dirname, relative } from 'path';
 import { existsSync } from 'fs';
-import { RFDBServerBackend, findContainingFunction as findContainingFunctionCore } from '@grafema/util';
+import { RFDBServerBackend, findContainingFunction as findContainingFunctionCore, parseSemanticIdV2 } from '@grafema/util';
 import { formatNodeDisplay, formatNodeInline } from '../utils/formatNode.js';
 import { exitWithError } from '../utils/errorFormatter.js';
 
@@ -181,10 +181,13 @@ async function findMethodInClass(
   classId: string,
   methodName: string
 ): Promise<string | null> {
-  const containsEdges = await backend.getOutgoingEdges(classId, ['CONTAINS']);
-  for (const edge of containsEdges) {
+  // Classes link to their methods via HAS_METHOD edges to METHOD nodes; the
+  // class's direct CONTAINS edge goes to its body SCOPE, not the methods. Accept
+  // FUNCTION too for analyzers that model methods as FUNCTION children.
+  const methodEdges = await backend.getOutgoingEdges(classId, ['HAS_METHOD', 'CONTAINS']);
+  for (const edge of methodEdges) {
     const child = await backend.getNode(edge.dst);
-    if (child && child.type === 'FUNCTION' && child.name === methodName) {
+    if (child && (child.type === 'METHOD' || child.type === 'FUNCTION') && child.name === methodName) {
       return child.id;
     }
   }
@@ -389,6 +392,10 @@ async function collectCallersBFS(
   const callChains: string[][] = [];
   const visited = new Set<string>();
   const initialTargetIds = new Set(targetIds);
+  // Names of the target class's own methods — used to recognise internal callers
+  // whose enclosing scope is a method body (`<expression>[in:method]`) rather than
+  // the METHOD node itself. Empty for non-CLASS targets.
+  const classMethodNames = new Set(targetMethodNames.values());
 
   const queue: Array<{ id: string; depth: number; chain: string[] }> = targetIds.map(id => ({
     id,
@@ -415,8 +422,14 @@ async function collectCallersBFS(
         const container = await findContainingFunctionCore(backend, callNode.id);
 
         if (container && !visited.has(container.id)) {
-          // Skip internal callers (methods of the same class being analyzed)
-          if (target.type === 'CLASS' && targetIds.includes(container.id)) continue;
+          // Skip internal callers (the class's own methods calling each other):
+          // either the method node itself, or a method-body `<expression>` FUNCTION
+          // whose enclosing scope (`[in:method]`) is one of the class's methods.
+          if (target.type === 'CLASS') {
+            if (targetIds.includes(container.id)) continue;
+            const enclosing = parseSemanticIdV2(container.id)?.namedParent;
+            if (enclosing && classMethodNames.has(enclosing)) continue;
+          }
 
           const caller: NodeInfo = {
             id: container.id,
@@ -476,11 +489,14 @@ async function getClassMethods(
   const methods: Array<{ id: string; name: string }> = [];
 
   try {
-    const edges = await backend.getOutgoingEdges(classId, ['CONTAINS']);
+    // Classes link to their methods via HAS_METHOD edges to METHOD nodes; the
+    // class's direct CONTAINS edge goes to its body SCOPE, not the methods.
+    // Accept FUNCTION too for analyzers that model methods as FUNCTION children.
+    const edges = await backend.getOutgoingEdges(classId, ['HAS_METHOD', 'CONTAINS']);
 
     for (const edge of edges) {
       const node = await backend.getNode(edge.dst);
-      if (node && node.type === 'FUNCTION') {
+      if (node && (node.type === 'METHOD' || node.type === 'FUNCTION')) {
         methods.push({ id: node.id, name: node.name || '' });
       }
     }
