@@ -17,7 +17,7 @@ import {
   DIAGNOSTIC_CATEGORIES,
 } from '@grafema/util';
 import type { GuaranteeGraph, DiagnosticCategoryKey } from '@grafema/util';
-import { exitWithError } from '../utils/errorFormatter.js';
+import { exitWithError, emitJsonNotFound } from '../utils/errorFormatter.js';
 
 
 // Available built-in validators
@@ -111,6 +111,11 @@ Examples:
         const validatorInfo = BUILT_IN_VALIDATORS[options.guarantee];
         if (!validatorInfo) {
           const available = Object.keys(BUILT_IN_VALIDATORS).join(', ');
+          if (options.json) {
+            // --json contract: parseable stdout mirroring the validator shape.
+            emitJsonNotFound({ guarantee: options.guarantee, passed: false }, `Unknown guarantee: ${options.guarantee}`);
+            return;
+          }
           exitWithError(`Unknown guarantee: ${options.guarantee}`, [
             `Available: ${available}`
           ]);
@@ -155,11 +160,14 @@ Examples:
         }
 
         if (!options.skipReanalysis) {
-          console.log(`Reanalyzing ${freshness.staleCount} stale module(s)...`);
+          // Status chatter must NOT hit stdout under --json (stdout = JSON only).
+          if (!options.json) console.log(`Reanalyzing ${freshness.staleCount} stale module(s)...`);
           const reanalyzer = new IncrementalReanalyzer(backend, projectPath);
           const result = await reanalyzer.reanalyze(freshness.staleModules);
-          console.log(`Reanalyzed ${result.modulesReanalyzed} module(s) in ${result.durationMs}ms`);
-          console.log('');
+          if (!options.json) {
+            console.log(`Reanalyzed ${result.modulesReanalyzed} module(s) in ${result.durationMs}ms`);
+            console.log('');
+          }
         } else {
           console.warn(`Warning: ${freshness.staleCount} stale module(s) detected. Use --skip-reanalysis to suppress.`);
           for (const stale of freshness.staleModules.slice(0, 5)) {
@@ -168,9 +176,9 @@ Examples:
           if (freshness.staleModules.length > 5) {
             console.warn(`  ... and ${freshness.staleModules.length - 5} more`);
           }
-          console.log('');
+          if (!options.json) console.log('');
         }
-      } else if (!options.quiet) {
+      } else if (!options.quiet && !options.json) {
         console.log('Graph is fresh');
         console.log('');
       }
@@ -189,6 +197,11 @@ Examples:
         const guarantees = await manager.list();
 
         if (guarantees.length === 0) {
+          if (options.json) {
+            // --json contract: no guarantees → empty results, parseable stdout.
+            emitJsonNotFound({ results: [] }, 'No guarantees found.');
+            return;
+          }
           console.log('No guarantees found.');
           console.log('');
           console.log('Create guarantees in .grafema/guarantees.yaml or use --file option.');
@@ -203,6 +216,12 @@ Examples:
 
         if (toCheck.length === 0 && rule) {
           const available = guarantees.map((g) => g.id).join(', ');
+          if (options.json) {
+            // --json contract: parseable stdout mirroring the results shape.
+            // (return runs the enclosing finally → backend.close().)
+            emitJsonNotFound({ results: [] }, `Guarantee not found: ${rule}`);
+            return;
+          }
           exitWithError(`Guarantee not found: ${rule}`, [
             `Available: ${available}`
           ]);

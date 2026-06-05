@@ -12,7 +12,7 @@ import { isAbsolute, resolve, join } from 'path';
 import { existsSync } from 'fs';
 import { RFDBServerBackend, parseSemanticId, parseSemanticIdV2, traceValues, traceDataflow, renderTraceNarrative, type ValueSource, type DataflowBackend } from '@grafema/util';
 import { formatNodeDisplay } from '../utils/formatNode.js';
-import { exitWithError } from '../utils/errorFormatter.js';
+import { exitWithError, emitJsonNotFound } from '../utils/errorFormatter.js';
 
 interface TraceOptions {
   project: string;
@@ -723,6 +723,12 @@ async function handleRouteTrace(
   const route = await findRouteByPattern(backend, pattern);
 
   if (!route) {
+    if (jsonOutput) {
+      // --json contract: stdout is always parseable JSON. Mirror the success
+      // shape (route + responses) with a null route; human note to stderr.
+      emitJsonNotFound({ route: null, responses: [] }, `Route not found: ${pattern}`);
+      return;
+    }
     console.log(`Route not found: ${pattern}`);
     console.log('');
     console.log('Hint: Use "grafema query" to list available routes');
