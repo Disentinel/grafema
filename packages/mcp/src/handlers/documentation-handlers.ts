@@ -40,11 +40,21 @@ Grafema is a static code analyzer that builds a graph of your codebase.
 ## Syntax
 violation(X) :- node(X, "TYPE"), attr(X, "name", "value").
 
-## Available Predicates
-- type(Id, Type) - match nodes (alias: node)
-- edge(Src, Dst, Type) - match edges
-- attr(Id, Name, Value) - match node attributes (name, file, line, etc.)
-- \\+ - negation (not)
+## Node / Edge / Attribute Predicates
+- node(Id, Type) - match nodes by type (alias: type(Id, Type))
+- edge(Src, Dst, Type) - match outgoing edges Src -> Dst of the given type
+- incoming(Dst, Src, Type) - match edges pointing TO Dst (reverse of edge)
+- path(Src, Dst) - transitive reachability Src -> Dst (BFS over edges)
+- attr(Id, Name, Value) - match node attributes (name, file, line, ...; nested paths like "a.b" supported)
+- attr_edge(Src, Dst, EdgeType, AttrName, Value) - match EDGE attributes; Src/Dst/EdgeType/AttrName must be bound, Value may be variable/constant/wildcard
+- parent_function(NodeId, FunctionId) - bind the enclosing FUNCTION of NodeId via CONTAINS; NodeId must be bound; empty at module level
+
+## Negation & String Predicates
+- \\+ - negation (not); also for negative joins on a dst-position variable, e.g. \\+ edge(X, _, "CALLS")
+- neq(X, Y) - inequality; BOTH arguments must be bound
+- starts_with(Value, Prefix) - string prefix match
+- not_starts_with(Value, Prefix) - negative string prefix match
+- string_contains(Value, Substring) - substring match
 
 ## Numeric Comparison Predicates
 - gt(Value, Threshold) - greater than
@@ -54,6 +64,11 @@ violation(X) :- node(X, "TYPE"), attr(X, "name", "value").
 
 Values are parsed as floating-point numbers. Non-numeric values produce no matches.
 Use with attr() to filter by metadata values (e.g., metrics, line numbers).
+
+## Limitations
+- No aggregations (count/sum/avg), no GROUP BY, no ORDER BY - aggregate/sort client-side.
+- Predicate ORDER matters: bind a variable (via node/edge/attr) before a comparison /
+  string / attr_edge predicate uses it, or the query fails to place ("circular dependency").
 
 ## Examples
 Find all functions:
@@ -67,6 +82,12 @@ Find files where parsing took > 500ms:
 
 Find functions with more than 100 lines:
   violation(X, Lines) :- node(X, "FUNCTION"), attr(X, "line", Start), attr(X, "endLine", End), gt(End, Start).
+
+Find the enclosing function of every call:
+  violation(C, F) :- node(C, "CALL"), parent_function(C, F).
+
+Find nodes that have incoming CALLS edges (i.e. are called):
+  violation(D) :- incoming(D, _, "CALLS").
 `,
     types: `
 # Node & Edge Types
