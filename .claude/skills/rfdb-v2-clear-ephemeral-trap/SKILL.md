@@ -24,7 +24,7 @@ error.
 
 ## Context / Trigger Conditions
 
-- `grafema analyze --clear --auto-start` reports successful analysis with node/edge counts
+- `grafema analyze --clear` reports successful analysis with node/edge counts
 - On restart, rfdb-server logs "Default database: 0 nodes, 0 edges"
 - `manifest_index.json` shows `"total_nodes": 0, "total_edges": 0`
 - Segment directories (`segments/00/`, `segments/01/`, etc.) exist but are empty
@@ -68,10 +68,10 @@ but nothing is written to disk. When the process exits, all data is lost.
 
 ```dockerfile
 # BAD: --clear makes V2 engine ephemeral, data lost
-RUN grafema analyze /build --clear --auto-start
+RUN grafema analyze /build --clear
 
 # GOOD: No --clear needed for fresh build (no existing DB)
-RUN grafema analyze /build --auto-start
+RUN grafema analyze /build
 ```
 
 If you truly need to clear and re-analyze an existing database, the proper approach is to
@@ -79,7 +79,7 @@ delete the database directory before starting the server, rather than using `--c
 
 ```bash
 rm -rf .grafema/graph.rfdb
-grafema analyze . --auto-start
+grafema analyze .
 ```
 
 ## Verification
