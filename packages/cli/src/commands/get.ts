@@ -77,7 +77,10 @@ Examples:
       if (!node) {
         spinner.stop();
         if (options.json) {
-          emitJsonNotFound({ node: null, incoming: [], outgoing: [] }, `Node not found: ${semanticId}`);
+          emitJsonNotFound(
+            { node: null, edges: { incoming: [], outgoing: [] }, stats: { incomingCount: 0, outgoingCount: 0 } },
+            `Node not found: ${semanticId}`,
+          );
           return;
         }
         exitWithError('Node not found', [
