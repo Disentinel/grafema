@@ -74,10 +74,25 @@ Examples:
       const target = await findTarget(backend, type, name);
 
       if (!target) {
+        const notFoundMessage = `No ${type || 'node'} "${name}" found`;
         if (options.json) {
-          process.stderr.write(`No ${type || 'node'} "${name}" found\n`);
+          // --json is an agent-facing contract: ALWAYS emit a valid JSON object on
+          // stdout, even when the target is missing. A not-found result is still a
+          // valid answer, not an empty stream + a side-channel stderr line (which
+          // makes a consumer's JSON.parse throw "Unexpected end of JSON input").
+          // The shape mirrors the success payload so callers can read
+          // directCallers/affectedModules unconditionally; target=null plus a
+          // human-readable `error` string signal the miss.
+          console.log(JSON.stringify({
+            target: null,
+            error: notFoundMessage,
+            directCallers: 0,
+            transitiveCallers: 0,
+            affectedModules: {},
+            callChains: [],
+          }, null, 2));
         } else {
-          console.log(`No ${type || 'node'} "${name}" found`);
+          console.log(notFoundMessage);
         }
         return;
       }
