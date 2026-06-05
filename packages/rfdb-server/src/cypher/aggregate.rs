@@ -17,6 +17,19 @@ use super::values::CypherValue;
 use super::CypherError;
 use std::cmp::Ordering;
 
+/// Is `name` (any case) one of the aggregate functions the executor implements?
+///
+/// This is the single source of truth for "aggregate vs scalar" — it MUST stay
+/// in sync with the accepted set in [`AggAcc::new`]. The planner uses it to route
+/// only aggregate calls through `HashAggregate` (and to reject unknown functions),
+/// so a scalar function in `RETURN` is never silently treated as an aggregate.
+pub fn is_aggregate_function(name: &str) -> bool {
+    matches!(
+        name.to_uppercase().as_str(),
+        "COUNT" | "SUM" | "AVG" | "MIN" | "MAX"
+    )
+}
+
 /// Per-aggregate, per-group accumulator state.
 ///
 /// Constructed once per group from the aggregate's function name, updated for
