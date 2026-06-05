@@ -14,15 +14,6 @@ use std::path::PathBuf;
 /// Without a synthetic file, `commit_batch` can't clean them up (file-based deletion).
 /// This assigns a per-plugin synthetic file so old virtual nodes are properly
 /// tombstoned before new ones are added.
-fn tag_virtual_nodes(output: &mut plugin::PluginOutput, plugin_name: &str) {
-    let synthetic_file = format!("__grafema_virtual/{}", plugin_name);
-    for node in &mut output.nodes {
-        if node.file.is_none() || node.file.as_deref() == Some("") {
-            node.file = Some(synthetic_file.clone());
-        }
-    }
-}
-
 #[derive(Parser)]
 #[command(name = "grafema-orchestrator", version, about = "Grafema analysis pipeline orchestrator")]
 struct Cli {
@@ -295,23 +286,9 @@ async fn commit_resolve_output(
     generation: u64,
     rfdb: &mut rfdb::RfdbClient,
 ) -> anyhow::Result<()> {
-    plugin::validate_plugin_output(output)?;
-    plugin::stamp_metadata(output, name, generation);
-    tag_virtual_nodes(output, name);
-    // Only include synthetic virtual files in changed_files — real source
-    // files must NOT be listed or commit_batch will tombstone all analysis
-    // nodes for those files before adding only the resolution nodes.
-    let files: Vec<String> = output
-        .nodes
-        .iter()
-        .filter_map(|n| n.file.clone())
-        .filter(|f| f.starts_with("__grafema_virtual/") || f.starts_with("<"))
-        .collect::<HashSet<_>>()
-        .into_iter()
-        .collect();
-    rfdb.commit_batch(&files, &output.nodes, &output.edges, true)
-        .await
-        .context(format!("Failed to commit {name} output"))?;
+    // Single safe commit path (validate + stamp + tag virtual nodes + tombstone-safe
+    // changed_files filter), shared with the per-file resolve durability checkpoints.
+    plugin::commit_resolve_chunk(output, name, generation, rfdb).await?;
     tracing::info!(
         plugin = name,
         nodes = output.nodes.len(),
@@ -1050,11 +1027,13 @@ async fn main() -> Result<()> {
                     Ok(resolve_pool) => {
                         let handles = resolve_pool.acquire_all().await?;
 
-                        let mut output = plugin::resolve_per_file(
+                        let output = plugin::resolve_per_file(
                             &mut rfdb,
                             config::Language::JavaScript,
                             &handles[0],
                             &ws_packages,
+                            "js-resolution",
+                            generation,
                         ).await?;
 
                         // Extract IMPORTS_FROM edges for DEPENDS_ON derivation
@@ -1064,7 +1043,8 @@ async fn main() -> Result<()> {
                             }
                         }
 
-                        commit_resolve_output(&mut output, "js-resolution", generation, &mut rfdb).await?;
+                        // resolve_per_file commits its own output incrementally
+                        // (per-checkpoint), so no end-of-phase commit here.
 
                         // Release the first-pass worker handle before the second pass acquires it.
                         // acquire_all() holds all pool slots; stream_and_resolve_single_worker needs
@@ -1997,11 +1977,13 @@ async fn main() -> Result<()> {
                     Ok(resolve_pool) => {
                         let handles = resolve_pool.acquire_all().await?;
 
-                        let mut output = plugin::resolve_per_file(
+                        let output = plugin::resolve_per_file(
                             &mut rfdb,
                             config::Language::JavaScript,
                             &handles[0],
                             &ws_packages,
+                            "js-resolution",
+                            generation,
                         ).await?;
 
                         // Extract IMPORTS_FROM edges for DEPENDS_ON derivation
@@ -2011,7 +1993,8 @@ async fn main() -> Result<()> {
                             }
                         }
 
-                        commit_resolve_output(&mut output, "js-resolution", generation, &mut rfdb).await?;
+                        // resolve_per_file commits its own output incrementally
+                        // (per-checkpoint), so no end-of-phase commit here.
                         let lang_ms = lang_start.elapsed().as_millis();
                         eprintln!("  Resolve: JS complete ({} edges, {:.1}s)",
                             output.edges.len(), lang_ms as f64 / 1000.0);

@@ -985,6 +985,122 @@ const INDEX_NODE_TYPES: &[&str] = &[
     "FUNCTION", "VARIABLE", "CONSTANT", "CLASS", "INTERFACE", "TYPE_ALIAS", "ENUM", "NAMESPACE",
 ];
 
+/// How many files to process between durability checkpoints in the per-file
+/// resolve loop. Resolve over a large monorepo can take hours; without a
+/// mid-phase commit a crash or SIGTERM discards 100% of the resolved edges
+/// (the manifest pointer never advances). Committing every N files bounds that
+/// loss to at most N files of work. See [`CheckpointAccumulator`] and REG-1138.
+const RESOLVE_CHECKPOINT_INTERVAL: usize = 500;
+
+/// Tag resolution-phase nodes that have no source file with a synthetic virtual
+/// file (`__grafema_virtual/<plugin>`), so they are never mistaken for real
+/// source nodes and never cause `commit_batch` to tombstone a real file.
+pub fn tag_virtual_nodes(output: &mut PluginOutput, plugin_name: &str) {
+    let synthetic_file = format!("__grafema_virtual/{plugin_name}");
+    for node in &mut output.nodes {
+        if node.file.is_none() || node.file.as_deref() == Some("") {
+            node.file = Some(synthetic_file.clone());
+        }
+    }
+}
+
+/// Commit one batch of resolution output to RFDB using the deferred-index path.
+///
+/// This is the single safe commit path shared by the end-of-phase commit and
+/// the mid-phase durability checkpoints. It:
+/// 1. validates + stamps provenance metadata + tags file-less virtual nodes,
+/// 2. lists ONLY synthetic virtual files in `changed_files` — real source files
+///    must never appear, or `commit_batch` tombstones their analysis nodes
+///    before re-adding only the resolution nodes,
+/// 3. commits with `defer_index = true` (callers rebuild indexes once at the end).
+///
+/// Re-committing the same nodes/edges is safe for the phase output: resolution
+/// nodes upsert by id and edge reads dedup by `(src, dst, edge_type)`, and edge
+/// tombstones key off the (real-source) origin node, so resolution edges from
+/// earlier checkpoints accumulate correctly and are never wiped by later ones.
+///
+/// Caveat — file-less virtual diagnostic nodes are last-writer-wins across
+/// checkpoints: every checkpoint lists the same `__grafema_virtual/<plugin>`
+/// file in `changed_files`, and `commit_batch` tombstones all nodes in a changed
+/// file before adding the chunk's nodes. So only the final checkpoint's virtual
+/// nodes persist. This is acceptable — virtual nodes are ephemeral placeholders;
+/// the real graph state (resolution edges + real-source nodes) is unaffected.
+pub async fn commit_resolve_chunk(
+    output: &mut PluginOutput,
+    name: &str,
+    generation: u64,
+    rfdb: &mut RfdbClient,
+) -> Result<()> {
+    validate_plugin_output(output)?;
+    stamp_metadata(output, name, generation);
+    tag_virtual_nodes(output, name);
+    let files: Vec<String> = output
+        .nodes
+        .iter()
+        .filter_map(|n| n.file.clone())
+        .filter(|f| f.starts_with("__grafema_virtual/") || f.starts_with('<'))
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    rfdb.commit_batch(&files, &output.nodes, &output.edges, true)
+        .await
+        .with_context(|| format!("Failed to commit {name} output"))?;
+    Ok(())
+}
+
+/// Buffers per-file resolve output and signals when a durability checkpoint is
+/// due (every `interval` files). Lets the per-file resolve loop commit partial
+/// progress so a crash or SIGTERM mid-resolve does not discard all work.
+///
+/// Pure and synchronous so it is unit-testable without an RFDB connection.
+pub struct CheckpointAccumulator {
+    interval: usize,
+    files_since_checkpoint: usize,
+    pending: PluginOutput,
+}
+
+impl CheckpointAccumulator {
+    /// `interval == 0` disables periodic checkpoints (single commit at the end).
+    pub fn new(interval: usize) -> Self {
+        Self {
+            interval,
+            files_since_checkpoint: 0,
+            pending: PluginOutput::default(),
+        }
+    }
+
+    /// Record one file's resolve output into the pending delta buffer.
+    pub fn record(&mut self, nodes: &[WireNode], edges: &[WireEdge]) {
+        self.pending.nodes.extend_from_slice(nodes);
+        self.pending.edges.extend_from_slice(edges);
+        self.files_since_checkpoint += 1;
+    }
+
+    /// If `interval` files have accrued since the last checkpoint, return the
+    /// buffered delta (resetting the buffer) so the caller can commit it. A due
+    /// checkpoint over files that produced no output yields `None` (the counter
+    /// still resets) so no empty commit is issued.
+    pub fn take_if_due(&mut self) -> Option<PluginOutput> {
+        if self.interval != 0 && self.files_since_checkpoint >= self.interval {
+            self.files_since_checkpoint = 0;
+            if self.pending.nodes.is_empty() && self.pending.edges.is_empty() {
+                return None;
+            }
+            return Some(std::mem::take(&mut self.pending));
+        }
+        None
+    }
+
+    /// Return any remaining un-checkpointed delta. Call once after the loop.
+    pub fn take_remaining(&mut self) -> Option<PluginOutput> {
+        if self.pending.nodes.is_empty() && self.pending.edges.is_empty() {
+            None
+        } else {
+            Some(std::mem::take(&mut self.pending))
+        }
+    }
+}
+
 /// Per-file resolve: builds an export index on the worker, then resolves each
 /// file individually by querying RFDB for that file's nodes.
 ///
@@ -995,13 +1111,21 @@ const INDEX_NODE_TYPES: &[&str] = &[
 /// Protocol:
 /// 1. Query MODULE nodes → discover files for the given language
 /// 2. Query index-worthy nodes (exports, modules) → send `build-index` to worker
-/// 3. For each file: `query_nodes_by_file` → send `resolve-file` → accumulate edges
-/// 4. Return accumulated PluginOutput (caller commits to RFDB)
+/// 3. For each file: `query_nodes_by_file` → send `resolve-file` → accumulate edges,
+///    committing a durability checkpoint every [`RESOLVE_CHECKPOINT_INTERVAL`] files
+/// 4. Commit the final delta and return the accumulated PluginOutput
+///
+/// Because this function now commits its own output incrementally (under
+/// `name`/`generation`), the caller must NOT commit the returned output again —
+/// it is returned only so the caller can read derived edges (e.g. IMPORTS_FROM)
+/// and counts.
 pub async fn resolve_per_file(
     rfdb: &mut RfdbClient,
     lang: crate::config::Language,
     handle: &WorkerHandle<'_>,
     workspace_packages: &[WorkspacePackageWire],
+    name: &str,
+    generation: u64,
 ) -> Result<PluginOutput> {
     // Step 1: Get all MODULE nodes to find files for this language
     let module_nodes = rfdb.query_nodes_by_type("MODULE").await?;
@@ -1061,8 +1185,12 @@ pub async fn resolve_per_file(
     }
     drop(build_index_request); // Free memory
 
-    // Step 3: For each file, query nodes and send resolve-file
+    // Step 3: For each file, query nodes and send resolve-file. Output is
+    // committed incrementally (every RESOLVE_CHECKPOINT_INTERVAL files) so a
+    // crash or SIGTERM mid-resolve does not discard all work, and also kept in
+    // `all_output` so the caller can read derived edges/counts.
     let mut all_output = PluginOutput::default();
+    let mut checkpoints = CheckpointAccumulator::new(RESOLVE_CHECKPOINT_INTERVAL);
     let total_files = files.len();
 
     for (i, file) in files.iter().enumerate() {
@@ -1086,13 +1214,23 @@ pub async fn resolve_per_file(
             .with_context(|| format!("resolve-file failed for '{file}'"))?;
         let output = parse_resolve_response(&response_bytes, "resolve-file")?;
 
+        checkpoints.record(&output.nodes, &output.edges);
         all_output.nodes.extend(output.nodes);
         all_output.edges.extend(output.edges);
+
+        if let Some(mut chunk) = checkpoints.take_if_due() {
+            commit_resolve_chunk(&mut chunk, name, generation, rfdb).await?;
+        }
 
         if (i + 1) % 500 == 0 || i + 1 == total_files {
             eprintln!("    Per-file resolve: {}/{} files ({} edges so far)",
                 i + 1, total_files, all_output.edges.len());
         }
+    }
+
+    // Commit the final partial delta (files since the last checkpoint).
+    if let Some(mut chunk) = checkpoints.take_remaining() {
+        commit_resolve_chunk(&mut chunk, name, generation, rfdb).await?;
     }
 
     deduplicate_virtual_nodes(&mut all_output);
@@ -1569,5 +1707,110 @@ mod tests {
                  resolver indexes — its exports become unresolvable (REG-1139)"
             );
         }
+    }
+
+    // -- CheckpointAccumulator tests (REG-1138 mid-resolve durability) --
+
+    fn ck_node(id: &str) -> WireNode {
+        WireNode {
+            id: id.to_string(),
+            semantic_id: None,
+            node_type: None,
+            name: None,
+            file: None,
+            exported: false,
+            metadata: None,
+        }
+    }
+
+    fn ck_edge(src: &str, dst: &str) -> WireEdge {
+        WireEdge {
+            src: src.to_string(),
+            dst: dst.to_string(),
+            edge_type: "CALLS".to_string(),
+            metadata: None,
+        }
+    }
+
+    /// With interval N a checkpoint is due exactly every N recorded files and
+    /// carries only the delta since the previous checkpoint.
+    #[test]
+    fn checkpoint_fires_every_interval_with_delta_only() {
+        let mut acc = CheckpointAccumulator::new(2);
+        // file 1 — not due yet
+        acc.record(&[ck_node("a")], &[]);
+        assert!(acc.take_if_due().is_none());
+        // file 2 — due, delta = files 1..2
+        acc.record(&[ck_node("b")], &[ck_edge("b", "x")]);
+        let chunk = acc.take_if_due().expect("checkpoint due at 2 files");
+        assert_eq!(chunk.nodes.len(), 2);
+        assert_eq!(chunk.edges.len(), 1);
+        // file 3 — buffer was reset, not due yet
+        acc.record(&[ck_node("c")], &[]);
+        assert!(acc.take_if_due().is_none());
+        // remaining = just file 3
+        let rest = acc.take_remaining().expect("file 3 still pending");
+        assert_eq!(rest.nodes.len(), 1);
+        assert_eq!(rest.nodes[0].id, "c");
+    }
+
+    /// The union of every checkpoint chunk plus the final remainder reproduces
+    /// all recorded output exactly once — no loss, no duplication.
+    #[test]
+    fn checkpoint_chunks_partition_all_output() {
+        let mut acc = CheckpointAccumulator::new(2);
+        let mut committed_nodes = 0usize;
+        let mut committed_edges = 0usize;
+        for i in 0..5 {
+            acc.record(&[ck_node(&format!("n{i}"))], &[ck_edge(&format!("n{i}"), "t")]);
+            if let Some(chunk) = acc.take_if_due() {
+                committed_nodes += chunk.nodes.len();
+                committed_edges += chunk.edges.len();
+            }
+        }
+        if let Some(rest) = acc.take_remaining() {
+            committed_nodes += rest.nodes.len();
+            committed_edges += rest.edges.len();
+        }
+        assert_eq!(committed_nodes, 5, "all 5 files' nodes committed exactly once");
+        assert_eq!(committed_edges, 5, "all 5 files' edges committed exactly once");
+    }
+
+    /// interval == 0 disables periodic checkpoints: everything lands in the
+    /// final remainder (the pre-fix single-commit behavior).
+    #[test]
+    fn checkpoint_interval_zero_commits_once_at_end() {
+        let mut acc = CheckpointAccumulator::new(0);
+        for i in 0..10 {
+            acc.record(&[ck_node(&format!("n{i}"))], &[]);
+            assert!(acc.take_if_due().is_none(), "no periodic checkpoint when interval=0");
+        }
+        let rest = acc.take_remaining().expect("all output pending at end");
+        assert_eq!(rest.nodes.len(), 10);
+    }
+
+    /// take_remaining yields nothing when the buffer is empty (e.g. the last
+    /// file landed exactly on a checkpoint boundary).
+    #[test]
+    fn checkpoint_remaining_empty_after_exact_boundary() {
+        let mut acc = CheckpointAccumulator::new(2);
+        acc.record(&[ck_node("a")], &[]);
+        acc.record(&[ck_node("b")], &[]);
+        assert!(acc.take_if_due().is_some());
+        assert!(acc.take_remaining().is_none(), "nothing pending after exact boundary");
+    }
+
+    /// A due checkpoint whose interval produced no output issues no commit
+    /// (returns None) but still resets the counter.
+    #[test]
+    fn checkpoint_skips_empty_delta() {
+        let mut acc = CheckpointAccumulator::new(2);
+        acc.record(&[], &[]);
+        acc.record(&[], &[]);
+        assert!(acc.take_if_due().is_none(), "empty delta → no commit");
+        // counter reset: a subsequent non-empty pair fires normally
+        acc.record(&[ck_node("a")], &[]);
+        acc.record(&[ck_node("b")], &[]);
+        assert!(acc.take_if_due().is_some(), "counter reset after empty checkpoint");
     }
 }
