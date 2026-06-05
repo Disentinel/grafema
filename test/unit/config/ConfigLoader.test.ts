@@ -490,19 +490,14 @@ plugins:
       assert.ok(Array.isArray(DEFAULT_CONFIG.plugins.validation));
     });
 
-    it('should have non-empty default plugins', () => {
-      assert.ok(DEFAULT_CONFIG.plugins.indexing.length > 0, 'indexing should have default plugins');
-      assert.ok(DEFAULT_CONFIG.plugins.analysis.length > 0, 'analysis should have default plugins');
-      assert.ok(DEFAULT_CONFIG.plugins.enrichment.length > 0, 'enrichment should have default plugins');
-      assert.ok(DEFAULT_CONFIG.plugins.validation.length > 0, 'validation should have default plugins');
-    });
-
-    it('should include expected default plugins', () => {
-      // Based on Joel's spec
-      assert.ok(DEFAULT_CONFIG.plugins.indexing.includes('JSModuleIndexer'));
-      assert.ok(DEFAULT_CONFIG.plugins.analysis.includes('CoreV2Analyzer'));
-      assert.ok(DEFAULT_CONFIG.plugins.enrichment.includes('ExportEntityLinker'));
-      assert.ok(DEFAULT_CONFIG.plugins.validation.includes('EvalBanValidator'));
+    it('should have empty default plugins (legacy JS pipeline removed in v3)', () => {
+      // The JS analysis-plugin pipeline was deleted in the v3 migration (e063fc4e);
+      // analysis/enrichment/validation run natively in the Rust orchestrator now.
+      // The TS plugin lists are vestigial and must default to empty so `doctor`
+      // does not report deleted plugins as configured. See test/unit/configDefaultPlugins.
+      for (const phase of ['discovery', 'indexing', 'analysis', 'enrichment', 'validation'] as const) {
+        assert.deepStrictEqual(DEFAULT_CONFIG.plugins[phase], [], `default plugins.${phase} must be empty`);
+      }
     });
   });
 
