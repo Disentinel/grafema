@@ -12,7 +12,7 @@ import { Command } from 'commander';
 import { resolve, join } from 'path';
 import { existsSync } from 'fs';
 import { RFDBServerBackend } from '@grafema/util';
-import { exitWithError } from '../utils/errorFormatter.js';
+import { exitWithError, emitJsonNotFound } from '../utils/errorFormatter.js';
 
 interface TypesOptions {
   project: string;
@@ -53,6 +53,13 @@ Use with query --type:
       const entries = Object.entries(nodeCounts);
 
       if (entries.length === 0) {
+        // --json contract: stdout is always parseable JSON. Emit the empty
+        // success shape ({ types, totalTypes, totalNodes }) so a consumer reading
+        // those fields never chokes on the human "No nodes in graph" string.
+        if (options.json) {
+          emitJsonNotFound({ types: [], totalTypes: 0, totalNodes: 0 }, 'No nodes in graph. Run: grafema analyze');
+          return;
+        }
         console.log('No nodes in graph. Run: grafema analyze');
         return;
       }
