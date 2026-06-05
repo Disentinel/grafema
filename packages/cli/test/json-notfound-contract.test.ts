@@ -76,4 +76,20 @@ describe('CLI --json not-found contract (get/context/describe/ls)', { timeout: 9
     assert.deepStrictEqual(parsed.nodes, [], `nodes should be empty:\n${out}`);
     assert.strictEqual(parsed.total, 0);
   });
+
+  it('explain <missing-file> --json → parseable JSON, NOT_FOUND, empty nodes', () => {
+    const out = runCli(['explain', '__nope__.ts', '--json'], tempDir).stdout;
+    const parsed = JSON.parse(out); // must not throw
+    assert.strictEqual(parsed.status, 'NOT_FOUND', `status should be NOT_FOUND:\n${out}`);
+    assert.deepStrictEqual(parsed.nodes, []);
+    assert.strictEqual(parsed.totalCount, 0);
+  });
+
+  it('file <missing-file> --json → parseable JSON, NOT_FOUND, empty collections', () => {
+    const out = runCli(['file', '__nope__.ts', '--json'], tempDir).stdout;
+    const parsed = JSON.parse(out); // must not throw
+    assert.strictEqual(parsed.status, 'NOT_FOUND', `status should be NOT_FOUND:\n${out}`);
+    assert.deepStrictEqual(parsed.functions, []);
+    assert.deepStrictEqual(parsed.imports, []);
+  });
 });
