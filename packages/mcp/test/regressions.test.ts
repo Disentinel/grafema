@@ -14,7 +14,7 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { FileOverview } from '@grafema/util';
 import type { GraphBackend } from '@grafema/types';
 import { findProjectRoot } from '../src/state.js';
@@ -571,5 +571,34 @@ describe('REG-652 — findProjectRoot workspace auto-detection', () => {
     const sub = join(inner, 'src');
     mkdirSync(sub);
     assert.strictEqual(findProjectRoot(sub), inner);
+  });
+});
+
+// ============================================================================
+// REG-1144 — no advertised-but-dead MCP tools
+//
+// Every tool advertised in TOOLS (returned by ListTools) must have a matching
+// `case '<name>':` dispatch arm in server.ts, or calling it falls through to
+// the switch default and returns errorResult("Unknown tool: <name>") — an
+// advertised-but-dead trust hole for agents.
+// ============================================================================
+
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { TOOLS } from '../src/definitions/index.js';
+
+describe('REG-1144 — advertised tools all have dispatch handlers', () => {
+  it('no advertised tool is missing a server.ts case handler', () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const serverSrc = readFileSync(join(here, '..', 'src', 'server.ts'), 'utf8');
+    const handled = new Set(
+      [...serverSrc.matchAll(/case '([a-z_]+)':/g)].map((m) => m[1]),
+    );
+    const dead = TOOLS.map((t) => t.name).filter((n) => !handled.has(n));
+    assert.deepStrictEqual(
+      dead,
+      [],
+      `advertised tools with no dispatch handler (would return "Unknown tool"): ${dead.join(', ')}`,
+    );
   });
 });
