@@ -7,6 +7,13 @@ All notable changes to this project will be documented in this file.
 ### Features
 
 - feat(cli): `grafema upgrade` command — clean stale artifacts from `~/.grafema/bin/` and upgrade binaries to current version. Supports `--all`, `--lang`, `--project`, `--dry-run` flags.
+- feat(cypher): SUM/AVG/MIN/MAX aggregates in Cypher queries (RFD-70) — real typed accumulators with Cypher NULL semantics and Int→Float promotion; unsupported aggregate functions now error instead of silently returning a row count (#274)
+
+### Bug Fixes
+
+- fix(coverage): exclude skipped/failed files from the analyzed count — oversized files that the orchestrator silently skips are reclassified from "analyzed" into a new "Failed" bucket, so `grafema coverage` reports an accurate (no longer inflated) percentage (REG-1140, #276)
+- fix(rfdb): correct token fuzzy-search Jaccard scores by unifying the tokenizer — removes the phantom whole-string token that inflated the union denominator and distorted `find_nodes` fuzzy-fallback ranking (#275)
+- fix(rust-analyzer): unwrap `Box`/`Rc`/`Arc` receiver types so `Box<dyn Trait>` resolves to the inner trait, restoring dyn-dispatch CALLS edges that were previously dropped (#273)
 
 ## [0.3.23] - 2026-04-01
 
