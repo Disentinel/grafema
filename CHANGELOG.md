@@ -27,6 +27,7 @@ All notable changes to this project will be documented in this file.
 - fix(cli): `grafema impact <symbol> --json` emits valid JSON (zero-impact object with `target: null`) instead of empty stdout when the target is not found; the human-readable note stays on stderr (#304)
 - fix(cli): `grafema wtf <symbol> --json` emits valid JSON (`{ symbol, node: null, results: [] }`) instead of empty stdout when the symbol is not found; human note moves to stderr (#307)
 - fix(cli): `--json` always emits parseable JSON on not-found for `get`/`context`/`describe`/`ls` via a shared `emitJsonNotFound` helper (each shape mirrors its success output); previously these printed empty stdout, breaking `JSON.parse` for scripts/agents (#308)
+- fix(cli): `file`/`explain --json` emit parseable JSON on a missing file (object mirroring each command's success shape with `status: "NOT_FOUND"` and empty collections) instead of empty stdout; human note moves to stderr, exit stays 0 (#311)
 
 ## [0.3.23] - 2026-04-01
 
