@@ -110,7 +110,13 @@ describe('CLI --json not-found contract (get/context/describe/ls)', { timeout: 9
     // --skip-reanalysis isolates the not-found path from incremental reanalysis.
     const out = runCli(['check', '__unknownRule__', '--skip-reanalysis', '--json'], tempDir).stdout;
     const parsed = JSON.parse(out); // must not throw
+    // Must mirror the full CheckAllResult success shape (not a degenerate {results:[]}),
+    // so consumers reading total/passed/failed/errors on success don't get undefined here.
     assert.deepStrictEqual(parsed.results, [], `results should be empty:\n${out}`);
+    assert.strictEqual(parsed.total, 0, `total:\n${out}`);
+    assert.strictEqual(parsed.passed, 0, `passed:\n${out}`);
+    assert.strictEqual(parsed.failed, 0, `failed:\n${out}`);
+    assert.strictEqual(parsed.errors, 0, `errors:\n${out}`);
   });
 
   it('trace --from-route <missing> --json → parseable JSON, route:null (REG-1149)', () => {

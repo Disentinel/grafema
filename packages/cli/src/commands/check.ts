@@ -199,7 +199,7 @@ Examples:
         if (guarantees.length === 0) {
           if (options.json) {
             // --json contract: no guarantees → empty results, parseable stdout.
-            emitJsonNotFound({ results: [] }, 'No guarantees found.');
+            emitJsonNotFound({ total: 0, passed: 0, failed: 0, errors: 0, results: [] }, 'No guarantees found.');
             return;
           }
           console.log('No guarantees found.');
@@ -219,7 +219,7 @@ Examples:
           if (options.json) {
             // --json contract: parseable stdout mirroring the results shape.
             // (return runs the enclosing finally → backend.close().)
-            emitJsonNotFound({ results: [] }, `Guarantee not found: ${rule}`);
+            emitJsonNotFound({ total: 0, passed: 0, failed: 0, errors: 0, results: [] }, `Guarantee not found: ${rule}`);
             return;
           }
           exitWithError(`Guarantee not found: ${rule}`, [
