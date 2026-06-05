@@ -26,8 +26,8 @@
     "build": "tsc",
     "clean": "rm -rf dist",
     "start": "node dist/server.js",
-    "test": "node --import tsx --experimental-test-module-mocks --test test/*.test.ts",
-    "test:watch": "node --import tsx --experimental-test-module-mocks --test --watch test/*.test.ts"
+    "test": "node --import tsx --experimental-test-module-mocks --test --test-concurrency=1 test/*.test.ts",
+    "test:watch": "node --import tsx --experimental-test-module-mocks --test --test-concurrency=1 --watch test/*.test.ts"
   },
   "keywords": [
     "grafema",
