@@ -23,6 +23,8 @@ All notable changes to this project will be documented in this file.
 - fix(cli): `file`/`explain` resolve files correctly when the project root is a symlink (e.g. `--project` at a symlinked checkout, or a root under macOS `/tmp`→`/private/tmp`) — previously reported `NOT_ANALYZED` for analyzed files because the project-relative path was computed against a non-realpath'd root (#293)
 - fix(cli): `grafema impact <method>` resolves a bare method name to its METHOD node and finds its callers (previously reported "No node found") — recovers `receiver.method()` call sites whose `method` attribute is unpopulated via a name-based CALL scan, consistent with `grafema who` (#297)
 - fix(util): `findContainingFunction` attributes a call inside a class method to that METHOD instead of the enclosing CLASS — fixes caller labelling and impact's internal-call exclusion for method-to-method calls (REG-254, #300)
+- fix(cli): `grafema impact <Class>` aggregates callers of all the class's methods (enumerated via `HAS_METHOD`) and excludes the class's own method-to-method internal calls from the external-impact count (REG-543, #303)
+- fix(cli): `grafema impact <symbol> --json` emits valid JSON (zero-impact object with `target: null`) instead of empty stdout when the target is not found; the human-readable note stays on stderr (#304)
 
 ## [0.3.23] - 2026-04-01
 
