@@ -4,6 +4,7 @@
 //! Cypher complements Datalog for interactive queries: LIMIT stops the pipeline
 //! after k results (O(k) not O(N)), COUNT is supported, ORDER BY sorts results.
 
+mod aggregate;
 mod ast;
 mod parser;
 mod values;
