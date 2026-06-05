@@ -200,6 +200,10 @@ describe('GitIngest', () => {
 
     // Create a test git repo with some commits
     execSync('git init', { cwd: repoDir });
+    // Disable commit signing locally so the suite is hermetic: a host with a
+    // global `commit.gpgsign=true` (common for "Verified"-badge setups) would
+    // otherwise fail every `git commit` below against the test's synthetic identities.
+    execSync('git config commit.gpgsign false', { cwd: repoDir });
     execSync('git config user.email "alice@test.com"', { cwd: repoDir });
     execSync('git config user.name "Alice"', { cwd: repoDir });
 
@@ -697,6 +701,10 @@ describe('GitIngest → KnowledgeBase → query round-trip', () => {
 
     // Create test repo with 2 authors
     execSync('git init', { cwd: repoDir });
+    // Disable commit signing locally so the suite is hermetic (see note in the
+    // GitIngest YAML round-trip setup above): a global `commit.gpgsign=true`
+    // would otherwise fail every `git commit` against the synthetic identities.
+    execSync('git config commit.gpgsign false', { cwd: repoDir });
     execSync('git config user.email "alice@test.com"', { cwd: repoDir });
     execSync('git config user.name "Alice"', { cwd: repoDir });
 
