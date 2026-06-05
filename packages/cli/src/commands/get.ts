@@ -11,7 +11,7 @@ import { resolve, join } from 'path';
 import { existsSync } from 'fs';
 import { RFDBServerBackend } from '@grafema/util';
 import { formatNodeDisplay } from '../utils/formatNode.js';
-import { exitWithError } from '../utils/errorFormatter.js';
+import { exitWithError, emitJsonNotFound } from '../utils/errorFormatter.js';
 import { Spinner } from '../utils/spinner.js';
 
 interface GetOptions {
@@ -76,6 +76,10 @@ Examples:
 
       if (!node) {
         spinner.stop();
+        if (options.json) {
+          emitJsonNotFound({ node: null, incoming: [], outgoing: [] }, `Node not found: ${semanticId}`);
+          return;
+        }
         exitWithError('Node not found', [
           `ID: ${semanticId}`,
           'Try: grafema query "<name>" to search for nodes',
