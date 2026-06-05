@@ -105,6 +105,13 @@ extractEdges = concatMap getEdge
     getEdge (EmitEdge e) = [e]
     getEdge _            = []
 
+-- | Extract emitted nodes from plugin commands.
+extractNodes :: [PluginCommand] -> [GraphNode]
+extractNodes = concatMap getNode
+  where
+    getNode (EmitNode n) = [n]
+    getNode _            = []
+
 -- | Create a CLASS node with line range.
 mkClass :: Text -> Text -> Int -> Int -> GraphNode
 mkClass file name startLine endLine =
@@ -667,16 +674,34 @@ testNoSuperClass =
     [] -> Pass
     _  -> Fail $ "Expected 0 edges for class without superClass, got: " ++ show edges
 
--- | Unknown superClass (not in file, not imported) → no edge.
-testUnknownSuperClass :: TestResult
-testUnknownSuperClass =
+-- | Builtin superClass (e.g. EventEmitter) → EXTENDS edge to a virtual
+-- BUILTIN_CLASS node + the CLASS node itself (REG-585).
+testBuiltinBaseExtends :: TestResult
+testBuiltinBaseExtends =
   let file  = "src/animals.ts"
-      nodes = [ mkClassWithSuper file "Dog" "EventEmitter" ]
+      nodes = [ mkClassWithSuper file "Logger" "EventEmitter" ]
+      cmds  = ClassInheritance.resolveAll nodes
+      edges = extractEdges cmds
+      clsNodes = filter (\n -> gnType n == "CLASS" && gnId n == "BUILTIN_CLASS::EventEmitter") (extractNodes cmds)
+  in case (edges, clsNodes) of
+    ([e], (_:_))
+      | geSource e == file <> "->CLASS->Logger"
+      , geTarget e == "BUILTIN_CLASS::EventEmitter"
+      , geType e == "EXTENDS"
+      , Map.lookup "resolvedVia" (geMetadata e) == Just (MetaText "builtin-class")
+      -> Pass
+    _ -> Fail $ "Expected builtin EXTENDS edge + BUILTIN_CLASS node, got edges: " ++ show edges
+
+-- | Unknown NON-builtin superClass (not in file, not imported, not builtin) → no edge.
+testUnknownNonBuiltinSuper :: TestResult
+testUnknownNonBuiltinSuper =
+  let file  = "src/animals.ts"
+      nodes = [ mkClassWithSuper file "Dog" "TotallyMadeUpBase" ]
       cmds  = ClassInheritance.resolveAll nodes
       edges = extractEdges cmds
   in case edges of
     [] -> Pass
-    _  -> Fail $ "Expected 0 edges for unknown superClass, got: " ++ show edges
+    _  -> Fail $ "Expected 0 edges for unknown non-builtin superClass, got: " ++ show edges
 
 -- | Cross-file inheritance: Animal imported from ./base, class Dog extends Animal.
 testCrossFileExtends :: TestResult
@@ -806,7 +831,8 @@ main = do
   ciResults <- sequence
     [ runTest "same-file class extends creates EXTENDS edge" testSameFileExtends
     , runTest "class without superClass produces no edge" testNoSuperClass
-    , runTest "unknown superClass produces no edge" testUnknownSuperClass
+    , runTest "builtin superClass (EventEmitter) creates EXTENDS to BUILTIN_CLASS node" testBuiltinBaseExtends
+    , runTest "unknown non-builtin superClass produces no edge" testUnknownNonBuiltinSuper
     , runTest "cross-file inheritance via import creates EXTENDS edge" testCrossFileExtends
     ]
   putStrLn ""
