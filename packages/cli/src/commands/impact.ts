@@ -75,7 +75,17 @@ Examples:
 
       if (!target) {
         if (options.json) {
+          // --json contract: stdout is always parseable JSON. Emit a zero-impact
+          // object (target:null) so scripts/agents don't choke on empty output;
+          // the human-readable note goes to stderr.
           process.stderr.write(`No ${type || 'node'} "${name}" found\n`);
+          console.log(JSON.stringify({
+            target: null,
+            directCallers: 0,
+            transitiveCallers: 0,
+            affectedModules: {},
+            callChains: [],
+          }, null, 2));
         } else {
           console.log(`No ${type || 'node'} "${name}" found`);
         }
