@@ -16,7 +16,7 @@ import { resolve, join, relative, normalize } from 'path';
 import { existsSync, realpathSync } from 'fs';
 import { RFDBServerBackend, FileOverview } from '@grafema/util';
 import type { FileOverviewResult, FunctionOverview } from '@grafema/util';
-import { exitWithError } from '../utils/errorFormatter.js';
+import { exitWithError, emitJsonNotFound } from '../utils/errorFormatter.js';
 import { Spinner } from '../utils/spinner.js';
 
 interface FileOptions {
@@ -79,6 +79,15 @@ Use 'grafema context <id>' to dive deeper into any specific entity.
 
     const resolvedPath = resolve(projectPath, filePath);
     if (!existsSync(resolvedPath)) {
+      if (options.json) {
+        // --json contract: stdout is always parseable JSON. Mirror the
+        // FileOverviewResult shape with a NOT_FOUND status; human note to stderr.
+        emitJsonNotFound(
+          { file, status: 'NOT_FOUND', imports: [], exports: [], classes: [], functions: [], variables: [] },
+          `File not found: ${file}`,
+        );
+        return;
+      }
       exitWithError(`File not found: ${file}`, [
         'Check the file path and try again',
       ]);

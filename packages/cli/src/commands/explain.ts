@@ -17,7 +17,7 @@ import { resolve, join, relative, normalize } from 'path';
 import { existsSync, realpathSync } from 'fs';
 import { toRelativeDisplay } from '../utils/pathUtils.js';
 import { RFDBServerBackend, FileExplainer, type EnhancedNode } from '@grafema/util';
-import { exitWithError } from '../utils/errorFormatter.js';
+import { exitWithError, emitJsonNotFound } from '../utils/errorFormatter.js';
 
 interface ExplainOptions {
   project: string;
@@ -78,6 +78,15 @@ If a file shows NOT_ANALYZED:
     // Resolve to absolute path for graph lookup
     const resolvedPath = resolve(projectPath, filePath);
     if (!existsSync(resolvedPath)) {
+      if (options.json) {
+        // --json contract: stdout is always parseable JSON. Mirror the
+        // FileExplainResult shape with a NOT_FOUND status; human note to stderr.
+        emitJsonNotFound(
+          { file, status: 'NOT_FOUND', nodes: [], byType: {}, totalCount: 0 },
+          `File not found: ${file}`,
+        );
+        return;
+      }
       exitWithError(`File not found: ${file}`, [
         'Check the file path and try again',
       ]);
