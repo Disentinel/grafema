@@ -1,0 +1,1286 @@
+//! Layer 5 — builtin predicate registry.
+//!
+//! Holds the `BuiltinDef` registry and ports the v1 eval bodies (`node`/`type`,
+//! `edge`, `incoming`, `attr`, `neq`, `gt`/`lt`/`gte`/`lte`, `starts_with`,
+//! `not_starts_with`, `string_contains`), each annotated with its supported binding
+//! modes and a cost estimate, served through [`StorageView`]. Invariant I5: an
+//! unsupported binding mode for a builtin is rejected with `E-PLAN-001`.
+//!
+//! # One registration point
+//!
+//! [`registry`] is the single place every builtin is declared. The planner consults a
+//! [`BuiltinDef`] for its arity, kind, supported [`Mode`]s, and cost; the executor calls
+//! its [`BuiltinDef::eval`] with the storage view, an output [`Batch`], and the resolved
+//! [`ArgSpec`] for the literal. No builtin reads storage directly — every access goes
+//! through the locked `StorageView` surface (I10).
+//!
+//! # Modes and `E-PLAN-001`
+//!
+//! Each argument of a literal is, at plan time, either already *bound* (a constant or a
+//! variable bound by an earlier literal) or *free* (an as-yet-unbound variable / wildcard
+//! to be produced). A [`Mode`] is the per-position bind pattern a builtin supports. The
+//! planner calls [`BuiltinDef::check_mode`]; if the literal's actual pattern matches no
+//! supported mode the call is rejected with [`BuiltinError`] carrying `E-PLAN-001` and the
+//! list of argument positions that would need to be bound first (spec §7).
+//!
+//! # `attr` coercion (spec §5)
+//!
+//! `attr(Id, Key, Value)` reads a node's first-class column (`name`/`file`/`type`/`id`)
+//! through the single permitted bound-id point lookup ([`StorageView::get_node`]). The
+//! comparison against a literal `Value` is performed at the value level; a comparison that
+//! cannot be satisfied because the literal cannot be coerced to the column's surface
+//! (e.g. a numeric literal against a string column with no numeric reading) is a **tuple
+//! non-match** that increments [`Batch::coercion_misses`] — never a crash and never a
+//! silently-empty query masquerading as "no such node". Metadata-key attrs are not part of
+//! the Gate A `StorageView` row surface (`NodeRow` carries only id/type/name/file); an
+//! attr key outside the first-class set is reported as a coercion miss for the same reason
+//! and resolved when the row surface gains metadata in a later gate.
+
+use std::fmt;
+
+use crate::datalog::Value;
+
+use super::storage_glue::{EdgeOrder, NodeRow, StorageView};
+
+// ── Errors (invariant I5) ──────────────────────────────────────────
+
+/// Stable, machine-readable builtin error codes (invariant I5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuiltinCode {
+    /// A literal's actual binding pattern is supported by no registered [`Mode`] of the
+    /// builtin: the planner must bind the named positions first. Spec §7.
+    UnsupportedMode,
+}
+
+impl BuiltinCode {
+    /// The stable string form emitted in diagnostics and conformance manifests.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            BuiltinCode::UnsupportedMode => "E-PLAN-001",
+        }
+    }
+}
+
+impl fmt::Display for BuiltinCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// A builtin planning/evaluation rejection (invariant I5): a stable [`BuiltinCode`] plus a
+/// human detail and the argument positions whose binding the rejection requires.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuiltinError {
+    /// Stable taxonomy code — the load-bearing, machine-checkable field.
+    pub code: BuiltinCode,
+    /// The builtin that rejected the call.
+    pub builtin: &'static str,
+    /// One-line human detail (never the sole signal; the code is authoritative).
+    pub detail: String,
+    /// Argument positions (0-based) that must be bound before the call is feasible. For
+    /// `E-PLAN-001` this names the required bindings (spec §7).
+    pub required_bindings: Vec<usize>,
+}
+
+impl fmt::Display for BuiltinError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} [{}] (bind positions {:?}): {}",
+            self.code, self.builtin, self.required_bindings, self.detail
+        )
+    }
+}
+
+impl std::error::Error for BuiltinError {}
+
+/// Result of a builtin operation (plan-time mode check or eval).
+pub type BuiltinResult<T> = Result<T, BuiltinError>;
+
+// ── Binding modes ──────────────────────────────────────────────────
+
+/// The bind-state of a single literal argument at plan time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArgMode {
+    /// Already bound: a constant, or a variable bound by an earlier literal.
+    Bound,
+    /// Free: an unbound variable or wildcard, to be produced by this literal.
+    Free,
+}
+
+/// A supported binding pattern for a builtin: one [`ArgMode`] per argument position.
+///
+/// The planner matches a literal's actual pattern against each registered `Mode`; the
+/// match is exact per position (`Bound` requires the actual arg be bound, `Free` requires
+/// it be free). A builtin with no matching mode is rejected with `E-PLAN-001`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Mode {
+    /// Per-position bind pattern. `len()` equals the builtin's arity.
+    pub args: &'static [ArgMode],
+}
+
+impl Mode {
+    /// Whether `actual` (the literal's per-position bind state) satisfies this mode.
+    fn matches(&self, actual: &[ArgMode]) -> bool {
+        self.args.len() == actual.len()
+            && self
+                .args
+                .iter()
+                .zip(actual.iter())
+                .all(|(want, have)| want == have)
+    }
+}
+
+// ── Argument specification ─────────────────────────────────────────
+
+/// One resolved argument of a builtin literal, as the executor presents it.
+///
+/// At eval time every argument is one of: a literal constant, a variable already bound to
+/// a value by the surrounding row, or a free output variable to be produced. The slot
+/// index identifies which output column a [`Free`](ArgValue::Free) variable fills.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ArgValue {
+    /// A bound value: a constant literal or a variable bound by an earlier literal.
+    Bound(Value),
+    /// A free output variable; `slot` is its position in the produced [`Row`]'s output
+    /// column order (the order the registry documents for the builtin).
+    Free { slot: usize },
+    /// A wildcard `_`: free but never captured (no output column).
+    Wildcard,
+}
+
+impl ArgValue {
+    /// The plan-time [`ArgMode`] this argument presents.
+    pub fn mode(&self) -> ArgMode {
+        match self {
+            ArgValue::Bound(_) => ArgMode::Bound,
+            ArgValue::Free { .. } | ArgValue::Wildcard => ArgMode::Free,
+        }
+    }
+
+    /// The bound value, if this argument is bound.
+    pub fn as_bound(&self) -> Option<&Value> {
+        match self {
+            ArgValue::Bound(v) => Some(v),
+            _ => None,
+        }
+    }
+}
+
+/// The resolved arguments of one builtin literal, in source position order.
+///
+/// Built once per literal occurrence per row by the executor; the builtin's `eval` reads
+/// it positionally. Output bindings are written to a [`Batch`] keyed by the [`ArgValue::Free`]
+/// slots.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArgSpec {
+    /// One entry per builtin argument, in declared order.
+    pub args: Vec<ArgValue>,
+}
+
+impl ArgSpec {
+    /// Build an arg spec from resolved arguments.
+    pub fn new(args: Vec<ArgValue>) -> Self {
+        Self { args }
+    }
+
+    /// The per-position bind pattern, for mode checking.
+    pub fn pattern(&self) -> Vec<ArgMode> {
+        self.args.iter().map(ArgValue::mode).collect()
+    }
+
+    /// The number of output columns (distinct free, captured slots).
+    fn output_arity(&self) -> usize {
+        self.args
+            .iter()
+            .filter_map(|a| match a {
+                ArgValue::Free { slot } => Some(*slot + 1),
+                _ => None,
+            })
+            .max()
+            .unwrap_or(0)
+    }
+}
+
+// ── Output batch ───────────────────────────────────────────────────
+
+/// An output row: one [`Value`] per captured free slot of the builtin literal, in slot
+/// order. A filter/function builtin that captures nothing produces the empty row `[]`
+/// (one such row = "the filter passed").
+pub type Row = Box<[Value]>;
+
+/// The accumulator a builtin writes produced rows into, plus the `coercion_miss` counter
+/// (spec §5 / §11 events). The executor drains `rows` to feed the next join leg and folds
+/// `coercion_misses` into the run's event counters.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Batch {
+    /// Produced output rows (slot-ordered values). For filters/functions that capture no
+    /// variable a single empty row signals a pass; an empty `rows` signals no match.
+    pub rows: Vec<Row>,
+    /// Count of literal-level coercion failures (spec §5): a comparison that could not be
+    /// satisfied because a literal could not be coerced to the column surface. A miss is a
+    /// tuple non-match, never an error and never a silently-empty query.
+    pub coercion_misses: u64,
+}
+
+impl Batch {
+    /// A fresh, empty batch.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Record one produced output row.
+    fn push(&mut self, row: Row) {
+        self.rows.push(row);
+    }
+
+    /// Record a filter/function pass that captures no variables (the empty row).
+    fn push_pass(&mut self) {
+        self.rows.push(Vec::new().into_boxed_slice());
+    }
+
+    /// Record one literal-level coercion miss (a tuple non-match, spec §5).
+    fn coercion_miss(&mut self) {
+        self.coercion_misses += 1;
+    }
+}
+
+// ── Builtin kind, cost, def ────────────────────────────────────────
+
+/// Whether a builtin produces tuples, prunes them, or computes a derived column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuiltinKind {
+    /// Produces tuples from storage (e.g. `node`, `edge`, `incoming`).
+    Generator,
+    /// Prunes the current row, capturing no new variable (e.g. `neq`, `gt`, `starts_with`).
+    Filter,
+    /// Binds a derived value from already-bound inputs (e.g. forward `attr` reading a column).
+    Function,
+}
+
+/// A coarse, monotone cost estimate the planner orders literals by (spec §7).
+pub type Cost = u64;
+
+/// Minimal storage statistics the cost functions consult. A trimmed surface (the full
+/// `Stats` lives with the planner in a later layer); cost only needs relation magnitudes.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Stats {
+    /// Total live nodes at the run's snapshot.
+    pub total_nodes: u64,
+    /// Total live edges at the run's snapshot.
+    pub total_edges: u64,
+}
+
+/// A registered builtin (spec §7): name, arity, supported modes, cost, kind, and eval body.
+///
+/// `eval` reads only through [`StorageView`], writes produced rows / coercion misses into
+/// the [`Batch`], and consumes the resolved [`ArgSpec`]. It returns `Err` only for a
+/// genuine planning fault (`E-PLAN-001`); ordinary non-matches are an empty `Batch`, and
+/// coercion failures are counted, never errors.
+pub struct BuiltinDef {
+    /// Predicate name as written in rules.
+    pub name: &'static str,
+    /// Argument count.
+    pub arity: usize,
+    /// Supported binding modes; a literal matching none is rejected `E-PLAN-001`.
+    pub modes: &'static [Mode],
+    /// Greedy cost estimate from [`Stats`] for a given matched [`Mode`].
+    pub cost: fn(&Stats, &Mode) -> Cost,
+    /// Generator / Filter / Function classification.
+    pub kind: BuiltinKind,
+    /// Evaluation body. Reads via `StorageView`, writes into `Batch`, consumes `ArgSpec`.
+    pub eval: fn(&dyn StorageView, &mut Batch, &ArgSpec) -> BuiltinResult<()>,
+}
+
+impl BuiltinDef {
+    /// Check that `spec` matches one of this builtin's modes (invariant I5).
+    ///
+    /// On success returns the matched [`Mode`] (for cost). On failure returns
+    /// `E-PLAN-001` naming the argument positions a feasible mode would require bound.
+    pub fn check_mode(&self, spec: &ArgSpec) -> BuiltinResult<Mode> {
+        let actual = spec.pattern();
+        if let Some(m) = self.modes.iter().find(|m| m.matches(&actual)) {
+            return Ok(*m);
+        }
+        // Build the required-binding hint: positions where every supported mode of the
+        // matching arity wants `Bound` but the actual arg is `Free`.
+        let mut required = Vec::new();
+        for (pos, have) in actual.iter().enumerate() {
+            if *have == ArgMode::Free
+                && self
+                    .modes
+                    .iter()
+                    .filter(|m| m.args.len() == actual.len())
+                    .all(|m| m.args.get(pos) == Some(&ArgMode::Bound))
+            {
+                required.push(pos);
+            }
+        }
+        Err(BuiltinError {
+            code: BuiltinCode::UnsupportedMode,
+            builtin: self.name,
+            detail: format!(
+                "no supported binding mode for `{}` with pattern {:?}",
+                self.name, actual
+            ),
+            required_bindings: required,
+        })
+    }
+}
+
+// ── Shared value-extraction helpers ────────────────────────────────
+
+/// Pull the bound id from a [`ArgValue::Bound`] (string forms are parsed once). Returns
+/// `None` for a free/wildcard arg or a non-id string.
+fn bound_id(arg: &ArgValue) -> Option<u128> {
+    arg.as_bound().and_then(Value::as_id)
+}
+
+/// Pull the bound string surface from a [`ArgValue::Bound`].
+fn bound_str(arg: &ArgValue) -> Option<String> {
+    arg.as_bound().map(Value::as_str)
+}
+
+/// The captured output slot of an argument, if it is a free, captured variable.
+fn free_slot(arg: &ArgValue) -> Option<usize> {
+    match arg {
+        ArgValue::Free { slot } => Some(*slot),
+        _ => None,
+    }
+}
+
+/// Build a slot-ordered output row binding the given `(slot, value)` pairs. `width` is the
+/// row's column count (the spec's output arity); unspecified slots are unreachable because
+/// every captured slot is supplied by construction.
+fn emit_row(width: usize, bindings: &[(usize, Value)]) -> Row {
+    // Placeholder unit strings are never observed: each captured slot is written below.
+    let mut cols: Vec<Value> = vec![Value::Str(String::new()); width];
+    for (slot, value) in bindings {
+        cols[*slot] = value.clone();
+    }
+    cols.into_boxed_slice()
+}
+
+// ── Generators: node / type, edge, incoming ────────────────────────
+
+/// `node(X, T)` / `type(X, T)` — nodes by type.
+///
+/// Modes: `node(Free, Bound)` generates all nodes of the bound type; `node(Bound, Bound)`
+/// checks the bound id has the bound type (point lookup, the id is already bound);
+/// `node(Bound, Free)` binds the type of the bound id. Reads via `scan_nodes_by_type`
+/// (generator) or `get_node` (bound id).
+fn eval_node(view: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> BuiltinResult<()> {
+    let id_arg = &spec.args[0];
+    let ty_arg = &spec.args[1];
+    let width = spec.output_arity();
+
+    match (id_arg, ty_arg) {
+        // node(Free X, "TYPE") — generate ids of that type.
+        (ArgValue::Free { slot }, ArgValue::Bound(ty)) => {
+            let ty = ty.as_str();
+            for n in view.scan_nodes_by_type(&ty) {
+                out.push(emit_row(width, &[(*slot, Value::Id(n.id))]));
+            }
+        }
+        // node(_, "TYPE") — existence/pass over that type (no capture).
+        (ArgValue::Wildcard, ArgValue::Bound(ty)) => {
+            let ty = ty.as_str();
+            for _ in view.scan_nodes_by_type(&ty) {
+                out.push_pass();
+            }
+        }
+        // node(BoundId, "TYPE") — check the bound id has that type.
+        (ArgValue::Bound(_), ArgValue::Bound(ty)) => {
+            if let Some(id) = bound_id(id_arg) {
+                if let Some(n) = view.get_node(id) {
+                    if n.node_type == ty.as_str() {
+                        out.push_pass();
+                    }
+                }
+            }
+        }
+        // node(BoundId, Free T) — bind the type of the bound id.
+        (ArgValue::Bound(_), ArgValue::Free { slot }) => {
+            if let Some(id) = bound_id(id_arg) {
+                if let Some(n) = view.get_node(id) {
+                    out.push(emit_row(width, &[(*slot, Value::Str(n.node_type))]));
+                }
+            }
+        }
+        // node(BoundId, _) — existence of the bound id.
+        (ArgValue::Bound(_), ArgValue::Wildcard) => {
+            if let Some(id) = bound_id(id_arg) {
+                if view.get_node(id).is_some() {
+                    out.push_pass();
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// `edge(Src, Dst, T)` — forward edges of a bound type.
+///
+/// Modes: `edge(Free, Free, Bound)` generates all `(src,dst)` of the type;
+/// `edge(Bound, Free, Bound)` generates the bound source's outgoing of the type;
+/// `edge(Bound, Bound, Bound)` checks the triple exists. Reads `scan_edges_by_type`
+/// forward.
+fn eval_edge(view: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> BuiltinResult<()> {
+    eval_edge_dir(view, out, spec, EdgeOrder::Forward)
+}
+
+/// `incoming(Dst, Src, T)` — reverse edges of a bound type (the `incoming` view).
+///
+/// Argument order is `(dst, src, type)`. Modes mirror `edge` over the reverse key. Reads
+/// `scan_edges_by_type` reverse.
+fn eval_incoming(view: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> BuiltinResult<()> {
+    eval_edge_dir(view, out, spec, EdgeOrder::Reverse)
+}
+
+/// Shared body for `edge`/`incoming`. For `Forward` the args are `(src, dst, type)`; for
+/// `Reverse` they are `(dst, src, type)`. We resolve the type, then filter/produce the
+/// near/far endpoints against the requested direction.
+fn eval_edge_dir(
+    view: &dyn StorageView,
+    out: &mut Batch,
+    spec: &ArgSpec,
+    order: EdgeOrder,
+) -> BuiltinResult<()> {
+    // arg[0] is the "near" endpoint in the directional view; arg[1] the "far"; arg[2] type.
+    let near_arg = &spec.args[0];
+    let far_arg = &spec.args[1];
+    let ty_arg = &spec.args[2];
+    let width = spec.output_arity();
+
+    let ty = match bound_str(ty_arg) {
+        Some(t) => t,
+        // Variable edge-type is out of this layer's supported modes (caught by check_mode);
+        // defensively yield nothing rather than scanning every type.
+        None => return Ok(()),
+    };
+
+    // Map an EdgeRow to (near, far) per direction.
+    let near_far = |src: u128, dst: u128| match order {
+        EdgeOrder::Forward => (src, dst),
+        EdgeOrder::Reverse => (dst, src),
+    };
+
+    let near_bound = bound_id(near_arg);
+    let far_bound = bound_id(far_arg);
+
+    for e in view.scan_edges_by_type(&ty, order) {
+        let (near, far) = near_far(e.src, e.dst);
+        if let Some(nb) = near_bound {
+            if nb != near {
+                continue;
+            }
+        }
+        if let Some(fb) = far_bound {
+            if fb != far {
+                continue;
+            }
+        }
+        // Build captured outputs for any free endpoints.
+        let mut binds: Vec<(usize, Value)> = Vec::new();
+        if let Some(slot) = free_slot(near_arg) {
+            binds.push((slot, Value::Id(near)));
+        }
+        if let Some(slot) = free_slot(far_arg) {
+            binds.push((slot, Value::Id(far)));
+        }
+        if binds.is_empty() {
+            out.push_pass();
+        } else {
+            out.push(emit_row(width, &binds));
+        }
+    }
+    Ok(())
+}
+
+// ── Function: attr (first-class columns, with §5 coercion) ─────────
+
+/// First-class node columns `attr` can read at Gate A (the `StorageView` row surface).
+/// Metadata-key attrs are not yet on the row surface and resolve to a coercion miss.
+fn first_class_attr(node: &NodeRow, key: &str) -> Option<String> {
+    match key {
+        "name" => Some(node.name.clone()),
+        "file" => Some(node.file.clone()),
+        "type" => Some(node.node_type.clone()),
+        "id" => Some(node.id.to_string()),
+        _ => None,
+    }
+}
+
+/// `attr(Id, Key, Value)` — read a first-class column of a bound node (spec §5).
+///
+/// Modes: `attr(Bound, Bound, Free)` binds the column value; `attr(Bound, Bound, Bound)`
+/// checks the column equals the literal. The id is always bound (the only permitted point
+/// lookup, §8.3); the key is always a bound literal. A literal `Value` that cannot be
+/// coerced to the column's string surface, or a key outside the first-class set, is a
+/// coercion miss (tuple non-match, counted — never crash, never silent-empty).
+fn eval_attr(view: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> BuiltinResult<()> {
+    let id_arg = &spec.args[0];
+    let key_arg = &spec.args[1];
+    let val_arg = &spec.args[2];
+    let width = spec.output_arity();
+
+    let id = match bound_id(id_arg) {
+        Some(id) => id,
+        // No bound id → nothing to read (mode check guarantees boundness; defensive).
+        None => return Ok(()),
+    };
+    let key = match bound_str(key_arg) {
+        Some(k) => k,
+        None => return Ok(()),
+    };
+
+    let node = match view.get_node(id) {
+        Some(n) => n,
+        // Bound id not present at this generation → no match (legitimately empty).
+        None => return Ok(()),
+    };
+
+    let column = match first_class_attr(&node, &key) {
+        Some(v) => v,
+        // Key outside the first-class row surface (e.g. a metadata key) — coercion miss
+        // per §5: the literal-level read cannot be satisfied on the Gate A surface.
+        None => {
+            out.coercion_miss();
+            return Ok(());
+        }
+    };
+
+    match val_arg {
+        // attr(Id, Key, Free V) — bind the column value.
+        ArgValue::Free { slot } => {
+            out.push(emit_row(width, &[(*slot, Value::Str(column))]));
+        }
+        ArgValue::Wildcard => {
+            // Presence of the column is enough.
+            out.push_pass();
+        }
+        // attr(Id, Key, "literal") — equality check with §5 coercion.
+        ArgValue::Bound(expected) => match coerce_eq(&column, expected) {
+            CoerceEq::Match => out.push_pass(),
+            CoerceEq::NoMatch => {}
+            CoerceEq::Miss => out.coercion_miss(),
+        },
+    }
+    Ok(())
+}
+
+/// Outcome of comparing a column's string surface against a literal value (spec §5).
+enum CoerceEq {
+    /// The literal coerced and equals the column.
+    Match,
+    /// The literal coerced but does not equal the column (ordinary tuple non-match).
+    NoMatch,
+    /// The literal could not be coerced to the column surface (a coercion miss).
+    Miss,
+}
+
+/// Compare a column's string surface against a literal at the value level (spec §5).
+///
+/// A [`Value::Str`] literal compares by string surface (always coercible). A
+/// [`Value::Id`] literal coerces by its decimal surface; if the column has no such surface
+/// the comparison is a coercion miss rather than a silent non-match — the distinction is
+/// what `coercion_misses` records.
+fn coerce_eq(column: &str, expected: &Value) -> CoerceEq {
+    match expected {
+        Value::Str(s) => {
+            if column == s {
+                CoerceEq::Match
+            } else {
+                CoerceEq::NoMatch
+            }
+        }
+        Value::Id(id) => {
+            // The literal is an id; coerce by comparing the column's id surface. A column
+            // that does not parse as an id cannot be coerced → miss.
+            match column.parse::<u128>() {
+                Ok(col_id) if col_id == *id => CoerceEq::Match,
+                Ok(_) => CoerceEq::NoMatch,
+                Err(_) => CoerceEq::Miss,
+            }
+        }
+    }
+}
+
+// ── Filters: neq, numeric comparisons, string predicates ───────────
+
+/// `neq(X, Y)` — both args bound; pass iff their string surfaces differ.
+fn eval_neq(_view: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> BuiltinResult<()> {
+    if let (Some(a), Some(b)) = (bound_str(&spec.args[0]), bound_str(&spec.args[1])) {
+        if a != b {
+            out.push_pass();
+        }
+    }
+    Ok(())
+}
+
+/// Numeric comparison filter shared by `gt`/`lt`/`gte`/`lte`. Both args parse as `f64`; a
+/// non-numeric surface is a coercion miss (tuple non-match, counted — §5), matching v1's
+/// graceful failure but surfacing it instead of swallowing it.
+fn eval_numeric_cmp(
+    out: &mut Batch,
+    spec: &ArgSpec,
+    pass: fn(f64, f64) -> bool,
+) -> BuiltinResult<()> {
+    let (ls, rs) = match (bound_str(&spec.args[0]), bound_str(&spec.args[1])) {
+        (Some(l), Some(r)) => (l, r),
+        _ => return Ok(()),
+    };
+    let left: f64 = match ls.parse() {
+        Ok(v) => v,
+        Err(_) => {
+            out.coercion_miss();
+            return Ok(());
+        }
+    };
+    let right: f64 = match rs.parse() {
+        Ok(v) => v,
+        Err(_) => {
+            out.coercion_miss();
+            return Ok(());
+        }
+    };
+    if pass(left, right) {
+        out.push_pass();
+    }
+    Ok(())
+}
+
+fn eval_gt(_v: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> BuiltinResult<()> {
+    eval_numeric_cmp(out, spec, |l, r| l > r)
+}
+fn eval_lt(_v: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> BuiltinResult<()> {
+    eval_numeric_cmp(out, spec, |l, r| l < r)
+}
+fn eval_gte(_v: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> BuiltinResult<()> {
+    eval_numeric_cmp(out, spec, |l, r| l >= r)
+}
+fn eval_lte(_v: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> BuiltinResult<()> {
+    eval_numeric_cmp(out, spec, |l, r| l <= r)
+}
+
+/// `starts_with(Value, Prefix)` — both bound; pass iff `Value` begins with `Prefix`.
+fn eval_starts_with(_v: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> BuiltinResult<()> {
+    if let (Some(v), Some(p)) = (bound_str(&spec.args[0]), bound_str(&spec.args[1])) {
+        if v.starts_with(&p) {
+            out.push_pass();
+        }
+    }
+    Ok(())
+}
+
+/// `not_starts_with(Value, Prefix)` — both bound; pass iff `Value` does NOT begin with
+/// `Prefix`. (A semantic complement filter, not stratified negation.)
+fn eval_not_starts_with(_v: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> BuiltinResult<()> {
+    if let (Some(v), Some(p)) = (bound_str(&spec.args[0]), bound_str(&spec.args[1])) {
+        if !v.starts_with(&p) {
+            out.push_pass();
+        }
+    }
+    Ok(())
+}
+
+/// `string_contains(Value, Substring)` — both bound; pass iff `Value` contains `Substring`.
+fn eval_string_contains(_v: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> BuiltinResult<()> {
+    if let (Some(v), Some(s)) = (bound_str(&spec.args[0]), bound_str(&spec.args[1])) {
+        if v.contains(&s) {
+            out.push_pass();
+        }
+    }
+    Ok(())
+}
+
+// ── Cost functions ─────────────────────────────────────────────────
+
+/// Generator cost over nodes: a free id-output scans the type (≈ a fraction of nodes); a
+/// bound id is a point lookup (unit). Coarse but monotone (spec §7).
+fn cost_node(stats: &Stats, mode: &Mode) -> Cost {
+    if mode.args.first() == Some(&ArgMode::Bound) {
+        1
+    } else {
+        // A typed scan touches at most the whole node CF; the planner only needs ordering.
+        stats.total_nodes.max(1)
+    }
+}
+
+/// Generator cost over edges: a fully-free generate scans the type; a bound near endpoint
+/// narrows it. Bounded by the edge total.
+fn cost_edge(stats: &Stats, mode: &Mode) -> Cost {
+    let near_bound = mode.args.first() == Some(&ArgMode::Bound);
+    let total = stats.total_edges.max(1);
+    if near_bound {
+        // Outgoing/incoming of one endpoint — a small fraction; floor at 1.
+        (total / 16).max(1)
+    } else {
+        total
+    }
+}
+
+/// Function cost for `attr`: a single bound-id point lookup.
+fn cost_attr(_stats: &Stats, _mode: &Mode) -> Cost {
+    1
+}
+
+/// Filter cost: filters operate on the current row only — unit cost.
+fn cost_filter(_stats: &Stats, _mode: &Mode) -> Cost {
+    1
+}
+
+// ── Mode tables ────────────────────────────────────────────────────
+
+use ArgMode::{Bound as B, Free as F};
+
+/// `node`/`type` modes: generate by type, check id+type, bind type of id.
+const NODE_MODES: &[Mode] = &[
+    Mode { args: &[F, B] }, // node(X, "TYPE") — generate
+    Mode { args: &[B, B] }, // node(id, "TYPE") — check
+    Mode { args: &[B, F] }, // node(id, T) — bind type
+];
+
+/// `edge`/`incoming` modes: type is always bound at Gate A. Near endpoint may be bound to
+/// narrow; far endpoint may be bound to check.
+const EDGE_MODES: &[Mode] = &[
+    Mode { args: &[F, F, B] }, // edge(S, D, "T") — generate all
+    Mode { args: &[B, F, B] }, // edge(s, D, "T") — outgoing of s
+    Mode { args: &[F, B, B] }, // edge(S, d, "T") — sources into d
+    Mode { args: &[B, B, B] }, // edge(s, d, "T") — check triple
+];
+
+/// `attr` modes: id and key always bound; value bound (check) or free (bind).
+const ATTR_MODES: &[Mode] = &[
+    Mode { args: &[B, B, F] }, // attr(id, "key", V) — bind
+    Mode { args: &[B, B, B] }, // attr(id, "key", "val") — check
+];
+
+/// Two-argument filter modes: both arguments must be bound.
+const FILTER2_MODES: &[Mode] = &[Mode { args: &[B, B] }];
+
+// ── The registry (one registration point) ──────────────────────────
+
+/// All Gate A builtins, in a single declaration. The planner and executor look up a
+/// builtin by name here; this is the sole registration point (spec §7).
+pub fn registry() -> Vec<BuiltinDef> {
+    vec![
+        BuiltinDef {
+            name: "node",
+            arity: 2,
+            modes: NODE_MODES,
+            cost: cost_node,
+            kind: BuiltinKind::Generator,
+            eval: eval_node,
+        },
+        BuiltinDef {
+            name: "type",
+            arity: 2,
+            modes: NODE_MODES,
+            cost: cost_node,
+            kind: BuiltinKind::Generator,
+            eval: eval_node,
+        },
+        BuiltinDef {
+            name: "edge",
+            arity: 3,
+            modes: EDGE_MODES,
+            cost: cost_edge,
+            kind: BuiltinKind::Generator,
+            eval: eval_edge,
+        },
+        BuiltinDef {
+            name: "incoming",
+            arity: 3,
+            modes: EDGE_MODES,
+            cost: cost_edge,
+            kind: BuiltinKind::Generator,
+            eval: eval_incoming,
+        },
+        BuiltinDef {
+            name: "attr",
+            arity: 3,
+            modes: ATTR_MODES,
+            cost: cost_attr,
+            kind: BuiltinKind::Function,
+            eval: eval_attr,
+        },
+        BuiltinDef {
+            name: "neq",
+            arity: 2,
+            modes: FILTER2_MODES,
+            cost: cost_filter,
+            kind: BuiltinKind::Filter,
+            eval: eval_neq,
+        },
+        BuiltinDef {
+            name: "gt",
+            arity: 2,
+            modes: FILTER2_MODES,
+            cost: cost_filter,
+            kind: BuiltinKind::Filter,
+            eval: eval_gt,
+        },
+        BuiltinDef {
+            name: "lt",
+            arity: 2,
+            modes: FILTER2_MODES,
+            cost: cost_filter,
+            kind: BuiltinKind::Filter,
+            eval: eval_lt,
+        },
+        BuiltinDef {
+            name: "gte",
+            arity: 2,
+            modes: FILTER2_MODES,
+            cost: cost_filter,
+            kind: BuiltinKind::Filter,
+            eval: eval_gte,
+        },
+        BuiltinDef {
+            name: "lte",
+            arity: 2,
+            modes: FILTER2_MODES,
+            cost: cost_filter,
+            kind: BuiltinKind::Filter,
+            eval: eval_lte,
+        },
+        BuiltinDef {
+            name: "starts_with",
+            arity: 2,
+            modes: FILTER2_MODES,
+            cost: cost_filter,
+            kind: BuiltinKind::Filter,
+            eval: eval_starts_with,
+        },
+        BuiltinDef {
+            name: "not_starts_with",
+            arity: 2,
+            modes: FILTER2_MODES,
+            cost: cost_filter,
+            kind: BuiltinKind::Filter,
+            eval: eval_not_starts_with,
+        },
+        BuiltinDef {
+            name: "string_contains",
+            arity: 2,
+            modes: FILTER2_MODES,
+            cost: cost_filter,
+            kind: BuiltinKind::Filter,
+            eval: eval_string_contains,
+        },
+    ]
+}
+
+/// Look up a builtin by name in the registry (linear; the set is small and fixed).
+pub fn lookup(name: &str) -> Option<BuiltinDef> {
+    registry().into_iter().find(|b| b.name == name)
+}
+
+// ── Tests ──────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage_v2::manifest::ManifestStore;
+    use crate::storage_v2::multi_shard::MultiShardStore;
+    use crate::storage_v2::types::{EdgeRecordV2, NodeRecordV2};
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    use super::super::storage_glue::LsmStorageView;
+
+    fn id_of(semantic_id: &str) -> u128 {
+        u128::from_le_bytes(
+            blake3::hash(semantic_id.as_bytes()).as_bytes()[0..16]
+                .try_into()
+                .unwrap(),
+        )
+    }
+
+    fn node_rec(sid: &str, ty: &str, name: &str, file: &str) -> NodeRecordV2 {
+        NodeRecordV2 {
+            semantic_id: sid.to_string(),
+            id: id_of(sid),
+            node_type: ty.to_string(),
+            name: name.to_string(),
+            file: file.to_string(),
+            content_hash: 0,
+            metadata: String::new(),
+        }
+    }
+
+    fn edge_rec(src: &str, dst: &str, ty: &str) -> EdgeRecordV2 {
+        EdgeRecordV2 {
+            src: id_of(src),
+            dst: id_of(dst),
+            edge_type: ty.to_string(),
+            metadata: String::new(),
+        }
+    }
+
+    /// A small committed store with two functions, one class, and CALLS/CONTAINS edges.
+    fn build_view() -> LsmStorageView {
+        let mut store = MultiShardStore::ephemeral(4);
+        let mut manifest = ManifestStore::ephemeral();
+        let nodes = vec![
+            node_rec("a/fn1", "FUNCTION", "fn1", "a/file.js"),
+            node_rec("a/fn2", "FUNCTION", "fn2", "a/file.js"),
+            node_rec("b/cls1", "CLASS", "Widget", "b/file.js"),
+        ];
+        let edges = vec![
+            edge_rec("a/fn1", "a/fn2", "CALLS"),
+            edge_rec("a/fn1", "b/cls1", "CONTAINS"),
+            edge_rec("a/fn2", "b/cls1", "CALLS"),
+        ];
+        store
+            .commit_batch(
+                nodes,
+                edges,
+                &["a/file.js".to_string(), "b/file.js".to_string()],
+                HashMap::new(),
+                &mut manifest,
+            )
+            .unwrap();
+        LsmStorageView::capture(Arc::new(store), &manifest)
+    }
+
+    fn s(v: &str) -> Value {
+        Value::Str(v.to_string())
+    }
+
+    fn run(name: &str, spec: ArgSpec) -> Batch {
+        let view = build_view();
+        let def = lookup(name).expect("builtin registered");
+        // Mode must be supported for the call to proceed.
+        def.check_mode(&spec).expect("mode supported");
+        let mut out = Batch::new();
+        (def.eval)(&view, &mut out, &spec).expect("eval ok");
+        out
+    }
+
+    // ── registry / mode ────────────────────────────────────────────
+
+    #[test]
+    fn registry_has_all_ported_builtins() {
+        for name in [
+            "node",
+            "type",
+            "edge",
+            "incoming",
+            "attr",
+            "neq",
+            "gt",
+            "lt",
+            "gte",
+            "lte",
+            "starts_with",
+            "not_starts_with",
+            "string_contains",
+        ] {
+            assert!(lookup(name).is_some(), "missing builtin {name}");
+        }
+    }
+
+    #[test]
+    fn arity_matches_mode_widths() {
+        for def in registry() {
+            for m in def.modes {
+                assert_eq!(m.args.len(), def.arity, "{} mode width", def.name);
+            }
+        }
+    }
+
+    #[test]
+    fn unsupported_mode_is_e_plan_001_naming_bindings() {
+        // edge(S, D, T) with a FREE type is unsupported at Gate A → E-PLAN-001 naming the
+        // type position (2) which every same-arity mode requires bound.
+        let def = lookup("edge").unwrap();
+        let spec = ArgSpec::new(vec![
+            ArgValue::Free { slot: 0 },
+            ArgValue::Free { slot: 1 },
+            ArgValue::Free { slot: 2 },
+        ]);
+        let err = def.check_mode(&spec).unwrap_err();
+        assert_eq!(err.code, BuiltinCode::UnsupportedMode);
+        assert_eq!(err.code.as_str(), "E-PLAN-001");
+        assert!(err.required_bindings.contains(&2), "must name type position");
+    }
+
+    #[test]
+    fn attr_free_id_is_unsupported_mode() {
+        // attr(Free, "name", V) — id must be bound (§8.3 point lookup only on bound id).
+        let def = lookup("attr").unwrap();
+        let spec = ArgSpec::new(vec![
+            ArgValue::Free { slot: 0 },
+            ArgValue::Bound(s("name")),
+            ArgValue::Free { slot: 1 },
+        ]);
+        let err = def.check_mode(&spec).unwrap_err();
+        assert_eq!(err.code.as_str(), "E-PLAN-001");
+        assert!(err.required_bindings.contains(&0));
+    }
+
+    // ── node / type ────────────────────────────────────────────────
+
+    #[test]
+    fn node_generates_ids_by_type() {
+        let spec = ArgSpec::new(vec![ArgValue::Free { slot: 0 }, ArgValue::Bound(s("FUNCTION"))]);
+        let out = run("node", spec);
+        let ids: Vec<u128> = out
+            .rows
+            .iter()
+            .map(|r| match &r[0] {
+                Value::Id(id) => *id,
+                _ => panic!("expected id"),
+            })
+            .collect();
+        assert_eq!(ids.len(), 2, "two FUNCTION nodes");
+        assert!(ids.contains(&id_of("a/fn1")));
+        assert!(ids.contains(&id_of("a/fn2")));
+    }
+
+    #[test]
+    fn type_alias_behaves_like_node() {
+        let spec = ArgSpec::new(vec![ArgValue::Free { slot: 0 }, ArgValue::Bound(s("CLASS"))]);
+        let out = run("type", spec);
+        assert_eq!(out.rows.len(), 1, "one CLASS node");
+    }
+
+    #[test]
+    fn node_check_bound_id_and_type() {
+        let spec = ArgSpec::new(vec![
+            ArgValue::Bound(Value::Id(id_of("a/fn1"))),
+            ArgValue::Bound(s("FUNCTION")),
+        ]);
+        assert_eq!(run("node", spec).rows.len(), 1, "id is a FUNCTION");
+
+        let wrong = ArgSpec::new(vec![
+            ArgValue::Bound(Value::Id(id_of("a/fn1"))),
+            ArgValue::Bound(s("CLASS")),
+        ]);
+        assert_eq!(run("node", wrong).rows.len(), 0, "id is not a CLASS");
+    }
+
+    #[test]
+    fn node_binds_type_of_bound_id() {
+        let spec = ArgSpec::new(vec![
+            ArgValue::Bound(Value::Id(id_of("b/cls1"))),
+            ArgValue::Free { slot: 0 },
+        ]);
+        let out = run("node", spec);
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(out.rows[0][0], s("CLASS"));
+    }
+
+    // ── edge / incoming ────────────────────────────────────────────
+
+    #[test]
+    fn edge_generates_all_of_type() {
+        let spec = ArgSpec::new(vec![
+            ArgValue::Free { slot: 0 },
+            ArgValue::Free { slot: 1 },
+            ArgValue::Bound(s("CALLS")),
+        ]);
+        let out = run("edge", spec);
+        assert_eq!(out.rows.len(), 2, "two CALLS edges");
+        for r in &out.rows {
+            assert!(matches!(r[0], Value::Id(_)));
+            assert!(matches!(r[1], Value::Id(_)));
+        }
+    }
+
+    #[test]
+    fn edge_outgoing_of_bound_source() {
+        let spec = ArgSpec::new(vec![
+            ArgValue::Bound(Value::Id(id_of("a/fn1"))),
+            ArgValue::Free { slot: 0 },
+            ArgValue::Bound(s("CALLS")),
+        ]);
+        let out = run("edge", spec);
+        assert_eq!(out.rows.len(), 1, "fn1 CALLS fn2");
+        assert_eq!(out.rows[0][0], Value::Id(id_of("a/fn2")));
+    }
+
+    #[test]
+    fn edge_check_triple_exists() {
+        let present = ArgSpec::new(vec![
+            ArgValue::Bound(Value::Id(id_of("a/fn1"))),
+            ArgValue::Bound(Value::Id(id_of("a/fn2"))),
+            ArgValue::Bound(s("CALLS")),
+        ]);
+        assert_eq!(run("edge", present).rows.len(), 1);
+
+        let absent = ArgSpec::new(vec![
+            ArgValue::Bound(Value::Id(id_of("a/fn2"))),
+            ArgValue::Bound(Value::Id(id_of("a/fn1"))),
+            ArgValue::Bound(s("CALLS")),
+        ]);
+        assert_eq!(run("edge", absent).rows.len(), 0);
+    }
+
+    #[test]
+    fn incoming_binds_sources_into_bound_dst() {
+        // incoming(dst, Src, "CALLS"): who CALLS cls1? — fn2 (a/fn2 -> b/cls1 CALLS).
+        let spec = ArgSpec::new(vec![
+            ArgValue::Bound(Value::Id(id_of("b/cls1"))),
+            ArgValue::Free { slot: 0 },
+            ArgValue::Bound(s("CALLS")),
+        ]);
+        let out = run("incoming", spec);
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(out.rows[0][0], Value::Id(id_of("a/fn2")));
+    }
+
+    // ── attr (+ coercion) ──────────────────────────────────────────
+
+    #[test]
+    fn attr_binds_first_class_columns() {
+        for (key, expected) in [("name", "Widget"), ("type", "CLASS"), ("file", "b/file.js")] {
+            let spec = ArgSpec::new(vec![
+                ArgValue::Bound(Value::Id(id_of("b/cls1"))),
+                ArgValue::Bound(s(key)),
+                ArgValue::Free { slot: 0 },
+            ]);
+            let out = run("attr", spec);
+            assert_eq!(out.rows.len(), 1, "attr {key} binds");
+            assert_eq!(out.rows[0][0], s(expected));
+            assert_eq!(out.coercion_misses, 0);
+        }
+    }
+
+    #[test]
+    fn attr_check_equality_match_and_nonmatch() {
+        let m = ArgSpec::new(vec![
+            ArgValue::Bound(Value::Id(id_of("b/cls1"))),
+            ArgValue::Bound(s("name")),
+            ArgValue::Bound(s("Widget")),
+        ]);
+        let out = run("attr", m);
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(out.coercion_misses, 0);
+
+        let nm = ArgSpec::new(vec![
+            ArgValue::Bound(Value::Id(id_of("b/cls1"))),
+            ArgValue::Bound(s("name")),
+            ArgValue::Bound(s("Other")),
+        ]);
+        let out = run("attr", nm);
+        assert_eq!(out.rows.len(), 0, "ordinary non-match, not a miss");
+        assert_eq!(out.coercion_misses, 0);
+    }
+
+    #[test]
+    fn attr_unknown_key_is_coercion_miss_not_crash() {
+        // A metadata key outside the Gate A row surface → coercion miss (counted), never a
+        // crash and never silently treated as "no such node".
+        let spec = ArgSpec::new(vec![
+            ArgValue::Bound(Value::Id(id_of("b/cls1"))),
+            ArgValue::Bound(s("object")),
+            ArgValue::Free { slot: 0 },
+        ]);
+        let out = run("attr", spec);
+        assert_eq!(out.rows.len(), 0);
+        assert_eq!(out.coercion_misses, 1, "unknown key recorded as a miss");
+    }
+
+    #[test]
+    fn attr_uncoercible_literal_is_miss() {
+        // Compare the string column "Widget" against an Id literal: the column has no id
+        // surface → coercion miss, not a silent non-match.
+        let spec = ArgSpec::new(vec![
+            ArgValue::Bound(Value::Id(id_of("b/cls1"))),
+            ArgValue::Bound(s("name")),
+            ArgValue::Bound(Value::Id(123)),
+        ]);
+        let out = run("attr", spec);
+        assert_eq!(out.rows.len(), 0);
+        assert_eq!(out.coercion_misses, 1);
+    }
+
+    #[test]
+    fn attr_missing_node_is_empty_not_miss() {
+        let spec = ArgSpec::new(vec![
+            ArgValue::Bound(Value::Id(0xdead_beef)),
+            ArgValue::Bound(s("name")),
+            ArgValue::Free { slot: 0 },
+        ]);
+        let out = run("attr", spec);
+        assert_eq!(out.rows.len(), 0, "no such node → legitimately empty");
+        assert_eq!(out.coercion_misses, 0, "absence is not a coercion miss");
+    }
+
+    // ── filters ────────────────────────────────────────────────────
+
+    #[test]
+    fn neq_passes_when_different() {
+        let pass = ArgSpec::new(vec![ArgValue::Bound(s("a")), ArgValue::Bound(s("b"))]);
+        assert_eq!(run("neq", pass).rows.len(), 1);
+        let fail = ArgSpec::new(vec![ArgValue::Bound(s("a")), ArgValue::Bound(s("a"))]);
+        assert_eq!(run("neq", fail).rows.len(), 0);
+    }
+
+    #[test]
+    fn numeric_comparisons() {
+        let mk = |a: &str, b: &str| ArgSpec::new(vec![ArgValue::Bound(s(a)), ArgValue::Bound(s(b))]);
+        assert_eq!(run("gt", mk("5", "3")).rows.len(), 1);
+        assert_eq!(run("gt", mk("3", "5")).rows.len(), 0);
+        assert_eq!(run("lt", mk("3", "5")).rows.len(), 1);
+        assert_eq!(run("gte", mk("5", "5")).rows.len(), 1);
+        assert_eq!(run("lte", mk("5", "5")).rows.len(), 1);
+        assert_eq!(run("lte", mk("6", "5")).rows.len(), 0);
+    }
+
+    #[test]
+    fn numeric_nonnumeric_is_coercion_miss() {
+        let spec = ArgSpec::new(vec![ArgValue::Bound(s("abc")), ArgValue::Bound(s("3"))]);
+        let out = run("gt", spec);
+        assert_eq!(out.rows.len(), 0);
+        assert_eq!(out.coercion_misses, 1, "non-numeric surface is a miss");
+    }
+
+    #[test]
+    fn string_predicates() {
+        let sw = ArgSpec::new(vec![
+            ArgValue::Bound(s("queue:publish")),
+            ArgValue::Bound(s("queue:")),
+        ]);
+        assert_eq!(run("starts_with", sw).rows.len(), 1);
+
+        let nsw = ArgSpec::new(vec![
+            ArgValue::Bound(s("queue:publish")),
+            ArgValue::Bound(s("http:")),
+        ]);
+        assert_eq!(run("not_starts_with", nsw).rows.len(), 1);
+
+        let sc = ArgSpec::new(vec![
+            ArgValue::Bound(s("queue:publish")),
+            ArgValue::Bound(s("pub")),
+        ]);
+        assert_eq!(run("string_contains", sc).rows.len(), 1);
+
+        let sc_no = ArgSpec::new(vec![
+            ArgValue::Bound(s("queue:publish")),
+            ArgValue::Bound(s("zzz")),
+        ]);
+        assert_eq!(run("string_contains", sc_no).rows.len(), 0);
+    }
+
+    // ── cost monotonicity ──────────────────────────────────────────
+
+    #[test]
+    fn cost_bound_id_cheaper_than_scan() {
+        let stats = Stats {
+            total_nodes: 1000,
+            total_edges: 2000,
+        };
+        let scan = Mode { args: &[F, B] };
+        let point = Mode { args: &[B, B] };
+        assert!(cost_node(&stats, &point) < cost_node(&stats, &scan));
+
+        let edge_gen = Mode { args: &[F, F, B] };
+        let edge_src = Mode { args: &[B, F, B] };
+        assert!(cost_edge(&stats, &edge_src) < cost_edge(&stats, &edge_gen));
+    }
+}
