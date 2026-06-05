@@ -16,7 +16,7 @@ export const resolveCommand = new Command('resolve')
   .option('--debug', 'Enable debug mode')
   .option('--log-level <level>', 'Set log level (silent, errors, warnings, info, debug)')
   .option('--log-file <path>', 'Write all log output to a file')
-  .option('-j, --jobs <number>', 'Number of parallel resolve workers (default: auto)')
+  .option('-j, --jobs <number>', 'Requested resolve-worker count (resolution currently runs single-worker; a value other than 1 has no effect — a notice is printed)')
   .option('--no-auto-start', 'Do not auto-start RFDB server (require manual start)')
   .addHelpText('after', `
 Examples:
