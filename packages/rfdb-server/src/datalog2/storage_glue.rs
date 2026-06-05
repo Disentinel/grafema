@@ -349,43 +349,109 @@ impl LsmStorageView {
         Self { store, snapshot }
     }
 
-    /// Collect this generation's live node rows (deduped, tombstone-filtered by the
-    /// public snapshot path) sorted by id.
-    fn node_rows_by_id(&self) -> Vec<Row> {
-        let mut rows: Vec<Row> = self
-            .store
-            .find_nodes_at(&self.snapshot, None, None)
-            .into_iter()
-            .map(|r| {
-                Row::Node(NodeRow {
-                    id: r.id,
-                    node_type: r.node_type,
-                    name: r.name,
-                    file: r.file,
-                })
-            })
-            .collect();
-        rows.sort_by(|a, b| row_cmp(a, b, SortOrder::NodeById));
-        rows
-    }
+}
 
-    /// Collect this generation's live edge rows sorted in `order`.
-    fn edge_rows(&self, order: SortOrder) -> Vec<Row> {
-        let mut rows: Vec<Row> = self
-            .store
-            .iter_all_edges_at(&self.snapshot)
-            .into_iter()
-            .map(|r| {
-                Row::Edge(EdgeRow {
-                    src: r.src,
-                    dst: r.dst,
-                    edge_type: r.edge_type,
-                })
+// ── Shared read helpers over (store, snapshot) ─────────────────────
+//
+// Both the owned [`LsmStorageView`] (Arc) and the borrowing
+// [`BorrowedLsmStorageView`] (router path) read through the same `*_at` snapshot
+// methods. The logic lives in these free helpers so the two views never drift in
+// what they surface (one source of truth for the real read path).
+
+/// Collect a snapshot's live node rows (deduped, tombstone-filtered by the public
+/// snapshot path) sorted by id.
+fn snapshot_node_rows_by_id(store: &MultiShardStore, snapshot: &ReadSnapshot) -> Vec<Row> {
+    let mut rows: Vec<Row> = store
+        .find_nodes_at(snapshot, None, None)
+        .into_iter()
+        .map(|r| {
+            Row::Node(NodeRow {
+                id: r.id,
+                node_type: r.node_type,
+                name: r.name,
+                file: r.file,
             })
-            .collect();
-        rows.sort_by(|a, b| row_cmp(a, b, order));
-        rows
+        })
+        .collect();
+    rows.sort_by(|a, b| row_cmp(a, b, SortOrder::NodeById));
+    rows
+}
+
+/// Collect a snapshot's live edge rows sorted in `order`.
+fn snapshot_edge_rows(store: &MultiShardStore, snapshot: &ReadSnapshot, order: SortOrder) -> Vec<Row> {
+    let mut rows: Vec<Row> = store
+        .iter_all_edges_at(snapshot)
+        .into_iter()
+        .map(|r| {
+            Row::Edge(EdgeRow {
+                src: r.src,
+                dst: r.dst,
+                edge_type: r.edge_type,
+            })
+        })
+        .collect();
+    rows.sort_by(|a, b| row_cmp(a, b, order));
+    rows
+}
+
+fn snapshot_sorted_run(
+    store: &MultiShardStore,
+    snapshot: &ReadSnapshot,
+    rel: Relation,
+    order: SortOrder,
+) -> Vec<Row> {
+    match (rel, order) {
+        (Relation::Nodes, SortOrder::NodeById) => snapshot_node_rows_by_id(store, snapshot),
+        (Relation::Edges, SortOrder::EdgeSrcTypeDst)
+        | (Relation::Edges, SortOrder::EdgeDstTypeSrc) => snapshot_edge_rows(store, snapshot, order),
+        // Invalid (rel, order) pairing — empty run (the planner never issues these;
+        // an empty run keeps the merge-join total without a panic).
+        _ => Vec::new(),
     }
+}
+
+fn snapshot_scan_nodes_by_type(store: &MultiShardStore, snapshot: &ReadSnapshot, ty: &str) -> Vec<NodeRow> {
+    store
+        .find_nodes_at(snapshot, Some(ty), None)
+        .into_iter()
+        .map(|r| NodeRow {
+            id: r.id,
+            node_type: r.node_type,
+            name: r.name,
+            file: r.file,
+        })
+        .collect()
+}
+
+fn snapshot_scan_edges_by_type(
+    store: &MultiShardStore,
+    snapshot: &ReadSnapshot,
+    ty: &str,
+    order: EdgeOrder,
+) -> Vec<EdgeRow> {
+    let mut rows: Vec<EdgeRow> = store
+        .get_edges_by_type_at(snapshot, ty)
+        .into_iter()
+        .map(|r| EdgeRow {
+            src: r.src,
+            dst: r.dst,
+            edge_type: r.edge_type,
+        })
+        .collect();
+    match order {
+        EdgeOrder::Forward => rows.sort_by(|a, b| a.src.cmp(&b.src).then_with(|| a.dst.cmp(&b.dst))),
+        EdgeOrder::Reverse => rows.sort_by(|a, b| a.dst.cmp(&b.dst).then_with(|| a.src.cmp(&b.src))),
+    }
+    rows
+}
+
+fn snapshot_get_node(store: &MultiShardStore, snapshot: &ReadSnapshot, id: u128) -> Option<NodeRow> {
+    store.get_node_at(snapshot, id).map(|r| NodeRow {
+        id: r.id,
+        node_type: r.node_type,
+        name: r.name,
+        file: r.file,
+    })
 }
 
 impl StorageView for LsmStorageView {
@@ -394,32 +460,14 @@ impl StorageView for LsmStorageView {
     }
 
     fn sorted_run(&self, rel: Relation, order: SortOrder) -> Box<dyn Iterator<Item = Row> + '_> {
-        let rows = match (rel, order) {
-            (Relation::Nodes, SortOrder::NodeById) => self.node_rows_by_id(),
-            (Relation::Edges, SortOrder::EdgeSrcTypeDst)
-            | (Relation::Edges, SortOrder::EdgeDstTypeSrc) => self.edge_rows(order),
-            // Invalid (rel, order) pairing — empty run (the planner never issues these;
-            // an empty run keeps the merge-join total without a panic).
-            _ => Vec::new(),
-        };
+        let rows = snapshot_sorted_run(&self.store, &self.snapshot, rel, order);
         // Wrap the already-sorted single source in the same k-way merge primitive so the
         // real and fixture impls share one ordered-iteration mechanism.
         Box::new(KMerge::new(vec![rows], order))
     }
 
     fn scan_nodes_by_type(&self, ty: &str) -> Box<dyn Iterator<Item = NodeRow> + '_> {
-        let rows: Vec<NodeRow> = self
-            .store
-            .find_nodes_at(&self.snapshot, Some(ty), None)
-            .into_iter()
-            .map(|r| NodeRow {
-                id: r.id,
-                node_type: r.node_type,
-                name: r.name,
-                file: r.file,
-            })
-            .collect();
-        Box::new(rows.into_iter())
+        Box::new(snapshot_scan_nodes_by_type(&self.store, &self.snapshot, ty).into_iter())
     }
 
     fn scan_edges_by_type(
@@ -427,30 +475,63 @@ impl StorageView for LsmStorageView {
         ty: &str,
         order: EdgeOrder,
     ) -> Box<dyn Iterator<Item = EdgeRow> + '_> {
-        let mut rows: Vec<EdgeRow> = self
-            .store
-            .get_edges_by_type_at(&self.snapshot, ty)
-            .into_iter()
-            .map(|r| EdgeRow {
-                src: r.src,
-                dst: r.dst,
-                edge_type: r.edge_type,
-            })
-            .collect();
-        match order {
-            EdgeOrder::Forward => rows.sort_by(|a, b| a.src.cmp(&b.src).then_with(|| a.dst.cmp(&b.dst))),
-            EdgeOrder::Reverse => rows.sort_by(|a, b| a.dst.cmp(&b.dst).then_with(|| a.src.cmp(&b.src))),
-        }
-        Box::new(rows.into_iter())
+        Box::new(snapshot_scan_edges_by_type(&self.store, &self.snapshot, ty, order).into_iter())
     }
 
     fn get_node(&self, id: u128) -> Option<NodeRow> {
-        self.store.get_node_at(&self.snapshot, id).map(|r| NodeRow {
-            id: r.id,
-            node_type: r.node_type,
-            name: r.name,
-            file: r.file,
-        })
+        snapshot_get_node(&self.store, &self.snapshot, id)
+    }
+}
+
+// ── Borrowing impl over a version-pinned ReadSnapshot (router path) ─
+
+/// `StorageView` over the real `storage_v2` MVCC read path that BORROWS the store
+/// instead of holding an `Arc`.
+///
+/// The server-side dispatch (the `RFDB_DATALOG_V2` router) already holds a read lock on
+/// the engine for the duration of one [`crate::datalog2::evaluate`] call, so it can lend
+/// `&MultiShardStore` directly — no `Arc` clone is needed and the storage type stays
+/// module-private to `datalog2` (I10). The captured [`ReadSnapshot`] pins the manifest
+/// version for the view's lifetime exactly like [`LsmStorageView`]; both delegate to the
+/// same `snapshot_*` helpers so they can never disagree on what the snapshot surfaces.
+pub(crate) struct BorrowedLsmStorageView<'a> {
+    store: &'a MultiShardStore,
+    snapshot: ReadSnapshot,
+}
+
+impl<'a> BorrowedLsmStorageView<'a> {
+    /// Build a borrowing view from a borrowed store and an already-captured snapshot. The
+    /// snapshot pins the published version for the view's lifetime; the caller must keep
+    /// the snapshot consistent with the manifest it was captured from.
+    pub(crate) fn new(store: &'a MultiShardStore, snapshot: ReadSnapshot) -> Self {
+        Self { store, snapshot }
+    }
+}
+
+impl<'a> StorageView for BorrowedLsmStorageView<'a> {
+    fn generation(&self) -> u64 {
+        self.snapshot.version
+    }
+
+    fn sorted_run(&self, rel: Relation, order: SortOrder) -> Box<dyn Iterator<Item = Row> + '_> {
+        let rows = snapshot_sorted_run(self.store, &self.snapshot, rel, order);
+        Box::new(KMerge::new(vec![rows], order))
+    }
+
+    fn scan_nodes_by_type(&self, ty: &str) -> Box<dyn Iterator<Item = NodeRow> + '_> {
+        Box::new(snapshot_scan_nodes_by_type(self.store, &self.snapshot, ty).into_iter())
+    }
+
+    fn scan_edges_by_type(
+        &self,
+        ty: &str,
+        order: EdgeOrder,
+    ) -> Box<dyn Iterator<Item = EdgeRow> + '_> {
+        Box::new(snapshot_scan_edges_by_type(self.store, &self.snapshot, ty, order).into_iter())
+    }
+
+    fn get_node(&self, id: u128) -> Option<NodeRow> {
+        snapshot_get_node(self.store, &self.snapshot, id)
     }
 }
 

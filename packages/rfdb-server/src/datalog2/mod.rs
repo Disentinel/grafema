@@ -43,6 +43,9 @@ pub mod plan;
 pub mod exec;
 pub mod events;
 
+#[cfg(test)]
+mod differential;
+
 use crate::datalog::EvalLimits;
 
 use builtin::Stats;

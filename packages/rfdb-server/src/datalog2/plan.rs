@@ -234,9 +234,18 @@ pub fn plan_rule(rule: &Rule, strat: &Stratification, stats: &Stats) -> PlanResu
         let join = pick_join(&source, &pattern);
         let estimate = leg_estimate(&source, &pattern, stats);
 
-        rule_estimate = rule_estimate.saturating_mul(estimate.max(1));
+        // Only positive, tuple-introducing legs (those that bind previously-free variables)
+        // grow the output-size estimate. Anti-joins (negative literals) and fully-bound
+        // filters can only narrow the result (selectivity ≤ 1), so they must NOT multiply the
+        // estimate — otherwise a cheap `node(X,T), \+ edge(_,X,"CONTAINS")` is mis-estimated
+        // as the product of two relation magnitudes and spuriously trips the §3 E-PLAN-003
+        // guard (observed: function-has-contains estimated 52,970,680 vs actual 1,747).
+        let provided = provided_vars(atom, &bound);
+        if lit.is_positive() && !provided.is_empty() {
+            rule_estimate = rule_estimate.saturating_mul(estimate.max(1));
+        }
 
-        bound.extend(provided_vars(atom, &bound));
+        bound.extend(provided);
         legs.push(PlanLeg {
             literal: lit.clone(),
             pattern,
@@ -375,11 +384,15 @@ fn positive_can_place_and_provides(
             }
             let id_ok = is_bound_or_const(&args[0], bound);
             let name_ok = is_bound_or_const(&args[1], bound);
-            let val_ok = is_bound_or_const(&args[2], bound);
+            // v2 Gate A: `attr` is a column reader/filter requiring a bound Id (matches
+            // ATTR_MODES [B,B,F]/[B,B,B] and eval_attr in builtin.rs). Finding nodes by attr
+            // VALUE (a generator over a value index) is deferred — so attr is only placeable
+            // once its Id is bound by a preceding generator (e.g. node(X,T)). This keeps the
+            // feasibility layer in sync with the registry, which has no [Free,Bound,Bound]
+            // mode (was: E-PLAN-001 on switch-has-cases / if-has-consequent when the planner
+            // tried to place attr first as a generator).
             if id_ok && name_ok {
                 (true, provides_if_free(&args[2], bound))
-            } else if !id_ok && name_ok && val_ok {
-                (true, provides_if_free(&args[0], bound))
             } else {
                 (false, HashSet::new())
             }
