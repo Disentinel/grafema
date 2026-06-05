@@ -2403,4 +2403,60 @@ mod integration_tests {
             result
         );
     }
+
+    // ── Aggregate-vs-scalar function routing (RFD-70 follow-up) ─────────
+
+    #[test]
+    fn scalar_function_in_return_rejected_not_mislabeled_aggregate() {
+        // A non-aggregate function in RETURN must be rejected as an unsupported
+        // FUNCTION — never silently routed through aggregation nor mislabeled as
+        // an "aggregate". Only COUNT/SUM/AVG/MIN/MAX are aggregates.
+        let engine = create_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN toUpper(n.name)",
+            EvalLimits::none(),
+        );
+        assert!(result.is_err(), "expected an error for unsupported scalar function");
+        let msg = format!("{:?}", result.unwrap_err()).to_lowercase();
+        assert!(
+            !msg.contains("aggregate"),
+            "scalar function must not be reported as an aggregate; got: {}",
+            msg
+        );
+        assert!(
+            msg.contains("toupper") || msg.contains("function"),
+            "error should name the unsupported function; got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn mixed_scalar_and_column_not_misaggregated() {
+        // `RETURN n.file, toUpper(n.name)` must NOT be planned as GROUP BY n.file
+        // with toUpper treated as an aggregate; it's rejected as unsupported.
+        let engine = create_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN n.file, toUpper(n.name)",
+            EvalLimits::none(),
+        );
+        assert!(result.is_err());
+        let msg = format!("{:?}", result.unwrap_err()).to_lowercase();
+        assert!(!msg.contains("aggregate"), "got: {}", msg);
+    }
+
+    #[test]
+    fn real_aggregates_still_work_after_scalar_split() {
+        // Regression: real aggregates + grouping unaffected by the scalar split.
+        let engine = create_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (f:FUNCTION)-[:CALLS]->(g) RETURN f.name, COUNT(g) AS calls",
+            EvalLimits::none(),
+        )
+        .unwrap();
+        assert_eq!(result.columns, vec!["f.name", "calls"]);
+        assert!(result.row_count >= 1);
+    }
 }
