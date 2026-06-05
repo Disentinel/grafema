@@ -1244,7 +1244,7 @@ pub async fn resolve_per_file(
             commit_resolve_chunk(&mut chunk, name, generation, rfdb).await?;
         }
 
-        if (i + 1) % 500 == 0 || i + 1 == total_files {
+        if (i + 1) % RESOLVE_CHECKPOINT_INTERVAL == 0 || i + 1 == total_files {
             eprintln!("    Per-file resolve: {}/{} files ({} edges so far)",
                 i + 1, total_files, all_output.edges.len());
             if let Some(prof) = profiler {
