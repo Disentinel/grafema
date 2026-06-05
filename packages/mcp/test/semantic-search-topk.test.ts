@@ -14,6 +14,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
 import { handleSemanticSearch } from '../dist/handlers/enox-handlers.js';
+import { ENOX_TOOLS } from '../dist/definitions/enox-tools.js';
 
 /** Minimal fake RFDBClient — handleSemanticSearch only calls queryNodes(). */
 function fakeClient(nodeCount: number): any {
@@ -70,5 +71,17 @@ describe('semantic_search top_k parameter (schema/handler contract)', () => {
     assert.ok(!/\[\d\.\d{2}\]/.test(text), `must not fabricate a similarity score, got:\n${text}`);
     // Results are still listed by name so the tool remains useful.
     assert.ok(text.includes('match1'), `should still list result names, got:\n${text}`);
+  });
+
+  it('schema is honest: drops unimplemented include_edges, description reflects substring (REG-1152)', () => {
+    const tool = ENOX_TOOLS.find((t: any) => t.name === 'semantic_search') as any;
+    assert.ok(tool, 'semantic_search tool exists');
+    const props = tool.inputSchema.properties;
+    // include_edges was advertised but never read by the handler — must not be advertised.
+    assert.strictEqual(props.include_edges, undefined, 'include_edges must not be advertised');
+    // The real params stay.
+    assert.ok(props.query && props.top_k, 'query/top_k still advertised');
+    // Description must not overpromise embedding-based semantic search (it does substring matching).
+    assert.match(tool.description, /substring/i, 'description should reflect substring matching');
   });
 });

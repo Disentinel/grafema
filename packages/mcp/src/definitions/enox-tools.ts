@@ -124,14 +124,13 @@ Example: recall(query="federation architecture", depth=2)`,
   },
   {
     name: 'semantic_search',
-    description: `Embedding-based similarity search across the knowledge graph.
+    description: `Substring search across knowledge-graph node names (case-insensitive).
 
-Use this for precise similarity matching — finds nodes whose content
-is semantically close to the query, even if exact keywords differ.
+NOTE: despite the name, embedding-based semantic ranking is not wired yet
+(RFD-63). This currently matches substrings of node names — results are
+plain matches, not similarity-ranked. Use recall for broader retrieval.
 
-More targeted than recall: returns ranked results without graph traversal.
-
-Example: semantic_search(query="Docker container auth token", top_k=5, domain="devops")`,
+Example: semantic_search(query="auth token", top_k=5, domain="devops")`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -146,10 +145,6 @@ Example: semantic_search(query="Docker container auth token", top_k=5, domain="d
         domain: {
           type: 'string',
           description: 'Filter results to a specific domain',
-        },
-        include_edges: {
-          type: 'boolean',
-          description: 'Include edges connected to matched nodes (default: false)',
         },
       },
       required: ['query'],
