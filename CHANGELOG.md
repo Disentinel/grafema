@@ -21,6 +21,7 @@ All notable changes to this project will be documented in this file.
 - fix(cli): `grafema analyze --resolve-jobs N` / `grafema resolve --jobs N` no longer silently ignore the requested worker count — resolution currently runs single-worker, so any value other than 1 now prints a clear notice that the flag has no effect and proceeds with 1 worker; help text updated to match (REG-563, #287)
 - fix(cli): `grafema who` attributes each call to its enclosing named function (via the v2 `[in:…]` semantic-id annotation) instead of `<anonymous>`; import statements are no longer mislabelled as bare callers (#292)
 - fix(cli): `file`/`explain` resolve files correctly when the project root is a symlink (e.g. `--project` at a symlinked checkout, or a root under macOS `/tmp`→`/private/tmp`) — previously reported `NOT_ANALYZED` for analyzed files because the project-relative path was computed against a non-realpath'd root (#293)
+- fix(cli): `grafema impact <method>` resolves a bare method name to its METHOD node and finds its callers (previously reported "No node found") — recovers `receiver.method()` call sites whose `method` attribute is unpopulated via a name-based CALL scan, consistent with `grafema who` (#297)
 
 ## [0.3.23] - 2026-04-01
 
