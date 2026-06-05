@@ -11,7 +11,7 @@
 import { Command } from 'commander';
 import { resolve, join, isAbsolute, relative } from 'path';
 import { existsSync } from 'fs';
-import { RFDBServerBackend, parseSemanticIdV2 } from '@grafema/util';
+import { RFDBServerBackend, parseSemanticIdV2, namedParentName } from '@grafema/util';
 import { exitWithError } from '../utils/errorFormatter.js';
 import { Spinner } from '../utils/spinner.js';
 
@@ -93,7 +93,10 @@ Examples:
         // (parseSemanticIdV2 also decodes the `grafema://` URI form). The old
         // `->`-split walk targeted the v1 id shape and never matched v2 ids, so
         // every caller printed as `<anonymous>`.
-        const callerName = parseSemanticIdV2(node.id)?.namedParent || '<anonymous>';
+        // The native Rust analyzer stores the enclosing function's FULL semantic
+        // id in `in:`, so normalize to the bare ancestor name for display.
+        const np = parseSemanticIdV2(node.id)?.namedParent;
+        const callerName = np ? namedParentName(np) : '<anonymous>';
 
         const file = node.file || '';
 

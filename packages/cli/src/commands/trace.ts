@@ -10,7 +10,7 @@
 import { Command } from 'commander';
 import { isAbsolute, resolve, join } from 'path';
 import { existsSync } from 'fs';
-import { RFDBServerBackend, parseSemanticId, parseSemanticIdV2, traceValues, traceDataflow, renderTraceNarrative, type ValueSource, type DataflowBackend } from '@grafema/util';
+import { RFDBServerBackend, parseSemanticId, parseSemanticIdV2, namedParentName, traceValues, traceDataflow, renderTraceNarrative, type ValueSource, type DataflowBackend } from '@grafema/util';
 import { formatNodeDisplay } from '../utils/formatNode.js';
 import { exitWithError } from '../utils/errorFormatter.js';
 
@@ -245,7 +245,10 @@ async function findVariables(
           // Try v2 parsing first
           const parsedV2 = parseSemanticIdV2(node.id);
           if (parsedV2) {
-            if (!parsedV2.namedParent || parsedV2.namedParent.toLowerCase() !== lowerScopeName) {
+            // namedParent may be a full semantic id (native Rust analyzer) —
+            // normalize to the bare ancestor name before comparing the scope.
+            if (!parsedV2.namedParent ||
+                namedParentName(parsedV2.namedParent).toLowerCase() !== lowerScopeName) {
               continue;
             }
           } else {

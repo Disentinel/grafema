@@ -69,6 +69,7 @@ export {
   computeDiscriminator,
   computeSemanticIdV2,
   parseSemanticIdV2,
+  namedParentName,
   computeContentHash
 } from './core/SemanticId.js';
 export type {

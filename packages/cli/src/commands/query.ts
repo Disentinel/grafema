@@ -13,7 +13,7 @@ import { Command } from 'commander';
 import { resolve, join, basename } from 'path';
 import { toRelativeDisplay } from '../utils/pathUtils.js';
 import { existsSync } from 'fs';
-import { RFDBServerBackend, parseSemanticId, parseSemanticIdV2, findCallsInFunction as findCallsInFunctionCore, findContainingFunction as findContainingFunctionCore } from '@grafema/util';
+import { RFDBServerBackend, parseSemanticId, parseSemanticIdV2, namedParentName, findCallsInFunction as findCallsInFunctionCore, findContainingFunction as findContainingFunctionCore } from '@grafema/util';
 import { formatNodeDisplay, formatNodeInline, formatLocation } from '../utils/formatNode.js';
 import { exitWithError } from '../utils/errorFormatter.js';
 import { Spinner } from '../utils/spinner.js';
@@ -451,9 +451,12 @@ export function matchesScope(semanticId: string, file: string | null, scopes: st
       }
     }
 
-    // Function/class scope check (v2): check namedParent
+    // Function/class scope check (v2): check namedParent.
+    // namedParent may be a bare name (JS/Haskell) or a full semantic id (native
+    // Rust analyzer) — normalize to the bare ancestor name before comparing.
     for (const scope of scopes) {
-      if (!parsedV2.namedParent || parsedV2.namedParent.toLowerCase() !== scope.toLowerCase()) {
+      if (!parsedV2.namedParent ||
+          namedParentName(parsedV2.namedParent).toLowerCase() !== scope.toLowerCase()) {
         return false;
       }
     }
@@ -520,7 +523,7 @@ export function extractScopeContext(semanticId: string): string | null {
   const parsedV2 = parseSemanticIdV2(semanticId);
   if (parsedV2) {
     if (parsedV2.namedParent) {
-      return `inside ${parsedV2.namedParent}`;
+      return `inside ${namedParentName(parsedV2.namedParent)}`;
     }
     // v2 with no parent = top-level
     return null;

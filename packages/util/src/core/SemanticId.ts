@@ -399,6 +399,39 @@ export function parseSemanticIdV2(id: string): ParsedSemanticIdV2 | null {
 }
 
 /**
+ * Resolve a v2 `namedParent` value to the bare name of the nearest named ancestor.
+ *
+ * The v2 ID spec (see {@link ParsedSemanticIdV2}) intends `namedParent` to be a
+ * bare name, e.g. `login`. The JS/Haskell analyzers honor this, but the native
+ * Rust analyzer (grafema-orchestrator/src/rust_analyzer.rs) emits the ancestor's
+ * FULL semantic id instead, e.g.
+ *   `src/lib.rs->FUNCTION->run[in:src/lib.rs->IMPL_BLOCK->Service]`.
+ * Any consumer that DISPLAYS namedParent to a user, or COMPARES it against a
+ * bare scope name (e.g. the `in:` / `--scope` filter), must tolerate BOTH shapes
+ * — otherwise Rust callers render as unreadable internal ids and scope filters
+ * silently match nothing.
+ *
+ * This is a display/comparison normalization only; it does not change what the
+ * analyzers emit (the analyzer-side encoding is a separate, owner-gated decision).
+ *
+ * @param namedParent - Raw `namedParent` from {@link parseSemanticIdV2}
+ * @returns Bare name of the nearest named ancestor. A bare input is returned
+ *   unchanged; a full semantic id is reduced to its leaf name.
+ */
+export function namedParentName(namedParent: string): string {
+  // Bare name (JS/Haskell analyzers) — nothing to unwrap.
+  if (!namedParent.includes('->')) return namedParent;
+  // Full semantic id (native Rust analyzer) — parse out the leaf name.
+  const parsed = parseSemanticIdV2(namedParent);
+  if (parsed?.name) return parsed.name;
+  // Defensive fallback for shapes the v2 parser rejects: take the segment after
+  // the last `->`, dropping any trailing `[..]` annotation.
+  const tail = namedParent.slice(namedParent.lastIndexOf('->') + 2);
+  const bracket = tail.indexOf('[');
+  return bracket === -1 ? tail : tail.slice(0, bracket);
+}
+
+/**
  * FNV-1a hash function, returns 4-hex-char string.
  *
  * FNV-1a is simple, fast, and has good distribution for short strings.
