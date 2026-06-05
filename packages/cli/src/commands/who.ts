@@ -14,6 +14,7 @@ import { existsSync } from 'fs';
 import { RFDBServerBackend } from '@grafema/util';
 import { exitWithError } from '../utils/errorFormatter.js';
 import { Spinner } from '../utils/spinner.js';
+import { resolveCallerName } from './whoCaller.js';
 
 interface WhoCommandOptions {
   project: string;
@@ -88,17 +89,10 @@ Examples:
         const edges = await backend.getOutgoingEdges(node.id, ['CALLS']);
         const resolved = edges.length > 0;
 
-        // Extract caller name from semantic ID
-        // Format: "file->SCOPE->TYPE->name" — parent scope is the caller
-        const idParts = node.id.split('->');
-        let callerName = '<anonymous>';
-        // Walk up the scope chain to find a FUNCTION or METHOD parent
-        for (let i = idParts.length - 3; i >= 1; i--) {
-          if (idParts[i] === 'FUNCTION' || idParts[i] === 'METHOD') {
-            callerName = idParts[i + 1] || callerName;
-            break;
-          }
-        }
+        // Resolve the caller (enclosing function/method) graph-natively via the
+        // CALL node's incoming CONTAINS edge. v2 semantic IDs no longer embed the
+        // scope chain, so the caller cannot be recovered from the id string.
+        const callerName = await resolveCallerName(backend, node.id);
 
         const file = node.file || '';
 
