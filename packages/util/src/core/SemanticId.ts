@@ -354,10 +354,6 @@ export function parseSemanticIdV2(id: string): ParsedSemanticIdV2 | null {
   const type = id.slice(firstArrow + 2, secondArrow);
   let rest = id.slice(secondArrow + 2);
 
-  // Check this isn't a v1 ID (v1 has 4+ parts, meaning rest contains '->')
-  // v2 names don't contain '->' in practice
-  if (rest.includes('->')) return null;
-
   // Parse counter suffix: #N (only at the very end, after brackets)
   let counter: number | undefined;
   const counterMatch = rest.match(/#(\d+)$/);
@@ -373,7 +369,17 @@ export function parseSemanticIdV2(id: string): ParsedSemanticIdV2 | null {
 
   const bracketStart = rest.indexOf('[');
   const bracketEnd = rest.lastIndexOf(']');
-  if (bracketStart !== -1 && bracketEnd === rest.length - 1) {
+  const hasBracket = bracketStart !== -1 && bracketEnd === rest.length - 1;
+
+  // Reject legacy v1 IDs (file->scope->TYPE->name): in v1 the extra '->' lives
+  // in the path/name region, never inside the v2 metadata bracket. A v2
+  // namedParent value MAY itself contain '->' (e.g. the native Rust analyzer
+  // emits the full parent path in `in:`), so only the name region — the part
+  // before `[in:...]` — is checked for the v1 marker.
+  const nameRegion = hasBracket ? rest.slice(0, bracketStart) : rest;
+  if (nameRegion.includes('->')) return null;
+
+  if (hasBracket) {
     name = rest.slice(0, bracketStart);
     const bracketContent = rest.slice(bracketStart + 1, bracketEnd);
 
