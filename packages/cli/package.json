@@ -24,7 +24,8 @@
     "postbuild": "mkdir -p dist/plugins && cp src/plugins/pluginResolver.js dist/plugins/",
     "clean": "rm -rf dist",
     "start": "node dist/cli.js",
-    "test": "node --import tsx --test test/*.test.ts"
+    "test": "node --import tsx --test test/*.test.ts",
+    "test:unit": "node --import tsx --test --test-concurrency=1 test/analyze-utils.test.ts test/formatNode.test.ts test/pathutils-resolveprojectroot.test.ts test/progressRenderer.test.ts test/query-raw-predicate-warning.test.ts"
   },
   "keywords": [
     "grafema",

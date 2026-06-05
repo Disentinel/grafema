@@ -42,3 +42,22 @@ Rust packages:
 cargo test -p grafema-orchestrator
 cargo test -p rfdb-server
 ```
+
+## What runs in CI
+
+The `CI / Tests` job (`.github/workflows/ci.yml`) gates these suites on every PR:
+
+| Suite | Command | Gated | Notes |
+|-------|---------|-------|-------|
+| Root unit | `pnpm test:coverage` (`test/unit/*.test.js`) | ✅ | |
+| MCP | `pnpm --filter @grafema/mcp test` | ✅ | |
+| VSCode unit | `packages/vscode/test/unit/*.test.ts` | ✅ | |
+| API + types | `pnpm --filter @grafema/api --filter @grafema/types test` | ✅ | |
+| CLI unit (backend-free) | `pnpm --filter @grafema/cli test:unit` | ✅ | REG-1153 — pure-unit files, no spawned binary |
+| CLI integration | `pnpm --filter @grafema/cli test` (full) | ❌ | spawns `dist/cli.js` + needs native orchestrator/rfdb binaries not built in CI |
+
+`@grafema/cli test:unit` covers only files that import functions directly (no cli spawn, no
+`.grafema` db): `analyze-utils`, `formatNode`, `pathutils-resolveprojectroot`,
+`progressRenderer`, `query-raw-predicate-warning`. The remaining cli tests spawn the built
+binary and/or run `analyze`, so they require the Rust/Haskell native binaries; CI-gating them
+needs the workflow to build or fetch those first.
