@@ -41,7 +41,9 @@ enum Commands {
         #[arg(long)]
         force: bool,
 
-        /// Number of parallel resolve workers (overrides auto-detection)
+        /// Requested resolve-worker count. NOTE: resolution currently runs
+        /// single-worker (per-file streaming); a value other than 1 has no
+        /// effect and a notice is printed.
         #[arg(long)]
         resolve_jobs: Option<usize>,
     },
@@ -53,7 +55,9 @@ enum Commands {
         /// Path to RFDB unix socket
         #[arg(short, long)]
         socket: Option<PathBuf>,
-        /// Number of parallel resolve workers (default: auto based on CPU count)
+        /// Requested resolve-worker count. NOTE: resolution currently runs
+        /// single-worker (per-file streaming); a value other than 1 has no
+        /// effect and a notice is printed.
         #[arg(short, long)]
         jobs: Option<usize>,
     },
@@ -172,6 +176,23 @@ fn resolve_worker_count() -> usize {
         );
     }
     count
+}
+
+/// Build a user-facing notice when an explicit resolve-worker count is requested
+/// that the orchestrator cannot honor. Resolution currently runs single-worker
+/// (per-file streaming), so any request other than 1 worker is a no-op today.
+/// Surfacing it stops `--resolve-jobs` / `--jobs` from being silently ignored and
+/// misleading the user about its effect (REG-563: surface silent skips).
+///
+/// Returns `Some(message)` when `requested` is `Some(n)` with `n != 1`, else `None`.
+fn resolve_jobs_notice(flag: &str, requested: Option<usize>) -> Option<String> {
+    match requested {
+        Some(n) if n != 1 => Some(format!(
+            "{flag}={n} has no effect: resolution currently runs single-worker \
+             (per-file streaming); proceeding with 1 worker."
+        )),
+        _ => None,
+    }
 }
 
 /// Detect available system memory in GB.
@@ -324,8 +345,11 @@ async fn main() -> Result<()> {
             socket,
             jobs,
             force,
-            resolve_jobs: _resolve_jobs,
+            resolve_jobs,
         } => {
+            if let Some(msg) = resolve_jobs_notice("--resolve-jobs", resolve_jobs) {
+                tracing::warn!("{msg}");
+            }
             let cfg = config::load(&config_path)?.with_defaults();
 
             // Resolve RFDB socket path: CLI flag > config > default
@@ -1873,8 +1897,11 @@ async fn main() -> Result<()> {
         Commands::Resolve {
             config: config_path,
             socket,
-            jobs: _jobs,
+            jobs,
         } => {
+            if let Some(msg) = resolve_jobs_notice("--jobs", jobs) {
+                tracing::warn!("{msg}");
+            }
             let cfg = config::load(&config_path)?.with_defaults();
 
             // Resolve RFDB socket path: CLI flag > config > default
@@ -2878,5 +2905,27 @@ mod tests {
     #[test]
     fn test_parse_git_remote_invalid() {
         assert_eq!(parse_git_remote_authority("not-a-url"), None);
+    }
+
+    #[test]
+    fn resolve_jobs_notice_silent_for_default_and_single_worker() {
+        // Unset or exactly 1 worker matches reality → no notice (no false alarm).
+        assert!(resolve_jobs_notice("--resolve-jobs", None).is_none());
+        assert!(resolve_jobs_notice("--resolve-jobs", Some(1)).is_none());
+    }
+
+    #[test]
+    fn resolve_jobs_notice_surfaces_unhonored_request() {
+        // n > 1 is silently a no-op today → must be surfaced, naming the flag,
+        // the requested value, and that it runs single-worker.
+        let msg = resolve_jobs_notice("--resolve-jobs", Some(8)).expect("n>1 surfaced");
+        assert!(msg.contains("--resolve-jobs"), "names the flag: {msg}");
+        assert!(msg.contains('8'), "echoes the requested value: {msg}");
+        assert!(msg.contains("single-worker"), "states actual behavior: {msg}");
+
+        // 0 is also a non-unit request → surfaced, not silently swallowed.
+        assert!(resolve_jobs_notice("--jobs", Some(0)).is_some());
+        // The flag name is threaded through (resolve subcommand uses --jobs).
+        assert!(resolve_jobs_notice("--jobs", Some(4)).unwrap().contains("--jobs"));
     }
 }
