@@ -15,7 +15,7 @@ import { toRelativeDisplay } from '../utils/pathUtils.js';
 import { existsSync } from 'fs';
 import { RFDBServerBackend, parseSemanticId, parseSemanticIdV2, findCallsInFunction as findCallsInFunctionCore, findContainingFunction as findContainingFunctionCore } from '@grafema/util';
 import { formatNodeDisplay, formatNodeInline, formatLocation } from '../utils/formatNode.js';
-import { exitWithError } from '../utils/errorFormatter.js';
+import { exitWithError, emitJsonNotFound } from '../utils/errorFormatter.js';
 import { Spinner } from '../utils/spinner.js';
 import { extractQueriedTypes, findSimilarTypes } from '../utils/queryHints.js';
 import type { DatalogExplainResult, CypherResult } from '@grafema/types';
@@ -229,6 +229,13 @@ Examples:
       const hasScope = query.file !== null || query.scopes.length > 0;
 
       if (nodes.length === 0) {
+        // --json contract: stdout is always parseable JSON. The success path
+        // (below) emits a JSON array of nodes, so an empty result mirrors it with
+        // `[]`; the human "No results" note + suggestions go to stderr.
+        if (options.json) {
+          emitJsonNotFound([], `No results for "${pattern}"`);
+          return;
+        }
         console.log(`No results for "${pattern}"`);
         if (hasScope) {
           console.log(`  Try: grafema query "${query.name}" (search all scopes)`);
