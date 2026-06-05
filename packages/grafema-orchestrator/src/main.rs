@@ -1058,6 +1058,7 @@ async fn main() -> Result<()> {
                             &ws_packages,
                             "js-resolution",
                             generation,
+                            prof.as_ref(),
                         ).await?;
 
                         // Extract IMPORTS_FROM edges for DEPENDS_ON derivation
@@ -2011,6 +2012,7 @@ async fn main() -> Result<()> {
                             &ws_packages,
                             "js-resolution",
                             generation,
+                            None,
                         ).await?;
 
                         // Extract IMPORTS_FROM edges for DEPENDS_ON derivation

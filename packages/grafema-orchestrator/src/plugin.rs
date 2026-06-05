@@ -1101,6 +1101,27 @@ impl CheckpointAccumulator {
     }
 }
 
+/// Build the fields for a `resolve_progress` profiler event.
+///
+/// Kept pure (no Profiler / RFDB) so the event schema is unit-testable. Emitted
+/// every [`RESOLVE_CHECKPOINT_INTERVAL`] files (and once at completion) so a long
+/// per-file resolve's liveness and rate are visible in `analysis-profile.jsonl`
+/// instead of being a silent gap between `js_resolve_start` and `js_resolve_complete`
+/// that run-health tooling must reconstruct from rfdb.log. See REG-1138 (defect 2).
+fn resolve_progress_fields(
+    phase: &str,
+    files_done: usize,
+    total_files: usize,
+    edges_so_far: usize,
+) -> Vec<(&'static str, String)> {
+    vec![
+        ("phase", phase.to_string()),
+        ("files_done", files_done.to_string()),
+        ("total_files", total_files.to_string()),
+        ("edges_so_far", edges_so_far.to_string()),
+    ]
+}
+
 /// Per-file resolve: builds an export index on the worker, then resolves each
 /// file individually by querying RFDB for that file's nodes.
 ///
@@ -1126,6 +1147,7 @@ pub async fn resolve_per_file(
     workspace_packages: &[WorkspacePackageWire],
     name: &str,
     generation: u64,
+    profiler: Option<&crate::profiler::Profiler>,
 ) -> Result<PluginOutput> {
     // Step 1: Get all MODULE nodes to find files for this language
     let module_nodes = rfdb.query_nodes_by_type("MODULE").await?;
@@ -1222,9 +1244,14 @@ pub async fn resolve_per_file(
             commit_resolve_chunk(&mut chunk, name, generation, rfdb).await?;
         }
 
-        if (i + 1) % 500 == 0 || i + 1 == total_files {
+        if (i + 1) % RESOLVE_CHECKPOINT_INTERVAL == 0 || i + 1 == total_files {
             eprintln!("    Per-file resolve: {}/{} files ({} edges so far)",
                 i + 1, total_files, all_output.edges.len());
+            if let Some(prof) = profiler {
+                let fields = resolve_progress_fields(name, i + 1, total_files, all_output.edges.len());
+                let refs: Vec<(&str, &str)> = fields.iter().map(|(k, v)| (*k, v.as_str())).collect();
+                prof.event("resolve_progress", &refs);
+            }
         }
     }
 
@@ -1812,5 +1839,19 @@ mod tests {
         acc.record(&[ck_node("a")], &[]);
         acc.record(&[ck_node("b")], &[]);
         assert!(acc.take_if_due().is_some(), "counter reset after empty checkpoint");
+    }
+
+    // -- resolve_progress telemetry (REG-1138 defect 2) --
+
+    /// The `resolve_progress` event carries the phase + progress counters under
+    /// the field names run-health tooling parses; lock that schema.
+    #[test]
+    fn resolve_progress_fields_schema() {
+        let f = resolve_progress_fields("js-resolution", 500, 9059, 12345);
+        let map: std::collections::HashMap<_, _> = f.into_iter().collect();
+        assert_eq!(map.get("phase").map(String::as_str), Some("js-resolution"));
+        assert_eq!(map.get("files_done").map(String::as_str), Some("500"));
+        assert_eq!(map.get("total_files").map(String::as_str), Some("9059"));
+        assert_eq!(map.get("edges_so_far").map(String::as_str), Some("12345"));
     }
 }
