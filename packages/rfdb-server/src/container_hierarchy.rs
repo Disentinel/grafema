@@ -6,7 +6,7 @@
 //!
 //! # Example
 //!
-//! ```
+//! ```no_run
 //! use rfdb::container_hierarchy::{HierarchyLevel, ContainerRule, ContainerTree};
 //!
 //! let hierarchy = vec![
@@ -18,8 +18,9 @@
 //!     ])),
 //! ];
 //!
-//! let tree = ContainerTree::build(&hierarchy, &nodes, &edges);
-//! let region = tree.sa_region(node_idx);
+//! // `nodes` / `edges` come from your graph; empty slices here for illustration.
+//! let tree = ContainerTree::build(&hierarchy, &[], &[]);
+//! let _region = tree.sa_region(0);
 //! ```
 
 use std::collections::HashMap;
