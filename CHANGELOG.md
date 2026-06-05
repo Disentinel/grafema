@@ -30,6 +30,7 @@ All notable changes to this project will be documented in this file.
 - fix(cli): `file`/`explain --json` emit parseable JSON on a missing file (object mirroring each command's success shape with `status: "NOT_FOUND"` and empty collections) instead of empty stdout; human note moves to stderr, exit stays 0 (#311)
 - fix(cli): `grafema context <missing> --json` not-found payload mirrors the success `NodeContext` shape (`{ node: null, source: null, outgoing: [], incoming: [] }`) instead of a degenerate `{ node: null }` (#313)
 - fix(mcp): `semantic_search` honors its advertised `top_k` parameter — the handler read `args.limit` (default 20) while the tool schema advertises `top_k` (default 10), so callers passing `top_k` were silently ignored; now respected with the schema default (#314)
+- fix(mcp): `semantic_search` no longer prints a fabricated similarity score — results were rendered with a purely positional `[0.95]`-style score (embeddings not yet wired; matching is substring-based) that an agent reads as a real confidence metric; results are now listed by rank + name without the fake score (#319)
 
 ## [0.3.23] - 2026-04-01
 
