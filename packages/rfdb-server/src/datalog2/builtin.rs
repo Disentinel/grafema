@@ -263,12 +263,18 @@ pub type Cost = u64;
 
 /// Minimal storage statistics the cost functions consult. A trimmed surface (the full
 /// `Stats` lives with the planner in a later layer); cost only needs relation magnitudes.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct Stats {
     /// Total live nodes at the run's snapshot.
     pub total_nodes: u64,
     /// Total live edges at the run's snapshot.
     pub total_edges: u64,
+    /// Per-node-type live counts — the §7 cardinality oracle. A bound type literal in a
+    /// `node(X, "TYPE")` generator narrows the estimate to that type's count; an empty map (or
+    /// an absent type) falls back to `total_nodes`. Lets the planner place an empty-type leg
+    /// first instead of over-estimating it at the whole relation (which spuriously trips
+    /// E-PLAN-003 — e.g. node(M, "MESSAGE_TYPE") in a graph with zero MESSAGE_TYPE nodes).
+    pub nodes_by_type: std::collections::HashMap<String, u64>,
 }
 
 /// A registered builtin (spec §7): name, arity, supported modes, cost, kind, and eval body.
@@ -1499,6 +1505,7 @@ mod tests {
         let stats = Stats {
             total_nodes: 1000,
             total_edges: 2000,
+            ..Default::default()
         };
         let scan = Mode { args: &[F, B] };
         let point = Mode { args: &[B, B] };

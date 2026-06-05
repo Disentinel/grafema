@@ -1265,7 +1265,7 @@ mod tests {
             called(Y) :- edge(C, Y, "CALLS").
             orphan(X) :- node(X, "FUNCTION"), \+ called(X).
         "#;
-        let eval = run(src, &v, Stats { total_nodes: 4, total_edges: 2 });
+        let eval = run(src, &v, Stats { total_nodes: 4, total_edges: 2, ..Default::default() });
 
         // Only fn2 is called → orphans are fn1 and fn3.
         let orphans = ids(&eval, "orphan");
@@ -1369,7 +1369,7 @@ mod tests {
         let src = r#"
             has_no_incoming_call(X) :- node(X, "FUNCTION"), \+ incoming(X, _, "CALLS").
         "#;
-        let eval = run_on(src, &view, Stats { total_nodes: n as u64, total_edges: (n / 2) as u64 });
+        let eval = run_on(src, &view, Stats { total_nodes: n as u64, total_edges: (n / 2) as u64, ..Default::default() });
 
         // The odd-indexed functions (no incoming CALLS) survive the anti-join.
         let got = ids(&eval, "has_no_incoming_call");
@@ -1414,7 +1414,7 @@ mod tests {
             interesting(X) :- node(X, "FUNCTION").
             interesting(X) :- node(X, "CLASS").
         "#;
-        let eval = run(src, &v, Stats { total_nodes: 4, total_edges: 0 });
+        let eval = run(src, &v, Stats { total_nodes: 4, total_edges: 0, ..Default::default() });
 
         let got = ids(&eval, "interesting");
         let mut expected = vec![id_of("fn1"), id_of("fn2"), id_of("cls1")];
@@ -1446,7 +1446,7 @@ mod tests {
             handler_writes(M) :- edge(M, C, "CONTAINS"), incoming(C, _, "STATE_WRITE").
             violation(M) :- node(M, "MESSAGE_TYPE"), \+ handler_writes(M).
         "#;
-        let eval = run(src, &v, Stats { total_nodes: 5, total_edges: 3 });
+        let eval = run(src, &v, Stats { total_nodes: 5, total_edges: 3, ..Default::default() });
 
         // handler_writes = {msgA}; violation = {msgB}.
         assert_eq!(ids(&eval, "handler_writes"), vec![id_of("msgA")]);
@@ -1472,7 +1472,7 @@ mod tests {
             reach(X, Y) :- edge(X, Y, "CALLS").
             reach(X, Z) :- reach(X, Y), edge(Y, Z, "CALLS").
         "#;
-        let eval = run(src, &v, Stats { total_nodes: 4, total_edges: 3 });
+        let eval = run(src, &v, Stats { total_nodes: 4, total_edges: 3, ..Default::default() });
 
         // Reachable pairs: (1,2),(2,3),(3,4),(1,3),(2,4),(1,4) = 6 pairs.
         let pairs: std::collections::BTreeSet<(u128, u128)> = eval
@@ -1515,8 +1515,8 @@ mod tests {
             interesting(X) :- node(X, "CLASS").
             interesting(X) :- node(X, "FUNCTION").
         "#;
-        let stats = Stats { total_nodes: 3, total_edges: 0 };
-        let ea = run(a, &v, stats);
+        let stats = Stats { total_nodes: 3, total_edges: 0, ..Default::default() };
+        let ea = run(a, &v, stats.clone());
         let eb = run(b, &v, stats);
         assert_eq!(ea, eb, "clause order must not change the committed result (I1)");
     }
@@ -1539,7 +1539,7 @@ mod tests {
         let prog = parse_ext_program(src).expect("parse");
         let strat = stratify(&prog).expect("stratify");
         let rules = prog.rules();
-        let plans = plan_program(&rules, &strat, &Stats { total_nodes: 2, total_edges: 1 })
+        let plans = plan_program(&rules, &strat, &Stats { total_nodes: 2, total_edges: 1, ..Default::default() })
             .expect("plan");
         let exec = Executor::<BoolTag>::with_limits(&v, EvalLimits::none(), 0);
         let err = exec.evaluate(&plans, &rules, &strat).expect_err("cap fires");
@@ -1558,7 +1558,7 @@ mod tests {
     #[test]
     fn empty_program_evaluates_to_nothing() {
         let v = FixtureStorageView::new(1);
-        let eval = run("", &v, Stats { total_nodes: 0, total_edges: 0 });
+        let eval = run("", &v, Stats { total_nodes: 0, total_edges: 0, ..Default::default() });
         assert!(eval.relations.is_empty());
     }
 
@@ -1582,7 +1582,7 @@ mod tests {
             reach(X, Z) :- reach(X, Y), edge(Y, Z, "CALLS").
         "#;
         let (eval, events) =
-            run_with_events(src, &v, Stats { total_nodes: 4, total_edges: 3 });
+            run_with_events(src, &v, Stats { total_nodes: 4, total_edges: 3, ..Default::default() });
 
         // Non-empty sequence; every line carries the current schema version (I9).
         assert!(!events.is_empty(), "an always-on log must not be empty");
@@ -1665,7 +1665,7 @@ mod tests {
         let prog = parse_ext_program(src).expect("parse");
         let strat = stratify(&prog).expect("stratify");
         let rules = prog.rules();
-        let plans = plan_program(&rules, &strat, &Stats { total_nodes: 2, total_edges: 1 })
+        let plans = plan_program(&rules, &strat, &Stats { total_nodes: 2, total_edges: 1, ..Default::default() })
             .expect("plan");
         let sink = SharedMemSink::new();
         let exec = Executor::<BoolTag>::with_limits(&v, EvalLimits::none(), 0)

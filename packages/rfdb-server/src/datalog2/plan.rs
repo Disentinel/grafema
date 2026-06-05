@@ -232,7 +232,7 @@ pub fn plan_rule(rule: &Rule, strat: &Stratification, stats: &Stats) -> PlanResu
         }
 
         let join = pick_join(&source, &pattern);
-        let estimate = leg_estimate(&source, &pattern, stats);
+        let estimate = leg_estimate(&source, atom, &pattern, stats);
 
         // Only positive, tuple-introducing legs (those that bind previously-free variables)
         // grow the output-size estimate. Anti-joins (negative literals) and fully-bound
@@ -574,26 +574,63 @@ fn synth_arg_spec(pattern: &[ArgMode]) -> builtin::ArgSpec {
 /// - A filter prunes (fan-out ≤ 1); a function binds one row (fan-out 1).
 /// - A derived leg estimates against the larger relation magnitude (conservative; the run
 ///   stats refine this at execution time per the §7 re-plan rule).
-fn leg_estimate(source: &LegSource, pattern: &[ArgMode], stats: &Stats) -> u64 {
-    let has_bound_key = pattern.first().map(|m| *m == ArgMode::Bound).unwrap_or(false);
+fn leg_estimate(source: &LegSource, atom: &Atom, pattern: &[ArgMode], stats: &Stats) -> u64 {
+    let first_bound = pattern.first().map(|m| *m == ArgMode::Bound).unwrap_or(false);
     match source {
         LegSource::Builtin(_) => 1,
-        LegSource::Base(rel) => {
-            let magnitude = match rel.as_str() {
-                "node" | "type" | "attr" => stats.total_nodes,
-                "edge" | "incoming" => stats.total_edges,
-                _ => stats.total_nodes.max(stats.total_edges),
-            };
-            if has_bound_key {
-                // Narrowed by a bound key column: a bounded fan-out per probe.
-                narrowed_fanout(magnitude)
-            } else {
-                magnitude.max(1)
+        LegSource::Base(rel) => match rel.as_str() {
+            "node" | "type" => {
+                // Per-type cardinality oracle (§7): a CONST type literal narrows the estimate
+                // to that type's live count. When the oracle is populated, a const type ABSENT
+                // from the map has zero live nodes (not "unknown") — so it estimates ~0 and the
+                // planner won't over-estimate it at total_nodes and trip E-PLAN-003 (e.g.
+                // node(M, "MESSAGE_TYPE") in a graph with no MESSAGE_TYPE nodes). A variable
+                // type, or an empty oracle (unit tests), conservatively falls back to the whole
+                // relation.
+                let const_ty = atom.args().get(1).and_then(|t| t.const_value());
+                let magnitude = match const_ty {
+                    Some(ty) if !stats.nodes_by_type.is_empty() => {
+                        stats.nodes_by_type.get(ty).copied().unwrap_or(0)
+                    }
+                    _ => stats.total_nodes,
+                };
+                if first_bound {
+                    narrowed_fanout(magnitude)
+                } else {
+                    magnitude.max(1)
+                }
             }
-        }
+            "edge" | "incoming" => {
+                // An edge leg is keyed if EITHER endpoint is bound — storage_v2 serves both
+                // get_outgoing_edges_at (bound src) and get_incoming_edges_at (bound dst), so a
+                // bound destination is as cheap as a bound source, not a full relation scan.
+                let endpoint_bound = pattern.first() == Some(&ArgMode::Bound)
+                    || pattern.get(1) == Some(&ArgMode::Bound);
+                if endpoint_bound {
+                    narrowed_fanout(stats.total_edges)
+                } else {
+                    stats.total_edges.max(1)
+                }
+            }
+            "attr" => {
+                if first_bound {
+                    narrowed_fanout(stats.total_nodes)
+                } else {
+                    stats.total_nodes.max(1)
+                }
+            }
+            _ => {
+                let magnitude = stats.total_nodes.max(stats.total_edges);
+                if first_bound {
+                    narrowed_fanout(magnitude)
+                } else {
+                    magnitude.max(1)
+                }
+            }
+        },
         LegSource::Derived { .. } => {
             let magnitude = stats.total_nodes.max(stats.total_edges);
-            if has_bound_key {
+            if first_bound {
                 narrowed_fanout(magnitude)
             } else {
                 magnitude.max(1)
@@ -686,6 +723,7 @@ mod tests {
         Stats {
             total_nodes: nodes,
             total_edges: edges,
+            ..Default::default()
         }
     }
 

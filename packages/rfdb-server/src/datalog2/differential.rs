@@ -245,10 +245,10 @@ fn v1_violations(engine: &dyn GraphStore, program_src: &str) -> Result<BTreeSet<
 /// trace). The `violation` facts' first column is the offending node id.
 fn v2_violations(
     view: &LsmStorageView,
-    stats: Stats,
+    stats: &Stats,
     program_src: &str,
 ) -> Result<BTreeSet<u128>, String> {
-    let eval = evaluate(view, program_src, stats, EvalLimits::none(), EventLog::discard())
+    let eval = evaluate(view, program_src, stats.clone(), EvalLimits::none(), EventLog::discard())
         .map_err(|e| format!("v2 eval ({}): {e}", e.code()))?;
 
     let mut ids = BTreeSet::new();
@@ -311,11 +311,20 @@ fn datalog2_differential_against_real_dataset() {
 
     // Relation magnitudes for the v2 planner cost model, taken from the same snapshot.
     let snap = store.snapshot(&manifest);
-    let total_nodes = store.find_nodes_at(&snap, None, None).len() as u64;
+    let all_nodes = store.find_nodes_at(&snap, None, None);
+    let total_nodes = all_nodes.len() as u64;
     let total_edges = store.iter_all_edges_at(&snap).len() as u64;
+    // Per-type cardinality oracle for the planner: count live nodes per type so an empty type
+    // (e.g. MESSAGE_TYPE in a TS/Rust graph) is estimated at ~0 and placed first, instead of
+    // total_nodes (which over-estimates beam-* rules into a spurious E-PLAN-003).
+    let mut nodes_by_type: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    for n in &all_nodes {
+        *nodes_by_type.entry(n.node_type.clone()).or_insert(0) += 1;
+    }
     let stats = Stats {
         total_nodes,
         total_edges,
+        nodes_by_type,
     };
 
     // 3. Load the datalog guarantee rules.
@@ -360,7 +369,7 @@ fn datalog2_differential_against_real_dataset() {
     for rule in &rules {
         compared += 1;
         let v1 = v1_violations(&engine, &rule.program);
-        let v2 = v2_violations(&view, stats, &rule.program);
+        let v2 = v2_violations(&view, &stats, &rule.program);
 
         match (&v1, &v2) {
             (Ok(s1), Ok(s2)) => {
@@ -411,13 +420,16 @@ fn datalog2_differential_against_real_dataset() {
                 println!("    └─ v2 error: {e2}");
             }
             (Err(e1), Err(e2)) => {
+                // Both engines reject the rule identically (e.g. the malformed
+                // call-with-args rule using an unsupported numeric literal `gt(A, 0)`):
+                // v2 does NOT diverge from v1, so this counts as agreement, not a v2 fault.
                 both_errors += 1;
                 println!(
                     "{:<34} {:>9} {:>9}  {}",
                     truncate(&rule.name, 34),
                     "ERR",
                     "ERR",
-                    "BOTH_ERR"
+                    "BOTH_ERR(agree)"
                 );
                 println!("    └─ v1 error: {e1}");
                 println!("    └─ v2 error: {e2}");

@@ -226,6 +226,7 @@ mod smoke {
         let stats = Stats {
             total_nodes: 3,
             total_edges: 1,
+            ..Default::default()
         };
         let sink = SharedMemSink::new();
         let eval = evaluate(

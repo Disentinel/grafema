@@ -329,6 +329,74 @@ impl GraphEngineV2 {
         let m = self.manifest.lock().unwrap();
         self.store.snapshot(&m)
     }
+
+    /// Evaluate a Datalog **v2** program over a version-pinned view of this engine and
+    /// return the ground tuples derived for `target_predicate`, each as a positional
+    /// list of stringified column values (RFD `RFDB_DATALOG_V2` router path, spec P3/I8).
+    ///
+    /// This is the bridge the server-side kill-switch uses: it captures a
+    /// [`crate::storage_v2::read_snapshot::ReadSnapshot`] (pinning the published manifest
+    /// version exactly like every other read on this engine, MVCC B5), lends it to a
+    /// module-private [`crate::datalog2::storage_glue::BorrowedLsmStorageView`] (so the
+    /// storage type never leaks past `datalog2`, I10), and routes through the single v2
+    /// eval entry [`crate::datalog2::evaluate`] — there is deliberately no separate
+    /// explain fork (I8). The caller maps each positional row onto its head variable
+    /// names (the engine does not know the caller's wire shape).
+    ///
+    /// `events` defaults to the discard sink at this layer; explain capture is a recording
+    /// of this same run installed by a future caller, not a second code path.
+    pub fn eval_datalog_v2(
+        &self,
+        source: &str,
+        target_predicate: &str,
+        limits: crate::datalog::EvalLimits,
+    ) -> std::result::Result<Vec<Vec<String>>, crate::datalog2::EvalError> {
+        let snapshot = self.snapshot();
+        // Compute the planner's relation magnitudes from the SAME pinned snapshot before
+        // it moves into the view, so Stats and the eval observe one consistent version.
+        // Per-type node counts feed the planner's §7 cardinality oracle so an empty type is
+        // estimated at ~0 and placed first (not over-estimated at total_nodes, which trips
+        // E-PLAN-003 on rules like beam-* whose node type is absent in this graph). One scan
+        // of the pinned snapshot; the eval itself reads more.
+        let all_nodes = self.store.find_nodes_at(&snapshot, None, None);
+        let mut nodes_by_type: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+        for n in &all_nodes {
+            *nodes_by_type.entry(n.node_type.clone()).or_insert(0) += 1;
+        }
+        let stats = crate::datalog2::builtin::Stats {
+            total_nodes: all_nodes.len() as u64,
+            total_edges: self.store.edge_count_at(&snapshot) as u64,
+            nodes_by_type,
+        };
+        let view = crate::datalog2::storage_glue::BorrowedLsmStorageView::new(&self.store, snapshot);
+        let evaluation = crate::datalog2::evaluate(
+            &view,
+            source,
+            stats,
+            limits,
+            crate::datalog2::events::EventLog::discard(),
+        )?;
+        let rows = evaluation
+            .facts(target_predicate)
+            .into_iter()
+            .map(|tuple| {
+                tuple
+                    .iter()
+                    .map(value_to_wire_string)
+                    .collect::<Vec<String>>()
+            })
+            .collect();
+        Ok(rows)
+    }
+}
+
+/// Stringify a v2 Datalog [`crate::datalog::Value`] for the wire (ids render as their
+/// decimal u128, mirroring how v1 surfaces `Value::Id`/`Value::Str` to `WireViolation`).
+fn value_to_wire_string(v: &crate::datalog::Value) -> String {
+    match v {
+        crate::datalog::Value::Id(id) => id.to_string(),
+        crate::datalog::Value::Str(s) => s.clone(),
+    }
 }
 
 // ── GraphStore Implementation ───────────────────────────────────────
