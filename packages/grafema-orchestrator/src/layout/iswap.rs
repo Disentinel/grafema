@@ -75,7 +75,7 @@ pub fn iswap(
                 for j in (i + 1)..nodes.len() {
                     let b_idx = nodes[j];
                     let delta = swap_delta(a_idx, b_idx, coords, incidence);
-                    if delta < 0.0 {
+                    if delta < -0.01 {
                         // Apply the swap to both coords[] and state.
                         let coord_a = coords[a_idx as usize];
                         let coord_b = coords[b_idx as usize];

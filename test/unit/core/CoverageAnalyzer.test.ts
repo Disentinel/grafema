@@ -519,4 +519,80 @@ describe('CoverageAnalyzer', () => {
       assert.ok(result.unreachable.byExtension['.rs']);
     });
   });
+
+  // ===========================================================================
+  // TESTS: Failed/skipped files excluded from analyzed (REG-1140)
+  // ===========================================================================
+
+  describe('Failed/skipped files (REG-1140)', () => {
+    it('reclassifies an oversized-skipped file from analyzed into failed', async () => {
+      mkdirSync(join(testDir, 'src'), { recursive: true });
+      writeFileSync(join(testDir, 'src', 'good.ts'), 'export const x = 1;');
+      writeFileSync(join(testDir, 'src', 'godfile.ts'), '// huge file');
+
+      // Both files have MODULE nodes (the analyzer creates a stub even when it
+      // skips the file), but godfile.ts also has an oversized_source ISSUE — it
+      // produced zero real analysis and must NOT count as analyzed.
+      const graph = new MockGraphBackend(['src/good.ts', 'src/godfile.ts']);
+      await graph.addNode({
+        id: 'issue:godfile',
+        type: 'ISSUE',
+        name: 'oversized_source: warning',
+        file: 'src/godfile.ts',
+        category: 'oversized_source',
+        severity: 'warning',
+        message: 'Source file too large: 2439 KB (limit: 1024 KB)',
+      });
+
+      const analyzer = new CoverageAnalyzer(graph as unknown as GraphBackend, testDir);
+      const result = await analyzer.analyze();
+
+      assert.strictEqual(result.failed.count, 1, 'godfile should be in failed bucket');
+      assert.ok(result.failed.files.includes('src/godfile.ts'));
+      assert.ok(result.failed.byCategory['oversized_source']?.includes('src/godfile.ts'));
+
+      assert.strictEqual(result.analyzed.count, 1, 'only good.ts is truly analyzed');
+      assert.ok(!result.analyzed.files.includes('src/godfile.ts'));
+
+      // total stays 2 (failed comes out of analyzed, not added on top)
+      assert.strictEqual(result.total, 2);
+      assert.strictEqual(result.percentages.analyzed, 50);
+      assert.strictEqual(result.percentages.failed, 50);
+    });
+
+    it('does NOT reclassify a file that only has a non-skip ISSUE (e.g. a smell)', async () => {
+      mkdirSync(join(testDir, 'src'), { recursive: true });
+      writeFileSync(join(testDir, 'src', 'good.ts'), 'export const x = 1;');
+
+      const graph = new MockGraphBackend(['src/good.ts']);
+      await graph.addNode({
+        id: 'issue:smell',
+        type: 'ISSUE',
+        name: 'complexity: info',
+        file: 'src/good.ts',
+        category: 'complexity',
+        severity: 'info',
+        message: 'Function too complex',
+      });
+
+      const analyzer = new CoverageAnalyzer(graph as unknown as GraphBackend, testDir);
+      const result = await analyzer.analyze();
+
+      assert.strictEqual(result.failed.count, 0, 'a smell must not mark the file failed');
+      assert.strictEqual(result.analyzed.count, 1);
+      assert.strictEqual(result.percentages.analyzed, 100);
+    });
+
+    it('keeps failed.count at 0 when there are no issues (backward compatible)', async () => {
+      mkdirSync(join(testDir, 'src'), { recursive: true });
+      writeFileSync(join(testDir, 'src', 'good.ts'), 'export const x = 1;');
+
+      const graph = new MockGraphBackend(['src/good.ts']) as unknown as GraphBackend;
+      const analyzer = new CoverageAnalyzer(graph, testDir);
+      const result = await analyzer.analyze();
+
+      assert.strictEqual(result.failed.count, 0);
+      assert.strictEqual(result.percentages.analyzed, 100);
+    });
+  });
 });

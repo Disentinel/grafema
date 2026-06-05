@@ -7,10 +7,15 @@
 //!
 //! Usage:
 //! ```no_run
+//! use grafema_orchestrator::profiler::Profiler;
+//!
+//! # fn main() -> std::io::Result<()> {
 //! let profiler = Profiler::new(".grafema/analysis-profile.jsonl")?;
 //! profiler.event("phase_start", &[("phase", "js_analysis"), ("files", "204")]);
 //! // ... do work ...
 //! profiler.event("phase_end", &[("phase", "js_analysis"), ("nodes", "45000")]);
+//! # Ok(())
+//! # }
 //! ```
 
 use std::fs::{File, OpenOptions};

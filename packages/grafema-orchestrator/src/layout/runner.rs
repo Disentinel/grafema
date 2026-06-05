@@ -118,7 +118,11 @@ pub fn run_layout(input: &LayoutInput, opts: &RunOpts) -> RunResult {
         sigma_link_after_iswap = sigma_link(&coords, &input.edges);
 
         let t_xswap = Instant::now();
-        xswap_swaps = xswap(&mut coords, &mut state, &input.tree, &incidence);
+        for _ in 0..5 {
+            let round = xswap(&mut coords, &mut state, &input.tree, &incidence);
+            xswap_swaps += round;
+            if round == 0 { break; }
+        }
         xswap_ms = t_xswap.elapsed().as_millis() as u64;
         sigma_link_after_xswap = sigma_link(&coords, &input.edges);
     }

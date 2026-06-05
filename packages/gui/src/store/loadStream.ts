@@ -34,6 +34,10 @@ export interface StreamOptions {
   nodeTypes?: string;
   edgeTypes?: string;
   maxNodes?: number;
+  /** Skip edge frames in the initial stream (lazy-load on toggle). */
+  noEdges?: boolean;
+  /** Skip the excluded_nodes batch (300k+ entries, blocks main thread). */
+  noExcluded?: boolean;
   /** Container hierarchy level for region grouping (e.g. "package", "directory"). */
   lodLevel?: string;
   onProgress?: (phase: string, count: number, total?: number) => void;
@@ -303,6 +307,8 @@ export async function parseStream(
   if (opts.nodeTypes) params.set('nodeTypes', opts.nodeTypes);
   if (opts.edgeTypes) params.set('edgeTypes', opts.edgeTypes);
   if (opts.maxNodes) params.set('maxNodes', String(opts.maxNodes));
+  if (opts.noEdges) params.set('noEdges', '1');
+  if (opts.noExcluded) params.set('noExcluded', '1');
   if (opts.lodLevel) params.set('lodLevel', opts.lodLevel);
 
   const baseUrl = opts.url ?? '/api/graph-stream';

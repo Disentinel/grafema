@@ -1,5 +1,7 @@
 /**
- * Find the FUNCTION, CLASS, or MODULE that contains a node.
+ * Find the FUNCTION, METHOD, CLASS, or MODULE that contains a node.
+ * (METHOD is a most-specific container, like FUNCTION: a CALL inside a class
+ * method is contained by that METHOD, not the enclosing CLASS.)
  *
  * Supports two graph layouts:
  *
@@ -56,7 +58,9 @@ interface GraphBackend {
 const DEFAULT_MAX_DEPTH = 15;
 
 /**
- * Find the FUNCTION, CLASS, or MODULE that contains a node.
+ * Find the FUNCTION, METHOD, CLASS, or MODULE that contains a node.
+ * (METHOD is a most-specific container, like FUNCTION: a CALL inside a class
+ * method is contained by that METHOD, not the enclosing CLASS.)
  *
  * @param backend - Graph backend for queries
  * @param nodeId - ID of the node to find container for
@@ -92,8 +96,14 @@ export async function findContainingFunction(
       const parentNode = await backend.getNode(edge.src);
       if (!parentNode || visited.has(parentNode.id)) continue;
 
-      // Found container!
-      if (parentNode.type === 'FUNCTION' || parentNode.type === 'CLASS' || parentNode.type === 'MODULE') {
+      // Found container! METHOD is a callable too — a CALL inside a class method
+      // is contained by that METHOD, not the enclosing CLASS.
+      if (
+        parentNode.type === 'FUNCTION' ||
+        parentNode.type === 'METHOD' ||
+        parentNode.type === 'CLASS' ||
+        parentNode.type === 'MODULE'
+      ) {
         const candidate: CallerInfo = {
           id: parentNode.id,
           name: parentNode.name || '<anonymous>',
@@ -102,8 +112,12 @@ export async function findContainingFunction(
           line: parentNode.line,
         };
 
-        // FUNCTION/CLASS is most specific — return immediately
-        if (parentNode.type === 'FUNCTION' || parentNode.type === 'CLASS') {
+        // FUNCTION/METHOD/CLASS is most specific — return immediately
+        if (
+          parentNode.type === 'FUNCTION' ||
+          parentNode.type === 'METHOD' ||
+          parentNode.type === 'CLASS'
+        ) {
           return candidate;
         }
 

@@ -14,7 +14,7 @@ import { dirname } from 'path';
 import { tmpdir } from 'os';
 import { setTimeout as sleep } from 'timers/promises';
 
-import { RFDBClient } from '@grafema/util';
+import { RFDBClient, findRfdbBinary } from '@grafema/util';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -22,22 +22,27 @@ const __dirname = dirname(__filename);
 const testDir = mkdtempSync(join(tmpdir(), 'rfdb-client-'));
 const TEST_DB_PATH = join(testDir, 'graph.rfdb');
 const TEST_SOCKET_PATH = join(testDir, 'rfdb.sock');
-const SERVER_BINARY = join(__dirname, '../../packages/rfdb-server/target/debug/rfdb-server');
+// Resolve via the canonical production resolver (honors GRAFEMA_RFDB_SERVER,
+// the platform npm package, PATH, ~/.grafema/bin, etc.). Re-resolved after a
+// build fallback below.
+let SERVER_BINARY = findRfdbBinary();
 
 describe('RFDB Client-Server', () => {
   let serverProcess = null;
   let client = null;
 
   before(async () => {
-    // Check if server binary exists
-    if (!existsSync(SERVER_BINARY)) {
+    // Build a development binary only if none was resolved anywhere.
+    if (!SERVER_BINARY) {
       console.log('Building rfdb-server...');
       const { execSync } = await import('child_process');
       execSync('cargo build --bin rfdb-server', {
         cwd: join(__dirname, '../../packages/rfdb-server'),
         stdio: 'inherit'
       });
+      SERVER_BINARY = findRfdbBinary();
     }
+    if (!SERVER_BINARY) throw new Error('rfdb-server binary not found');
 
     // Start server
     console.log('Starting rfdb-server...');

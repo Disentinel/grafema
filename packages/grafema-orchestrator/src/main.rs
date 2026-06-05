@@ -14,15 +14,6 @@ use std::path::PathBuf;
 /// Without a synthetic file, `commit_batch` can't clean them up (file-based deletion).
 /// This assigns a per-plugin synthetic file so old virtual nodes are properly
 /// tombstoned before new ones are added.
-fn tag_virtual_nodes(output: &mut plugin::PluginOutput, plugin_name: &str) {
-    let synthetic_file = format!("__grafema_virtual/{}", plugin_name);
-    for node in &mut output.nodes {
-        if node.file.is_none() || node.file.as_deref() == Some("") {
-            node.file = Some(synthetic_file.clone());
-        }
-    }
-}
-
 #[derive(Parser)]
 #[command(name = "grafema-orchestrator", version, about = "Grafema analysis pipeline orchestrator")]
 struct Cli {
@@ -50,7 +41,9 @@ enum Commands {
         #[arg(long)]
         force: bool,
 
-        /// Number of parallel resolve workers (overrides auto-detection)
+        /// Requested resolve-worker count. NOTE: resolution currently runs
+        /// single-worker (per-file streaming); a value other than 1 has no
+        /// effect and a notice is printed.
         #[arg(long)]
         resolve_jobs: Option<usize>,
     },
@@ -62,7 +55,9 @@ enum Commands {
         /// Path to RFDB unix socket
         #[arg(short, long)]
         socket: Option<PathBuf>,
-        /// Number of parallel resolve workers (default: auto based on CPU count)
+        /// Requested resolve-worker count. NOTE: resolution currently runs
+        /// single-worker (per-file streaming); a value other than 1 has no
+        /// effect and a notice is printed.
         #[arg(short, long)]
         jobs: Option<usize>,
     },
@@ -183,6 +178,23 @@ fn resolve_worker_count() -> usize {
     count
 }
 
+/// Build a user-facing notice when an explicit resolve-worker count is requested
+/// that the orchestrator cannot honor. Resolution currently runs single-worker
+/// (per-file streaming), so any request other than 1 worker is a no-op today.
+/// Surfacing it stops `--resolve-jobs` / `--jobs` from being silently ignored and
+/// misleading the user about its effect (REG-563: surface silent skips).
+///
+/// Returns `Some(message)` when `requested` is `Some(n)` with `n != 1`, else `None`.
+fn resolve_jobs_notice(flag: &str, requested: Option<usize>) -> Option<String> {
+    match requested {
+        Some(n) if n != 1 => Some(format!(
+            "{flag}={n} has no effect: resolution currently runs single-worker \
+             (per-file streaming); proceeding with 1 worker."
+        )),
+        _ => None,
+    }
+}
+
 /// Detect available system memory in GB.
 ///
 /// Linux: reads MemAvailable from /proc/meminfo (accounts for caches/buffers).
@@ -295,19 +307,9 @@ async fn commit_resolve_output(
     generation: u64,
     rfdb: &mut rfdb::RfdbClient,
 ) -> anyhow::Result<()> {
-    plugin::validate_plugin_output(output)?;
-    plugin::stamp_metadata(output, name, generation);
-    tag_virtual_nodes(output, name);
-    let files: Vec<String> = output
-        .nodes
-        .iter()
-        .filter_map(|n| n.file.clone())
-        .collect::<HashSet<_>>()
-        .into_iter()
-        .collect();
-    rfdb.commit_batch(&files, &output.nodes, &output.edges, true)
-        .await
-        .context(format!("Failed to commit {name} output"))?;
+    // Single safe commit path (validate + stamp + tag virtual nodes + tombstone-safe
+    // changed_files filter), shared with the per-file resolve durability checkpoints.
+    plugin::commit_resolve_chunk(output, name, generation, rfdb).await?;
     tracing::info!(
         plugin = name,
         nodes = output.nodes.len(),
@@ -345,7 +347,9 @@ async fn main() -> Result<()> {
             force,
             resolve_jobs,
         } => {
-            let resolve_workers = resolve_jobs.unwrap_or_else(num_cpus).max(1);
+            if let Some(msg) = resolve_jobs_notice("--resolve-jobs", resolve_jobs) {
+                tracing::warn!("{msg}");
+            }
             let cfg = config::load(&config_path)?.with_defaults();
 
             // Resolve RFDB socket path: CLI flag > config > default
@@ -1045,9 +1049,8 @@ async fn main() -> Result<()> {
             // 8. Run JS resolution with per-file streaming (build-index + resolve-file)
             if js_file_count > 0 {
                 let lang_start = std::time::Instant::now();
-                eprintln!("  Resolution: JS/TS (per-file streaming, {} worker{})...",
-                    resolve_workers, if resolve_workers == 1 { "" } else { "s" });
-                profile!("js_resolve_start", "workers" => resolve_workers);
+                eprintln!("  Resolution: JS/TS (per-file streaming, 1 worker)...");
+                profile!("js_resolve_start", "workers" => 1);
 
                 let resolve_pool_config = process_pool::PoolConfig {
                     command: cfg.analyzers.js_resolve_path(),
@@ -1057,15 +1060,18 @@ async fn main() -> Result<()> {
                     effects_db_path: effects_db_path.clone(),
                 };
 
-                match process_pool::ProcessPool::new(resolve_pool_config, resolve_workers) {
+                match process_pool::ProcessPool::new(resolve_pool_config, 1) {
                     Ok(resolve_pool) => {
                         let handles = resolve_pool.acquire_all().await?;
 
-                        let mut output = plugin::resolve_per_file(
+                        let output = plugin::resolve_per_file(
                             &mut rfdb,
                             config::Language::JavaScript,
-                            &handles,
+                            &handles[0],
                             &ws_packages,
+                            "js-resolution",
+                            generation,
+                            prof.as_ref(),
                         ).await?;
 
                         // Extract IMPORTS_FROM edges for DEPENDS_ON derivation
@@ -1075,7 +1081,8 @@ async fn main() -> Result<()> {
                             }
                         }
 
-                        commit_resolve_output(&mut output, "js-resolution", generation, &mut rfdb).await?;
+                        // resolve_per_file commits its own output incrementally
+                        // (per-checkpoint), so no end-of-phase commit here.
 
                         // Release the first-pass worker handle before the second pass acquires it.
                         // acquire_all() holds all pool slots; stream_and_resolve_single_worker needs
@@ -1917,7 +1924,9 @@ async fn main() -> Result<()> {
             socket,
             jobs,
         } => {
-            let resolve_workers = jobs.unwrap_or_else(num_cpus).max(1);
+            if let Some(msg) = resolve_jobs_notice("--jobs", jobs) {
+                tracing::warn!("{msg}");
+            }
             let cfg = config::load(&config_path)?.with_defaults();
 
             // Resolve RFDB socket path: CLI flag > config > default
@@ -2016,15 +2025,18 @@ async fn main() -> Result<()> {
                     effects_db_path: effects_db_path.clone(),
                 };
 
-                match process_pool::ProcessPool::new(resolve_pool_config, resolve_workers) {
+                match process_pool::ProcessPool::new(resolve_pool_config, 1) {
                     Ok(resolve_pool) => {
                         let handles = resolve_pool.acquire_all().await?;
 
-                        let mut output = plugin::resolve_per_file(
+                        let output = plugin::resolve_per_file(
                             &mut rfdb,
                             config::Language::JavaScript,
-                            &handles,
+                            &handles[0],
                             &ws_packages,
+                            "js-resolution",
+                            generation,
+                            None,
                         ).await?;
 
                         // Extract IMPORTS_FROM edges for DEPENDS_ON derivation
@@ -2034,7 +2046,8 @@ async fn main() -> Result<()> {
                             }
                         }
 
-                        commit_resolve_output(&mut output, "js-resolution", generation, &mut rfdb).await?;
+                        // resolve_per_file commits its own output incrementally
+                        // (per-checkpoint), so no end-of-phase commit here.
                         let lang_ms = lang_start.elapsed().as_millis();
                         eprintln!("  Resolve: JS complete ({} edges, {:.1}s)",
                             output.edges.len(), lang_ms as f64 / 1000.0);
@@ -2918,5 +2931,27 @@ mod tests {
     #[test]
     fn test_parse_git_remote_invalid() {
         assert_eq!(parse_git_remote_authority("not-a-url"), None);
+    }
+
+    #[test]
+    fn resolve_jobs_notice_silent_for_default_and_single_worker() {
+        // Unset or exactly 1 worker matches reality → no notice (no false alarm).
+        assert!(resolve_jobs_notice("--resolve-jobs", None).is_none());
+        assert!(resolve_jobs_notice("--resolve-jobs", Some(1)).is_none());
+    }
+
+    #[test]
+    fn resolve_jobs_notice_surfaces_unhonored_request() {
+        // n > 1 is silently a no-op today → must be surfaced, naming the flag,
+        // the requested value, and that it runs single-worker.
+        let msg = resolve_jobs_notice("--resolve-jobs", Some(8)).expect("n>1 surfaced");
+        assert!(msg.contains("--resolve-jobs"), "names the flag: {msg}");
+        assert!(msg.contains('8'), "echoes the requested value: {msg}");
+        assert!(msg.contains("single-worker"), "states actual behavior: {msg}");
+
+        // 0 is also a non-unit request → surfaced, not silently swallowed.
+        assert!(resolve_jobs_notice("--jobs", Some(0)).is_some());
+        // The flag name is threaded through (resolve subcommand uses --jobs).
+        assert!(resolve_jobs_notice("--jobs", Some(4)).unwrap().contains("--jobs"));
     }
 }

@@ -26,6 +26,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { findRfdbBinary } from '@grafema/util';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -36,14 +37,16 @@ const TEST_WS_URL = `ws://127.0.0.1:${TEST_WS_PORT}`;
 const testDir = mkdtempSync(join(tmpdir(), 'rfdb-ws-'));
 const TEST_DB_PATH = join(testDir, 'graph.rfdb');
 const TEST_SOCKET_PATH = join(testDir, 'rfdb.sock');
-const SERVER_BINARY = join(__dirname, '../../packages/rfdb-server/target/debug/rfdb-server');
+// Resolve via the canonical production resolver (honors GRAFEMA_RFDB_SERVER,
+// the platform npm package, PATH, ~/.grafema/bin, etc.).
+const SERVER_BINARY = findRfdbBinary();
 
 /**
  * Check if rfdb-server binary exists and supports --ws-port.
  * If not, skip these tests.
  */
 function canRunTests(): boolean {
-  return existsSync(SERVER_BINARY);
+  return SERVER_BINARY !== null;
 }
 
 // =============================================================================
@@ -59,7 +62,8 @@ describe('RFDB WebSocket Integration', { skip: !canRunTests() ? 'rfdb-server bin
 
   before(async () => {
     // Start server with both Unix socket and WebSocket
-    serverProcess = spawn(SERVER_BINARY, [
+    // Non-null: the suite is skipped via canRunTests() when SERVER_BINARY is null.
+    serverProcess = spawn(SERVER_BINARY as string, [
       TEST_DB_PATH,
       '--socket', TEST_SOCKET_PATH,
       '--ws-port', TEST_WS_PORT.toString(),

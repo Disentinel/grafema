@@ -982,8 +982,145 @@ pub async fn clear_context_on_workers(
 /// Index-worthy node types: these form the export index for cross-file resolution.
 const INDEX_NODE_TYPES: &[&str] = &[
     "EXPORT_BINDING", "EXPORT", "MODULE",
-    "FUNCTION", "VARIABLE", "CONSTANT", "CLASS", "INTERFACE", "TYPE_ALIAS", "ENUM",
+    "FUNCTION", "VARIABLE", "CONSTANT", "CLASS", "INTERFACE", "TYPE_ALIAS", "ENUM", "NAMESPACE",
 ];
+
+/// How many files to process between durability checkpoints in the per-file
+/// resolve loop. Resolve over a large monorepo can take hours; without a
+/// mid-phase commit a crash or SIGTERM discards 100% of the resolved edges
+/// (the manifest pointer never advances). Committing every N files bounds that
+/// loss to at most N files of work. See [`CheckpointAccumulator`] and REG-1138.
+const RESOLVE_CHECKPOINT_INTERVAL: usize = 500;
+
+/// Tag resolution-phase nodes that have no source file with a synthetic virtual
+/// file (`__grafema_virtual/<plugin>`), so they are never mistaken for real
+/// source nodes and never cause `commit_batch` to tombstone a real file.
+pub fn tag_virtual_nodes(output: &mut PluginOutput, plugin_name: &str) {
+    let synthetic_file = format!("__grafema_virtual/{plugin_name}");
+    for node in &mut output.nodes {
+        if node.file.is_none() || node.file.as_deref() == Some("") {
+            node.file = Some(synthetic_file.clone());
+        }
+    }
+}
+
+/// Commit one batch of resolution output to RFDB using the deferred-index path.
+///
+/// This is the single safe commit path shared by the end-of-phase commit and
+/// the mid-phase durability checkpoints. It:
+/// 1. validates + stamps provenance metadata + tags file-less virtual nodes,
+/// 2. lists ONLY synthetic virtual files in `changed_files` — real source files
+///    must never appear, or `commit_batch` tombstones their analysis nodes
+///    before re-adding only the resolution nodes,
+/// 3. commits with `defer_index = true` (callers rebuild indexes once at the end).
+///
+/// Re-committing the same nodes/edges is safe for the phase output: resolution
+/// nodes upsert by id and edge reads dedup by `(src, dst, edge_type)`, and edge
+/// tombstones key off the (real-source) origin node, so resolution edges from
+/// earlier checkpoints accumulate correctly and are never wiped by later ones.
+///
+/// Caveat — file-less virtual diagnostic nodes are last-writer-wins across
+/// checkpoints: every checkpoint lists the same `__grafema_virtual/<plugin>`
+/// file in `changed_files`, and `commit_batch` tombstones all nodes in a changed
+/// file before adding the chunk's nodes. So only the final checkpoint's virtual
+/// nodes persist. This is acceptable — virtual nodes are ephemeral placeholders;
+/// the real graph state (resolution edges + real-source nodes) is unaffected.
+pub async fn commit_resolve_chunk(
+    output: &mut PluginOutput,
+    name: &str,
+    generation: u64,
+    rfdb: &mut RfdbClient,
+) -> Result<()> {
+    validate_plugin_output(output)?;
+    stamp_metadata(output, name, generation);
+    tag_virtual_nodes(output, name);
+    let files: Vec<String> = output
+        .nodes
+        .iter()
+        .filter_map(|n| n.file.clone())
+        .filter(|f| f.starts_with("__grafema_virtual/") || f.starts_with('<'))
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    rfdb.commit_batch(&files, &output.nodes, &output.edges, true)
+        .await
+        .with_context(|| format!("Failed to commit {name} output"))?;
+    Ok(())
+}
+
+/// Buffers per-file resolve output and signals when a durability checkpoint is
+/// due (every `interval` files). Lets the per-file resolve loop commit partial
+/// progress so a crash or SIGTERM mid-resolve does not discard all work.
+///
+/// Pure and synchronous so it is unit-testable without an RFDB connection.
+pub struct CheckpointAccumulator {
+    interval: usize,
+    files_since_checkpoint: usize,
+    pending: PluginOutput,
+}
+
+impl CheckpointAccumulator {
+    /// `interval == 0` disables periodic checkpoints (single commit at the end).
+    pub fn new(interval: usize) -> Self {
+        Self {
+            interval,
+            files_since_checkpoint: 0,
+            pending: PluginOutput::default(),
+        }
+    }
+
+    /// Record one file's resolve output into the pending delta buffer.
+    pub fn record(&mut self, nodes: &[WireNode], edges: &[WireEdge]) {
+        self.pending.nodes.extend_from_slice(nodes);
+        self.pending.edges.extend_from_slice(edges);
+        self.files_since_checkpoint += 1;
+    }
+
+    /// If `interval` files have accrued since the last checkpoint, return the
+    /// buffered delta (resetting the buffer) so the caller can commit it. A due
+    /// checkpoint over files that produced no output yields `None` (the counter
+    /// still resets) so no empty commit is issued.
+    pub fn take_if_due(&mut self) -> Option<PluginOutput> {
+        if self.interval != 0 && self.files_since_checkpoint >= self.interval {
+            self.files_since_checkpoint = 0;
+            if self.pending.nodes.is_empty() && self.pending.edges.is_empty() {
+                return None;
+            }
+            return Some(std::mem::take(&mut self.pending));
+        }
+        None
+    }
+
+    /// Return any remaining un-checkpointed delta. Call once after the loop.
+    pub fn take_remaining(&mut self) -> Option<PluginOutput> {
+        if self.pending.nodes.is_empty() && self.pending.edges.is_empty() {
+            None
+        } else {
+            Some(std::mem::take(&mut self.pending))
+        }
+    }
+}
+
+/// Build the fields for a `resolve_progress` profiler event.
+///
+/// Kept pure (no Profiler / RFDB) so the event schema is unit-testable. Emitted
+/// every [`RESOLVE_CHECKPOINT_INTERVAL`] files (and once at completion) so a long
+/// per-file resolve's liveness and rate are visible in `analysis-profile.jsonl`
+/// instead of being a silent gap between `js_resolve_start` and `js_resolve_complete`
+/// that run-health tooling must reconstruct from rfdb.log. See REG-1138 (defect 2).
+fn resolve_progress_fields(
+    phase: &str,
+    files_done: usize,
+    total_files: usize,
+    edges_so_far: usize,
+) -> Vec<(&'static str, String)> {
+    vec![
+        ("phase", phase.to_string()),
+        ("files_done", files_done.to_string()),
+        ("total_files", total_files.to_string()),
+        ("edges_so_far", edges_so_far.to_string()),
+    ]
+}
 
 /// Per-file resolve: builds an export index on the worker, then resolves each
 /// file individually by querying RFDB for that file's nodes.
@@ -995,18 +1132,23 @@ const INDEX_NODE_TYPES: &[&str] = &[
 /// Protocol:
 /// 1. Query MODULE nodes → discover files for the given language
 /// 2. Query index-worthy nodes (exports, modules) → send `build-index` to worker
-/// 3. For each file: `query_nodes_by_file` → send `resolve-file` → accumulate edges
-/// 4. Return accumulated PluginOutput (caller commits to RFDB)
+/// 3. For each file: `query_nodes_by_file` → send `resolve-file` → accumulate edges,
+///    committing a durability checkpoint every [`RESOLVE_CHECKPOINT_INTERVAL`] files
+/// 4. Commit the final delta and return the accumulated PluginOutput
+///
+/// Because this function now commits its own output incrementally (under
+/// `name`/`generation`), the caller must NOT commit the returned output again —
+/// it is returned only so the caller can read derived edges (e.g. IMPORTS_FROM)
+/// and counts.
 pub async fn resolve_per_file(
     rfdb: &mut RfdbClient,
     lang: crate::config::Language,
-    handles: &[WorkerHandle<'_>],
+    handle: &WorkerHandle<'_>,
     workspace_packages: &[WorkspacePackageWire],
+    name: &str,
+    generation: u64,
+    profiler: Option<&crate::profiler::Profiler>,
 ) -> Result<PluginOutput> {
-    use futures::future::try_join_all;
-
-    let worker_count = handles.len().max(1);
-
     // Step 1: Get all MODULE nodes to find files for this language
     let module_nodes = rfdb.query_nodes_by_type("MODULE").await?;
     let files: Vec<String> = module_nodes.iter()
@@ -1018,11 +1160,9 @@ pub async fn resolve_per_file(
         .filter_map(|n| n.file.clone())
         .collect();
 
-    tracing::info!(files = files.len(), workers = worker_count, "Per-file resolve: discovered files");
+    tracing::info!(files = files.len(), "Per-file resolve: discovered files");
 
-    // Step 2: Collect index-worthy nodes and send build-index to EVERY handle.
-    // build-index seeds each daemon process with the cross-file symbol table; the
-    // resolve-file pass needs every worker to share that view.
+    // Step 2: Collect index-worthy nodes and send build-index
     let mut index_json_nodes: Vec<serde_json::Value> = Vec::new();
     for node_type in INDEX_NODE_TYPES {
         let nodes = rfdb.query_nodes_by_type(node_type).await?;
@@ -1038,7 +1178,7 @@ pub async fn resolve_per_file(
             // For declarations, only include exported ones in the index.
             // Note: JS analyzer's `exported` flag may be false for `export function foo()`
             // due to OXC AST walking order. We also check the file's exports list below.
-            if matches!(*node_type, "FUNCTION" | "VARIABLE" | "CONSTANT" | "CLASS" | "INTERFACE" | "TYPE_ALIAS" | "ENUM") {
+            if matches!(*node_type, "FUNCTION" | "VARIABLE" | "CONSTANT" | "CLASS" | "INTERFACE" | "TYPE_ALIAS" | "ENUM" | "NAMESPACE") {
                 if !node.exported {
                     continue;
                 }
@@ -1047,7 +1187,7 @@ pub async fn resolve_per_file(
         }
     }
 
-    tracing::info!(nodes = index_json_nodes.len(), "Per-file resolve: sending build-index to all workers");
+    tracing::info!(nodes = index_json_nodes.len(), "Per-file resolve: sending build-index");
 
     let build_index_request = ResolveRequest {
         cmd: "build-index".to_string(),
@@ -1055,94 +1195,69 @@ pub async fn resolve_per_file(
         workspace_packages: workspace_packages.to_vec(),
         edges: vec![],
     };
-    let build_index_payload = std::sync::Arc::new(
-        rmp_serde::to_vec_named(&build_index_request)
-            .context("Failed to encode build-index request")?
-    );
-    drop(build_index_request);
+    let payload = rmp_serde::to_vec_named(&build_index_request)
+        .context("Failed to encode build-index request")?;
+    let response_bytes = handle.request(&payload).await
+        .context("build-index request failed")?;
+    let response: ResolveResponse = rmp_serde::from_slice(&response_bytes)
+        .context("Failed to decode build-index response")?;
+    if response.status != "ok" {
+        let msg = response.error.unwrap_or_else(|| "unknown error".to_string());
+        bail!("build-index failed: {msg}");
+    }
+    drop(build_index_request); // Free memory
 
-    let build_index_futures = handles.iter().enumerate().map(|(i, handle)| {
-        let payload = build_index_payload.clone();
-        async move {
-            let response_bytes = handle.request(&payload).await
-                .with_context(|| format!("build-index request failed on worker {i}"))?;
-            let response: ResolveResponse = rmp_serde::from_slice(&response_bytes)
-                .with_context(|| format!("Failed to decode build-index response from worker {i}"))?;
-            if response.status != "ok" {
-                let msg = response.error.unwrap_or_else(|| "unknown error".to_string());
-                bail!("build-index failed on worker {i}: {msg}");
-            }
-            Ok::<(), anyhow::Error>(())
-        }
-    }).collect::<Vec<_>>();
-    try_join_all(build_index_futures).await?;
-    drop(build_index_payload);
-
-    // Step 3: Pre-fetch per-file nodes serially (RfdbClient is &mut, can't share
-    // across parallel async branches). Skip files with no nodes — empty work units
-    // would otherwise create RPC overhead with no payload.
+    // Step 3: For each file, query nodes and send resolve-file. Output is
+    // committed incrementally (every RESOLVE_CHECKPOINT_INTERVAL files) so a
+    // crash or SIGTERM mid-resolve does not discard all work, and also kept in
+    // `all_output` so the caller can read derived edges/counts.
+    let mut all_output = PluginOutput::default();
+    let mut checkpoints = CheckpointAccumulator::new(RESOLVE_CHECKPOINT_INTERVAL);
     let total_files = files.len();
-    let mut file_units: Vec<(String, Vec<serde_json::Value>)> = Vec::with_capacity(total_files);
-    for file in &files {
+
+    for (i, file) in files.iter().enumerate() {
         let file_nodes = rfdb.query_nodes_by_file(file).await?;
         if file_nodes.is_empty() { continue; }
+
         let json_nodes: Vec<serde_json::Value> = file_nodes
             .iter()
             .map(|n| crate::analyzer::wire_node_to_resolve_json(n))
             .collect();
-        file_units.push((file.clone(), json_nodes));
-    }
-    let total_units = file_units.len();
-    let ws_packages_owned = workspace_packages.to_vec();
 
-    // Step 4: Partition file units into worker_count chunks, dispatch each chunk
-    // to its own worker handle. Within a chunk, files are processed sequentially
-    // (preserves the per-handle ordering invariants the daemon protocol assumes);
-    // across chunks, work runs concurrently via try_join_all on the same task.
-    let chunk_size = total_units.div_ceil(worker_count).max(1);
-    let chunks: Vec<Vec<(String, Vec<serde_json::Value>)>> = file_units
-        .chunks(chunk_size)
-        .map(|c| c.to_vec())
-        .collect();
+        let request = ResolveRequest {
+            cmd: "resolve-file".to_string(),
+            nodes: json_nodes,
+            workspace_packages: workspace_packages.to_vec(),
+            edges: vec![],
+        };
+        let payload = rmp_serde::to_vec_named(&request)
+            .context("Failed to encode resolve-file request")?;
+        let response_bytes = handle.request(&payload).await
+            .with_context(|| format!("resolve-file failed for '{file}'"))?;
+        let output = parse_resolve_response(&response_bytes, "resolve-file")?;
 
-    let progress = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        checkpoints.record(&output.nodes, &output.edges);
+        all_output.nodes.extend(output.nodes);
+        all_output.edges.extend(output.edges);
 
-    let chunk_futures = chunks.into_iter().enumerate().map(|(chunk_idx, chunk)| {
-        let handle = &handles[chunk_idx.min(worker_count - 1)];
-        let ws_packages_for_chunk = ws_packages_owned.clone();
-        let progress = progress.clone();
-        async move {
-            let mut local_output = PluginOutput::default();
-            for (file, json_nodes) in chunk {
-                let request = ResolveRequest {
-                    cmd: "resolve-file".to_string(),
-                    nodes: json_nodes,
-                    workspace_packages: ws_packages_for_chunk.clone(),
-                    edges: vec![],
-                };
-                let payload = rmp_serde::to_vec_named(&request)
-                    .context("Failed to encode resolve-file request")?;
-                let response_bytes = handle.request(&payload).await
-                    .with_context(|| format!("resolve-file failed for '{file}' on worker {chunk_idx}"))?;
-                let output = parse_resolve_response(&response_bytes, "resolve-file")?;
-                local_output.nodes.extend(output.nodes);
-                local_output.edges.extend(output.edges);
-
-                let done = progress.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-                if done % 500 == 0 || done == total_units {
-                    eprintln!("    Per-file resolve: {}/{} files ({} workers)",
-                        done, total_units, worker_count);
-                }
-            }
-            Ok::<PluginOutput, anyhow::Error>(local_output)
+        if let Some(mut chunk) = checkpoints.take_if_due() {
+            commit_resolve_chunk(&mut chunk, name, generation, rfdb).await?;
         }
-    }).collect::<Vec<_>>();
 
-    let chunk_outputs = try_join_all(chunk_futures).await?;
-    let mut all_output = PluginOutput::default();
-    for chunk_output in chunk_outputs {
-        all_output.nodes.extend(chunk_output.nodes);
-        all_output.edges.extend(chunk_output.edges);
+        if (i + 1) % RESOLVE_CHECKPOINT_INTERVAL == 0 || i + 1 == total_files {
+            eprintln!("    Per-file resolve: {}/{} files ({} edges so far)",
+                i + 1, total_files, all_output.edges.len());
+            if let Some(prof) = profiler {
+                let fields = resolve_progress_fields(name, i + 1, total_files, all_output.edges.len());
+                let refs: Vec<(&str, &str)> = fields.iter().map(|(k, v)| (*k, v.as_str())).collect();
+                prof.event("resolve_progress", &refs);
+            }
+        }
+    }
+
+    // Commit the final partial delta (files since the last checkpoint).
+    if let Some(mut chunk) = checkpoints.take_remaining() {
+        commit_resolve_chunk(&mut chunk, name, generation, rfdb).await?;
     }
 
     deduplicate_virtual_nodes(&mut all_output);
@@ -1597,5 +1712,146 @@ mod tests {
             serde_json::from_str(output.nodes[0].metadata.as_ref().unwrap()).unwrap();
         assert_eq!(meta["_source"], "plugin-x");
         assert_eq!(meta["_generation"], 1);
+    }
+
+    /// Regression for REG-1139: every exported-declaration node type that the
+    /// grafema-resolve export index recognizes (see `nodeToExportEntries` /
+    /// `gnExported` arm in `packages/grafema-resolve/src/ImportResolution.hs`)
+    /// MUST also be queried by the orchestrator and sent to `build-index` — else
+    /// those exports are dark in the index and imports of them fail with
+    /// "no matching export" (e.g. `export namespace X {}`).
+    #[test]
+    fn index_node_types_cover_exported_declarations() {
+        // Mirrors grafema-resolve ImportResolution.hs `gnExported` export arm.
+        let resolver_exported_decl_types = [
+            "FUNCTION", "VARIABLE", "CONSTANT", "CLASS", "INTERFACE", "TYPE_ALIAS", "ENUM",
+            "NAMESPACE",
+        ];
+        for t in resolver_exported_decl_types {
+            assert!(
+                INDEX_NODE_TYPES.contains(&t),
+                "INDEX_NODE_TYPES is missing exported-declaration type {t:?} that the \
+                 resolver indexes — its exports become unresolvable (REG-1139)"
+            );
+        }
+    }
+
+    // -- CheckpointAccumulator tests (REG-1138 mid-resolve durability) --
+
+    fn ck_node(id: &str) -> WireNode {
+        WireNode {
+            id: id.to_string(),
+            semantic_id: None,
+            node_type: None,
+            name: None,
+            file: None,
+            exported: false,
+            metadata: None,
+        }
+    }
+
+    fn ck_edge(src: &str, dst: &str) -> WireEdge {
+        WireEdge {
+            src: src.to_string(),
+            dst: dst.to_string(),
+            edge_type: "CALLS".to_string(),
+            metadata: None,
+        }
+    }
+
+    /// With interval N a checkpoint is due exactly every N recorded files and
+    /// carries only the delta since the previous checkpoint.
+    #[test]
+    fn checkpoint_fires_every_interval_with_delta_only() {
+        let mut acc = CheckpointAccumulator::new(2);
+        // file 1 — not due yet
+        acc.record(&[ck_node("a")], &[]);
+        assert!(acc.take_if_due().is_none());
+        // file 2 — due, delta = files 1..2
+        acc.record(&[ck_node("b")], &[ck_edge("b", "x")]);
+        let chunk = acc.take_if_due().expect("checkpoint due at 2 files");
+        assert_eq!(chunk.nodes.len(), 2);
+        assert_eq!(chunk.edges.len(), 1);
+        // file 3 — buffer was reset, not due yet
+        acc.record(&[ck_node("c")], &[]);
+        assert!(acc.take_if_due().is_none());
+        // remaining = just file 3
+        let rest = acc.take_remaining().expect("file 3 still pending");
+        assert_eq!(rest.nodes.len(), 1);
+        assert_eq!(rest.nodes[0].id, "c");
+    }
+
+    /// The union of every checkpoint chunk plus the final remainder reproduces
+    /// all recorded output exactly once — no loss, no duplication.
+    #[test]
+    fn checkpoint_chunks_partition_all_output() {
+        let mut acc = CheckpointAccumulator::new(2);
+        let mut committed_nodes = 0usize;
+        let mut committed_edges = 0usize;
+        for i in 0..5 {
+            acc.record(&[ck_node(&format!("n{i}"))], &[ck_edge(&format!("n{i}"), "t")]);
+            if let Some(chunk) = acc.take_if_due() {
+                committed_nodes += chunk.nodes.len();
+                committed_edges += chunk.edges.len();
+            }
+        }
+        if let Some(rest) = acc.take_remaining() {
+            committed_nodes += rest.nodes.len();
+            committed_edges += rest.edges.len();
+        }
+        assert_eq!(committed_nodes, 5, "all 5 files' nodes committed exactly once");
+        assert_eq!(committed_edges, 5, "all 5 files' edges committed exactly once");
+    }
+
+    /// interval == 0 disables periodic checkpoints: everything lands in the
+    /// final remainder (the pre-fix single-commit behavior).
+    #[test]
+    fn checkpoint_interval_zero_commits_once_at_end() {
+        let mut acc = CheckpointAccumulator::new(0);
+        for i in 0..10 {
+            acc.record(&[ck_node(&format!("n{i}"))], &[]);
+            assert!(acc.take_if_due().is_none(), "no periodic checkpoint when interval=0");
+        }
+        let rest = acc.take_remaining().expect("all output pending at end");
+        assert_eq!(rest.nodes.len(), 10);
+    }
+
+    /// take_remaining yields nothing when the buffer is empty (e.g. the last
+    /// file landed exactly on a checkpoint boundary).
+    #[test]
+    fn checkpoint_remaining_empty_after_exact_boundary() {
+        let mut acc = CheckpointAccumulator::new(2);
+        acc.record(&[ck_node("a")], &[]);
+        acc.record(&[ck_node("b")], &[]);
+        assert!(acc.take_if_due().is_some());
+        assert!(acc.take_remaining().is_none(), "nothing pending after exact boundary");
+    }
+
+    /// A due checkpoint whose interval produced no output issues no commit
+    /// (returns None) but still resets the counter.
+    #[test]
+    fn checkpoint_skips_empty_delta() {
+        let mut acc = CheckpointAccumulator::new(2);
+        acc.record(&[], &[]);
+        acc.record(&[], &[]);
+        assert!(acc.take_if_due().is_none(), "empty delta → no commit");
+        // counter reset: a subsequent non-empty pair fires normally
+        acc.record(&[ck_node("a")], &[]);
+        acc.record(&[ck_node("b")], &[]);
+        assert!(acc.take_if_due().is_some(), "counter reset after empty checkpoint");
+    }
+
+    // -- resolve_progress telemetry (REG-1138 defect 2) --
+
+    /// The `resolve_progress` event carries the phase + progress counters under
+    /// the field names run-health tooling parses; lock that schema.
+    #[test]
+    fn resolve_progress_fields_schema() {
+        let f = resolve_progress_fields("js-resolution", 500, 9059, 12345);
+        let map: std::collections::HashMap<_, _> = f.into_iter().collect();
+        assert_eq!(map.get("phase").map(String::as_str), Some("js-resolution"));
+        assert_eq!(map.get("files_done").map(String::as_str), Some("500"));
+        assert_eq!(map.get("total_files").map(String::as_str), Some("9059"));
+        assert_eq!(map.get("edges_so_far").map(String::as_str), Some("12345"));
     }
 }

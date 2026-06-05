@@ -7,6 +7,24 @@ All notable changes to this project will be documented in this file.
 ### Features
 
 - feat(cli): `grafema upgrade` command — clean stale artifacts from `~/.grafema/bin/` and upgrade binaries to current version. Supports `--all`, `--lang`, `--project`, `--dry-run` flags.
+- feat(cypher): SUM/AVG/MIN/MAX aggregates in Cypher queries (RFD-70) — real typed accumulators with Cypher NULL semantics and Int→Float promotion; unsupported aggregate functions now error instead of silently returning a row count (#274)
+- feat(orchestrator): emit `resolve_progress` profiler events during per-file JS/TS resolve (files_done / total_files / edges_so_far, every 500 files + at completion) — closes the silent profiler gap between `js_resolve_start` and `js_resolve_complete` (#296)
+
+### Bug Fixes
+
+- fix(coverage): exclude skipped/failed files from the analyzed count — oversized files that the orchestrator silently skips are reclassified from "analyzed" into a new "Failed" bucket, so `grafema coverage` reports an accurate (no longer inflated) percentage (REG-1140, #276)
+- fix(rfdb): correct token fuzzy-search Jaccard scores by unifying the tokenizer — removes the phantom whole-string token that inflated the union denominator and distorted `find_nodes` fuzzy-fallback ranking (#275)
+- fix(rust-analyzer): unwrap `Box`/`Rc`/`Arc` receiver types so `Box<dyn Trait>` resolves to the inner trait, restoring dyn-dispatch CALLS edges that were previously dropped (#273)
+- fix(orchestrator): index exported `namespace` declarations so `export namespace X {}` resolves cross-file and gets an IMPORTS_FROM edge — keeps `INDEX_NODE_TYPES` in sync with the resolver's exported-declaration list (REG-1139, #277)
+- fix(cypher): route only real aggregates (COUNT/SUM/AVG/MIN/MAX) through HashAggregate — a scalar function in `RETURN` (e.g. `toUpper(n.name)`) now fails loudly at plan time instead of being mislabeled as an aggregate and erroring at execution (RFD-70 follow-up, #282)
+- fix(orchestrator): checkpoint JS/TS resolve every 500 files instead of a single end-of-phase commit, so a crash or SIGTERM mid-resolve loses at most ~500 files of work rather than the entire (multi-hour on large monorepos) resolution phase (REG-1138, #286)
+- fix(cli): `grafema analyze --resolve-jobs N` / `grafema resolve --jobs N` no longer silently ignore the requested worker count — resolution currently runs single-worker, so any value other than 1 now prints a clear notice that the flag has no effect and proceeds with 1 worker; help text updated to match (REG-563, #287)
+- fix(cli): `grafema who` attributes each call to its enclosing named function (via the v2 `[in:…]` semantic-id annotation) instead of `<anonymous>`; import statements are no longer mislabelled as bare callers (#292)
+- fix(cli): `file`/`explain` resolve files correctly when the project root is a symlink (e.g. `--project` at a symlinked checkout, or a root under macOS `/tmp`→`/private/tmp`) — previously reported `NOT_ANALYZED` for analyzed files because the project-relative path was computed against a non-realpath'd root (#293)
+- fix(cli): `grafema impact <method>` resolves a bare method name to its METHOD node and finds its callers (previously reported "No node found") — recovers `receiver.method()` call sites whose `method` attribute is unpopulated via a name-based CALL scan, consistent with `grafema who` (#297)
+- fix(util): `findContainingFunction` attributes a call inside a class method to that METHOD instead of the enclosing CLASS — fixes caller labelling and impact's internal-call exclusion for method-to-method calls (REG-254, #300)
+- fix(cli): `grafema impact <Class>` aggregates callers of all the class's methods (enumerated via `HAS_METHOD`) and excludes the class's own method-to-method internal calls from the external-impact count (REG-543, #303)
+- fix(cli): `grafema impact <symbol> --json` emits valid JSON (zero-impact object with `target: null`) instead of empty stdout when the target is not found; the human-readable note stays on stderr (#304)
 
 ## [0.3.23] - 2026-04-01
 

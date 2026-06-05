@@ -2260,4 +2260,209 @@ mod integration_tests {
         assert_eq!(result.rows[0][1], serde_json::json!("validate"));
         assert_eq!(result.rows[0][2], serde_json::json!("User"));
     }
+
+    // ── SUM / AVG / MIN / MAX aggregates (RFD-70) ───────────────────────
+
+    /// Test graph with varied numeric `lineCount` metadata so SUM/AVG/MIN/MAX
+    /// have real numeric inputs. One node deliberately has NO `lineCount` to
+    /// exercise NULL-skipping (a missing metadata field evaluates to NULL).
+    ///
+    /// FUNCTION lineCounts: a=10, b=20, c=30, d=(none/NULL)
+    fn create_numeric_test_graph() -> GraphEngineV2 {
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let mk = |id: u128, name: &str, meta: Option<&str>| NodeRecord {
+            id,
+            node_type: Some("FUNCTION".to_string()),
+            name: Some(name.to_string()),
+            file: Some("src/m.js".to_string()),
+            file_id: 0,
+            name_offset: 0,
+            version: "main".into(),
+            exported: true,
+            replaces: None,
+            deleted: false,
+            metadata: meta.map(|s| s.to_string()),
+            semantic_id: None,
+        };
+        engine.add_nodes(vec![
+            mk(20, "a", Some(r#"{"lineCount": 10}"#)),
+            mk(21, "b", Some(r#"{"lineCount": 20}"#)),
+            mk(22, "c", Some(r#"{"lineCount": 30}"#)),
+            mk(23, "d", None),
+        ]);
+        engine
+    }
+
+    #[test]
+    fn sum_aggregate() {
+        let engine = create_numeric_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN SUM(n.lineCount) AS total",
+            EvalLimits::none(),
+        )
+        .unwrap();
+
+        assert_eq!(result.columns, vec!["total"]);
+        assert_eq!(result.row_count, 1);
+        // 10 + 20 + 30 = 60, NULL skipped. NOT a COUNT (which would be 3 or 4).
+        assert_eq!(result.rows[0][0], serde_json::json!(60));
+    }
+
+    #[test]
+    fn avg_aggregate() {
+        let engine = create_numeric_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN AVG(n.lineCount) AS mean",
+            EvalLimits::none(),
+        )
+        .unwrap();
+
+        assert_eq!(result.row_count, 1);
+        // (10 + 20 + 30) / 3 = 20.0, NULL excluded from both sum and count.
+        assert_eq!(result.rows[0][0].as_f64().unwrap(), 20.0);
+    }
+
+    #[test]
+    fn min_aggregate() {
+        let engine = create_numeric_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN MIN(n.lineCount) AS lo",
+            EvalLimits::none(),
+        )
+        .unwrap();
+
+        assert_eq!(result.row_count, 1);
+        assert_eq!(result.rows[0][0], serde_json::json!(10));
+    }
+
+    #[test]
+    fn max_aggregate() {
+        let engine = create_numeric_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN MAX(n.lineCount) AS hi",
+            EvalLimits::none(),
+        )
+        .unwrap();
+
+        assert_eq!(result.row_count, 1);
+        assert_eq!(result.rows[0][0], serde_json::json!(30));
+    }
+
+    #[test]
+    fn sum_aggregate_grouped() {
+        // Two groups by file, each with distinct numeric sums.
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let mk = |id: u128, file: &str, lc: i64| NodeRecord {
+            id,
+            node_type: Some("FUNCTION".to_string()),
+            name: Some(format!("f{}", id)),
+            file: Some(file.to_string()),
+            file_id: 0,
+            name_offset: 0,
+            version: "main".into(),
+            exported: true,
+            replaces: None,
+            deleted: false,
+            metadata: Some(format!(r#"{{"lineCount": {}}}"#, lc)),
+            semantic_id: None,
+        };
+        engine.add_nodes(vec![
+            mk(30, "a.js", 1),
+            mk(31, "a.js", 2),
+            mk(32, "b.js", 10),
+        ]);
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN n.file, SUM(n.lineCount) AS total",
+            EvalLimits::none(),
+        )
+        .unwrap();
+
+        let mut pairs: Vec<(String, i64)> = result
+            .rows
+            .iter()
+            .map(|row| (row[0].as_str().unwrap().to_string(), row[1].as_i64().unwrap()))
+            .collect();
+        pairs.sort();
+        assert_eq!(
+            pairs,
+            vec![("a.js".to_string(), 3), ("b.js".to_string(), 10)]
+        );
+    }
+
+    #[test]
+    fn unsupported_aggregate_function_errors() {
+        // A truly unsupported aggregate must error, not silently return a count.
+        let engine = create_numeric_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN STDDEV(n.lineCount) AS s",
+            EvalLimits::none(),
+        );
+        assert!(
+            result.is_err(),
+            "expected error for unsupported aggregate, got {:?}",
+            result
+        );
+    }
+
+    // ── Aggregate-vs-scalar function routing (RFD-70 follow-up) ─────────
+
+    #[test]
+    fn scalar_function_in_return_rejected_not_mislabeled_aggregate() {
+        // A non-aggregate function in RETURN must be rejected as an unsupported
+        // FUNCTION — never silently routed through aggregation nor mislabeled as
+        // an "aggregate". Only COUNT/SUM/AVG/MIN/MAX are aggregates.
+        let engine = create_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN toUpper(n.name)",
+            EvalLimits::none(),
+        );
+        assert!(result.is_err(), "expected an error for unsupported scalar function");
+        let msg = format!("{:?}", result.unwrap_err()).to_lowercase();
+        assert!(
+            !msg.contains("aggregate"),
+            "scalar function must not be reported as an aggregate; got: {}",
+            msg
+        );
+        assert!(
+            msg.contains("toupper") || msg.contains("function"),
+            "error should name the unsupported function; got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn mixed_scalar_and_column_not_misaggregated() {
+        // `RETURN n.file, toUpper(n.name)` must NOT be planned as GROUP BY n.file
+        // with toUpper treated as an aggregate; it's rejected as unsupported.
+        let engine = create_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN n.file, toUpper(n.name)",
+            EvalLimits::none(),
+        );
+        assert!(result.is_err());
+        let msg = format!("{:?}", result.unwrap_err()).to_lowercase();
+        assert!(!msg.contains("aggregate"), "got: {}", msg);
+    }
+
+    #[test]
+    fn real_aggregates_still_work_after_scalar_split() {
+        // Regression: real aggregates + grouping unaffected by the scalar split.
+        let engine = create_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (f:FUNCTION)-[:CALLS]->(g) RETURN f.name, COUNT(g) AS calls",
+            EvalLimits::none(),
+        )
+        .unwrap();
+        assert_eq!(result.columns, vec!["f.name", "calls"]);
+        assert!(result.row_count >= 1);
+    }
 }

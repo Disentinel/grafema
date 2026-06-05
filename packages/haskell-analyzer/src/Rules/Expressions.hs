@@ -67,8 +67,10 @@ import Analysis.Context
   , emitEdge
   , askFile
   , askScopeId
+  , withScope
+  , withEnclosingFn
   )
-import Analysis.Types (GraphNode(..), GraphEdge(..), MetaValue(..))
+import Analysis.Types (GraphNode(..), GraphEdge(..), MetaValue(..), Scope(Scope), ScopeKind(..))
 import Grafema.SemanticId (semanticId)
 import Loc (getLoc)
 
@@ -597,8 +599,11 @@ walkValBinds (XValBindsLR _) = pure ()
 -- recurse into the body expressions.
 walkBind :: GenLocated l (HsBindLR GhcPs GhcPs) -> Analyzer ()
 walkBind (L _ (FunBind { fun_id = funId, fun_matches = mg })) = do
-  walkFunBind funId mg      -- emit FUNCTION node for local binding
-  walkMatchGroup mg         -- walk into the body
+  fnId <- walkFunBind funId mg   -- emit FUNCTION node for local binding
+  -- walk the body inside this local function's scope so its calls/refs
+  -- attach to it rather than the enclosing module/function
+  let fnScope = Scope fnId FunctionScope mempty Nothing
+  withEnclosingFn fnId $ withScope fnScope $ walkMatchGroup mg
 walkBind (L _ (PatBind { pat_lhs = pat, pat_rhs = grhss })) = do
   walkPatBind pat grhss     -- emit VARIABLE node for local binding
   walkGRHSs grhss           -- walk into the body
