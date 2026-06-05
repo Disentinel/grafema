@@ -389,9 +389,9 @@ export async function handleSemanticSearch(
     for (let i = 0; i < results.length; i++) {
       const node = results[i];
       const meta = parseMeta(node);
-      // Pseudo-similarity score based on match quality (placeholder until embeddings)
-      const similarity = (1.0 - (i * 0.05)).toFixed(2);
-      lines.push(`${i + 1}. [${similarity}] ${node.name} (${node.nodeType})`);
+      // NOTE: this is substring matching, not embeddings — do not fabricate a
+      // similarity score (it would read to an agent as a real metric). Just rank.
+      lines.push(`${i + 1}. ${node.name} (${node.nodeType})`);
       if (meta.domain) lines.push(`   Domain: ${meta.domain}`);
       if (meta.content) lines.push(`   ${String(meta.content).slice(0, 200)}`);
       lines.push('');
