@@ -25,6 +25,8 @@ All notable changes to this project will be documented in this file.
 - fix(util): `findContainingFunction` attributes a call inside a class method to that METHOD instead of the enclosing CLASS — fixes caller labelling and impact's internal-call exclusion for method-to-method calls (REG-254, #300)
 - fix(cli): `grafema impact <Class>` aggregates callers of all the class's methods (enumerated via `HAS_METHOD`) and excludes the class's own method-to-method internal calls from the external-impact count (REG-543, #303)
 - fix(cli): `grafema impact <symbol> --json` emits valid JSON (zero-impact object with `target: null`) instead of empty stdout when the target is not found; the human-readable note stays on stderr (#304)
+- fix(cli): `grafema wtf <symbol> --json` emits valid JSON (`{ symbol, node: null, results: [] }`) instead of empty stdout when the symbol is not found; human note moves to stderr (#307)
+- fix(cli): `--json` always emits parseable JSON on not-found for `get`/`context`/`describe`/`ls` via a shared `emitJsonNotFound` helper (each shape mirrors its success output); previously these printed empty stdout, breaking `JSON.parse` for scripts/agents (#308)
 
 ## [0.3.23] - 2026-04-01
 
