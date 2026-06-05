@@ -63,7 +63,7 @@ function initAndAnalyze(tempDir: string): void {
   const initResult = runCli(['init'], tempDir);
   assert.strictEqual(initResult.status, 0, `init failed: ${initResult.stderr}`);
 
-  const analyzeResult = runCli(['analyze', '--auto-start'], tempDir);
+  const analyzeResult = runCli(['analyze'], tempDir);
   assert.strictEqual(analyzeResult.status, 0, `analyze failed: ${analyzeResult.stderr}`);
 }
 
