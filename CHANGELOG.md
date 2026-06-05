@@ -18,6 +18,7 @@ All notable changes to this project will be documented in this file.
 - fix(cypher): route only real aggregates (COUNT/SUM/AVG/MIN/MAX) through HashAggregate — a scalar function in `RETURN` (e.g. `toUpper(n.name)`) now fails loudly at plan time instead of being mislabeled as an aggregate and erroring at execution (RFD-70 follow-up, #282)
 - fix(orchestrator): checkpoint JS/TS resolve every 500 files instead of a single end-of-phase commit, so a crash or SIGTERM mid-resolve loses at most ~500 files of work rather than the entire (multi-hour on large monorepos) resolution phase (REG-1138, #286)
 - fix(cli): `grafema analyze --resolve-jobs N` / `grafema resolve --jobs N` no longer silently ignore the requested worker count — resolution currently runs single-worker, so any value other than 1 now prints a clear notice that the flag has no effect and proceeds with 1 worker; help text updated to match (REG-563, #287)
+- fix(cli): `grafema who` attributes each call to its enclosing named function (via the v2 `[in:…]` semantic-id annotation) instead of `<anonymous>`; import statements are no longer mislabelled as bare callers (#292)
 
 ## [0.3.23] - 2026-04-01
 
