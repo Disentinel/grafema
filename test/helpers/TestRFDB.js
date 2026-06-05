@@ -11,8 +11,8 @@
  */
 
 import { RFDBClient } from '../../packages/rfdb/dist/client.js';
-import { RFDBServerBackend } from '@grafema/util';
-import { join, dirname } from 'node:path';
+import { RFDBServerBackend, findRfdbBinary } from '@grafema/util';
+import { dirname } from 'node:path';
 import { existsSync, rmSync, mkdirSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -127,7 +127,8 @@ async function _startSharedServer() {
   const binaryPath = _findServerBinary();
   if (!binaryPath) {
     throw new Error(
-      'RFDB server binary not found. Run: cargo build --release -p rfdb-server'
+      'RFDB server binary not found. Set GRAFEMA_RFDB_SERVER, run `npm install`, ' +
+        'or build from source: cd packages/rfdb-server && cargo build --release'
     );
   }
 
@@ -169,19 +170,18 @@ async function _startSharedServer() {
   };
 }
 
-function _findServerBinary() {
-  const candidates = [
-    join(process.cwd(), 'packages/rfdb-server/target/release/rfdb-server'),
-    join(process.cwd(), 'packages/rfdb-server/target/debug/rfdb-server'),
-  ];
-
-  for (const path of candidates) {
-    if (existsSync(path)) {
-      return path;
-    }
-  }
-
-  return null;
+/**
+ * Resolve the rfdb-server binary using the same canonical resolver as
+ * production code (`findRfdbBinary` from `@grafema/util`). This honors the
+ * documented `GRAFEMA_RFDB_SERVER` override, the platform npm package, the
+ * monorepo `cargo` build dirs, `PATH`, and `~/.grafema/bin` — keeping the test
+ * harness in lockstep with how the server is actually located at runtime
+ * instead of duplicating a narrower, divergent lookup (RFD-40).
+ *
+ * @returns {string | null} Absolute path to the binary, or null if not found.
+ */
+export function _findServerBinary() {
+  return findRfdbBinary();
 }
 
 // ===========================================================================
