@@ -591,8 +591,11 @@ describe('REG-1144 — advertised tools all have dispatch handlers', () => {
   it('no advertised tool is missing a server.ts case handler', () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const serverSrc = readFileSync(join(here, '..', 'src', 'server.ts'), 'utf8');
+    // Anchor to line start (after indentation) so commented-out arms like
+    // `// case 'git_churn':` are NOT counted as handled — otherwise the test
+    // would silently pass on the exact REG-1144 pattern it guards against.
     const handled = new Set(
-      [...serverSrc.matchAll(/case '([a-z_]+)':/g)].map((m) => m[1]),
+      [...serverSrc.matchAll(/^\s*case '([a-z_]+)':/gm)].map((m) => m[1]),
     );
     const dead = TOOLS.map((t) => t.name).filter((n) => !handled.has(n));
     assert.deepStrictEqual(
