@@ -1014,8 +1014,17 @@ pub fn tag_virtual_nodes(output: &mut PluginOutput, plugin_name: &str) {
 ///    before re-adding only the resolution nodes,
 /// 3. commits with `defer_index = true` (callers rebuild indexes once at the end).
 ///
-/// Re-committing the same nodes/edges is safe: nodes upsert by id and edge reads
-/// dedup by `(src, dst, edge_type)`, so checkpoints that overlap are idempotent.
+/// Re-committing the same nodes/edges is safe for the phase output: resolution
+/// nodes upsert by id and edge reads dedup by `(src, dst, edge_type)`, and edge
+/// tombstones key off the (real-source) origin node, so resolution edges from
+/// earlier checkpoints accumulate correctly and are never wiped by later ones.
+///
+/// Caveat — file-less virtual diagnostic nodes are last-writer-wins across
+/// checkpoints: every checkpoint lists the same `__grafema_virtual/<plugin>`
+/// file in `changed_files`, and `commit_batch` tombstones all nodes in a changed
+/// file before adding the chunk's nodes. So only the final checkpoint's virtual
+/// nodes persist. This is acceptable — virtual nodes are ephemeral placeholders;
+/// the real graph state (resolution edges + real-source nodes) is unaffected.
 pub async fn commit_resolve_chunk(
     output: &mut PluginOutput,
     name: &str,
