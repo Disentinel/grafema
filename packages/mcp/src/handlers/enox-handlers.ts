@@ -348,14 +348,25 @@ export async function handleRecall(args: RecallArgs): Promise<ToolResult> {
 
 export interface SemanticSearchArgs {
   query: string;
-  limit?: number;
+  top_k?: number;
   domain?: string;
 }
 
-export async function handleSemanticSearch(args: SemanticSearchArgs): Promise<ToolResult> {
+/**
+ * Handle the `semantic_search` MCP tool.
+ *
+ * @param args - tool input. `top_k` (matching the published schema) caps the
+ *   number of results; defaults to 10 per the schema's documented default.
+ * @param clientOverride - optional RFDB client, injected by tests; production
+ *   callers omit it and the shared knowledge client is used.
+ */
+export async function handleSemanticSearch(
+  args: SemanticSearchArgs,
+  clientOverride?: RFDBClient,
+): Promise<ToolResult> {
   try {
-    const client = await getKnowledgeClient();
-    const limit = args.limit ?? 20;
+    const client = clientOverride ?? await getKnowledgeClient();
+    const limit = args.top_k ?? 10;
 
     // TODO: Wire to RFDB embedding engine when enabled.
     // For now, fall back to substring search via queryNodes.
