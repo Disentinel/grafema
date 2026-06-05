@@ -354,10 +354,6 @@ export function parseSemanticIdV2(id: string): ParsedSemanticIdV2 | null {
   const type = id.slice(firstArrow + 2, secondArrow);
   let rest = id.slice(secondArrow + 2);
 
-  // Check this isn't a v1 ID (v1 has 4+ parts, meaning rest contains '->')
-  // v2 names don't contain '->' in practice
-  if (rest.includes('->')) return null;
-
   // Parse counter suffix: #N (only at the very end, after brackets)
   let counter: number | undefined;
   const counterMatch = rest.match(/#(\d+)$/);
@@ -366,14 +362,26 @@ export function parseSemanticIdV2(id: string): ParsedSemanticIdV2 | null {
     rest = rest.slice(0, -counterMatch[0].length);
   }
 
+  // Locate the optional bracket payload: [in:namedParent,h:xxxx].
+  const bracketStart = rest.indexOf('[');
+  const bracketEnd = rest.lastIndexOf(']');
+  const hasBracket = bracketStart !== -1 && bracketEnd === rest.length - 1;
+
+  // Reject genuine v1 IDs (file->scope->TYPE->name): they carry extra '->'
+  // delimiters in the NAME region. Only the name region is inspected — the v2
+  // `in:` namedParent value is opaque and MAY legitimately contain '->' (the
+  // native Rust analyzer stores a full `file->FUNCTION->name` parent id there,
+  // see grafema-orchestrator/src/rust_analyzer.rs enclosing_fn). The old guard
+  // checked the whole remainder including the bracket and false-rejected these.
+  const nameRegion = hasBracket ? rest.slice(0, bracketStart) : rest;
+  if (nameRegion.includes('->')) return null;
+
   // Parse bracket content: [in:parent,h:xxxx]
   let namedParent: string | undefined;
   let contentHash: string | undefined;
   let name = rest;
 
-  const bracketStart = rest.indexOf('[');
-  const bracketEnd = rest.lastIndexOf(']');
-  if (bracketStart !== -1 && bracketEnd === rest.length - 1) {
+  if (hasBracket) {
     name = rest.slice(0, bracketStart);
     const bracketContent = rest.slice(bracketStart + 1, bracketEnd);
 
