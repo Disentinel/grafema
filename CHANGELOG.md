@@ -9,8 +9,11 @@ All notable changes to this project will be documented in this file.
 - feat(cli): `grafema upgrade` command — clean stale artifacts from `~/.grafema/bin/` and upgrade binaries to current version. Supports `--all`, `--lang`, `--project`, `--dry-run` flags.
 - feat(cypher): SUM/AVG/MIN/MAX aggregates in Cypher queries (RFD-70) — real typed accumulators with Cypher NULL semantics and Int→Float promotion; unsupported aggregate functions now error instead of silently returning a row count (#274)
 - feat(orchestrator): emit `resolve_progress` profiler events during per-file JS/TS resolve (files_done / total_files / edges_so_far, every 500 files + at completion) — closes the silent profiler gap between `js_resolve_start` and `js_resolve_complete` (#296)
+- perf(plugins): Datalog-based reimplementations of `shape-tracker`, `type-inference`, `method-call-resolver`, and `shape-verifier`, opt-in behind the `GRAFEMA_DATALOG_PLUGINS` env flag (comma-separated plugin names); the default path is byte-for-byte the existing legacy logic, relocated into `*Legacy` functions (REG-1128 Phase 3b+3c, #265)
 
 ### Bug Fixes
+- fix(rfdb): edge-lifting attributes hidden nodes to their actual containing function/class by walking `CONTAINS` ancestry, instead of collapsing them onto whichever visible node happens to be first in the file (REG-1132, #265)
+- fix(doctor): `checkServerStatus` removes a stale RFDB socket file so a leftover socket from a crashed server no longer blocks a clean restart (REG-1129, #265)
 
 - fix(coverage): exclude skipped/failed files from the analyzed count — oversized files that the orchestrator silently skips are reclassified from "analyzed" into a new "Failed" bucket, so `grafema coverage` reports an accurate (no longer inflated) percentage (REG-1140, #276)
 - fix(rfdb): correct token fuzzy-search Jaccard scores by unifying the tokenizer — removes the phantom whole-string token that inflated the union denominator and distorted `find_nodes` fuzzy-fallback ranking (#275)

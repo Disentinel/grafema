@@ -11,6 +11,8 @@
  * Environment:
  *   RFDB_SOCKET  — path to RFDB unix socket
  *   RFDB_DATABASE — database name
+ *   GRAFEMA_DATALOG_PLUGINS — comma-separated list of plugins to use Datalog path
+ *                             (e.g. "shape-verifier" to enable this plugin's Datalog impl)
  */
 
 import { RFDBClient } from '../packages/rfdb/dist/client.js';
@@ -29,6 +31,151 @@ try {
   await client.connect();
   if (dbName) await client.openDatabase(dbName);
 
+  const useDatalog = process.env.GRAFEMA_DATALOG_PLUGINS?.split(',').includes('shape-verifier');
+  if (useDatalog) {
+    await shapeVerifierDatalog(client);
+  } else {
+    await shapeVerifierLegacy(client);
+  }
+
+  await client.close();
+} catch (err) {
+  console.error(`[shape-verifier] Error: ${err.message}`);
+  await client.close();
+  process.exit(1);
+}
+
+// ── Datalog implementation ────────────────────────────────────────────────────
+
+/**
+ * Datalog-based implementation of shape verification.
+ *
+ * Uses two executeDatalog() calls instead of ~600k individual IPC calls:
+ *   1. Build has_method(ClassId, MethodName) with recursive EXTENDS chain
+ *   2. Find unresolved CALL nodes that have an INSTANCE_OF receiver path
+ * Then cross-references in JS to produce violations.
+ *
+ * Expected speedup: ×20–50 vs legacy on large codebases.
+ *
+ * Recursive Datalog is supported by rfdb-server (max_recursion_depth=64),
+ * which is sufficient for any realistic class hierarchy depth.
+ */
+async function shapeVerifierDatalog(client) {
+  // Step 1: Build complete has_method index via recursive Datalog.
+  // Covers CLASS and INTERFACE nodes (both use HAS_METHOD / HAS_PROPERTY edges).
+  // Recursive rule follows EXTENDS chain to include inherited methods.
+  const hasMethodResults = await client.executeDatalog(
+    'has_method(Class, Name) :- edge(Class, M, "HAS_METHOD"), attr(M, "name", Name).\n' +
+    'has_method(Class, Name) :- edge(Class, M, "HAS_PROPERTY"), attr(M, "name", Name).\n' +
+    'has_method(Class, Name) :- edge(Class, P, "EXTENDS"), has_method(P, Name).\n'
+  );
+
+  // Build classId → Set<methodName> (deduplicated)
+  const classMethodMap = new Map();
+  for (const row of hasMethodResults) {
+    const classId = row.bindings['Class'];
+    const name = row.bindings['Name'];
+    if (!classId || !name) continue;
+    let methods = classMethodMap.get(classId);
+    if (!methods) { methods = new Set(); classMethodMap.set(classId, methods); }
+    methods.add(name);
+  }
+  console.error(`[shape-verifier/datalog] ${classMethodMap.size} classes/interfaces indexed`);
+
+  // Step 2: Find unresolved CALL nodes that have a receiver with INSTANCE_OF.
+  // Covers four receiver path variants from resolveReceiverType():
+  //   A2: CALL -READS_FROM→ Decl -INSTANCE_OF→ Class         (direct, 2 hops)
+  //   A3: CALL -READS_FROM→ Ref -READS_FROM→ Decl -INSTANCE_OF→ Class  (via REF, 3 hops)
+  //   B3: CALL -DERIVED_FROM→ PA -READS_FROM→ Decl -INSTANCE_OF→ Class  (via PA, 3 hops)
+  //   B4: CALL -DERIVED_FROM→ PA -READS_FROM→ Ref -READS_FROM→ Decl -INSTANCE_OF→ Class (4 hops)
+  const callResults = await client.executeDatalog(
+    'call_receiver(C, CallName, Class) :- node(C, "CALL"), attr(C, "name", CallName), ' +
+      '\\+ edge(C, _, "CALLS"), \\+ edge(C, _, "CALLS_REMOTE"), ' +
+      'edge(C, Decl, "READS_FROM"), edge(Decl, Class, "INSTANCE_OF").\n' +
+    'call_receiver(C, CallName, Class) :- node(C, "CALL"), attr(C, "name", CallName), ' +
+      '\\+ edge(C, _, "CALLS"), \\+ edge(C, _, "CALLS_REMOTE"), ' +
+      'edge(C, Ref, "READS_FROM"), edge(Ref, Decl, "READS_FROM"), edge(Decl, Class, "INSTANCE_OF").\n' +
+    'call_receiver(C, CallName, Class) :- node(C, "CALL"), attr(C, "name", CallName), ' +
+      '\\+ edge(C, _, "CALLS"), \\+ edge(C, _, "CALLS_REMOTE"), ' +
+      'edge(C, PA, "DERIVED_FROM"), edge(PA, Decl, "READS_FROM"), edge(Decl, Class, "INSTANCE_OF").\n' +
+    'call_receiver(C, CallName, Class) :- node(C, "CALL"), attr(C, "name", CallName), ' +
+      '\\+ edge(C, _, "CALLS"), \\+ edge(C, _, "CALLS_REMOTE"), ' +
+      'edge(C, PA, "DERIVED_FROM"), edge(PA, Ref, "READS_FROM"), edge(Ref, Decl, "READS_FROM"), edge(Decl, Class, "INSTANCE_OF").\n'
+  );
+
+  // Step 3: Cross-reference to find violations.
+  const issueNodes = [];
+  const seen = new Set();
+  const classNameCache = new Map();
+  let verified = 0;
+  let violations = 0;
+
+  for (const row of callResults) {
+    const callId = row.bindings['C'];
+    const callName = row.bindings['CallName'];
+    const classId = row.bindings['Class'];
+    if (!callId || !callName || !classId) continue;
+
+    // Extract method name (after last '.')
+    const dotIdx = callName.lastIndexOf('.');
+    if (dotIdx === -1) continue;
+    const methodName = callName.substring(dotIdx + 1);
+    if (!methodName) continue;
+
+    // Deduplicate: same (call, class) pair can appear via multiple paths
+    const key = `${callId}::${classId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    verified++;
+
+    const classMethods = classMethodMap.get(classId);
+    if (!classMethods) continue; // Unknown class, can't verify
+
+    if (!classMethods.has(methodName)) {
+      violations++;
+
+      // Fetch call node for file/line metadata (violations are rare)
+      const callNode = await client.getNode(callId);
+      if (!classNameCache.has(classId)) {
+        const classNode = await client.getNode(classId);
+        classNameCache.set(classId, classNode?.name || '?');
+      }
+      const className = classNameCache.get(classId);
+
+      issueNodes.push({
+        id: `issue::shape-violation::${callId}`,
+        type: 'ISSUE',
+        name: `Method .${methodName} not found on ${className}`,
+        file: callNode?.file || '',
+        exported: false,
+        metadata: JSON.stringify({
+          _source: 'shape-verifier',
+          severity: 'warning',
+          category: 'shape-violation',
+          method: methodName,
+          receiverType: className,
+          callName,
+          line: callNode?.line,
+        }),
+      });
+    }
+  }
+
+  // Commit ISSUE nodes
+  if (issueNodes.length > 0) {
+    const BATCH = 200;
+    for (let i = 0; i < issueNodes.length; i += BATCH) {
+      await client.addNodes(issueNodes.slice(i, i + BATCH));
+    }
+  }
+
+  console.error(`[shape-verifier/datalog] Done: ${verified} calls verified, ${violations} violations found`);
+}
+
+// ── Legacy implementation ─────────────────────────────────────────────────────
+
+async function shapeVerifierLegacy(client) {
   // Build class → methods index
   const classMethodIndex = new Map(); // classId → Set<methodName>
   const classNameIndex = new Map();   // classId → className
@@ -135,11 +282,6 @@ try {
   }
 
   console.error(`[shape-verifier] Done: ${verified} calls verified, ${violations} violations found`);
-  await client.close();
-} catch (err) {
-  console.error(`[shape-verifier] Error: ${err.message}`);
-  await client.close();
-  process.exit(1);
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────

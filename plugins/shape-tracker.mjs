@@ -10,6 +10,7 @@
  * Environment:
  *   RFDB_SOCKET  — path to RFDB unix socket
  *   RFDB_DATABASE — database name
+ *   GRAFEMA_DATALOG_PLUGINS — include "shape-tracker" to use Datalog-based impl
  */
 
 import { RFDBClient } from '../packages/rfdb/dist/client.js';
@@ -28,6 +29,197 @@ try {
   await client.connect();
   if (dbName) await client.openDatabase(dbName);
 
+  const useDatalog = (process.env.GRAFEMA_DATALOG_PLUGINS ?? '').split(',').includes('shape-tracker');
+  if (useDatalog) {
+    await shapeTrackerDatalog(client);
+  } else {
+    await shapeTrackerLegacy(client);
+  }
+
+  await client.close();
+} catch (err) {
+  console.error(`[shape-tracker] Error: ${err.message}`);
+  await client.close();
+  process.exit(1);
+}
+
+// ── Datalog implementation ───────────────────────────────────────────────────
+
+/**
+ * Datalog-based shape tracker.
+ *
+ * Phase 3a: JS (metadata JSON.parse blocks pure Datalog) + early-exit gate
+ * Phase 3b: Datalog finds ASSIGNED_FROM chains; JS extracts objectKeys from LITERAL metadata
+ * Phase 3c: Pure Datalog — guarded writes via HAS_CONSEQUENT/HAS_ALTERNATE → CONTAINS → WRITES_TO
+ */
+async function shapeTrackerDatalog(client) {
+  const BATCH = 500;
+
+  // Build CLASS index (name → id) — needed for edge construction in all phases
+  const classIndex = new Map();
+  for await (const n of client.queryNodes({ type: 'CLASS' })) {
+    if (n.name) classIndex.set(n.name, String(n.id));
+  }
+  for await (const n of client.queryNodes({ type: 'INTERFACE' })) {
+    if (n.name) classIndex.set(n.name, String(n.id));
+  }
+  console.error(`[shape-tracker/datalog] ${classIndex.size} classes indexed`);
+
+  // ── Phase 3a: EXTENDS / IMPLEMENTS (JS — requires JSON.parse on metadata) ──
+
+  let extendsCreated = 0;
+  let implementsCreated = 0;
+  const phase3aEdges = [];
+
+  for await (const cls of client.queryNodes({ type: 'CLASS' })) {
+    const classId = String(cls.id);
+    const meta = typeof cls.metadata === 'string' ? JSON.parse(cls.metadata || '{}') : cls.metadata || {};
+
+    // Early-exit gate: skip if no superClass or implements
+    if (!meta.superClass && !meta.implements) continue;
+
+    const outEdges = await client.getOutgoingEdges(classId);
+
+    if (meta.superClass) {
+      const superId = classIndex.get(meta.superClass);
+      if (superId && !outEdges.some(e => e.type === 'EXTENDS')) {
+        phase3aEdges.push({
+          src: classId,
+          dst: superId,
+          type: 'EXTENDS',
+          metadata: JSON.stringify({ _source: 'shape-tracker' }),
+        });
+        extendsCreated++;
+      }
+    }
+
+    if (meta.implements) {
+      const hasImpl = outEdges.some(e => e.type === 'IMPLEMENTS');
+      if (!hasImpl) {
+        const ifaceNames = String(meta.implements).split(',').map(s => s.trim()).filter(Boolean);
+        for (const ifaceName of ifaceNames) {
+          const ifaceId = classIndex.get(ifaceName);
+          if (ifaceId) {
+            phase3aEdges.push({
+              src: classId,
+              dst: ifaceId,
+              type: 'IMPLEMENTS',
+              metadata: JSON.stringify({ _source: 'shape-tracker' }),
+            });
+            implementsCreated++;
+          }
+        }
+      }
+    }
+  }
+
+  for (let i = 0; i < phase3aEdges.length; i += BATCH) {
+    await client.addEdges(phase3aEdges.slice(i, i + BATCH));
+  }
+  console.error(`[shape-tracker/datalog] Phase 3a: ${extendsCreated} EXTENDS + ${implementsCreated} IMPLEMENTS edges created`);
+
+  // ── Phase 3c: GUARDED_WRITE — pure Datalog (priority 1) ──────────────────
+  // Two rules cover then-branch and else-branch. One query issues both.
+
+  const guardedRows = await client.executeDatalog(
+    'guarded_write(Branch, Target) :- node(Branch, "BRANCH"), edge(Branch, Cons, "HAS_CONSEQUENT"), edge(Cons, Cont, "CONTAINS"), edge(Cont, Target, "WRITES_TO").\n' +
+    'guarded_write(Branch, Target) :- node(Branch, "BRANCH"), edge(Branch, Alt, "HAS_ALTERNATE"), edge(Alt, Cont, "CONTAINS"), edge(Cont, Target, "WRITES_TO").\n'
+  );
+
+  const guardedEdges = [];
+  const guardedSeen = new Set();
+  let guardedWrites = 0;
+
+  for (const row of (guardedRows ?? [])) {
+    const branchId = row.bindings['Branch'];
+    const targetId = row.bindings['Target'];
+    if (!branchId || !targetId) continue;
+    const key = `${branchId}|${targetId}`;
+    if (guardedSeen.has(key)) continue;
+    guardedSeen.add(key);
+    guardedEdges.push({
+      src: branchId,
+      dst: targetId,
+      type: 'GUARDED_WRITE',
+      metadata: JSON.stringify({ _source: 'shape-tracker' }),
+    });
+    guardedWrites++;
+  }
+
+  for (let i = 0; i < guardedEdges.length; i += BATCH) {
+    await client.addEdges(guardedEdges.slice(i, i + BATCH));
+  }
+  console.error(`[shape-tracker/datalog] Phase 3c: ${guardedWrites} GUARDED_WRITE edges created`);
+
+  // ── Phase 3b: shape propagation — hybrid Datalog + JS ────────────────────
+  // Datalog unrolls ASSIGNED_FROM up to 5 hops for VARIABLE/CONSTANT without
+  // INSTANCE_OF, finding (source, literal) pairs. JS reads objectKeys from
+  // literal metadata (requires JSON.parse — can't be done in pure Datalog).
+
+  const CHAIN_PROGRAM =
+    'needs_shape(V) :- node(V, "VARIABLE"), \\+ edge(V, _, "INSTANCE_OF").\n' +
+    'needs_shape(V) :- node(V, "CONSTANT"), \\+ edge(V, _, "INSTANCE_OF").\n' +
+    'chain1(A, B) :- needs_shape(A), edge(A, B, "ASSIGNED_FROM").\n' +
+    'chain2(A, C) :- chain1(A, B), edge(B, C, "ASSIGNED_FROM").\n' +
+    'chain3(A, C) :- chain2(A, B), edge(B, C, "ASSIGNED_FROM").\n' +
+    'chain4(A, C) :- chain3(A, B), edge(B, C, "ASSIGNED_FROM").\n' +
+    'chain5(A, C) :- chain4(A, B), edge(B, C, "ASSIGNED_FROM").\n' +
+    'chain_literal(A, L) :- chain1(A, L), node(L, "LITERAL").\n' +
+    'chain_literal(A, L) :- chain2(A, L), node(L, "LITERAL").\n' +
+    'chain_literal(A, L) :- chain3(A, L), node(L, "LITERAL").\n' +
+    'chain_literal(A, L) :- chain4(A, L), node(L, "LITERAL").\n' +
+    'chain_literal(A, L) :- chain5(A, L), node(L, "LITERAL").\n';
+
+  const chainRows = await client.executeDatalog(CHAIN_PROGRAM);
+
+  // Group by source variable (first-wins: take first literal per var)
+  const varToLiteral = new Map();
+  for (const row of (chainRows ?? [])) {
+    const varId = row.bindings['A'];
+    const litId = row.bindings['L'];
+    if (!varId || !litId || varToLiteral.has(varId)) continue;
+    varToLiteral.set(varId, litId);
+  }
+
+  console.error(`[shape-tracker/datalog] Phase 3b: ${varToLiteral.size} var→literal pairs from Datalog`);
+
+  const shapeEdges = [];
+  let shapePropagated = 0;
+
+  for (const [varId, litId] of varToLiteral) {
+    const litNode = await client.getNode(litId);
+    if (!litNode) continue;
+    const meta = typeof litNode.metadata === 'string'
+      ? JSON.parse(litNode.metadata || '{}') : litNode.metadata || {};
+    if (meta.kind !== 'object' || !Array.isArray(meta.objectKeys)) continue;
+
+    const targetClassId = classIndex.get('Object');
+    if (!targetClassId) continue;
+
+    shapeEdges.push({
+      src: varId,
+      dst: targetClassId,
+      type: 'INSTANCE_OF',
+      metadata: JSON.stringify({
+        _source: 'shape-tracker',
+        inferredType: 'Object',
+        shape: meta.objectKeys,
+        strategy: 'shape_propagation',
+      }),
+    });
+    shapePropagated++;
+  }
+
+  for (let i = 0; i < shapeEdges.length; i += BATCH) {
+    await client.addEdges(shapeEdges.slice(i, i + BATCH));
+  }
+  console.error(`[shape-tracker/datalog] Phase 3b: ${shapePropagated} shapes propagated`);
+  console.error(`[shape-tracker/datalog] Done`);
+}
+
+// ── Legacy implementation ────────────────────────────────────────────────────
+
+async function shapeTrackerLegacy(client) {
   // Phase 3a: Create EXTENDS and IMPLEMENTS edges from CLASS metadata
   const classIndex = new Map(); // name → numericId
   for await (const n of client.queryNodes({ type: 'CLASS' })) {
@@ -87,9 +279,6 @@ try {
   console.error(`[shape-tracker] Phase 3a: ${extendsCreated} EXTENDS + ${implementsCreated} IMPLEMENTS edges created`);
 
   // Phase 3b: Object literal shape propagation
-  // For variables assigned from other variables, propagate shape through chain.
-  // type-inference already stores shape on INSTANCE_OF edges for direct literal assignments.
-  // Here we handle: const b = a; (where a has shape from literal).
   let shapePropagated = 0;
   const shapeEdges = [];
 
@@ -135,8 +324,6 @@ try {
   console.error(`[shape-tracker] Phase 3b: ${shapePropagated} shapes propagated through assignment chains`);
 
   // Phase 3c: GUARDED_WRITE edges — mark property writes inside branches
-  // For each BRANCH(if), traverse HAS_CONSEQUENT/HAS_ALTERNATE → SCOPE → CONTAINS
-  // to find PROPERTY_ACCESS nodes with WRITES_TO. Create GUARDED_WRITE edge.
   let guardedWrites = 0;
   const guardedEdges = [];
 
@@ -182,13 +369,7 @@ try {
     await client.addEdges(guardedEdges.slice(i, i + BATCH));
   }
   console.error(`[shape-tracker] Phase 3c: ${guardedWrites} GUARDED_WRITE edges created`);
-
   console.error(`[shape-tracker] Done`);
-  await client.close();
-} catch (err) {
-  console.error(`[shape-tracker] Error: ${err.message}`);
-  await client.close();
-  process.exit(1);
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
