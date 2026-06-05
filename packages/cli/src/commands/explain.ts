@@ -15,7 +15,7 @@
 import { Command } from 'commander';
 import { resolve, join, relative, normalize } from 'path';
 import { existsSync, realpathSync } from 'fs';
-import { toRelativeDisplay } from '../utils/pathUtils.js';
+import { toRelativeDisplay, resolveProjectRoot } from '../utils/pathUtils.js';
 import { RFDBServerBackend, FileExplainer, type EnhancedNode } from '@grafema/util';
 import { exitWithError, emitJsonNotFound } from '../utils/errorFormatter.js';
 
@@ -45,15 +45,7 @@ If a file shows NOT_ANALYZED:
   - Check if file is excluded in config
 `)
   .action(async (file: string, options: ExplainOptions) => {
-    // realpath the project root so it shares a base with the realpath'd file
-    // path computed below; otherwise relative() breaks when the root is a
-    // symlink (e.g. macOS /tmp -> /private/tmp), and the file reads NOT_ANALYZED.
-    let projectPath = resolve(options.project);
-    try {
-      projectPath = realpathSync(projectPath);
-    } catch {
-      // Project dir missing — leave resolved; the dbPath check below reports it.
-    }
+    const projectPath = resolveProjectRoot(options.project);
     const grafemaDir = join(projectPath, '.grafema');
     const dbPath = join(grafemaDir, 'graph.rfdb');
 

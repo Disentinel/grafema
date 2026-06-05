@@ -17,6 +17,7 @@ import { existsSync, realpathSync } from 'fs';
 import { RFDBServerBackend, FileOverview } from '@grafema/util';
 import type { FileOverviewResult, FunctionOverview } from '@grafema/util';
 import { exitWithError, emitJsonNotFound } from '../utils/errorFormatter.js';
+import { resolveProjectRoot } from '../utils/pathUtils.js';
 import { Spinner } from '../utils/spinner.js';
 
 interface FileOptions {
@@ -50,15 +51,7 @@ Output shows:
 Use 'grafema context <id>' to dive deeper into any specific entity.
 `)
   .action(async (file: string, options: FileOptions) => {
-    // realpath the project root so it shares a base with the realpath'd file
-    // path computed below; otherwise relative() breaks when the root is a
-    // symlink (e.g. macOS /tmp -> /private/tmp), and the file reads NOT_ANALYZED.
-    let projectPath = resolve(options.project);
-    try {
-      projectPath = realpathSync(projectPath);
-    } catch {
-      // Project dir missing — leave resolved; the dbPath check below reports it.
-    }
+    const projectPath = resolveProjectRoot(options.project);
     const grafemaDir = join(projectPath, '.grafema');
     const dbPath = join(grafemaDir, 'graph.rfdb');
 
