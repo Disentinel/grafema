@@ -50,7 +50,7 @@
 #![allow(dead_code)]
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::marker::PhantomData;
 use std::time::Instant;
 
@@ -724,6 +724,45 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
             return if negated { rows } else { Vec::new() };
         };
 
+        // ── Set-at-once anti-join (the function-has-contains shape) ──
+        //
+        // For a negated edge/incoming/node leg whose only free positions are the key
+        // VARIABLE(s) bound from the rows (the rest being constants or wildcards), the
+        // membership test is a single keyed/typed scan projected onto the bound key
+        // positions — built ONCE — and an O(1) probe per row, instead of one storage eval
+        // per row. This turns the dominant anti-join (`\+ edge(_, X, "T")`) from
+        // O(rows × M) into O(M + rows). Any shape we do not special-case (attr, filters,
+        // wildcard-only existence probes, etc.) keeps the exact per-row fallback below —
+        // correctness over coverage. Semantics are preserved exactly: a negated literal
+        // contributes membership and binds nothing (BoolTag), so a surviving row is
+        // returned unchanged.
+        if negated {
+            if let Some(membership) = self.build_anti_join_set(name, atom) {
+                let mut out: Vec<BindRow> = Vec::with_capacity(rows.len());
+                for row in rows {
+                    match project_anti_join_key(atom, &row) {
+                        // Row's projected key tuple present in the membership set ⇒ a match
+                        // exists ⇒ the anti-join drops the row. Absent ⇒ the row survives.
+                        Some(key) => {
+                            if !membership.contains(&key) {
+                                out.push(row);
+                            }
+                        }
+                        // A key position is unexpectedly unbound for this row (the planner
+                        // guarantees this does not happen for a safe rule). Fall back to the
+                        // exact per-row eval for this row so correctness never depends on the
+                        // fast path's preconditions.
+                        None => {
+                            if self.anti_join_row_passes(def.eval, atom, &row) {
+                                out.push(row);
+                            }
+                        }
+                    }
+                }
+                return out;
+            }
+        }
+
         let mut out: Vec<BindRow> = Vec::new();
         for row in rows {
             // Resolve args → ArgSpec. Free (unbound) variables get sequential output slots;
@@ -775,6 +814,115 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
             }
         }
         out
+    }
+
+    /// Build, in ONE keyed/typed scan, the membership key-set for an anti-join over a
+    /// special-cased negated base leg (`edge`/`incoming`/`node`/`type`), or `None` if the
+    /// leg's shape is not special-cased (the caller then keeps the exact per-row fallback).
+    ///
+    /// The set holds the projection of every matching tuple onto the leg's bound key
+    /// VARIABLE positions, in source order — the same projection [`project_anti_join_key`]
+    /// computes per row. Constant positions are existence filters (a scanned tuple must
+    /// agree on them to count); wildcard positions are ignored. A row survives the anti-join
+    /// iff its projected key tuple is absent from this set, an O(1) probe.
+    ///
+    /// Shape requirements (else `None`, fall back):
+    /// * `edge`/`incoming`: the type position (arg 2) is a bound constant; the two endpoint
+    ///   positions are each a variable or a wildcard (no endpoint constants — a constant
+    ///   endpoint is rare and handled correctly by the per-row fallback). Built from the
+    ///   single typed scan `scan_edges_by_type`.
+    /// * `node`/`type`: the type position (arg 1) is a bound constant; the id position is a
+    ///   variable or wildcard. Built from the single typed scan `scan_nodes_by_type`.
+    fn build_anti_join_set(&self, name: &str, atom: &Atom) -> Option<HashSet<Vec<Value>>> {
+        let args = atom.args();
+        match name {
+            "edge" | "incoming" => {
+                if args.len() != 3 {
+                    return None;
+                }
+                let ty = match &args[2] {
+                    Term::Const(s) => s.clone(),
+                    _ => return None,
+                };
+                // Endpoints must be variable/wildcard for the set projection to be defined
+                // by the rows; a constant endpoint falls back (correctness over coverage).
+                for ep in &args[..2] {
+                    if matches!(ep, Term::Const(_)) {
+                        return None;
+                    }
+                }
+                let order = if name == "incoming" {
+                    super::storage_glue::EdgeOrder::Reverse
+                } else {
+                    super::storage_glue::EdgeOrder::Forward
+                };
+                let mut set: HashSet<Vec<Value>> = HashSet::new();
+                for e in self.view.scan_edges_by_type(&ty, order) {
+                    // Map storage (src,dst) to this view's (near, far) per direction.
+                    let (near, far) = match order {
+                        super::storage_glue::EdgeOrder::Forward => (e.src, e.dst),
+                        super::storage_glue::EdgeOrder::Reverse => (e.dst, e.src),
+                    };
+                    let mut key: Vec<Value> = Vec::new();
+                    if matches!(args[0], Term::Var(_)) {
+                        key.push(Value::Id(near));
+                    }
+                    if matches!(args[1], Term::Var(_)) {
+                        key.push(Value::Id(far));
+                    }
+                    set.insert(key);
+                }
+                Some(set)
+            }
+            "node" | "type" => {
+                if args.len() != 2 {
+                    return None;
+                }
+                let ty = match &args[1] {
+                    Term::Const(s) => s.clone(),
+                    _ => return None,
+                };
+                // The id position must be a variable/wildcard (a constant id is a point
+                // check the per-row fallback handles).
+                if matches!(args[0], Term::Const(_)) {
+                    return None;
+                }
+                let mut set: HashSet<Vec<Value>> = HashSet::new();
+                for n in self.view.scan_nodes_by_type(&ty) {
+                    let mut key: Vec<Value> = Vec::new();
+                    if matches!(args[0], Term::Var(_)) {
+                        key.push(Value::Id(n.id));
+                    }
+                    set.insert(key);
+                }
+                Some(set)
+            }
+            _ => None,
+        }
+    }
+
+    /// Exact per-row anti-join fallback for a single row: run the registry eval and report
+    /// whether the row survives (no matching tuple produced). Used only when the row's key
+    /// could not be projected for the set probe (a safety net the planner makes unreachable
+    /// on a safe rule).
+    fn anti_join_row_passes(
+        &self,
+        eval: fn(
+            &dyn StorageView,
+            &mut Batch,
+            &ArgSpec,
+        ) -> super::builtin::BuiltinResult<()>,
+        atom: &Atom,
+        row: &BindRow,
+    ) -> bool {
+        let (spec, _slot_vars) = resolve_arg_spec(atom, row);
+        let mut batch = Batch::new();
+        if eval(self.view, &mut batch, &spec).is_err() {
+            // An eval fault drops the row from a positive leg; for an anti-join the safe,
+            // membership-preserving choice is "no match found" so the row survives.
+            return true;
+        }
+        batch.rows.is_empty()
     }
 
     /// Per-stratum intermediate-result ceiling (`EvalLimits::max_intermediate_results`).
@@ -859,6 +1007,23 @@ fn bind_atom_args(atom: &Atom, row: &BindRow) -> Option<Vec<Value>> {
         }
     }
     Some(out)
+}
+
+/// Project a binding row onto a negated base atom's VARIABLE positions, in source order —
+/// the per-row probe key for the set-at-once anti-join ([`Executor::build_anti_join_set`]).
+///
+/// Only `Term::Var` positions contribute a column (each looked up in the row); constants and
+/// wildcards contribute nothing, exactly mirroring the set builder's projection. Returns
+/// `None` iff a variable position is unbound in this row (the planner makes this unreachable
+/// for a safe rule; the caller then takes the exact per-row fallback for that row).
+fn project_anti_join_key(atom: &Atom, row: &BindRow) -> Option<Vec<Value>> {
+    let mut key: Vec<Value> = Vec::new();
+    for t in atom.args() {
+        if let Term::Var(v) = t {
+            key.push(row.get(v)?.clone());
+        }
+    }
+    Some(key)
 }
 
 /// Project a rule head onto a ground tuple from a binding row. Every head variable must be
@@ -1109,6 +1274,127 @@ mod tests {
         assert_eq!(orphans, expected, "fn1 and fn3 have no incoming CALLS");
         // called = {fn2}.
         assert_eq!(ids(&eval, "called"), vec![id_of("fn2")]);
+    }
+
+    // ── anti-join over a negated BASE leg is set-at-once (bounded scans) ──
+
+    use crate::datalog2::storage_glue::{EdgeOrder, NodeRow as GlueNodeRow};
+    use std::cell::Cell;
+
+    /// Wraps a fixture view and counts how many full typed relation scans the run issues,
+    /// so a test can assert the set-at-once anti-join touches each negated base relation a
+    /// BOUNDED number of times (independent of the row count) — not once per row.
+    struct ScanCountingView {
+        inner: FixtureStorageView,
+        edge_scans: Cell<usize>,
+        node_scans: Cell<usize>,
+    }
+
+    impl ScanCountingView {
+        fn new(inner: FixtureStorageView) -> Self {
+            Self {
+                inner,
+                edge_scans: Cell::new(0),
+                node_scans: Cell::new(0),
+            }
+        }
+    }
+
+    impl StorageView for ScanCountingView {
+        fn generation(&self) -> u64 {
+            self.inner.generation()
+        }
+        fn sorted_run(
+            &self,
+            rel: crate::datalog2::storage_glue::Relation,
+            order: crate::datalog2::storage_glue::SortOrder,
+        ) -> Box<dyn Iterator<Item = crate::datalog2::storage_glue::Row> + '_> {
+            self.inner.sorted_run(rel, order)
+        }
+        fn scan_nodes_by_type(&self, ty: &str) -> Box<dyn Iterator<Item = GlueNodeRow> + '_> {
+            self.node_scans.set(self.node_scans.get() + 1);
+            self.inner.scan_nodes_by_type(ty)
+        }
+        fn scan_edges_by_type(
+            &self,
+            ty: &str,
+            order: EdgeOrder,
+        ) -> Box<dyn Iterator<Item = EdgeRow> + '_> {
+            self.edge_scans.set(self.edge_scans.get() + 1);
+            self.inner.scan_edges_by_type(ty, order)
+        }
+        fn edges_from(&self, src: u128, edge_type: &str) -> Vec<EdgeRow> {
+            self.inner.edges_from(src, edge_type)
+        }
+        fn edges_to(&self, dst: u128, edge_type: &str) -> Vec<EdgeRow> {
+            self.inner.edges_to(dst, edge_type)
+        }
+        fn get_node(&self, id: u128) -> Option<GlueNodeRow> {
+            self.inner.get_node(id)
+        }
+    }
+
+    /// Run a program over an arbitrary `StorageView` (not just the fixture), so a counting
+    /// view can observe the access pattern. Mirrors [`run`].
+    fn run_on(src: &str, view: &dyn StorageView, stats: Stats) -> Evaluation {
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let plans = plan_program(&rules, &strat, &stats).expect("plan");
+        let exec = Executor::<BoolTag>::with_limits(view, EvalLimits::none(), DEFAULT_ITERATION_CAP);
+        exec.evaluate(&plans, &rules, &strat).expect("evaluate")
+    }
+
+    #[test]
+    fn anti_join_over_base_leg_is_set_at_once_bounded_scans() {
+        // has_no_incoming_call(X) :- node(X, "FUNCTION"), \+ incoming(X, _, "CALLS").
+        // The negated BASE leg `incoming(X, _, "CALLS")` is the function-has-contains anti-
+        // join shape: X bound from the rows, far endpoint a wildcard, type bound. With MANY
+        // candidate rows (50 FUNCTION nodes), the set-at-once path must scan the CALLS edge
+        // relation a BOUNDED number of times — once to build the membership set — NOT once
+        // per row. A per-row anti-join would scan/probe 50 times.
+        let mut v = FixtureStorageView::new(1);
+        let n = 50usize;
+        for i in 0..n {
+            node(&mut v, &format!("fn{i}"), "FUNCTION");
+        }
+        // Only the even-indexed functions receive an incoming CALLS edge; the odd ones are
+        // orphans (no incoming CALLS).
+        for i in (0..n).step_by(2) {
+            let caller = (i + 1) % n;
+            edge(&mut v, &format!("fn{caller}"), &format!("fn{i}"), "CALLS");
+        }
+
+        let view = ScanCountingView::new(v);
+        let src = r#"
+            has_no_incoming_call(X) :- node(X, "FUNCTION"), \+ incoming(X, _, "CALLS").
+        "#;
+        let eval = run_on(src, &view, Stats { total_nodes: n as u64, total_edges: (n / 2) as u64 });
+
+        // The odd-indexed functions (no incoming CALLS) survive the anti-join.
+        let got = ids(&eval, "has_no_incoming_call");
+        let mut expected: Vec<u128> = (0..n)
+            .filter(|i| i % 2 == 1)
+            .map(|i| id_of(&format!("fn{i}")))
+            .collect();
+        expected.sort_unstable();
+        assert_eq!(got, expected, "orphans are exactly the odd-indexed functions");
+
+        // The membership set for `incoming(_, _, "CALLS")` is built with ONE typed edge
+        // scan, regardless of the 50 candidate rows. The bound is small and constant —
+        // crucially NOT proportional to the row count (which a per-row anti-join would be).
+        assert!(
+            view.edge_scans.get() <= 1,
+            "set-at-once anti-join scans the CALLS relation at most once (got {}), \
+             not once per row",
+            view.edge_scans.get()
+        );
+        assert!(
+            view.edge_scans.get() < n,
+            "edge scans ({}) must be bounded, not O(rows={})",
+            view.edge_scans.get(),
+            n
+        );
     }
 
     // ── multi-clause union ──────────────────────────────────────────

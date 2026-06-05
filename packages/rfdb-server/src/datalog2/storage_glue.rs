@@ -317,6 +317,22 @@ pub(crate) trait StorageView {
     fn scan_edges_by_type(&self, ty: &str, order: EdgeOrder)
         -> Box<dyn Iterator<Item = EdgeRow> + '_>;
 
+    /// Keyed probe: outgoing edges of a *bound* source `src` with the given `edge_type`.
+    ///
+    /// Backed by storage's keyed source index (snapshot-pinned), NOT a full relation scan —
+    /// the access cost is proportional to `src`'s fan-out, not to the edge total. This is the
+    /// access path for `edge(boundSrc, Dst, "T")` and the per-row probe an anti-join issues on
+    /// its negated leg (so the anti-join is O(rows × fanout), not O(rows × edges)). A `src`
+    /// with no matching outgoing edges yields an empty vec.
+    fn edges_from(&self, src: u128, edge_type: &str) -> Vec<EdgeRow>;
+
+    /// Keyed probe: incoming edges into a *bound* destination `dst` with the given `edge_type`.
+    ///
+    /// Backed by storage's keyed destination index (snapshot-pinned), NOT a full relation scan;
+    /// the access path for `incoming(boundDst, Src, "T")` / `edge(Src, boundDst, "T")`. A `dst`
+    /// with no matching incoming edges yields an empty vec.
+    fn edges_to(&self, dst: u128, edge_type: &str) -> Vec<EdgeRow>;
+
     /// Bound-id point lookup — the ONLY permitted point lookup (§8.3), for an already-bound
     /// id (attr / parent_function). FORBIDDEN inside the fixpoint hot path on unbound vars.
     fn get_node(&self, id: u128) -> Option<NodeRow>;
@@ -445,6 +461,45 @@ fn snapshot_scan_edges_by_type(
     rows
 }
 
+/// Keyed outgoing-edge probe for a bound source, via the snapshot-pinned source index
+/// (`get_outgoing_edges_at`) — NOT a full scan. Passes the single `edge_type` through as a
+/// one-element type filter so the bloom/zone-map short-circuits apply.
+fn snapshot_edges_from(
+    store: &MultiShardStore,
+    snapshot: &ReadSnapshot,
+    src: u128,
+    edge_type: &str,
+) -> Vec<EdgeRow> {
+    store
+        .get_outgoing_edges_at(snapshot, src, Some(&[edge_type]))
+        .into_iter()
+        .map(|r| EdgeRow {
+            src: r.src,
+            dst: r.dst,
+            edge_type: r.edge_type,
+        })
+        .collect()
+}
+
+/// Keyed incoming-edge probe for a bound destination, via the snapshot-pinned destination
+/// index (`get_incoming_edges_at`) — NOT a full scan.
+fn snapshot_edges_to(
+    store: &MultiShardStore,
+    snapshot: &ReadSnapshot,
+    dst: u128,
+    edge_type: &str,
+) -> Vec<EdgeRow> {
+    store
+        .get_incoming_edges_at(snapshot, dst, Some(&[edge_type]))
+        .into_iter()
+        .map(|r| EdgeRow {
+            src: r.src,
+            dst: r.dst,
+            edge_type: r.edge_type,
+        })
+        .collect()
+}
+
 fn snapshot_get_node(store: &MultiShardStore, snapshot: &ReadSnapshot, id: u128) -> Option<NodeRow> {
     store.get_node_at(snapshot, id).map(|r| NodeRow {
         id: r.id,
@@ -476,6 +531,14 @@ impl StorageView for LsmStorageView {
         order: EdgeOrder,
     ) -> Box<dyn Iterator<Item = EdgeRow> + '_> {
         Box::new(snapshot_scan_edges_by_type(&self.store, &self.snapshot, ty, order).into_iter())
+    }
+
+    fn edges_from(&self, src: u128, edge_type: &str) -> Vec<EdgeRow> {
+        snapshot_edges_from(&self.store, &self.snapshot, src, edge_type)
+    }
+
+    fn edges_to(&self, dst: u128, edge_type: &str) -> Vec<EdgeRow> {
+        snapshot_edges_to(&self.store, &self.snapshot, dst, edge_type)
     }
 
     fn get_node(&self, id: u128) -> Option<NodeRow> {
@@ -528,6 +591,14 @@ impl<'a> StorageView for BorrowedLsmStorageView<'a> {
         order: EdgeOrder,
     ) -> Box<dyn Iterator<Item = EdgeRow> + '_> {
         Box::new(snapshot_scan_edges_by_type(self.store, &self.snapshot, ty, order).into_iter())
+    }
+
+    fn edges_from(&self, src: u128, edge_type: &str) -> Vec<EdgeRow> {
+        snapshot_edges_from(self.store, &self.snapshot, src, edge_type)
+    }
+
+    fn edges_to(&self, dst: u128, edge_type: &str) -> Vec<EdgeRow> {
+        snapshot_edges_to(self.store, &self.snapshot, dst, edge_type)
     }
 
     fn get_node(&self, id: u128) -> Option<NodeRow> {
@@ -628,6 +699,22 @@ impl StorageView for FixtureStorageView {
             EdgeOrder::Reverse => rows.sort_by(|a, b| a.dst.cmp(&b.dst).then_with(|| a.src.cmp(&b.src))),
         }
         Box::new(rows.into_iter())
+    }
+
+    fn edges_from(&self, src: u128, edge_type: &str) -> Vec<EdgeRow> {
+        self.edges_fwd
+            .values()
+            .filter(|e| e.src == src && e.edge_type == edge_type)
+            .cloned()
+            .collect()
+    }
+
+    fn edges_to(&self, dst: u128, edge_type: &str) -> Vec<EdgeRow> {
+        self.edges_fwd
+            .values()
+            .filter(|e| e.dst == dst && e.edge_type == edge_type)
+            .cloned()
+            .collect()
     }
 
     fn get_node(&self, id: u128) -> Option<NodeRow> {
@@ -840,6 +927,64 @@ mod tests {
             .collect();
         assert_eq!(real_calls, fix_calls, "scan_edges_by_type parity");
         assert_eq!(real_calls.len(), 2, "two CALLS edges in the fixture");
+    }
+
+    #[test]
+    fn edges_from_and_to_keyed_probe_on_fixture() {
+        let fixture = build_fixture_view();
+        let fn1 = id_of("a/fn1");
+        let fn2 = id_of("a/fn2");
+        let cls1 = id_of("b/cls1");
+
+        // Outgoing CALLS of fn1 — exactly one (a/fn1 -CALLS-> a/fn2).
+        let out_calls = fixture.edges_from(fn1, "CALLS");
+        assert_eq!(out_calls.len(), 1);
+        assert_eq!(out_calls[0].src, fn1);
+        assert_eq!(out_calls[0].dst, fn2);
+        assert_eq!(out_calls[0].edge_type, "CALLS");
+
+        // Outgoing CONTAINS of fn1 — exactly one (a/fn1 -CONTAINS-> b/cls1); type-filtered.
+        let out_contains = fixture.edges_from(fn1, "CONTAINS");
+        assert_eq!(out_contains.len(), 1);
+        assert_eq!(out_contains[0].dst, cls1);
+
+        // Incoming CALLS into cls1 — exactly one (a/fn2 -CALLS-> b/cls1).
+        let in_calls = fixture.edges_to(cls1, "CALLS");
+        assert_eq!(in_calls.len(), 1);
+        assert_eq!(in_calls[0].src, fn2);
+        assert_eq!(in_calls[0].dst, cls1);
+
+        // Non-existent endpoint → empty (a keyed miss, never a full scan).
+        assert!(fixture.edges_from(0xdead_beef, "CALLS").is_empty());
+        assert!(fixture.edges_to(0xdead_beef, "CALLS").is_empty());
+        // Bound endpoint, wrong type → empty.
+        assert!(fixture.edges_from(fn1, "NOPE").is_empty());
+        // Source with no outgoing edges of that type → empty (cls1 is a sink).
+        assert!(fixture.edges_from(cls1, "CALLS").is_empty());
+    }
+
+    #[test]
+    fn edges_from_and_to_real_fixture_parity() {
+        let real = build_real_view();
+        let fixture = build_fixture_view();
+        let fn1 = id_of("a/fn1");
+        let cls1 = id_of("b/cls1");
+
+        let mut real_out: Vec<(u128, u128)> =
+            real.edges_from(fn1, "CALLS").into_iter().map(|e| (e.src, e.dst)).collect();
+        let mut fix_out: Vec<(u128, u128)> =
+            fixture.edges_from(fn1, "CALLS").into_iter().map(|e| (e.src, e.dst)).collect();
+        real_out.sort_unstable();
+        fix_out.sort_unstable();
+        assert_eq!(real_out, fix_out, "edges_from parity");
+
+        let mut real_in: Vec<(u128, u128)> =
+            real.edges_to(cls1, "CALLS").into_iter().map(|e| (e.src, e.dst)).collect();
+        let mut fix_in: Vec<(u128, u128)> =
+            fixture.edges_to(cls1, "CALLS").into_iter().map(|e| (e.src, e.dst)).collect();
+        real_in.sort_unstable();
+        fix_in.sort_unstable();
+        assert_eq!(real_in, fix_in, "edges_to parity");
     }
 
     #[test]

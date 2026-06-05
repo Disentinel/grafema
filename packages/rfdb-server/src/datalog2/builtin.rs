@@ -40,7 +40,7 @@ use std::fmt;
 
 use crate::datalog::Value;
 
-use super::storage_glue::{EdgeOrder, NodeRow, StorageView};
+use super::storage_glue::{EdgeOrder, EdgeRow, NodeRow, StorageView};
 
 // ── Errors (invariant I5) ──────────────────────────────────────────
 
@@ -439,8 +439,12 @@ fn eval_incoming(view: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> Bui
 }
 
 /// Shared body for `edge`/`incoming`. For `Forward` the args are `(src, dst, type)`; for
-/// `Reverse` they are `(dst, src, type)`. We resolve the type, then filter/produce the
-/// near/far endpoints against the requested direction.
+/// `Reverse` they are `(dst, src, type)`. We resolve the type, then read the smallest
+/// possible edge set for the bound endpoints (§8.3): a bound endpoint is served through a
+/// snapshot-pinned *keyed* probe (`edges_from`/`edges_to`), proportional to that endpoint's
+/// fan-out — never a full relation scan. Only when BOTH endpoints are free do we fall back
+/// to the full typed scan (`scan_edges_by_type`), which the planner already costs as the
+/// fully-free generator.
 fn eval_edge_dir(
     view: &dyn StorageView,
     out: &mut Batch,
@@ -460,7 +464,7 @@ fn eval_edge_dir(
         None => return Ok(()),
     };
 
-    // Map an EdgeRow to (near, far) per direction.
+    // Map a storage EdgeRow's `(src, dst)` to this view's `(near, far)` endpoints.
     let near_far = |src: u128, dst: u128| match order {
         EdgeOrder::Forward => (src, dst),
         EdgeOrder::Reverse => (dst, src),
@@ -469,8 +473,32 @@ fn eval_edge_dir(
     let near_bound = bound_id(near_arg);
     let far_bound = bound_id(far_arg);
 
-    for e in view.scan_edges_by_type(&ty, order) {
+    // Choose the access path by which endpoints are bound. The keyed probes accept a
+    // storage-key id (src for `edges_from`, dst for `edges_to`); translate the view's
+    // near/far back into storage src/dst per direction. `EdgeRow` always carries the
+    // canonical `(src, dst)`, so the same `near_far` mapping reconstructs the view tuple.
+    let edges: Vec<EdgeRow> = match (near_bound, far_bound) {
+        // Near endpoint bound — use the index keyed on near. Forward: near == src →
+        // `edges_from`; Reverse: near == dst → `edges_to`.
+        (Some(near_id), _) => match order {
+            EdgeOrder::Forward => view.edges_from(near_id, &ty),
+            EdgeOrder::Reverse => view.edges_to(near_id, &ty),
+        },
+        // Only the far endpoint bound — use the index keyed on far. Forward: far == dst →
+        // `edges_to`; Reverse: far == src → `edges_from`.
+        (None, Some(far_id)) => match order {
+            EdgeOrder::Forward => view.edges_to(far_id, &ty),
+            EdgeOrder::Reverse => view.edges_from(far_id, &ty),
+        },
+        // Both free — the only case that needs the full typed scan (the planner's
+        // fully-free generator cost). Collect it through the same code path below.
+        (None, None) => view.scan_edges_by_type(&ty, order).collect(),
+    };
+
+    for e in edges {
         let (near, far) = near_far(e.src, e.dst);
+        // A keyed probe already filtered the bound endpoint; re-check defensively and to
+        // apply the OTHER bound endpoint's filter when both are bound (check-triple mode).
         if let Some(nb) = near_bound {
             if nb != near {
                 continue;
@@ -1131,6 +1159,203 @@ mod tests {
         let out = run("incoming", spec);
         assert_eq!(out.rows.len(), 1);
         assert_eq!(out.rows[0][0], Value::Id(id_of("a/fn2")));
+    }
+
+    // ── keyed-probe access path (no full-type scan when an endpoint is bound) ──
+
+    use super::super::storage_glue::{EdgeRow, FixtureStorageView, NodeRow as GlueNodeRow};
+    use std::cell::Cell;
+
+    /// A `StorageView` that delegates to a fixture but counts which access path each call
+    /// takes, so a test can assert that a bound endpoint is served by a *keyed* probe and
+    /// NEVER by the full `scan_edges_by_type`.
+    struct CountingView {
+        inner: FixtureStorageView,
+        scans: Cell<usize>,
+        from_probes: Cell<usize>,
+        to_probes: Cell<usize>,
+    }
+
+    impl CountingView {
+        fn new(inner: FixtureStorageView) -> Self {
+            Self {
+                inner,
+                scans: Cell::new(0),
+                from_probes: Cell::new(0),
+                to_probes: Cell::new(0),
+            }
+        }
+    }
+
+    impl StorageView for CountingView {
+        fn generation(&self) -> u64 {
+            self.inner.generation()
+        }
+        fn sorted_run(
+            &self,
+            rel: super::super::storage_glue::Relation,
+            order: super::super::storage_glue::SortOrder,
+        ) -> Box<dyn Iterator<Item = super::super::storage_glue::Row> + '_> {
+            self.inner.sorted_run(rel, order)
+        }
+        fn scan_nodes_by_type(&self, ty: &str) -> Box<dyn Iterator<Item = GlueNodeRow> + '_> {
+            self.inner.scan_nodes_by_type(ty)
+        }
+        fn scan_edges_by_type(
+            &self,
+            ty: &str,
+            order: EdgeOrder,
+        ) -> Box<dyn Iterator<Item = EdgeRow> + '_> {
+            self.scans.set(self.scans.get() + 1);
+            self.inner.scan_edges_by_type(ty, order)
+        }
+        fn edges_from(&self, src: u128, edge_type: &str) -> Vec<EdgeRow> {
+            self.from_probes.set(self.from_probes.get() + 1);
+            self.inner.edges_from(src, edge_type)
+        }
+        fn edges_to(&self, dst: u128, edge_type: &str) -> Vec<EdgeRow> {
+            self.to_probes.set(self.to_probes.get() + 1);
+            self.inner.edges_to(dst, edge_type)
+        }
+        fn get_node(&self, id: u128) -> Option<GlueNodeRow> {
+            self.inner.get_node(id)
+        }
+    }
+
+    fn counting_view() -> CountingView {
+        let mut v = FixtureStorageView::new(1);
+        for (sid, ty, name, file) in [
+            ("a/fn1", "FUNCTION", "fn1", "a/file.js"),
+            ("a/fn2", "FUNCTION", "fn2", "a/file.js"),
+            ("b/cls1", "CLASS", "Widget", "b/file.js"),
+        ] {
+            v.put_node(GlueNodeRow {
+                id: id_of(sid),
+                node_type: ty.to_string(),
+                name: name.to_string(),
+                file: file.to_string(),
+            });
+        }
+        for (src, dst, ty) in [
+            ("a/fn1", "a/fn2", "CALLS"),
+            ("a/fn1", "b/cls1", "CONTAINS"),
+            ("a/fn2", "b/cls1", "CALLS"),
+        ] {
+            v.put_edge(EdgeRow {
+                src: id_of(src),
+                dst: id_of(dst),
+                edge_type: ty.to_string(),
+            });
+        }
+        CountingView::new(v)
+    }
+
+    fn run_on<'a>(view: &'a CountingView, name: &str, spec: ArgSpec) -> Batch {
+        let def = lookup(name).expect("builtin registered");
+        def.check_mode(&spec).expect("mode supported");
+        let mut out = Batch::new();
+        (def.eval)(view, &mut out, &spec).expect("eval ok");
+        out
+    }
+
+    #[test]
+    fn edge_bound_src_uses_keyed_probe_not_scan() {
+        // edge(BoundSrc, Free, "CALLS") — must hit edges_from, never scan_edges_by_type.
+        let view = counting_view();
+        let spec = ArgSpec::new(vec![
+            ArgValue::Bound(Value::Id(id_of("a/fn1"))),
+            ArgValue::Free { slot: 0 },
+            ArgValue::Bound(s("CALLS")),
+        ]);
+        let out = run_on(&view, "edge", spec);
+        assert_eq!(out.rows.len(), 1, "fn1 CALLS fn2");
+        assert_eq!(out.rows[0][0], Value::Id(id_of("a/fn2")));
+        assert_eq!(view.scans.get(), 0, "no full-type scan for a bound src");
+        assert_eq!(view.from_probes.get(), 1, "served by one keyed edges_from probe");
+        assert_eq!(view.to_probes.get(), 0);
+    }
+
+    #[test]
+    fn edge_bound_dst_uses_keyed_probe_not_scan() {
+        // edge(Free, BoundDst, "CALLS") — far (dst) bound → edges_to, never a scan.
+        let view = counting_view();
+        let spec = ArgSpec::new(vec![
+            ArgValue::Free { slot: 0 },
+            ArgValue::Bound(Value::Id(id_of("b/cls1"))),
+            ArgValue::Bound(s("CALLS")),
+        ]);
+        let out = run_on(&view, "edge", spec);
+        assert_eq!(out.rows.len(), 1, "fn2 CALLS cls1");
+        assert_eq!(out.rows[0][0], Value::Id(id_of("a/fn2")), "binds the free src");
+        assert_eq!(view.scans.get(), 0, "no full-type scan for a bound dst");
+        assert_eq!(view.to_probes.get(), 1, "served by one keyed edges_to probe");
+        assert_eq!(view.from_probes.get(), 0);
+    }
+
+    #[test]
+    fn incoming_bound_dst_uses_keyed_probe_not_scan() {
+        // incoming(BoundDst, Free, "CALLS") — Reverse near (dst) bound → edges_to.
+        let view = counting_view();
+        let spec = ArgSpec::new(vec![
+            ArgValue::Bound(Value::Id(id_of("b/cls1"))),
+            ArgValue::Free { slot: 0 },
+            ArgValue::Bound(s("CALLS")),
+        ]);
+        let out = run_on(&view, "incoming", spec);
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(out.rows[0][0], Value::Id(id_of("a/fn2")));
+        assert_eq!(view.scans.get(), 0, "no full-type scan for a bound dst (reverse)");
+        assert_eq!(view.to_probes.get(), 1, "reverse near=dst → keyed edges_to");
+        assert_eq!(view.from_probes.get(), 0);
+    }
+
+    #[test]
+    fn incoming_bound_src_uses_keyed_probe_not_scan() {
+        // incoming(Free, BoundSrc, "CALLS") — Reverse far (src) bound → edges_from.
+        let view = counting_view();
+        let spec = ArgSpec::new(vec![
+            ArgValue::Free { slot: 0 },
+            ArgValue::Bound(Value::Id(id_of("a/fn2"))),
+            ArgValue::Bound(s("CALLS")),
+        ]);
+        let out = run_on(&view, "incoming", spec);
+        // a/fn2 -CALLS-> b/cls1 ; incoming(dst=cls1, src=fn2) → near (dst) free binds cls1.
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(out.rows[0][0], Value::Id(id_of("b/cls1")));
+        assert_eq!(view.scans.get(), 0, "no full-type scan for a bound src (reverse)");
+        assert_eq!(view.from_probes.get(), 1, "reverse far=src → keyed edges_from");
+        assert_eq!(view.to_probes.get(), 0);
+    }
+
+    #[test]
+    fn edge_check_triple_uses_keyed_probe_not_scan() {
+        // edge(BoundSrc, BoundDst, "CALLS") — both bound → keyed near probe + far filter.
+        let view = counting_view();
+        let present = ArgSpec::new(vec![
+            ArgValue::Bound(Value::Id(id_of("a/fn1"))),
+            ArgValue::Bound(Value::Id(id_of("a/fn2"))),
+            ArgValue::Bound(s("CALLS")),
+        ]);
+        let out = run_on(&view, "edge", present);
+        assert_eq!(out.rows.len(), 1, "fn1 CALLS fn2 exists");
+        assert_eq!(view.scans.get(), 0, "triple check uses the keyed near probe");
+        assert_eq!(view.from_probes.get(), 1);
+    }
+
+    #[test]
+    fn edge_both_free_falls_back_to_scan() {
+        // edge(Free, Free, "CALLS") — only here is a full typed scan the correct path.
+        let view = counting_view();
+        let spec = ArgSpec::new(vec![
+            ArgValue::Free { slot: 0 },
+            ArgValue::Free { slot: 1 },
+            ArgValue::Bound(s("CALLS")),
+        ]);
+        let out = run_on(&view, "edge", spec);
+        assert_eq!(out.rows.len(), 2, "two CALLS edges");
+        assert_eq!(view.scans.get(), 1, "fully-free generator uses the typed scan");
+        assert_eq!(view.from_probes.get(), 0);
+        assert_eq!(view.to_probes.get(), 0);
     }
 
     // ── attr (+ coercion) ──────────────────────────────────────────
