@@ -45,7 +45,15 @@ If a file shows NOT_ANALYZED:
   - Check if file is excluded in config
 `)
   .action(async (file: string, options: ExplainOptions) => {
-    const projectPath = resolve(options.project);
+    // realpath the project root so it shares a base with the realpath'd file
+    // path computed below; otherwise relative() breaks when the root is a
+    // symlink (e.g. macOS /tmp -> /private/tmp), and the file reads NOT_ANALYZED.
+    let projectPath = resolve(options.project);
+    try {
+      projectPath = realpathSync(projectPath);
+    } catch {
+      // Project dir missing — leave resolved; the dbPath check below reports it.
+    }
     const grafemaDir = join(projectPath, '.grafema');
     const dbPath = join(grafemaDir, 'graph.rfdb');
 
