@@ -15,6 +15,7 @@ All notable changes to this project will be documented in this file.
 - fix(rfdb): correct token fuzzy-search Jaccard scores by unifying the tokenizer — removes the phantom whole-string token that inflated the union denominator and distorted `find_nodes` fuzzy-fallback ranking (#275)
 - fix(rust-analyzer): unwrap `Box`/`Rc`/`Arc` receiver types so `Box<dyn Trait>` resolves to the inner trait, restoring dyn-dispatch CALLS edges that were previously dropped (#273)
 - fix(orchestrator): index exported `namespace` declarations so `export namespace X {}` resolves cross-file and gets an IMPORTS_FROM edge — keeps `INDEX_NODE_TYPES` in sync with the resolver's exported-declaration list (REG-1139, #277)
+- fix(cypher): route only real aggregates (COUNT/SUM/AVG/MIN/MAX) through HashAggregate — a scalar function in `RETURN` (e.g. `toUpper(n.name)`) now fails loudly at plan time instead of being mislabeled as an aggregate and erroring at execution (RFD-70 follow-up, #282)
 
 ## [0.3.23] - 2026-04-01
 
