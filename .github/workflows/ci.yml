@@ -53,10 +53,10 @@ jobs:
           set -o pipefail
           pnpm test:coverage 2>&1 | tee /tmp/pnpm-test-coverage.log
 
-      - name: Run regression tests (REG-655 / REG-656 / REG-652)
+      - name: Run MCP package tests
         run: |
           set -o pipefail
-          node --import tsx --test packages/mcp/test/regressions.test.ts 2>&1 | tee /tmp/regression-test.log
+          pnpm --filter @grafema/mcp test 2>&1 | tee /tmp/mcp-test.log
 
       - name: Run VSCode extension unit tests
         run: |
