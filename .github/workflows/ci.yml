@@ -63,6 +63,11 @@ jobs:
           set -o pipefail
           node --import tsx --test 'packages/vscode/test/unit/*.test.ts' 2>&1 | tee /tmp/vscode-test.log
 
+      - name: Run API & types package tests
+        run: |
+          set -o pipefail
+          pnpm --filter @grafema/api --filter @grafema/types test 2>&1 | tee /tmp/api-types-test.log
+
       - name: Summarize failed tests
         if: failure()
         run: |
