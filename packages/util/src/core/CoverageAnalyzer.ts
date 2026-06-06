@@ -12,7 +12,7 @@
  *   const result = await analyzer.analyze();
  */
 
-import { readdirSync, existsSync, lstatSync } from 'fs';
+import { readdirSync, existsSync, lstatSync, realpathSync } from 'fs';
 import { join, relative, extname } from 'path';
 import type { GraphBackend } from '@grafema/types';
 
@@ -114,7 +114,31 @@ export class CoverageAnalyzer {
 
   constructor(graph: GraphBackend, projectPath: string) {
     this.graph = graph;
-    this.projectPath = projectPath;
+    // Collapse the project root to its realpath. The graph stores realpath'd
+    // ABSOLUTE file paths on MODULE/ISSUE nodes, and both path-matching steps
+    // below (`node.file.startsWith(projectPath)` and `relative(projectPath, …)`)
+    // assume the root is realpath'd too. Callers (`grafema coverage`, the MCP
+    // `get_coverage` handler) pass a plain `resolve()`d path, which does NOT
+    // collapse symlinks — under a symlinked root (e.g. macOS `/tmp` ->
+    // `/private/tmp`, a symlinked checkout) that mismatch made analyzed files
+    // surface as `unreachable` and double-counted `total` (REG-408). Fall back
+    // to the raw path when the directory does not exist; `analyze()` then simply
+    // finds zero files on disk.
+    this.projectPath = CoverageAnalyzer.realpathRoot(projectPath);
+  }
+
+  /**
+   * Resolve `projectPath` to its realpath, falling back to the input when the
+   * path cannot be resolved (e.g. the directory does not exist yet). Mirrors the
+   * CLI's `resolveProjectRoot` helper so coverage matches the graph's realpath'd
+   * file paths regardless of which entry point computed the root.
+   */
+  private static realpathRoot(projectPath: string): string {
+    try {
+      return realpathSync(projectPath);
+    } catch {
+      return projectPath;
+    }
   }
 
   /**
