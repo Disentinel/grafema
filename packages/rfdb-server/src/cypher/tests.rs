@@ -1241,6 +1241,145 @@ mod executor_tests {
         assert!(filter.next().unwrap().is_none());
     }
 
+    /// Graph with a STRING metadata property `category` that is genuinely
+    /// present on one FUNCTION node ("withcat" = "alpha") and absent (NULL) on
+    /// two others ("nocat_none" has no metadata; "nocat_other" has metadata
+    /// without the key). Used to exercise three-valued logic of the string
+    /// predicates under NOT — `semanticId` cannot be used because NodeScan
+    /// synthesizes a non-NULL semanticId for every node.
+    fn create_string_metadata_graph() -> GraphEngineV2 {
+        let mut engine = GraphEngineV2::create_ephemeral();
+        engine.add_nodes(vec![
+            NodeRecord {
+                id: 1,
+                node_type: Some("FUNCTION".to_string()),
+                name: Some("withcat".to_string()),
+                file: Some("src/a.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: true,
+                replaces: None,
+                deleted: false,
+                metadata: Some(r#"{"category": "alpha"}"#.to_string()),
+                semantic_id: None,
+            },
+            NodeRecord {
+                id: 2,
+                node_type: Some("FUNCTION".to_string()),
+                name: Some("nocat_none".to_string()),
+                file: Some("src/b.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+                semantic_id: None,
+            },
+            NodeRecord {
+                id: 3,
+                node_type: Some("FUNCTION".to_string()),
+                name: Some("nocat_other".to_string()),
+                file: Some("src/c.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: Some(r#"{"other": 1}"#.to_string()),
+                semantic_id: None,
+            },
+        ]);
+        engine
+    }
+
+    /// Collect FUNCTION node names that pass `predicate` against the
+    /// string-metadata fixture, sorted.
+    fn filtered_names(predicate: Expr) -> Vec<String> {
+        let engine = create_string_metadata_graph();
+        let limits = default_limits();
+        let scan = NodeScan::new(
+            &engine,
+            Some("n".to_string()),
+            vec!["FUNCTION".to_string()],
+            vec![],
+            &limits,
+        );
+        let mut filter = Filter::new(Box::new(scan), predicate);
+        let mut names = Vec::new();
+        while let Some(rec) = filter.next().unwrap() {
+            if let CypherValue::Str(s) = rec.get("n").unwrap().property("name") {
+                names.push(s);
+            }
+        }
+        names.sort();
+        names
+    }
+
+    /// Regression (three-valued logic): `WHERE NOT n.<prop> CONTAINS 'x'` must
+    /// EXCLUDE nodes whose property is NULL (absent), matching Cypher/Neo4j
+    /// semantics. Before the fix, CONTAINS returned `Bool(false)` for a NULL
+    /// operand, and `NOT Bool(false)` is `Bool(true)`, so the row was wrongly
+    /// admitted. Correct: `null CONTAINS 'x' = null`, `NOT null = null` (excluded).
+    ///
+    /// `NOT category CONTAINS 'a'` matches NOTHING: "withcat" ("alpha") contains
+    /// 'a' (NOT -> false), and the two NULL-category nodes stay NULL.
+    #[test]
+    fn filter_not_contains_null_property_excluded() {
+        let names = filtered_names(Expr::Not(Box::new(Expr::Contains(
+            Box::new(Expr::Property("n".to_string(), "category".to_string())),
+            Box::new(Expr::Literal(CypherLiteral::Str("a".to_string()))),
+        ))));
+        assert!(
+            names.is_empty(),
+            "NOT CONTAINS on a NULL property must exclude null-valued rows, got {:?}",
+            names
+        );
+    }
+
+    /// Sibling of `filter_not_contains_null_property_excluded` for STARTS WITH.
+    #[test]
+    fn filter_not_starts_with_null_property_excluded() {
+        let names = filtered_names(Expr::Not(Box::new(Expr::StartsWith(
+            Box::new(Expr::Property("n".to_string(), "category".to_string())),
+            Box::new(Expr::Literal(CypherLiteral::Str("al".to_string()))),
+        ))));
+        assert!(
+            names.is_empty(),
+            "NOT STARTS WITH on a NULL property must exclude null-valued rows, got {:?}",
+            names
+        );
+    }
+
+    /// Sibling of `filter_not_contains_null_property_excluded` for ENDS WITH.
+    #[test]
+    fn filter_not_ends_with_null_property_excluded() {
+        let names = filtered_names(Expr::Not(Box::new(Expr::EndsWith(
+            Box::new(Expr::Property("n".to_string(), "category".to_string())),
+            Box::new(Expr::Literal(CypherLiteral::Str("ha".to_string()))),
+        ))));
+        assert!(
+            names.is_empty(),
+            "NOT ENDS WITH on a NULL property must exclude null-valued rows, got {:?}",
+            names
+        );
+    }
+
+    /// Guard against over-correction: a direct (non-negated) CONTAINS on a NULL
+    /// property still EXCLUDES the row (NULL is not truthy) and still matches the
+    /// non-null hit. Passes both before and after the fix.
+    #[test]
+    fn filter_contains_null_property_still_excludes_and_matches() {
+        let names = filtered_names(Expr::Contains(
+            Box::new(Expr::Property("n".to_string(), "category".to_string())),
+            Box::new(Expr::Literal(CypherLiteral::Str("a".to_string()))),
+        ));
+        assert_eq!(names, vec!["withcat"]);
+    }
+
     #[test]
     fn filter_exported_boolean() {
         let engine = create_test_graph();
@@ -1821,6 +1960,52 @@ mod executor_tests {
             &rec,
         );
         assert_eq!(result, CypherValue::Bool(true));
+    }
+
+    /// Three-valued logic for the string predicates and `NOT`: a NULL operand
+    /// yields NULL (not `Bool(false)`), and `NOT NULL` stays NULL (not
+    /// `Bool(true)`). This is the mechanism behind `WHERE NOT x CONTAINS 'y'`
+    /// correctly excluding rows where `x` is NULL.
+    #[test]
+    fn eval_expr_string_predicates_null_operand_yields_null() {
+        let rec = Record::new(); // empty record: Variable("x") evaluates to NULL
+
+        for pred in [
+            Expr::Contains(
+                Box::new(Expr::Variable("x".to_string())),
+                Box::new(Expr::Literal(CypherLiteral::Str("y".to_string()))),
+            ),
+            Expr::StartsWith(
+                Box::new(Expr::Variable("x".to_string())),
+                Box::new(Expr::Literal(CypherLiteral::Str("y".to_string()))),
+            ),
+            Expr::EndsWith(
+                Box::new(Expr::Variable("x".to_string())),
+                Box::new(Expr::Literal(CypherLiteral::Str("y".to_string()))),
+            ),
+        ] {
+            assert_eq!(eval_expr(&pred, &rec), CypherValue::Null);
+            // NOT NULL must remain NULL (three-valued logic), not flip to true.
+            let negated = Expr::Not(Box::new(pred));
+            assert_eq!(eval_expr(&negated, &rec), CypherValue::Null);
+        }
+
+        // The NULL guard fires on EITHER operand: a NULL right-hand side too.
+        let rhs_null = Expr::Contains(
+            Box::new(Expr::Literal(CypherLiteral::Str("abc".to_string()))),
+            Box::new(Expr::Variable("x".to_string())),
+        );
+        assert_eq!(eval_expr(&rhs_null, &rec), CypherValue::Null);
+    }
+
+    /// `NOT` on a definite boolean is unchanged: only the NULL arm is special.
+    #[test]
+    fn eval_expr_not_on_boolean_unchanged() {
+        let rec = Record::new();
+        let t = Expr::Not(Box::new(Expr::Literal(CypherLiteral::Bool(true))));
+        assert_eq!(eval_expr(&t, &rec), CypherValue::Bool(false));
+        let f = Expr::Not(Box::new(Expr::Literal(CypherLiteral::Bool(false))));
+        assert_eq!(eval_expr(&f, &rec), CypherValue::Bool(true));
     }
 
     #[test]
