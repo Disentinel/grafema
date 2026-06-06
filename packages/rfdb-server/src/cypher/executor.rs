@@ -629,9 +629,7 @@ impl<'a> Sort<'a> {
             for (expr, dir) in order_by {
                 let va = eval_expr(expr, a);
                 let vb = eval_expr(expr, b);
-                let cmp = va
-                    .partial_cmp_values(&vb)
-                    .unwrap_or(std::cmp::Ordering::Equal);
+                let cmp = order_cmp(&va, &vb);
                 let cmp = match dir {
                     SortDir::Asc => cmp,
                     SortDir::Desc => cmp.reverse(),
@@ -921,6 +919,32 @@ pub fn eval_expr(expr: &Expr, record: &Record) -> CypherValue {
 }
 
 // ─── Helper functions ───────────────────────────────────────────────────────
+
+/// Ordering comparator for `ORDER BY`, applied in the *ascending* direction
+/// (callers reverse it for `DESC`).
+///
+/// Implements Cypher/Neo4j ordering semantics for NULL: a null value is
+/// considered **greater than** any non-null value, so it sorts LAST under
+/// ascending order and FIRST under descending order (see the Neo4j Cypher
+/// manual, "Ordering null"). This deliberately differs from
+/// [`CypherValue::partial_cmp_values`], which treats null as the smallest
+/// value — that comparator is shared with WHERE-clause comparisons
+/// (`eval_binop`) and must not change. ORDER BY needs its own null rule, so
+/// it lives here rather than in the shared value comparator.
+///
+/// Non-null, mutually-incomparable values (e.g. a Str vs an Int, or two
+/// Node values) fall back to `Ordering::Equal`, preserving the prior
+/// best-effort behaviour for heterogeneous columns.
+fn order_cmp(a: &CypherValue, b: &CypherValue) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    match (a, b) {
+        (CypherValue::Null, CypherValue::Null) => Ordering::Equal,
+        // null is greater than any non-null value -> sorts last ascending.
+        (CypherValue::Null, _) => Ordering::Greater,
+        (_, CypherValue::Null) => Ordering::Less,
+        _ => a.partial_cmp_values(b).unwrap_or(Ordering::Equal),
+    }
+}
 
 /// Convert a CypherLiteral to a CypherValue.
 fn literal_to_value(lit: &CypherLiteral) -> CypherValue {
