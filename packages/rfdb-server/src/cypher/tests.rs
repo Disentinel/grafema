@@ -2346,6 +2346,96 @@ mod integration_tests {
         assert_eq!(result.rows[0][0], serde_json::json!(30));
     }
 
+    // ── WHERE comparisons with a NULL operand (Cypher three-valued logic) ──
+    //
+    // In Cypher, a comparison where either operand is NULL evaluates to NULL
+    // (unknown), which is not truthy, so WHERE must EXCLUDE the row. Node `d`
+    // has no `lineCount` property, so `d.lineCount` evaluates to NULL.
+    //
+    // Regression guard: `eval_binop` previously delegated ordering operators to
+    // `partial_cmp_values`, which orders NULL as Less-than-everything — so
+    // `null < 100` was `true` and wrongly ADMITTED `d`. Likewise `null <> 10`
+    // returned `true` (via `!=`) and admitted `d`. Both must now exclude it.
+
+    #[test]
+    fn where_less_than_excludes_null_property() {
+        let engine = create_numeric_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION) WHERE n.lineCount < 100 RETURN n.name",
+            EvalLimits::none(),
+        )
+        .unwrap();
+
+        let mut names: Vec<String> = result
+            .rows
+            .iter()
+            .map(|row| row[0].as_str().unwrap().to_string())
+            .collect();
+        names.sort();
+        // d (no lineCount → NULL) must NOT appear: `null < 100` is NULL, not true.
+        assert_eq!(names, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn where_lte_excludes_null_property() {
+        let engine = create_numeric_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION) WHERE n.lineCount <= 100 RETURN n.name",
+            EvalLimits::none(),
+        )
+        .unwrap();
+
+        let mut names: Vec<String> = result
+            .rows
+            .iter()
+            .map(|row| row[0].as_str().unwrap().to_string())
+            .collect();
+        names.sort();
+        assert_eq!(names, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn where_not_equal_excludes_null_property() {
+        let engine = create_numeric_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION) WHERE n.lineCount <> 10 RETURN n.name",
+            EvalLimits::none(),
+        )
+        .unwrap();
+
+        let mut names: Vec<String> = result
+            .rows
+            .iter()
+            .map(|row| row[0].as_str().unwrap().to_string())
+            .collect();
+        names.sort();
+        // a excluded (10 <> 10 = false); d excluded (null <> 10 is NULL, not true).
+        assert_eq!(names, vec!["b", "c"]);
+    }
+
+    #[test]
+    fn where_greater_than_present_property_unaffected() {
+        // Sanity: non-NULL operands keep working exactly as before.
+        let engine = create_numeric_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION) WHERE n.lineCount > 15 RETURN n.name",
+            EvalLimits::none(),
+        )
+        .unwrap();
+
+        let mut names: Vec<String> = result
+            .rows
+            .iter()
+            .map(|row| row[0].as_str().unwrap().to_string())
+            .collect();
+        names.sort();
+        assert_eq!(names, vec!["b", "c"]);
+    }
+
     #[test]
     fn sum_aggregate_grouped() {
         // Two groups by file, each with distinct numeric sums.
