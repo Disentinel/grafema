@@ -150,9 +150,14 @@ pub fn plan<'a>(
             op = Box::new(Sort::new(op, order_by.clone(), limits));
         }
     } else {
-        // Sort before Project (operates on full node records).
+        // Sort before Project (operates on full node records). ORDER BY may
+        // reference a RETURN alias (e.g. `RETURN n.name AS nm ORDER BY nm`),
+        // but alias columns are not materialised until Project runs afterwards.
+        // Rewrite alias references to the underlying RETURN expression so Sort
+        // can evaluate them against the full pattern record.
         if let Some(ref order_by) = query.order_by {
-            op = Box::new(Sort::new(op, order_by.clone(), limits));
+            let order_by = rewrite_order_by_aliases(order_by, &query.return_clause);
+            op = Box::new(Sort::new(op, order_by, limits));
         }
 
         op = Box::new(Project::new(op, query.return_clause.items.clone()));
@@ -198,6 +203,65 @@ fn split_return_items(ret: &ReturnClause) -> (Vec<ReturnItem>, Vec<AggregateItem
     }
 
     (group_keys, aggregates)
+}
+
+/// Rewrite ORDER BY terms that reference a RETURN alias to the underlying
+/// RETURN expression, for the non-aggregate query path.
+///
+/// Here the `Sort` operator runs *before* `Project`, so it sees the raw pattern
+/// bindings (e.g. node `n`) but none of the RETURN-clause aliases, which
+/// `Project` materialises afterwards. An `ORDER BY <alias>` term is parsed as
+/// `Variable(alias)`; without this rewrite `eval_expr` looks up an absent
+/// variable, yields `NULL` for every row, and the result silently falls back to
+/// scan order (the ORDER BY no-ops). Mapping each such `Variable(alias)` back to
+/// the aliased expression lets `Sort` evaluate it against the full record.
+///
+/// Terms that match no alias — a raw property, or a variable that is a real
+/// pattern binding — are left unchanged.
+fn rewrite_order_by_aliases(
+    order_by: &[(Expr, SortDir)],
+    ret: &ReturnClause,
+) -> Vec<(Expr, SortDir)> {
+    order_by
+        .iter()
+        .map(|(expr, dir)| (rewrite_alias_expr(expr, ret), *dir))
+        .collect()
+}
+
+/// Recursively replace a `Variable(alias)` reference with the expression the
+/// matching aliased RETURN item projects. See [`rewrite_order_by_aliases`].
+///
+/// The substituted expression is returned as-is (not re-rewritten): RETURN
+/// expressions are pattern-scoped and cannot reference other aliases, so a
+/// single substitution suffices and self-aliases (`RETURN n AS n`) cannot loop.
+fn rewrite_alias_expr(expr: &Expr, ret: &ReturnClause) -> Expr {
+    if let Expr::Variable(name) = expr {
+        if let Some(item) = ret
+            .items
+            .iter()
+            .find(|it| it.alias.as_deref() == Some(name.as_str()))
+        {
+            return item.expr.clone();
+        }
+    }
+
+    match expr {
+        Expr::BinaryOp(l, op, r) => Expr::BinaryOp(
+            Box::new(rewrite_alias_expr(l, ret)),
+            *op,
+            Box::new(rewrite_alias_expr(r, ret)),
+        ),
+        Expr::And(l, r) => Expr::And(
+            Box::new(rewrite_alias_expr(l, ret)),
+            Box::new(rewrite_alias_expr(r, ret)),
+        ),
+        Expr::Or(l, r) => Expr::Or(
+            Box::new(rewrite_alias_expr(l, ret)),
+            Box::new(rewrite_alias_expr(r, ret)),
+        ),
+        Expr::Not(inner) => Expr::Not(Box::new(rewrite_alias_expr(inner, ret))),
+        other => other.clone(),
+    }
 }
 
 /// Format an expression for use in a generated alias.
