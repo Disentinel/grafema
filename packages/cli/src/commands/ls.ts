@@ -40,7 +40,7 @@ interface NodeInfo {
 
 export const lsCommand = new Command('ls')
   .description('List nodes by type')
-  .requiredOption('-t, --type <nodeType>', 'Node type to list (required)')
+  .option('-t, --type <nodeType>', 'Node type to list (required)')
   .option('-p, --project <path>', 'Project path', '.')
   .option('-j, --json', 'Output as JSON')
   .option('-l, --limit <n>', 'Limit results (default: 50)', '50')
@@ -57,6 +57,13 @@ Discover available types:
   grafema types                           List all types with counts
 `)
   .action(async (options: LsOptions) => {
+    if (!options.type) {
+      exitWithError("Type filter required for 'ls' command", [
+        'Run: grafema types    to see available types',
+        'Usage: grafema ls --type <type>',
+      ]);
+    }
+
     const projectPath = resolve(options.project);
     const grafemaDir = join(projectPath, '.grafema');
     const dbPath = join(grafemaDir, 'graph.rfdb');
