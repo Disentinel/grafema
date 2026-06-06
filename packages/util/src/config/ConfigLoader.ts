@@ -13,16 +13,8 @@ import { GRAFEMA_VERSION, getSchemaVersion, isCompatibleVersion, parseVersion } 
  *
  * ```yaml
  * # Plugins for each analysis phase
- * plugins:
- *   indexing:
- *     - JSModuleIndexer
- *   analysis:
- *     - CoreV2Analyzer
- *     - ExpressRouteAnalyzer
- *   enrichment:
- *     - ExportEntityLinker
- *   validation:
- *     - EvalBanValidator
+ * plugins:           # analysis/enrichment/validation run natively in the v3
+ *   analysis: []     # orchestrator; these TS lists default to empty.
  *
  * # Optional: Explicit service definitions (bypass auto-discovery)
  * services:
@@ -144,42 +136,15 @@ export interface WorkspaceConfig {
 export const DEFAULT_CONFIG: GrafemaConfig = {
   version: getSchemaVersion(GRAFEMA_VERSION),
   plugins: {
+    // Legacy JS analysis-pipeline plugins were removed in the v3 migration
+    // (commit e063fc4e). The orchestrator now applies its own native passes
+    // (see packages/grafema-orchestrator config); these TS lists are vestigial
+    // (read only by `doctor` reporting + `write_config`) and default to empty.
     discovery: [],
-    indexing: ['JSModuleIndexer'],
-    analysis: [
-      'CoreV2Analyzer',
-      'ExpressRouteAnalyzer',
-      'ExpressResponseAnalyzer',
-      'NestJSRouteAnalyzer',
-      'SocketIOAnalyzer',
-      'DatabaseAnalyzer',
-      'FetchAnalyzer',
-      'ServiceLayerAnalyzer',
-    ],
-    enrichment: [
-      'ExportEntityLinker',
-      'CallbackCallResolver',
-      'RejectionPropagationEnricher',
-      'ValueDomainAnalyzer',
-      'MountPointResolver',
-      'ExpressHandlerLinker',
-      'PrefixEvaluator',
-      'ConfigRoutingMapBuilder',
-      'ServiceConnectionEnricher',
-      'RedisEnricher',
-    ],
-    validation: [
-      'GraphConnectivityValidator',
-      'DataFlowValidator',
-      'EvalBanValidator',
-      'CallResolverValidator',
-      'SQLInjectionValidator',
-      'AwaitInLoopValidator',
-      'ShadowingDetector',
-      'BrokenImportValidator',
-      'UnconnectedRouteValidator',
-      'PackageCoverageValidator',
-    ],
+    indexing: [],
+    analysis: [],
+    enrichment: [],
+    validation: [],
   },
   services: [], // Empty by default (uses auto-discovery)
   strict: false, // Graceful degradation by default
