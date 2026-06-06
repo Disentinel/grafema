@@ -64,6 +64,83 @@ fn read_u128_at(data: &[u8], offset: usize) -> u128 {
     u128::from_le_bytes(data[offset..offset + 16].try_into().unwrap())
 }
 
+/// Read u16 from byte slice at offset (little-endian).
+#[inline]
+fn read_u16_at(data: &[u8], offset: usize) -> u16 {
+    u16::from_le_bytes(data[offset..offset + 2].try_into().unwrap())
+}
+
+// ── Derived (Datalog v2 §8.1) Column Reader ───────────────────────
+
+use crate::storage_v2::writer::{PROVENANCE_RECORD_SIZE, TAG_DIR_RECORD_SIZE, TX_RECORD_SIZE};
+
+/// Decoded handle to the three derived columns of a v3 segment. `None` on a
+/// base (v2) segment, in which case all accessors return §8.1 defaults.
+#[derive(Debug, Clone, Copy)]
+struct DerivedColumns {
+    provenance_offset: usize,
+    tag_dir_offset: usize,
+    /// Start of the concatenated tag-bytes blob (immediately after the dir).
+    tag_bytes_offset: usize,
+    tx_offset: usize,
+}
+
+impl DerivedColumns {
+    /// Build from footer offsets if the segment is derived (version 3).
+    fn from_footer(header: &SegmentHeaderV2, footer: &FooterIndex, record_count: usize) -> Option<Self> {
+        if !header.has_derived_columns() {
+            return None;
+        }
+        let tag_dir_offset = footer.tag_dir_offset as usize;
+        Some(Self {
+            provenance_offset: footer.provenance_offset as usize,
+            tag_dir_offset,
+            tag_bytes_offset: tag_dir_offset + TAG_DIR_RECORD_SIZE * record_count,
+            tx_offset: footer.tx_offset as usize,
+        })
+    }
+
+    #[inline]
+    fn provenance(&self, data: &[u8], index: usize) -> ProvenanceV2 {
+        let base = self.provenance_offset + index * PROVENANCE_RECORD_SIZE;
+        ProvenanceV2 {
+            rule_ast_hash: read_u32_at(data, base),
+            generation: read_u64_at(data, base + 4),
+        }
+    }
+
+    /// Decode the tag at `index`, validating the semiring id against the set of
+    /// ids this build understands. Unknown id ⇒ E-FMT-001 (never a default).
+    #[inline]
+    fn tag(&self, data: &[u8], index: usize) -> Result<TagV2> {
+        let dir = self.tag_dir_offset + index * TAG_DIR_RECORD_SIZE;
+        let semiring_id = read_u16_at(data, dir);
+        let len = read_u16_at(data, dir + 2) as usize;
+        let byte_offset = read_u32_at(data, dir + 4) as usize;
+
+        // Gate B understands exactly one semiring: BoolTag. Any other id is an
+        // unrecognized capability and MUST surface as a typed error (I11),
+        // never a silent default. Gate C adds CountTag/ConfTag/… here.
+        if semiring_id != BOOLTAG_SEMIRING_ID {
+            return Err(GraphError::UnknownSemiringId(semiring_id));
+        }
+
+        let start = self.tag_bytes_offset + byte_offset;
+        let bytes = data[start..start + len].to_vec();
+        Ok(TagV2 { semiring_id, bytes })
+    }
+
+    #[inline]
+    fn tx_created(&self, data: &[u8], index: usize) -> u64 {
+        read_u64_at(data, self.tx_offset + index * TX_RECORD_SIZE)
+    }
+
+    #[inline]
+    fn tx_invalidated(&self, data: &[u8], index: usize) -> u64 {
+        read_u64_at(data, self.tx_offset + index * TX_RECORD_SIZE + 8)
+    }
+}
+
 // ── Node Column Offset Computation ────────────────────────────────
 
 /// Compute byte offsets for node segment columns.
@@ -154,6 +231,9 @@ pub struct NodeSegmentV2 {
     metadata_offset: usize,
     ids_offset: usize,
     content_hash_offset: usize,
+
+    /// Derived (§8.1) columns, or None for a base v2 segment.
+    derived: Option<DerivedColumns>,
 }
 
 impl NodeSegmentV2 {
@@ -186,26 +266,38 @@ impl NodeSegmentV2 {
             ));
         }
 
-        // 3. Read footer index (last FOOTER_INDEX_SIZE bytes)
-        let fi_start = data.len() - FOOTER_INDEX_SIZE;
-        let footer_index = FooterIndex::from_bytes(&data[fi_start..])?;
-
-        // 4. Validate footer_offset
+        // 4. Validate footer_offset (read first; it locates the footer index,
+        // whose size varies between base (48B) and derived (72B) segments).
         if header.footer_offset as usize >= data.len() {
             return Err(GraphError::InvalidFormat(
                 "footer_offset points past end of file".into(),
             ));
         }
 
-        // 5. Validate data_end_offset
+        // 3. Read footer index — sliced from footer_offset to EOF so the
+        // self-describing size/magic tail is found regardless of footer length.
+        let footer_index = FooterIndex::from_bytes(&data[header.footer_offset as usize..])?;
+
+        // 5. Validate data_end_offset. For derived segments the data section
+        // additionally contains the provenance/tag/tx columns, so we only
+        // assert the base-column end is the floor of data_end.
         let n = header.record_count as usize;
         let (_, _, _, _, _, _, content_hash_offset) = compute_node_column_offsets(n);
-        let expected_data_end = content_hash_offset + 8 * n;
-        if footer_index.data_end_offset != expected_data_end as u64 {
+        let base_data_end = (content_hash_offset + 8 * n) as u64;
+        if header.has_derived_columns() {
+            if footer_index.data_end_offset < base_data_end {
+                return Err(GraphError::InvalidFormat(
+                    "data_end_offset precedes base column layout".into(),
+                ));
+            }
+        } else if footer_index.data_end_offset != base_data_end {
             return Err(GraphError::InvalidFormat(
                 "data_end_offset does not match column layout".into(),
             ));
         }
+
+        // 5b. Decode derived columns (None for base segments).
+        let derived = DerivedColumns::from_footer(&header, &footer_index, n);
 
         // 6. Load footer components
         let bloom = BloomFilter::from_bytes(
@@ -245,12 +337,59 @@ impl NodeSegmentV2 {
             metadata_offset,
             ids_offset,
             content_hash_offset,
+            derived,
         })
     }
 
     /// Number of records in the segment.
     pub fn record_count(&self) -> usize {
         self.header.record_count as usize
+    }
+
+    /// Whether this segment carries §8.1 derived columns (version 3).
+    pub fn has_derived_columns(&self) -> bool {
+        self.derived.is_some()
+    }
+
+    // ── Derived (§8.1) Per-Record Accessors ────────────────────────
+
+    /// Provenance for the record at `index`. Returns `ProvenanceV2::none()`
+    /// for base (v2) segments without touching any (absent) column.
+    pub fn provenance(&self, index: usize) -> ProvenanceV2 {
+        debug_assert!(index < self.record_count(), "index out of bounds");
+        match &self.derived {
+            Some(d) => d.provenance(&self.data, index),
+            None => ProvenanceV2::none(),
+        }
+    }
+
+    /// Tag for the record at `index`. Returns `TagV2::bool_one()` for base
+    /// segments; for derived segments decodes the tag and returns E-FMT-001 on
+    /// an unknown semiring_id.
+    pub fn tag(&self, index: usize) -> Result<TagV2> {
+        debug_assert!(index < self.record_count(), "index out of bounds");
+        match &self.derived {
+            Some(d) => d.tag(&self.data, index),
+            None => Ok(TagV2::bool_one()),
+        }
+    }
+
+    /// `tx_created` for the record at `index`. Defaults to 0 for base segments.
+    pub fn tx_created(&self, index: usize) -> u64 {
+        debug_assert!(index < self.record_count(), "index out of bounds");
+        match &self.derived {
+            Some(d) => d.tx_created(&self.data, index),
+            None => 0,
+        }
+    }
+
+    /// `tx_invalidated` for the record at `index`. Defaults to TX_OPEN for base.
+    pub fn tx_invalidated(&self, index: usize) -> u64 {
+        debug_assert!(index < self.record_count(), "index out of bounds");
+        match &self.derived {
+            Some(d) => d.tx_invalidated(&self.data, index),
+            None => TX_OPEN,
+        }
     }
 
     // ── Column Accessors (O(1)) ────────────────────────────────────
@@ -374,6 +513,9 @@ pub struct EdgeSegmentV2 {
     dst_offset: usize,
     edge_type_offset: usize,
     metadata_offset: usize,
+
+    /// Derived (§8.1) columns, or None for a base v2 segment.
+    derived: Option<DerivedColumns>,
 }
 
 impl EdgeSegmentV2 {
@@ -406,26 +548,34 @@ impl EdgeSegmentV2 {
             ));
         }
 
-        // 3. Read footer index (last FOOTER_INDEX_SIZE bytes)
-        let fi_start = data.len() - FOOTER_INDEX_SIZE;
-        let footer_index = FooterIndex::from_bytes(&data[fi_start..])?;
-
-        // 4. Validate footer_offset
+        // 4. Validate footer_offset (locates the variable-length footer index).
         if header.footer_offset as usize >= data.len() {
             return Err(GraphError::InvalidFormat(
                 "footer_offset points past end of file".into(),
             ));
         }
 
-        // 5. Validate data_end_offset
+        // 3. Read footer index (footer_offset..EOF; size/magic at the tail).
+        let footer_index = FooterIndex::from_bytes(&data[header.footer_offset as usize..])?;
+
+        // 5. Validate data_end_offset (derived segments append extra columns).
         let n = header.record_count as usize;
         let (_, _, _, metadata_offset) = compute_edge_column_offsets(n);
-        let expected_data_end = metadata_offset + 4 * n;
-        if footer_index.data_end_offset != expected_data_end as u64 {
+        let base_data_end = (metadata_offset + 4 * n) as u64;
+        if header.has_derived_columns() {
+            if footer_index.data_end_offset < base_data_end {
+                return Err(GraphError::InvalidFormat(
+                    "data_end_offset precedes base column layout".into(),
+                ));
+            }
+        } else if footer_index.data_end_offset != base_data_end {
             return Err(GraphError::InvalidFormat(
                 "data_end_offset does not match column layout".into(),
             ));
         }
+
+        // 5b. Decode derived columns (None for base segments).
+        let derived = DerivedColumns::from_footer(&header, &footer_index, n);
 
         // 6. Load footer components (TWO bloom filters)
         let src_bloom = BloomFilter::from_bytes(
@@ -460,12 +610,57 @@ impl EdgeSegmentV2 {
             dst_offset,
             edge_type_offset,
             metadata_offset,
+            derived,
         })
     }
 
     /// Number of records in the segment.
     pub fn record_count(&self) -> usize {
         self.header.record_count as usize
+    }
+
+    /// Whether this segment carries §8.1 derived columns (version 3).
+    pub fn has_derived_columns(&self) -> bool {
+        self.derived.is_some()
+    }
+
+    // ── Derived (§8.1) Per-Record Accessors ────────────────────────
+
+    /// Provenance for the record at `index`. Default `none()` for base segments.
+    pub fn provenance(&self, index: usize) -> ProvenanceV2 {
+        debug_assert!(index < self.record_count(), "index out of bounds");
+        match &self.derived {
+            Some(d) => d.provenance(&self.data, index),
+            None => ProvenanceV2::none(),
+        }
+    }
+
+    /// Tag for the record at `index`. Default `bool_one()` for base segments;
+    /// E-FMT-001 on unknown semiring_id for derived segments.
+    pub fn tag(&self, index: usize) -> Result<TagV2> {
+        debug_assert!(index < self.record_count(), "index out of bounds");
+        match &self.derived {
+            Some(d) => d.tag(&self.data, index),
+            None => Ok(TagV2::bool_one()),
+        }
+    }
+
+    /// `tx_created` for the record at `index`. Defaults to 0 for base segments.
+    pub fn tx_created(&self, index: usize) -> u64 {
+        debug_assert!(index < self.record_count(), "index out of bounds");
+        match &self.derived {
+            Some(d) => d.tx_created(&self.data, index),
+            None => 0,
+        }
+    }
+
+    /// `tx_invalidated` for the record at `index`. Defaults to TX_OPEN for base.
+    pub fn tx_invalidated(&self, index: usize) -> u64 {
+        debug_assert!(index < self.record_count(), "index out of bounds");
+        match &self.derived {
+            Some(d) => d.tx_invalidated(&self.data, index),
+            None => TX_OPEN,
+        }
     }
 
     // ── Column Accessors (O(1)) ────────────────────────────────────
@@ -1089,6 +1284,201 @@ mod tests {
         let seg = NodeSegmentV2::open(temp.path()).unwrap();
         assert_eq!(seg.record_count(), 1);
         assert_eq!(seg.get_record(0), node);
+    }
+
+    // ── Derived Columns (Datalog v2 §8.1) ─────────────────────────────
+
+    #[test]
+    fn test_base_segment_returns_derived_defaults() {
+        // A plain base (v2) segment must expose §8.1 defaults without touching
+        // any (absent) derived column.
+        let node = make_node("id", "FUNCTION", "name", "file.rs");
+        let bytes = write_node_segment(vec![node]);
+        let seg = NodeSegmentV2::from_bytes(&bytes).unwrap();
+
+        assert!(!seg.has_derived_columns());
+        assert_eq!(seg.provenance(0), ProvenanceV2::none());
+        assert_eq!(seg.tag(0).unwrap(), TagV2::bool_one());
+        assert_eq!(seg.tx_created(0), 0);
+        assert_eq!(seg.tx_invalidated(0), TX_OPEN);
+    }
+
+    #[test]
+    fn test_derived_node_segment_roundtrip() {
+        // Three records with distinct, non-default provenance + tx; BoolTag.
+        let recs = [
+            make_node("n0", "FUNCTION", "a", "f0.rs"),
+            make_node("n1", "CLASS", "b", "f1.rs"),
+            make_node("n2", "METHOD", "c", "f2.rs"),
+        ];
+        let fields = [
+            DerivedFields {
+                provenance: ProvenanceV2 { rule_ast_hash: 0xAABB_CCDD, generation: 7 },
+                tag: TagV2::bool_one(),
+                tx_created: 100,
+                tx_invalidated: 200,
+            },
+            DerivedFields {
+                provenance: ProvenanceV2 { rule_ast_hash: 0, generation: 0 },
+                tag: TagV2::bool_one(),
+                tx_created: 101,
+                tx_invalidated: TX_OPEN,
+            },
+            DerivedFields {
+                provenance: ProvenanceV2 { rule_ast_hash: 42, generation: u64::MAX },
+                tag: TagV2::bool_one(),
+                tx_created: 0,
+                tx_invalidated: 999,
+            },
+        ];
+
+        let mut writer = NodeSegmentWriter::new();
+        for (r, f) in recs.iter().zip(fields.iter()) {
+            writer.add_derived(r.clone(), f.clone());
+        }
+        let mut buf = Cursor::new(Vec::new());
+        writer.finish(&mut buf).unwrap();
+        let bytes = buf.into_inner();
+
+        // Header must be the derived version.
+        assert_eq!(u16::from_le_bytes([bytes[4], bytes[5]]), FORMAT_VERSION_DERIVED);
+
+        let seg = NodeSegmentV2::from_bytes(&bytes).unwrap();
+        assert!(seg.has_derived_columns());
+        assert_eq!(seg.record_count(), 3);
+
+        // Base columns still round-trip.
+        for (i, r) in recs.iter().enumerate() {
+            assert_eq!(seg.get_record(i), *r, "base record mismatch at {}", i);
+        }
+        // Every derived field round-trips exactly.
+        for (i, f) in fields.iter().enumerate() {
+            assert_eq!(seg.provenance(i), f.provenance, "provenance at {}", i);
+            assert_eq!(seg.tag(i).unwrap(), f.tag, "tag at {}", i);
+            assert_eq!(seg.tx_created(i), f.tx_created, "tx_created at {}", i);
+            assert_eq!(seg.tx_invalidated(i), f.tx_invalidated, "tx_invalidated at {}", i);
+        }
+    }
+
+    #[test]
+    fn test_derived_edge_segment_roundtrip() {
+        let recs = [
+            make_edge("s0", "d0", "CALLS"),
+            make_edge("s1", "d1", "IMPORTS_FROM"),
+        ];
+        let fields = [
+            DerivedFields {
+                provenance: ProvenanceV2 { rule_ast_hash: 1, generation: 11 },
+                tag: TagV2::bool_one(),
+                tx_created: 5,
+                tx_invalidated: TX_OPEN,
+            },
+            DerivedFields {
+                provenance: ProvenanceV2 { rule_ast_hash: 2, generation: 22 },
+                tag: TagV2::bool_one(),
+                tx_created: 6,
+                tx_invalidated: 60,
+            },
+        ];
+
+        let mut writer = EdgeSegmentWriter::new();
+        for (r, f) in recs.iter().zip(fields.iter()) {
+            writer.add_derived(r.clone(), f.clone());
+        }
+        let mut buf = Cursor::new(Vec::new());
+        writer.finish(&mut buf).unwrap();
+        let bytes = buf.into_inner();
+
+        assert_eq!(u16::from_le_bytes([bytes[4], bytes[5]]), FORMAT_VERSION_DERIVED);
+
+        let seg = EdgeSegmentV2::from_bytes(&bytes).unwrap();
+        assert!(seg.has_derived_columns());
+        assert_eq!(seg.record_count(), 2);
+
+        for (i, r) in recs.iter().enumerate() {
+            assert_eq!(seg.get_record(i), *r, "base edge mismatch at {}", i);
+        }
+        for (i, f) in fields.iter().enumerate() {
+            assert_eq!(seg.provenance(i), f.provenance, "provenance at {}", i);
+            assert_eq!(seg.tag(i).unwrap(), f.tag, "tag at {}", i);
+            assert_eq!(seg.tx_created(i), f.tx_created, "tx_created at {}", i);
+            assert_eq!(seg.tx_invalidated(i), f.tx_invalidated, "tx_invalidated at {}", i);
+        }
+    }
+
+    #[test]
+    fn test_derived_segment_carries_nonempty_tag_bytes() {
+        // The encoding path for non-empty tag bytes must round-trip, so Gate C
+        // semirings drop in without another format change. We still use the
+        // reserved BoolTag id (the only id Gate B accepts), but with payload.
+        let node = make_node("n0", "FUNCTION", "a", "f0.rs");
+        let tag = TagV2 { semiring_id: BOOLTAG_SEMIRING_ID, bytes: vec![1, 2, 3, 4, 5] };
+        let f = DerivedFields {
+            provenance: ProvenanceV2::none(),
+            tag: tag.clone(),
+            tx_created: 0,
+            tx_invalidated: TX_OPEN,
+        };
+        let mut writer = NodeSegmentWriter::new();
+        writer.add_derived(node, f);
+        let mut buf = Cursor::new(Vec::new());
+        writer.finish(&mut buf).unwrap();
+        let seg = NodeSegmentV2::from_bytes(&buf.into_inner()).unwrap();
+        assert_eq!(seg.tag(0).unwrap(), tag);
+    }
+
+    #[test]
+    fn test_unknown_semiring_id_is_e_fmt_001() {
+        // Write a derived segment, then corrupt the tag directory's semiring_id
+        // to an id this build doesn't know. Reading the tag must yield E-FMT-001,
+        // never a silent default.
+        let node = make_node("n0", "FUNCTION", "a", "f0.rs");
+        let f = DerivedFields::edb_default();
+        let mut writer = NodeSegmentWriter::new();
+        writer.add_derived(node, f);
+        let mut buf = Cursor::new(Vec::new());
+        writer.finish(&mut buf).unwrap();
+        let mut bytes = buf.into_inner();
+
+        // Locate the tag directory via the footer index and patch semiring_id.
+        let header = SegmentHeaderV2::from_bytes(&bytes[..HEADER_SIZE]).unwrap();
+        let footer = FooterIndex::from_bytes(&bytes[header.footer_offset as usize..]).unwrap();
+        let dir = footer.tag_dir_offset as usize; // first record's semiring_id (u16)
+        bytes[dir..dir + 2].copy_from_slice(&999u16.to_le_bytes());
+
+        let seg = NodeSegmentV2::from_bytes(&bytes).unwrap();
+        let err = seg.tag(0).unwrap_err();
+        assert_eq!(err.code(), "E-FMT-001", "unexpected error: {}", err);
+        assert!(err.to_string().contains("999"), "err: {}", err);
+    }
+
+    #[test]
+    fn test_add_then_add_derived_backfills_defaults() {
+        // Mixing plain add() (base) then add_derived() switches to v3 and
+        // backfills EDB defaults for the earlier base record.
+        let mut writer = NodeSegmentWriter::new();
+        writer.add(make_node("n0", "FUNCTION", "a", "f0.rs"));
+        writer.add_derived(
+            make_node("n1", "CLASS", "b", "f1.rs"),
+            DerivedFields {
+                provenance: ProvenanceV2 { rule_ast_hash: 9, generation: 3 },
+                tag: TagV2::bool_one(),
+                tx_created: 50,
+                tx_invalidated: TX_OPEN,
+            },
+        );
+        let mut buf = Cursor::new(Vec::new());
+        writer.finish(&mut buf).unwrap();
+        let seg = NodeSegmentV2::from_bytes(&buf.into_inner()).unwrap();
+
+        assert!(seg.has_derived_columns());
+        // Backfilled record 0 carries EDB defaults.
+        assert_eq!(seg.provenance(0), ProvenanceV2::none());
+        assert_eq!(seg.tx_created(0), 0);
+        assert_eq!(seg.tx_invalidated(0), TX_OPEN);
+        // Record 1 carries its explicit fields.
+        assert_eq!(seg.provenance(1), ProvenanceV2 { rule_ast_hash: 9, generation: 3 });
+        assert_eq!(seg.tx_created(1), 50);
     }
 
     // ── Prefetch Smoke Test ───────────────────────────────────────────

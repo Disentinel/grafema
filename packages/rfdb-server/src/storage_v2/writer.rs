@@ -12,6 +12,63 @@ use crate::storage_v2::string_table::StringTableV2;
 use crate::storage_v2::types::*;
 use crate::storage_v2::zone_map::ZoneMap;
 
+// ── Derived (Datalog v2 §8.1) Column Writer ───────────────────────
+
+/// Per-record byte width of the provenance column: rule_ast_hash(u32) + generation(u64).
+pub(crate) const PROVENANCE_RECORD_SIZE: usize = 4 + 8; // 12
+/// Per-record byte width of the tag directory entry: semiring_id(u16) + len(u16) + byte_offset(u32).
+pub(crate) const TAG_DIR_RECORD_SIZE: usize = 2 + 2 + 4; // 8
+/// Per-record byte width of the tx column: tx_created(u64) + tx_invalidated(u64).
+pub(crate) const TX_RECORD_SIZE: usize = 8 + 8; // 16
+
+/// Write the three §8.1 derived columns for `fields` (one entry per record),
+/// returning `(provenance_offset, tag_dir_offset, tx_offset)`.
+///
+/// Layout (each block is contiguous, in record order):
+/// ```text
+/// [provenance: { rule_ast_hash u32, generation u64 } × N]   (12N bytes)
+/// [tag dir:    { semiring_id u16, len u16, byte_offset u32 } × N]  (8N bytes)
+/// [tag bytes:  concatenated tag payloads in record order]    (Σ len bytes)
+/// [tx:         { tx_created u64, tx_invalidated u64 } × N]    (16N bytes)
+/// ```
+/// The tag directory's `byte_offset` is relative to the start of the tag-bytes
+/// blob (which immediately follows the directory). BoolTag rows have len 0.
+fn write_derived_columns<W: Write + Seek>(
+    writer: &mut W,
+    fields: &[DerivedFields],
+) -> Result<(u64, u64, u64)> {
+    // Provenance column.
+    let provenance_offset = writer.stream_position()?;
+    for f in fields {
+        writer.write_all(&f.provenance.rule_ast_hash.to_le_bytes())?;
+        writer.write_all(&f.provenance.generation.to_le_bytes())?;
+    }
+
+    // Tag directory column, then concatenated tag-bytes blob.
+    let tag_dir_offset = writer.stream_position()?;
+    let mut running: u32 = 0;
+    for f in fields {
+        let len = f.tag.bytes.len();
+        debug_assert!(len <= u16::MAX as usize, "tag payload exceeds u16 len");
+        writer.write_all(&f.tag.semiring_id.to_le_bytes())?;
+        writer.write_all(&(len as u16).to_le_bytes())?;
+        writer.write_all(&running.to_le_bytes())?;
+        running = running.checked_add(len as u32).expect("tag bytes blob overflows u32");
+    }
+    for f in fields {
+        writer.write_all(&f.tag.bytes)?;
+    }
+
+    // Tx column.
+    let tx_offset = writer.stream_position()?;
+    for f in fields {
+        writer.write_all(&f.tx_created.to_le_bytes())?;
+        writer.write_all(&f.tx_invalidated.to_le_bytes())?;
+    }
+
+    Ok((provenance_offset, tag_dir_offset, tx_offset))
+}
+
 // ── NodeSegmentWriter ──────────────────────────────────────────────
 
 /// Writer for node segments (SegmentType::Nodes).
@@ -20,6 +77,10 @@ use crate::storage_v2::zone_map::ZoneMap;
 /// with associated indexes (bloom filter, zone map, string table) on `finish()`.
 pub struct NodeSegmentWriter {
     records: Vec<NodeRecordV2>,
+    /// Per-record derived fields, parallel to `records`. Empty unless any
+    /// `add_derived` was called; when empty the writer emits the BASE v2 format
+    /// (byte-identical to the pre-Datalog-v2 writer).
+    derived: Vec<DerivedFields>,
 }
 
 impl NodeSegmentWriter {
@@ -27,18 +88,35 @@ impl NodeSegmentWriter {
     pub fn new() -> Self {
         Self {
             records: Vec::new(),
+            derived: Vec::new(),
         }
     }
 
     /// Add a node record to the segment.
     ///
-    /// Add a node record to the segment.
-    ///
     /// Nodes coming through the v2-native pipeline have id == blake3(semantic_id).
     /// Nodes from the v1 backward-compat path (GraphStore trait) may have
     /// arbitrary IDs. Both are accepted during the transition period.
+    ///
+    /// If this writer has been put into derived mode by an earlier
+    /// `add_derived`, the record is stamped with EDB-default derived fields.
     pub fn add(&mut self, record: NodeRecordV2) {
+        if !self.derived.is_empty() {
+            self.derived.push(DerivedFields::edb_default());
+        }
         self.records.push(record);
+    }
+
+    /// Add a node record together with its §8.1 derived fields (provenance,
+    /// tag, tx). The FIRST call to this method switches the writer to the
+    /// derived (v3) format; any base records added earlier are backfilled with
+    /// EDB-default derived fields so the columns stay parallel.
+    pub fn add_derived(&mut self, record: NodeRecordV2, fields: DerivedFields) {
+        if self.derived.is_empty() && !self.records.is_empty() {
+            self.derived = vec![DerivedFields::edb_default(); self.records.len()];
+        }
+        self.records.push(record);
+        self.derived.push(fields);
     }
 
     /// Number of records in the segment.
@@ -111,8 +189,16 @@ impl NodeSegmentWriter {
             bloom.insert(id);
         }
 
+        // Derived (v3) format iff any per-record derived fields were supplied.
+        let is_derived = !self.derived.is_empty();
+        debug_assert!(!is_derived || self.derived.len() == n);
+
         // Step 3: Write header with placeholder footer_offset=0.
-        let header = SegmentHeaderV2::new(SegmentType::Nodes, n as u64, 0);
+        let header = if is_derived {
+            SegmentHeaderV2::new_derived(SegmentType::Nodes, n as u64, 0)
+        } else {
+            SegmentHeaderV2::new(SegmentType::Nodes, n as u64, 0)
+        };
         header.write_to(writer)?;
 
         // Step 4: Write u32 columns (5 × N values).
@@ -148,7 +234,15 @@ impl NodeSegmentWriter {
             writer.write_all(&hash.to_le_bytes())?;
         }
 
-        // Record data_end_offset.
+        // Step 7b: Write derived columns (v3 only). They live between the base
+        // data columns and the footer sections, addressed by footer offsets.
+        let derived_offsets = if is_derived {
+            Some(write_derived_columns(writer, &self.derived)?)
+        } else {
+            None
+        };
+
+        // Record data_end_offset = end of ALL data columns (incl. derived).
         let data_end_offset = writer.stream_position()?;
 
         // Step 8: Write footer sections.
@@ -165,15 +259,19 @@ impl NodeSegmentWriter {
 
         // Step 9: Write footer index.
         let footer_offset = writer.stream_position()?;
-        let footer_index = FooterIndex {
+        let mut footer_index = FooterIndex::base(
             bloom_offset,
             dst_bloom_offset,
             zone_maps_offset,
             string_table_offset,
             data_end_offset,
-            footer_index_size: FOOTER_INDEX_SIZE as u32,
-            magic: FOOTER_INDEX_MAGIC,
-        };
+        );
+        if let Some((provenance_offset, tag_dir_offset, tx_offset)) = derived_offsets {
+            footer_index.footer_index_size = FOOTER_INDEX_SIZE_DERIVED as u32;
+            footer_index.provenance_offset = provenance_offset;
+            footer_index.tag_dir_offset = tag_dir_offset;
+            footer_index.tx_offset = tx_offset;
+        }
         footer_index.write_to(writer)?;
 
         let total_size = writer.stream_position()?;
@@ -211,6 +309,8 @@ impl Default for NodeSegmentWriter {
 /// on `finish()`.
 pub struct EdgeSegmentWriter {
     records: Vec<EdgeRecordV2>,
+    /// Per-record derived fields, parallel to `records`. Empty ⇒ base v2 format.
+    derived: Vec<DerivedFields>,
 }
 
 impl EdgeSegmentWriter {
@@ -218,12 +318,27 @@ impl EdgeSegmentWriter {
     pub fn new() -> Self {
         Self {
             records: Vec::new(),
+            derived: Vec::new(),
         }
     }
 
     /// Add an edge record to the segment.
     pub fn add(&mut self, record: EdgeRecordV2) {
+        if !self.derived.is_empty() {
+            self.derived.push(DerivedFields::edb_default());
+        }
         self.records.push(record);
+    }
+
+    /// Add an edge record together with its §8.1 derived fields. The first call
+    /// switches the writer to the derived (v3) format; earlier base records are
+    /// backfilled with EDB-default derived fields.
+    pub fn add_derived(&mut self, record: EdgeRecordV2, fields: DerivedFields) {
+        if self.derived.is_empty() && !self.records.is_empty() {
+            self.derived = vec![DerivedFields::edb_default(); self.records.len()];
+        }
+        self.records.push(record);
+        self.derived.push(fields);
     }
 
     /// Number of records in the segment.
@@ -289,8 +404,16 @@ impl EdgeSegmentWriter {
             dst_bloom.insert(dst);
         }
 
+        // Derived (v3) format iff any per-record derived fields were supplied.
+        let is_derived = !self.derived.is_empty();
+        debug_assert!(!is_derived || self.derived.len() == n);
+
         // Step 3: Write header with placeholder footer_offset=0.
-        let header = SegmentHeaderV2::new(SegmentType::Edges, n as u64, 0);
+        let header = if is_derived {
+            SegmentHeaderV2::new_derived(SegmentType::Edges, n as u64, 0)
+        } else {
+            SegmentHeaderV2::new(SegmentType::Edges, n as u64, 0)
+        };
         header.write_to(writer)?;
 
         // Step 4: Write u128 columns (src, dst).
@@ -310,7 +433,14 @@ impl EdgeSegmentWriter {
             writer.write_all(&idx.to_le_bytes())?;
         }
 
-        // Record data_end_offset.
+        // Step 5b: Write derived columns (v3 only).
+        let derived_offsets = if is_derived {
+            Some(write_derived_columns(writer, &self.derived)?)
+        } else {
+            None
+        };
+
+        // Record data_end_offset = end of ALL data columns (incl. derived).
         let data_end_offset = writer.stream_position()?;
 
         // Step 6: Write footer sections.
@@ -328,15 +458,19 @@ impl EdgeSegmentWriter {
 
         // Step 7: Write footer index.
         let footer_offset = writer.stream_position()?;
-        let footer_index = FooterIndex {
+        let mut footer_index = FooterIndex::base(
             bloom_offset,
             dst_bloom_offset,
             zone_maps_offset,
             string_table_offset,
             data_end_offset,
-            footer_index_size: FOOTER_INDEX_SIZE as u32,
-            magic: FOOTER_INDEX_MAGIC,
-        };
+        );
+        if let Some((provenance_offset, tag_dir_offset, tx_offset)) = derived_offsets {
+            footer_index.footer_index_size = FOOTER_INDEX_SIZE_DERIVED as u32;
+            footer_index.provenance_offset = provenance_offset;
+            footer_index.tag_dir_offset = tag_dir_offset;
+            footer_index.tx_offset = tx_offset;
+        }
         footer_index.write_to(writer)?;
 
         let total_size = writer.stream_position()?;

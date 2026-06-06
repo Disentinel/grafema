@@ -27,6 +27,13 @@ pub enum GraphError {
     #[error("Invalid file format: {0}")]
     InvalidFormat(String),
 
+    /// E-FMT-001 (Datalog v2, spec §6/§8.1/§I11): a derived segment carries a
+    /// tag/payload whose `semiring_id` (or `lattice_id`) is not recognized by
+    /// this build. Per I11 the reader MUST surface this as a typed error rather
+    /// than silently defaulting — unknown id = error, never garbage.
+    #[error("E-FMT-001: unknown semiring_id {0} in segment tag block")]
+    UnknownSemiringId(u16),
+
     #[error("Compaction error: {0}")]
     Compaction(String),
 
@@ -95,6 +102,7 @@ impl GraphError {
             GraphError::QueryCancelled => "QUERY_CANCELLED",
             GraphError::QueryLimitExceeded(_) => "QUERY_LIMIT_EXCEEDED",
             GraphError::ConflictedCommit { .. } => "COMMIT_CONFLICT",
+            GraphError::UnknownSemiringId(_) => "E-FMT-001",
             _ => "INTERNAL_ERROR",
         }
     }
