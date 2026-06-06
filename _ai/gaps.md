@@ -53,3 +53,10 @@ on `.grafema/grafema.rfdb`). The differential surfaced these gaps, mapped to spe
   K=8 ≥ 3× K=1 speedup assertion is deferred → Gate A residual.
 - **`bench/manifests/gate-a.yaml`** conformance manifest not yet authored (P1: "green = manifest") →
   Gate A residual.
+- **Executor evaluates join legs per-row, not build-once hash-join** (Gate B blocker, 2026-06-06). The
+  Gate B exit `depends/2` rule PLANS (estimate 148k) but its EVAL does not finish on the real graph in debug
+  OR release (algorithmic): the `node(M,"MODULE"), attr(M,"file",F)` sub-pattern does a `nodes_by_attr` index
+  probe PER IMPORTS_FROM row (1644×2). Same class as the earlier anti-join O(rows×M) hang. Fix = build the hash
+  side ONCE for a shared-variable generator leg (proper semi-naive hash-join, spec §4), in `exec.rs` (mirror the
+  existing `build_anti_join_set` one-time set). Benefits ALL multi-join rules. **This is the immediate next task to
+  reach the Gate B exit** (see `_ai/research/rfdb-datalog-RESUME.md`).
