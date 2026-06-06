@@ -1,0 +1,6 @@
+@materialize(edge_type="DEPENDS_ON")
+depends(Msrc, Mdst) :- edge(Isrc, Idst, "IMPORTS_FROM"),
+                       attr(Isrc, "file", Fsrc), attr(Idst, "file", Fdst),
+                       node(Msrc, "MODULE"), attr(Msrc, "file", Fsrc),
+                       node(Mdst, "MODULE"), attr(Mdst, "file", Fdst),
+                       neq(Msrc, Mdst).

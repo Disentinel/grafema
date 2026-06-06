@@ -388,6 +388,89 @@ impl GraphEngineV2 {
             .collect();
         Ok(rows)
     }
+
+    /// Evaluate a Datalog **v2** program and write back every `@materialize(edge_type="T")`
+    /// predicate's derived facts AS graph edges — the v2 `@materialize` write-back path
+    /// (Gate B Stage 1).
+    ///
+    /// # Run isolation + single atomic flip
+    ///
+    /// The whole run is staged under ONE generation and committed with a SINGLE atomic
+    /// manifest flip:
+    ///
+    /// 1. Capture a version-pinned snapshot (the read generation) and run the single v2
+    ///    eval entry ([`crate::datalog2::evaluate_with_materialize`]) to the fixpoint. The
+    ///    target generation is `snapshot.version + 1` — the version the written edges
+    ///    become visible at (the orchestrator's `_generation` convention).
+    /// 2. Project ALL `@materialize` predicates of the run to one [`EdgeRecordV2`] batch,
+    ///    each stamped `{"_source": rule_ast_hash, "_generation": generation}`.
+    /// 3. Commit the entire batch with a SINGLE [`Self::commit_batch_ext`] (empty
+    ///    `changed_files` → additive, no tombstoning of existing data; the underlying
+    ///    `commit_batch_ext` flips the manifest exactly once via `commit_edit`).
+    ///
+    /// A mid-run failure (parse/stratify/plan/exec/mis-shaped materialized head) returns
+    /// the error BEFORE step 3, so nothing is committed and the prior committed generation
+    /// stays intact (abort-no-commit). When no rule carries `@materialize`, the run derives
+    /// facts and commits nothing (0 edges).
+    ///
+    /// Returns the number of edges written back.
+    pub fn eval_datalog_v2_materialize(
+        &mut self,
+        source: &str,
+        limits: crate::datalog::EvalLimits,
+    ) -> std::result::Result<usize, crate::datalog2::EvalError> {
+        // ── Step 1: pinned snapshot + fixpoint (the read generation). ──
+        let snapshot = self.snapshot();
+        // The generation the written edges become visible at is one past the pinned read
+        // version (the version commit_batch_ext will publish for this run).
+        let generation = snapshot.version + 1;
+
+        let all_nodes = self.store.find_nodes_at(&snapshot, None, None);
+        let mut nodes_by_type: std::collections::HashMap<String, u64> =
+            std::collections::HashMap::new();
+        for n in &all_nodes {
+            *nodes_by_type.entry(n.node_type.clone()).or_insert(0) += 1;
+        }
+        let stats = crate::datalog2::builtin::Stats {
+            total_nodes: all_nodes.len() as u64,
+            total_edges: self.store.edge_count_at(&snapshot) as u64,
+            nodes_by_type,
+        };
+
+        let (evaluation, specs) = {
+            let view =
+                crate::datalog2::storage_glue::BorrowedLsmStorageView::new(&self.store, snapshot);
+            crate::datalog2::evaluate_with_materialize(
+                &view,
+                source,
+                stats,
+                limits,
+                crate::datalog2::events::EventLog::discard(),
+            )?
+        };
+
+        // ── Step 2: project ALL @materialize predicates → one edge batch. ──
+        // A mis-shaped materialized head aborts here (coded), before any commit.
+        let edges =
+            crate::datalog2::materialize::plan_writeback(&specs, &evaluation, generation)?;
+        if edges.is_empty() {
+            return Ok(0);
+        }
+        let written = edges.len();
+
+        // ── Step 3: single atomic commit (one manifest flip). ──
+        // Empty `changed_files` ⇒ additive (no tombstoning of existing nodes/edges); the
+        // whole run's edges land under `generation` with a single `commit_edit`.
+        self.commit_batch_ext(Vec::new(), edges, &[], std::collections::HashMap::new(), &[])
+            .map_err(|e| {
+                crate::datalog2::EvalError::Materialize(crate::datalog2::materialize::MaterializeError {
+                    code: "E-MAT-004",
+                    detail: format!("@materialize write-back commit failed: {e}"),
+                })
+            })?;
+
+        Ok(written)
+    }
 }
 
 /// Stringify a v2 Datalog [`crate::datalog::Value`] for the wire (ids render as their
@@ -2832,5 +2915,102 @@ mod tests {
         assert_eq!(pub_edges.len(), 1);
         assert_eq!(pub_funcs, at_funcs);
         assert_eq!(pub_funcs, vec![id1]);
+    }
+
+    // ── @materialize write-back (Gate B Stage 1) ─────────────────────
+
+    /// A tiny `@materialize(edge_type="DEPENDS_ON")` rule over a committed graph must
+    /// write its derived binary facts back AS DEPENDS_ON edges, each carrying the
+    /// orchestrator-style provenance (`_source = rule_ast_hash`, `_generation = run_id`),
+    /// committed by a single atomic manifest flip on top of the prior generation.
+    #[test]
+    fn materialize_writeback_produces_edges_with_provenance() {
+        let mut engine = GraphEngineV2::create_ephemeral();
+
+        // Commit a base graph: two modules, an IMPORTS_FROM edge a→b.
+        let a = make_v2_node("a.js->MODULE->a", "MODULE", "a", "a.js");
+        let b = make_v2_node("b.js->MODULE->b", "MODULE", "b", "b.js");
+        let (id_a, id_b) = (a.id, b.id);
+        let import_edge = EdgeRecordV2 {
+            src: id_a,
+            dst: id_b,
+            edge_type: "IMPORTS_FROM".to_string(),
+            metadata: String::new(),
+        };
+        engine
+            .commit_batch_ext(
+                vec![a, b],
+                vec![import_edge],
+                &["a.js".to_string(), "b.js".to_string()],
+                HashMap::new(),
+                &[],
+            )
+            .expect("base commit");
+
+        // The generation the write-back will publish at (one past the current version).
+        let gen = engine.snapshot().version + 1;
+
+        // A binary @materialize rule: dep(X, Y) projects to a DEPENDS_ON edge.
+        let src = r#"@materialize(edge_type = "DEPENDS_ON")
+                     dep(X, Y) :- edge(X, Y, "IMPORTS_FROM")."#;
+
+        let written = engine
+            .eval_datalog_v2_materialize(src, crate::datalog::EvalLimits::none())
+            .expect("write-back");
+        assert_eq!(written, 1, "exactly one IMPORTS_FROM → one DEPENDS_ON");
+
+        // Read back the materialized edge on the freshly published snapshot.
+        let snap = engine.snapshot();
+        let deps = engine.store.get_edges_by_type_at(&snap, "DEPENDS_ON");
+        assert_eq!(deps.len(), 1, "one DEPENDS_ON edge was written back");
+        assert_eq!(deps[0].src, id_a);
+        assert_eq!(deps[0].dst, id_b);
+
+        // Provenance: _source is the rule AST hash, _generation is the run id.
+        let meta: serde_json::Value =
+            serde_json::from_str(&deps[0].metadata).expect("provenance is JSON");
+        let parsed = crate::datalog2::parser_ext::parse_ext_program(src).unwrap();
+        let expected_hash =
+            crate::datalog2::materialize::rule_ast_hash(&parsed.items[0].rule);
+        assert_eq!(meta["_source"], serde_json::Value::String(expected_hash));
+        assert_eq!(meta["_generation"], serde_json::json!(gen));
+
+        // The base graph survived the additive write-back (run isolation: the flip layered
+        // the derived edge on top of the prior generation, it did not replace it).
+        assert!(engine.node_exists(id_a));
+        assert!(engine.node_exists(id_b));
+        assert_eq!(
+            engine.store.get_edges_by_type_at(&snap, "IMPORTS_FROM").len(),
+            1,
+            "the source IMPORTS_FROM edge is intact"
+        );
+    }
+
+    /// A `@materialize` rule whose head is NOT binary aborts the run with a coded error
+    /// BEFORE any commit — the prior generation must stay intact (abort-no-commit).
+    #[test]
+    fn materialize_writeback_aborts_no_commit_on_bad_head() {
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let n = make_v2_node("a.js->FUNCTION->f", "FUNCTION", "f", "a.js");
+        engine
+            .commit_batch_ext(vec![n], Vec::new(), &["a.js".to_string()], HashMap::new(), &[])
+            .expect("base commit");
+        let version_before = engine.snapshot().version;
+
+        // Unary head under @materialize — cannot project to an edge.
+        let src = r#"@materialize(edge_type = "T")
+                     orphan(X) :- node(X, "FUNCTION")."#;
+        let err = engine
+            .eval_datalog_v2_materialize(src, crate::datalog::EvalLimits::none())
+            .expect_err("a non-binary materialized head must abort");
+        assert_eq!(err.code(), "E-MAT-002");
+
+        // No commit happened: the published version is unchanged.
+        assert_eq!(
+            engine.snapshot().version,
+            version_before,
+            "abort-no-commit: the prior generation is intact"
+        );
+        assert!(engine.store.get_edges_by_type_at(&engine.snapshot(), "T").is_empty());
     }
 }

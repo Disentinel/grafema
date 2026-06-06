@@ -42,6 +42,8 @@ pub mod builtin;
 pub mod plan;
 pub mod exec;
 pub mod events;
+pub mod materialize;
+pub mod stdlib;
 
 #[cfg(test)]
 mod differential;
@@ -51,6 +53,7 @@ use crate::datalog::EvalLimits;
 use builtin::Stats;
 use events::EventLog;
 use exec::{DEFAULT_ITERATION_CAP, Evaluation, ExecError, Executor};
+use materialize::{collect_materialize_specs, MaterializeError, MaterializeSpec};
 use parser_ext::{parse_ext_program, ExtParseError};
 use plan::{plan_program, PlanError};
 use storage_glue::StorageView;
@@ -76,6 +79,10 @@ pub enum EvalError {
     Plan(PlanError),
     /// The fixpoint executor aborted (`E-EXEC-…`, e.g. an iteration cap or a limit ceiling).
     Exec(ExecError),
+    /// The `@materialize` write-back planner rejected a directive (`E-MAT-…`, e.g. a
+    /// non-binary materialized head or a missing `edge_type=`). Raised on the write-back
+    /// path *before* any commit, so a rejection leaves the prior generation intact.
+    Materialize(MaterializeError),
 }
 
 impl EvalError {
@@ -87,6 +94,7 @@ impl EvalError {
             EvalError::Stratify(e) => e.code.as_str(),
             EvalError::Plan(e) => e.code.as_str(),
             EvalError::Exec(e) => e.code.as_str(),
+            EvalError::Materialize(e) => e.code,
         }
     }
 }
@@ -98,6 +106,7 @@ impl std::fmt::Display for EvalError {
             EvalError::Stratify(e) => write!(f, "stratify: {e}"),
             EvalError::Plan(e) => write!(f, "plan: {e}"),
             EvalError::Exec(e) => write!(f, "exec: {e}"),
+            EvalError::Materialize(e) => write!(f, "materialize: {e}"),
         }
     }
 }
@@ -124,6 +133,11 @@ impl From<ExecError> for EvalError {
         EvalError::Exec(e)
     }
 }
+impl From<MaterializeError> for EvalError {
+    fn from(e: MaterializeError) -> Self {
+        EvalError::Materialize(e)
+    }
+}
 
 /// Evaluate a Datalog v2 program against a [`StorageView`] — THE single eval entry (I8).
 ///
@@ -148,6 +162,28 @@ pub(crate) fn evaluate(
     limits: EvalLimits,
     events: EventLog,
 ) -> Result<Evaluation, EvalError> {
+    let (evaluation, _specs) = evaluate_with_materialize(view, source, stats, limits, events)?;
+    Ok(evaluation)
+}
+
+/// Evaluate a program AND surface its `@materialize` write-back plan — the entry the v2
+/// `@materialize` write-back path uses.
+///
+/// Runs the identical single pipeline as [`evaluate`] (parse → stratify → plan → fixpoint;
+/// I8 — there is no second eval path) and, after the fixpoint commits, collects the
+/// program's `@materialize(edge_type="T")` directives into [`MaterializeSpec`]s (each with
+/// the stable [`materialize::rule_ast_hash`] provenance stamp). The *projection* of those
+/// specs to graph edges and the single atomic commit are the engine adapter's job: this
+/// entry stays a pure function of its arguments (no storage write, I1/I10). Collecting the
+/// specs cannot fail on a well-formed annotation; a `@materialize` missing `edge_type=` is
+/// rejected here (coded `E-MAT-001`) before the caller commits anything.
+pub(crate) fn evaluate_with_materialize(
+    view: &dyn StorageView,
+    source: &str,
+    stats: Stats,
+    limits: EvalLimits,
+    events: EventLog,
+) -> Result<(Evaluation, Vec<MaterializeSpec>), EvalError> {
     let program = parse_ext_program(source)?;
     let strat = stratify(&program)?;
     let rules = program.rules();
@@ -155,7 +191,8 @@ pub(crate) fn evaluate(
     let executor = Executor::<BoolTag>::with_limits(view, limits, DEFAULT_ITERATION_CAP)
         .with_events(events);
     let evaluation = executor.evaluate(&plans, &rules, &strat)?;
-    Ok(evaluation)
+    let specs = collect_materialize_specs(&program)?;
+    Ok((evaluation, specs))
 }
 
 // ── Router note: the `RFDB_DATALOG_V2` kill switch (P3) ─────────────

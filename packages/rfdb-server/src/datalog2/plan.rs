@@ -42,6 +42,7 @@ use super::stratify::Stratification;
 /// exceeds this is rejected with `E-PLAN-003`. Ten million facts.
 pub const MAX_MATERIALIZED_FACTS: u64 = 10_000_000;
 
+
 // ── Error taxonomy (invariant I5) ──────────────────────────────────
 
 /// Stable planner error codes (spec §12). Every rejection carries one; a silently-empty
@@ -295,17 +296,70 @@ fn order_literals(body: &[Literal], head: &str, stats: &Stats) -> PlanResult<Vec
     let mut remaining: Vec<Literal> = body.to_vec();
 
     while !remaining.is_empty() {
-        // All placeable candidates under the current bindings.
-        let mut best: Option<(usize, u64)> = None;
+        // All placeable candidates under the current bindings, ranked by a lexicographic key
+        // (lower is better): (cross_join_class, cost_band, hub_rank, cost). Every term changes
+        // only join ORDER, never which facts derive (I1).
+        //   • cross_join_class — 0 normally; 1 for a positive tuple-introducing leg that, after
+        //     the first placement, shares NO bound variable (a would-be Cartesian product). Any
+        //     connected feasible leg is preferred over a disconnected free generator, so the
+        //     planner never manufactures a cross-join the §3 guard would then reject.
+        //   • cost_band — the cost's order of magnitude (bit length). The most selective leg
+        //     still leads across DIFFERENT magnitudes (e.g. a 5-node RARE generator beats a
+        //     100k-node COMMON one), but two legs of the SAME magnitude (e.g. 367 vs 370 nodes)
+        //     fall in one band and defer to connectivity — so a marginal cost difference does
+        //     NOT dictate a globally worse join order.
+        //   • hub_rank — within a cost band at the FIRST placement (empty bindings, where every
+        //     leg is disconnected and per-leg cost alone would pick the cheapest LEAF
+        //     generator): rank legs by how many join KEYS they bind that OTHER body literals
+        //     consume. The driver that unlocks the most downstream keyed readers leads, turning
+        //     those readers into point lookups instead of fresh value-generators (observed: the
+        //     stdlib `depends` rule estimates at 367·20·370·20 ≈ 54M when led by a leaf
+        //     `node(M,"MODULE")` generator binding ONE key, vs ≈148k when led by its hub `edge`
+        //     binding TWO endpoint keys that feed the file readers — both legs sit in the same
+        //     ~370 cost band, so the marginal 367<370 must not force the worse leaf-led order).
+        //     After the first leg hub_rank ≡ 0 (binding-driven feasibility takes over).
+        //   • cost — the exact per-type / per-endpoint estimate, final tiebreak within a band.
+        let mut best: Option<(usize, (u64, u64, u64, u64))> = None;
         for (i, lit) in remaining.iter().enumerate() {
-            let (can_place, _) = can_place_and_provides(lit, &bound);
+            let (can_place, provides) = can_place_and_provides(lit, &bound);
             if !can_place {
                 continue;
             }
-            let c = ordering_estimate(lit, &bound, stats);
+            let cross_join_class = if !result.is_empty()
+                && lit.is_positive()
+                && introduces_tuples(lit.atom().predicate())
+                && shares_no_binding(lit.atom(), &bound)
+            {
+                1
+            } else {
+                0
+            };
+            let cost = ordering_estimate(lit, &bound, stats);
+            // Order of magnitude: 64 − leading_zeros = number of significant bits. Costs within
+            // the same power-of-two band tie here and defer to hub_rank.
+            let cost_band = (u64::BITS - cost.leading_zeros()) as u64;
+            let hub_rank = if result.is_empty() {
+                let keys_to_others = provides
+                    .iter()
+                    .filter(|v| {
+                        remaining.iter().enumerate().any(|(j, other)| {
+                            j != i
+                                && other.atom().args().iter().any(|t| match t {
+                                    Term::Var(name) => name == *v,
+                                    _ => false,
+                                })
+                        })
+                    })
+                    .count() as u64;
+                // More keys unlocked → lower (better) rank.
+                (remaining.len() as u64).saturating_sub(keys_to_others)
+            } else {
+                0
+            };
+            let key = (cross_join_class, cost_band, hub_rank, cost);
             match best {
-                Some((_, bc)) if c >= bc => {}
-                _ => best = Some((i, c)),
+                Some((_, bk)) if key >= bk => {}
+                _ => best = Some((i, key)),
             }
         }
 
@@ -638,20 +692,40 @@ fn base_estimate(rel: &str, atom: &Atom, pattern: &[ArgMode], stats: &Stats) -> 
             // bound destination is as cheap as a bound source, not a full relation scan.
             let endpoint_bound = pattern.first() == Some(&ArgMode::Bound)
                 || pattern.get(1) == Some(&ArgMode::Bound);
-            if endpoint_bound {
+            // A CONST edge type narrows the scan even with both endpoints free: storage_v2
+            // serves a per-type edge index (`get_edges_by_type_at`), so `edge(_, _, "T")` is a
+            // keyed scan of one type's edges, not a full relation scan. Without an endpoint
+            // bound but with a const type, cost it as narrowed (parity with the per-type node
+            // oracle) — otherwise an IMPORTS_FROM-driven join is mis-estimated at the WHOLE
+            // edge count (every type), tripping the §3 estimate guard (observed: the stdlib
+            // `depends` rule estimated at total_edges·N^½ ≈ 54M vs an actual ~1.6k IMPORTS_FROM).
+            let const_type = atom.args().get(2).and_then(|t| t.const_value()).is_some();
+            if endpoint_bound || const_type {
                 narrowed_fanout(stats.total_edges)
             } else {
                 stats.total_edges.max(1)
             }
         }
         "attr" => {
-            // Bound-id reader → point lookup. Free-id generator with a bound key+value
-            // is a keyed index reverse-lookup (`nodes_by_attr`), not a full node scan —
-            // a value-equality probe narrows the relation, so cost it as narrowed too.
+            // Bound-id reader (`attr(boundId, "key", V)`) is a genuine point lookup: it reads
+            // ONE node's column, so its fan-out is exactly 1 — it binds the value of a single
+            // attribute, never a set. Modeling it at √N over-estimated a chain of column reads
+            // as if each multiplied the result (the stdlib `depends` rule reads four `file`
+            // columns and tripped the §3 estimate guard at √N⁴·edges; the true fan-out is 1).
+            //
+            // Free-id value-generator (`attr(X, "key", "val")`, key+value bound) is a keyed
+            // index reverse-lookup (`nodes_by_attr`) on an EQUALITY — strictly more selective
+            // than a key-prefix scan, so cost it as a doubly-narrowed fan-out (not √N, which is
+            // the key-prefix model). This keeps a join that keys two MODULE nodes by an exact
+            // `file` value (functionally ~1 module per file) from being mis-estimated as N².
             let value_bound = pattern.get(2) == Some(&ArgMode::Bound);
             let key_bound = pattern.get(1) == Some(&ArgMode::Bound);
-            if first_bound || (key_bound && value_bound) {
-                narrowed_fanout(stats.total_nodes)
+            if first_bound {
+                // Point column read: exactly one value.
+                1
+            } else if key_bound && value_bound {
+                // Equality reverse-lookup: doubly narrowed (≈ N^¼).
+                narrowed_fanout(narrowed_fanout(stats.total_nodes))
             } else {
                 stats.total_nodes.max(1)
             }
@@ -954,7 +1028,11 @@ mod tests {
 
     #[test]
     fn connected_body_plans_clean() {
-        // h(X, Y) :- node(X, "FUNCTION"), edge(X, Y, "CALLS").  Shared X → connected.
+        // h(X, Y) :- node(X, "FUNCTION"), edge(X, Y, "CALLS").  Shared X → connected, so it
+        // plans without the §3 cross-join rejection regardless of which leg the cost model
+        // leads with. (The const-typed `edge(_,_,"CALLS")` is per-type-index-narrowed, so the
+        // greedy ordering may lead with EITHER leg; the invariant under test is connectivity,
+        // not a specific leg order — order is I1-free.)
         let rule = Rule::new(
             Atom::new("h", vec![v("X"), v("Y")]),
             vec![
@@ -965,10 +1043,33 @@ mod tests {
         let strat = empty_strat();
         let plan = plan_rule(&rule, &strat, &stats(50, 50)).expect("connected plans");
         assert_eq!(plan.legs.len(), 2);
-        // edge's src is now bound by node → forward-narrowed, merge leg.
-        let edge_leg = &plan.legs[1];
-        assert_eq!(edge_leg.literal.atom().predicate(), "edge");
-        assert_eq!(edge_leg.pattern[0], ArgMode::Bound); // src bound
+
+        // The body is connected: the second-placed leg shares variable X with the first, so it
+        // is never a Cartesian product. Whichever leg leads, the trailing one binds against the
+        // accumulated bindings (X) rather than scanning free.
+        let first_vars: std::collections::HashSet<String> = plan.legs[0]
+            .literal
+            .atom()
+            .args()
+            .iter()
+            .filter_map(|t| match t {
+                Term::Var(name) => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
+        let second = plan.legs[1].literal.atom();
+        let second_shares = second.args().iter().any(|t| match t {
+            Term::Var(name) => first_vars.contains(name),
+            _ => false,
+        });
+        assert!(second_shares, "second leg must share a bound var (connected, not cross-join)");
+
+        // The edge leg (in whatever position) merge-joins over the sorted run.
+        let edge_leg = plan
+            .legs
+            .iter()
+            .find(|l| l.literal.atom().predicate() == "edge")
+            .expect("edge leg present");
         assert_eq!(edge_leg.join, JoinKind::MergeOnTotal);
     }
 
@@ -976,14 +1077,18 @@ mod tests {
 
     #[test]
     fn rejects_oversized_rule_estimate() {
-        // Two unbound full-relation generators over a huge relation overflow the 10M guard.
-        // h(X, Y) :- node(X, "A"), edge(X, Y, "T").  node scans all nodes; edge then
-        // narrows by X, but with 1e8 nodes the product crosses MAX_MATERIALIZED_FACTS.
+        // A two-hop generator join over a huge relation overflows the 10M guard.
+        // h(X, Y, Z) :- edge(X, Y, "T"), edge(Y, Z, "T").  Connected via Y (not a cross-join,
+        // valid modes — edge requires a bound type). Each hop is a per-type-index-narrowed scan
+        // (√1e8 = 1e4 fan-out) that binds a NEW variable, so both legs multiply the estimate:
+        // 1e4 × 1e4 = 1e8 > MAX_MATERIALIZED_FACTS. This exercises the §3 estimate guard with
+        // legitimate generator legs (the previous single-edge/node form collapses to a filter
+        // once the cheaper const-typed edge leads and node binds nothing new).
         let rule = Rule::new(
-            Atom::new("h", vec![v("X"), v("Y")]),
+            Atom::new("h", vec![v("X"), v("Y"), v("Z")]),
             vec![
-                pos("node", vec![v("X"), c("A")]),
                 pos("edge", vec![v("X"), v("Y"), c("T")]),
+                pos("edge", vec![v("Y"), v("Z"), c("T")]),
             ],
         );
         let strat = empty_strat();

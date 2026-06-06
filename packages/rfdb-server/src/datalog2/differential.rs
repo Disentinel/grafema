@@ -472,6 +472,413 @@ fn datalog2_differential_against_real_dataset() {
     );
 }
 
+/// Ground-truth probe (Stage 2): inspect the SHAPE of `IMPORTS_FROM` edges in the real
+/// store before authoring the `depends.dl` rule. Answers: what node TYPES do the edge
+/// endpoints have, and do those endpoints + MODULE nodes carry a `file` attr whose value
+/// equals the file segment of the orchestrator's id-string parse (`build_file_to_module_map`)?
+///
+/// Run with:
+///   cargo test --lib datalog2::differential::probe_imports_from_shape -- --ignored --nocapture
+#[test]
+#[ignore = "manual real-data shape probe; run with --ignored"]
+fn probe_imports_from_shape() {
+    use std::collections::BTreeMap;
+
+    let dataset = repo_path(".grafema/grafema.rfdb");
+    if !dataset.join("db_config.json").exists() {
+        panic!(
+            "real dataset not found at {} (expected a MultiShardStore dir with db_config.json)",
+            dataset.display()
+        );
+    }
+
+    let tmp = tempfile::tempdir().expect("create temp dir");
+    let work = tmp.path().join("grafema.rfdb");
+    copy_dir_all(&dataset, &work).expect("copy real dataset into temp dir");
+    let _ = std::fs::remove_file(work.join("LOCK"));
+
+    let manifest = ManifestStore::open(&work).expect("open manifest");
+    let store = MultiShardStore::open(&work, &manifest).expect("open store");
+    let snap = store.snapshot(&manifest);
+
+    // All MODULE node ids (for endpoint-type classification) and file→count for the map shape.
+    let module_nodes = store.find_nodes_at(&snap, Some("MODULE"), None);
+    let module_ids: BTreeSet<u128> = module_nodes.iter().map(|n| n.id).collect();
+    eprintln!("\n=== IMPORTS_FROM shape probe ===");
+    eprintln!("MODULE nodes: {}", module_nodes.len());
+
+    let imports: Vec<_> = store.get_edges_by_type_at(&snap, "IMPORTS_FROM");
+    eprintln!("IMPORTS_FROM edges: {}", imports.len());
+
+    // Classify endpoint node types.
+    let mut src_types: BTreeMap<String, usize> = BTreeMap::new();
+    let mut dst_types: BTreeMap<String, usize> = BTreeMap::new();
+    // Does the endpoint carry a `file` first-class attr equal to the id's file segment?
+    let mut src_file_present = 0usize;
+    let mut src_file_matches_idseg = 0usize;
+    let mut dst_file_present = 0usize;
+    let mut src_is_module = 0usize;
+    let mut dst_is_module = 0usize;
+    let mut sample = Vec::new();
+
+    let id_file_seg = |sid: &str| -> String {
+        // Mirror build_file_to_module_map's caller: URI `grafema://auth/path#frag` or legacy
+        // `path->TYPE->name`. We don't know the authority here, so handle both generically.
+        if let Some(rest) = sid.strip_prefix("grafema://") {
+            // strip authority segment: first '/' after authority
+            if let Some(idx) = rest.find('/') {
+                let after = &rest[idx + 1..];
+                return after.split('#').next().unwrap_or("").to_string();
+            }
+        }
+        sid.split("->").next().unwrap_or("").to_string()
+    };
+
+    for e in &imports {
+        let s = store.get_node_at(&snap, e.src);
+        let d = store.get_node_at(&snap, e.dst);
+        if let Some(s) = &s {
+            *src_types.entry(s.node_type.clone()).or_insert(0) += 1;
+            if !s.file.is_empty() {
+                src_file_present += 1;
+                if s.file == id_file_seg(&s.semantic_id) {
+                    src_file_matches_idseg += 1;
+                }
+            }
+            if module_ids.contains(&e.src) {
+                src_is_module += 1;
+            }
+        }
+        if let Some(d) = &d {
+            *dst_types.entry(d.node_type.clone()).or_insert(0) += 1;
+            if !d.file.is_empty() {
+                dst_file_present += 1;
+            }
+            if module_ids.contains(&e.dst) {
+                dst_is_module += 1;
+            }
+        }
+        if sample.len() < 8 {
+            if let (Some(s), Some(d)) = (&s, &d) {
+                sample.push(format!(
+                    "  {} [{}] file={:?}  ->  {} [{}] file={:?}",
+                    s.semantic_id, s.node_type, s.file, d.semantic_id, d.node_type, d.file
+                ));
+            }
+        }
+    }
+
+    eprintln!("SRC endpoint types: {:?}", src_types);
+    eprintln!("DST endpoint types: {:?}", dst_types);
+    eprintln!(
+        "src file-attr present: {}/{} ; matches id-file-seg: {}",
+        src_file_present, imports.len(), src_file_matches_idseg
+    );
+    eprintln!("dst file-attr present: {}/{}", dst_file_present, imports.len());
+    eprintln!(
+        "src is a MODULE node: {} ; dst is a MODULE node: {}",
+        src_is_module, dst_is_module
+    );
+    eprintln!("--- sample edges ---");
+    for s in &sample {
+        eprintln!("{s}");
+    }
+
+    // MODULE file-attr coverage (the orchestrator's map keys).
+    let mod_with_file = module_nodes.iter().filter(|n| !n.file.is_empty()).count();
+    eprintln!("MODULE nodes with non-empty file attr: {}/{}", mod_with_file, module_nodes.len());
+
+    // Now run the candidate depends.dl rule through v2 and count derived pairs (no write).
+    // Give the planner REAL per-type cardinalities (mirrors the differential harness) so it
+    // drives the join from the small IMPORTS_FROM edge relation and key-probes outward,
+    // instead of cross-producting two unbound MODULE generators.
+    let all_nodes = store.find_nodes_at(&snap, None, None);
+    let total_nodes = all_nodes.len() as u64;
+    let total_edges = store.iter_all_edges_at(&snap).len() as u64;
+    let mut nodes_by_type: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    for n in &all_nodes {
+        *nodes_by_type.entry(n.node_type.clone()).or_insert(0) += 1;
+    }
+    eprintln!("total_nodes={} total_edges={}", total_nodes, total_edges);
+    let view = LsmStorageView::capture(Arc::new(store), &manifest);
+    let stats = Stats {
+        total_nodes,
+        total_edges,
+        nodes_by_type,
+    };
+    // Dump the planned per-leg estimates so an E-PLAN-003 estimate rejection is diagnosable.
+    {
+        use crate::datalog2::parser_ext::parse_ext_program;
+        use crate::datalog2::plan::plan_program;
+        use crate::datalog2::stratify::stratify;
+        if let Ok(prog) = parse_ext_program(crate::datalog2::stdlib::DEPENDS_DL) {
+            if let Ok(strat) = stratify(&prog) {
+                let rules = prog.rules();
+                match plan_program(&rules, &strat, &stats) {
+                    Ok(plans) => {
+                        for p in &plans {
+                            eprintln!("PLAN {} rule_estimate={}", p.head, p.estimate);
+                            for leg in &p.legs {
+                                eprintln!(
+                                    "   leg {} pattern={:?} estimate={}",
+                                    leg.literal.atom().predicate(),
+                                    leg.pattern,
+                                    leg.estimate
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => eprintln!("PLAN error ({}): {e}", e.code.as_str()),
+                }
+            }
+        }
+    }
+    let rule = crate::datalog2::stdlib::DEPENDS_DL;
+    match evaluate(&view, rule, stats, EvalLimits::none(), EventLog::discard()) {
+        Ok(eval) => {
+            let pairs = eval.facts("depends");
+            let mut self_loops = 0usize;
+            for row in &pairs {
+                if let (Some(a), Some(b)) = (row.first(), row.get(1)) {
+                    if a == b {
+                        self_loops += 1;
+                    }
+                }
+            }
+            eprintln!(
+                "\ndepends.dl derived pairs: {} (self-loops among them: {})",
+                pairs.len(),
+                self_loops
+            );
+        }
+        Err(e) => eprintln!("\ndepends.dl eval error ({}): {e}", e.code()),
+    }
+    eprintln!("=== end probe ===\n");
+}
+
+/// Stage 3 (Gate B EXIT) — `depends/2` differential against the orchestrator's
+/// `DEPENDS_ON` ground truth on the REAL store.
+///
+/// Asserts the central Gate B claim: **v2 `depends/2` ≡ the orchestrator's MODULE→MODULE
+/// `DEPENDS_ON` derivation**. Both sides are reduced to a set of `(Msrc, Mdst)` MODULE
+/// id-pairs over one version-pinned snapshot of a temp copy of the real dogfood store.
+///
+/// - **v2 side**: run the bundled [`crate::datalog2::stdlib::DEPENDS_DL`] rule through the
+///   single eval entry and collect every derived `depends(Msrc, Mdst)` id-pair.
+/// - **ground truth**, in priority order:
+///   1. If the store already CONTAINS `DEPENDS_ON` edges (the orchestrator wrote them during
+///      analysis, `grafema-orchestrator/src/main.rs:1766-1783`), read those edges directly —
+///      they ARE the oracle — keeping only MODULE→MODULE pairs (the orchestrator only ever
+///      emits module-pair `DEPENDS_ON`).
+///   2. ELSE reproduce the orchestrator's mapping in-test (`main.rs:1733-1793` +
+///      `build_file_to_module_map`, `main.rs:290-301`): build a file→MODULE-id map from
+///      MODULE nodes' `file` attr, then for each `IMPORTS_FROM` edge map each endpoint to a
+///      module by the file segment parsed from the endpoint's semantic-id string, dropping
+///      self-deps (`src_mod != dst_mod`).
+///
+/// Measurement + claim: prints v2 count, oracle count, MATCH/MISMATCH, and a sample of the
+/// symmetric difference. Honest about a mismatch — a divergence is the real finding (a
+/// modeling gap between the rule's `file`-attr join and the orchestrator's id-string parse).
+///
+/// Run with:
+///   cargo test --lib datalog2::differential::depends2_matches_orchestrator_ground_truth -- --ignored --nocapture
+#[test]
+#[ignore = "manual real-data depends/2 differential (Gate B exit); run with --ignored"]
+fn depends2_matches_orchestrator_ground_truth() {
+    use std::collections::BTreeMap;
+
+    let dataset = repo_path(".grafema/grafema.rfdb");
+    if !dataset.join("db_config.json").exists() {
+        panic!(
+            "real dataset not found at {} (expected a MultiShardStore dir with db_config.json)",
+            dataset.display()
+        );
+    }
+
+    // Off the live store: copy to temp, drop the copied LOCK marker.
+    let tmp = tempfile::tempdir().expect("create temp dir");
+    let work = tmp.path().join("grafema.rfdb");
+    copy_dir_all(&dataset, &work).expect("copy real dataset into temp dir");
+    let _ = std::fs::remove_file(work.join("LOCK"));
+
+    let manifest = ManifestStore::open(&work).expect("open manifest");
+    let store = MultiShardStore::open(&work, &manifest).expect("open store");
+    let snap = store.snapshot(&manifest);
+
+    // ── MODULE nodes: id-set (to classify endpoints) + file→module-id map (the oracle key). ──
+    let module_nodes = store.find_nodes_at(&snap, Some("MODULE"), None);
+    let module_ids: BTreeSet<u128> = module_nodes.iter().map(|n| n.id).collect();
+    // file → MODULE id. Mirrors build_file_to_module_map (key = MODULE `file` attr). If two
+    // modules ever shared a file the orchestrator's HashMap would keep the last; here a
+    // BTreeMap insert keeps the last too — faithful enough, and such collisions don't occur.
+    let mut file_to_module: BTreeMap<String, u128> = BTreeMap::new();
+    for n in &module_nodes {
+        if !n.file.is_empty() {
+            file_to_module.insert(n.file.clone(), n.id);
+        }
+    }
+
+    // ── v2 side: run depends.dl, collect (Msrc, Mdst) id-pairs. ──
+    let all_nodes = store.find_nodes_at(&snap, None, None);
+    let total_nodes = all_nodes.len() as u64;
+    let total_edges = store.iter_all_edges_at(&snap).len() as u64;
+    let mut nodes_by_type: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    for n in &all_nodes {
+        *nodes_by_type.entry(n.node_type.clone()).or_insert(0) += 1;
+    }
+    let stats = Stats {
+        total_nodes,
+        total_edges,
+        nodes_by_type,
+    };
+
+    // Capture the view BEFORE moving `store` into the Arc — but we still need `store` for the
+    // oracle reads below, so build the oracle first while we hold the bare store.
+    let imports: Vec<_> = store.get_edges_by_type_at(&snap, "IMPORTS_FROM");
+    let existing_depends: Vec<_> = store.get_edges_by_type_at(&snap, "DEPENDS_ON");
+
+    eprintln!("\n=== depends/2 differential — Gate B exit ===");
+    eprintln!(
+        "dataset (temp copy): {}\nsnapshot version: {} | MODULE nodes: {} | IMPORTS_FROM edges: {} | DEPENDS_ON edges in store: {}",
+        work.display(),
+        snap.version,
+        module_nodes.len(),
+        imports.len(),
+        existing_depends.len(),
+    );
+
+    // ── Ground truth (oracle). ──
+    // Priority 1: the store already contains DEPENDS_ON edges → those ARE the oracle.
+    // Priority 2: reproduce the orchestrator's file→module derivation from IMPORTS_FROM.
+    let id_file_seg = |sid: &str| -> String {
+        // Mirror the orchestrator's parse (main.rs:1746-1755): URI
+        // `grafema://authority/path#frag` → `path`; legacy `path->TYPE->name` → `path`.
+        if let Some(rest) = sid.strip_prefix("grafema://") {
+            if let Some(idx) = rest.find('/') {
+                let after = &rest[idx + 1..];
+                return after.split('#').next().unwrap_or("").to_string();
+            }
+        }
+        sid.split("->").next().unwrap_or("").to_string()
+    };
+
+    let (oracle, oracle_source): (BTreeSet<(u128, u128)>, &str) = if !existing_depends.is_empty() {
+        let mut set = BTreeSet::new();
+        let mut non_module = 0usize;
+        for e in &existing_depends {
+            // The orchestrator only emits module-pair DEPENDS_ON. Keep only those endpoints so
+            // the comparison is apples-to-apples with v2's module-typed head; count any others.
+            if module_ids.contains(&e.src) && module_ids.contains(&e.dst) {
+                set.insert((e.src, e.dst));
+            } else {
+                non_module += 1;
+            }
+        }
+        if non_module > 0 {
+            eprintln!(
+                "note: {non_module} DEPENDS_ON edges had a non-MODULE endpoint (excluded from oracle)"
+            );
+        }
+        (set, "store DEPENDS_ON edges")
+    } else {
+        // Reproduce main.rs:1742-1764.
+        let mut set = BTreeSet::new();
+        let mut unmapped_endpoints = 0usize;
+        for e in &imports {
+            let s = store.get_node_at(&snap, e.src);
+            let d = store.get_node_at(&snap, e.dst);
+            let (Some(s), Some(d)) = (s, d) else {
+                continue;
+            };
+            let src_file = id_file_seg(&s.semantic_id);
+            let dst_file = id_file_seg(&d.semantic_id);
+            match (file_to_module.get(&src_file), file_to_module.get(&dst_file)) {
+                (Some(&sm), Some(&dm)) => {
+                    if sm != dm {
+                        set.insert((sm, dm));
+                    }
+                }
+                _ => unmapped_endpoints += 1,
+            }
+        }
+        eprintln!(
+            "note: reproduced oracle from IMPORTS_FROM; {unmapped_endpoints} import edges had an endpoint with no file→MODULE mapping"
+        );
+        (set, "reproduced orchestrator mapping")
+    };
+
+    // Now move the store into the Arc-backed view for the v2 run.
+    let view = LsmStorageView::capture(Arc::new(store), &manifest);
+    let v2: BTreeSet<(u128, u128)> = match evaluate(
+        &view,
+        crate::datalog2::stdlib::DEPENDS_DL,
+        stats,
+        EvalLimits::none(),
+        EventLog::discard(),
+    ) {
+        Ok(eval) => {
+            let mut set = BTreeSet::new();
+            for row in eval.facts("depends") {
+                if let (Some(a), Some(b)) = (row.first(), row.get(1)) {
+                    if let (Some(a), Some(b)) = (a.as_id(), b.as_id()) {
+                        set.insert((a, b));
+                    }
+                }
+            }
+            set
+        }
+        Err(e) => panic!("v2 depends.dl eval failed ({}): {e}", e.code()),
+    };
+
+    // ── Compare. ──
+    let only_v2: Vec<&(u128, u128)> = v2.difference(&oracle).collect();
+    let only_oracle: Vec<&(u128, u128)> = oracle.difference(&v2).collect();
+    let same = only_v2.is_empty() && only_oracle.is_empty();
+
+    eprintln!("\noracle source: {oracle_source}");
+    eprintln!(
+        "v2 depends/2 pairs: {}\norchestrator (oracle) pairs: {}",
+        v2.len(),
+        oracle.len()
+    );
+    eprintln!(
+        "intersection: {} | only-v2: {} | only-oracle: {}",
+        v2.intersection(&oracle).count(),
+        only_v2.len(),
+        only_oracle.len()
+    );
+    eprintln!(
+        "\n>>> Gate B EXIT: v2 depends/2 {} orchestrator DEPENDS_ON <<<",
+        if same { "≡ (MATCH)" } else { "≠ (MISMATCH)" }
+    );
+
+    // Resolve a few diff pairs to semantic ids for cheap triage.
+    let label = |a: u128, b: u128| -> String {
+        let n = module_nodes.iter().find(|n| n.id == a).map(|n| n.semantic_id.as_str());
+        let m = module_nodes.iter().find(|n| n.id == b).map(|n| n.semantic_id.as_str());
+        format!("({} -> {})", n.unwrap_or("?"), m.unwrap_or("?"))
+    };
+    if !same {
+        eprintln!("\n--- sample only-v2 (≤8) [v2 derives, orchestrator does not] ---");
+        for (a, b) in only_v2.iter().take(8) {
+            eprintln!("  {} [{:x} -> {:x}]", label(*a, *b), a, b);
+        }
+        eprintln!("--- sample only-oracle (≤8) [orchestrator has, v2 misses] ---");
+        for (a, b) in only_oracle.iter().take(8) {
+            eprintln!("  {} [{:x} -> {:x}]", label(*a, *b), a, b);
+        }
+    }
+    eprintln!("=== end depends/2 differential ===\n");
+
+    // Harness-integrity guard only (NOT the all-match assertion — a mismatch is a finding to
+    // surface, per the Gate B plan): the comparison actually ran over a non-empty oracle.
+    assert!(
+        !oracle.is_empty(),
+        "oracle is empty — no DEPENDS_ON ground truth could be established; the differential \
+         would vacuously pass and tell us nothing about the Gate B claim"
+    );
+}
+
 /// Right-pad / truncate a rule name to keep the table aligned.
 fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
