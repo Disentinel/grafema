@@ -941,6 +941,146 @@ mod executor_tests {
         assert!(expand.next().unwrap().is_none());
     }
 
+    // ── Repeated-variable / self-join pattern tests ─────────────────────
+    //
+    // A node variable used twice in a MATCH pattern (e.g. `(a)-[:R]->(a)` or
+    // `(m)-[:R1]->(c)-[:R2]->(m)`) must denote the SAME node: the second
+    // occurrence is an equality constraint, not a fresh binding. The Expand /
+    // VarLengthExpand operators must FILTER (keep only rows whose discovered
+    // target equals the already-bound node), not overwrite the binding —
+    // overwriting fabricates rows for non-existent self-loops / cycles. This
+    // is the same self-join class as the Datalog hash-join shared-var guard.
+
+    fn person(id: u128, name: &str) -> NodeRecord {
+        NodeRecord {
+            id,
+            node_type: Some("PERSON".to_string()),
+            name: Some(name.to_string()),
+            file: Some("g".to_string()),
+            file_id: 0,
+            name_offset: 0,
+            version: "main".into(),
+            exported: false,
+            replaces: None,
+            deleted: false,
+            metadata: None,
+            semantic_id: None,
+        }
+    }
+
+    fn rel(src: u128, dst: u128, ty: &str) -> EdgeRecord {
+        EdgeRecord {
+            src,
+            dst,
+            edge_type: Some(ty.to_string()),
+            version: "main".into(),
+            metadata: None,
+            deleted: false,
+        }
+    }
+
+    #[test]
+    fn expand_self_loop_repeated_var() {
+        // alice -LOOPS-> alice (real self-loop); bob -LOOPS-> carol (not one).
+        // `MATCH (a)-[:LOOPS]->(a)` must return ONLY alice.
+        let mut engine = GraphEngineV2::create_ephemeral();
+        engine.add_nodes(vec![person(1, "alice"), person(2, "bob"), person(3, "carol")]);
+        engine.add_edges(vec![rel(1, 1, "LOOPS"), rel(2, 3, "LOOPS")], true);
+
+        let res = crate::cypher::execute(
+            &engine,
+            "MATCH (a)-[:LOOPS]->(a) RETURN a.name",
+            default_limits(),
+        )
+        .unwrap();
+
+        let mut names: Vec<String> = res
+            .rows
+            .iter()
+            .map(|r| r[0].as_str().unwrap_or("").to_string())
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            vec!["alice"],
+            "self-loop pattern must bind `a` to the same node on both ends; bob->carol must not appear"
+        );
+    }
+
+    #[test]
+    fn expand_two_hop_cycle_repeated_var() {
+        // Mutual: alice<->bob. One-way chain: carol->dave->erin.
+        // `MATCH (m)-[:KNOWS]->(c)-[:KNOWS]->(m)` must return ONLY the mutual
+        // pair, in both directions: (alice,bob) and (bob,alice).
+        let mut engine = GraphEngineV2::create_ephemeral();
+        engine.add_nodes(vec![
+            person(1, "alice"),
+            person(2, "bob"),
+            person(3, "carol"),
+            person(4, "dave"),
+            person(5, "erin"),
+        ]);
+        engine.add_edges(
+            vec![
+                rel(1, 2, "KNOWS"),
+                rel(2, 1, "KNOWS"),
+                rel(3, 4, "KNOWS"),
+                rel(4, 5, "KNOWS"),
+            ],
+            true,
+        );
+
+        let res = crate::cypher::execute(
+            &engine,
+            "MATCH (m)-[:KNOWS]->(c)-[:KNOWS]->(m) RETURN m.name, c.name",
+            default_limits(),
+        )
+        .unwrap();
+
+        let mut pairs: Vec<(String, String)> = res
+            .rows
+            .iter()
+            .map(|r| {
+                (
+                    r[0].as_str().unwrap_or("").to_string(),
+                    r[1].as_str().unwrap_or("").to_string(),
+                )
+            })
+            .collect();
+        pairs.sort();
+        assert_eq!(
+            pairs,
+            vec![
+                ("alice".to_string(), "bob".to_string()),
+                ("bob".to_string(), "alice".to_string()),
+            ],
+            "two-hop cycle must close back to the same start node; the carol->dave->erin chain must not yield a row"
+        );
+    }
+
+    #[test]
+    fn varlength_expand_repeated_var_no_fabricated_rows() {
+        // One-way chain alice->bob->carol; nothing returns to alice.
+        // `MATCH (a)-[:KNOWS*1..2]->(a)` has no valid binding, so it must
+        // return NOTHING — and must never rebind `a` to bob or carol.
+        let mut engine = GraphEngineV2::create_ephemeral();
+        engine.add_nodes(vec![person(1, "alice"), person(2, "bob"), person(3, "carol")]);
+        engine.add_edges(vec![rel(1, 2, "KNOWS"), rel(2, 3, "KNOWS")], true);
+
+        let res = crate::cypher::execute(
+            &engine,
+            "MATCH (a)-[:KNOWS*1..2]->(a) RETURN a.name",
+            default_limits(),
+        )
+        .unwrap();
+
+        assert!(
+            res.rows.is_empty(),
+            "variable-length repeated-var pattern must not fabricate rows by rebinding `a`; got {:?}",
+            res.rows
+        );
+    }
+
     // ── Filter tests ────────────────────────────────────────────────────
 
     #[test]

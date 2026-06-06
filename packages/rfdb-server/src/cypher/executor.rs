@@ -311,6 +311,21 @@ impl<'a> Operator for Expand<'a> {
                         .unwrap_or(0);
                     let target_id = self.target_id(edge, src_node_id);
 
+                    // Repeated-variable constraint: if `dst_var` is already
+                    // bound (the pattern reuses this node variable, e.g.
+                    // `(a)-[:R]->(a)` or `(m)-[:R1]->(c)-[:R2]->(m)`), the
+                    // discovered target must equal the existing binding —
+                    // Cypher requires the same variable to denote the same
+                    // node. Overwriting it would fabricate rows for
+                    // non-existent self-loops/cycles, so skip on mismatch.
+                    if let Some(ref dv) = self.dst_var {
+                        if let Some(existing) = input_rec.get(dv).and_then(|v| v.as_node_id()) {
+                            if existing != target_id {
+                                continue;
+                            }
+                        }
+                    }
+
                     if let Some(target_rec) = self.engine.get_node(target_id) {
                         self.limits.track_intermediate()?;
                         let mut out = input_rec.clone();
@@ -456,6 +471,19 @@ impl<'a> Operator for VarLengthExpand<'a> {
                 while self.result_pos < self.results.len() {
                     let nid = self.results[self.result_pos];
                     self.result_pos += 1;
+
+                    // Repeated-variable constraint (see Expand::next): if
+                    // `dst_var` is already bound (e.g. `(a)-[:R*1..2]->(a)`),
+                    // a reached node must equal the existing binding rather
+                    // than overwrite it. Skip on mismatch to avoid fabricating
+                    // rows that rebind the variable to a different node.
+                    if let Some(ref dv) = self.dst_var {
+                        if let Some(existing) = input_rec.get(dv).and_then(|v| v.as_node_id()) {
+                            if existing != nid {
+                                continue;
+                            }
+                        }
+                    }
 
                     if let Some(node_rec) = self.engine.get_node(nid) {
                         self.limits.track_intermediate()?;
