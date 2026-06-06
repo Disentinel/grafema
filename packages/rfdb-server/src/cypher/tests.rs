@@ -566,6 +566,53 @@ mod parser_tests {
     }
 
     #[test]
+    fn multibyte_char_where_keyword_expected_errors_not_panics() {
+        // A multibyte UTF-8 char sitting where a keyword check happens must
+        // produce a clean ParseError, not panic on a non-char-boundary byte
+        // slice. Here, after `n.name = 'x'` the expression parser probes for
+        // `OR`/`AND` (2/3-byte keywords) against a 3-byte char (好, U+597D).
+        let multibyte = String::from_utf8(vec![0xE5, 0xA5, 0xBD]).unwrap();
+        let query = format!("MATCH (n) WHERE n.name = 'x' {}", multibyte);
+        let err = parse_cypher(&query).unwrap_err();
+        assert!(
+            err.message.contains("expected keyword 'RETURN'"),
+            "unexpected message: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn multibyte_trailing_input_errors_not_panics() {
+        // Trailing multibyte input after a complete query reaches the
+        // `ORDER`/`LIMIT` keyword probes (5-byte keywords) against a 6-byte
+        // run (ααα, three U+03B1). The byte index 5 lands mid-char.
+        let multibyte = String::from_utf8(vec![0xCE, 0xB1, 0xCE, 0xB1, 0xCE, 0xB1]).unwrap();
+        let query = format!("MATCH (n) RETURN n {}", multibyte);
+        let err = parse_cypher(&query).unwrap_err();
+        assert!(
+            err.message.contains("unexpected input after query"),
+            "unexpected message: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn multibyte_immediately_before_real_keyword_still_parses() {
+        // Guard: a legitimate non-ASCII string literal followed by ORDER BY
+        // must still parse — the boundary-safe keyword check must not regress
+        // normal keyword detection.
+        let cyrillic =
+            String::from_utf8(vec![0xD1, 0x82, 0xD0, 0xB5, 0xD1, 0x81, 0xD1, 0x82]).unwrap(); // "тест"
+        let query = format!(
+            "MATCH (n) WHERE n.name = '{}' RETURN n.name ORDER BY n.name LIMIT 5",
+            cyrillic
+        );
+        let q = parse_cypher(&query).unwrap();
+        assert!(q.order_by.is_some());
+        assert_eq!(q.limit, Some(5));
+    }
+
+    #[test]
     fn line_comment_ignored() {
         let q = parse_cypher(
             "// Find all functions\nMATCH (n:FUNCTION) RETURN n.name",
