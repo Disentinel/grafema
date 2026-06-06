@@ -2223,6 +2223,90 @@ mod eval_tests {
             "stats.total_results should match number of bindings");
     }
 
+    // REG-315 / REG-503 regression: the explain evaluator must support the
+    // attr_edge() builtin exactly like the plain evaluator. Before the fix,
+    // EvaluatorExplain omitted attr_edge from its builtin dispatch, so under
+    // `--explain` the atom fell through to derived-predicate lookup (no such
+    // rule) and silently returned zero bindings — making `--explain` change
+    // the answer for any query/guarantee that uses attr_edge.
+    #[test]
+    fn test_explain_attr_edge_matches_plain_evaluator() {
+        use crate::datalog::eval_explain::EvaluatorExplain;
+
+        let mut engine = GraphEngineV2::create_ephemeral();
+
+        engine.add_nodes(vec![
+            NodeRecord {
+                id: 1,
+                node_type: Some("LOOP".to_string()),
+                name: Some("for_loop".to_string()),
+                file: Some("test.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+                semantic_id: None,
+            },
+            NodeRecord {
+                id: 2,
+                node_type: Some("VARIABLE".to_string()),
+                name: Some("items".to_string()),
+                file: Some("test.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+                semantic_id: None,
+            },
+        ]);
+
+        engine.add_edges(vec![
+            EdgeRecord {
+                src: 1,
+                dst: 2,
+                edge_type: Some("ITERATES_OVER".to_string()),
+                version: "main".into(),
+                metadata: Some(r#"{"scale": "nodes", "reason": "array_iteration"}"#.to_string()),
+                deleted: false,
+            },
+        ], false);
+
+        // attr_edge(1, 2, "ITERATES_OVER", "scale", X)
+        let query = Atom::new("attr_edge", vec![
+            Term::constant("1"),
+            Term::constant("2"),
+            Term::constant("ITERATES_OVER"),
+            Term::constant("scale"),
+            Term::var("X"),
+        ]);
+
+        // Plain evaluator (ground truth)
+        let plain = Evaluator::new(&engine);
+        let plain_results = plain.query_atom(&query).unwrap();
+        assert_eq!(plain_results.len(), 1, "plain evaluator should bind X once");
+        assert_eq!(plain_results[0].get("X"), Some(&Value::Str("nodes".to_string())));
+
+        // Explain evaluator must produce the SAME binding
+        let mut explain_eval = EvaluatorExplain::new(&engine, true);
+        let explain_result = explain_eval.query(&query);
+        assert_eq!(
+            explain_result.bindings.len(),
+            plain_results.len(),
+            "explain evaluator must produce the same attr_edge bindings as the plain evaluator"
+        );
+        assert_eq!(
+            explain_result.bindings[0].get("X").map(|s| s.as_str()),
+            Some("nodes"),
+            "explain evaluator must bind X to the edge metadata value"
+        );
+    }
+
     #[test]
     fn test_eval_attr_edge_in_rule() {
         // Test attr_edge() used in a Datalog rule context
