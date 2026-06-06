@@ -392,6 +392,19 @@ impl<'a> EvaluatorExplain<'a> {
                         }
                     }
 
+                    // Honour an already-bound variable on the dst end — critical
+                    // for self-join patterns like `edge(M, C, T1), edge(C, M, T2)`.
+                    // Without this, the second edge atom rebinds the shared var to
+                    // any outgoing dst, silently producing cross-joined rows.
+                    // Mirror of Evaluator::eval_edge_hash_join (REG-503 parity).
+                    if let Term::Var(var) = dst_term {
+                        if let Some(existing) = bindings.get(var).and_then(|v| v.as_id()) {
+                            if existing != dst_id {
+                                continue;
+                            }
+                        }
+                    }
+
                     let mut new_bindings = bindings.clone();
 
                     match dst_term {
@@ -446,6 +459,17 @@ impl<'a> EvaluatorExplain<'a> {
                     if let Term::Const(expected_src) = src_term {
                         if expected_src.parse::<u128>().ok() != Some(src_id) {
                             continue;
+                        }
+                    }
+
+                    // Honour an already-bound variable on the src end — same bug
+                    // as eval_edge_hash_join for `incoming(A, B, T1), incoming(B, A, T2)`.
+                    // Mirror of Evaluator::eval_incoming_hash_join (REG-503 parity).
+                    if let Term::Var(var) = src_term {
+                        if let Some(existing) = bindings.get(var).and_then(|v| v.as_id()) {
+                            if existing != src_id {
+                                continue;
+                            }
                         }
                     }
 
