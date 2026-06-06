@@ -25,7 +25,7 @@ interface LsOptions {
   limit: string;
 }
 
-interface NodeInfo {
+export interface NodeInfo {
   id: string;
   type: string;
   name: string;
@@ -133,9 +133,8 @@ Discover available types:
         console.log(`[${nodeType}] (${showing}${showing < totalCount ? ` of ${totalCount}` : ''}):`);
         console.log('');
 
-        for (const node of nodes) {
-          const display = formatNodeForList(node, nodeType, projectPath);
-          console.log(`  ${display}`);
+        for (const line of formatNodeList(nodes, nodeType, projectPath)) {
+          console.log(`  ${line}`);
         }
 
         if (showing < totalCount) {
@@ -183,4 +182,17 @@ function formatNodeForList(node: NodeInfo, nodeType: string, projectPath: string
   // Default: name (location)
   const name = node.name || node.id;
   return loc ? `${name}  (${loc})` : name;
+}
+
+/**
+ * Format a whole node list for display, disambiguating entries whose base
+ * display string collides (REG-279). Same-name/same-location nodes are
+ * otherwise indistinguishable; for those (and only those) the semantic ID is
+ * appended so the user can tell them apart. Unique entries are left untouched.
+ */
+export function formatNodeList(nodes: NodeInfo[], nodeType: string, projectPath: string): string[] {
+  const base = nodes.map((n) => formatNodeForList(n, nodeType, projectPath));
+  const counts = new Map<string, number>();
+  for (const b of base) counts.set(b, (counts.get(b) ?? 0) + 1);
+  return base.map((b, i) => ((counts.get(b) ?? 0) > 1 ? `${b}  [${nodes[i].id}]` : b));
 }
