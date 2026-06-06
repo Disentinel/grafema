@@ -29,8 +29,11 @@ const KNOWN_FORMATS = Object.keys(RENDERERS).sort().join(', ');
 
 export const exportCommand = new Command('export')
   .description('Export FEATURE entries from the graph in a chosen format')
-  .requiredOption('--feature <pattern>', "Feature glob (e.g. 'cli:*', 'http:*', \"cli:command:'analyze'\")")
-  .requiredOption('--as <format>', `Output format (${KNOWN_FORMATS})`)
+  // Declared as plain `.option` (not `.requiredOption`): commander's bare
+  // "required option … not specified" would short-circuit before the action,
+  // making the guided error below unreachable (sibling of REG-278 / `ls --type`).
+  .option('--feature <pattern>', "Feature glob (e.g. 'cli:*', 'http:*', \"cli:command:'analyze'\")")
+  .option('--as <format>', `Output format (${KNOWN_FORMATS})`)
   .option('-o, --output <path>', 'Write output to <path> instead of stdout')
   .option('-p, --project <path>', 'Project path', '.')
   .addHelpText('after', `
@@ -44,8 +47,15 @@ docs-md (all categories). Other formats — mcp-schema, asyncapi,
 json-schema, ts-declarations, mermaid — are tracked separately.
 `)
   .action(async (options: ExportCliOptions) => {
+    // Outer condition ends in exitWithError (returns `never`), so after this
+    // block TS narrows both options.feature and options.as to `string`.
     if (!options.feature || !options.as) {
-      exitWithError('Both --feature and --as are required', [
+      const missing: string[] = [];
+      if (!options.feature) missing.push('--feature <pattern>');
+      if (!options.as) missing.push('--as <format>');
+      exitWithError(`Missing required option(s) for 'export': ${missing.join(', ')}`, [
+        "Example: grafema export --feature 'http:*' --as openapi-3.1",
+        `Formats: ${KNOWN_FORMATS}`,
         'See: grafema export --help',
       ]);
     }
