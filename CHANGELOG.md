@@ -40,6 +40,7 @@ All notable changes to this project will be documented in this file.
 - fix(cli): `grafema ls` disambiguates duplicate node names by appending the semantic id to colliding entries only — unique lines are unchanged (REG-279, #328)
 - fix(config): empty the vestigial JS-pipeline plugin defaults in `DEFAULT_CONFIG.plugins` so `grafema doctor` no longer reports plugins that were deleted with the dead JS analysis pipeline as "configured" (REG-519/501/572, #330)
 - fix(resolve): emit an `EXTENDS` edge to a virtual `BUILTIN_CLASS` node for classes extending JS/TS builtins (`Error`, `EventEmitter`, etc.) instead of silently dropping it; user-defined classes that shadow a builtin still win (REG-585 part 1, #331)
+- fix(orchestrator): rebuild the RFDB index before the unresolved-diagnostics negation queries (the resolver commits CALLS/IMPORTS_FROM with `defer_index=true`), so the ISSUE count is deterministic across runs instead of varying with L0/L1 compaction timing (RFD-65, #332)
 
 ### Documentation
 
