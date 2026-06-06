@@ -207,25 +207,72 @@ impl<'a> Parser<'a> {
         self.pos += 1; // consume opening quote
 
         let start = self.pos;
+        let mut value = String::new();
         while self.pos < self.input.len() {
             let c = self.input[self.pos..].chars().next().unwrap();
             if c == '\\' {
-                // Skip escaped character
+                // Escape sequence: consume the backslash, then decode the next
+                // character into `value`. A backslash before the closing quote
+                // must not be emitted verbatim and must not let the escaped
+                // quote terminate the string.
                 self.pos += c.len_utf8();
-                if self.pos < self.input.len() {
-                    let escaped = self.input[self.pos..].chars().next().unwrap();
-                    self.pos += escaped.len_utf8();
+                let escaped = match self.input[self.pos..].chars().next() {
+                    Some(e) => e,
+                    None => break, // trailing backslash -> falls through to "unterminated"
+                };
+                self.pos += escaped.len_utf8();
+                match escaped {
+                    '\'' => value.push('\''),
+                    '"' => value.push('"'),
+                    '\\' => value.push('\\'),
+                    'n' => value.push('\n'),
+                    't' => value.push('\t'),
+                    'r' => value.push('\r'),
+                    'b' => value.push('\u{0008}'),
+                    'f' => value.push('\u{000C}'),
+                    'u' => self.decode_unicode_escape(&mut value),
+                    // Unknown escape: preserve verbatim (backslash + char), the
+                    // conservative choice so only well-defined escapes change.
+                    other => {
+                        value.push('\\');
+                        value.push(other);
+                    }
                 }
             } else if c == quote {
-                let value = self.input[start..self.pos].to_string();
                 self.pos += 1; // consume closing quote
                 return Ok(value);
             } else {
+                value.push(c);
                 self.pos += c.len_utf8();
             }
         }
 
         Err(ParseError::new("unterminated string", start))
+    }
+
+    /// Decode a `\uXXXX` escape. On entry `self.pos` is positioned just after
+    /// the `u`. If exactly four hex digits follow and form a valid Unicode
+    /// scalar value, push the decoded character and advance past the digits.
+    /// Otherwise leave the digits unconsumed and preserve the escape verbatim
+    /// (a literal backslash + `u`), matching the conservative policy for
+    /// unrecognized escapes.
+    fn decode_unicode_escape(&mut self, value: &mut String) {
+        let hex: String = self.input[self.pos..]
+            .chars()
+            .take(4)
+            .take_while(|c| c.is_ascii_hexdigit())
+            .collect();
+        if hex.len() == 4 {
+            if let Some(ch) = u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32) {
+                value.push(ch);
+                self.pos += 4; // four ASCII hex digits => four bytes
+                return;
+            }
+        }
+        // Not a valid \uXXXX — preserve verbatim; the following characters are
+        // re-parsed as ordinary string content.
+        value.push('\\');
+        value.push('u');
     }
 
     /// Parse an integer literal.

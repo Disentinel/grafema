@@ -526,6 +526,66 @@ mod parser_tests {
         .unwrap();
         assert_eq!(q.match_clause.pattern.start.labels, vec!["FUNCTION".to_string()]);
     }
+
+    /// Parse `cypher_literal` (the raw Cypher source text of a string literal,
+    /// e.g. `r"'it\'s'"`) inside an inline node property and return the decoded
+    /// string value the parser produced.
+    fn parsed_string_literal(cypher_literal: &str) -> String {
+        let query = format!("MATCH (n {{name: {}}}) RETURN n", cypher_literal);
+        let q = parse_cypher(&query).unwrap();
+        match &q.match_clause.pattern.start.properties[0].1 {
+            Expr::Literal(CypherLiteral::Str(s)) => s.clone(),
+            other => panic!("expected string literal, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn string_escape_single_quote_decoded() {
+        // `'it\'s'` must decode to `it's` (the backslash is removed, the quote
+        // does not terminate the string). Previously the raw `it\'s` — backslash
+        // retained — was returned.
+        assert_eq!(parsed_string_literal(r"'it\'s'"), "it's");
+    }
+
+    #[test]
+    fn string_escape_double_quote_decoded() {
+        // `"she said \"hi\""` decodes to `she said "hi"`.
+        assert_eq!(
+            parsed_string_literal(r#""she said \"hi\"""#),
+            "she said \"hi\""
+        );
+    }
+
+    #[test]
+    fn string_escape_backslash_decoded() {
+        // `'a\\b'` decodes to a single backslash: `a\b`.
+        assert_eq!(parsed_string_literal(r"'a\\b'"), "a\\b");
+    }
+
+    #[test]
+    fn string_escape_newline_and_tab_decoded() {
+        assert_eq!(parsed_string_literal(r"'line\nbreak'"), "line\nbreak");
+        assert_eq!(parsed_string_literal(r"'a\tb'"), "a\tb");
+    }
+
+    #[test]
+    fn string_escape_unicode_decoded() {
+        // `\u0041` is the Unicode escape for `A`.
+        assert_eq!(parsed_string_literal(r"'\u0041BC'"), "ABC");
+    }
+
+    #[test]
+    fn string_unknown_escape_preserved_verbatim() {
+        // `\d` is not a defined escape; conservatively preserve `\d` so only
+        // well-defined escapes change behavior.
+        assert_eq!(parsed_string_literal(r"'a\db'"), "a\\db");
+    }
+
+    #[test]
+    fn string_no_escape_unchanged() {
+        // The common case (no backslash) is byte-for-byte unchanged.
+        assert_eq!(parsed_string_literal("'plain text'"), "plain text");
+    }
 }
 
 mod value_tests {
@@ -2458,5 +2518,37 @@ mod integration_tests {
         .unwrap();
         assert_eq!(result.columns, vec!["f.name", "calls"]);
         assert!(result.row_count >= 1);
+    }
+
+    #[test]
+    fn where_string_literal_with_escaped_quote_matches() {
+        // End-to-end: a node whose name literally contains an apostrophe must be
+        // matched by a WHERE comparison whose Cypher string literal uses an
+        // escaped quote. Before escape decoding the literal parsed as `it\'s`
+        // (backslash retained) and matched nothing (0 rows).
+        let mut engine = GraphEngineV2::create_ephemeral();
+        engine.add_nodes(vec![NodeRecord {
+            id: 1,
+            node_type: Some("FUNCTION".to_string()),
+            name: Some("it's".to_string()),
+            file: Some("src/a.js".to_string()),
+            file_id: 0,
+            name_offset: 0,
+            version: "main".into(),
+            exported: false,
+            replaces: None,
+            deleted: false,
+            metadata: None,
+            semantic_id: None,
+        }]);
+
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION) WHERE n.name = 'it\\'s' RETURN n.name",
+            EvalLimits::none(),
+        )
+        .unwrap();
+
+        assert_eq!(collect_string_column(&result, 0), vec!["it's"]);
     }
 }
