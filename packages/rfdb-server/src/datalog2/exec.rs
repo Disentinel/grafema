@@ -1332,6 +1332,9 @@ mod tests {
         fn get_node(&self, id: u128) -> Option<GlueNodeRow> {
             self.inner.get_node(id)
         }
+        fn nodes_by_attr(&self, key: &str, value: &str) -> Vec<GlueNodeRow> {
+            self.inner.nodes_by_attr(key, value)
+        }
     }
 
     /// Run a program over an arbitrary `StorageView` (not just the fixture), so a counting

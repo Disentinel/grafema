@@ -258,9 +258,6 @@ pub enum BuiltinKind {
     Function,
 }
 
-/// A coarse, monotone cost estimate the planner orders literals by (spec §7).
-pub type Cost = u64;
-
 /// Minimal storage statistics the cost functions consult. A trimmed surface (the full
 /// `Stats` lives with the planner in a later layer); cost only needs relation magnitudes.
 #[derive(Debug, Clone, Default)]
@@ -290,8 +287,6 @@ pub struct BuiltinDef {
     pub arity: usize,
     /// Supported binding modes; a literal matching none is rejected `E-PLAN-001`.
     pub modes: &'static [Mode],
-    /// Greedy cost estimate from [`Stats`] for a given matched [`Mode`].
-    pub cost: fn(&Stats, &Mode) -> Cost,
     /// Generator / Filter / Function classification.
     pub kind: BuiltinKind,
     /// Evaluation body. Reads via `StorageView`, writes into `Batch`, consumes `ArgSpec`.
@@ -344,6 +339,16 @@ fn bound_id(arg: &ArgValue) -> Option<u128> {
 
 /// Pull the bound string surface from a [`ArgValue::Bound`].
 fn bound_str(arg: &ArgValue) -> Option<String> {
+    arg.as_bound().map(Value::as_str)
+}
+
+/// The string surface of a bound literal used as an attr equality target (spec §5): a
+/// `Value::Str` is its own string, a `Value::Id` is its decimal surface — exactly the
+/// surface v1's `attr_to_query` writes into the `AttrQuery`. The index reverse-lookup then
+/// matches against the column's stored string, so this is the same coercion the bound-id
+/// filter path applies through [`coerce_eq`], just driven through the index instead of a
+/// per-node read.
+fn bound_value_surface(arg: &ArgValue) -> Option<String> {
     arg.as_bound().map(Value::as_str)
 }
 
@@ -559,13 +564,43 @@ fn eval_attr(view: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> Builtin
     let val_arg = &spec.args[2];
     let width = spec.output_arity();
 
+    let key = match bound_str(key_arg) {
+        Some(k) => k,
+        None => return Ok(()),
+    };
+
+    // Generator mode `attr(FreeId, "key", "val")` (ATTR_MODES [F, B, B]): the id is a free
+    // output and the value is a bound literal — produce every node whose attr key == value
+    // via the snapshot-pinned attr index (parity with v1's `find_by_attr`). This is the
+    // capability Gate A had scoped out (E-PLAN-001 on an unbound id).
+    if id_arg.mode() == ArgMode::Free {
+        let Some(slot) = free_slot(id_arg) else {
+            // A wildcard id with a value literal: existence over the matching set. Bound by
+            // the same index path; no captured id column.
+            if let Some(value) = bound_value_surface(val_arg) {
+                for _ in view.nodes_by_attr(&key, &value) {
+                    out.push_pass();
+                }
+            }
+            return Ok(());
+        };
+        // The value position must be bound for this mode (the mode check guarantees it);
+        // its string surface is the equality target, applying §5 coercion: a literal that
+        // has a string surface drives the index reverse-lookup, exactly as the filter path
+        // compares against the column's string surface.
+        let value = match bound_value_surface(val_arg) {
+            Some(v) => v,
+            None => return Ok(()),
+        };
+        for n in view.nodes_by_attr(&key, &value) {
+            out.push(emit_row(width, &[(slot, Value::Id(n.id))]));
+        }
+        return Ok(());
+    }
+
     let id = match bound_id(id_arg) {
         Some(id) => id,
         // No bound id → nothing to read (mode check guarantees boundness; defensive).
-        None => return Ok(()),
-    };
-    let key = match bound_str(key_arg) {
-        Some(k) => k,
         None => return Ok(()),
     };
 
@@ -729,42 +764,6 @@ fn eval_string_contains(_v: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -
     Ok(())
 }
 
-// ── Cost functions ─────────────────────────────────────────────────
-
-/// Generator cost over nodes: a free id-output scans the type (≈ a fraction of nodes); a
-/// bound id is a point lookup (unit). Coarse but monotone (spec §7).
-fn cost_node(stats: &Stats, mode: &Mode) -> Cost {
-    if mode.args.first() == Some(&ArgMode::Bound) {
-        1
-    } else {
-        // A typed scan touches at most the whole node CF; the planner only needs ordering.
-        stats.total_nodes.max(1)
-    }
-}
-
-/// Generator cost over edges: a fully-free generate scans the type; a bound near endpoint
-/// narrows it. Bounded by the edge total.
-fn cost_edge(stats: &Stats, mode: &Mode) -> Cost {
-    let near_bound = mode.args.first() == Some(&ArgMode::Bound);
-    let total = stats.total_edges.max(1);
-    if near_bound {
-        // Outgoing/incoming of one endpoint — a small fraction; floor at 1.
-        (total / 16).max(1)
-    } else {
-        total
-    }
-}
-
-/// Function cost for `attr`: a single bound-id point lookup.
-fn cost_attr(_stats: &Stats, _mode: &Mode) -> Cost {
-    1
-}
-
-/// Filter cost: filters operate on the current row only — unit cost.
-fn cost_filter(_stats: &Stats, _mode: &Mode) -> Cost {
-    1
-}
-
 // ── Mode tables ────────────────────────────────────────────────────
 
 use ArgMode::{Bound as B, Free as F};
@@ -785,10 +784,11 @@ const EDGE_MODES: &[Mode] = &[
     Mode { args: &[B, B, B] }, // edge(s, d, "T") — check triple
 ];
 
-/// `attr` modes: id and key always bound; value bound (check) or free (bind).
+/// `attr` modes: a bound-id reader (bind/check the column value) and a value generator.
 const ATTR_MODES: &[Mode] = &[
-    Mode { args: &[B, B, F] }, // attr(id, "key", V) — bind
-    Mode { args: &[B, B, B] }, // attr(id, "key", "val") — check
+    Mode { args: &[B, B, F] }, // attr(id, "key", V)     — bind the column value
+    Mode { args: &[B, B, B] }, // attr(id, "key", "val") — check the column equals the literal
+    Mode { args: &[F, B, B] }, // attr(X, "key", "val")  — generate ids whose key == value
 ];
 
 /// Two-argument filter modes: both arguments must be bound.
@@ -804,7 +804,6 @@ pub fn registry() -> Vec<BuiltinDef> {
             name: "node",
             arity: 2,
             modes: NODE_MODES,
-            cost: cost_node,
             kind: BuiltinKind::Generator,
             eval: eval_node,
         },
@@ -812,7 +811,6 @@ pub fn registry() -> Vec<BuiltinDef> {
             name: "type",
             arity: 2,
             modes: NODE_MODES,
-            cost: cost_node,
             kind: BuiltinKind::Generator,
             eval: eval_node,
         },
@@ -820,7 +818,6 @@ pub fn registry() -> Vec<BuiltinDef> {
             name: "edge",
             arity: 3,
             modes: EDGE_MODES,
-            cost: cost_edge,
             kind: BuiltinKind::Generator,
             eval: eval_edge,
         },
@@ -828,7 +825,6 @@ pub fn registry() -> Vec<BuiltinDef> {
             name: "incoming",
             arity: 3,
             modes: EDGE_MODES,
-            cost: cost_edge,
             kind: BuiltinKind::Generator,
             eval: eval_incoming,
         },
@@ -836,7 +832,6 @@ pub fn registry() -> Vec<BuiltinDef> {
             name: "attr",
             arity: 3,
             modes: ATTR_MODES,
-            cost: cost_attr,
             kind: BuiltinKind::Function,
             eval: eval_attr,
         },
@@ -844,7 +839,6 @@ pub fn registry() -> Vec<BuiltinDef> {
             name: "neq",
             arity: 2,
             modes: FILTER2_MODES,
-            cost: cost_filter,
             kind: BuiltinKind::Filter,
             eval: eval_neq,
         },
@@ -852,7 +846,6 @@ pub fn registry() -> Vec<BuiltinDef> {
             name: "gt",
             arity: 2,
             modes: FILTER2_MODES,
-            cost: cost_filter,
             kind: BuiltinKind::Filter,
             eval: eval_gt,
         },
@@ -860,7 +853,6 @@ pub fn registry() -> Vec<BuiltinDef> {
             name: "lt",
             arity: 2,
             modes: FILTER2_MODES,
-            cost: cost_filter,
             kind: BuiltinKind::Filter,
             eval: eval_lt,
         },
@@ -868,7 +860,6 @@ pub fn registry() -> Vec<BuiltinDef> {
             name: "gte",
             arity: 2,
             modes: FILTER2_MODES,
-            cost: cost_filter,
             kind: BuiltinKind::Filter,
             eval: eval_gte,
         },
@@ -876,7 +867,6 @@ pub fn registry() -> Vec<BuiltinDef> {
             name: "lte",
             arity: 2,
             modes: FILTER2_MODES,
-            cost: cost_filter,
             kind: BuiltinKind::Filter,
             eval: eval_lte,
         },
@@ -884,7 +874,6 @@ pub fn registry() -> Vec<BuiltinDef> {
             name: "starts_with",
             arity: 2,
             modes: FILTER2_MODES,
-            cost: cost_filter,
             kind: BuiltinKind::Filter,
             eval: eval_starts_with,
         },
@@ -892,7 +881,6 @@ pub fn registry() -> Vec<BuiltinDef> {
             name: "not_starts_with",
             arity: 2,
             modes: FILTER2_MODES,
-            cost: cost_filter,
             kind: BuiltinKind::Filter,
             eval: eval_not_starts_with,
         },
@@ -900,7 +888,6 @@ pub fn registry() -> Vec<BuiltinDef> {
             name: "string_contains",
             arity: 2,
             modes: FILTER2_MODES,
-            cost: cost_filter,
             kind: BuiltinKind::Filter,
             eval: eval_string_contains,
         },
@@ -1043,8 +1030,15 @@ mod tests {
     }
 
     #[test]
-    fn attr_free_id_is_unsupported_mode() {
-        // attr(Free, "name", V) — id must be bound (§8.3 point lookup only on bound id).
+    fn attr_free_id_and_free_value_is_unsupported_mode() {
+        // attr(Free, "name", FreeV) — neither the bound-id reader ([B,B,_]) nor the value
+        // generator ([F,B,B]) applies: the reader needs arg0 (id) bound while the generator
+        // needs arg2 (value) bound. The call is still rejected with the authoritative
+        // E-PLAN-001 code. The required-binding HINT names only positions that *every*
+        // same-arity mode requires bound; with the generator now registered there is no such
+        // single position (the reader wants arg0, the generator wants arg2), so position 0 is
+        // no longer pinned as the sole fix — binding EITHER arg0 (→ reader) or arg2
+        // (→ generator) resolves it.
         let def = lookup("attr").unwrap();
         let spec = ArgSpec::new(vec![
             ArgValue::Free { slot: 0 },
@@ -1053,7 +1047,12 @@ mod tests {
         ]);
         let err = def.check_mode(&spec).unwrap_err();
         assert_eq!(err.code.as_str(), "E-PLAN-001");
-        assert!(err.required_bindings.contains(&0));
+        assert!(
+            !err.required_bindings.contains(&0),
+            "id is left free by the [F,B,B] generator mode, so it is no longer the sole \
+             required binding; got {:?}",
+            err.required_bindings
+        );
     }
 
     // ── node / type ────────────────────────────────────────────────
@@ -1225,6 +1224,9 @@ mod tests {
         }
         fn get_node(&self, id: u128) -> Option<GlueNodeRow> {
             self.inner.get_node(id)
+        }
+        fn nodes_by_attr(&self, key: &str, value: &str) -> Vec<GlueNodeRow> {
+            self.inner.nodes_by_attr(key, value)
         }
     }
 
@@ -1442,6 +1444,142 @@ mod tests {
         assert_eq!(out.coercion_misses, 0, "absence is not a coercion miss");
     }
 
+    // ── attr value-generator (parity with v1 find_by_attr) ─────────
+
+    #[test]
+    fn attr_generator_mode_is_supported() {
+        // attr(Free X, "name", "switch") — the [F, B, B] generator mode is registered, so
+        // the mode check passes (Gate A had rejected this as E-PLAN-001).
+        let def = lookup("attr").unwrap();
+        let spec = ArgSpec::new(vec![
+            ArgValue::Free { slot: 0 },
+            ArgValue::Bound(s("name")),
+            ArgValue::Bound(s("switch")),
+        ]);
+        def.check_mode(&spec).expect("attr generator mode supported");
+    }
+
+    /// A fixture with two FUNCTION nodes named `switch` and one named `loop`, to exercise the
+    /// value generator returning *exactly* the matching ids.
+    fn switch_fixture() -> FixtureStorageView {
+        let mut v = FixtureStorageView::new(1);
+        for (sid, ty, name, file) in [
+            ("a/sw1", "FUNCTION", "switch", "a/file.js"),
+            ("a/sw2", "FUNCTION", "switch", "b/file.js"),
+            ("a/lp1", "FUNCTION", "loop", "a/file.js"),
+        ] {
+            v.put_node(GlueNodeRow {
+                id: id_of(sid),
+                node_type: ty.to_string(),
+                name: name.to_string(),
+                file: file.to_string(),
+            });
+        }
+        v
+    }
+
+    #[test]
+    fn attr_generator_binds_unbound_id_to_matching_nodes_on_fixture() {
+        // attr(X, "name", "switch") with X unbound → exactly the two `switch` node ids.
+        let view = switch_fixture();
+        let def = lookup("attr").unwrap();
+        let spec = ArgSpec::new(vec![
+            ArgValue::Free { slot: 0 },
+            ArgValue::Bound(s("name")),
+            ArgValue::Bound(s("switch")),
+        ]);
+        def.check_mode(&spec).expect("mode supported");
+        let mut out = Batch::new();
+        (def.eval)(&view, &mut out, &spec).expect("eval ok");
+
+        let mut got: Vec<u128> = out
+            .rows
+            .iter()
+            .map(|r| match &r[0] {
+                Value::Id(id) => *id,
+                other => panic!("expected an id, got {other:?}"),
+            })
+            .collect();
+        got.sort_unstable();
+        let mut expected = vec![id_of("a/sw1"), id_of("a/sw2")];
+        expected.sort_unstable();
+        assert_eq!(got, expected, "generator binds exactly the two `switch` ids");
+        assert_eq!(out.coercion_misses, 0);
+
+        // A value that matches nothing → empty, not an error.
+        let none = ArgSpec::new(vec![
+            ArgValue::Free { slot: 0 },
+            ArgValue::Bound(s("name")),
+            ArgValue::Bound(s("nonesuch")),
+        ]);
+        let mut out2 = Batch::new();
+        (def.eval)(&view, &mut out2, &none).expect("eval ok");
+        assert_eq!(out2.rows.len(), 0, "no node named `nonesuch`");
+    }
+
+    #[test]
+    fn attr_generator_real_and_fixture_parity() {
+        // Real LSM view (build_view): two FUNCTIONs named fn1/fn2, one CLASS named Widget.
+        // attr(X, "name", "fn1") must bind exactly a/fn1 on both the real index and the
+        // fixture — parity of the value-generator path with v1's find_by_attr.
+        let real = build_view();
+        let mut fixture = FixtureStorageView::new(1);
+        for (sid, ty, name, file) in [
+            ("a/fn1", "FUNCTION", "fn1", "a/file.js"),
+            ("a/fn2", "FUNCTION", "fn2", "a/file.js"),
+            ("b/cls1", "CLASS", "Widget", "b/file.js"),
+        ] {
+            fixture.put_node(GlueNodeRow {
+                id: id_of(sid),
+                node_type: ty.to_string(),
+                name: name.to_string(),
+                file: file.to_string(),
+            });
+        }
+
+        let def = lookup("attr").unwrap();
+        let eval_gen = |view: &dyn StorageView, key: &str, val: &str| -> Vec<u128> {
+            let spec = ArgSpec::new(vec![
+                ArgValue::Free { slot: 0 },
+                ArgValue::Bound(s(key)),
+                ArgValue::Bound(s(val)),
+            ]);
+            def.check_mode(&spec).expect("mode supported");
+            let mut out = Batch::new();
+            (def.eval)(view, &mut out, &spec).expect("eval ok");
+            let mut ids: Vec<u128> = out
+                .rows
+                .iter()
+                .map(|r| match &r[0] {
+                    Value::Id(id) => *id,
+                    other => panic!("expected id, got {other:?}"),
+                })
+                .collect();
+            ids.sort_unstable();
+            ids
+        };
+
+        // name → fn1 : exactly a/fn1 on both.
+        let real_name = eval_gen(&real, "name", "fn1");
+        let fix_name = eval_gen(&fixture, "name", "fn1");
+        assert_eq!(real_name, vec![id_of("a/fn1")], "real binds a/fn1 by name");
+        assert_eq!(real_name, fix_name, "real/fixture name-generator parity");
+
+        // type → FUNCTION : both functions on both.
+        let real_ty = eval_gen(&real, "type", "FUNCTION");
+        let fix_ty = eval_gen(&fixture, "type", "FUNCTION");
+        let mut expect_fns = vec![id_of("a/fn1"), id_of("a/fn2")];
+        expect_fns.sort_unstable();
+        assert_eq!(real_ty, expect_fns, "real binds both FUNCTIONs by type");
+        assert_eq!(real_ty, fix_ty, "real/fixture type-generator parity");
+
+        // file → b/file.js : exactly b/cls1 on both.
+        let real_file = eval_gen(&real, "file", "b/file.js");
+        let fix_file = eval_gen(&fixture, "file", "b/file.js");
+        assert_eq!(real_file, vec![id_of("b/cls1")], "real binds b/cls1 by file");
+        assert_eq!(real_file, fix_file, "real/fixture file-generator parity");
+    }
+
     // ── filters ────────────────────────────────────────────────────
 
     #[test]
@@ -1498,21 +1636,4 @@ mod tests {
         assert_eq!(run("string_contains", sc_no).rows.len(), 0);
     }
 
-    // ── cost monotonicity ──────────────────────────────────────────
-
-    #[test]
-    fn cost_bound_id_cheaper_than_scan() {
-        let stats = Stats {
-            total_nodes: 1000,
-            total_edges: 2000,
-            ..Default::default()
-        };
-        let scan = Mode { args: &[F, B] };
-        let point = Mode { args: &[B, B] };
-        assert!(cost_node(&stats, &point) < cost_node(&stats, &scan));
-
-        let edge_gen = Mode { args: &[F, F, B] };
-        let edge_src = Mode { args: &[B, F, B] };
-        assert!(cost_edge(&stats, &edge_src) < cost_edge(&stats, &edge_gen));
-    }
 }

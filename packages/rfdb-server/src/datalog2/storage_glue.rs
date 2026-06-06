@@ -336,6 +336,17 @@ pub(crate) trait StorageView {
     /// Bound-id point lookup — the ONLY permitted point lookup (§8.3), for an already-bound
     /// id (attr / parent_function). FORBIDDEN inside the fixpoint hot path on unbound vars.
     fn get_node(&self, id: u128) -> Option<NodeRow>;
+
+    /// Attribute value-generator: all nodes whose attribute `key` equals `value`.
+    ///
+    /// The parity twin of v1's `find_by_attr` reverse lookup — it backs the `attr(FreeId,
+    /// "key", "val")` generator mode. The key→filter mapping matches v1's `attr_to_query`
+    /// exactly: `name`/`file`/`type` are first-class column filters, `exported` is the
+    /// boolean export filter, and any other key is a metadata-key filter. The real impl
+    /// drives this through storage_v2's snapshot-pinned attr index
+    /// (`find_node_ids_by_attr_at`), so it is the same index path v1 uses — not a full scan
+    /// the engine post-filters. A key/value that matches no node yields an empty vec.
+    fn nodes_by_attr(&self, key: &str, value: &str) -> Vec<NodeRow>;
 }
 
 // ── Real impl over a version-pinned ReadSnapshot ───────────────────
@@ -509,6 +520,51 @@ fn snapshot_get_node(store: &MultiShardStore, snapshot: &ReadSnapshot, id: u128)
     })
 }
 
+/// Attribute value-generator over the snapshot-pinned attr index. The key→filter mapping is
+/// identical to v1's `attr_to_query` (`name`/`file`/`type` → first-class column filters,
+/// `exported` → boolean export filter, anything else → a metadata-key filter), so the v2
+/// generator hits the same `find_node_ids_by_attr_at` index path v1 uses. Rows are resolved
+/// from the matched ids through the same snapshot point lookup (`get_node_at`) and ordered by
+/// id for a deterministic run.
+fn snapshot_nodes_by_attr(
+    store: &MultiShardStore,
+    snapshot: &ReadSnapshot,
+    key: &str,
+    value: &str,
+) -> Vec<NodeRow> {
+    // Map the attr key onto the storage filter slots exactly as v1's `attr_to_query` does.
+    let mut node_type: Option<&str> = None;
+    let mut file: Option<&str> = None;
+    let mut name: Option<&str> = None;
+    let mut exported: Option<bool> = None;
+    let mut metadata_filters: Vec<(String, String)> = Vec::new();
+    match key {
+        "name" => name = Some(value),
+        "file" => file = Some(value),
+        "type" => node_type = Some(value),
+        "exported" => exported = Some(value == "true"),
+        _ => metadata_filters = vec![(key.to_string(), value.to_string())],
+    }
+
+    let ids = store.find_node_ids_by_attr_at(
+        snapshot,
+        node_type,
+        None,
+        file,
+        name,
+        exported,
+        &metadata_filters,
+        false,
+    );
+
+    let mut rows: Vec<NodeRow> = ids
+        .into_iter()
+        .filter_map(|id| snapshot_get_node(store, snapshot, id))
+        .collect();
+    rows.sort_by(|a, b| a.id.cmp(&b.id));
+    rows
+}
+
 impl StorageView for LsmStorageView {
     fn generation(&self) -> u64 {
         self.snapshot.version
@@ -543,6 +599,10 @@ impl StorageView for LsmStorageView {
 
     fn get_node(&self, id: u128) -> Option<NodeRow> {
         snapshot_get_node(&self.store, &self.snapshot, id)
+    }
+
+    fn nodes_by_attr(&self, key: &str, value: &str) -> Vec<NodeRow> {
+        snapshot_nodes_by_attr(&self.store, &self.snapshot, key, value)
     }
 }
 
@@ -603,6 +663,10 @@ impl<'a> StorageView for BorrowedLsmStorageView<'a> {
 
     fn get_node(&self, id: u128) -> Option<NodeRow> {
         snapshot_get_node(self.store, &self.snapshot, id)
+    }
+
+    fn nodes_by_attr(&self, key: &str, value: &str) -> Vec<NodeRow> {
+        snapshot_nodes_by_attr(self.store, &self.snapshot, key, value)
     }
 }
 
@@ -719,6 +783,23 @@ impl StorageView for FixtureStorageView {
 
     fn get_node(&self, id: u128) -> Option<NodeRow> {
         self.nodes.get(&id).cloned()
+    }
+
+    fn nodes_by_attr(&self, key: &str, value: &str) -> Vec<NodeRow> {
+        // The fixture's `NodeRow` surface carries only the first-class columns
+        // (id/type/name/file); it mirrors the real index for those keys and yields nothing
+        // for keys outside that surface (e.g. metadata keys), consistent with the Gate A row
+        // surface. Rows come back ascending by id (BTreeMap iteration order).
+        self.nodes
+            .values()
+            .filter(|n| match key {
+                "name" => n.name == value,
+                "file" => n.file == value,
+                "type" => n.node_type == value,
+                _ => false,
+            })
+            .cloned()
+            .collect()
     }
 }
 

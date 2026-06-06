@@ -20,11 +20,13 @@
 //! # Cost model
 //!
 //! Cost is a coarse, monotone estimate (spec §7). A base/EDB leg with a bound key column is
-//! a narrowed scan (cheap); an unbound generator is a full relation scan (its magnitude).
-//! Builtins delegate to their registered [`BuiltinDef::cost`](crate::datalog2::builtin::BuiltinDef)
-//! against the matched [`Mode`](crate::datalog2::builtin::Mode). The planner's running
-//! output-size estimate multiplies the surviving fan-out of each placed leg; the §3 guard
-//! fires when that product exceeds `MAX_MATERIALIZED_FACTS`.
+//! a narrowed scan (cheap); an unbound generator is a full relation scan (its per-type/per-
+//! endpoint magnitude from the [`Stats`](crate::datalog2::builtin::Stats) cardinality oracle).
+//! Both literal ordering (`ordering_estimate`) and the per-rule size guard (`leg_estimate`)
+//! score legs through the shared `base_estimate`/`derived_estimate` helpers, so the order the
+//! executor runs and the guard's product are computed from identical cardinality math. The
+//! running output-size estimate multiplies the surviving fan-out of each placed leg; the §3
+//! guard fires when that product exceeds `MAX_MATERIALIZED_FACTS`.
 
 use std::collections::HashSet;
 use std::fmt;
@@ -189,7 +191,7 @@ pub fn plan_rule(rule: &Rule, strat: &Stratification, stats: &Stats) -> PlanResu
     let head = rule.head().predicate().to_string();
     let head_stratum = strat.stratum_of(&head);
 
-    let ordered = order_literals(rule.body(), &head)?;
+    let ordered = order_literals(rule.body(), &head, stats)?;
 
     let mut bound: HashSet<String> = HashSet::new();
     let mut legs: Vec<PlanLeg> = Vec::with_capacity(ordered.len());
@@ -276,13 +278,18 @@ pub fn plan_rule(rule: &Rule, strat: &Stratification, stats: &Stats) -> PlanResu
 
 // ── Literal ordering: bound-first feasibility + greedy cost ────────
 
-/// Order body literals bound-first (ported from v1 `reorder_literals`) and break ties by
-/// greedy cost. At each step the candidates are the literals whose binding requirements are
-/// already satisfied; among them the lowest static cost is placed first.
+/// Order body literals bound-first (ported from v1 `reorder_literals`) and break ties by a
+/// cardinality-aware estimate. At each step the candidates are the literals whose binding
+/// requirements are already satisfied (bound-first feasibility gates candidacy); among them
+/// the leg with the lowest estimated cardinality under the current bindings is placed first,
+/// so the most selective feasible leg leads each join. The estimate is the same per-type /
+/// per-endpoint oracle the per-rule guard folds in ([`base_estimate`]) — ordering is no
+/// longer cardinality-blind. Reordering is order-independent (I1): it changes only the join
+/// ORDER, never WHICH facts the rule derives.
 ///
 /// Returns `E-PLAN-002` if no candidate can be placed (circular feasibility) — the v1
 /// engine's "circular dependency" rejection, surfaced with a stable code (I5).
-fn order_literals(body: &[Literal], head: &str) -> PlanResult<Vec<Literal>> {
+fn order_literals(body: &[Literal], head: &str, stats: &Stats) -> PlanResult<Vec<Literal>> {
     let mut bound: HashSet<String> = HashSet::new();
     let mut result: Vec<Literal> = Vec::with_capacity(body.len());
     let mut remaining: Vec<Literal> = body.to_vec();
@@ -295,7 +302,7 @@ fn order_literals(body: &[Literal], head: &str) -> PlanResult<Vec<Literal>> {
             if !can_place {
                 continue;
             }
-            let c = static_cost(lit, &bound);
+            let c = ordering_estimate(lit, &bound, stats);
             match best {
                 Some((_, bc)) if c >= bc => {}
                 _ => best = Some((i, c)),
@@ -329,24 +336,32 @@ fn order_literals(body: &[Literal], head: &str) -> PlanResult<Vec<Literal>> {
     Ok(result)
 }
 
-/// A coarse static cost used only to break feasibility ties during ordering. A leg that
-/// binds a key column (narrowed scan) is cheaper than an unbound full scan; filters are
-/// cheapest (they only prune the current row).
-fn static_cost(lit: &Literal, bound: &HashSet<String>) -> u64 {
+/// The cardinality-aware ordering cost of a candidate literal under the current bind set
+/// (spec §7). Used only to break bound-first feasibility ties during ordering, so it must be
+/// a pure function of the binding state and never change WHICH facts are derived (I1).
+///
+/// Filters/functions are always cheapest (they prune/bind within the current row, fan-out
+/// ≤ 1) so a placeable filter leads as soon as its inputs are bound. A relational leg is
+/// ranked by its estimated output cardinality: a base relation uses the per-type /
+/// per-endpoint oracle ([`base_estimate`] — e.g. `node(X, "TYPE")` costs that type's live
+/// count, not `total_nodes`), so the most selective feasible generator is placed first;
+/// derived/unknown predicates use the conservative derived magnitude.
+fn ordering_estimate(lit: &Literal, bound: &HashSet<String>, stats: &Stats) -> u64 {
     let atom = lit.atom();
     let pred = atom.predicate();
+    // Filters and functions consume the current row: lowest possible cost (fan-out ≤ 1), so
+    // a feasible filter is placed the moment its inputs are bound.
     if is_filter_or_function(pred) {
         return 0;
     }
-    // Count already-bound argument positions; more bound = narrower = cheaper.
-    let bound_args = atom
-        .args()
-        .iter()
-        .filter(|t| is_bound_or_const(t, bound))
-        .count() as u64;
-    // Invert so that more bound args → lower cost. Unbound generators cost the most.
-    let arity = atom.args().len() as u64;
-    (arity + 1).saturating_sub(bound_args)
+    let pattern = arg_pattern(atom, bound);
+    if BASE_RELATIONS.contains(&pred) {
+        base_estimate(pred, atom, &pattern, stats)
+    } else {
+        // A derived predicate (rule head) reachable here: no per-type oracle, conservative
+        // magnitude narrowed by a bound first key column.
+        derived_estimate(&pattern, stats)
+    }
 }
 
 // ── Feasibility (ported from v1 utils.rs) ──────────────────────────
@@ -384,15 +399,22 @@ fn positive_can_place_and_provides(
             }
             let id_ok = is_bound_or_const(&args[0], bound);
             let name_ok = is_bound_or_const(&args[1], bound);
-            // v2 Gate A: `attr` is a column reader/filter requiring a bound Id (matches
-            // ATTR_MODES [B,B,F]/[B,B,B] and eval_attr in builtin.rs). Finding nodes by attr
-            // VALUE (a generator over a value index) is deferred — so attr is only placeable
-            // once its Id is bound by a preceding generator (e.g. node(X,T)). This keeps the
-            // feasibility layer in sync with the registry, which has no [Free,Bound,Bound]
-            // mode (was: E-PLAN-001 on switch-has-cases / if-has-consequent when the planner
-            // tried to place attr first as a generator).
+            let value_ok = is_bound_or_const(&args[2], bound);
+            // `attr` has two placeable shapes, both backed by storage_v2's snapshot-pinned
+            // attr index (parity with v1's `attr_to_query` + `find_by_attr`):
+            //   • column reader/filter  — id bound, key bound: matches ATTR_MODES
+            //     [B,B,F]/[B,B,B] and reads the bound node's column (eval_attr point lookup).
+            //   • value generator       — id FREE, key AND value bound: matches
+            //     ATTR_MODES [F,B,B] and produces the ids whose attr key == value via
+            //     `nodes_by_attr` (the index reverse-lookup). This is what lets a rule write
+            //     `attr(X, "name", "switch")` with X unbound (v1 ran it; Gate A had scoped it
+            //     out, an E-PLAN-001 capability gap now closed).
             if id_ok && name_ok {
+                // Reader/filter: binds the value position if it is free.
                 (true, provides_if_free(&args[2], bound))
+            } else if name_ok && value_ok {
+                // Generator: key + value bound, id free → provides (binds) the id var.
+                (true, provides_if_free(&args[0], bound))
             } else {
                 (false, HashSet::new())
             }
@@ -575,60 +597,66 @@ fn synth_arg_spec(pattern: &[ArgMode]) -> builtin::ArgSpec {
 /// - A derived leg estimates against the larger relation magnitude (conservative; the run
 ///   stats refine this at execution time per the §7 re-plan rule).
 fn leg_estimate(source: &LegSource, atom: &Atom, pattern: &[ArgMode], stats: &Stats) -> u64 {
-    let first_bound = pattern.first().map(|m| *m == ArgMode::Bound).unwrap_or(false);
     match source {
         LegSource::Builtin(_) => 1,
-        LegSource::Base(rel) => match rel.as_str() {
-            "node" | "type" => {
-                // Per-type cardinality oracle (§7): a CONST type literal narrows the estimate
-                // to that type's live count. When the oracle is populated, a const type ABSENT
-                // from the map has zero live nodes (not "unknown") — so it estimates ~0 and the
-                // planner won't over-estimate it at total_nodes and trip E-PLAN-003 (e.g.
-                // node(M, "MESSAGE_TYPE") in a graph with no MESSAGE_TYPE nodes). A variable
-                // type, or an empty oracle (unit tests), conservatively falls back to the whole
-                // relation.
-                let const_ty = atom.args().get(1).and_then(|t| t.const_value());
-                let magnitude = match const_ty {
-                    Some(ty) if !stats.nodes_by_type.is_empty() => {
-                        stats.nodes_by_type.get(ty).copied().unwrap_or(0)
-                    }
-                    _ => stats.total_nodes,
-                };
-                if first_bound {
-                    narrowed_fanout(magnitude)
-                } else {
-                    magnitude.max(1)
+        LegSource::Base(rel) => base_estimate(rel, atom, pattern, stats),
+        LegSource::Derived { .. } => derived_estimate(pattern, stats),
+    }
+}
+
+/// The cardinality estimate of a base-relation leg under its current bind pattern (spec §7).
+/// Factored out so the planner's literal ordering ([`order_literals`]) can rank candidate
+/// legs by the SAME per-type / per-endpoint oracle that the per-rule guard folds in — the
+/// ordering is no longer cardinality-blind. Pure function of `(rel, atom, pattern, stats)`.
+fn base_estimate(rel: &str, atom: &Atom, pattern: &[ArgMode], stats: &Stats) -> u64 {
+    let first_bound = pattern.first().map(|m| *m == ArgMode::Bound).unwrap_or(false);
+    match rel {
+        "node" | "type" => {
+            // Per-type cardinality oracle (§7): a CONST type literal narrows the estimate
+            // to that type's live count. When the oracle is populated, a const type ABSENT
+            // from the map has zero live nodes (not "unknown") — so it estimates ~0 and the
+            // planner won't over-estimate it at total_nodes and trip E-PLAN-003 (e.g.
+            // node(M, "MESSAGE_TYPE") in a graph with no MESSAGE_TYPE nodes). A variable
+            // type, or an empty oracle (unit tests), conservatively falls back to the whole
+            // relation.
+            let const_ty = atom.args().get(1).and_then(|t| t.const_value());
+            let magnitude = match const_ty {
+                Some(ty) if !stats.nodes_by_type.is_empty() => {
+                    stats.nodes_by_type.get(ty).copied().unwrap_or(0)
                 }
+                _ => stats.total_nodes,
+            };
+            if first_bound {
+                narrowed_fanout(magnitude)
+            } else {
+                magnitude.max(1)
             }
-            "edge" | "incoming" => {
-                // An edge leg is keyed if EITHER endpoint is bound — storage_v2 serves both
-                // get_outgoing_edges_at (bound src) and get_incoming_edges_at (bound dst), so a
-                // bound destination is as cheap as a bound source, not a full relation scan.
-                let endpoint_bound = pattern.first() == Some(&ArgMode::Bound)
-                    || pattern.get(1) == Some(&ArgMode::Bound);
-                if endpoint_bound {
-                    narrowed_fanout(stats.total_edges)
-                } else {
-                    stats.total_edges.max(1)
-                }
+        }
+        "edge" | "incoming" => {
+            // An edge leg is keyed if EITHER endpoint is bound — storage_v2 serves both
+            // get_outgoing_edges_at (bound src) and get_incoming_edges_at (bound dst), so a
+            // bound destination is as cheap as a bound source, not a full relation scan.
+            let endpoint_bound = pattern.first() == Some(&ArgMode::Bound)
+                || pattern.get(1) == Some(&ArgMode::Bound);
+            if endpoint_bound {
+                narrowed_fanout(stats.total_edges)
+            } else {
+                stats.total_edges.max(1)
             }
-            "attr" => {
-                if first_bound {
-                    narrowed_fanout(stats.total_nodes)
-                } else {
-                    stats.total_nodes.max(1)
-                }
+        }
+        "attr" => {
+            // Bound-id reader → point lookup. Free-id generator with a bound key+value
+            // is a keyed index reverse-lookup (`nodes_by_attr`), not a full node scan —
+            // a value-equality probe narrows the relation, so cost it as narrowed too.
+            let value_bound = pattern.get(2) == Some(&ArgMode::Bound);
+            let key_bound = pattern.get(1) == Some(&ArgMode::Bound);
+            if first_bound || (key_bound && value_bound) {
+                narrowed_fanout(stats.total_nodes)
+            } else {
+                stats.total_nodes.max(1)
             }
-            _ => {
-                let magnitude = stats.total_nodes.max(stats.total_edges);
-                if first_bound {
-                    narrowed_fanout(magnitude)
-                } else {
-                    magnitude.max(1)
-                }
-            }
-        },
-        LegSource::Derived { .. } => {
+        }
+        _ => {
             let magnitude = stats.total_nodes.max(stats.total_edges);
             if first_bound {
                 narrowed_fanout(magnitude)
@@ -636,6 +664,20 @@ fn leg_estimate(source: &LegSource, atom: &Atom, pattern: &[ArgMode], stats: &St
                 magnitude.max(1)
             }
         }
+    }
+}
+
+/// The cardinality estimate of a derived-predicate leg (a rule head). No per-type oracle is
+/// available for a derived relation, so it is conservatively the larger relation magnitude,
+/// narrowed when its first key column is already bound (the §7 re-plan rule refines this at
+/// execution time against the run's Δ stats).
+fn derived_estimate(pattern: &[ArgMode], stats: &Stats) -> u64 {
+    let first_bound = pattern.first().map(|m| *m == ArgMode::Bound).unwrap_or(false);
+    let magnitude = stats.total_nodes.max(stats.total_edges);
+    if first_bound {
+        narrowed_fanout(magnitude)
+    } else {
+        magnitude.max(1)
     }
 }
 
@@ -746,6 +788,18 @@ mod tests {
         Literal::positive(Atom::new(pred, args))
     }
 
+    /// Stats with a populated per-type cardinality oracle (the §7 ordering input).
+    fn stats_typed(nodes: u64, edges: u64, by_type: &[(&str, u64)]) -> Stats {
+        Stats {
+            total_nodes: nodes,
+            total_edges: edges,
+            nodes_by_type: by_type
+                .iter()
+                .map(|(t, n)| (t.to_string(), *n))
+                .collect(),
+        }
+    }
+
     // ── bound-first reorder ─────────────────────────────────────────
 
     #[test]
@@ -771,6 +825,90 @@ mod tests {
         // The filter is a no-join leg whose X arg is now bound.
         assert_eq!(plan.legs[1].join, JoinKind::None);
         assert_eq!(plan.legs[1].pattern, vec![ArgMode::Bound, ArgMode::Bound]);
+    }
+
+    // ── cardinality-aware ordering (§7 per-type oracle) ─────────────
+
+    #[test]
+    fn orders_most_selective_generator_first() {
+        // h(X, Y) :- node(X, "COMMON"), node(Y, "RARE"), edge(X, Y, "CALLS").
+        // Both node generators are feasible from the start (free id). With a per-type oracle
+        // (COMMON: 100_000 live, RARE: 5 live) the planner must lead with the RARE generator —
+        // the most selective feasible leg — NOT the syntactically-first COMMON one. The old
+        // bound-arg-only tie-break was cardinality-blind and would have kept source order.
+        let rule = Rule::new(
+            Atom::new("h", vec![v("X"), v("Y")]),
+            vec![
+                pos("node", vec![v("X"), c("COMMON")]),
+                pos("node", vec![v("Y"), c("RARE")]),
+                pos("edge", vec![v("X"), v("Y"), c("CALLS")]),
+            ],
+        );
+        let strat = empty_strat();
+        let st = stats_typed(100_005, 100, &[("COMMON", 100_000), ("RARE", 5)]);
+        let plan = plan_rule(&rule, &strat, &st).expect("plan ok");
+        // The first leg is the RARE generator (lowest estimated cardinality).
+        let first = &plan.legs[0];
+        assert_eq!(first.literal.atom().predicate(), "node");
+        assert_eq!(
+            first.literal.atom().args().get(1).and_then(|t| t.const_value()),
+            Some("RARE"),
+            "most selective (RARE) generator must lead; got {:?}",
+            first.literal
+        );
+    }
+
+    #[test]
+    fn cardinality_ordering_is_order_independent_i1() {
+        // Same rule body, two source permutations. The cardinality-aware ordering must derive
+        // the SAME ordered leg multiset (the set of literals is identical) — it changes only
+        // the ORDER, never WHICH literals/facts (I1). We compare the chosen first leg: both
+        // permutations must lead with the RARE generator regardless of source order.
+        let st = stats_typed(100_005, 100, &[("COMMON", 100_000), ("RARE", 5)]);
+        let strat = empty_strat();
+
+        let body_ab = vec![
+            pos("node", vec![v("X"), c("COMMON")]),
+            pos("node", vec![v("Y"), c("RARE")]),
+            pos("edge", vec![v("X"), v("Y"), c("CALLS")]),
+        ];
+        let body_ba = vec![
+            pos("node", vec![v("Y"), c("RARE")]),
+            pos("node", vec![v("X"), c("COMMON")]),
+            pos("edge", vec![v("X"), v("Y"), c("CALLS")]),
+        ];
+
+        let plan_ab = plan_rule(
+            &Rule::new(Atom::new("h", vec![v("X"), v("Y")]), body_ab),
+            &strat,
+            &st,
+        )
+        .expect("plan ab");
+        let plan_ba = plan_rule(
+            &Rule::new(Atom::new("h", vec![v("X"), v("Y")]), body_ba),
+            &strat,
+            &st,
+        )
+        .expect("plan ba");
+
+        // The ordered predicate-with-type sequence is identical across permutations.
+        let seq = |p: &RulePlan| -> Vec<(String, Option<String>)> {
+            p.legs
+                .iter()
+                .map(|l| {
+                    let a = l.literal.atom();
+                    (
+                        a.predicate().to_string(),
+                        a.args().get(1).and_then(|t| t.const_value()).map(str::to_string),
+                    )
+                })
+                .collect()
+        };
+        assert_eq!(
+            seq(&plan_ab),
+            seq(&plan_ba),
+            "literal ordering must be independent of source clause order (I1)"
+        );
     }
 
     // ── E-PLAN-001 via builtin mode check ───────────────────────────
