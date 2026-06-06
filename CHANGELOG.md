@@ -36,6 +36,18 @@ All notable changes to this project will be documented in this file.
 - fix(mcp): `semantic_search` no longer prints a fabricated similarity score — results were rendered with a purely positional `[0.95]`-style score (embeddings not yet wired; matching is substring-based) that an agent reads as a real confidence metric; results are now listed by rank + name without the fake score (#319)
 - fix(mcp): `semantic_search` tool schema is honest — drops the advertised-but-ignored `include_edges` parameter and rewrites the description to state case-insensitive substring matching on node names (embedding ranking not yet wired) instead of claiming embedding-based similarity (REG-1152, #323)
 - fix(cli): `check --json` and `trace --from-route --json` emit parseable JSON on not-found via the shared `emitJsonNotFound` helper (each payload mirrors its command's success shape — `check` returns the full `{total,passed,failed,errors,results}` with zero counts); previously `check` exited with empty stdout and `trace --from-route` printed plain text, breaking `JSON.parse` for scripts/agents (REG-1149, #321)
+- fix(cli): `grafema ls` without `--type` now prints a helpful error guiding to `grafema types` and exits 1 before any DB access, instead of a bare "required option" message (REG-278, #326)
+- fix(cli): `grafema ls` disambiguates duplicate node names by appending the semantic id to colliding entries only — unique lines are unchanged (REG-279, #328)
+- fix(config): empty the vestigial JS-pipeline plugin defaults in `DEFAULT_CONFIG.plugins` so `grafema doctor` no longer reports plugins that were deleted with the dead JS analysis pipeline as "configured" (REG-519/501/572, #330)
+- fix(resolve): emit an `EXTENDS` edge to a virtual `BUILTIN_CLASS` node for classes extending JS/TS builtins (`Error`, `EventEmitter`, etc.) instead of silently dropping it; user-defined classes that shadow a builtin still win (REG-585 part 1, #331)
+
+### Documentation
+
+- docs(mcp): `get_documentation("queries")` now documents all Datalog builtin predicates (`incoming`/`path`/`attr_edge`/`parent_function`/`neq`/`starts_with`/`not_starts_with`/`string_contains`), with a CI-gated drift test against the engine source (REG-658, #327)
+
+### Tests
+
+- test(cli): gate the backend-free CLI unit suite in CI and fix a rotted `analyzeAction` import so the suite runs green (REG-1153, #325)
 
 ## [0.3.23] - 2026-04-01
 
