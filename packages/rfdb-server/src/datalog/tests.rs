@@ -2314,6 +2314,90 @@ mod eval_tests {
             "stats.total_results should match number of bindings");
     }
 
+    // REG-315 / REG-503 regression: the explain evaluator must support the
+    // attr_edge() builtin exactly like the plain evaluator. Before the fix,
+    // EvaluatorExplain omitted attr_edge from its builtin dispatch, so under
+    // `--explain` the atom fell through to derived-predicate lookup (no such
+    // rule) and silently returned zero bindings — making `--explain` change
+    // the answer for any query/guarantee that uses attr_edge.
+    #[test]
+    fn test_explain_attr_edge_matches_plain_evaluator() {
+        use crate::datalog::eval_explain::EvaluatorExplain;
+
+        let mut engine = GraphEngineV2::create_ephemeral();
+
+        engine.add_nodes(vec![
+            NodeRecord {
+                id: 1,
+                node_type: Some("LOOP".to_string()),
+                name: Some("for_loop".to_string()),
+                file: Some("test.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+                semantic_id: None,
+            },
+            NodeRecord {
+                id: 2,
+                node_type: Some("VARIABLE".to_string()),
+                name: Some("items".to_string()),
+                file: Some("test.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+                semantic_id: None,
+            },
+        ]);
+
+        engine.add_edges(vec![
+            EdgeRecord {
+                src: 1,
+                dst: 2,
+                edge_type: Some("ITERATES_OVER".to_string()),
+                version: "main".into(),
+                metadata: Some(r#"{"scale": "nodes", "reason": "array_iteration"}"#.to_string()),
+                deleted: false,
+            },
+        ], false);
+
+        // attr_edge(1, 2, "ITERATES_OVER", "scale", X)
+        let query = Atom::new("attr_edge", vec![
+            Term::constant("1"),
+            Term::constant("2"),
+            Term::constant("ITERATES_OVER"),
+            Term::constant("scale"),
+            Term::var("X"),
+        ]);
+
+        // Plain evaluator (ground truth)
+        let plain = Evaluator::new(&engine);
+        let plain_results = plain.query_atom(&query).unwrap();
+        assert_eq!(plain_results.len(), 1, "plain evaluator should bind X once");
+        assert_eq!(plain_results[0].get("X"), Some(&Value::Str("nodes".to_string())));
+
+        // Explain evaluator must produce the SAME binding
+        let mut explain_eval = EvaluatorExplain::new(&engine, true);
+        let explain_result = explain_eval.query(&query);
+        assert_eq!(
+            explain_result.bindings.len(),
+            plain_results.len(),
+            "explain evaluator must produce the same attr_edge bindings as the plain evaluator"
+        );
+        assert_eq!(
+            explain_result.bindings[0].get("X").map(|s| s.as_str()),
+            Some("nodes"),
+            "explain evaluator must bind X to the edge metadata value"
+        );
+    }
+
     #[test]
     fn test_eval_attr_edge_in_rule() {
         // Test attr_edge() used in a Datalog rule context
@@ -4396,6 +4480,176 @@ mod hash_join_tests {
         let b = &results[0];
         assert_eq!(b.get("A").unwrap().as_id().unwrap(), 1);
         assert_eq!(b.get("B").unwrap().as_id().unwrap(), (n + 1) as u128);
+    }
+
+    /// REG-503 explain↔plain parity for the shared-variable hash-join fix.
+    ///
+    /// The plain `Evaluator` honours an already-bound variable on the non-key
+    /// end of a self-join `edge(M, C, T1), edge(C, M, T2)` (see
+    /// `test_hash_join_shared_var_across_two_edges`). The explain evaluator
+    /// (`EvaluatorExplain`) drives the SAME `eval_edge_hash_join` shape and
+    /// MUST produce identical bindings under `--explain`. Without the bound-var
+    /// guard ported into the explain path, the second edge atom rebinds `M` to
+    /// every `SENDS_MESSAGE` dst, yielding ~n spurious rows — so `--explain`
+    /// silently changes the answer, violating the parity invariant.
+    #[test]
+    fn test_explain_edge_hash_join_shared_var_matches_plain() {
+        use crate::datalog::eval_explain::EvaluatorExplain;
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let n = HASH_JOIN_THRESHOLD + 10;
+
+        let mut nodes = Vec::with_capacity(3 * n);
+        for i in 1..=n {
+            nodes.push(NodeRecord {
+                id: i as u128,
+                node_type: Some("MESSAGE_TYPE".to_string()),
+                name: Some(format!("msg_{}", i)),
+                file: Some("t.ex".to_string()),
+                file_id: 0, name_offset: 0, version: "main".into(),
+                exported: false, replaces: None, deleted: false,
+                metadata: None, semantic_id: None,
+            });
+            nodes.push(NodeRecord {
+                id: (n + i) as u128,
+                node_type: Some("CALL".to_string()),
+                name: Some(format!("call_{}", i)),
+                file: Some("t.ex".to_string()),
+                file_id: 0, name_offset: 0, version: "main".into(),
+                exported: false, replaces: None, deleted: false,
+                metadata: None, semantic_id: None,
+            });
+            nodes.push(NodeRecord {
+                id: (2 * n + i) as u128,
+                node_type: Some("MESSAGE_TYPE".to_string()),
+                name: Some(format!("other_msg_{}", i)),
+                file: Some("t.ex".to_string()),
+                file_id: 0, name_offset: 0, version: "main".into(),
+                exported: false, replaces: None, deleted: false,
+                metadata: None, semantic_id: None,
+            });
+        }
+        engine.add_nodes(nodes);
+
+        let contains: Vec<EdgeRecord> = (1..=n).map(|i| EdgeRecord {
+            src: i as u128,
+            dst: (n + i) as u128,
+            edge_type: Some("CONTAINS".to_string()),
+            version: "main".into(), metadata: None, deleted: false,
+        }).collect();
+        engine.add_edges(contains, false);
+
+        let mut sends: Vec<EdgeRecord> = (1..=n).map(|i| EdgeRecord {
+            src: (n + i) as u128,
+            dst: (2 * n + i) as u128,
+            edge_type: Some("SENDS_MESSAGE".to_string()),
+            version: "main".into(), metadata: None, deleted: false,
+        }).collect();
+        sends.push(EdgeRecord {
+            src: (n + 1) as u128,
+            dst: 1_u128,
+            edge_type: Some("SENDS_MESSAGE".to_string()),
+            version: "main".into(), metadata: None, deleted: false,
+        });
+        engine.add_edges(sends, false);
+
+        let query = "edge(M, C, \"CONTAINS\"), edge(C, M, \"SENDS_MESSAGE\")";
+
+        // Plain evaluator: ground truth (exactly one self-loop).
+        let plain = Evaluator::new(&engine);
+        let plain_results = plain.eval_query(&parse_query(query).unwrap()).unwrap();
+        assert_eq!(plain_results.len(), 1, "plain evaluator baseline: one self-loop");
+
+        // Explain evaluator MUST match.
+        let mut explain = EvaluatorExplain::new(&engine, true);
+        let explain_result = explain.eval_query(&parse_query(query).unwrap()).unwrap();
+        assert_eq!(
+            explain_result.bindings.len(), plain_results.len(),
+            "explain evaluator must honour already-bound vars in edge hash-join \
+             (parity with plain evaluator) — got spurious rows under --explain"
+        );
+        let b = &explain_result.bindings[0];
+        assert_eq!(b.get("M").map(String::as_str), Some("1"));
+        assert_eq!(b.get("C").map(String::as_str), Some((n + 1).to_string().as_str()));
+    }
+
+    /// REG-503 explain↔plain parity for the `incoming/3` flavour of the
+    /// shared-variable hash-join fix. Mirror of
+    /// `test_incoming_hash_join_shared_var` through `EvaluatorExplain`.
+    #[test]
+    fn test_explain_incoming_hash_join_shared_var_matches_plain() {
+        use crate::datalog::eval_explain::EvaluatorExplain;
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let n = HASH_JOIN_THRESHOLD + 10;
+
+        let mut nodes = Vec::with_capacity(3 * n);
+        for i in 1..=n {
+            nodes.push(NodeRecord {
+                id: i as u128,
+                node_type: Some("A".to_string()),
+                name: Some(format!("a_{}", i)),
+                file: Some("t.ex".to_string()),
+                file_id: 0, name_offset: 0, version: "main".into(),
+                exported: false, replaces: None, deleted: false,
+                metadata: None, semantic_id: None,
+            });
+            nodes.push(NodeRecord {
+                id: (n + i) as u128,
+                node_type: Some("B".to_string()),
+                name: Some(format!("b_{}", i)),
+                file: Some("t.ex".to_string()),
+                file_id: 0, name_offset: 0, version: "main".into(),
+                exported: false, replaces: None, deleted: false,
+                metadata: None, semantic_id: None,
+            });
+            nodes.push(NodeRecord {
+                id: (2 * n + i) as u128,
+                node_type: Some("A".to_string()),
+                name: Some(format!("other_a_{}", i)),
+                file: Some("t.ex".to_string()),
+                file_id: 0, name_offset: 0, version: "main".into(),
+                exported: false, replaces: None, deleted: false,
+                metadata: None, semantic_id: None,
+            });
+        }
+        engine.add_nodes(nodes);
+
+        let fw: Vec<EdgeRecord> = (1..=n).map(|i| EdgeRecord {
+            src: i as u128,
+            dst: (n + i) as u128,
+            edge_type: Some("F".to_string()),
+            version: "main".into(), metadata: None, deleted: false,
+        }).collect();
+        engine.add_edges(fw, false);
+        let mut bk: Vec<EdgeRecord> = (1..=n).map(|i| EdgeRecord {
+            src: (n + i) as u128,
+            dst: (2 * n + i) as u128,
+            edge_type: Some("G".to_string()),
+            version: "main".into(), metadata: None, deleted: false,
+        }).collect();
+        bk.push(EdgeRecord {
+            src: (n + 1) as u128,
+            dst: 1u128,
+            edge_type: Some("G".to_string()),
+            version: "main".into(), metadata: None, deleted: false,
+        });
+        engine.add_edges(bk, false);
+
+        let query = "node(A, \"A\"), incoming(A, B, \"G\"), incoming(B, A, \"F\")";
+
+        let plain = Evaluator::new(&engine);
+        let plain_results = plain.eval_query(&parse_query(query).unwrap()).unwrap();
+        assert_eq!(plain_results.len(), 1, "plain evaluator baseline: one round-trip");
+
+        let mut explain = EvaluatorExplain::new(&engine, true);
+        let explain_result = explain.eval_query(&parse_query(query).unwrap()).unwrap();
+        assert_eq!(
+            explain_result.bindings.len(), plain_results.len(),
+            "explain evaluator must honour already-bound vars in incoming hash-join \
+             (parity with plain evaluator) — got spurious rows under --explain"
+        );
+        let b = &explain_result.bindings[0];
+        assert_eq!(b.get("A").map(String::as_str), Some("1"));
+        assert_eq!(b.get("B").map(String::as_str), Some((n + 1).to_string().as_str()));
     }
 
     /// Regression: when a variable appears in *both* edge atoms on opposite

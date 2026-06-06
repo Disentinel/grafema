@@ -392,6 +392,19 @@ impl<'a> EvaluatorExplain<'a> {
                         }
                     }
 
+                    // Honour an already-bound variable on the dst end — critical
+                    // for self-join patterns like `edge(M, C, T1), edge(C, M, T2)`.
+                    // Without this, the second edge atom rebinds the shared var to
+                    // any outgoing dst, silently producing cross-joined rows.
+                    // Mirror of Evaluator::eval_edge_hash_join (REG-503 parity).
+                    if let Term::Var(var) = dst_term {
+                        if let Some(existing) = bindings.get(var).and_then(|v| v.as_id()) {
+                            if existing != dst_id {
+                                continue;
+                            }
+                        }
+                    }
+
                     let mut new_bindings = bindings.clone();
 
                     match dst_term {
@@ -446,6 +459,17 @@ impl<'a> EvaluatorExplain<'a> {
                     if let Term::Const(expected_src) = src_term {
                         if expected_src.parse::<u128>().ok() != Some(src_id) {
                             continue;
+                        }
+                    }
+
+                    // Honour an already-bound variable on the src end — same bug
+                    // as eval_edge_hash_join for `incoming(A, B, T1), incoming(B, A, T2)`.
+                    // Mirror of Evaluator::eval_incoming_hash_join (REG-503 parity).
+                    if let Term::Var(var) = src_term {
+                        if let Some(existing) = bindings.get(var).and_then(|v| v.as_id()) {
+                            if existing != src_id {
+                                continue;
+                            }
                         }
                     }
 
@@ -580,6 +604,7 @@ impl<'a> EvaluatorExplain<'a> {
             "incoming" => self.eval_incoming(atom),
             "path" => self.eval_path(atom),
             "attr" => self.eval_attr(atom),
+            "attr_edge" => self.eval_attr_edge(atom),
             "neq" => self.eval_neq(atom),
             "gt" | "lt" | "gte" | "lte" => self.eval_numeric_cmp(atom),
             "starts_with" => self.eval_starts_with(atom),
@@ -605,6 +630,7 @@ impl<'a> EvaluatorExplain<'a> {
             "incoming" => self.eval_incoming(atom),
             "path" => self.eval_path(atom),
             "attr" => self.eval_attr(atom),
+            "attr_edge" => self.eval_attr_edge(atom),
             "neq" => self.eval_neq(atom),
             "gt" | "lt" | "gte" | "lte" => self.eval_numeric_cmp(atom),
             "starts_with" => self.eval_starts_with(atom),
@@ -1163,6 +1189,98 @@ impl<'a> EvaluatorExplain<'a> {
             None => return vec![],
         };
 
+        match value_term {
+            Term::Var(var) => {
+                let mut b = Bindings::new();
+                b.set(var, Value::Str(attr_value));
+                vec![b]
+            }
+            Term::Const(expected) => {
+                if &attr_value == expected {
+                    vec![Bindings::new()]
+                } else {
+                    vec![]
+                }
+            }
+            Term::Wildcard => {
+                vec![Bindings::new()]
+            }
+        }
+    }
+
+    /// Evaluate attr_edge(Src, Dst, EdgeType, AttrName, Value) — read a metadata
+    /// attribute off a specific edge. Mirrors `Evaluator::eval_attr_edge` so the
+    /// explain path produces identical bindings to the plain path (REG-315).
+    /// Src/Dst must be bound node IDs; EdgeType and AttrName must be constants;
+    /// Value may be a variable (bind), constant (match), or wildcard (exists).
+    fn eval_attr_edge(&mut self, atom: &Atom) -> Vec<Bindings> {
+        let args = atom.args();
+        if args.len() < 5 {
+            return vec![];
+        }
+
+        let src_term = &args[0];
+        let dst_term = &args[1];
+        let type_term = &args[2];
+        let attr_term = &args[3];
+        let value_term = &args[4];
+
+        // 1. Need bound src ID
+        let src_id = match src_term {
+            Term::Const(s) => match s.parse::<u128>() {
+                Ok(id) => id,
+                Err(_) => return vec![],
+            },
+            _ => return vec![],
+        };
+
+        // 2. Need bound dst ID
+        let dst_id = match dst_term {
+            Term::Const(s) => match s.parse::<u128>() {
+                Ok(id) => id,
+                Err(_) => return vec![],
+            },
+            _ => return vec![],
+        };
+
+        // 3. Need constant edge type
+        let edge_type = match type_term {
+            Term::Const(s) => s.as_str(),
+            _ => return vec![],
+        };
+
+        // 4. Need constant attr name
+        let attr_name = match attr_term {
+            Term::Const(s) => s.as_str(),
+            _ => return vec![],
+        };
+
+        // 5. Find the edge
+        self.stats.outgoing_edge_calls += 1;
+        let edges = self.engine.get_outgoing_edges(src_id, Some(&[edge_type]));
+        self.stats.edges_traversed += edges.len();
+        let edge = match edges.into_iter().find(|e| e.dst == dst_id) {
+            Some(e) => e,
+            None => return vec![],
+        };
+
+        // 6. Parse metadata
+        let metadata_str = match edge.metadata.as_ref() {
+            Some(s) => s,
+            None => return vec![],
+        };
+        let metadata: serde_json::Value = match serde_json::from_str(metadata_str) {
+            Ok(m) => m,
+            Err(_) => return vec![],
+        };
+
+        // 7. Get attribute value using the shared helper (supports nested paths)
+        let attr_value = match crate::datalog::utils::get_metadata_value(&metadata, attr_name) {
+            Some(v) => v,
+            None => return vec![],
+        };
+
+        // 8. Match against value_term (same logic as eval_attr)
         match value_term {
             Term::Var(var) => {
                 let mut b = Bindings::new();
