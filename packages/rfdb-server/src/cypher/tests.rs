@@ -79,6 +79,53 @@ mod parser_tests {
         assert_eq!(rel.length, Some((1, 5)));
     }
 
+    // ── Variable-length forms beyond `*min..max` (standard Cypher grammar) ──
+    //
+    // `parse_var_length` used to call `expect("..")` unconditionally, so the
+    // unbounded `*` and exact-length `*N` forms were REJECTED with a parse error,
+    // and the open-ended `*N..` / `*..` forms silently defaulted `max` to 10 —
+    // a traversal that silently truncated at depth 10. These guard each form.
+
+    #[test]
+    fn variable_length_unbounded() {
+        // Bare `*` = "one or more hops", no upper bound.
+        let q = parse_cypher("MATCH (a)-[:CALLS*]->(b) RETURN b.name").unwrap();
+        let (rel, _) = &q.match_clause.pattern.segments[0];
+        assert_eq!(rel.length, Some((1, u32::MAX)));
+    }
+
+    #[test]
+    fn variable_length_exact() {
+        // `*3` = "exactly three hops" → (3, 3).
+        let q = parse_cypher("MATCH (a)-[:CALLS*3]->(b) RETURN b.name").unwrap();
+        let (rel, _) = &q.match_clause.pattern.segments[0];
+        assert_eq!(rel.length, Some((3, 3)));
+    }
+
+    #[test]
+    fn variable_length_min_unbounded() {
+        // `*2..` = "at least two hops", no upper bound — NOT silently capped at 10.
+        let q = parse_cypher("MATCH (a)-[:CALLS*2..]->(b) RETURN b.name").unwrap();
+        let (rel, _) = &q.match_clause.pattern.segments[0];
+        assert_eq!(rel.length, Some((2, u32::MAX)));
+    }
+
+    #[test]
+    fn variable_length_max_only() {
+        // `*..5` = "up to five hops", min defaults to 1.
+        let q = parse_cypher("MATCH (a)-[:CALLS*..5]->(b) RETURN b.name").unwrap();
+        let (rel, _) = &q.match_clause.pattern.segments[0];
+        assert_eq!(rel.length, Some((1, 5)));
+    }
+
+    #[test]
+    fn variable_length_open_both_ends() {
+        // `*..` = "one or more hops" — equivalent to bare `*`.
+        let q = parse_cypher("MATCH (a)-[:CALLS*..]->(b) RETURN b.name").unwrap();
+        let (rel, _) = &q.match_clause.pattern.segments[0];
+        assert_eq!(rel.length, Some((1, u32::MAX)));
+    }
+
     #[test]
     fn where_with_and_or() {
         let q = parse_cypher(
@@ -2275,6 +2322,94 @@ mod integration_tests {
         // So only helper and validate at depth >= 1.
         let names = collect_string_column(&result, 0);
         assert_eq!(names, vec!["helper", "validate"]);
+    }
+
+    /// Build a straight CALLS chain `n0 -> n1 -> ... -> n{len-1}`.
+    fn create_chain_graph(len: u128) -> GraphEngineV2 {
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let nodes: Vec<NodeRecord> = (0..len)
+            .map(|i| NodeRecord {
+                id: i + 1,
+                node_type: Some("FUNCTION".to_string()),
+                name: Some(format!("n{}", i)),
+                file: Some("src/chain.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+                semantic_id: None,
+            })
+            .collect();
+        engine.add_nodes(nodes);
+
+        let edges: Vec<EdgeRecord> = (0..len - 1)
+            .map(|i| EdgeRecord {
+                src: i + 1,
+                dst: i + 2,
+                edge_type: Some("CALLS".to_string()),
+                version: "main".into(),
+                metadata: None,
+                deleted: false,
+            })
+            .collect();
+        engine.add_edges(edges, true);
+        engine
+    }
+
+    #[test]
+    fn variable_length_unbounded_reaches_beyond_depth_10() {
+        // 15-node chain n0 -> n1 -> ... -> n14. Bare `*` must reach ALL 14
+        // descendants of n0. Before the parse fix, `*` failed to parse at all;
+        // the open-ended `*N..` form silently capped traversal at depth 10, so
+        // n11..n14 vanished from results.
+        let engine = create_chain_graph(15);
+        let result = execute(
+            &engine,
+            "MATCH (a:FUNCTION)-[:CALLS*]->(b) WHERE a.name = 'n0' RETURN b.name",
+            EvalLimits::none(),
+        )
+        .unwrap();
+
+        let mut names = collect_string_column(&result, 0);
+        names.sort();
+        let mut expected: Vec<String> = (1..15).map(|i| format!("n{}", i)).collect();
+        expected.sort();
+        assert_eq!(names, expected, "bare `*` must reach all 14 descendants");
+    }
+
+    #[test]
+    fn variable_length_min_unbounded_not_capped_at_10() {
+        // `*12..` from n0 must reach n12, n13, n14 (depths 12,13,14) — depths the
+        // old silent max-of-10 default excluded entirely.
+        let engine = create_chain_graph(15);
+        let result = execute(
+            &engine,
+            "MATCH (a:FUNCTION)-[:CALLS*12..]->(b) WHERE a.name = 'n0' RETURN b.name",
+            EvalLimits::none(),
+        )
+        .unwrap();
+
+        let mut names = collect_string_column(&result, 0);
+        names.sort();
+        assert_eq!(names, vec!["n12", "n13", "n14"]);
+    }
+
+    #[test]
+    fn variable_length_exact_depth() {
+        // `*5` from n0 is exactly n5 — no shorter, no longer.
+        let engine = create_chain_graph(15);
+        let result = execute(
+            &engine,
+            "MATCH (a:FUNCTION)-[:CALLS*5]->(b) WHERE a.name = 'n0' RETURN b.name",
+            EvalLimits::none(),
+        )
+        .unwrap();
+
+        let names = collect_string_column(&result, 0);
+        assert_eq!(names, vec!["n5"]);
     }
 
     #[test]
