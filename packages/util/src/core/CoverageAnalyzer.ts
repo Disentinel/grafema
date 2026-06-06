@@ -12,7 +12,7 @@
  *   const result = await analyzer.analyze();
  */
 
-import { readdirSync, existsSync, lstatSync } from 'fs';
+import { readdirSync, existsSync, lstatSync, realpathSync } from 'fs';
 import { join, relative, extname } from 'path';
 import type { GraphBackend } from '@grafema/types';
 
@@ -112,9 +112,28 @@ export class CoverageAnalyzer {
   private graph: GraphBackend;
   private projectPath: string;
 
+  /**
+   * @param graph - graph backend to query for MODULE/ISSUE nodes
+   * @param projectPath - absolute project root to scan and to strip from node
+   *   paths. It is realpath'd here (REG-408 class): the graph stores realpath'd
+   *   ABSOLUTE file paths, so a symlinked root (e.g. macOS `/tmp` ->
+   *   `/private/tmp`) would otherwise never `startsWith` an absolute MODULE path
+   *   — keeping the file absolute while {@link scanProjectFiles} emits relative
+   *   paths, double-counting the same file as both `analyzed` and `unreachable`
+   *   and inflating `total`. Callers (`grafema coverage`, MCP `get_coverage`)
+   *   pass a raw `resolve()`'d / user-supplied root, so normalizing here fixes
+   *   every caller in one place. Falls back to the given path if it does not
+   *   exist on disk (the caller's own dbPath check reports a missing project).
+   */
   constructor(graph: GraphBackend, projectPath: string) {
     this.graph = graph;
-    this.projectPath = projectPath;
+    let normalized = projectPath;
+    try {
+      normalized = realpathSync(projectPath);
+    } catch {
+      // Path does not exist (or is not resolvable): keep the raw value.
+    }
+    this.projectPath = normalized;
   }
 
   /**
