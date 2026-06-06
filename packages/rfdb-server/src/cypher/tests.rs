@@ -2689,4 +2689,135 @@ mod integration_tests {
         assert_eq!(result.columns, vec!["f.name", "calls"]);
         assert!(result.row_count >= 1);
     }
+
+    // ── GROUP BY key must distinguish value types (value_to_group_key) ─────
+    //
+    // `value_to_group_key` must map two values to the SAME bucket iff they are
+    // equal under `CypherValue`'s `PartialEq` (the relation GROUP BY groups on).
+    // The old implementation collapsed every variant to a bare `to_string()`,
+    // so distinct-typed values that render to the same text — Int(5)/Str("5"),
+    // Bool/Str, Null/Str("__null__") — were silently merged into ONE group,
+    // corrupting aggregates. These tests pin the type-distinction (and guard
+    // that Int(5) == Float(5.0) still groups together — no over-splitting).
+
+    /// Build a graph of FUNCTION nodes whose `tag` metadata is injected verbatim
+    /// as a JSON fragment, so each node's `n.tag` resolves to the exact
+    /// `CypherValue` variant the test needs.
+    fn graph_with_tags(tags: &[(u128, &str)]) -> GraphEngineV2 {
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let nodes = tags
+            .iter()
+            .map(|(id, meta)| NodeRecord {
+                id: *id,
+                node_type: Some("FUNCTION".to_string()),
+                name: Some(format!("f{}", id)),
+                file: Some("src/m.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: true,
+                replaces: None,
+                deleted: false,
+                metadata: Some(meta.to_string()),
+                semantic_id: None,
+            })
+            .collect();
+        engine.add_nodes(nodes);
+        engine
+    }
+
+    #[test]
+    fn group_key_int_and_string_do_not_collide() {
+        // Int(5) and Str("5") are NOT equal under PartialEq → two groups.
+        let engine = graph_with_tags(&[
+            (40, r#"{"tag": 5}"#),   // n.tag -> Int(5)
+            (41, r#"{"tag": "5"}"#), // n.tag -> Str("5")
+        ]);
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN n.tag, COUNT(*) AS c",
+            EvalLimits::none(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            result.row_count, 2,
+            "Int(5) and Str(\"5\") must form two distinct GROUP BY buckets, got rows: {:?}",
+            result.rows
+        );
+        // Exactly one numeric-tag group and one string-tag group, each count 1.
+        let mut counts: Vec<(bool, i64)> = result
+            .rows
+            .iter()
+            .map(|row| (row[0].is_string(), row[1].as_i64().unwrap()))
+            .collect();
+        counts.sort();
+        assert_eq!(counts, vec![(false, 1), (true, 1)]);
+    }
+
+    #[test]
+    fn group_key_null_and_sentinel_string_do_not_collide() {
+        // A missing property -> Null; a literal Str("__null__") must not share
+        // the Null bucket (the old "__null__" sentinel collided with it).
+        let engine = graph_with_tags(&[
+            (42, r#"{"other": 1}"#),        // no `tag` -> n.tag = Null
+            (43, r#"{"tag": "__null__"}"#), // n.tag -> Str("__null__")
+        ]);
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN n.tag, COUNT(*) AS c",
+            EvalLimits::none(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            result.row_count, 2,
+            "Null and Str(\"__null__\") must not collide, got rows: {:?}",
+            result.rows
+        );
+    }
+
+    #[test]
+    fn group_key_bool_and_string_do_not_collide() {
+        // Bool(true) and Str("true") are NOT equal under PartialEq → two groups.
+        let engine = graph_with_tags(&[
+            (46, r#"{"tag": true}"#),    // n.tag -> Bool(true)
+            (47, r#"{"tag": "true"}"#),  // n.tag -> Str("true")
+        ]);
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN n.tag, COUNT(*) AS c",
+            EvalLimits::none(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            result.row_count, 2,
+            "Bool(true) and Str(\"true\") must not collide, got rows: {:?}",
+            result.rows
+        );
+    }
+
+    #[test]
+    fn group_key_int_and_equal_float_still_group() {
+        // Guard against over-splitting: Int(5) == Float(5.0) under PartialEq, so
+        // they MUST stay in one group (Int/Float share the numeric namespace).
+        let engine = graph_with_tags(&[
+            (44, r#"{"tag": 5}"#),   // Int(5)
+            (45, r#"{"tag": 5.0}"#), // Float(5.0)
+        ]);
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN n.tag, COUNT(*) AS c",
+            EvalLimits::none(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            result.row_count, 1,
+            "Int(5) and Float(5.0) are equal and must share one group, got rows: {:?}",
+            result.rows
+        );
+        assert_eq!(result.rows[0][1].as_i64().unwrap(), 2);
+    }
 }
