@@ -96,18 +96,24 @@ impl<'a> Parser<'a> {
     fn keyword_ahead(&mut self, kw: &str) -> bool {
         self.skip_whitespace();
         let rem = self.remaining();
-        if rem.len() < kw.len() {
+        // `str::get(..kw.len())` returns `None` both when the remaining input
+        // is shorter than the keyword AND when `kw.len()` does not fall on a
+        // UTF-8 char boundary (e.g. a multibyte char straddles that index).
+        // This avoids the panic that a raw `rem[..kw.len()]` byte slice would
+        // hit when non-ASCII input appears where a keyword is probed.
+        let head = match rem.get(..kw.len()) {
+            Some(h) => h,
+            None => return false,
+        };
+        if !head.eq_ignore_ascii_case(kw) {
             return false;
         }
-        if !rem[..kw.len()].eq_ignore_ascii_case(kw) {
-            return false;
+        // Must be followed by non-alphanumeric (word boundary) or end of input.
+        // `kw.len()` is a valid boundary here because `get(..kw.len())` succeeded.
+        match rem[kw.len()..].chars().next() {
+            None => true,
+            Some(next_char) => !next_char.is_alphanumeric() && next_char != '_',
         }
-        // Must be followed by non-alphanumeric (word boundary) or end of input
-        if rem.len() == kw.len() {
-            return true;
-        }
-        let next_char = rem[kw.len()..].chars().next().unwrap();
-        !next_char.is_alphanumeric() && next_char != '_'
     }
 
     /// Consume a keyword (case-insensitive) or return an error.
