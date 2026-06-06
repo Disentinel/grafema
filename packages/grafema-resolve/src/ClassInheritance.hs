@@ -188,6 +188,43 @@ resolveOneCore classIdx importIdx exportIdx classNode =
                               }
                           ]
 
+-- | Resolve a VARIABLE/CONSTANT initialized from `new X()` (carrying
+-- `instanceOfName` metadata, stamped by the analyzer) to an INSTANCE_OF edge
+-- to its CLASS (REG-585 pt2). Resolution order: same-file CLASS, imported
+-- CLASS, builtin CLASS. Source is the VARIABLE (consumed by getShape).
+resolveInstanceOf :: ClassIndex -> ImportBindingIndex -> ExportIndex -> GraphNode -> [PluginCommand]
+resolveInstanceOf classIdx importIdx exportIdx varNode =
+  case lookupMetaText "instanceOfName" (gnMetadata varNode) of
+    Nothing -> []
+    Just cn ->
+      let file = gnFile varNode
+          edgeTo targetId via extra =
+            [ EmitEdge GraphEdge
+                { geSource   = gnId varNode
+                , geTarget   = targetId
+                , geType     = "INSTANCE_OF"
+                , geMetadata = Map.fromList (("resolvedVia", MetaText via) : extra)
+                }
+            ]
+      in case Map.lookup (file, cn) classIdx of
+        -- 1. same-file class
+        Just targetId -> edgeTo targetId "instance-of" []
+        Nothing ->
+          -- 2. imported class
+          case Map.lookup (file, cn) importIdx of
+            Just ib
+              | Just resolvedPath <- resolveModulePath file (ibSource ib) exportIdx Map.empty
+              , Just exports <- Map.lookup resolvedPath exportIdx
+              , Just entry <- findMatchingExport (ibImportedName ib) exports ->
+                  edgeTo (eeNodeId entry) "instance-of" [("importedFrom", MetaText (ibSource ib))]
+            _ ->
+              -- 3. builtin class
+              if isBuiltinClass cn
+                then let name = builtinBaseName cn
+                     in EmitNode (mkBuiltinClassNode name)
+                        : edgeTo (builtinClassNodeId name) "instance-of-builtin" []
+                else []
+
 -- | Resolve all CLASS inheritance edges.
 resolveAll :: [GraphNode] -> [PluginCommand]
 resolveAll nodes =
@@ -200,7 +237,13 @@ resolveAll nodes =
           isJsTsFile (gnFile n) &&
           Map.member "superClass" (gnMetadata n)
         ) nodes
+      varNodes = filter (\n ->
+          (gnType n == "VARIABLE" || gnType n == "CONSTANT") &&
+          isJsTsFile (gnFile n) &&
+          Map.member "instanceOfName" (gnMetadata n)
+        ) nodes
       results = concatMap (resolveOne classIdx importIdx exportIdx) classNodes
+             ++ concatMap (resolveInstanceOf classIdx importIdx exportIdx) varNodes
   in results
 
 -- | Resolve with a pre-built export index (for streaming per-file mode).
@@ -216,4 +259,10 @@ resolveFileWithIndex exportIdx fileNodes =
           isJsTsFile (gnFile n) &&
           Map.member "superClass" (gnMetadata n)
         ) fileNodes
+      varNodes = filter (\n ->
+          (gnType n == "VARIABLE" || gnType n == "CONSTANT") &&
+          isJsTsFile (gnFile n) &&
+          Map.member "instanceOfName" (gnMetadata n)
+        ) fileNodes
   in concatMap (resolveOne classIdx importIdx exportIdx) classNodes
+  ++ concatMap (resolveInstanceOf classIdx importIdx exportIdx) varNodes

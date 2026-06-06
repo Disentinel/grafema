@@ -89,6 +89,20 @@ ruleVariableDeclarator node parentDecl = do
         parent <- askNamedParent
         isExported <- askExported
         let nodeId = semanticId file nodeType name parent Nothing
+            -- REG-585 pt2: if initialized from `new X()` (simple identifier callee),
+            -- stamp the constructor name so the resolver can emit VARIABLE -INSTANCE_OF-> CLASS.
+            mInstanceOf = case getChildrenMaybe "init" node of
+              Just initNode -> case initNode of
+                NewExpressionNode _ _ -> case getChildrenMaybe "callee" initNode of
+                  Just calleeNode@(IdentifierNode _ _) ->
+                    let cn = getTextFieldOr "name" "" calleeNode
+                    in if T.null cn then Nothing else Just cn
+                  _ -> Nothing
+                _ -> Nothing
+              Nothing -> Nothing
+            varMeta = case mInstanceOf of
+              Just cn -> Map.fromList [("kind", MetaText kind), ("instanceOfName", MetaText cn)]
+              Nothing -> Map.singleton "kind" (MetaText kind)
         emitNode GraphNode
           { gnId       = nodeId
           , gnType     = nodeType
@@ -99,7 +113,7 @@ ruleVariableDeclarator node parentDecl = do
           , gnEndLine  = spanEnd idSp
           , gnEndColumn = 0
           , gnExported = isExported
-          , gnMetadata = Map.singleton "kind" (MetaText kind)
+          , gnMetadata = varMeta
           }
         emitEdge GraphEdge
           { geSource = curScopeId
