@@ -68,6 +68,11 @@ jobs:
           set -o pipefail
           pnpm --filter @grafema/api --filter @grafema/types test 2>&1 | tee /tmp/api-types-test.log
 
+      - name: Run CLI unit tests (backend-free subset — REG-1153)
+        run: |
+          set -o pipefail
+          pnpm --filter @grafema/cli test:unit 2>&1 | tee /tmp/cli-unit-test.log
+
       - name: Summarize failed tests
         if: failure()
         run: |
@@ -128,7 +133,7 @@ jobs:
       - name: Check for .only in test files
         run: |
           echo "Checking for .only() in test files..."
-          if grep -rE '\.only\s*\(' test/ packages/mcp/test/ packages/vscode/test/ --include="*.test.js" --include="*.test.ts" 2>/dev/null; then
+          if grep -rE '\.only\s*\(' test/ packages/cli/test/ packages/mcp/test/ packages/vscode/test/ --include="*.test.js" --include="*.test.ts" 2>/dev/null; then
             echo "::error::Found .only() in test files. Remove before merging."
             exit 1
           fi
@@ -138,7 +143,7 @@ jobs:
         if: github.ref == 'refs/heads/stable'
         run: |
           echo "Checking for .skip() in test files (stable branch)..."
-          if grep -rE '\.skip\s*\(' test/ packages/mcp/test/ packages/vscode/test/ --include="*.test.js" --include="*.test.ts" 2>/dev/null; then
+          if grep -rE '\.skip\s*\(' test/ packages/cli/test/ packages/mcp/test/ packages/vscode/test/ --include="*.test.js" --include="*.test.ts" 2>/dev/null; then
             echo "::error::Found .skip() in test files. All tests must pass on stable."
             exit 1
           fi
