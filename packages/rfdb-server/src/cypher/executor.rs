@@ -858,39 +858,33 @@ pub fn eval_expr(expr: &Expr, record: &Record) -> CypherValue {
         }
 
         Expr::Not(inner) => {
+            // Three-valued logic: NOT NULL is NULL, not TRUE. Without this, a
+            // predicate that evaluates to NULL (e.g. a string predicate against
+            // an absent property) would be flipped to a definite TRUE and
+            // wrongly admit the row in `WHERE NOT ...`.
             let v = eval_expr(inner, record);
-            CypherValue::Bool(!v.is_truthy())
+            match v {
+                CypherValue::Null => CypherValue::Null,
+                _ => CypherValue::Bool(!v.is_truthy()),
+            }
         }
 
         Expr::Contains(lhs, rhs) => {
             let l = eval_expr(lhs, record);
             let r = eval_expr(rhs, record);
-            match (&l, &r) {
-                (CypherValue::Str(a), CypherValue::Str(b)) => CypherValue::Bool(a.contains(b.as_str())),
-                _ => CypherValue::Bool(false),
-            }
+            eval_string_predicate(l, r, |a, b| a.contains(b))
         }
 
         Expr::StartsWith(lhs, rhs) => {
             let l = eval_expr(lhs, record);
             let r = eval_expr(rhs, record);
-            match (&l, &r) {
-                (CypherValue::Str(a), CypherValue::Str(b)) => {
-                    CypherValue::Bool(a.starts_with(b.as_str()))
-                }
-                _ => CypherValue::Bool(false),
-            }
+            eval_string_predicate(l, r, |a, b| a.starts_with(b))
         }
 
         Expr::EndsWith(lhs, rhs) => {
             let l = eval_expr(lhs, record);
             let r = eval_expr(rhs, record);
-            match (&l, &r) {
-                (CypherValue::Str(a), CypherValue::Str(b)) => {
-                    CypherValue::Bool(a.ends_with(b.as_str()))
-                }
-                _ => CypherValue::Bool(false),
-            }
+            eval_string_predicate(l, r, |a, b| a.ends_with(b))
         }
 
         Expr::IsNull(inner) => {
@@ -921,6 +915,30 @@ pub fn eval_expr(expr: &Expr, record: &Record) -> CypherValue {
 }
 
 // ─── Helper functions ───────────────────────────────────────────────────────
+
+/// Evaluate a Cypher string predicate (CONTAINS / STARTS WITH / ENDS WITH)
+/// over already-evaluated operands, applying three-valued logic.
+///
+/// Semantics (matching Neo4j):
+/// - if EITHER operand is NULL, the result is NULL (so that `NOT pred` stays
+///   NULL and the row is excluded, rather than being flipped to a definite
+///   TRUE and wrongly admitted);
+/// - if both operands are strings, return `Bool(test(a, b))`;
+/// - any other (non-NULL, non-string) combination yields `Bool(false)`,
+///   preserving the engine's prior behavior for type mismatches.
+fn eval_string_predicate(
+    lhs: CypherValue,
+    rhs: CypherValue,
+    test: impl Fn(&str, &str) -> bool,
+) -> CypherValue {
+    if matches!(lhs, CypherValue::Null) || matches!(rhs, CypherValue::Null) {
+        return CypherValue::Null;
+    }
+    match (&lhs, &rhs) {
+        (CypherValue::Str(a), CypherValue::Str(b)) => CypherValue::Bool(test(a, b)),
+        _ => CypherValue::Bool(false),
+    }
+}
 
 /// Convert a CypherLiteral to a CypherValue.
 fn literal_to_value(lit: &CypherLiteral) -> CypherValue {
