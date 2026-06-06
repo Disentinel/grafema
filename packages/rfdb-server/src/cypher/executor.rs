@@ -970,7 +970,17 @@ fn eval_literal_expr(expr: &Expr) -> CypherValue {
 }
 
 /// Evaluate a binary comparison operator.
+///
+/// Follows Cypher three-valued logic: a comparison where either operand is NULL
+/// evaluates to NULL (unknown), never to a definite boolean. This matters in a
+/// `WHERE` clause — a NULL predicate is not truthy, so the row is excluded. Without
+/// this guard the ordering operators delegated to `partial_cmp_values`, which orders
+/// NULL as Less-than-everything (so `null < x` was `true`), and `Neq` returned `true`
+/// for `null <> x` — both wrongly admitting rows whose compared property is absent.
 fn eval_binop(l: &CypherValue, op: BinOp, r: &CypherValue) -> CypherValue {
+    if matches!(l, CypherValue::Null) || matches!(r, CypherValue::Null) {
+        return CypherValue::Null;
+    }
     match op {
         BinOp::Eq => CypherValue::Bool(l == r),
         BinOp::Neq => CypherValue::Bool(l != r),
