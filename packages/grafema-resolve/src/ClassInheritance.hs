@@ -80,14 +80,74 @@ isJsTsFile f = any (`T.isSuffixOf` f) [".ts", ".tsx", ".js", ".jsx", ".mjs", ".c
 -- Resolution
 -- ---------------------------------------------------------------------------
 
--- | Resolve a single CLASS node that has a superClass to an EXTENDS edge.
-resolveOne
+-- | Builtin JS/TS base classes/constructors that resolve to a virtual CLASS
+-- node (REG-585). Closed, language-defined set; extend as needed.
+builtinClassNames :: [Text]
+builtinClassNames =
+  [ "Error", "TypeError", "RangeError", "ReferenceError", "SyntaxError"
+  , "URIError", "EvalError", "AggregateError"
+  , "Object", "Array", "Map", "Set", "WeakMap", "WeakSet", "Promise"
+  , "EventEmitter"
+  ]
+
+-- | Last dotted segment, e.g. "events.EventEmitter" -> "EventEmitter".
+builtinBaseName :: Text -> Text
+builtinBaseName = T.takeWhileEnd (/= '.')
+
+isBuiltinClass :: Text -> Bool
+isBuiltinClass sc = builtinBaseName sc `elem` builtinClassNames
+
+builtinClassNodeId :: Text -> Text
+builtinClassNodeId name = "BUILTIN_CLASS::" <> name
+
+-- | Virtual CLASS node for a builtin base; deduped by id at the store layer.
+mkBuiltinClassNode :: Text -> GraphNode
+mkBuiltinClassNode name = GraphNode
+  { gnId        = builtinClassNodeId name
+  , gnType      = "CLASS"
+  , gnName      = name
+  , gnFile      = "<builtin>"
+  , gnLine      = 0
+  , gnColumn    = 0
+  , gnEndLine   = 0
+  , gnEndColumn = 0
+  , gnExported  = True
+  , gnMetadata  = Map.singleton "source" (MetaText "ecmascript-builtin")
+  }
+
+-- | When same-file + cross-file resolution find no target, resolve a builtin
+-- base (e.g. @class MyError extends Error@) to a virtual BUILTIN_CLASS node so
+-- the EXTENDS edge is no longer silently dropped (REG-585).
+builtinFallback :: GraphNode -> [PluginCommand]
+builtinFallback classNode =
+  case lookupMetaText "superClass" (gnMetadata classNode) of
+    Just sc | isBuiltinClass sc ->
+      let name = builtinBaseName sc
+      in [ EmitNode (mkBuiltinClassNode name)
+         , EmitEdge GraphEdge
+             { geSource   = gnId classNode
+             , geTarget   = builtinClassNodeId name
+             , geType     = "EXTENDS"
+             , geMetadata = Map.singleton "resolvedVia" (MetaText "builtin-class")
+             }
+         ]
+    _ -> []
+
+-- | Resolve a CLASS node's superClass: same-file/cross-file, else builtin fallback.
+resolveOne :: ClassIndex -> ImportBindingIndex -> ExportIndex -> GraphNode -> [PluginCommand]
+resolveOne classIdx importIdx exportIdx classNode =
+  case resolveOneCore classIdx importIdx exportIdx classNode of
+    []   -> builtinFallback classNode
+    cmds -> cmds
+
+-- | Core resolution: same-file then cross-file (no builtin fallback).
+resolveOneCore
   :: ClassIndex
   -> ImportBindingIndex
   -> ExportIndex
   -> GraphNode  -- must be a CLASS node with superClass metadata
   -> [PluginCommand]
-resolveOne classIdx importIdx exportIdx classNode =
+resolveOneCore classIdx importIdx exportIdx classNode =
   let file       = gnFile classNode
       superName  = lookupMetaText "superClass" (gnMetadata classNode)
   in case superName of
