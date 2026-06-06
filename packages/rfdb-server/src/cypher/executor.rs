@@ -1011,14 +1011,25 @@ fn format_return_expr(expr: &Expr) -> String {
     }
 }
 
-/// Convert a CypherValue to a string for use as a group key in HashAggregate.
+/// Convert a CypherValue into a `GROUP BY` bucket key for HashAggregate.
+///
+/// Two values must map to the SAME key iff they are equal under
+/// `CypherValue`'s `PartialEq` (the relation `GROUP BY` groups on). The first
+/// character is a per-type discriminant, so values of different types can never
+/// collide even when they render to the same text — `Int(5)` (`"#5"`),
+/// `Str("5")` (`"S5"`), `Bool(true)` (`"Btrue"`) and `Null` (`"N"`) are all
+/// distinct buckets. `Int` and `Float` deliberately share the `#` numeric
+/// namespace because `Int(5) == Float(5.0)` holds (`values.rs` PartialEq), so
+/// `5` and `5.0` must group together — and they do, since `5.0_f64` renders to
+/// `"5"`. Without the discriminant a bare `to_string()` silently merged
+/// distinct-typed values (e.g. `Int(5)` with `Str("5")`) into one group.
 fn value_to_group_key(val: &CypherValue) -> String {
     match val {
-        CypherValue::Null => "__null__".to_string(),
-        CypherValue::Bool(b) => b.to_string(),
-        CypherValue::Int(i) => i.to_string(),
-        CypherValue::Float(f) => f.to_string(),
-        CypherValue::Str(s) => s.clone(),
-        CypherValue::Node { id, .. } => id.to_string(),
+        CypherValue::Null => "N".to_string(),
+        CypherValue::Bool(b) => format!("B{b}"),
+        CypherValue::Int(i) => format!("#{i}"),
+        CypherValue::Float(f) => format!("#{f}"),
+        CypherValue::Str(s) => format!("S{s}"),
+        CypherValue::Node { id, .. } => format!("@{id}"),
     }
 }
