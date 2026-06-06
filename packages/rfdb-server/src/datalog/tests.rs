@@ -2205,6 +2205,97 @@ mod eval_tests {
             "binding values should match between plain and explain evaluators");
     }
 
+    /// REG-503 parity — wildcard arms.
+    ///
+    /// The plain `Evaluator` has dedicated match arms for every `Term::Wildcard`
+    /// combination in `node` / `edge` / `incoming`. The explain `EvaluatorExplain`
+    /// historically fell through those to `_ => vec![]`, so any atom containing a
+    /// bare `_` returned 0 bindings under `--explain` while plain returned N.
+    /// These tests pin the explain↔plain parity invariant for the wildcard arms.
+    ///
+    /// Each case asserts the explain evaluator's bindings (count, and for bound
+    /// vars the value set) equal the plain evaluator's on the shared test graph
+    /// (ids 1,3 = `queue:publish`, id 2 = `queue:consume`, id 4 = `FUNCTION`;
+    /// edges 1→4 and 4→2, both `CALLS`).
+    fn assert_explain_parity(query: &str, var: Option<&str>) {
+        use crate::datalog::eval_explain::EvaluatorExplain;
+
+        let engine = setup_test_graph();
+
+        let evaluator = Evaluator::new(&engine);
+        let plain = evaluator
+            .eval_query(&parse_query(query).unwrap())
+            .unwrap();
+
+        let mut explain_eval = EvaluatorExplain::new(&engine, true);
+        let explain = explain_eval
+            .eval_query(&parse_query(query).unwrap())
+            .unwrap();
+
+        assert_eq!(
+            plain.len(),
+            explain.bindings.len(),
+            "explain evaluator must produce the same number of bindings as plain for `{query}` (parity)"
+        );
+
+        if let Some(v) = var {
+            let mut plain_vals: Vec<String> =
+                plain.iter().filter_map(|b| b.get(v).map(|x| x.as_str())).collect();
+            plain_vals.sort();
+
+            let mut explain_vals: Vec<String> =
+                explain.bindings.iter().filter_map(|b| b.get(v).cloned()).collect();
+            explain_vals.sort();
+
+            assert_eq!(
+                plain_vals, explain_vals,
+                "explain evaluator must bind `{v}` to the same values as plain for `{query}` (parity)"
+            );
+        }
+    }
+
+    #[test]
+    fn test_explain_node_wildcard_id_matches_plain() {
+        // node(_, "type") — (Wildcard, Const): plain finds 2 publish nodes.
+        assert_explain_parity("node(_, \"queue:publish\")", None);
+    }
+
+    #[test]
+    fn test_explain_node_wildcard_type_matches_plain() {
+        // node(X, _) — (Var, Wildcard): plain enumerates all 4 nodes, binds id.
+        assert_explain_parity("node(X, _)", Some("X"));
+    }
+
+    #[test]
+    fn test_explain_node_wildcard_id_var_type_matches_plain() {
+        // node(_, T) — (Wildcard, Var): plain enumerates all 4 nodes, binds type.
+        assert_explain_parity("node(_, T)", Some("T"));
+    }
+
+    #[test]
+    fn test_explain_node_both_wildcard_matches_plain() {
+        // node(_, _) — (Wildcard, Wildcard): plain enumerates all 4 nodes.
+        assert_explain_parity("node(_, _)", None);
+    }
+
+    #[test]
+    fn test_explain_node_const_wildcard_type_matches_plain() {
+        // node("1", _) — (Const, Wildcard): plain checks node 1 exists.
+        assert_explain_parity("node(\"1\", _)", None);
+    }
+
+    #[test]
+    fn test_explain_edge_wildcard_src_matches_plain() {
+        // edge(_, X, "CALLS") — Wildcard src: plain enumerates 2 CALLS edges, binds dst.
+        assert_explain_parity("edge(_, X, \"CALLS\")", Some("X"));
+    }
+
+    #[test]
+    fn test_explain_incoming_wildcard_dst_matches_plain() {
+        // incoming(_, X, "CALLS") — Wildcard dst: plain enumerates 2 CALLS edges, binds src.
+        assert_explain_parity("incoming(_, X, \"CALLS\")", Some("X"));
+    }
+
     #[test]
     fn test_explain_stats_populated() {
         use crate::datalog::eval_explain::EvaluatorExplain;
