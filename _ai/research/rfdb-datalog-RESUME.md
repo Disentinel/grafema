@@ -75,7 +75,21 @@ without explicit permission.
     maintained ≡ scratch) + `deletion_rederives_fact_with_surviving_alternate_path` (diamond). datalog2
     unit 153, Gate A re-verified 50/50. **The Gate C EXIT is PROVEN on the fixture.**
 
-**REMAINING — commit 8 only: engine_v2 cross-run wiring on real .rfdb.**
+**DONE — engine wiring + real-store EXIT proof (`321cd061`, commit 8). GATE C EXIT COMPLETE.**
+  - `GraphEngineV2::maintain_datalog_v2(source, prev, prev_snapshot, limits) -> Option<Evaluation>`:
+    diff_base over two pinned BorrowedLsmStorageViews → maintain_incremental. Pure read (no write-back).
+    Being `pub` it removed ALL the cfg(not(test)) dead-code allows — the engine is live code now.
+  - PROOF: `maintain_datalog_v2_equals_scratch_on_real_store_over_cycles` — 6 additive IMPORTS_FROM
+    insertions on an ephemeral storage_v2 engine, maintained ≡ scratch each cycle. datalog2 153,
+    engine_v2 42, storage_v2 427, Gate A 50/50.
+  - **The full vertical (commits 1-8) is done & proven.** What's NOT done (deliberately, beyond the
+    EXIT — future work): (a) incremental EDGE WRITE-BACK — maintain_datalog_v2 returns the maintained
+    Evaluation but eval_datalog_v2_materialize still recomputes+rewrites all edges; wiring the maintained
+    delta into an additive/tombstoning commit + reading/writing the binding-blob in the manifest tags is
+    the production-perf follow-up. (b) deletion on the REAL store in a test (proven on fixture, same
+    StorageView trait). (c) cross-stratum + negation incremental (envelope → recompute today).
+
+**(historical) REMAINING — commit 8 only: engine_v2 cross-run wiring on real .rfdb.**
   - Wire `maintain_incremental` into engine_v2 `eval_datalog_v2_materialize` (`graph/engine_v2.rs:~2924`):
     on a materialize run, read the prior binding-table blob (`BindingTable::load_from_tags` from the
     parent manifest's `tags`) + pin the prior snapshot; `diff_base(prior_snapshot_view, cur_view)`;
