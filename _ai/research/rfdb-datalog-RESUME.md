@@ -52,13 +52,11 @@ byte-identical + alloc-free. Proof `incremental_insertion_work_proportional_to_d
 
 **NEXT (recommended order, user approved "поехали в рекомендованном порядке", run via workflow):**
 1. ✅ work-proportionality (`1f59a98b`).
-2. **why() / fact provenance** (Gate C "annotations+why()"; → Gate E `explain_fact`). Scoped by the
-   wf_22df23ed scope workflow: smallest viable = given (predicate, fact key), replay
-   `clause_derives_head`-style over committed relations to find ONE supporting derivation, return
-   `(rule_ast_hash, bound body facts)`. ZERO extra storage (recompute on demand, spec §11 lazy tree),
-   not a per-fact provenance index. Hook = a new query method on Executor / GraphEngineV2. numeric-
-   literals NOT needed for why(). Risk flagged: don't store provenance per DerivedFact (memory).
-3. **Gate D edge write-back + DEPENDS_ON pilot** — incremental `eval_datalog_v2_materialize_incremental`:
+2. ✅ **why() / fact provenance** (`9a80550a`): `DerivationWitness{rule_ast_hash, body:[(pred,tuple)]}`,
+   `Executor::witness_fact` (head-bound body replay capturing bindings), `explain_fact` free fn,
+   `GraphEngineV2::explain_datalog_fact` (pub, real-storage). On-demand, zero per-fact storage. Additive
+   (eval path untouched, Gate A unaffected). datalog2 155, engine_v2 43.
+3. **← NEXT: Gate D edge write-back + DEPENDS_ON pilot** — incremental `eval_datalog_v2_materialize_incremental`:
    commit only the derived-edge DELTA (added → additive; removed → tombstone via delete_edge/
    pending_tombstone_edges) + read/write binding-blob in manifest tags around the commit. Perf-measure
    for Gate D exit (reanalysis ≥5× vs 256s, ≤30s). Scoped by the same workflow (gateD finding).
