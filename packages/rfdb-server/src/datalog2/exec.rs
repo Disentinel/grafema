@@ -57,6 +57,7 @@ use std::time::Instant;
 use crate::datalog::{Atom, EvalLimits, Rule, Term, Value};
 
 use super::builtin::{self, ArgSpec, ArgValue, Batch};
+use super::increment::{self, BaseDelta};
 use super::events::{EventLog, PredicateCount, PredicateDelta, StratumEntry};
 use super::plan::{LegSource, RulePlan};
 use super::stratify::Stratification;
@@ -369,89 +370,6 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         Ok(out)
     }
 
-    /// Incrementally maintain a program's derived relations from a base delta, given the
-    /// previous run's [`Evaluation`]. The asserted base delta `ΔB` must be installed via
-    /// [`with_delta_view`](Self::with_delta_view); `base_has_retraction` says whether the
-    /// base diff also removed facts.
-    ///
-    /// Returns the maintained `Evaluation` — provably equal to a from-scratch [`evaluate`]
-    /// of the new snapshot — for the SOUND monotone envelope, or `Ok(None)` when the program
-    /// falls outside it and the caller must recompute from scratch. The envelope is:
-    /// * **negation-free** — a base insertion can RETRACT a derived fact through `\+`
-    ///   (non-monotone), which insertion-only propagation cannot model;
-    /// * **a single derived stratum** — cross-stratum delta threading (a lower stratum's
-    ///   delta seeding a higher one) is a later commit; the headline recursive views
-    ///   (`depends/2`, `reach/2`) are single-stratum;
-    /// * **insert-only** (`!base_has_retraction`) — base deletion needs Delete-and-Rederive
-    ///   (DRed), the next commits; counting cannot help a recursive view (I4 bars `CountTag`
-    ///   from recursion).
-    ///
-    /// Falling back rather than risking a wrong delta is the I5/“never a silent wrong
-    /// answer” discipline: an unsupported shape recomputes, it does not mis-maintain.
-    pub fn evaluate_incremental(
-        &self,
-        plans: &[RulePlan],
-        rules: &[&Rule],
-        strat: &Stratification,
-        prev: &Evaluation,
-        base_has_retraction: bool,
-    ) -> ExecResult<Option<Evaluation>> {
-        // ── Envelope guard (sound monotone insertion only) ──
-        let has_negation = rules
-            .iter()
-            .any(|r| r.body().iter().any(|l| l.is_negative()));
-        if base_has_retraction || has_negation || strat.strata.len() > 1 {
-            return Ok(None);
-        }
-
-        let pred_ids = assign_pred_ids(strat);
-
-        // Pre-load each derived predicate's Total with the prior run's facts (keyed by the
-        // same deterministic `fact_id` the seed/loop use, so membership checks line up).
-        let mut relations: HashMap<String, Relation<T>> = HashMap::new();
-        for (name, rows) in &prev.relations {
-            let Some(&pred_id) = pred_ids.get(name) else {
-                // A prior predicate not in this program's stratification (the program
-                // changed): outside the single-stratum monotone envelope — recompute.
-                return Ok(None);
-            };
-            let rel = relations.entry(name.clone()).or_insert_with(Relation::new);
-            for key in rows {
-                let fid = fact_id(pred_id, key);
-                rel.total.insert(
-                    fid,
-                    DerivedFact {
-                        key: key.clone(),
-                        tag: T::one(),
-                    },
-                );
-            }
-        }
-
-        // Maintain each stratum incrementally (the envelope guarantees a single one).
-        for stratum in &strat.strata {
-            self.eval_stratum(
-                stratum.index,
-                &stratum.predicates,
-                plans,
-                rules,
-                &pred_ids,
-                &mut relations,
-                true,
-            )?;
-        }
-
-        // Project the maintained relations into the same deterministic public form as
-        // `evaluate`, so a byte-for-byte comparison against a from-scratch run is meaningful.
-        let mut out = Evaluation::default();
-        for (name, rel) in &relations {
-            let mut rows: Vec<Box<[Value]>> = rel.total.values().map(|f| f.key.clone()).collect();
-            rows.sort_by(|a, b| cmp_tuple(a, b));
-            out.relations.insert(name.clone(), rows);
-        }
-        Ok(Some(out))
-    }
-
     /// DRed phase 1 — **over-delete** (spec §9.2, deletion). Given the prior `Total`
     /// pre-loaded in `relations` and a delta view of the RETRACTED base facts `ΔB⁻`
     /// (installed via [`with_delta_view`](Self::with_delta_view), with `view` = the PRIOR
@@ -594,6 +512,90 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
             }
         }
         Ok(candidates)
+    }
+
+    /// Whether some clause of `key`'s predicate derives exactly `key` from the CURRENT
+    /// `relations` (`Total`) and base (`view`) — a head-bound body-satisfiability probe. The
+    /// head variables are pinned to `key` (via [`head_bound_row`]); the body legs then read
+    /// `Total`/base with those bindings fixed, so a single surviving row means `key` has a
+    /// supporting derivation right now. The bounded primitive the DRed re-derive checks each
+    /// over-deleted candidate with — `O(|candidates|)` probes, not a full re-evaluation.
+    fn clause_derives_head(
+        &self,
+        clauses: &[Clause<'_>],
+        relations: &HashMap<String, Relation<T>>,
+        pred: &str,
+        key: &[Value],
+    ) -> ExecResult<bool> {
+        for clause in clauses.iter().filter(|c| c.head_pred == pred) {
+            let Some(init) = head_bound_row(clause.rule.head(), key) else {
+                continue;
+            };
+            let mut rows = vec![init];
+            for leg in &clause.plan.legs {
+                if rows.is_empty() {
+                    break;
+                }
+                // Every leg reads Total/base (no Δ): we are asking "is it derivable NOW".
+                rows = self.apply_leg(leg, rows, relations, false)?;
+            }
+            if !rows.is_empty() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// DRed phase 2 — **re-derive** (spec §9.2, deletion). After [`over_delete`] has computed
+    /// the candidate set and the caller has removed it from `Total`, restore every candidate
+    /// that still has a derivation from the SURVIVING facts and the NEW base (`view` = the new
+    /// base). A candidate is checked with [`clause_derives_head`]; restoring one can support
+    /// another (recursion), so the scan repeats until a round restores nothing — the least
+    /// fixpoint of "supported by surviving ∪ already-restored". Bounded by the candidate set,
+    /// not the full relation.
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn rederive(
+        &self,
+        plans: &[RulePlan],
+        rules: &[&Rule],
+        strat: &Stratification,
+        relations: &mut HashMap<String, Relation<T>>,
+        candidates: &HashMap<String, HashMap<u64, DerivedFact<T>>>,
+    ) -> ExecResult<()> {
+        let Some(stratum) = strat.strata.first() else {
+            return Ok(());
+        };
+        let clauses = self.collect_clauses(&stratum.predicates, plans, rules);
+
+        // The over-deleted facts to re-check (predicate, fact_id, key).
+        let mut pending: Vec<(String, u64, Box<[Value]>)> = candidates
+            .iter()
+            .flat_map(|(p, m)| m.iter().map(move |(fid, f)| (p.clone(), *fid, f.key.clone())))
+            .collect();
+
+        loop {
+            let mut restored_any = false;
+            let mut still_pending: Vec<(String, u64, Box<[Value]>)> = Vec::new();
+            for (pred, fid, key) in pending {
+                if self.clause_derives_head(&clauses, relations, &pred, &key)? {
+                    relations
+                        .get_mut(&pred)
+                        .expect("candidate predicate present")
+                        .total
+                        .insert(fid, DerivedFact { key, tag: T::one() });
+                    restored_any = true;
+                } else {
+                    still_pending.push((pred, fid, key));
+                }
+            }
+            pending = still_pending;
+            // Fixpoint: stop when a full pass restores nothing (the remaining candidates have
+            // no surviving support) or everything has been restored.
+            if !restored_any || pending.is_empty() {
+                break;
+            }
+        }
+        Ok(())
     }
 
     /// Evaluate a single stratum to its fixpoint (seed → Δ-loop).
@@ -1407,6 +1409,115 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
     }
 }
 
+// ── Incremental maintenance orchestrator (DRed + insertion) ─────────
+
+/// Pre-load each derived predicate's `Total` from a prior [`Evaluation`], keyed by the same
+/// deterministic `fact_id` the seed/loop use. `None` if a prior predicate is absent from this
+/// program's stratification (the program changed) — the caller then recomputes from scratch.
+fn preload_relations<T: IdempotentTag>(
+    prev: &Evaluation,
+    pred_ids: &HashMap<String, u64>,
+) -> Option<HashMap<String, Relation<T>>> {
+    let mut relations: HashMap<String, Relation<T>> = HashMap::new();
+    for (name, rows) in &prev.relations {
+        let &pred_id = pred_ids.get(name)?;
+        let rel = relations.entry(name.clone()).or_insert_with(Relation::new);
+        for key in rows {
+            rel.total.insert(
+                fact_id(pred_id, key),
+                DerivedFact { key: key.clone(), tag: T::one() },
+            );
+        }
+    }
+    Some(relations)
+}
+
+/// Maintain a program's derived relations across a base delta — the full Gate C EXIT entry
+/// (spec §9.1/§9.2), composing DRed deletion and insertion. Given the prior [`Evaluation`],
+/// the prior and new base views, and the [`BaseDelta`] between them, returns the maintained
+/// `Evaluation` — provably equal to a from-scratch [`Executor::evaluate`] of the new base —
+/// or `Ok(None)` when the program is outside the sound envelope (any negation, or more than
+/// one derived stratum) and the caller must recompute.
+///
+/// Order: **delete then insert**. DRed (over-delete on the PRIOR base reading `ΔB⁻`, remove
+/// the candidates, re-derive the still-supported ones against the new base) yields the LFP of
+/// `prior_base − retracted`; the insertion seed/Δ-loop (reading `ΔB⁺` against the new base)
+/// then adds the asserted facts — giving the LFP of `(prior − retracted) + asserted` = the
+/// new base. Each phase runs its own executor because the phases read different base views.
+pub(crate) fn maintain_incremental<T: IdempotentTag>(
+    prev: &Evaluation,
+    prev_view: &dyn StorageView,
+    cur_view: &dyn StorageView,
+    base_delta: &BaseDelta,
+    plans: &[RulePlan],
+    rules: &[&Rule],
+    strat: &Stratification,
+    limits: EvalLimits,
+) -> ExecResult<Option<Evaluation>> {
+    // Envelope: insertion is non-monotone under negation (a base insert can retract through
+    // `\+`), and cross-stratum delta threading is not yet implemented — recompute instead.
+    let has_negation = rules
+        .iter()
+        .any(|r| r.body().iter().any(|l| l.is_negative()));
+    if has_negation || strat.strata.len() > 1 {
+        return Ok(None);
+    }
+
+    let pred_ids = assign_pred_ids(strat);
+    let Some(mut relations) = preload_relations::<T>(prev, &pred_ids) else {
+        return Ok(None);
+    };
+
+    let has_retract = !base_delta.nodes.retracted.is_empty()
+        || !base_delta.edges.retracted.is_empty();
+    let has_assert =
+        !base_delta.nodes.asserted.is_empty() || !base_delta.edges.asserted.is_empty();
+
+    // ── DRed deletion (over-delete on the PRIOR base, then re-derive on the new base) ──
+    if has_retract {
+        let retracted_view = increment::delta_view_retracted(base_delta);
+        let del = Executor::<T>::with_limits(prev_view, limits.clone(), DEFAULT_ITERATION_CAP)
+            .with_delta_view(&retracted_view);
+        let candidates = del.over_delete(plans, rules, strat, &pred_ids, &mut relations)?;
+        for (pred, facts) in &candidates {
+            if let Some(rel) = relations.get_mut(pred) {
+                for fid in facts.keys() {
+                    rel.total.remove(fid);
+                }
+            }
+        }
+        let red = Executor::<T>::with_limits(cur_view, limits.clone(), DEFAULT_ITERATION_CAP);
+        red.rederive(plans, rules, strat, &mut relations, &candidates)?;
+    }
+
+    // ── Insertion (semi-naive seed from ΔB⁺ against the new base) ──
+    if has_assert {
+        let asserted_view = increment::delta_view(base_delta);
+        let ins = Executor::<T>::with_limits(cur_view, limits, DEFAULT_ITERATION_CAP)
+            .with_delta_view(&asserted_view);
+        for stratum in &strat.strata {
+            ins.eval_stratum(
+                stratum.index,
+                &stratum.predicates,
+                plans,
+                rules,
+                &pred_ids,
+                &mut relations,
+                true,
+            )?;
+        }
+    }
+
+    // Project into the deterministic public form (so a byte comparison against scratch holds).
+    let mut out = Evaluation::default();
+    for (name, rel) in &relations {
+        let mut rows: Vec<Box<[Value]>> = rel.total.values().map(|f| f.key.clone()).collect();
+        rows.sort_by(|a, b| cmp_tuple(a, b));
+        out.relations.insert(name.clone(), rows);
+    }
+    Ok(Some(out))
+}
+
 // ── One clause = plan + source rule ────────────────────────────────
 
 /// A clause to evaluate: its head predicate, the [`RulePlan`] (ordered legs), and the
@@ -1518,6 +1629,35 @@ fn project_head(head: &Atom, row: &BindRow) -> Option<Box<[Value]>> {
         }
     }
     Some(out.into_boxed_slice())
+}
+
+/// Build the initial binding row that pins a clause's HEAD to a specific ground tuple — the
+/// seed for a head-bound body-satisfiability probe (DRed re-derive). Each head variable binds
+/// the tuple's value at its position; a head constant must already agree (else `None`, the
+/// tuple is not an instance of this head). A head wildcard binds nothing.
+fn head_bound_row(head: &Atom, key: &[Value]) -> Option<BindRow> {
+    if head.args().len() != key.len() {
+        return None;
+    }
+    let mut row = BindRow::new();
+    for (t, val) in head.args().iter().zip(key.iter()) {
+        match t {
+            Term::Var(v) => match row.get(v) {
+                Some(existing) if existing != val => return None,
+                Some(_) => {}
+                None => {
+                    row.insert(v.clone(), val.clone());
+                }
+            },
+            Term::Const(s) => {
+                if &Value::from_term_const(s) != val {
+                    return None;
+                }
+            }
+            Term::Wildcard => {}
+        }
+    }
+    Some(row)
 }
 
 /// Unify a positive derived-predicate atom against one stored fact tuple, given a partial
@@ -1734,7 +1874,7 @@ mod tests {
     /// base. The two must agree on every cycle.
     #[test]
     fn incremental_insertion_equals_scratch_over_seeded_cycles() {
-        use crate::datalog2::increment::{delta_view, diff_base};
+        use crate::datalog2::increment::diff_base;
 
         // Transitive closure: negation-free, single recursive stratum, the monotone envelope.
         let src = "path(A, B) :- edge(A, B, \"E\").\n\
@@ -1794,15 +1934,17 @@ mod tests {
                 saw_nonempty_delta = true;
             }
 
-            let dv = delta_view(&base_delta);
-            let maintained = Executor::<BoolTag>::with_limits(
+            let maintained = maintain_incremental::<BoolTag>(
+                &prev_eval,
+                &prev_view,
                 &cur_view,
+                &base_delta,
+                &plans,
+                &rules,
+                &strat,
                 EvalLimits::none(),
-                DEFAULT_ITERATION_CAP,
             )
-            .with_delta_view(&dv)
-            .evaluate_incremental(&plans, &rules, &strat, &prev_eval, has_retraction)
-            .expect("incremental evaluate")
+            .expect("incremental maintain")
             .expect("monotone envelope → Some, not a recompute fallback");
 
             let scratch = eval_scratch(&cur_view);
@@ -1842,31 +1984,137 @@ mod tests {
         let mut v = FixtureStorageView::new(1);
         edge(&mut v, "a", "b", "E");
         let empty = Evaluation::default();
-        let out = Executor::<BoolTag>::with_limits(&v, EvalLimits::none(), DEFAULT_ITERATION_CAP)
-            .evaluate_incremental(&plans, &rules, &strat, &empty, false)
-            .expect("no executor error");
+        let base_delta = crate::datalog2::increment::diff_base(&v, &v);
+        let out = maintain_incremental::<BoolTag>(
+            &empty, &v, &v, &base_delta, &plans, &rules, &strat, EvalLimits::none(),
+        )
+        .expect("no executor error");
         assert!(out.is_none(), "negation → recompute fallback, never a wrong increment");
     }
 
-    /// The envelope guard: a retracting base delta (deletion) is DRed's job, not insertion
-    /// maintenance — so the entry returns `None` even on an otherwise-monotone program.
+    /// DRed end-to-end: deleting a base edge whose derived fact still has an ALTERNATE
+    /// derivation must KEEP that fact (over-delete marks it, re-derive restores it). Diamond
+    /// a→b, a→c, b→d, c→d; delete b→d; `(a,d)` survives via a→c→d.
     #[test]
-    fn incremental_refuses_retraction_returns_none() {
-        let src = "path(A, B) :- edge(A, B, \"E\").";
-        let prog = parse_ext_program(src).expect("parse");
+    fn deletion_rederives_fact_with_surviving_alternate_path() {
+        use crate::datalog2::increment::diff_base;
+        let (src,) = closure_program();
+        let prog = parse_ext_program(&src).expect("parse");
         let strat = stratify(&prog).expect("stratify");
         let rules = prog.rules();
         let plans = plan_program(
             &rules,
             &strat,
-            &Stats { total_nodes: 2, total_edges: 1, ..Default::default() },
+            &Stats { total_nodes: 4, total_edges: 4, ..Default::default() },
         )
         .expect("plan");
-        let v = FixtureStorageView::new(1);
-        let out = Executor::<BoolTag>::with_limits(&v, EvalLimits::none(), DEFAULT_ITERATION_CAP)
-            .evaluate_incremental(&plans, &rules, &strat, &Evaluation::default(), true)
-            .expect("no executor error");
-        assert!(out.is_none(), "base retraction → recompute fallback (DRed pending)");
+
+        let mk = |edges: &[(&str, &str)], gen: u64| {
+            let mut v = FixtureStorageView::new(gen);
+            for &(s, d) in edges {
+                edge(&mut v, s, d, "E");
+            }
+            v
+        };
+        let prev_view = mk(&[("a", "b"), ("a", "c"), ("b", "d"), ("c", "d")], 1);
+        let cur_view = mk(&[("a", "b"), ("a", "c"), ("c", "d")], 2); // b→d deleted
+        let prev = Executor::<BoolTag>::with_limits(&prev_view, EvalLimits::none(), DEFAULT_ITERATION_CAP)
+            .evaluate(&plans, &rules, &strat)
+            .expect("prev");
+
+        let base_delta = diff_base(&prev_view, &cur_view);
+        let maintained = maintain_incremental::<BoolTag>(
+            &prev, &prev_view, &cur_view, &base_delta, &plans, &rules, &strat, EvalLimits::none(),
+        )
+        .expect("maintain")
+        .expect("monotone envelope");
+        let scratch = Executor::<BoolTag>::with_limits(&cur_view, EvalLimits::none(), DEFAULT_ITERATION_CAP)
+            .evaluate(&plans, &rules, &strat)
+            .expect("scratch");
+
+        assert_eq!(maintained.relations, scratch.relations, "DRed ≡ scratch on diamond delete");
+        // (a,d) must still be present — re-derived from the surviving a→c→d.
+        let ad = maintained
+            .facts("path")
+            .iter()
+            .any(|r| r[0] == Value::Id(id_of("a")) && r[1] == Value::Id(id_of("d")));
+        assert!(ad, "(a,d) survives via the alternate a→c→d derivation");
+    }
+
+    /// The full Gate C EXIT invariant: over 100 seeded base edits that MIX insertions and
+    /// deletions, the maintained relation (DRed + insertion) is byte-identical to scratch.
+    #[test]
+    fn incremental_mixed_insert_delete_equals_scratch_over_seeded_cycles() {
+        use crate::datalog2::increment::diff_base;
+        let (src,) = closure_program();
+        let prog = parse_ext_program(&src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let plans = plan_program(
+            &rules,
+            &strat,
+            &Stats { total_nodes: 6, total_edges: 8, ..Default::default() },
+        )
+        .expect("plan");
+
+        const N: u128 = 6;
+        let nid = |i: u128| id_of(&format!("n{i}"));
+        let build = |edges: &[(u128, u128)], gen: u64| {
+            let mut v = FixtureStorageView::new(gen);
+            for &(s, d) in edges {
+                v.put_edge(EdgeRow { src: nid(s), dst: nid(d), edge_type: "E".to_string() });
+            }
+            v
+        };
+        let eval_scratch = |view: &FixtureStorageView| {
+            Executor::<BoolTag>::with_limits(view, EvalLimits::none(), DEFAULT_ITERATION_CAP)
+                .evaluate(&plans, &rules, &strat)
+                .expect("scratch")
+        };
+
+        let mut edges: Vec<(u128, u128)> = vec![(0, 1), (1, 2), (2, 3), (3, 4)];
+        let mut prev_view = build(&edges, 0);
+        let mut prev_eval = eval_scratch(&prev_view);
+
+        let mut lcg: u64 = 0xD1B5_4A32_D192_ED03;
+        let (mut saw_insert, mut saw_delete) = (false, false);
+        for cycle in 1..=100u64 {
+            lcg = lcg.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            let s = ((lcg >> 33) as u128) % N;
+            let d = ((lcg >> 17) as u128) % N;
+            let remove = (lcg >> 3) & 1 == 0;
+            if remove {
+                match edges.iter().position(|&e| e == (s, d)) {
+                    Some(pos) => {
+                        edges.remove(pos);
+                        saw_delete = true;
+                    }
+                    None => continue,
+                }
+            } else if edges.contains(&(s, d)) {
+                continue;
+            } else {
+                edges.push((s, d));
+                saw_insert = true;
+            }
+            let cur_view = build(&edges, cycle);
+            let base_delta = diff_base(&prev_view, &cur_view);
+            let maintained = maintain_incremental::<BoolTag>(
+                &prev_eval, &prev_view, &cur_view, &base_delta, &plans, &rules, &strat,
+                EvalLimits::none(),
+            )
+            .expect("maintain")
+            .expect("monotone envelope");
+            let scratch = eval_scratch(&cur_view);
+            assert_eq!(
+                maintained.relations, scratch.relations,
+                "cycle {cycle}: maintained ≡ scratch ({}n{s}->n{d})",
+                if remove { "del " } else { "add " }
+            );
+            prev_view = cur_view;
+            prev_eval = maintained;
+        }
+        assert!(saw_insert && saw_delete, "the mix exercised both insertion and deletion");
     }
 
     // ── DRed phase 1: over-delete candidate set ─────────────────────

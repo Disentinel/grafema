@@ -226,16 +226,34 @@ pub(crate) fn diff_base(prev: &dyn StorageView, cur: &dyn StorageView) -> BaseDe
     }
 }
 
-/// Build a [`StorageView`] exposing ONLY the asserted base delta `ΔB` — the view the
-/// incremental executor installs via `with_delta_view`, so a base leg flagged as the
-/// semi-naive delta leg reads only the new base facts. Reconstructs `NodeRow`/`EdgeRow`
-/// from the canonical-order value tuples (`Row::as_values`: node `[id, type, name, file]`,
-/// edge `[src, type, dst]`).
+/// Build a [`StorageView`] exposing ONLY the ASSERTED base delta `ΔB⁺` — the view the
+/// incremental insertion seed installs via `with_delta_view`, so a base leg flagged as the
+/// semi-naive delta leg reads only the new base facts.
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn delta_view(base: &BaseDelta) -> crate::datalog2::storage_glue::FixtureStorageView {
+    view_from(&base.nodes.asserted, &base.edges.asserted)
+}
+
+/// Build a [`StorageView`] exposing ONLY the RETRACTED base delta `ΔB⁻` — the view DRed's
+/// over-delete installs, so a base leg reads only the deleted base facts.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn delta_view_retracted(
+    base: &BaseDelta,
+) -> crate::datalog2::storage_glue::FixtureStorageView {
+    view_from(&base.nodes.retracted, &base.edges.retracted)
+}
+
+/// Reconstruct a `FixtureStorageView` from one side (asserted or retracted) of a base delta,
+/// rebuilding `NodeRow`/`EdgeRow` from the canonical-order value tuples (`Row::as_values`:
+/// node `[id, type, name, file]`, edge `[src, type, dst]`).
+#[cfg_attr(not(test), allow(dead_code))]
+fn view_from(
+    nodes: &BTreeMap<u64, (Box<[Value]>, BoolTag)>,
+    edges: &BTreeMap<u64, (Box<[Value]>, BoolTag)>,
+) -> crate::datalog2::storage_glue::FixtureStorageView {
     use crate::datalog2::storage_glue::{EdgeRow, FixtureStorageView, NodeRow};
     let mut v = FixtureStorageView::new(0);
-    for (_, (vals, _)) in &base.nodes.asserted {
+    for (_, (vals, _)) in nodes {
         if let [Value::Id(id), Value::Str(ty), Value::Str(name), Value::Str(file)] = &vals[..] {
             v.put_node(NodeRow {
                 id: *id,
@@ -245,7 +263,7 @@ pub(crate) fn delta_view(base: &BaseDelta) -> crate::datalog2::storage_glue::Fix
             });
         }
     }
-    for (_, (vals, _)) in &base.edges.asserted {
+    for (_, (vals, _)) in edges {
         if let [Value::Id(src), Value::Str(ty), Value::Id(dst)] = &vals[..] {
             v.put_edge(EdgeRow {
                 src: *src,

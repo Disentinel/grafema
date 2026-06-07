@@ -108,6 +108,7 @@ impl Bindings {
 /// Checked at hot paths (after each literal, before each derived predicate entry).
 /// All limits are cooperative — the evaluator checks them periodically and returns
 /// an error if any limit is exceeded.
+#[derive(Clone)]
 pub struct EvalLimits {
     /// Absolute wall-clock deadline (default: 30s from now)
     pub deadline: Option<Instant>,
