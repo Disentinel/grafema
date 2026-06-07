@@ -1427,6 +1427,96 @@ mod executor_tests {
         assert_eq!(names, vec!["withcat"]);
     }
 
+    /// Three-valued (Kleene) logic for `AND` under `NOT`. `n.category` is NULL
+    /// for the two cat-less nodes, so `n.category CONTAINS 'a'` is NULL there.
+    /// Kleene: `null AND true = null`; `NOT null = null` → excluded. Before the
+    /// fix `AND` collapsed the NULL operand to `Bool(false)` via `is_truthy()`,
+    /// so `NOT (null AND true)` became `NOT false = true` and wrongly admitted
+    /// the two NULL-category rows. `withcat` ("alpha") → `true AND true = true`,
+    /// `NOT true = false` → excluded. Correct result: nothing.
+    #[test]
+    fn filter_not_and_null_operand_excluded() {
+        let names = filtered_names(Expr::Not(Box::new(Expr::And(
+            Box::new(Expr::Contains(
+                Box::new(Expr::Property("n".to_string(), "category".to_string())),
+                Box::new(Expr::Literal(CypherLiteral::Str("a".to_string()))),
+            )),
+            Box::new(Expr::Literal(CypherLiteral::Bool(true))),
+        ))));
+        assert!(
+            names.is_empty(),
+            "NOT (nullPredicate AND true) must exclude NULL-operand rows (Kleene: null AND true = null), got {:?}",
+            names
+        );
+    }
+
+    /// Sibling of `filter_not_and_null_operand_excluded` for `OR`. Kleene:
+    /// `null OR false = null`; `NOT null = null` → excluded. Before the fix
+    /// `OR` collapsed the NULL operand to `Bool(false)`, so `NOT (null OR false)`
+    /// became `NOT false = true` and wrongly admitted the NULL-category rows.
+    #[test]
+    fn filter_not_or_null_operand_excluded() {
+        let names = filtered_names(Expr::Not(Box::new(Expr::Or(
+            Box::new(Expr::Contains(
+                Box::new(Expr::Property("n".to_string(), "category".to_string())),
+                Box::new(Expr::Literal(CypherLiteral::Str("a".to_string()))),
+            )),
+            Box::new(Expr::Literal(CypherLiteral::Bool(false))),
+        ))));
+        assert!(
+            names.is_empty(),
+            "NOT (nullPredicate OR false) must exclude NULL-operand rows (Kleene: null OR false = null), got {:?}",
+            names
+        );
+    }
+
+    /// Guard: FALSE dominates `AND` even past a NULL operand (Kleene:
+    /// `null AND false = false`). So `NOT (anything AND false) = NOT false =
+    /// true` admits every row. Holds before and after the fix — proves the
+    /// truthy/falsy short-circuits are preserved.
+    #[test]
+    fn filter_not_and_false_admits_all() {
+        let names = filtered_names(Expr::Not(Box::new(Expr::And(
+            Box::new(Expr::Contains(
+                Box::new(Expr::Property("n".to_string(), "category".to_string())),
+                Box::new(Expr::Literal(CypherLiteral::Str("a".to_string()))),
+            )),
+            Box::new(Expr::Literal(CypherLiteral::Bool(false))),
+        ))));
+        assert_eq!(names, vec!["nocat_none", "nocat_other", "withcat"]);
+    }
+
+    /// Guard: TRUE dominates `OR` even past a NULL operand (Kleene:
+    /// `null OR true = true`). So `NOT (anything OR true) = NOT true = false`
+    /// admits nothing. Holds before and after the fix.
+    #[test]
+    fn filter_not_or_true_excludes_all() {
+        let names = filtered_names(Expr::Not(Box::new(Expr::Or(
+            Box::new(Expr::Contains(
+                Box::new(Expr::Property("n".to_string(), "category".to_string())),
+                Box::new(Expr::Literal(CypherLiteral::Str("a".to_string()))),
+            )),
+            Box::new(Expr::Literal(CypherLiteral::Bool(true))),
+        ))));
+        assert!(names.is_empty(), "got {:?}", names);
+    }
+
+    /// Guard: a direct (non-negated) `AND` with a NULL operand still EXCLUDES
+    /// the row (NULL is not truthy) and still matches the non-null hit. The bug
+    /// is only observable under `NOT`; top-level `WHERE` filtering is unchanged.
+    /// Holds before and after the fix.
+    #[test]
+    fn filter_and_null_operand_still_excludes_and_matches() {
+        let names = filtered_names(Expr::And(
+            Box::new(Expr::Contains(
+                Box::new(Expr::Property("n".to_string(), "category".to_string())),
+                Box::new(Expr::Literal(CypherLiteral::Str("a".to_string()))),
+            )),
+            Box::new(Expr::Literal(CypherLiteral::Bool(true))),
+        ));
+        assert_eq!(names, vec!["withcat"]);
+    }
+
     #[test]
     fn filter_exported_boolean() {
         let engine = create_test_graph();
