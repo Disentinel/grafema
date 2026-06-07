@@ -5316,6 +5316,147 @@ mod hash_join_tests {
         assert_eq!(results.len(), db_count,
             "should find {} functions calling DB queries", db_count);
     }
+
+    // ------------------------------------------------------------------------
+    // Negation hash join: a constant (or bound-var) NON-KEY endpoint must be
+    // honored.
+    //
+    // `eval_negation_hash_join` keys its existence set on a single endpoint
+    // (`key_pos`). For `\+ edge(X, "d", "T")` the constant dst "d" was silently
+    // dropped once the binding count crossed HASH_JOIN_THRESHOLD, collapsing the
+    // literal into `\+ edge(X, _, "T")` ("X has NO outgoing T edge") — a
+    // threshold-dependent silent wrong answer. These tests pin the correct
+    // per-edge semantics across all three evaluation loops (process_literals,
+    // eval_rule_body_with, and the explain twin), in both edge directions.
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn test_hash_join_negation_const_dst_via_eval_query() {
+        // In setup_hash_join_graph, FUNCTION i calls CALL node (n+i). Targeting
+        // the CALL node of function 1 means ONLY function 1 calls it, so
+        // `\+ edge(X, "<n+1>", "CALLS")` must match every function EXCEPT 1.
+        let n = HASH_JOIN_THRESHOLD + 10;
+        let engine = setup_hash_join_graph(n);
+        let target = (n + 1) as u128;
+
+        let evaluator = Evaluator::new(&engine);
+        let literals = parse_query(&format!(
+            "node(X, \"FUNCTION\"), \\+ edge(X, \"{}\", \"CALLS\")",
+            target
+        )).unwrap();
+        let results = evaluator.eval_query(&literals).unwrap();
+
+        let ids: HashSet<u128> = results.iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+
+        assert_eq!(ids.len(), n - 1,
+            "negation with a const dst must exclude ONLY the caller of that dst");
+        assert!(!ids.contains(&1), "fn 1 calls the target dst -> excluded");
+        assert!(ids.contains(&2), "fn 2 does not call the target dst -> included");
+    }
+
+    #[test]
+    fn test_hash_join_negation_const_dst_via_rule() {
+        // Same property through a derived rule (eval_rule_body_with path).
+        let n = HASH_JOIN_THRESHOLD + 10;
+        let engine = setup_hash_join_graph(n);
+        let target = (n + 1) as u128;
+
+        let mut evaluator = Evaluator::new(&engine);
+        let rule = parse_rule(&format!(
+            "no_call_to(X) :- node(X, \"FUNCTION\"), \\+ edge(X, \"{}\", \"CALLS\").",
+            target
+        )).unwrap();
+        evaluator.add_rule(rule);
+
+        let goal = parse_atom("no_call_to(X)").unwrap();
+        let results = evaluator.query(&goal).unwrap();
+
+        let ids: HashSet<u128> = results.iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        assert_eq!(ids.len(), n - 1,
+            "derived-rule negation with a const dst must honor the dst");
+        assert!(!ids.contains(&1), "fn 1 calls the target dst -> excluded");
+    }
+
+    #[test]
+    fn test_hash_join_negation_const_src_incoming() {
+        // incoming sibling: `\+ incoming(C, "1", "CALLS")` = "no CALLS edge from
+        // node 1 into C". Only CALL node (n+1) has node 1 as its caller, so every
+        // other CALL node must match.
+        let n = HASH_JOIN_THRESHOLD + 10;
+        let engine = setup_hash_join_graph(n);
+
+        let evaluator = Evaluator::new(&engine);
+        let literals = parse_query(
+            "node(C, \"CALL\"), \\+ incoming(C, \"1\", \"CALLS\")"
+        ).unwrap();
+        let results = evaluator.eval_query(&literals).unwrap();
+
+        let ids: HashSet<u128> = results.iter()
+            .filter_map(|b| b.get("C").and_then(|v| v.as_id()))
+            .collect();
+        assert_eq!(ids.len(), n - 1,
+            "only the CALL node called by node 1 must be excluded");
+        assert!(!ids.contains(&((n + 1) as u128)), "CALL n+1 is called by node 1 -> excluded");
+        assert!(ids.contains(&((n + 2) as u128)), "CALL n+2 is called by node 2 -> included");
+    }
+
+    #[test]
+    fn test_hash_join_negation_const_dst_explain_parity() {
+        // The explain twin must agree with the standard evaluator.
+        let n = HASH_JOIN_THRESHOLD + 10;
+        let engine = setup_hash_join_graph(n);
+        let target = (n + 1) as u128;
+
+        let mut explain = EvaluatorExplain::new(&engine, false);
+        let literals = parse_query(&format!(
+            "node(X, \"FUNCTION\"), \\+ edge(X, \"{}\", \"CALLS\")",
+            target
+        )).unwrap();
+        let result = explain.eval_query(&literals).unwrap();
+
+        let ids: HashSet<u128> = result.bindings.iter()
+            .filter_map(|b| b.get("X").and_then(|s| s.parse::<u128>().ok()))
+            .collect();
+        assert_eq!(ids.len(), n - 1, "explain twin must honor the const dst too");
+        assert!(!ids.contains(&1), "fn 1 calls the target dst -> excluded");
+    }
+
+    #[test]
+    fn test_hash_join_negation_wildcard_still_fast_path() {
+        // Regression guard: the wildcard non-key endpoint is the ONLY sound
+        // fast-path case and must keep working — `\+ edge(X, _, "CALLS")`.
+        let n = HASH_JOIN_THRESHOLD + 10;
+        let mut engine = setup_hash_join_graph(n);
+        let mut orphans = Vec::new();
+        for i in (2 * n + 1)..=(2 * n + 5) {
+            orphans.push(NodeRecord {
+                id: i as u128,
+                node_type: Some("FUNCTION".to_string()),
+                name: Some(format!("orphan_{}", i)),
+                file: Some("test.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+                semantic_id: None,
+            });
+        }
+        engine.add_nodes(orphans);
+
+        let evaluator = Evaluator::new(&engine);
+        let literals = parse_query(
+            "node(X, \"FUNCTION\"), \\+ edge(X, _, \"CALLS\")"
+        ).unwrap();
+        let results = evaluator.eval_query(&literals).unwrap();
+        assert_eq!(results.len(), 5, "only the 5 orphan functions have no CALLS edge");
+    }
 }
 
 // ============================================================================
