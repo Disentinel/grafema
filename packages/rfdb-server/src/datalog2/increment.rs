@@ -39,7 +39,9 @@ use std::collections::BTreeMap;
 
 use crate::datalog::Value;
 
-use super::tag::{InvertibleTag, Tag};
+use super::storage_glue::{Relation, SortOrder, StorageView};
+use super::tag::{BoolTag, InvertibleTag, Tag};
+use super::value::{fact_id, PredicateId};
 
 /// A derived relation's committed half: `fact_id → (head tuple, provenance weight)`.
 ///
@@ -166,9 +168,85 @@ pub fn apply_counted<T: InvertibleTag + PartialEq>(
     }
 }
 
+// ── The EDB Differ (spec §9.2) ──────────────────────────────────────
+
+/// Reserved predicate ids for keying BASE-relation facts in a [`BaseDelta`]. A namespace
+/// distinct from the small, dense ids `assign_pred_ids` (exec.rs) hands the *derived*
+/// predicates, so a base fact's `fact_id` never collides with a derived one.
+pub const NODE_PRED_ID: PredicateId = u64::MAX;
+/// Reserved predicate id for base edge facts (see [`NODE_PRED_ID`]).
+pub const EDGE_PRED_ID: PredicateId = u64::MAX - 1;
+
+/// The fact-level change in the BASE relations between two version-pinned snapshots: the
+/// nodes and edges added/removed. Base facts are presence-only (`BoolTag`), so this is a
+/// pair of set deltas — the seed the incremental fixpoint propagates to derived predicates.
+///
+/// A node whose *attributes* changed (same id, different name/file) is one full tuple
+/// retracted and a new one asserted — exactly what a rule joining on `node.name` must see.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct BaseDelta {
+    /// Node tuples added (`asserted`) / removed (`retracted`).
+    pub nodes: RelationDelta<BoolTag>,
+    /// Edge tuples added / removed.
+    pub edges: RelationDelta<BoolTag>,
+}
+
+impl BaseDelta {
+    /// Whether nothing in the base relations changed between the two snapshots.
+    pub fn is_empty(&self) -> bool {
+        self.nodes.is_empty() && self.edges.is_empty()
+    }
+
+    /// Total changed base facts (nodes + edges, asserted + retracted) — the size of the
+    /// seed the incremental loop starts from, vs. the full base a recompute would re-scan.
+    pub fn len(&self) -> usize {
+        self.nodes.len() + self.edges.len()
+    }
+}
+
+/// Diff the BASE relations of two version-pinned views: scan each view's full node and edge
+/// run, build a presence-weighted relation, and set-diff them via [`diff`]. Pure over the
+/// two views — the only access is the locked [`StorageView`] scan surface (I10), no write.
+///
+/// `prev` is the previously-materialized generation, `cur` the new one; the returned
+/// [`BaseDelta`] asserts facts new in `cur` and retracts facts gone from `prev`.
+pub fn diff_base(prev: &dyn StorageView, cur: &dyn StorageView) -> BaseDelta {
+    BaseDelta {
+        nodes: diff(
+            &scan_weighted(prev, Relation::Nodes, SortOrder::NodeById),
+            &scan_weighted(cur, Relation::Nodes, SortOrder::NodeById),
+        ),
+        edges: diff(
+            &scan_weighted(prev, Relation::Edges, SortOrder::EdgeSrcTypeDst),
+            &scan_weighted(cur, Relation::Edges, SortOrder::EdgeSrcTypeDst),
+        ),
+    }
+}
+
+/// Materialize one base relation of a view as a presence-weighted relation keyed by the
+/// canonical `fact_id` over the full tuple (so an attribute change is a distinct fact).
+fn scan_weighted(
+    view: &dyn StorageView,
+    rel: Relation,
+    order: SortOrder,
+) -> WeightedRelation<BoolTag> {
+    let pid = match rel {
+        Relation::Nodes => NODE_PRED_ID,
+        Relation::Edges => EDGE_PRED_ID,
+    };
+    view.sorted_run(rel, order)
+        .map(|row| {
+            let key: Box<[Value]> = row.as_values().into_boxed_slice();
+            let fid = fact_id(pid, &key);
+            (fid, (key, BoolTag::present()))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::datalog2::storage_glue::{EdgeRow, FixtureStorageView, NodeRow};
     use crate::datalog2::tag::{BoolTag, CountTag};
 
     fn key(n: i64) -> Box<[Value]> {
@@ -248,6 +326,71 @@ mod tests {
         // Retract the last derivation: count 1 → 0, fact gone (not a 0-weight ghost).
         apply_counted(&mut rel, &d);
         assert!(!rel.contains_key(&1), "count reached zero → fact dropped");
+    }
+
+    // ── EDB Differ (diff_base over two snapshots) ────────────────────
+
+    fn node(id: u128, ty: &str, name: &str, file: &str) -> NodeRow {
+        NodeRow {
+            id,
+            node_type: ty.into(),
+            name: name.into(),
+            file: file.into(),
+        }
+    }
+    fn edge(src: u128, dst: u128, ty: &str) -> EdgeRow {
+        EdgeRow {
+            src,
+            dst,
+            edge_type: ty.into(),
+        }
+    }
+
+    #[test]
+    fn diff_base_detects_added_and_removed_nodes_and_edges() {
+        let mut prev = FixtureStorageView::new(1);
+        prev.put_node(node(1, "FUNCTION", "a", "a.rs"));
+        prev.put_node(node(2, "FUNCTION", "b", "b.rs"));
+        prev.put_edge(edge(1, 2, "CALLS"));
+
+        let mut cur = FixtureStorageView::new(2);
+        cur.put_node(node(1, "FUNCTION", "a", "a.rs")); // unchanged
+        cur.put_node(node(3, "FUNCTION", "c", "c.rs")); // added (2 removed)
+        cur.put_edge(edge(1, 3, "CALLS")); // added (1→2 removed)
+
+        let d = diff_base(&prev, &cur);
+        assert_eq!(d.nodes.asserted.len(), 1, "node 3 added");
+        assert_eq!(d.nodes.retracted.len(), 1, "node 2 removed");
+        assert_eq!(d.edges.asserted.len(), 1, "edge 1→3 added");
+        assert_eq!(d.edges.retracted.len(), 1, "edge 1→2 removed");
+        assert_eq!(d.len(), 4);
+    }
+
+    #[test]
+    fn diff_base_treats_attribute_change_as_retract_plus_assert() {
+        // Same node id, renamed: the full tuple changed → old retracted, new asserted, so a
+        // rule joining on node.name re-derives correctly.
+        let mut prev = FixtureStorageView::new(1);
+        prev.put_node(node(1, "FUNCTION", "old", "a.rs"));
+        let mut cur = FixtureStorageView::new(2);
+        cur.put_node(node(1, "FUNCTION", "new", "a.rs"));
+
+        let d = diff_base(&prev, &cur);
+        assert_eq!(d.nodes.asserted.len(), 1, "renamed node asserted");
+        assert_eq!(d.nodes.retracted.len(), 1, "old name retracted");
+        assert!(d.edges.is_empty());
+    }
+
+    #[test]
+    fn diff_base_empty_when_snapshots_equal() {
+        let mut prev = FixtureStorageView::new(1);
+        prev.put_node(node(1, "FUNCTION", "a", "a.rs"));
+        prev.put_edge(edge(1, 1, "RECURSES"));
+        let mut cur = FixtureStorageView::new(9); // generation differs, content identical
+        cur.put_node(node(1, "FUNCTION", "a", "a.rs"));
+        cur.put_edge(edge(1, 1, "RECURSES"));
+
+        assert!(diff_base(&prev, &cur).is_empty(), "identical content → empty base delta");
     }
 
     #[test]
