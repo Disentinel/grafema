@@ -487,7 +487,7 @@ fn walk_item(item: &syn::Item, ctx: &mut Ctx) {
         syn::Item::ExternCrate(_) => {}
         syn::Item::ForeignMod(_) => {}
         syn::Item::Macro(_) => {}
-        syn::Item::Union(_) => {} // TODO: treat like struct
+        syn::Item::Union(u) => walk_union(u, ctx),
         syn::Item::TraitAlias(_) => {}
         syn::Item::Verbatim(_) => {}
         _ => panic!("rust_analyzer: unhandled Item variant: {}", item_variant_name(item)),
@@ -708,6 +708,72 @@ fn walk_struct(s: &syn::ItemStruct, ctx: &mut Ctx) {
 
     // Fields
     for field in &s.fields {
+        if let Some(ident) = &field.ident {
+            let fname = ident.to_string();
+            let (fl, fc) = ctx.span_line_col(ident.span());
+            let field_id = semantic_id(&ctx.file, "RECORD_FIELD", &fname, Some(&node_id), None);
+            let mut field_meta = HashMap::new();
+            let type_str = type_to_name(&field.ty);
+            if type_str != "<type>" {
+                field_meta.insert("typeAnnotation".to_string(), serde_json::Value::String(type_str));
+            }
+            ctx.emit_declaration(GraphNode {
+                id: field_id.clone(),
+                node_type: "RECORD_FIELD".to_string(),
+                name: fname,
+                file: ctx.file.clone(),
+                line: fl, column: fc,
+                end_line: ctx.span_end_line_col(ident.span()).0, end_column: ctx.span_end_line_col(ident.span()).1,
+                exported: false,
+                metadata: field_meta,
+                extra: HashMap::new(),
+            });
+            ctx.emit_edge(GraphEdge {
+                src: node_id.clone(), dst: field_id,
+                edge_type: "HAS_FIELD".to_string(),
+                metadata: HashMap::new(),
+            });
+        }
+    }
+}
+
+/// Walk a Rust `union` declaration.
+///
+/// Unions are struct-like aggregate types with the same named-field layout, so
+/// we model them as STRUCT nodes — this lets every struct-aware query, the
+/// layout pass, and the city-map placeable-type list pick them up without
+/// introducing a new node type (which would have to be kept in sync across
+/// `analyzer.rs`, `layout/loader.rs`, and the GUI's placeable set). The
+/// union/struct distinction is preserved in `metadata.declKind = "union"`.
+fn walk_union(u: &syn::ItemUnion, ctx: &mut Ctx) {
+    let ident = u.ident.to_string();
+    let (line, col) = ctx.span_line_col(u.ident.span());
+    let is_exported = is_pub(&u.vis);
+    let node_id = semantic_id(&ctx.file, "STRUCT", &ident, None, None);
+
+    ctx.emit_declaration(GraphNode {
+        id: node_id.clone(),
+        node_type: "STRUCT".to_string(),
+        name: ident.clone(),
+        file: ctx.file.clone(),
+        line, column: col,
+        end_line: ctx.span_end_line_col(u.ident.span()).0, end_column: ctx.span_end_line_col(u.ident.span()).1,
+        exported: is_exported,
+        metadata: HashMap::from([
+            Ctx::meta_text("visibility", vis_to_text(&u.vis)),
+            Ctx::meta_text("declKind", "union"),
+        ]),
+        extra: HashMap::new(),
+    });
+
+    if is_exported {
+        ctx.exports.push(ExportInfo {
+            name: ident, node_id: node_id.clone(), kind: "union".to_string(), source: None,
+        });
+    }
+
+    // Fields — a union always has named fields.
+    for field in &u.fields.named {
         if let Some(ident) = &field.ident {
             let fname = ident.to_string();
             let (fl, fc) = ctx.span_line_col(ident.span());
@@ -1879,6 +1945,32 @@ mod tests {
         assert!(has_node(&fa, "RECORD_FIELD", "bar"));
         assert!(has_node(&fa, "RECORD_FIELD", "baz"));
         assert!(has_edge(&fa, "HAS_FIELD", "STRUCT", "RECORD_FIELD"));
+    }
+
+    #[test]
+    fn test_union_with_fields() {
+        // Rust `union`s are struct-like: same named-field layout, same role as a
+        // declared aggregate type. We emit them as STRUCT nodes (so every
+        // struct-aware query, layout pass, and the city-map placeable list pick
+        // them up without new node-type plumbing) and tag declKind=union so the
+        // union/struct distinction survives in the graph.
+        let fa = parse_and_analyze("pub union MyUnion { pub i: u32, f: f32 }");
+        assert!(has_node(&fa, "STRUCT", "MyUnion"), "union emitted as STRUCT node");
+        assert!(has_node(&fa, "RECORD_FIELD", "i"), "union field i");
+        assert!(has_node(&fa, "RECORD_FIELD", "f"), "union field f");
+        assert!(has_edge(&fa, "HAS_FIELD", "STRUCT", "RECORD_FIELD"), "HAS_FIELD edge");
+
+        let u = fa.nodes.iter()
+            .find(|n| n.node_type == "STRUCT" && n.name == "MyUnion")
+            .unwrap();
+        assert_eq!(u.metadata.get("declKind"), Some(&serde_json::json!("union")), "tagged declKind=union");
+        assert!(u.exported, "pub union is exported");
+
+        // Field type annotations are preserved exactly like struct fields.
+        let i = fa.nodes.iter()
+            .find(|n| n.node_type == "RECORD_FIELD" && n.name == "i")
+            .unwrap();
+        assert_eq!(i.metadata.get("typeAnnotation"), Some(&serde_json::json!("u32")));
     }
 
     #[test]
