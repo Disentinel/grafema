@@ -311,6 +311,21 @@ impl<'a> Operator for Expand<'a> {
                         .unwrap_or(0);
                     let target_id = self.target_id(edge, src_node_id);
 
+                    // Repeated-variable constraint: if `dst_var` is already
+                    // bound (the pattern reuses this node variable, e.g.
+                    // `(a)-[:R]->(a)` or `(m)-[:R1]->(c)-[:R2]->(m)`), the
+                    // discovered target must equal the existing binding —
+                    // Cypher requires the same variable to denote the same
+                    // node. Overwriting it would fabricate rows for
+                    // non-existent self-loops/cycles, so skip on mismatch.
+                    if let Some(ref dv) = self.dst_var {
+                        if let Some(existing) = input_rec.get(dv).and_then(|v| v.as_node_id()) {
+                            if existing != target_id {
+                                continue;
+                            }
+                        }
+                    }
+
                     if let Some(target_rec) = self.engine.get_node(target_id) {
                         self.limits.track_intermediate()?;
                         let mut out = input_rec.clone();
@@ -456,6 +471,19 @@ impl<'a> Operator for VarLengthExpand<'a> {
                 while self.result_pos < self.results.len() {
                     let nid = self.results[self.result_pos];
                     self.result_pos += 1;
+
+                    // Repeated-variable constraint (see Expand::next): if
+                    // `dst_var` is already bound (e.g. `(a)-[:R*1..2]->(a)`),
+                    // a reached node must equal the existing binding rather
+                    // than overwrite it. Skip on mismatch to avoid fabricating
+                    // rows that rebind the variable to a different node.
+                    if let Some(ref dv) = self.dst_var {
+                        if let Some(existing) = input_rec.get(dv).and_then(|v| v.as_node_id()) {
+                            if existing != nid {
+                                continue;
+                            }
+                        }
+                    }
 
                     if let Some(node_rec) = self.engine.get_node(nid) {
                         self.limits.track_intermediate()?;
@@ -858,39 +886,33 @@ pub fn eval_expr(expr: &Expr, record: &Record) -> CypherValue {
         }
 
         Expr::Not(inner) => {
+            // Three-valued logic: NOT NULL is NULL, not TRUE. Without this, a
+            // predicate that evaluates to NULL (e.g. a string predicate against
+            // an absent property) would be flipped to a definite TRUE and
+            // wrongly admit the row in `WHERE NOT ...`.
             let v = eval_expr(inner, record);
-            CypherValue::Bool(!v.is_truthy())
+            match v {
+                CypherValue::Null => CypherValue::Null,
+                _ => CypherValue::Bool(!v.is_truthy()),
+            }
         }
 
         Expr::Contains(lhs, rhs) => {
             let l = eval_expr(lhs, record);
             let r = eval_expr(rhs, record);
-            match (&l, &r) {
-                (CypherValue::Str(a), CypherValue::Str(b)) => CypherValue::Bool(a.contains(b.as_str())),
-                _ => CypherValue::Bool(false),
-            }
+            eval_string_predicate(l, r, |a, b| a.contains(b))
         }
 
         Expr::StartsWith(lhs, rhs) => {
             let l = eval_expr(lhs, record);
             let r = eval_expr(rhs, record);
-            match (&l, &r) {
-                (CypherValue::Str(a), CypherValue::Str(b)) => {
-                    CypherValue::Bool(a.starts_with(b.as_str()))
-                }
-                _ => CypherValue::Bool(false),
-            }
+            eval_string_predicate(l, r, |a, b| a.starts_with(b))
         }
 
         Expr::EndsWith(lhs, rhs) => {
             let l = eval_expr(lhs, record);
             let r = eval_expr(rhs, record);
-            match (&l, &r) {
-                (CypherValue::Str(a), CypherValue::Str(b)) => {
-                    CypherValue::Bool(a.ends_with(b.as_str()))
-                }
-                _ => CypherValue::Bool(false),
-            }
+            eval_string_predicate(l, r, |a, b| a.ends_with(b))
         }
 
         Expr::IsNull(inner) => {
@@ -922,6 +944,30 @@ pub fn eval_expr(expr: &Expr, record: &Record) -> CypherValue {
 
 // ─── Helper functions ───────────────────────────────────────────────────────
 
+/// Evaluate a Cypher string predicate (CONTAINS / STARTS WITH / ENDS WITH)
+/// over already-evaluated operands, applying three-valued logic.
+///
+/// Semantics (matching Neo4j):
+/// - if EITHER operand is NULL, the result is NULL (so that `NOT pred` stays
+///   NULL and the row is excluded, rather than being flipped to a definite
+///   TRUE and wrongly admitted);
+/// - if both operands are strings, return `Bool(test(a, b))`;
+/// - any other (non-NULL, non-string) combination yields `Bool(false)`,
+///   preserving the engine's prior behavior for type mismatches.
+fn eval_string_predicate(
+    lhs: CypherValue,
+    rhs: CypherValue,
+    test: impl Fn(&str, &str) -> bool,
+) -> CypherValue {
+    if matches!(lhs, CypherValue::Null) || matches!(rhs, CypherValue::Null) {
+        return CypherValue::Null;
+    }
+    match (&lhs, &rhs) {
+        (CypherValue::Str(a), CypherValue::Str(b)) => CypherValue::Bool(test(a, b)),
+        _ => CypherValue::Bool(false),
+    }
+}
+
 /// Convert a CypherLiteral to a CypherValue.
 fn literal_to_value(lit: &CypherLiteral) -> CypherValue {
     match lit {
@@ -942,30 +988,39 @@ fn eval_literal_expr(expr: &Expr) -> CypherValue {
 }
 
 /// Evaluate a binary comparison operator.
+///
+/// Follows Cypher three-valued logic: a comparison where either operand is NULL
+/// evaluates to NULL (unknown), never to a definite boolean. This matters in a
+/// `WHERE` clause — a NULL predicate is not truthy, so the row is excluded. Without
+/// this guard the ordering operators delegated to `partial_cmp_values`, which orders
+/// NULL as Less-than-everything (so `null < x` was `true`), and `Neq` returned `true`
+/// for `null <> x` — both wrongly admitting rows whose compared property is absent.
 fn eval_binop(l: &CypherValue, op: BinOp, r: &CypherValue) -> CypherValue {
+    if matches!(l, CypherValue::Null) || matches!(r, CypherValue::Null) {
+        return CypherValue::Null;
+    }
     match op {
         BinOp::Eq => CypherValue::Bool(l == r),
         BinOp::Neq => CypherValue::Bool(l != r),
-        BinOp::Lt => CypherValue::Bool(
-            l.partial_cmp_values(r)
-                .map(|o| o == std::cmp::Ordering::Less)
-                .unwrap_or(false),
-        ),
-        BinOp::Gt => CypherValue::Bool(
-            l.partial_cmp_values(r)
-                .map(|o| o == std::cmp::Ordering::Greater)
-                .unwrap_or(false),
-        ),
-        BinOp::Lte => CypherValue::Bool(
-            l.partial_cmp_values(r)
-                .map(|o| o != std::cmp::Ordering::Greater)
-                .unwrap_or(false),
-        ),
-        BinOp::Gte => CypherValue::Bool(
-            l.partial_cmp_values(r)
-                .map(|o| o != std::cmp::Ordering::Less)
-                .unwrap_or(false),
-        ),
+        // Ordering operators follow three-valued logic for INCOMPARABLE operands.
+        // `partial_cmp_values` returns `None` when the two non-NULL operands cannot
+        // be ordered against each other (e.g. String vs Int, Bool vs number, Node,
+        // or a NaN float). Per Cypher/Neo4j this is UNKNOWN → NULL, not a definite
+        // `false`: a previous `.unwrap_or(false)` here meant `NOT (Str < Int)`
+        // flipped to a definite `true` and wrongly admitted the row in `WHERE`.
+        // (NULL operands are already short-circuited to NULL at the top of this fn,
+        // so they never reach `partial_cmp_values`; this guard covers only the
+        // non-NULL-but-incomparable case — the sibling of #341/#348/#352.)
+        BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte => match l.partial_cmp_values(r) {
+            Some(ord) => CypherValue::Bool(match op {
+                BinOp::Lt => ord == std::cmp::Ordering::Less,
+                BinOp::Gt => ord == std::cmp::Ordering::Greater,
+                BinOp::Lte => ord != std::cmp::Ordering::Greater,
+                BinOp::Gte => ord != std::cmp::Ordering::Less,
+                _ => unreachable!("outer arm restricts op to ordering comparisons"),
+            }),
+            None => CypherValue::Null,
+        },
     }
 }
 
@@ -1011,14 +1066,25 @@ fn format_return_expr(expr: &Expr) -> String {
     }
 }
 
-/// Convert a CypherValue to a string for use as a group key in HashAggregate.
+/// Convert a CypherValue into a `GROUP BY` bucket key for HashAggregate.
+///
+/// Two values must map to the SAME key iff they are equal under
+/// `CypherValue`'s `PartialEq` (the relation `GROUP BY` groups on). The first
+/// character is a per-type discriminant, so values of different types can never
+/// collide even when they render to the same text — `Int(5)` (`"#5"`),
+/// `Str("5")` (`"S5"`), `Bool(true)` (`"Btrue"`) and `Null` (`"N"`) are all
+/// distinct buckets. `Int` and `Float` deliberately share the `#` numeric
+/// namespace because `Int(5) == Float(5.0)` holds (`values.rs` PartialEq), so
+/// `5` and `5.0` must group together — and they do, since `5.0_f64` renders to
+/// `"5"`. Without the discriminant a bare `to_string()` silently merged
+/// distinct-typed values (e.g. `Int(5)` with `Str("5")`) into one group.
 fn value_to_group_key(val: &CypherValue) -> String {
     match val {
-        CypherValue::Null => "__null__".to_string(),
-        CypherValue::Bool(b) => b.to_string(),
-        CypherValue::Int(i) => i.to_string(),
-        CypherValue::Float(f) => f.to_string(),
-        CypherValue::Str(s) => s.clone(),
-        CypherValue::Node { id, .. } => id.to_string(),
+        CypherValue::Null => "N".to_string(),
+        CypherValue::Bool(b) => format!("B{b}"),
+        CypherValue::Int(i) => format!("#{i}"),
+        CypherValue::Float(f) => format!("#{f}"),
+        CypherValue::Str(s) => format!("S{s}"),
+        CypherValue::Node { id, .. } => format!("@{id}"),
     }
 }

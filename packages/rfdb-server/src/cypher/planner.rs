@@ -24,10 +24,27 @@ pub fn plan<'a>(
 ) -> Result<Box<dyn Operator + 'a>, CypherError> {
     let pattern = &query.match_clause.pattern;
 
+    // The start node's effective variable name. For an anonymous start node
+    // (`MATCH ()-[:CALLS]->(g)`) we synthesize `__anon_0` — the same name the
+    // segment loop below uses for unnamed nodes (`__anon_{i+1}`). This name is
+    // used for BOTH the `NodeScan` binding and `prev_var` so they always agree.
+    let start_var = pattern
+        .start
+        .variable
+        .clone()
+        .unwrap_or_else(|| "__anon_0".to_string());
+
     // 1. Start with NodeScan for the first node pattern.
+    //
+    // The scan must always bind the start node under `start_var`, even when the
+    // pattern node is anonymous: a downstream `Expand` resolves its source node
+    // by looking up `start_var` in the record. If `NodeScan` produced an unbound
+    // record (as it did when the start node had no explicit variable), `Expand`
+    // failed with "variable '__anon_0' is not a node". Binding here mirrors how
+    // anonymous DESTINATION nodes are already bound by `Expand`.
     let mut op: Box<dyn Operator + 'a> = Box::new(NodeScan::new(
         engine,
-        pattern.start.variable.clone(),
+        Some(start_var.clone()),
         pattern.start.labels.clone(),
         pattern.start.properties.clone(),
         limits,
@@ -35,11 +52,7 @@ pub fn plan<'a>(
 
     // Track the "current" variable name so Expand knows which record field
     // holds the source node. Start with the first node pattern's variable.
-    let mut prev_var = pattern
-        .start
-        .variable
-        .clone()
-        .unwrap_or_else(|| "__anon_0".to_string());
+    let mut prev_var = start_var;
 
     // 2. Chain Expand/VarLengthExpand for each segment.
     for (i, (rel, node)) in pattern.segments.iter().enumerate() {
@@ -116,19 +129,40 @@ pub fn plan<'a>(
     //   HashAggregate already produces named columns, so Sort works on those.
     //   No separate Project is needed after HashAggregate.
 
-    // Reject non-aggregate functions in RETURN. The executor implements only
-    // aggregate functions (COUNT/SUM/AVG/MIN/MAX); a scalar function such as
-    // toUpper(...) must fail loudly here rather than be silently routed through
-    // HashAggregate (which would mislabel it as an aggregate) or projected to
-    // NULL. Scalar-function support is a separate feature.
+    // Reject unsupported (non-aggregate) scalar functions in every clause whose
+    // expressions the engine evaluates. The executor implements only the aggregate
+    // functions (COUNT/SUM/AVG/MIN/MAX); any other function name (e.g. `toUpper`,
+    // `toLower`, `type`, `length`) is NOT implemented and `eval_expr` evaluates it
+    // to NULL. Left unguarded that produces silent wrong answers:
+    //   - RETURN toUpper(n.name)            → mislabeled as an aggregate / NULL column
+    //   - WHERE  toUpper(n.name) = 'X'      → `NULL = 'X'` = NULL → every row dropped
+    //                                         (an empty result that looks like "no match")
+    //   - ORDER BY toUpper(n.name)          → every sort key NULL → silent no-op sort
+    // So each such clause must fail loudly here. Scalar-function support is a
+    // separate feature; until it exists, an unsupported call is an error, not a
+    // confidently-wrong result.
     for item in &query.return_clause.items {
-        if let Expr::FunctionCall(name, _) = &item.expr {
-            if !is_aggregate_function(name) {
-                return Err(CypherError::Plan(format!(
-                    "Unsupported function '{}' in RETURN (supported: COUNT, SUM, AVG, MIN, MAX)",
-                    name
-                )));
-            }
+        reject_unsupported_functions(&item.expr, "RETURN")?;
+    }
+    if let Some(ref where_expr) = query.where_clause {
+        reject_unsupported_functions(where_expr, "WHERE")?;
+    }
+    if let Some(ref order_by) = query.order_by {
+        for (expr, _) in order_by {
+            reject_unsupported_functions(expr, "ORDER BY")?;
+        }
+    }
+    // Inline pattern property values are evaluated too — the start node's via
+    // `NodeScan::matches_properties` (`eval_literal_expr`) and each segment node's
+    // via a synthesized `Filter` (`eval_expr`). A function call there is the same
+    // silent-NULL trap (e.g. `MATCH (n {name: toUpper('x')})` would match only
+    // NULL-named nodes), so validate those values as well.
+    for (_, val) in &pattern.start.properties {
+        reject_unsupported_functions(val, "node pattern properties")?;
+    }
+    for (_, node) in &pattern.segments {
+        for (_, val) in &node.properties {
+            reject_unsupported_functions(val, "node pattern properties")?;
         }
     }
 
@@ -169,6 +203,135 @@ pub fn plan<'a>(
     }
 
     Ok(op)
+}
+
+/// Expand a `RETURN *` wildcard into one explicit return item per variable bound
+/// by the MATCH pattern, in pattern-declaration order.
+///
+/// `RETURN *` is a core Cypher idiom — "give me every variable in scope". The
+/// parser produces it as a top-level [`Expr::Star`] return item (distinct from
+/// `count(*)`, where the `Star` is nested inside a [`Expr::FunctionCall`]'s
+/// arguments and is therefore left untouched here). Without expansion the
+/// executor's `eval_expr` evaluates a bare `Expr::Star` to `NULL`, so the query
+/// silently returns a single column literally named `*` holding `NULL` instead
+/// of the bound nodes/relationships — an on-thesis silent-wrong-answer.
+///
+/// This MUST run before both the planner and the column-name derivation in
+/// `execute`, so that the operator tree and the result header agree on the
+/// expanded set of columns.
+///
+/// Behaviour:
+/// - The wildcard expands to the pattern's **named** variables only — the start
+///   node, then for each segment its relationship variable (if named) followed
+///   by its destination node variable (if named) — preserving declaration order
+///   and de-duplicating. Anonymous pattern elements (`()`, `-[:T]->`) contribute
+///   nothing, mirroring Cypher (they are not in scope).
+/// - `RETURN *` with **no** named variable in the pattern is an error (nothing to
+///   project), rather than a confidently-empty/NULL result.
+/// - `RETURN * AS x` is rejected: aliasing the wildcard is not valid Cypher.
+/// - Non-wildcard return items (including `count(*)`) are passed through
+///   unchanged, so `RETURN *, count(x)` expands the `*` and keeps the aggregate.
+pub fn expand_return_star(query: &mut CypherQuery) -> Result<(), CypherError> {
+    // Fast path: nothing to do unless a top-level `*` return item is present.
+    let has_star = query
+        .return_clause
+        .items
+        .iter()
+        .any(|item| matches!(item.expr, Expr::Star));
+    if !has_star {
+        return Ok(());
+    }
+
+    // Collect named variables in pattern-declaration order, de-duplicated.
+    let pattern = &query.match_clause.pattern;
+    let mut named: Vec<String> = Vec::new();
+    let mut push_unique = |v: &Option<String>, named: &mut Vec<String>| {
+        if let Some(name) = v {
+            if !named.iter().any(|n| n == name) {
+                named.push(name.clone());
+            }
+        }
+    };
+    push_unique(&pattern.start.variable, &mut named);
+    for (rel, node) in &pattern.segments {
+        push_unique(&rel.variable, &mut named);
+        push_unique(&node.variable, &mut named);
+    }
+
+    let mut expanded: Vec<ReturnItem> = Vec::with_capacity(query.return_clause.items.len());
+    for item in &query.return_clause.items {
+        if matches!(item.expr, Expr::Star) {
+            if item.alias.is_some() {
+                return Err(CypherError::Plan(
+                    "RETURN * cannot be aliased (`RETURN * AS ...` is invalid)".to_string(),
+                ));
+            }
+            if named.is_empty() {
+                return Err(CypherError::Plan(
+                    "RETURN * requires at least one named variable in the MATCH pattern".to_string(),
+                ));
+            }
+            for var in &named {
+                expanded.push(ReturnItem {
+                    expr: Expr::Variable(var.clone()),
+                    // Alias to the variable name so the column header is `n`, not
+                    // the formatted expression — matching `RETURN n`.
+                    alias: Some(var.clone()),
+                });
+            }
+        } else {
+            expanded.push(item.clone());
+        }
+    }
+
+    query.return_clause.items = expanded;
+    Ok(())
+}
+
+/// Recursively reject any unsupported (non-aggregate) function call anywhere in
+/// `expr`, returning a [`CypherError::Plan`] that names the offending function
+/// and the `clause` it appears in.
+///
+/// The engine only implements the aggregate functions (COUNT/SUM/AVG/MIN/MAX);
+/// every other function name evaluates to NULL in `eval_expr`, which silently
+/// corrupts WHERE filters, ORDER BY keys, and RETURN columns. This walk catches
+/// such calls before execution — including ones buried inside compound
+/// predicates (e.g. `NOT (toLower(x) = 'y' AND ...)`) — so the query fails
+/// loudly instead of returning a confidently-wrong empty/unsorted result.
+///
+/// Aggregate function calls are left intact: they are legitimate in RETURN (and
+/// in ORDER BY of an aggregate query), and are routed through `HashAggregate`.
+/// Their arguments are still walked, so a scalar function nested inside an
+/// aggregate (e.g. `COUNT(toUpper(x))`) is also rejected.
+fn reject_unsupported_functions(expr: &Expr, clause: &str) -> Result<(), CypherError> {
+    match expr {
+        Expr::FunctionCall(name, args) => {
+            if !is_aggregate_function(name) {
+                return Err(CypherError::Plan(format!(
+                    "Unsupported function '{}' in {} (supported: COUNT, SUM, AVG, MIN, MAX); \
+                     scalar functions are not implemented",
+                    name, clause
+                )));
+            }
+            for arg in args {
+                reject_unsupported_functions(arg, clause)?;
+            }
+            Ok(())
+        }
+        Expr::BinaryOp(lhs, _, rhs)
+        | Expr::And(lhs, rhs)
+        | Expr::Or(lhs, rhs)
+        | Expr::Contains(lhs, rhs)
+        | Expr::StartsWith(lhs, rhs)
+        | Expr::EndsWith(lhs, rhs) => {
+            reject_unsupported_functions(lhs, clause)?;
+            reject_unsupported_functions(rhs, clause)
+        }
+        Expr::Not(inner) | Expr::IsNull(inner) | Expr::IsNotNull(inner) => {
+            reject_unsupported_functions(inner, clause)
+        }
+        Expr::Property(_, _) | Expr::Literal(_) | Expr::Variable(_) | Expr::Star => Ok(()),
+    }
 }
 
 /// Split ReturnClause items into group keys (non-aggregate) and aggregate items.

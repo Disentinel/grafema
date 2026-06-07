@@ -96,18 +96,24 @@ impl<'a> Parser<'a> {
     fn keyword_ahead(&mut self, kw: &str) -> bool {
         self.skip_whitespace();
         let rem = self.remaining();
-        if rem.len() < kw.len() {
+        // `str::get(..kw.len())` returns `None` both when the remaining input
+        // is shorter than the keyword AND when `kw.len()` does not fall on a
+        // UTF-8 char boundary (e.g. a multibyte char straddles that index).
+        // This avoids the panic that a raw `rem[..kw.len()]` byte slice would
+        // hit when non-ASCII input appears where a keyword is probed.
+        let head = match rem.get(..kw.len()) {
+            Some(h) => h,
+            None => return false,
+        };
+        if !head.eq_ignore_ascii_case(kw) {
             return false;
         }
-        if !rem[..kw.len()].eq_ignore_ascii_case(kw) {
-            return false;
+        // Must be followed by non-alphanumeric (word boundary) or end of input.
+        // `kw.len()` is a valid boundary here because `get(..kw.len())` succeeded.
+        match rem[kw.len()..].chars().next() {
+            None => true,
+            Some(next_char) => !next_char.is_alphanumeric() && next_char != '_',
         }
-        // Must be followed by non-alphanumeric (word boundary) or end of input
-        if rem.len() == kw.len() {
-            return true;
-        }
-        let next_char = rem[kw.len()..].chars().next().unwrap();
-        !next_char.is_alphanumeric() && next_char != '_'
     }
 
     /// Consume a keyword (case-insensitive) or return an error.
@@ -207,25 +213,72 @@ impl<'a> Parser<'a> {
         self.pos += 1; // consume opening quote
 
         let start = self.pos;
+        let mut value = String::new();
         while self.pos < self.input.len() {
             let c = self.input[self.pos..].chars().next().unwrap();
             if c == '\\' {
-                // Skip escaped character
+                // Escape sequence: consume the backslash, then decode the next
+                // character into `value`. A backslash before the closing quote
+                // must not be emitted verbatim and must not let the escaped
+                // quote terminate the string.
                 self.pos += c.len_utf8();
-                if self.pos < self.input.len() {
-                    let escaped = self.input[self.pos..].chars().next().unwrap();
-                    self.pos += escaped.len_utf8();
+                let escaped = match self.input[self.pos..].chars().next() {
+                    Some(e) => e,
+                    None => break, // trailing backslash -> falls through to "unterminated"
+                };
+                self.pos += escaped.len_utf8();
+                match escaped {
+                    '\'' => value.push('\''),
+                    '"' => value.push('"'),
+                    '\\' => value.push('\\'),
+                    'n' => value.push('\n'),
+                    't' => value.push('\t'),
+                    'r' => value.push('\r'),
+                    'b' => value.push('\u{0008}'),
+                    'f' => value.push('\u{000C}'),
+                    'u' => self.decode_unicode_escape(&mut value),
+                    // Unknown escape: preserve verbatim (backslash + char), the
+                    // conservative choice so only well-defined escapes change.
+                    other => {
+                        value.push('\\');
+                        value.push(other);
+                    }
                 }
             } else if c == quote {
-                let value = self.input[start..self.pos].to_string();
                 self.pos += 1; // consume closing quote
                 return Ok(value);
             } else {
+                value.push(c);
                 self.pos += c.len_utf8();
             }
         }
 
         Err(ParseError::new("unterminated string", start))
+    }
+
+    /// Decode a `\uXXXX` escape. On entry `self.pos` is positioned just after
+    /// the `u`. If exactly four hex digits follow and form a valid Unicode
+    /// scalar value, push the decoded character and advance past the digits.
+    /// Otherwise leave the digits unconsumed and preserve the escape verbatim
+    /// (a literal backslash + `u`), matching the conservative policy for
+    /// unrecognized escapes.
+    fn decode_unicode_escape(&mut self, value: &mut String) {
+        let hex: String = self.input[self.pos..]
+            .chars()
+            .take(4)
+            .take_while(|c| c.is_ascii_hexdigit())
+            .collect();
+        if hex.len() == 4 {
+            if let Some(ch) = u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32) {
+                value.push(ch);
+                self.pos += 4; // four ASCII hex digits => four bytes
+                return;
+            }
+        }
+        // Not a valid \uXXXX — preserve verbatim; the following characters are
+        // re-parsed as ordinary string content.
+        value.push('\\');
+        value.push('u');
     }
 
     /// Parse an integer literal.
@@ -572,25 +625,50 @@ impl<'a> Parser<'a> {
         Ok((variable, rel_types, length))
     }
 
-    /// Parse variable-length specifier after '*': min..max
+    /// Parse the variable-length specifier following `*`, returning `(min, max)`.
+    ///
+    /// Supports the full standard Cypher grammar (the leading `*` is already
+    /// consumed by the caller):
+    /// - `*`        → `(1, u32::MAX)`  — one or more hops, no upper bound
+    /// - `*N`       → `(N, N)`         — exactly N hops
+    /// - `*N..`     → `(N, u32::MAX)`  — at least N hops, no upper bound
+    /// - `*..M`     → `(1, M)`         — up to M hops
+    /// - `*N..M`    → `(N, M)`         — between N and M hops
+    /// - `*..`      → `(1, u32::MAX)`  — equivalent to bare `*`
+    ///
+    /// An omitted bound is "unbounded", represented as [`u32::MAX`] rather than a
+    /// magic finite cap: `VarLengthExpand`'s BFS dedupes visited nodes (so it is
+    /// O(V+E) per source and always terminates) and `EvalLimits` bounds result
+    /// volume, so there is no silent depth truncation. The previous code called
+    /// `expect("..")` unconditionally — rejecting `*` and `*N`, and defaulting an
+    /// omitted max to 10, which silently dropped any path longer than 10 hops.
     fn parse_var_length(&mut self) -> Result<(u32, u32), ParseError> {
         self.skip_whitespace();
-        let min = if self.remaining().chars().next().map(|c| c.is_ascii_digit()) == Some(true) {
+        let has_min = self.remaining().chars().next().map(|c| c.is_ascii_digit()) == Some(true);
+        let min = if has_min {
             self.parse_integer()? as u32
         } else {
             1 // default min
         };
 
-        self.expect("..")?;
-
         self.skip_whitespace();
-        let max = if self.remaining().chars().next().map(|c| c.is_ascii_digit()) == Some(true) {
-            self.parse_integer()? as u32
+        if self.remaining().starts_with("..") {
+            // Range form `*min..` / `*min..max` / `*..max` / `*..`.
+            self.pos += 2;
+            self.skip_whitespace();
+            let max = if self.remaining().chars().next().map(|c| c.is_ascii_digit()) == Some(true) {
+                self.parse_integer()? as u32
+            } else {
+                u32::MAX // omitted upper bound → unbounded
+            };
+            Ok((min, max))
+        } else if has_min {
+            // Exact-length form `*N` → exactly N hops.
+            Ok((min, min))
         } else {
-            10 // default max
-        };
-
-        Ok((min, max))
+            // Bare `*` → one or more hops, unbounded.
+            Ok((1, u32::MAX))
+        }
     }
 
     // ========================================================================

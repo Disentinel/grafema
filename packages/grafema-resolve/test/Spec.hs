@@ -645,6 +645,16 @@ mkSimpleClass file className =
     file
     Map.empty
 
+-- | VARIABLE node initialized from `new <className>()` (REG-585 pt2 metadata).
+mkVarWithInstanceOf :: Text -> Text -> Text -> GraphNode
+mkVarWithInstanceOf file varName className =
+  mkNode
+    (file <> "->VARIABLE->" <> varName)
+    "VARIABLE"
+    varName
+    file
+    (Map.fromList [("kind", MetaText "const"), ("instanceOfName", MetaText className)])
+
 -- | Same-file inheritance: class Dog extends Animal in same .ts file.
 testSameFileExtends :: TestResult
 testSameFileExtends =
@@ -721,6 +731,37 @@ testCrossFileExtends =
         , geType e == "EXTENDS"
         -> Pass
     _ -> Fail $ "Expected 1 cross-file EXTENDS edge Dog→Animal, got: " ++ show edges
+
+-- | REG-585 pt2: const x = new Foo() (same-file class) → VARIABLE -INSTANCE_OF-> CLASS Foo.
+testInstanceOfSameFile :: TestResult
+testInstanceOfSameFile =
+  let file  = "src/app.ts"
+      nodes = [ mkSimpleClass file "Foo", mkVarWithInstanceOf file "x" "Foo" ]
+      ioEdges = filter (\e -> geType e == "INSTANCE_OF") (extractEdges (ClassInheritance.resolveAll nodes))
+  in case ioEdges of
+    [e] | geSource e == file <> "->VARIABLE->x", geTarget e == file <> "->CLASS->Foo" -> Pass
+    _ -> Fail $ "Expected INSTANCE_OF x->Foo, got: " ++ show ioEdges
+
+-- | REG-585 pt2: const e = new Error() → VARIABLE -INSTANCE_OF-> BUILTIN_CLASS::Error + node.
+testInstanceOfBuiltin :: TestResult
+testInstanceOfBuiltin =
+  let file  = "src/app.ts"
+      cmds  = ClassInheritance.resolveAll [ mkVarWithInstanceOf file "e" "Error" ]
+      ioEdges = filter (\e -> geType e == "INSTANCE_OF") (extractEdges cmds)
+      clsNodes = filter (\n -> gnType n == "CLASS" && gnId n == "BUILTIN_CLASS::Error") (extractNodes cmds)
+  in case (ioEdges, clsNodes) of
+    ([e], (_:_)) | geSource e == file <> "->VARIABLE->e", geTarget e == "BUILTIN_CLASS::Error" -> Pass
+    _ -> Fail $ "Expected INSTANCE_OF e->BUILTIN_CLASS::Error + node, got: " ++ show ioEdges
+
+-- | REG-585 pt2: VARIABLE without instanceOfName → no INSTANCE_OF edge.
+testInstanceOfNoMetadata :: TestResult
+testInstanceOfNoMetadata =
+  let file  = "src/app.ts"
+      nodes = [ mkNode (file <> "->VARIABLE->y") "VARIABLE" "y" file (Map.singleton "kind" (MetaText "const")) ]
+      ioEdges = filter (\e -> geType e == "INSTANCE_OF") (extractEdges (ClassInheritance.resolveAll nodes))
+  in case ioEdges of
+    [] -> Pass
+    _  -> Fail $ "Expected no INSTANCE_OF edge, got: " ++ show ioEdges
 
 -- ---------------------------------------------------------------------------
 -- ImportResolution unit tests
@@ -834,6 +875,9 @@ main = do
     , runTest "builtin superClass (EventEmitter) creates EXTENDS to BUILTIN_CLASS node" testBuiltinBaseExtends
     , runTest "unknown non-builtin superClass produces no edge" testUnknownNonBuiltinSuper
     , runTest "cross-file inheritance via import creates EXTENDS edge" testCrossFileExtends
+    , runTest "new Foo() (same-file) creates INSTANCE_OF edge" testInstanceOfSameFile
+    , runTest "new Error() creates INSTANCE_OF to BUILTIN_CLASS node" testInstanceOfBuiltin
+    , runTest "VARIABLE without instanceOfName produces no INSTANCE_OF" testInstanceOfNoMetadata
     ]
   putStrLn ""
   putStrLn "ImportResolution unit tests:"
