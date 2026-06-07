@@ -62,18 +62,38 @@ byte-identical + alloc-free. Proof `incremental_insertion_work_proportional_to_d
      storage) by (src,dst,edge_type); added→`add_edges`, removed→`delete_edge`, one `flush()` commits
      both atomically (VERIFIED: first-run (2,0) / insert (1,0) / unchanged (0,0) no-op / delete (0,1)
      tombstone). Derivation is still FULL eval — only the write is incremental.
-   - ⬜ **D1b derive-incremental (perf):** wire `maintain_datalog_v2` so the DERIVE is work-proportional
-     too. Needs: (a) the prior base snapshot pinned across runs — store its version in manifest tags;
-     (b) reconstruct prev_eval from the current materialized edges (sound only when the program's derived
-     predicates == {the single @materialize predicate}, e.g. depends/2 — GUARD else full eval); (c) a
-     commit path that applies tombstones AND writes tags together (flush() takes no tags; commit_batch_ext
-     doesn't apply tombstones — needs a small combined path or store snapshot-version via a tags-carrying
-     commit then a separate tombstone flush, verify tags carry-forward across commits FIRST with a probe).
-     Delicate persisted-state lifecycle — do with fresh context, verify each semantic with a test.
-   - ⬜ **D2 perf EXIT + pilots (integration, needs the analyze pipeline, likely its own session):**
-     port DEPENDS_ON-family + `guarantees/imports` pack to v2 rules; wire incremental @materialize into
-     the orchestrator analyze flow; benchmark cold analyze ≤5min and 10-line reanalysis ≥5× vs 256s
-     baseline (≤30s); pure-JS fixture green. This is a benchmark-on-corpus effort, not a Rust unit test.
+   - ✅ **D1b/D2 derive-incremental — DONE via approach (d): in-engine pinned cache** (commits
+     `c01cb273`, `6cf0cb58`, `8ec9d11e`). The DERIVE is now work-proportional across runs.
+     **PREMISE CORRECTION (grounded, supersedes the workflow's `d2-plan.md` scope-first plan):**
+     (1) `diff_base` ALREADY yields the minimal base delta; the cost is the JOIN not the base scan
+     (depends.dl: 1644 edges, 97s was the join) → "scope" (sublinear scan) optimizes the WRONG axis,
+     deferred to a massive-corpus follow-up. (2) The real fork is cross-run acquisition of `prev`+
+     `prev_snapshot`; the self-pinned-snapshot-in-tags design is FRAGILE (tags reset per commit
+     `manifest.rs:1486`; manifest GC keeps 3 `engine_v2.rs:1194`). **(d)** sidesteps both: the
+     long-lived per-DB engine caches `(pinned ReadSnapshot, Evaluation)` per program
+     (`datalog2_materialize_cache`); a `ReadSnapshot` pins its version (segments survive GC,
+     `read_snapshot.rs:144`), replacing the entry drops the old pin (bounded disk); the cached
+     `Evaluation` needs no reconstruction. Hit → `maintain_datalog_v2` (delta-seeded); miss
+     (first run / restart / envelope `None`) → full scratch (I5 floor). **No API/wire/orchestrator
+     change** — the existing `materialize_datalog("")` gets the maintain path transparently on its
+     2nd+ call. `eval_datalog_v2_maintain_writeback` (explicit-prev seam) + `eval_datalog_v2_materialize_cached`
+     (stateful) + shared `derive_for_materialize`/`materialize_writeback_delta`; dispatch wired
+     (`rfdb_server.rs` `dispatch_materialize_datalog`). **Bonus: task #9 fixed** — cached write-back
+     tombstones stale edges, so reanalysis SUPERSEDES obsolete DEPENDS_ON (the old additive path only
+     accreted). Proofs (real storage_v2, mixed insert/delete ≡ scratch + maintain-hit counter):
+     `maintain_writeback_materialize_equals_full_scratch_on_real_store`,
+     `cached_materialize_maintains_across_calls_and_equals_scratch`, and on the ACTUAL bundled rule
+     `cached_materialize_bundled_depends_dl_equals_scratch_on_real_store` (multi-leg edge+node×2+attr×3+neq).
+     datalog2 155, engine_v2 47, materialize 15/15, maintain 4/4, Gate A 50/50 (96.83s).
+   - ⬜ **D2 REMAINING — durable-across-restart pin + corpus benchmark EXIT.** (a) Durable cache: a
+     cold CI server starts with an empty cache → always full-eval (correct, not work-proportional);
+     persist+pin the last-materialized version durably (NOT manifest tags — fragile; a dedicated
+     metadata node or sidecar) so reanalysis after restart still maintains. (d) is its prerequisite.
+     (b) Benchmark EXIT (needs the analyze pipeline + pilot corpus, its own session): wire is already
+     transparent (no orchestrator change), so just run `analyze` cold, touch one file, reanalyze, and
+     measure the DEPENDS_ON phase ≥5× / ≤30s vs 256s; pure-JS fixture green. (c) `guarantees/imports`
+     pack is UNDEFINED (no `.dl`) — out of scope until authored; envelope table in `d2-plan.md` §5.
+     Lesson: [[optimize-the-bottleneck-axis-not-the-incidental-one]].
 4. **Gate E** — stdlib, MCP explain_fact (surfaces why()), docs, events-schema.md, sim(), Appendix-B
    migrations, retire legacy (P3 task #8: legacy execution-counter test + legacy-retirement.lock).
 
