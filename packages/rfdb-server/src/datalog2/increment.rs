@@ -210,7 +210,10 @@ impl BaseDelta {
 ///
 /// `prev` is the previously-materialized generation, `cur` the new one; the returned
 /// [`BaseDelta`] asserts facts new in `cur` and retracts facts gone from `prev`.
-pub fn diff_base(prev: &dyn StorageView, cur: &dyn StorageView) -> BaseDelta {
+// Consumed by the engine_v2 incremental `@materialize` path (Gate C EXIT, next commit) and
+// fully exercised by the tests now; allow the gap only in a non-test build until then.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn diff_base(prev: &dyn StorageView, cur: &dyn StorageView) -> BaseDelta {
     BaseDelta {
         nodes: diff(
             &scan_weighted(prev, Relation::Nodes, SortOrder::NodeById),
@@ -223,8 +226,40 @@ pub fn diff_base(prev: &dyn StorageView, cur: &dyn StorageView) -> BaseDelta {
     }
 }
 
+/// Build a [`StorageView`] exposing ONLY the asserted base delta `ΔB` — the view the
+/// incremental executor installs via `with_delta_view`, so a base leg flagged as the
+/// semi-naive delta leg reads only the new base facts. Reconstructs `NodeRow`/`EdgeRow`
+/// from the canonical-order value tuples (`Row::as_values`: node `[id, type, name, file]`,
+/// edge `[src, type, dst]`).
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn delta_view(base: &BaseDelta) -> crate::datalog2::storage_glue::FixtureStorageView {
+    use crate::datalog2::storage_glue::{EdgeRow, FixtureStorageView, NodeRow};
+    let mut v = FixtureStorageView::new(0);
+    for (_, (vals, _)) in &base.nodes.asserted {
+        if let [Value::Id(id), Value::Str(ty), Value::Str(name), Value::Str(file)] = &vals[..] {
+            v.put_node(NodeRow {
+                id: *id,
+                node_type: ty.clone(),
+                name: name.clone(),
+                file: file.clone(),
+            });
+        }
+    }
+    for (_, (vals, _)) in &base.edges.asserted {
+        if let [Value::Id(src), Value::Str(ty), Value::Id(dst)] = &vals[..] {
+            v.put_edge(EdgeRow {
+                src: *src,
+                dst: *dst,
+                edge_type: ty.clone(),
+            });
+        }
+    }
+    v
+}
+
 /// Materialize one base relation of a view as a presence-weighted relation keyed by the
 /// canonical `fact_id` over the full tuple (so an attribute change is a distinct fact).
+#[cfg_attr(not(test), allow(dead_code))]
 fn scan_weighted(
     view: &dyn StorageView,
     rel: Relation,

@@ -213,6 +213,12 @@ type BindRow = BTreeMap<String, Value>;
 pub(crate) struct Executor<'v, T: IdempotentTag> {
     /// The only access path to storage (I10).
     view: &'v dyn StorageView,
+    /// Optional delta-base view for incremental maintenance (spec §9.2): a view exposing
+    /// ONLY the asserted base delta `ΔB`. When set, a base leg flagged as the semi-naive
+    /// delta leg reads its facts from here instead of `view`, so the seed derives exactly
+    /// the facts that use a new base fact. `None` for a from-scratch evaluation (the only
+    /// mode before Gate C); leaving it `None` keeps every non-incremental run byte-identical.
+    delta_view: Option<&'v dyn StorageView>,
     /// Per-stratum evaluation limits (intermediate-result cap, deadline).
     limits: EvalLimits,
     /// Semi-naive iteration cap (`E-EXEC-002` on overflow).
@@ -232,6 +238,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
     pub(crate) fn new(view: &'v dyn StorageView) -> Self {
         Self {
             view,
+            delta_view: None,
             limits: EvalLimits::default(),
             iteration_cap: DEFAULT_ITERATION_CAP,
             events: RefCell::new(EventLog::discard()),
@@ -248,11 +255,20 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
     ) -> Self {
         Self {
             view,
+            delta_view: None,
             limits,
             iteration_cap,
             events: RefCell::new(EventLog::discard()),
             _tag: PhantomData,
         }
+    }
+
+    /// Install a delta-base view (builder-style): the view exposing only `ΔB`, the asserted
+    /// base delta of an incremental run. With it set, a base leg the caller marks as the
+    /// semi-naive delta leg reads `ΔB` rather than the full base. Returns `self` to chain.
+    pub(crate) fn with_delta_view(mut self, delta_view: &'v dyn StorageView) -> Self {
+        self.delta_view = Some(delta_view);
+        self
     }
 
     /// Install an event log on this executor (builder-style). The log is always-on by
@@ -320,6 +336,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
                 rules,
                 &pred_ids,
                 &mut relations,
+                false,
             ) {
                 self.events
                     .borrow_mut()
@@ -352,6 +369,89 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         Ok(out)
     }
 
+    /// Incrementally maintain a program's derived relations from a base delta, given the
+    /// previous run's [`Evaluation`]. The asserted base delta `ΔB` must be installed via
+    /// [`with_delta_view`](Self::with_delta_view); `base_has_retraction` says whether the
+    /// base diff also removed facts.
+    ///
+    /// Returns the maintained `Evaluation` — provably equal to a from-scratch [`evaluate`]
+    /// of the new snapshot — for the SOUND monotone envelope, or `Ok(None)` when the program
+    /// falls outside it and the caller must recompute from scratch. The envelope is:
+    /// * **negation-free** — a base insertion can RETRACT a derived fact through `\+`
+    ///   (non-monotone), which insertion-only propagation cannot model;
+    /// * **a single derived stratum** — cross-stratum delta threading (a lower stratum's
+    ///   delta seeding a higher one) is a later commit; the headline recursive views
+    ///   (`depends/2`, `reach/2`) are single-stratum;
+    /// * **insert-only** (`!base_has_retraction`) — base deletion needs Delete-and-Rederive
+    ///   (DRed), the next commits; counting cannot help a recursive view (I4 bars `CountTag`
+    ///   from recursion).
+    ///
+    /// Falling back rather than risking a wrong delta is the I5/“never a silent wrong
+    /// answer” discipline: an unsupported shape recomputes, it does not mis-maintain.
+    pub fn evaluate_incremental(
+        &self,
+        plans: &[RulePlan],
+        rules: &[&Rule],
+        strat: &Stratification,
+        prev: &Evaluation,
+        base_has_retraction: bool,
+    ) -> ExecResult<Option<Evaluation>> {
+        // ── Envelope guard (sound monotone insertion only) ──
+        let has_negation = rules
+            .iter()
+            .any(|r| r.body().iter().any(|l| l.is_negative()));
+        if base_has_retraction || has_negation || strat.strata.len() > 1 {
+            return Ok(None);
+        }
+
+        let pred_ids = assign_pred_ids(strat);
+
+        // Pre-load each derived predicate's Total with the prior run's facts (keyed by the
+        // same deterministic `fact_id` the seed/loop use, so membership checks line up).
+        let mut relations: HashMap<String, Relation<T>> = HashMap::new();
+        for (name, rows) in &prev.relations {
+            let Some(&pred_id) = pred_ids.get(name) else {
+                // A prior predicate not in this program's stratification (the program
+                // changed): outside the single-stratum monotone envelope — recompute.
+                return Ok(None);
+            };
+            let rel = relations.entry(name.clone()).or_insert_with(Relation::new);
+            for key in rows {
+                let fid = fact_id(pred_id, key);
+                rel.total.insert(
+                    fid,
+                    DerivedFact {
+                        key: key.clone(),
+                        tag: T::one(),
+                    },
+                );
+            }
+        }
+
+        // Maintain each stratum incrementally (the envelope guarantees a single one).
+        for stratum in &strat.strata {
+            self.eval_stratum(
+                stratum.index,
+                &stratum.predicates,
+                plans,
+                rules,
+                &pred_ids,
+                &mut relations,
+                true,
+            )?;
+        }
+
+        // Project the maintained relations into the same deterministic public form as
+        // `evaluate`, so a byte-for-byte comparison against a from-scratch run is meaningful.
+        let mut out = Evaluation::default();
+        for (name, rel) in &relations {
+            let mut rows: Vec<Box<[Value]>> = rel.total.values().map(|f| f.key.clone()).collect();
+            rows.sort_by(|a, b| cmp_tuple(a, b));
+            out.relations.insert(name.clone(), rows);
+        }
+        Ok(Some(out))
+    }
+
     /// Evaluate a single stratum to its fixpoint (seed → Δ-loop).
     fn eval_stratum(
         &self,
@@ -361,10 +461,13 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         rules: &[&Rule],
         pred_ids: &HashMap<String, u64>,
         relations: &mut HashMap<String, Relation<T>>,
+        incremental: bool,
     ) -> ExecResult<()> {
-        // Fresh relations for this stratum's predicates (their Total/Δ start empty).
+        // Fresh relations for this stratum's predicates: from-scratch starts Total/Δ empty;
+        // an incremental run keeps the pre-loaded prior Total and only clears Δ.
         for p in predicates {
-            relations.entry(p.clone()).or_insert_with(Relation::new);
+            let rel = relations.entry(p.clone()).or_insert_with(Relation::new);
+            rel.delta.clear();
         }
 
         // ── Event: stratum begin ──
@@ -375,22 +478,38 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         // The clauses (plan + source rule) that belong to this stratum.
         let clauses = self.collect_clauses(predicates, plans, rules);
 
-        // ── Seed: every clause once, all legs reading their full source ──
-        // The seed pass uses Total for any same-stratum derived leg, which is empty at this
-        // point, so the seed naturally captures the non-recursive (base/lower-stratum)
-        // derivations. This is the standard "round 0" of semi-naive.
+        // ── Seed (round 0 of semi-naive) ──
+        //
+        // From-scratch: every clause once with all legs reading their full source (Total for
+        // a same-stratum derived leg is empty here, so the seed captures the non-recursive
+        // base/lower-stratum derivations).
+        //
+        // Incremental: Total is pre-loaded with the prior run's facts, so a full seed would
+        // re-derive everything (no saving). Instead fire ONE base-delta variant per positive
+        // base leg — that leg reads only `ΔB` (the asserted base delta, via the delta view),
+        // every other leg reads the full new base / prior Total — so the seed derives exactly
+        // the facts that use a new base fact. The recursive Δ-loop below then propagates them
+        // (insertion-monotone; the caller restricts this path to negation-free, single-
+        // stratum, insert-only programs where that is sound).
         let mut seeded: HashMap<String, HashMap<u64, DerivedFact<T>>> = HashMap::new();
         for clause in &clauses {
             let pred_id = pred_ids[&clause.head_pred];
-            let rows = self.eval_clause(clause, relations, None)?;
-            self.check_intermediate(stratum_idx, &rows)?;
-            let bucket = seeded.entry(clause.head_pred.clone()).or_default();
-            for head_row in rows {
-                let fid = fact_id(pred_id, &head_row);
-                bucket.entry(fid).or_insert(DerivedFact {
-                    key: head_row,
-                    tag: T::one(),
-                });
+            let variants: Vec<Option<usize>> = if incremental {
+                clause.base_leg_indices().into_iter().map(Some).collect()
+            } else {
+                vec![None]
+            };
+            for delta_leg in variants {
+                let rows = self.eval_clause(clause, relations, delta_leg)?;
+                self.check_intermediate(stratum_idx, &rows)?;
+                let bucket = seeded.entry(clause.head_pred.clone()).or_default();
+                for head_row in rows {
+                    let fid = fact_id(pred_id, &head_row);
+                    bucket.entry(fid).or_insert(DerivedFact {
+                        key: head_row,
+                        tag: T::one(),
+                    });
+                }
             }
         }
 
@@ -632,11 +751,79 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
             LegSource::Derived { name, .. } => {
                 Ok(self.join_derived(leg, name, rows, relations, use_delta))
             }
+            // A base leg flagged as the semi-naive delta leg (incremental maintenance):
+            // read ONLY the asserted base delta `ΔB` via the delta view, so this clause
+            // variant derives exactly the facts that use a new base fact. Positive-only —
+            // a negated leg is never a delta leg (negation is stratified strictly below).
+            LegSource::Base(_) if use_delta && !leg.literal.is_negative() => {
+                match self.delta_view {
+                    Some(dv) => Ok(self.join_base_against(leg, rows, dv)),
+                    // A delta-base leg with no delta view installed is a caller error; the
+                    // safe behavior is no rows (this variant contributes nothing) rather
+                    // than silently reading the full base as if it were the delta.
+                    None => Ok(Vec::new()),
+                }
+            }
             // Base relations and builtins are served by the v2 registry eval body, which
             // reads sorted runs / typed scans through the StorageView. Driving it per
             // partial row is the nested-loop join over the EDB/Total leg.
             LegSource::Base(_) | LegSource::Builtin(_) => Ok(self.join_extensional(leg, rows)),
         }
+    }
+
+    /// Evaluate a POSITIVE base leg against an explicit `view` — the per-row registry eval,
+    /// no fast paths. Used for a semi-naive delta-base leg that must read only `ΔB`; the
+    /// non-incremental path ([`join_extensional`]) is left byte-identical so a from-scratch
+    /// run is unaffected. Mirrors `join_extensional`'s positive projection exactly: each
+    /// produced tuple binds the leg's free output slots into the row, agreeing on any
+    /// already-bound shared variable.
+    fn join_base_against(
+        &self,
+        leg: &crate::datalog2::plan::PlanLeg,
+        rows: Vec<BindRow>,
+        view: &dyn StorageView,
+    ) -> Vec<BindRow> {
+        let atom = leg.literal.atom();
+        let name = atom.predicate();
+        let lookup_name = if name == "type" { "node" } else { name };
+        let Some(def) = builtin::lookup(lookup_name) else {
+            // An unported predicate yields no rows for a positive leg (never a silent pass).
+            return Vec::new();
+        };
+        let mut out: Vec<BindRow> = Vec::new();
+        for row in rows {
+            let (spec, slot_vars) = resolve_arg_spec(atom, &row);
+            let mut batch = Batch::new();
+            if (def.eval)(view, &mut batch, &spec).is_err() {
+                continue;
+            }
+            for produced in &batch.rows {
+                let mut next = row.clone();
+                let mut ok = true;
+                for (slot, var) in &slot_vars {
+                    match produced.get(*slot) {
+                        Some(val) => {
+                            if let Some(existing) = next.get(var) {
+                                if existing != val {
+                                    ok = false;
+                                    break;
+                                }
+                            } else {
+                                next.insert(var.clone(), val.clone());
+                            }
+                        }
+                        None => {
+                            ok = false;
+                            break;
+                        }
+                    }
+                }
+                if ok {
+                    out.push(next);
+                }
+            }
+        }
+        out
     }
 
     /// Join a derived-predicate leg into the partial rows.
@@ -1108,6 +1295,22 @@ impl<'r> Clause<'r> {
             })
             .collect()
     }
+
+    /// The body-leg positions that read a BASE (EDB) relation positively — the legs a base
+    /// delta `ΔB` can change. The semi-naive incremental seed fires one variant per such
+    /// leg (that leg reading `ΔB`, the rest full), deriving exactly the facts that use a new
+    /// base fact. Negated base legs are anti-joins, never a delta source.
+    fn base_leg_indices(&self) -> Vec<usize> {
+        self.plan
+            .legs
+            .iter()
+            .enumerate()
+            .filter_map(|(i, leg)| match &leg.source {
+                LegSource::Base(_) if leg.literal.is_positive() => Some(i),
+                _ => None,
+            })
+            .collect()
+    }
 }
 
 // ── Binding / unification helpers ──────────────────────────────────
@@ -1373,6 +1576,153 @@ mod tests {
             .collect();
         out.sort_unstable();
         out
+    }
+
+    // ── Incremental maintenance: maintained ≡ scratch (insert-only) ──
+
+    /// The Gate C EXIT invariant for the monotone envelope: over many seeded base
+    /// INSERTIONS into a recursive transitive-closure view, the incrementally-maintained
+    /// relation is byte-identical to a from-scratch re-evaluation of the new snapshot.
+    ///
+    /// Each cycle: pick a pseudo-random edge (deterministic LCG — no `rand`/clock in tests),
+    /// add it, diff the base (`diff_base`), maintain from the prior result against a delta
+    /// view of `ΔB` (`evaluate_incremental`), and compare to a full `evaluate` of the new
+    /// base. The two must agree on every cycle.
+    #[test]
+    fn incremental_insertion_equals_scratch_over_seeded_cycles() {
+        use crate::datalog2::increment::{delta_view, diff_base};
+
+        // Transitive closure: negation-free, single recursive stratum, the monotone envelope.
+        let src = "path(A, B) :- edge(A, B, \"E\").\n\
+                   path(A, B) :- edge(A, C, \"E\"), path(C, B).";
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let plans = plan_program(
+            &rules,
+            &strat,
+            &Stats { total_nodes: 6, total_edges: 8, ..Default::default() },
+        )
+        .expect("plan");
+
+        const N: u128 = 6;
+        let nid = |i: u128| id_of(&format!("n{i}"));
+        let build = |edges: &[(u128, u128)], gen: u64| {
+            let mut v = FixtureStorageView::new(gen);
+            for &(s, d) in edges {
+                v.put_edge(EdgeRow {
+                    src: nid(s),
+                    dst: nid(d),
+                    edge_type: "E".to_string(),
+                });
+            }
+            v
+        };
+        let eval_scratch = |view: &FixtureStorageView| {
+            Executor::<BoolTag>::with_limits(view, EvalLimits::none(), DEFAULT_ITERATION_CAP)
+                .evaluate(&plans, &rules, &strat)
+                .expect("scratch evaluate")
+        };
+
+        let mut edges: Vec<(u128, u128)> = vec![(0, 1), (1, 2)];
+        let mut prev_view = build(&edges, 0);
+        let mut prev_eval = eval_scratch(&prev_view);
+
+        let mut lcg: u64 = 0x9E37_79B9_7F4A_7C15;
+        let mut saw_nonempty_delta = false;
+        let mut saw_growth = false;
+
+        for cycle in 1..=100u64 {
+            lcg = lcg.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            let s = ((lcg >> 33) as u128) % N;
+            let d = ((lcg >> 17) as u128) % N;
+            if edges.contains(&(s, d)) {
+                continue; // a duplicate edit is a no-op cycle; skip to a meaningful one
+            }
+            edges.push((s, d));
+            let cur_view = build(&edges, cycle);
+
+            let base_delta = diff_base(&prev_view, &cur_view);
+            let has_retraction = !base_delta.nodes.retracted.is_empty()
+                || !base_delta.edges.retracted.is_empty();
+            assert!(!has_retraction, "insert-only edits produce no base retraction");
+            if !base_delta.is_empty() {
+                saw_nonempty_delta = true;
+            }
+
+            let dv = delta_view(&base_delta);
+            let maintained = Executor::<BoolTag>::with_limits(
+                &cur_view,
+                EvalLimits::none(),
+                DEFAULT_ITERATION_CAP,
+            )
+            .with_delta_view(&dv)
+            .evaluate_incremental(&plans, &rules, &strat, &prev_eval, has_retraction)
+            .expect("incremental evaluate")
+            .expect("monotone envelope → Some, not a recompute fallback");
+
+            let scratch = eval_scratch(&cur_view);
+            assert_eq!(
+                maintained.relations, scratch.relations,
+                "cycle {cycle}: maintained must equal scratch (edge n{s}->n{d})"
+            );
+            if maintained.facts("path").len() > prev_eval.facts("path").len() {
+                saw_growth = true;
+            }
+
+            prev_view = cur_view;
+            prev_eval = maintained;
+        }
+        assert!(saw_nonempty_delta, "some cycle must have applied a real base delta");
+        assert!(saw_growth, "some insertion must have grown the transitive closure");
+    }
+
+    /// The envelope guard: a program with negation cannot be insertion-maintained (a base
+    /// insert can RETRACT a derived fact through `\\+`), so `evaluate_incremental` returns
+    /// `None` (recompute) rather than a wrong delta.
+    #[test]
+    fn incremental_refuses_negation_returns_none() {
+        // `orphan(A)` depends on a negated `path` — non-monotone under insertion.
+        let src = "path(A, B) :- edge(A, B, \"E\").\n\
+                   orphan(A) :- node(A, \"N\"), \\+ path(A, _).";
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let plans = plan_program(
+            &rules,
+            &strat,
+            &Stats { total_nodes: 3, total_edges: 1, ..Default::default() },
+        )
+        .expect("plan");
+
+        let mut v = FixtureStorageView::new(1);
+        edge(&mut v, "a", "b", "E");
+        let empty = Evaluation::default();
+        let out = Executor::<BoolTag>::with_limits(&v, EvalLimits::none(), DEFAULT_ITERATION_CAP)
+            .evaluate_incremental(&plans, &rules, &strat, &empty, false)
+            .expect("no executor error");
+        assert!(out.is_none(), "negation → recompute fallback, never a wrong increment");
+    }
+
+    /// The envelope guard: a retracting base delta (deletion) is DRed's job, not insertion
+    /// maintenance — so the entry returns `None` even on an otherwise-monotone program.
+    #[test]
+    fn incremental_refuses_retraction_returns_none() {
+        let src = "path(A, B) :- edge(A, B, \"E\").";
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let plans = plan_program(
+            &rules,
+            &strat,
+            &Stats { total_nodes: 2, total_edges: 1, ..Default::default() },
+        )
+        .expect("plan");
+        let v = FixtureStorageView::new(1);
+        let out = Executor::<BoolTag>::with_limits(&v, EvalLimits::none(), DEFAULT_ITERATION_CAP)
+            .evaluate_incremental(&plans, &rules, &strat, &Evaluation::default(), true)
+            .expect("no executor error");
+        assert!(out.is_none(), "base retraction → recompute fallback (DRed pending)");
     }
 
     // ── anti-join: function-has-contains shape ──────────────────────
