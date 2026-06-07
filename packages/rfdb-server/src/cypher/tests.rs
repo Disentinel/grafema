@@ -2027,6 +2027,44 @@ mod executor_tests {
         assert_eq!(names, vec!["internal"]);
     }
 
+    /// Zero-length path: `min_depth = max_depth = 0` binds the destination to
+    /// the START node itself (Cypher `*0` semantics). Was dropped by the
+    /// `&& depth > 0` guard in `bfs`, which excluded depth 0 even for min 0.
+    #[test]
+    fn var_length_expand_zero_depth_yields_start() {
+        let engine = create_test_graph();
+        let limits = default_limits();
+
+        let scan = NodeScan::new(
+            &engine,
+            Some("a".to_string()),
+            vec!["FUNCTION".to_string()],
+            vec![("name".to_string(), Expr::Literal(CypherLiteral::Str("main".to_string())))],
+            &limits,
+        );
+
+        let mut expand = VarLengthExpand::new(
+            Box::new(scan),
+            &engine,
+            "a".to_string(),
+            Some("b".to_string()),
+            vec!["CALLS".to_string()],
+            Direction::Outgoing,
+            0,
+            0,
+            &limits,
+        );
+
+        let mut names = Vec::new();
+        while let Some(rec) = expand.next().unwrap() {
+            if let CypherValue::Str(s) = rec.get("b").unwrap().property("name") {
+                names.push(s);
+            }
+        }
+        // Only the start node "main" — zero hops, no traversal.
+        assert_eq!(names, vec!["main"]);
+    }
+
     // ── eval_expr unit tests ────────────────────────────────────────────
 
     #[test]
@@ -3576,6 +3614,107 @@ mod integration_tests {
         .unwrap();
 
         assert_eq!(collect_string_column(&result, 0), vec!["it's"]);
+    }
+
+    // ── Zero-length variable-length paths (`*0`, `*0..N`) ────────────────────
+    //
+    // openCypher/Neo4j: a variable-length pattern with a lower bound of 0
+    // includes the ZERO-length path, which binds the destination variable to
+    // the START node itself (the node is "reachable from itself in 0 hops").
+    // `VarLengthExpand::bfs` dropped depth-0 unconditionally (`&& depth > 0`),
+    // so `*0` / `*0..N` silently omitted the start node — a silent-wrong-answer
+    // for the common "self-or-descendants" idiom (e.g. `-[:CONTAINS*0..]->`).
+
+    /// `*0` is exactly the zero-length path: x is bound to the start node and
+    /// nothing else. Was: empty result.
+    #[test]
+    fn var_length_zero_exact_returns_start_node() {
+        let engine = create_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION {name: 'main'})-[:CALLS*0]->(x) RETURN x.name",
+            EvalLimits::none(),
+        )
+        .unwrap();
+        assert_eq!(collect_string_column(&result, 0), vec!["main"]);
+    }
+
+    /// `*0..1` = the start node (0 hops) PLUS its direct CALLS targets (1 hop).
+    /// main -> helper, main -> validate, so the set is {main, helper, validate}.
+    /// Was: {helper, validate} (start node missing).
+    #[test]
+    fn var_length_zero_to_one_includes_start_and_neighbors() {
+        let engine = create_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION {name: 'main'})-[:CALLS*0..1]->(x) RETURN x.name",
+            EvalLimits::none(),
+        )
+        .unwrap();
+        assert_eq!(
+            collect_string_column(&result, 0),
+            vec!["helper", "main", "validate"]
+        );
+    }
+
+    /// A destination label/property filter still applies to the zero-length
+    /// match: `(x:CLASS)` excludes the FUNCTION start node, so `*0..1` here
+    /// yields nothing (main has no CALLS edge to a CLASS, and main itself is
+    /// not a CLASS).
+    #[test]
+    fn var_length_zero_respects_destination_label_filter() {
+        let engine = create_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION {name: 'main'})-[:CALLS*0..1]->(x:CLASS) RETURN x.name",
+            EvalLimits::none(),
+        )
+        .unwrap();
+        assert!(
+            result.rows.is_empty(),
+            "zero-length match must honor destination label filter, got {:?}",
+            result.rows
+        );
+    }
+
+    /// Regression guard: a NON-zero lower bound must STILL exclude the start
+    /// node. Removing the buggy `&& depth > 0` must not leak the start node into
+    /// `*1..N` queries (depth 0 < min_depth already excludes it).
+    #[test]
+    fn var_length_min_one_still_excludes_start_node() {
+        let engine = create_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION {name: 'main'})-[:CALLS*1..2]->(x) RETURN x.name",
+            EvalLimits::none(),
+        )
+        .unwrap();
+        // 1 hop: helper, validate. 2 hops: validate (via helper). De-duped set
+        // excludes "main" — the start node must not appear for a min>=1 path.
+        assert_eq!(
+            collect_string_column(&result, 0),
+            vec!["helper", "validate"]
+        );
+    }
+
+    /// Headline idiom: `*0..` ("the node itself plus everything reachable").
+    /// From "main" over CALLS this is {main, helper, validate} — the start node
+    /// included via the zero-length path. Also proves the unbounded BFS still
+    /// terminates (visited-set de-dup) with a zero lower bound. Was: start node
+    /// missing.
+    #[test]
+    fn var_length_zero_unbounded_includes_self_and_all_reachable() {
+        let engine = create_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION {name: 'main'})-[:CALLS*0..]->(x) RETURN x.name",
+            EvalLimits::none(),
+        )
+        .unwrap();
+        assert_eq!(
+            collect_string_column(&result, 0),
+            vec!["helper", "main", "validate"]
+        );
     }
 
 }
