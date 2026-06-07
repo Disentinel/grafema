@@ -1002,26 +1002,25 @@ fn eval_binop(l: &CypherValue, op: BinOp, r: &CypherValue) -> CypherValue {
     match op {
         BinOp::Eq => CypherValue::Bool(l == r),
         BinOp::Neq => CypherValue::Bool(l != r),
-        BinOp::Lt => CypherValue::Bool(
-            l.partial_cmp_values(r)
-                .map(|o| o == std::cmp::Ordering::Less)
-                .unwrap_or(false),
-        ),
-        BinOp::Gt => CypherValue::Bool(
-            l.partial_cmp_values(r)
-                .map(|o| o == std::cmp::Ordering::Greater)
-                .unwrap_or(false),
-        ),
-        BinOp::Lte => CypherValue::Bool(
-            l.partial_cmp_values(r)
-                .map(|o| o != std::cmp::Ordering::Greater)
-                .unwrap_or(false),
-        ),
-        BinOp::Gte => CypherValue::Bool(
-            l.partial_cmp_values(r)
-                .map(|o| o != std::cmp::Ordering::Less)
-                .unwrap_or(false),
-        ),
+        // Ordering operators follow three-valued logic for INCOMPARABLE operands.
+        // `partial_cmp_values` returns `None` when the two non-NULL operands cannot
+        // be ordered against each other (e.g. String vs Int, Bool vs number, Node,
+        // or a NaN float). Per Cypher/Neo4j this is UNKNOWN → NULL, not a definite
+        // `false`: a previous `.unwrap_or(false)` here meant `NOT (Str < Int)`
+        // flipped to a definite `true` and wrongly admitted the row in `WHERE`.
+        // (NULL operands are already short-circuited to NULL at the top of this fn,
+        // so they never reach `partial_cmp_values`; this guard covers only the
+        // non-NULL-but-incomparable case — the sibling of #341/#348/#352.)
+        BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte => match l.partial_cmp_values(r) {
+            Some(ord) => CypherValue::Bool(match op {
+                BinOp::Lt => ord == std::cmp::Ordering::Less,
+                BinOp::Gt => ord == std::cmp::Ordering::Greater,
+                BinOp::Lte => ord != std::cmp::Ordering::Greater,
+                BinOp::Gte => ord != std::cmp::Ordering::Less,
+                _ => unreachable!("outer arm restricts op to ordering comparisons"),
+            }),
+            None => CypherValue::Null,
+        },
     }
 }
 
