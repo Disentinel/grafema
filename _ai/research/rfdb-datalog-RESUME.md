@@ -1,6 +1,38 @@
 # Datalog v2 — RESUME HERE (post-compaction handoff)
 
-**Branch:** `feat/datalog`. **As of:** 2026-06-06. Single source of "where we are / what's next".
+**Branch:** `feat/datalog`. **As of:** 2026-06-07. Single source of "where we are / what's next".
+
+## 2026-06-07 session — committed progress (newest first)
+
+- `b081fe6a` compaction-⊕ part 2: fold tags in merge + coordinator branch (base fast-path
+  unchanged; derived inputs ⊕-fold via `fold_tags` and write v3 via `add_derived`). I10
+  non-Bool fixture tests. 427 storage_v2 green.
+- `68506f29` compaction-⊕ part 1: tag↔bytes codec (`CountTag/ConfTag::to/from_le_bytes`),
+  segment reader accepts Count/Conf semiring_ids (E-FMT-001 only on truly unknown),
+  `compaction/tag_fold.rs::fold_tags` (Bool→dedup, Count→sum, Conf→min; E-FMT-002 mixed,
+  E-FMT-003 malformed). COUNTTAG_SEMIRING_ID=1, CONFTAG_SEMIRING_ID=2.
+- `63a4538d` Gate C semiring tags: `CountTag`/`ConfTag`/`Product<A,B>` + full law gates in
+  `datalog2/tag.rs` (I4 enforced by CountTag NOT impl IdempotentTag → compile-rejected in
+  recursion; I15 conf≠probability). 13 tag tests.
+- `fbddfdd7` **RELEASE-BLOCKER done**: server `MaterializeDatalog` command (write-lock, kill-
+  switch-gated, empty source ⇒ bundled depends.dl) + Hello advertises `datalogV2Materialize`
+  + orchestrator phase-9 gated on it (legacy = P3 fallback). All green.
+- `e0fe6a25` **Gate B exit**: build-once hash-join + planner ordering ⇒ depends.dl 97s; v2 is
+  the correct reference (orchestrator MODULE#-sid bug recorded in gaps.md).
+
+**Gate C state:** (1) semiring tags ✓, (3-partial) compaction-⊕ ✓ (the §8 storage half, folded
+in per user decision). REMAINING: binding-table (§9.3 assert-uniformity minimum); numeric
+literals (⚠ NOT cheap — `crate::datalog::Value` is shared-with-v1 and deliberately unmodified,
+only Id/Str today; bare numbers / `gt(A,0)` need a value-representation decision, not a lexer
+one-liner); **increment machinery / EDB Differ / fact-level deltas = the Gate C EXIT** (single-
+line edit ⇒ deltas ⇒ maintained ≡ scratch over 100 cycles); annotations + why(). Full plan +
+the §8 maps: `_ai/research/rfdb-datalog-gateB-residual-map.md`.
+
+**Standing (user, 2026-06-07):** commit freely on `feat/datalog` without asking; NEVER push
+without explicit permission.
+
+---
+## (historical, superseded by the 2026-06-07 section above)
 Spec: `rfdb-datalog-engine-v2-spec.md`. Plans: `rfdb-datalog-gate-a-plan.md`, `rfdb-datalog-gate-b-plan.md`.
 Appendix B: `rfdb-datalog-appendix-b-rule-migration.md`. Contract: `rfdb-datalog-storageview-contract.md`. Gaps: `_ai/gaps.md`.
 
