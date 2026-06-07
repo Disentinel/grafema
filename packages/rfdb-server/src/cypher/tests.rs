@@ -2459,6 +2459,85 @@ mod integration_tests {
         );
     }
 
+    // ── Anonymous start node + relationship ─────────────────────────────────
+    //
+    // Regression: a pattern whose FIRST node is anonymous (`MATCH ()-[:CALLS]->(g)`)
+    // must still traverse edges. The planner synthesizes the source variable
+    // `__anon_0` for the unnamed start node, but `NodeScan` only bound a record
+    // field when the node had an explicit variable — so the produced record was
+    // empty and `Expand` failed with "variable '__anon_0' is not a node".
+    // Anonymous DESTINATION nodes were already bound (by `Expand`), so the gap
+    // was specific to the start node. These cover outgoing, incoming, and the
+    // edge-counting query (`MATCH ()-[r]->() RETURN COUNT(*)`) that surfaced it.
+
+    #[test]
+    fn anonymous_start_node_outgoing_traverses() {
+        let engine = create_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH ()-[:CALLS]->(g) RETURN g.name",
+            EvalLimits::none(),
+        )
+        .unwrap();
+
+        // CALLS edges: main->helper, main->validate, helper->validate.
+        // Targets (g): helper, validate, validate.
+        assert_eq!(result.row_count, 3);
+        let names = collect_string_column(&result, 0);
+        assert_eq!(names, vec!["helper", "validate", "validate"]);
+    }
+
+    #[test]
+    fn anonymous_start_node_incoming_traverses() {
+        let engine = create_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH ()<-[:CALLS]-(caller) RETURN caller.name",
+            EvalLimits::none(),
+        )
+        .unwrap();
+
+        // Same CALLS edges read backwards — callers (sources): main, main, helper.
+        assert_eq!(result.row_count, 3);
+        let names = collect_string_column(&result, 0);
+        assert_eq!(names, vec!["helper", "main", "main"]);
+    }
+
+    #[test]
+    fn anonymous_start_node_count_edges() {
+        // The exact dogfooding query that exposed the bug: counting edges with
+        // both endpoints anonymous.
+        let engine = create_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH ()-[:CALLS]->() RETURN COUNT(*) AS total",
+            EvalLimits::none(),
+        )
+        .unwrap();
+
+        assert_eq!(result.columns, vec!["total"]);
+        assert_eq!(result.row_count, 1);
+        assert_eq!(result.rows[0][0], serde_json::json!(3));
+    }
+
+    #[test]
+    fn anonymous_start_node_var_length_traverses() {
+        // The same root cause affected `VarLengthExpand` (it resolves its source
+        // node identically to `Expand`). A single-hop `*1..1` exercises that
+        // operator deterministically (no BFS-dedup ambiguity).
+        let engine = create_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH ()-[:CALLS*1..1]->(g) RETURN g.name",
+            EvalLimits::none(),
+        )
+        .unwrap();
+
+        assert_eq!(result.row_count, 3);
+        let names = collect_string_column(&result, 0);
+        assert_eq!(names, vec!["helper", "validate", "validate"]);
+    }
+
     #[test]
     fn where_clause() {
         let engine = create_test_graph();
