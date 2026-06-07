@@ -427,7 +427,15 @@ impl<'a> VarLengthExpand<'a> {
         };
 
         while let Some((node_id, depth)) = queue.pop_front() {
-            if depth >= self.min_depth && depth > 0 {
+            // Emit a node once its depth reaches the lower bound. `depth >=
+            // min_depth` alone is correct for every bound: for the usual
+            // `min_depth >= 1` it already excludes the start node (depth 0), and
+            // for a ZERO lower bound (`*0` / `*0..N`) it includes the start node
+            // bound to itself — the openCypher zero-length path. A prior `&&
+            // depth > 0` guard unconditionally dropped depth 0, silently omitting
+            // the start node from `*0` patterns (e.g. the `-[:CONTAINS*0..]->`
+            // "self-or-descendants" idiom).
+            if depth >= self.min_depth {
                 result.push(node_id);
             }
             if depth >= self.max_depth {
@@ -657,9 +665,7 @@ impl<'a> Sort<'a> {
             for (expr, dir) in order_by {
                 let va = eval_expr(expr, a);
                 let vb = eval_expr(expr, b);
-                let cmp = va
-                    .partial_cmp_values(&vb)
-                    .unwrap_or(std::cmp::Ordering::Equal);
+                let cmp = order_cmp(&va, &vb);
                 let cmp = match dir {
                     SortDir::Asc => cmp,
                     SortDir::Desc => cmp.reverse(),
@@ -868,21 +874,41 @@ pub fn eval_expr(expr: &Expr, record: &Record) -> CypherValue {
         }
 
         Expr::And(lhs, rhs) => {
-            let l = eval_expr(lhs, record);
-            if !l.is_truthy() {
+            // Kleene three-valued AND. FALSE dominates (short-circuits even past a
+            // NULL operand: `null AND false = false`); otherwise NULL is contagious
+            // (`true AND null = null`, `null AND true = null`). Collapsing a NULL
+            // operand to `Bool(false)` here would be wrong under `NOT`: it makes
+            // `NOT (null AND true)` become `NOT false = true`, wrongly admitting a
+            // row whose predicate is unknown. See `Expr::Not` below for the
+            // complementary NULL-preserving rule. Non-NULL operands fall through
+            // `kleene_truth` to `is_truthy()`, so their behaviour is unchanged.
+            let l = kleene_truth(&eval_expr(lhs, record));
+            if l == Some(false) {
                 return CypherValue::Bool(false);
             }
-            let r = eval_expr(rhs, record);
-            CypherValue::Bool(r.is_truthy())
+            let r = kleene_truth(&eval_expr(rhs, record));
+            kleene_value(match (l, r) {
+                (_, Some(false)) => Some(false),
+                (Some(true), Some(true)) => Some(true),
+                _ => None,
+            })
         }
 
         Expr::Or(lhs, rhs) => {
-            let l = eval_expr(lhs, record);
-            if l.is_truthy() {
+            // Kleene three-valued OR. TRUE dominates (`null OR true = true`);
+            // otherwise NULL is contagious (`null OR false = null`, `false OR
+            // null = null`). As with AND, collapsing a NULL operand to
+            // `Bool(false)` would wrongly admit rows under `NOT`.
+            let l = kleene_truth(&eval_expr(lhs, record));
+            if l == Some(true) {
                 return CypherValue::Bool(true);
             }
-            let r = eval_expr(rhs, record);
-            CypherValue::Bool(r.is_truthy())
+            let r = kleene_truth(&eval_expr(rhs, record));
+            kleene_value(match (l, r) {
+                (_, Some(true)) => Some(true),
+                (Some(false), Some(false)) => Some(false),
+                _ => None,
+            })
         }
 
         Expr::Not(inner) => {
@@ -943,6 +969,32 @@ pub fn eval_expr(expr: &Expr, record: &Record) -> CypherValue {
 }
 
 // ─── Helper functions ───────────────────────────────────────────────────────
+
+/// Ordering comparator for `ORDER BY`, applied in the *ascending* direction
+/// (callers reverse it for `DESC`).
+///
+/// Implements Cypher/Neo4j ordering semantics for NULL: a null value is
+/// considered **greater than** any non-null value, so it sorts LAST under
+/// ascending order and FIRST under descending order (see the Neo4j Cypher
+/// manual, "Ordering null"). This deliberately differs from
+/// [`CypherValue::partial_cmp_values`], which treats null as the smallest
+/// value — that comparator is shared with WHERE-clause comparisons
+/// (`eval_binop`) and must not change. ORDER BY needs its own null rule, so
+/// it lives here rather than in the shared value comparator.
+///
+/// Non-null, mutually-incomparable values (e.g. a Str vs an Int, or two
+/// Node values) fall back to `Ordering::Equal`, preserving the prior
+/// best-effort behaviour for heterogeneous columns.
+fn order_cmp(a: &CypherValue, b: &CypherValue) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    match (a, b) {
+        (CypherValue::Null, CypherValue::Null) => Ordering::Equal,
+        // null is greater than any non-null value -> sorts last ascending.
+        (CypherValue::Null, _) => Ordering::Greater,
+        (_, CypherValue::Null) => Ordering::Less,
+        _ => a.partial_cmp_values(b).unwrap_or(Ordering::Equal),
+    }
+}
 
 /// Evaluate a Cypher string predicate (CONTAINS / STARTS WITH / ENDS WITH)
 /// over already-evaluated operands, applying three-valued logic.
@@ -1024,6 +1076,29 @@ fn eval_binop(l: &CypherValue, op: BinOp, r: &CypherValue) -> CypherValue {
     }
 }
 
+/// Classify a Cypher value for Kleene (three-valued) boolean logic.
+///
+/// Returns `None` for NULL (the UNKNOWN truth value) and `Some(bool)` for any
+/// definite value, reusing `is_truthy()` so non-NULL operands keep the engine's
+/// existing loose truthiness (e.g. `Int(0)` → `Some(false)`). Used by the `AND`
+/// and `OR` arms of `eval_expr` so a NULL operand propagates as NULL instead of
+/// collapsing to a definite boolean (which is wrong under `NOT`).
+fn kleene_truth(v: &CypherValue) -> Option<bool> {
+    match v {
+        CypherValue::Null => None,
+        other => Some(other.is_truthy()),
+    }
+}
+
+/// Reconstruct a Cypher value from a Kleene truth: `None` → NULL, `Some(b)` →
+/// `Bool(b)`. Inverse of `kleene_truth` for the definite cases.
+fn kleene_value(t: Option<bool>) -> CypherValue {
+    match t {
+        Some(b) => CypherValue::Bool(b),
+        None => CypherValue::Null,
+    }
+}
+
 /// Convert a NodeRecord into a CypherValue::Node.
 fn node_record_to_value(rec: &crate::storage::NodeRecord) -> CypherValue {
     CypherValue::Node {
@@ -1056,7 +1131,11 @@ fn edge_record_to_value(edge: &EdgeRecord) -> CypherValue {
 }
 
 /// Format a RETURN expression as a column name.
-fn format_return_expr(expr: &Expr) -> String {
+///
+/// `pub(crate)` so the planner can reconstruct the exact group-key column names
+/// produced by `HashAggregate` when rewriting `ORDER BY` expressions (an
+/// aggregate query sorts over these produced columns, not the raw pattern).
+pub(crate) fn format_return_expr(expr: &Expr) -> String {
     match expr {
         Expr::Property(var, prop) => format!("{}.{}", var, prop),
         Expr::Variable(v) => v.clone(),

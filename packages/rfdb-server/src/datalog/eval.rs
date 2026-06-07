@@ -55,6 +55,42 @@ impl Value {
     }
 }
 
+/// Compare two numeric operand strings for the gt/lt/gte/lte builtins.
+///
+/// Integer operands are compared EXACTLY. This matters because operands are
+/// frequently u128 node IDs (and large integer metadata such as timestamps or
+/// byte offsets), which overflow f64's 53-bit mantissa — parsing those as f64
+/// would collapse distinct values onto the same float and silently drop or admit
+/// rows (e.g. `lt(A, B)` between two IDs differing only in low bits returns
+/// false; `gte(A, B)` returns true). `i128` is tried first (covers negative
+/// metadata and IDs up to i128::MAX); `u128` second (covers hash IDs above
+/// i128::MAX). Only genuinely fractional operands fall back to `f64`.
+///
+/// Returns `None` when either operand is non-numeric, when an `f64` comparison
+/// is undefined (NaN), or when `op` is not a recognised comparison — callers
+/// treat any `None`/`Some(false)` as a non-passing constraint (empty result).
+pub(crate) fn numeric_compare(left: &str, right: &str, op: &str) -> Option<bool> {
+    use std::cmp::Ordering;
+
+    let ordering: Ordering = if let (Ok(l), Ok(r)) = (left.parse::<i128>(), right.parse::<i128>()) {
+        l.cmp(&r)
+    } else if let (Ok(l), Ok(r)) = (left.parse::<u128>(), right.parse::<u128>()) {
+        l.cmp(&r)
+    } else {
+        let l: f64 = left.parse().ok()?;
+        let r: f64 = right.parse().ok()?;
+        l.partial_cmp(&r)? // None on NaN → graceful non-pass
+    };
+
+    Some(match op {
+        "gt" => ordering == Ordering::Greater,
+        "lt" => ordering == Ordering::Less,
+        "gte" => ordering != Ordering::Less,
+        "lte" => ordering != Ordering::Greater,
+        _ => return None,
+    })
+}
+
 /// Variable bindings
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Bindings {
@@ -1604,6 +1640,47 @@ impl<'a> Evaluator<'a> {
                     vec![Bindings::new()]
                 }
             }
+            // path(X, "dst") - REVERSE reachability: enumerate every node that
+            // can REACH dst (its ancestor set). The directed dual of the
+            // (Const, Var) forward arm. Previously this fell through to the
+            // catch-all and silently returned NO rows, so an agent asking "what
+            // reaches / depends on dst" via `path(X, dst)` got a confidently
+            // empty answer instead of the real ancestors — an on-thesis
+            // silent-wrong-answer.
+            (Term::Var(var), Term::Const(dst_str)) => {
+                let dst_id = match dst_str.parse::<u128>() {
+                    Ok(id) => id,
+                    Err(_) => return vec![],
+                };
+
+                self.path_reaches(dst_id)
+                    .into_iter()
+                    .map(|id| {
+                        let mut b = Bindings::new();
+                        b.set(var, Value::Id(id));
+                        b
+                    })
+                    .collect()
+            }
+            // path(_, "dst") - does ANY node reach dst? Dual of (Const, _).
+            (Term::Wildcard, Term::Const(dst_str)) => {
+                let dst_id = match dst_str.parse::<u128>() {
+                    Ok(id) => id,
+                    Err(_) => return vec![],
+                };
+
+                if self.path_reaches(dst_id).is_empty() {
+                    vec![]
+                } else {
+                    vec![Bindings::new()]
+                }
+            }
+            // Remaining modes have NO constant endpoint (both src and dst are
+            // Var/Wildcard). Answering them would require materializing all-pairs
+            // reachability (O(N·E)) and is intentionally unsupported — `path`
+            // needs at least one bound endpoint, exactly as the forward arms
+            // require a bound source. In a conjunctive query the pipeline binds
+            // one endpoint from a preceding generator atom before `path` runs.
             _ => vec![],
         }
     }
@@ -1625,6 +1702,36 @@ impl<'a> Evaluator<'a> {
             return Vec::new();
         }
         self.engine.bfs(&frontier, 100, &[])
+    }
+
+    /// Set of nodes that can REACH `dst_id` via AT LEAST ONE edge — the ancestor
+    /// set queried by `path(X, dst)` (the reverse of [`Self::path_reachable`]).
+    ///
+    /// Mirrors `path_reachable` exactly, but walks INCOMING edges backward: BFS
+    /// is seeded from `dst_id`'s direct predecessors (the depth-1 frontier)
+    /// rather than `dst_id` itself, so `dst_id` appears here ONLY when a real
+    /// edge path loops back to it (a genuine cycle). This keeps the reverse arms
+    /// consistent with the forward arms and with the irreflexive `path(A, A)`
+    /// self-rule (see the `test_eval_path_self_*` tests). It reuses the shared
+    /// `traversal::bfs` with a backward-neighbour closure — the same primitive
+    /// `GraphStore::bfs` uses forward — so the two directions cannot drift apart.
+    fn path_reaches(&self, dst_id: u128) -> Vec<u128> {
+        // Direct predecessors of `node`: the sources of its (non-deleted)
+        // incoming edges. The backward analogue of `GraphStore::neighbors`.
+        let predecessors = |node: u128| -> Vec<u128> {
+            self.engine
+                .get_incoming_edges(node, None)
+                .into_iter()
+                .filter(|e| !e.deleted)
+                .map(|e| e.src)
+                .collect()
+        };
+
+        let frontier = predecessors(dst_id);
+        if frontier.is_empty() {
+            return Vec::new();
+        }
+        crate::graph::traversal::bfs(&frontier, 100, predecessors)
     }
 
     /// Evaluate neq(X, Y) - inequality constraint
@@ -1659,7 +1766,9 @@ impl<'a> Evaluator<'a> {
 
     /// Evaluate gt/lt/gte/lte(X, Y) - numeric comparison constraints
     /// Both arguments must be bound (either constants or bound variables).
-    /// Values are parsed as f64; non-numeric strings produce empty result (graceful failure).
+    /// Integer operands (including u128 node IDs) are compared exactly via
+    /// [`numeric_compare`]; non-numeric strings produce an empty result
+    /// (graceful failure).
     fn eval_numeric_cmp(&self, atom: &Atom) -> Vec<Bindings> {
         let args = atom.args();
         if args.len() < 2 {
@@ -1676,28 +1785,9 @@ impl<'a> Evaluator<'a> {
             _ => return vec![],
         };
 
-        let left: f64 = match left_str.parse() {
-            Ok(v) => v,
-            Err(_) => return vec![],
-        };
-
-        let right: f64 = match right_str.parse() {
-            Ok(v) => v,
-            Err(_) => return vec![],
-        };
-
-        let pass = match atom.predicate() {
-            "gt" => left > right,
-            "lt" => left < right,
-            "gte" => left >= right,
-            "lte" => left <= right,
-            _ => return vec![],
-        };
-
-        if pass {
-            vec![Bindings::new()]
-        } else {
-            vec![]
+        match numeric_compare(left_str, right_str, atom.predicate()) {
+            Some(true) => vec![Bindings::new()],
+            _ => vec![],
         }
     }
 

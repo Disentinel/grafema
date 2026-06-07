@@ -406,7 +406,21 @@ impl<'a> Parser<'a> {
 
         let limit = if self.keyword_ahead("LIMIT") {
             self.expect_keyword("LIMIT")?;
-            Some(self.parse_integer()? as u64)
+            // `parse_integer` accepts an optional leading sign, so a negative
+            // LIMIT would otherwise parse to a negative i64 and then wrap to a
+            // huge u64 via `as u64` (e.g. -1 → u64::MAX), making the Limit
+            // operator effectively unbounded — the query would silently return
+            // the entire result set instead of erroring. Reject it explicitly so
+            // a bad bound surfaces as a parse error, not wrong data.
+            let n_pos = self.pos;
+            let n = self.parse_integer()?;
+            if n < 0 {
+                return Err(ParseError::new(
+                    "LIMIT must be a non-negative integer",
+                    n_pos,
+                ));
+            }
+            Some(n as u64)
         } else {
             None
         };

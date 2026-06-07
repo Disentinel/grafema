@@ -620,6 +620,30 @@ mod parser_tests {
         .unwrap();
         assert_eq!(q.match_clause.pattern.start.labels, vec!["FUNCTION".to_string()]);
     }
+
+    #[test]
+    fn limit_zero_parses() {
+        // LIMIT 0 is a valid (if pointless) non-negative bound.
+        let q = parse_cypher("MATCH (n:FUNCTION) RETURN n.name LIMIT 0").unwrap();
+        assert_eq!(q.limit, Some(0));
+    }
+
+    #[test]
+    fn negative_limit_rejected() {
+        // A negative LIMIT must be a parse error, not silently wrapped to a huge
+        // u64 (which would behave as "no limit" and return the entire result set).
+        let err = parse_cypher("MATCH (n:FUNCTION) RETURN n.name LIMIT -1")
+            .expect_err("LIMIT -1 must be rejected");
+        let msg = format!("{}", err).to_lowercase();
+        assert!(
+            msg.contains("limit") && msg.contains("non-negative"),
+            "expected a clear non-negative LIMIT error, got: {}",
+            msg
+        );
+
+        // Larger negative values are rejected the same way.
+        assert!(parse_cypher("MATCH (n:FUNCTION) RETURN n.name LIMIT -5").is_err());
+    }
 }
 
 mod value_tests {
@@ -2246,6 +2270,134 @@ mod executor_tests {
         );
         assert!(filter.next().unwrap().is_none());
     }
+
+    /// Three-valued (Kleene) logic for `AND` under `NOT`. `n.category` is NULL
+    /// for the two cat-less nodes, so `n.category CONTAINS 'a'` is NULL there.
+    /// Kleene: `null AND true = null`; `NOT null = null` → excluded. Before the
+    /// fix `AND` collapsed the NULL operand to `Bool(false)` via `is_truthy()`,
+    /// so `NOT (null AND true)` became `NOT false = true` and wrongly admitted
+    /// the two NULL-category rows. `withcat` ("alpha") → `true AND true = true`,
+    /// `NOT true = false` → excluded. Correct result: nothing.
+    #[test]
+    fn filter_not_and_null_operand_excluded() {
+        let names = filtered_names(Expr::Not(Box::new(Expr::And(
+            Box::new(Expr::Contains(
+                Box::new(Expr::Property("n".to_string(), "category".to_string())),
+                Box::new(Expr::Literal(CypherLiteral::Str("a".to_string()))),
+            )),
+            Box::new(Expr::Literal(CypherLiteral::Bool(true))),
+        ))));
+        assert!(
+            names.is_empty(),
+            "NOT (nullPredicate AND true) must exclude NULL-operand rows (Kleene: null AND true = null), got {:?}",
+            names
+        );
+    }
+
+    /// Sibling of `filter_not_and_null_operand_excluded` for `OR`. Kleene:
+    /// `null OR false = null`; `NOT null = null` → excluded. Before the fix
+    /// `OR` collapsed the NULL operand to `Bool(false)`, so `NOT (null OR false)`
+    /// became `NOT false = true` and wrongly admitted the NULL-category rows.
+    #[test]
+    fn filter_not_or_null_operand_excluded() {
+        let names = filtered_names(Expr::Not(Box::new(Expr::Or(
+            Box::new(Expr::Contains(
+                Box::new(Expr::Property("n".to_string(), "category".to_string())),
+                Box::new(Expr::Literal(CypherLiteral::Str("a".to_string()))),
+            )),
+            Box::new(Expr::Literal(CypherLiteral::Bool(false))),
+        ))));
+        assert!(
+            names.is_empty(),
+            "NOT (nullPredicate OR false) must exclude NULL-operand rows (Kleene: null OR false = null), got {:?}",
+            names
+        );
+    }
+
+    /// Guard: FALSE dominates `AND` even past a NULL operand (Kleene:
+    /// `null AND false = false`). So `NOT (anything AND false) = NOT false =
+    /// true` admits every row. Holds before and after the fix — proves the
+    /// truthy/falsy short-circuits are preserved.
+    #[test]
+    fn filter_not_and_false_admits_all() {
+        let names = filtered_names(Expr::Not(Box::new(Expr::And(
+            Box::new(Expr::Contains(
+                Box::new(Expr::Property("n".to_string(), "category".to_string())),
+                Box::new(Expr::Literal(CypherLiteral::Str("a".to_string()))),
+            )),
+            Box::new(Expr::Literal(CypherLiteral::Bool(false))),
+        ))));
+        assert_eq!(names, vec!["nocat_none", "nocat_other", "withcat"]);
+    }
+
+    /// Guard: TRUE dominates `OR` even past a NULL operand (Kleene:
+    /// `null OR true = true`). So `NOT (anything OR true) = NOT true = false`
+    /// admits nothing. Holds before and after the fix.
+    #[test]
+    fn filter_not_or_true_excludes_all() {
+        let names = filtered_names(Expr::Not(Box::new(Expr::Or(
+            Box::new(Expr::Contains(
+                Box::new(Expr::Property("n".to_string(), "category".to_string())),
+                Box::new(Expr::Literal(CypherLiteral::Str("a".to_string()))),
+            )),
+            Box::new(Expr::Literal(CypherLiteral::Bool(true))),
+        ))));
+        assert!(names.is_empty(), "got {:?}", names);
+    }
+
+    /// Guard: a direct (non-negated) `AND` with a NULL operand still EXCLUDES
+    /// the row (NULL is not truthy) and still matches the non-null hit. The bug
+    /// is only observable under `NOT`; top-level `WHERE` filtering is unchanged.
+    /// Holds before and after the fix.
+    #[test]
+    fn filter_and_null_operand_still_excludes_and_matches() {
+        let names = filtered_names(Expr::And(
+            Box::new(Expr::Contains(
+                Box::new(Expr::Property("n".to_string(), "category".to_string())),
+                Box::new(Expr::Literal(CypherLiteral::Str("a".to_string()))),
+            )),
+            Box::new(Expr::Literal(CypherLiteral::Bool(true))),
+        ));
+        assert_eq!(names, vec!["withcat"]);
+    }
+
+    /// Zero-length path: `min_depth = max_depth = 0` binds the destination to
+    /// the START node itself (Cypher `*0` semantics). Was dropped by the
+    /// `&& depth > 0` guard in `bfs`, which excluded depth 0 even for min 0.
+    #[test]
+    fn var_length_expand_zero_depth_yields_start() {
+        let engine = create_test_graph();
+        let limits = default_limits();
+
+        let scan = NodeScan::new(
+            &engine,
+            Some("a".to_string()),
+            vec!["FUNCTION".to_string()],
+            vec![("name".to_string(), Expr::Literal(CypherLiteral::Str("main".to_string())))],
+            &limits,
+        );
+
+        let mut expand = VarLengthExpand::new(
+            Box::new(scan),
+            &engine,
+            "a".to_string(),
+            Some("b".to_string()),
+            vec!["CALLS".to_string()],
+            Direction::Outgoing,
+            0,
+            0,
+            &limits,
+        );
+
+        let mut names = Vec::new();
+        while let Some(rec) = expand.next().unwrap() {
+            if let CypherValue::Str(s) = rec.get("b").unwrap().property("name") {
+                names.push(s);
+            }
+        }
+        // Only the start node "main" — zero hops, no traversal.
+        assert_eq!(names, vec!["main"]);
+    }
 }
 
 /// Integration tests: full pipeline parse → plan → execute.
@@ -3578,6 +3730,389 @@ mod integration_tests {
         assert_eq!(collect_string_column(&result, 0), vec!["it's"]);
     }
 
+    // ── ORDER BY in aggregate queries (sort by aggregate / group-key expr) ──
+
+    /// Three files with distinct grouped SUMs, laid out so that the group
+    /// insertion order (a.js, m.js, z.js — ascending node id) matches NONE of
+    /// the sorted orders we assert below. This makes the tests fail reliably
+    /// when ORDER BY silently no-ops (rows fall back to insertion order),
+    /// regardless of the storage scan order.
+    ///
+    /// Grouped SUM(lineCount): a.js=10, m.js=100, z.js=1.
+    fn order_by_agg_graph() -> GraphEngineV2 {
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let mk = |id: u128, file: &str, lc: i64| NodeRecord {
+            id,
+            node_type: Some("FUNCTION".to_string()),
+            name: Some(format!("f{}", id)),
+            file: Some(file.to_string()),
+            file_id: 0,
+            name_offset: 0,
+            version: "main".into(),
+            exported: true,
+            replaces: None,
+            deleted: false,
+            metadata: Some(format!(r#"{{"lineCount": {}}}"#, lc)),
+            semantic_id: None,
+        };
+        engine.add_nodes(vec![
+            mk(20, "a.js", 5),
+            mk(21, "a.js", 5),
+            mk(22, "m.js", 100),
+            mk(23, "z.js", 1),
+        ]);
+        engine
+    }
+
+    #[test]
+    fn order_by_aggregate_expression_sorts_groups() {
+        // ORDER BY <aggregate function> in an aggregate query must sort by the
+        // computed aggregate. The Sort operator runs on HashAggregate output
+        // (columns keyed "n.file" / "total"); evaluating the raw FunctionCall
+        // expr returns NULL post-aggregation, so without a rewrite every row
+        // compares equal and the result stays in group-insertion order.
+        let engine = order_by_agg_graph();
+
+        let asc = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN n.file, SUM(n.lineCount) AS total ORDER BY SUM(n.lineCount) ASC",
+            EvalLimits::none(),
+        )
+        .unwrap();
+        let asc_totals: Vec<i64> = asc.rows.iter().map(|r| r[1].as_i64().unwrap()).collect();
+        let asc_files: Vec<&str> = asc.rows.iter().map(|r| r[0].as_str().unwrap()).collect();
+        assert_eq!(asc_totals, vec![1, 10, 100], "totals must be ascending");
+        assert_eq!(asc_files, vec!["z.js", "a.js", "m.js"]);
+
+        let desc = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN n.file, SUM(n.lineCount) AS total ORDER BY SUM(n.lineCount) DESC",
+            EvalLimits::none(),
+        )
+        .unwrap();
+        let desc_totals: Vec<i64> = desc.rows.iter().map(|r| r[1].as_i64().unwrap()).collect();
+        assert_eq!(desc_totals, vec![100, 10, 1], "totals must be descending");
+    }
+
+    #[test]
+    fn order_by_aliased_aggregate_sorts_groups() {
+        // ORDER BY the aggregate's alias must also sort (this already worked via
+        // the Variable lookup path, but is asserted to lock in the behavior).
+        let engine = order_by_agg_graph();
+        let res = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN n.file, SUM(n.lineCount) AS total ORDER BY total DESC",
+            EvalLimits::none(),
+        )
+        .unwrap();
+        let totals: Vec<i64> = res.rows.iter().map(|r| r[1].as_i64().unwrap()).collect();
+        assert_eq!(totals, vec![100, 10, 1]);
+    }
+
+    #[test]
+    fn order_by_group_key_property_in_aggregate_query() {
+        // Sibling case: ORDER BY a group-key PROPERTY (n.file) in an aggregate
+        // query. Post-aggregation node `n` is gone and the column is keyed
+        // "n.file"; the raw Property("n","file") expr looked up absent var `n`,
+        // yielding NULL and no sort. Assert both directions so insertion order
+        // (which equals at most one of them) cannot satisfy both.
+        let engine = order_by_agg_graph();
+
+        let asc = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN n.file, SUM(n.lineCount) AS total ORDER BY n.file ASC",
+            EvalLimits::none(),
+        )
+        .unwrap();
+        let asc_files: Vec<&str> = asc.rows.iter().map(|r| r[0].as_str().unwrap()).collect();
+        assert_eq!(asc_files, vec!["a.js", "m.js", "z.js"]);
+
+        let desc = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN n.file, SUM(n.lineCount) AS total ORDER BY n.file DESC",
+            EvalLimits::none(),
+        )
+        .unwrap();
+        let desc_files: Vec<&str> = desc.rows.iter().map(|r| r[0].as_str().unwrap()).collect();
+        assert_eq!(desc_files, vec!["z.js", "m.js", "a.js"]);
+    }
+
+    // ── ORDER BY a RETURN alias in a non-aggregate query ──────────────────
+    //
+    // In the non-aggregate path the planner runs Sort BEFORE Project, so Sort
+    // sees the full pattern record (node bound to `n`) but NOT the RETURN
+    // aliases (which Project creates afterwards). `ORDER BY <alias>` is parsed
+    // as `Variable(alias)`; evaluating it against the pre-projection record
+    // yields NULL for every row, so the rows fall back to scan/insertion order
+    // and the ORDER BY silently no-ops. The fix rewrites alias references in
+    // ORDER BY to the underlying RETURN expression so Sort can evaluate them.
+    //
+    // The three FUNCTION nodes are inserted as main, helper, validate (id
+    // 10,11,12). Alphabetical ASC is helper,main,validate and DESC is
+    // validate,main,helper — neither equals insertion order, so a no-op sort
+    // cannot satisfy either assertion.
+
+    #[test]
+    fn order_by_alias_ascending_non_aggregate() {
+        let engine = create_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN n.name AS nm ORDER BY nm",
+            EvalLimits::none(),
+        )
+        .unwrap();
+
+        assert_eq!(result.columns, vec!["nm"]);
+        let names: Vec<&str> = result
+            .rows
+            .iter()
+            .map(|row| row[0].as_str().unwrap())
+            .collect();
+        assert_eq!(names, vec!["helper", "main", "validate"]);
+    }
+
+    #[test]
+    fn order_by_alias_descending_non_aggregate() {
+        let engine = create_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN n.name AS nm ORDER BY nm DESC",
+            EvalLimits::none(),
+        )
+        .unwrap();
+
+        assert_eq!(result.columns, vec!["nm"]);
+        let names: Vec<&str> = result
+            .rows
+            .iter()
+            .map(|row| row[0].as_str().unwrap())
+            .collect();
+        assert_eq!(names, vec!["validate", "main", "helper"]);
+    }
+
+    #[test]
+    fn order_by_alias_with_limit_non_aggregate() {
+        // The alias rewrite must compose with LIMIT: sort first, then take 2.
+        let engine = create_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN n.name AS nm ORDER BY nm DESC LIMIT 2",
+            EvalLimits::none(),
+        )
+        .unwrap();
+
+        let names: Vec<&str> = result
+            .rows
+            .iter()
+            .map(|row| row[0].as_str().unwrap())
+            .collect();
+        assert_eq!(names, vec!["validate", "main"]);
+    }
+
+    #[test]
+    fn order_by_plain_property_still_works_non_aggregate() {
+        // Regression guard: ORDER BY a raw property (no alias indirection) must
+        // keep working — the rewrite must leave non-alias terms untouched.
+        let engine = create_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN n.name AS nm ORDER BY n.name DESC",
+            EvalLimits::none(),
+        )
+        .unwrap();
+
+        let names: Vec<&str> = result
+            .rows
+            .iter()
+            .map(|row| row[0].as_str().unwrap())
+            .collect();
+        assert_eq!(names, vec!["validate", "main", "helper"]);
+    }
+
+    #[test]
+    fn negative_limit_does_not_return_full_result_set() {
+        // Regression: `LIMIT -1` was parsed to i64 -1 then cast `as u64`, yielding
+        // u64::MAX — so the Limit operator never stopped and the query silently
+        // returned EVERY row instead of erroring. An agent that computes a limit
+        // and accidentally passes a negative value would get the whole graph back
+        // dressed up as a capped result. The fix rejects negative LIMIT at parse
+        // time, so execution surfaces a loud error rather than wrong data.
+        let engine = create_test_graph();
+
+        // Baseline: there is more than one FUNCTION node, so an unbounded scan
+        // returns multiple rows. This makes the "returned everything" failure
+        // mode observable.
+        let all = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN n.name",
+            EvalLimits::none(),
+        )
+        .unwrap();
+        assert!(
+            all.row_count > 1,
+            "fixture must have >1 FUNCTION node for this test to be meaningful"
+        );
+
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN n.name LIMIT -1",
+            EvalLimits::none(),
+        );
+        assert!(
+            result.is_err(),
+            "negative LIMIT must error, not return {} rows",
+            result.map(|r| r.row_count).unwrap_or(0)
+        );
+    }
+
+    // ── ORDER BY null ordering (Cypher/Neo4j semantics) ─────────────────
+    //
+    // Cypher treats null as GREATER than any non-null value for ordering:
+    // nulls sort LAST in ascending order and FIRST in descending order
+    // (Neo4j Cypher manual, "Ordering null"). The numeric fixture has one
+    // node (`d`) with no `lineCount`, so `n.lineCount` is NULL for it.
+
+    #[test]
+    fn order_by_nulls_last_ascending() {
+        let engine = create_numeric_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN n.name, n.lineCount ORDER BY n.lineCount",
+            EvalLimits::none(),
+        )
+        .unwrap();
+
+        let names: Vec<&str> = result
+            .rows
+            .iter()
+            .map(|row| row[0].as_str().unwrap())
+            .collect();
+        // a=10, b=20, c=30 ascending, then d (NULL lineCount) LAST.
+        assert_eq!(names, vec!["a", "b", "c", "d"]);
+        // The trailing row really is the NULL one (projects to JSON null).
+        assert_eq!(result.rows[3][1], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn order_by_nulls_first_descending() {
+        let engine = create_numeric_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN n.name, n.lineCount ORDER BY n.lineCount DESC",
+            EvalLimits::none(),
+        )
+        .unwrap();
+
+        let names: Vec<&str> = result
+            .rows
+            .iter()
+            .map(|row| row[0].as_str().unwrap())
+            .collect();
+        // d (NULL lineCount) FIRST, then c=30, b=20, a=10 descending.
+        assert_eq!(names, vec!["d", "c", "b", "a"]);
+        assert_eq!(result.rows[0][1], serde_json::Value::Null);
+    }
+
+    // ── Zero-length variable-length paths (`*0`, `*0..N`) ────────────────────
+    //
+    // openCypher/Neo4j: a variable-length pattern with a lower bound of 0
+    // includes the ZERO-length path, which binds the destination variable to
+    // the START node itself (the node is "reachable from itself in 0 hops").
+    // `VarLengthExpand::bfs` dropped depth-0 unconditionally (`&& depth > 0`),
+    // so `*0` / `*0..N` silently omitted the start node — a silent-wrong-answer
+    // for the common "self-or-descendants" idiom (e.g. `-[:CONTAINS*0..]->`).
+
+    /// `*0` is exactly the zero-length path: x is bound to the start node and
+    /// nothing else. Was: empty result.
+    #[test]
+    fn var_length_zero_exact_returns_start_node() {
+        let engine = create_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION {name: 'main'})-[:CALLS*0]->(x) RETURN x.name",
+            EvalLimits::none(),
+        )
+        .unwrap();
+        assert_eq!(collect_string_column(&result, 0), vec!["main"]);
+    }
+
+    /// `*0..1` = the start node (0 hops) PLUS its direct CALLS targets (1 hop).
+    /// main -> helper, main -> validate, so the set is {main, helper, validate}.
+    /// Was: {helper, validate} (start node missing).
+    #[test]
+    fn var_length_zero_to_one_includes_start_and_neighbors() {
+        let engine = create_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION {name: 'main'})-[:CALLS*0..1]->(x) RETURN x.name",
+            EvalLimits::none(),
+        )
+        .unwrap();
+        assert_eq!(
+            collect_string_column(&result, 0),
+            vec!["helper", "main", "validate"]
+        );
+    }
+
+    /// A destination label/property filter still applies to the zero-length
+    /// match: `(x:CLASS)` excludes the FUNCTION start node, so `*0..1` here
+    /// yields nothing (main has no CALLS edge to a CLASS, and main itself is
+    /// not a CLASS).
+    #[test]
+    fn var_length_zero_respects_destination_label_filter() {
+        let engine = create_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION {name: 'main'})-[:CALLS*0..1]->(x:CLASS) RETURN x.name",
+            EvalLimits::none(),
+        )
+        .unwrap();
+        assert!(
+            result.rows.is_empty(),
+            "zero-length match must honor destination label filter, got {:?}",
+            result.rows
+        );
+    }
+
+    /// Regression guard: a NON-zero lower bound must STILL exclude the start
+    /// node. Removing the buggy `&& depth > 0` must not leak the start node into
+    /// `*1..N` queries (depth 0 < min_depth already excludes it).
+    #[test]
+    fn var_length_min_one_still_excludes_start_node() {
+        let engine = create_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION {name: 'main'})-[:CALLS*1..2]->(x) RETURN x.name",
+            EvalLimits::none(),
+        )
+        .unwrap();
+        // 1 hop: helper, validate. 2 hops: validate (via helper). De-duped set
+        // excludes "main" — the start node must not appear for a min>=1 path.
+        assert_eq!(
+            collect_string_column(&result, 0),
+            vec!["helper", "validate"]
+        );
+    }
+
+    /// Headline idiom: `*0..` ("the node itself plus everything reachable").
+    /// From "main" over CALLS this is {main, helper, validate} — the start node
+    /// included via the zero-length path. Also proves the unbounded BFS still
+    /// terminates (visited-set de-dup) with a zero lower bound. Was: start node
+    /// missing.
+    #[test]
+    fn var_length_zero_unbounded_includes_self_and_all_reachable() {
+        let engine = create_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION {name: 'main'})-[:CALLS*0..]->(x) RETURN x.name",
+            EvalLimits::none(),
+        )
+        .unwrap();
+        assert_eq!(
+            collect_string_column(&result, 0),
+            vec!["helper", "main", "validate"]
+        );
+    }
 }
 
 
@@ -3707,99 +4242,6 @@ mod return_star_tests {
         assert_eq!(r.columns, vec!["c"]);
         assert_eq!(r.row_count, 1);
         assert_eq!(r.rows[0][0], serde_json::json!(3));
-    }
-
-
-    // ── ORDER BY a RETURN alias in a non-aggregate query ──────────────────
-    //
-    // In the non-aggregate path the planner runs Sort BEFORE Project, so Sort
-    // sees the full pattern record (node bound to `n`) but NOT the RETURN
-    // aliases (which Project creates afterwards). `ORDER BY <alias>` is parsed
-    // as `Variable(alias)`; evaluating it against the pre-projection record
-    // yields NULL for every row, so the rows fall back to scan/insertion order
-    // and the ORDER BY silently no-ops. The fix rewrites alias references in
-    // ORDER BY to the underlying RETURN expression so Sort can evaluate them.
-    //
-    // The three FUNCTION nodes are inserted as main, helper, validate (id
-    // 10,11,12). Alphabetical ASC is helper,main,validate and DESC is
-    // validate,main,helper — neither equals insertion order, so a no-op sort
-    // cannot satisfy either assertion.
-
-    #[test]
-    fn order_by_alias_ascending_non_aggregate() {
-        let engine = create_test_graph();
-        let result = execute(
-            &engine,
-            "MATCH (n:FUNCTION) RETURN n.name AS nm ORDER BY nm",
-            EvalLimits::none(),
-        )
-        .unwrap();
-
-        assert_eq!(result.columns, vec!["nm"]);
-        let names: Vec<&str> = result
-            .rows
-            .iter()
-            .map(|row| row[0].as_str().unwrap())
-            .collect();
-        assert_eq!(names, vec!["helper", "main", "validate"]);
-    }
-
-    #[test]
-    fn order_by_alias_descending_non_aggregate() {
-        let engine = create_test_graph();
-        let result = execute(
-            &engine,
-            "MATCH (n:FUNCTION) RETURN n.name AS nm ORDER BY nm DESC",
-            EvalLimits::none(),
-        )
-        .unwrap();
-
-        assert_eq!(result.columns, vec!["nm"]);
-        let names: Vec<&str> = result
-            .rows
-            .iter()
-            .map(|row| row[0].as_str().unwrap())
-            .collect();
-        assert_eq!(names, vec!["validate", "main", "helper"]);
-    }
-
-    #[test]
-    fn order_by_alias_with_limit_non_aggregate() {
-        // The alias rewrite must compose with LIMIT: sort first, then take 2.
-        let engine = create_test_graph();
-        let result = execute(
-            &engine,
-            "MATCH (n:FUNCTION) RETURN n.name AS nm ORDER BY nm DESC LIMIT 2",
-            EvalLimits::none(),
-        )
-        .unwrap();
-
-        let names: Vec<&str> = result
-            .rows
-            .iter()
-            .map(|row| row[0].as_str().unwrap())
-            .collect();
-        assert_eq!(names, vec!["validate", "main"]);
-    }
-
-    #[test]
-    fn order_by_plain_property_still_works_non_aggregate() {
-        // Regression guard: ORDER BY a raw property (no alias indirection) must
-        // keep working — the rewrite must leave non-alias terms untouched.
-        let engine = create_test_graph();
-        let result = execute(
-            &engine,
-            "MATCH (n:FUNCTION) RETURN n.name AS nm ORDER BY n.name DESC",
-            EvalLimits::none(),
-        )
-        .unwrap();
-
-        let names: Vec<&str> = result
-            .rows
-            .iter()
-            .map(|row| row[0].as_str().unwrap())
-            .collect();
-        assert_eq!(names, vec!["validate", "main", "helper"]);
     }
 
 }

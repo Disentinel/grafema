@@ -693,6 +693,105 @@ mod eval_tests {
         assert_eq!(results.len(), 1, "node on a cycle MUST have a path to itself");
     }
 
+    // ── path() REVERSE reachability: path(X, dst) enumerates ancestors ──
+    //
+    // The directed dual of path(src, X). `path(X, "dst")` must return every node
+    // that can REACH dst (its ancestor set). Before the fix these (Var/Wildcard
+    // source, Const dest) arms fell through to the catch-all and silently
+    // returned NO rows — so "what reaches / depends on dst" answered empty.
+
+    #[test]
+    fn test_eval_path_reverse_enumerates_ancestors() {
+        // Graph: 1 -> 4 -> 2 (CALLS); node 3 is an orphan.
+        // path(X, "2") = nodes that reach 2 = {1, 4}.
+        let engine = setup_test_graph();
+        let evaluator = Evaluator::new(&engine);
+        let query = Atom::new("path", vec![Term::var("X"), Term::constant("2")]);
+        let mut ids: Vec<u128> = evaluator
+            .query_atom(&query)
+            .unwrap()
+            .iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        ids.sort();
+        assert_eq!(ids, vec![1, 4], "reverse path must enumerate ancestors of 2");
+    }
+
+    #[test]
+    fn test_eval_path_reverse_no_ancestors_is_empty() {
+        // Node 1 is a root: nothing reaches it → path(X, "1") is empty.
+        let engine = setup_test_graph();
+        let evaluator = Evaluator::new(&engine);
+        let query = Atom::new("path", vec![Term::var("X"), Term::constant("1")]);
+        let results = evaluator.query_atom(&query).unwrap();
+        assert_eq!(results.len(), 0, "a root node has no ancestors");
+    }
+
+    #[test]
+    fn test_eval_path_reverse_wildcard_existence() {
+        let engine = setup_test_graph();
+        let evaluator = Evaluator::new(&engine);
+        // path(_, "2") - something reaches 2 → exactly one success row.
+        let reach2 = Atom::new("path", vec![Term::Wildcard, Term::constant("2")]);
+        assert_eq!(evaluator.query_atom(&reach2).unwrap().len(), 1);
+        // path(_, "1") - nothing reaches 1 → no rows.
+        let reach1 = Atom::new("path", vec![Term::Wildcard, Term::constant("1")]);
+        assert_eq!(evaluator.query_atom(&reach1).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_eval_path_reverse_includes_cyclic_self() {
+        // 100 <-> 101 cycle. Ancestors of 100: 101 reaches it directly, and 100
+        // reaches itself via the cycle → {100, 101}. Mirrors the forward
+        // test_eval_path_var_includes_cyclic_self.
+        let engine = setup_cycle_graph();
+        let evaluator = Evaluator::new(&engine);
+        let query = Atom::new("path", vec![Term::var("X"), Term::constant("100")]);
+        let mut ids: Vec<u128> = evaluator
+            .query_atom(&query)
+            .unwrap()
+            .iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        ids.sort();
+        assert_eq!(ids, vec![100, 101], "cyclic reverse enumeration includes self (100) and peer (101)");
+    }
+
+    #[test]
+    fn test_eval_path_reverse_via_parsed_query() {
+        // End-to-end through parse_query + eval_query (not just query_atom),
+        // exercising the full pipeline for a single reverse-path literal.
+        let engine = setup_test_graph();
+        let evaluator = Evaluator::new(&engine);
+        let literals = parse_query("path(X, \"2\")").unwrap();
+        let mut ids: Vec<u128> = evaluator
+            .eval_query(&literals)
+            .unwrap()
+            .iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        ids.sort();
+        assert_eq!(ids, vec![1, 4]);
+    }
+
+    #[test]
+    fn test_eval_path_reverse_in_conjunction() {
+        // The real-world shape: "which FUNCTIONs reach node 2?". `reorder_literals`
+        // must place the reverse-path atom first (it provides X via the constant
+        // dst), then the node generator filters. Ancestors of 2 = {1, 4}; only 4
+        // is a FUNCTION (1 is queue:publish).
+        let engine = setup_test_graph();
+        let evaluator = Evaluator::new(&engine);
+        let literals = parse_query("path(X, \"2\"), node(X, \"FUNCTION\")").unwrap();
+        let ids: Vec<u128> = evaluator
+            .eval_query(&literals)
+            .unwrap()
+            .iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        assert_eq!(ids, vec![4], "only FUNCTION ancestor of node 2 is node 4");
+    }
+
     #[test]
     fn test_eval_path_var_includes_cyclic_self() {
         // Enumerating reachable nodes from a cyclic node must include the node
@@ -5824,6 +5923,146 @@ mod numeric_cmp_tests {
         assert_eq!(result[0].atom().predicate(), "node");
         assert_eq!(result[1].atom().predicate(), "attr");
         assert_eq!(result[2].atom().predicate(), "gt");
+    }
+}
+
+// ============================================================================
+// numeric_cmp(gt/lt/gte/lte) — integer-exact comparison of large operands
+//
+// The comparison parsed both operands as f64. f64 has a 53-bit mantissa, so any
+// integer above 2^53 (e.g. u128 node IDs, large timestamps / byte offsets stored
+// as metadata) loses precision: two DISTINCT values that differ only in low bits
+// round to the SAME f64. That made `lt(A, B)` return FALSE for distinct IDs
+// (silently dropping rows — e.g. the canonical symmetric-pair-dedup idiom
+// `edge(A,B), edge(B,A), lt(A,B)` lost every pair) and `gte(A, B)` return TRUE
+// for distinct IDs (false positive). These tests pin integer-exact comparison;
+// genuinely fractional operands still fall back to f64.
+// ============================================================================
+
+mod numeric_cmp_u128_precision_tests {
+    use super::*;
+    use crate::graph::{GraphEngineV2, GraphStore};
+    use crate::storage::{NodeRecord, EdgeRecord};
+    use crate::datalog::eval::{Evaluator, Value};
+    use crate::datalog::eval_explain::EvaluatorExplain;
+
+    // 2^60 and 2^60 + 1 — both <= i128::MAX, both round to the SAME f64
+    // (2^60 is exactly representable, 2^60 + 1 is not).
+    const BIG: &str = "1152921504606846976";
+    const BIG_PLUS_1: &str = "1152921504606846977";
+
+    // 2^127 and 2^127 + 1 — both > i128::MAX but < u128::MAX, also f64-equal.
+    // Exercises the u128 fallback (these do not parse as i128).
+    const HUGE: &str = "170141183460469231731687303715884105728";
+    const HUGE_PLUS_1: &str = "170141183460469231731687303715884105729";
+
+    fn cmp(op: &str, a: &str, b: &str) -> usize {
+        let engine = GraphEngineV2::create_ephemeral();
+        let evaluator = Evaluator::new(&engine);
+        let query = Atom::new(op, vec![Term::constant(a), Term::constant(b)]);
+        evaluator.query_atom(&query).unwrap().len()
+    }
+
+    // lt(2^60, 2^60+1) must be TRUE — distinct IDs must not collapse under f64.
+    #[test]
+    fn test_lt_large_ids_not_collapsed() {
+        assert_eq!(cmp("lt", BIG, BIG_PLUS_1), 1, "2^60 < 2^60+1 must hold");
+    }
+
+    // gt(2^60+1, 2^60) must be TRUE.
+    #[test]
+    fn test_gt_large_ids_not_collapsed() {
+        assert_eq!(cmp("gt", BIG_PLUS_1, BIG), 1, "2^60+1 > 2^60 must hold");
+    }
+
+    // gte/lte must NOT treat distinct large IDs as equal (false-positive guard).
+    #[test]
+    fn test_gte_lte_distinct_large_ids_not_falsely_equal() {
+        // 2^60 is strictly less than 2^60+1, so neither >= nor (reversed) <= holds.
+        assert_eq!(cmp("gte", BIG, BIG_PLUS_1), 0, "2^60 >= 2^60+1 must be false");
+        assert_eq!(cmp("lte", BIG_PLUS_1, BIG), 0, "2^60+1 <= 2^60 must be false");
+        // The genuinely-equal case still passes.
+        assert_eq!(cmp("gte", BIG, BIG), 1, "2^60 >= 2^60 must hold");
+        assert_eq!(cmp("lte", BIG, BIG), 1, "2^60 <= 2^60 must hold");
+    }
+
+    // u128 operands above i128::MAX (do not parse as i128) compared exactly.
+    #[test]
+    fn test_cmp_u128_above_i128_max() {
+        assert_eq!(cmp("lt", HUGE, HUGE_PLUS_1), 1, "2^127 < 2^127+1 must hold");
+        assert_eq!(cmp("gt", HUGE_PLUS_1, HUGE), 1, "2^127+1 > 2^127 must hold");
+        assert_eq!(cmp("gte", HUGE, HUGE_PLUS_1), 0, "2^127 >= 2^127+1 must be false");
+    }
+
+    // Regression: fractional and negative operands still work via the f64 fallback.
+    #[test]
+    fn test_float_and_negative_comparisons_still_work() {
+        assert_eq!(cmp("gt", "1000.5", "1000"), 1, "1000.5 > 1000");
+        assert_eq!(cmp("lt", "5", "5.5"), 1, "5 < 5.5 (mixed int/float)");
+        assert_eq!(cmp("gt", "5", "-10"), 1, "5 > -10 (negative)");
+        assert_eq!(cmp("lt", "-10", "5"), 1, "-10 < 5");
+        assert_eq!(cmp("gt", "abc", "100"), 0, "non-numeric → empty");
+    }
+
+    // Realistic end-to-end: the symmetric-pair-dedup idiom over two nodes whose
+    // u128 IDs round to the same f64. `lt(A, B)` must keep the one canonical pair.
+    #[test]
+    fn test_symmetric_pair_dedup_idiom_large_ids() {
+        let a: u128 = BIG.parse().unwrap();
+        let b: u128 = BIG_PLUS_1.parse().unwrap();
+        let mut engine = GraphEngineV2::create_ephemeral();
+        engine.add_nodes(vec![
+            NodeRecord {
+                id: a,
+                node_type: Some("FUNCTION".to_string()),
+                name: Some("alpha".to_string()),
+                file: Some("a.js".to_string()),
+                file_id: 0, name_offset: 0,
+                version: "main".into(),
+                exported: false, replaces: None, deleted: false,
+                metadata: None, semantic_id: None,
+            },
+            NodeRecord {
+                id: b,
+                node_type: Some("FUNCTION".to_string()),
+                name: Some("beta".to_string()),
+                file: Some("b.js".to_string()),
+                file_id: 0, name_offset: 0,
+                version: "main".into(),
+                exported: false, replaces: None, deleted: false,
+                metadata: None, semantic_id: None,
+            },
+        ]);
+        engine.add_edges(vec![
+            EdgeRecord { src: a, dst: b, edge_type: Some("CALLS".to_string()),
+                version: "main".into(), metadata: None, deleted: false },
+            EdgeRecord { src: b, dst: a, edge_type: Some("CALLS".to_string()),
+                version: "main".into(), metadata: None, deleted: false },
+        ], false);
+
+        let mut evaluator = Evaluator::new(&engine);
+        let rule = parse_rule(
+            r#"mutual(A, B) :- edge(A, B, "CALLS"), edge(B, A, "CALLS"), lt(A, B)."#
+        ).unwrap();
+        evaluator.add_rule(rule);
+
+        let results = evaluator.query(&parse_atom("mutual(A, B)").unwrap()).unwrap();
+        // Exactly one canonical ordered pair (a < b); not zero (collapsed by f64),
+        // not two (both directions admitted).
+        assert_eq!(results.len(), 1, "dedup must keep exactly one ordered pair");
+        assert_eq!(results[0].get("A"), Some(&Value::Id(a)));
+        assert_eq!(results[0].get("B"), Some(&Value::Id(b)));
+    }
+
+    // EvaluatorExplain twin must agree: lt(2^60, 2^60+1) yields one row.
+    #[test]
+    fn test_numeric_cmp_large_ids_explain_parity() {
+        let engine = GraphEngineV2::create_ephemeral();
+        let mut ev = EvaluatorExplain::new(&engine, false);
+        let result = ev.eval_query(
+            &parse_query(&format!(r#"lt("{}", "{}")"#, BIG, BIG_PLUS_1)).unwrap()
+        ).unwrap();
+        assert_eq!(result.bindings.len(), 1, "explain twin must also pass lt on distinct large IDs");
     }
 }
 
