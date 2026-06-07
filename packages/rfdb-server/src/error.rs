@@ -48,6 +48,13 @@ pub enum GraphError {
     #[error("E-FMT-003: malformed tag payload for semiring_id {semiring_id}: {detail}")]
     MalformedTag { semiring_id: u16, detail: String },
 
+    /// E-FMT-004 (Datalog v2, spec §9.3/§I11): the binding-table blob persisted in a
+    /// manifest tag does not parse (corrupt / written by an incompatible build). Per I11 a
+    /// reader surfaces this typed rather than silently treating the predicate set as empty
+    /// (which would force a spurious full recompute or, worse, a wrong incremental delta).
+    #[error("E-FMT-004: malformed datalog2 binding-table blob: {0}")]
+    MalformedBindingBlob(String),
+
     #[error("Compaction error: {0}")]
     Compaction(String),
 
@@ -119,6 +126,7 @@ impl GraphError {
             GraphError::UnknownSemiringId(_) => "E-FMT-001",
             GraphError::MixedSemiringId { .. } => "E-FMT-002",
             GraphError::MalformedTag { .. } => "E-FMT-003",
+            GraphError::MalformedBindingBlob(_) => "E-FMT-004",
             _ => "INTERNAL_ERROR",
         }
     }

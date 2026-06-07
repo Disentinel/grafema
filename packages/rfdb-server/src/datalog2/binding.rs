@@ -27,13 +27,23 @@
 //! prior-run table into the manifest is the increment machinery's concern, where its first
 //! reader exists, not this gate's.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+
+use serde::{Deserialize, Serialize};
 
 use super::parser_ext::ExtProgram;
+use crate::error::GraphError;
+
+/// Reserved [`crate::storage_v2::manifest::Manifest::tags`] key under which a materialization
+/// run persists its binding table as a neutral JSON blob. The manifest `tags` map is an
+/// opaque `String → String` channel (storage_v2 stores it without interpreting it — I10), so
+/// the binding table crosses runs without storage_v2 ever depending on datalog2 types. The
+/// next run loads the blob to diff its predicate set against this one (Gate C increments).
+pub const MANIFEST_TAG_KEY: &str = "datalog2.binding_table";
 
 /// What one predicate is bound to: its semiring, its head arity, and the set of normalized
 /// rule-AST hashes (see [`super::materialize::rule_ast_hash`]) of the clauses that derive it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PredicateBinding {
     /// The semiring its provenance tags live in (`BOOLTAG_SEMIRING_ID` at Gate B).
     pub semiring_id: u16,
@@ -69,7 +79,7 @@ impl std::fmt::Display for BindingConflict {
 impl std::error::Error for BindingConflict {}
 
 /// The predicate → binding registry for one program.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BindingTable {
     map: BTreeMap<String, PredicateBinding>,
 }
@@ -228,6 +238,42 @@ impl BindingTable {
         changes.sort_by(|a, b| a.predicate().cmp(b.predicate()));
         changes
     }
+
+    // ── Neutral manifest blob (cross-run persistence, §9.3) ──────────
+
+    /// Serialize the table to the neutral JSON blob stored under [`MANIFEST_TAG_KEY`].
+    /// Deterministic (the `BTreeMap`/`BTreeSet` ordering is canonical), so two equal tables
+    /// produce byte-identical blobs (I1). Carries the FULL `rule_ast_hash` strings — the
+    /// authoritative hash for increment decisions, distinct from the per-record u32
+    /// `ProvenanceV2.rule_ast_hash` segment index (which is a separate, lossy locator).
+    pub fn to_blob(&self) -> String {
+        // A map of plain strings/ints over BTree containers cannot fail to serialize.
+        serde_json::to_string(self).unwrap_or_else(|_| "{\"map\":{}}".to_string())
+    }
+
+    /// Parse a binding table from its [`to_blob`](Self::to_blob) JSON. A corrupt blob (or one
+    /// from an incompatible build) is `E-FMT-004` — never a silent empty table (I11), which
+    /// would force a spurious recompute or a wrong delta.
+    pub fn from_blob(blob: &str) -> Result<Self, GraphError> {
+        serde_json::from_str(blob)
+            .map_err(|e| GraphError::MalformedBindingBlob(e.to_string()))
+    }
+
+    /// Store this table into a manifest `tags` map under [`MANIFEST_TAG_KEY`].
+    pub fn store_in_tags(&self, tags: &mut HashMap<String, String>) {
+        tags.insert(MANIFEST_TAG_KEY.to_string(), self.to_blob());
+    }
+
+    /// Load the prior run's table from a manifest `tags` map, or `Ok(None)` if the key is
+    /// absent (a first run / a generation written before binding tables existed — the
+    /// increment path then falls back to a full recompute). A present-but-corrupt blob is
+    /// `E-FMT-004`, surfaced rather than swallowed.
+    pub fn load_from_tags(tags: &HashMap<String, String>) -> Result<Option<Self>, GraphError> {
+        match tags.get(MANIFEST_TAG_KEY) {
+            Some(blob) => Self::from_blob(blob).map(Some),
+            None => Ok(None),
+        }
+    }
 }
 
 /// One predicate's change between a prior run's binding table and the current one.
@@ -383,6 +429,53 @@ mod tests {
         let changes = cur.diff(&prev);
         assert_eq!(changes.len(), 1);
         assert!(matches!(&changes[0], BindingChange::Removed { predicate } if predicate == "q"));
+    }
+
+    // ── Neutral manifest blob (cross-run persistence) ────────────────
+
+    #[test]
+    fn blob_round_trips_through_manifest_tags() {
+        let table = bool_table_from(
+            "path(A, B) :- e(A, B).\n\
+             path(A, B) :- e(A, C), path(C, B).\n\
+             q(A) :- e(A, A).",
+        )
+        .unwrap();
+        let mut tags: HashMap<String, String> = HashMap::new();
+        table.store_in_tags(&mut tags);
+        assert!(tags.contains_key(MANIFEST_TAG_KEY), "blob stored under reserved key");
+
+        let loaded = BindingTable::load_from_tags(&tags)
+            .expect("well-formed blob parses")
+            .expect("key present");
+        assert_eq!(loaded, table, "manifest blob round-trips the binding table");
+        // The full rule hashes survive (the authoritative increment key, not the u32 index).
+        assert_eq!(loaded.get("path").unwrap().rule_hashes.len(), 2);
+    }
+
+    #[test]
+    fn load_from_tags_absent_key_is_none() {
+        let tags: HashMap<String, String> = HashMap::new();
+        assert!(
+            BindingTable::load_from_tags(&tags).unwrap().is_none(),
+            "first run / pre-binding-table generation → None, caller recomputes"
+        );
+    }
+
+    #[test]
+    fn corrupt_blob_is_e_fmt_004_not_silent_empty() {
+        let mut tags: HashMap<String, String> = HashMap::new();
+        tags.insert(MANIFEST_TAG_KEY.to_string(), "{not valid json".to_string());
+        let err = BindingTable::load_from_tags(&tags).expect_err("corrupt blob must error");
+        assert_eq!(err.code(), "E-FMT-004");
+    }
+
+    #[test]
+    fn blob_is_deterministic() {
+        // Same program, different source order → equal tables → byte-identical blobs (I1).
+        let a = bool_table_from("p(A, B) :- e(A, B).\nq(A) :- e(A, A).").unwrap();
+        let b = bool_table_from("q(A) :- e(A, A).\np(A, B) :- e(A, B).").unwrap();
+        assert_eq!(a.to_blob(), b.to_blob(), "canonical ordering → stable blob");
     }
 
     #[test]
