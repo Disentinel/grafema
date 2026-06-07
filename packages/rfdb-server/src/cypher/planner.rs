@@ -24,10 +24,27 @@ pub fn plan<'a>(
 ) -> Result<Box<dyn Operator + 'a>, CypherError> {
     let pattern = &query.match_clause.pattern;
 
+    // The start node's effective variable name. For an anonymous start node
+    // (`MATCH ()-[:CALLS]->(g)`) we synthesize `__anon_0` — the same name the
+    // segment loop below uses for unnamed nodes (`__anon_{i+1}`). This name is
+    // used for BOTH the `NodeScan` binding and `prev_var` so they always agree.
+    let start_var = pattern
+        .start
+        .variable
+        .clone()
+        .unwrap_or_else(|| "__anon_0".to_string());
+
     // 1. Start with NodeScan for the first node pattern.
+    //
+    // The scan must always bind the start node under `start_var`, even when the
+    // pattern node is anonymous: a downstream `Expand` resolves its source node
+    // by looking up `start_var` in the record. If `NodeScan` produced an unbound
+    // record (as it did when the start node had no explicit variable), `Expand`
+    // failed with "variable '__anon_0' is not a node". Binding here mirrors how
+    // anonymous DESTINATION nodes are already bound by `Expand`.
     let mut op: Box<dyn Operator + 'a> = Box::new(NodeScan::new(
         engine,
-        pattern.start.variable.clone(),
+        Some(start_var.clone()),
         pattern.start.labels.clone(),
         pattern.start.properties.clone(),
         limits,
@@ -35,11 +52,7 @@ pub fn plan<'a>(
 
     // Track the "current" variable name so Expand knows which record field
     // holds the source node. Start with the first node pattern's variable.
-    let mut prev_var = pattern
-        .start
-        .variable
-        .clone()
-        .unwrap_or_else(|| "__anon_0".to_string());
+    let mut prev_var = start_var;
 
     // 2. Chain Expand/VarLengthExpand for each segment.
     for (i, (rel, node)) in pattern.segments.iter().enumerate() {
