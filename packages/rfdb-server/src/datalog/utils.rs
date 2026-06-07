@@ -236,16 +236,31 @@ fn positive_can_place_and_provides(
             (true, provides)
         }
         "path" => {
-            // path(src, dst) — requires the first arg (source) bound. Unlike the
-            // edge predicates, `eval_path` only supports a Const/bound source
-            // (BFS from an unbound source is not a scan), so it cannot full-scan.
+            // path(src, dst) — placeable when AT LEAST ONE endpoint is *concrete*
+            // (a Const or an already-bound Var; a Wildcard does NOT count):
+            //   - src concrete → forward BFS, providing a free dst var
+            //     (`eval_path` (Const, Var/Wildcard/Const) arms);
+            //   - dst concrete → reverse BFS over incoming edges, providing a
+            //     free src var (`eval_path` (Var/Wildcard, Const) arms).
+            // A fully-unbound pair (both Var/Wildcard) is all-pairs reachability
+            // (O(N·E)) and is unsupported — `eval_path` returns nothing for it —
+            // so reorder must NOT report it as placeable, otherwise it would
+            // claim to bind a variable it never produces. This classification
+            // mirrors the supported `eval_path` modes exactly.
             if args.is_empty() {
                 return (true, HashSet::new());
             }
-            let can_place = is_bound_or_const(&args[0], bound);
+            let concrete = |t: &Term| match t {
+                Term::Const(_) => true,
+                Term::Var(v) => bound.contains(v),
+                Term::Wildcard => false,
+            };
+            let can_place = concrete(&args[0]) || args.get(1).is_some_and(concrete);
             let mut provides = HashSet::new();
             if can_place {
-                for arg in args.iter().skip(1) {
+                // Whichever side was free becomes bound once the (directional)
+                // BFS runs, so report every free Var arg.
+                for arg in args.iter() {
                     if let Term::Var(v) = arg {
                         if !bound.contains(v) {
                             provides.insert(v.clone());

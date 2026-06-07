@@ -1427,6 +1427,47 @@ impl<'a> Evaluator<'a> {
                     vec![Bindings::new()]
                 }
             }
+            // path(X, "dst") - REVERSE reachability: enumerate every node that
+            // can REACH dst (its ancestor set). The directed dual of the
+            // (Const, Var) forward arm. Previously this fell through to the
+            // catch-all and silently returned NO rows, so an agent asking "what
+            // reaches / depends on dst" via `path(X, dst)` got a confidently
+            // empty answer instead of the real ancestors — an on-thesis
+            // silent-wrong-answer.
+            (Term::Var(var), Term::Const(dst_str)) => {
+                let dst_id = match dst_str.parse::<u128>() {
+                    Ok(id) => id,
+                    Err(_) => return vec![],
+                };
+
+                self.path_reaches(dst_id)
+                    .into_iter()
+                    .map(|id| {
+                        let mut b = Bindings::new();
+                        b.set(var, Value::Id(id));
+                        b
+                    })
+                    .collect()
+            }
+            // path(_, "dst") - does ANY node reach dst? Dual of (Const, _).
+            (Term::Wildcard, Term::Const(dst_str)) => {
+                let dst_id = match dst_str.parse::<u128>() {
+                    Ok(id) => id,
+                    Err(_) => return vec![],
+                };
+
+                if self.path_reaches(dst_id).is_empty() {
+                    vec![]
+                } else {
+                    vec![Bindings::new()]
+                }
+            }
+            // Remaining modes have NO constant endpoint (both src and dst are
+            // Var/Wildcard). Answering them would require materializing all-pairs
+            // reachability (O(N·E)) and is intentionally unsupported — `path`
+            // needs at least one bound endpoint, exactly as the forward arms
+            // require a bound source. In a conjunctive query the pipeline binds
+            // one endpoint from a preceding generator atom before `path` runs.
             _ => vec![],
         }
     }
@@ -1448,6 +1489,36 @@ impl<'a> Evaluator<'a> {
             return Vec::new();
         }
         self.engine.bfs(&frontier, 100, &[])
+    }
+
+    /// Set of nodes that can REACH `dst_id` via AT LEAST ONE edge — the ancestor
+    /// set queried by `path(X, dst)` (the reverse of [`Self::path_reachable`]).
+    ///
+    /// Mirrors `path_reachable` exactly, but walks INCOMING edges backward: BFS
+    /// is seeded from `dst_id`'s direct predecessors (the depth-1 frontier)
+    /// rather than `dst_id` itself, so `dst_id` appears here ONLY when a real
+    /// edge path loops back to it (a genuine cycle). This keeps the reverse arms
+    /// consistent with the forward arms and with the irreflexive `path(A, A)`
+    /// self-rule (see the `test_eval_path_self_*` tests). It reuses the shared
+    /// `traversal::bfs` with a backward-neighbour closure — the same primitive
+    /// `GraphStore::bfs` uses forward — so the two directions cannot drift apart.
+    fn path_reaches(&self, dst_id: u128) -> Vec<u128> {
+        // Direct predecessors of `node`: the sources of its (non-deleted)
+        // incoming edges. The backward analogue of `GraphStore::neighbors`.
+        let predecessors = |node: u128| -> Vec<u128> {
+            self.engine
+                .get_incoming_edges(node, None)
+                .into_iter()
+                .filter(|e| !e.deleted)
+                .map(|e| e.src)
+                .collect()
+        };
+
+        let frontier = predecessors(dst_id);
+        if frontier.is_empty() {
+            return Vec::new();
+        }
+        crate::graph::traversal::bfs(&frontier, 100, predecessors)
     }
 
     /// Evaluate neq(X, Y) - inequality constraint
