@@ -56,7 +56,24 @@ byte-identical + alloc-free. Proof `incremental_insertion_work_proportional_to_d
    `Executor::witness_fact` (head-bound body replay capturing bindings), `explain_fact` free fn,
    `GraphEngineV2::explain_datalog_fact` (pub, real-storage). On-demand, zero per-fact storage. Additive
    (eval path untouched, Gate A unaffected). datalog2 155, engine_v2 43.
-3. **← NEXT: Gate D edge write-back + DEPENDS_ON pilot** — incremental `eval_datalog_v2_materialize_incremental`:
+3. **Gate D — IN PROGRESS.**
+   - ✅ **D1 incremental edge WRITE-back** (`cfd86034`): `GraphEngineV2::eval_datalog_v2_materialize_incremental`
+     — diff freshly-derived edges vs the currently-materialized edges (the prior state, no extra
+     storage) by (src,dst,edge_type); added→`add_edges`, removed→`delete_edge`, one `flush()` commits
+     both atomically (VERIFIED: first-run (2,0) / insert (1,0) / unchanged (0,0) no-op / delete (0,1)
+     tombstone). Derivation is still FULL eval — only the write is incremental.
+   - ⬜ **D1b derive-incremental (perf):** wire `maintain_datalog_v2` so the DERIVE is work-proportional
+     too. Needs: (a) the prior base snapshot pinned across runs — store its version in manifest tags;
+     (b) reconstruct prev_eval from the current materialized edges (sound only when the program's derived
+     predicates == {the single @materialize predicate}, e.g. depends/2 — GUARD else full eval); (c) a
+     commit path that applies tombstones AND writes tags together (flush() takes no tags; commit_batch_ext
+     doesn't apply tombstones — needs a small combined path or store snapshot-version via a tags-carrying
+     commit then a separate tombstone flush, verify tags carry-forward across commits FIRST with a probe).
+     Delicate persisted-state lifecycle — do with fresh context, verify each semantic with a test.
+   - ⬜ **D2 perf EXIT + pilots (integration, needs the analyze pipeline, likely its own session):**
+     port DEPENDS_ON-family + `guarantees/imports` pack to v2 rules; wire incremental @materialize into
+     the orchestrator analyze flow; benchmark cold analyze ≤5min and 10-line reanalysis ≥5× vs 256s
+     baseline (≤30s); pure-JS fixture green. This is a benchmark-on-corpus effort, not a Rust unit test. — incremental `eval_datalog_v2_materialize_incremental`:
    commit only the derived-edge DELTA (added → additive; removed → tombstone via delete_edge/
    pending_tombstone_edges) + read/write binding-blob in manifest tags around the commit. Perf-measure
    for Gate D exit (reanalysis ≥5× vs 256s, ≤30s). Scoped by the same workflow (gateD finding).
