@@ -71,6 +71,13 @@ use super::value::fact_id;
 /// tripwire against a planning or storage fault, never the normal exit.
 pub const DEFAULT_ITERATION_CAP: usize = 10_000;
 
+/// A recursive semi-naive Δ this size or smaller is led with (enumerated first, then the
+/// other legs probed per row) instead of following the cost-optimized plan order — see
+/// [`Executor::eval_clause`]. Small enough that the per-row probes stay cheaper than a full
+/// base scan (the incremental win), large enough that the live-dataset recursion — whose Δ
+/// rounds are far bigger — keeps its cost-optimized order (no from-scratch regression).
+const DELTA_LEAD_THRESHOLD: usize = 64;
+
 // ── Errors (invariant I5) ──────────────────────────────────────────
 
 /// Stable, machine-readable executor error codes (invariant I5). A silently-empty result
@@ -861,12 +868,57 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         // Start with a single empty binding row; each leg extends or filters it.
         let mut rows: Vec<BindRow> = vec![BindRow::new()];
 
-        for (idx, leg) in clause.plan.legs.iter().enumerate() {
-            if rows.is_empty() {
-                break;
+        // Evaluation order. The static plan order is cost-optimized for a from-scratch run
+        // (it leads with a selective generator). A semi-naive DELTA variant CAN do better by
+        // leading with the Δ leg — enumerate the small Δ relation first, then probe the rest
+        // per row — making the work proportional to |Δ| instead of a full base scan per round
+        // (work-proportionality, spec §13). But this only wins when Δ is SMALL: with a large
+        // Δ, leading with it turns the other legs into |Δ| per-row probes, which is worse than
+        // the cost-optimized plan order. So lead with the Δ leg only when it is cheap — a
+        // small derived Δ, or a base-delta leg (whose ΔB view is small by construction); large
+        // Δ keeps the plan order. Reordering is safe: enumerating Δ needs no bound input and
+        // binds the vars later legs consume, and the executor mode-checks each leg dynamically
+        // from the row, independent of leg order.
+        // Only an INCREMENTAL run reorders (its executor has a delta view installed); a
+        // from-scratch `evaluate` keeps its cost-optimized plan order byte-for-byte, so the
+        // live-dataset differential is unaffected.
+        let n = clause.plan.legs.len();
+        let lead_delta = self.delta_view.is_some() && match delta_leg {
+            Some(d) if d < n => match &clause.plan.legs[d].source {
+                // Base-delta seed (incremental insertion/deletion): the delta view is ΔB, small.
+                LegSource::Base(_) => true,
+                // Recursive semi-naive Δ leg: lead only when this round's Δ is small.
+                LegSource::Derived { name, .. } => relations
+                    .get(name)
+                    .is_some_and(|r| r.delta.len() <= DELTA_LEAD_THRESHOLD),
+                LegSource::Builtin(_) => false,
+            },
+            _ => false,
+        };
+        match delta_leg {
+            // Incremental small-Δ variant: lead with the Δ leg, then the rest in plan order.
+            Some(d) if lead_delta => {
+                rows = self.apply_leg(&clause.plan.legs[d], rows, relations, true)?;
+                for (idx, leg) in clause.plan.legs.iter().enumerate() {
+                    if idx == d {
+                        continue;
+                    }
+                    if rows.is_empty() {
+                        break;
+                    }
+                    rows = self.apply_leg(leg, rows, relations, false)?;
+                }
             }
-            let use_delta = delta_leg == Some(idx);
-            rows = self.apply_leg(leg, rows, relations, use_delta)?;
+            // Plan order — the from-scratch hot path, allocation-free and byte-identical.
+            _ => {
+                for (idx, leg) in clause.plan.legs.iter().enumerate() {
+                    if rows.is_empty() {
+                        break;
+                    }
+                    let use_delta = delta_leg == Some(idx);
+                    rows = self.apply_leg(leg, rows, relations, use_delta)?;
+                }
+            }
         }
 
         // Project surviving rows onto the head atom (ground tuple in head-arg order).
@@ -2115,6 +2167,94 @@ mod tests {
         assert!(saw_insert && saw_delete, "the mix exercised both insertion and deletion");
     }
 
+    /// Gate C exit, second half (spec §13 line 339: "work-proportionality holds"). Having
+    /// proven maintained ≡ scratch, prove the incremental path's work scales with the base
+    /// DELTA's impact, not the base SIZE. Method: insert one ISOLATED edge (its closure
+    /// impact is a single new fact, constant regardless of base size) into a transitive-
+    /// closure view over a growing chain, measuring total base rows touched through the
+    /// `StorageView` (`WorkCountingView`). As the base grows, a from-scratch evaluation does
+    /// strictly more work (it recomputes the whole closure) while the maintain run stays
+    /// ~flat (it only touches the delta and the empty neighbourhood it propagates into).
+    #[test]
+    fn incremental_insertion_work_proportional_to_delta_not_base_size() {
+        use crate::datalog2::increment::diff_base;
+        let (src,) = closure_program();
+        let prog = parse_ext_program(&src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let plans = plan_program(
+            &rules,
+            &strat,
+            &Stats { total_nodes: 32, total_edges: 32, ..Default::default() },
+        )
+        .expect("plan");
+
+        let nid = |i: u128| id_of(&format!("n{i}"));
+        let build = |edges: &[(u128, u128)]| {
+            let mut v = FixtureStorageView::new(1);
+            for &(s, d) in edges {
+                v.put_edge(EdgeRow { src: nid(s), dst: nid(d), edge_type: "E".to_string() });
+            }
+            v
+        };
+        // The delta: a small ISOLATED component (two fresh nodes' chain n900→n901→n902),
+        // disconnected from the bulk chain. Its closure impact (3 new paths) is constant,
+        // INDEPENDENT of how big the rest of the base is — so the incremental work must be a
+        // small constant while a from-scratch run pays for the whole growing base.
+        let delta_edges: [(u128, u128); 2] = [(900, 901), (901, 902)];
+
+        // Measure (maintain_work, scratch_work) for a base chain of `k` edges.
+        let measure = |k: u128| -> (usize, usize) {
+            let base: Vec<(u128, u128)> = (0..k).map(|i| (i, i + 1)).collect();
+            let mut cur = base.clone();
+            cur.extend_from_slice(&delta_edges);
+            let prev = Executor::<BoolTag>::new(&build(&base))
+                .evaluate(&plans, &rules, &strat)
+                .expect("prev");
+            let delta = diff_base(&build(&base), &build(&cur));
+
+            let pv = WorkCountingView::new(build(&base));
+            let cv = WorkCountingView::new(build(&cur));
+            let maintained = maintain_incremental::<BoolTag>(
+                &prev, &pv, &cv, &delta, &plans, &rules, &strat, EvalLimits::none(),
+            )
+            .expect("maintain")
+            .expect("monotone envelope");
+
+            let sv = WorkCountingView::new(build(&cur));
+            let scratch = Executor::<BoolTag>::new(&sv)
+                .evaluate(&plans, &rules, &strat)
+                .expect("scratch");
+            assert_eq!(maintained.relations, scratch.relations, "k={k}: still ≡ scratch");
+            (pv.rows.get() + cv.rows.get(), sv.rows.get())
+        };
+
+        let (m_small, s_small) = measure(6);
+        let (m_large, s_large) = measure(24); // 4× the base
+        eprintln!(
+            "WORK-PROP scaling: maintain {m_small}->{m_large}  scratch {s_small}->{s_large}"
+        );
+
+        // 1. Scratch work scales with base size — quadrupling the chain costs it much more.
+        assert!(
+            s_large > s_small * 2,
+            "scratch work must grow with base size (small={s_small}, large={s_large})"
+        );
+        // 2. Maintain work stays ~flat — the isolated delta's impact is base-size-independent;
+        //    a 4× larger base must not materially increase the incremental work.
+        assert!(
+            m_large <= m_small + 4,
+            "maintain work must stay ~flat as the base grows \
+             (small={m_small}, large={m_large})"
+        );
+        // 3. At the larger size the incremental win is decisive.
+        assert!(
+            m_large * 4 < s_large,
+            "maintain must do far less work than scratch at scale \
+             (maintain={m_large}, scratch={s_large})"
+        );
+    }
+
     // ── DRed phase 1: over-delete candidate set ─────────────────────
 
     /// Pre-load each derived predicate's `Total` from a prior `Evaluation`, keyed by the same
@@ -2358,6 +2498,72 @@ mod tests {
         fn nodes_by_attr(&self, key: &str, value: &str) -> Vec<GlueNodeRow> {
             self.attr_calls.set(self.attr_calls.get() + 1);
             self.inner.nodes_by_attr(key, value)
+        }
+    }
+
+    /// Wraps a fixture view and counts the TOTAL number of base rows the run touches across
+    /// every access method (typed scans, sorted runs, keyed `edges_from`/`edges_to`,
+    /// point lookups). This is the honest "storage work" metric for the work-proportionality
+    /// gate: a from-scratch run reads the whole base, an incremental run should read only the
+    /// delta plus the bounded slices its propagation probes.
+    struct WorkCountingView {
+        inner: FixtureStorageView,
+        rows: Cell<usize>,
+    }
+    impl WorkCountingView {
+        fn new(inner: FixtureStorageView) -> Self {
+            Self { inner, rows: Cell::new(0) }
+        }
+        fn bump(&self, n: usize) {
+            self.rows.set(self.rows.get() + n);
+        }
+    }
+    impl StorageView for WorkCountingView {
+        fn generation(&self) -> u64 {
+            self.inner.generation()
+        }
+        fn sorted_run(
+            &self,
+            rel: crate::datalog2::storage_glue::Relation,
+            order: crate::datalog2::storage_glue::SortOrder,
+        ) -> Box<dyn Iterator<Item = crate::datalog2::storage_glue::Row> + '_> {
+            let rows: Vec<_> = self.inner.sorted_run(rel, order).collect();
+            self.bump(rows.len());
+            Box::new(rows.into_iter())
+        }
+        fn scan_nodes_by_type(&self, ty: &str) -> Box<dyn Iterator<Item = GlueNodeRow> + '_> {
+            let rows: Vec<_> = self.inner.scan_nodes_by_type(ty).collect();
+            self.bump(rows.len());
+            Box::new(rows.into_iter())
+        }
+        fn scan_edges_by_type(
+            &self,
+            ty: &str,
+            order: EdgeOrder,
+        ) -> Box<dyn Iterator<Item = EdgeRow> + '_> {
+            let rows: Vec<_> = self.inner.scan_edges_by_type(ty, order).collect();
+            self.bump(rows.len());
+            Box::new(rows.into_iter())
+        }
+        fn edges_from(&self, src: u128, edge_type: &str) -> Vec<EdgeRow> {
+            let rows = self.inner.edges_from(src, edge_type);
+            self.bump(rows.len());
+            rows
+        }
+        fn edges_to(&self, dst: u128, edge_type: &str) -> Vec<EdgeRow> {
+            let rows = self.inner.edges_to(dst, edge_type);
+            self.bump(rows.len());
+            rows
+        }
+        fn get_node(&self, id: u128) -> Option<GlueNodeRow> {
+            let r = self.inner.get_node(id);
+            self.bump(r.is_some() as usize);
+            r
+        }
+        fn nodes_by_attr(&self, key: &str, value: &str) -> Vec<GlueNodeRow> {
+            let rows = self.inner.nodes_by_attr(key, value);
+            self.bump(rows.len());
+            rows
         }
     }
 
