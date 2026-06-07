@@ -300,6 +300,29 @@ fn is_bound_or_const(term: &Term, bound: &HashSet<String>) -> bool {
     }
 }
 
+/// Whether the negation hash-join fast path is sound for `atom`, given that its
+/// existence set is keyed on the endpoint at `key_pos`.
+///
+/// `eval_negation_hash_join` builds a set of node ids for ONE endpoint
+/// (`key_pos`) and rejects every binding whose key is in that set. That
+/// correctly models `\+ edge(X, _, "T")` ("X has no outgoing T edge") only when
+/// the OTHER endpoint is unconstrained — i.e. a `Wildcard`. When the other
+/// endpoint is a `Const` (or an already-bound `Var`), the negation refers to a
+/// SPECIFIC edge — `\+ edge(X, "d", "T")` means "X has no T edge *to d*", not
+/// "X has no T edge at all" — which a single-endpoint existence set cannot
+/// express. In that case this returns `false` so the literal falls through to
+/// the per-binding path (`substitute_atom` + `eval_edge`/`eval_incoming`), which
+/// filters on both endpoints. Without this guard the constant was silently
+/// dropped once the binding count crossed the hash-join threshold, producing a
+/// threshold-dependent wrong answer.
+///
+/// `key_pos` is always 0 or 1 (per `should_hash_join`), so the other endpoint is
+/// the remaining one of `args[0]`/`args[1]`.
+pub(crate) fn negation_hash_join_sound(atom: &super::types::Atom, key_pos: usize) -> bool {
+    let other_pos = if key_pos == 0 { 1 } else { 0 };
+    matches!(atom.args().get(other_pos), Some(Term::Wildcard))
+}
+
 /// Collect all free Var names from args (Var names not yet in bound).
 fn free_vars(args: &[Term], bound: &HashSet<String>) -> HashSet<String> {
     args.iter()

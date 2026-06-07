@@ -264,24 +264,29 @@ impl<'a> EvaluatorExplain<'a> {
                 }
             }
 
-            // Check if hash join applies for negation edge/incoming literals
+            // Check if hash join applies for negation edge/incoming literals.
+            // The fast path is only sound when the non-key endpoint is a Wildcard
+            // (see negation_hash_join_sound); a constant/bound endpoint must be
+            // honored, so fall through to the per-binding path in that case.
             if let Literal::Negative(atom) = literal {
                 if let Some((join_var, key_pos)) = self.should_hash_join(atom, &bound_vars, current.len()) {
-                    let start = Instant::now();
-                    current = self.eval_negation_hash_join(atom, &current, &join_var, key_pos);
-                    let duration = start.elapsed();
-                    self.record_step(
-                        "hash_join_negation",
-                        atom.predicate(),
-                        atom.args(),
-                        current.len(),
-                        duration,
-                        Some(format!("key_var={}, key_pos={}", join_var, key_pos)),
-                    );
-                    if current.is_empty() {
-                        break;
+                    if super::utils::negation_hash_join_sound(atom, key_pos) {
+                        let start = Instant::now();
+                        current = self.eval_negation_hash_join(atom, &current, &join_var, key_pos);
+                        let duration = start.elapsed();
+                        self.record_step(
+                            "hash_join_negation",
+                            atom.predicate(),
+                            atom.args(),
+                            current.len(),
+                            duration,
+                            Some(format!("key_var={}, key_pos={}", join_var, key_pos)),
+                        );
+                        if current.is_empty() {
+                            break;
+                        }
+                        continue;
                     }
-                    continue;
                 }
             }
 
@@ -1766,24 +1771,29 @@ impl<'a> EvaluatorExplain<'a> {
                 }
             }
 
-            // Check if hash join applies for negation edge/incoming literals
+            // Check if hash join applies for negation edge/incoming literals.
+            // The fast path is only sound when the non-key endpoint is a Wildcard
+            // (see negation_hash_join_sound); a constant/bound endpoint must be
+            // honored, so fall through to the per-binding path in that case.
             if let Literal::Negative(atom) = literal {
                 if let Some((join_var, key_pos)) = self.should_hash_join(atom, &bound_vars, current.len()) {
-                    let start = Instant::now();
-                    current = self.eval_negation_hash_join(atom, &current, &join_var, key_pos);
-                    let duration = start.elapsed();
-                    self.record_step(
-                        "hash_join_negation",
-                        atom.predicate(),
-                        atom.args(),
-                        current.len(),
-                        duration,
-                        Some(format!("key_var={}, key_pos={}", join_var, key_pos)),
-                    );
-                    if current.is_empty() {
-                        break;
+                    if super::utils::negation_hash_join_sound(atom, key_pos) {
+                        let start = Instant::now();
+                        current = self.eval_negation_hash_join(atom, &current, &join_var, key_pos);
+                        let duration = start.elapsed();
+                        self.record_step(
+                            "hash_join_negation",
+                            atom.predicate(),
+                            atom.args(),
+                            current.len(),
+                            duration,
+                            Some(format!("key_var={}, key_pos={}", join_var, key_pos)),
+                        );
+                        if current.is_empty() {
+                            break;
+                        }
+                        continue;
                     }
-                    continue;
                 }
             }
 
