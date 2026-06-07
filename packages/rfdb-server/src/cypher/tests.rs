@@ -3579,3 +3579,133 @@ mod integration_tests {
     }
 
 }
+
+
+// ─── RETURN * (project all named variables) ──────────────────────────────────
+//
+// `RETURN *` is a core Cypher idiom: it projects every variable bound in the
+// MATCH pattern. Before the fix it parsed to a single `Expr::Star` return item
+// that `eval_expr` evaluated to NULL, so `MATCH (n:CLASS) RETURN *` silently
+// returned one column literally named "*" holding NULL instead of the node `n`
+// — an on-thesis silent-wrong-answer for an AI agent querying the graph.
+mod return_star_tests {
+    use super::*;
+    use crate::graph::GraphEngineV2;
+    use crate::storage::{NodeRecord, EdgeRecord};
+    use crate::datalog::EvalLimits;
+
+    fn mkn(id: u128, ntype: &str, name: &str) -> NodeRecord {
+        NodeRecord {
+            id, node_type: Some(ntype.to_string()), name: Some(name.to_string()),
+            file: Some("src/m.js".to_string()), file_id: 0, name_offset: 0,
+            version: "main".into(), exported: true, replaces: None, deleted: false,
+            metadata: None, semantic_id: None,
+        }
+    }
+    fn mke(src: u128, dst: u128, t: &str) -> EdgeRecord {
+        EdgeRecord {
+            src, dst, edge_type: Some(t.to_string()),
+            version: "main".into(), deleted: false, metadata: None,
+        }
+    }
+    fn graph() -> GraphEngineV2 {
+        let mut e = GraphEngineV2::create_ephemeral();
+        e.add_nodes(vec![
+            mkn(10, "CLASS", "User"),
+            mkn(11, "FUNCTION", "main"),
+            mkn(12, "FUNCTION", "helper"),
+            mkn(13, "FUNCTION", "validate"),
+        ]);
+        e.add_edges(vec![
+            mke(11, 12, "CALLS"),
+            mke(11, 13, "CALLS"),
+        ], false);
+        e
+    }
+
+    fn obj_name(v: &serde_json::Value) -> String {
+        v.get("name").and_then(|n| n.as_str()).unwrap_or("<none>").to_string()
+    }
+
+    #[test]
+    fn return_star_projects_single_named_node_variable() {
+        let e = graph();
+        let r = execute(&e, "MATCH (n:CLASS) RETURN *", EvalLimits::none()).unwrap();
+        // Column is the variable name `n`, NOT the literal "*".
+        assert_eq!(r.columns, vec!["n"]);
+        assert_eq!(r.row_count, 1);
+        // The value is the whole node object, not NULL.
+        assert!(r.rows[0][0].is_object(), "expected node object, got {:?}", r.rows[0][0]);
+        assert_eq!(obj_name(&r.rows[0][0]), "User");
+    }
+
+    #[test]
+    fn return_star_projects_all_named_variables_in_pattern_order() {
+        let e = graph();
+        let r = execute(
+            &e,
+            "MATCH (a:FUNCTION {name:'main'})-[:CALLS]->(b:FUNCTION) RETURN *",
+            EvalLimits::none(),
+        ).unwrap();
+        assert_eq!(r.columns, vec!["a", "b"]);
+        assert_eq!(r.row_count, 2);
+        for row in &r.rows {
+            assert_eq!(obj_name(&row[0]), "main");
+            assert!(["helper", "validate"].contains(&obj_name(&row[1]).as_str()));
+        }
+    }
+
+    #[test]
+    fn return_star_includes_relationship_variable() {
+        let e = graph();
+        let r = execute(
+            &e,
+            "MATCH (a:FUNCTION {name:'main'})-[r:CALLS]->(b) RETURN *",
+            EvalLimits::none(),
+        ).unwrap();
+        assert_eq!(r.columns, vec!["a", "r", "b"]);
+        assert_eq!(r.row_count, 2);
+    }
+
+    #[test]
+    fn return_star_with_no_named_variables_errors() {
+        let e = graph();
+        // No named variable anywhere in the pattern → `RETURN *` has nothing to project.
+        let r = execute(&e, "MATCH ()-[:CALLS]->() RETURN *", EvalLimits::none());
+        assert!(r.is_err(), "RETURN * with no named variables must error, got {:?}", r);
+    }
+
+    #[test]
+    fn return_star_aliased_errors() {
+        let e = graph();
+        // `RETURN * AS x` is not valid Cypher.
+        let r = execute(&e, "MATCH (n:CLASS) RETURN * AS x", EvalLimits::none());
+        assert!(r.is_err(), "RETURN * AS x must error, got {:?}", r);
+    }
+
+    #[test]
+    fn return_star_with_order_by_and_limit() {
+        let e = graph();
+        // Sort runs before Project, so ORDER BY on a star-projected variable's
+        // property must still work (the full record is in scope at Sort time).
+        let r = execute(
+            &e,
+            "MATCH (n:FUNCTION) RETURN * ORDER BY n.name ASC LIMIT 2",
+            EvalLimits::none(),
+        ).unwrap();
+        assert_eq!(r.columns, vec!["n"]);
+        assert_eq!(r.row_count, 2);
+        assert_eq!(obj_name(&r.rows[0][0]), "helper");
+        assert_eq!(obj_name(&r.rows[1][0]), "main");
+    }
+
+    #[test]
+    fn count_star_still_works_after_star_expansion() {
+        let e = graph();
+        // Regression guard: count(*) must NOT be treated as RETURN *.
+        let r = execute(&e, "MATCH (n:FUNCTION) RETURN count(*) AS c", EvalLimits::none()).unwrap();
+        assert_eq!(r.columns, vec!["c"]);
+        assert_eq!(r.row_count, 1);
+        assert_eq!(r.rows[0][0], serde_json::json!(3));
+    }
+}

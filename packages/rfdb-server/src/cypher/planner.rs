@@ -200,6 +200,89 @@ pub fn plan<'a>(
     Ok(op)
 }
 
+/// Expand a `RETURN *` wildcard into one explicit return item per variable bound
+/// by the MATCH pattern, in pattern-declaration order.
+///
+/// `RETURN *` is a core Cypher idiom — "give me every variable in scope". The
+/// parser produces it as a top-level [`Expr::Star`] return item (distinct from
+/// `count(*)`, where the `Star` is nested inside a [`Expr::FunctionCall`]'s
+/// arguments and is therefore left untouched here). Without expansion the
+/// executor's `eval_expr` evaluates a bare `Expr::Star` to `NULL`, so the query
+/// silently returns a single column literally named `*` holding `NULL` instead
+/// of the bound nodes/relationships — an on-thesis silent-wrong-answer.
+///
+/// This MUST run before both the planner and the column-name derivation in
+/// `execute`, so that the operator tree and the result header agree on the
+/// expanded set of columns.
+///
+/// Behaviour:
+/// - The wildcard expands to the pattern's **named** variables only — the start
+///   node, then for each segment its relationship variable (if named) followed
+///   by its destination node variable (if named) — preserving declaration order
+///   and de-duplicating. Anonymous pattern elements (`()`, `-[:T]->`) contribute
+///   nothing, mirroring Cypher (they are not in scope).
+/// - `RETURN *` with **no** named variable in the pattern is an error (nothing to
+///   project), rather than a confidently-empty/NULL result.
+/// - `RETURN * AS x` is rejected: aliasing the wildcard is not valid Cypher.
+/// - Non-wildcard return items (including `count(*)`) are passed through
+///   unchanged, so `RETURN *, count(x)` expands the `*` and keeps the aggregate.
+pub fn expand_return_star(query: &mut CypherQuery) -> Result<(), CypherError> {
+    // Fast path: nothing to do unless a top-level `*` return item is present.
+    let has_star = query
+        .return_clause
+        .items
+        .iter()
+        .any(|item| matches!(item.expr, Expr::Star));
+    if !has_star {
+        return Ok(());
+    }
+
+    // Collect named variables in pattern-declaration order, de-duplicated.
+    let pattern = &query.match_clause.pattern;
+    let mut named: Vec<String> = Vec::new();
+    let mut push_unique = |v: &Option<String>, named: &mut Vec<String>| {
+        if let Some(name) = v {
+            if !named.iter().any(|n| n == name) {
+                named.push(name.clone());
+            }
+        }
+    };
+    push_unique(&pattern.start.variable, &mut named);
+    for (rel, node) in &pattern.segments {
+        push_unique(&rel.variable, &mut named);
+        push_unique(&node.variable, &mut named);
+    }
+
+    let mut expanded: Vec<ReturnItem> = Vec::with_capacity(query.return_clause.items.len());
+    for item in &query.return_clause.items {
+        if matches!(item.expr, Expr::Star) {
+            if item.alias.is_some() {
+                return Err(CypherError::Plan(
+                    "RETURN * cannot be aliased (`RETURN * AS ...` is invalid)".to_string(),
+                ));
+            }
+            if named.is_empty() {
+                return Err(CypherError::Plan(
+                    "RETURN * requires at least one named variable in the MATCH pattern".to_string(),
+                ));
+            }
+            for var in &named {
+                expanded.push(ReturnItem {
+                    expr: Expr::Variable(var.clone()),
+                    // Alias to the variable name so the column header is `n`, not
+                    // the formatted expression — matching `RETURN n`.
+                    alias: Some(var.clone()),
+                });
+            }
+        } else {
+            expanded.push(item.clone());
+        }
+    }
+
+    query.return_clause.items = expanded;
+    Ok(())
+}
+
 /// Recursively reject any unsupported (non-aggregate) function call anywhere in
 /// `expr`, returning a [`CypherError::Plan`] that names the offending function
 /// and the `clause` it appears in.
