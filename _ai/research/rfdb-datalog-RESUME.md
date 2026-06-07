@@ -4,6 +4,15 @@
 
 ## 2026-06-07 session — committed progress (newest first)
 
+- `76659214` Gate C **binding table (§9.3)**: new `datalog2/binding.rs` — `BindingTable`
+  pins one `(semiring_id, arity)` + defining rule-AST-hash set per predicate; the
+  per-predicate dual of compaction-⊕'s per-record guard. Wired into
+  `evaluate_with_materialize` as a post-parse / pre-fixpoint gate (`EvalError::Binding`,
+  E-BIND-001 semiring / E-BIND-002 arity). Pure `diff()` seam (Added/Removed/Semiring/
+  Arity/RulesChanged) for the increment machinery. Semiring arm unit-tested directly
+  (BoolTag-uniform at this gate); arity arm reachable end-to-end. Manifest persistence
+  DEFERRED to (A) — TagV2.semiring_id is self-describing, no prior-run reader exists yet.
+  8 binding tests; datalog2 unit 133 passed; Gate A re-verified 50/50 (gate transparent).
 - `b081fe6a` compaction-⊕ part 2: fold tags in merge + coordinator branch (base fast-path
   unchanged; derived inputs ⊕-fold via `fold_tags` and write v3 via `add_derived`). I10
   non-Bool fixture tests. 427 storage_v2 green.
@@ -33,19 +42,31 @@ without explicit permission.
 
 ## ▶ NEXT after compaction — resume here
 
-**Open decision (asked the user, awaiting their pick):** which Gate C piece next —
-- **(A) increment machinery / EDB Differ = the Gate C EXIT** (single-line edit ⇒ fact-level
-  deltas ⇒ maintained ≡ scratch over 100 seeded cycles; spec §9.1/§9.2). The big, multi-commit,
-  defining piece. Start: design the delta representation + the EDB Differ (`datalog2/differential.rs`
-  is currently the TEST harness name — the spec's "EDB Differ" is a different thing; don't conflate).
-- **(B) binding-table** (§9.3, smaller, self-contained). Design fork to settle first: persist the
-  `predicate → (semiring_id, schema, rule_hashes)` table in the manifest NOW (touches
-  `storage_v2/manifest.rs:150/233` + the commit path; serialize as a NEUTRAL blob so storage_v2
-  doesn't depend on datalog2 types — I10) vs a registry-in-memory built during `evaluate_with_materialize`
-  (`datalog2/mod.rs:180`). Recommend: assert-uniformity minimum + manifest blob, expose a `diff()` seam
-  for Gate C. Also reconcile `rule_ast_hash` width (String blake3 in `materialize.rs:199` vs u32 in
-  `storage_v2/types.rs:426` → recommend u64).
-- **(C)** the user reviews the 6 diffs first.
+**(B) binding-table DONE** (`76659214`). **NEXT = (A) increment machinery / EDB Differ — the Gate
+C EXIT.** Single-line source edit ⇒ fact-level deltas ⇒ incrementally-maintained relation ≡
+from-scratch evaluation over 100 seeded cycles (spec §9.1/§9.2). The big, multi-commit, defining
+piece. Design forks to settle with the user BEFORE coding (laid these out, awaiting confirmation):
+
+1. **Delta representation.** A run's output as `(predicate, fact, weight_delta)` triples under the
+   predicate's semiring (`+w` insert / `-w` retract; BoolTag = ±1, CountTag = ±n). The EDB Differ
+   computes the *input* delta (which base facts changed between two pinned snapshots); semi-naive
+   already propagates IDB deltas. Recommend: reuse the existing `Δ`-loop machinery; the new piece is
+   the EDB diff + retraction (negative weight) handling, which needs InvertibleTag (BoolTag/CountTag
+   are; ConfTag is NOT → ConfTag predicates fall back to recompute, gated by the binding table).
+2. **EDB Differ location & naming.** `datalog2/differential.rs` is ALREADY TAKEN — it is the Gate A/B
+   *test harness* (the v1≡v2 + orchestrator differentials), NOT the spec's EDB Differ. Do not conflate.
+   New module e.g. `datalog2/increment.rs`. The Differ diffs two `StorageView`s (prev-gen snapshot vs
+   current) → base-fact deltas; consumes `BindingTable::diff()` to decide recompute-vs-maintain per
+   predicate.
+3. **Prior-run state persistence (the piece deferred from B).** To diff against the last run the
+   Differ needs (a) the prior snapshot/manifest version pin and (b) the prior `BindingTable`. Persist
+   the binding table in the manifest NOW as a NEUTRAL blob (storage_v2 must not depend on datalog2
+   types — I10), touching `storage_v2/manifest.rs:150/233` + commit path. Also reconcile `rule_ast_hash`
+   width here: String blake3 (`materialize.rs:199`) vs the u32 `ProvenanceV2.rule_ast_hash`
+   (`storage_v2/types.rs:434`, today only ever synthetic test values) → recommend storing the full
+   hash (string/u64-trunc) in the blob; keep ProvenanceV2.rule_ast_hash as the per-record index.
+
+**Verify before starting (cheap):** `cargo test --lib datalog2::binding` (8) + the commands below.
 
 **numeric-literals caveat (when it comes up):** NOT a lexer one-liner. `crate::datalog::Value` is
 shared with the v1 top-down engine and deliberately unmodified (`exec.rs cmp_value` handles only
@@ -56,7 +77,7 @@ Settle that design before touching the parser.
 **Verify-current (independent of any agent report — P1):**
 ```
 cd packages/rfdb-server
-cargo test --lib datalog2 -- --skip datalog2_differential_against_real_dataset --skip depends2_matches  # expect 125 passed
+cargo test --lib datalog2 -- --skip datalog2_differential_against_real_dataset --skip depends2_matches  # expect 133 passed
 cargo test --lib storage_v2                                                                              # expect 427 passed
 cargo test --bin rfdb-server -- materialize router hello                                                 # release-blocker wiring
 cargo test --lib datalog2_differential_against_real_dataset -- --ignored --nocapture   # Gate A: TALLY match=50 mismatch=0 (~18-280s)
