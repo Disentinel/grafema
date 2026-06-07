@@ -201,6 +201,23 @@ impl Evaluation {
     }
 }
 
+// ── why(): one supporting derivation of a fact ─────────────────────
+
+/// One supporting derivation of a derived fact — the unit of `why()`/`explain_fact`
+/// provenance (spec §11). Computed on demand (no per-fact provenance is stored — that would
+/// cost memory on every derived fact for a query-time-only need); a full provenance tree is
+/// this applied recursively to each body fact, which the lazy on-demand shape supports.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DerivationWitness {
+    /// The rule that derived the fact, by its stable whitespace/variable-rename-invariant
+    /// hash (the same `_source` stamp a materialized edge carries).
+    pub rule_ast_hash: String,
+    /// The POSITIVE body facts that satisfied the rule for this fact: `(predicate, ground
+    /// tuple)` per positive body literal, in source order. Negated literals contribute an
+    /// absence (they bind nothing) and are omitted; builtin filters likewise.
+    pub body: Vec<(String, Box<[Value]>)>,
+}
+
 // ── A partial binding row ──────────────────────────────────────────
 
 /// A partial binding: variable name → bound value, accumulated as body legs are placed.
@@ -601,6 +618,51 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
             }
         }
         Ok(())
+    }
+
+    /// why(): find ONE supporting derivation of `pred(key)` from the current `relations`
+    /// (`Total`) and base (`view`) — the head-bound body replay of [`clause_derives_head`],
+    /// but capturing the surviving row's body bindings instead of just a bool. Returns the
+    /// first clause whose body is satisfiable for `key`, with the ground body facts that
+    /// satisfied it; `None` if no clause derives `key` (it is not a fact, or only a base fact
+    /// with no rule). Provenance is computed on demand — nothing is stored per derived fact.
+    pub(crate) fn witness_fact(
+        &self,
+        clauses: &[Clause<'_>],
+        relations: &HashMap<String, Relation<T>>,
+        pred: &str,
+        key: &[Value],
+    ) -> ExecResult<Option<DerivationWitness>> {
+        for clause in clauses.iter().filter(|c| c.head_pred == pred) {
+            let Some(init) = head_bound_row(clause.rule.head(), key) else {
+                continue;
+            };
+            let mut rows = vec![init];
+            for leg in &clause.plan.legs {
+                if rows.is_empty() {
+                    break;
+                }
+                rows = self.apply_leg(leg, rows, relations, false)?;
+            }
+            // The first surviving row is one witnessing assignment; read each positive body
+            // literal's now-ground tuple back out of it.
+            if let Some(row) = rows.into_iter().next() {
+                let mut body = Vec::new();
+                for lit in clause.rule.body() {
+                    if lit.is_positive() {
+                        let atom = lit.atom();
+                        if let Some(tuple) = bind_atom_args(atom, &row) {
+                            body.push((atom.predicate().to_string(), tuple.into_boxed_slice()));
+                        }
+                    }
+                }
+                return Ok(Some(DerivationWitness {
+                    rule_ast_hash: super::materialize::rule_ast_hash(clause.rule),
+                    body,
+                }));
+            }
+        }
+        Ok(None)
     }
 
     /// Evaluate a single stratum to its fixpoint (seed → Δ-loop).
@@ -1568,6 +1630,30 @@ pub(crate) fn maintain_incremental<T: IdempotentTag>(
     Ok(Some(out))
 }
 
+/// why(): explain ONE supporting derivation of `pred(key)` over a snapshot. Evaluates the
+/// program to populate the derived relations, then replays the head-bound body of each clause
+/// of `pred` to capture a witnessing assignment (see [`Executor::witness_fact`]). `None` if
+/// the fact is not derivable. Not a hot path — explanation is a query-time operation.
+pub(crate) fn explain_fact<T: IdempotentTag>(
+    view: &dyn StorageView,
+    plans: &[RulePlan],
+    rules: &[&Rule],
+    strat: &Stratification,
+    pred: &str,
+    key: &[Value],
+    limits: EvalLimits,
+) -> ExecResult<Option<DerivationWitness>> {
+    let exec = Executor::<T>::with_limits(view, limits, DEFAULT_ITERATION_CAP);
+    let evaluation = exec.evaluate(plans, rules, strat)?;
+    let pred_ids = assign_pred_ids(strat);
+    let Some(relations) = preload_relations::<T>(&evaluation, &pred_ids) else {
+        return Ok(None);
+    };
+    let all_preds: Vec<String> = strat.strata.iter().flat_map(|s| s.predicates.clone()).collect();
+    let clauses = exec.collect_clauses(&all_preds, plans, rules);
+    exec.witness_fact(&clauses, &relations, pred, key)
+}
+
 // ── One clause = plan + source rule ────────────────────────────────
 
 /// A clause to evaluate: its head predicate, the [`RulePlan`] (ordered legs), and the
@@ -2253,6 +2339,64 @@ mod tests {
             "maintain must do far less work than scratch at scale \
              (maintain={m_large}, scratch={s_large})"
         );
+    }
+
+    // ── why(): one supporting derivation ────────────────────────────
+
+    #[test]
+    fn why_explains_a_transitive_path_and_a_direct_one() {
+        use crate::datalog2::exec::explain_fact;
+        let (src,) = closure_program();
+        let prog = parse_ext_program(&src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let plans = plan_program(
+            &rules,
+            &strat,
+            &Stats { total_nodes: 3, total_edges: 2, ..Default::default() },
+        )
+        .expect("plan");
+        let mut v = FixtureStorageView::new(1);
+        edge(&mut v, "a", "b", "E");
+        edge(&mut v, "b", "c", "E");
+
+        let recursive_hash =
+            crate::datalog2::materialize::rule_ast_hash(&prog.items[1].rule); // clause 2
+        let base_hash =
+            crate::datalog2::materialize::rule_ast_hash(&prog.items[0].rule); // clause 1
+
+        // path(a,c) is transitive: derived by `path :- edge(a,C), path(C,c)` with C=b.
+        let w = explain_fact::<BoolTag>(
+            &v, &plans, &rules, &strat, "path",
+            &[Value::Id(id_of("a")), Value::Id(id_of("c"))], EvalLimits::none(),
+        )
+        .expect("no error")
+        .expect("path(a,c) is derivable");
+        assert_eq!(w.rule_ast_hash, recursive_hash, "explained by the recursive clause");
+        let preds: Vec<&str> = w.body.iter().map(|(p, _)| p.as_str()).collect();
+        assert!(preds.contains(&"edge") && preds.contains(&"path"), "body = edge + path: {preds:?}");
+        // The supporting `path` body fact is exactly path(b,c).
+        let path_fact = w.body.iter().find(|(p, _)| p == "path").map(|(_, t)| t).unwrap();
+        assert_eq!(&path_fact[..], &[Value::Id(id_of("b")), Value::Id(id_of("c"))]);
+
+        // path(a,b) is direct: derived by `path :- edge(a,b)` (the first clause).
+        let w2 = explain_fact::<BoolTag>(
+            &v, &plans, &rules, &strat, "path",
+            &[Value::Id(id_of("a")), Value::Id(id_of("b"))], EvalLimits::none(),
+        )
+        .unwrap()
+        .expect("path(a,b) is derivable");
+        assert_eq!(w2.rule_ast_hash, base_hash, "explained by the base clause");
+        assert_eq!(w2.body.len(), 1, "one body fact (the edge)");
+        assert_eq!(w2.body[0].0, "edge");
+
+        // A non-fact has no derivation.
+        let none = explain_fact::<BoolTag>(
+            &v, &plans, &rules, &strat, "path",
+            &[Value::Id(id_of("c")), Value::Id(id_of("a"))], EvalLimits::none(),
+        )
+        .unwrap();
+        assert!(none.is_none(), "path(c,a) is not derivable → no witness");
     }
 
     // ── DRed phase 1: over-delete candidate set ─────────────────────

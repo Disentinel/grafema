@@ -529,6 +529,45 @@ impl GraphEngineV2 {
         )?;
         Ok(maintained)
     }
+
+    /// why(): explain ONE supporting derivation of a derived fact `pred(key)` against the
+    /// current committed snapshot (spec §11; the engine primitive behind the Gate E MCP
+    /// `explain_fact`). Returns the rule that derived it and the ground body facts that
+    /// satisfied that rule, or `None` if the fact is not derivable by the program. Provenance
+    /// is computed on demand — nothing is stored per derived fact.
+    pub fn explain_datalog_fact(
+        &self,
+        source: &str,
+        predicate: &str,
+        key: &[crate::datalog::Value],
+        limits: crate::datalog::EvalLimits,
+    ) -> std::result::Result<
+        Option<crate::datalog2::exec::DerivationWitness>,
+        crate::datalog2::EvalError,
+    > {
+        let program = crate::datalog2::parser_ext::parse_ext_program(source)?;
+        let strat = crate::datalog2::stratify::stratify(&program)?;
+        let rules = program.rules();
+        let snapshot = self.snapshot();
+        let all_nodes = self.store.find_nodes_at(&snapshot, None, None);
+        let mut nodes_by_type: std::collections::HashMap<String, u64> =
+            std::collections::HashMap::new();
+        for n in &all_nodes {
+            *nodes_by_type.entry(n.node_type.clone()).or_insert(0) += 1;
+        }
+        let stats = crate::datalog2::builtin::Stats {
+            total_nodes: all_nodes.len() as u64,
+            total_edges: self.store.edge_count_at(&snapshot) as u64,
+            nodes_by_type,
+        };
+        let plans = crate::datalog2::plan::plan_program(&rules, &strat, &stats)?;
+        let view =
+            crate::datalog2::storage_glue::BorrowedLsmStorageView::new(&self.store, snapshot);
+        let witness = crate::datalog2::exec::explain_fact::<crate::datalog2::tag::BoolTag>(
+            &view, &plans, &rules, &strat, predicate, key, limits,
+        )?;
+        Ok(witness)
+    }
 }
 
 /// Stringify a v2 Datalog [`crate::datalog::Value`] for the wire (ids render as their
@@ -3164,5 +3203,51 @@ mod tests {
             prev_snap = engine.snapshot();
         }
         assert!(saw_growth, "the transitive closure grew under the seeded insertions");
+    }
+
+    /// why() on real storage: explain a transitive DEPENDS-style fact and get back the rule
+    /// plus the ground body facts that derived it (the engine primitive behind Gate E's MCP
+    /// `explain_fact`).
+    #[test]
+    fn explain_datalog_fact_returns_supporting_derivation_on_real_store() {
+        use crate::datalog::{EvalLimits, Value};
+        let src = "path(A, B) :- edge(A, B, \"IMPORTS_FROM\").\n\
+                   path(A, B) :- edge(A, C, \"IMPORTS_FROM\"), path(C, B).";
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let a = make_v2_node("a.js->MODULE->a", "MODULE", "a", "a.js");
+        let b = make_v2_node("b.js->MODULE->b", "MODULE", "b", "b.js");
+        let c = make_v2_node("c.js->MODULE->c", "MODULE", "c", "c.js");
+        let (ia, ib, ic) = (a.id, b.id, c.id);
+        let e = |s: u128, d: u128| EdgeRecordV2 {
+            src: s,
+            dst: d,
+            edge_type: "IMPORTS_FROM".to_string(),
+            metadata: String::new(),
+        };
+        engine
+            .commit_batch_ext(
+                vec![a, b, c],
+                vec![e(ia, ib), e(ib, ic)],
+                &["a.js".into(), "b.js".into(), "c.js".into()],
+                HashMap::new(),
+                &[],
+            )
+            .expect("base commit");
+
+        // path(a,c) holds transitively via edge(a,b) ∧ path(b,c).
+        let w = engine
+            .explain_datalog_fact(src, "path", &[Value::Id(ia), Value::Id(ic)], EvalLimits::none())
+            .expect("no eval error")
+            .expect("path(a,c) is derivable");
+        let preds: Vec<&str> = w.body.iter().map(|(p, _)| p.as_str()).collect();
+        assert!(preds.contains(&"edge") && preds.contains(&"path"), "body = edge+path: {preds:?}");
+        let path_fact = w.body.iter().find(|(p, _)| p == "path").map(|(_, t)| t).unwrap();
+        assert_eq!(&path_fact[..], &[Value::Id(ib), Value::Id(ic)], "supported by path(b,c)");
+
+        // A fact that does not hold has no derivation.
+        let none = engine
+            .explain_datalog_fact(src, "path", &[Value::Id(ic), Value::Id(ia)], EvalLimits::none())
+            .expect("no eval error");
+        assert!(none.is_none(), "path(c,a) is not derivable");
     }
 }
