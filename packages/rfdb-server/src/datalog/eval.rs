@@ -1387,10 +1387,7 @@ impl<'a> Evaluator<'a> {
                     Err(_) => return vec![],
                 };
 
-                // BFS with all edge types, max depth 100
-                let reachable = self.engine.bfs(&[src_id], 100, &[]);
-
-                if reachable.contains(&dst_id) {
+                if self.path_reachable(src_id).contains(&dst_id) {
                     vec![Bindings::new()]
                 } else {
                     vec![]
@@ -1403,11 +1400,8 @@ impl<'a> Evaluator<'a> {
                     Err(_) => return vec![],
                 };
 
-                let reachable = self.engine.bfs(&[src_id], 100, &[]);
-
-                reachable
+                self.path_reachable(src_id)
                     .into_iter()
-                    .filter(|&id| id != src_id) // exclude self
                     .map(|id| {
                         let mut b = Bindings::new();
                         b.set(var, Value::Id(id));
@@ -1422,17 +1416,33 @@ impl<'a> Evaluator<'a> {
                     Err(_) => return vec![],
                 };
 
-                let reachable = self.engine.bfs(&[src_id], 100, &[]);
-
-                // Has path if reaches anything other than self
-                if reachable.iter().any(|&id| id != src_id) {
-                    vec![Bindings::new()]
-                } else {
+                if self.path_reachable(src_id).is_empty() {
                     vec![]
+                } else {
+                    vec![Bindings::new()]
                 }
             }
             _ => vec![],
         }
+    }
+
+    /// Set of nodes reachable from `src_id` via AT LEAST ONE edge (`path/2`
+    /// semantics).
+    ///
+    /// BFS is seeded from `src_id`'s direct neighbours (the depth-1 frontier)
+    /// rather than from `src_id` itself. `GraphStore::bfs` always returns its
+    /// seed nodes in the result, so seeding from `src_id` would make every node
+    /// trivially "reach itself" in zero hops — which is why all three `path/2`
+    /// argument modes must agree on excluding that zero-length self path. Seeding
+    /// from the neighbours instead means `src_id` appears here ONLY when a real
+    /// edge path loops back to it (a genuine cycle). For acyclic sources this is
+    /// identical to "bfs(src) minus src".
+    fn path_reachable(&self, src_id: u128) -> Vec<u128> {
+        let frontier = self.engine.neighbors(src_id, &[]);
+        if frontier.is_empty() {
+            return Vec::new();
+        }
+        self.engine.bfs(&frontier, 100, &[])
     }
 
     /// Evaluate neq(X, Y) - inequality constraint

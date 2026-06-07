@@ -1334,11 +1334,7 @@ impl<'a> EvaluatorExplain<'a> {
                     Err(_) => return vec![],
                 };
 
-                self.stats.bfs_calls += 1;
-                let reachable = self.engine.bfs(&[src_id], 100, &[]);
-                self.stats.nodes_visited += reachable.len();
-
-                if reachable.contains(&dst_id) {
+                if self.path_reachable(src_id).contains(&dst_id) {
                     vec![Bindings::new()]
                 } else {
                     vec![]
@@ -1350,13 +1346,8 @@ impl<'a> EvaluatorExplain<'a> {
                     Err(_) => return vec![],
                 };
 
-                self.stats.bfs_calls += 1;
-                let reachable = self.engine.bfs(&[src_id], 100, &[]);
-                self.stats.nodes_visited += reachable.len();
-
-                reachable
+                self.path_reachable(src_id)
                     .into_iter()
-                    .filter(|&id| id != src_id)
                     .map(|id| {
                         let mut b = Bindings::new();
                         b.set(var, Value::Id(id));
@@ -1370,18 +1361,30 @@ impl<'a> EvaluatorExplain<'a> {
                     Err(_) => return vec![],
                 };
 
-                self.stats.bfs_calls += 1;
-                let reachable = self.engine.bfs(&[src_id], 100, &[]);
-                self.stats.nodes_visited += reachable.len();
-
-                if reachable.iter().any(|&id| id != src_id) {
-                    vec![Bindings::new()]
-                } else {
+                if self.path_reachable(src_id).is_empty() {
                     vec![]
+                } else {
+                    vec![Bindings::new()]
                 }
             }
             _ => vec![],
         }
+    }
+
+    /// Set of nodes reachable from `src_id` via AT LEAST ONE edge (`path/2`
+    /// semantics). See `Evaluator::path_reachable` for the rationale; BFS is
+    /// seeded from `src_id`'s neighbours so the trivial zero-length self path is
+    /// never counted, while a genuine cycle back to `src_id` still is. Updates
+    /// the explain stats (`bfs_calls`, `nodes_visited`) like the previous code.
+    fn path_reachable(&mut self, src_id: u128) -> Vec<u128> {
+        let frontier = self.engine.neighbors(src_id, &[]);
+        if frontier.is_empty() {
+            return Vec::new();
+        }
+        self.stats.bfs_calls += 1;
+        let reachable = self.engine.bfs(&frontier, 100, &[]);
+        self.stats.nodes_visited += reachable.len();
+        reachable
     }
 
     /// Evaluate neq(X, Y)
