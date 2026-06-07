@@ -43,6 +43,7 @@ pub mod plan;
 pub mod exec;
 pub mod events;
 pub mod materialize;
+pub mod binding;
 pub mod stdlib;
 
 #[cfg(test)]
@@ -50,6 +51,7 @@ mod differential;
 
 use crate::datalog::EvalLimits;
 
+use binding::{BindingConflict, BindingTable};
 use builtin::Stats;
 use events::EventLog;
 use exec::{DEFAULT_ITERATION_CAP, Evaluation, ExecError, Executor};
@@ -83,6 +85,10 @@ pub enum EvalError {
     /// non-binary materialized head or a missing `edge_type=`). Raised on the write-back
     /// path *before* any commit, so a rejection leaves the prior generation intact.
     Materialize(MaterializeError),
+    /// The predicate binding table rejected the program (`E-BIND-…`, §9.3): one predicate
+    /// bound to two semirings or two arities. Raised after parse, before the fixpoint, so a
+    /// malformed program aborts before any derivation or commit.
+    Binding(BindingConflict),
 }
 
 impl EvalError {
@@ -95,6 +101,7 @@ impl EvalError {
             EvalError::Plan(e) => e.code.as_str(),
             EvalError::Exec(e) => e.code.as_str(),
             EvalError::Materialize(e) => e.code,
+            EvalError::Binding(e) => e.code,
         }
     }
 }
@@ -107,6 +114,7 @@ impl std::fmt::Display for EvalError {
             EvalError::Plan(e) => write!(f, "plan: {e}"),
             EvalError::Exec(e) => write!(f, "exec: {e}"),
             EvalError::Materialize(e) => write!(f, "materialize: {e}"),
+            EvalError::Binding(e) => write!(f, "binding: {e}"),
         }
     }
 }
@@ -136,6 +144,11 @@ impl From<ExecError> for EvalError {
 impl From<MaterializeError> for EvalError {
     fn from(e: MaterializeError) -> Self {
         EvalError::Materialize(e)
+    }
+}
+impl From<BindingConflict> for EvalError {
+    fn from(e: BindingConflict) -> Self {
+        EvalError::Binding(e)
     }
 }
 
@@ -185,6 +198,13 @@ pub(crate) fn evaluate_with_materialize(
     events: EventLog,
 ) -> Result<(Evaluation, Vec<MaterializeSpec>), EvalError> {
     let program = parse_ext_program(source)?;
+    // §9.3 binding gate: pin one (semiring_id, arity) per predicate before any derivation,
+    // so a malformed program aborts before the fixpoint and before any commit. Uniform
+    // `BoolTag` at this gate (the executor is monomorphic); the table also seeds the diff()
+    // seam Gate C's increment machinery consumes. Built but not yet persisted (no prior-run
+    // reader exists until increments land — I10).
+    let _bindings =
+        BindingTable::from_program(&program, crate::storage_v2::types::BOOLTAG_SEMIRING_ID)?;
     let strat = stratify(&program)?;
     let rules = program.rules();
     let plans = plan_program(&rules, &strat, &stats)?;
