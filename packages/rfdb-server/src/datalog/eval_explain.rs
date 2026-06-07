@@ -1134,8 +1134,7 @@ impl<'a> EvaluatorExplain<'a> {
             (id_term, attr_term, value_term)
         {
             self.stats.find_by_type_calls += 1;
-            let query = Self::attr_to_query(attr_name, expected_value);
-            let ids = self.engine.find_by_attr(&query);
+            let ids = Self::reverse_attr_lookup(self.engine, attr_name, expected_value);
             self.stats.nodes_visited += ids.len();
             return ids
                 .into_iter()
@@ -1317,6 +1316,33 @@ impl<'a> EvaluatorExplain<'a> {
             _ => query.metadata_filters = vec![(attr_name.to_string(), value.to_string())],
         }
         query
+    }
+
+    /// Reverse `attr(X, F, V)` lookup — twin of `Evaluator::reverse_attr_lookup`
+    /// (keep both in sync). Restores forward/reverse symmetry for the
+    /// first-class columns `semantic_id`/`id`/`version`, which `AttrQuery`
+    /// cannot express and which `metadata_filters` would silently miss. See the
+    /// doc comment on `Evaluator::reverse_attr_lookup` for the full rationale.
+    fn reverse_attr_lookup(engine: &dyn GraphStore, attr_name: &str, value: &str) -> Vec<u128> {
+        match attr_name {
+            "id" => match value.parse::<u128>() {
+                Ok(id) if engine.get_node(id).is_some() => vec![id],
+                _ => vec![],
+            },
+            "semantic_id" => engine
+                .find_by_attr(&AttrQuery::default())
+                .into_iter()
+                .filter(|id| {
+                    engine.get_node(*id).and_then(|n| n.semantic_id).as_deref() == Some(value)
+                })
+                .collect(),
+            "version" => engine
+                .find_by_attr(&AttrQuery::default())
+                .into_iter()
+                .filter(|id| engine.get_node(*id).map(|n| n.version).as_deref() == Some(value))
+                .collect(),
+            _ => engine.find_by_attr(&Self::attr_to_query(attr_name, value)),
+        }
     }
 
     /// Evaluate path(Src, Dst) predicate using BFS

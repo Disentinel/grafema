@@ -460,16 +460,40 @@ impl<'a> Evaluator<'a> {
                 if let (Term::Var(id_var), Term::Const(attr_name), Term::Const(expected_value)) =
                     (&args[0], &args[1], &args[2])
                 {
-                    let query = Self::attr_to_query(attr_name, expected_value);
                     let id_var = id_var.clone();
-                    self.engine.find_by_attr_chunked(&query, chunk_size, &mut |ids| {
-                        let bindings: Vec<Bindings> = ids.iter().map(|&id| {
-                            let mut b = Bindings::new();
-                            b.set(&id_var, Value::Id(id));
-                            b
-                        }).collect();
-                        callback(bindings)
-                    });
+                    match attr_name.as_str() {
+                        // First-class columns AttrQuery cannot express. These must
+                        // route through the shared reverse helper (same as
+                        // eval_attr) — `attr_to_query` would mis-route them to a
+                        // metadata filter that silently matches nothing. They are
+                        // O(1)/O(n) and emitted as a single chunk; symmetry with
+                        // the non-generator path matters more than streaming here.
+                        "id" | "semantic_id" | "version" => {
+                            let ids = Self::reverse_attr_lookup(
+                                self.engine,
+                                attr_name,
+                                expected_value,
+                            );
+                            let bindings: Vec<Bindings> = ids.iter().map(|&id| {
+                                let mut b = Bindings::new();
+                                b.set(&id_var, Value::Id(id));
+                                b
+                            }).collect();
+                            callback(bindings);
+                        }
+                        // name/file/type/exported + metadata: indexed, chunked.
+                        _ => {
+                            let query = Self::attr_to_query(attr_name, expected_value);
+                            self.engine.find_by_attr_chunked(&query, chunk_size, &mut |ids| {
+                                let bindings: Vec<Bindings> = ids.iter().map(|&id| {
+                                    let mut b = Bindings::new();
+                                    b.set(&id_var, Value::Id(id));
+                                    b
+                                }).collect();
+                                callback(bindings)
+                            });
+                        }
+                    }
                 }
             }
             _ => {}
@@ -1180,8 +1204,7 @@ impl<'a> Evaluator<'a> {
         if let (Term::Var(id_var), Term::Const(attr_name), Term::Const(expected_value)) =
             (id_term, attr_term, value_term)
         {
-            let query = Self::attr_to_query(attr_name, expected_value);
-            let ids = self.engine.find_by_attr(&query);
+            let ids = Self::reverse_attr_lookup(self.engine, attr_name, expected_value);
             return ids
                 .into_iter()
                 .map(|id| {
@@ -1273,6 +1296,44 @@ impl<'a> Evaluator<'a> {
             _ => query.metadata_filters = vec![(attr_name.to_string(), value.to_string())],
         }
         query
+    }
+
+    /// Reverse `attr(X, F, V)` lookup: find node ids whose field `F` equals `V`.
+    ///
+    /// This is the dual of the forward path in `eval_attr` and MUST stay
+    /// symmetric with it. `name`/`file`/`type`/`exported` are expressible as an
+    /// `AttrQuery` and use the index-accelerated `find_by_attr`. But
+    /// `semantic_id`/`id`/`version` are first-class node columns that
+    /// `AttrQuery` cannot express — routing them through `metadata_filters` (as
+    /// `attr_to_query` does) silently matches nothing, because they are NOT in
+    /// the node's metadata JSON. The forward path reads them off `NodeRecord`
+    /// directly, so the reverse path must too, or the two directions disagree
+    /// (a silent wrong answer). They are handled here:
+    /// - `id`: O(1) existence check (the value *is* the node id).
+    /// - `semantic_id`/`version`: scan the node set (O(n), consistent with the
+    ///   documented O(n) cost of `attr()` reverse lookups).
+    ///
+    /// Any other field name is treated as a metadata key, unchanged.
+    fn reverse_attr_lookup(engine: &dyn GraphStore, attr_name: &str, value: &str) -> Vec<u128> {
+        match attr_name {
+            "id" => match value.parse::<u128>() {
+                Ok(id) if engine.get_node(id).is_some() => vec![id],
+                _ => vec![],
+            },
+            "semantic_id" => engine
+                .find_by_attr(&AttrQuery::default())
+                .into_iter()
+                .filter(|id| {
+                    engine.get_node(*id).and_then(|n| n.semantic_id).as_deref() == Some(value)
+                })
+                .collect(),
+            "version" => engine
+                .find_by_attr(&AttrQuery::default())
+                .into_iter()
+                .filter(|id| engine.get_node(*id).map(|n| n.version).as_deref() == Some(value))
+                .collect(),
+            _ => engine.find_by_attr(&Self::attr_to_query(attr_name, value)),
+        }
     }
 
     /// Evaluate attr_edge(Src, Dst, EdgeType, AttrName, Value) predicate - access edge metadata
