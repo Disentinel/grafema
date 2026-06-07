@@ -467,12 +467,14 @@ impl<'a> Evaluator<'a> {
                 {
                     let id_var = id_var.clone();
                     match attr_name.as_str() {
-                        // First-class columns AttrQuery cannot express. These must
-                        // route through the shared reverse helper (same as
-                        // eval_attr) — `attr_to_query` would mis-route them to a
-                        // metadata filter that silently matches nothing. They are
-                        // O(1)/O(n) and emitted as a single chunk; symmetry with
-                        // the non-generator path matters more than streaming here.
+                        // First-class columns AttrQuery cannot express (id /
+                        // semantic_id / version), AND dotted nested metadata keys
+                        // the flat index cannot match: both must route through the
+                        // shared reverse helper for forward/reverse symmetry —
+                        // `attr_to_query` would mis-route them to a flat metadata
+                        // filter that silently matches nothing. Emitted as a single
+                        // chunk (O(1)/O(n)); symmetry with the non-generator path
+                        // matters more than streaming here.
                         "id" | "semantic_id" | "version" => {
                             let ids = Self::reverse_attr_lookup(
                                 self.engine,
@@ -486,7 +488,20 @@ impl<'a> Evaluator<'a> {
                             }).collect();
                             callback(bindings);
                         }
-                        // name/file/type/exported + metadata: indexed, chunked.
+                        name if name.contains('.') => {
+                            let ids = Self::reverse_attr_lookup(
+                                self.engine,
+                                attr_name,
+                                expected_value,
+                            );
+                            let bindings: Vec<Bindings> = ids.iter().map(|&id| {
+                                let mut b = Bindings::new();
+                                b.set(&id_var, Value::Id(id));
+                                b
+                            }).collect();
+                            callback(bindings);
+                        }
+                        // name/file/type/exported + FLAT metadata: indexed, chunked.
                         _ => {
                             let query = Self::attr_to_query(attr_name, expected_value);
                             self.engine.find_by_attr_chunked(&query, chunk_size, &mut |ids| {
@@ -1337,8 +1352,41 @@ impl<'a> Evaluator<'a> {
                 .into_iter()
                 .filter(|id| engine.get_node(*id).map(|n| n.version).as_deref() == Some(value))
                 .collect(),
+            // Nested dotted metadata path (e.g. "config.port"). The forward path
+            // (`eval_attr`) resolves these via `get_metadata_value`
+            // (metadata["config"]["port"]), but the index-backed `find_by_attr` /
+            // `metadata_matches` only matches FLAT keys (`parsed.get("config.port")`),
+            // so a dotted key reverses to nothing while the forward dual resolves
+            // it — a silent forward/reverse asymmetry (same class as the
+            // semantic_id/version/id gap above). Scan the node set with the SAME
+            // `get_metadata_value` the forward path uses, so the two directions
+            // cannot disagree (O(n), consistent with the other reverse lookups).
+            // Flat keys keep the fast index path in the arm below.
+            name if name.contains('.') => Self::reverse_metadata_scan(engine, name, value),
             _ => engine.find_by_attr(&Self::attr_to_query(attr_name, value)),
         }
+    }
+
+    /// Reverse-lookup node ids whose metadata resolves `attr_name` to `value`,
+    /// using the exact same `get_metadata_value` resolution the forward `attr`
+    /// path uses (exact flat key first, then nested dotted path). This keeps the
+    /// reverse direction symmetric with the forward direction for dotted metadata
+    /// keys that the flat `find_by_attr` index cannot express. O(n) over the node
+    /// set, consistent with the documented cost of `attr()` reverse lookups.
+    fn reverse_metadata_scan(engine: &dyn GraphStore, attr_name: &str, value: &str) -> Vec<u128> {
+        engine
+            .find_by_attr(&AttrQuery::default())
+            .into_iter()
+            .filter(|id| {
+                engine
+                    .get_node(*id)
+                    .and_then(|n| n.metadata)
+                    .and_then(|m| serde_json::from_str::<serde_json::Value>(&m).ok())
+                    .and_then(|j| crate::datalog::utils::get_metadata_value(&j, attr_name))
+                    .as_deref()
+                    == Some(value)
+            })
+            .collect()
     }
 
     /// Evaluate attr_edge(Src, Dst, EdgeType, AttrName, Value) predicate - access edge metadata

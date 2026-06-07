@@ -1346,8 +1346,33 @@ impl<'a> EvaluatorExplain<'a> {
                 .into_iter()
                 .filter(|id| engine.get_node(*id).map(|n| n.version).as_deref() == Some(value))
                 .collect(),
+            // Nested dotted metadata path — twin of
+            // `Evaluator::reverse_attr_lookup`'s nested-path arm (keep in sync).
+            // The flat `find_by_attr` index cannot match dotted keys that the
+            // forward `get_metadata_value` resolves, so scan with the same
+            // resolver to keep forward/reverse symmetric.
+            name if name.contains('.') => Self::reverse_metadata_scan(engine, name, value),
             _ => engine.find_by_attr(&Self::attr_to_query(attr_name, value)),
         }
+    }
+
+    /// Reverse-lookup node ids whose metadata resolves `attr_name` to `value`
+    /// via the forward `get_metadata_value` resolution. Twin of
+    /// `Evaluator::reverse_metadata_scan` (keep in sync).
+    fn reverse_metadata_scan(engine: &dyn GraphStore, attr_name: &str, value: &str) -> Vec<u128> {
+        engine
+            .find_by_attr(&AttrQuery::default())
+            .into_iter()
+            .filter(|id| {
+                engine
+                    .get_node(*id)
+                    .and_then(|n| n.metadata)
+                    .and_then(|m| serde_json::from_str::<serde_json::Value>(&m).ok())
+                    .and_then(|j| crate::datalog::utils::get_metadata_value(&j, attr_name))
+                    .as_deref()
+                    == Some(value)
+            })
+            .collect()
     }
 
     /// Evaluate path(Src, Dst) predicate using BFS

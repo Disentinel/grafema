@@ -5826,3 +5826,162 @@ mod numeric_cmp_tests {
         assert_eq!(result[2].atom().predicate(), "gt");
     }
 }
+
+
+// ============================================================================
+// attr() reverse lookup — nested metadata dotted paths (forward/reverse symmetry)
+//
+// The forward path `attr(id, "a.b", V)` resolves nested dotted metadata paths
+// via `get_metadata_value` (metadata["a"]["b"]). The reverse path
+// `attr(X, "a.b", "v")` routed dotted keys through `metadata_filters`, which
+// only matches FLAT keys (`parsed.get("a.b")`), so it silently returned nothing
+// while the forward dual resolved it — a silent forward/reverse asymmetry of
+// the same class as the semantic_id/version/id reverse gap (RFD-48). These
+// tests pin the restored symmetry; flat-key reverse is unchanged.
+// ============================================================================
+
+mod attr_reverse_nested_metadata_tests {
+    use super::*;
+    use crate::graph::{GraphEngineV2, GraphStore};
+    use crate::storage::NodeRecord;
+    use crate::datalog::eval::Evaluator;
+    use crate::datalog::eval_explain::EvaluatorExplain;
+
+    fn setup_nested_metadata_graph() -> GraphEngineV2 {
+        let mut engine = GraphEngineV2::create_ephemeral();
+        engine.add_nodes(vec![
+            NodeRecord {
+                id: 1,
+                node_type: Some("SERVICE".to_string()),
+                name: Some("db".to_string()),
+                file: Some("db.js".to_string()),
+                file_id: 0, name_offset: 0,
+                version: "main".into(),
+                exported: false, replaces: None, deleted: false,
+                metadata: Some(r#"{"config":{"port":"5432"},"tier":"data"}"#.to_string()),
+                semantic_id: None,
+            },
+            NodeRecord {
+                id: 2,
+                node_type: Some("SERVICE".to_string()),
+                name: Some("cache".to_string()),
+                file: Some("cache.js".to_string()),
+                file_id: 0, name_offset: 0,
+                version: "main".into(),
+                exported: false, replaces: None, deleted: false,
+                metadata: Some(r#"{"config":{"port":"6379"},"tier":"data"}"#.to_string()),
+                semantic_id: None,
+            },
+        ]);
+        engine
+    }
+
+    // Reverse: attr(X, "config.port", "5432") must find node 1, mirroring the
+    // forward attr(1, "config.port", V) = "5432".
+    #[test]
+    fn test_eval_attr_reverse_nested_metadata() {
+        let engine = setup_nested_metadata_graph();
+        let ev = Evaluator::new(&engine);
+
+        let results = ev.query_atom(&Atom::new("attr", vec![
+            Term::var("X"),
+            Term::constant("config.port"),
+            Term::constant("5432"),
+        ])).unwrap();
+
+        let ids: Vec<u128> = results.iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        assert_eq!(ids, vec![1], "reverse nested config.port=5432 must return node 1");
+    }
+
+    // Forward/reverse symmetry over a nested dotted path: the value forward
+    // returns for node 2's config.port, fed back to reverse, returns node 2.
+    #[test]
+    fn test_eval_attr_nested_forward_reverse_symmetry() {
+        let engine = setup_nested_metadata_graph();
+        let ev = Evaluator::new(&engine);
+
+        let fwd = ev.query_atom(&Atom::new("attr", vec![
+            Term::constant("2"),
+            Term::constant("config.port"),
+            Term::var("V"),
+        ])).unwrap();
+        assert_eq!(fwd.len(), 1);
+        let value = match fwd[0].get("V").unwrap() {
+            Value::Str(s) => s.clone(),
+            other => panic!("expected Str, got {:?}", other),
+        };
+        assert_eq!(value, "6379");
+
+        let rev = ev.query_atom(&Atom::new("attr", vec![
+            Term::var("X"),
+            Term::constant("config.port"),
+            Term::constant(&value),
+        ])).unwrap();
+        let ids: Vec<u128> = rev.iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        assert_eq!(ids, vec![2], "forward nested value must reverse to node 2");
+    }
+
+    // A nested path value that no node has → empty.
+    #[test]
+    fn test_eval_attr_reverse_nested_no_match() {
+        let engine = setup_nested_metadata_graph();
+        let ev = Evaluator::new(&engine);
+        let results = ev.query_atom(&Atom::new("attr", vec![
+            Term::var("X"),
+            Term::constant("config.port"),
+            Term::constant("9999"),
+        ])).unwrap();
+        assert!(results.is_empty(), "unknown nested value must yield no rows");
+    }
+
+    // Regression: flat metadata key reverse lookup is unchanged.
+    #[test]
+    fn test_eval_attr_reverse_flat_metadata_still_works() {
+        let engine = setup_nested_metadata_graph();
+        let ev = Evaluator::new(&engine);
+        let results = ev.query_atom(&Atom::new("attr", vec![
+            Term::var("X"),
+            Term::constant("tier"),
+            Term::constant("data"),
+        ])).unwrap();
+        let mut ids: Vec<u128> = results.iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        ids.sort();
+        assert_eq!(ids, vec![1, 2], "flat metadata reverse must still match both nodes");
+    }
+
+    // EvaluatorExplain twin must agree with Evaluator on the reverse nested lookup.
+    #[test]
+    fn test_eval_attr_reverse_nested_explain() {
+        let engine = setup_nested_metadata_graph();
+        let mut ev = EvaluatorExplain::new(&engine, false);
+        let result = ev.eval_query(&parse_query(
+            r#"attr(X, "config.port", "5432")"#
+        ).unwrap()).unwrap();
+        assert_eq!(result.bindings.len(), 1);
+        assert_eq!(result.bindings[0].get("X"), Some(&"1".to_string()));
+    }
+
+    // The pipelined generator path (eval_generator_chunked) has its OWN copy of
+    // the reverse-attr routing. A conjunction whose only valid seed is the
+    // reverse nested attr lookup routes through it (neq is a filter that needs X
+    // already bound, so the reorderer places the reverse attr first as the
+    // generator) — exercising the generator-path copy, not eval_attr.
+    #[test]
+    fn test_eval_attr_reverse_nested_as_generator() {
+        let engine = setup_nested_metadata_graph();
+        let ev = Evaluator::new(&engine);
+        let results = ev.eval_query(&parse_query(
+            r#"attr(X, "config.port", "6379"), neq(X, "0")"#
+        ).unwrap()).unwrap();
+        let ids: Vec<u128> = results.iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        assert_eq!(ids, vec![2], "reverse nested attr must seed the pipelined generator path");
+    }
+}
