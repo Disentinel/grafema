@@ -64,7 +64,31 @@ without explicit permission.
   - PROOF: `incremental_insertion_equals_scratch_over_seeded_cycles` (100 LCG edge inserts, maintained ≡
     scratch every cycle) + 2 envelope-guard tests. datalog2 unit 150, Gate A re-verified 50/50.
 
-**REMAINING engine commits:**
+**DONE — DRed deletion + full EXIT proof (`89b6b2ed` over-delete, `29d3d266` re-derive+EXIT):**
+  - `exec.rs`: `over_delete` (DRed phase 1 — candidate set, reads prior base + ΔB⁻, over-approximates,
+    does not mutate Total), `clause_derives_head` (head-bound body-satisfiability probe via
+    `head_bound_row`), `rederive` (DRed phase 2 — restore candidates still derivable from surviving +
+    new base, fixpoint), `maintain_incremental` (free fn — THE EXIT entry: preload prior Total → DRed
+    delete → insertion → project; envelope: negation/multi-stratum → None; subsumes & replaced the old
+    `evaluate_incremental`). `increment::delta_view_retracted` + `view_from`. `EvalLimits: Clone`.
+  - PROOF: `incremental_mixed_insert_delete_equals_scratch_over_seeded_cycles` (100 MIXED edits,
+    maintained ≡ scratch) + `deletion_rederives_fact_with_surviving_alternate_path` (diamond). datalog2
+    unit 153, Gate A re-verified 50/50. **The Gate C EXIT is PROVEN on the fixture.**
+
+**REMAINING — commit 8 only: engine_v2 cross-run wiring on real .rfdb.**
+  - Wire `maintain_incremental` into engine_v2 `eval_datalog_v2_materialize` (`graph/engine_v2.rs:~2924`):
+    on a materialize run, read the prior binding-table blob (`BindingTable::load_from_tags` from the
+    parent manifest's `tags`) + pin the prior snapshot; `diff_base(prior_snapshot_view, cur_view)`;
+    `BindingTable::diff` per predicate (semiring/arity change → recompute, else maintain); call
+    `maintain_incremental` (or scratch `evaluate` on None / first run); write the new binding blob via
+    `store_in_tags` into the commit's manifest tags. Removes the `cfg(not(test))` dead-code allows on
+    `diff_base`/`delta_view`/`delta_view_retracted`/`over_delete`/`rederive`/`maintain_incremental`.
+  - PROOF: a 100-cycle maintained≡scratch on a REAL `.rfdb` (LsmStorageView at two generations), not the
+    fixture. Reuse the mixed-cycle structure but commit edits to the store and pin snapshots.
+  - Storage API to find: how to capture a prior `ReadSnapshot`/manifest version + build an
+    `LsmStorageView` at it (`storage_glue::LsmStorageView::capture`), and read the parent manifest tags.
+
+**(superseded) earlier DRed plan:**
   6. **DRed over-delete pass** — recursive DELETION. Counting can't (I4 bars CountTag from recursion).
      Given ΔB.retracted: forward-propagate to compute the "possibly deleted" derived set (every fact
      whose derivation used a retracted base fact), remove it from Total. Mirror the incremental seed but
@@ -115,7 +139,7 @@ Settle that design before touching the parser.
 **Verify-current (independent of any agent report — P1):**
 ```
 cd packages/rfdb-server
-cargo test --lib datalog2 -- --skip datalog2_differential_against_real_dataset --skip depends2_matches  # expect 150 passed
+cargo test --lib datalog2 -- --skip datalog2_differential_against_real_dataset --skip depends2_matches  # expect 153 passed
 cargo test --lib storage_v2                                                                              # expect 427 passed
 cargo test --bin rfdb-server -- materialize router hello                                                 # release-blocker wiring
 cargo test --lib datalog2_differential_against_real_dataset -- --ignored --nocapture   # Gate A: TALLY match=50 mismatch=0 (~18-280s)
