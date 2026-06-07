@@ -16,6 +16,7 @@ use crate::datalog::types::*;
 use crate::datalog::eval::{Value, Bindings, EvalLimits};
 use super::utils::reorder_literals;
 use super::eval::HASH_JOIN_THRESHOLD;
+use super::eval::numeric_compare;
 
 /// Statistics collected during query execution
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -1511,7 +1512,10 @@ impl<'a> EvaluatorExplain<'a> {
         }
     }
 
-    /// Evaluate gt/lt/gte/lte(X, Y) - numeric comparison constraints
+    /// Evaluate gt/lt/gte/lte(X, Y) - numeric comparison constraints.
+    /// Integer operands (including u128 node IDs) are compared exactly via the
+    /// shared [`numeric_compare`] helper (kept in sync with the non-explain
+    /// `Evaluator`); non-numeric strings produce an empty result.
     fn eval_numeric_cmp(&mut self, atom: &Atom) -> Vec<Bindings> {
         let args = atom.args();
         if args.len() < 2 {
@@ -1528,28 +1532,9 @@ impl<'a> EvaluatorExplain<'a> {
             _ => return vec![],
         };
 
-        let left: f64 = match left_str.parse() {
-            Ok(v) => v,
-            Err(_) => return vec![],
-        };
-
-        let right: f64 = match right_str.parse() {
-            Ok(v) => v,
-            Err(_) => return vec![],
-        };
-
-        let pass = match atom.predicate() {
-            "gt" => left > right,
-            "lt" => left < right,
-            "gte" => left >= right,
-            "lte" => left <= right,
-            _ => return vec![],
-        };
-
-        if pass {
-            vec![Bindings::new()]
-        } else {
-            vec![]
+        match numeric_compare(left_str, right_str, atom.predicate()) {
+            Some(true) => vec![Bindings::new()],
+            _ => vec![],
         }
     }
 
