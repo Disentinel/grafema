@@ -73,10 +73,7 @@ byte-identical + alloc-free. Proof `incremental_insertion_work_proportional_to_d
    - ⬜ **D2 perf EXIT + pilots (integration, needs the analyze pipeline, likely its own session):**
      port DEPENDS_ON-family + `guarantees/imports` pack to v2 rules; wire incremental @materialize into
      the orchestrator analyze flow; benchmark cold analyze ≤5min and 10-line reanalysis ≥5× vs 256s
-     baseline (≤30s); pure-JS fixture green. This is a benchmark-on-corpus effort, not a Rust unit test. — incremental `eval_datalog_v2_materialize_incremental`:
-   commit only the derived-edge DELTA (added → additive; removed → tombstone via delete_edge/
-   pending_tombstone_edges) + read/write binding-blob in manifest tags around the commit. Perf-measure
-   for Gate D exit (reanalysis ≥5× vs 256s, ≤30s). Scoped by the same workflow (gateD finding).
+     baseline (≤30s); pure-JS fixture green. This is a benchmark-on-corpus effort, not a Rust unit test.
 4. **Gate E** — stdlib, MCP explain_fact (surfaces why()), docs, events-schema.md, sim(), Appendix-B
    migrations, retire legacy (P3 task #8: legacy execution-counter test + legacy-retirement.lock).
 
