@@ -1019,7 +1019,13 @@ impl<'a> EvaluatorExplain<'a> {
                     self.stats.edges_by_type_calls += 1;
                     self.engine.get_edges_by_type(edge_type)
                 } else {
-                    return vec![];
+                    // Full-scan parity with the plain evaluator's eval_incoming
+                    // Var arm and this fn's own Wildcard-dst arm: returning empty
+                    // here silently dropped every row of an untyped
+                    // `incoming(Dst, Src)` enumeration (false negatives).
+                    self.warnings.push("Full edge scan: consider binding destination node".to_string());
+                    self.stats.all_edges_calls += 1;
+                    self.engine.get_all_edges()
                 };
                 self.stats.edges_traversed += edges.len();
 

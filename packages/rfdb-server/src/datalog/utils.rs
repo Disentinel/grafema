@@ -223,8 +223,22 @@ fn positive_can_place_and_provides(
             let provides = free_vars(args, bound);
             (true, provides)
         }
-        "incoming" | "path" => {
-            // incoming(dst, src, type) / path(src, dst) — requires first arg bound
+        "incoming" => {
+            // incoming(dst, src, type) is the reverse of edge(src, dst, type):
+            // both are edge-relation predicates that differ only in argument
+            // order. Like `edge`, `incoming` is always placeable (full scan if
+            // dst is unbound) and provides every free Var arg. Requiring a bound
+            // dst here — while `edge` requires nothing — wrongly rejected
+            // placeable enumerations such as `incoming(D, S)` or
+            // `incoming(D, S, "CALLS")` as circular dependencies, even though the
+            // executor can satisfy them (by edge-type index or full scan).
+            let provides = free_vars(args, bound);
+            (true, provides)
+        }
+        "path" => {
+            // path(src, dst) — requires the first arg (source) bound. Unlike the
+            // edge predicates, `eval_path` only supports a Const/bound source
+            // (BFS from an unbound source is not a scan), so it cannot full-scan.
             if args.is_empty() {
                 return (true, HashSet::new());
             }

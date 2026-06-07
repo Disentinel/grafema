@@ -855,6 +855,38 @@ mod eval_tests {
     }
 
     #[test]
+    fn test_eval_incoming_untyped_var_dst_enumerates_all_edges() {
+        // incoming(D, S) — unbound dst AND no edge-type constant — must enumerate
+        // every edge (binding D=dst, S=src), mirroring edge(S, D) and incoming's
+        // own Wildcard-dst arm. Returning empty here silently drops every row of
+        // an untyped incoming enumeration (false negatives).
+        let engine = setup_test_graph(); // edges: 1->4, 4->2 (CALLS)
+        let evaluator = Evaluator::new(&engine);
+
+        let query = Atom::new("incoming", vec![Term::var("D"), Term::var("S")]);
+        let mut pairs: Vec<(u128, u128)> = evaluator
+            .query_atom(&query)
+            .unwrap()
+            .iter()
+            .filter_map(|b| Some((b.get("D")?.as_id()?, b.get("S")?.as_id()?)))
+            .collect();
+        pairs.sort();
+        // (dst, src): edge 1->4 => (4,1); edge 4->2 => (2,4)
+        assert_eq!(pairs, vec![(2, 4), (4, 1)]);
+
+        // Symmetry: incoming(D, S) must yield the same (dst,src) set as edge(S, D).
+        let edge_query = Atom::new("edge", vec![Term::var("S"), Term::var("D")]);
+        let mut edge_pairs: Vec<(u128, u128)> = evaluator
+            .query_atom(&edge_query)
+            .unwrap()
+            .iter()
+            .filter_map(|b| Some((b.get("D")?.as_id()?, b.get("S")?.as_id()?)))
+            .collect();
+        edge_pairs.sort();
+        assert_eq!(pairs, edge_pairs, "incoming(D,S) must mirror edge(S,D)");
+    }
+
+    #[test]
     fn test_eval_edge_wildcard_negation() {
         // The original diagnostic query: violation(X) :- node(X, "FUNCTION"), \+ edge(_, X, "CONTAINS").
         // Setup: graph with FUNCTION nodes, some with incoming CONTAINS, some without
@@ -2421,6 +2453,28 @@ mod eval_tests {
     fn test_explain_incoming_wildcard_dst_matches_plain() {
         // incoming(_, X, "CALLS") — Wildcard dst: plain enumerates 2 CALLS edges, binds src.
         assert_explain_parity("incoming(_, X, \"CALLS\")", Some("X"));
+    }
+
+    #[test]
+    fn test_explain_incoming_untyped_var_dst_matches_plain() {
+        // incoming(D, S) — Var dst, NO edge-type constant: the explain evaluator
+        // has its own copy of eval_incoming, so pin the untyped enumeration to
+        // the plain evaluator. Parity alone is insufficient here (both returned 0
+        // before the fix → 0 == 0 would pass), so assert the non-empty count too.
+        use crate::datalog::eval_explain::EvaluatorExplain;
+
+        let engine = setup_test_graph(); // edges: 1->4, 4->2
+        let mut explain_eval = EvaluatorExplain::new(&engine, true);
+        let result = explain_eval
+            .eval_query(&parse_query("incoming(D, S)").unwrap())
+            .unwrap();
+        assert_eq!(
+            result.bindings.len(),
+            2,
+            "explain: untyped incoming(D,S) must enumerate all edges"
+        );
+
+        assert_explain_parity("incoming(D, S)", Some("S"));
     }
 
     #[test]
@@ -3991,10 +4045,16 @@ mod attr_reverse_lookup_tests {
     // Before the fix, both would fail to place (circular dep). After the fix,
     // attr reverse provides X, enabling incoming to be placed.
     #[test]
-    fn test_reorder_attr_reverse_before_incoming() {
+    fn test_reorder_incoming_always_placeable_like_edge() {
         use crate::datalog::utils::reorder_literals;
 
-        // incoming requires X bound; attr reverse lookup provides X
+        // `incoming` is the reverse of `edge` and, like `edge`, is always
+        // placeable (full scan if dst is unbound) — it self-seeds and provides
+        // its free vars. So the reorderer does NOT need to hoist a seed provider
+        // ahead of it: the greedy sort keeps the author's order, placing
+        // `incoming` first. (Previously `incoming` was wrongly treated as
+        // requiring a bound dst, which forced `attr` ahead of it and rejected
+        // standalone `incoming(D, S)` enumerations as circular dependencies.)
         let literals = vec![
             Literal::positive(Atom::new("incoming", vec![
                 Term::var("X"),
@@ -4004,16 +4064,27 @@ mod attr_reverse_lookup_tests {
             Literal::positive(Atom::new("attr", vec![
                 Term::var("X"),
                 Term::constant("name"),
-                Term::constant("orders-pub"),
+                Term::constant("processOrder"),
             ])),
         ];
 
         let ordered = reorder_literals(&literals).unwrap();
+        assert_eq!(ordered[0].atom().predicate(), "incoming",
+            "incoming is always placeable (self-seeds) and stays first");
+        assert_eq!(ordered[1].atom().predicate(), "attr");
 
-        // attr should come first (it provides X via reverse lookup)
-        assert_eq!(ordered[0].atom().predicate(), "attr",
-            "attr reverse lookup should be reordered before incoming");
-        assert_eq!(ordered[1].atom().predicate(), "incoming");
+        // End-to-end: the conjunction is valid and order-independent — it binds
+        // X=dst (processOrder=node 4) and Y=src (node 1) for the CALLS edge 1->4.
+        let engine = setup_reverse_lookup_graph();
+        let evaluator = Evaluator::new(&engine);
+        let results = evaluator
+            .eval_query(&parse_query(
+                r#"incoming(X, Y, "CALLS"), attr(X, "name", "processOrder")"#,
+            ).unwrap())
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].get("X"), Some(&Value::Id(4)));
+        assert_eq!(results[0].get("Y"), Some(&Value::Id(1)));
     }
 
     // End-to-end: attr(X, "name", "orders-pub"), edge(X, Y, "CALLS") works
@@ -4341,19 +4412,55 @@ mod edge_type_index_tests {
     }
 
     #[test]
-    fn test_incoming_unbound_dst_var_type_still_empty() {
-        let engine = setup_edge_type_graph();
+    fn test_incoming_unbound_dst_var_type_enumerates_all_edges() {
+        let engine = setup_edge_type_graph(); // edges: 1->2 CALLS, 3->1 CONTAINS
         let evaluator = Evaluator::new(&engine);
 
-        // incoming(X, Y, T) — both dst and type unbound → degenerate, returns empty
+        // incoming(X, Y, T) — dst, src and type all unbound. With no edge-type
+        // constant the edge-type index (RFD-44) cannot apply, so this falls back
+        // to a full scan and enumerates EVERY edge, binding X=dst, Y=src, T=type.
+        // This is the reverse of edge(Y, X, T) and must agree with it; it used to
+        // silently return empty (a false-negative for an untyped enumeration).
         let query = Atom::new("incoming", vec![
             Term::var("X"),
             Term::var("Y"),
             Term::var("T"),
         ]);
 
-        let results = evaluator.query_atom(&query).unwrap();
-        assert!(results.is_empty(), "incoming with all-unbound should return empty");
+        let mut triples: Vec<(u128, u128, String)> = evaluator
+            .query_atom(&query)
+            .unwrap()
+            .iter()
+            .filter_map(|b| {
+                Some((b.get("X")?.as_id()?, b.get("Y")?.as_id()?, b.get("T")?.as_str()))
+            })
+            .collect();
+        triples.sort();
+        // (dst, src, type): CALLS 1->2 => (2,1,CALLS); CONTAINS 3->1 => (1,3,CONTAINS)
+        assert_eq!(
+            triples,
+            vec![
+                (1, 3, "CONTAINS".to_string()),
+                (2, 1, "CALLS".to_string()),
+            ]
+        );
+
+        // Must mirror edge(Y, X, T) (the same edges, src/dst swapped in binding).
+        let edge_query = Atom::new("edge", vec![
+            Term::var("Y"),
+            Term::var("X"),
+            Term::var("T"),
+        ]);
+        let mut edge_triples: Vec<(u128, u128, String)> = evaluator
+            .query_atom(&edge_query)
+            .unwrap()
+            .iter()
+            .filter_map(|b| {
+                Some((b.get("X")?.as_id()?, b.get("Y")?.as_id()?, b.get("T")?.as_str()))
+            })
+            .collect();
+        edge_triples.sort();
+        assert_eq!(triples, edge_triples, "incoming(X,Y,T) must mirror edge(Y,X,T)");
     }
 }
 
