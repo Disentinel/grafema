@@ -116,19 +116,40 @@ pub fn plan<'a>(
     //   HashAggregate already produces named columns, so Sort works on those.
     //   No separate Project is needed after HashAggregate.
 
-    // Reject non-aggregate functions in RETURN. The executor implements only
-    // aggregate functions (COUNT/SUM/AVG/MIN/MAX); a scalar function such as
-    // toUpper(...) must fail loudly here rather than be silently routed through
-    // HashAggregate (which would mislabel it as an aggregate) or projected to
-    // NULL. Scalar-function support is a separate feature.
+    // Reject unsupported (non-aggregate) scalar functions in every clause whose
+    // expressions the engine evaluates. The executor implements only the aggregate
+    // functions (COUNT/SUM/AVG/MIN/MAX); any other function name (e.g. `toUpper`,
+    // `toLower`, `type`, `length`) is NOT implemented and `eval_expr` evaluates it
+    // to NULL. Left unguarded that produces silent wrong answers:
+    //   - RETURN toUpper(n.name)            → mislabeled as an aggregate / NULL column
+    //   - WHERE  toUpper(n.name) = 'X'      → `NULL = 'X'` = NULL → every row dropped
+    //                                         (an empty result that looks like "no match")
+    //   - ORDER BY toUpper(n.name)          → every sort key NULL → silent no-op sort
+    // So each such clause must fail loudly here. Scalar-function support is a
+    // separate feature; until it exists, an unsupported call is an error, not a
+    // confidently-wrong result.
     for item in &query.return_clause.items {
-        if let Expr::FunctionCall(name, _) = &item.expr {
-            if !is_aggregate_function(name) {
-                return Err(CypherError::Plan(format!(
-                    "Unsupported function '{}' in RETURN (supported: COUNT, SUM, AVG, MIN, MAX)",
-                    name
-                )));
-            }
+        reject_unsupported_functions(&item.expr, "RETURN")?;
+    }
+    if let Some(ref where_expr) = query.where_clause {
+        reject_unsupported_functions(where_expr, "WHERE")?;
+    }
+    if let Some(ref order_by) = query.order_by {
+        for (expr, _) in order_by {
+            reject_unsupported_functions(expr, "ORDER BY")?;
+        }
+    }
+    // Inline pattern property values are evaluated too — the start node's via
+    // `NodeScan::matches_properties` (`eval_literal_expr`) and each segment node's
+    // via a synthesized `Filter` (`eval_expr`). A function call there is the same
+    // silent-NULL trap (e.g. `MATCH (n {name: toUpper('x')})` would match only
+    // NULL-named nodes), so validate those values as well.
+    for (_, val) in &pattern.start.properties {
+        reject_unsupported_functions(val, "node pattern properties")?;
+    }
+    for (_, node) in &pattern.segments {
+        for (_, val) in &node.properties {
+            reject_unsupported_functions(val, "node pattern properties")?;
         }
     }
 
@@ -164,6 +185,52 @@ pub fn plan<'a>(
     }
 
     Ok(op)
+}
+
+/// Recursively reject any unsupported (non-aggregate) function call anywhere in
+/// `expr`, returning a [`CypherError::Plan`] that names the offending function
+/// and the `clause` it appears in.
+///
+/// The engine only implements the aggregate functions (COUNT/SUM/AVG/MIN/MAX);
+/// every other function name evaluates to NULL in `eval_expr`, which silently
+/// corrupts WHERE filters, ORDER BY keys, and RETURN columns. This walk catches
+/// such calls before execution — including ones buried inside compound
+/// predicates (e.g. `NOT (toLower(x) = 'y' AND ...)`) — so the query fails
+/// loudly instead of returning a confidently-wrong empty/unsorted result.
+///
+/// Aggregate function calls are left intact: they are legitimate in RETURN (and
+/// in ORDER BY of an aggregate query), and are routed through `HashAggregate`.
+/// Their arguments are still walked, so a scalar function nested inside an
+/// aggregate (e.g. `COUNT(toUpper(x))`) is also rejected.
+fn reject_unsupported_functions(expr: &Expr, clause: &str) -> Result<(), CypherError> {
+    match expr {
+        Expr::FunctionCall(name, args) => {
+            if !is_aggregate_function(name) {
+                return Err(CypherError::Plan(format!(
+                    "Unsupported function '{}' in {} (supported: COUNT, SUM, AVG, MIN, MAX); \
+                     scalar functions are not implemented",
+                    name, clause
+                )));
+            }
+            for arg in args {
+                reject_unsupported_functions(arg, clause)?;
+            }
+            Ok(())
+        }
+        Expr::BinaryOp(lhs, _, rhs)
+        | Expr::And(lhs, rhs)
+        | Expr::Or(lhs, rhs)
+        | Expr::Contains(lhs, rhs)
+        | Expr::StartsWith(lhs, rhs)
+        | Expr::EndsWith(lhs, rhs) => {
+            reject_unsupported_functions(lhs, clause)?;
+            reject_unsupported_functions(rhs, clause)
+        }
+        Expr::Not(inner) | Expr::IsNull(inner) | Expr::IsNotNull(inner) => {
+            reject_unsupported_functions(inner, clause)
+        }
+        Expr::Property(_, _) | Expr::Literal(_) | Expr::Variable(_) | Expr::Star => Ok(()),
+    }
 }
 
 /// Split ReturnClause items into group keys (non-aggregate) and aggregate items.

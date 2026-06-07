@@ -3145,6 +3145,136 @@ mod integration_tests {
         assert!(result.row_count >= 1);
     }
 
+    // ── Unsupported scalar functions in WHERE / ORDER BY must fail loudly ──────
+    //
+    // The RETURN path already rejects unsupported scalar functions (see
+    // `scalar_function_in_return_rejected_not_mislabeled_aggregate`). WHERE and
+    // ORDER BY had no equivalent guard: a function the engine does not implement
+    // (e.g. `toUpper`) evaluated to NULL in `eval_expr`, so a predicate like
+    // `WHERE toUpper(n.name) = 'MAIN'` became `NULL = 'MAIN'` → NULL → not truthy
+    // → every row silently dropped (an empty result that LOOKS like "no matches"),
+    // and `ORDER BY toUpper(n.name)` made every sort key NULL → a silent no-op
+    // sort. On-thesis silent-wrong-answer: the engine an AI agent queries must
+    // fail loudly here, never return a confidently-wrong empty/unsorted result.
+
+    #[test]
+    fn where_unsupported_scalar_function_rejected_not_silent_empty() {
+        // `toUpper` is not implemented. The matching node ("main") exists, so a
+        // correct engine either evaluates the function or errors — it must NOT
+        // silently return zero rows.
+        let engine = create_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION) WHERE toUpper(n.name) = 'MAIN' RETURN n.name",
+            EvalLimits::none(),
+        );
+        assert!(
+            result.is_err(),
+            "unsupported scalar function in WHERE must error, not silently \
+             return rows; got {:?}",
+            result
+        );
+        let msg = format!("{:?}", result.unwrap_err()).to_lowercase();
+        assert!(
+            !msg.contains("aggregate"),
+            "scalar function must not be reported as an aggregate; got: {}",
+            msg
+        );
+        assert!(
+            msg.contains("toupper") || msg.contains("function"),
+            "error should name the unsupported function; got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn where_unsupported_scalar_function_nested_under_not_rejected() {
+        // The guard must walk the whole predicate tree, not just the top node:
+        // a scalar function buried under NOT/AND must still be rejected.
+        let engine = create_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION) WHERE NOT (toLower(n.name) = 'main' AND n.exported = true) RETURN n.name",
+            EvalLimits::none(),
+        );
+        assert!(
+            result.is_err(),
+            "unsupported scalar function nested in WHERE must error; got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn order_by_unsupported_scalar_function_rejected() {
+        // `ORDER BY toUpper(n.name)` would make every sort key NULL → silent
+        // no-op sort. Must error instead.
+        let engine = create_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN n.name ORDER BY toUpper(n.name)",
+            EvalLimits::none(),
+        );
+        assert!(
+            result.is_err(),
+            "unsupported scalar function in ORDER BY must error; got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn where_supported_string_predicate_still_works() {
+        // Regression guard: CONTAINS is a built-in predicate (Expr::Contains),
+        // NOT a FunctionCall, so the new guard must leave it untouched.
+        let engine = create_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION) WHERE n.name CONTAINS 'ain' RETURN n.name",
+            EvalLimits::none(),
+        )
+        .unwrap();
+        let names: Vec<String> = result
+            .rows
+            .iter()
+            .map(|r| r[0].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(names, vec!["main".to_string()]);
+    }
+
+    #[test]
+    fn inline_pattern_property_unsupported_function_rejected() {
+        // `MATCH (n {name: toUpper('main')})` would evaluate the value to NULL
+        // and match only NULL-named nodes → silent empty. Must error instead.
+        let engine = create_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION {name: toUpper('main')}) RETURN n.name",
+            EvalLimits::none(),
+        );
+        assert!(
+            result.is_err(),
+            "unsupported scalar function in inline pattern property must error; got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn order_by_aggregate_in_aggregate_query_not_rejected() {
+        // Regression guard: an AGGREGATE function (COUNT) in ORDER BY of an
+        // aggregate query is legitimate and must NOT be rejected by the
+        // scalar-function guard.
+        let engine = create_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (f:FUNCTION)-[:CALLS]->(g) RETURN f.name, COUNT(g) AS calls ORDER BY COUNT(g)",
+            EvalLimits::none(),
+        );
+        assert!(
+            result.is_ok(),
+            "aggregate function in ORDER BY must be allowed; got {:?}",
+            result
+        );
+    }
+
     // ── GROUP BY key must distinguish value types (value_to_group_key) ─────
     //
     // `value_to_group_key` must map two values to the SAME bucket iff they are
