@@ -568,6 +568,98 @@ impl GraphEngineV2 {
         )?;
         Ok(witness)
     }
+
+    /// Incremental `@materialize` write-back (Gate D): re-materialize a program but commit
+    /// only the EDGE DELTA against what is already in the graph, instead of rewriting every
+    /// derived edge each run. Returns `(added, removed)` edge counts.
+    ///
+    /// The currently-materialized edges of each `@materialize(edge_type)` ARE the prior
+    /// derived state (no extra cross-run storage): diff the freshly-derived edge set against
+    /// them by `(src, dst, edge_type)` identity — facts new this run are ADDED (buffered),
+    /// facts gone this run are REMOVED (edge-tombstoned). A single [`Self::flush`] applies the
+    /// additions and tombstones together (one manifest advance, run isolation). A mis-shaped
+    /// materialized head aborts in [`plan_writeback`] BEFORE any mutation (abort-no-commit).
+    ///
+    /// NOTE: the derivation here is a full evaluation; making it work-proportional (wiring
+    /// `maintain_datalog_v2` with a pinned prior snapshot) is the perf half of Gate D. This
+    /// commit makes the WRITE incremental; the DERIVE-incremental is the follow-up.
+    pub fn eval_datalog_v2_materialize_incremental(
+        &mut self,
+        source: &str,
+        limits: crate::datalog::EvalLimits,
+    ) -> std::result::Result<(usize, usize), crate::datalog2::EvalError> {
+        use std::collections::HashSet;
+
+        // ── Phase 1: derive + diff against current edges (read-only). ──
+        let snapshot = self.snapshot();
+        let generation = snapshot.version + 1;
+        let all_nodes = self.store.find_nodes_at(&snapshot, None, None);
+        let mut nodes_by_type: HashMap<String, u64> = HashMap::new();
+        for n in &all_nodes {
+            *nodes_by_type.entry(n.node_type.clone()).or_insert(0) += 1;
+        }
+        let stats = crate::datalog2::builtin::Stats {
+            total_nodes: all_nodes.len() as u64,
+            total_edges: self.store.edge_count_at(&snapshot) as u64,
+            nodes_by_type,
+        };
+
+        let (added, removed): (Vec<EdgeRecordV2>, Vec<(u128, u128, String)>) = {
+            let view =
+                crate::datalog2::storage_glue::BorrowedLsmStorageView::new(&self.store, snapshot.clone());
+            let (evaluation, specs) = crate::datalog2::evaluate_with_materialize(
+                &view,
+                source,
+                stats,
+                limits,
+                crate::datalog2::events::EventLog::discard(),
+            )?;
+            // The full derived edge set (also the abort-no-commit shape check).
+            let new_edges =
+                crate::datalog2::materialize::plan_writeback(&specs, &evaluation, generation)?;
+            let new_keys: HashSet<(u128, u128, String)> = new_edges
+                .iter()
+                .map(|e| (e.src, e.dst, e.edge_type.clone()))
+                .collect();
+            // The prior derived state IS the currently-materialized edges of the spec types.
+            let edge_types: HashSet<String> = specs.iter().map(|s| s.edge_type.clone()).collect();
+            let mut prev_keys: HashSet<(u128, u128, String)> = HashSet::new();
+            for t in &edge_types {
+                for e in self.store.get_edges_by_type_at(&snapshot, t) {
+                    prev_keys.insert((e.src, e.dst, e.edge_type.clone()));
+                }
+            }
+            let added: Vec<EdgeRecordV2> = new_edges
+                .into_iter()
+                .filter(|e| !prev_keys.contains(&(e.src, e.dst, e.edge_type.clone())))
+                .collect();
+            let removed: Vec<(u128, u128, String)> = prev_keys
+                .into_iter()
+                .filter(|k| !new_keys.contains(k))
+                .collect();
+            (added, removed)
+        };
+
+        // ── Phase 2: apply the delta (one flush commits adds + tombstones). ──
+        let (n_added, n_removed) = (added.len(), removed.len());
+        if n_added == 0 && n_removed == 0 {
+            return Ok((0, 0));
+        }
+        for (s, d, t) in &removed {
+            self.delete_edge(*s, *d, t);
+        }
+        if !added.is_empty() {
+            let v1: Vec<EdgeRecord> = added.iter().map(edge_v2_to_v1).collect();
+            self.add_edges(v1, true);
+        }
+        self.flush().map_err(|e| {
+            crate::datalog2::EvalError::Materialize(crate::datalog2::materialize::MaterializeError {
+                code: "E-MAT-005",
+                detail: format!("incremental @materialize write-back flush failed: {e}"),
+            })
+        })?;
+        Ok((n_added, n_removed))
+    }
 }
 
 /// Stringify a v2 Datalog [`crate::datalog::Value`] for the wire (ids render as their
@@ -3249,5 +3341,77 @@ mod tests {
             .explain_datalog_fact(src, "path", &[Value::Id(ic), Value::Id(ia)], EvalLimits::none())
             .expect("no eval error");
         assert!(none.is_none(), "path(c,a) is not derivable");
+    }
+
+    /// Gate D: incremental @materialize commits only the edge DELTA — adds new derived edges,
+    /// tombstones gone ones, no-ops when nothing changed — instead of rewriting every edge.
+    #[test]
+    fn incremental_materialize_commits_only_the_edge_delta() {
+        use crate::datalog::EvalLimits;
+        let src = r#"@materialize(edge_type = "DEPENDS_ON")
+                     dep(X, Y) :- edge(X, Y, "IMPORTS_FROM")."#;
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let a = make_v2_node("a.js->MODULE->a", "MODULE", "a", "a.js");
+        let b = make_v2_node("b.js->MODULE->b", "MODULE", "b", "b.js");
+        let c = make_v2_node("c.js->MODULE->c", "MODULE", "c", "c.js");
+        let (ia, ib, ic) = (a.id, b.id, c.id);
+        let imp = |s: u128, d: u128| EdgeRecordV2 {
+            src: s,
+            dst: d,
+            edge_type: "IMPORTS_FROM".to_string(),
+            metadata: String::new(),
+        };
+        engine
+            .commit_batch_ext(
+                vec![a, b, c],
+                vec![imp(ia, ib), imp(ib, ic)],
+                &["a.js".into(), "b.js".into(), "c.js".into()],
+                HashMap::new(),
+                &[],
+            )
+            .expect("base commit");
+        let deps = |e: &GraphEngineV2| {
+            e.store
+                .get_edges_by_type_at(&e.snapshot(), "DEPENDS_ON")
+                .into_iter()
+                .map(|x| (x.src, x.dst))
+                .collect::<std::collections::HashSet<_>>()
+        };
+
+        // First run: no prior DEPENDS_ON → both edges added.
+        assert_eq!(
+            engine.eval_datalog_v2_materialize_incremental(src, EvalLimits::none()).unwrap(),
+            (2, 0)
+        );
+        assert_eq!(deps(&engine), [(ia, ib), (ib, ic)].into_iter().collect());
+
+        // Add IMPORTS_FROM c→a → exactly one DEPENDS_ON added, nothing rewritten.
+        engine
+            .commit_batch_ext(Vec::new(), vec![imp(ic, ia)], &[], HashMap::new(), &[])
+            .expect("add edge");
+        assert_eq!(
+            engine.eval_datalog_v2_materialize_incremental(src, EvalLimits::none()).unwrap(),
+            (1, 0)
+        );
+        assert_eq!(deps(&engine), [(ia, ib), (ib, ic), (ic, ia)].into_iter().collect());
+
+        // No base change → a no-op (0,0): the write is genuinely delta-only.
+        assert_eq!(
+            engine.eval_datalog_v2_materialize_incremental(src, EvalLimits::none()).unwrap(),
+            (0, 0)
+        );
+
+        // Remove IMPORTS_FROM a→b → the derived DEPENDS_ON a→b is tombstoned (1 removed).
+        engine.delete_edge(ia, ib, "IMPORTS_FROM");
+        engine.flush().expect("flush base delete");
+        assert_eq!(
+            engine.eval_datalog_v2_materialize_incremental(src, EvalLimits::none()).unwrap(),
+            (0, 1)
+        );
+        assert_eq!(
+            deps(&engine),
+            [(ib, ic), (ic, ia)].into_iter().collect(),
+            "DEPENDS_ON a→b tombstoned; the rest intact"
+        );
     }
 }
