@@ -1056,7 +1056,11 @@ fn edge_record_to_value(edge: &EdgeRecord) -> CypherValue {
 }
 
 /// Format a RETURN expression as a column name.
-fn format_return_expr(expr: &Expr) -> String {
+///
+/// `pub(crate)` so the planner can reconstruct the exact group-key column names
+/// produced by `HashAggregate` when rewriting `ORDER BY` expressions (an
+/// aggregate query sorts over these produced columns, not the raw pattern).
+pub(crate) fn format_return_expr(expr: &Expr) -> String {
     match expr {
         Expr::Property(var, prop) => format!("{}.{}", var, prop),
         Expr::Variable(v) => v.clone(),

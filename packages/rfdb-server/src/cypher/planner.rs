@@ -177,11 +177,22 @@ pub fn plan<'a>(
 
     if has_aggregates {
         let (group_keys, aggregates) = split_return_items(&query.return_clause);
+
+        // Rewrite ORDER BY to reference the columns HashAggregate produces.
+        // Post-aggregation the original node bindings are gone and aggregate
+        // calls are not re-evaluated, so Sort must reference the produced
+        // column names. Done BEFORE the groups/aggregates are moved into the
+        // operator below.
+        let order_by = query
+            .order_by
+            .as_ref()
+            .map(|ob| rewrite_order_by_for_aggregates(ob, &group_keys, &aggregates));
+
         op = Box::new(HashAggregate::new(op, group_keys, aggregates, limits));
 
-        // Sort after aggregate (operates on named columns).
-        if let Some(ref order_by) = query.order_by {
-            op = Box::new(Sort::new(op, order_by.clone(), limits));
+        // Sort after aggregate (operates on the produced named columns).
+        if let Some(order_by) = order_by {
+            op = Box::new(Sort::new(op, order_by, limits));
         }
     } else {
         // Sort before Project (operates on full node records). ORDER BY may
@@ -423,6 +434,96 @@ fn rewrite_alias_expr(expr: &Expr, ret: &ReturnClause) -> Expr {
             Box::new(rewrite_alias_expr(r, ret)),
         ),
         Expr::Not(inner) => Expr::Not(Box::new(rewrite_alias_expr(inner, ret))),
+        other => other.clone(),
+    }
+}
+
+/// The column name `HashAggregate` produces for a group-key RETURN item.
+///
+/// MUST stay identical to the key `HashAggregate::materialize` inserts for the
+/// same item (`alias` else `format_return_expr(expr)`), so that an `ORDER BY`
+/// expression rewritten to `Variable(name)` resolves to the right column.
+fn group_key_name(item: &ReturnItem) -> String {
+    item.alias
+        .clone()
+        .unwrap_or_else(|| format_return_expr(&item.expr))
+}
+
+/// Rewrite the `ORDER BY` expressions of an aggregate query so they reference
+/// the columns the `HashAggregate` operator emits.
+///
+/// In an aggregate query the `Sort` operator runs *after* `HashAggregate`,
+/// whose output records carry only the produced columns: one per group key
+/// (keyed by [`group_key_name`]) and one per aggregate (keyed by its alias).
+/// The original `ORDER BY` AST instead holds the raw pattern expressions:
+///
+/// - `ORDER BY n.file` is a `Property("n", "file")`, but `n` no longer exists
+///   in the post-aggregation record (only the string column `"n.file"` does),
+///   so `eval_expr` would yield `NULL` and the rows would not sort.
+/// - `ORDER BY COUNT(*)` is a `FunctionCall`, which `eval_expr` returns `NULL`
+///   for (aggregates are not re-evaluated post-aggregation), again no sort.
+///
+/// This rewrite maps any `ORDER BY` term that matches a RETURN item — by
+/// structural equality for group keys, by function name + argument for
+/// aggregates — to a `Variable` referencing that item's produced column, so
+/// `Sort` reads the already-computed value. Terms that match nothing (e.g. an
+/// alias already referenced directly, or an expression not in RETURN) are left
+/// unchanged.
+fn rewrite_order_by_for_aggregates(
+    order_by: &[(Expr, SortDir)],
+    group_keys: &[ReturnItem],
+    aggregates: &[AggregateItem],
+) -> Vec<(Expr, SortDir)> {
+    order_by
+        .iter()
+        .map(|(expr, dir)| (rewrite_order_expr(expr, group_keys, aggregates), *dir))
+        .collect()
+}
+
+/// Recursively rewrite a single `ORDER BY` expression. See
+/// [`rewrite_order_by_for_aggregates`] for the rationale.
+fn rewrite_order_expr(
+    expr: &Expr,
+    group_keys: &[ReturnItem],
+    aggregates: &[AggregateItem],
+) -> Expr {
+    // An aggregate call that also appears in RETURN -> its produced column.
+    if let Expr::FunctionCall(name, args) = expr {
+        if is_aggregate_function(name) {
+            let func = name.to_uppercase();
+            let arg = args.first().cloned().unwrap_or(Expr::Star);
+            if let Some(agg) = aggregates
+                .iter()
+                .find(|a| a.function == func && a.arg == arg)
+            {
+                return Expr::Variable(agg.alias.clone());
+            }
+        }
+    }
+
+    // A group-key expression that appears in RETURN -> its produced column.
+    if let Some(gk) = group_keys.iter().find(|g| g.expr == *expr) {
+        return Expr::Variable(group_key_name(gk));
+    }
+
+    // Recurse into compound expressions so combinations resolve too.
+    match expr {
+        Expr::BinaryOp(l, op, r) => Expr::BinaryOp(
+            Box::new(rewrite_order_expr(l, group_keys, aggregates)),
+            *op,
+            Box::new(rewrite_order_expr(r, group_keys, aggregates)),
+        ),
+        Expr::And(l, r) => Expr::And(
+            Box::new(rewrite_order_expr(l, group_keys, aggregates)),
+            Box::new(rewrite_order_expr(r, group_keys, aggregates)),
+        ),
+        Expr::Or(l, r) => Expr::Or(
+            Box::new(rewrite_order_expr(l, group_keys, aggregates)),
+            Box::new(rewrite_order_expr(r, group_keys, aggregates)),
+        ),
+        Expr::Not(inner) => {
+            Expr::Not(Box::new(rewrite_order_expr(inner, group_keys, aggregates)))
+        }
         other => other.clone(),
     }
 }

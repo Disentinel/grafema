@@ -3578,6 +3578,204 @@ mod integration_tests {
         assert_eq!(collect_string_column(&result, 0), vec!["it's"]);
     }
 
+    // ── ORDER BY in aggregate queries (sort by aggregate / group-key expr) ──
+
+    /// Three files with distinct grouped SUMs, laid out so that the group
+    /// insertion order (a.js, m.js, z.js — ascending node id) matches NONE of
+    /// the sorted orders we assert below. This makes the tests fail reliably
+    /// when ORDER BY silently no-ops (rows fall back to insertion order),
+    /// regardless of the storage scan order.
+    ///
+    /// Grouped SUM(lineCount): a.js=10, m.js=100, z.js=1.
+    fn order_by_agg_graph() -> GraphEngineV2 {
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let mk = |id: u128, file: &str, lc: i64| NodeRecord {
+            id,
+            node_type: Some("FUNCTION".to_string()),
+            name: Some(format!("f{}", id)),
+            file: Some(file.to_string()),
+            file_id: 0,
+            name_offset: 0,
+            version: "main".into(),
+            exported: true,
+            replaces: None,
+            deleted: false,
+            metadata: Some(format!(r#"{{"lineCount": {}}}"#, lc)),
+            semantic_id: None,
+        };
+        engine.add_nodes(vec![
+            mk(20, "a.js", 5),
+            mk(21, "a.js", 5),
+            mk(22, "m.js", 100),
+            mk(23, "z.js", 1),
+        ]);
+        engine
+    }
+
+    #[test]
+    fn order_by_aggregate_expression_sorts_groups() {
+        // ORDER BY <aggregate function> in an aggregate query must sort by the
+        // computed aggregate. The Sort operator runs on HashAggregate output
+        // (columns keyed "n.file" / "total"); evaluating the raw FunctionCall
+        // expr returns NULL post-aggregation, so without a rewrite every row
+        // compares equal and the result stays in group-insertion order.
+        let engine = order_by_agg_graph();
+
+        let asc = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN n.file, SUM(n.lineCount) AS total ORDER BY SUM(n.lineCount) ASC",
+            EvalLimits::none(),
+        )
+        .unwrap();
+        let asc_totals: Vec<i64> = asc.rows.iter().map(|r| r[1].as_i64().unwrap()).collect();
+        let asc_files: Vec<&str> = asc.rows.iter().map(|r| r[0].as_str().unwrap()).collect();
+        assert_eq!(asc_totals, vec![1, 10, 100], "totals must be ascending");
+        assert_eq!(asc_files, vec!["z.js", "a.js", "m.js"]);
+
+        let desc = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN n.file, SUM(n.lineCount) AS total ORDER BY SUM(n.lineCount) DESC",
+            EvalLimits::none(),
+        )
+        .unwrap();
+        let desc_totals: Vec<i64> = desc.rows.iter().map(|r| r[1].as_i64().unwrap()).collect();
+        assert_eq!(desc_totals, vec![100, 10, 1], "totals must be descending");
+    }
+
+    #[test]
+    fn order_by_aliased_aggregate_sorts_groups() {
+        // ORDER BY the aggregate's alias must also sort (this already worked via
+        // the Variable lookup path, but is asserted to lock in the behavior).
+        let engine = order_by_agg_graph();
+        let res = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN n.file, SUM(n.lineCount) AS total ORDER BY total DESC",
+            EvalLimits::none(),
+        )
+        .unwrap();
+        let totals: Vec<i64> = res.rows.iter().map(|r| r[1].as_i64().unwrap()).collect();
+        assert_eq!(totals, vec![100, 10, 1]);
+    }
+
+    #[test]
+    fn order_by_group_key_property_in_aggregate_query() {
+        // Sibling case: ORDER BY a group-key PROPERTY (n.file) in an aggregate
+        // query. Post-aggregation node `n` is gone and the column is keyed
+        // "n.file"; the raw Property("n","file") expr looked up absent var `n`,
+        // yielding NULL and no sort. Assert both directions so insertion order
+        // (which equals at most one of them) cannot satisfy both.
+        let engine = order_by_agg_graph();
+
+        let asc = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN n.file, SUM(n.lineCount) AS total ORDER BY n.file ASC",
+            EvalLimits::none(),
+        )
+        .unwrap();
+        let asc_files: Vec<&str> = asc.rows.iter().map(|r| r[0].as_str().unwrap()).collect();
+        assert_eq!(asc_files, vec!["a.js", "m.js", "z.js"]);
+
+        let desc = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN n.file, SUM(n.lineCount) AS total ORDER BY n.file DESC",
+            EvalLimits::none(),
+        )
+        .unwrap();
+        let desc_files: Vec<&str> = desc.rows.iter().map(|r| r[0].as_str().unwrap()).collect();
+        assert_eq!(desc_files, vec!["z.js", "m.js", "a.js"]);
+    }
+
+    // ── ORDER BY a RETURN alias in a non-aggregate query ──────────────────
+    //
+    // In the non-aggregate path the planner runs Sort BEFORE Project, so Sort
+    // sees the full pattern record (node bound to `n`) but NOT the RETURN
+    // aliases (which Project creates afterwards). `ORDER BY <alias>` is parsed
+    // as `Variable(alias)`; evaluating it against the pre-projection record
+    // yields NULL for every row, so the rows fall back to scan/insertion order
+    // and the ORDER BY silently no-ops. The fix rewrites alias references in
+    // ORDER BY to the underlying RETURN expression so Sort can evaluate them.
+    //
+    // The three FUNCTION nodes are inserted as main, helper, validate (id
+    // 10,11,12). Alphabetical ASC is helper,main,validate and DESC is
+    // validate,main,helper — neither equals insertion order, so a no-op sort
+    // cannot satisfy either assertion.
+
+    #[test]
+    fn order_by_alias_ascending_non_aggregate() {
+        let engine = create_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN n.name AS nm ORDER BY nm",
+            EvalLimits::none(),
+        )
+        .unwrap();
+
+        assert_eq!(result.columns, vec!["nm"]);
+        let names: Vec<&str> = result
+            .rows
+            .iter()
+            .map(|row| row[0].as_str().unwrap())
+            .collect();
+        assert_eq!(names, vec!["helper", "main", "validate"]);
+    }
+
+    #[test]
+    fn order_by_alias_descending_non_aggregate() {
+        let engine = create_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN n.name AS nm ORDER BY nm DESC",
+            EvalLimits::none(),
+        )
+        .unwrap();
+
+        assert_eq!(result.columns, vec!["nm"]);
+        let names: Vec<&str> = result
+            .rows
+            .iter()
+            .map(|row| row[0].as_str().unwrap())
+            .collect();
+        assert_eq!(names, vec!["validate", "main", "helper"]);
+    }
+
+    #[test]
+    fn order_by_alias_with_limit_non_aggregate() {
+        // The alias rewrite must compose with LIMIT: sort first, then take 2.
+        let engine = create_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN n.name AS nm ORDER BY nm DESC LIMIT 2",
+            EvalLimits::none(),
+        )
+        .unwrap();
+
+        let names: Vec<&str> = result
+            .rows
+            .iter()
+            .map(|row| row[0].as_str().unwrap())
+            .collect();
+        assert_eq!(names, vec!["validate", "main"]);
+    }
+
+    #[test]
+    fn order_by_plain_property_still_works_non_aggregate() {
+        // Regression guard: ORDER BY a raw property (no alias indirection) must
+        // keep working — the rewrite must leave non-alias terms untouched.
+        let engine = create_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN n.name AS nm ORDER BY n.name DESC",
+            EvalLimits::none(),
+        )
+        .unwrap();
+
+        let names: Vec<&str> = result
+            .rows
+            .iter()
+            .map(|row| row[0].as_str().unwrap())
+            .collect();
+        assert_eq!(names, vec!["validate", "main", "helper"]);
+    }
 }
 
 
@@ -3707,99 +3905,6 @@ mod return_star_tests {
         assert_eq!(r.columns, vec!["c"]);
         assert_eq!(r.row_count, 1);
         assert_eq!(r.rows[0][0], serde_json::json!(3));
-    }
-
-
-    // ── ORDER BY a RETURN alias in a non-aggregate query ──────────────────
-    //
-    // In the non-aggregate path the planner runs Sort BEFORE Project, so Sort
-    // sees the full pattern record (node bound to `n`) but NOT the RETURN
-    // aliases (which Project creates afterwards). `ORDER BY <alias>` is parsed
-    // as `Variable(alias)`; evaluating it against the pre-projection record
-    // yields NULL for every row, so the rows fall back to scan/insertion order
-    // and the ORDER BY silently no-ops. The fix rewrites alias references in
-    // ORDER BY to the underlying RETURN expression so Sort can evaluate them.
-    //
-    // The three FUNCTION nodes are inserted as main, helper, validate (id
-    // 10,11,12). Alphabetical ASC is helper,main,validate and DESC is
-    // validate,main,helper — neither equals insertion order, so a no-op sort
-    // cannot satisfy either assertion.
-
-    #[test]
-    fn order_by_alias_ascending_non_aggregate() {
-        let engine = create_test_graph();
-        let result = execute(
-            &engine,
-            "MATCH (n:FUNCTION) RETURN n.name AS nm ORDER BY nm",
-            EvalLimits::none(),
-        )
-        .unwrap();
-
-        assert_eq!(result.columns, vec!["nm"]);
-        let names: Vec<&str> = result
-            .rows
-            .iter()
-            .map(|row| row[0].as_str().unwrap())
-            .collect();
-        assert_eq!(names, vec!["helper", "main", "validate"]);
-    }
-
-    #[test]
-    fn order_by_alias_descending_non_aggregate() {
-        let engine = create_test_graph();
-        let result = execute(
-            &engine,
-            "MATCH (n:FUNCTION) RETURN n.name AS nm ORDER BY nm DESC",
-            EvalLimits::none(),
-        )
-        .unwrap();
-
-        assert_eq!(result.columns, vec!["nm"]);
-        let names: Vec<&str> = result
-            .rows
-            .iter()
-            .map(|row| row[0].as_str().unwrap())
-            .collect();
-        assert_eq!(names, vec!["validate", "main", "helper"]);
-    }
-
-    #[test]
-    fn order_by_alias_with_limit_non_aggregate() {
-        // The alias rewrite must compose with LIMIT: sort first, then take 2.
-        let engine = create_test_graph();
-        let result = execute(
-            &engine,
-            "MATCH (n:FUNCTION) RETURN n.name AS nm ORDER BY nm DESC LIMIT 2",
-            EvalLimits::none(),
-        )
-        .unwrap();
-
-        let names: Vec<&str> = result
-            .rows
-            .iter()
-            .map(|row| row[0].as_str().unwrap())
-            .collect();
-        assert_eq!(names, vec!["validate", "main"]);
-    }
-
-    #[test]
-    fn order_by_plain_property_still_works_non_aggregate() {
-        // Regression guard: ORDER BY a raw property (no alias indirection) must
-        // keep working — the rewrite must leave non-alias terms untouched.
-        let engine = create_test_graph();
-        let result = execute(
-            &engine,
-            "MATCH (n:FUNCTION) RETURN n.name AS nm ORDER BY n.name DESC",
-            EvalLimits::none(),
-        )
-        .unwrap();
-
-        let names: Vec<&str> = result
-            .rows
-            .iter()
-            .map(|row| row[0].as_str().unwrap())
-            .collect();
-        assert_eq!(names, vec!["validate", "main", "helper"]);
     }
 
 }
