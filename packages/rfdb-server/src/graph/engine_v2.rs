@@ -588,9 +588,7 @@ impl GraphEngineV2 {
         source: &str,
         limits: crate::datalog::EvalLimits,
     ) -> std::result::Result<(usize, usize), crate::datalog2::EvalError> {
-        use std::collections::HashSet;
-
-        // ── Phase 1: derive + diff against current edges (read-only). ──
+        // ── Phase 1: derive (full eval) then commit only the edge delta. ──
         let snapshot = self.snapshot();
         let generation = snapshot.version + 1;
         let all_nodes = self.store.find_nodes_at(&snapshot, None, None);
@@ -603,42 +601,119 @@ impl GraphEngineV2 {
             total_edges: self.store.edge_count_at(&snapshot) as u64,
             nodes_by_type,
         };
-
-        let (added, removed): (Vec<EdgeRecordV2>, Vec<(u128, u128, String)>) = {
-            let view =
-                crate::datalog2::storage_glue::BorrowedLsmStorageView::new(&self.store, snapshot.clone());
-            let (evaluation, specs) = crate::datalog2::evaluate_with_materialize(
+        let (evaluation, specs) = {
+            let view = crate::datalog2::storage_glue::BorrowedLsmStorageView::new(
+                &self.store,
+                snapshot.clone(),
+            );
+            crate::datalog2::evaluate_with_materialize(
                 &view,
                 source,
                 stats,
                 limits,
                 crate::datalog2::events::EventLog::discard(),
-            )?;
-            // The full derived edge set (also the abort-no-commit shape check).
-            let new_edges =
-                crate::datalog2::materialize::plan_writeback(&specs, &evaluation, generation)?;
-            let new_keys: HashSet<(u128, u128, String)> = new_edges
-                .iter()
-                .map(|e| (e.src, e.dst, e.edge_type.clone()))
-                .collect();
-            // The prior derived state IS the currently-materialized edges of the spec types.
-            let edge_types: HashSet<String> = specs.iter().map(|s| s.edge_type.clone()).collect();
-            let mut prev_keys: HashSet<(u128, u128, String)> = HashSet::new();
-            for t in &edge_types {
-                for e in self.store.get_edges_by_type_at(&snapshot, t) {
-                    prev_keys.insert((e.src, e.dst, e.edge_type.clone()));
-                }
-            }
-            let added: Vec<EdgeRecordV2> = new_edges
-                .into_iter()
-                .filter(|e| !prev_keys.contains(&(e.src, e.dst, e.edge_type.clone())))
-                .collect();
-            let removed: Vec<(u128, u128, String)> = prev_keys
-                .into_iter()
-                .filter(|k| !new_keys.contains(k))
-                .collect();
-            (added, removed)
+            )?
         };
+        self.materialize_writeback_delta(&evaluation, &specs, &snapshot, generation)
+    }
+
+    /// Work-proportional `@materialize` (Gate D2): incrementally MAINTAIN the program's derived
+    /// relations against the current snapshot — given the prior run's result `prev` and the
+    /// `prev_snapshot` it was computed at — then commit only the resulting edge delta. The
+    /// derive is delta-seeded ([`Self::maintain_datalog_v2`]); the write is delta-only
+    /// ([`Self::materialize_writeback_delta`]). Returns `(added, removed)` edge counts.
+    ///
+    /// Outside the sound monotone envelope (negation / multiple derived strata) maintenance
+    /// returns `None` and this falls back to a full from-scratch evaluation — never a silently
+    /// wrong answer (I5). The write-back is byte-identical to the full incremental path; only
+    /// how the derived `Evaluation` is produced (maintained vs scratch) differs.
+    pub fn eval_datalog_v2_maintain_writeback(
+        &mut self,
+        source: &str,
+        prev: &crate::datalog2::exec::Evaluation,
+        prev_snapshot: crate::storage_v2::read_snapshot::ReadSnapshot,
+        limits: crate::datalog::EvalLimits,
+    ) -> std::result::Result<(usize, usize), crate::datalog2::EvalError> {
+        let snapshot = self.snapshot();
+        let generation = snapshot.version + 1;
+        // Specs come from a parse alone (no eval needed) — the maintained branch must know the
+        // target edge types without re-deriving.
+        let program = crate::datalog2::parser_ext::parse_ext_program(source)?;
+        let specs = crate::datalog2::materialize::collect_materialize_specs(&program)?;
+
+        let maintained =
+            self.maintain_datalog_v2(source, prev, prev_snapshot, limits.clone())?;
+        let evaluation = match maintained {
+            Some(e) => e,
+            None => {
+                // Outside the envelope ⇒ recompute from scratch (correctness floor).
+                let all_nodes = self.store.find_nodes_at(&snapshot, None, None);
+                let mut nodes_by_type: HashMap<String, u64> = HashMap::new();
+                for n in &all_nodes {
+                    *nodes_by_type.entry(n.node_type.clone()).or_insert(0) += 1;
+                }
+                let stats = crate::datalog2::builtin::Stats {
+                    total_nodes: all_nodes.len() as u64,
+                    total_edges: self.store.edge_count_at(&snapshot) as u64,
+                    nodes_by_type,
+                };
+                let view = crate::datalog2::storage_glue::BorrowedLsmStorageView::new(
+                    &self.store,
+                    snapshot.clone(),
+                );
+                crate::datalog2::evaluate_with_materialize(
+                    &view,
+                    source,
+                    stats,
+                    limits,
+                    crate::datalog2::events::EventLog::discard(),
+                )?
+                .0
+            }
+        };
+        self.materialize_writeback_delta(&evaluation, &specs, &snapshot, generation)
+    }
+
+    /// Commit ONLY the edge delta of a freshly-derived `@materialize` result against what is
+    /// already in the graph: the currently-materialized edges of each spec's `edge_type` ARE
+    /// the prior derived state (no extra cross-run storage). Facts new this run are added
+    /// (buffered); facts gone this run are edge-tombstoned. A single [`Self::flush`] applies the
+    /// additions and tombstones together (one manifest advance, run isolation). A mis-shaped
+    /// materialized head aborts in [`plan_writeback`] BEFORE any mutation (abort-no-commit).
+    /// Returns `(added, removed)` edge counts. Shared by the full-incremental and
+    /// maintain-incremental `@materialize` entries.
+    fn materialize_writeback_delta(
+        &mut self,
+        evaluation: &crate::datalog2::exec::Evaluation,
+        specs: &[crate::datalog2::materialize::MaterializeSpec],
+        snapshot: &crate::storage_v2::read_snapshot::ReadSnapshot,
+        generation: u64,
+    ) -> std::result::Result<(usize, usize), crate::datalog2::EvalError> {
+        use std::collections::HashSet;
+
+        // The full derived edge set (also the abort-no-commit shape check).
+        let new_edges =
+            crate::datalog2::materialize::plan_writeback(specs, evaluation, generation)?;
+        let new_keys: HashSet<(u128, u128, String)> = new_edges
+            .iter()
+            .map(|e| (e.src, e.dst, e.edge_type.clone()))
+            .collect();
+        // The prior derived state IS the currently-materialized edges of the spec types.
+        let edge_types: HashSet<String> = specs.iter().map(|s| s.edge_type.clone()).collect();
+        let mut prev_keys: HashSet<(u128, u128, String)> = HashSet::new();
+        for t in &edge_types {
+            for e in self.store.get_edges_by_type_at(snapshot, t) {
+                prev_keys.insert((e.src, e.dst, e.edge_type.clone()));
+            }
+        }
+        let added: Vec<EdgeRecordV2> = new_edges
+            .into_iter()
+            .filter(|e| !prev_keys.contains(&(e.src, e.dst, e.edge_type.clone())))
+            .collect();
+        let removed: Vec<(u128, u128, String)> = prev_keys
+            .into_iter()
+            .filter(|k| !new_keys.contains(k))
+            .collect();
 
         // ── Phase 2: apply the delta (one flush commits adds + tombstones). ──
         let (n_added, n_removed) = (added.len(), removed.len());
@@ -3413,5 +3488,136 @@ mod tests {
             [(ib, ic), (ic, ia)].into_iter().collect(),
             "DEPENDS_ON a→b tombstoned; the rest intact"
         );
+    }
+
+    /// Gate D2: the maintain-based `@materialize` (`eval_datalog_v2_maintain_writeback`) produces
+    /// a materialized edge set byte-identical to a full from-scratch derivation, across mixed
+    /// insert/delete edits on the REAL store. The derive is delta-seeded (work-proportional);
+    /// this proves it stays equivalent to recompute (the cross-run cache wiring rides on this).
+    #[test]
+    fn maintain_writeback_materialize_equals_full_scratch_on_real_store() {
+        use crate::datalog::{EvalLimits, Value};
+        let src = r#"@materialize(edge_type = "DEPENDS_ON")
+                     dep(X, Y) :- edge(X, Y, "IMPORTS_FROM")."#;
+
+        // Full from-scratch derivation of the `dep` relation at the engine's current snapshot.
+        let dep_scratch = |engine: &GraphEngineV2| -> std::collections::HashSet<(u128, u128)> {
+            let snap = engine.snapshot();
+            let all_nodes = engine.store.find_nodes_at(&snap, None, None);
+            let mut nbt: HashMap<String, u64> = HashMap::new();
+            for n in &all_nodes {
+                *nbt.entry(n.node_type.clone()).or_insert(0) += 1;
+            }
+            let stats = crate::datalog2::builtin::Stats {
+                total_nodes: all_nodes.len() as u64,
+                total_edges: engine.store.edge_count_at(&snap) as u64,
+                nodes_by_type: nbt,
+            };
+            let view = crate::datalog2::storage_glue::BorrowedLsmStorageView::new(&engine.store, snap);
+            let (eval, _specs) = crate::datalog2::evaluate_with_materialize(
+                &view,
+                src,
+                stats,
+                EvalLimits::none(),
+                crate::datalog2::events::EventLog::discard(),
+            )
+            .expect("scratch eval");
+            eval.facts("dep")
+                .iter()
+                .map(|t| match (&t[0], &t[1]) {
+                    (Value::Id(a), Value::Id(b)) => (*a, *b),
+                    _ => panic!("dep tuple shape"),
+                })
+                .collect()
+        };
+        // The Evaluation (all derived relations) at the current snapshot — the `prev` for maintain.
+        let eval_at = |engine: &GraphEngineV2| -> crate::datalog2::exec::Evaluation {
+            let snap = engine.snapshot();
+            let all_nodes = engine.store.find_nodes_at(&snap, None, None);
+            let mut nbt: HashMap<String, u64> = HashMap::new();
+            for n in &all_nodes {
+                *nbt.entry(n.node_type.clone()).or_insert(0) += 1;
+            }
+            let stats = crate::datalog2::builtin::Stats {
+                total_nodes: all_nodes.len() as u64,
+                total_edges: engine.store.edge_count_at(&snap) as u64,
+                nodes_by_type: nbt,
+            };
+            let view = crate::datalog2::storage_glue::BorrowedLsmStorageView::new(&engine.store, snap);
+            crate::datalog2::evaluate_with_materialize(
+                &view,
+                src,
+                stats,
+                EvalLimits::none(),
+                crate::datalog2::events::EventLog::discard(),
+            )
+            .expect("eval")
+            .0
+        };
+        let deps = |e: &GraphEngineV2| {
+            e.store
+                .get_edges_by_type_at(&e.snapshot(), "DEPENDS_ON")
+                .into_iter()
+                .map(|x| (x.src, x.dst))
+                .collect::<std::collections::HashSet<(u128, u128)>>()
+        };
+
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let ids: Vec<u128> = (0..6u32)
+            .map(|i| make_v2_node(&format!("m{i}.js->MODULE->m{i}"), "MODULE", &format!("m{i}"), &format!("m{i}.js")).id)
+            .collect();
+        let nodes: Vec<_> = (0..6u32)
+            .map(|i| make_v2_node(&format!("m{i}.js->MODULE->m{i}"), "MODULE", &format!("m{i}"), &format!("m{i}.js")))
+            .collect();
+        let imp = |s: usize, d: usize| EdgeRecordV2 {
+            src: ids[s],
+            dst: ids[d],
+            edge_type: "IMPORTS_FROM".to_string(),
+            metadata: String::new(),
+        };
+        engine
+            .commit_batch_ext(
+                nodes,
+                vec![imp(0, 1), imp(1, 2)],
+                &(0..6).map(|i| format!("m{i}.js")).collect::<Vec<_>>(),
+                HashMap::new(),
+                &[],
+            )
+            .expect("base commit");
+
+        // Initial full materialize (cache-miss equivalent), then snapshot the prior state.
+        engine
+            .eval_datalog_v2_materialize_incremental(src, EvalLimits::none())
+            .expect("initial materialize");
+        assert_eq!(deps(&engine), dep_scratch(&engine), "initial materialize ≡ scratch");
+        let mut prev_eval = eval_at(&engine);
+        let mut prev_snap = engine.snapshot();
+
+        // Mixed insert/delete edits; each maintained materialize must equal a full scratch one.
+        let edits: [(bool, usize, usize); 6] =
+            [(true, 2, 3), (true, 0, 4), (true, 3, 5), (false, 0, 1), (true, 4, 5), (false, 1, 2)];
+        for (add, s, d) in edits {
+            if add {
+                engine
+                    .commit_batch_ext(Vec::new(), vec![imp(s, d)], &[], HashMap::new(), &[])
+                    .expect("additive edge commit");
+            } else {
+                engine.delete_edge(ids[s], ids[d], "IMPORTS_FROM");
+                engine.flush().expect("base delete flush");
+            }
+
+            engine
+                .eval_datalog_v2_maintain_writeback(src, &prev_eval, prev_snap.clone(), EvalLimits::none())
+                .expect("maintain write-back");
+
+            assert_eq!(
+                deps(&engine),
+                dep_scratch(&engine),
+                "maintained DEPENDS_ON ≡ scratch after edit add={add} m{s}→m{d}"
+            );
+
+            prev_eval = eval_at(&engine);
+            prev_snap = engine.snapshot();
+        }
     }
 }
