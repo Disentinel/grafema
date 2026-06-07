@@ -3720,14 +3720,14 @@ mod return_star_tests {
     // and the ORDER BY silently no-ops. The fix rewrites alias references in
     // ORDER BY to the underlying RETURN expression so Sort can evaluate them.
     //
-    // The three FUNCTION nodes are inserted as main, helper, validate (id
-    // 10,11,12). Alphabetical ASC is helper,main,validate and DESC is
-    // validate,main,helper — neither equals insertion order, so a no-op sort
-    // cannot satisfy either assertion.
+    // The module's `graph()` helper inserts FUNCTION nodes main, helper,
+    // validate (id 11,12,13) in that order. Alphabetical ASC is
+    // helper,main,validate and DESC is validate,main,helper — neither equals
+    // insertion order, so a no-op sort cannot satisfy either assertion.
 
     #[test]
     fn order_by_alias_ascending_non_aggregate() {
-        let engine = create_test_graph();
+        let engine = graph();
         let result = execute(
             &engine,
             "MATCH (n:FUNCTION) RETURN n.name AS nm ORDER BY nm",
@@ -3746,7 +3746,7 @@ mod return_star_tests {
 
     #[test]
     fn order_by_alias_descending_non_aggregate() {
-        let engine = create_test_graph();
+        let engine = graph();
         let result = execute(
             &engine,
             "MATCH (n:FUNCTION) RETURN n.name AS nm ORDER BY nm DESC",
@@ -3766,7 +3766,7 @@ mod return_star_tests {
     #[test]
     fn order_by_alias_with_limit_non_aggregate() {
         // The alias rewrite must compose with LIMIT: sort first, then take 2.
-        let engine = create_test_graph();
+        let engine = graph();
         let result = execute(
             &engine,
             "MATCH (n:FUNCTION) RETURN n.name AS nm ORDER BY nm DESC LIMIT 2",
@@ -3786,7 +3786,7 @@ mod return_star_tests {
     fn order_by_plain_property_still_works_non_aggregate() {
         // Regression guard: ORDER BY a raw property (no alias indirection) must
         // keep working — the rewrite must leave non-alias terms untouched.
-        let engine = create_test_graph();
+        let engine = graph();
         let result = execute(
             &engine,
             "MATCH (n:FUNCTION) RETURN n.name AS nm ORDER BY n.name DESC",
