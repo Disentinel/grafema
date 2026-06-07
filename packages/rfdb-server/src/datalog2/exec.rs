@@ -452,6 +452,150 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         Ok(Some(out))
     }
 
+    /// DRed phase 1 — **over-delete** (spec §9.2, deletion). Given the prior `Total`
+    /// pre-loaded in `relations` and a delta view of the RETRACTED base facts `ΔB⁻`
+    /// (installed via [`with_delta_view`](Self::with_delta_view), with `view` = the PRIOR
+    /// base — the over-delete reasons about the OLD derivation graph), compute the set of
+    /// derived facts that had at least one derivation using a deleted base fact, transitively
+    /// through other candidates. This is an OVER-approximation: a candidate may still have an
+    /// alternate derivation from surviving facts and be restored by the re-derive phase
+    /// (commit 7) — so this method does NOT mutate `Total`; it only returns the candidate set
+    /// for the caller to remove and then re-derive. Single derived stratum, positive.
+    ///
+    /// Mirrors the incremental seed/Δ-loop: the seed fires one variant per positive base leg
+    /// reading `ΔB⁻` (facts whose derivation used a deleted base fact); the loop fires the
+    /// recursive-leg variant reading the candidate Δ (facts whose derivation used a candidate)
+    /// — both restricted to facts that actually exist in the prior `Total` (only an existing
+    /// fact can be deleted). The working Δ rides each predicate's `Relation::delta`.
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn over_delete(
+        &self,
+        plans: &[RulePlan],
+        rules: &[&Rule],
+        strat: &Stratification,
+        pred_ids: &HashMap<String, u64>,
+        relations: &mut HashMap<String, Relation<T>>,
+    ) -> ExecResult<HashMap<String, HashMap<u64, DerivedFact<T>>>> {
+        let mut candidates: HashMap<String, HashMap<u64, DerivedFact<T>>> = HashMap::new();
+        let Some(stratum) = strat.strata.first() else {
+            return Ok(candidates);
+        };
+        let predicates = &stratum.predicates;
+        let clauses = self.collect_clauses(predicates, plans, rules);
+        for p in predicates {
+            if let Some(r) = relations.get_mut(p) {
+                r.delta.clear();
+            }
+        }
+
+        // Is `fid` a real prior fact of `pred` not yet marked a candidate? (Only an existing
+        // fact can be over-deleted, and each is marked once.)
+        let is_fresh_existing =
+            |candidates: &HashMap<String, HashMap<u64, DerivedFact<T>>>,
+             relations: &HashMap<String, Relation<T>>,
+             pred: &str,
+             fid: u64| {
+                relations.get(pred).is_some_and(|r| r.total.contains_key(&fid))
+                    && !candidates.get(pred).is_some_and(|c| c.contains_key(&fid))
+            };
+
+        // ── Seed: candidates with a derivation through a deleted base fact ──
+        let mut round: HashMap<String, HashMap<u64, DerivedFact<T>>> = HashMap::new();
+        for clause in &clauses {
+            let pred_id = pred_ids[&clause.head_pred];
+            for b in clause.base_leg_indices() {
+                let rows = self.eval_clause(clause, relations, Some(b))?;
+                self.check_intermediate(stratum.index, &rows)?;
+                for head_row in rows {
+                    let fid = fact_id(pred_id, &head_row);
+                    if is_fresh_existing(&candidates, relations, &clause.head_pred, fid) {
+                        round
+                            .entry(clause.head_pred.clone())
+                            .or_default()
+                            .entry(fid)
+                            .or_insert(DerivedFact { key: head_row, tag: T::one() });
+                    }
+                }
+            }
+        }
+        // Commit the round into `candidates` and as each predicate's working Δ.
+        for p in predicates {
+            let fresh = round.remove(p).unwrap_or_default();
+            for (fid, f) in &fresh {
+                candidates
+                    .entry(p.clone())
+                    .or_default()
+                    .insert(*fid, f.clone());
+            }
+            relations.get_mut(p).expect("stratum predicate present").delta = fresh;
+        }
+
+        // ── Loop: chase candidates through recursive legs to a fixpoint ──
+        let mut iteration = 0usize;
+        loop {
+            let any = predicates
+                .iter()
+                .any(|p| relations.get(p).is_some_and(|r| !r.delta.is_empty()));
+            if !any {
+                break;
+            }
+            iteration += 1;
+            if iteration > self.iteration_cap {
+                return Err(ExecError {
+                    code: ExecCode::IterationCap,
+                    stratum: stratum.index,
+                    detail: format!(
+                        "over-delete did not reach fixpoint within {} iterations",
+                        self.iteration_cap
+                    ),
+                });
+            }
+            self.check_deadline(stratum.index)?;
+
+            let mut next: HashMap<String, HashMap<u64, DerivedFact<T>>> = HashMap::new();
+            for clause in &clauses {
+                let recs = clause.recursive_leg_indices(predicates);
+                if recs.is_empty() {
+                    continue;
+                }
+                let pred_id = pred_ids[&clause.head_pred];
+                for &r in &recs {
+                    let rows = self.eval_clause(clause, relations, Some(r))?;
+                    self.check_intermediate(stratum.index, &rows)?;
+                    for head_row in rows {
+                        let fid = fact_id(pred_id, &head_row);
+                        if is_fresh_existing(&candidates, relations, &clause.head_pred, fid)
+                            && !next
+                                .get(&clause.head_pred)
+                                .is_some_and(|m| m.contains_key(&fid))
+                        {
+                            next.entry(clause.head_pred.clone())
+                                .or_default()
+                                .insert(fid, DerivedFact { key: head_row, tag: T::one() });
+                        }
+                    }
+                }
+            }
+            for p in predicates {
+                let fresh = next.remove(p).unwrap_or_default();
+                for (fid, f) in &fresh {
+                    candidates
+                        .entry(p.clone())
+                        .or_default()
+                        .insert(*fid, f.clone());
+                }
+                relations.get_mut(p).expect("stratum predicate present").delta = fresh;
+            }
+        }
+
+        for p in predicates {
+            if let Some(r) = relations.get_mut(p) {
+                r.delta.clear();
+            }
+        }
+        Ok(candidates)
+    }
+
     /// Evaluate a single stratum to its fixpoint (seed → Δ-loop).
     fn eval_stratum(
         &self,
@@ -1723,6 +1867,146 @@ mod tests {
             .evaluate_incremental(&plans, &rules, &strat, &Evaluation::default(), true)
             .expect("no executor error");
         assert!(out.is_none(), "base retraction → recompute fallback (DRed pending)");
+    }
+
+    // ── DRed phase 1: over-delete candidate set ─────────────────────
+
+    /// Pre-load each derived predicate's `Total` from a prior `Evaluation`, keyed by the same
+    /// deterministic `fact_id` `over_delete`/`evaluate_incremental` use (the test analogue of
+    /// the engine's prior-snapshot load).
+    fn preload(
+        prev: &Evaluation,
+        pred_ids: &HashMap<String, u64>,
+    ) -> HashMap<String, Relation<BoolTag>> {
+        let mut relations: HashMap<String, Relation<BoolTag>> = HashMap::new();
+        for (name, rows) in &prev.relations {
+            let pid = pred_ids[name];
+            let rel = relations.entry(name.clone()).or_insert_with(Relation::new);
+            for key in rows {
+                rel.total.insert(
+                    fact_id(pid, key),
+                    DerivedFact { key: key.clone(), tag: BoolTag::one() },
+                );
+            }
+        }
+        relations
+    }
+
+    /// The `(src, dst)` id-pairs of a binary derived predicate's over-delete candidate set.
+    fn pair_set(
+        candidates: &HashMap<String, HashMap<u64, DerivedFact<BoolTag>>>,
+        pred: &str,
+    ) -> std::collections::BTreeSet<(u128, u128)> {
+        candidates
+            .get(pred)
+            .into_iter()
+            .flat_map(|m| m.values())
+            .map(|f| match (&f.key[0], &f.key[1]) {
+                (Value::Id(s), Value::Id(d)) => (*s, *d),
+                _ => panic!("expected id columns"),
+            })
+            .collect()
+    }
+
+    fn closure_program() -> (String,) {
+        ("path(A, B) :- edge(A, B, \"E\").\n\
+          path(A, B) :- edge(A, C, \"E\"), path(C, B)."
+            .to_string(),)
+    }
+
+    #[test]
+    fn over_delete_marks_all_paths_through_a_deleted_edge() {
+        // Chain a → b → c → d; delete b→c. Every path that used b→c must be a candidate
+        // (no alternates in a chain), and nothing else.
+        let (src,) = closure_program();
+        let prog = parse_ext_program(&src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let plans = plan_program(
+            &rules,
+            &strat,
+            &Stats { total_nodes: 4, total_edges: 3, ..Default::default() },
+        )
+        .expect("plan");
+        let pred_ids = assign_pred_ids(&strat);
+
+        let mut old_base = FixtureStorageView::new(1);
+        for (s, d) in [("a", "b"), ("b", "c"), ("c", "d")] {
+            edge(&mut old_base, s, d, "E");
+        }
+        let prev = Executor::<BoolTag>::with_limits(&old_base, EvalLimits::none(), DEFAULT_ITERATION_CAP)
+            .evaluate(&plans, &rules, &strat)
+            .expect("prev closure");
+
+        // ΔB⁻ = {edge b→c}.
+        let mut retracted = FixtureStorageView::new(1);
+        edge(&mut retracted, "b", "c", "E");
+
+        let mut relations = preload(&prev, &pred_ids);
+        let exec =
+            Executor::<BoolTag>::with_limits(&old_base, EvalLimits::none(), DEFAULT_ITERATION_CAP)
+                .with_delta_view(&retracted);
+        let candidates = exec
+            .over_delete(&plans, &rules, &strat, &pred_ids, &mut relations)
+            .expect("over_delete");
+
+        let got = pair_set(&candidates, "path");
+        let want: std::collections::BTreeSet<(u128, u128)> = [
+            (id_of("a"), id_of("c")),
+            (id_of("a"), id_of("d")),
+            (id_of("b"), id_of("c")),
+            (id_of("b"), id_of("d")),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(got, want, "exactly the paths that used b→c");
+        // Total is untouched (over_delete computes, does not mutate — re-derive removes later).
+        assert!(relations["path"].total.len() >= want.len() + 2, "prev Total intact");
+    }
+
+    #[test]
+    fn over_delete_over_approximates_a_fact_with_an_alternate_derivation() {
+        // Diamond: a→b, a→c, b→d, c→d. Delete b→d. (a,d) has an ALTERNATE derivation via
+        // a→c→d, but it ALSO had one through b→d, so over-delete (correctly) lists it as a
+        // candidate — the re-derive phase (commit 7) is what restores it.
+        let (src,) = closure_program();
+        let prog = parse_ext_program(&src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let plans = plan_program(
+            &rules,
+            &strat,
+            &Stats { total_nodes: 4, total_edges: 4, ..Default::default() },
+        )
+        .expect("plan");
+        let pred_ids = assign_pred_ids(&strat);
+
+        let mut old_base = FixtureStorageView::new(1);
+        for (s, d) in [("a", "b"), ("a", "c"), ("b", "d"), ("c", "d")] {
+            edge(&mut old_base, s, d, "E");
+        }
+        let prev = Executor::<BoolTag>::with_limits(&old_base, EvalLimits::none(), DEFAULT_ITERATION_CAP)
+            .evaluate(&plans, &rules, &strat)
+            .expect("prev closure");
+
+        let mut retracted = FixtureStorageView::new(1);
+        edge(&mut retracted, "b", "d", "E");
+
+        let mut relations = preload(&prev, &pred_ids);
+        let candidates =
+            Executor::<BoolTag>::with_limits(&old_base, EvalLimits::none(), DEFAULT_ITERATION_CAP)
+                .with_delta_view(&retracted)
+                .over_delete(&plans, &rules, &strat, &pred_ids, &mut relations)
+                .expect("over_delete");
+
+        let got = pair_set(&candidates, "path");
+        assert!(got.contains(&(id_of("b"), id_of("d"))), "deleted edge's path is a candidate");
+        assert!(
+            got.contains(&(id_of("a"), id_of("d"))),
+            "(a,d) over-deleted even though a→c→d survives (re-derive restores it)"
+        );
+        assert!(!got.contains(&(id_of("c"), id_of("d"))), "c→d path untouched");
+        assert!(!got.contains(&(id_of("a"), id_of("c"))), "a→c path untouched");
     }
 
     // ── anti-join: function-has-contains shape ──────────────────────
