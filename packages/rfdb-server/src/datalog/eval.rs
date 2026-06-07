@@ -1068,7 +1068,12 @@ impl<'a> Evaluator<'a> {
                 let edges = if let Some(edge_type) = type_filter {
                     self.engine.get_edges_by_type(edge_type)
                 } else {
-                    return vec![];
+                    // No edge-type constant: enumerate every edge (full scan),
+                    // binding the dst variable below. Mirrors eval_edge's
+                    // Var(src) arm and this fn's own Wildcard-dst arm. Returning
+                    // empty here silently dropped every row of an untyped
+                    // `incoming(Dst, Src)` enumeration (false negatives).
+                    self.engine.get_all_edges()
                 };
 
                 edges
