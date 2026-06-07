@@ -625,6 +625,108 @@ mod eval_tests {
         assert_eq!(results.len(), 0); // no path
     }
 
+    /// A->B->A two-node cycle plus an isolated node C, for self-reachability tests.
+    fn setup_cycle_graph() -> GraphEngineV2 {
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let mk = |id: u128, name: &str| NodeRecord {
+            id,
+            node_type: Some("FUNCTION".to_string()),
+            name: Some(name.to_string()),
+            file: Some("c.js".to_string()),
+            file_id: 0,
+            name_offset: 0,
+            version: "main".into(),
+            exported: false,
+            replaces: None,
+            deleted: false,
+            metadata: None,
+            semantic_id: None,
+        };
+        engine.add_nodes(vec![mk(100, "a"), mk(101, "b"), mk(102, "c_isolated")]);
+        engine.add_edges(
+            vec![
+                EdgeRecord { src: 100, dst: 101, edge_type: Some("CALLS".into()), version: "main".into(), metadata: None, deleted: false },
+                EdgeRecord { src: 101, dst: 100, edge_type: Some("CALLS".into()), version: "main".into(), metadata: None, deleted: false },
+            ],
+            false,
+        );
+        engine
+    }
+
+    // ── path() self-reachability (irreflexive: a node reaches itself only via a
+    //    genuine cycle, never via the trivial zero-length self path) ──
+    //
+    // Regression: `path(src, dst)` seeded BFS from `src` itself, and `bfs` returns
+    // the seed in its result set. The (Const, Const) arm did `reachable.contains(dst)`
+    // without excluding that trivial self-presence, so `path(A, A)` was TRUE for
+    // EVERY node — even an isolated node with no edges — contradicting the (Var) and
+    // (Wildcard) arms which both exclude self. Fixed by seeding BFS from src's
+    // neighbours (≥1 hop), so self counts only when a real edge path returns to src.
+
+    #[test]
+    fn test_eval_path_self_isolated_is_false() {
+        // Node 3 in setup_test_graph has NO outgoing edges → no path to itself.
+        let engine = setup_test_graph();
+        let evaluator = Evaluator::new(&engine);
+        let query = Atom::new("path", vec![Term::constant("3"), Term::constant("3")]);
+        let results = evaluator.query_atom(&query).unwrap();
+        assert_eq!(results.len(), 0, "isolated node must NOT have a path to itself");
+    }
+
+    #[test]
+    fn test_eval_path_self_acyclic_is_false() {
+        // Node 1 reaches 4 and 2 but nothing loops back to 1 → no self path.
+        let engine = setup_test_graph();
+        let evaluator = Evaluator::new(&engine);
+        let query = Atom::new("path", vec![Term::constant("1"), Term::constant("1")]);
+        let results = evaluator.query_atom(&query).unwrap();
+        assert_eq!(results.len(), 0, "acyclic node must NOT have a path to itself");
+    }
+
+    #[test]
+    fn test_eval_path_self_cycle_is_true() {
+        // 100 -> 101 -> 100 is a genuine cycle → path(100, 100) holds.
+        let engine = setup_cycle_graph();
+        let evaluator = Evaluator::new(&engine);
+        let query = Atom::new("path", vec![Term::constant("100"), Term::constant("100")]);
+        let results = evaluator.query_atom(&query).unwrap();
+        assert_eq!(results.len(), 1, "node on a cycle MUST have a path to itself");
+    }
+
+    #[test]
+    fn test_eval_path_var_includes_cyclic_self() {
+        // Enumerating reachable nodes from a cyclic node must include the node
+        // itself (it is genuinely reachable via the cycle), alongside its peer.
+        let engine = setup_cycle_graph();
+        let evaluator = Evaluator::new(&engine);
+        let query = Atom::new("path", vec![Term::constant("100"), Term::var("X")]);
+        let mut ids: Vec<u128> = evaluator
+            .query_atom(&query)
+            .unwrap()
+            .iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        ids.sort();
+        assert_eq!(ids, vec![100, 101], "cyclic enumeration must include self (100) and peer (101)");
+    }
+
+    #[test]
+    fn test_eval_path_var_acyclic_excludes_self() {
+        // Regression guard: for an acyclic source, enumeration is unchanged and
+        // never includes the source itself.
+        let engine = setup_test_graph();
+        let evaluator = Evaluator::new(&engine);
+        let query = Atom::new("path", vec![Term::constant("1"), Term::var("X")]);
+        let mut ids: Vec<u128> = evaluator
+            .query_atom(&query)
+            .unwrap()
+            .iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        ids.sort();
+        assert_eq!(ids, vec![2, 4], "acyclic enumeration unchanged: reaches 4 and 2, not self");
+    }
+
     #[test]
     fn test_eval_rule_simple() {
         let engine = setup_test_graph();
@@ -2203,6 +2305,31 @@ mod eval_tests {
 
         assert_eq!(plain_values, explain_values,
             "binding values should match between plain and explain evaluators");
+    }
+
+    /// The explain evaluator has its OWN copy of `eval_path`; pin its
+    /// self-reachability semantics to the same fix as the plain evaluator so the
+    /// duplicated implementations cannot drift (isolated/acyclic self = false,
+    /// cyclic self = true).
+    #[test]
+    fn test_explain_path_self_reachability_matches_plain() {
+        use crate::datalog::eval_explain::EvaluatorExplain;
+
+        // Isolated node 3 (no edges): path(3, 3) must be empty.
+        let engine = setup_test_graph();
+        let mut explain_eval = EvaluatorExplain::new(&engine, true);
+        let isolated = explain_eval
+            .eval_query(&parse_query("path(\"3\", \"3\")").unwrap())
+            .unwrap();
+        assert_eq!(isolated.bindings.len(), 0, "explain: isolated node has no self path");
+
+        // Cyclic node 100 (100->101->100): path(100, 100) must hold.
+        let cycle = setup_cycle_graph();
+        let mut explain_cycle = EvaluatorExplain::new(&cycle, true);
+        let cyclic = explain_cycle
+            .eval_query(&parse_query("path(\"100\", \"100\")").unwrap())
+            .unwrap();
+        assert_eq!(cyclic.bindings.len(), 1, "explain: cyclic node reaches itself");
     }
 
     /// REG-503 parity — wildcard arms.
