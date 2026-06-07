@@ -140,6 +140,19 @@ impl InvertibleTag for BoolTag {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CountTag(pub i64);
 
+impl CountTag {
+    /// Encode to the tag-payload bytes the segment format stores (8 LE bytes).
+    #[inline]
+    pub fn to_le_bytes(self) -> Vec<u8> {
+        self.0.to_le_bytes().to_vec()
+    }
+    /// Decode from the tag-payload bytes; `None` on a wrong-length / corrupt payload.
+    #[inline]
+    pub fn from_le_bytes(b: &[u8]) -> Option<Self> {
+        <[u8; 8]>::try_from(b).ok().map(i64::from_le_bytes).map(CountTag)
+    }
+}
+
 impl Sealed for CountTag {}
 
 impl Tag for CountTag {
@@ -193,6 +206,19 @@ impl ConfTag {
     pub const CERTAIN: ConfTag = ConfTag(0);
     /// Impossible (neg-log `+∞ = u32::MAX`) — the identity for `⊕`, i.e. [`Tag::zero`].
     pub const IMPOSSIBLE: ConfTag = ConfTag(u32::MAX);
+}
+
+impl ConfTag {
+    /// Encode to the tag-payload bytes the segment format stores (4 LE bytes).
+    #[inline]
+    pub fn to_le_bytes(self) -> Vec<u8> {
+        self.0.to_le_bytes().to_vec()
+    }
+    /// Decode from the tag-payload bytes; `None` on a wrong-length / corrupt payload.
+    #[inline]
+    pub fn from_le_bytes(b: &[u8]) -> Option<Self> {
+        <[u8; 4]>::try_from(b).ok().map(u32::from_le_bytes).map(ConfTag)
+    }
 }
 
 impl Default for ConfTag {

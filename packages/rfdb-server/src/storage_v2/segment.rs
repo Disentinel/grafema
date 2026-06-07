@@ -118,11 +118,13 @@ impl DerivedColumns {
         let len = read_u16_at(data, dir + 2) as usize;
         let byte_offset = read_u32_at(data, dir + 4) as usize;
 
-        // Gate B understands exactly one semiring: BoolTag. Any other id is an
-        // unrecognized capability and MUST surface as a typed error (I11),
-        // never a silent default. Gate C adds CountTag/ConfTag/… here.
-        if semiring_id != BOOLTAG_SEMIRING_ID {
-            return Err(GraphError::UnknownSemiringId(semiring_id));
+        // This build understands BoolTag (Gate A) plus the Gate C semirings CountTag and
+        // ConfTag. Any other id is an unrecognized capability and MUST surface as a typed
+        // error (I11), never a silent default. The per-record bytes are returned verbatim;
+        // the carrier-level decode/validation happens at the fold/read site.
+        match semiring_id {
+            BOOLTAG_SEMIRING_ID | COUNTTAG_SEMIRING_ID | CONFTAG_SEMIRING_ID => {}
+            other => return Err(GraphError::UnknownSemiringId(other)),
         }
 
         let start = self.tag_bytes_offset + byte_offset;

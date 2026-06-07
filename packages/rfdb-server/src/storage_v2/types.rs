@@ -58,6 +58,14 @@ pub const FOOTER_INDEX_SIZE_DERIVED: usize = 72;
 /// A BoolTag carries no per-record bytes (len = 0); its value is always one().
 pub const BOOLTAG_SEMIRING_ID: u16 = 0;
 
+/// Semiring id for `CountTag` (Gate C): carrier `i64`, encoded as 8 little-endian
+/// bytes in the tag payload.
+pub const COUNTTAG_SEMIRING_ID: u16 = 1;
+
+/// Semiring id for `ConfTag` (Gate C): carrier `u32` neg-log units, encoded as 4
+/// little-endian bytes in the tag payload.
+pub const CONFTAG_SEMIRING_ID: u16 = 2;
+
 /// Bloom filter: bits per key (10 → ~0.82% FPR with k=7)
 pub const BLOOM_BITS_PER_KEY: usize = 10;
 
