@@ -31,6 +31,44 @@ the §8 maps: `_ai/research/rfdb-datalog-gateB-residual-map.md`.
 **Standing (user, 2026-06-07):** commit freely on `feat/datalog` without asking; NEVER push
 without explicit permission.
 
+## ▶ NEXT after compaction — resume here
+
+**Open decision (asked the user, awaiting their pick):** which Gate C piece next —
+- **(A) increment machinery / EDB Differ = the Gate C EXIT** (single-line edit ⇒ fact-level
+  deltas ⇒ maintained ≡ scratch over 100 seeded cycles; spec §9.1/§9.2). The big, multi-commit,
+  defining piece. Start: design the delta representation + the EDB Differ (`datalog2/differential.rs`
+  is currently the TEST harness name — the spec's "EDB Differ" is a different thing; don't conflate).
+- **(B) binding-table** (§9.3, smaller, self-contained). Design fork to settle first: persist the
+  `predicate → (semiring_id, schema, rule_hashes)` table in the manifest NOW (touches
+  `storage_v2/manifest.rs:150/233` + the commit path; serialize as a NEUTRAL blob so storage_v2
+  doesn't depend on datalog2 types — I10) vs a registry-in-memory built during `evaluate_with_materialize`
+  (`datalog2/mod.rs:180`). Recommend: assert-uniformity minimum + manifest blob, expose a `diff()` seam
+  for Gate C. Also reconcile `rule_ast_hash` width (String blake3 in `materialize.rs:199` vs u32 in
+  `storage_v2/types.rs:426` → recommend u64).
+- **(C)** the user reviews the 6 diffs first.
+
+**numeric-literals caveat (when it comes up):** NOT a lexer one-liner. `crate::datalog::Value` is
+shared with the v1 top-down engine and deliberately unmodified (`exec.rs cmp_value` handles only
+Id/Str). Bare numbers / the dead `gt(A,0)` guarantee (`.grafema/guarantees.yaml:371`) need a
+value-representation decision (extend shared Value — risk to v1 — vs a v2-local numeric value).
+Settle that design before touching the parser.
+
+**Verify-current (independent of any agent report — P1):**
+```
+cd packages/rfdb-server
+cargo test --lib datalog2 -- --skip datalog2_differential_against_real_dataset --skip depends2_matches  # expect 125 passed
+cargo test --lib storage_v2                                                                              # expect 427 passed
+cargo test --bin rfdb-server -- materialize router hello                                                 # release-blocker wiring
+cargo test --lib datalog2_differential_against_real_dataset -- --ignored --nocapture   # Gate A: TALLY match=50 mismatch=0 (~18-280s)
+cargo test --release --lib depends2_matches_orchestrator_ground_truth -- --ignored --nocapture  # Gate B: v2=622 ⊋ oracle=495, only-oracle=0 (~97s, MISMATCH is EXPECTED — orchestrator bug)
+```
+Pre-existing/unrelated: 5 `cypher::tests` aggregate tests fail on clean HEAD (from the main merge).
+
+**Tasks (TaskList):** #10 Gate C in_progress (this); #6 §8 scaffolding — compaction-⊕ DONE, only
+migrate-segments remains (L, low urgency); #8 P3 compliance (counter test + legacy-retirement.lock);
+#9 re-analyze DEPENDS_ON supersede (parity-with-legacy verify); #1 multiworker resolve reconcile;
+#4 planner q-error (Gate D) + parallel re-shuffle + gate-a.yaml (Gate A residuals).
+
 ---
 ## (historical, superseded by the 2026-06-07 section above)
 Spec: `rfdb-datalog-engine-v2-spec.md`. Plans: `rfdb-datalog-gate-a-plan.md`, `rfdb-datalog-gate-b-plan.md`.
