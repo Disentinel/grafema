@@ -830,7 +830,11 @@ impl<'a> EvaluatorExplain<'a> {
                         let mut b = Bindings::new();
 
                         match dst_term {
-                            Term::Var(var) => b.set(var, Value::Id(e.dst)),
+                            Term::Var(var) => {
+                                if !b.bind_checked(var, Value::Id(e.dst)) {
+                                    return None;
+                                }
+                            }
                             Term::Const(s) => {
                                 if s.parse::<u128>().ok() != Some(e.dst) {
                                     return None;
@@ -841,7 +845,9 @@ impl<'a> EvaluatorExplain<'a> {
 
                         if let Some(Term::Var(var)) = type_term {
                             if let Some(etype) = e.edge_type {
-                                b.set(var, Value::Str(etype));
+                                if !b.bind_checked(var, Value::Str(etype)) {
+                                    return None;
+                                }
                             }
                         }
 
@@ -882,25 +888,32 @@ impl<'a> EvaluatorExplain<'a> {
                         }
                         true
                     })
-                    .map(|e| {
+                    .filter_map(|e| {
                         let mut b = Bindings::new();
 
                         // Bind source variable
                         b.set(src_var, Value::Id(e.src));
 
-                        // Bind destination
+                        // Bind destination. `bind_checked` enforces equality when
+                        // dst is the SAME variable as src — `edge(X, X)` is a
+                        // self-loop join, not an overwrite that drops the
+                        // e.src == e.dst constraint.
                         if let Term::Var(var) = dst_term {
-                            b.set(var, Value::Id(e.dst));
+                            if !b.bind_checked(var, Value::Id(e.dst)) {
+                                return None;
+                            }
                         }
 
                         // Bind edge type if variable
                         if let Some(Term::Var(var)) = type_term {
                             if let Some(etype) = e.edge_type {
-                                b.set(var, Value::Str(etype));
+                                if !b.bind_checked(var, Value::Str(etype)) {
+                                    return None;
+                                }
                             }
                         }
 
-                        b
+                        Some(b)
                     })
                     .collect()
             }
@@ -936,22 +949,26 @@ impl<'a> EvaluatorExplain<'a> {
                         }
                         true
                     })
-                    .map(|e| {
+                    .filter_map(|e| {
                         let mut b = Bindings::new();
 
                         // Bind destination if variable
                         if let Term::Var(var) = dst_term {
-                            b.set(var, Value::Id(e.dst));
+                            if !b.bind_checked(var, Value::Id(e.dst)) {
+                                return None;
+                            }
                         }
 
                         // Bind edge type if variable
                         if let Some(Term::Var(var)) = type_term {
                             if let Some(etype) = e.edge_type {
-                                b.set(var, Value::Str(etype));
+                                if !b.bind_checked(var, Value::Str(etype)) {
+                                    return None;
+                                }
                             }
                         }
 
-                        b
+                        Some(b)
                     })
                     .collect()
             }
@@ -994,7 +1011,11 @@ impl<'a> EvaluatorExplain<'a> {
                         let mut b = Bindings::new();
 
                         match src_term {
-                            Term::Var(var) => b.set(var, Value::Id(e.src)),
+                            Term::Var(var) => {
+                                if !b.bind_checked(var, Value::Id(e.src)) {
+                                    return None;
+                                }
+                            }
                             Term::Const(s) => {
                                 if s.parse::<u128>().ok() != Some(e.src) {
                                     return None;
@@ -1005,7 +1026,9 @@ impl<'a> EvaluatorExplain<'a> {
 
                         if let Some(Term::Var(var)) = type_term {
                             if let Some(etype) = e.edge_type {
-                                b.set(var, Value::Str(etype));
+                                if !b.bind_checked(var, Value::Str(etype)) {
+                                    return None;
+                                }
                             }
                         }
 
@@ -1042,9 +1065,16 @@ impl<'a> EvaluatorExplain<'a> {
                         // Bind dst variable
                         b.set(dst_var, Value::Id(e.dst));
 
-                        // Bind src
+                        // Bind src. `bind_checked` enforces equality when src is
+                        // the SAME variable as the (variable) dst — `incoming(X, X)`
+                        // is a self-loop join, not an overwrite that drops the
+                        // e.src == e.dst constraint.
                         match src_term {
-                            Term::Var(var) => b.set(var, Value::Id(e.src)),
+                            Term::Var(var) => {
+                                if !b.bind_checked(var, Value::Id(e.src)) {
+                                    return None;
+                                }
+                            }
                             Term::Const(s) => {
                                 if s.parse::<u128>().ok() != Some(e.src) {
                                     return None;
@@ -1055,7 +1085,9 @@ impl<'a> EvaluatorExplain<'a> {
 
                         if let Some(Term::Var(var)) = type_term {
                             if let Some(etype) = e.edge_type {
-                                b.set(var, Value::Str(etype));
+                                if !b.bind_checked(var, Value::Str(etype)) {
+                                    return None;
+                                }
                             }
                         }
 
@@ -1100,7 +1132,11 @@ impl<'a> EvaluatorExplain<'a> {
 
                         // Bind src
                         match src_term {
-                            Term::Var(var) => b.set(var, Value::Id(e.src)),
+                            Term::Var(var) => {
+                                if !b.bind_checked(var, Value::Id(e.src)) {
+                                    return None;
+                                }
+                            }
                             Term::Const(s) => {
                                 if s.parse::<u128>().ok() != Some(e.src) {
                                     return None;
@@ -1112,7 +1148,9 @@ impl<'a> EvaluatorExplain<'a> {
                         // Bind edge type if variable
                         if let Some(Term::Var(var)) = type_term {
                             if let Some(etype) = e.edge_type {
-                                b.set(var, Value::Str(etype));
+                                if !b.bind_checked(var, Value::Str(etype)) {
+                                    return None;
+                                }
                             }
                         }
 

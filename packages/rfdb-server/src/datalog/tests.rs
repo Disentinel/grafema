@@ -5985,3 +5985,186 @@ mod attr_reverse_nested_metadata_tests {
         assert_eq!(ids, vec![2], "reverse nested attr must seed the pipelined generator path");
     }
 }
+
+/// Repeated-variable (self-loop) handling for `edge`/`incoming` enumeration.
+///
+/// A variable that appears in BOTH the src and dst position of a single edge
+/// atom — e.g. `edge(X, X, "CALLS")` ("find recursive functions") — is an
+/// equality join: only edges whose src == dst may match. When the shared
+/// variable is still unbound (the atom acts as a generator), the per-edge
+/// binding builder must enforce that equality, not silently overwrite the
+/// earlier binding with the later endpoint.
+mod repeated_var_tests {
+    use super::*;
+    use crate::graph::{GraphEngineV2, GraphStore};
+    use crate::storage::{NodeRecord, EdgeRecord};
+
+    /// Graph with two genuine self-loops and two ordinary edges:
+    ///   1 -> 2  CALLS
+    ///   2 -> 3  CALLS
+    ///   4 -> 4  CALLS        (recursive function — a real self-loop)
+    ///   1 -> 1  REFERENCES   (self-loop of a different type)
+    fn setup_self_loop_graph() -> GraphEngineV2 {
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let mk = |id: u128| NodeRecord {
+            id,
+            node_type: Some("FUNCTION".to_string()),
+            name: Some(format!("fn_{}", id)),
+            file: Some("t.js".to_string()),
+            file_id: 0,
+            name_offset: 0,
+            version: "main".into(),
+            exported: false,
+            replaces: None,
+            deleted: false,
+            metadata: None,
+            semantic_id: None,
+        };
+        engine.add_nodes(vec![mk(1), mk(2), mk(3), mk(4)]);
+        let e = |src: u128, dst: u128, t: &str| EdgeRecord {
+            src,
+            dst,
+            edge_type: Some(t.to_string()),
+            version: "main".into(),
+            metadata: None,
+            deleted: false,
+        };
+        engine.add_edges(
+            vec![
+                e(1, 2, "CALLS"),
+                e(2, 3, "CALLS"),
+                e(4, 4, "CALLS"),
+                e(1, 1, "REFERENCES"),
+            ],
+            false,
+        );
+        engine
+    }
+
+    fn ids_of(results: &[Bindings], var: &str) -> Vec<u128> {
+        let mut v: Vec<u128> = results
+            .iter()
+            .filter_map(|b| b.get(var).and_then(|val| val.as_id()))
+            .collect();
+        v.sort_unstable();
+        v.dedup();
+        v
+    }
+
+    #[test]
+    fn test_edge_repeated_var_typed_self_loop_only() {
+        let engine = setup_self_loop_graph();
+        let ev = Evaluator::new(&engine);
+        // edge(X, X, "CALLS") — only the 4->4 recursive CALLS edge qualifies.
+        let results = ev
+            .eval_query(&parse_query(r#"edge(X, X, "CALLS")"#).unwrap())
+            .unwrap();
+        assert_eq!(
+            ids_of(&results, "X"),
+            vec![4],
+            "edge(X, X, \"CALLS\") must return only the self-loop source, not every CALLS edge"
+        );
+    }
+
+    #[test]
+    fn test_edge_repeated_var_untyped_self_loops() {
+        let engine = setup_self_loop_graph();
+        let ev = Evaluator::new(&engine);
+        // edge(X, X) — both self-loops (4->4 CALLS and 1->1 REFERENCES).
+        let results = ev
+            .eval_query(&parse_query(r#"edge(X, X)"#).unwrap())
+            .unwrap();
+        assert_eq!(
+            ids_of(&results, "X"),
+            vec![1, 4],
+            "edge(X, X) must return exactly the self-loop nodes"
+        );
+    }
+
+    #[test]
+    fn test_incoming_repeated_var_typed_self_loop_only() {
+        let engine = setup_self_loop_graph();
+        let ev = Evaluator::new(&engine);
+        // incoming(X, X, "CALLS") — reverse view, same single self-loop.
+        let results = ev
+            .eval_query(&parse_query(r#"incoming(X, X, "CALLS")"#).unwrap())
+            .unwrap();
+        assert_eq!(
+            ids_of(&results, "X"),
+            vec![4],
+            "incoming(X, X, \"CALLS\") must return only the self-loop node"
+        );
+    }
+
+    #[test]
+    fn test_incoming_repeated_var_untyped_self_loops() {
+        let engine = setup_self_loop_graph();
+        let ev = Evaluator::new(&engine);
+        let results = ev
+            .eval_query(&parse_query(r#"incoming(X, X)"#).unwrap())
+            .unwrap();
+        assert_eq!(
+            ids_of(&results, "X"),
+            vec![1, 4],
+            "incoming(X, X) must return exactly the self-loop nodes"
+        );
+    }
+
+    #[test]
+    fn test_edge_distinct_vars_unaffected() {
+        // Regression guard: distinct src/dst variables still enumerate every edge.
+        let engine = setup_self_loop_graph();
+        let ev = Evaluator::new(&engine);
+        let results = ev
+            .eval_query(&parse_query(r#"edge(X, Y, "CALLS")"#).unwrap())
+            .unwrap();
+        // (1,2), (2,3), (4,4) — three CALLS edges.
+        assert_eq!(results.len(), 3, "distinct-var enumeration must be unchanged");
+    }
+
+    #[test]
+    fn test_edge_repeated_var_bound_path_still_correct() {
+        // When X is already bound before the edge atom, evaluation goes through
+        // the Const-src branch (which already filters dst == src correctly).
+        // This guards that the fix does not regress the already-correct path.
+        let engine = setup_self_loop_graph();
+        let ev = Evaluator::new(&engine);
+        let results = ev
+            .eval_query(
+                &parse_query(r#"node(X, "FUNCTION"), edge(X, X, "CALLS")"#).unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            ids_of(&results, "X"),
+            vec![4],
+            "bound-var self-loop path must remain correct"
+        );
+    }
+
+    #[test]
+    fn test_explain_edge_repeated_var_matches_plain() {
+        use crate::datalog::eval_explain::EvaluatorExplain;
+        let engine = setup_self_loop_graph();
+        let plain = Evaluator::new(&engine);
+        let plain_results = plain
+            .eval_query(&parse_query(r#"edge(X, X, "CALLS")"#).unwrap())
+            .unwrap();
+        assert_eq!(ids_of(&plain_results, "X"), vec![4]);
+
+        let mut explain = EvaluatorExplain::new(&engine, true);
+        let explain_result = explain
+            .eval_query(&parse_query(r#"edge(X, X, "CALLS")"#).unwrap())
+            .unwrap();
+        let mut explain_ids: Vec<u128> = explain_result
+            .bindings
+            .iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.parse::<u128>().ok()))
+            .collect();
+        explain_ids.sort_unstable();
+        explain_ids.dedup();
+        assert_eq!(
+            explain_ids, vec![4],
+            "explain evaluator must match plain for repeated-var self-loop"
+        );
+    }
+}
