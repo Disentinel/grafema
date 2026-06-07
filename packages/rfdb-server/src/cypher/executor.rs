@@ -866,21 +866,41 @@ pub fn eval_expr(expr: &Expr, record: &Record) -> CypherValue {
         }
 
         Expr::And(lhs, rhs) => {
-            let l = eval_expr(lhs, record);
-            if !l.is_truthy() {
+            // Kleene three-valued AND. FALSE dominates (short-circuits even past a
+            // NULL operand: `null AND false = false`); otherwise NULL is contagious
+            // (`true AND null = null`, `null AND true = null`). Collapsing a NULL
+            // operand to `Bool(false)` here would be wrong under `NOT`: it makes
+            // `NOT (null AND true)` become `NOT false = true`, wrongly admitting a
+            // row whose predicate is unknown. See `Expr::Not` below for the
+            // complementary NULL-preserving rule. Non-NULL operands fall through
+            // `kleene_truth` to `is_truthy()`, so their behaviour is unchanged.
+            let l = kleene_truth(&eval_expr(lhs, record));
+            if l == Some(false) {
                 return CypherValue::Bool(false);
             }
-            let r = eval_expr(rhs, record);
-            CypherValue::Bool(r.is_truthy())
+            let r = kleene_truth(&eval_expr(rhs, record));
+            kleene_value(match (l, r) {
+                (_, Some(false)) => Some(false),
+                (Some(true), Some(true)) => Some(true),
+                _ => None,
+            })
         }
 
         Expr::Or(lhs, rhs) => {
-            let l = eval_expr(lhs, record);
-            if l.is_truthy() {
+            // Kleene three-valued OR. TRUE dominates (`null OR true = true`);
+            // otherwise NULL is contagious (`null OR false = null`, `false OR
+            // null = null`). As with AND, collapsing a NULL operand to
+            // `Bool(false)` would wrongly admit rows under `NOT`.
+            let l = kleene_truth(&eval_expr(lhs, record));
+            if l == Some(true) {
                 return CypherValue::Bool(true);
             }
-            let r = eval_expr(rhs, record);
-            CypherValue::Bool(r.is_truthy())
+            let r = kleene_truth(&eval_expr(rhs, record));
+            kleene_value(match (l, r) {
+                (_, Some(true)) => Some(true),
+                (Some(false), Some(false)) => Some(false),
+                _ => None,
+            })
         }
 
         Expr::Not(inner) => {
@@ -1045,6 +1065,29 @@ fn eval_binop(l: &CypherValue, op: BinOp, r: &CypherValue) -> CypherValue {
             }),
             None => CypherValue::Null,
         },
+    }
+}
+
+/// Classify a Cypher value for Kleene (three-valued) boolean logic.
+///
+/// Returns `None` for NULL (the UNKNOWN truth value) and `Some(bool)` for any
+/// definite value, reusing `is_truthy()` so non-NULL operands keep the engine's
+/// existing loose truthiness (e.g. `Int(0)` → `Some(false)`). Used by the `AND`
+/// and `OR` arms of `eval_expr` so a NULL operand propagates as NULL instead of
+/// collapsing to a definite boolean (which is wrong under `NOT`).
+fn kleene_truth(v: &CypherValue) -> Option<bool> {
+    match v {
+        CypherValue::Null => None,
+        other => Some(other.is_truthy()),
+    }
+}
+
+/// Reconstruct a Cypher value from a Kleene truth: `None` → NULL, `Some(b)` →
+/// `Bool(b)`. Inverse of `kleene_truth` for the definite cases.
+fn kleene_value(t: Option<bool>) -> CypherValue {
+    match t {
+        Some(b) => CypherValue::Bool(b),
+        None => CypherValue::Null,
     }
 }
 
