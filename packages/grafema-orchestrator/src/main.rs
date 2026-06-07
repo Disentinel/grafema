@@ -1730,10 +1730,34 @@ async fn main() -> Result<()> {
 
             let diagnostics_ms = diagnostics_start.elapsed().as_millis() as u64;
 
-            // 9. Derive MODULE→MODULE DEPENDS_ON edges from IMPORTS_FROM
+            // 9. Derive MODULE→MODULE DEPENDS_ON edges from IMPORTS_FROM.
+            //
+            // When the RFDB server advertises `datalogV2Materialize` (its RFDB_DATALOG_V2 kill
+            // switch is on), the SERVER derives DEPENDS_ON via the bundled `depends.dl` — a file-
+            // ATTR join, which is correct on the Haskell `MODULE#/…` semantic-ids the legacy
+            // string-parse below silently drops (see _ai/gaps.md 2026-06-07: 127 real module-pairs
+            // lost). Otherwise the legacy in-orchestrator derivation runs. P3: the legacy path is
+            // kept runnable as the fallback until Gate E + one release — do NOT delete it without
+            // the legacy-retirement.lock gate.
             let depends_on_start = std::time::Instant::now();
             profile!("depends_on_start", "imports_from_edges" => all_imports_from_edges.len());
-            if !all_imports_from_edges.is_empty() {
+            if rfdb.supports_datalog_v2_materialize() {
+                // v2 path: empty source ⇒ the server runs its canonical bundled depends rule over
+                // the committed snapshot (all IMPORTS_FROM are already committed by now).
+                let written = rfdb
+                    .materialize_datalog("")
+                    .await
+                    .context("RFDB Datalog v2 @materialize DEPENDS_ON failed")?;
+                tracing::info!(
+                    edges = written,
+                    from_imports = all_imports_from_edges.len(),
+                    "DEPENDS_ON derived by RFDB Datalog v2 @materialize"
+                );
+                profile!("depends_on_complete_v2", "edges" => written as usize);
+            } else if !all_imports_from_edges.is_empty() {
+                // ── LEGACY fallback (P3): in-orchestrator sid-parse derivation. Lossy on
+                // `MODULE#`-sid (Haskell) endpoints; superseded by the v2 path above. ──
+                tracing::info!("DEPENDS_ON derived by legacy orchestrator derivation (P3 fallback)");
                 let mut depends_on_pairs: HashSet<(String, String)> = HashSet::new();
 
                 // Pre-compute URI prefix for extracting file paths from grafema:// URIs

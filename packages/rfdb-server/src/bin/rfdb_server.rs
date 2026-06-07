@@ -256,6 +256,14 @@ pub enum Request {
         explain: bool,
     },
 
+    /// Run a Datalog v2 program that carries `@materialize`, committing the materialized
+    /// edges (e.g. stdlib `depends.dl` → DEPENDS_ON) in ONE atomic generation. WRITE path,
+    /// v2-ONLY: refused with an explicit coded error when `RFDB_DATALOG_V2` is off (the
+    /// legacy derivation runs in the orchestrator under P3). Returns the edges-written count.
+    MaterializeDatalog {
+        source: String,
+    },
+
     // Cypher queries
     CypherQuery {
         query: String,
@@ -1139,6 +1147,7 @@ fn get_operation_name(request: &Request) -> String {
         Request::DatalogLoadRules { .. } => "DatalogLoadRules".to_string(),
         Request::DatalogClearRules => "DatalogClearRules".to_string(),
         Request::ExecuteDatalog { .. } => "ExecuteDatalog".to_string(),
+        Request::MaterializeDatalog { .. } => "MaterializeDatalog".to_string(),
         Request::IsEndpoint { .. } => "IsEndpoint".to_string(),
         Request::GetNodeIdentifier { .. } => "GetNodeIdentifier".to_string(),
         Request::UpdateNodeVersion { .. } => "UpdateNodeVersion".to_string(),
@@ -1175,11 +1184,24 @@ fn handle_request_with_cancel(
 
         Request::Hello { protocol_version, client_id: _ } => {
             session.protocol_version = protocol_version.unwrap_or(2);
+            let mut features = vec![
+                "multiDatabase".to_string(),
+                "ephemeral".to_string(),
+                "semanticIds".to_string(),
+                "streaming".to_string(),
+            ];
+            // Advertise the v2 @materialize write-back capability ONLY when the kill switch is
+            // on, so the orchestrator learns from the SERVER (single source of truth) whether to
+            // skip its own legacy DEPENDS_ON derivation. A duplicated env read in the
+            // orchestrator process could disagree with the server's actual backend.
+            if datalog_v2_enabled() {
+                features.push("datalogV2Materialize".to_string());
+            }
             Response::HelloOk {
                 ok: true,
                 protocol_version: 3,
                 server_version: env!("CARGO_PKG_VERSION").to_string(),
-                features: vec!["multiDatabase".to_string(), "ephemeral".to_string(), "semanticIds".to_string(), "streaming".to_string()],
+                features,
             }
         }
 
@@ -1615,6 +1637,19 @@ fn handle_request_with_cancel(
                 match dispatch_execute_datalog(engine, &source, explain, cf) {
                     Ok(DatalogResponse::Violations(results)) => Response::DatalogResults { results },
                     Ok(DatalogResponse::Explain(result)) => Response::ExplainResult(result),
+                    Err(e) => Response::Error { error: e },
+                }
+            })
+        }
+
+        Request::MaterializeDatalog { source } => {
+            // WRITE path: @materialize ends in commit_batch_ext (&mut self), so it takes the
+            // exclusive write lock (mirrors CommitBatch's serial fallback). v2-only and
+            // kill-switch-gated inside the dispatcher; refusal is an explicit coded error (I5).
+            let cf = cancel_flag.clone();
+            with_engine_write(session, |engine| {
+                match dispatch_materialize_datalog(engine, &source, cf) {
+                    Ok(count) => Response::Count { count: count as u32 },
                     Err(e) => Response::Error { error: e },
                 }
             })
@@ -2779,6 +2814,48 @@ fn dispatch_execute_datalog(
         return route_datalog_v2(engine, source, &target, cancel_flag);
     }
     execute_datalog(engine, source, explain, cancel_flag)
+}
+
+/// `MaterializeDatalog` dispatch (WRITE path): run a v2 `@materialize` program and commit the
+/// materialized edges in ONE atomic generation, returning the edges-written count.
+///
+/// v2-ONLY and kill-switch-gated: when `RFDB_DATALOG_V2` is off this refuses with an explicit
+/// coded error (the legacy DEPENDS_ON derivation runs in the orchestrator under P3) rather than
+/// silently doing nothing (I5). The backend must be a `GraphEngineV2` (storage_v2) — anything
+/// else is an explicit error, never a silent no-op. There is no v1 materialize path: `@materialize`
+/// write-back is a v2 capability. The whole run commits via the single atomic flip in
+/// [`GraphEngineV2::eval_datalog_v2_materialize`] (run isolation, abort-no-commit).
+fn dispatch_materialize_datalog(
+    engine: &mut dyn GraphStore,
+    source: &str,
+    cancel_flag: Arc<AtomicBool>,
+) -> std::result::Result<usize, String> {
+    if !datalog_v2_enabled() {
+        return Err("RFDB_DATALOG_V2: @materialize write-back is a v2-only path; with the kill \
+                    switch off the legacy DEPENDS_ON derivation runs in the orchestrator (P3)"
+            .to_string());
+    }
+    let v2 = engine
+        .as_any_mut()
+        .downcast_mut::<GraphEngineV2>()
+        .ok_or_else(|| {
+            "RFDB_DATALOG_V2: @materialize requires a storage_v2 GraphEngineV2 backend".to_string()
+        })?;
+
+    let mut limits = EvalLimits::default();
+    limits.cancelled = Some(cancel_flag);
+
+    // An empty `source` means "run the canonical bundled rule" — the orchestrator triggers
+    // DEPENDS_ON derivation without shipping the rule text (single source of truth, no drift).
+    // A non-empty source runs that explicit program (tests / future materialized rules).
+    let program = if source.trim().is_empty() {
+        rfdb::datalog2::stdlib::DEPENDS_DL
+    } else {
+        source
+    };
+
+    v2.eval_datalog_v2_materialize(program, limits)
+        .map_err(|e| format!("Datalog v2 materialize error [{}]: {}", e.code(), e))
 }
 
 /// Convert a `QueryResult` into a `WireExplainResult`
@@ -7022,6 +7099,145 @@ mod protocol_tests {
         assert!(datalog_v2_enabled(), "RFDB_DATALOG_V2=on must select v2");
         std::env::set_var("RFDB_DATALOG_V2", "1");
         assert!(datalog_v2_enabled(), "RFDB_DATALOG_V2=1 must select v2");
+
+        match prev {
+            Some(v) => std::env::set_var("RFDB_DATALOG_V2", v),
+            None => std::env::remove_var("RFDB_DATALOG_V2"),
+        }
+    }
+
+    /// `MaterializeDatalog` dispatch (the release-blocker write path): kill-switch-gated and
+    /// v2-only. With the switch OFF it refuses with an explicit coded error (legacy DEPENDS_ON
+    /// runs in the orchestrator, P3) and writes nothing; with it ON, a `@materialize` program
+    /// over a committed IMPORTS_FROM graph writes the DEPENDS_ON edge in one generation and a
+    /// follow-up v2 read sees it. This is the path the orchestrator will call instead of its
+    /// in-process derivation.
+    #[test]
+    fn dispatch_materialize_datalog_gated_and_writes_edges() {
+        let _guard = DATALOG_V2_ENV_LOCK.lock().unwrap();
+        let prev = std::env::var("RFDB_DATALOG_V2").ok();
+
+        // Real ephemeral v2 engine: module `a` IMPORTS_FROM module `b`.
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let mk_node = |sid: &str, ty: &str| NodeRecord {
+            id: string_to_id(sid),
+            node_type: Some(ty.to_string()),
+            file_id: 0,
+            name_offset: 0,
+            version: "main".to_string(),
+            exported: false,
+            replaces: None,
+            deleted: false,
+            name: Some(sid.to_string()),
+            file: Some(format!("{sid}.js")),
+            metadata: None,
+            semantic_id: Some(sid.to_string()),
+        };
+        engine.add_nodes(vec![mk_node("a", "MODULE"), mk_node("b", "MODULE")]);
+        engine.add_edges(
+            vec![EdgeRecord {
+                src: string_to_id("a"),
+                dst: string_to_id("b"),
+                edge_type: Some("IMPORTS_FROM".to_string()),
+                version: "main".to_string(),
+                metadata: None,
+                deleted: false,
+            }],
+            true,
+        );
+        engine.flush().unwrap();
+
+        let cf = || Arc::new(AtomicBool::new(false));
+        // A binary @materialize head projects to a DEPENDS_ON edge per derived pair.
+        let src = r#"@materialize(edge_type = "DEPENDS_ON")
+                     dep(X, Y) :- edge(X, Y, "IMPORTS_FROM")."#;
+
+        // ── Switch OFF → refused (coded), nothing written (P3 legacy path owns it). ──
+        std::env::set_var("RFDB_DATALOG_V2", "off");
+        let off = dispatch_materialize_datalog(&mut engine, src, cf());
+        assert!(off.is_err(), "materialize must be refused when the kill switch is off");
+        assert!(
+            off.unwrap_err().contains("v2-only"),
+            "the refusal must be the explicit v2-only coded error (P3), not a silent no-op"
+        );
+
+        // ── Switch ON → one DEPENDS_ON edge written in one generation. ──
+        std::env::set_var("RFDB_DATALOG_V2", "on");
+        let written = dispatch_materialize_datalog(&mut engine, src, cf())
+            .expect("materialize must succeed under the v2 engine");
+        assert_eq!(written, 1, "exactly one IMPORTS_FROM → one DEPENDS_ON");
+
+        // A follow-up v2 read sees the materialized edge (committed + visible).
+        let read_src = r#"result(X, Y) :- edge(X, Y, "DEPENDS_ON")."#;
+        match dispatch_execute_datalog(&engine, read_src, false, cf()) {
+            Ok(DatalogResponse::Violations(v)) => {
+                assert_eq!(v.len(), 1, "the committed DEPENDS_ON edge must be readable");
+                assert_eq!(v[0].bindings.get("X").map(String::as_str), Some(string_to_id("a").to_string().as_str()));
+                assert_eq!(v[0].bindings.get("Y").map(String::as_str), Some(string_to_id("b").to_string().as_str()));
+            }
+            Ok(DatalogResponse::Explain(_)) => panic!("expected violations, got an explain result"),
+            Err(e) => panic!("v2 read of DEPENDS_ON failed: {e}"),
+        }
+
+        match prev {
+            Some(v) => std::env::set_var("RFDB_DATALOG_V2", v),
+            None => std::env::remove_var("RFDB_DATALOG_V2"),
+        }
+    }
+
+    /// The PROD path: an EMPTY `source` runs the server's bundled canonical `depends.dl`
+    /// (file-attr join), so the orchestrator triggers DEPENDS_ON derivation without shipping
+    /// the rule text. A module `a` (file a.js) importing module `b` (file b.js) must derive
+    /// exactly one `a -DEPENDS_ON-> b` edge — and crucially via the `file` ATTR, the
+    /// derivation that is correct on the `MODULE#` sids the legacy parser drops.
+    #[test]
+    fn dispatch_materialize_empty_source_runs_bundled_depends() {
+        let _guard = DATALOG_V2_ENV_LOCK.lock().unwrap();
+        let prev = std::env::var("RFDB_DATALOG_V2").ok();
+
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let mk_node = |sid: &str, file: &str| NodeRecord {
+            id: string_to_id(sid),
+            node_type: Some("MODULE".to_string()),
+            file_id: 0,
+            name_offset: 0,
+            version: "main".to_string(),
+            exported: false,
+            replaces: None,
+            deleted: false,
+            name: Some(sid.to_string()),
+            file: Some(file.to_string()),
+            metadata: None,
+            semantic_id: Some(sid.to_string()),
+        };
+        // Mirror the Haskell shape the legacy parser drops: a `MODULE#`-prefixed sid whose
+        // `file` attr is the real path. depends.dl joins on the attr, so it must still resolve.
+        engine.add_nodes(vec![
+            mk_node("MODULE#a.hs", "a.hs"),
+            mk_node("MODULE#b.hs", "b.hs"),
+        ]);
+        engine.add_edges(
+            vec![EdgeRecord {
+                src: string_to_id("MODULE#a.hs"),
+                dst: string_to_id("MODULE#b.hs"),
+                edge_type: Some("IMPORTS_FROM".to_string()),
+                version: "main".to_string(),
+                metadata: None,
+                deleted: false,
+            }],
+            true,
+        );
+        engine.flush().unwrap();
+
+        std::env::set_var("RFDB_DATALOG_V2", "on");
+        let cf = Arc::new(AtomicBool::new(false));
+        // Empty source ⇒ bundled stdlib depends.dl.
+        let written = dispatch_materialize_datalog(&mut engine, "", cf)
+            .expect("bundled depends materialize must succeed");
+        assert_eq!(
+            written, 1,
+            "bundled depends.dl must derive one DEPENDS_ON via the file attr, even for MODULE# sids"
+        );
 
         match prev {
             Some(v) => std::env::set_var("RFDB_DATALOG_V2", v),

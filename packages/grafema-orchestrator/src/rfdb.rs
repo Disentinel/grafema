@@ -232,6 +232,10 @@ struct RawResponse {
     #[serde(default)]
     results: Option<Vec<DatalogResult>>,
 
+    // Count reply (e.g. materializeDatalog → edges written)
+    #[serde(default)]
+    count: Option<u32>,
+
     // QueryNodes results
     #[serde(default)]
     nodes: Option<Vec<WireNode>>,
@@ -741,6 +745,26 @@ impl RfdbClient {
         Ok(resp.results.unwrap_or_default())
     }
 
+    /// Whether the connected server advertised the v2 `@materialize` write-back capability
+    /// (the `datalogV2Materialize` feature, set when the server's `RFDB_DATALOG_V2` kill
+    /// switch is on). When true, the orchestrator must SKIP its own legacy DEPENDS_ON
+    /// derivation and call [`Self::materialize_datalog`] instead — the server owns the
+    /// derivation. The server is the single source of truth (a duplicated env read here could
+    /// disagree with the server's actual backend).
+    pub fn supports_datalog_v2_materialize(&self) -> bool {
+        self.features.iter().any(|f| f == "datalogV2Materialize")
+    }
+
+    /// Run a Datalog v2 program carrying `@materialize` on the server, committing the
+    /// materialized edges (e.g. stdlib `depends.dl` → DEPENDS_ON) in one atomic generation.
+    /// Returns the number of edges written. The server refuses (coded error) when its kill
+    /// switch is off, so only call this after [`Self::supports_datalog_v2_materialize`].
+    pub async fn materialize_datalog(&mut self, source: &str) -> Result<u32> {
+        let params = serde_json::json!({ "source": source });
+        let resp = self.send_command("materializeDatalog", params).await?;
+        Ok(resp.count.unwrap_or(0))
+    }
+
     /// Start a streaming queryNodes request. Returns (first_chunk, is_streaming).
     ///
     /// If `is_streaming` is true, call [`recv_query_frame`](Self::recv_query_frame)
@@ -1031,6 +1055,7 @@ mod tests {
             edge_count: None,
             delta: None,
             results: None,
+            count: None,
             nodes: None,
             done: None,
             chunk_index: None,
@@ -1058,6 +1083,7 @@ mod tests {
             edge_count: None,
             delta: None,
             results: None,
+            count: None,
             nodes: None,
             done: None,
             chunk_index: None,

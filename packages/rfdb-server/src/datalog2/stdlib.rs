@@ -24,7 +24,11 @@
 //! stamp the materialize layer attaches.
 
 /// The bundled `depends/2` rule program (module→module `DEPENDS_ON`). See module docs.
-pub(crate) const DEPENDS_DL: &str = include_str!("stdlib/depends.dl");
+///
+/// `pub` so the server's `MaterializeDatalog` dispatch can run the CANONICAL depends rule
+/// (empty wire `source` ⇒ this bundled rule) — the orchestrator triggers DEPENDS_ON
+/// derivation without carrying the rule text, keeping a single source of truth (no drift).
+pub const DEPENDS_DL: &str = include_str!("stdlib/depends.dl");
 
 #[cfg(test)]
 mod tests {
