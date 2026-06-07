@@ -1427,6 +1427,94 @@ mod executor_tests {
         assert_eq!(names, vec!["withcat"]);
     }
 
+    /// Three-valued logic for ORDER-style comparisons over INCOMPARABLE (but
+    /// non-NULL) operands. In the fixture, `withcat.category` is the string
+    /// `"alpha"`. Comparing a String against an Int (`n.category < 5`) is
+    /// incomparable, so per Cypher/Neo4j it must evaluate to NULL — not a
+    /// definite `false`. Under `NOT`, NULL stays NULL and the row is EXCLUDED.
+    ///
+    /// Before the fix `eval_binop` returned `Bool(false)` for incomparable
+    /// operands (`partial_cmp_values(..).unwrap_or(false)`), so
+    /// `NOT (Str < Int)` became `NOT false = true` and wrongly admitted
+    /// `withcat`. This is the incomparable-type sibling of the NULL-operand
+    /// guard (#341) and the string-predicate / AND-OR NULL fixes (#348/#352).
+    ///
+    /// `NOT (category < 5)` must match NOTHING: `withcat` → `Str < Int` = NULL →
+    /// `NOT NULL` = NULL (excluded); the two NULL-category nodes → `null < 5` =
+    /// NULL → excluded.
+    #[test]
+    fn filter_not_lt_incomparable_types_excluded() {
+        let names = filtered_names(Expr::Not(Box::new(Expr::BinaryOp(
+            Box::new(Expr::Property("n".to_string(), "category".to_string())),
+            BinOp::Lt,
+            Box::new(Expr::Literal(CypherLiteral::Int(5))),
+        ))));
+        assert!(
+            names.is_empty(),
+            "NOT (String < Int) is incomparable -> NULL -> NOT NULL = NULL; row must be excluded, got {:?}",
+            names
+        );
+    }
+
+    /// Sibling of `filter_not_lt_incomparable_types_excluded` for `>=`.
+    /// `NOT (category >= 5)` over `withcat` (`"alpha"` vs Int) must also be
+    /// NULL → excluded, not `NOT false = true`.
+    #[test]
+    fn filter_not_gte_incomparable_types_excluded() {
+        let names = filtered_names(Expr::Not(Box::new(Expr::BinaryOp(
+            Box::new(Expr::Property("n".to_string(), "category".to_string())),
+            BinOp::Gte,
+            Box::new(Expr::Literal(CypherLiteral::Int(5))),
+        ))));
+        assert!(
+            names.is_empty(),
+            "NOT (String >= Int) is incomparable -> NULL; row must be excluded, got {:?}",
+            names
+        );
+    }
+
+    /// Guard against over-correction: a direct (non-negated) incomparable
+    /// ordering still EXCLUDES the row (NULL is not truthy). Passes both before
+    /// (false) and after (NULL) the fix — confirms top-level WHERE is unchanged.
+    #[test]
+    fn filter_lt_incomparable_types_still_excludes() {
+        let names = filtered_names(Expr::BinaryOp(
+            Box::new(Expr::Property("n".to_string(), "category".to_string())),
+            BinOp::Lt,
+            Box::new(Expr::Literal(CypherLiteral::Int(5))),
+        ));
+        assert!(
+            names.is_empty(),
+            "String < Int is incomparable -> not truthy; row must be excluded, got {:?}",
+            names
+        );
+    }
+
+    /// Guard: valid SAME-type ordering still works after the fix. String vs
+    /// String (`category < 'b'`) is comparable: `"alpha" < "b"` is true, so
+    /// `withcat` matches; the NULL-category nodes are excluded.
+    #[test]
+    fn filter_lt_same_type_strings_still_matches() {
+        let names = filtered_names(Expr::BinaryOp(
+            Box::new(Expr::Property("n".to_string(), "category".to_string())),
+            BinOp::Lt,
+            Box::new(Expr::Literal(CypherLiteral::Str("b".to_string()))),
+        ));
+        assert_eq!(names, vec!["withcat"]);
+    }
+
+    /// Guard: valid numeric ordering still works. `nocat_other` has `other = 1`
+    /// (Int); `other > 0` is comparable and true, so it matches.
+    #[test]
+    fn filter_gt_same_type_numbers_still_matches() {
+        let names = filtered_names(Expr::BinaryOp(
+            Box::new(Expr::Property("n".to_string(), "other".to_string())),
+            BinOp::Gt,
+            Box::new(Expr::Literal(CypherLiteral::Int(0))),
+        ));
+        assert_eq!(names, vec!["nocat_other"]);
+    }
+
     #[test]
     fn filter_exported_boolean() {
         let engine = create_test_graph();
