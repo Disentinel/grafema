@@ -385,7 +385,6 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
     /// recursive-leg variant reading the candidate Δ (facts whose derivation used a candidate)
     /// — both restricted to facts that actually exist in the prior `Total` (only an existing
     /// fact can be deleted). The working Δ rides each predicate's `Relation::delta`.
-    #[cfg_attr(not(test), allow(dead_code))]
     fn over_delete(
         &self,
         plans: &[RulePlan],
@@ -553,7 +552,6 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
     /// another (recursion), so the scan repeats until a round restores nothing — the least
     /// fixpoint of "supported by surviving ∪ already-restored". Bounded by the candidate set,
     /// not the full relation.
-    #[cfg_attr(not(test), allow(dead_code))]
     fn rederive(
         &self,
         plans: &[RulePlan],

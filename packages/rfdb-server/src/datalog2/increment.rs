@@ -212,7 +212,6 @@ impl BaseDelta {
 /// [`BaseDelta`] asserts facts new in `cur` and retracts facts gone from `prev`.
 // Consumed by the engine_v2 incremental `@materialize` path (Gate C EXIT, next commit) and
 // fully exercised by the tests now; allow the gap only in a non-test build until then.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn diff_base(prev: &dyn StorageView, cur: &dyn StorageView) -> BaseDelta {
     BaseDelta {
         nodes: diff(
@@ -229,14 +228,12 @@ pub(crate) fn diff_base(prev: &dyn StorageView, cur: &dyn StorageView) -> BaseDe
 /// Build a [`StorageView`] exposing ONLY the ASSERTED base delta `ΔB⁺` — the view the
 /// incremental insertion seed installs via `with_delta_view`, so a base leg flagged as the
 /// semi-naive delta leg reads only the new base facts.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn delta_view(base: &BaseDelta) -> crate::datalog2::storage_glue::FixtureStorageView {
     view_from(&base.nodes.asserted, &base.edges.asserted)
 }
 
 /// Build a [`StorageView`] exposing ONLY the RETRACTED base delta `ΔB⁻` — the view DRed's
 /// over-delete installs, so a base leg reads only the deleted base facts.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn delta_view_retracted(
     base: &BaseDelta,
 ) -> crate::datalog2::storage_glue::FixtureStorageView {
@@ -246,7 +243,6 @@ pub(crate) fn delta_view_retracted(
 /// Reconstruct a `FixtureStorageView` from one side (asserted or retracted) of a base delta,
 /// rebuilding `NodeRow`/`EdgeRow` from the canonical-order value tuples (`Row::as_values`:
 /// node `[id, type, name, file]`, edge `[src, type, dst]`).
-#[cfg_attr(not(test), allow(dead_code))]
 fn view_from(
     nodes: &BTreeMap<u64, (Box<[Value]>, BoolTag)>,
     edges: &BTreeMap<u64, (Box<[Value]>, BoolTag)>,
@@ -277,7 +273,6 @@ fn view_from(
 
 /// Materialize one base relation of a view as a presence-weighted relation keyed by the
 /// canonical `fact_id` over the full tuple (so an attribute change is a distinct fact).
-#[cfg_attr(not(test), allow(dead_code))]
 fn scan_weighted(
     view: &dyn StorageView,
     rel: Relation,

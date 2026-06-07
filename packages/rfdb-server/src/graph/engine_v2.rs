@@ -471,6 +471,64 @@ impl GraphEngineV2 {
 
         Ok(written)
     }
+
+    /// Incrementally maintain a Datalog program's derived relations against the CURRENT
+    /// committed snapshot, given the prior run's result `prev` and the `prev_snapshot` it was
+    /// computed at — the real-storage entry behind incremental `@materialize` (spec §9, the
+    /// Gate C EXIT on live `storage_v2`).
+    ///
+    /// Diffs the base relations between the two version-pinned snapshots
+    /// ([`crate::datalog2::increment::diff_base`]) and replays the change through
+    /// [`crate::datalog2::exec::maintain_incremental`] (DRed deletion + insertion). Returns the
+    /// maintained [`Evaluation`] — provably equal to a from-scratch eval of the current
+    /// snapshot — for the sound monotone envelope, or `Ok(None)` when the program is outside
+    /// it (negation / multiple derived strata) and the caller must recompute from scratch. A
+    /// pure read over the two snapshots: no commit happens here (projecting the maintained
+    /// relations back to edges is the write-back caller's concern).
+    pub fn maintain_datalog_v2(
+        &self,
+        source: &str,
+        prev: &crate::datalog2::exec::Evaluation,
+        prev_snapshot: crate::storage_v2::read_snapshot::ReadSnapshot,
+        limits: crate::datalog::EvalLimits,
+    ) -> std::result::Result<Option<crate::datalog2::exec::Evaluation>, crate::datalog2::EvalError>
+    {
+        let program = crate::datalog2::parser_ext::parse_ext_program(source)?;
+        let strat = crate::datalog2::stratify::stratify(&program)?;
+        let rules = program.rules();
+
+        let cur_snapshot = self.snapshot();
+        let all_nodes = self.store.find_nodes_at(&cur_snapshot, None, None);
+        let mut nodes_by_type: std::collections::HashMap<String, u64> =
+            std::collections::HashMap::new();
+        for n in &all_nodes {
+            *nodes_by_type.entry(n.node_type.clone()).or_insert(0) += 1;
+        }
+        let stats = crate::datalog2::builtin::Stats {
+            total_nodes: all_nodes.len() as u64,
+            total_edges: self.store.edge_count_at(&cur_snapshot) as u64,
+            nodes_by_type,
+        };
+        let plans = crate::datalog2::plan::plan_program(&rules, &strat, &stats)?;
+
+        let prev_view =
+            crate::datalog2::storage_glue::BorrowedLsmStorageView::new(&self.store, prev_snapshot);
+        let cur_view =
+            crate::datalog2::storage_glue::BorrowedLsmStorageView::new(&self.store, cur_snapshot);
+        let base_delta = crate::datalog2::increment::diff_base(&prev_view, &cur_view);
+
+        let maintained = crate::datalog2::exec::maintain_incremental::<crate::datalog2::tag::BoolTag>(
+            prev,
+            &prev_view,
+            &cur_view,
+            &base_delta,
+            &plans,
+            &rules,
+            &strat,
+            limits,
+        )?;
+        Ok(maintained)
+    }
 }
 
 /// Stringify a v2 Datalog [`crate::datalog::Value`] for the wire (ids render as their
@@ -3012,5 +3070,99 @@ mod tests {
             "abort-no-commit: the prior generation is intact"
         );
         assert!(engine.store.get_edges_by_type_at(&engine.snapshot(), "T").is_empty());
+    }
+
+    // ── Gate C EXIT on real storage: maintain_datalog_v2 ≡ scratch ───
+
+    /// The Gate C EXIT on a live `storage_v2` graph (not the in-memory fixture): across a
+    /// series of base-edge insertions committed to the real store, the relation maintained by
+    /// `maintain_datalog_v2` (diff two pinned `ReadSnapshot`s → `maintain_incremental`) is
+    /// byte-identical to a from-scratch evaluation of each new snapshot. DRed deletion is
+    /// proven on the in-memory fixture across the same `StorageView` trait boundary; this test
+    /// exercises the real `BorrowedLsmStorageView` end of it.
+    #[test]
+    fn maintain_datalog_v2_equals_scratch_on_real_store_over_cycles() {
+        use crate::datalog2::exec::{Evaluation, Executor, DEFAULT_ITERATION_CAP};
+        use crate::datalog2::parser_ext::parse_ext_program;
+        use crate::datalog2::plan::plan_program;
+        use crate::datalog2::stratify::stratify;
+        use crate::datalog2::tag::BoolTag;
+        use crate::datalog::EvalLimits;
+
+        // Transitive closure over IMPORTS_FROM — negation-free, single recursive stratum.
+        let src = "path(A, B) :- edge(A, B, \"IMPORTS_FROM\").\n\
+                   path(A, B) :- edge(A, C, \"IMPORTS_FROM\"), path(C, B).";
+
+        let mut engine = GraphEngineV2::create_ephemeral();
+        // Commit eight module nodes m0..m7 plus a seed chain m0→m1→m2.
+        let ids: Vec<u128> = (0..8u32)
+            .map(|i| {
+                let sid = format!("m{i}.js->MODULE->m{i}");
+                make_v2_node(&sid, "MODULE", &format!("m{i}"), &format!("m{i}.js")).id
+            })
+            .collect();
+        let nodes: Vec<_> = (0..8u32)
+            .map(|i| make_v2_node(&format!("m{i}.js->MODULE->m{i}"), "MODULE", &format!("m{i}"), &format!("m{i}.js")))
+            .collect();
+        let imp = |s: usize, d: usize| EdgeRecordV2 {
+            src: ids[s],
+            dst: ids[d],
+            edge_type: "IMPORTS_FROM".to_string(),
+            metadata: String::new(),
+        };
+        engine
+            .commit_batch_ext(
+                nodes,
+                vec![imp(0, 1), imp(1, 2)],
+                &(0..8).map(|i| format!("m{i}.js")).collect::<Vec<_>>(),
+                HashMap::new(),
+                &[],
+            )
+            .expect("base commit");
+
+        // Plan once (program is fixed); scratch eval helper over a pinned snapshot.
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let stats = crate::datalog2::builtin::Stats {
+            total_nodes: 8,
+            total_edges: 8,
+            ..Default::default()
+        };
+        let plans = plan_program(&rules, &strat, &stats).expect("plan");
+        let scratch_at = |engine: &GraphEngineV2| -> Evaluation {
+            let snap = engine.snapshot();
+            let view = crate::datalog2::storage_glue::BorrowedLsmStorageView::new(&engine.store, snap);
+            Executor::<BoolTag>::with_limits(&view, EvalLimits::none(), DEFAULT_ITERATION_CAP)
+                .evaluate(&plans, &rules, &strat)
+                .expect("scratch")
+        };
+
+        let mut prev_eval = scratch_at(&engine);
+        let mut prev_snap = engine.snapshot();
+        let mut saw_growth = false;
+
+        // Each cycle adds one IMPORTS_FROM edge (additive commit) and maintains incrementally.
+        for (s, d) in [(2usize, 3usize), (3, 4), (0, 5), (5, 6), (4, 7), (6, 7)] {
+            engine
+                .commit_batch_ext(Vec::new(), vec![imp(s, d)], &[], HashMap::new(), &[])
+                .expect("additive edge commit");
+
+            let maintained = engine
+                .maintain_datalog_v2(src, &prev_eval, prev_snap.clone(), EvalLimits::none())
+                .expect("maintain")
+                .expect("monotone envelope → Some, not a recompute fallback");
+            let scratch = scratch_at(&engine);
+            assert_eq!(
+                maintained.relations, scratch.relations,
+                "real-store maintain ≡ scratch after adding m{s}→m{d}"
+            );
+            if maintained.facts("path").len() > prev_eval.facts("path").len() {
+                saw_growth = true;
+            }
+            prev_eval = maintained;
+            prev_snap = engine.snapshot();
+        }
+        assert!(saw_growth, "the transitive closure grew under the seeded insertions");
     }
 }
