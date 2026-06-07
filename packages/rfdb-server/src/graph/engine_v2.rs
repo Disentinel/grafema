@@ -191,6 +191,27 @@ pub struct GraphEngineV2 {
     /// MVCC C3.a: count of auto-compaction rounds fired during bulk-load
     /// (diagnostics / acceptance bench).
     auto_compactions: u64,
+    /// Gate D2: per-program cross-call cache of `(pinned prior snapshot, prior Evaluation)`
+    /// for work-proportional `@materialize`. Keyed by a stable hash of the program source. A
+    /// cache hit lets [`Self::eval_datalog_v2_materialize_cached`] MAINTAIN (delta-seeded)
+    /// instead of full-eval; a miss (first run / restart / outside the monotone envelope) falls
+    /// back to a full eval. Holding the [`ReadSnapshot`] pins that version (its segments survive
+    /// GC); replacing the entry drops the old pin, so retained disk is bounded to one prior
+    /// generation per materialized program.
+    datalog2_materialize_cache: std::collections::HashMap<
+        u64,
+        (
+            crate::storage_v2::read_snapshot::ReadSnapshot,
+            crate::datalog2::exec::Evaluation,
+        ),
+    >,
+    /// Test-only: counts how many times [`Self::derive_for_materialize`] took the work-
+    /// proportional MAINTAIN path (vs a from-scratch recompute). Lets the cached-materialize
+    /// proof assert the incremental path actually fired — a correctness-only check can't, since
+    /// maintain and scratch yield identical results by construction. Per-engine (no cross-test
+    /// race); atomic so it can be bumped through `&self`.
+    #[cfg(test)]
+    datalog2_maintain_hits: std::sync::atomic::AtomicU64,
 }
 
 // ── Constructors ────────────────────────────────────────────────────
@@ -220,6 +241,9 @@ impl GraphEngineV2 {
             bulk_load_active: false,
             auto_compact_threshold: 8,
             auto_compactions: 0,
+            datalog2_materialize_cache: std::collections::HashMap::new(),
+            #[cfg(test)]
+            datalog2_maintain_hits: std::sync::atomic::AtomicU64::new(0),
             #[cfg(feature = "embedding")]
             embedding_engine: Self::init_embedding_engine(Some(path)),
         })
@@ -240,6 +264,9 @@ impl GraphEngineV2 {
             bulk_load_active: false,
             auto_compact_threshold: 8,
             auto_compactions: 0,
+            datalog2_materialize_cache: std::collections::HashMap::new(),
+            #[cfg(test)]
+            datalog2_maintain_hits: std::sync::atomic::AtomicU64::new(0),
             #[cfg(feature = "embedding")]
             embedding_engine: None,
         }
@@ -283,6 +310,9 @@ impl GraphEngineV2 {
             bulk_load_active: false,
             auto_compact_threshold: 8,
             auto_compactions: 0,
+            datalog2_materialize_cache: std::collections::HashMap::new(),
+            #[cfg(test)]
+            datalog2_maintain_hits: std::sync::atomic::AtomicU64::new(0),
             #[cfg(feature = "embedding")]
             embedding_engine: Self::init_embedding_engine(Some(path)),
         })
@@ -641,37 +671,106 @@ impl GraphEngineV2 {
         let program = crate::datalog2::parser_ext::parse_ext_program(source)?;
         let specs = crate::datalog2::materialize::collect_materialize_specs(&program)?;
 
-        let maintained =
-            self.maintain_datalog_v2(source, prev, prev_snapshot, limits.clone())?;
-        let evaluation = match maintained {
-            Some(e) => e,
-            None => {
-                // Outside the envelope ⇒ recompute from scratch (correctness floor).
-                let all_nodes = self.store.find_nodes_at(&snapshot, None, None);
-                let mut nodes_by_type: HashMap<String, u64> = HashMap::new();
-                for n in &all_nodes {
-                    *nodes_by_type.entry(n.node_type.clone()).or_insert(0) += 1;
-                }
-                let stats = crate::datalog2::builtin::Stats {
-                    total_nodes: all_nodes.len() as u64,
-                    total_edges: self.store.edge_count_at(&snapshot) as u64,
-                    nodes_by_type,
-                };
-                let view = crate::datalog2::storage_glue::BorrowedLsmStorageView::new(
-                    &self.store,
-                    snapshot.clone(),
-                );
-                crate::datalog2::evaluate_with_materialize(
-                    &view,
-                    source,
-                    stats,
-                    limits,
-                    crate::datalog2::events::EventLog::discard(),
-                )?
-                .0
-            }
-        };
+        let evaluation =
+            self.derive_for_materialize(source, Some((prev_snapshot, prev)), &snapshot, limits)?;
         self.materialize_writeback_delta(&evaluation, &specs, &snapshot, generation)
+    }
+
+    /// Work-proportional `@materialize` with an in-engine cross-call cache (Gate D2). On a cache
+    /// hit, MAINTAIN the derived relations against the prior pinned snapshot (delta-seeded) and
+    /// commit only the edge delta; on a miss (first run / process restart / a program that falls
+    /// outside the monotone envelope) recompute from scratch (the correctness floor, I5). Either
+    /// way the cache is refreshed to the current snapshot + result, so the NEXT call is
+    /// work-proportional — and replacing the entry drops the prior snapshot's pin (bounded disk).
+    ///
+    /// Requires no API/wire/orchestrator change: the existing `materialize_datalog("")` call
+    /// transparently gets the work-proportional path on its 2nd+ invocation against a long-lived
+    /// engine. Durable-across-restart pinning is the named follow-up; this is its prerequisite.
+    pub fn eval_datalog_v2_materialize_cached(
+        &mut self,
+        source: &str,
+        limits: crate::datalog::EvalLimits,
+    ) -> std::result::Result<(usize, usize), crate::datalog2::EvalError> {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        source.hash(&mut hasher);
+        let key = hasher.finish();
+
+        let snapshot = self.snapshot();
+        let generation = snapshot.version + 1;
+        let program = crate::datalog2::parser_ext::parse_ext_program(source)?;
+        let specs = crate::datalog2::materialize::collect_materialize_specs(&program)?;
+
+        // Clone the prior entry out so the `&self` maintain borrow doesn't collide with the
+        // `&mut self` write-back; cloning the ReadSnapshot bumps its pin (released on drop).
+        let prior_owned = self.datalog2_materialize_cache.get(&key).cloned();
+        let evaluation = {
+            let prior = prior_owned.as_ref().map(|(s, e)| (s.clone(), e));
+            self.derive_for_materialize(source, prior, &snapshot, limits)?
+        };
+
+        let counts = self.materialize_writeback_delta(&evaluation, &specs, &snapshot, generation)?;
+        // Refresh the cache to this generation (drops & unpins the previous one).
+        self.datalog2_materialize_cache.insert(key, (snapshot, evaluation));
+        Ok(counts)
+    }
+
+    /// Produce the derived `Evaluation` for a `@materialize` run: MAINTAIN against a prior pinned
+    /// `(snapshot, Evaluation)` when one is supplied AND the program stays inside the monotone
+    /// envelope; otherwise (no prior, or maintenance returned `None`) recompute from scratch.
+    /// Shared by the explicit-prev ([`Self::eval_datalog_v2_maintain_writeback`]) and cached
+    /// ([`Self::eval_datalog_v2_materialize_cached`]) entries.
+    fn derive_for_materialize(
+        &self,
+        source: &str,
+        prior: Option<(
+            crate::storage_v2::read_snapshot::ReadSnapshot,
+            &crate::datalog2::exec::Evaluation,
+        )>,
+        cur_snapshot: &crate::storage_v2::read_snapshot::ReadSnapshot,
+        limits: crate::datalog::EvalLimits,
+    ) -> std::result::Result<crate::datalog2::exec::Evaluation, crate::datalog2::EvalError> {
+        if let Some((prev_snapshot, prev)) = prior {
+            if let Some(e) = self.maintain_datalog_v2(source, prev, prev_snapshot, limits.clone())? {
+                #[cfg(test)]
+                self.datalog2_maintain_hits
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                return Ok(e);
+            }
+        }
+        self.evaluate_materialize_scratch(source, cur_snapshot, limits)
+    }
+
+    /// Full from-scratch derivation of a `@materialize` program at a pinned snapshot (the
+    /// correctness floor for [`Self::derive_for_materialize`]).
+    fn evaluate_materialize_scratch(
+        &self,
+        source: &str,
+        snapshot: &crate::storage_v2::read_snapshot::ReadSnapshot,
+        limits: crate::datalog::EvalLimits,
+    ) -> std::result::Result<crate::datalog2::exec::Evaluation, crate::datalog2::EvalError> {
+        let all_nodes = self.store.find_nodes_at(snapshot, None, None);
+        let mut nodes_by_type: HashMap<String, u64> = HashMap::new();
+        for n in &all_nodes {
+            *nodes_by_type.entry(n.node_type.clone()).or_insert(0) += 1;
+        }
+        let stats = crate::datalog2::builtin::Stats {
+            total_nodes: all_nodes.len() as u64,
+            total_edges: self.store.edge_count_at(snapshot) as u64,
+            nodes_by_type,
+        };
+        let view = crate::datalog2::storage_glue::BorrowedLsmStorageView::new(
+            &self.store,
+            snapshot.clone(),
+        );
+        Ok(crate::datalog2::evaluate_with_materialize(
+            &view,
+            source,
+            stats,
+            limits,
+            crate::datalog2::events::EventLog::discard(),
+        )?
+        .0)
     }
 
     /// Commit ONLY the edge delta of a freshly-derived `@materialize` result against what is
@@ -3619,5 +3718,119 @@ mod tests {
             prev_eval = eval_at(&engine);
             prev_snap = engine.snapshot();
         }
+    }
+
+    /// Gate D2: the cached `@materialize` entry keeps the materialized edge set ≡ a full scratch
+    /// derivation across calls WITHOUT an explicit prior — the in-engine pinned cache supplies it
+    /// — and actually takes the work-proportional MAINTAIN path on every call after the first
+    /// (proven via the test-only hit counter; a correctness-only assertion could not establish
+    /// this, since maintain and scratch yield identical results by construction).
+    #[test]
+    fn cached_materialize_maintains_across_calls_and_equals_scratch() {
+        use crate::datalog::{EvalLimits, Value};
+        use std::sync::atomic::Ordering;
+        let src = r#"@materialize(edge_type = "DEPENDS_ON")
+                     dep(X, Y) :- edge(X, Y, "IMPORTS_FROM")."#;
+
+        let dep_scratch = |engine: &GraphEngineV2| -> std::collections::HashSet<(u128, u128)> {
+            let snap = engine.snapshot();
+            let all_nodes = engine.store.find_nodes_at(&snap, None, None);
+            let mut nbt: HashMap<String, u64> = HashMap::new();
+            for n in &all_nodes {
+                *nbt.entry(n.node_type.clone()).or_insert(0) += 1;
+            }
+            let stats = crate::datalog2::builtin::Stats {
+                total_nodes: all_nodes.len() as u64,
+                total_edges: engine.store.edge_count_at(&snap) as u64,
+                nodes_by_type: nbt,
+            };
+            let view = crate::datalog2::storage_glue::BorrowedLsmStorageView::new(&engine.store, snap);
+            let (eval, _s) = crate::datalog2::evaluate_with_materialize(
+                &view,
+                src,
+                stats,
+                EvalLimits::none(),
+                crate::datalog2::events::EventLog::discard(),
+            )
+            .expect("scratch");
+            eval.facts("dep")
+                .iter()
+                .map(|t| match (&t[0], &t[1]) {
+                    (Value::Id(a), Value::Id(b)) => (*a, *b),
+                    _ => panic!("dep tuple shape"),
+                })
+                .collect()
+        };
+        let deps = |e: &GraphEngineV2| {
+            e.store
+                .get_edges_by_type_at(&e.snapshot(), "DEPENDS_ON")
+                .into_iter()
+                .map(|x| (x.src, x.dst))
+                .collect::<std::collections::HashSet<(u128, u128)>>()
+        };
+
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let ids: Vec<u128> = (0..6u32)
+            .map(|i| make_v2_node(&format!("m{i}.js->MODULE->m{i}"), "MODULE", &format!("m{i}"), &format!("m{i}.js")).id)
+            .collect();
+        let nodes: Vec<_> = (0..6u32)
+            .map(|i| make_v2_node(&format!("m{i}.js->MODULE->m{i}"), "MODULE", &format!("m{i}"), &format!("m{i}.js")))
+            .collect();
+        let imp = |s: usize, d: usize| EdgeRecordV2 {
+            src: ids[s],
+            dst: ids[d],
+            edge_type: "IMPORTS_FROM".to_string(),
+            metadata: String::new(),
+        };
+        engine
+            .commit_batch_ext(
+                nodes,
+                vec![imp(0, 1), imp(1, 2)],
+                &(0..6).map(|i| format!("m{i}.js")).collect::<Vec<_>>(),
+                HashMap::new(),
+                &[],
+            )
+            .expect("base commit");
+
+        // First call: cache miss ⇒ full eval (no maintain hit), then the cache is populated.
+        engine
+            .eval_datalog_v2_materialize_cached(src, EvalLimits::none())
+            .expect("first materialize");
+        assert_eq!(deps(&engine), dep_scratch(&engine), "first (miss) ≡ scratch");
+        assert_eq!(engine.datalog2_maintain_hits.load(Ordering::Relaxed), 0, "first call is a miss");
+        assert_eq!(engine.datalog2_materialize_cache.len(), 1, "cache populated after first call");
+
+        // Subsequent calls: each must take the MAINTAIN path (hit) and stay ≡ scratch.
+        let edits: [(bool, usize, usize); 6] =
+            [(true, 2, 3), (true, 0, 4), (true, 3, 5), (false, 0, 1), (true, 4, 5), (false, 1, 2)];
+        for (i, (add, s, d)) in edits.into_iter().enumerate() {
+            if add {
+                engine
+                    .commit_batch_ext(Vec::new(), vec![imp(s, d)], &[], HashMap::new(), &[])
+                    .expect("additive edge commit");
+            } else {
+                engine.delete_edge(ids[s], ids[d], "IMPORTS_FROM");
+                engine.flush().expect("base delete flush");
+            }
+            engine
+                .eval_datalog_v2_materialize_cached(src, EvalLimits::none())
+                .expect("cached materialize");
+            assert_eq!(
+                deps(&engine),
+                dep_scratch(&engine),
+                "cached DEPENDS_ON ≡ scratch after edit add={add} m{s}→m{d}"
+            );
+            assert_eq!(
+                engine.datalog2_maintain_hits.load(Ordering::Relaxed),
+                (i as u64) + 1,
+                "maintain path fired on cache hit #{}",
+                i + 1
+            );
+        }
+        assert_eq!(
+            engine.datalog2_materialize_cache.len(),
+            1,
+            "cache holds exactly one generation per program"
+        );
     }
 }
