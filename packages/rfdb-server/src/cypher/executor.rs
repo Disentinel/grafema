@@ -427,7 +427,15 @@ impl<'a> VarLengthExpand<'a> {
         };
 
         while let Some((node_id, depth)) = queue.pop_front() {
-            if depth >= self.min_depth && depth > 0 {
+            // Emit a node once its depth reaches the lower bound. `depth >=
+            // min_depth` alone is correct for every bound: for the usual
+            // `min_depth >= 1` it already excludes the start node (depth 0), and
+            // for a ZERO lower bound (`*0` / `*0..N`) it includes the start node
+            // bound to itself — the openCypher zero-length path. A prior `&&
+            // depth > 0` guard unconditionally dropped depth 0, silently omitting
+            // the start node from `*0` patterns (e.g. the `-[:CONTAINS*0..]->`
+            // "self-or-descendants" idiom).
+            if depth >= self.min_depth {
                 result.push(node_id);
             }
             if depth >= self.max_depth {
