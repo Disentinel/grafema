@@ -44,6 +44,7 @@ pub mod exec;
 pub mod events;
 pub mod materialize;
 pub mod binding;
+pub mod increment;
 pub mod stdlib;
 
 #[cfg(test)]
