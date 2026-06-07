@@ -620,6 +620,30 @@ mod parser_tests {
         .unwrap();
         assert_eq!(q.match_clause.pattern.start.labels, vec!["FUNCTION".to_string()]);
     }
+
+    #[test]
+    fn limit_zero_parses() {
+        // LIMIT 0 is a valid (if pointless) non-negative bound.
+        let q = parse_cypher("MATCH (n:FUNCTION) RETURN n.name LIMIT 0").unwrap();
+        assert_eq!(q.limit, Some(0));
+    }
+
+    #[test]
+    fn negative_limit_rejected() {
+        // A negative LIMIT must be a parse error, not silently wrapped to a huge
+        // u64 (which would behave as "no limit" and return the entire result set).
+        let err = parse_cypher("MATCH (n:FUNCTION) RETURN n.name LIMIT -1")
+            .expect_err("LIMIT -1 must be rejected");
+        let msg = format!("{}", err).to_lowercase();
+        assert!(
+            msg.contains("limit") && msg.contains("non-negative"),
+            "expected a clear non-negative LIMIT error, got: {}",
+            msg
+        );
+
+        // Larger negative values are rejected the same way.
+        assert!(parse_cypher("MATCH (n:FUNCTION) RETURN n.name LIMIT -5").is_err());
+    }
 }
 
 mod value_tests {
@@ -3775,6 +3799,42 @@ mod integration_tests {
             .map(|row| row[0].as_str().unwrap())
             .collect();
         assert_eq!(names, vec!["validate", "main", "helper"]);
+    }
+
+    #[test]
+    fn negative_limit_does_not_return_full_result_set() {
+        // Regression: `LIMIT -1` was parsed to i64 -1 then cast `as u64`, yielding
+        // u64::MAX — so the Limit operator never stopped and the query silently
+        // returned EVERY row instead of erroring. An agent that computes a limit
+        // and accidentally passes a negative value would get the whole graph back
+        // dressed up as a capped result. The fix rejects negative LIMIT at parse
+        // time, so execution surfaces a loud error rather than wrong data.
+        let engine = create_test_graph();
+
+        // Baseline: there is more than one FUNCTION node, so an unbounded scan
+        // returns multiple rows. This makes the "returned everything" failure
+        // mode observable.
+        let all = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN n.name",
+            EvalLimits::none(),
+        )
+        .unwrap();
+        assert!(
+            all.row_count > 1,
+            "fixture must have >1 FUNCTION node for this test to be meaningful"
+        );
+
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN n.name LIMIT -1",
+            EvalLimits::none(),
+        );
+        assert!(
+            result.is_err(),
+            "negative LIMIT must error, not return {} rows",
+            result.map(|r| r.row_count).unwrap_or(0)
+        );
     }
 }
 
