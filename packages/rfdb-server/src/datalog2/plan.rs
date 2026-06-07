@@ -394,18 +394,33 @@ fn order_literals(body: &[Literal], head: &str, stats: &Stats) -> PlanResult<Vec
 /// (spec §7). Used only to break bound-first feasibility ties during ordering, so it must be
 /// a pure function of the binding state and never change WHICH facts are derived (I1).
 ///
-/// Filters/functions are always cheapest (they prune/bind within the current row, fan-out
-/// ≤ 1) so a placeable filter leads as soon as its inputs are bound. A relational leg is
-/// ranked by its estimated output cardinality: a base relation uses the per-type /
-/// per-endpoint oracle ([`base_estimate`] — e.g. `node(X, "TYPE")` costs that type's live
-/// count, not `total_nodes`), so the most selective feasible generator is placed first;
-/// derived/unknown predicates use the conservative derived magnitude.
+/// The ranking turns on whether the leg INTRODUCES new tuples under the current bindings:
+///
+/// * A leg that binds NO new variable — a filter (`neq`/`gt`/…), a fully-bound existence or
+///   point check (`node(BoundId,"T")`, `attr(BoundId,"k",V)`, a negated anti-join) — has
+///   fan-out ≤ 1: it can only prune. It is the cheapest possible leg (cost 0) and must lead
+///   the moment it is feasible. This is what keeps a type-filter running IMMEDIATELY after the
+///   generator that bound its id, instead of deferring behind a second generator (which would
+///   materialize the cross-product of two generators before any pruning — observed on the
+///   stdlib `depends` rule: two `attr(FreeId,"file",F)` generators sorted ahead of their
+///   `node(M,"MODULE")` filters blew the intermediate set to ~12M rows).
+/// * A leg that DOES bind a new variable is a generator, ranked by its estimated output
+///   cardinality through the SAME per-type / per-endpoint oracle the per-rule guard folds in
+///   ([`base_estimate`]). Note this correctly costs `attr(FreeId,"key","val")` in GENERATOR
+///   mode (binds the free id) as a keyed reverse-lookup — NOT as the 0-cost filter the old
+///   `is_filter_or_function("attr")` blanket made it, which mis-ranked it ahead of cheaper
+///   point-check legs.
 fn ordering_estimate(lit: &Literal, bound: &HashSet<String>, stats: &Stats) -> u64 {
     let atom = lit.atom();
     let pred = atom.predicate();
-    // Filters and functions consume the current row: lowest possible cost (fan-out ≤ 1), so
-    // a feasible filter is placed the moment its inputs are bound.
-    if is_filter_or_function(pred) {
+    // A leg that introduces no new variable under the current bindings is a pure filter /
+    // point check (fan-out ≤ 1). Negative literals are anti-joins (membership test, fan-out
+    // ≤ 1). Either way: cheapest possible, lead it as soon as it is feasible.
+    let provided = match lit {
+        Literal::Positive(a) => provided_vars(a, bound),
+        Literal::Negative(_) => HashSet::new(),
+    };
+    if provided.is_empty() {
         return 0;
     }
     let pattern = arg_pattern(atom, bound);

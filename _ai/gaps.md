@@ -2,6 +2,33 @@
 
 Gaps discovered during dogfooding. Each gap = graph couldn't answer a question it should.
 
+## 2026-06-07: Orchestrator DEPENDS_ON derivation drops Haskell (`MODULE#`-sid) imports
+
+- **Where**: `packages/grafema-orchestrator/src/main.rs:1745-1758` (phase 9, "Derive MODULE→MODULE
+  DEPENDS_ON edges from IMPORTS_FROM"). For each `IMPORTS_FROM` edge it maps each endpoint to a file by
+  STRING-PARSING the semantic_id — strip `grafema://{authority}/` prefix, ELSE `split("->").next()` — then
+  `file_to_module.get(parsed_file)`.
+- **Bug**: a Haskell `IMPORTS_FROM` runs IMPORT-node → MODULE-node. The MODULE endpoint's semantic_id has a
+  `MODULE#` prefix (e.g. `MODULE#/Users/.../AST/Types.hs`), which matches NEITHER parse branch (`grafema://`
+  nor `->`), so the parser leaves the whole `MODULE#/...` string → `file_to_module` miss → the edge is
+  silently dropped. Affects all 16 Haskell packages.
+- **Evidence (live, on `.grafema/grafema.rfdb`, snapshot v104, via the Gate B differential diagnostic,
+  `src/datalog2/differential.rs`)**:
+  - `805 of 1644` IMPORTS_FROM edges had an endpoint the orchestrator's sid-parse could not map.
+  - `622` edges map both endpoints to distinct modules by FILE ATTR but NOT by sid-parse; sample dst:
+    `sid=MODULE#/Users/.../AST/Types.hs file_attr="/Users/.../AST/Types.hs" sid_parsed="MODULE#/Users/.../AST/Types.hs"`.
+  - Net: the orchestrator under-derives DEPENDS_ON by **127 real module-pairs** (v2's file-attr join finds
+    622, orchestrator's sid-parse 495, only-v2=127, only-oracle=0).
+- **Why it matters**: DEPENDS_ON is a core product edge; Haskell module-dependency queries (and anything
+  built on DEPENDS_ON) are silently incomplete. The graph SHOULD answer this — it has the right `file` attr
+  on every node; only the derivation's string-parse is lossy.
+- **Fix (product, follow-up)**: derive the endpoint file from the node's `file` ATTR (what the v2 Datalog
+  rule does) instead of parsing the semantic_id; OR, minimally, teach the parser the `MODULE#` prefix. The
+  attr-based derivation is the robust fix (no format coupling). Until fixed, the v2 `depends.dl` (file-attr
+  join) is the correct reference.
+- **Severity**: real product gap (silent under-derivation on a first-class edge), not a v2-engine gap. The v2
+  Datalog engine is the thing that SURFACED it (Gate B exit differential).
+
 ## 2026-04-28: Datalog same-function deadlock rule misses cross-file dispatch
 
 - **Query attempted**: `node(Fn,"FUNCTION") ∧ Fn—CONTAINS→CALL{name=acquire_all,line=L1} ∧ Fn—CONTAINS→CALL{name=acquire,line=L2} ∧ lt(L1,L2)`
@@ -53,10 +80,22 @@ on `.grafema/grafema.rfdb`). The differential surfaced these gaps, mapped to spe
   K=8 ≥ 3× K=1 speedup assertion is deferred → Gate A residual.
 - **`bench/manifests/gate-a.yaml`** conformance manifest not yet authored (P1: "green = manifest") →
   Gate A residual.
-- **Executor evaluates join legs per-row, not build-once hash-join** (Gate B blocker, 2026-06-06). The
-  Gate B exit `depends/2` rule PLANS (estimate 148k) but its EVAL does not finish on the real graph in debug
-  OR release (algorithmic): the `node(M,"MODULE"), attr(M,"file",F)` sub-pattern does a `nodes_by_attr` index
-  probe PER IMPORTS_FROM row (1644×2). Same class as the earlier anti-join O(rows×M) hang. Fix = build the hash
-  side ONCE for a shared-variable generator leg (proper semi-naive hash-join, spec §4), in `exec.rs` (mirror the
-  existing `build_anti_join_set` one-time set). Benefits ALL multi-join rules. **This is the immediate next task to
-  reach the Gate B exit** (see `_ai/research/rfdb-datalog-RESUME.md`).
+- **Executor evaluated join legs per-row, not build-once hash-join** (Gate B blocker, 2026-06-06) —
+  **RESOLVED 2026-06-07**. The `depends/2` EVAL never finished on the real graph; two coupled causes,
+  both now fixed:
+  1. **Per-row full scan.** `attr(FreeId,"file",F)` in generator mode called `nodes_by_attr` →
+     `find_node_ids_by_attr_at` (a FULL node-segment scan, `multi_shard.rs:1485`) ONCE PER IMPORTS_FROM
+     row ≈ 1644 × 137k ≈ 225M examinations. Fix (`exec.rs join_attr_generator_built_once`): build the
+     `value→[id]` hash side ONCE from a single `sorted_run(Nodes)` pass, probe O(1) per row → O(nodes+rows)
+     (proper build-once hash-join, spec §4); falls back to per-row for non-surface keys (metadata/`exported`/
+     variable key). Mirrors the existing `build_anti_join_set` one-time set.
+  2. **Intermediate row blowup (ordering).** `ordering_estimate` costed EVERY `attr` as 0 (via the blanket
+     `is_filter_or_function("attr")`), so BOTH `attr` generators sorted ahead of their `node(_,"MODULE")`
+     type-filters → ~12M-row intermediate set before any pruning. Fix (`plan.rs ordering_estimate`): a leg
+     that binds NO new variable (filter / bound-id point check / anti-join) is the 0-cost leg; a leg that
+     INTRODUCES a variable (incl. `attr` GENERATOR mode) is ranked by cardinality. Interleaves
+     generator→filter→generator→filter; peak intermediate ~140k.
+  Result: `depends.dl` eval finishes in **97.66s** (was: never / killed >15min). **Gate A re-verified
+  50/51 match=50 mismatch=0 — no regression** (the change is ordering-only, I1 preserved). 122 datalog2
+  unit tests green (added `attr_value_generator_is_built_once_not_per_row` contract test: 0 `nodes_by_attr`
+  calls + bounded sorted-node passes). Benefits ALL multi-join rules, not just depends.

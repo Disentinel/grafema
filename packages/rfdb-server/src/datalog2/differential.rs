@@ -807,6 +807,56 @@ fn depends2_matches_orchestrator_ground_truth() {
         (set, "reproduced orchestrator mapping")
     };
 
+    // ── Diagnostic: WHY the file-attr join (v2) and the sid-parse oracle (orchestrator) diverge. ──
+    // For each IMPORTS_FROM edge, map each endpoint to a MODULE two ways: by the node's FILE
+    // ATTR (what depends.dl joins on) vs by the orchestrator's semantic-id PARSE
+    // (main.rs:1745-1758, `id_file_seg` here). Count edges the sid-parse drops but the file-attr
+    // maps to two distinct modules — those are exactly the source of the only-v2 pairs — and
+    // print a sample with each endpoint's sid / file attr / parsed segment so the root cause
+    // (e.g. a `MODULE#/abs/path` sid that matches neither `grafema://` nor `->`) is on the record.
+    {
+        let mut parse_drops_attr_maps = 0usize;
+        let mut samples: Vec<String> = Vec::new();
+        for e in &imports {
+            let (Some(s), Some(d)) = (store.get_node_at(&snap, e.src), store.get_node_at(&snap, e.dst))
+            else {
+                continue;
+            };
+            let attr_ok = matches!(
+                (file_to_module.get(&s.file), file_to_module.get(&d.file)),
+                (Some(a), Some(b)) if a != b
+            );
+            let parse_ok = matches!(
+                (
+                    file_to_module.get(&id_file_seg(&s.semantic_id)),
+                    file_to_module.get(&id_file_seg(&d.semantic_id)),
+                ),
+                (Some(a), Some(b)) if a != b
+            );
+            if attr_ok && !parse_ok {
+                parse_drops_attr_maps += 1;
+                if samples.len() < 5 {
+                    samples.push(format!(
+                        "  src sid={} file_attr={:?} sid_parsed={:?}\n  dst sid={} file_attr={:?} sid_parsed={:?}",
+                        s.semantic_id,
+                        s.file,
+                        id_file_seg(&s.semantic_id),
+                        d.semantic_id,
+                        d.file,
+                        id_file_seg(&d.semantic_id),
+                    ));
+                }
+            }
+        }
+        eprintln!("\n--- diagnostic: IMPORTS_FROM edges the orchestrator's sid-parse DROPS but the file-attr join MAPS ---");
+        eprintln!(
+            "count (both endpoints map to distinct modules by FILE ATTR, but NOT by sid-parse): {parse_drops_attr_maps}"
+        );
+        for s in &samples {
+            eprintln!("{s}");
+        }
+    }
+
     // Now move the store into the Arc-backed view for the v2 run.
     let view = LsmStorageView::capture(Arc::new(store), &manifest);
     let v2: BTreeSet<(u128, u128)> = match evaluate(

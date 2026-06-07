@@ -763,6 +763,24 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
             }
         }
 
+        // ── Set-at-once positive attr value-generator (build-once hash-join) ──
+        //
+        // `attr(FreeId, "key", Value)` in generator mode would otherwise drive the snapshot
+        // attr index (`nodes_by_attr` → `find_node_ids_by_attr_at`, a FULL segment scan)
+        // ONCE PER ROW — O(rows × nodes). When the key is a constant the row surface carries
+        // (`name`/`file`/`type`), build the `value → [id]` index ONCE in a single sorted-node
+        // pass and probe it O(1) per row: the join becomes O(nodes + rows), the proper
+        // build-once hash-join (spec §4, build the hash side once). Any shape outside this
+        // (a metadata/`exported` key, a variable or wildcard key, a wildcard value, a bound
+        // id) keeps the exact per-row fallback below — correctness over coverage. Semantics
+        // match `eval_attr`'s generator branch exactly: each matching node's id is bound into
+        // the free id position (`Value::Id`), nothing else is captured.
+        if !negated && name == "attr" {
+            if let Some(joined) = self.join_attr_generator_built_once(leg, atom, &rows) {
+                return joined;
+            }
+        }
+
         let mut out: Vec<BindRow> = Vec::new();
         for row in rows {
             // Resolve args → ArgSpec. Free (unbound) variables get sequential output slots;
@@ -925,6 +943,108 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         batch.rows.is_empty()
     }
 
+    /// Build-once hash-join for the positive `attr(FreeId, "key", Value)` value-generator,
+    /// or `None` if the leg's shape is not the build-once case (the caller then keeps the
+    /// exact per-row `nodes_by_attr` fallback).
+    ///
+    /// The generator joins the current rows with the node relation on an attribute equality.
+    /// Instead of one full attr-index scan per row (`O(rows × nodes)`), this builds the join's
+    /// hash side ONCE — a `value → [id]` map over a single [`StorageView::sorted_run`] pass —
+    /// and probes it per row (`O(nodes + rows)`). It mirrors `eval_attr`'s generator branch:
+    /// for each node whose attribute `key` equals the row's value, the node id is bound into
+    /// the free id position; nothing else is captured.
+    ///
+    /// Shape requirements (else `None`, fall back):
+    /// * the id position (arg 0) is FREE (a generator, per the planner pattern) and a variable;
+    /// * the key position (arg 1) is a constant the row surface carries (`name`/`file`/`type`)
+    ///   — the same first-class columns [`StorageView::sorted_run`] exposes; a metadata /
+    ///   `exported` key, or a variable key, cannot be served from the sorted node run;
+    /// * the value position (arg 2) is a constant or a row-bound variable (not a wildcard —
+    ///   that is an existence probe, not a value join).
+    fn join_attr_generator_built_once(
+        &self,
+        leg: &crate::datalog2::plan::PlanLeg,
+        atom: &Atom,
+        rows: &[BindRow],
+    ) -> Option<Vec<BindRow>> {
+        use super::builtin::ArgMode;
+        use super::storage_glue::{Relation, Row, SortOrder};
+
+        let args = atom.args();
+        if args.len() != 3 {
+            return None;
+        }
+        // The id position must be a FREE variable (generator mode). The planner's pattern is
+        // authoritative on boundness; the atom term gives the variable name to bind.
+        if leg.pattern.first() != Some(&ArgMode::Free) {
+            return None;
+        }
+        let id_var = match &args[0] {
+            Term::Var(v) => v.clone(),
+            _ => return None,
+        };
+        // The key must be a constant the sorted node run surfaces as a first-class column.
+        let key = match &args[1] {
+            Term::Const(k) => k.as_str(),
+            _ => return None,
+        };
+        if !matches!(key, "name" | "file" | "type") {
+            return None;
+        }
+
+        // ── Build the hash side ONCE: value → [id] over one sorted-node pass. ──
+        let mut index: HashMap<String, Vec<u128>> = HashMap::new();
+        for row in self.view.sorted_run(Relation::Nodes, SortOrder::NodeById) {
+            if let Row::Node(n) = row {
+                let col = match key {
+                    "name" => n.name,
+                    "file" => n.file,
+                    "type" => n.node_type,
+                    _ => unreachable!("key matched above"),
+                };
+                index.entry(col).or_default().push(n.id);
+            }
+        }
+
+        // ── Probe per row by the value's string surface (§5), binding the free id. ──
+        let value_term = &args[2];
+        let mut out: Vec<BindRow> = Vec::new();
+        for row in rows {
+            let value = match value_term {
+                Term::Const(s) => Value::from_term_const(s),
+                Term::Var(v) => match row.get(v) {
+                    Some(val) => val.clone(),
+                    // The value var is unexpectedly unbound (the planner makes this
+                    // unreachable for a placed generator leg); this row contributes nothing.
+                    None => continue,
+                },
+                // A wildcard value is an existence probe, screened out above; defensive.
+                Term::Wildcard => return None,
+            };
+            let surface = value_surface(&value);
+            let Some(ids) = index.get(&surface) else {
+                continue;
+            };
+            for &id in ids {
+                let mut next = row.clone();
+                match next.get(&id_var) {
+                    // The id var should be free (pattern says so); if it were somehow already
+                    // bound, keep the row only on agreement (shared-variable join semantics).
+                    Some(existing) => {
+                        if *existing == Value::Id(id) {
+                            out.push(next);
+                        }
+                    }
+                    None => {
+                        next.insert(id_var.clone(), Value::Id(id));
+                        out.push(next);
+                    }
+                }
+            }
+        }
+        Some(out)
+    }
+
     /// Per-stratum intermediate-result ceiling (`EvalLimits::max_intermediate_results`).
     fn check_intermediate(&self, stratum: usize, rows: &[Box<[Value]>]) -> ExecResult<()> {
         if rows.len() > self.limits.max_intermediate_results {
@@ -1007,6 +1127,18 @@ fn bind_atom_args(atom: &Atom, row: &BindRow) -> Option<Vec<Value>> {
         }
     }
     Some(out)
+}
+
+/// The string surface of a [`Value`] for an attribute equality probe (spec §5), matching
+/// `eval_attr`'s value coercion: a `Str` compares by its string, an `Id` by its decimal
+/// surface. The build-once attr index ([`Executor::join_attr_generator_built_once`]) keys
+/// node columns (raw strings) and probes them with this surface, so a row's bound value
+/// matches the same nodes `nodes_by_attr` would have returned per row.
+fn value_surface(v: &Value) -> String {
+    match v {
+        Value::Str(s) => s.clone(),
+        Value::Id(id) => id.to_string(),
+    }
 }
 
 /// Project a binding row onto a negated base atom's VARIABLE positions, in source order —
@@ -1288,6 +1420,12 @@ mod tests {
         inner: FixtureStorageView,
         edge_scans: Cell<usize>,
         node_scans: Cell<usize>,
+        /// Full attr-index reverse lookups (`nodes_by_attr`) — the per-row cost the
+        /// build-once attr hash-join eliminates.
+        attr_calls: Cell<usize>,
+        /// Sorted-node passes (`sorted_run(Nodes, …)`) — the bounded build side of the
+        /// build-once attr hash-join.
+        node_sorted_runs: Cell<usize>,
     }
 
     impl ScanCountingView {
@@ -1296,6 +1434,8 @@ mod tests {
                 inner,
                 edge_scans: Cell::new(0),
                 node_scans: Cell::new(0),
+                attr_calls: Cell::new(0),
+                node_sorted_runs: Cell::new(0),
             }
         }
     }
@@ -1309,6 +1449,9 @@ mod tests {
             rel: crate::datalog2::storage_glue::Relation,
             order: crate::datalog2::storage_glue::SortOrder,
         ) -> Box<dyn Iterator<Item = crate::datalog2::storage_glue::Row> + '_> {
+            if rel == crate::datalog2::storage_glue::Relation::Nodes {
+                self.node_sorted_runs.set(self.node_sorted_runs.get() + 1);
+            }
             self.inner.sorted_run(rel, order)
         }
         fn scan_nodes_by_type(&self, ty: &str) -> Box<dyn Iterator<Item = GlueNodeRow> + '_> {
@@ -1333,6 +1476,7 @@ mod tests {
             self.inner.get_node(id)
         }
         fn nodes_by_attr(&self, key: &str, value: &str) -> Vec<GlueNodeRow> {
+            self.attr_calls.set(self.attr_calls.get() + 1);
             self.inner.nodes_by_attr(key, value)
         }
     }
@@ -1396,6 +1540,74 @@ mod tests {
             view.edge_scans.get() < n,
             "edge scans ({}) must be bounded, not O(rows={})",
             view.edge_scans.get(),
+            n
+        );
+    }
+
+    // ── positive attr value-generator is a build-once hash-join ──────
+
+    #[test]
+    fn attr_value_generator_is_built_once_not_per_row() {
+        // dep(M) :- node(I,"IMPORT"), attr(I,"file",F), attr(M,"file",F), node(M,"MODULE").
+        // This is the stdlib `depends` join shape: many driver rows (IMPORT nodes) join to a
+        // node-by-file on a shared `file` value, the join keyed by the FREE id of
+        // `attr(M,"file",F)` (generator mode). With N=40 imports, the OLD per-row path would
+        // issue ~40 `nodes_by_attr` full attr-index scans (O(rows × nodes)); the build-once
+        // hash-join issues ZERO `nodes_by_attr` calls and a BOUNDED number of sorted-node
+        // passes (the hash side is built once), independent of the row count.
+        let n = 40usize;
+        let mut v = FixtureStorageView::new(1);
+        // Each file_i holds one IMPORT and one MODULE → import_i's file maps to module_i.
+        for i in 0..n {
+            let file = format!("file{i}.js");
+            v.put_node(NodeRow {
+                id: id_of(&format!("import{i}")),
+                node_type: "IMPORT".to_string(),
+                name: format!("import{i}"),
+                file: file.clone(),
+            });
+            v.put_node(NodeRow {
+                id: id_of(&format!("module{i}")),
+                node_type: "MODULE".to_string(),
+                name: format!("module{i}"),
+                file,
+            });
+        }
+
+        let view = ScanCountingView::new(v);
+        let src = r#"
+            dep(M) :- node(I, "IMPORT"), attr(I, "file", F), attr(M, "file", F), node(M, "MODULE").
+        "#;
+        let eval = run_on(
+            src,
+            &view,
+            Stats {
+                total_nodes: (2 * n) as u64,
+                total_edges: 0,
+                nodes_by_type: [("IMPORT".to_string(), n as u64), ("MODULE".to_string(), n as u64)]
+                    .into_iter()
+                    .collect(),
+            },
+        );
+
+        // Every module is reachable from its same-file import → all n modules derive.
+        let got = ids(&eval, "dep");
+        let mut expected: Vec<u128> = (0..n).map(|i| id_of(&format!("module{i}"))).collect();
+        expected.sort_unstable();
+        assert_eq!(got, expected, "each import's file maps to exactly its module");
+
+        // The build-once hash-join NEVER routes the generator through the per-row attr index.
+        assert_eq!(
+            view.attr_calls.get(),
+            0,
+            "attr value-generator must be built once (sorted_run), never per-row nodes_by_attr"
+        );
+        // The hash side is built with a BOUNDED number of sorted-node passes — crucially NOT
+        // proportional to the n driver rows (a per-row build would be ≥ n).
+        assert!(
+            view.node_sorted_runs.get() < n,
+            "sorted-node passes ({}) must be bounded, not O(rows={})",
+            view.node_sorted_runs.get(),
             n
         );
     }
