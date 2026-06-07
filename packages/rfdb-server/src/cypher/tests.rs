@@ -3836,6 +3836,54 @@ mod integration_tests {
             result.map(|r| r.row_count).unwrap_or(0)
         );
     }
+
+    // ── ORDER BY null ordering (Cypher/Neo4j semantics) ─────────────────
+    //
+    // Cypher treats null as GREATER than any non-null value for ordering:
+    // nulls sort LAST in ascending order and FIRST in descending order
+    // (Neo4j Cypher manual, "Ordering null"). The numeric fixture has one
+    // node (`d`) with no `lineCount`, so `n.lineCount` is NULL for it.
+
+    #[test]
+    fn order_by_nulls_last_ascending() {
+        let engine = create_numeric_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN n.name, n.lineCount ORDER BY n.lineCount",
+            EvalLimits::none(),
+        )
+        .unwrap();
+
+        let names: Vec<&str> = result
+            .rows
+            .iter()
+            .map(|row| row[0].as_str().unwrap())
+            .collect();
+        // a=10, b=20, c=30 ascending, then d (NULL lineCount) LAST.
+        assert_eq!(names, vec!["a", "b", "c", "d"]);
+        // The trailing row really is the NULL one (projects to JSON null).
+        assert_eq!(result.rows[3][1], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn order_by_nulls_first_descending() {
+        let engine = create_numeric_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION) RETURN n.name, n.lineCount ORDER BY n.lineCount DESC",
+            EvalLimits::none(),
+        )
+        .unwrap();
+
+        let names: Vec<&str> = result
+            .rows
+            .iter()
+            .map(|row| row[0].as_str().unwrap())
+            .collect();
+        // d (NULL lineCount) FIRST, then c=30, b=20, a=10 descending.
+        assert_eq!(names, vec!["d", "c", "b", "a"]);
+        assert_eq!(result.rows[0][1], serde_json::Value::Null);
+    }
 }
 
 
