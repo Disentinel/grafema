@@ -42,8 +42,46 @@ without explicit permission.
 
 ## ▶ NEXT after compaction — resume here
 
-**(B) binding-table DONE** (`76659214`). **NEXT = (A) increment machinery / EDB Differ — the Gate
-C EXIT.** Single-line source edit ⇒ fact-level deltas ⇒ incrementally-maintained relation ≡
+**Gate C EXIT vertical IN PROGRESS — "build the real engine" (user, 2026-06-07).** Foundation done:
+- `bec6409f` increment delta algebra (commit 1/N): `datalog2/increment.rs` — `WeightedRelation<T>`,
+  `RelationDelta{asserted,retracted}`, `diff` (InvertibleTag), `apply_set` (BoolTag/DRed) +
+  `apply_counted` (CountTag/counting, drop at zero). 10 tests.
+- `45c5dd1f` EDB Differ (commit 2/N): `diff_base(prev,cur)→BaseDelta{nodes,edges}` over the two
+  StorageView base scans, reusing `diff`. Reserved NODE/EDGE_PRED_ID. 3 tests.
+- `442c88e5` binding-table manifest persistence (commit 3/N): serde on BindingTable, `to_blob`/
+  `from_blob`/`store_in_tags`/`load_from_tags` under `datalog2.binding_table` in `Manifest::tags`
+  (NO format change — opaque String map). Corrupt blob = E-FMT-004. 4 tests.
+
+**DONE — insertion-incremental engine (`8a7094fe`, commits 4+5 merged):**
+  - `exec.rs`: `Executor.delta_view` + `with_delta_view`; `join_base_against` (positive base leg vs an
+    explicit view, no fast paths — `join_extensional` left byte-identical so Gate A unaffected);
+    `eval_stratum(incremental)` swaps only the SEED (incremental fires one base-delta variant per
+    positive base leg via `Clause::base_leg_indices`); `evaluate_incremental(plans,rules,strat,prev,
+    base_has_retraction) -> Option<Evaluation>` — pre-loads Total with prev, seeds, Δ-loops, projects.
+    Returns `None` (recompute) outside the SOUND monotone envelope: negation / >1 derived stratum /
+    retracting base delta.
+  - `increment.rs`: `delta_view(BaseDelta)` rebuilds a FixtureStorageView from ΔB.asserted.
+  - PROOF: `incremental_insertion_equals_scratch_over_seeded_cycles` (100 LCG edge inserts, maintained ≡
+    scratch every cycle) + 2 envelope-guard tests. datalog2 unit 150, Gate A re-verified 50/50.
+
+**REMAINING engine commits:**
+  6. **DRed over-delete pass** — recursive DELETION. Counting can't (I4 bars CountTag from recursion).
+     Given ΔB.retracted: forward-propagate to compute the "possibly deleted" derived set (every fact
+     whose derivation used a retracted base fact), remove it from Total. Mirror the incremental seed but
+     seed from ΔB.retracted via a `delta_view(retracted)` and chase derived deltas — same `eval_stratum`
+     machinery, a "retract" mode. `apply_set` (increment.rs) is the per-relation remove primitive.
+  7. **DRed re-derive pass + deletion proof** — a fact in the possibly-deleted set may still have an
+     ALTERNATE derivation from surviving facts; re-derive it (one semi-naive pass over surviving Total +
+     the over-deleted candidates) and re-insert the supported ones. Then `evaluate_incremental` accepts
+     retractions for the single-stratum negation-free envelope. Extend the 100-cycle proof to MIX
+     inserts and deletes (maintained ≡ scratch). Guard still: negation / multi-stratum → recompute.
+  8. **cross-run wire** — engine_v2 `eval_datalog_v2_materialize`: read prev binding-blob (`BindingTable::
+     load_from_tags`) + prev snapshot from the manifest, `diff_base(prev_snapshot, cur)`, decide per
+     predicate via `BindingTable::diff` (semiring/arity change → recompute; else maintain), commit new
+     binding-blob via `store_in_tags`. Then a 100-cycle maintained≡scratch on a real `.rfdb` (not just
+     the fixture). This is where `diff_base`/`delta_view` lose their `cfg(not(test))` dead-code allow.
+
+**(historical) NEXT = (A) increment machinery / EDB Differ — the Gate C EXIT.** Single-line source edit ⇒ fact-level deltas ⇒ incrementally-maintained relation ≡
 from-scratch evaluation over 100 seeded cycles (spec §9.1/§9.2). The big, multi-commit, defining
 piece. Design forks to settle with the user BEFORE coding (laid these out, awaiting confirmation):
 
@@ -77,7 +115,7 @@ Settle that design before touching the parser.
 **Verify-current (independent of any agent report — P1):**
 ```
 cd packages/rfdb-server
-cargo test --lib datalog2 -- --skip datalog2_differential_against_real_dataset --skip depends2_matches  # expect 133 passed
+cargo test --lib datalog2 -- --skip datalog2_differential_against_real_dataset --skip depends2_matches  # expect 150 passed
 cargo test --lib storage_v2                                                                              # expect 427 passed
 cargo test --bin rfdb-server -- materialize router hello                                                 # release-blocker wiring
 cargo test --lib datalog2_differential_against_real_dataset -- --ignored --nocapture   # Gate A: TALLY match=50 mismatch=0 (~18-280s)
