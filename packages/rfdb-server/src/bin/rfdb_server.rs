@@ -2854,7 +2854,14 @@ fn dispatch_materialize_datalog(
         source
     };
 
-    v2.eval_datalog_v2_materialize(program, limits)
+    // Gate D2: the cached entry MAINTAINS the derived relations across calls against this
+    // long-lived per-database engine (work-proportional on the 2nd+ run) and commits only the
+    // edge delta — additions AND tombstones of stale edges, so a reanalysis supersedes obsolete
+    // DEPENDS_ON instead of only accreting (the additive full-rewrite path never removed stale
+    // edges). First run / restart / a program outside the monotone envelope falls back to a full
+    // scratch eval (correctness floor, I5). Reports the edges ADDED this run as the written count.
+    v2.eval_datalog_v2_materialize_cached(program, limits)
+        .map(|(added, _removed)| added)
         .map_err(|e| format!("Datalog v2 materialize error [{}]: {}", e.code(), e))
 }
 

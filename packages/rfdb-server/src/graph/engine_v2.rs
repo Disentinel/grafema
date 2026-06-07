@@ -3833,4 +3833,108 @@ mod tests {
             "cache holds exactly one generation per program"
         );
     }
+
+    /// Gate D2: the BUNDLED `depends.dl` (the actual prod rule — multi-leg: edge + node×2 +
+    /// attr×3 + neq, not the single-leg toy rule the other D2 tests use) maintains correctly
+    /// through the cached path. Proves the work-proportional prod DEPENDS_ON derivation stays ≡
+    /// full scratch across mixed insert/delete edits, with the MAINTAIN path actually firing.
+    #[test]
+    fn cached_materialize_bundled_depends_dl_equals_scratch_on_real_store() {
+        use crate::datalog::{EvalLimits, Value};
+        use std::sync::atomic::Ordering;
+        let src = crate::datalog2::stdlib::DEPENDS_DL;
+
+        let depends_scratch = |engine: &GraphEngineV2| -> std::collections::HashSet<(u128, u128)> {
+            let snap = engine.snapshot();
+            let all_nodes = engine.store.find_nodes_at(&snap, None, None);
+            let mut nbt: HashMap<String, u64> = HashMap::new();
+            for n in &all_nodes {
+                *nbt.entry(n.node_type.clone()).or_insert(0) += 1;
+            }
+            let stats = crate::datalog2::builtin::Stats {
+                total_nodes: all_nodes.len() as u64,
+                total_edges: engine.store.edge_count_at(&snap) as u64,
+                nodes_by_type: nbt,
+            };
+            let view = crate::datalog2::storage_glue::BorrowedLsmStorageView::new(&engine.store, snap);
+            let (eval, _s) = crate::datalog2::evaluate_with_materialize(
+                &view,
+                src,
+                stats,
+                EvalLimits::none(),
+                crate::datalog2::events::EventLog::discard(),
+            )
+            .expect("scratch");
+            eval.facts("depends")
+                .iter()
+                .map(|t| match (&t[0], &t[1]) {
+                    (Value::Id(a), Value::Id(b)) => (*a, *b),
+                    _ => panic!("depends tuple shape"),
+                })
+                .collect()
+        };
+        let deps = |e: &GraphEngineV2| {
+            e.store
+                .get_edges_by_type_at(&e.snapshot(), "DEPENDS_ON")
+                .into_iter()
+                .map(|x| (x.src, x.dst))
+                .collect::<std::collections::HashSet<(u128, u128)>>()
+        };
+
+        let mut engine = GraphEngineV2::create_ephemeral();
+        // Distinct-file MODULE nodes so the depends.dl file-attr join + neq fire.
+        let ids: Vec<u128> = (0..6u32)
+            .map(|i| make_v2_node(&format!("m{i}.js->MODULE->m{i}"), "MODULE", &format!("m{i}"), &format!("m{i}.js")).id)
+            .collect();
+        let nodes: Vec<_> = (0..6u32)
+            .map(|i| make_v2_node(&format!("m{i}.js->MODULE->m{i}"), "MODULE", &format!("m{i}"), &format!("m{i}.js")))
+            .collect();
+        let imp = |s: usize, d: usize| EdgeRecordV2 {
+            src: ids[s],
+            dst: ids[d],
+            edge_type: "IMPORTS_FROM".to_string(),
+            metadata: String::new(),
+        };
+        engine
+            .commit_batch_ext(
+                nodes,
+                vec![imp(0, 1), imp(1, 2)],
+                &(0..6).map(|i| format!("m{i}.js")).collect::<Vec<_>>(),
+                HashMap::new(),
+                &[],
+            )
+            .expect("base commit");
+
+        engine
+            .eval_datalog_v2_materialize_cached(src, EvalLimits::none())
+            .expect("first materialize");
+        assert_eq!(deps(&engine), depends_scratch(&engine), "first (miss) ≡ scratch");
+
+        let edits: [(bool, usize, usize); 6] =
+            [(true, 2, 3), (true, 0, 4), (true, 3, 5), (false, 0, 1), (true, 4, 5), (false, 1, 2)];
+        for (i, (add, s, d)) in edits.into_iter().enumerate() {
+            if add {
+                engine
+                    .commit_batch_ext(Vec::new(), vec![imp(s, d)], &[], HashMap::new(), &[])
+                    .expect("additive edge commit");
+            } else {
+                engine.delete_edge(ids[s], ids[d], "IMPORTS_FROM");
+                engine.flush().expect("base delete flush");
+            }
+            engine
+                .eval_datalog_v2_materialize_cached(src, EvalLimits::none())
+                .expect("cached materialize");
+            assert_eq!(
+                deps(&engine),
+                depends_scratch(&engine),
+                "bundled depends.dl maintained ≡ scratch after edit add={add} m{s}→m{d}"
+            );
+            assert_eq!(
+                engine.datalog2_maintain_hits.load(Ordering::Relaxed),
+                (i as u64) + 1,
+                "maintain path fired on cache hit #{}",
+                i + 1
+            );
+        }
+    }
 }
