@@ -4303,6 +4303,173 @@ mod attr_first_class_field_tests {
         assert_eq!(result.bindings.len(), 1);
         assert_eq!(result.bindings[0].get("X"), Some(&"10".to_string()));
     }
+
+    // ------------------------------------------------------------------
+    // Reverse lookup for first-class fields version / semantic_id / id.
+    //
+    // RFD-48 added FORWARD `attr(id, F, V)` support for these (tested
+    // above), but the REVERSE path `attr(X, F, V)` routed every non-
+    // name/file/type/exported field through `metadata_filters`, which
+    // only matches the node's metadata JSON. semantic_id / id / version
+    // are first-class columns (NOT in metadata JSON), so reverse lookup
+    // silently returned nothing — asymmetric with forward, a silent
+    // wrong answer for the most fundamental "find the node with this
+    // semantic_id" query. These tests pin the restored symmetry.
+    // ------------------------------------------------------------------
+
+    // Reverse lookup: attr(X, "semantic_id", "...") finds the node by its
+    // canonical identifier. Must mirror the forward test above.
+    #[test]
+    fn test_eval_attr_reverse_semantic_id() {
+        let engine = setup_attr_field_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        let query = Atom::new("attr", vec![
+            Term::var("X"),
+            Term::constant("semantic_id"),
+            Term::constant("lib.js->FUNCTION->exportedFn"),
+        ]);
+        let results = evaluator.query_atom(&query).unwrap();
+        let ids: Vec<u128> = results.iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        assert_eq!(ids, vec![10], "reverse semantic_id must return node 10");
+    }
+
+    // Reverse lookup with a semantic_id that no node has → empty.
+    #[test]
+    fn test_eval_attr_reverse_semantic_id_no_match() {
+        let engine = setup_attr_field_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        let query = Atom::new("attr", vec![
+            Term::var("X"),
+            Term::constant("semantic_id"),
+            Term::constant("does.js->NONE->missing"),
+        ]);
+        let results = evaluator.query_atom(&query).unwrap();
+        assert!(results.is_empty(), "unknown semantic_id must yield no rows");
+    }
+
+    // Forward/reverse symmetry: the value forward returns for node 10's
+    // semantic_id, fed back into the reverse lookup, must return node 10.
+    #[test]
+    fn test_eval_attr_semantic_id_forward_reverse_symmetry() {
+        let engine = setup_attr_field_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        // Forward: get node 10's semantic_id value.
+        let fwd = evaluator.query_atom(&Atom::new("attr", vec![
+            Term::constant("10"),
+            Term::constant("semantic_id"),
+            Term::var("V"),
+        ])).unwrap();
+        let value = match fwd[0].get("V").unwrap() {
+            Value::Str(s) => s.clone(),
+            other => panic!("expected Str, got {:?}", other),
+        };
+
+        // Reverse: that value must resolve back to exactly node 10.
+        let rev = evaluator.query_atom(&Atom::new("attr", vec![
+            Term::var("X"),
+            Term::constant("semantic_id"),
+            Term::constant(&value),
+        ])).unwrap();
+        let ids: Vec<u128> = rev.iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        assert_eq!(ids, vec![10], "forward semantic_id value must reverse to node 10");
+    }
+
+    // Reverse lookup: attr(X, "id", "20") binds X to that node (O(1) by id).
+    #[test]
+    fn test_eval_attr_reverse_id() {
+        let engine = setup_attr_field_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        let query = Atom::new("attr", vec![
+            Term::var("X"),
+            Term::constant("id"),
+            Term::constant("20"),
+        ]);
+        let results = evaluator.query_atom(&query).unwrap();
+        let ids: Vec<u128> = results.iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        assert_eq!(ids, vec![20], "reverse id must return exactly node 20");
+    }
+
+    // Reverse lookup: attr(X, "id", "<nonexistent>") → empty (node absent).
+    #[test]
+    fn test_eval_attr_reverse_id_no_match() {
+        let engine = setup_attr_field_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        let query = Atom::new("attr", vec![
+            Term::var("X"),
+            Term::constant("id"),
+            Term::constant("99999"),
+        ]);
+        let results = evaluator.query_atom(&query).unwrap();
+        assert!(results.is_empty(), "unknown id must yield no rows");
+    }
+
+    // Reverse lookup: attr(X, "version", "main") returns every node at
+    // that version (both fixture nodes are version "main").
+    #[test]
+    fn test_eval_attr_reverse_version() {
+        let engine = setup_attr_field_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        let query = Atom::new("attr", vec![
+            Term::var("X"),
+            Term::constant("version"),
+            Term::constant("main"),
+        ]);
+        let results = evaluator.query_atom(&query).unwrap();
+        let mut ids: Vec<u128> = results.iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        ids.sort();
+        assert_eq!(ids, vec![10, 20], "reverse version must return both nodes");
+    }
+
+    // The pipelined GENERATOR path (eval_generator_chunked) is a SEPARATE copy
+    // of the reverse-attr lookup. A conjunction whose only valid seed is a
+    // reverse semantic_id lookup routes through it. `neq` is a filter (needs X
+    // already bound), so the reorderer must place the reverse `attr` first as
+    // the generator — exercising the generator-path copy, not eval_attr.
+    #[test]
+    fn test_eval_attr_reverse_semantic_id_as_generator() {
+        let engine = setup_attr_field_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        let literals = parse_query(
+            r#"attr(X, "semantic_id", "lib.js->FUNCTION->exportedFn"), neq(X, "0")"#
+        ).unwrap();
+
+        let results = evaluator.eval_query(&literals).unwrap();
+        let ids: Vec<u128> = results.iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        assert_eq!(ids, vec![10], "reverse semantic_id must seed the pipelined generator path");
+    }
+
+    // EvaluatorExplain mirror for reverse semantic_id — both evaluators
+    // must agree (the explain twin shares the same attr logic).
+    #[test]
+    fn test_eval_attr_reverse_semantic_id_explain() {
+        let engine = setup_attr_field_graph();
+        let mut evaluator = EvaluatorExplain::new(&engine, false);
+
+        let literals = parse_query(
+            r#"attr(X, "semantic_id", "app.js->IMPORT->React")"#
+        ).unwrap();
+
+        let result = evaluator.eval_query(&literals).unwrap();
+        assert_eq!(result.bindings.len(), 1);
+        assert_eq!(result.bindings[0].get("X"), Some(&"20".to_string()));
+    }
 }
 
 // ============================================================================
