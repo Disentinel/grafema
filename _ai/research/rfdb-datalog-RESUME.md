@@ -40,7 +40,32 @@ the §8 maps: `_ai/research/rfdb-datalog-gateB-residual-map.md`.
 **Standing (user, 2026-06-07):** commit freely on `feat/datalog` without asking; NEVER push
 without explicit permission.
 
-## ▶ NEXT after compaction — resume here
+## ▶ NEXT — recommended order (Gate C residuals → Gate D → Gate E)
+
+**Gate C exit NOW FULLY MET.** maintained≡scratch (commits 1-8) + **work-proportionality DONE**
+(`1f59a98b`): `eval_clause` leads a semi-naive Δ variant with the Δ leg (enumerate Δ, then probe)
+INSTEAD of the plan's base-generator-first order — scoped to incremental runs only
+(`self.delta_view.is_some()`) AND small Δ (≤`DELTA_LEAD_THRESHOLD`=64 / base-delta seed), from-scratch
+byte-identical + alloc-free. Proof `incremental_insertion_work_proportional_to_delta_not_base_size`
+(WorkCountingView: maintain flat 1→1, scratch 64→676 as base 4×s). Lesson: naive unconditional reorder
+4×'d Gate A (404s); scoped version = baseline 107s. datalog2 154, engine_v2 42, Gate A 50/50.
+
+**NEXT (recommended order, user approved "поехали в рекомендованном порядке", run via workflow):**
+1. ✅ work-proportionality (`1f59a98b`).
+2. **why() / fact provenance** (Gate C "annotations+why()"; → Gate E `explain_fact`). Scoped by the
+   wf_22df23ed scope workflow: smallest viable = given (predicate, fact key), replay
+   `clause_derives_head`-style over committed relations to find ONE supporting derivation, return
+   `(rule_ast_hash, bound body facts)`. ZERO extra storage (recompute on demand, spec §11 lazy tree),
+   not a per-fact provenance index. Hook = a new query method on Executor / GraphEngineV2. numeric-
+   literals NOT needed for why(). Risk flagged: don't store provenance per DerivedFact (memory).
+3. **Gate D edge write-back + DEPENDS_ON pilot** — incremental `eval_datalog_v2_materialize_incremental`:
+   commit only the derived-edge DELTA (added → additive; removed → tombstone via delete_edge/
+   pending_tombstone_edges) + read/write binding-blob in manifest tags around the commit. Perf-measure
+   for Gate D exit (reanalysis ≥5× vs 256s, ≤30s). Scoped by the same workflow (gateD finding).
+4. **Gate E** — stdlib, MCP explain_fact (surfaces why()), docs, events-schema.md, sim(), Appendix-B
+   migrations, retire legacy (P3 task #8: legacy execution-counter test + legacy-retirement.lock).
+
+## ▶ (historical) NEXT after compaction — resume here
 
 **Gate C EXIT vertical IN PROGRESS — "build the real engine" (user, 2026-06-07).** Foundation done:
 - `bec6409f` increment delta algebra (commit 1/N): `datalog2/increment.rs` — `WeightedRelation<T>`,
