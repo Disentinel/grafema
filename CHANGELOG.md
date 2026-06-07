@@ -42,6 +42,23 @@ All notable changes to this project will be documented in this file.
 - fix(resolve): emit an `EXTENDS` edge to a virtual `BUILTIN_CLASS` node for classes extending JS/TS builtins (`Error`, `EventEmitter`, etc.) instead of silently dropping it; user-defined classes that shadow a builtin still win (REG-585 part 1, #331)
 - fix(orchestrator): rebuild the RFDB index before the unresolved-diagnostics negation queries (the resolver commits CALLS/IMPORTS_FROM with `defer_index=true`), so the ISSUE count is deterministic across runs instead of varying with L0/L1 compaction timing (RFD-65, #332)
 - fix(resolve): emit `VARIABLE→INSTANCE_OF→CLASS` edges for `new X()` declarator initializers, resolving `X` to same-file, imported, or builtin classes (graceful no-edge when unresolved) — feeds `getShape` type/hover (REG-585 part 2, #335)
+- fix(rfdb): Datalog `--explain` supports the `attr_edge()` builtin identically to the plain evaluator, instead of silently returning zero rows for queries/guarantees that use it (REG-315, #337)
+- fix(rfdb): Datalog `--explain` honors already-bound variables in edge/incoming hash-joins, fixing inflated spurious rows on self-join patterns and restoring explain↔plain parity (REG-503, #338)
+- fix(rfdb): enforce the repeated-variable equality constraint in Cypher `Expand`/`VarLengthExpand` so reused node variables (`(a)-[:R]->(a)`, `(m)-[:R1]->(c)-[:R2]->(m)`) filter instead of rebinding, eliminating fabricated self-loop/cycle rows (REG-1140, #340)
+- fix(rfdb): Cypher `WHERE` comparisons with a NULL operand evaluate to NULL under three-valued logic and exclude the row, instead of wrongly admitting it via NULL-orders-less or `<>` (REG-1147, #341)
+- fix(rfdb): type-discriminate Cypher `GROUP BY` keys so distinct-typed values that render to the same text (`Int(5)` vs `Str("5")`, `Bool` vs `Str`, `Null` vs `Str("__null__")`) no longer merge into one aggregate bucket (#342)
+- fix(rfdb): decode escape sequences (`\' \" \\ \n \t \r \b \f \uXXXX`) in Cypher string literals so comparisons against quoted values no longer carry stray backslashes and silently match nothing (#343)
+- fix(rfdb): accept the full Cypher variable-length grammar (`*`, `*N`, `*N..`) in `parse_var_length`, treating an omitted upper bound as unbounded instead of silently capping traversal at depth 10 (#344)
+- fix(rfdb): aggregate-query `ORDER BY` sorts by the produced columns so `ORDER BY <agg>` / `ORDER BY <group-key expr>` actually sorts instead of returning group-insertion order (#345)
+- fix(rfdb): resolve RETURN aliases in non-aggregate `ORDER BY` so `RETURN x AS a ORDER BY a` sorts by the aliased value instead of no-opping to scan order (#346)
+- fix(rfdb): reject a negative Cypher `LIMIT` at parse time instead of wrapping to `u64::MAX` and silently returning the full result set (#347)
+- fix(rfdb): Cypher `WHERE NOT n.prop CONTAINS/STARTS WITH/ENDS WITH 'x'` no longer admits nodes whose property is NULL/absent — string predicates propagate NULL and `NOT NULL` stays NULL per three-valued logic (#348)
+- fix(rfdb): Cypher keyword probe is UTF-8-boundary-safe (`str::get` instead of a byte slice), so malformed-UTF-8 queries return a clean `ParseError` instead of panicking the engine thread (#349)
+- fix(rfdb): Cypher `ORDER BY` places NULLs last (ASC) / first (DESC) per the openCypher spec (#351)
+- fix(rfdb): evaluate Cypher `AND`/`OR` under Kleene three-valued logic so a NULL operand propagates as NULL instead of collapsing to `false` (`null AND true = null`); FALSE still dominates `AND`, TRUE still dominates `OR`, and top-level non-negated filtering is unchanged (#352)
+- fix(rfdb): include the start node in zero-length Cypher variable-length paths (`*0` / `*0..N` / `*0..`) so the self-or-descendants idiom binds the destination to the start node (#356)
+- fix(rfdb): Datalog `path(X, dst)` / `path(_, dst)` reverse-reachability queries enumerate the nodes that reach `dst` instead of returning empty (#360)
+- fix(rfdb): Datalog `gt/lt/gte/lte` compare integer operands (including u128 node IDs) exactly via an i128/u128 cascade before falling back to f64, instead of a lossy f64 parse that dropped or falsely admitted rows for values above 2^53 (#365)
 
 ### Documentation
 
