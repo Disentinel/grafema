@@ -55,6 +55,42 @@ impl Value {
     }
 }
 
+/// Compare two numeric operand strings for the gt/lt/gte/lte builtins.
+///
+/// Integer operands are compared EXACTLY. This matters because operands are
+/// frequently u128 node IDs (and large integer metadata such as timestamps or
+/// byte offsets), which overflow f64's 53-bit mantissa — parsing those as f64
+/// would collapse distinct values onto the same float and silently drop or admit
+/// rows (e.g. `lt(A, B)` between two IDs differing only in low bits returns
+/// false; `gte(A, B)` returns true). `i128` is tried first (covers negative
+/// metadata and IDs up to i128::MAX); `u128` second (covers hash IDs above
+/// i128::MAX). Only genuinely fractional operands fall back to `f64`.
+///
+/// Returns `None` when either operand is non-numeric, when an `f64` comparison
+/// is undefined (NaN), or when `op` is not a recognised comparison — callers
+/// treat any `None`/`Some(false)` as a non-passing constraint (empty result).
+pub(crate) fn numeric_compare(left: &str, right: &str, op: &str) -> Option<bool> {
+    use std::cmp::Ordering;
+
+    let ordering: Ordering = if let (Ok(l), Ok(r)) = (left.parse::<i128>(), right.parse::<i128>()) {
+        l.cmp(&r)
+    } else if let (Ok(l), Ok(r)) = (left.parse::<u128>(), right.parse::<u128>()) {
+        l.cmp(&r)
+    } else {
+        let l: f64 = left.parse().ok()?;
+        let r: f64 = right.parse().ok()?;
+        l.partial_cmp(&r)? // None on NaN → graceful non-pass
+    };
+
+    Some(match op {
+        "gt" => ordering == Ordering::Greater,
+        "lt" => ordering == Ordering::Less,
+        "gte" => ordering != Ordering::Less,
+        "lte" => ordering != Ordering::Greater,
+        _ => return None,
+    })
+}
+
 /// Variable bindings
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Bindings {
@@ -1730,7 +1766,9 @@ impl<'a> Evaluator<'a> {
 
     /// Evaluate gt/lt/gte/lte(X, Y) - numeric comparison constraints
     /// Both arguments must be bound (either constants or bound variables).
-    /// Values are parsed as f64; non-numeric strings produce empty result (graceful failure).
+    /// Integer operands (including u128 node IDs) are compared exactly via
+    /// [`numeric_compare`]; non-numeric strings produce an empty result
+    /// (graceful failure).
     fn eval_numeric_cmp(&self, atom: &Atom) -> Vec<Bindings> {
         let args = atom.args();
         if args.len() < 2 {
@@ -1747,28 +1785,9 @@ impl<'a> Evaluator<'a> {
             _ => return vec![],
         };
 
-        let left: f64 = match left_str.parse() {
-            Ok(v) => v,
-            Err(_) => return vec![],
-        };
-
-        let right: f64 = match right_str.parse() {
-            Ok(v) => v,
-            Err(_) => return vec![],
-        };
-
-        let pass = match atom.predicate() {
-            "gt" => left > right,
-            "lt" => left < right,
-            "gte" => left >= right,
-            "lte" => left <= right,
-            _ => return vec![],
-        };
-
-        if pass {
-            vec![Bindings::new()]
-        } else {
-            vec![]
+        match numeric_compare(left_str, right_str, atom.predicate()) {
+            Some(true) => vec![Bindings::new()],
+            _ => vec![],
         }
     }
 
