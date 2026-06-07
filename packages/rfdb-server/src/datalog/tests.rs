@@ -693,6 +693,105 @@ mod eval_tests {
         assert_eq!(results.len(), 1, "node on a cycle MUST have a path to itself");
     }
 
+    // ── path() REVERSE reachability: path(X, dst) enumerates ancestors ──
+    //
+    // The directed dual of path(src, X). `path(X, "dst")` must return every node
+    // that can REACH dst (its ancestor set). Before the fix these (Var/Wildcard
+    // source, Const dest) arms fell through to the catch-all and silently
+    // returned NO rows — so "what reaches / depends on dst" answered empty.
+
+    #[test]
+    fn test_eval_path_reverse_enumerates_ancestors() {
+        // Graph: 1 -> 4 -> 2 (CALLS); node 3 is an orphan.
+        // path(X, "2") = nodes that reach 2 = {1, 4}.
+        let engine = setup_test_graph();
+        let evaluator = Evaluator::new(&engine);
+        let query = Atom::new("path", vec![Term::var("X"), Term::constant("2")]);
+        let mut ids: Vec<u128> = evaluator
+            .query_atom(&query)
+            .unwrap()
+            .iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        ids.sort();
+        assert_eq!(ids, vec![1, 4], "reverse path must enumerate ancestors of 2");
+    }
+
+    #[test]
+    fn test_eval_path_reverse_no_ancestors_is_empty() {
+        // Node 1 is a root: nothing reaches it → path(X, "1") is empty.
+        let engine = setup_test_graph();
+        let evaluator = Evaluator::new(&engine);
+        let query = Atom::new("path", vec![Term::var("X"), Term::constant("1")]);
+        let results = evaluator.query_atom(&query).unwrap();
+        assert_eq!(results.len(), 0, "a root node has no ancestors");
+    }
+
+    #[test]
+    fn test_eval_path_reverse_wildcard_existence() {
+        let engine = setup_test_graph();
+        let evaluator = Evaluator::new(&engine);
+        // path(_, "2") - something reaches 2 → exactly one success row.
+        let reach2 = Atom::new("path", vec![Term::Wildcard, Term::constant("2")]);
+        assert_eq!(evaluator.query_atom(&reach2).unwrap().len(), 1);
+        // path(_, "1") - nothing reaches 1 → no rows.
+        let reach1 = Atom::new("path", vec![Term::Wildcard, Term::constant("1")]);
+        assert_eq!(evaluator.query_atom(&reach1).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_eval_path_reverse_includes_cyclic_self() {
+        // 100 <-> 101 cycle. Ancestors of 100: 101 reaches it directly, and 100
+        // reaches itself via the cycle → {100, 101}. Mirrors the forward
+        // test_eval_path_var_includes_cyclic_self.
+        let engine = setup_cycle_graph();
+        let evaluator = Evaluator::new(&engine);
+        let query = Atom::new("path", vec![Term::var("X"), Term::constant("100")]);
+        let mut ids: Vec<u128> = evaluator
+            .query_atom(&query)
+            .unwrap()
+            .iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        ids.sort();
+        assert_eq!(ids, vec![100, 101], "cyclic reverse enumeration includes self (100) and peer (101)");
+    }
+
+    #[test]
+    fn test_eval_path_reverse_via_parsed_query() {
+        // End-to-end through parse_query + eval_query (not just query_atom),
+        // exercising the full pipeline for a single reverse-path literal.
+        let engine = setup_test_graph();
+        let evaluator = Evaluator::new(&engine);
+        let literals = parse_query("path(X, \"2\")").unwrap();
+        let mut ids: Vec<u128> = evaluator
+            .eval_query(&literals)
+            .unwrap()
+            .iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        ids.sort();
+        assert_eq!(ids, vec![1, 4]);
+    }
+
+    #[test]
+    fn test_eval_path_reverse_in_conjunction() {
+        // The real-world shape: "which FUNCTIONs reach node 2?". `reorder_literals`
+        // must place the reverse-path atom first (it provides X via the constant
+        // dst), then the node generator filters. Ancestors of 2 = {1, 4}; only 4
+        // is a FUNCTION (1 is queue:publish).
+        let engine = setup_test_graph();
+        let evaluator = Evaluator::new(&engine);
+        let literals = parse_query("path(X, \"2\"), node(X, \"FUNCTION\")").unwrap();
+        let ids: Vec<u128> = evaluator
+            .eval_query(&literals)
+            .unwrap()
+            .iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        assert_eq!(ids, vec![4], "only FUNCTION ancestor of node 2 is node 4");
+    }
+
     #[test]
     fn test_eval_path_var_includes_cyclic_self() {
         // Enumerating reachable nodes from a cyclic node must include the node
