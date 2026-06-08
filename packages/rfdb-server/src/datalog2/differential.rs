@@ -469,6 +469,68 @@ fn datalog2_differential_against_real_dataset() {
     );
 }
 
+/// Coverage-as-negation on REAL code (apparatus doc §6 — "validate on real corpus, not fixture").
+/// How many CALL sites are RESOLVED (have an outgoing `CALLS` edge) vs DARK (none) — the
+/// resolution-coverage metric expressed as a v2 stratified-negation query over the live store. This
+/// is the product-visible "coverage = what does NOT link" from the link-PoC trilogy, on real data.
+/// Read-only (operates on a temp copy). Prints the number; the dark CALLs ARE the coverage worklist.
+///
+/// CAVEAT (honest): counts only the DIRECT `CALL -CALLS-> target` form (Layout A). Resolution living
+/// on the parent FUNCTION (Layout B) or via the line-range fallback (REG-655) is NOT counted, so the
+/// printed coverage is a LOWER BOUND, not the true call-resolution rate. The point is the MECHANISM
+/// (coverage-as-negation runs over the live store in ~4s), not the exact %; graph is also stale.
+/// First run 2026-06-09: 13634 CALL sites, 2215 direct-resolved, 11419 dark → 16.2% (lower bound).
+///   cargo test --release --lib datalog2::differential::probe_call_resolution_coverage -- --ignored --nocapture
+#[test]
+#[ignore = "manual real-data coverage probe; run with --ignored"]
+fn probe_call_resolution_coverage() {
+    let dataset = repo_path(".grafema/grafema.rfdb");
+    if !dataset.join("db_config.json").exists() {
+        panic!("real dataset not found at {}", dataset.display());
+    }
+    let tmp = tempfile::tempdir().expect("temp");
+    let work = tmp.path().join("grafema.rfdb");
+    copy_dir_all(&dataset, &work).expect("copy");
+    let _ = std::fs::remove_file(work.join("LOCK"));
+    let manifest = ManifestStore::open(&work).expect("manifest");
+    let store = MultiShardStore::open(&work, &manifest).expect("store");
+    let store = Arc::new(store);
+    let view = LsmStorageView::capture(store.clone(), &manifest);
+
+    let snap = store.snapshot(&manifest);
+    let all_nodes = store.find_nodes_at(&snap, None, None);
+    let mut nbt: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    for n in &all_nodes {
+        *nbt.entry(n.node_type.clone()).or_insert(0) += 1;
+    }
+    let stats = Stats {
+        total_nodes: all_nodes.len() as u64,
+        total_edges: store.iter_all_edges_at(&snap).len() as u64,
+        nodes_by_type: nbt,
+    };
+
+    let total_calls = store.find_nodes_at(&snap, Some("CALL"), None).len();
+    // The dark CALL sites: a CALL with no outgoing CALLS edge (the resolver could not bind it).
+    let dark = v2_violations(
+        &view,
+        &stats,
+        r#"violation(C) :- node(C, "CALL"), \+ edge(C, _, "CALLS")."#,
+    )
+    .expect("v2 eval");
+    let n_dark = dark.len();
+    let resolved = total_calls.saturating_sub(n_dark);
+    let pct = if total_calls > 0 {
+        100.0 * resolved as f64 / total_calls as f64
+    } else {
+        0.0
+    };
+    eprintln!("\n=== CALL resolution coverage (v2 negation query, real corpus) ===");
+    eprintln!(
+        "CALL sites: {total_calls} | resolved (outgoing CALLS): {resolved} | DARK (no CALLS): {n_dark} | coverage: {pct:.1}%"
+    );
+    assert!(total_calls > 0, "corpus has CALL nodes");
+}
+
 /// Gate D2 perf evidence on the REAL corpus (the repo's own ~199M `.grafema/grafema.rfdb`):
 /// compares a full from-scratch `depends.dl` materialize against a maintain-path re-materialize,
 /// where the latter pays `diff_base`'s full base scan + maintain overhead but SKIPS the join.
@@ -1042,5 +1104,49 @@ guarantees:
         assert_eq!(clauses.len(), 2, "both block-scalar clauses captured");
         assert!(rules[1].program.contains("db:query"));
         assert!(rules[1].program.contains("db:connection"));
+    }
+
+    /// Real-graph vocabulary probe (ignored): dump the node-type and edge-type histograms of the
+    /// repo's own `.grafema/grafema.rfdb`. Grounds the stdlib/archetypes design in the ACTUAL
+    /// relation vocabulary (not depends_on alone).
+    /// `cargo test --release --lib datalog2::differential::probe_real_graph_vocabulary -- --ignored --nocapture`
+    #[test]
+    #[ignore = "manual real-data vocabulary probe; run with --ignored"]
+    fn probe_real_graph_vocabulary() {
+        use std::collections::BTreeMap;
+        let dataset = repo_path(".grafema/grafema.rfdb");
+        assert!(dataset.join("db_config.json").exists(), "no dataset at {}", dataset.display());
+        let tmp = tempfile::tempdir().expect("temp");
+        let work = tmp.path().join("grafema.rfdb");
+        copy_dir_all(&dataset, &work).expect("copy");
+        let _ = std::fs::remove_file(work.join("LOCK"));
+        let manifest = ManifestStore::open(&work).expect("manifest");
+        let store = MultiShardStore::open(&work, &manifest).expect("store");
+        let snap = store.snapshot(&manifest);
+
+        let nodes = store.find_nodes_at(&snap, None, None);
+        let mut nbt: BTreeMap<String, usize> = BTreeMap::new();
+        for n in &nodes {
+            *nbt.entry(n.node_type.clone()).or_insert(0) += 1;
+        }
+        let edges = store.iter_all_edges_at(&snap);
+        let mut ebt: BTreeMap<String, usize> = BTreeMap::new();
+        for e in &edges {
+            *ebt.entry(e.edge_type.clone()).or_insert(0) += 1;
+        }
+
+        let mut nv: Vec<_> = nbt.into_iter().collect();
+        nv.sort_by(|a, b| b.1.cmp(&a.1));
+        let mut ev: Vec<_> = ebt.into_iter().collect();
+        ev.sort_by(|a, b| b.1.cmp(&a.1));
+        eprintln!("\n=== REAL GRAPH: {} nodes / {} edges ===", nodes.len(), edges.len());
+        eprintln!("--- node types ({}) ---", nv.len());
+        for (t, c) in &nv {
+            eprintln!("  {:>9}  {}", c, t);
+        }
+        eprintln!("--- edge types ({}) ---", ev.len());
+        for (t, c) in &ev {
+            eprintln!("  {:>9}  {}", c, t);
+        }
     }
 }
