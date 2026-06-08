@@ -302,11 +302,41 @@ function resolveRelative(fromFile: string, source: string): string {
   return (resolved.startsWith('/') ? '/' : '') + stack.join('/');
 }
 
-/** Source-file extensions a re-export specifier may resolve to, TS-first. */
-const REEXPORT_EXTENSIONS: readonly string[] = ['.ts', '.tsx', '.js', '.mjs', '.cjs'];
-/** Directory index file names, TS-first. */
+/**
+ * Source-file extensions a re-export specifier may resolve to.
+ *
+ * This MUST mirror the JS/TS extension set the orchestrator actually analyzes
+ * and indexes — `is_js_ts_file` in
+ * `packages/grafema-orchestrator/src/analyzer.rs` (`js | jsx | ts | tsx | mjs |
+ * cjs | mts | cts`). Any extension the orchestrator indexes but this list omits
+ * is a definition file that an extensionless/directory re-export can never
+ * resolve to, silently inflating `exportsWithoutHandler`.
+ *
+ * Ordered TS-family first (`.ts/.tsx/.mts/.cts`) then JS-family
+ * (`.js/.jsx/.mjs/.cjs`) so a re-export resolves to the TypeScript definition
+ * before a compiled JS sibling when both happen to be in the graph — keeping
+ * `resolveReExportTarget`'s first-match deterministic.
+ */
+const REEXPORT_EXTENSIONS: readonly string[] = [
+  '.ts',
+  '.tsx',
+  '.mts',
+  '.cts',
+  '.js',
+  '.jsx',
+  '.mjs',
+  '.cjs',
+];
+/** Directory index file names, same TS-first order as {@link REEXPORT_EXTENSIONS}. */
 const REEXPORT_INDEX_FILES: readonly string[] = REEXPORT_EXTENSIONS.map(e => `index${e}`);
-const KNOWN_EXT_RE = /\.(?:ts|tsx|js|mjs|cjs|jsx)$/;
+/**
+ * Matches a trailing known JS/TS extension. Derived from {@link
+ * REEXPORT_EXTENSIONS} so the two can never drift apart — a specifier whose
+ * extension is in the candidate set is treated as carrying a known extension.
+ */
+const KNOWN_EXT_RE = new RegExp(
+  `\\.(?:${REEXPORT_EXTENSIONS.map(e => e.slice(1)).join('|')})$`,
+);
 
 /**
  * Expand a normalized re-export base path into the candidate graph file paths
