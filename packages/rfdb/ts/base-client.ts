@@ -17,6 +17,7 @@ import type {
   FieldDeclaration,
   DatalogResult,
   DatalogExplainResult,
+  FactWitness,
   CypherResult,
   NodeType,
   EdgeType,
@@ -497,6 +498,20 @@ export abstract class BaseRFDBClient extends EventEmitter implements IRFDBClient
       return this._parseExplainResponse(response);
     }
     return (response as { results?: DatalogResult[] }).results || [];
+  }
+
+  /**
+   * why()/explain_fact (spec §11): explain ONE supporting derivation of `predicate(key)` under a
+   * v2 program (empty `source` ⇒ the bundled depends.dl). Resolves to `null` when the fact is not
+   * derivable by the program (a true negative). v2-only — rejects when RFDB_DATALOG_V2 is off.
+   */
+  async explainDatalogFact(
+    source: string,
+    predicate: string,
+    key: string[],
+  ): Promise<FactWitness | null> {
+    const response = await this._send('explainDatalogFact', { source, predicate, key });
+    return (response as { witness?: FactWitness | null }).witness ?? null;
   }
 
   async cypherQuery(query: string): Promise<CypherResult> {

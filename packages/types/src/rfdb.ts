@@ -49,6 +49,7 @@ export type RFDBCommand =
   | 'datalogQuery'
   | 'checkGuarantee'
   | 'executeDatalog'
+  | 'explainDatalogFact'
   // Cypher
   | 'cypherQuery'
   // Protocol v2 - Multi-Database Commands
@@ -407,6 +408,24 @@ export interface DatalogExplainResult {
   warnings: string[];
 }
 
+/** One positive body fact supporting a derivation (why()/explain_fact, spec §11). */
+export interface FactWitnessBody {
+  predicate: string;
+  /** Ground tuple as wire strings (node ids → decimal u128, string literals verbatim). */
+  tuple: string[];
+}
+
+/**
+ * why()/explain_fact result: ONE supporting derivation of a derived fact — the deriving rule's
+ * stable hash + the positive body facts that satisfied it. Returned as `null` when the fact is
+ * not derivable by the program (a true negative, distinct from an error). Provenance is computed
+ * on demand (nothing stored per derived fact).
+ */
+export interface FactWitness {
+  ruleAstHash: string;
+  body: FactWitnessBody[];
+}
+
 // === CYPHER TYPES ===
 export interface CypherResult {
   columns: string[];
@@ -611,6 +630,12 @@ export interface IRFDBClient {
   executeDatalog(source: string): Promise<DatalogResult[]>;
   /** Pass literal `true` for explain -- a boolean variable won't narrow the return type. */
   executeDatalog(source: string, explain: true): Promise<DatalogExplainResult>;
+  /**
+   * why()/explain_fact: explain ONE derivation of `predicate(key)` under a v2 program (empty
+   * source ⇒ the bundled depends.dl). `key` is the ground tuple as wire strings. Resolves to
+   * `null` when the fact is not derivable. v2-only (rejects when RFDB_DATALOG_V2 is off).
+   */
+  explainDatalogFact(source: string, predicate: string, key: string[]): Promise<FactWitness | null>;
 
   // Cypher
   cypherQuery(query: string): Promise<CypherResult>;
