@@ -1,0 +1,26 @@
+# legacy-retirement.lock
+#
+# RFDB Datalog v2 spec — invariant P3 (`_ai/research/rfdb-datalog-engine-v2-spec.md:63`):
+#   "Legacy fallback lives through Gate E + one release.
+#    (c) deleting legacy paths fails CI unless `legacy-retirement.lock` updated."
+#
+# Guarded legacy path:
+#   packages/grafema-orchestrator/src/main.rs :: derive_depends_on_legacy
+#     + the LEGACY_DEPENDS_ON_EXECUTIONS execution counter.
+#   This is the in-orchestrator DEPENDS_ON derivation used when the RFDB server does NOT
+#   advertise `datalogV2Materialize` (i.e. RFDB_DATALOG_V2=off). It is superseded — but NOT
+#   yet retired — by the v2 @materialize file-attr join.
+#
+# RETIREMENT CEREMONY (do all three in ONE change, never piecemeal):
+#   1. Confirm Gate E has shipped AND at least one release has gone out with the v2 path live.
+#   2. Delete `derive_depends_on_legacy` + its phase-9 caller + LEGACY_DEPENDS_ON_EXECUTIONS.
+#   3. Flip `status` below to `retired` (and update/remove the guarding tests
+#      `legacy_depends_on_executes_and_counts` + `legacy_retirement_lock_guards_deletion`).
+#
+# While `status = retained`, the test `legacy_retirement_lock_guards_deletion` requires this
+# file to say so AND references `derive_depends_on_legacy` by signature — so deleting the legacy
+# path without performing the ceremony fails to compile / fails the test (CI red).
+
+status = retained
+retire_not_before = "Gate E + one release"
+guards = "src/main.rs::derive_depends_on_legacy + LEGACY_DEPENDS_ON_EXECUTIONS"

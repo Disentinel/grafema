@@ -300,6 +300,51 @@ async fn build_file_to_module_map(rfdb: &mut rfdb::RfdbClient) -> HashMap<String
         .collect()
 }
 
+/// P3 (RFDB Datalog v2 spec, invariant P3 `:63`): the legacy in-orchestrator DEPENDS_ON
+/// derivation is the `RFDB_DATALOG_V2=off` fallback (the server then does NOT advertise the
+/// `datalogV2Materialize` capability, so phase-9 routes here). It MUST live through Gate E + one
+/// release after the v2 `@materialize` path shipped. This counter records every execution of the
+/// legacy derivation so a test can assert the fallback is exercised — **execution, not result
+/// equality** with v2 (the two intentionally differ: v2's file-attr join is more complete on
+/// `MODULE#`-sid Haskell endpoints, see `_ai/gaps.md`). Do NOT delete the legacy path without
+/// flipping `legacy-retirement.lock` (enforced by `legacy_retirement_lock_guards_deletion`).
+static LEGACY_DEPENDS_ON_EXECUTIONS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// Legacy (P3) module→module DEPENDS_ON derivation: map each `IMPORTS_FROM` endpoint id to its
+/// file (URI form `grafema://auth/path#frag` → `path`, or legacy sid `path->TYPE->name` → `path`),
+/// then to its MODULE via `file_to_module`, emitting one pair per cross-module import. Lossy on
+/// endpoints whose file segment the sid-parse cannot recover (`MODULE#`-sid) — superseded by the
+/// v2 file-attr join. Increments [`LEGACY_DEPENDS_ON_EXECUTIONS`] on every call.
+fn derive_depends_on_legacy(
+    all_imports_from_edges: &[(String, String)],
+    file_to_module: &HashMap<String, String>,
+    uri_prefix: &str,
+) -> HashSet<(String, String)> {
+    LEGACY_DEPENDS_ON_EXECUTIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let mut depends_on_pairs: HashSet<(String, String)> = HashSet::new();
+    for (src_id, dst_id) in all_imports_from_edges {
+        let src_file = if let Some(rest) = src_id.strip_prefix(uri_prefix) {
+            rest.split('#').next().unwrap_or("")
+        } else {
+            src_id.split("->").next().unwrap_or("")
+        };
+        let dst_file = if let Some(rest) = dst_id.strip_prefix(uri_prefix) {
+            rest.split('#').next().unwrap_or("")
+        } else {
+            dst_id.split("->").next().unwrap_or("")
+        };
+        if let (Some(src_mod), Some(dst_mod)) =
+            (file_to_module.get(src_file), file_to_module.get(dst_file))
+        {
+            if src_mod != dst_mod {
+                depends_on_pairs.insert((src_mod.clone(), dst_mod.clone()));
+            }
+        }
+    }
+    depends_on_pairs
+}
+
 /// Validate, stamp, tag virtual nodes, and commit a resolution output to RFDB.
 async fn commit_resolve_output(
     output: &mut plugin::PluginOutput,
@@ -1756,36 +1801,12 @@ async fn main() -> Result<()> {
                 profile!("depends_on_complete_v2", "edges" => written as usize);
             } else if !all_imports_from_edges.is_empty() {
                 // ── LEGACY fallback (P3): in-orchestrator sid-parse derivation. Lossy on
-                // `MODULE#`-sid (Haskell) endpoints; superseded by the v2 path above. ──
+                // `MODULE#`-sid (Haskell) endpoints; superseded by the v2 path above. Kept runnable
+                // + execution-counted through Gate E + one release (see legacy-retirement.lock). ──
                 tracing::info!("DEPENDS_ON derived by legacy orchestrator derivation (P3 fallback)");
-                let mut depends_on_pairs: HashSet<(String, String)> = HashSet::new();
-
-                // Pre-compute URI prefix for extracting file paths from grafema:// URIs
                 let uri_prefix = format!("grafema://{authority}/");
-
-                for (src_id, dst_id) in &all_imports_from_edges {
-                    // Extract file path from semantic ID.
-                    // URI format: "grafema://authority/path/to/file.ts#FRAGMENT" → "path/to/file.ts"
-                    // Legacy format: "path/to/file.ts->TYPE->name" → "path/to/file.ts"
-                    let src_file = if let Some(rest) = src_id.strip_prefix(&uri_prefix) {
-                        rest.split('#').next().unwrap_or("")
-                    } else {
-                        src_id.split("->").next().unwrap_or("")
-                    };
-                    let dst_file = if let Some(rest) = dst_id.strip_prefix(&uri_prefix) {
-                        rest.split('#').next().unwrap_or("")
-                    } else {
-                        dst_id.split("->").next().unwrap_or("")
-                    };
-
-                    if let (Some(src_mod), Some(dst_mod)) =
-                        (file_to_module.get(src_file), file_to_module.get(dst_file))
-                    {
-                        if src_mod != dst_mod {
-                            depends_on_pairs.insert((src_mod.clone(), dst_mod.clone()));
-                        }
-                    }
-                }
+                let depends_on_pairs =
+                    derive_depends_on_legacy(&all_imports_from_edges, &file_to_module, &uri_prefix);
 
                 if !depends_on_pairs.is_empty() {
                     let metadata_json = format!(
@@ -2977,5 +2998,70 @@ mod tests {
         assert!(resolve_jobs_notice("--jobs", Some(0)).is_some());
         // The flag name is threaded through (resolve subcommand uses --jobs).
         assert!(resolve_jobs_notice("--jobs", Some(4)).unwrap().contains("--jobs"));
+    }
+
+    /// P3 (spec `:63` b): assert the legacy DEPENDS_ON fallback EXECUTES (its execution counter
+    /// advances), NOT that its result equals v2 — the two intentionally differ (v2's file-attr
+    /// join recovers `MODULE#`-sid Haskell deps the legacy sid-parse drops, `_ai/gaps.md`). Also
+    /// pins the legacy derivation's behavior: URI- and legacy-form endpoint ids both resolve to
+    /// files, cross-module imports emit one pair, same-module imports are excluded.
+    #[test]
+    fn legacy_depends_on_executes_and_counts() {
+        use std::sync::atomic::Ordering;
+
+        let before = LEGACY_DEPENDS_ON_EXECUTIONS.load(Ordering::Relaxed);
+
+        let mut file_to_module = HashMap::new();
+        file_to_module.insert("a.ts".to_string(), "a.ts->MODULE->a".to_string());
+        file_to_module.insert("b.ts".to_string(), "b.ts->MODULE->b".to_string());
+
+        let uri_prefix = "grafema://gh.com/owner/repo/".to_string();
+        let imports = vec![
+            // URI-form src + legacy-form dst → cross-module a→b.
+            (
+                "grafema://gh.com/owner/repo/a.ts#IMPORT->fs".to_string(),
+                "b.ts->TYPE->Thing".to_string(),
+            ),
+            // Both endpoints in the same module (a.ts) → excluded by the `src_mod != dst_mod` gate.
+            ("a.ts->TYPE->X".to_string(), "a.ts->TYPE->Y".to_string()),
+            // Endpoint file with no MODULE → silently skipped (no panic).
+            ("ghost.ts->TYPE->Z".to_string(), "b.ts->TYPE->W".to_string()),
+        ];
+
+        let pairs = derive_depends_on_legacy(&imports, &file_to_module, &uri_prefix);
+
+        // (b) execution counter advanced — the fallback ran.
+        assert_eq!(
+            LEGACY_DEPENDS_ON_EXECUTIONS.load(Ordering::Relaxed),
+            before + 1,
+            "the legacy derivation must record its execution (P3 counter)"
+        );
+        // behavior: exactly the one cross-module pair, URI+legacy id forms both resolved.
+        let expected: HashSet<(String, String)> =
+            [("a.ts->MODULE->a".to_string(), "b.ts->MODULE->b".to_string())]
+                .into_iter()
+                .collect();
+        assert_eq!(pairs, expected, "one cross-module DEPENDS_ON; same-module + orphan excluded");
+    }
+
+    /// P3 (spec `:63` c): the legacy fallback may not be deleted before its retirement ceremony.
+    /// This test (a) binds `derive_depends_on_legacy` to a typed fn pointer, so deleting or
+    /// re-signing it FAILS COMPILATION (CI red), and (b) requires `legacy-retirement.lock` to
+    /// declare `status = retained`. To retire: remove the legacy path AND flip the lock in the
+    /// same change (which also removes/updates this test) — see the lock file's ceremony.
+    #[test]
+    fn legacy_retirement_lock_guards_deletion() {
+        // (a) compile-time anchor: the guarded symbol must exist with this exact signature.
+        let _anchor: fn(&[(String, String)], &HashMap<String, String>, &str) -> HashSet<(String, String)> =
+            derive_depends_on_legacy;
+
+        // (b) the lock must still declare the legacy path retained (read at compile time so the
+        // test cannot pass against a missing/renamed lock).
+        let lock = include_str!("../legacy-retirement.lock");
+        assert!(
+            lock.contains("status = retained"),
+            "legacy DEPENDS_ON path is still live; legacy-retirement.lock must say `status = retained` \
+             until Gate E + one release (flip it as part of the retirement ceremony)"
+        );
     }
 }
