@@ -315,4 +315,56 @@ mod smoke {
             "the eval entry must emit events (I9: the log is the source of truth)"
         );
     }
+
+    /// Cross-artifact value-join PoC (`semantic-graph-as-abstract-interpretation.md` §9, iter 1).
+    /// A frontend `HTTP_REQUEST` and a backend `http:route` carrying the SAME path (here in the
+    /// `name` column — the exact-match value-domain) `link` ACROSS artifacts, derived by one rule
+    /// joining on the shared path value. This is the smallest proof that the v2 engine derives a
+    /// cross-artifact `link(client, backend)` join — without any rewrite/string builtins (the nginx
+    /// prefix-rewrite congruence is iter 2). A path with a client but no backend route (`/orders`)
+    /// or a route with no client (`/health`) does NOT link — that asymmetry is the coverage signal.
+    #[test]
+    fn cross_artifact_link_on_shared_path() {
+        // Build a NodeRow whose `name` carries the path-key (id_of is a fn, captures nothing).
+        let n = |sid: &str, ty: &str, path: &str, file: &str| NodeRow {
+            id: id_of(sid),
+            node_type: ty.to_string(),
+            name: path.to_string(),
+            file: file.to_string(),
+        };
+        let mut v = FixtureStorageView::new(1);
+        // Frontend: two outgoing HTTP requests.
+        v.put_node(n("fe:req:/users", "HTTP_REQUEST", "/users", "web/api.js"));
+        v.put_node(n("fe:req:/orders", "HTTP_REQUEST", "/orders", "web/api.js"));
+        // Backend: routes. /users is served; /orders is NOT (a real coverage hole); /health has
+        // no client.
+        v.put_node(n("be:route:/users", "http:route", "/users", "api/users.js"));
+        v.put_node(n("be:route:/health", "http:route", "/health", "api/health.js"));
+
+        // link(C,B): a client request and a backend route sharing the path value-domain key.
+        let src = r#"link(C, B) :- node(C, "HTTP_REQUEST"), attr(C, "name", P),
+                                   node(B, "http:route"),    attr(B, "name", P)."#;
+        let stats = Stats { total_nodes: 4, total_edges: 0, ..Default::default() };
+        let eval = evaluate(&v, src, stats, EvalLimits::none(), EventLog::discard())
+            .expect("evaluate");
+
+        let links: std::collections::HashSet<(u128, u128)> = eval
+            .facts("link")
+            .iter()
+            .map(|r| {
+                (
+                    r[0].as_id().expect("client id"),
+                    r[1].as_id().expect("backend id"),
+                )
+            })
+            .collect();
+        assert_eq!(
+            links,
+            [(id_of("fe:req:/users"), id_of("be:route:/users"))]
+                .into_iter()
+                .collect(),
+            "exactly the shared-path pair links across artifacts; /orders (no backend) and \
+             /health (no client) do not"
+        );
+    }
 }
