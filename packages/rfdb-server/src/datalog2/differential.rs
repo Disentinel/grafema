@@ -472,6 +472,74 @@ fn datalog2_differential_against_real_dataset() {
     );
 }
 
+/// Gate D2 perf evidence on the REAL corpus (the repo's own ~199M `.grafema/grafema.rfdb`):
+/// compares a full from-scratch `depends.dl` materialize against a maintain-path re-materialize,
+/// where the latter pays `diff_base`'s full base scan + maintain overhead but SKIPS the join.
+/// This is the representative measurement the clean-synthetic micro-bench could not give
+/// (`graph::engine_v2::tests::cached_materialize_reanalysis_is_work_proportional`): on the real
+/// graph the depends.dl join over the messy attr/node fan-out is the dominant cost, so the
+/// maintain path's speedup reflects how much of that cost it avoids.
+///
+/// The second call has NO base change (cur == prev snapshot), so its maintain runs `diff_base`
+/// (full scan, the floor) + `maintain_incremental` over an empty delta + the write-back diff —
+/// i.e. it isolates the per-call maintain FLOOR. A real tiny edit adds only O(delta) on top, so
+/// `t_full / t_maintain_floor` is the speedup ceiling for small reanalysis deltas. Prints the
+/// split (full vs floor) so we can see whether the join (skipped → big win) or the base scan
+/// (still paid → motivates a version-delta-scoped diff_base) dominates.
+///
+///   cargo test --release --lib datalog2::differential::depends_dl_maintain_vs_full_on_real_corpus -- --ignored --nocapture
+#[test]
+#[ignore = "manual real-data perf bench; run with --ignored --release"]
+fn depends_dl_maintain_vs_full_on_real_corpus() {
+    use crate::graph::GraphEngineV2;
+    use std::time::Instant;
+
+    let dataset = repo_path(".grafema/grafema.rfdb");
+    if !dataset.join("db_config.json").exists() {
+        panic!(
+            "real dataset not found at {} (expected a MultiShardStore dir with db_config.json)",
+            dataset.display()
+        );
+    }
+    let tmp = tempfile::tempdir().expect("create temp dir");
+    let work = tmp.path().join("grafema.rfdb");
+    copy_dir_all(&dataset, &work).expect("copy real dataset into temp dir");
+    let _ = std::fs::remove_file(work.join("LOCK"));
+
+    let mut engine = GraphEngineV2::open(&work).expect("open real dataset");
+    let src = crate::datalog2::stdlib::DEPENDS_DL;
+
+    // Full from-scratch materialize (cache miss).
+    let t0 = Instant::now();
+    let (added, _removed) = engine
+        .eval_datalog_v2_materialize_cached(src, EvalLimits::none())
+        .expect("full materialize");
+    let t_full = t0.elapsed();
+
+    // Re-materialize with NO base change → maintain-path FLOOR (full diff_base scan + maintain
+    // over an empty delta + write-back diff). A real small edit adds only O(delta) on top.
+    let t1 = Instant::now();
+    let (added2, removed2) = engine
+        .eval_datalog_v2_materialize_cached(src, EvalLimits::none())
+        .expect("maintain re-materialize");
+    let t_maintain = t1.elapsed();
+
+    let ratio = t_full.as_secs_f64() / t_maintain.as_secs_f64().max(1e-9);
+    println!(
+        "[D2 corpus perf] DEPENDS_ON={added} | full-eval {:?} | maintain-floor {:?} | speedup {:.1}× \
+         | reanalysis write delta ({added2},{removed2})",
+        t_full, t_maintain, ratio
+    );
+    assert_eq!((added2, removed2), (0, 0), "no base change ⇒ the maintain re-run writes nothing");
+    assert!(
+        t_maintain < t_full,
+        "maintain floor must be below full eval on the real corpus: full={:?} maintain={:?} ({:.1}×)",
+        t_full,
+        t_maintain,
+        ratio
+    );
+}
+
 /// Ground-truth probe (Stage 2): inspect the SHAPE of `IMPORTS_FROM` edges in the real
 /// store before authoring the `depends.dl` rule. Answers: what node TYPES do the edge
 /// endpoints have, and do those endpoints + MODULE nodes carry a `file` attr whose value

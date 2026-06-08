@@ -3937,4 +3937,101 @@ mod tests {
             );
         }
     }
+
+    /// Gate D2 perf evidence (ignored — run on demand like Gate A): on a sizeable IMPORTS_FROM
+    /// graph, a 1-edge reanalysis through the cached MAINTAIN path is faster than the full
+    /// from-scratch derivation, and writes only the 1-edge delta.
+    ///
+    /// IMPORTANT — what this does and does NOT show. The maintain path still pays `diff_base`'s
+    /// FULL base scan + plan/index setup (the fixed cost both paths share); it only skips the
+    /// per-edge JOIN. On THIS clean 1:1-module graph the join is cheap, so the fixed scan
+    /// dominates and the speedup is modest (~2× at N=1500) and stays ~flat as N grows (both legs
+    /// scale linearly). The real win is workload-dependent: on the production corpus the depends.dl
+    /// join was the 97s cost (messy attr/node fan-out) while the base scan is sub-second, so
+    /// maintain skips nearly all the work — but that ≥5× ratio can only be shown on the real corpus
+    /// (the Gate D2 corpus-benchmark EXIT), not a clean synthetic. Two follow-ups this measurement
+    /// motivates: a version-delta-scoped `diff_base` (read only segments newer than prev_snapshot →
+    /// sublinear scan, raising the floor) and confirming maintain reuses rather than rebuilds the
+    /// join indices. This test asserts only the DIRECTION (maintain strictly faster + exact delta).
+    ///
+    /// `cargo test --release --lib cached_materialize_reanalysis_is_work_proportional -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn cached_materialize_reanalysis_is_work_proportional() {
+        use crate::datalog::EvalLimits;
+        use std::sync::atomic::Ordering;
+        use std::time::Instant;
+        let src = crate::datalog2::stdlib::DEPENDS_DL;
+
+        const N: usize = 1500;
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let ids: Vec<u128> = (0..N)
+            .map(|i| make_v2_node(&format!("m{i}.js->MODULE->m{i}"), "MODULE", &format!("m{i}"), &format!("m{i}.js")).id)
+            .collect();
+        let nodes: Vec<_> = (0..N)
+            .map(|i| make_v2_node(&format!("m{i}.js->MODULE->m{i}"), "MODULE", &format!("m{i}"), &format!("m{i}.js")))
+            .collect();
+        let imp = |s: usize, d: usize| EdgeRecordV2 {
+            src: ids[s],
+            dst: ids[d],
+            edge_type: "IMPORTS_FROM".to_string(),
+            metadata: String::new(),
+        };
+        // Each module imports the next three → ~3*N distinct-pair IMPORTS_FROM edges.
+        let mut edges = Vec::new();
+        for i in 0..N {
+            for k in 1..=3 {
+                if i + k < N {
+                    edges.push(imp(i, i + k));
+                }
+            }
+        }
+        let n_edges = edges.len();
+        engine
+            .commit_batch_ext(
+                nodes,
+                edges,
+                &(0..N).map(|i| format!("m{i}.js")).collect::<Vec<_>>(),
+                HashMap::new(),
+                &[],
+            )
+            .expect("base commit");
+
+        // Full materialize (cache miss).
+        let t0 = Instant::now();
+        let (added0, _) = engine
+            .eval_datalog_v2_materialize_cached(src, EvalLimits::none())
+            .expect("full materialize");
+        let t_full = t0.elapsed();
+        assert_eq!(engine.datalog2_maintain_hits.load(Ordering::Relaxed), 0, "first call is a miss");
+        assert_eq!(added0, n_edges, "full run materializes one DEPENDS_ON per distinct import");
+
+        // 1-edge reanalysis (cache hit → maintain). (0 → N-2) is not among the seeded next-three.
+        engine
+            .commit_batch_ext(Vec::new(), vec![imp(0, N - 2)], &[], HashMap::new(), &[])
+            .expect("reanalysis edge commit");
+        let t1 = Instant::now();
+        let (added1, removed1) = engine
+            .eval_datalog_v2_materialize_cached(src, EvalLimits::none())
+            .expect("reanalysis materialize");
+        let t_maintain = t1.elapsed();
+        assert_eq!(engine.datalog2_maintain_hits.load(Ordering::Relaxed), 1, "reanalysis took the maintain path");
+        assert_eq!((added1, removed1), (1, 0), "reanalysis writes exactly the 1-edge delta");
+
+        let ratio = t_full.as_secs_f64() / t_maintain.as_secs_f64().max(1e-9);
+        println!(
+            "[D2 perf] N={N} modules, {n_edges} IMPORTS_FROM | full-eval {:?} | 1-edge maintain {:?} | speedup {:.1}× \
+             (clean 1:1 graph → scan-bound; ≥5× is corpus-dependent, see doc)",
+            t_full, t_maintain, ratio
+        );
+        // Direction only: maintain skips the join so it is strictly faster than full eval. The
+        // magnitude is workload-dependent (the ≥5× target is the corpus-benchmark EXIT).
+        assert!(
+            t_maintain < t_full,
+            "1-edge reanalysis (maintain) must be faster than full eval: full={:?} maintain={:?} ({:.1}×)",
+            t_full,
+            t_maintain,
+            ratio
+        );
+    }
 }

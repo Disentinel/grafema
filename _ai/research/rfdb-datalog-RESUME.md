@@ -85,15 +85,28 @@ byte-identical + alloc-free. Proof `incremental_insertion_work_proportional_to_d
      `cached_materialize_maintains_across_calls_and_equals_scratch`, and on the ACTUAL bundled rule
      `cached_materialize_bundled_depends_dl_equals_scratch_on_real_store` (multi-leg edge+node×2+attr×3+neq).
      datalog2 155, engine_v2 47, materialize 15/15, maintain 4/4, Gate A 50/50 (96.83s).
-   - ⬜ **D2 REMAINING — durable-across-restart pin + corpus benchmark EXIT.** (a) Durable cache: a
-     cold CI server starts with an empty cache → always full-eval (correct, not work-proportional);
-     persist+pin the last-materialized version durably (NOT manifest tags — fragile; a dedicated
-     metadata node or sidecar) so reanalysis after restart still maintains. (d) is its prerequisite.
-     (b) Benchmark EXIT (needs the analyze pipeline + pilot corpus, its own session): wire is already
-     transparent (no orchestrator change), so just run `analyze` cold, touch one file, reanalyze, and
-     measure the DEPENDS_ON phase ≥5× / ≤30s vs 256s; pure-JS fixture green. (c) `guarantees/imports`
-     pack is UNDEFINED (no `.dl`) — out of scope until authored; envelope table in `d2-plan.md` §5.
-     Lesson: [[optimize-the-bottleneck-axis-not-the-incidental-one]].
+   - ✅ **D2 PERF EXIT DEMONSTRATED on the REAL corpus — 14.2×** (≥5× target met). Bench
+     `datalog2::differential::depends_dl_maintain_vs_full_on_real_corpus` (ignored, `--release`) over
+     the repo's own `.grafema/grafema.rfdb`: full depends.dl eval **33.0s** vs maintain-floor **2.3s**
+     (DEPENDS_ON=622), 14.2×. The floor = `diff_base` full scan + `maintain_incremental` over an
+     empty delta + write-back diff; a real tiny edit adds only O(delta) on top, so 14.2× is the
+     small-reanalysis ceiling. Confirms: on the real graph the JOIN dominates (33s), maintain skips
+     it. The clean-synthetic micro-bench (`engine_v2::...reanalysis_is_work_proportional`) showed only
+     2.2× — scan-bound, unrepresentative; both honest, corpus resolves it. Lesson (updated with the
+     measured nuance): [[optimize-the-bottleneck-axis-not-the-incidental-one]].
+   - ⬜ **D2 OPTIONAL follow-ups (perf EXIT already met; none blocking):**
+     (a) **version-delta-scoped `diff_base`** — read only segments newer than `prev_snapshot.version`
+     → sublinear scan, shaves the 2.3s floor toward sub-second (would push past 14.2×). Server-internal,
+     sound, no wire change. Motivated but NOT needed for the target.
+     (b) **end-to-end pipeline wall-clock** — confirm the phase-9 ≤30s/≥5× through `analyze` (wire is
+     already transparent: cold analyze, touch a file, reanalyze). The server ratio (14.2×) is the
+     dominant factor; this is confirmation, its own session.
+     (c) **durable-across-restart pin** — cold CI server starts with empty cache → full-eval (correct,
+     not work-proportional). Persist+pin the last-materialized version durably (NOT manifest tags;
+     dedicated metadata node/sidecar). NARROW benefit (CI usually full-rebuilds); delicate persisted
+     state — defer unless a real cold-reanalysis scenario demands it.
+     (d) `guarantees/imports` pack is UNDEFINED (no `.dl`) — out of scope until authored; envelope
+     table in `d2-plan.md` §5.
 4. **Gate E** — stdlib, MCP explain_fact (surfaces why()), docs, events-schema.md, sim(), Appendix-B
    migrations, retire legacy (P3 task #8: legacy execution-counter test + legacy-retirement.lock).
 
