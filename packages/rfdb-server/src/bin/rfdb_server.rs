@@ -264,6 +264,18 @@ pub enum Request {
         source: String,
     },
 
+    /// why() / explain_fact (spec §11, Gate E): explain ONE supporting derivation of a derived
+    /// fact `predicate(key)` under a v2 program (empty `source` ⇒ the bundled `depends.dl`).
+    /// v2-only, kill-switch gated. READ path; provenance computed on demand (nothing stored per
+    /// fact). Returns the deriving rule's hash + the positive body facts that satisfied it, or a
+    /// null witness when the fact is not derivable by the program.
+    ExplainDatalogFact {
+        source: String,
+        predicate: String,
+        /// Ground key tuple as wire strings (all-digits ⇒ node id, else string literal).
+        key: Vec<String>,
+    },
+
     // Cypher queries
     CypherQuery {
         query: String,
@@ -509,6 +521,7 @@ pub enum Response {
     Identifier { identifier: Option<String> },
     DatalogResults { results: Vec<WireViolation> },
     ExplainResult(WireExplainResult),
+    FactWitness { witness: Option<WireFactWitness> },
     CypherResult {
         columns: Vec<String>,
         rows: Vec<Vec<serde_json::Value>>,
@@ -685,6 +698,24 @@ impl From<DatabaseInfo> for WireDatabaseInfo {
 #[serde(rename_all = "camelCase")]
 pub struct WireViolation {
     pub bindings: HashMap<String, String>,
+}
+
+/// Wire form of a `DerivationWitness` (why()/explain_fact, spec §11): the deriving rule's stable
+/// hash + the positive body facts (predicate + ground tuple) that satisfied it for this fact.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WireFactWitness {
+    pub rule_ast_hash: String,
+    pub body: Vec<WireBodyFact>,
+}
+
+/// One positive body fact of a witness: the literal's predicate + its ground tuple as wire
+/// strings (ids → decimal u128, string literals verbatim).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WireBodyFact {
+    pub predicate: String,
+    pub tuple: Vec<String>,
 }
 
 /// Explain result for wire protocol (single object per query, not per row)
@@ -1148,6 +1179,7 @@ fn get_operation_name(request: &Request) -> String {
         Request::DatalogClearRules => "DatalogClearRules".to_string(),
         Request::ExecuteDatalog { .. } => "ExecuteDatalog".to_string(),
         Request::MaterializeDatalog { .. } => "MaterializeDatalog".to_string(),
+        Request::ExplainDatalogFact { .. } => "ExplainDatalogFact".to_string(),
         Request::IsEndpoint { .. } => "IsEndpoint".to_string(),
         Request::GetNodeIdentifier { .. } => "GetNodeIdentifier".to_string(),
         Request::UpdateNodeVersion { .. } => "UpdateNodeVersion".to_string(),
@@ -1650,6 +1682,17 @@ fn handle_request_with_cancel(
             with_engine_write(session, |engine| {
                 match dispatch_materialize_datalog(engine, &source, cf) {
                     Ok(count) => Response::Count { count: count as u32 },
+                    Err(e) => Response::Error { error: e },
+                }
+            })
+        }
+
+        Request::ExplainDatalogFact { source, predicate, key } => {
+            // READ path: why() is a pure read over the current snapshot (no commit).
+            let cf = cancel_flag.clone();
+            with_engine_read(session, |engine| {
+                match dispatch_explain_datalog_fact(engine, &source, &predicate, &key, cf) {
+                    Ok(witness) => Response::FactWitness { witness },
                     Err(e) => Response::Error { error: e },
                 }
             })
@@ -2863,6 +2906,76 @@ fn dispatch_materialize_datalog(
     v2.eval_datalog_v2_materialize_cached(program, limits)
         .map(|(added, _removed)| added)
         .map_err(|e| format!("Datalog v2 materialize error [{}]: {}", e.code(), e))
+}
+
+/// `ExplainDatalogFact` dispatch (READ path): explain ONE supporting derivation of
+/// `predicate(key)` under a v2 program via [`GraphEngineV2::explain_datalog_fact`] (why(), spec
+/// §11). v2-ONLY and kill-switch-gated (refused with a coded error when `RFDB_DATALOG_V2` is off,
+/// I5 — never a silent empty answer). Empty `source` ⇒ the bundled `depends.dl`. `Ok(None)` ⇒ the
+/// fact is not derivable by the program (a true negative, distinct from an error).
+fn dispatch_explain_datalog_fact(
+    engine: &dyn GraphStore,
+    source: &str,
+    predicate: &str,
+    key: &[String],
+    cancel_flag: Arc<AtomicBool>,
+) -> std::result::Result<Option<WireFactWitness>, String> {
+    if !datalog_v2_enabled() {
+        return Err("RFDB_DATALOG_V2: explain_fact is a v2-only path; with the kill switch off \
+                    there is no v2 why() provenance"
+            .to_string());
+    }
+    let v2 = engine
+        .as_any()
+        .downcast_ref::<GraphEngineV2>()
+        .ok_or_else(|| {
+            "RFDB_DATALOG_V2: explain_fact requires a storage_v2 GraphEngineV2 backend".to_string()
+        })?;
+
+    let program = if source.trim().is_empty() {
+        rfdb::datalog2::stdlib::DEPENDS_DL
+    } else {
+        source
+    };
+    let key_vals: Vec<rfdb::datalog::Value> = key.iter().map(|s| wire_string_to_value(s)).collect();
+
+    let mut limits = EvalLimits::default();
+    limits.cancelled = Some(cancel_flag);
+
+    let witness = v2
+        .explain_datalog_fact(program, predicate, &key_vals, limits)
+        .map_err(|e| format!("Datalog v2 explain_fact error [{}]: {}", e.code(), e))?;
+
+    Ok(witness.map(|w| WireFactWitness {
+        rule_ast_hash: w.rule_ast_hash,
+        body: w
+            .body
+            .into_iter()
+            .map(|(predicate, tuple)| WireBodyFact {
+                predicate,
+                tuple: tuple.iter().map(datalog_value_to_wire_string).collect(),
+            })
+            .collect(),
+    }))
+}
+
+/// Parse a wire term: an all-`u128` string is a node id ([`rfdb::datalog::Value::Id`]); anything
+/// else is a string literal ([`rfdb::datalog::Value::Str`]). Inverse of
+/// [`datalog_value_to_wire_string`]; mirrors how the v2 read path treats numeric ids.
+fn wire_string_to_value(s: &str) -> rfdb::datalog::Value {
+    match s.parse::<u128>() {
+        Ok(id) => rfdb::datalog::Value::Id(id),
+        Err(_) => rfdb::datalog::Value::Str(s.to_string()),
+    }
+}
+
+/// Render a datalog [`rfdb::datalog::Value`] to its wire string (ids → decimal u128, strings
+/// verbatim).
+fn datalog_value_to_wire_string(v: &rfdb::datalog::Value) -> String {
+    match v {
+        rfdb::datalog::Value::Id(id) => id.to_string(),
+        rfdb::datalog::Value::Str(s) => s.clone(),
+    }
 }
 
 /// Convert a `QueryResult` into a `WireExplainResult`
@@ -7185,6 +7298,78 @@ mod protocol_tests {
             Ok(DatalogResponse::Explain(_)) => panic!("expected violations, got an explain result"),
             Err(e) => panic!("v2 read of DEPENDS_ON failed: {e}"),
         }
+
+        match prev {
+            Some(v) => std::env::set_var("RFDB_DATALOG_V2", v),
+            None => std::env::remove_var("RFDB_DATALOG_V2"),
+        }
+    }
+
+    /// Gate E: `ExplainDatalogFact` (why()) returns ONE supporting derivation of a derived fact,
+    /// is v2-only (refused with the kill switch off, I5), and yields a NULL witness for a fact the
+    /// program cannot derive — a true negative, distinct from an error.
+    #[test]
+    fn dispatch_explain_datalog_fact_returns_witness_and_gates_off() {
+        let _guard = DATALOG_V2_ENV_LOCK.lock().unwrap();
+        let prev = std::env::var("RFDB_DATALOG_V2").ok();
+
+        // Module `a` (file a.js) imports module `b` (file b.js) → depends(a,b) via depends.dl.
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let mk_node = |sid: &str, ty: &str| NodeRecord {
+            id: string_to_id(sid),
+            node_type: Some(ty.to_string()),
+            file_id: 0,
+            name_offset: 0,
+            version: "main".to_string(),
+            exported: false,
+            replaces: None,
+            deleted: false,
+            name: Some(sid.to_string()),
+            file: Some(format!("{sid}.js")),
+            metadata: None,
+            semantic_id: Some(sid.to_string()),
+        };
+        engine.add_nodes(vec![mk_node("a", "MODULE"), mk_node("b", "MODULE")]);
+        engine.add_edges(
+            vec![EdgeRecord {
+                src: string_to_id("a"),
+                dst: string_to_id("b"),
+                edge_type: Some("IMPORTS_FROM".to_string()),
+                version: "main".to_string(),
+                metadata: None,
+                deleted: false,
+            }],
+            true,
+        );
+        engine.flush().unwrap();
+
+        let cf = || Arc::new(AtomicBool::new(false));
+        let a = string_to_id("a").to_string();
+        let b = string_to_id("b").to_string();
+
+        // ── Kill switch OFF → refused (coded), no v2 why(). ──
+        std::env::set_var("RFDB_DATALOG_V2", "off");
+        let off = dispatch_explain_datalog_fact(&engine, "", "depends", &[a.clone(), b.clone()], cf());
+        assert!(off.is_err(), "explain_fact must be refused when the kill switch is off");
+        assert!(off.unwrap_err().contains("v2-only"), "explicit v2-only coded refusal (P3/I5)");
+
+        // ── Kill switch ON → a derivable fact yields a witness (deriving rule + body facts). ──
+        std::env::set_var("RFDB_DATALOG_V2", "on");
+        let witness = dispatch_explain_datalog_fact(&engine, "", "depends", &[a.clone(), b.clone()], cf())
+            .expect("explain succeeds under v2")
+            .expect("depends(a,b) is derivable → Some witness");
+        assert!(!witness.rule_ast_hash.is_empty(), "witness names the deriving rule (its _source hash)");
+        assert!(
+            witness.body.iter().any(|f| f.predicate == "edge"
+                && f.tuple.iter().any(|t| t == "IMPORTS_FROM")),
+            "the IMPORTS_FROM base fact supports the derivation: {:?}",
+            witness.body
+        );
+
+        // ── A non-derivable fact → NULL witness (true negative, not an error). ──
+        let none = dispatch_explain_datalog_fact(&engine, "", "depends", &[b, a], cf())
+            .expect("explain succeeds under v2");
+        assert!(none.is_none(), "depends(b,a) is not derivable (only a→b imports) → null witness");
 
         match prev {
             Some(v) => std::env::set_var("RFDB_DATALOG_V2", v),
