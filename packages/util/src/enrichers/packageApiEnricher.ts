@@ -136,7 +136,7 @@ export async function enrichPackageApis(
       //     job). If the source is outside the indexed graph, we still emit the
       //     node but increment exportsWithoutHandler.
       const targetId = reExportSource
-        ? await findDefinitionTarget(client, exportedName, resolveRelative(barrel, reExportSource))
+        ? await resolveReExportTarget(client, exportedName, resolveRelative(barrel, reExportSource))
         : await findDefinitionTarget(client, exportedName, barrel);
 
       const nodeMeta: Record<string, unknown> = {
@@ -275,11 +275,16 @@ async function findDefinitionTarget(
 }
 
 /**
- * Resolve a relative re-export source (`./foo/index.js`, `../bar.ts`) against
- * the barrel's file path. Mirrors ManifestGenerator.resolveSourcePath but
- * without TypeScript-specific extension tweaks: we deliberately try the source
- * verbatim AND with a `.ts` swap, since the JS analyzer emits `.js` paths even
- * for source TypeScript.
+ * Normalize a relative re-export source (`./foo`, `./foo.js`, `./sub`, `../bar`)
+ * into a logical base path relative to the barrel. Non-relative sources
+ * (bare/scoped specifiers like `@scope/pkg`) are returned verbatim — they don't
+ * map to an in-graph file and resolve to no HANDLES target.
+ *
+ * This deliberately does NOT pick a file extension: extension/index expansion
+ * happens in {@link candidateFiles}, because a single specifier can map to a
+ * `.ts`, `.tsx`, `.js`, … file, or a directory `index.*`, and the analyzer
+ * indexes source TypeScript as `.ts` even when the specifier is `.js` or
+ * extensionless.
  */
 function resolveRelative(fromFile: string, source: string): string {
   if (!source.startsWith('.')) return source;
@@ -294,11 +299,62 @@ function resolveRelative(fromFile: string, source: string): string {
     if (p === '..') stack.pop();
     else if (p !== '.' && p !== '') stack.push(p);
   }
-  resolved = (resolved.startsWith('/') ? '/' : '') + stack.join('/');
-  // The analyzer indexes source TypeScript as .ts; barrels typically reference
-  // siblings via `./foo.js` thanks to ESM. Try .ts before falling through.
-  if (resolved.endsWith('.js')) return resolved.replace(/\.js$/, '.ts');
-  return resolved;
+  return (resolved.startsWith('/') ? '/' : '') + stack.join('/');
+}
+
+/** Source-file extensions a re-export specifier may resolve to, TS-first. */
+const REEXPORT_EXTENSIONS: readonly string[] = ['.ts', '.tsx', '.js', '.mjs', '.cjs'];
+/** Directory index file names, TS-first. */
+const REEXPORT_INDEX_FILES: readonly string[] = REEXPORT_EXTENSIONS.map(e => `index${e}`);
+const KNOWN_EXT_RE = /\.(?:ts|tsx|js|mjs|cjs|jsx)$/;
+
+/**
+ * Expand a normalized re-export base path into the candidate graph file paths
+ * it may correspond to, ordered by likelihood (verbatim first when the
+ * specifier already carries a known extension, otherwise TS source files before
+ * the directory `index.*` forms).
+ *
+ * The analyzer stores `EXPORT_BINDING.source` as the verbatim `from '...'`
+ * string. Source TypeScript commonly uses the extensionless (`./foo`) or
+ * ESM `.js` (`./foo.js`) form, while the real graph node lives in `foo.ts`,
+ * so a single fixed extension can never cover every layout.
+ */
+function candidateFiles(resolved: string): string[] {
+  const out: string[] = [];
+  const push = (p: string): void => {
+    if (!out.includes(p)) out.push(p);
+  };
+
+  if (KNOWN_EXT_RE.test(resolved)) {
+    // e.g. './foo.js' → try foo.js verbatim, then TS/JS siblings of foo.*
+    push(resolved);
+    const base = resolved.replace(KNOWN_EXT_RE, '');
+    for (const ext of REEXPORT_EXTENSIONS) push(base + ext);
+  } else {
+    // e.g. './foo' or './sub' → file-with-extension first, then directory index
+    for (const ext of REEXPORT_EXTENSIONS) push(resolved + ext);
+    push(resolved);
+    for (const idx of REEXPORT_INDEX_FILES) push(`${resolved}/${idx}`);
+  }
+  return out;
+}
+
+/**
+ * Resolve a re-export's HANDLES target by trying each candidate file the
+ * normalized source path may map to, returning the first definition found.
+ * Returns null when no candidate file holds a matching definition — callers
+ * treat that as an unresolved re-export (`exportsWithoutHandler`).
+ */
+async function resolveReExportTarget(
+  client: RFDBClient,
+  name: string,
+  resolvedSource: string,
+): Promise<string | null> {
+  for (const file of candidateFiles(resolvedSource)) {
+    const id = await findDefinitionTarget(client, name, file);
+    if (id) return id;
+  }
+  return null;
 }
 
 /** ---------------------------------------------------------------------------

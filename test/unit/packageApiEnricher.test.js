@@ -243,6 +243,118 @@ describe('packageApiEnricher', () => {
     }
   });
 
+  it('extensionless re-export source resolves to the .ts definition', async () => {
+    // The JS analyzer stores EXPORT_BINDING.source as the verbatim `from '...'`
+    // specifier. For source TypeScript, the common form is extensionless
+    // (`export { foo } from './foo'`). The resolver must expand './foo' to the
+    // real graph file `foo.ts` — a `.js→.ts` swap alone never fires here.
+    const barrel = 'packages/pkg-a/src/index.ts';
+    const defFile = 'packages/pkg-a/src/foo.ts';
+    await seedBarrelModule(backend, barrel);
+    await seedBarrelModule(backend, defFile);
+
+    await backend.addNode({
+      id: 'test::eb-foo',
+      type: 'EXPORT_BINDING',
+      name: 'foo',
+      file: barrel,
+      exported: true,
+      exportedName: 'foo',
+      source: './foo', // extensionless
+    });
+    await backend.addNode({
+      id: 'test::fn-foo',
+      type: 'FUNCTION',
+      name: 'foo',
+      file: defFile,
+    });
+
+    const result = await enrichPackageApis(client);
+
+    assert.equal(result.apiNodesCreated, 1);
+    assert.equal(result.handlesEdgesCreated, 1, 'extensionless source must resolve to a HANDLES target');
+    assert.equal(result.exportsWithoutHandler, 0);
+
+    const apiNodes = [];
+    for await (const wn of client.queryNodes({ type: 'package:export' })) apiNodes.push(wn);
+    assert.equal(apiNodes.length, 1);
+
+    const has = await getEdges(client, apiNodes[0].id, 'HANDLES');
+    assert.equal(has.length, 1, 'one HANDLES edge expected');
+    const target = await client.getNode(String(has[0].dst));
+    assert.equal(target.nodeType, 'FUNCTION');
+    assert.equal(target.name, 'foo');
+  });
+
+  it('directory re-export source resolves to the directory index file', async () => {
+    // `export { bar } from './sub'` where ./sub is a directory must resolve to
+    // its index file (`./sub/index.ts`).
+    const barrel = 'packages/pkg-a/src/index.ts';
+    const defFile = 'packages/pkg-a/src/sub/index.ts';
+    await seedBarrelModule(backend, barrel);
+    await seedBarrelModule(backend, defFile);
+
+    await backend.addNode({
+      id: 'test::eb-bar',
+      type: 'EXPORT_BINDING',
+      name: 'bar',
+      file: barrel,
+      exported: true,
+      exportedName: 'bar',
+      source: './sub', // directory
+    });
+    await backend.addNode({
+      id: 'test::fn-bar',
+      type: 'FUNCTION',
+      name: 'bar',
+      file: defFile,
+    });
+
+    const result = await enrichPackageApis(client);
+
+    assert.equal(result.handlesEdgesCreated, 1, 'directory source must resolve via index file');
+    assert.equal(result.exportsWithoutHandler, 0);
+
+    const apiNodes = [];
+    for await (const wn of client.queryNodes({ type: 'package:export' })) apiNodes.push(wn);
+    const has = await getEdges(client, apiNodes[0].id, 'HANDLES');
+    assert.equal(has.length, 1, 'one HANDLES edge expected');
+    const target = await client.getNode(String(has[0].dst));
+    assert.equal(target.name, 'bar');
+  });
+
+  it('extensionless source pointing nowhere still increments exportsWithoutHandler (no false resolve)', async () => {
+    // Adversarial: a same-named definition exists in an UNRELATED file. The
+    // resolver must NOT resolve to it — candidate expansion stays scoped to the
+    // re-export source path, and fuzzyNameFallback is disabled.
+    const barrel = 'packages/pkg-a/src/index.ts';
+    const unrelated = 'packages/pkg-a/src/elsewhere.ts';
+    await seedBarrelModule(backend, barrel);
+    await seedBarrelModule(backend, unrelated);
+
+    await backend.addNode({
+      id: 'test::eb-missing',
+      type: 'EXPORT_BINDING',
+      name: 'missing',
+      file: barrel,
+      exported: true,
+      exportedName: 'missing',
+      source: './missing', // no ./missing.* file in graph
+    });
+    await backend.addNode({
+      id: 'test::fn-missing',
+      type: 'FUNCTION',
+      name: 'missing',
+      file: unrelated, // same name, wrong file
+    });
+
+    const result = await enrichPackageApis(client);
+
+    assert.equal(result.apiNodesCreated, 1);
+    assert.equal(result.handlesEdgesCreated, 0, 'must not falsely resolve to unrelated file');
+    assert.equal(result.exportsWithoutHandler, 1);
+  });
+
   it('idempotent: running twice does not duplicate nodes or HANDLES edges', async () => {
     const barrel = 'packages/pkg-a/src/index.ts';
     const defFile = 'packages/pkg-a/src/foo.ts';
