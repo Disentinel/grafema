@@ -367,4 +367,69 @@ mod smoke {
              /health (no client) do not"
         );
     }
+
+    /// Cross-artifact link() PoC iter 2 (apparatus doc §4–§5): the THREE-artifact chain
+    /// frontend → nginx → backend. The client path `/api/users` does NOT equal the backend path
+    /// `/users` — nginx rewrote it. Per the declarative-source-plugin model, the nginx extractor
+    /// RESOLVES the rewrite into facts (an `nginx:route` node carrying the external path + a
+    /// `PROXIES_TO` edge to the backend route), so the cross-artifact join stays pure Datalog with
+    /// NO string builtins. This proves the chain composes across frontend code + nginx config +
+    /// backend code, and that without the nginx hop the differing strings would not link.
+    #[test]
+    fn cross_artifact_link_through_nginx_rewrite() {
+        let n = |sid: &str, ty: &str, path: &str, file: &str| NodeRow {
+            id: id_of(sid),
+            node_type: ty.to_string(),
+            name: path.to_string(),
+            file: file.to_string(),
+        };
+        let mut v = FixtureStorageView::new(1);
+        // Frontend calls the EXTERNAL path (what the browser hits).
+        v.put_node(n("fe:req", "HTTP_REQUEST", "/api/users", "web/api.js"));
+        // nginx (declarative source): the extractor resolved `location /api/ { proxy_pass …/ }`
+        // into an nginx:route carrying the external path + a PROXIES_TO edge to the backend route.
+        v.put_node(n("nginx:/api/users", "nginx:route", "/api/users", "infra/nginx.conf"));
+        // Backend exposes the INTERNAL (rewritten) path.
+        v.put_node(n("be:route", "http:route", "/users", "api/users.js"));
+        v.put_edge(EdgeRow {
+            src: id_of("nginx:/api/users"),
+            dst: id_of("be:route"),
+            edge_type: "PROXIES_TO".to_string(),
+        });
+
+        // The 3-artifact chain: client external path = nginx external path; nginx PROXIES_TO backend.
+        let src = r#"link(C, B) :- node(C, "HTTP_REQUEST"), attr(C, "name", P),
+                                   node(N, "nginx:route"),   attr(N, "name", P),
+                                   edge(N, B, "PROXIES_TO"),  node(B, "http:route")."#;
+        let stats = Stats { total_nodes: 3, total_edges: 1, ..Default::default() };
+        let eval = evaluate(&v, src, stats, EvalLimits::none(), EventLog::discard())
+            .expect("evaluate");
+        let links: std::collections::HashSet<(u128, u128)> = eval
+            .facts("link")
+            .iter()
+            .map(|r| (r[0].as_id().unwrap(), r[1].as_id().unwrap()))
+            .collect();
+        assert_eq!(
+            links,
+            [(id_of("fe:req"), id_of("be:route"))].into_iter().collect(),
+            "the frontend request links to the backend route THROUGH the nginx rewrite, \
+             across all three artifacts"
+        );
+
+        // Sanity: the naive exact-path join (no nginx hop) would NOT link — the strings differ.
+        let naive = r#"link(C, B) :- node(C, "HTTP_REQUEST"), attr(C, "name", P),
+                                     node(B, "http:route"),    attr(B, "name", P)."#;
+        let eval2 = evaluate(
+            &v,
+            naive,
+            Stats { total_nodes: 3, total_edges: 1, ..Default::default() },
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("evaluate");
+        assert!(
+            eval2.facts("link").is_empty(),
+            "without the nginx rewrite hop, /api/users ≠ /users → no link (why nginx matters)"
+        );
+    }
 }
