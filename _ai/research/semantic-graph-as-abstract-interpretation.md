@@ -164,13 +164,46 @@ actions) · packaging (the plugin molecule) · surface (the DSL). Only "derivati
 
 ## 8. What's textbook vs what's ours
 
-- Textbook (don't reinvent): abstract interpretation soundness/precision/termination (Cousot);
-  Datalog points-to (DOOP); equality saturation (egg); existential rules/chase (Datalog^±);
-  provenance semirings (Green–Karvounarakis–Tannen); magic-sets/demand transformation.
-- Ours ("своё сан-рэмо", not chasing CodeQL's QL-library): **cross-artifact** AI (code+config+deploy
-  as one chain joined by value-domains); **incremental** maintenance of the AI fixpoint (Gate D2);
-  a **live shared** graph (not a per-query DB); the **readable DSL** surface CodeQL never had; and
-  **coverage-as-demand-diff** (self-reporting typed gap worklist).
+**Textbook — don't reinvent (verified citations, 2026-06-09 web pass).** Each gives us a SPECIFIC
+tool, not just a name:
+- **Abstract interpretation** — Cousot & Cousot (POPL 1977). Soundness, precision lattice, termination
+  via finite height / widening. Our value-domains ARE abstract domains; "bounded fan-out" = finite
+  lattice height.
+- **Datalog points-to** — Bravenboer & Smaragdakis, "Strictly Declarative Specification of
+  Sophisticated Points-to Analyses" (OOPSLA 2009, the DOOP framework). PRODUCTION precedent that
+  "analysis = recursive Datalog rules" works (10× faster than Paddle) — but only with aggressive
+  optimization of highly-recursive Datalog (our build-once / work-proportionality is the same need).
+  Our derived-congruence value-domain (iter4) is points-to in miniature.
+- **Equality saturation / e-graphs** — Willsey et al., "egg" (POPL 2021, SIGPLAN Research Highlight).
+  Two transfers we want: **e-class analyses** = "attach a program analysis (const-prop, nullability)
+  to an equivalence class" = EXACTLY our "value-domain = an equivalence class WITH attached logic
+  (canonicalizer / may-info)"; and **amortized invariant maintenance** = batch the congruence
+  rebuild = the parallel of our incremental maintenance.
+- **Existential rules / the chase / value invention** — Calì, Gottlob, Kifer, "Taming the infinite
+  chase" (KR 2008); Datalog^± / TGDs. Value invention (fan-out, minting an endpoint node) = an
+  existential rule; the central problem is **chase termination** (acyclicity notions) — which is
+  precisely our "bounded fan-out" soundness obligation, named and studied.
+- **Provenance semirings** — Green, Karvounarakis, Tannen (PODS 2007). `ℕ[X]` is universal for
+  commutative semirings; why-provenance, bag semantics, probabilistic DBs are all the SAME semiring
+  algorithm. So our BoolTag/CountTag/ConfTag are not ad-hoc — they are instances of one framework;
+  "Revisiting Semiring Provenance for Datalog" (2022) is the direct Datalog port.
+- **Coverage = why-NOT provenance** (this validated §6, the strongest find): missing-answer /
+  why-not provenance is a real studied problem — Lee et al., "Efficiently Computing Provenance Graphs
+  for Queries with Negation" (2017) + the **PUG** framework (why & why-not, VLDB). Crucially they hit
+  and solve OUR exact caveat: why-not provenance "can be very large even for small inputs" → PUG
+  **limits capture to what is relevant to the (missing) result + sampling-based summarization** — i.e.
+  the demand-set ∖ EDB + first-missing-premise we proposed is the known-tractable shape, not a guess.
+  They also list "answering hypothetical questions" as a why-not application = our **sim()**.
+- **Magic-sets / demand transformation** — the goal-directed evaluation that turns a target query into
+  the demand-set (the top-down half of coverage).
+
+**Ours ("своё сан-рэмо", not chasing CodeQL's QL-library):** the COMPOSITION + four deltas —
+**cross-artifact** AI (code+config+deploy as one chain joined by value-domains; AI is classically
+within ONE program); **incremental** maintenance of the AI fixpoint (Gate D2, 14.2×); a **live shared**
+graph (not a per-query extracted DB); the **readable archetype-DSL** surface CodeQL/QL never had; and
+**coverage-as-demand-diff** wired as the product's primary coverage signal (why-not as a feature, not a
+debugging afterthought). None of the pieces is new; the assembly + the incremental-live-shared
+substrate + treating why-not as the coverage UX is.
 
 ## 9. Recommended first experiment
 
