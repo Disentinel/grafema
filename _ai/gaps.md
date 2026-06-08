@@ -99,3 +99,31 @@ on `.grafema/grafema.rfdb`). The differential surfaced these gaps, mapped to spe
   50/51 match=50 mismatch=0 — no regression** (the change is ordering-only, I1 preserved). 122 datalog2
   unit tests green (added `attr_value_generator_is_built_once_not_per_row` contract test: 0 `nodes_by_attr`
   calls + bounded sorted-node passes). Benefits ALL multi-join rules, not just depends.
+
+## 2026-06-09: Edge-vocabulary FORK — DERIVED_FROM (emitted) vs DERIVES_FROM (declared)
+
+- **Found** while grounding the archetype claim-map (apparatus doc / I13) against the REAL graph
+  (`.grafema/grafema.rfdb` probe): `DERIVED_FROM` is the **3rd-largest edge class (17,385 edges)** and
+  is UNCLAIMED by `packages/util/src/notation/archetypes.ts` (`EDGE_ARCHETYPE_MAP`).
+- **Root cause (NOT a typo-drift — a real fork across layers):**
+  - `DERIVED_FROM` (past tense) is EMITTED by the analyzers + enricher + dataflow query:
+    `packages/js-analyzer/src/Rules/Expressions.hs` (`geType="DERIVED_FROM"`, lines 109/675/685),
+    `packages/haskell-analyzer/src/Rules/Expressions.hs`, `util/src/enrichers/libraryCallbackEnricher.ts`,
+    `util/src/queries/traceDataflow.ts`.
+  - `DERIVES_FROM` (present tense) is DECLARED + consumed by the type/query/cli layer:
+    `packages/types/src/edges.ts`, `lang-spec/data/vocabulary/baseline.json`,
+    `util/src/queries/{types,traceValues}.ts`, `util/src/storage/backends/typeValidation.ts`,
+    `cli/src/commands/{explore,impact}.ts`, and the archetype map (`archetypes.ts:104`).
+- **Impact:** the 17k emitted `DERIVED_FROM` edges are dark to type-tracing, the archetype
+  notation/describe rendering, and any query keyed on `DERIVES_FROM`. Two synonyms split the dataflow
+  vocabulary. (Also unclaimed: `AWAITS` 1016, `HAS_EFFECT` 27.)
+- **Why NOT fixed autonomously (2026-06-09 overnight loop):** picking a canonical name is a cross-layer
+  vocabulary decision — rename in the analyzers (changes analyzer OUTPUT → needs reanalyze, risks
+  dataflow) OR add the synonym to types+queries+cli (two names forever). Analyzer-output change is not
+  cleanly git-revertable and needs a human call on which name wins. Surfaced for decision.
+- **Fix options:** (a) canonicalize to `DERIVED_FROM` (analyzers are the source of truth) — migrate
+  types/queries/cli/vocab/map; reanalyze. (b) canonicalize to `DERIVES_FROM` — change the 2 analyzers'
+  `geType` + reanalyze. (c) alias both in the archetype map short-term (stops the dark-edge bleed in
+  notation) while deciding. Recommend (a): the emitted name is the ground truth; the 17k edges already exist.
+- **Ties to:** I13 edge-vocabulary governance (apparatus doc); the archetype claim-map + W-code would
+  have caught this at load time. This fork is the concrete motivation for that mechanism.
