@@ -581,11 +581,17 @@ fn walk_node_inner(node: &ruby_prism::Node<'_>, ctx: &mut Ctx) {
                 source: None,
             });
 
+            // A module body is a fresh "default definee": visibility starts at
+            // public and the enclosing visibility resumes on exit (mirrors the
+            // ClassNode / SingletonClassNode handling).
+            let saved_visibility = ctx.visibility;
+            ctx.visibility = Visibility::Public;
             ctx.push_scope(&node_id, ScopeKind::Module, line, col, end_line, end_col);
             if let Some(body) = mn.body() {
                 walk_node(&body, ctx);
             }
             ctx.pop_scope();
+            ctx.visibility = saved_visibility;
         }
 
         ruby_prism::Node::ClassNode { .. } => {
@@ -661,11 +667,17 @@ fn walk_node_inner(node: &ruby_prism::Node<'_>, ctx: &mut Ctx) {
             };
             ctx.emit_node(gn);
 
+            // A singleton-class body is a fresh "default definee": visibility
+            // starts at public and the enclosing visibility resumes on exit
+            // (mirrors the ClassNode / ModuleNode handling).
+            let saved_visibility = ctx.visibility;
+            ctx.visibility = Visibility::Public;
             ctx.push_scope(&node_id, ScopeKind::Class, line, col, end_line, end_col);
             if let Some(body) = scn.body() {
                 walk_node(&body, ctx);
             }
             ctx.pop_scope();
+            ctx.visibility = saved_visibility;
         }
 
         ruby_prism::Node::DefNode { .. } => {
@@ -3334,6 +3346,101 @@ mod tests {
         assert_eq!(priv_m.metadata.get("visibility").unwrap(), "private");
         assert!(pub_m.exported);
         assert!(!priv_m.exported);
+    }
+
+    // 7b. Visibility must not leak across a `module` body boundary.
+    //
+    // In Ruby every class/module body establishes a fresh "default definee"
+    // whose visibility starts at `public`, and the enclosing visibility
+    // resumes once the body closes. So `private` set in an outer scope must
+    // NOT carry into a nested module, and `private` set inside the module
+    // must NOT leak back out to the enclosing scope.
+    #[test]
+    fn test_visibility_does_not_leak_across_module() {
+        let src = "\
+class Outer
+  private
+
+  module Inner
+    def inner_public; end
+
+    private
+    def inner_secret; end
+  end
+
+  def outer_after; end
+end";
+        let a = analyze(src);
+        let functions = find_nodes_by_type(&a, "FUNCTION");
+        let get = |name: &str| {
+            functions
+                .iter()
+                .find(|f| f.name == name)
+                .unwrap_or_else(|| panic!("missing FUNCTION {name}"))
+        };
+
+        // Module body resets to public on entry, despite Outer's `private`.
+        let inner_public = get("inner_public");
+        assert_eq!(
+            inner_public.metadata.get("visibility").unwrap(),
+            "public",
+            "module body must reset visibility to public on entry"
+        );
+        assert!(inner_public.exported);
+
+        // `private` set inside the module applies within it.
+        let inner_secret = get("inner_secret");
+        assert_eq!(inner_secret.metadata.get("visibility").unwrap(), "private");
+        assert!(!inner_secret.exported);
+
+        // The module's `private` must not leak back to Outer's body, which is
+        // still under Outer's own `private`.
+        let outer_after = get("outer_after");
+        assert_eq!(
+            outer_after.metadata.get("visibility").unwrap(),
+            "private",
+            "Outer's `private` must resume after the nested module closes"
+        );
+        assert!(!outer_after.exported);
+    }
+
+    // 7c. Same invariant for a singleton class (`class << self`) body.
+    #[test]
+    fn test_visibility_does_not_leak_across_singleton_class() {
+        let src = "\
+class Outer
+  private
+
+  class << self
+    def klass_public; end
+  end
+
+  def outer_after; end
+end";
+        let a = analyze(src);
+        let functions = find_nodes_by_type(&a, "FUNCTION");
+        let get = |name: &str| {
+            functions
+                .iter()
+                .find(|f| f.name == name)
+                .unwrap_or_else(|| panic!("missing FUNCTION {name}"))
+        };
+
+        // Singleton-class body resets to public on entry.
+        let klass_public = get("klass_public");
+        assert_eq!(
+            klass_public.metadata.get("visibility").unwrap(),
+            "public",
+            "singleton-class body must reset visibility to public on entry"
+        );
+
+        // Outer's `private` resumes after the singleton class closes.
+        let outer_after = get("outer_after");
+        assert_eq!(
+            outer_after.metadata.get("visibility").unwrap(),
+            "private",
+            "Outer's `private` must resume after the singleton class closes"
+        );
     }
 
     // 8. Block test
