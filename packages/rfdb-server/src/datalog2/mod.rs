@@ -481,4 +481,52 @@ mod smoke {
             "exactly the client request whose path has no backend route is a coverage gap"
         );
     }
+
+    /// Cross-artifact link() PoC iter 4 (apparatus doc §2 — the value-domain's equality theory as a
+    /// DERIVED CONGRUENCE, the points-to branch). A frontend and a backend reference an endpoint by
+    /// DIFFERENT aliases (`ep_a` vs `ep_c`); they still link because the aliases are in the same
+    /// equivalence class — computed by a recursive symmetric-transitive closure `same/2`, NOT by
+    /// exact string match. This is "comparability is itself computed by a program" (a recursive
+    /// Datalog rule), the third value-domain implementation alongside iter1 (exact canon key) and
+    /// iter2 (extractor-resolved rewrite). The unaliased endpoint `ep_d` does NOT link.
+    #[test]
+    fn cross_artifact_link_via_derived_alias_congruence() {
+        let mut v = FixtureStorageView::new(1);
+        node(&mut v, "fe", "HTTP_REQUEST");
+        node(&mut v, "be", "http:route");
+        node(&mut v, "be2", "http:route");
+        for ep in ["ep_a", "ep_b", "ep_c", "ep_d"] {
+            node(&mut v, ep, "endpoint");
+        }
+        // fe refers ep_a; be refers ep_c; be2 refers the unaliased ep_d.
+        edge(&mut v, "fe", "ep_a", "REFERS");
+        edge(&mut v, "be", "ep_c", "REFERS");
+        edge(&mut v, "be2", "ep_d", "REFERS");
+        // Alias chain ep_a — ep_b — ep_c (so ep_a ≡ ep_c via closure). ep_d is alone.
+        edge(&mut v, "ep_a", "ep_b", "ALIASES");
+        edge(&mut v, "ep_b", "ep_c", "ALIASES");
+
+        // same/2 = the derived congruence (symmetric base + transitive recursion, BoolTag-idempotent).
+        // link follows it instead of an exact key, so differently-aliased references still join.
+        let src = r#"same(X, Y) :- edge(X, Y, "ALIASES").
+                     same(X, Y) :- edge(Y, X, "ALIASES").
+                     same(X, Z) :- same(X, Y), same(Y, Z).
+                     link(F, B) :- node(F, "HTTP_REQUEST"), edge(F, E1, "REFERS"),
+                                   node(B, "http:route"),    edge(B, E2, "REFERS"),
+                                   same(E1, E2)."#;
+        let stats = Stats { total_nodes: 7, total_edges: 5, ..Default::default() };
+        let eval = evaluate(&v, src, stats, EvalLimits::none(), EventLog::discard())
+            .expect("evaluate");
+        let links: std::collections::HashSet<(u128, u128)> = eval
+            .facts("link")
+            .iter()
+            .map(|r| (r[0].as_id().unwrap(), r[1].as_id().unwrap()))
+            .collect();
+        assert_eq!(
+            links,
+            [(id_of("fe"), id_of("be"))].into_iter().collect(),
+            "fe and be link via the derived alias equivalence class (ep_a ≡ ep_c); the unaliased \
+             be2/ep_d does not — comparability computed by a recursive rule, not exact match"
+        );
+    }
 }
