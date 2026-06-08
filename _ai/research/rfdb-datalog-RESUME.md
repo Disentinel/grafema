@@ -107,8 +107,16 @@ byte-identical + alloc-free. Proof `incremental_insertion_work_proportional_to_d
      state — defer unless a real cold-reanalysis scenario demands it.
      (d) `guarantees/imports` pack is UNDEFINED (no `.dl`) — out of scope until authored; envelope
      table in `d2-plan.md` §5.
-4. **Gate E** — stdlib, MCP explain_fact (surfaces why()), docs, events-schema.md, sim(), Appendix-B
-   migrations, retire legacy (P3 task #8: legacy execution-counter test + legacy-retirement.lock).
+4. **Gate E — IN PROGRESS.**
+   - ✅ **P3 task #8 DONE** (`671d9e80`): orchestrator `derive_depends_on_legacy` extracted +
+     `LEGACY_DEPENDS_ON_EXECUTIONS` counter; `legacy_depends_on_executes_and_counts` (execution, not
+     equality) + `legacy-retirement.lock` (status=retained) guarded by
+     `legacy_retirement_lock_guards_deletion` (fn-pointer anchor → delete fails compile + lock check).
+     8/8 orchestrator tests green. Legacy DEPENDS_ON now safe to retire after Gate E + one release.
+   - ⬜ REMAINING Gate E (parallel, pick per priority): **MCP `explain_fact`** (wire the existing
+     `GraphEngineV2::explain_datalog_fact` why() through a server command + MCP tool — code, builds on
+     `9a80550a`); **stdlib** (more bundled .dl rules beyond depends.dl); **docs + events-schema.md**;
+     **sim()** (hypothetical-edit query, new feature); **Appendix-B migrations**.
 
 ## ▶ (historical) NEXT after compaction — resume here
 
