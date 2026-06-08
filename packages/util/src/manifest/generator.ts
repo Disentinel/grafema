@@ -222,30 +222,58 @@ export class ManifestGenerator {
     if (depth > 5) return null;
 
     const resolved = this.resolveSourcePath(source, fromFile);
+    const candidates = this.candidateFiles(resolved);
 
-    // Direct definition in resolved file
-    const def = await this.findDefinitionInFile(name, resolved);
-    if (def) return def;
-
-    // Try common extensions if no match found (compiled_js often omits extensions in source fields)
-    for (const ext of ['.js', '.mjs', '.cjs', '/index.js', '/index.mjs']) {
-      const withExt = resolved.endsWith(ext) ? null : resolved + ext;
-      if (!withExt) continue;
-      const defWithExt = await this.findDefinitionInFile(name, withExt);
-      if (defWithExt) return defWithExt;
+    // Direct definition in any candidate file (verbatim + extension/index forms).
+    for (const file of candidates) {
+      const def = await this.findDefinitionInFile(name, file);
+      if (def) return def;
     }
 
-    // Follow barrel re-export chain via EXPORT_BINDING
-    for await (const binding of this.backend.queryNodes({
-      type: 'EXPORT_BINDING' as never, name, file: resolved,
-    })) {
-      const nextSource = (binding as Record<string, unknown>).source as string | undefined;
-      if (nextSource) {
-        return this.findDefinition(name, nextSource, resolved, depth + 1);
+    // Follow barrel re-export chain: an EXPORT_BINDING for `name` in a candidate
+    // file re-exports from a deeper source. fuzzyNameFallback:false keeps the
+    // lookup file-scoped (see findDefinitionInFile).
+    for (const file of candidates) {
+      for await (const binding of this.backend.queryNodes({
+        type: 'EXPORT_BINDING' as never, name, file, fuzzyNameFallback: false,
+      })) {
+        const nextSource = (binding as Record<string, unknown>).source as string | undefined;
+        if (nextSource) {
+          return this.findDefinition(name, nextSource, file, depth + 1);
+        }
       }
     }
 
     return null;
+  }
+
+  /**
+   * Expand a resolved (possibly extensionless) source specifier into the
+   * concrete graph file paths the analyzer would have indexed.
+   *
+   * The JS analyzer stores `EXPORT_BINDING.source` verbatim from the
+   * `from '...'` clause (packages/js-analyzer/src/Rules/Declarations.hs:644,742),
+   * which for source TypeScript is typically extensionless (`./impl`) or a
+   * directory (`./utils`). RFDB's `file` filter is an exact match, so an
+   * extensionless `resolved` never matches the real `.ts` or `/index.ts` file
+   * unless we try those forms explicitly. Source TypeScript variants are tried
+   * first; `.js` variants cover `compiled_js` inputs.
+   */
+  private candidateFiles(resolved: string): string[] {
+    const exts =
+      this.options.sourceType === 'compiled_js'
+        ? ['', '.js', '.mjs', '.cjs', '.ts', '.tsx', '/index.js', '/index.mjs', '/index.ts', '/index.tsx']
+        : ['', '.ts', '.tsx', '.js', '.mjs', '.cjs', '/index.ts', '/index.tsx', '/index.js', '/index.mjs'];
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const ext of exts) {
+      const file = ext === '' || resolved.endsWith(ext) ? resolved : resolved + ext;
+      if (!seen.has(file)) {
+        seen.add(file);
+        out.push(file);
+      }
+    }
+    return out;
   }
 
   /** Resolve a relative source path to a graph-relative file path */
@@ -263,7 +291,15 @@ export class ManifestGenerator {
   /** Find a FUNCTION/CLASS/CONSTANT/INTERFACE node by name in a specific file */
   private async findDefinitionInFile(name: string, file: string): Promise<NodeRecord | null> {
     for (const type of ManifestGenerator.DEF_TYPES) {
-      for await (const node of this.backend.queryNodes({ type: type as never, name, file })) {
+      // fuzzyNameFallback:false — without it, RFDB's name-similarity fallback
+      // fires whenever the exact (name+file) query returns 0 rows and resolves
+      // a re-export to a same-named symbol in an UNRELATED file, ignoring the
+      // `file` constraint entirely. The manifest export surface must be
+      // file-scoped, so we require an exact file match (mirrors the sibling
+      // packageApiEnricher.findDefinitionTarget).
+      for await (const node of this.backend.queryNodes({
+        type: type as never, name, file, fuzzyNameFallback: false,
+      })) {
         return node;
       }
     }
