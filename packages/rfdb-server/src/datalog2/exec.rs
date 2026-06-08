@@ -1457,6 +1457,8 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         for row in rows {
             let value = match value_term {
                 Term::Const(s) => Value::from_term_const(s),
+                // A typed literal is already a ground `Value`; use it directly.
+                Term::Lit(v) => v.clone(),
                 Term::Var(v) => match row.get(v) {
                     Some(val) => val.clone(),
                     // The value var is unexpectedly unbound (the planner makes this
@@ -1714,6 +1716,8 @@ fn bind_atom_args(atom: &Atom, row: &BindRow) -> Option<Vec<Value>> {
     for t in atom.args() {
         match t {
             Term::Const(s) => out.push(Value::from_term_const(s)),
+            // A typed literal is already a ground `Value`; use it directly.
+            Term::Lit(v) => out.push(v.clone()),
             Term::Var(v) => out.push(row.get(v)?.clone()),
             // A wildcard has no value to bind into a key; an atom keyed on a wildcard is
             // not a fully-bound key.
@@ -1732,6 +1736,9 @@ fn value_surface(v: &Value) -> String {
     match v {
         Value::Str(s) => s.clone(),
         Value::Id(id) => id.to_string(),
+        // Typed numeric literals surface as their decimal text.
+        Value::Int(i) => i.to_string(),
+        Value::Float(f) => f.to_string(),
     }
 }
 
@@ -1759,6 +1766,8 @@ fn project_head(head: &Atom, row: &BindRow) -> Option<Box<[Value]>> {
     for t in head.args() {
         match t {
             Term::Const(s) => out.push(Value::from_term_const(s)),
+            // A typed literal is already a ground `Value`; use it directly.
+            Term::Lit(v) => out.push(v.clone()),
             Term::Var(v) => out.push(row.get(v)?.clone()),
             // A wildcard in a head is not a captured column; a safe rule never has one.
             Term::Wildcard => return None,
@@ -1790,6 +1799,12 @@ fn head_bound_row(head: &Atom, key: &[Value]) -> Option<BindRow> {
                     return None;
                 }
             }
+            // A typed literal is already a ground `Value`; compare it directly.
+            Term::Lit(v) => {
+                if v != val {
+                    return None;
+                }
+            }
             Term::Wildcard => {}
         }
     }
@@ -1808,6 +1823,12 @@ fn unify_atom(atom: &Atom, fact_key: &[Value], row: &BindRow) -> Option<BindRow>
         match t {
             Term::Const(s) => {
                 if &Value::from_term_const(s) != val {
+                    return None;
+                }
+            }
+            // A typed literal is already a ground `Value`; compare it directly.
+            Term::Lit(v) => {
+                if v != val {
                     return None;
                 }
             }
@@ -1843,6 +1864,8 @@ fn resolve_arg_spec(atom: &Atom, row: &BindRow) -> (ArgSpec, Vec<(usize, String)
     for t in atom.args() {
         match t {
             Term::Const(s) => args.push(ArgValue::Bound(Value::from_term_const(s))),
+            // A typed literal is already a ground `Value`; bind it directly.
+            Term::Lit(v) => args.push(ArgValue::Bound(v.clone())),
             Term::Wildcard => args.push(ArgValue::Wildcard),
             Term::Var(v) => match row.get(v) {
                 Some(val) => args.push(ArgValue::Bound(val.clone())),
@@ -1869,6 +1892,23 @@ fn cmp_value(a: &Value, b: &Value) -> std::cmp::Ordering {
         (Value::Str(x), Value::Str(y)) => x.cmp(y),
         (Value::Id(_), Value::Str(_)) => Ordering::Less,
         (Value::Str(_), Value::Id(_)) => Ordering::Greater,
+        // Typed numeric literals get a deterministic place in the total order: same-variant
+        // pairs compare by their string surface; otherwise by a fixed variant rank so the
+        // result stays a total order regardless of which numeric variants appear.
+        (Value::Int(x), Value::Int(y)) => x.cmp(y),
+        (Value::Float(x), Value::Float(y)) => x.to_bits().cmp(&y.to_bits()),
+        _ => value_rank(a).cmp(&value_rank(b)),
+    }
+}
+
+/// Fixed variant rank for [`cmp_value`]'s cross-variant fallback (keeps the existing
+/// Id < Str ordering, places numerics after them deterministically).
+fn value_rank(v: &Value) -> u8 {
+    match v {
+        Value::Id(_) => 0,
+        Value::Str(_) => 1,
+        Value::Int(_) => 2,
+        Value::Float(_) => 3,
     }
 }
 
@@ -1989,10 +2029,7 @@ mod tests {
         let mut out: Vec<u128> = eval
             .facts(pred)
             .iter()
-            .map(|row| match &row[0] {
-                Value::Id(id) => *id,
-                Value::Str(s) => s.parse().expect("id column"),
-            })
+            .map(|row| row[0].as_id().expect("id column"))
             .collect();
         out.sort_unstable();
         out

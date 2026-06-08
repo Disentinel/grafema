@@ -19,17 +19,55 @@ pub const HASH_JOIN_THRESHOLD: usize = 16;
 /// and processed through the remaining pipeline before fetching the next chunk.
 const PIPELINE_CHUNK_SIZE: usize = 4096;
 
-/// A value in Datalog bindings
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+/// A value in Datalog bindings (spec §5).
+///
+/// `Int`/`Float` are typed numeric literals — a bare `0` / `3.14` in a rule parses to one of
+/// these (not a string round-trip, not a node id). Comparison builtins coerce at the literal
+/// level (`as_f64`); `Eq`/`Hash` are hand-written because `f64` is neither (`Float` compares and
+/// hashes by `to_bits`, so fact-set dedup over numeric tuples stays well-defined and consistent).
+#[derive(Clone, Debug)]
 pub enum Value {
     /// Node ID (u128)
     Id(u128),
     /// String value
     Str(String),
+    /// Signed integer literal (`i64`)
+    Int(i64),
+    /// Floating-point literal (`f64`)
+    Float(f64),
+}
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Value::Id(a), Value::Id(b)) => a == b,
+            (Value::Str(a), Value::Str(b)) => a == b,
+            (Value::Int(a), Value::Int(b)) => a == b,
+            // Bit-equality so `Eq` agrees with `Hash` (NaN==NaN, -0.0≠0.0) — consistent fact
+            // identity, not IEEE numeric equality (which `gt`/`lt` provide via coercion).
+            (Value::Float(a), Value::Float(b)) => a.to_bits() == b.to_bits(),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Value {}
+
+impl std::hash::Hash for Value {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(self).hash(state);
+        match self {
+            Value::Id(x) => x.hash(state),
+            Value::Str(s) => s.hash(state),
+            Value::Int(i) => i.hash(state),
+            Value::Float(f) => f.to_bits().hash(state),
+        }
+    }
 }
 
 impl Value {
-    /// Parse a string as an ID or keep as string
+    /// Parse a string as an ID or keep as string. Used for unquoted/quoted Term::Const surfaces;
+    /// typed numeric literals arrive via `Term::Lit` and do NOT pass through here.
     pub fn from_term_const(s: &str) -> Self {
         if let Ok(id) = s.parse::<u128>() {
             Value::Id(id)
@@ -38,19 +76,34 @@ impl Value {
         }
     }
 
-    /// Get as u128 if possible
+    /// Get as u128 if possible (node-id interpretation). Numeric literals are values, not ids.
     pub fn as_id(&self) -> Option<u128> {
         match self {
             Value::Id(id) => Some(*id),
             Value::Str(s) => s.parse().ok(),
+            Value::Int(_) | Value::Float(_) => None,
         }
     }
 
-    /// Get as string
+    /// Get as string (the wire/attr surface; ids and numbers render to their decimal text).
     pub fn as_str(&self) -> String {
         match self {
             Value::Id(id) => id.to_string(),
             Value::Str(s) => s.clone(),
+            Value::Int(i) => i.to_string(),
+            Value::Float(f) => f.to_string(),
+        }
+    }
+
+    /// Coerce to `f64` for numeric comparison (spec §5: coercion at the literal level). Typed
+    /// numerics read directly; an `Id`/`Str` surface parses, returning `None` on a non-numeric
+    /// surface (the caller treats that as a tuple non-match + `coercion_miss`, never a crash).
+    pub fn as_f64(&self) -> Option<f64> {
+        match self {
+            Value::Int(i) => Some(*i as f64),
+            Value::Float(f) => Some(*f),
+            Value::Id(id) => Some(*id as f64),
+            Value::Str(s) => s.parse().ok(),
         }
     }
 }
@@ -581,6 +634,7 @@ impl<'a> Evaluator<'a> {
                     match dst_term {
                         Term::Var(var) => new_bindings.set(var, Value::Id(dst_id)),
                         Term::Const(_) => {} // already checked above
+                        Term::Lit(_) => {}   // already checked above
                         Term::Wildcard => {}
                     }
 
@@ -656,6 +710,7 @@ impl<'a> Evaluator<'a> {
                     match src_term {
                         Term::Var(var) => new_bindings.set(var, Value::Id(src_id)),
                         Term::Const(_) => {} // already checked above
+                        Term::Lit(_) => {}   // already checked above
                         Term::Wildcard => {}
                     }
 
@@ -736,10 +791,30 @@ impl<'a> Evaluator<'a> {
             return vec![];
         }
 
-        let id_term = &args[0];
-        let type_term = &args[1];
+        // A numeric literal behaves like the equivalent quoted constant (spec §5):
+        // normalize `Term::Lit` to its string surface so the match below treats it
+        // identically to a quoted const.
+        let id_norm;
+        let id_term = match &args[0] {
+            Term::Lit(v) => {
+                id_norm = Term::Const(v.as_str());
+                &id_norm
+            }
+            other => other,
+        };
+        let type_norm;
+        let type_term = match &args[1] {
+            Term::Lit(v) => {
+                type_norm = Term::Const(v.as_str());
+                &type_norm
+            }
+            other => other,
+        };
 
         match (id_term, type_term) {
+            // A `Term::Lit` is normalized to `Term::Const` above, so these are unreachable
+            // in practice; mirror the empty/non-matching case to stay total without panicking.
+            (Term::Lit(_), _) | (_, Term::Lit(_)) => vec![],
             // node(X, "type") - find all nodes of type
             (Term::Var(var), Term::Const(node_type)) => {
                 let ids = self.engine.find_by_type(node_type);
@@ -856,9 +931,22 @@ impl<'a> Evaluator<'a> {
             return vec![];
         }
 
-        let src_term = &args[0];
-        let dst_term = &args[1];
-        let type_term = args.get(2);
+        // A numeric literal behaves like the equivalent quoted constant (spec §5).
+        let src_term = match &args[0] {
+            Term::Lit(v) => Term::Const(v.as_str()),
+            other => other.clone(),
+        };
+        let dst_term = match &args[1] {
+            Term::Lit(v) => Term::Const(v.as_str()),
+            other => other.clone(),
+        };
+        let type_term = args.get(2).map(|t| match t {
+            Term::Lit(v) => Term::Const(v.as_str()),
+            other => other.clone(),
+        });
+        let src_term = &src_term;
+        let dst_term = &dst_term;
+        let type_term = type_term.as_ref();
 
         match src_term {
             Term::Const(src_str) => {
@@ -891,6 +979,8 @@ impl<'a> Evaluator<'a> {
                                     return None;
                                 }
                             }
+                            // Lit is normalized to Const above; never reached.
+                            Term::Lit(_) => {}
                             Term::Wildcard => {}
                         }
 
@@ -1003,6 +1093,8 @@ impl<'a> Evaluator<'a> {
                     })
                     .collect()
             }
+            // Lit is normalized to Const above; never reached.
+            Term::Lit(_) => vec![],
         }
     }
 
@@ -1013,9 +1105,22 @@ impl<'a> Evaluator<'a> {
             return vec![];
         }
 
-        let dst_term = &args[0];
-        let src_term = &args[1];
-        let type_term = args.get(2);
+        // A numeric literal behaves like the equivalent quoted constant (spec §5).
+        let dst_term = match &args[0] {
+            Term::Lit(v) => Term::Const(v.as_str()),
+            other => other.clone(),
+        };
+        let src_term = match &args[1] {
+            Term::Lit(v) => Term::Const(v.as_str()),
+            other => other.clone(),
+        };
+        let type_term = args.get(2).map(|t| match t {
+            Term::Lit(v) => Term::Const(v.as_str()),
+            other => other.clone(),
+        });
+        let dst_term = &dst_term;
+        let src_term = &src_term;
+        let type_term = type_term.as_ref();
 
         match dst_term {
             Term::Const(dst_str) => {
@@ -1048,6 +1153,8 @@ impl<'a> Evaluator<'a> {
                                     return None;
                                 }
                             }
+                            // Lit is normalized to Const above; never reached.
+                            Term::Lit(_) => {}
                             Term::Wildcard => {}
                         }
 
@@ -1091,6 +1198,8 @@ impl<'a> Evaluator<'a> {
                                     return None;
                                 }
                             }
+                            // Lit is normalized to Const above; never reached.
+                            Term::Lit(_) => {}
                             Term::Wildcard => {}
                         }
 
@@ -1144,6 +1253,8 @@ impl<'a> Evaluator<'a> {
                                     return None;
                                 }
                             }
+                            // Lit is normalized to Const above; never reached.
+                            Term::Lit(_) => {}
                             Term::Wildcard => {}
                         }
 
@@ -1158,6 +1269,8 @@ impl<'a> Evaluator<'a> {
                     })
                     .collect()
             }
+            // Lit is normalized to Const above; never reached.
+            Term::Lit(_) => vec![],
         }
     }
 
@@ -1250,6 +1363,13 @@ impl<'a> Evaluator<'a> {
             }
             Term::Const(expected) => {
                 if &attr_value == expected {
+                    vec![Bindings::new()]
+                } else {
+                    vec![]
+                }
+            }
+            Term::Lit(v) => {
+                if attr_value == v.as_str() {
                     vec![Bindings::new()]
                 } else {
                     vec![]
@@ -1358,6 +1478,13 @@ impl<'a> Evaluator<'a> {
             }
             Term::Const(expected) => {
                 if &attr_value == expected {
+                    vec![Bindings::new()] // Match succeeded
+                } else {
+                    vec![] // No match
+                }
+            }
+            Term::Lit(v) => {
+                if attr_value == v.as_str() {
                     vec![Bindings::new()] // Match succeeded
                 } else {
                     vec![] // No match
@@ -1731,6 +1858,13 @@ impl<'a> Evaluator<'a> {
                     vec![]
                 }
             }
+            Term::Lit(v) => {
+                if v.as_str() == count_str {
+                    vec![Bindings::new()]
+                } else {
+                    vec![]
+                }
+            }
             Term::Wildcard => vec![Bindings::new()],
         }
     }
@@ -1750,6 +1884,13 @@ impl<'a> Evaluator<'a> {
                     vec![]
                 }
             }
+            Term::Lit(v) => {
+                if v.as_str() == val {
+                    vec![Bindings::new()]
+                } else {
+                    vec![]
+                }
+            }
             Term::Wildcard => vec![Bindings::new()],
         }
     }
@@ -1764,6 +1905,13 @@ impl<'a> Evaluator<'a> {
             }
             Term::Const(c) => {
                 if c.parse::<u128>().ok() == Some(id) {
+                    vec![Bindings::new()]
+                } else {
+                    vec![]
+                }
+            }
+            Term::Lit(v) => {
+                if v.as_str().parse::<u128>().ok() == Some(id) {
                     vec![Bindings::new()]
                 } else {
                     vec![]
@@ -1879,6 +2027,13 @@ impl<'a> Evaluator<'a> {
             }
             Term::Const(expected) => {
                 if expected.parse::<u128>().ok() == Some(parent_id) {
+                    vec![Bindings::new()]
+                } else {
+                    vec![]
+                }
+            }
+            Term::Lit(v) => {
+                if v.as_str().parse::<u128>().ok() == Some(parent_id) {
                     vec![Bindings::new()]
                 } else {
                     vec![]

@@ -323,7 +323,8 @@ fn positive_can_place_and_provides(
 /// Check if a term is a Const or a Var that is already in bound.
 fn is_bound_or_const(term: &Term, bound: &HashSet<String>) -> bool {
     match term {
-        Term::Const(_) | Term::Wildcard => true,
+        // A typed numeric literal is a ground value, like a quoted const.
+        Term::Const(_) | Term::Lit(_) | Term::Wildcard => true,
         Term::Var(v) => bound.contains(v),
     }
 }

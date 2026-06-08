@@ -817,7 +817,8 @@ fn shares_no_binding(atom: &Atom, bound: &HashSet<String>) -> bool {
 /// A term is bound if it is a constant/wildcard or a variable already in `bound`.
 fn is_bound_or_const(term: &Term, bound: &HashSet<String>) -> bool {
     match term {
-        Term::Const(_) | Term::Wildcard => true,
+        // A typed numeric literal is a ground value, like a quoted const.
+        Term::Const(_) | Term::Lit(_) | Term::Wildcard => true,
         Term::Var(v) => bound.contains(v),
     }
 }

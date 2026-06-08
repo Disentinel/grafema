@@ -254,10 +254,7 @@ fn v2_violations(
     let mut ids = BTreeSet::new();
     for row in eval.facts("violation") {
         if let Some(v) = row.first() {
-            let id = match v {
-                Value::Id(id) => Some(*id),
-                Value::Str(s) => s.parse::<u128>().ok(),
-            };
+            let id = v.as_id();
             if let Some(id) = id {
                 ids.insert(id);
             }

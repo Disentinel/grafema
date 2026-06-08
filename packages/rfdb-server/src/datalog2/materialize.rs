@@ -182,6 +182,8 @@ fn value_to_id(v: &Value) -> Option<u128> {
     match v {
         Value::Id(id) => Some(*id),
         Value::Str(s) => s.parse::<u128>().ok(),
+        // Typed numeric literals are values, not node ids.
+        Value::Int(_) | Value::Float(_) => None,
     }
 }
 
@@ -253,6 +255,15 @@ fn encode_atom(atom: &Atom, var_map: &HashMap<String, u32>, buf: &mut Vec<u8>) {
             Term::Const(s) => {
                 buf.push(0x02);
                 let b = s.as_bytes();
+                buf.extend_from_slice(&(b.len() as u64).to_le_bytes());
+                buf.extend_from_slice(b);
+            }
+            // A typed numeric literal: its own variant tag (so it hashes distinctly from a
+            // quoted const with the same surface) plus its length-prefixed string surface.
+            Term::Lit(v) => {
+                buf.push(0x04);
+                let surface = v.as_str();
+                let b = surface.as_bytes();
                 buf.extend_from_slice(&(b.len() as u64).to_le_bytes());
                 buf.extend_from_slice(b);
             }

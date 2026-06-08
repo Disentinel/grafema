@@ -29,6 +29,8 @@ pub type Row = Fact;
 /// `1` vs. the one-byte string `"\x01"`).
 const TAG_ID: u8 = 0x01;
 const TAG_STR: u8 = 0x02;
+const TAG_INT: u8 = 0x03;
+const TAG_FLOAT: u8 = 0x04;
 
 /// Append the canonical, variant-tagged byte encoding of a single value to `out`.
 ///
@@ -47,6 +49,16 @@ fn encode_value(out: &mut Vec<u8>, value: &Value) {
             let bytes = s.as_bytes();
             out.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
             out.extend_from_slice(bytes);
+        }
+        // Typed numerics: fixed-width payloads, Float by canonical bit pattern so fact identity
+        // agrees with `Value`'s `Eq`/`Hash` (same to_bits discipline).
+        Value::Int(i) => {
+            out.push(TAG_INT);
+            out.extend_from_slice(&i.to_le_bytes());
+        }
+        Value::Float(f) => {
+            out.push(TAG_FLOAT);
+            out.extend_from_slice(&f.to_bits().to_le_bytes());
         }
     }
 }

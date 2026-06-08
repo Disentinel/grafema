@@ -143,8 +143,52 @@ impl<'a> Parser<'a> {
             let name = self.parse_identifier()?;
             // If it looks like a variable pattern but starts lowercase, treat as const
             Ok(Term::Const(name))
+        } else if c.is_ascii_digit()
+            || (c == '-' && self.remaining()[1..].starts_with(|d: char| d.is_ascii_digit()))
+        {
+            // Bare numeric literal → typed Int/Float (spec §5; not a string const, not an id).
+            self.parse_number()
         } else {
             Err(ParseError::new(&format!("unexpected character '{}'", c), self.pos))
+        }
+    }
+
+    /// Parse a bare numeric literal: optional leading `-`, digits, optional single `.` + digits.
+    /// A `.` makes it a `Float`, otherwise an `Int`. The decision is at parse time so `0` and
+    /// `"0"` stay distinct (typed literal vs string const, spec §5).
+    fn parse_number(&mut self) -> Result<Term, ParseError> {
+        self.skip_whitespace();
+        let start = self.pos;
+        if self.remaining().starts_with('-') {
+            self.pos += 1;
+        }
+        let mut saw_dot = false;
+        // Direct char walk (like `parse_identifier`) — NOT `peek()`, which skips whitespace and
+        // would let a number span a space. A single interior `.` (with a digit after) makes it a
+        // float; a trailing `.` (e.g. the rule terminator in `gt(A, 0).`) is left for the caller.
+        while self.pos < self.input.len() {
+            let c = self.input[self.pos..].chars().next().unwrap();
+            if c.is_ascii_digit() {
+                self.pos += 1;
+            } else if c == '.'
+                && !saw_dot
+                && self.input[self.pos + 1..].starts_with(|d: char| d.is_ascii_digit())
+            {
+                saw_dot = true;
+                self.pos += 1;
+            } else {
+                break;
+            }
+        }
+        let text = &self.input[start..self.pos];
+        if saw_dot {
+            text.parse::<f64>()
+                .map(|f| Term::Lit(crate::datalog::eval::Value::Float(f)))
+                .map_err(|_| ParseError::new("invalid float literal", start))
+        } else {
+            text.parse::<i64>()
+                .map(|i| Term::Lit(crate::datalog::eval::Value::Int(i)))
+                .map_err(|_| ParseError::new("invalid integer literal", start))
         }
     }
 

@@ -842,6 +842,8 @@ fn value_to_wire_string(v: &crate::datalog::Value) -> String {
     match v {
         crate::datalog::Value::Id(id) => id.to_string(),
         crate::datalog::Value::Str(s) => s.clone(),
+        crate::datalog::Value::Int(i) => i.to_string(),
+        crate::datalog::Value::Float(f) => f.to_string(),
     }
 }
 

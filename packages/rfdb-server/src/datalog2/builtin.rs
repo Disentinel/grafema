@@ -664,6 +664,14 @@ fn coerce_eq(column: &str, expected: &Value) -> CoerceEq {
                 CoerceEq::NoMatch
             }
         }
+        // Typed numeric literals compare by their string surface, like a quoted const.
+        Value::Int(_) | Value::Float(_) => {
+            if column == expected.as_str() {
+                CoerceEq::Match
+            } else {
+                CoerceEq::NoMatch
+            }
+        }
         Value::Id(id) => {
             // The literal is an id; coerce by comparing the column's id surface. A column
             // that does not parse as an id cannot be coerced → miss.

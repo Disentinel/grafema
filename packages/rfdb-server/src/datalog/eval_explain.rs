@@ -397,6 +397,7 @@ impl<'a> EvaluatorExplain<'a> {
                     match dst_term {
                         Term::Var(var) => new_bindings.set(var, Value::Id(dst_id)),
                         Term::Const(_) => {}
+                        Term::Lit(_) => {}
                         Term::Wildcard => {}
                     }
 
@@ -454,6 +455,7 @@ impl<'a> EvaluatorExplain<'a> {
                     match src_term {
                         Term::Var(var) => new_bindings.set(var, Value::Id(src_id)),
                         Term::Const(_) => {}
+                        Term::Lit(_) => {}
                         Term::Wildcard => {}
                     }
 
@@ -745,6 +747,11 @@ impl<'a> EvaluatorExplain<'a> {
                                     return None;
                                 }
                             }
+                            Term::Lit(v) => {
+                                if v.as_str().parse::<u128>().ok() != Some(e.dst) {
+                                    return None;
+                                }
+                            }
                             Term::Wildcard => {}
                         }
 
@@ -859,6 +866,11 @@ impl<'a> EvaluatorExplain<'a> {
                                     return None;
                                 }
                             }
+                            Term::Lit(v) => {
+                                if v.as_str().parse::<u128>().ok() != Some(e.src) {
+                                    return None;
+                                }
+                            }
                             Term::Wildcard => {}
                         }
 
@@ -900,6 +912,11 @@ impl<'a> EvaluatorExplain<'a> {
                             Term::Var(var) => b.set(var, Value::Id(e.src)),
                             Term::Const(s) => {
                                 if s.parse::<u128>().ok() != Some(e.src) {
+                                    return None;
+                                }
+                            }
+                            Term::Lit(v) => {
+                                if v.as_str().parse::<u128>().ok() != Some(e.src) {
                                     return None;
                                 }
                             }
@@ -1005,6 +1022,13 @@ impl<'a> EvaluatorExplain<'a> {
             }
             Term::Const(expected) => {
                 if &attr_value == expected {
+                    vec![Bindings::new()]
+                } else {
+                    vec![]
+                }
+            }
+            Term::Lit(v) => {
+                if attr_value == v.as_str() {
                     vec![Bindings::new()]
                 } else {
                     vec![]
@@ -1379,6 +1403,13 @@ impl<'a> EvaluatorExplain<'a> {
                     vec![]
                 }
             }
+            Term::Lit(v) => {
+                if v.as_str() == count_str {
+                    vec![Bindings::new()]
+                } else {
+                    vec![]
+                }
+            }
             Term::Wildcard => vec![Bindings::new()],
         }
     }
@@ -1397,6 +1428,13 @@ impl<'a> EvaluatorExplain<'a> {
                     vec![]
                 }
             }
+            Term::Lit(v) => {
+                if v.as_str() == val {
+                    vec![Bindings::new()]
+                } else {
+                    vec![]
+                }
+            }
             Term::Wildcard => vec![Bindings::new()],
         }
     }
@@ -1410,6 +1448,13 @@ impl<'a> EvaluatorExplain<'a> {
             }
             Term::Const(c) => {
                 if c.parse::<u128>().ok() == Some(id) {
+                    vec![Bindings::new()]
+                } else {
+                    vec![]
+                }
+            }
+            Term::Lit(v) => {
+                if v.as_str().parse::<u128>().ok() == Some(id) {
                     vec![Bindings::new()]
                 } else {
                     vec![]
@@ -1515,6 +1560,13 @@ impl<'a> EvaluatorExplain<'a> {
             }
             Term::Const(expected) => {
                 if expected.parse::<u128>().ok() == Some(parent_id) {
+                    vec![Bindings::new()]
+                } else {
+                    vec![]
+                }
+            }
+            Term::Lit(v) => {
+                if v.as_str().parse::<u128>().ok() == Some(parent_id) {
                     vec![Bindings::new()]
                 } else {
                     vec![]

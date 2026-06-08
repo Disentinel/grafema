@@ -397,8 +397,19 @@ impl<'a> Framer<'a> {
                     }
                 }
                 b'.' => {
-                    self.pos += 1; // include the terminator
-                    return Ok((&self.input[start..self.pos], start));
+                    // A '.' flanked by digits is a decimal point inside a numeric literal
+                    // (e.g. `gt(S, 0.5)`), NOT the clause terminator — keep scanning. Datalog
+                    // has no `.`-member syntax, so a digit-flanked dot is unambiguously a float.
+                    let prev_digit =
+                        self.pos > start && self.bytes[self.pos - 1].is_ascii_digit();
+                    let next_digit = self.pos + 1 < self.bytes.len()
+                        && self.bytes[self.pos + 1].is_ascii_digit();
+                    if prev_digit && next_digit {
+                        self.pos += 1;
+                    } else {
+                        self.pos += 1; // include the terminator
+                        return Ok((&self.input[start..self.pos], start));
+                    }
                 }
                 _ => self.pos += 1,
             }
@@ -853,17 +864,23 @@ mod tests {
     }
 
     #[test]
-    fn bare_numeric_term_is_a_v1_grammar_gap_surfaced_as_parse_code() {
-        // `.grafema/guarantees.yaml` writes `gt(A, 0)` with a bare integer. The shared
-        // v1 term grammar (var | quoted-const | lowercase-const | wildcard) has no
-        // numeric-literal production, so this is rejected — but, per I5, with a stable
-        // code, never a silent failure. parser_ext does not modify the v1 grammar; this
-        // gap is recorded for the next stage (the v1 term lexer would need a numeric
-        // production, or guarantee authors quote the threshold).
-        let src = r#"violation(X) :- attr(X, "argCount", A), gt(A, 0)."#;
-        let err = parse_ext_program(src).expect_err("v1 grammar rejects bare integers");
-        assert_eq!(err.code, ErrorCode::Parse);
-        assert_eq!(err.code.as_str(), "E-PARSE-001");
+    fn bare_numeric_term_parses_to_a_typed_literal() {
+        // `.grafema/guarantees.yaml` writes `gt(A, 0)` with a bare integer. The shared term
+        // grammar now has a numeric-literal production (spec §5): a bare `0`/`3.14` parses to a
+        // typed `Term::Lit(Value::Int/Float)` — NOT a string round-trip, NOT a node id — so
+        // numeric-comparison guarantee rules evaluate instead of erroring (was E-PARSE-001).
+        use crate::datalog::{Term, Value};
+
+        let prog = parse_ext_program(r#"violation(X) :- attr(X, "argCount", A), gt(A, 0)."#)
+            .expect("bare integer literal now parses");
+        let gt = &prog.items[0].rule.body()[1];
+        assert_eq!(gt.atom().predicate(), "gt");
+        assert_eq!(gt.atom().args()[1], Term::Lit(Value::Int(0)), "0 → typed Int literal");
+
+        // A decimal point makes it a Float; both stay distinct from the quoted string "0".
+        let progf = parse_ext_program(r#"violation(X) :- attr(X, "score", S), gt(S, 0.5)."#)
+            .expect("bare float literal parses");
+        assert_eq!(progf.items[0].rule.body()[1].atom().args()[1], Term::Lit(Value::Float(0.5)));
     }
 
     #[test]

@@ -227,6 +227,8 @@ fn edge_type_arg(lit: &Literal) -> Option<Option<String>> {
     }
     match atom.args().get(2) {
         Some(Term::Const(t)) => Some(Some(t.clone())),
+        // A typed literal edge-type behaves like the equivalent constant.
+        Some(Term::Lit(v)) => Some(Some(v.as_str())),
         Some(Term::Var(_)) | Some(Term::Wildcard) => Some(None),
         // Fewer than 3 args (e.g. `edge(X, Y)`): no edge-type dependency.
         None => None,

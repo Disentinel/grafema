@@ -300,10 +300,7 @@ mod smoke {
         let mut flagged: Vec<u128> = eval
             .facts("violation")
             .iter()
-            .map(|row| match &row[0] {
-                Value::Id(id) => *id,
-                Value::Str(s) => s.parse().expect("id column"),
-            })
+            .map(|row| row[0].as_id().expect("id column"))
             .collect();
         flagged.sort_unstable();
         assert_eq!(

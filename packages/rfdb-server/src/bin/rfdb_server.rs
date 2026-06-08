@@ -2975,6 +2975,8 @@ fn datalog_value_to_wire_string(v: &rfdb::datalog::Value) -> String {
     match v {
         rfdb::datalog::Value::Id(id) => id.to_string(),
         rfdb::datalog::Value::Str(s) => s.clone(),
+        rfdb::datalog::Value::Int(i) => i.to_string(),
+        rfdb::datalog::Value::Float(f) => f.to_string(),
     }
 }
 
