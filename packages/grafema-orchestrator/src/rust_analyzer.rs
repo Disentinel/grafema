@@ -883,61 +883,93 @@ fn walk_impl(i: &syn::ItemImpl, ctx: &mut Ctx) {
     ctx.enclosing_trait = prev_trait;
 }
 
+/// Emit a `FUNCTION` node for a method that owns a body — an `impl` method or a
+/// trait's *provided* (default-body) method — and walk it fully so the calls,
+/// references and parameters inside the body become first-class graph nodes.
+///
+/// Shared by [`walk_impl_item`] (impl methods) and [`walk_trait`] (default trait
+/// methods); both push the owning declaration (`IMPL_BLOCK` or `TRAIT`) as the
+/// current scope before calling this, so the `HAS_METHOD` edge and the
+/// `FUNCTION`'s parent are wired to whichever owner is on top of the scope
+/// stack.
+///
+/// - `vis` — visibility used for the `visibility` metadata and the export flag.
+/// - `is_default` — `true` for a trait's provided method; adds `default: true`
+///   metadata so consumers can distinguish a default implementation from an
+///   explicit `impl` override.
+///
+/// When `ctx.enclosing_trait` is set, the method is tagged with `trait`
+/// metadata so dyn/`impl Trait` dispatch resolution can index it without graph
+/// traversal (see `RustCrossMethodCalls.hs::buildTraitMethodIndex`).
+fn walk_method_fn(
+    sig: &syn::Signature,
+    block: &syn::Block,
+    vis: &syn::Visibility,
+    is_default: bool,
+    ctx: &mut Ctx,
+) {
+    let ident = sig.ident.to_string();
+    let (line, col) = ctx.span_line_col(sig.ident.span());
+    let (end_line, end_col) = ctx.span_end_line_col(block.brace_token.span.join());
+    let is_exported = is_pub(vis);
+    let parent = ctx.scope_stack.last().map(|s| s.as_str());
+    let node_id = semantic_id(&ctx.file, "FUNCTION", &ident, parent, None);
+
+    let mut method_meta = HashMap::from([
+        Ctx::meta_text("visibility", vis_to_text(vis)),
+        Ctx::meta_bool("async", sig.asyncness.is_some()),
+        Ctx::meta_bool("unsafe", sig.unsafety.is_some()),
+    ]);
+    if let syn::ReturnType::Type(_, ty) = &sig.output {
+        let return_type = type_to_name(ty);
+        if return_type != "<type>" {
+            let (k, v) = Ctx::meta_text("returnType", &return_type);
+            method_meta.insert(k, v);
+        }
+    }
+    if is_default {
+        let (k, v) = Ctx::meta_bool("default", true);
+        method_meta.insert(k, v);
+    }
+    // Tag trait methods with the trait name so that dyn/impl Trait dispatch
+    // resolution can build a TraitMethodIndex without graph traversal.
+    if let Some(trait_name) = &ctx.enclosing_trait {
+        method_meta.insert("trait".to_string(), serde_json::json!(trait_name));
+    }
+    ctx.emit_declaration(GraphNode {
+        id: node_id.clone(),
+        node_type: "FUNCTION".to_string(),
+        name: ident.clone(),
+        file: ctx.file.clone(),
+        line, column: col,
+        end_line, end_column: end_col,
+        exported: is_exported,
+        metadata: method_meta,
+        extra: HashMap::new(),
+    });
+
+    // HAS_METHOD edge from the owning IMPL_BLOCK/TRAIT (current scope).
+    ctx.emit_edge(GraphEdge {
+        src: ctx.scope_id().to_string(), dst: node_id.clone(),
+        edge_type: "HAS_METHOD".to_string(),
+        metadata: HashMap::new(),
+    });
+
+    for param in &sig.inputs {
+        walk_fn_param(param, &node_id, ctx);
+    }
+
+    let prev_fn = ctx.enclosing_fn.replace(node_id.clone());
+    ctx.push_scope(&node_id, ScopeKind::Function);
+    walk_block(block, ctx);
+    ctx.pop_scope();
+    ctx.enclosing_fn = prev_fn;
+}
+
 fn walk_impl_item(item: &syn::ImplItem, ctx: &mut Ctx) {
     match item {
         syn::ImplItem::Fn(m) => {
-            let ident = m.sig.ident.to_string();
-            let (line, col) = ctx.span_line_col(m.sig.ident.span());
-            let (end_line, end_col) = ctx.span_end_line_col(m.block.brace_token.span.join());
-            let is_exported = is_pub(&m.vis);
-            let parent = ctx.scope_stack.last().map(|s| s.as_str());
-            let node_id = semantic_id(&ctx.file, "FUNCTION", &ident, parent, None);
-
-            let mut method_meta = HashMap::from([
-                Ctx::meta_text("visibility", vis_to_text(&m.vis)),
-                Ctx::meta_bool("async", m.sig.asyncness.is_some()),
-                Ctx::meta_bool("unsafe", m.sig.unsafety.is_some()),
-            ]);
-            if let syn::ReturnType::Type(_, ty) = &m.sig.output {
-                let return_type = type_to_name(ty);
-                if return_type != "<type>" {
-                    let (k, v) = Ctx::meta_text("returnType", &return_type);
-                    method_meta.insert(k, v);
-                }
-            }
-            // Tag impl-of-trait methods with the trait name so that dyn/impl Trait
-            // dispatch resolution can build a TraitMethodIndex without graph traversal.
-            if let Some(trait_name) = &ctx.enclosing_trait {
-                method_meta.insert("trait".to_string(), serde_json::json!(trait_name));
-            }
-            ctx.emit_declaration(GraphNode {
-                id: node_id.clone(),
-                node_type: "FUNCTION".to_string(),
-                name: ident.clone(),
-                file: ctx.file.clone(),
-                line, column: col,
-                end_line, end_column: end_col,
-                exported: is_exported,
-                metadata: method_meta,
-                extra: HashMap::new(),
-            });
-
-            // HAS_METHOD edge
-            ctx.emit_edge(GraphEdge {
-                src: ctx.scope_id().to_string(), dst: node_id.clone(),
-                edge_type: "HAS_METHOD".to_string(),
-                metadata: HashMap::new(),
-            });
-
-            for param in &m.sig.inputs {
-                walk_fn_param(param, &node_id, ctx);
-            }
-
-            let prev_fn = ctx.enclosing_fn.replace(node_id.clone());
-            ctx.push_scope(&node_id, ScopeKind::Function);
-            walk_block(&m.block, ctx);
-            ctx.pop_scope();
-            ctx.enclosing_fn = prev_fn;
+            walk_method_fn(&m.sig, &m.block, &m.vis, false, ctx);
         }
         syn::ImplItem::Const(_) => {}
         syn::ImplItem::Type(_) => {}
@@ -969,29 +1001,43 @@ fn walk_trait(t: &syn::ItemTrait, ctx: &mut Ctx) {
 
     if is_exported {
         ctx.exports.push(ExportInfo {
-            name: ident, node_id: node_id.clone(), kind: "trait".to_string(), source: None,
+            name: ident.clone(), node_id: node_id.clone(), kind: "trait".to_string(), source: None,
         });
     }
 
     ctx.push_scope(&node_id, ScopeKind::Trait);
+    // Tag methods declared in this trait with its name (consumed by dispatch
+    // resolution); restored after the items are walked.
+    let prev_trait = ctx.enclosing_trait.replace(ident.clone());
     for trait_item in &t.items {
         if let syn::TraitItem::Fn(m) = trait_item {
-            let mname = m.sig.ident.to_string();
-            let (ml, mc) = ctx.span_line_col(m.sig.ident.span());
-            let sig_id = semantic_id(&ctx.file, "TYPE_SIGNATURE", &mname, Some(&node_id), None);
-            ctx.emit_node(GraphNode {
-                id: sig_id,
-                node_type: "TYPE_SIGNATURE".to_string(),
-                name: mname,
-                file: ctx.file.clone(),
-                line: ml, column: mc,
-                end_line: ctx.span_end_line_col(m.sig.ident.span()).0, end_column: ctx.span_end_line_col(m.sig.ident.span()).1,
-                exported: false,
-                metadata: HashMap::new(),
-                extra: HashMap::new(),
-            });
+            match &m.default {
+                // Provided method (has a body) — a real implementation. Emit a
+                // FUNCTION and walk the body so its calls/references are visible.
+                Some(body) => {
+                    walk_method_fn(&m.sig, body, &t.vis, true, ctx);
+                }
+                // Required method (abstract) — only a signature/contract.
+                None => {
+                    let mname = m.sig.ident.to_string();
+                    let (ml, mc) = ctx.span_line_col(m.sig.ident.span());
+                    let sig_id = semantic_id(&ctx.file, "TYPE_SIGNATURE", &mname, Some(&node_id), None);
+                    ctx.emit_node(GraphNode {
+                        id: sig_id,
+                        node_type: "TYPE_SIGNATURE".to_string(),
+                        name: mname,
+                        file: ctx.file.clone(),
+                        line: ml, column: mc,
+                        end_line: ctx.span_end_line_col(m.sig.ident.span()).0, end_column: ctx.span_end_line_col(m.sig.ident.span()).1,
+                        exported: false,
+                        metadata: HashMap::new(),
+                        extra: HashMap::new(),
+                    });
+                }
+            }
         }
     }
+    ctx.enclosing_trait = prev_trait;
     ctx.pop_scope();
 }
 
@@ -2083,6 +2129,36 @@ mod tests {
         let fa = parse_and_analyze("pub trait Foo { fn bar(&self); fn baz(&self); }");
         assert!(has_node(&fa, "TRAIT", "Foo"));
         assert_eq!(count_nodes(&fa, "TYPE_SIGNATURE"), 2);
+    }
+
+    #[test]
+    fn test_trait_default_method_body_is_analyzed() {
+        // A provided (default-body) trait method is a real implementation, not
+        // just a signature: its body must be walked so calls/references inside
+        // it are visible in the graph. Required (abstract) methods stay
+        // TYPE_SIGNATURE; provided methods become FUNCTION nodes, mirroring
+        // how `impl` methods are modeled.
+        let fa = parse_and_analyze(
+            "fn helper() {} \
+             trait Greeter { fn name(&self); fn greet(&self) { helper(); } }",
+        );
+        // Only the required method `name` is a bare signature.
+        assert_eq!(
+            count_nodes(&fa, "TYPE_SIGNATURE"),
+            1,
+            "required method -> TYPE_SIGNATURE; provided method -> FUNCTION"
+        );
+        // The provided method `greet` is emitted as a FUNCTION owned by the trait.
+        assert!(has_node(&fa, "FUNCTION", "greet"), "default method -> FUNCTION node");
+        assert!(
+            has_edge(&fa, "HAS_METHOD", "TRAIT", "FUNCTION"),
+            "TRAIT HAS_METHOD its provided method"
+        );
+        // The call inside the default body must now be captured.
+        assert!(
+            has_node(&fa, "CALL", "helper"),
+            "call inside the default method body is analyzed"
+        );
     }
 
     #[test]
