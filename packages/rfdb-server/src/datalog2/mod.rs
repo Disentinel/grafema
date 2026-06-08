@@ -432,4 +432,53 @@ mod smoke {
             "without the nginx rewrite hop, /api/users ≠ /users → no link (why nginx matters)"
         );
     }
+
+    /// Cross-artifact link() PoC iter 3 (apparatus doc §6): COVERAGE as a query. The product-
+    /// visible form of "coverage = what does NOT link" — the uncovered client requests are
+    /// themselves a derivable relation via stratified negation over the link chain. A client call
+    /// whose path has no nginx route (missing config = a real coverage hole) is flagged. This is
+    /// the concrete, today-expressible shape of the demand-diff/why-not gap: the dark frontend
+    /// calls surface as facts, each naming the request whose backend is unknown.
+    #[test]
+    fn coverage_gap_uncovered_client_request_via_negation() {
+        let n = |sid: &str, ty: &str, path: &str, file: &str| NodeRow {
+            id: id_of(sid),
+            node_type: ty.to_string(),
+            name: path.to_string(),
+            file: file.to_string(),
+        };
+        let mut v = FixtureStorageView::new(1);
+        // Covered: /api/users has the full frontend → nginx → backend chain.
+        v.put_node(n("fe:users", "HTTP_REQUEST", "/api/users", "web/api.js"));
+        v.put_node(n("nginx:users", "nginx:route", "/api/users", "infra/nginx.conf"));
+        v.put_node(n("be:users", "http:route", "/users", "api/users.js"));
+        v.put_edge(EdgeRow {
+            src: id_of("nginx:users"),
+            dst: id_of("be:users"),
+            edge_type: "PROXIES_TO".to_string(),
+        });
+        // UNCOVERED: the frontend calls /api/ghost, but no nginx route handles it (missing config).
+        v.put_node(n("fe:ghost", "HTTP_REQUEST", "/api/ghost", "web/api.js"));
+
+        // covered(C) iff the cross-artifact chain links; uncovered(C) is the stratified anti-join.
+        let src = r#"covered(C) :- node(C, "HTTP_REQUEST"), attr(C, "name", P),
+                                   node(N, "nginx:route"),   attr(N, "name", P),
+                                   edge(N, B, "PROXIES_TO"),  node(B, "http:route").
+                     uncovered(C) :- node(C, "HTTP_REQUEST"), \+ covered(C)."#;
+        let stats = Stats { total_nodes: 4, total_edges: 1, ..Default::default() };
+        let eval = evaluate(&v, src, stats, EvalLimits::none(), EventLog::discard())
+            .expect("evaluate");
+
+        let mut uncovered: Vec<u128> = eval
+            .facts("uncovered")
+            .iter()
+            .map(|r| r[0].as_id().unwrap())
+            .collect();
+        uncovered.sort_unstable();
+        assert_eq!(
+            uncovered,
+            vec![id_of("fe:ghost")],
+            "exactly the client request whose path has no backend route is a coverage gap"
+        );
+    }
 }
