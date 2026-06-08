@@ -1054,7 +1054,17 @@ impl Shard {
                         serde_json::Value::String(s) => s.clone(),
                         serde_json::Value::Bool(b) => b.to_string(),
                         serde_json::Value::Number(n) => n.to_string(),
-                        other => other.to_string(),
+                        // Null / Object / Array are not exact-matchable primitives.
+                        // The forward `attr()` read path (datalog
+                        // get_metadata_value → value_to_string) returns None for
+                        // these and yields no match, so the reverse/filter path must
+                        // too. Stringifying them here (Null → "null", objects →
+                        // order-dependent compact JSON) let reverse lookups match
+                        // rows the forward direction rejects — a silent
+                        // forward/reverse asymmetry. Mirror value_to_string.
+                        serde_json::Value::Null
+                        | serde_json::Value::Object(_)
+                        | serde_json::Value::Array(_) => return false,
                     };
                     if v_str != *value {
                         return false;
