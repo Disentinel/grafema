@@ -183,6 +183,13 @@ v2 engine TODAY, as `datalog2` smoke tests (`mod.rs`), no string builtins, no in
   `PROXIES_TO`), so the join stays pure Datalog; the naive no-nginx join correctly yields nothing.
 - **iter3** `coverage_gap_uncovered_client_request_via_negation` (`90dd0beb`) — coverage as a query:
   `uncovered(C) :- HTTP_REQUEST(C), \+ covered(C)` surfaces the dark frontend call (missing config).
+- **iter4** `cross_artifact_link_via_derived_alias_congruence` (`7fd8e080`) — the value-domain's
+  equality theory as a DERIVED CONGRUENCE (§2, points-to branch): frontend/backend reference an
+  endpoint by different aliases yet link via a recursive symmetric-transitive `same/2` closure (not
+  exact match). Completes the §2 trifecta: exact canon key / extractor-rewrite / derived congruence.
+- **real-data** `probe_call_resolution_coverage` (`c2071947`, ignored) — coverage-as-negation over the
+  live corpus in ~4s: 13634 CALL sites, 16.2% direct-resolved (lower bound — Layout-A only; honest
+  caveat in the test). Found the `DERIVED_FROM`/`DERIVES_FROM` vocab fork (→ `_ai/gaps.md`).
 **Finding:** the declarative-source model holds — string-rewrite/path-fuzz lives in the extractor
 (facts), the cross-artifact join + coverage are declarative Datalog. **Next:** (a) real corpus (not
 fixture); (b) the string-builtin decision IF we ever want the rewrite IN Datalog (`strip_prefix`/
