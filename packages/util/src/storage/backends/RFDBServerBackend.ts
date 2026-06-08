@@ -25,7 +25,7 @@ import { setTimeout as sleep } from 'timers/promises';
 import { join, dirname } from 'path';
 import { createHash } from 'crypto';
 
-import type { WireNode, WireEdge, FieldDeclaration, CommitDelta, AttrQuery as RFDBAttrQuery, DatalogExplainResult, ServerStats, CypherResult } from '@grafema/types';
+import type { WireNode, WireEdge, FieldDeclaration, CommitDelta, AttrQuery as RFDBAttrQuery, DatalogExplainResult, FactWitness, ServerStats, CypherResult } from '@grafema/types';
 import type { NodeType, EdgeType } from '@grafema/types';
 import { startRfdbServer } from '../../utils/startRfdbServer.js';
 import { GRAFEMA_VERSION, getSchemaVersion } from '../../version.js';
@@ -870,6 +870,16 @@ export class RFDBServerBackend {
     return results.map(r => ({
       bindings: Object.entries(r.bindings).map(([name, value]) => ({ name, value }))
     }));
+  }
+
+  /**
+   * why()/explain_fact: explain ONE supporting derivation of `predicate(key)` under a v2 program
+   * (empty `source` ⇒ the bundled depends.dl). Resolves to `null` when the fact is not derivable.
+   * v2-only — rejects when RFDB_DATALOG_V2 is off.
+   */
+  async explainDatalogFact(source: string, predicate: string, key: string[]): Promise<FactWitness | null> {
+    if (!this.client) throw new Error('Not connected');
+    return await this.client.explainDatalogFact(source, predicate, key);
   }
 
   /**

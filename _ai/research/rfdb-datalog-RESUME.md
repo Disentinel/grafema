@@ -113,10 +113,22 @@ byte-identical + alloc-free. Proof `incremental_insertion_work_proportional_to_d
      equality) + `legacy-retirement.lock` (status=retained) guarded by
      `legacy_retirement_lock_guards_deletion` (fn-pointer anchor → delete fails compile + lock check).
      8/8 orchestrator tests green. Legacy DEPENDS_ON now safe to retire after Gate E + one release.
-   - ⬜ REMAINING Gate E (parallel, pick per priority): **MCP `explain_fact`** (wire the existing
-     `GraphEngineV2::explain_datalog_fact` why() through a server command + MCP tool — code, builds on
-     `9a80550a`); **stdlib** (more bundled .dl rules beyond depends.dl); **docs + events-schema.md**;
-     **sim()** (hypothetical-edit query, new feature); **Appendix-B migrations**.
+   - ✅ **MCP `explain_fact` — SERVER half DONE** (commit after `3ad9c3d8`): `Request::ExplainDatalogFact
+     { source, predicate, key: Vec<String> }` + `WireFactWitness{ruleAstHash, body:[{predicate,tuple}]}`
+     + `Response::FactWitness{witness: Option<_>}` + `dispatch_explain_datalog_fact` (v2-only, kill-switch
+     gated, READ, empty source ⇒ depends.dl; null witness = true negative). Wraps the existing
+     `GraphEngineV2::explain_datalog_fact` (`9a80550a`). Test `dispatch_explain_datalog_fact_returns_witness_and_gates_off`
+     green (off→coded refusal; on→witness w/ IMPORTS_FROM body; non-derivable→null).
+   - ✅ **MCP `explain_fact` — TS/MCP half DONE** (full vertical, builds clean types→rfdb→util→mcp,
+     REG-1144 22/22): `types/rfdb.ts` (`explainDatalogFact` command + `FactWitness`/`FactWitnessBody` +
+     `IRFDBClient` method); `rfdb/ts/base-client.ts` (`explainDatalogFact` via `_send`); `util` RFDBServerBackend
+     passthrough; MCP `explain_fact` tool (def in `query-tools.ts`, `ExplainFactArgs` in `types.ts`,
+     `handleExplainFact` in `query-handlers.ts` formatting the witness, dispatch case + barrel export). **why()
+     is now end-to-end queryable from an MCP client** — `explain_fact(predicate="depends", key=[A,B])` explains a
+     DEPENDS_ON edge. Follow-up (optional): an MCP↔server integration test (needs a running RFDB server; the Rust
+     dispatch + REG-1144 invariant already cover the seam structurally).
+   - ⬜ OTHER Gate E (parallel): **stdlib** (more bundled .dl); **docs + events-schema.md**; **sim()**
+     (hypothetical-edit query, new feature); **Appendix-B migrations**.
 
 ## ▶ (historical) NEXT after compaction — resume here
 

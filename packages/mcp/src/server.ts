@@ -39,6 +39,7 @@ import { errorResult, log } from './utils.js';
 import { getSocketPathOverride } from './state.js';
 import {
   handleQueryGraph,
+  handleExplainFact,
   handleFindCalls,
   handleFindNodes,
   handleTraceAlias,
@@ -101,6 +102,7 @@ import type {
   GetFunctionDetailsArgs,
   GetContextArgs,
   QueryGraphArgs,
+  ExplainFactArgs,
   FindCallsArgs,
   FindNodesArgs,
   TraceAliasArgs,
@@ -280,6 +282,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
 
       case 'explain':
         result = await handleExplain(asArgs<ExplainArgs>(args));
+        break;
+
+      case 'explain_fact':
+        result = await handleExplainFact(asArgs<ExplainFactArgs>(args));
         break;
 
       case 'trace_effects':

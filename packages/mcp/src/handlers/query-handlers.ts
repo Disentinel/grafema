@@ -13,7 +13,7 @@ import {
   textResult,
   errorResult,
 } from '../utils.js';
-import type { DatalogExplainResult, CypherResult } from '@grafema/types';
+import type { DatalogExplainResult, CypherResult, FactWitness } from '@grafema/types';
 import type {
   ToolResult,
   QueryGraphArgs,
@@ -22,6 +22,7 @@ import type {
   GraphNode,
   DatalogBinding,
   CallResult,
+  ExplainFactArgs,
 } from '../types.js';
 
 // === QUERY HANDLERS ===
@@ -618,4 +619,48 @@ async function grepAndEnrich(
   } catch {
     return [];
   }
+}
+
+/**
+ * explain_fact (why(), spec §11): explain WHY a derived fact holds — return the rule that derived
+ * it and the supporting body facts. Empty `source` ⇒ the bundled depends.dl (so `explain_fact`
+ * with predicate "depends" explains a DEPENDS_ON edge). v2-only.
+ */
+export async function handleExplainFact(args: ExplainFactArgs): Promise<ToolResult> {
+  const { predicate, key, source } = args;
+  if (!predicate || !Array.isArray(key)) {
+    return errorResult('explain_fact requires `predicate` (string) and `key` (array of wire-string terms).');
+  }
+
+  const db = await ensureAnalyzed();
+  if (!('explainDatalogFact' in db)) {
+    return errorResult('Backend does not support explain_fact (needs the RFDB v2 server with RFDB_DATALOG_V2 enabled).');
+  }
+  const fn = (db as unknown as {
+    explainDatalogFact: (s: string, p: string, k: string[]) => Promise<FactWitness | null>;
+  }).explainDatalogFact;
+
+  let witness: FactWitness | null;
+  try {
+    witness = await fn.call(db, source ?? '', predicate, key.map(String));
+  } catch (e) {
+    return errorResult(`explain_fact failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  const factStr = `${predicate}(${key.join(', ')})`;
+  if (!witness) {
+    return textResult(
+      `No derivation: ${factStr} is not derivable by the program (it does not hold as a derived fact).`,
+    );
+  }
+
+  const lines = [`${factStr} holds — derived by rule ${witness.ruleAstHash}:`];
+  if (witness.body.length === 0) {
+    lines.push('  (the rule body has no positive facts — supported by builtins/constants alone)');
+  } else {
+    for (const f of witness.body) {
+      lines.push(`  • ${f.predicate}(${f.tuple.join(', ')})`);
+    }
+  }
+  return textResult(guardResponseSize(lines.join('\n')));
 }

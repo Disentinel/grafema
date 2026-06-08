@@ -354,6 +354,40 @@ The question parameter guides what graph data to fetch and how to frame the summ
     },
   },
   {
+    name: 'explain_fact',
+    description: `Explain WHY a derived (Datalog) fact holds — returns the rule that derived it plus the supporting body facts (why()/provenance).
+
+This is the inverse of "what holds": instead of listing results, it justifies ONE
+result. Provenance is computed on demand against the current graph snapshot.
+
+Default program is the bundled depends.dl, so the common use is explaining a
+MODULE→MODULE dependency edge:
+- "Why does module A depend on B?" → explain_fact(predicate="depends", key=["<A_id>", "<B_id>"])
+
+For a custom rule, pass its source. \`key\` is the fact's ground tuple as wire-string
+terms (node ids as their decimal id). A null/"no derivation" result means the fact
+is not derivable by the program (it does not hold as a derived fact).`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        predicate: {
+          type: 'string',
+          description: 'The derived predicate to explain (e.g. "depends").',
+        },
+        key: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'The fact\'s ground key tuple as wire-string terms (node ids as decimal).',
+        },
+        source: {
+          type: 'string',
+          description: 'Optional Datalog v2 program; empty/omitted ⇒ the bundled depends.dl.',
+        },
+      },
+      required: ['predicate', 'key'],
+    },
+  },
+  {
     name: 'check_invariant',
     description: `Check a one-off code invariant using a Datalog rule. Returns violations if broken.
 

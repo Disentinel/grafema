@@ -51,6 +51,15 @@ export interface QueryGraphArgs {
   count?: boolean;
 }
 
+export interface ExplainFactArgs {
+  /** The derived predicate (e.g. "depends"). */
+  predicate: string;
+  /** The fact's ground key tuple as wire-string terms (node ids as decimal, else string). */
+  key: string[];
+  /** Optional Datalog v2 program; empty/omitted ⇒ the bundled depends.dl. */
+  source?: string;
+}
+
 export interface FindCallsArgs {
   name: string;
   limit?: number;
