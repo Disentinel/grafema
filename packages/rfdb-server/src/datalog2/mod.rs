@@ -529,4 +529,66 @@ mod smoke {
              be2/ep_d does not — comparability computed by a recursive rule, not exact match"
         );
     }
+
+    /// Library-semantics as a Datalog rule (apparatus doc §3 — the plugin molecule / "rules instead
+    /// of an imperative enricher"). `effects-db/packages/express.yaml` declares `Application.get(path,
+    /// handler)`: arg0 = ROUTE_PATH, arg1 = ENTRY_POINT_CALLBACK → materialize HANDLES. This is the
+    /// libraryCallbackEnricher's job expressed as ONE rule: a `HANDLES(route, handler)` derivation
+    /// from a recognized express route registration. The extractor's positional→role arg mapping
+    /// (the dirty part) is represented here as role-typed edges `ARG_ROUTE_PATH`/`ARG_ENTRY_POINT_CALLBACK`
+    /// (per §3: arg-role resolution lives in the extractor/facts; the SEMANTICS live in the rule). A
+    /// non-express call does NOT produce HANDLES. (`@materialize` write-back is tested separately;
+    /// here we prove the RULE derives the right (route, handler) pairs.)
+    #[test]
+    fn library_semantics_express_route_as_rule() {
+        let mut v = FixtureStorageView::new(1);
+        // app.get("/users", usersHandler) — a recognized express route registration. The CALL's
+        // `name` carries the callee; the path LITERAL's `name` carries the route string.
+        v.put_node(NodeRow {
+            id: id_of("c1"),
+            node_type: "CALL".to_string(),
+            name: "app.get".to_string(),
+            file: "web/server.js".to_string(),
+        });
+        v.put_node(NodeRow {
+            id: id_of("p_users"),
+            node_type: "LITERAL".to_string(),
+            name: "/users".to_string(),
+            file: "web/server.js".to_string(),
+        });
+        node(&mut v, "usersHandler", "FUNCTION");
+        edge(&mut v, "c1", "p_users", "ARG_ROUTE_PATH");
+        edge(&mut v, "c1", "usersHandler", "ARG_ENTRY_POINT_CALLBACK");
+        // A non-express call with arguments — must NOT produce a route.
+        v.put_node(NodeRow {
+            id: id_of("c2"),
+            node_type: "CALL".to_string(),
+            name: "console.log".to_string(),
+            file: "web/server.js".to_string(),
+        });
+        node(&mut v, "litX", "LITERAL");
+        edge(&mut v, "c2", "litX", "ARG_ROUTE_PATH");
+
+        // The express plugin rule: a HANDLES(route, handler) per recognized app.get registration.
+        let src = r#"handles(Route, Handler) :-
+                       node(C, "CALL"), attr(C, "name", "app.get"),
+                       edge(C, Route, "ARG_ROUTE_PATH"),
+                       edge(C, Handler, "ARG_ENTRY_POINT_CALLBACK")."#;
+        let stats = Stats { total_nodes: 5, total_edges: 3, ..Default::default() };
+        let eval = evaluate(&v, src, stats, EvalLimits::none(), EventLog::discard())
+            .expect("evaluate");
+        let handles: std::collections::HashSet<(u128, u128)> = eval
+            .facts("handles")
+            .iter()
+            .map(|r| (r[0].as_id().unwrap(), r[1].as_id().unwrap()))
+            .collect();
+        assert_eq!(
+            handles,
+            [(id_of("p_users"), id_of("usersHandler"))]
+                .into_iter()
+                .collect(),
+            "express route /users HANDLES usersHandler, derived by rule from effects-db arg-roles; \
+             the non-express console.log call produces nothing"
+        );
+    }
 }
