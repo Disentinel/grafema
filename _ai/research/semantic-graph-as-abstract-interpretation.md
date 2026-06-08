@@ -174,6 +174,23 @@ actions) · packaging (the plugin molecule) · surface (the DSL). Only "derivati
 
 ## 9. Recommended first experiment
 
+**STATUS — VALIDATED on a fixture (2026-06-09, overnight loop).** The apparatus is provable on the
+v2 engine TODAY, as `datalog2` smoke tests (`mod.rs`), no string builtins, no infra:
+- **iter1** `cross_artifact_link_on_shared_path` (`eee1074c`) — exact-match value-join: frontend
+  `HTTP_REQUEST` ↔ backend `http:route` link on a shared path.
+- **iter2** `cross_artifact_link_through_nginx_rewrite` (`43a8a9fb`) — the 3-artifact chain
+  frontend→nginx→backend; the nginx extractor RESOLVES the rewrite into facts (`nginx:route` +
+  `PROXIES_TO`), so the join stays pure Datalog; the naive no-nginx join correctly yields nothing.
+- **iter3** `coverage_gap_uncovered_client_request_via_negation` (`90dd0beb`) — coverage as a query:
+  `uncovered(C) :- HTTP_REQUEST(C), \+ covered(C)` surfaces the dark frontend call (missing config).
+**Finding:** the declarative-source model holds — string-rewrite/path-fuzz lives in the extractor
+(facts), the cross-artifact join + coverage are declarative Datalog. **Next:** (a) real corpus (not
+fixture); (b) the string-builtin decision IF we ever want the rewrite IN Datalog (`strip_prefix`/
+`concat`) vs keeping it in the extractor (current answer: extractor); (c) true demand-diff coverage
+via the top-down engine (iter3 is the bottom-up negation form, not the goal-directed demand form).
+
+### Original framing
+
 Not "an analyzer as Datalog" (dataflow) first. Instead: **run ONE cross-artifact chain
 `link(client, backend)` (frontend HTTP_REQUEST → nginx rewrite → backend EXPOSES) on a FIXTURE with a
 deliberate hole, and collect the typed missing-facts list.** This proves the whole apparatus at once
