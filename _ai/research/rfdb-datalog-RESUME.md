@@ -234,11 +234,15 @@ piece. Design forks to settle with the user BEFORE coding (laid these out, await
 
 **Verify before starting (cheap):** `cargo test --lib datalog2::binding` (8) + the commands below.
 
-**numeric-literals caveat (when it comes up):** NOT a lexer one-liner. `crate::datalog::Value` is
-shared with the v1 top-down engine and deliberately unmodified (`exec.rs cmp_value` handles only
-Id/Str). Bare numbers / the dead `gt(A,0)` guarantee (`.grafema/guarantees.yaml:371`) need a
-value-representation decision (extend shared Value — risk to v1 — vs a v2-local numeric value).
-Settle that design before touching the parser.
+**numeric-literals — ✅ DONE (`43431ddd`, spec §5).** Chose spec-faithful typed `Value::Int(i64)`+
+`Float(f64)` (shared v1/v2/cypher; hand-written Eq/Hash since f64 isn't, Float by `to_bits`).
+`Term::Lit(Value)` carries the type from parse time (`0` typed-Int ≠ `"0"` string-const, no id
+conflation). parser `parse_number` + the real bug: `parser_ext` Framer `read_clause` split clauses
+on a digit-flanked `.` (mis-split `gt(S, 0.5)`) — now a decimal point isn't a terminator. ~40
+compiler-guided match arms (v1: Lit→string surface, unchanged behavior; v2: bind typed Value).
+**Gate A 51/51, 0 errors** (was 50 + 1 `both_err`): the `gt(A,0)` guarantee now evaluates v1≡v2 on
+the real dataset. datalog2 155 / v1 184 / engine_v2 47. (Pre-existing, NOT mine: 5 cypher-aggregate
++ 18 protocol_tests failures — fail identically with this change stashed.)
 
 **Verify-current (independent of any agent report — P1):**
 ```
