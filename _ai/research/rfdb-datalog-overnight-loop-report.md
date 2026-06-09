@@ -17,6 +17,21 @@ for you. Running ledger stays in `rfdb-datalog-RESUME.md`; this is the morning-s
 | `c2071947` | coverage-as-negation on the REAL corpus — CALL resolution probe | 13634 CALL sites, 16.2% direct-resolved (honest Layout-A lower bound) |
 | `6e316f49` | gaps: DERIVED_FROM vs DERIVES_FROM edge-vocab fork | 17385 dark edges |
 
+## Real-code findings (the loop ran v2 queries on the actual dogfood graph)
+
+1. **A real circular dependency in `core`** — surfaced by a bounded mutual-import query
+   (`mutual(A,B) :- depends(A,B), depends(B,A), lt(A,B)`) run on `.grafema/grafema.rfdb` (622 depends
+   pairs → exactly 1 mutual pair, 35.8s):
+   > `packages/core/src/errors/GrafemaError.ts` ⇄ `packages/core/src/diagnostics/DiagnosticCollector.ts`
+   GrafemaError and DiagnosticCollector import each other. Actionable architectural smell, found via
+   the graph, not grep. Probe: `datalog2::differential::yaml_extract_tests::probe_real_mutual_module_imports`.
+2. **A planner q-error** (recursive transitive-closure over-estimates → spurious E-PLAN-003) — see
+   `_ai/gaps.md`; roadmap task #4. The full transitive-closure cycle query can't run on the real graph
+   until the estimator is fixed; the bounded 2-cycle query above is the safe workaround that does run.
+3. **CALL-resolution coverage** 16.2% direct-resolved (13634 CALL sites) — honest Layout-A lower bound.
+4. **Import→MODULE coverage / depends recall** already characterized by `probe_imports_from_shape` +
+   the differential's `unmapped_endpoints` (endpoints whose file has no MODULE node are dark to depends).
+
 ## What is now PROVEN (no decision needed)
 
 - **The abstract-interpretation apparatus** (`semantic-graph-as-abstract-interpretation.md`) is
