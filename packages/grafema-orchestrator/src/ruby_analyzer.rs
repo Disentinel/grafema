@@ -274,6 +274,34 @@ impl Ctx {
         }
         None
     }
+
+    /// Retroactively set the visibility of an already-emitted singleton (class) method
+    /// named `name` within the current class/module scope.
+    ///
+    /// Used by the argument form of `private_class_method` / `public_class_method`,
+    /// which name methods that are *already defined* — e.g. the canonical
+    /// `private_class_method :new` factory idiom. The matching `def self.<name>`
+    /// FUNCTION node is located by its canonical def-site id (reconstructed via
+    /// `semantic_id`) together with the `static` marker, so a same-named *instance*
+    /// method (`def name`) is never affected. The node's `visibility` metadata and
+    /// `exported` flag are updated in place. No-op if the named class method has not
+    /// been seen yet (forward reference / typo) — silently, as Ruby itself would raise
+    /// only at runtime.
+    fn set_static_method_visibility(&mut self, name: &str, vis: Visibility) {
+        let parent = self.enclosing_class_or_module();
+        let expected_id = semantic_id(&self.file, "FUNCTION", name, parent.as_deref(), None);
+        for node in self.nodes.iter_mut().rev() {
+            if node.id == expected_id
+                && node.node_type == "FUNCTION"
+                && node.metadata.get("static") == Some(&serde_json::Value::Bool(true))
+            {
+                node.metadata
+                    .insert("visibility".to_string(), serde_json::Value::String(vis.as_str().to_string()));
+                node.exported = vis == Visibility::Public;
+                return;
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -921,6 +949,29 @@ fn walk_node_inner(node: &ruby_prism::Node<'_>, ctx: &mut Ctx) {
                                 extra: HashMap::new(),
                             };
                             ctx.emit_declaration(gn);
+                        }
+                    }
+                    return;
+                }
+                "private_class_method" | "public_class_method" => {
+                    // Retroactive visibility for singleton (class) methods, e.g. the
+                    // `private_class_method :new` factory idiom. Symbol/string args name
+                    // already-defined `def self.<name>` methods and update them in place;
+                    // non-symbol args (the rare inline `private_class_method def self.x; end`
+                    // form) are walked so their bodies are still analysed. The argument form
+                    // does NOT change the default visibility for subsequent defs.
+                    let vis = if name == "private_class_method" {
+                        Visibility::Private
+                    } else {
+                        Visibility::Public
+                    };
+                    if let Some(args) = cn.arguments() {
+                        for arg in args.arguments().iter() {
+                            if let Some(method_name) = extract_symbol_name(&arg) {
+                                ctx.set_static_method_visibility(&method_name, vis);
+                            } else {
+                                walk_node(&arg, ctx);
+                            }
                         }
                     }
                     return;
@@ -3334,6 +3385,85 @@ mod tests {
         assert_eq!(priv_m.metadata.get("visibility").unwrap(), "private");
         assert!(pub_m.exported);
         assert!(!priv_m.exported);
+    }
+
+    // 7a. private_class_method :sym retro-privatises an already-defined class method.
+    // Canonical singleton/factory idiom: `private_class_method :new`.
+    #[test]
+    fn test_private_class_method_symbol_arg() {
+        let a = analyze(
+            "class Foo\n  def self.create; end\n  def self.internal; end\n  private_class_method :internal\nend",
+        );
+        let functions = find_nodes_by_type(&a, "FUNCTION");
+        let create = functions
+            .iter()
+            .find(|f| f.name == "create" && f.metadata.get("static").is_some())
+            .unwrap();
+        let internal = functions
+            .iter()
+            .find(|f| f.name == "internal" && f.metadata.get("static").is_some())
+            .unwrap();
+
+        // Untouched class method stays public.
+        assert_eq!(create.metadata.get("visibility").unwrap(), "public");
+        assert!(create.exported);
+        // Named class method becomes private + unexported.
+        assert_eq!(internal.metadata.get("visibility").unwrap(), "private");
+        assert!(!internal.exported);
+    }
+
+    // 7b. public_class_method :sym re-promotes a previously-privatised class method.
+    #[test]
+    fn test_public_class_method_repromotes() {
+        let a = analyze(
+            "class Foo\n  def self.exposed; end\n  private_class_method :exposed\n  public_class_method :exposed\nend",
+        );
+        let functions = find_nodes_by_type(&a, "FUNCTION");
+        let exposed = functions
+            .iter()
+            .find(|f| f.name == "exposed" && f.metadata.get("static").is_some())
+            .unwrap();
+        assert_eq!(exposed.metadata.get("visibility").unwrap(), "public");
+        assert!(exposed.exported);
+    }
+
+    // 7d. private_class_method must touch ONLY the singleton method, never a same-named
+    // instance method (both share a canonical def-site id; disambiguated by `static`).
+    #[test]
+    fn test_private_class_method_does_not_touch_instance_method() {
+        let a = analyze(
+            "class Foo\n  def run; end\n  def self.run; end\n  private_class_method :run\nend",
+        );
+        let functions = find_nodes_by_type(&a, "FUNCTION");
+        let instance = functions
+            .iter()
+            .find(|f| f.name == "run" && f.metadata.get("static").is_none())
+            .unwrap();
+        let static_m = functions
+            .iter()
+            .find(|f| f.name == "run" && f.metadata.get("static").is_some())
+            .unwrap();
+        // Instance method untouched (still public), class method privatised.
+        assert_eq!(instance.metadata.get("visibility").unwrap(), "public");
+        assert!(instance.exported);
+        assert_eq!(static_m.metadata.get("visibility").unwrap(), "private");
+        assert!(!static_m.exported);
+    }
+
+    // 7c. The argument form must NOT change the default visibility for subsequent defs.
+    #[test]
+    fn test_class_method_visibility_arg_form_does_not_change_default() {
+        let a = analyze(
+            "class Foo\n  def self.early; end\n  private_class_method :early\n  def self.later; end\nend",
+        );
+        let functions = find_nodes_by_type(&a, "FUNCTION");
+        let later = functions
+            .iter()
+            .find(|f| f.name == "later" && f.metadata.get("static").is_some())
+            .unwrap();
+        // `later` is defined AFTER the modifier and must remain public.
+        assert_eq!(later.metadata.get("visibility").unwrap(), "public");
+        assert!(later.exported);
     }
 
     // 8. Block test
