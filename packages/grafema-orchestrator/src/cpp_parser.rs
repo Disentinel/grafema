@@ -190,25 +190,49 @@ pub fn parse_cpp_source(source: &str, filename: &str, args: &[String]) -> Result
     unsafe { parse_cpp_source_unsafe(source, filename, args) }
 }
 
-/// Ensure libclang is loaded exactly once (runtime feature requires explicit load).
+/// Ensure libclang is loaded and available **on the calling thread**.
+///
+/// With the `runtime` feature, clang-sys stores the loaded shared library in
+/// *thread-local* storage (`clang-sys` `link.rs` `LIBRARY`), and every wrapped
+/// `clang_*` function panics if the calling thread has no library set. The
+/// orchestrator parses C/C++ files from many `spawn_blocking` worker threads,
+/// so loading the library once behind a global `Once` would only ever populate
+/// the thread that won the race — every other worker would then panic and that
+/// file would silently produce zero graph nodes.
+///
+/// We therefore load the library exactly once process-wide, cache the shared
+/// `Arc<SharedLibrary>`, and propagate it to each thread via `set_library`
+/// (clang-sys exposes `get_library`/`set_library` precisely for sharing the
+/// instance across threads).
 fn ensure_libclang_loaded() -> Result<()> {
-    use std::sync::Once;
-    static INIT: Once = Once::new();
-    static mut INIT_ERR: Option<String> = None;
+    use std::sync::{Arc, OnceLock};
 
-    INIT.call_once(|| {
-        // clang-sys `load()!` macro is not usable here; use the function form
-        if let Err(e) = clang_sys::load() {
-            unsafe { INIT_ERR = Some(format!("Failed to load libclang: {e}")); }
+    // Loaded once, then shared with every worker thread. Stores the failure
+    // message instead of the library when the initial load fails.
+    static SHARED: OnceLock<std::result::Result<Arc<clang_sys::SharedLibrary>, String>> =
+        OnceLock::new();
+
+    let shared = SHARED.get_or_init(|| {
+        // `load()` populates the current thread's TLS; immediately grab the
+        // shared handle so other threads can adopt it.
+        match clang_sys::load() {
+            Ok(()) => clang_sys::get_library().ok_or_else(|| {
+                "libclang reported as loaded but no shared instance is available".to_string()
+            }),
+            Err(e) => Err(format!("Failed to load libclang: {e}")),
         }
     });
 
-    unsafe {
-        if let Some(ref err) = INIT_ERR {
-            anyhow::bail!("{err}");
+    match shared {
+        Ok(library) => {
+            // Adopt the shared instance on this thread if it isn't set yet.
+            if !clang_sys::is_loaded() {
+                clang_sys::set_library(Some(library.clone()));
+            }
+            Ok(())
         }
+        Err(err) => anyhow::bail!("{err}"),
     }
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -522,17 +546,22 @@ unsafe fn add_kind_specific_fields(
         }
 
         // Using directive (using namespace X)
-        CXCursor_UsingDirective => {
-            let referenced = clang_getCursorReferenced(cursor);
-            if !clang_Cursor_isNull(referenced) != 0 {
-                node["namespace"] = json!(cx_string_to_string(clang_getCursorSpelling(referenced)));
-            }
-        }
+        //
+        // NOTE: libclang's `clang_getCursorReferenced` on a UsingDirective cursor
+        // returns the directive cursor *itself* (kind=UsingDirective, empty
+        // spelling), not the nominated namespace — so it yields no usable name.
+        // The cursor's own spelling is also empty. The nominated namespace is
+        // instead recovered from the child `NamespaceRef` node(s) in
+        // `add_named_fields` (which sets both `name` and `namespace`). Doing it
+        // here would only ever set `namespace` to an empty string.
+        CXCursor_UsingDirective => {}
 
-        // Using declaration
+        // Using declaration (using X::y) — the referenced cursor resolves to the
+        // imported symbol, whose spelling is the bound name. Guard with the same
+        // `clang_Cursor_isNull(..) == 0` idiom used by the other reference arms.
         CXCursor_UsingDeclaration => {
             let referenced = clang_getCursorReferenced(cursor);
-            if !clang_Cursor_isNull(referenced) != 0 {
+            if clang_Cursor_isNull(referenced) == 0 {
                 node["target"] = json!(cx_string_to_string(clang_getCursorSpelling(referenced)));
             }
         }
@@ -1081,6 +1110,32 @@ fn add_named_fields(node: &mut Value, kind_str: &str) {
             }
         }
 
+        // -------------------------------------------------------------------
+        // Using directive (using namespace X / using namespace A::B)
+        // -------------------------------------------------------------------
+        "UsingDirective" => {
+            // libclang gives the UsingDirective cursor an empty spelling and its
+            // `getCursorReferenced` points back at the directive itself, so the
+            // nominated namespace name is unavailable from the cursor directly.
+            // It is, however, expressed as the chain of child `NamespaceRef`
+            // nodes (e.g. `using namespace a::b;` -> NamespaceRef "a", "b").
+            // Reconstruct the qualified namespace name by joining those segments
+            // with `::`. The downstream C++ analyzer reads the node's `name`
+            // field (see cpp-analyzer Rules/Imports.hs `walkImport`), so without
+            // this the resulting IMPORT_BINDING node would have an empty name and
+            // the used namespace would be lost from the graph.
+            let segments: Vec<&str> = children.iter()
+                .filter(|c| child_kind(c) == Some("NamespaceRef"))
+                .filter_map(|c| c.get("name").and_then(|n| n.as_str()))
+                .filter(|s| !s.is_empty())
+                .collect();
+            if !segments.is_empty() {
+                let qualified = segments.join("::");
+                node["name"] = json!(qualified);
+                node["namespace"] = json!(qualified);
+            }
+        }
+
         _ => {
             // No named fields for other kinds
         }
@@ -1275,4 +1330,98 @@ pub fn is_c_file(path: &Path) -> bool {
         .and_then(|e| e.to_str())
         .map(|e| e == "c")
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Depth-first search for the first node whose `kind` field equals `kind`.
+    fn find_first<'a>(node: &'a Value, kind: &str) -> Option<&'a Value> {
+        if node.get("kind").and_then(|k| k.as_str()) == Some(kind) {
+            return Some(node);
+        }
+        if let Some(children) = node.get("children").and_then(|c| c.as_array()) {
+            for c in children {
+                if let Some(found) = find_first(c, kind) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+
+    /// Collect every node whose `kind` field equals `kind`.
+    fn find_all<'a>(node: &'a Value, kind: &str, out: &mut Vec<&'a Value>) {
+        if node.get("kind").and_then(|k| k.as_str()) == Some(kind) {
+            out.push(node);
+        }
+        if let Some(children) = node.get("children").and_then(|c| c.as_array()) {
+            for c in children {
+                find_all(c, kind, out);
+            }
+        }
+    }
+
+    fn parse(src: &str) -> Value {
+        parse_cpp_source(
+            src,
+            "test.cpp",
+            &["-std=c++17".to_string(), "-xc++".to_string()],
+        )
+        .expect("parse failed")
+    }
+
+    /// `using namespace ns;` must carry the namespace name on the node's `name`
+    /// field (and `namespace`), because the downstream C++ analyzer derives the
+    /// IMPORT_BINDING node's name from `nodeName` (cpp-analyzer Rules/Imports.hs).
+    /// Before the fix the cursor spelling was empty and the field was the empty
+    /// string, so the used namespace was lost from the graph.
+    #[test]
+    fn using_directive_carries_namespace_name() {
+        let ast = parse("namespace ns { int x; }\nusing namespace ns;\n");
+        let dir = find_first(&ast, "UsingDirective").expect("no UsingDirective node");
+        assert_eq!(dir.get("name").and_then(|v| v.as_str()), Some("ns"),
+            "UsingDirective node name must be the namespace, got {:?}", dir.get("name"));
+        assert_eq!(dir.get("namespace").and_then(|v| v.as_str()), Some("ns"),
+            "UsingDirective `namespace` field must be the namespace, got {:?}", dir.get("namespace"));
+    }
+
+    /// A qualified `using namespace a::b;` must reconstruct the full qualified
+    /// name `a::b` by joining the child NamespaceRef segments with `::`.
+    #[test]
+    fn using_directive_qualified_namespace() {
+        let ast = parse(
+            "namespace a { namespace b { int y; } }\nusing namespace a::b;\n",
+        );
+        let dir = find_first(&ast, "UsingDirective").expect("no UsingDirective node");
+        assert_eq!(dir.get("name").and_then(|v| v.as_str()), Some("a::b"));
+        assert_eq!(dir.get("namespace").and_then(|v| v.as_str()), Some("a::b"));
+    }
+
+    /// Regression guard: the `namespace` field must never be the empty string
+    /// for a well-formed `using namespace` directive.
+    #[test]
+    fn using_directive_namespace_not_empty() {
+        let ast = parse("namespace ns { int x; }\nusing namespace ns;\n");
+        let mut dirs = Vec::new();
+        find_all(&ast, "UsingDirective", &mut dirs);
+        assert_eq!(dirs.len(), 1);
+        for d in &dirs {
+            let ns = d.get("namespace").and_then(|v| v.as_str()).unwrap_or("");
+            assert!(!ns.is_empty(), "namespace field must not be empty");
+            let name = d.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            assert!(!name.is_empty(), "name field must not be empty");
+        }
+    }
+
+    /// Control: `using ns::x;` (UsingDeclaration) already carried the bound
+    /// symbol name on `name`/`target`; the fix must not regress it.
+    #[test]
+    fn using_declaration_unchanged() {
+        let ast = parse("namespace ns { int x; }\nusing ns::x;\n");
+        let decl = find_first(&ast, "UsingDeclaration").expect("no UsingDeclaration node");
+        assert_eq!(decl.get("name").and_then(|v| v.as_str()), Some("x"));
+        assert_eq!(decl.get("target").and_then(|v| v.as_str()), Some("x"));
+    }
 }
