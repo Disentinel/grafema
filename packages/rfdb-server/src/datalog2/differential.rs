@@ -1149,4 +1149,107 @@ guarantees:
             eprintln!("  {:>9}  {}", c, t);
         }
     }
+
+    /// Real-code finding: run `depends/2` (the shipped rule) + transitive closure + self-reach
+    /// on the actual dogfood graph and report the MODULE import CYCLES. A cycle is a real
+    /// architectural smell; this is the second clean v2 migration (cycle detection over a
+    /// first-class-keyed edge) exercised on real data, not a fixture.
+    ///
+    /// FINDING (2026-06-09, autonomous loop): on the real dogfood graph the naive transitive
+    /// closure `dep_reach/2` trips **E-PLAN-003** — the planner estimates its per-rule output at
+    /// ~54.3M facts (> the 10M `MAX_MATERIALIZED_FACTS` guard). That estimate is implausibly high:
+    /// the base `depends/2` relation is only ~622 pairs, so the true closure is bounded by
+    /// modules² (a few hundred², well under the guard). This is a **recursive-closure planner
+    /// q-error** (the roadmap's "planner q-error (Gate D)", task #4): the recursive rule's
+    /// cardinality estimate compounds instead of saturating. The cycle LOGIC is proven correct on
+    /// a fixture (`datalog2::smoke::module_dependency_cycles_via_transitive_closure_over_depends`);
+    /// surfacing the real cycle SET needs either a tighter recursive-closure estimator or a bounded
+    /// formulation — NOT weakening the global guard. The probe leaves the E-PLAN-003 visible on
+    /// purpose; it is the finding. (No autonomous fix: the estimator change touches a prod guard.)
+    ///
+    /// Run: cargo test --manifest-path packages/rfdb-server/Cargo.toml --lib \
+    ///        datalog2::differential::yaml_extract_tests::probe_real_module_dependency_cycles -- --ignored --nocapture
+    #[test]
+    #[ignore = "manual real-data cycle probe; documents the recursive-closure E-PLAN-003 q-error"]
+    fn probe_real_module_dependency_cycles() {
+        use std::collections::{BTreeSet, HashMap};
+        let dataset = repo_path(".grafema/grafema.rfdb");
+        assert!(dataset.join("db_config.json").exists(), "no dataset at {}", dataset.display());
+        let tmp = tempfile::tempdir().expect("temp");
+        let work = tmp.path().join("grafema.rfdb");
+        copy_dir_all(&dataset, &work).expect("copy");
+        let _ = std::fs::remove_file(work.join("LOCK"));
+        let manifest = ManifestStore::open(&work).expect("manifest");
+        let store = MultiShardStore::open(&work, &manifest).expect("store");
+        let snap = store.snapshot(&manifest);
+
+        // Real per-type cardinalities so the planner drives from the small IMPORTS_FROM relation.
+        let all_nodes = store.find_nodes_at(&snap, None, None);
+        let module_label: HashMap<u128, String> =
+            all_nodes.iter().map(|n| (n.id, n.semantic_id.clone())).collect();
+        let total_nodes = all_nodes.len() as u64;
+        let total_edges = store.iter_all_edges_at(&snap).len() as u64;
+        let mut nodes_by_type: HashMap<String, u64> = HashMap::new();
+        for n in &all_nodes {
+            *nodes_by_type.entry(n.node_type.clone()).or_insert(0) += 1;
+        }
+        let view = LsmStorageView::capture(Arc::new(store), &manifest);
+        let stats = Stats { total_nodes, total_edges, nodes_by_type };
+
+        // The shipped depends body (strip @materialize) + transitive closure + self-reach.
+        let depends_body: String = crate::datalog2::stdlib::DEPENDS_DL
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("@materialize"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let src = format!(
+            "{depends_body}\n\
+             dep_reach(A, B) :- depends(A, B).\n\
+             dep_reach(A, B) :- depends(A, C), dep_reach(C, B).\n\
+             cycle(M) :- dep_reach(M, M)."
+        );
+
+        eprintln!("\n=== REAL module import-cycle probe ===");
+        match evaluate(&view, &src, stats, EvalLimits::none(), EventLog::discard()) {
+            Ok(eval) => {
+                let cyclic: BTreeSet<u128> = eval
+                    .facts("cycle")
+                    .iter()
+                    .filter_map(|r| r.first().and_then(|v| v.as_id()))
+                    .collect();
+                let depends_pairs = eval.facts("depends").len();
+                eprintln!(
+                    "depends pairs: {} | modules on a cycle: {}",
+                    depends_pairs,
+                    cyclic.len()
+                );
+                // Report the cyclic edges (both endpoints in the cycle set) for triage.
+                let mut cyclic_edges: Vec<(String, String)> = eval
+                    .facts("depends")
+                    .iter()
+                    .filter_map(|r| {
+                        let a = r.first()?.as_id()?;
+                        let b = r.get(1)?.as_id()?;
+                        if cyclic.contains(&a) && cyclic.contains(&b) {
+                            let la = module_label.get(&a).cloned().unwrap_or_else(|| format!("{a:x}"));
+                            let lb = module_label.get(&b).cloned().unwrap_or_else(|| format!("{b:x}"));
+                            Some((la, lb))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                cyclic_edges.sort();
+                eprintln!("--- cyclic depends edges ({}) ---", cyclic_edges.len());
+                for (a, b) in cyclic_edges.iter().take(60) {
+                    eprintln!("  {a}  ->  {b}");
+                }
+                if cyclic_edges.len() > 60 {
+                    eprintln!("  … {} more", cyclic_edges.len() - 60);
+                }
+            }
+            Err(e) => eprintln!("cycle probe eval error ({}): {e}", e.code()),
+        }
+        eprintln!("=== end cycle probe ===\n");
+    }
 }
