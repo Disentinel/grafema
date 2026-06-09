@@ -2683,6 +2683,43 @@ mod tests {
         assert!(none.is_none(), "p(f1) is derivable (f1 calls g) → no gap");
     }
 
+    /// `witness_gap` over a MULTI-clause predicate reports the gap of the clause that came
+    /// CLOSEST to firing (longest satisfied prefix), not the first clause that fails. Two rules
+    /// for `q`: rule 1 fails immediately (no `R1` edge), rule 2 satisfies one more premise
+    /// (`R2` holds) before failing at `R3`. The reported gap must be rule 2's (deeper prefix).
+    #[test]
+    fn why_not_reports_the_closest_to_firing_clause() {
+        use crate::datalog2::exec::explain_gap;
+        let src = "q(X) :- node(X, \"A\"), edge(X, Y, \"R1\").\n\
+                   q(X) :- node(X, \"A\"), edge(X, Y, \"R2\"), edge(Y, Z, \"R3\").";
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let plans = plan_program(
+            &rules,
+            &strat,
+            &Stats { total_nodes: 2, total_edges: 1, ..Default::default() },
+        )
+        .expect("plan");
+        let mut v = FixtureStorageView::new(1);
+        node(&mut v, "x", "A");
+        node(&mut v, "y", "A");
+        edge(&mut v, "x", "y", "R2"); // rule 2 gets one premise deeper than rule 1; no R1, no R3.
+
+        let gap = explain_gap::<BoolTag>(
+            &v, &plans, &rules, &strat, "q", &[Value::Id(id_of("x"))], EvalLimits::none(),
+        )
+        .expect("no error")
+        .expect("q(x) is not derivable → a gap");
+        // Rule 2 satisfied {node, edge(R2)} before failing → prefix ≥ 2 (beats rule 1's ≤ 1).
+        assert!(
+            gap.satisfied.len() >= 2,
+            "reported the closest-to-firing clause (rule 2, deeper prefix), got prefix {}",
+            gap.satisfied.len()
+        );
+        assert_eq!(gap.failing_predicate, "edge", "the deepest gap is the missing R3 edge");
+    }
+
     // ── DRed phase 1: over-delete candidate set ─────────────────────
 
     /// Pre-load each derived predicate's `Total` from a prior `Evaluation`, keyed by the same
