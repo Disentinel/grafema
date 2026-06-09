@@ -89,6 +89,32 @@ the JS corpus (LLM-generated artifacts not in this repo's tree — they live und
 produced by a paid run). That is the one fact I could not ground from source alone; it decides whether
 "migrate plugins to v2" is a codegen change in stage 10 or a per-edge authoring effort.
 
+## Evidence: the real edge vocabulary refines the migration thesis (2026-06-09)
+
+Enumerated the actual dogfood graph (143164 nodes / 136617 edges, 29 edge types) via
+`probe_real_graph_vocabulary` and classified every edge type by migratability to `.dl`:
+
+- **Walk-phase syntactic facts (the EDB) — the overwhelming majority.** `READS_FROM` (30806),
+  `CONTAINS` (19332), `DECLARES` (13556), `PASSES_ARGUMENT` (12504), `HAS_PROPERTY` (8372),
+  `ASSIGNED_FROM` (5262), `HAS_CONDITION`, `HAS_SCOPE`, `RECEIVES_ARGUMENT`, `HAS_ELEMENT`,
+  `RETURNS`, `HAS_METHOD`, `HAS_CONSEQUENT`/`HAS_ALTERNATE`, `THROWS`, `EXPORTS`, `AWAITS`,
+  `ITERATES_OVER`, `HAS_SIGNATURE`/`HAS_FIELD`/`HAS_CATCH`/`HAS_UPDATE`/`HAS_FINALLY`. These are
+  emitted directly from the AST during the walk — primary facts, not relational derivations.
+- **Fuzzy-resolver outputs.** `DERIVED_FROM` (17385, dataflow), `CALLS` (5130), `IMPORTS_FROM`
+  (1644). Each needs name/specifier/path matching (the imperative resolver atom), NOT a clean
+  relational join — they are the JS extractor's output by data-physics, not Datalog candidates.
+- **Clean relational post-project derivation: essentially only `DEPENDS_ON`** (the module→module
+  file-attr join `depends.dl` already does; not even materialized in this snapshot).
+
+**Refined thesis (evidence-backed):** "migrate analyzers/plugins to v2" is NOT "rewrite edge
+emission in Datalog." The EDB (syntactic facts) STAYS imperative — walk-phase extraction is the
+correct substrate for it by the §3 data-physics rule (parse + dirty inference, recompute-from-scratch).
+Datalog is the **additive IDB layer** that composes those facts into derived relations
+(`depends`, dependency cycles, reachability, coverage-as-negation — all proven this session). The
+migration is therefore *additive new `.dl` derivations*, not a fact-emission rewrite; depends.dl is
+the prototype, and the clean-relational candidates beyond it are scarce precisely because the analyzer
+already emits a rich, first-class EDB. The value is in the derived layer, not in re-expressing the EDB.
+
 ## Provenance
 
 lang-spec: `packages/lang-spec/README.md`, `packages/lang-spec/src/types.ts`,
