@@ -483,9 +483,9 @@ fn walk_item(item: &syn::Item, ctx: &mut Ctx) {
         syn::Item::Use(u) => walk_use(u, ctx),
         syn::Item::Mod(m) => walk_mod(m, ctx),
         syn::Item::Type(t) => walk_type_alias(t, ctx),
+        syn::Item::ForeignMod(m) => walk_foreign_mod(m, ctx),
         // Transparent items — no graph nodes needed
         syn::Item::ExternCrate(_) => {}
-        syn::Item::ForeignMod(_) => {}
         syn::Item::Macro(_) => {}
         syn::Item::Union(u) => walk_union(u, ctx),
         syn::Item::TraitAlias(_) => {}
@@ -1103,6 +1103,155 @@ fn walk_type_alias(t: &syn::ItemType, ctx: &mut Ctx) {
         end_line: ctx.span_end_line_col(t.ident.span()).0, end_column: ctx.span_end_line_col(t.ident.span()).1,
         exported: is_pub(&t.vis),
         metadata: HashMap::new(),
+        extra: HashMap::new(),
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Foreign module (`extern "C" { ... }`)
+// ---------------------------------------------------------------------------
+
+/// Walk an `extern` block, emitting a graph node for each foreign declaration.
+///
+/// An `extern` block is NOT transparent: it declares the FFI boundary — the
+/// functions, statics, and opaque types this crate binds to across the
+/// language boundary (exactly the cross-artifact edges Grafema exists to map).
+/// Each is a real, queryable symbol and (for fns) a real call target, so it
+/// must appear in the graph rather than being dropped with the genuinely
+/// transparent items (`extern crate`, item macros). Foreign declarations carry
+/// no body/initializer; they are emitted as the same node types as their
+/// in-crate counterparts (FUNCTION / VARIABLE / TYPE_ALIAS), tagged
+/// `extern=true` and `abi=<abi>` so the FFI distinction survives in the graph.
+/// Foreign macros / verbatim are left unexpanded, consistent with the rest of
+/// the analyzer.
+fn walk_foreign_mod(m: &syn::ItemForeignMod, ctx: &mut Ctx) {
+    // `extern { ... }` with no explicit ABI string defaults to the "C" ABI.
+    let abi = m
+        .abi
+        .name
+        .as_ref()
+        .map(|s| s.value())
+        .unwrap_or_else(|| "C".to_string());
+
+    for item in &m.items {
+        match item {
+            syn::ForeignItem::Fn(f) => walk_foreign_fn(f, &abi, ctx),
+            syn::ForeignItem::Static(s) => walk_foreign_static(s, &abi, ctx),
+            syn::ForeignItem::Type(t) => walk_foreign_type(t, &abi, ctx),
+            syn::ForeignItem::Macro(_) => {}
+            syn::ForeignItem::Verbatim(_) => {}
+            _ => panic!("rust_analyzer: unhandled ForeignItem variant"),
+        }
+    }
+}
+
+/// Emit a foreign function declaration (signature only, no body) as a FUNCTION
+/// node. Mirrors `walk_fn` for the signature-level metadata and parameter nodes
+/// so the FFI signature (arity + types + return type) is queryable and the fn
+/// is a resolvable call target; the only differences are no walked body and the
+/// `extern`/`abi` tags.
+fn walk_foreign_fn(f: &syn::ForeignItemFn, abi: &str, ctx: &mut Ctx) {
+    let ident = f.sig.ident.to_string();
+    let (line, col) = ctx.span_line_col(f.sig.ident.span());
+    let (end_line, end_col) = ctx.span_end_line_col(f.sig.ident.span());
+    let is_exported = is_pub(&f.vis);
+    let node_id = semantic_id(&ctx.file, "FUNCTION", &ident, None, None);
+
+    let mut fn_meta = HashMap::from([
+        Ctx::meta_text("visibility", vis_to_text(&f.vis)),
+        Ctx::meta_bool("async", f.sig.asyncness.is_some()),
+        Ctx::meta_bool("unsafe", f.sig.unsafety.is_some()),
+        Ctx::meta_bool("extern", true),
+        Ctx::meta_text("abi", abi),
+    ]);
+    if let syn::ReturnType::Type(_, ty) = &f.sig.output {
+        let return_type = type_to_name(ty);
+        if return_type != "<type>" {
+            let (k, v) = Ctx::meta_text("returnType", &return_type);
+            fn_meta.insert(k, v);
+        }
+    }
+    ctx.emit_declaration(GraphNode {
+        id: node_id.clone(),
+        node_type: "FUNCTION".to_string(),
+        name: ident.clone(),
+        file: ctx.file.clone(),
+        line, column: col,
+        end_line, end_column: end_col,
+        exported: is_exported,
+        metadata: fn_meta,
+        extra: HashMap::new(),
+    });
+
+    if is_exported {
+        ctx.exports.push(ExportInfo {
+            name: ident.clone(),
+            node_id: node_id.clone(),
+            kind: "function".to_string(),
+            source: None,
+        });
+    }
+
+    // Foreign fns have a signature but no body; still emit PARAMETER nodes so
+    // the FFI signature stays queryable (mirrors walk_fn's param pass).
+    for param in &f.sig.inputs {
+        walk_fn_param(param, &node_id, ctx);
+    }
+}
+
+/// Emit a foreign static (`static X: T;` inside an `extern` block) as a
+/// VARIABLE node (kind=static). Mirrors `walk_static` minus the initializer
+/// (foreign statics have none), plus the `extern`/`abi` tags.
+fn walk_foreign_static(s: &syn::ForeignItemStatic, abi: &str, ctx: &mut Ctx) {
+    let ident = s.ident.to_string();
+    let (line, col) = ctx.span_line_col(s.ident.span());
+    let is_exported = is_pub(&s.vis);
+    let is_mut = matches!(s.mutability, syn::StaticMutability::Mut(_));
+    let node_id = semantic_id(&ctx.file, "VARIABLE", &ident, None, None);
+
+    ctx.emit_declaration(GraphNode {
+        id: node_id.clone(),
+        node_type: "VARIABLE".to_string(),
+        name: ident.clone(),
+        file: ctx.file.clone(),
+        line, column: col,
+        end_line: ctx.span_end_line_col(s.ident.span()).0, end_column: ctx.span_end_line_col(s.ident.span()).1,
+        exported: is_exported,
+        metadata: HashMap::from([
+            Ctx::meta_text("kind", "static"),
+            Ctx::meta_bool("mutable", is_mut),
+            Ctx::meta_text("visibility", vis_to_text(&s.vis)),
+            Ctx::meta_bool("extern", true),
+            Ctx::meta_text("abi", abi),
+        ]),
+        extra: HashMap::new(),
+    });
+
+    if is_exported {
+        ctx.exports.push(ExportInfo {
+            name: ident, node_id, kind: "variable".to_string(), source: None,
+        });
+    }
+}
+
+/// Emit a foreign opaque type (`type T;` inside an `extern` block) as a
+/// TYPE_ALIAS node. Mirrors `walk_type_alias` plus the `extern`/`abi` tags.
+fn walk_foreign_type(t: &syn::ForeignItemType, abi: &str, ctx: &mut Ctx) {
+    let ident = t.ident.to_string();
+    let (line, col) = ctx.span_line_col(t.ident.span());
+    let node_id = semantic_id(&ctx.file, "TYPE_ALIAS", &ident, None, None);
+    ctx.emit_declaration(GraphNode {
+        id: node_id,
+        node_type: "TYPE_ALIAS".to_string(),
+        name: ident,
+        file: ctx.file.clone(),
+        line, column: col,
+        end_line: ctx.span_end_line_col(t.ident.span()).0, end_column: ctx.span_end_line_col(t.ident.span()).1,
+        exported: is_pub(&t.vis),
+        metadata: HashMap::from([
+            Ctx::meta_bool("extern", true),
+            Ctx::meta_text("abi", abi),
+        ]),
         extra: HashMap::new(),
     });
 }
@@ -1971,6 +2120,69 @@ mod tests {
             .find(|n| n.node_type == "RECORD_FIELD" && n.name == "i")
             .unwrap();
         assert_eq!(i.metadata.get("typeAnnotation"), Some(&serde_json::json!("u32")));
+    }
+
+    #[test]
+    fn test_extern_block_foreign_items() {
+        // `extern` blocks declare the FFI boundary — foreign fns are real call
+        // targets and foreign statics/types are real symbols. They must appear
+        // in the graph, not be silently dropped with the genuinely transparent
+        // items (`extern crate`, item macros).
+        let fa = parse_and_analyze(
+            "extern \"C\" { pub fn ffi_call(x: i32) -> i32; static ERRNO: i32; type Opaque; }",
+        );
+
+        // Foreign fn -> FUNCTION node, exported, tagged extern+abi, with its parameter.
+        assert!(has_node(&fa, "FUNCTION", "ffi_call"), "foreign fn emitted as FUNCTION");
+        let f = fa.nodes.iter()
+            .find(|n| n.node_type == "FUNCTION" && n.name == "ffi_call")
+            .unwrap();
+        assert_eq!(f.metadata.get("extern"), Some(&serde_json::json!(true)), "fn tagged extern");
+        assert_eq!(f.metadata.get("abi"), Some(&serde_json::json!("C")), "fn tagged abi=C");
+        assert_eq!(f.metadata.get("returnType"), Some(&serde_json::json!("i32")), "return type preserved");
+        assert!(f.exported, "pub foreign fn is exported");
+        assert!(has_node(&fa, "PARAMETER", "x"), "foreign fn parameter emitted");
+        let fn_id = f.id.clone();
+        assert!(
+            fa.edges.iter().any(|e| e.edge_type == "CONTAINS" && e.dst == fn_id),
+            "foreign fn reachable via CONTAINS from its scope"
+        );
+
+        // Foreign static -> VARIABLE node (kind=static), tagged extern+abi.
+        assert!(has_node(&fa, "VARIABLE", "ERRNO"), "foreign static emitted as VARIABLE");
+        let s = fa.nodes.iter()
+            .find(|n| n.node_type == "VARIABLE" && n.name == "ERRNO")
+            .unwrap();
+        assert_eq!(s.metadata.get("kind"), Some(&serde_json::json!("static")), "kind=static");
+        assert_eq!(s.metadata.get("extern"), Some(&serde_json::json!(true)), "static tagged extern");
+
+        // Foreign opaque type -> TYPE_ALIAS node, tagged extern.
+        assert!(has_node(&fa, "TYPE_ALIAS", "Opaque"), "foreign type emitted as TYPE_ALIAS");
+        let t = fa.nodes.iter()
+            .find(|n| n.node_type == "TYPE_ALIAS" && n.name == "Opaque")
+            .unwrap();
+        assert_eq!(t.metadata.get("extern"), Some(&serde_json::json!(true)), "type tagged extern");
+    }
+
+    #[test]
+    fn test_extern_block_abi_and_empty() {
+        // Bare `extern { ... }` (no ABI string) defaults to the "C" ABI.
+        let fa = parse_and_analyze("extern { fn bare_default(); }");
+        let f = fa.nodes.iter()
+            .find(|n| n.node_type == "FUNCTION" && n.name == "bare_default")
+            .unwrap();
+        assert_eq!(f.metadata.get("abi"), Some(&serde_json::json!("C")), "bare extern defaults abi=C");
+
+        // A non-C ABI is preserved verbatim.
+        let fa = parse_and_analyze("extern \"system\" { fn sys_call(); }");
+        let f = fa.nodes.iter()
+            .find(|n| n.node_type == "FUNCTION" && n.name == "sys_call")
+            .unwrap();
+        assert_eq!(f.metadata.get("abi"), Some(&serde_json::json!("system")), "non-C abi preserved");
+
+        // An empty extern block produces no spurious nodes.
+        let fa = parse_and_analyze("extern \"C\" {}");
+        assert_eq!(count_nodes(&fa, "FUNCTION"), 0, "empty extern block emits no FUNCTION nodes");
     }
 
     #[test]
