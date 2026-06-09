@@ -17,9 +17,16 @@ import { join, relative, extname } from 'path';
 import type { GraphBackend } from '@grafema/types';
 
 /**
- * Supported file extensions by language
+ * Supported file extensions by language.
+ *
+ * The JS/TS set MUST mirror the orchestrator's authoritative `is_js_ts_file`
+ * (`packages/grafema-orchestrator/src/analyzer.rs`: `js | jsx | ts | tsx |
+ * mjs | cjs | mts | cts`). If it drifts, files the orchestrator actually
+ * analyzes are mis-categorized here — and because `CODE_EXTENSIONS` is built
+ * from this list, any omitted extension makes the corresponding source files
+ * invisible to coverage (never scanned, so never reported as `unreachable`).
  */
-const JS_SUPPORTED = ['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx'];
+const JS_SUPPORTED = ['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.mts', '.cts'];
 const RUST_SUPPORTED = ['.rs'];
 const SUPPORTED_EXTENSIONS = new Set([...JS_SUPPORTED, ...RUST_SUPPORTED]);
 
