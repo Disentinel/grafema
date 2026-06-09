@@ -6,6 +6,7 @@
  */
 
 import { isAbsolute, relative } from 'path';
+import { parseSemanticIdV2 } from '@grafema/util';
 
 /**
  * Format options for node display
@@ -66,10 +67,22 @@ export function getNodeDisplayName(node: DisplayableNode): string {
   if (node.name && !node.name.startsWith('{')) {
     return node.name;
   }
-  // Fallback: extract name from semantic ID if possible
+  // Fallback: derive a human-readable name from the semantic ID.
+  // Semantic IDs (v2 compact `file->TYPE->name[in:p,h:x]#N` and grafema://
+  // URIs) carry the symbol name. parseSemanticIdV2 decodes URIs and strips
+  // the bracket payload / discriminator, returning the bare name. The old
+  // `id.split('#')[1]` returned the discriminator number (e.g. "2") or the
+  // percent-encoded TYPE chain for these formats — never the name.
+  const parsed = parseSemanticIdV2(node.id);
+  if (parsed?.name) {
+    return parsed.name;
+  }
+  // Synthetic IDs that are not arrow-chain semantic IDs (e.g. the legacy
+  // `http:route#GET:/path#file#line` form) keep their key segment after the
+  // scheme prefix.
   const parts = node.id.split('#');
   if (parts.length > 1) {
-    return parts[1]; // Usually contains the key identifier
+    return parts[1];
   }
   return node.id;
 }

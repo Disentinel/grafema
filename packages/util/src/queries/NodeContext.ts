@@ -12,6 +12,7 @@
 
 import { existsSync, readFileSync } from 'fs';
 import type { BaseNodeRecord, EdgeRecord } from '@grafema/types';
+import { parseSemanticIdV2 } from '../core/SemanticId.js';
 
 // ---------------------------------------------------------------------------
 // Minimal backend interface (matches project pattern — loose coupling)
@@ -249,6 +250,13 @@ export function getNodeDisplayName(node: BaseNodeRecord): string {
 
   // Default: name or ID fallback
   if (node.name && !node.name.startsWith('{')) return node.name;
+  // When the name is missing or a corrupt JSON metadata blob, derive a
+  // human-readable name from the semantic ID. parseSemanticIdV2 decodes
+  // grafema:// URIs and v2 compact ids (stripping the bracket payload /
+  // discriminator) and returns the bare symbol name; only fall back to the
+  // raw id when the id is not a parseable semantic id.
+  const parsed = parseSemanticIdV2(node.id);
+  if (parsed?.name) return parsed.name;
   return node.id;
 }
 

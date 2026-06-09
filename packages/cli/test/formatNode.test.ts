@@ -85,6 +85,60 @@ describe('formatNode utilities', () => {
       // Should extract from semantic ID
       assert.strictEqual(displayName, 'GET:/invitations/received');
     });
+
+    // --- Semantic-ID fallback (v2 compact + grafema:// URI) -------------------
+    // Regression: the fallback used `id.split('#')[1]`, which for v2/URI
+    // semantic IDs is the discriminator number or the percent-encoded
+    // TYPE chain — never the symbol name. It must return the real name.
+
+    it('should extract the symbol name from a v2 compact id with a discriminator', () => {
+      const node: DisplayableNode = {
+        id: 'src/auth/service.ts->FUNCTION->authenticate#2',
+        type: 'FUNCTION',
+        name: '', // unusable → fallback
+        file: '/project/src/auth/service.ts'
+      };
+
+      // Buggy behaviour returned the discriminator "2".
+      assert.strictEqual(getNodeDisplayName(node), 'authenticate');
+    });
+
+    it('should extract the symbol name from a grafema:// URI id', () => {
+      const node: DisplayableNode = {
+        // grafema://localhost/myproj/src/auth/service.ts#FUNCTION-%3Eauthenticate
+        id: 'grafema://localhost/myproj/src/auth/service.ts#FUNCTION-%3Eauthenticate',
+        type: 'FUNCTION',
+        name: '{"raw":"x"}', // corrupt JSON → fallback
+        file: 'src/auth/service.ts'
+      };
+
+      // Buggy behaviour returned "FUNCTION-%3Eauthenticate".
+      assert.strictEqual(getNodeDisplayName(node), 'authenticate');
+    });
+
+    it('should extract the symbol name from a grafema:// URI id with parent + counter', () => {
+      const node: DisplayableNode = {
+        // src/svc.ts->METHOD->login[in:UserService]#2 in URI form
+        id: 'grafema://localhost/myproj/src/svc.ts#METHOD-%3Elogin%5Bin:UserService%5D%232',
+        type: 'METHOD',
+        name: '',
+        file: 'src/svc.ts'
+      };
+
+      // Buggy behaviour returned "METHOD-%3Elogin%5Bin:UserService%5D%232".
+      assert.strictEqual(getNodeDisplayName(node), 'login');
+    });
+
+    it('should fall back to the full id when it is not a parseable semantic id', () => {
+      const node: DisplayableNode = {
+        id: '527103366',
+        type: 'FUNCTION',
+        name: '',
+        file: 'src/x.ts'
+      };
+
+      assert.strictEqual(getNodeDisplayName(node), '527103366');
+    });
   });
 
   describe('formatNodeDisplay', () => {
