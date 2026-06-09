@@ -127,8 +127,18 @@ byte-identical + alloc-free. Proof `incremental_insertion_work_proportional_to_d
      is now end-to-end queryable from an MCP client** — `explain_fact(predicate="depends", key=[A,B])` explains a
      DEPENDS_ON edge. Follow-up (optional): an MCP↔server integration test (needs a running RFDB server; the Rust
      dispatch + REG-1144 invariant already cover the seam structurally).
-   - ⬜ OTHER Gate E (parallel): **stdlib** (more bundled .dl); **docs + events-schema.md**; **sim()**
-     (hypothetical-edit query, new feature); **Appendix-B migrations**.
+   - 🟡 **sim() — ENGINE PRIMITIVE PROVEN** (`0c2e9c3b`): sim = `maintain_incremental` over a
+     HYPOTHETICAL `BaseDelta` against an overlay view, read-only (no flush/write-back). The
+     incremental engine already has the machinery — sim is the maintain seam in read-only mode.
+     PoC `sim_hypothetical_edit_predicts_derived_facts_without_mutating_base` pins both soundness
+     obligations: (1) SOUND `sim(base,Δ) ≡ scratch(base ∪ Δ)` + predicted edge closes the reach
+     gap; (2) NON-DESTRUCTIVE base+prev eval byte-identical after the what-if. It is the
+     hypothetical-questions dual of `why()` (PUG why-not, apparatus §6): a gap names the unbound
+     premise, sim proves a candidate fact closes it. REMAINING (supervised): production wire
+     vertical — `GraphEngineV2::sim_datalog_v2` + server `SimDatalog{source, hypothetical:[edits]}`
+     command + TS/MCP `sim_fact` tool, mirroring the `explain_fact` vertical. datalog2::exec 21/21.
+   - ⬜ OTHER Gate E (parallel): **stdlib** (more bundled .dl); **docs + events-schema.md**;
+     **Appendix-B migrations**.
 
 ## ▶ (historical) NEXT after compaction — resume here
 
