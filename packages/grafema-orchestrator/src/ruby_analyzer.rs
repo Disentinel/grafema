@@ -261,6 +261,30 @@ impl Ctx {
         (key.to_string(), serde_json::json!(val))
     }
 
+    /// Re-mark the visibility of an already-emitted FUNCTION node in the current
+    /// class/module scope. This backs the Ruby argument form of the visibility
+    /// modifiers (`private :foo`, `public :foo`, `protected :foo`), which changes
+    /// the visibility of a method defined ELSEWHERE rather than the default for
+    /// subsequent definitions. The target node is identified by reconstructing the
+    /// same semantic id used at the definition site (`def`, `attr_*`, alias), so
+    /// it matches methods and attribute accessors alike. The most recent matching
+    /// declaration wins. Returns `true` when a node was found and updated; a miss
+    /// (method defined later or elsewhere) is a silent no-op, mirroring that Ruby
+    /// itself requires the method to already exist.
+    fn set_method_visibility(&mut self, method_name: &str, vis: Visibility) -> bool {
+        let parent_name = self.enclosing_class_or_module();
+        let target_id = semantic_id(&self.file, "FUNCTION", method_name, parent_name.as_deref(), None);
+        for n in self.nodes.iter_mut().rev() {
+            if n.node_type == "FUNCTION" && n.id == target_id {
+                n.metadata
+                    .insert("visibility".to_string(), serde_json::Value::String(vis.as_str().to_string()));
+                n.exported = vis == Visibility::Public;
+                return true;
+            }
+        }
+        false
+    }
+
     /// Extract the parent class/module name from the current scope stack, if inside one.
     fn enclosing_class_or_module(&self) -> Option<String> {
         for (sid, kind) in self.scope_stack.iter().zip(self.scope_kinds.iter()).rev() {
@@ -820,16 +844,26 @@ fn walk_node_inner(node: &ruby_prism::Node<'_>, ctx: &mut Ctx) {
                         };
                         return;
                     }
-                    // With arguments: apply to specific methods, walk them
+                    // With arguments: apply to specific methods WITHOUT changing
+                    // the default visibility. A symbol/string argument names a
+                    // method defined elsewhere (`private :foo`) — re-mark that
+                    // existing node. Any other argument is an inline definition
+                    // (`private def foo; end`) and is walked with the visibility
+                    // applied so the def node is emitted with the right value.
                     if let Some(args) = cn.arguments() {
-                        let saved_vis = ctx.visibility;
-                        ctx.visibility = match name.as_str() {
+                        let vis = match name.as_str() {
                             "private" => Visibility::Private,
                             "protected" => Visibility::Protected,
                             _ => Visibility::Public,
                         };
+                        let saved_vis = ctx.visibility;
+                        ctx.visibility = vis;
                         for arg in args.arguments().iter() {
-                            walk_node(&arg, ctx);
+                            if let Some(method_name) = extract_symbol_name(&arg) {
+                                ctx.set_method_visibility(&method_name, vis);
+                            } else {
+                                walk_node(&arg, ctx);
+                            }
                         }
                         ctx.visibility = saved_vis;
                     }
@@ -3334,6 +3368,80 @@ mod tests {
         assert_eq!(priv_m.metadata.get("visibility").unwrap(), "private");
         assert!(pub_m.exported);
         assert!(!priv_m.exported);
+    }
+
+    // 7a. `private :sym` argument form re-marks an already-defined method.
+    // In Ruby `private :helper` (symbol/string args) changes the visibility of
+    // a method defined ELSEWHERE; it does NOT change the default visibility for
+    // subsequent defs (that is the bare `private` form).
+    #[test]
+    fn test_private_symbol_arg_changes_existing_method_visibility() {
+        let a = analyze("class Foo\n  def helper; end\n  def other; end\n  private :helper\nend");
+        let functions = find_nodes_by_type(&a, "FUNCTION");
+        let helper = functions.iter().find(|f| f.name == "helper").unwrap();
+        let other = functions.iter().find(|f| f.name == "other").unwrap();
+
+        assert_eq!(
+            helper.metadata.get("visibility").unwrap(),
+            "private",
+            "`private :helper` must mark the existing helper method private"
+        );
+        assert!(!helper.exported, "a privatised method must not be exported");
+        // `other` is not named by the modifier and must stay public.
+        assert_eq!(
+            other.metadata.get("visibility").unwrap(),
+            "public",
+            "`private :helper` must not demote sibling methods"
+        );
+        assert!(other.exported);
+    }
+
+    // 7b. The argument form must NOT change the default visibility for
+    // subsequent definitions (only the bare `private` form does).
+    #[test]
+    fn test_private_symbol_arg_does_not_change_default_visibility() {
+        let a = analyze("class Foo\n  def a; end\n  private :a\n  def b; end\nend");
+        let functions = find_nodes_by_type(&a, "FUNCTION");
+        let a_m = functions.iter().find(|f| f.name == "a").unwrap();
+        let b_m = functions.iter().find(|f| f.name == "b").unwrap();
+        assert_eq!(a_m.metadata.get("visibility").unwrap(), "private");
+        assert_eq!(
+            b_m.metadata.get("visibility").unwrap(),
+            "public",
+            "the `private :sym` argument form must not change the default visibility"
+        );
+        assert!(b_m.exported);
+    }
+
+    // 7c. `public :sym` re-promotes a method made private by a bare modifier.
+    #[test]
+    fn test_public_symbol_arg_repromotes_method() {
+        let a = analyze("class Foo\n  private\n  def secret; end\n  public :secret\nend");
+        let functions = find_nodes_by_type(&a, "FUNCTION");
+        let secret = functions.iter().find(|f| f.name == "secret").unwrap();
+        assert_eq!(secret.metadata.get("visibility").unwrap(), "public");
+        assert!(secret.exported);
+    }
+
+    // 7d. `protected :sym` marks an existing method protected.
+    #[test]
+    fn test_protected_symbol_arg_marks_existing_method() {
+        let a = analyze("class Foo\n  def shared; end\n  protected :shared\nend");
+        let functions = find_nodes_by_type(&a, "FUNCTION");
+        let shared = functions.iter().find(|f| f.name == "shared").unwrap();
+        assert_eq!(shared.metadata.get("visibility").unwrap(), "protected");
+        assert!(!shared.exported);
+    }
+
+    // 7e. Regression guard: the inline `private def foo; end` form (argument is
+    // a def, not a symbol) must keep working.
+    #[test]
+    fn test_private_inline_def_still_private() {
+        let a = analyze("class Foo\n  private def inline_secret; end\nend");
+        let functions = find_nodes_by_type(&a, "FUNCTION");
+        let m = functions.iter().find(|f| f.name == "inline_secret").unwrap();
+        assert_eq!(m.metadata.get("visibility").unwrap(), "private");
+        assert!(!m.exported);
     }
 
     // 8. Block test
