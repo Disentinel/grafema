@@ -177,7 +177,19 @@ on `.grafema/grafema.rfdb`). The differential surfaced these gaps, mapped to spe
 Verification: datalog2 172/172, full lib 1091 green (5 pre-existing cypher-aggregate failures
 reproduce on clean HEAD), Gate A differential 10/10 green (222s) WITH the hash-join.
 
-### ⚠ THE REMAINING (4th) LAYER — per-row LSM probes in BASE-leg joins (located, not fixed)
+### ✅ 4th LAYER FIXED (2026-06-10, commit 31d228c3, workflow wf_de9fc616-bfd)
+
+Build-once base-leg joins in `join_extensional` (typed-index scan → hash buckets for
+bound-endpoint edge legs; distinct-id dedup/batch for attr/node point reads; threshold-gated,
+property-tested identical to the per-row path). **Full-graph headline: method_calls.dl scratch
+4.08s (was >900s deadline), 2628 CALLS written; re-run 11.3s, 0 written (idempotent).** The
+replaced plugin produced NOTHING in its 60s timeout. Real-LSM @20k differential test gates it
+(24.6s release, counts ≡ fixture). Review follow-ups (non-blocking): index rebuilt per fixpoint
+iteration (cache on (leg, view generation)); attr distinct-scan >1024 ids materializes the node
+run. NOTE: maintain path (11.3s) is SLOWER than scratch here — the pack has negation/2 strata
+(outside the monotone envelope → recompute + diff); fine, not a target.
+
+### ~~THE REMAINING (4th) LAYER~~ (fixed above; original analysis follows)
 
 method_calls.dl on the REAL graph still hits the 900s deadline AFTER the exec hash-join, while
 the same program on the in-memory fixture runs 2.5s @ n=20k — the ONLY differential is the
