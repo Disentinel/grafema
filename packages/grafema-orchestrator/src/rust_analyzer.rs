@@ -486,7 +486,7 @@ fn walk_item(item: &syn::Item, ctx: &mut Ctx) {
         // Transparent items — no graph nodes needed
         syn::Item::ExternCrate(_) => {}
         syn::Item::ForeignMod(_) => {}
-        syn::Item::Macro(_) => {}
+        syn::Item::Macro(m) => walk_macro(m, ctx),
         syn::Item::Union(u) => walk_union(u, ctx),
         syn::Item::TraitAlias(_) => {}
         syn::Item::Verbatim(_) => {}
@@ -1105,6 +1105,52 @@ fn walk_type_alias(t: &syn::ItemType, ctx: &mut Ctx) {
         metadata: HashMap::new(),
         extra: HashMap::new(),
     });
+}
+
+/// Emit a MACRO declaration node for a `macro_rules!` definition.
+///
+/// `syn::Item::Macro` covers two distinct constructs that must be told apart:
+///   - a *definition* `macro_rules! name { ... }`, which carries an `ident`, and
+///   - an item-position *invocation* `lazy_static! { ... }` / `include!("..")`,
+///     which has no `ident`.
+/// Only the definition introduces a named, queryable declaration, so only the
+/// `ident.is_some()` case becomes a MACRO node — mirroring the C++ analyzer's
+/// `MacroDefinition -> MACRO` mapping. Invocations are left for call-site
+/// handling and produce nothing here, matching the previous behaviour.
+///
+/// Export status follows `#[macro_export]` (the `macro_rules!` visibility
+/// mechanism — these macros have no `syn::Visibility`), so a re-exportable macro
+/// surfaces in the package API just like a `pub` item.
+fn walk_macro(m: &syn::ItemMacro, ctx: &mut Ctx) {
+    let Some(ident) = &m.ident else {
+        // Item-position macro invocation, not a definition — nothing to declare.
+        return;
+    };
+    let name = ident.to_string();
+    let (line, col) = ctx.span_line_col(ident.span());
+    let (end_line, end_col) = ctx.span_end_line_col(ident.span());
+    let is_exported = m.attrs.iter().any(|a| a.path().is_ident("macro_export"));
+    let node_id = semantic_id(&ctx.file, "MACRO", &name, None, None);
+
+    ctx.emit_declaration(GraphNode {
+        id: node_id.clone(),
+        node_type: "MACRO".to_string(),
+        name: name.clone(),
+        file: ctx.file.clone(),
+        line, column: col,
+        end_line, end_column: end_col,
+        exported: is_exported,
+        metadata: HashMap::from([
+            Ctx::meta_text("kind", "macro_rules"),
+        ]),
+        extra: HashMap::new(),
+    });
+
+    if is_exported {
+        ctx.exports.push(ExportInfo {
+            name, node_id, kind: "macro".to_string(), source: None,
+        });
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2285,5 +2331,56 @@ mod tests {
             .filter(|e| e.edge_type == "READS_FROM" && e.src.contains("PROPERTY_ACCESS"))
             .collect();
         assert!(!reads.is_empty(), "PROPERTY_ACCESS should have READS_FROM");
+    }
+
+    // -----------------------------------------------------------------------
+    // macro_rules! declarations — previously silently dropped (Item::Macro arm)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_macro_rules_emits_macro_node() {
+        let fa = parse_and_analyze("macro_rules! greet { () => {}; }");
+        assert!(has_node(&fa, "MACRO", "greet"), "macro_rules! greet should emit a MACRO node");
+        // contained by the file MODULE scope
+        assert!(
+            has_edge(&fa, "CONTAINS", "MODULE", "MACRO"),
+            "MODULE should CONTAIN the MACRO node"
+        );
+        let m = fa.nodes.iter().find(|n| n.node_type == "MACRO" && n.name == "greet").unwrap();
+        assert_eq!(m.metadata.get("kind"), Some(&serde_json::json!("macro_rules")));
+    }
+
+    #[test]
+    fn test_macro_export_sets_exported() {
+        let fa = parse_and_analyze("#[macro_export] macro_rules! shared { () => {}; }");
+        let m = fa.nodes.iter().find(|n| n.node_type == "MACRO" && n.name == "shared").unwrap();
+        assert!(m.exported, "#[macro_export] macro_rules! must be exported");
+    }
+
+    #[test]
+    fn test_macro_rules_without_export_is_private() {
+        let fa = parse_and_analyze("macro_rules! local { () => {}; }");
+        let m = fa.nodes.iter().find(|n| n.node_type == "MACRO" && n.name == "local").unwrap();
+        assert!(!m.exported, "macro_rules! without #[macro_export] must not be exported");
+    }
+
+    #[test]
+    fn test_macro_rules_inside_function_body() {
+        let fa = parse_and_analyze("fn outer() { macro_rules! inner { () => {}; } }");
+        assert!(has_node(&fa, "MACRO", "inner"), "macro_rules! inside a fn body should emit a MACRO node");
+    }
+
+    #[test]
+    fn test_item_macro_invocation_is_not_a_macro_node() {
+        // An item-position macro *invocation* (no name) must not be mistaken for a
+        // macro *definition*. Only macro_rules! (which carries an ident) is a MACRO decl.
+        let fa = parse_and_analyze("include!(\"generated.rs\");");
+        assert_eq!(count_nodes(&fa, "MACRO"), 0, "macro invocation must not emit a MACRO node");
+    }
+
+    #[test]
+    fn test_stmt_macro_invocation_is_not_a_macro_node() {
+        let fa = parse_and_analyze("fn main() { println!(\"hi\"); }");
+        assert_eq!(count_nodes(&fa, "MACRO"), 0, "stmt macro invocation must not emit a MACRO node");
     }
 }
