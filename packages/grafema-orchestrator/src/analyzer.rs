@@ -360,16 +360,25 @@ fn compact_to_uri(id: &str, authority: &str) -> String {
     // The file part is everything before the first '->'
     if let Some(first_arrow) = id.find("->") {
         let before_arrow = &id[..first_arrow];
+        let rest = &id[first_arrow + 2..]; // TYPE->name[...] (file node) or name (virtual)
 
-        // Virtual nodes have no file path — they start with uppercase type or special prefix
-        // Examples: EXTERNAL_MODULE->lodash, GLOBAL::console, net:stdio->__stdio__
-        // Heuristic: if the part before '->' contains a '/' or '.', it's a file path
-        let is_file_path = before_arrow.contains('/') || before_arrow.contains('.');
+        // Distinguish a file-scoped node id (`<file>-><TYPE>-><name>`) from a
+        // virtual singleton id (`<PREFIX>-><name>`, e.g. EXTERNAL_MODULE->lodash,
+        // net:stdio->__stdio__).
+        //
+        // A file-scoped id always carries a second '->' in `rest` (the
+        // TYPE/name split), whereas virtual singletons have exactly one '->'.
+        // The cheaper `/`-or-`.` check on the file segment is kept as a fast
+        // path and for backward-compatibility, but the second-arrow check is
+        // what rescues *extensionless* root files — Ruby's Rakefile / Gemfile /
+        // Guardfile (see config.rs: "Gemfile" | "Rakefile" => Language::Ruby)
+        // have no '/' or '.' in their path yet are genuine file nodes.
+        let is_file_path =
+            before_arrow.contains('/') || before_arrow.contains('.') || rest.contains("->");
 
         if is_file_path {
             // Standard node: file->REST
             let file = before_arrow;
-            let rest = &id[first_arrow + 2..]; // TYPE->name[...] part
             let encoded = encode_fragment(rest);
             format!("grafema://{authority}/{file}#{encoded}")
         } else {
@@ -6687,6 +6696,38 @@ mod tests {
     }
 
     #[test]
+    fn test_compact_to_uri_extensionless_root_file() {
+        // Ruby Rakefile/Gemfile/Guardfile live at the repository root with no
+        // extension (see config.rs: "Gemfile" | "Rakefile" => Language::Ruby).
+        // Their node ids have the shape `<file>-><TYPE>-><name>` and MUST be
+        // encoded as file nodes (grafema://auth/<file>#...), NOT as virtual
+        // singleton nodes (grafema://auth/_/...). Before the fix, the
+        // file-vs-virtual heuristic only looked for `/` or `.` in the file
+        // segment, so an extensionless root file fell through to the virtual
+        // branch.
+        assert_eq!(
+            compact_to_uri("Rakefile->CLASS->RakeTasks", "localhost/grafema"),
+            "grafema://localhost/grafema/Rakefile#CLASS-%3ERakeTasks"
+        );
+        assert_eq!(
+            compact_to_uri("Gemfile->CALL->gem[in:x,h:a3f2]", "localhost/grafema"),
+            "grafema://localhost/grafema/Gemfile#CALL-%3Egem%5Bin:x,h:a3f2%5D"
+        );
+    }
+
+    #[test]
+    fn test_compact_to_uri_virtual_with_path_specifier_stays_virtual() {
+        // Regression guard: a virtual EXTERNAL_MODULE node whose name is a
+        // relative path specifier (single `->`, name contains `/` and `.`)
+        // must remain a virtual node — the second-arrow file heuristic must
+        // not be fooled by `/`/`.` inside the *name* segment.
+        assert_eq!(
+            compact_to_uri("EXTERNAL_MODULE->./helper.js", "localhost/grafema"),
+            "grafema://localhost/grafema/_/EXTERNAL_MODULE-%3E./helper.js"
+        );
+    }
+
+    #[test]
     fn test_to_uri_format_rewrites_all_fields() {
         let mut analysis = FileAnalysis {
             file: "src/app.js".to_string(),
@@ -6720,6 +6761,62 @@ mod tests {
         assert_eq!(analysis.nodes[0].file, "src/app.js"); // file stays as-is
         assert_eq!(analysis.edges[0].src, "grafema://localhost/grafema/src/app.js#MODULE");
         assert_eq!(analysis.edges[0].dst, "grafema://localhost/grafema/src/app.js#FUNCTION-%3Efoo");
+    }
+
+    #[test]
+    fn test_to_uri_format_extensionless_root_file_is_consistent() {
+        // Integration point: a Ruby Rakefile at the repository root. Its MODULE
+        // id (`MODULE#Rakefile`) already encodes to the file form, but before
+        // the fix its node ids encoded to the *virtual* form, so MODULE and its
+        // CONTAINS children disagreed on URI shape. After the fix both the
+        // module and the contained node share the `grafema://auth/Rakefile#...`
+        // file form, and the file path is recoverable by stripping the
+        // `grafema://{authority}/` prefix (which a `/_/` virtual URI breaks).
+        let mut analysis = FileAnalysis {
+            file: "Rakefile".to_string(),
+            module_id: "MODULE#Rakefile".to_string(),
+            nodes: vec![GraphNode {
+                id: "Rakefile->CLASS->RakeTasks".to_string(),
+                node_type: "CLASS".to_string(),
+                name: "RakeTasks".to_string(),
+                file: "Rakefile".to_string(),
+                line: 1,
+                column: 0,
+                end_line: 5,
+                end_column: 3,
+                exported: false,
+                metadata: HashMap::new(),
+                extra: HashMap::new(),
+            }],
+            edges: vec![GraphEdge {
+                src: "MODULE#Rakefile".to_string(),
+                dst: "Rakefile->CLASS->RakeTasks".to_string(),
+                edge_type: "CONTAINS".to_string(),
+                metadata: HashMap::new(),
+            }],
+            exports: vec![],
+        };
+
+        analysis.to_uri_format("localhost/grafema");
+
+        assert_eq!(analysis.module_id, "grafema://localhost/grafema/Rakefile#MODULE");
+        assert_eq!(
+            analysis.nodes[0].id,
+            "grafema://localhost/grafema/Rakefile#CLASS-%3ERakeTasks"
+        );
+        // CONTAINS edge endpoints both resolve to the same file-form URIs.
+        assert_eq!(analysis.edges[0].src, "grafema://localhost/grafema/Rakefile#MODULE");
+        assert_eq!(
+            analysis.edges[0].dst,
+            "grafema://localhost/grafema/Rakefile#CLASS-%3ERakeTasks"
+        );
+        // The file path is recoverable by stripping the authority prefix — a
+        // `/_/` virtual URI would leave "_/Rakefile-%3E..." instead.
+        let prefix = "grafema://localhost/grafema/";
+        assert_eq!(
+            analysis.nodes[0].id.strip_prefix(prefix).and_then(|s| s.split('#').next()),
+            Some("Rakefile")
+        );
     }
 
     // -----------------------------------------------------------------------
