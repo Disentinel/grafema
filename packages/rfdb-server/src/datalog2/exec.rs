@@ -218,6 +218,29 @@ pub struct DerivationWitness {
     pub body: Vec<(String, Box<[Value]>)>,
 }
 
+/// The why-NOT dual of [`DerivationWitness`] — why a fact is NOT derived (spec §6 coverage /
+/// PUG why-not provenance). Computed on demand by replaying each rule for the predicate with
+/// the head bound to the queried key and finding the FIRST body premise that no binding
+/// satisfies — the unbound premise that, if supplied, would close the gap. The dual feeds
+/// `sim()`: this names the missing premise (e.g. `edge(_, _, "IMPORTS_FROM")`), sim verifies
+/// that adding it produces the fact.
+///
+/// Reported for the rule with the LONGEST satisfied prefix (the closest-to-firing rule).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GapWitness {
+    /// The rule whose gap this characterizes (same stable hash as `DerivationWitness`).
+    pub rule_ast_hash: String,
+    /// The body premises that WERE satisfiable (with the head bound), in placement order —
+    /// `(predicate, ground tuple)`. The gap sits immediately after this prefix.
+    pub satisfied: Vec<(String, Box<[Value]>)>,
+    /// The predicate of the first body premise that no binding satisfies — the unbound premise.
+    pub failing_predicate: String,
+    /// `true` when the failing premise is a NEGATED literal (an anti-join): a fact that is
+    /// PRESENT blocks the derivation (the gap closes by REMOVING it), as opposed to a positive
+    /// premise that is MISSING (the gap closes by ADDING it).
+    pub failing_is_negative: bool,
+}
+
 // ── A partial binding row ──────────────────────────────────────────
 
 /// A partial binding: variable name → bound value, accumulated as body legs are placed.
@@ -663,6 +686,61 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
             }
         }
         Ok(None)
+    }
+
+    /// why-NOT: explain why `pred(key)` is NOT derived by finding, for the rule that comes
+    /// CLOSEST to firing, the first body premise that no binding satisfies (the unbound
+    /// premise). Replays each clause for `pred` with the head bound to `key` exactly like
+    /// [`Self::witness_fact`], but instead of requiring a surviving row it watches for the leg
+    /// at which the partial bindings drop to empty — that leg is the gap. Returns `None` if the
+    /// fact IS in fact derivable by some clause (no gap), or if no clause's head shape matches.
+    pub(crate) fn witness_gap(
+        &self,
+        clauses: &[Clause<'_>],
+        relations: &HashMap<String, Relation<T>>,
+        pred: &str,
+        key: &[Value],
+    ) -> ExecResult<Option<GapWitness>> {
+        let mut best: Option<GapWitness> = None;
+        for clause in clauses.iter().filter(|c| c.head_pred == pred) {
+            let Some(init) = head_bound_row(clause.rule.head(), key) else {
+                continue;
+            };
+            let mut rows = vec![init];
+            let mut satisfied: Vec<(String, Box<[Value]>)> = Vec::new();
+            let mut gapped = false;
+            for leg in &clause.plan.legs {
+                let next = self.apply_leg(leg, rows, relations, false)?;
+                if next.is_empty() {
+                    // This premise has no satisfying binding given the prefix — the gap.
+                    let cand = GapWitness {
+                        rule_ast_hash: super::materialize::rule_ast_hash(clause.rule),
+                        satisfied: satisfied.clone(),
+                        failing_predicate: leg.literal.atom().predicate().to_string(),
+                        failing_is_negative: leg.literal.is_negative(),
+                    };
+                    // Prefer the clause that got furthest (longest satisfied prefix).
+                    if best.as_ref().map_or(true, |b| cand.satisfied.len() > b.satisfied.len()) {
+                        best = Some(cand);
+                    }
+                    gapped = true;
+                    break;
+                }
+                // The premise held: record its ground tuple (positive legs only) and continue.
+                if leg.literal.is_positive() {
+                    if let Some(tuple) = bind_atom_args(leg.literal.atom(), &next[0]) {
+                        satisfied
+                            .push((leg.literal.atom().predicate().to_string(), tuple.into_boxed_slice()));
+                    }
+                }
+                rows = next;
+            }
+            if !gapped {
+                // Some clause derives the fact → it is NOT a gap.
+                return Ok(None);
+            }
+        }
+        Ok(best)
     }
 
     /// Evaluate a single stratum to its fixpoint (seed → Δ-loop).
@@ -1656,6 +1734,30 @@ pub(crate) fn explain_fact<T: IdempotentTag>(
     exec.witness_fact(&clauses, &relations, pred, key)
 }
 
+/// why-NOT entry point (spec §6 coverage): explain why `pred(key)` is NOT derived. Mirrors
+/// [`explain_fact`] — full evaluation to populate the derived relations, then a head-bound
+/// replay per clause via [`Executor::witness_gap`] to find the unbound premise. `None` when the
+/// fact is actually derivable (no gap) or no clause head matches the key's shape.
+pub(crate) fn explain_gap<T: IdempotentTag>(
+    view: &dyn StorageView,
+    plans: &[RulePlan],
+    rules: &[&Rule],
+    strat: &Stratification,
+    pred: &str,
+    key: &[Value],
+    limits: EvalLimits,
+) -> ExecResult<Option<GapWitness>> {
+    let exec = Executor::<T>::with_limits(view, limits, DEFAULT_ITERATION_CAP);
+    let evaluation = exec.evaluate(plans, rules, strat)?;
+    let pred_ids = assign_pred_ids(strat);
+    let Some(relations) = preload_relations::<T>(&evaluation, &pred_ids) else {
+        return Ok(None);
+    };
+    let all_preds: Vec<String> = strat.strata.iter().flat_map(|s| s.predicates.clone()).collect();
+    let clauses = exec.collect_clauses(&all_preds, plans, rules);
+    exec.witness_gap(&clauses, &relations, pred, key)
+}
+
 // ── One clause = plan + source rule ────────────────────────────────
 
 /// A clause to evaluate: its head predicate, the [`RulePlan`] (ordered legs), and the
@@ -2537,6 +2639,48 @@ mod tests {
         )
         .unwrap();
         assert!(none.is_none(), "path(c,a) is not derivable → no witness");
+    }
+
+    // ── why-NOT(): the unbound premise of a missing fact (coverage / §6) ──
+
+    /// `explain_gap` names the FIRST body premise that no binding satisfies for a fact that is
+    /// NOT derived — the why-not dual of `why()`. Program: `p(X) :- node(X,"FUNCTION"),
+    /// edge(X,Y,"CALLS")`. `f1` calls `g` (so `p(f1)` holds); `f2` is a FUNCTION with no CALLS
+    /// edge, so `p(f2)` fails exactly at the `edge` premise — the missing premise sim would add.
+    #[test]
+    fn why_not_names_the_unbound_premise_of_a_missing_fact() {
+        use crate::datalog2::exec::explain_gap;
+        let src = "p(X) :- node(X, \"FUNCTION\"), edge(X, Y, \"CALLS\").";
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let plans = plan_program(
+            &rules,
+            &strat,
+            &Stats { total_nodes: 3, total_edges: 1, ..Default::default() },
+        )
+        .expect("plan");
+        let mut v = FixtureStorageView::new(1);
+        node(&mut v, "f1", "FUNCTION");
+        node(&mut v, "f2", "FUNCTION");
+        node(&mut v, "g", "FUNCTION");
+        edge(&mut v, "f1", "g", "CALLS"); // f1 calls g → p(f1) holds; f2 calls nothing.
+
+        // p(f2): NOT derived — the gap is the missing `edge(f2, _, "CALLS")` premise.
+        let gap = explain_gap::<BoolTag>(
+            &v, &plans, &rules, &strat, "p", &[Value::Id(id_of("f2"))], EvalLimits::none(),
+        )
+        .expect("no error")
+        .expect("p(f2) is NOT derivable → a gap");
+        assert_eq!(gap.failing_predicate, "edge", "the unbound premise is the CALLS edge");
+        assert!(!gap.failing_is_negative, "a MISSING positive premise (closes by adding), not a blocker");
+
+        // p(f1): IS derivable → no gap.
+        let none = explain_gap::<BoolTag>(
+            &v, &plans, &rules, &strat, "p", &[Value::Id(id_of("f1"))], EvalLimits::none(),
+        )
+        .unwrap();
+        assert!(none.is_none(), "p(f1) is derivable (f1 calls g) → no gap");
     }
 
     // ── DRed phase 1: over-delete candidate set ─────────────────────
