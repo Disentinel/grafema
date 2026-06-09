@@ -1382,7 +1382,7 @@ fn walk_stmt(stmt: &syn::Stmt, ctx: &mut Ctx) {
         syn::Stmt::Local(local) => walk_let(local, ctx),
         syn::Stmt::Item(item) => walk_item(item, ctx),
         syn::Stmt::Expr(expr, _semi) => walk_expr(expr, ctx),
-        syn::Stmt::Macro(_) => {}
+        syn::Stmt::Macro(m) => walk_macro(&m.mac, ctx),
     }
 }
 
@@ -1408,6 +1408,66 @@ fn walk_let(local: &syn::Local, ctx: &mut Ctx) {
                     dst: init_node_id.clone(),
                     edge_type: "ASSIGNED_FROM".to_string(),
                     metadata: HashMap::new(),
+                });
+            }
+        }
+    }
+}
+
+/// Walk a Rust macro invocation: `name!(...)`, `name![...]`, or `name!{...}`.
+///
+/// `syn` does not expand macros, so the body is an opaque `TokenStream` rather
+/// than a parsed AST. We model the invocation itself as a CALL node tagged
+/// `macro=true` — honouring the KNOWN_LIMITATIONS contract that "macro
+/// invocations appear as CALL nodes" and letting downstream passes tell a
+/// macro call apart from a real function call. We do NOT defer a CALLS
+/// reference for the macro name: `foo!` is not the function `foo`.
+///
+/// Best-effort, we then parse the body as a comma-separated expression list and
+/// walk each argument, so calls/references nested inside common function-like
+/// macros (`vec![a(), b]`, `println!("{}", compute())`, `assert_eq!(x, y())`)
+/// are still recorded in the graph — otherwise they would be silently lost.
+/// Macros whose body is not an expression list (e.g. `matches!`, `quote!`)
+/// simply contribute no argument edges; the parse failure is swallowed, never
+/// a panic.
+fn walk_macro(mac: &syn::Macro, ctx: &mut Ctx) {
+    let name = path_to_string(&mac.path);
+    let span = mac.path.segments.last()
+        .map(|s| s.ident.span())
+        .unwrap_or_else(Span::call_site);
+    let (line, col) = ctx.span_line_col(span);
+    let parent = ctx.enclosing_fn.as_deref();
+    let hash = ctx.pos_hash(line, col);
+    let node_id = semantic_id(&ctx.file, "CALL", &name, parent, Some(&hash));
+    let (end_line, end_col) = ctx.span_end_line_col(span);
+
+    ctx.emit_node(GraphNode {
+        id: node_id.clone(),
+        node_type: "CALL".to_string(),
+        name: name.clone(),
+        file: ctx.file.clone(),
+        line, column: col,
+        end_line, end_column: end_col,
+        exported: false,
+        metadata: HashMap::from([
+            Ctx::meta_bool("method", false),
+            Ctx::meta_bool("macro", true),
+        ]),
+        extra: HashMap::new(),
+    });
+
+    // Best-effort argument walking; non-expression bodies are skipped safely.
+    if let Ok(args) = mac.parse_body_with(
+        syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated,
+    ) {
+        for (i, arg) in args.iter().enumerate() {
+            walk_expr(arg, ctx);
+            if let Some(arg_id) = expr_node_id(arg, ctx) {
+                ctx.emit_edge(GraphEdge {
+                    src: node_id.clone(),
+                    dst: arg_id,
+                    edge_type: "PASSES_ARGUMENT".to_string(),
+                    metadata: HashMap::from([Ctx::meta_int("index", i as i64)]),
                 });
             }
         }
@@ -1941,7 +2001,7 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
                 extra: HashMap::new(),
             });
         }
-        syn::Expr::Macro(_) => {}
+        syn::Expr::Macro(e) => walk_macro(&e.mac, ctx),
         // Inline `const { ... }` block — walk its body like Unsafe/Async blocks
         // so nested calls/references are not silently dropped from the graph.
         syn::Expr::Const(e) => walk_block(&e.block, ctx),
@@ -2715,5 +2775,65 @@ mod tests {
         assert!(has_edge(&fa, "CONTAINS", "TRAIT", "TYPE_ALIAS"), "TRAIT CONTAINS type");
         // The function signature is still emitted alongside the associated type.
         assert_eq!(count_nodes(&fa, "TYPE_SIGNATURE"), 1);
+    // ── Macro invocations ───────────────────────────────────────────────
+    // `syn` does not expand macros, so before this fix `Expr::Macro` and
+    // `Stmt::Macro` were dropped entirely. That violated KNOWN_LIMITATIONS'
+    // contract ("macro invocations appear as CALL nodes") and, worse, lost
+    // every call/reference nested inside macro arguments from the graph.
+
+    #[test]
+    fn test_macro_invocation_emits_call_node() {
+        let fa = parse_and_analyze("fn main() { println!(\"hello\"); }");
+        let call = fa.nodes.iter()
+            .find(|n| n.node_type == "CALL" && n.name == "println")
+            .expect("macro invocation should emit a CALL node");
+        assert_eq!(call.metadata.get("macro"), Some(&serde_json::json!(true)),
+            "macro CALL node tagged macro=true to distinguish from real fn calls");
+        assert_eq!(call.metadata.get("method"), Some(&serde_json::json!(false)),
+            "macro CALL is not a method call");
+    }
+
+    #[test]
+    fn test_nested_call_inside_macro_is_walked() {
+        // The real cost of dropping Expr::Macro: calls nested in macro args
+        // vanish from the graph. compute() inside println! must be captured.
+        let fa = parse_and_analyze(
+            "fn main() { println!(\"{}\", compute()); } fn compute() -> i32 { 0 }"
+        );
+        assert!(has_node(&fa, "CALL", "compute"),
+            "call nested inside a macro argument must be walked into the graph");
+        // The macro CALL passes the nested call as an argument.
+        assert!(has_edge(&fa, "PASSES_ARGUMENT", "CALL", "CALL"),
+            "macro should emit PASSES_ARGUMENT to its walked expression args");
+    }
+
+    #[test]
+    fn test_macro_expr_and_stmt_positions_walk_args() {
+        // `vec![...]` as a let initializer is Expr::Macro; `assert_eq!(...)` as a
+        // bare statement is Stmt::Macro. Both must emit CALL nodes and walk their
+        // comma-separated expression arguments.
+        let fa = parse_and_analyze(
+            "fn main() {
+                let v = vec![first(), second()];
+                assert_eq!(left(), right());
+            }
+            fn first() {} fn second() {} fn left() {} fn right() {}"
+        );
+        assert!(has_node(&fa, "CALL", "vec"), "vec! emits CALL (Expr::Macro)");
+        assert!(has_node(&fa, "CALL", "assert_eq"), "assert_eq! emits CALL (Stmt::Macro)");
+        for callee in ["first", "second", "left", "right"] {
+            assert!(has_node(&fa, "CALL", callee),
+                "nested call {callee} inside a macro must be walked");
+        }
+    }
+
+    #[test]
+    fn test_non_expression_macro_body_no_panic() {
+        // A macro whose body is not a comma-separated expression list (here a
+        // match-style pattern arm) must not panic and must still emit the macro
+        // CALL node — argument walking is strictly best-effort.
+        let fa = parse_and_analyze("fn main() { let _ = matches!(x, Some(_)); }");
+        assert!(has_node(&fa, "CALL", "matches"),
+            "matches! emits a CALL node even though its body isn't an expr list");
     }
 }
