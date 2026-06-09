@@ -2887,6 +2887,17 @@ fn dispatch_materialize_datalog(
 
     let mut limits = EvalLimits::default();
     limits.cancelled = Some(cancel_flag);
+    // @materialize is a BATCH operation (one-time per analysis, like a build step), not an
+    // interactive query — the 30s `EvalLimits::default()` deadline is an interactive-query bound
+    // and is too tight for a cold full materialize over a large graph (depends.dl on the ~408k-node
+    // dogfood graph exceeds 30s → E-EXEC-001). Give the batch path a generous deadline; cancellation
+    // still works via `cancelled` above. Tunable via `RFDB_MATERIALIZE_DEADLINE_SECS` (default 600).
+    let materialize_deadline_secs = std::env::var("RFDB_MATERIALIZE_DEADLINE_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(600);
+    limits.deadline =
+        Some(std::time::Instant::now() + std::time::Duration::from_secs(materialize_deadline_secs));
 
     // An empty `source` means "run the canonical bundled rule" — the orchestrator triggers
     // DEPENDS_ON derivation without shipping the rule text (single source of truth, no drift).
