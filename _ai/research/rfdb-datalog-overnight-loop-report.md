@@ -27,6 +27,17 @@ For current numbers, re-run `analyze` to refresh the graph (not done autonomousl
 is heavy + the data-plane was flaky this session). Lesson recorded:
 [[feedback_verify_graph_freshness_before_real_code_claims]].
 
+**How to refresh (feasibility checked 2026-06-09):** `.grafema/grafema.rfdb` is gitignored (safe to
+overwrite), and the toolchain is present — `packages/rfdb-server/target/release/rfdb-server`,
+`packages/grafema-orchestrator/target/release/grafema-orchestrator`, analyzer binaries in
+`~/.grafema/bin/`. Refresh = run the CLI `analyze` with `--auto-start` (it launches RFDB itself) from
+the repo root. **TWO HAZARDS before trusting the result:** (1) the `~/.grafema/bin/` analyzer binaries
+may be STALE vs current analyzer source — rebuild via `scripts/build-native.sh` (or `cabal install` +
+copy, per `grafema-haskell-binary-stale-priority`) first, else the "fresh" graph reflects old analyzer
+logic; (2) this session's RFDB data-plane returned ping timeouts twice — confirm the server is healthy
+(`get_stats` nodeCount > 0) before relying on queries. NOT done autonomously precisely because a
+mis-run would replace a known-stale graph with a fresh-but-wrong one.
+
 ## Real-code findings (the loop ran v2 queries on the actual — but STALE — dogfood graph)
 
 1. **A real source-level import cycle** (NOT a runtime circular dependency) — surfaced by a bounded
