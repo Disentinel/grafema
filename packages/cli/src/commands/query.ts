@@ -395,7 +395,8 @@ export function parseQuery(pattern: string): ParsedQuery {
  *
  * Heuristics:
  * - Contains "/" -> file path
- * - Ends with .ts, .js, .tsx, .jsx, .mjs, .cjs -> file path
+ * - Ends with a JS/TS extension (.ts/.js/.tsx/.jsx/.mjs/.cjs/.mts/.cts) -> file path
+ *   (mirrors the orchestrator's authoritative `is_js_ts_file` in analyzer.rs)
  *
  * Examples:
  *   "src/app.ts" -> true
@@ -408,8 +409,8 @@ export function isFileScope(scope: string): boolean {
   // Contains path separator
   if (scope.includes('/')) return true;
 
-  // Ends with common JS/TS extensions
-  const fileExtensions = /\.(ts|js|tsx|jsx|mjs|cjs)$/i;
+  // Ends with common JS/TS extensions (kept in sync with analyzer.rs is_js_ts_file)
+  const fileExtensions = /\.(ts|js|tsx|jsx|mjs|cjs|mts|cts)$/i;
   if (fileExtensions.test(scope)) return true;
 
   return false;
