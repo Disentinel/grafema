@@ -11,8 +11,9 @@ import { GRAFEMA_VERSION, getSchemaVersion } from '@grafema/util';
 
 /** All file extensions supported by Grafema's analyzers. */
 export const SUPPORTED_EXTENSIONS = [
-  // JavaScript / TypeScript
-  'js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx',
+  // JavaScript / TypeScript — must match the orchestrator's authoritative set,
+  // is_js_ts_file in packages/grafema-orchestrator/src/analyzer.rs:326.
+  'js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx', 'mts', 'cts',
   // Rust
   'rs',
   // Java / Kotlin

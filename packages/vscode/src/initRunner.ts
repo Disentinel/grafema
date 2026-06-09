@@ -10,9 +10,10 @@ import { join } from 'path';
 import * as vscode from 'vscode';
 
 /** All file extensions supported by Grafema's analyzers. */
-const SUPPORTED_EXTENSIONS = [
-  // JavaScript / TypeScript
-  'js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx',
+export const SUPPORTED_EXTENSIONS = [
+  // JavaScript / TypeScript — must match the orchestrator's authoritative set,
+  // is_js_ts_file in packages/grafema-orchestrator/src/analyzer.rs:326.
+  'js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx', 'mts', 'cts',
   // Rust
   'rs',
   // Java / Kotlin

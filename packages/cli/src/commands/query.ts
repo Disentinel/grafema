@@ -395,7 +395,7 @@ export function parseQuery(pattern: string): ParsedQuery {
  *
  * Heuristics:
  * - Contains "/" -> file path
- * - Ends with .ts, .js, .tsx, .jsx, .mjs, .cjs -> file path
+ * - Ends with .ts, .js, .tsx, .jsx, .mjs, .cjs, .mts, .cts -> file path
  *
  * Examples:
  *   "src/app.ts" -> true
@@ -408,8 +408,9 @@ export function isFileScope(scope: string): boolean {
   // Contains path separator
   if (scope.includes('/')) return true;
 
-  // Ends with common JS/TS extensions
-  const fileExtensions = /\.(ts|js|tsx|jsx|mjs|cjs)$/i;
+  // Ends with a JS/TS extension. Must match the orchestrator's authoritative
+  // set — is_js_ts_file in packages/grafema-orchestrator/src/analyzer.rs:326.
+  const fileExtensions = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/i;
   if (fileExtensions.test(scope)) return true;
 
   return false;

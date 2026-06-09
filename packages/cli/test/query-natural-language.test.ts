@@ -295,6 +295,20 @@ describe('isFileScope', () => {
     assert.strictEqual(isFileScope('module.cjs'), true);
   });
 
+  it('should detect file with .mts extension', () => {
+    if (!isFileScope) {
+      assert.fail('isFileScope not exported from query.ts - implement and export it');
+    }
+    assert.strictEqual(isFileScope('module.mts'), true);
+  });
+
+  it('should detect file with .cts extension', () => {
+    if (!isFileScope) {
+      assert.fail('isFileScope not exported from query.ts - implement and export it');
+    }
+    assert.strictEqual(isFileScope('module.cts'), true);
+  });
+
   it('should NOT detect function name as file', () => {
     if (!isFileScope) {
       assert.fail('isFileScope not exported from query.ts - implement and export it');
