@@ -149,3 +149,28 @@ on `.grafema/grafema.rfdb`). The differential surfaced these gaps, mapped to spe
   reproduction on real data. Fix options: (a) cap a recursive rule's estimate at |nodes|^arity
   (closure can't exceed the universe); (b) saturating estimate for self-recursive legs; (c) a
   bounded-depth reach formulation for cycle queries specifically.
+
+### PRECISE FIX (code-grounded, 2026-06-09) — q-error root cause located + spec'd
+
+- **Root cause (exact):** `derived_estimate(pattern, stats)` (`packages/rfdb-server/src/datalog2/plan.rs:668`)
+  sizes EVERY derived leg at the global magnitude `total_nodes.max(total_edges)` — it has no
+  per-predicate cardinality. For `dep_reach(A,B) :- depends(A,C), dep_reach(C,B)` BOTH derived legs
+  (`depends` and the recursive `dep_reach`) get the whole-graph magnitude M, giving `rule_estimate ≈
+  M^1.5`. On the real graph M ≈ 142k ⇒ 54,259,156, despite `depends` being only ~622 facts.
+- **Why it's NOT a local tweak:** `derived_estimate`'s signature only has `(pattern, stats)` — no
+  access to other predicates' sizes. The base-rule legs (`edge` const-type, `attr` point-read) were
+  ALREADY fixed for the same 54M symptom (see `base_estimate` comments); only the DERIVED legs remain.
+- **Spec'd fix:** thread a `HashMap<predicate, u64>` of estimated cardinality, populated
+  **stratum-bottom-up** (a predicate's estimate is known before higher strata that reference it are
+  planned), into `plan_rule → leg_estimate → derived_estimate`. A derived leg uses
+  `estimates.get(pred)` instead of the global magnitude. For the **recursive self-leg** (`recursive ==
+  true`, already computed in `classify()` at `plan.rs:589`) the predicate's own estimate isn't final
+  (fixpoint) — use its BASE-CASE estimate (max over its non-recursive rules); a binary transitive
+  closure is bounded by `(2·base_case)²`, which for depends (622) is ~1.5M < the 10M guard.
+- **Safety note for the implementer:** lowering derived estimates can only make MORE rules pass the
+  E-PLAN-003 guard (never fewer) and only reorders legs (I1 correctness-invariant), so Gate A
+  correctness should hold — BUT it changes plan estimates for every prod materialize query, so verify
+  beyond Gate A (estimate-accuracy isn't gated). This is why it was NOT done in the overnight loop.
+- **In-tree anchor:** `datalog2::plan::tests::recursive_closure_spuriously_tripped_by_global_magnitude_qerror`
+  reproduces it deterministically (50 edges, 50M nodes → spurious E-PLAN-003) and MUST FLIP to assert
+  success when this fix lands.

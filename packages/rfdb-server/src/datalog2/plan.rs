@@ -1147,4 +1147,45 @@ mod tests {
         }
         assert_eq!(reach_leg.join, JoinKind::HashOnDelta);
     }
+
+    /// CHARACTERIZATION of the recursive-closure planner q-error (roadmap task #4, `_ai/gaps.md`).
+    ///
+    /// A transitive-closure rule is SPURIOUSLY rejected with E-PLAN-003 when the graph has many
+    /// nodes, EVEN IF the recursive predicate's base relation is tiny. Root cause:
+    /// `derived_estimate` (this file) sizes EVERY derived leg at the GLOBAL magnitude
+    /// `total_nodes.max(total_edges)` — it has no per-predicate cardinality. So the recursive
+    /// `reach` leg is estimated at the whole node count instead of its tiny base
+    /// (a transitive closure is bounded by its base case's active domain, not |V|). On the real
+    /// dogfood graph this produced `54259156 ≈ M^1.5` (M ≈ 142k = the global magnitude) for
+    /// `dep_reach` despite only ~622 base `depends` pairs.
+    ///
+    /// Here: only 50 edges, but 50M nodes → the recursive `reach` leg is mis-sized at ~50M and
+    /// the rule trips the 10M guard. The cycle/closure LOGIC is correct (proven in
+    /// `datalog2::smoke`); this is purely the estimate.
+    ///
+    /// **When task #4 is fixed** (thread per-predicate cardinality, stratum-bottom-up, into
+    /// `derived_estimate`; for the recursive self-leg use the base-case estimate), this rule will
+    /// PLAN instead of rejecting — and THIS TEST MUST FLIP to `expect("...")` asserting success.
+    /// Its failure is the reminder.
+    #[test]
+    fn recursive_closure_spuriously_tripped_by_global_magnitude_qerror() {
+        let prog = parse_ext_program(
+            "reach(X, Y) :- edge(X, Y, \"CALLS\").\n\
+             reach(X, Z) :- reach(X, Y), edge(Y, Z, \"CALLS\").",
+        )
+        .expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        // 50 edges, 50M nodes: the base relation is tiny, but `derived_estimate` sizes the
+        // recursive `reach` leg at the global node magnitude → spurious E-PLAN-003.
+        let err = plan_program(&rules, &strat, &stats(50_000_000, 50))
+            .expect_err("q-error: recursive leg mis-sized at global magnitude trips the guard");
+        assert_eq!(err.code, PlanCode::GuardRejected, "{}", err);
+        assert_eq!(err.code.as_str(), "E-PLAN-003");
+        assert!(
+            err.detail.contains("max_materialized_facts"),
+            "rejection is the materialization guard, not a cross-join: {}",
+            err.detail
+        );
+    }
 }
