@@ -925,6 +925,94 @@ fn walk_node_inner(node: &ruby_prism::Node<'_>, ctx: &mut Ctx) {
                     }
                     return;
                 }
+                "define_method" => {
+                    // `define_method(:name) { body }` dynamically defines an instance
+                    // method. Model it like a `def` so the method is discoverable
+                    // ("what methods does this class define?") instead of being hidden
+                    // behind an opaque CALL node.
+                    //
+                    // Best-effort and conservative: only when called WITHOUT an explicit
+                    // receiver (i.e. on the implicit `self` of the enclosing class/module
+                    // body) AND with a literal symbol/string name. A dynamic name
+                    // (`define_method(var)`, interpolated symbol) or an explicit receiver
+                    // (`other.define_method`) would attribute the method to the wrong
+                    // owner, so those fall through to general CALL handling below — the
+                    // block body is still walked there, so nothing is lost.
+                    if cn.receiver().is_none() {
+                        if let Some(args) = cn.arguments() {
+                            let arg_list: Vec<_> = args.arguments().iter().collect();
+                            let method_name = arg_list.first().and_then(extract_symbol_name);
+                            if let Some(method_name) = method_name {
+                                let parent_name = ctx.enclosing_class_or_module();
+                                let method_id = semantic_id(
+                                    &ctx.file, "FUNCTION", &method_name, parent_name.as_deref(), None,
+                                );
+
+                                let gn = GraphNode {
+                                    id: method_id.clone(),
+                                    node_type: "FUNCTION".to_string(),
+                                    name: method_name.clone(),
+                                    file: ctx.file.clone(),
+                                    line, column: col, end_line, end_column: end_col,
+                                    exported: ctx.visibility == Visibility::Public,
+                                    metadata: HashMap::from([
+                                        Ctx::meta_text("kind", "define_method"),
+                                        Ctx::meta_text("visibility", ctx.visibility.as_str()),
+                                    ]),
+                                    extra: HashMap::new(),
+                                };
+                                ctx.emit_declaration(gn);
+
+                                // HAS_METHOD edge from the enclosing class/module
+                                // (mirrors the DefNode handler).
+                                if parent_name.is_some() {
+                                    let parent_scope =
+                                        ctx.scope_stack[ctx.scope_stack.len() - 1].clone();
+                                    ctx.emit_edge(GraphEdge {
+                                        src: parent_scope,
+                                        dst: method_id.clone(),
+                                        edge_type: "HAS_METHOD".to_string(),
+                                        metadata: HashMap::new(),
+                                    });
+                                }
+
+                                // Walk the body under the method's own scope so its
+                                // calls/refs attribute to this method (mirrors DefNode).
+                                let prev_fn = ctx.enclosing_fn.take();
+                                ctx.enclosing_fn = Some(method_id.clone());
+                                ctx.push_scope(
+                                    &method_id, ScopeKind::Function, line, col, end_line, end_col,
+                                );
+
+                                // The body is normally a brace/do block; walk its params
+                                // and statements directly (not as a separate <block>
+                                // function — the method node IS the container).
+                                if let Some(block) = cn.block() {
+                                    if let Some(bn) = block.as_block_node() {
+                                        if let Some(params) = bn.parameters() {
+                                            walk_node(&params, ctx);
+                                        }
+                                        if let Some(body) = bn.body() {
+                                            walk_node(&body, ctx);
+                                        }
+                                    } else {
+                                        walk_node(&block, ctx);
+                                    }
+                                }
+                                // A callable passed as the 2nd argument
+                                // (`define_method(:foo, some_proc)`) and any further args.
+                                for arg in arg_list.iter().skip(1) {
+                                    walk_node(arg, ctx);
+                                }
+
+                                ctx.pop_scope();
+                                ctx.enclosing_fn = prev_fn;
+                                return;
+                            }
+                        }
+                    }
+                    // Dynamic name / explicit receiver: fall through to general handling.
+                }
                 _ => {}
             }
 
@@ -3353,6 +3441,69 @@ mod tests {
         let names: Vec<&str> = functions.iter().map(|f| f.name.as_str()).collect();
         assert!(names.contains(&"name"), "expected attr_reader :name to create a FUNCTION node");
         assert!(names.contains(&"age"), "expected attr_reader :age to create a FUNCTION node");
+    }
+
+    // 9b. define_method — symbol name creates a FUNCTION node + HAS_METHOD edge
+    #[test]
+    fn test_define_method_symbol_creates_method() {
+        let a = analyze("class Foo\n  define_method(:greet) { puts 'hi' }\nend");
+        let functions = find_nodes_by_type(&a, "FUNCTION");
+        let greet = functions.iter().find(|f| f.name == "greet")
+            .expect("define_method(:greet) should create a FUNCTION node named 'greet'");
+        assert_eq!(greet.metadata.get("kind").map(|v| v.as_str().unwrap()), Some("define_method"));
+
+        let has_method = find_edges_by_type(&a, "HAS_METHOD");
+        assert!(
+            has_method.iter().any(|e| e.dst == greet.id),
+            "expected a HAS_METHOD edge from the enclosing class to the define_method'd method"
+        );
+    }
+
+    // 9c. define_method body is walked under the method's scope (CALLS attribution)
+    #[test]
+    fn test_define_method_body_attributed_to_method() {
+        let a = analyze("class Foo\n  define_method(:greet) { helper_call }\nend");
+        let functions = find_nodes_by_type(&a, "FUNCTION");
+        let greet = functions.iter().find(|f| f.name == "greet").unwrap();
+        let calls = find_edges_by_type(&a, "CALLS");
+        assert!(
+            calls.iter().any(|e| e.src == greet.id),
+            "a call inside the define_method block must be attributed to the defined method"
+        );
+        // The body block must NOT also surface as a separate '<block>' FUNCTION —
+        // the method node IS the body container (mirrors `def`).
+        assert!(
+            !functions.iter().any(|f| f.name == "<block>"),
+            "define_method body should be the method's scope, not a separate <block> function"
+        );
+    }
+
+    // 9d. define_method — string name + current visibility default
+    #[test]
+    fn test_define_method_string_name_visibility() {
+        let a = analyze("class Foo\n  private\n  define_method('secret') { }\nend");
+        let functions = find_nodes_by_type(&a, "FUNCTION");
+        let secret = functions.iter().find(|f| f.name == "secret")
+            .expect("string-named define_method should create a FUNCTION node");
+        assert_eq!(secret.metadata.get("visibility").map(|v| v.as_str().unwrap()), Some("private"));
+        assert!(!secret.exported, "private define_method should not be exported");
+    }
+
+    // 9e. define_method with a dynamic (non-literal) name: no method node, no panic,
+    // falls back to a general CALL node so nothing is lost.
+    #[test]
+    fn test_define_method_dynamic_name_falls_back() {
+        let a = analyze("class Foo\n  define_method(method_name_var) { 1 }\nend");
+        let functions = find_nodes_by_type(&a, "FUNCTION");
+        assert!(
+            !functions.iter().any(|f| f.name == "method_name_var"),
+            "a dynamic-name define_method must not create a method node named after the expression"
+        );
+        let calls = find_nodes_by_type(&a, "CALL");
+        assert!(
+            calls.iter().any(|c| c.name == "define_method"),
+            "dynamic-name define_method should fall back to a general CALL node"
+        );
     }
 
     // 10. Scope hierarchy
