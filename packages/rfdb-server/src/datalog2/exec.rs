@@ -1194,13 +1194,16 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         };
 
         let mut out: Vec<BindRow> = Vec::new();
-        for row in rows {
-            if negated {
-                // Anti-join: every arg is bound (planner ordered bound-first); the row
-                // survives iff no fact equals the bound tuple.
-                let key = bind_atom_args(atom, &row);
-                let present = match key {
-                    Some(key) => source.values().any(|f| f.key.as_ref() == key.as_slice()),
+
+        if negated {
+            // Anti-join: every arg is bound (planner ordered bound-first). Build the
+            // fact-key set ONCE; each row is then an O(1) membership probe. (The per-row
+            // `values().any()` scan made every anti-join O(rows × facts).)
+            let keys: std::collections::HashSet<&[Value]> =
+                source.values().map(|f| f.key.as_ref()).collect();
+            for row in rows {
+                let present = match bind_atom_args(atom, &row) {
+                    Some(key) => keys.contains(key.as_slice()),
                     // A key that cannot be fully bound is treated as "no match" — the row
                     // survives. The planner guarantees this does not happen for a safe rule.
                     None => false,
@@ -1208,12 +1211,66 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
                 if !present {
                     out.push(row);
                 }
-                continue;
             }
-            // Positive: probe by the bound-position pattern, extend with free vars.
-            for fact in source.values() {
-                if let Some(extended) = unify_atom(atom, &fact.key, &row) {
-                    out.push(extended);
+            return out;
+        }
+
+        // Positive: BUILD-ONCE hash-join. Index the relation by the leg's BOUND argument
+        // positions (the probe key a row can compute), then probe per row and unify only
+        // the candidate bucket. The per-row full-relation scan this replaces made every
+        // helper-predicate join O(rows × facts) — the exec twin of the planner's
+        // filter-before-generator lesson (observed: the method_calls pack spent
+        // ~1.2 ms/row scanning a 1000-fact relation at n=20k, and timed out at 900 s on
+        // the real graph).
+        let bound_positions: Vec<usize> = leg
+            .pattern
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| **m == crate::datalog2::builtin::ArgMode::Bound)
+            .map(|(i, _)| i)
+            .collect();
+
+        if bound_positions.is_empty() {
+            // No bound position: a genuine cross-extend — the scan IS the join.
+            for row in rows {
+                for fact in source.values() {
+                    if let Some(extended) = unify_atom(atom, &fact.key, &row) {
+                        out.push(extended);
+                    }
+                }
+            }
+            return out;
+        }
+
+        let arity = atom.args().len();
+        let mut index: HashMap<Vec<Value>, Vec<&DerivedFact<T>>> = HashMap::new();
+        for fact in source.values() {
+            if fact.key.len() != arity {
+                continue; // an arity mismatch can never unify
+            }
+            let k: Vec<Value> = bound_positions.iter().map(|&i| fact.key[i].clone()).collect();
+            index.entry(k).or_default().push(fact);
+        }
+        for row in rows {
+            match derived_probe_key(atom, &bound_positions, &row) {
+                Some(probe) => {
+                    if let Some(bucket) = index.get(&probe) {
+                        for fact in bucket {
+                            if let Some(extended) = unify_atom(atom, &fact.key, &row) {
+                                out.push(extended);
+                            }
+                        }
+                    }
+                }
+                // Defensive: the planner's pattern said Bound but the row cannot resolve
+                // the key — fall back to the full scan for THIS row (correctness over
+                // speed; must not silently drop the row).
+                None => {
+                    for fact in source.values() {
+                        if let Some(extended) = unify_atom(atom, &fact.key, &row) {
+                            out.push(extended);
+                        }
+                    }
                 }
             }
         }
@@ -1813,6 +1870,25 @@ impl<'r> Clause<'r> {
 /// Build the ground tuple for `atom`'s args from a binding row, in arg order. Returns
 /// `None` if any arg is an unbound variable (a fully-bound key was expected, e.g. for an
 /// anti-join or a head projection).
+/// The probe key of a derived-leg hash-join for one row: the values of the leg's BOUND
+/// argument positions (consts/typed literals directly, vars from the row's bindings).
+/// `None` when a position the planner marked Bound cannot be resolved against the row —
+/// the caller falls back to a scan for that row (defensive; must not drop it).
+fn derived_probe_key(atom: &Atom, bound_positions: &[usize], row: &BindRow) -> Option<Vec<Value>> {
+    let args = atom.args();
+    let mut out = Vec::with_capacity(bound_positions.len());
+    for &i in bound_positions {
+        match &args[i] {
+            Term::Const(s) => out.push(Value::from_term_const(s)),
+            Term::Lit(v) => out.push(v.clone()),
+            Term::Var(v) => out.push(row.get(v)?.clone()),
+            // A wildcard is never Bound in the planner's pattern; treat as unresolvable.
+            Term::Wildcard => return None,
+        }
+    }
+    Some(out)
+}
+
 fn bind_atom_args(atom: &Atom, row: &BindRow) -> Option<Vec<Value>> {
     let mut out = Vec::with_capacity(atom.args().len());
     for t in atom.args() {

@@ -28,7 +28,7 @@
 //! running output-size estimate multiplies the surviving fan-out of each placed leg; the §3
 //! guard fires when that product exceeds `MAX_MATERIALIZED_FACTS`.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use crate::datalog::{Atom, Literal, Rule, Term};
@@ -175,9 +175,73 @@ pub fn plan_program(
     strat: &Stratification,
     stats: &Stats,
 ) -> PlanResult<Vec<RulePlan>> {
-    rules
-        .iter()
-        .map(|rule| plan_rule(rule, strat, stats))
+    // Per-predicate cardinality estimates, populated STRATUM-BOTTOM-UP: a predicate's
+    // estimate is the (saturating) sum of its rules' output estimates, recorded before any
+    // higher stratum that references it is planned. This is what lets `derived_estimate`
+    // size a derived leg at the predicate's own magnitude instead of the whole-graph
+    // magnitude (the q-error that spuriously tripped E-PLAN-003 on recursive closures and
+    // on chains of small derived relations — see the flipped
+    // `recursive_closure_*_qerror` test).
+    let mut estimates: HashMap<String, u64> = HashMap::new();
+    let mut plans: Vec<Option<RulePlan>> = (0..rules.len()).map(|_| None).collect();
+
+    for stratum in &strat.strata {
+        let idxs: Vec<usize> = rules
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| {
+                strat.stratum_of(r.head().predicate()) == Some(stratum.index)
+            })
+            .map(|(i, _)| i)
+            .collect();
+
+        // Non-recursive (base-case) rules first: their estimates seed the self-leg bound
+        // the recursive rules of the SAME predicate use (fixpoint size isn't known until
+        // it runs; the base case is the sound seed, doubled for growth).
+        let mut base_case: HashMap<String, u64> = HashMap::new();
+        for &i in &idxs {
+            let rule = rules[i];
+            let head = rule.head().predicate();
+            let is_recursive = rule
+                .body()
+                .iter()
+                .any(|l| l.atom().predicate() == head);
+            if is_recursive {
+                continue;
+            }
+            let plan = plan_rule_with(rule, strat, stats, &estimates, None)?;
+            let e = base_case.entry(head.to_string()).or_insert(0);
+            *e = (*e).max(plan.estimate);
+            plans[i] = Some(plan);
+        }
+        for &i in &idxs {
+            if plans[i].is_some() {
+                continue;
+            }
+            let rule = rules[i];
+            let bc = base_case
+                .get(rule.head().predicate())
+                .copied()
+                .unwrap_or(0);
+            plans[i] = Some(plan_rule_with(rule, strat, stats, &estimates, Some(bc))?);
+        }
+        // Publish this stratum's predicate estimates for the strata above it.
+        for &i in &idxs {
+            let p = plans[i].as_ref().expect("planned above");
+            let e = estimates.entry(p.head.clone()).or_insert(0);
+            *e = e.saturating_add(p.estimate);
+        }
+    }
+
+    // Defensive: a rule whose head the stratification does not place (should not happen —
+    // every rule head is a derived predicate) is planned without predicate estimates.
+    plans
+        .into_iter()
+        .zip(rules.iter())
+        .map(|(p, rule)| match p {
+            Some(plan) => Ok(plan),
+            None => plan_rule(rule, strat, stats),
+        })
         .collect()
 }
 
@@ -189,6 +253,21 @@ pub fn plan_program(
 /// 3. Pick the join kind (hash on Δ for same-stratum derived legs; merge on Total/EDB).
 /// 4. Apply the §3 guards: cross-join body and per-rule estimate (`E-PLAN-003`).
 pub fn plan_rule(rule: &Rule, strat: &Stratification, stats: &Stats) -> PlanResult<RulePlan> {
+    plan_rule_with(rule, strat, stats, &HashMap::new(), None)
+}
+
+/// [`plan_rule`] with the per-predicate cardinality context [`plan_program`] threads in:
+/// `estimates` maps every LOWER-stratum predicate to its estimated cardinality, and
+/// `self_base` carries the head's base-case estimate when THIS rule is recursive (None for
+/// non-recursive rules). Without the context (empty map, None) the planner falls back to
+/// the conservative whole-graph magnitude — the pre-fix behavior.
+fn plan_rule_with(
+    rule: &Rule,
+    strat: &Stratification,
+    stats: &Stats,
+    estimates: &HashMap<String, u64>,
+    self_base: Option<u64>,
+) -> PlanResult<RulePlan> {
     let head = rule.head().predicate().to_string();
     let head_stratum = strat.stratum_of(&head);
 
@@ -235,7 +314,7 @@ pub fn plan_rule(rule: &Rule, strat: &Stratification, stats: &Stats) -> PlanResu
         }
 
         let join = pick_join(&source, &pattern);
-        let estimate = leg_estimate(&source, atom, &pattern, stats);
+        let estimate = leg_estimate(&source, atom, &pattern, stats, estimates, self_base);
 
         // Only positive, tuple-introducing legs (those that bind previously-free variables)
         // grow the output-size estimate. Anti-joins (negative literals) and fully-bound
@@ -427,9 +506,10 @@ fn ordering_estimate(lit: &Literal, bound: &HashSet<String>, stats: &Stats) -> u
     if BASE_RELATIONS.contains(&pred) {
         base_estimate(pred, atom, &pattern, stats)
     } else {
-        // A derived predicate (rule head) reachable here: no per-type oracle, conservative
-        // magnitude narrowed by a bound first key column.
-        derived_estimate(&pattern, stats)
+        // A derived predicate (rule head) reachable here. Ordering runs per rule WITHOUT
+        // the program-level estimates context (it only ranks candidate orders — it never
+        // feeds the §3 guard), so it keeps the conservative whole-graph magnitude.
+        derived_estimate(pred, false, &pattern, stats, &HashMap::new(), None)
     }
 }
 
@@ -665,11 +745,20 @@ fn synth_arg_spec(pattern: &[ArgMode]) -> builtin::ArgSpec {
 /// - A filter prunes (fan-out ≤ 1); a function binds one row (fan-out 1).
 /// - A derived leg estimates against the larger relation magnitude (conservative; the run
 ///   stats refine this at execution time per the §7 re-plan rule).
-fn leg_estimate(source: &LegSource, atom: &Atom, pattern: &[ArgMode], stats: &Stats) -> u64 {
+fn leg_estimate(
+    source: &LegSource,
+    atom: &Atom,
+    pattern: &[ArgMode],
+    stats: &Stats,
+    estimates: &HashMap<String, u64>,
+    self_base: Option<u64>,
+) -> u64 {
     match source {
         LegSource::Builtin(_) => 1,
         LegSource::Base(rel) => base_estimate(rel, atom, pattern, stats),
-        LegSource::Derived { .. } => derived_estimate(pattern, stats),
+        LegSource::Derived { name, recursive } => {
+            derived_estimate(name, *recursive, pattern, stats, estimates, self_base)
+        }
     }
 }
 
@@ -715,7 +804,14 @@ fn base_estimate(rel: &str, atom: &Atom, pattern: &[ArgMode], stats: &Stats) -> 
             // edge count (every type), tripping the §3 estimate guard (observed: the stdlib
             // `depends` rule estimated at total_edges·N^½ ≈ 54M vs an actual ~1.6k IMPORTS_FROM).
             let const_type = atom.args().get(2).and_then(|t| t.const_value()).is_some();
-            if endpoint_bound || const_type {
+            if endpoint_bound {
+                // A bound endpoint is a per-node adjacency probe: its true fan-out is the
+                // node's degree, whose sound population-level proxy is the graph's AVERAGE
+                // degree (⌈E/N⌉), not √E. The √E model inflated every traversal hop ~300×
+                // on the dogfood graph (920 vs ~3), and a 3-hop chain rule (method_calls
+                // receiver chain) multiplied to 779M — a spurious E-PLAN-003.
+                avg_degree(stats)
+            } else if const_type {
                 narrowed_fanout(stats.total_edges)
             } else {
                 stats.total_edges.max(1)
@@ -756,18 +852,62 @@ fn base_estimate(rel: &str, atom: &Atom, pattern: &[ArgMode], stats: &Stats) -> 
     }
 }
 
-/// The cardinality estimate of a derived-predicate leg (a rule head). No per-type oracle is
-/// available for a derived relation, so it is conservatively the larger relation magnitude,
-/// narrowed when its first key column is already bound (the §7 re-plan rule refines this at
-/// execution time against the run's Δ stats).
-fn derived_estimate(pattern: &[ArgMode], stats: &Stats) -> u64 {
+/// The cardinality estimate of a derived-predicate leg (a rule head).
+///
+/// With the [`plan_program`] stratum-bottom-up context, a non-recursive derived leg is
+/// sized at ITS OWN predicate's estimated cardinality (`estimates[name]`); a RECURSIVE
+/// self-leg uses the head's base-case estimate doubled (the fixpoint isn't known until it
+/// runs; 2× base-case is the sound seed for the growth a closure adds per join). Only when
+/// neither is available (direct `plan_rule` callers, e.g. unit tests) does it fall back to
+/// the conservative whole-graph magnitude — the pre-fix behavior that spuriously tripped
+/// E-PLAN-003 on recursive closures (M^1.5 with M = whole graph) and on chains of small
+/// derived relations. Lowering an estimate can only let MORE rules pass the §3 guard and
+/// reorder legs — never change WHICH facts a rule derives (I1).
+fn derived_estimate(
+    name: &str,
+    recursive: bool,
+    pattern: &[ArgMode],
+    stats: &Stats,
+    estimates: &HashMap<String, u64>,
+    self_base: Option<u64>,
+) -> u64 {
     let first_bound = pattern.first().map(|m| *m == ArgMode::Bound).unwrap_or(false);
-    let magnitude = stats.total_nodes.max(stats.total_edges);
-    if first_bound {
-        narrowed_fanout(magnitude)
+    let any_bound = pattern.iter().any(|m| *m == ArgMode::Bound);
+    let known = if recursive {
+        self_base.map(|b| b.saturating_mul(2))
     } else {
-        magnitude.max(1)
+        estimates.get(name).copied()
+    };
+    match known {
+        Some(k) => {
+            let k = k.max(1);
+            if any_bound {
+                // A bound column keys the probe into the derived relation; the per-key
+                // fan-out proxy is its size over the graph's key population (≈ rows per
+                // distinct key), floored at 1. The √K model gave a 1M-row relation a
+                // fan-out of 1000 per probe and inflated keyed joins ~400×.
+                (k / stats.total_nodes.max(1)).max(1)
+            } else {
+                k
+            }
+        }
+        // No context (direct `plan_rule` callers): the pre-fix conservative magnitude.
+        None => {
+            let magnitude = stats.total_nodes.max(stats.total_edges).max(1);
+            if first_bound {
+                narrowed_fanout(magnitude)
+            } else {
+                magnitude
+            }
+        }
     }
+}
+
+/// The graph's average degree (⌈E/N⌉, floored at 1) — the population-level fan-out of a
+/// single-node adjacency probe (a bound-endpoint `edge`/`incoming` leg).
+fn avg_degree(stats: &Stats) -> u64 {
+    let n = stats.total_nodes.max(1);
+    stats.total_edges.div_ceil(n).max(1)
 }
 
 /// Fan-out of a key-narrowed scan: a small bounded multiplier of the relation, never zero.
@@ -1093,13 +1233,15 @@ mod tests {
 
     #[test]
     fn rejects_oversized_rule_estimate() {
-        // A two-hop generator join over a huge relation overflows the 10M guard.
+        // A two-hop generator join over a DENSE graph overflows the 10M guard.
         // h(X, Y, Z) :- edge(X, Y, "T"), edge(Y, Z, "T").  Connected via Y (not a cross-join,
-        // valid modes — edge requires a bound type). Each hop is a per-type-index-narrowed scan
-        // (√1e8 = 1e4 fan-out) that binds a NEW variable, so both legs multiply the estimate:
-        // 1e4 × 1e4 = 1e8 > MAX_MATERIALIZED_FACTS. This exercises the §3 estimate guard with
-        // legitimate generator legs (the previous single-edge/node form collapses to a filter
-        // once the cheaper const-typed edge leads and node binds nothing new).
+        // valid modes — edge requires a bound type). The leading const-typed scan is
+        // index-narrowed (√1e8 = 1e4); the second hop probes a bound endpoint, whose
+        // fan-out is the AVERAGE DEGREE (E/N = 1e8/1e3 = 1e5 here — a deliberately dense
+        // graph): 1e4 × 1e5 = 1e9 > MAX_MATERIALIZED_FACTS. (On a sparse graph — avg
+        // degree ~1 — the same shape is a legitimate ~1e4-row join and must NOT be
+        // rejected; the old √E-per-hop model did reject it, the q-error this guard-model
+        // fix removed.)
         let rule = Rule::new(
             Atom::new("h", vec![v("X"), v("Y"), v("Z")]),
             vec![
@@ -1108,7 +1250,7 @@ mod tests {
             ],
         );
         let strat = empty_strat();
-        let err = plan_rule(&rule, &strat, &stats(100_000_000, 100_000_000))
+        let err = plan_rule(&rule, &strat, &stats(1_000, 100_000_000))
             .expect_err("estimate guard fires");
         assert_eq!(err.code, PlanCode::GuardRejected, "{}", err);
         assert!(err.detail.contains("max_materialized_facts"), "{}", err.detail);
@@ -1176,16 +1318,45 @@ mod tests {
         .expect("parse");
         let strat = stratify(&prog).expect("stratify");
         let rules = prog.rules();
-        // 50 edges, 50M nodes: the base relation is tiny, but `derived_estimate` sizes the
-        // recursive `reach` leg at the global node magnitude → spurious E-PLAN-003.
-        let err = plan_program(&rules, &strat, &stats(50_000_000, 50))
-            .expect_err("q-error: recursive leg mis-sized at global magnitude trips the guard");
-        assert_eq!(err.code, PlanCode::GuardRejected, "{}", err);
-        assert_eq!(err.code.as_str(), "E-PLAN-003");
+        // 50 edges, 50M nodes: the base relation is tiny. The FIXED planner sizes the
+        // recursive `reach` self-leg at 2× its base-case estimate (the tiny edge scan)
+        // instead of the 50M global magnitude, so the closure plans fine. (This test
+        // asserted the spurious E-PLAN-003 before the stratum-bottom-up estimates fix.)
+        let plans = plan_program(&rules, &strat, &stats(50_000_000, 50))
+            .expect("recursive closure over a tiny base relation must plan");
+        assert_eq!(plans.len(), 2);
+        let recursive_plan = &plans[1];
         assert!(
-            err.detail.contains("max_materialized_facts"),
-            "rejection is the materialization guard, not a cross-join: {}",
-            err.detail
+            recursive_plan.estimate <= 10_000_000,
+            "recursive rule estimate must reflect the base-case magnitude, got {}",
+            recursive_plan.estimate
         );
+    }
+
+    /// A chain of SMALL derived relations (the method_calls.dl shape: call_method →
+    /// receiver_decl → resolved_method_call over a huge graph) must not be sized at the
+    /// whole-graph magnitude per derived leg — that product spuriously tripped E-PLAN-003
+    /// (observed: 777M on the 413k-node dogfood graph).
+    #[test]
+    fn derived_chain_uses_per_predicate_estimates_not_global_magnitude() {
+        let prog = parse_ext_program(
+            "a(X, Y) :- edge(X, Y, \"T1\").\n\
+             b(X, Z) :- a(X, Y), edge(Y, Z, \"T2\").\n\
+             c(X, W) :- b(X, Z), edge(Z, W, \"T3\").",
+        )
+        .expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let plans = plan_program(&rules, &strat, &stats(50_000_000, 1_000))
+            .expect("a chain of small derived relations must plan on a huge graph");
+        // Each rule's estimate is bounded by its inputs' estimates, not 50M per leg.
+        for p in &plans {
+            assert!(
+                p.estimate <= 10_000_000,
+                "rule {} estimate {} must stay under the guard",
+                p.head,
+                p.estimate
+            );
+        }
     }
 }
