@@ -1185,4 +1185,66 @@ mod tests {
         assert_eq!(g1, g2, "generation must be stable for the view's life");
         assert!(g1 >= 1, "a committed store publishes version >= 1");
     }
+
+    /// `OverlayStorageView` returns `base ∪ delta` for ALL eight `StorageView` methods —
+    /// including the keyed probes (`edges_from`/`edges_to`) and the `sorted_run` merge that the
+    /// `depends.dl` integration path does not exercise. Base = the tiny fixture; delta = one new
+    /// FUNCTION in c/file.js + one new CALLS edge `a/fn1 → c/fn3`.
+    #[test]
+    fn overlay_view_returns_base_union_delta_for_every_method() {
+        let base = build_fixture_view();
+        let mut delta = FixtureStorageView::new(1);
+        delta.put_node(NodeRow {
+            id: id_of("c/fn3"),
+            node_type: "FUNCTION".to_string(),
+            name: "fn3".to_string(),
+            file: "c/file.js".to_string(),
+        });
+        delta.put_edge(EdgeRow {
+            src: id_of("a/fn1"),
+            dst: id_of("c/fn3"),
+            edge_type: "CALLS".to_string(),
+        });
+        let overlay = OverlayStorageView::new(&base, delta);
+
+        // generation: shares the base's version identity.
+        assert_eq!(overlay.generation(), base.generation());
+
+        // scan_nodes_by_type: base 2 FUNCTIONs + delta 1.
+        let funcs: Vec<u128> = overlay.scan_nodes_by_type("FUNCTION").map(|n| n.id).collect();
+        assert_eq!(funcs.len(), 3, "two base + one delta FUNCTION");
+        assert!(funcs.contains(&id_of("c/fn3")) && funcs.contains(&id_of("a/fn1")));
+
+        // scan_edges_by_type: base 2 CALLS + delta 1, and the run stays sorted (forward key).
+        let calls: Vec<EdgeRow> = overlay.scan_edges_by_type("CALLS", EdgeOrder::Forward).collect();
+        assert_eq!(calls.len(), 3, "two base + one delta CALLS edge");
+        for w in calls.windows(2) {
+            assert!((w[0].src, w[0].dst) <= (w[1].src, w[1].dst), "forward run stays sorted");
+        }
+
+        // edges_from (keyed): a/fn1 has one base CALLS + the delta CALLS.
+        let from_fn1: Vec<u128> = overlay.edges_from(id_of("a/fn1"), "CALLS").iter().map(|e| e.dst).collect();
+        assert_eq!(from_fn1.len(), 2, "fn1→fn2 (base) + fn1→fn3 (delta)");
+        assert!(from_fn1.contains(&id_of("c/fn3")));
+
+        // edges_to (keyed): only the delta edge points into c/fn3.
+        let into_fn3 = overlay.edges_to(id_of("c/fn3"), "CALLS");
+        assert_eq!(into_fn3.len(), 1);
+        assert_eq!(into_fn3[0].src, id_of("a/fn1"));
+
+        // get_node: delta shadows/extends base; a miss is None.
+        assert!(overlay.get_node(id_of("c/fn3")).is_some(), "delta node visible");
+        assert!(overlay.get_node(id_of("a/fn1")).is_some(), "base node visible");
+        assert!(overlay.get_node(id_of("nope/x")).is_none(), "neither base nor delta");
+
+        // nodes_by_attr: file index over base ∪ delta.
+        let by_c: Vec<u128> = overlay.nodes_by_attr("file", "c/file.js").iter().map(|n| n.id).collect();
+        assert_eq!(by_c, vec![id_of("c/fn3")], "the delta node by its file");
+        assert_eq!(overlay.nodes_by_attr("file", "a/file.js").len(), 2, "two base nodes by file");
+
+        // sorted_run: base 3 + delta 1 nodes, merged and monotone by id.
+        let nodes: Vec<Row> = overlay.sorted_run(Relation::Nodes, SortOrder::NodeById).collect();
+        assert_eq!(nodes.len(), 4, "three base + one delta node");
+        assert_monotone(nodes.into_iter(), SortOrder::NodeById);
+    }
 }
