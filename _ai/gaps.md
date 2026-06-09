@@ -157,6 +157,39 @@ on `.grafema/grafema.rfdb`). The differential surfaced these gaps, mapped to spe
   (closure can't exceed the universe); (b) saturating estimate for self-recursive legs; (c) a
   bounded-depth reach formulation for cycle queries specifically.
 
+### ✅ FIXED 2026-06-10 (decision #4 + the exec twin) — three q-error layers landed
+
+1. **Derived-leg estimates (the spec below): DONE.** `plan_program` now threads a per-predicate
+   cardinality map STRATUM-BOTTOM-UP into `plan_rule_with → leg_estimate → derived_estimate`;
+   a recursive self-leg uses 2× its base-case estimate. The anchor test
+   `recursive_closure_spuriously_tripped_by_global_magnitude_qerror` FLIPPED to assert success;
+   new `derived_chain_uses_per_predicate_estimates_not_global_magnitude` pins the chain shape.
+2. **Bound-endpoint edge legs: √E → average degree (⌈E/N⌉).** The √844k ≈ 920-per-hop model
+   inflated a 3-hop chain (method_calls receiver walk) to 779M → spurious E-PLAN-003; real
+   fan-out is ~3 (avg degree). `rejects_oversized_rule_estimate` updated to a dense-graph
+   fixture (E/N = 1e5) where the guard legitimately fires.
+3. **Exec `join_derived` was O(rows × facts) — now a build-once hash-join** (exec.rs): index the
+   relation by the leg's bound positions once, probe per row; anti-join = build-once HashSet.
+   This was invisible to depends.dl (no derived legs in its one rule) and fatal for any program
+   with helper predicates. Measured on the method_calls fixture probe: n=20k **23.4s → 2.5s**
+   (9.3×), identical fact counts, scaling 6.9x → 4.6x per 4× input.
+
+Verification: datalog2 172/172, full lib 1091 green (5 pre-existing cypher-aggregate failures
+reproduce on clean HEAD), Gate A differential 10/10 green (222s) WITH the hash-join.
+
+### ⚠ THE REMAINING (4th) LAYER — per-row LSM probes in BASE-leg joins (located, not fixed)
+
+method_calls.dl on the REAL graph still hits the 900s deadline AFTER the exec hash-join, while
+the same program on the in-memory fixture runs 2.5s @ n=20k — the ONLY differential is the
+StorageView. `join_extensional` evaluates base legs (`attr(C,"name",V)` point reads,
+`edge(C,V,"READS_FROM")` bound-src probes) PER ROW against LsmStorageView: ~69k CALLs × 5-8
+probes/row ≈ 0.5M LSM probes ≈ the 900s scale. depends.dl never hit this (its generator is 3k
+IMPORTS_FROM rows). **Fix direction:** build-once base-leg joins — ONE type-index scan per leg
+building src→rows / id→attr maps, then hash probes (mirror of the existing
+`join_attr_generator_built_once`). Validate with a fixture-style test backed by a REAL
+ephemeral LsmStorageView (engine test), per the small-fixture discipline.
+
+
 ### PRECISE FIX (code-grounded, 2026-06-09) — q-error root cause located + spec'd
 
 - **Root cause (exact):** `derived_estimate(pattern, stats)` (`packages/rfdb-server/src/datalog2/plan.rs:668`)
@@ -198,3 +231,26 @@ on `.grafema/grafema.rfdb`). The differential surfaced these gaps, mapped to spe
   (location AND message) before diagnosing; don't filter out the detail and infer which assertion fired.
 - ~~Original (incorrect) claim:~~ *"explain_gap returned None for a node blocked by a present DANGER edge
   — why-not silently failed to detect a real gap; a FOOTGUN."* — **FALSE**; it was a correct plan rejection.
+
+## `analyze --clear` is a placebo on the v2 engine — old-generation edges survive reanalysis (2026-06-09)
+
+**Evidence (live, graph.rfdb):** after `analyze . --clear` with renamed analyzers, the graph held
+`DERIVES_FROM: 52217` (gen 37, fresh) AND `DERIVED_FROM: 15531` (gen 36 = the MORNING run's
+generation, per edge `_generation` metadata); 15014 (src,dst) pairs carry BOTH forms. Manifest
+version continued 660 → 1001 across the "cleared" run — the on-disk DB was never wiped.
+
+**Mechanism:** `analyzeAction.ts:340-346` does `backend.clear()` → `shutdownServer()` → `connect()`.
+`GraphEngineV2::clear()` (engine_v2.rs:1539) swaps store+manifest to EPHEMERAL (in-memory, disk
+untouched — the documented `rfdb-v2-clear-ephemeral-trap`); the shutdown then discards that
+ephemeral state and the fresh auto-started server RELOADS the old on-disk DB intact. `--force`
+re-analysis then supersedes most data per-file, but edges of prior generations partially survive
+(15.5k here). The Feb-2026 skill documented the data-LOSS flavor (clear without restart); this is
+the dual: clear+restart = no-op.
+
+**Fix direction:** `GraphEngineV2::clear()` must clear the PERSISTENT store (tombstone-all or
+segment truncation + empty-manifest flip at a new version, honoring MVCC pins), not swap to
+ephemeral. Until then: the only real clear is `rm -rf .grafema/graph.rfdb` before the server starts.
+
+**Also:** why do exactly ~15.5k edges survive `--force` per-file deletion while the rest are
+superseded? Worth understanding the per-file delete path (suspect: edges whose src node id is
+identical across generations are not tombstoned by changed-file deletion).

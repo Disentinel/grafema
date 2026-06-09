@@ -108,3 +108,27 @@ verified (version-pinned snapshot reads + single-flip commit). Entry points: `_a
 - [ ] **Profile the ~6h analysis** — which phase dominates? (the real blocker for #9).
 - [ ] Verify the deadline fix let v2 DEPENDS_ON complete (or whether v2 is the 6h cause).
 - [ ] Then proceed down the decision order (1 → 9) once a fast baseline analysis exists.
+
+---
+
+## ADDENDUM 2026-06-09 ~21:50 (session after handoff) — the "~6h perf pathology" is DEBUNKED
+
+**The 5.9h run was the MacBook SLEEPING, not slow analysis.** Evidence:
+- `analysis-profile.jsonl` phase_summary: `total_ms=1 891 723` ≈ **31.5 min of monotonic time** vs 21 217s wall.
+- The entire gap is ONE interval: `depends_on_start` (08:12:28Z) → `depends_on_complete_v2` (13:41:05Z) =
+  19 717s wall but only 391.6s monotonic.
+- `pmset -g log`: `Entering Sleep state due to 'Idle Sleep'` at **11:16:19 local = 4 min after depends_on_start**;
+  real `Wake` at 16:40:47; `depends_on_complete_v2` logged 18s after wake. (Monotonic clocks pause in sleep.)
+
+**Real phase costs (666 files, 425 737 nodes / 942 563 edges):** resolve 758s ← biggest, analysis 393s,
+depends_on(v2 @materialize) 392s, rfdb_commit 375s, diagnostics 336s. Total ≈ 31.5 min.
+
+**Deadline fix (`c5f8e1a0`) VERIFIED:** `depends_on_complete_v2` edges=1738, zero E-EXEC-001 in rfdb.log;
+live query on graph.rfdb confirms `DEPENDS_ON: 1738`. NOTE: 392s vs the 600s default deadline is only 1.5×
+headroom — consider raising the default or documenting `RFDB_MATERIALIZE_DEADLINE_SECS` for bigger graphs.
+
+**Consequences for the roadmap:** checklist items "profile the 6h analysis" + "verify deadline fix" are DONE.
+Decision #9 (flip v2 default) is now gated only on depends.dl materialize cost (392s scratch on the real graph;
+D2 maintain-cache benchmark on a copy of graph.rfdb was run this session — see chat/bench output).
+Lesson for ANY long detached run on this laptop: wrap in `caffeinate -i`, and when a run "takes hours",
+check `pmset -g log` before declaring a perf pathology.

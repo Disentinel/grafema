@@ -40,6 +40,45 @@ the §8 maps: `_ai/research/rfdb-datalog-gateB-residual-map.md`.
 **Standing (user, 2026-06-07):** commit freely on `feat/datalog` without asking; NEVER push
 without explicit permission.
 
+## SESSION 2026-06-10 — user pivot: «MVCC с параллельностью + боттлнеки плагинов/ресолверов за счёт datalog2»
+
+- **MVCC ground truth:** branch `rfdb-mvcc` (B1–B5, C1 group-commit 3.12x, C2 bulk-load, C3
+  partial + prod-gap fix `59b8415c`) is FULLY MERGED into feat/datalog (`git rev-list --count
+  rfdb-mvcc ^feat/datalog` = 0). Full analyze already runs the bulk-load path
+  (`main.rs:517-523`). The remaining parallelism levers: orchestrator-side concurrent commits
+  (it awaits each commit_batch serially), tiered L1 compaction, interior-mutability Shard.
+- **Plugin→datalog2 vertical (method-call-resolver, the 60s-timeout plugin):**
+  `datalog2/stdlib/method_calls.dl` (bundled, `METHOD_CALLS_DL`) + `method_suffix/2` builtin +
+  **`@materialize(mode = "additive")`** (REQUIRED for shared edge types: exclusive mode
+  tombstones every stored edge of the type it didn't derive — would strip analyzer CALLS;
+  additive never tombstones, dedups adds; engine test
+  `additive_materialize_never_tombstones_shared_type`). Stratifier correctly REJECTS
+  `\+ edge(C,_,"CALLS")` inside a CALLS-materializing program (cross-run maintained≢scratch)
+  — the pack derives for all dotted calls and lets additive dedup absorb resolved ones.
+- **THREE q-error layers fixed** (decision #4 + discoveries): per-predicate stratum-bottom-up
+  estimates in the planner; bound-endpoint edge fan-out √E→avg-degree; exec `join_derived`
+  per-row scan → build-once hash-join (+O(1) anti-join). Fixture probe (`method_calls_pack_scales_near_linearly`,
+  the new small-fixture discipline): n=20k 23.4s → 2.5s. Full-graph scratch was >900s before
+  the exec fix; final number pending. gaps.md has the full record.
+- **`analyze --clear` is a PLACEBO** (gap recorded; skill `rfdb-v2-clear-ephemeral-trap` updated
+  with the second flavor): clear→ephemeral→shutdown→reload resurrects the on-disk DB; prior-gen
+  edges survive `--force` reanalysis (15 531 DERIVED_FROM gen-36 alongside fresh gen-37, 15 014
+  pairs with BOTH). Only real clear: `rm -rf .grafema/graph.rfdb`. Edge `_generation` metadata
+  = run counter (gen-tracker.json) — the forensic tool; segment mtimes are NOT (compaction rewrites).
+- **DERIVES_FROM rename verified end-to-end** on the physically-clean graph (413 472n/844 949e):
+  DERIVES_FROM present, DERIVED_FROM 0 (pending final count check), consumers updated incl.
+  root `/plugins/*.mjs` (grep scope must include repo root, not just packages/).
+- **Full-graph headline: NOT met yet.** After the exec hash-join, method_calls.dl on the real
+  graph STILL exceeds the 900s deadline; fixture (in-memory view) runs 2.5s @ n=20k. The located
+  4th layer: `join_extensional` evaluates base legs PER ROW against LsmStorageView (~0.5M LSM
+  probes for 69k CALLs) — fix = build-once base-leg joins mirroring `join_attr_generator_built_once`
+  (see gaps.md "THE REMAINING (4th) LAYER"). Validate on an ephemeral REAL-store engine test, not
+  the full graph.
+- Workflow `plugin-datalog2-migration-specs` (wf_5c1d0663-039) launched for the 3 remaining
+  timing-out plugins (analyze → adversarial verify, read-only) — specs land as its return value.
+- User process feedback (standing): use WORKFLOWS for multi-part engine work; iterate on small
+  fixtures, full graph = one final measurement only.
+
 ## ▶ NEXT — recommended order (Gate C residuals → Gate D → Gate E)
 
 **Gate C exit NOW FULLY MET.** maintained≡scratch (commits 1-8) + **work-proportionality DONE**
@@ -94,6 +133,14 @@ byte-identical + alloc-free. Proof `incremental_insertion_work_proportional_to_d
      it. The clean-synthetic micro-bench (`engine_v2::...reanalysis_is_work_proportional`) showed only
      2.2× — scan-bound, unrepresentative; both honest, corpus resolves it. Lesson (updated with the
      measured nuance): [[optimize-the-bottleneck-axis-not-the-incidental-one]].
+   - ✅ **D2 corpus benchmark EXIT on the FULL fresh graph (2026-06-09 evening session): PASSED.**
+     Isolated copy of `.grafema/graph.rfdb` (425 737 nodes / 942 563 edges, v660+), own rfdb-server with
+     `RFDB_DATALOG_V2=on`, `materialize_datalog("")` × 3 over the wire: 1st (scratch) **493s** (≈392s clean —
+     the analyze-run profile number; 493s ran under concurrent cabal builds), 2nd (maintain/cache-hit)
+     **12.14s**, 3rd **17.94s**. Criterion ≥5×/≤30s → **~30–40×, ≤30s: met**. count=0 (no-op diff, edges
+     already materialized). Same session: the "~6h analysis" handoff finding DEBUNKED — the Mac was ASLEEP
+     (pmset log; monotonic 31.5 min total, depends_on scratch 392s); deadline fix `c5f8e1a0` verified live
+     (DEPENDS_ON=1738 in graph.rfdb, zero E-EXEC-001). See HANDOFF-fresh-session.md ADDENDUM.
    - ⬜ **D2 OPTIONAL follow-ups (perf EXIT already met; none blocking):**
      (a) **version-delta-scoped `diff_base`** — read only segments newer than `prev_snapshot.version`
      → sublinear scan, shaves the 2.3s floor toward sub-second (would push past 14.2×). Server-internal,
