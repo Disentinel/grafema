@@ -523,7 +523,7 @@ async function traceToLiteral(client, node, depth) {
         // For method calls (.find, .pop) — trace the receiver
         if (callName.includes('.')) {
           for (const ce of callEdges) {
-            if (ce.type === 'READS_FROM' || ce.type === 'DERIVED_FROM') {
+            if (ce.type === 'READS_FROM' || ce.type === 'DERIVES_FROM') {
               const rn = await client.getNode(ce.dst);
               if (rn) {
                 const receiverResult = await traceToLiteral(client, rn, depth - 1);

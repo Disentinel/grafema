@@ -171,11 +171,11 @@ async function collectMethods(client, classId, visited) {
 }
 
 async function resolveReceiverType(client, callId, callEdges) {
-  // Path: CALL → DERIVED_FROM → PA → READS_FROM → REF → READS_FROM → DECL → INSTANCE_OF → CLASS
+  // Path: CALL → DERIVES_FROM → PA → READS_FROM → REF → READS_FROM → DECL → INSTANCE_OF → CLASS
   let readsFrom = callEdges.filter(e => e.type === 'READS_FROM');
 
   if (readsFrom.length === 0) {
-    for (const df of callEdges.filter(e => e.type === 'DERIVED_FROM')) {
+    for (const df of callEdges.filter(e => e.type === 'DERIVES_FROM')) {
       const paNode = await client.getNode(df.dst);
       if (!paNode || paNode.nodeType !== 'PROPERTY_ACCESS') continue;
       const paEdges = await client.getOutgoingEdges(String(paNode.id));

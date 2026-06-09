@@ -629,14 +629,14 @@ main = hspec $ do
   -- ── Phase 5: Data Flow Graph ──────────────────────────────────────
   describe "Phase 5: Data Flow Graph" $ do
 
-    it "emits DERIVED_FROM for operator arguments" $ do
+    it "emits DERIVES_FROM for operator arguments" $ do
       let Right fa = analyzeSource "Test.hs" "module Test where\nf x = x + 1"
-      let dfEdges = filter (\e -> geType e == "DERIVED_FROM") (faEdges fa)
+      let dfEdges = filter (\e -> geType e == "DERIVES_FROM") (faEdges fa)
       length dfEdges `shouldSatisfy` (> 0)
 
-    it "emits DERIVED_FROM from both operands to operator CALL" $ do
+    it "emits DERIVES_FROM from both operands to operator CALL" $ do
       let Right fa = analyzeSource "Test.hs" "module Test where\nf x y = x + y"
-      let dfEdges = filter (\e -> geType e == "DERIVED_FROM") (faEdges fa)
+      let dfEdges = filter (\e -> geType e == "DERIVES_FROM") (faEdges fa)
       -- Both x and y should flow into the (+) CALL node
       let callNodes = filter (\n -> gnType n == "CALL" && gnName n == "+") (faNodes fa)
       length callNodes `shouldBe` 1
@@ -644,18 +644,18 @@ main = hspec $ do
       let edgesToCall = filter (\e -> geTarget e == callId) dfEdges
       length edgesToCall `shouldBe` 2
 
-    it "emits DERIVED_FROM for if branches" $ do
+    it "emits DERIVES_FROM for if branches" $ do
       let Right fa = analyzeSource "Test.hs" "module Test where\nf x = if x then 1 else 0"
-      let dfEdges = filter (\e -> geType e == "DERIVED_FROM") (faEdges fa)
-      -- then and else are literals, so no DERIVED_FROM edges from them
+      let dfEdges = filter (\e -> geType e == "DERIVES_FROM") (faEdges fa)
+      -- then and else are literals, so no DERIVES_FROM edges from them
       -- (literals return Nothing). But the condition 'x' is a REFERENCE
       -- that doesn't flow to the BRANCH. Let's check for the BRANCH node.
       let branches = filter (\n -> gnType n == "BRANCH") (faNodes fa)
       length branches `shouldBe` 1
 
-    it "emits DERIVED_FROM for if branches with variable results" $ do
+    it "emits DERIVES_FROM for if branches with variable results" $ do
       let Right fa = analyzeSource "Test.hs" "module Test where\nf x y z = if x then y else z"
-      let dfEdges = filter (\e -> geType e == "DERIVED_FROM") (faEdges fa)
+      let dfEdges = filter (\e -> geType e == "DERIVES_FROM") (faEdges fa)
       let branches = filter (\n -> gnType n == "BRANCH" && gnName n == "if") (faNodes fa)
       length branches `shouldBe` 1
       let branchId = gnId (head branches)
@@ -663,9 +663,9 @@ main = hspec $ do
       -- y and z (both REFERENCE nodes) should flow into the BRANCH
       length edgesToBranch `shouldBe` 2
 
-    it "emits DERIVED_FROM for case branches with variable results" $ do
+    it "emits DERIVES_FROM for case branches with variable results" $ do
       let Right fa = analyzeSource "Test.hs" "module Test where\nf x y z = case x of { True -> y; False -> z }"
-      let dfEdges = filter (\e -> geType e == "DERIVED_FROM") (faEdges fa)
+      let dfEdges = filter (\e -> geType e == "DERIVES_FROM") (faEdges fa)
       let branches = filter (\n -> gnType n == "BRANCH" && gnName n == "case") (faNodes fa)
       length branches `shouldBe` 1
       let branchId = gnId (head branches)
@@ -673,9 +673,9 @@ main = hspec $ do
       -- y and z should flow into the case BRANCH
       length edgesToBranch `shouldBe` 2
 
-    it "emits DERIVED_FROM for let body to LET_BLOCK" $ do
+    it "emits DERIVES_FROM for let body to LET_BLOCK" $ do
       let Right fa = analyzeSource "Test.hs" "module Test where\nf x = let y = x in y"
-      let dfEdges = filter (\e -> geType e == "DERIVED_FROM") (faEdges fa)
+      let dfEdges = filter (\e -> geType e == "DERIVES_FROM") (faEdges fa)
       let lets = filter (\n -> gnType n == "LET_BLOCK") (faNodes fa)
       length lets `shouldBe` 1
       let letId = gnId (head lets)
@@ -683,9 +683,9 @@ main = hspec $ do
       -- The body 'y' (a REFERENCE) should flow into the LET_BLOCK
       length edgesToLet `shouldBe` 1
 
-    it "emits DERIVED_FROM for function application argument" $ do
+    it "emits DERIVES_FROM for function application argument" $ do
       let Right fa = analyzeSource "Test.hs" "module Test where\nf x = g x"
-      let dfEdges = filter (\e -> geType e == "DERIVED_FROM") (faEdges fa)
+      let dfEdges = filter (\e -> geType e == "DERIVES_FROM") (faEdges fa)
       let calls = filter (\n -> gnType n == "CALL" && gnName n == "g") (faNodes fa)
       length calls `shouldBe` 1
       let callId = gnId (head calls)
@@ -693,9 +693,9 @@ main = hspec $ do
       -- x flows into the call to g
       length edgesToCall `shouldBe` 1
 
-    it "emits DERIVED_FROM for lambda body" $ do
+    it "emits DERIVES_FROM for lambda body" $ do
       let Right fa = analyzeSource "Test.hs" "module Test where\nf = \\x -> x"
-      let dfEdges = filter (\e -> geType e == "DERIVED_FROM") (faEdges fa)
+      let dfEdges = filter (\e -> geType e == "DERIVES_FROM") (faEdges fa)
       let lams = filter (\n -> gnType n == "LAMBDA") (faNodes fa)
       length lams `shouldBe` 1
       let lamId = gnId (head lams)
@@ -703,7 +703,7 @@ main = hspec $ do
       -- x (REFERENCE) flows into the LAMBDA
       length edgesToLam `shouldBe` 1
 
-    it "emits DERIVED_FROM for do-block last statement" $ do
+    it "emits DERIVES_FROM for do-block last statement" $ do
       let source = T.unlines
             [ "module Test where"
             , "f = do"
@@ -711,7 +711,7 @@ main = hspec $ do
             , "  putStrLn x"
             ]
       let Right fa = analyzeSource "Test.hs" source
-      let dfEdges = filter (\e -> geType e == "DERIVED_FROM") (faEdges fa)
+      let dfEdges = filter (\e -> geType e == "DERIVES_FROM") (faEdges fa)
       let dos = filter (\n -> gnType n == "DO_BLOCK") (faNodes fa)
       length dos `shouldBe` 1
       let doId = gnId (head dos)

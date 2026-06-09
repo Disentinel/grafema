@@ -186,13 +186,13 @@ async function disambiguate(client, callId, receiverName, methodName, candidates
 
   // Strategy 3: trace receiver variable to find type
   // Path A: CALL → READS_FROM → VARIABLE → ASSIGNED_FROM → source
-  // Path B: CALL → DERIVED_FROM → PROPERTY_ACCESS → READS_FROM → VARIABLE → ASSIGNED_FROM → source
+  // Path B: CALL → DERIVES_FROM → PROPERTY_ACCESS → READS_FROM → VARIABLE → ASSIGNED_FROM → source
   const callEdges = await client.getOutgoingEdges(callId);
   let readsFrom = callEdges.filter(e => e.type === 'READS_FROM');
 
-  // If no direct READS_FROM, follow DERIVED_FROM → PROPERTY_ACCESS → READS_FROM
+  // If no direct READS_FROM, follow DERIVES_FROM → PROPERTY_ACCESS → READS_FROM
   if (readsFrom.length === 0) {
-    const derivedFrom = callEdges.filter(e => e.type === 'DERIVED_FROM');
+    const derivedFrom = callEdges.filter(e => e.type === 'DERIVES_FROM');
     for (const df of derivedFrom) {
       const paNode = await client.getNode(df.dst);
       if (!paNode || paNode.nodeType !== 'PROPERTY_ACCESS') continue;
@@ -266,15 +266,15 @@ async function disambiguate(client, callId, receiverName, methodName, candidates
 // ── INSTANCE_OF-based type resolution ────────────────────────────────────────
 
 async function resolveReceiverType(client, callId) {
-  // Path: CALL → DERIVED_FROM → PROPERTY_ACCESS → READS_FROM → REF → READS_FROM → VARIABLE → INSTANCE_OF → CLASS
+  // Path: CALL → DERIVES_FROM → PROPERTY_ACCESS → READS_FROM → REF → READS_FROM → VARIABLE → INSTANCE_OF → CLASS
   const callEdges = await client.getOutgoingEdges(callId);
 
   // Try direct READS_FROM first
   let readsFrom = callEdges.filter(e => e.type === 'READS_FROM');
 
-  // If not, follow DERIVED_FROM → PROPERTY_ACCESS → READS_FROM
+  // If not, follow DERIVES_FROM → PROPERTY_ACCESS → READS_FROM
   if (readsFrom.length === 0) {
-    for (const df of callEdges.filter(e => e.type === 'DERIVED_FROM')) {
+    for (const df of callEdges.filter(e => e.type === 'DERIVES_FROM')) {
       const paNode = await client.getNode(df.dst);
       if (!paNode || (paNode.nodeType !== 'PROPERTY_ACCESS' && paNode.nodeType !== 'REFERENCE')) continue;
       const paId = String(paNode.id);
