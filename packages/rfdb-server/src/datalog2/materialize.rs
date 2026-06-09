@@ -69,6 +69,12 @@ pub struct MaterializeSpec {
     /// The stable provenance stamp for THIS rule (`_source`), invariant under whitespace
     /// and variable renaming (see [`rule_ast_hash`]).
     pub rule_ast_hash: String,
+    /// `mode = "additive"`: this rule only ADDS missing edges of its type — the write-back
+    /// never tombstones. Required when the target edge type is SHARED with other producers
+    /// (analyzers, enrichers): the default exclusive mode treats every stored edge of the
+    /// type as owned by the program and deletes the underived ones. Default `false`
+    /// (exclusive — the depends.dl/DEPENDS_ON contract, reanalysis supersedes).
+    pub additive: bool,
 }
 
 /// Extract every `@materialize(edge_type="T")` directive from a parsed program, paired
@@ -98,10 +104,25 @@ pub fn collect_materialize_specs(
                         item.rule.head().predicate()
                     ),
                 })?;
+            let additive = match pairs.iter().find(|kv| kv.key == "mode").map(|kv| kv.value.as_str()) {
+                None | Some("exclusive") => false,
+                Some("additive") => true,
+                Some(other) => {
+                    return Err(MaterializeError {
+                        code: "E-MAT-006",
+                        detail: format!(
+                            "@materialize on predicate '{}' has unknown mode '{}' (expected \"additive\" or \"exclusive\")",
+                            item.rule.head().predicate(),
+                            other
+                        ),
+                    })
+                }
+            };
             out.push(MaterializeSpec {
                 predicate: item.rule.head().predicate().to_string(),
                 edge_type,
                 rule_ast_hash: rule_ast_hash(&item.rule),
+                additive,
             });
         }
     }
@@ -342,6 +363,7 @@ mod tests {
             predicate: "dep".to_string(),
             edge_type: "DEPENDS_ON".to_string(),
             rule_ast_hash: "abc123".to_string(),
+            additive: false,
         }];
         let edges = plan_writeback(&specs, &eval, 7).expect("plan");
         assert_eq!(edges.len(), 2);
@@ -363,6 +385,7 @@ mod tests {
             predicate: "orphan".to_string(),
             edge_type: "T".to_string(),
             rule_ast_hash: "h".to_string(),
+            additive: false,
         }];
         let err = plan_writeback(&specs, &eval, 1).expect_err("unary head must be rejected");
         assert_eq!(err.code, "E-MAT-002");

@@ -696,6 +696,37 @@ fn eval_neq(_view: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> Builtin
     Ok(())
 }
 
+/// `method_suffix(FullName, Method)` — the substring after the LAST `.` of a dotted call
+/// name (`"kb.queryNodes"` → `"queryNodes"`). NO row when the name has no dot or the
+/// suffix is empty: a bare `foo()` is not a method call (mirrors the method-call-resolver
+/// plugin's skip). Function kind: a free arg1 binds the suffix; a bound arg1 filters on
+/// equality with it.
+fn eval_method_suffix(_v: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> BuiltinResult<()> {
+    let Some(full) = bound_str(&spec.args[0]) else {
+        return Ok(());
+    };
+    let Some(dot) = full.rfind('.') else {
+        return Ok(());
+    };
+    let suffix = &full[dot + 1..];
+    if suffix.is_empty() {
+        return Ok(());
+    }
+    if spec.args[1].mode() == ArgMode::Free {
+        match free_slot(&spec.args[1]) {
+            Some(slot) => {
+                let width = spec.output_arity();
+                out.push(emit_row(width, &[(slot, Value::Str(suffix.to_string()))]));
+            }
+            // Wildcard method column: pure existence of a dotted suffix.
+            None => out.push_pass(),
+        }
+    } else if bound_str(&spec.args[1]).as_deref() == Some(suffix) {
+        out.push_pass();
+    }
+    Ok(())
+}
+
 /// Numeric comparison filter shared by `gt`/`lt`/`gte`/`lte`. Both args parse as `f64`; a
 /// non-numeric surface is a coercion miss (tuple non-match, counted — §5), matching v1's
 /// graceful failure but surfacing it instead of swallowing it.
@@ -802,6 +833,10 @@ const ATTR_MODES: &[Mode] = &[
 /// Two-argument filter modes: both arguments must be bound.
 const FILTER2_MODES: &[Mode] = &[Mode { args: &[B, B] }];
 
+/// `method_suffix/2` modes: the full dotted name (arg0) must be bound; the method-name
+/// column (arg1) is either free (bind the extracted suffix) or bound (equality check).
+const METHOD_SUFFIX_MODES: &[Mode] = &[Mode { args: &[B, F] }, Mode { args: &[B, B] }];
+
 // ── The registry (one registration point) ──────────────────────────
 
 /// All Gate A builtins, in a single declaration. The planner and executor look up a
@@ -898,6 +933,13 @@ pub fn registry() -> Vec<BuiltinDef> {
             modes: FILTER2_MODES,
             kind: BuiltinKind::Filter,
             eval: eval_string_contains,
+        },
+        BuiltinDef {
+            name: "method_suffix",
+            arity: 2,
+            modes: METHOD_SUFFIX_MODES,
+            kind: BuiltinKind::Function,
+            eval: eval_method_suffix,
         },
     ]
 }

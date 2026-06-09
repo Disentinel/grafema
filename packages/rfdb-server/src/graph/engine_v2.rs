@@ -929,7 +929,17 @@ impl GraphEngineV2 {
             .map(|e| (e.src, e.dst, e.edge_type.clone()))
             .collect();
         // The prior derived state IS the currently-materialized edges of the spec types.
+        // An ADDITIVE type (any of its specs carries `mode = "additive"`) is shared with
+        // other producers (analyzers, enrichers): its stored edges are used only to dedup
+        // additions and are NEVER tombstoned — exclusive ownership is what the default
+        // mode means, and claiming it over a shared type would delete the other producers'
+        // edges (e.g. `@materialize(edge_type = "CALLS")` would strip analyzer CALLS).
         let edge_types: HashSet<String> = specs.iter().map(|s| s.edge_type.clone()).collect();
+        let additive_types: HashSet<String> = specs
+            .iter()
+            .filter(|s| s.additive)
+            .map(|s| s.edge_type.clone())
+            .collect();
         let mut prev_keys: HashSet<(u128, u128, String)> = HashSet::new();
         for t in &edge_types {
             for e in self.store.get_edges_by_type_at(snapshot, t) {
@@ -942,7 +952,7 @@ impl GraphEngineV2 {
             .collect();
         let removed: Vec<(u128, u128, String)> = prev_keys
             .into_iter()
-            .filter(|k| !new_keys.contains(k))
+            .filter(|k| !new_keys.contains(k) && !additive_types.contains(&k.2))
             .collect();
 
         // ── Phase 2: apply the delta (one flush commits adds + tombstones). ──
@@ -3567,6 +3577,92 @@ mod tests {
             engine.store.get_edges_by_type_at(&snap, "IMPORTS_FROM").len(),
             1,
             "the source IMPORTS_FROM edge is intact"
+        );
+    }
+
+    /// `mode = "additive"`: a program materializing into a SHARED edge type must never
+    /// tombstone edges it did not derive. Pre-existing (analyzer-style) CALLS edge survives
+    /// an incremental materialize whose program derives a DIFFERENT CALLS edge; a second
+    /// run is a no-op (idempotent); and the exclusive default on the same store still
+    /// removes underived edges of its own (exclusively-owned) type.
+    #[test]
+    fn additive_materialize_never_tombstones_shared_type() {
+        let mut engine = GraphEngineV2::create_ephemeral();
+
+        let x = make_v2_node("x.js->CALL->x", "CALL", "x", "x.js");
+        let y = make_v2_node("y.js->METHOD->y", "METHOD", "y", "y.js");
+        let a = make_v2_node("a.js->CALL->a", "CALL", "a", "a.js");
+        let b = make_v2_node("b.js->METHOD->b", "METHOD", "b", "b.js");
+        let (id_x, id_y, id_a, id_b) = (x.id, y.id, a.id, b.id);
+        // Pre-existing CALLS x→y (an analyzer's edge, NOT derivable by the program) and the
+        // LINKS base fact the program derives from.
+        let analyzer_calls = EdgeRecordV2 {
+            src: id_x,
+            dst: id_y,
+            edge_type: "CALLS".to_string(),
+            metadata: String::new(),
+        };
+        let links = EdgeRecordV2 {
+            src: id_a,
+            dst: id_b,
+            edge_type: "LINKS".to_string(),
+            metadata: String::new(),
+        };
+        engine
+            .commit_batch_ext(
+                vec![x, y, a, b],
+                vec![analyzer_calls, links],
+                &["x.js".to_string(), "y.js".to_string(), "a.js".to_string(), "b.js".to_string()],
+                HashMap::new(),
+                &[],
+            )
+            .expect("base commit");
+
+        let src = r#"@materialize(edge_type = "CALLS", mode = "additive")
+                     r(A, B) :- edge(A, B, "LINKS")."#;
+
+        // First run: adds the derived CALLS a→b, removes NOTHING.
+        let (added, removed) = engine
+            .eval_datalog_v2_materialize_incremental(src, crate::datalog::EvalLimits::none())
+            .expect("additive write-back");
+        assert_eq!((added, removed), (1, 0), "one new CALLS added, zero tombstoned");
+
+        let snap = engine.snapshot();
+        let calls = engine.store.get_edges_by_type_at(&snap, "CALLS");
+        let keys: std::collections::BTreeSet<(u128, u128)> =
+            calls.iter().map(|e| (e.src, e.dst)).collect();
+        assert_eq!(
+            keys,
+            std::collections::BTreeSet::from([(id_x, id_y), (id_a, id_b)]),
+            "the analyzer's CALLS x→y SURVIVES the additive materialize"
+        );
+
+        // Second run: nothing new to add, still nothing tombstoned (idempotent no-op).
+        let (added2, removed2) = engine
+            .eval_datalog_v2_materialize_incremental(src, crate::datalog::EvalLimits::none())
+            .expect("additive re-run");
+        assert_eq!((added2, removed2), (0, 0), "additive re-run is a no-op");
+
+        // Contrast: the DEFAULT (exclusive) mode on an exclusively-owned type still
+        // supersedes — an OWNED edge not derived this run is tombstoned.
+        let stale_owned = EdgeRecordV2 {
+            src: id_x,
+            dst: id_b,
+            edge_type: "OWNED".to_string(),
+            metadata: String::new(),
+        };
+        engine
+            .commit_batch_ext(Vec::new(), vec![stale_owned], &[], HashMap::new(), &[])
+            .expect("stale owned edge commit");
+        let src_owned = r#"@materialize(edge_type = "OWNED")
+                           o(A, B) :- edge(A, B, "LINKS")."#;
+        let (o_added, o_removed) = engine
+            .eval_datalog_v2_materialize_incremental(src_owned, crate::datalog::EvalLimits::none())
+            .expect("exclusive write-back");
+        assert_eq!(
+            (o_added, o_removed),
+            (1, 1),
+            "exclusive mode adds the derived OWNED a→b and tombstones the underived x→b"
         );
     }
 
