@@ -2758,6 +2758,34 @@ mod tests {
         assert!(none.is_none(), "safe(f1) holds (no DANGER edge) → no gap");
     }
 
+    /// A NAMED var appearing ONLY inside a negated literal is UNSAFE Datalog (it can never be
+    /// positively bound, so a negated leg cannot existentially close over it as a wildcard does).
+    /// The planner correctly REJECTS it as `Infeasible` (E-PLAN-002) — it does NOT silently
+    /// mis-handle it. The wildcard form is the well-formed existential and evaluates correctly.
+    /// (This pins the SAFETY behavior; an earlier note mistook the plan-time rejection for a
+    /// silent why-not gap — it is a correct rejection, see gaps.md correction.)
+    #[test]
+    fn named_existential_var_in_negation_is_rejected_as_unsafe() {
+        let mut v = FixtureStorageView::new(1);
+        node(&mut v, "f1", "FUNCTION");
+        node(&mut v, "f2", "FUNCTION");
+        edge(&mut v, "f2", "f1", "DANGER"); // f2 has danger; f1 does not.
+        let stats = Stats { total_nodes: 2, total_edges: 1, ..Default::default() };
+
+        // Wildcard existential = well-formed: only f1 (no danger edge) is safe.
+        let wild = run("safe(X) :- node(X, \"FUNCTION\"), \\+ edge(X, _, \"DANGER\").", &v, stats.clone());
+        assert_eq!(ids(&wild, "safe"), vec![id_of("f1")], "wildcard `\\+ edge(X,_,DANGER)`: only f1 is safe");
+
+        // Named var Y used ONLY in the negation = UNSAFE → the planner rejects it (E-PLAN-002),
+        // rather than producing a wrong or vacuous result.
+        let prog = parse_ext_program("safe(X) :- node(X, \"FUNCTION\"), \\+ edge(X, Y, \"DANGER\").")
+            .expect("parses (safety is a planner check, not a parse error)");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let err = plan_program(&rules, &strat, &stats).expect_err("named-only-in-negation is unsafe → rejected");
+        assert_eq!(err.code.as_str(), "E-PLAN-002", "rejected as infeasible/unsafe, got {:?}", err.code);
+    }
+
     // ── DRed phase 1: over-delete candidate set ─────────────────────
 
     /// Pre-load each derived predicate's `Total` from a prior `Evaluation`, keyed by the same
