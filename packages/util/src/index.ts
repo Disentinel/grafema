@@ -110,6 +110,9 @@ export { ensureBinary, downloadBinary, isDownloadable, findInGrafemaBin, getGraf
 export { startRfdbServer, checkExistingServer } from './utils/startRfdbServer.js';
 export type { StartRfdbServerOptions } from './utils/startRfdbServer.js';
 
+// Canonical JS/TS extension set (mirrors orchestrator is_js_ts_file)
+export { JS_TS_EXTENSIONS, JS_TS_EXTENSION_SET } from './constants/jsTsExtensions.js';
+
 // Module resolution utilities
 export {
   resolveModulePath,

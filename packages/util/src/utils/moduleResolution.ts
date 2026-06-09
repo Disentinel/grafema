@@ -16,8 +16,14 @@ import { dirname, extname, resolve, join } from 'path';
 /**
  * Default file extensions to try when resolving modules.
  * Order: exact match first, then JS variants, then TS variants.
+ *
+ * Covers the full canonical {@link JS_TS_EXTENSIONS} set (the orchestrator's
+ * `is_js_ts_file`); `.mts`/`.cts` are appended in the TS group so every
+ * orchestrator-indexed extension is reachable while the first-match order for
+ * the pre-existing extensions is preserved. A drift test asserts this list and
+ * {@link DEFAULT_INDEX_FILES} cover exactly {@link JS_TS_EXTENSIONS}.
  */
-export const DEFAULT_EXTENSIONS = ['', '.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx'];
+export const DEFAULT_EXTENSIONS = ['', '.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.mts', '.cts'];
 
 /**
  * TypeScript extension redirects (REG-426).
@@ -42,7 +48,9 @@ export const DEFAULT_INDEX_FILES = [
   'index.mjs',
   'index.cjs',
   'index.jsx',
-  'index.tsx'
+  'index.tsx',
+  'index.mts',
+  'index.cts'
 ];
 
 /**
@@ -87,7 +95,8 @@ export interface ModuleResolutionOptions {
 
   /**
    * Extensions to try (in order).
-   * Default: ['', '.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx']
+   * Default: {@link DEFAULT_EXTENSIONS}
+   * (`['', '.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.mts', '.cts']`)
    *
    * Empty string '' means try exact path first.
    */
@@ -95,7 +104,8 @@ export interface ModuleResolutionOptions {
 
   /**
    * Index files to try (in order).
-   * Default: ['index.js', 'index.ts', 'index.mjs', 'index.cjs', 'index.jsx', 'index.tsx']
+   * Default: {@link DEFAULT_INDEX_FILES}
+   * (`['index.js', 'index.ts', 'index.mjs', 'index.cjs', 'index.jsx', 'index.tsx', 'index.mts', 'index.cts']`)
    */
   indexFiles?: string[];
 }

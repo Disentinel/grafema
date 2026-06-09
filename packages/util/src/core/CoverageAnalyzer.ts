@@ -15,11 +15,19 @@
 import { readdirSync, existsSync, lstatSync, realpathSync } from 'fs';
 import { join, relative, extname } from 'path';
 import type { GraphBackend } from '@grafema/types';
+import { JS_TS_EXTENSIONS } from '../constants/jsTsExtensions.js';
 
 /**
- * Supported file extensions by language
+ * Supported file extensions by language.
+ *
+ * The JS/TS set is the canonical {@link JS_TS_EXTENSIONS} (mirrors the
+ * orchestrator's `is_js_ts_file`) so a `.mts`/`.cts` source the orchestrator
+ * analyzes is never mis-scored: it feeds BOTH {@link SUPPORTED_EXTENSIONS}
+ * (unsupported-vs-unreachable classification) and {@link CODE_EXTENSIONS} (the
+ * on-disk scanner). Omitting `.mts`/`.cts` here previously dropped such files
+ * from coverage entirely.
  */
-const JS_SUPPORTED = ['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx'];
+const JS_SUPPORTED = [...JS_TS_EXTENSIONS];
 const RUST_SUPPORTED = ['.rs'];
 const SUPPORTED_EXTENSIONS = new Set([...JS_SUPPORTED, ...RUST_SUPPORTED]);
 
