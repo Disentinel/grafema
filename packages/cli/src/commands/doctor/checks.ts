@@ -249,8 +249,16 @@ export async function checkServerStatus(
   const client = new RFDBClient(socketPath, 'cli');
   client.on('error', () => {}); // Suppress error events
 
+  // Tracks whether the server accepted our connection. If `connect()` resolves,
+  // a live listener is bound to the socket — so the socket is NOT stale and must
+  // not be removed even if a later operation (e.g. `ping`) fails. We capture this
+  // in a local rather than reading `client.connected`, because a server that
+  // drops the connection flips `client.connected` back to false.
+  let serverAccepted = false;
+
   try {
     await client.connect();
+    serverAccepted = true;
     const version = await client.ping();
     await client.close();
 
@@ -261,6 +269,25 @@ export async function checkServerStatus(
       details: { version, socketPath },
     };
   } catch {
+    try { await client.close(); } catch { /* best-effort */ }
+
+    if (serverAccepted) {
+      // The server accepted the connection but did not respond to `ping`
+      // (e.g. it is busy/starting up, or stalled under RFDB write-lock
+      // contention where reads can time out at 60s). The listener is alive, so
+      // removing the socket file here would break a healthy server. Report it
+      // as unresponsive instead of deleting its socket.
+      return {
+        name: 'server',
+        status: 'warn',
+        message: 'RFDB server is running but did not respond to ping (may be busy or starting up).',
+        recommendation: 'Wait a moment and retry; if it persists, restart: grafema stop && grafema analyze',
+        details: { socketPath },
+      };
+    }
+
+    // `connect()` failed: nothing is listening on the socket path, so the
+    // socket file is a stale leftover from a crashed/stopped server. Remove it.
     try { unlinkSync(socketPath); } catch { /* already gone */ }
     return {
       name: 'server',
