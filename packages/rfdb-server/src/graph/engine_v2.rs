@@ -419,6 +419,85 @@ impl GraphEngineV2 {
         Ok(rows)
     }
 
+    /// Read-only WHAT-IF (`sim`): evaluate `source` in the hypothetical world where
+    /// `hypothetical_edges` (between EXISTING node ids) are added, and return the
+    /// `target_predicate` facts that are NEW versus the committed graph — WITHOUT committing.
+    ///
+    /// The engine seam for sim() — the hypothetical-questions dual of [`Self::explain_datalog_fact`]
+    /// (PUG-style why-not): a coverage gap names an unbound premise; sim proves a candidate edge
+    /// closes it. It lends ONE pinned snapshot (MVCC B5) to a read-only `BorrowedLsmStorageView`,
+    /// overlays an in-memory [`crate::datalog2::storage_glue::OverlayStorageView`] carrying only the
+    /// hypothetical edges (their endpoints' attrs resolve from the base), and runs the single v2
+    /// eval entry over BOTH base and overlay at the SAME version; the answer is `sim ∖ base`. The
+    /// committed store is never touched (read snapshot + in-memory delta, no manifest flip).
+    ///
+    /// The overlay path is proven sound on the real store
+    /// (`datalog2::differential::…::sim_on_real_store_predicts_new_depends_without_commit`,
+    /// `sim ≡ scratch(base ∪ Δ)`). The hypothetical-edit input shape here is intentionally minimal
+    /// (added edges between existing nodes); a richer wire API (add-node, retract) can reshape it —
+    /// this is the internal seam, not a committed contract.
+    pub fn sim_datalog_v2(
+        &self,
+        source: &str,
+        target_predicate: &str,
+        hypothetical_edges: &[(u128, u128, String)],
+        limits: crate::datalog::EvalLimits,
+    ) -> std::result::Result<Vec<Vec<String>>, crate::datalog2::EvalError> {
+        let snapshot = self.snapshot();
+        let all_nodes = self.store.find_nodes_at(&snapshot, None, None);
+        let mut nodes_by_type: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+        for n in &all_nodes {
+            *nodes_by_type.entry(n.node_type.clone()).or_insert(0) += 1;
+        }
+        let stats = crate::datalog2::builtin::Stats {
+            total_nodes: all_nodes.len() as u64,
+            total_edges: self.store.edge_count_at(&snapshot) as u64,
+            nodes_by_type,
+        };
+        let base = crate::datalog2::storage_glue::BorrowedLsmStorageView::new(&self.store, snapshot);
+
+        // Base world.
+        let base_eval = crate::datalog2::evaluate(
+            &base,
+            source,
+            stats.clone(),
+            limits.clone(),
+            crate::datalog2::events::EventLog::discard(),
+        )?;
+        let base_set: std::collections::HashSet<Vec<String>> = base_eval
+            .facts(target_predicate)
+            .into_iter()
+            .map(|t| t.iter().map(value_to_wire_string).collect::<Vec<String>>())
+            .collect();
+
+        // Hypothetical world: overlay the added edges (endpoints' attrs resolve from the base).
+        let mut delta = crate::datalog2::storage_glue::FixtureStorageView::new(0);
+        for (src, dst, ty) in hypothetical_edges {
+            delta.put_edge(crate::datalog2::storage_glue::EdgeRow {
+                src: *src,
+                dst: *dst,
+                edge_type: ty.clone(),
+            });
+        }
+        let overlay = crate::datalog2::storage_glue::OverlayStorageView::new(&base, delta);
+        let sim_eval = crate::datalog2::evaluate(
+            &overlay,
+            source,
+            stats,
+            limits,
+            crate::datalog2::events::EventLog::discard(),
+        )?;
+
+        // Answer = sim ∖ base: the NEW facts the hypothetical edits would create.
+        let added = sim_eval
+            .facts(target_predicate)
+            .into_iter()
+            .map(|t| t.iter().map(value_to_wire_string).collect::<Vec<String>>())
+            .filter(|row| !base_set.contains(row))
+            .collect();
+        Ok(added)
+    }
+
     /// Evaluate a Datalog **v2** program and write back every `@materialize(edge_type="T")`
     /// predicate's derived facts AS graph edges — the v2 `@materialize` write-back path
     /// (Gate B Stage 1).
@@ -2149,6 +2228,43 @@ mod tests {
         let incoming = engine.get_incoming_edges(31, None);
         assert_eq!(incoming.len(), 1);
         assert_eq!(incoming[0].src, 30);
+    }
+
+    /// `sim_datalog_v2` (the engine seam for what-if) predicts the derived facts a hypothetical
+    /// edge would create, WITHOUT committing it. Base graph: two MODULEs (a.ts / b.ts) + two
+    /// import endpoints, NO IMPORTS_FROM → depends/2 is empty. sim adds ea→eb and must predict
+    /// the new `depends(m_a, m_b)` while leaving the committed graph untouched.
+    #[test]
+    fn sim_datalog_v2_predicts_new_depends_without_committing() {
+        use crate::datalog::EvalLimits;
+        let src = crate::datalog2::stdlib::DEPENDS_DL;
+
+        let mut engine = GraphEngineV2::create_ephemeral();
+        engine.add_nodes(vec![
+            make_v1_node(1, "MODULE", "m_a", "a.ts"),
+            make_v1_node(2, "MODULE", "m_b", "b.ts"),
+            make_v1_node(10, "IMPORT_BINDING", "ea", "a.ts"),
+            make_v1_node(20, "FUNCTION", "eb", "b.ts"),
+        ]);
+        engine.flush().unwrap();
+
+        // Base world: no import edge → no module dependency.
+        let base = engine.eval_datalog_v2(src, "depends", EvalLimits::none()).expect("base eval");
+        assert!(base.is_empty(), "no IMPORTS_FROM yet → depends is empty, got {base:?}");
+
+        // sim: what if ea (a.ts) imported eb (b.ts)? → depends(m_a, m_b).
+        let added = engine
+            .sim_datalog_v2(src, "depends", &[(10u128, 20u128, "IMPORTS_FROM".to_string())], EvalLimits::none())
+            .expect("sim eval");
+        assert_eq!(
+            added,
+            vec![vec!["1".to_string(), "2".to_string()]],
+            "sim predicts exactly the new depends(m_a=1, m_b=2) the hypothetical import would create"
+        );
+
+        // NON-DESTRUCTIVE: the committed graph still has no import edge, so depends is still empty.
+        let after = engine.eval_datalog_v2(src, "depends", EvalLimits::none()).expect("re-eval");
+        assert!(after.is_empty(), "sim must NOT commit the hypothetical edge; got {after:?}");
     }
 
     #[test]
