@@ -117,3 +117,28 @@ toward marginal coverage-probe variants (declining insight). The remaining high-
 three decisions above, all of which need your input or change a product surface. Synthesizing rather
 than manufacturing more green commits is the honest call. The loop continues; if a safe, consumer-backed
 unit surfaces (e.g. a real-code dragons-probe you'd act on), I'll take it.
+
+---
+
+## ✅ DECISIONS RESOLVED (2026-06-09, by user — all approved)
+
+1. **Edge verb form → PRESENT tense / stative.** Rationale: a graph edge is a STANDING relation in
+   the current state ("A derives_from B" holds now), not a past event; present is already the dominant
+   convention (CALLS/CONTAINS/READS_FROM/DEPENDS_ON/…); and consumers ALREADY use `DERIVES_FROM`.
+   Action: analyzers' `geType` `DERIVED_FROM → DERIVES_FROM` (js + haskell Expressions.hs) + audit other
+   past-tense outliers (`ASSIGNED_FROM` → present) for consistency + reanalyze. Do AFTER the baseline run.
+2. **MCP wire for sim / why-not — GREENLIT.** Build the server `SimDatalog` + `ExplainDatalogGap`
+   Request variants + TS/MCP tools, mirroring `explain_fact`. sim input shape `{nodes, edges}` accepted.
+3. **Plugin-loader contract — yes.** User note: **cross-file resolvers are the heaviest part** (that's
+   the fuzzy-resolver atom — CALLS/IMPORTS_FROM resolution). Define the contract; the high-value target
+   is cross-file resolution.
+4. **Planner q-error fix — APPROVED (supervised).** Thread per-predicate cardinality into derived_estimate.
+5. **Numeric literals typed (Int+Float) — confirmed.** (Already implemented, Gate A 51/51.)
+6. **Coverage output — keep BOTH** the `%` metric AND the why-not worklist.
+7. **Value-domain spec DSL — must prototype**, aiming for the DRIEST/tersest notation we can produce.
+8. **First cross-artifact modelling target = what ALREADY exists in grafema / grafema-cloud — e.g. the GUI**
+   (frontend → backend), NOT nginx. Needs the fresh graph to include the GUI.
+9. **Flip `RFDB_DATALOG_V2` default → ON.** Do AFTER the fresh analysis confirms v2 is sound on real code.
+
+Execution order: fresh analysis (running) → validate v2 → flip #9 → tense canon #1 → confirm #5 →
+MCP wire #2 → planner fix #4 → plugin contract #3 → model GUI #8 → DSL prototype #7 (#6 at coverage-UX time).
