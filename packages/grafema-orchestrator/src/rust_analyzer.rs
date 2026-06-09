@@ -483,8 +483,8 @@ fn walk_item(item: &syn::Item, ctx: &mut Ctx) {
         syn::Item::Use(u) => walk_use(u, ctx),
         syn::Item::Mod(m) => walk_mod(m, ctx),
         syn::Item::Type(t) => walk_type_alias(t, ctx),
+        syn::Item::ExternCrate(c) => walk_extern_crate(c, ctx),
         // Transparent items — no graph nodes needed
-        syn::Item::ExternCrate(_) => {}
         syn::Item::ForeignMod(_) => {}
         syn::Item::Macro(_) => {}
         syn::Item::Union(u) => walk_union(u, ctx),
@@ -1002,6 +1002,26 @@ fn walk_trait(t: &syn::ItemTrait, ctx: &mut Ctx) {
 fn walk_use(u: &syn::ItemUse, ctx: &mut Ctx) {
     let (line, col) = ctx.span_line_col(u.use_token.span);
     walk_use_tree(&u.tree, "", line, col, &u.vis, ctx);
+}
+
+/// Walk an `extern crate foo;` / `extern crate foo as bar;` declaration.
+///
+/// `extern crate` introduces a crate into scope under a (possibly renamed) name —
+/// graph-identical to a top-level `use foo;` / `use foo as bar;`. We emit the same
+/// IMPORT + IMPORT_BINDING pair so the binding is visible to resolution and to
+/// "what does this file import?" queries, instead of being silently dropped.
+/// Common in `no_std` (`extern crate alloc;`), proc-macro (`extern crate proc_macro;`),
+/// and 2015-edition / renamed-crate code.
+fn walk_extern_crate(c: &syn::ItemExternCrate, ctx: &mut Ctx) {
+    let (line, col) = ctx.span_line_col(c.extern_token.span);
+    let source = c.ident.to_string();
+    // `extern crate foo as bar;` binds `foo` under the name `bar`; otherwise the
+    // crate name is the binding name.
+    let name = match &c.rename {
+        Some((_, rename)) => rename.to_string(),
+        None => source.clone(),
+    };
+    emit_import(&source, &name, line, col, &c.vis, ctx);
 }
 
 fn walk_use_tree(tree: &syn::UseTree, prefix: &str, line: i64, col: i64, vis: &syn::Visibility, ctx: &mut Ctx) {
@@ -2055,6 +2075,53 @@ mod tests {
         assert!(has_node(&fa, "IMPORT", "std::collections::HashMap"));
         assert!(has_node(&fa, "IMPORT_BINDING", "HashMap"));
         assert!(has_edge(&fa, "CONTAINS", "IMPORT", "IMPORT_BINDING"));
+    }
+
+    #[test]
+    fn test_extern_crate_plain() {
+        // `extern crate alloc;` (no_std) brings the crate into scope under its own
+        // name — graph-identical to a top-level `use alloc;`.
+        let fa = parse_and_analyze("extern crate alloc;");
+        assert!(has_node(&fa, "IMPORT", "alloc"), "IMPORT node for crate");
+        assert!(has_node(&fa, "IMPORT_BINDING", "alloc"), "IMPORT_BINDING for crate name");
+        assert!(has_edge(&fa, "CONTAINS", "IMPORT", "IMPORT_BINDING"), "IMPORT CONTAINS binding");
+    }
+
+    #[test]
+    fn test_extern_crate_renamed() {
+        // `extern crate foo as bar;` binds the crate `foo` under the name `bar` —
+        // graph-identical to `use foo as bar;`.
+        let fa = parse_and_analyze("extern crate foo as bar;");
+        assert!(has_node(&fa, "IMPORT", "foo"), "IMPORT node keyed by crate name");
+        assert!(has_node(&fa, "IMPORT_BINDING", "bar"), "IMPORT_BINDING under renamed name");
+        assert!(!has_node(&fa, "IMPORT_BINDING", "foo"), "no binding under the original name");
+        let binding = fa
+            .nodes
+            .iter()
+            .find(|n| n.node_type == "IMPORT_BINDING" && n.name == "bar")
+            .expect("binding node");
+        assert_eq!(binding.metadata.get("source"), Some(&serde_json::json!("foo")));
+    }
+
+    #[test]
+    fn test_extern_crate_pub_is_exported() {
+        // `pub extern crate foo;` re-exports the crate; the binding must be exported,
+        // mirroring `pub use`.
+        let fa = parse_and_analyze("pub extern crate foo;");
+        let binding = fa
+            .nodes
+            .iter()
+            .find(|n| n.node_type == "IMPORT_BINDING" && n.name == "foo")
+            .expect("binding node");
+        assert!(binding.exported, "pub extern crate binding is exported");
+    }
+
+    #[test]
+    fn test_extern_crate_anonymous_rename_does_not_panic() {
+        // `extern crate foo as _;` links the crate without binding a usable name.
+        // It must not panic; the binding is keyed by the original crate as source.
+        let fa = parse_and_analyze("extern crate foo as _;");
+        assert!(has_node(&fa, "IMPORT", "foo"), "IMPORT keyed by crate name");
     }
 
     #[test]
