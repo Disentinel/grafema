@@ -591,4 +591,55 @@ mod smoke {
              the non-express console.log call produces nothing"
         );
     }
+
+    /// Deployment-binding resolution (apparatus doc §5) — closes the gap iter2/iter3 left open: how
+    /// does a frontend know WHICH proxy serves it? Via the deployment layer. The full chain now spans
+    /// FOUR artifacts: frontend code → env binding (var → host) → which proxy SERVES that host →
+    /// backend. All hops are STRUCTURAL joins on shared node identity (a unique env binding = exact
+    /// RESOLUTION, the §5 resolution region — the same mechanism as the code import resolver, not
+    /// abstract interpretation). A second frontend whose env-resolved host has NO serving proxy does
+    /// NOT reach — a deployment-layer coverage gap (missing proxy config).
+    #[test]
+    fn deployment_binding_closes_frontend_to_backend_chain() {
+        let mut v = FixtureStorageView::new(1);
+        // Reaching chain: fe -USES_ENV-> apivar -BINDS_TO-> host1; nginx1 -SERVES-> host1,
+        // nginx1 -PROXIES_TO-> be1.
+        node(&mut v, "fe", "HTTP_REQUEST");
+        node(&mut v, "apivar", "env:var");
+        node(&mut v, "host1", "host");
+        node(&mut v, "nginx1", "nginx:route");
+        node(&mut v, "be1", "http:route");
+        edge(&mut v, "fe", "apivar", "USES_ENV");
+        edge(&mut v, "apivar", "host1", "BINDS_TO");
+        edge(&mut v, "nginx1", "host1", "SERVES");
+        edge(&mut v, "nginx1", "be1", "PROXIES_TO");
+        // Dead-ending chain: fe2's env-resolved host2 has NO serving proxy (missing deploy config).
+        node(&mut v, "fe2", "HTTP_REQUEST");
+        node(&mut v, "apivar2", "env:var");
+        node(&mut v, "host2", "host");
+        edge(&mut v, "fe2", "apivar2", "USES_ENV");
+        edge(&mut v, "apivar2", "host2", "BINDS_TO");
+
+        // reaches(FE,BE): frontend env-var resolves to a host, a proxy serves that host and proxies
+        // to the backend. The deployment hop (BINDS_TO) is what closes the frontend→proxy gap.
+        let src = r#"reaches(FE, BE) :-
+                       node(FE, "HTTP_REQUEST"), edge(FE, V, "USES_ENV"),
+                       edge(V, H, "BINDS_TO"),
+                       edge(P, H, "SERVES"), edge(P, BE, "PROXIES_TO"),
+                       node(BE, "http:route")."#;
+        let stats = Stats { total_nodes: 8, total_edges: 6, ..Default::default() };
+        let eval = evaluate(&v, src, stats, EvalLimits::none(), EventLog::discard())
+            .expect("evaluate");
+        let reaches: std::collections::HashSet<(u128, u128)> = eval
+            .facts("reaches")
+            .iter()
+            .map(|r| (r[0].as_id().unwrap(), r[1].as_id().unwrap()))
+            .collect();
+        assert_eq!(
+            reaches,
+            [(id_of("fe"), id_of("be1"))].into_iter().collect(),
+            "fe reaches be1 through env→host→proxy→backend; fe2's host2 has no serving proxy \
+             (a deployment-layer coverage gap) so fe2 reaches nothing"
+        );
+    }
 }

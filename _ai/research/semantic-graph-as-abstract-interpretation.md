@@ -220,6 +220,14 @@ v2 engine TODAY, as `datalog2` smoke tests (`mod.rs`), no string builtins, no in
   equality theory as a DERIVED CONGRUENCE (§2, points-to branch): frontend/backend reference an
   endpoint by different aliases yet link via a recursive symmetric-transitive `same/2` closure (not
   exact match). Completes the §2 trifecta: exact canon key / extractor-rewrite / derived congruence.
+- **iter5** `library_semantics_express_route_as_rule` (`b0368872`) — §3: the express
+  libraryCallbackEnricher's job (effects-db arg-roles → HANDLES) as ONE Datalog rule; arg-role
+  resolution is extractor facts (role-typed edges), the semantics are the rule. Non-express → nothing.
+- **iter6** `deployment_binding_closes_frontend_to_backend_chain` (next) — §5: the 4-artifact reach
+  chain frontend → env-binding(var→host) → SERVES(proxy) → PROXIES_TO(backend), structural joins on
+  shared node identity (unique binding = exact resolution = the import-resolver mechanism). Closes the
+  "how does the frontend know its proxy" gap iter2 left; a host with no serving proxy dead-ends
+  (deployment-layer coverage gap).
 - **real-data** `probe_call_resolution_coverage` (`c2071947`, ignored) — coverage-as-negation over the
   live corpus in ~4s: 13634 CALL sites, 16.2% direct-resolved (lower bound — Layout-A only; honest
   caveat in the test). Found the `DERIVED_FROM`/`DERIVES_FROM` vocab fork (→ `_ai/gaps.md`).
