@@ -433,13 +433,15 @@ impl GraphEngineV2 {
     ///
     /// The overlay path is proven sound on the real store
     /// (`datalog2::differential::…::sim_on_real_store_predicts_new_depends_without_commit`,
-    /// `sim ≡ scratch(base ∪ Δ)`). The hypothetical-edit input shape here is intentionally minimal
-    /// (added edges between existing nodes); a richer wire API (add-node, retract) can reshape it —
-    /// this is the internal seam, not a committed contract.
+    /// `sim ≡ scratch(base ∪ Δ)`). `hypothetical_nodes` are `(id, node_type, name, file)` and
+    /// `hypothetical_edges` are `(src, dst, edge_type)`; an edge may reference a hypothetical node
+    /// (so sim can add a wholly new import binding, not only bridge existing nodes). A richer wire
+    /// API (retract / metadata) can reshape this — it is the internal seam, not a committed contract.
     pub fn sim_datalog_v2(
         &self,
         source: &str,
         target_predicate: &str,
+        hypothetical_nodes: &[(u128, String, String, String)],
         hypothetical_edges: &[(u128, u128, String)],
         limits: crate::datalog::EvalLimits,
     ) -> std::result::Result<Vec<Vec<String>>, crate::datalog2::EvalError> {
@@ -470,8 +472,17 @@ impl GraphEngineV2 {
             .map(|t| t.iter().map(value_to_wire_string).collect::<Vec<String>>())
             .collect();
 
-        // Hypothetical world: overlay the added edges (endpoints' attrs resolve from the base).
+        // Hypothetical world: overlay the added nodes + edges (existing endpoints' attrs resolve
+        // from the base; a hypothetical edge may reference a hypothetical node).
         let mut delta = crate::datalog2::storage_glue::FixtureStorageView::new(0);
+        for (id, node_type, name, file) in hypothetical_nodes {
+            delta.put_node(crate::datalog2::storage_glue::NodeRow {
+                id: *id,
+                node_type: node_type.clone(),
+                name: name.clone(),
+                file: file.clone(),
+            });
+        }
         for (src, dst, ty) in hypothetical_edges {
             delta.put_edge(crate::datalog2::storage_glue::EdgeRow {
                 src: *src,
@@ -2231,9 +2242,11 @@ mod tests {
     }
 
     /// `sim_datalog_v2` (the engine seam for what-if) predicts the derived facts a hypothetical
-    /// edge would create, WITHOUT committing it. Base graph: two MODULEs (a.ts / b.ts) + two
-    /// import endpoints, NO IMPORTS_FROM → depends/2 is empty. sim adds ea→eb and must predict
-    /// the new `depends(m_a, m_b)` while leaving the committed graph untouched.
+    /// edit would create, WITHOUT committing it. Base graph: two MODULEs (a.ts / b.ts) + one
+    /// existing function in b.ts, NO import binding in a.ts → depends/2 is empty. sim adds a
+    /// wholly NEW import binding in a.ts (hypothetical node) importing the b.ts function
+    /// (hypothetical edge), and must predict `depends(m_a, m_b)` while leaving the committed
+    /// graph untouched — exercising both hypothetical-node and hypothetical-edge overlay.
     #[test]
     fn sim_datalog_v2_predicts_new_depends_without_committing() {
         use crate::datalog::EvalLimits;
@@ -2243,18 +2256,23 @@ mod tests {
         engine.add_nodes(vec![
             make_v1_node(1, "MODULE", "m_a", "a.ts"),
             make_v1_node(2, "MODULE", "m_b", "b.ts"),
-            make_v1_node(10, "IMPORT_BINDING", "ea", "a.ts"),
             make_v1_node(20, "FUNCTION", "eb", "b.ts"),
         ]);
         engine.flush().unwrap();
 
-        // Base world: no import edge → no module dependency.
+        // Base world: no import binding in a.ts → no module dependency.
         let base = engine.eval_datalog_v2(src, "depends", EvalLimits::none()).expect("base eval");
         assert!(base.is_empty(), "no IMPORTS_FROM yet → depends is empty, got {base:?}");
 
-        // sim: what if ea (a.ts) imported eb (b.ts)? → depends(m_a, m_b).
+        // sim: what if a NEW import binding in a.ts imported eb (b.ts)? → depends(m_a, m_b).
         let added = engine
-            .sim_datalog_v2(src, "depends", &[(10u128, 20u128, "IMPORTS_FROM".to_string())], EvalLimits::none())
+            .sim_datalog_v2(
+                src,
+                "depends",
+                &[(99u128, "IMPORT_BINDING".to_string(), "hypo_import".to_string(), "a.ts".to_string())],
+                &[(99u128, 20u128, "IMPORTS_FROM".to_string())],
+                EvalLimits::none(),
+            )
             .expect("sim eval");
         assert_eq!(
             added,
@@ -2262,9 +2280,10 @@ mod tests {
             "sim predicts exactly the new depends(m_a=1, m_b=2) the hypothetical import would create"
         );
 
-        // NON-DESTRUCTIVE: the committed graph still has no import edge, so depends is still empty.
+        // NON-DESTRUCTIVE: the committed graph still has neither the hypothetical node nor edge.
         let after = engine.eval_datalog_v2(src, "depends", EvalLimits::none()).expect("re-eval");
-        assert!(after.is_empty(), "sim must NOT commit the hypothetical edge; got {after:?}");
+        assert!(after.is_empty(), "sim must NOT commit the hypothetical edit; got {after:?}");
+        assert!(!engine.node_exists(99), "the hypothetical node must never reach the committed store");
     }
 
     #[test]
