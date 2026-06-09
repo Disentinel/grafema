@@ -1252,4 +1252,79 @@ guarantees:
         }
         eprintln!("=== end cycle probe ===\n");
     }
+
+    /// Real-code finding (the BOUNDED sibling of the cycle probe): mutual module imports
+    /// (`A imports B AND B imports A`) on the actual dogfood graph. Non-recursive self-join on
+    /// `depends/2` (`mutual(A,B) :- depends(A,B), depends(B,A), lt(A,B)`), estimate ≈ |depends|²
+    /// ≪ the §3 guard — so this one RUNS at scale where the full transitive closure trips
+    /// E-PLAN-003. Mutual imports are a real architectural smell; this surfaces Grafema's own.
+    ///
+    /// Run: cargo test --manifest-path packages/rfdb-server/Cargo.toml --lib \
+    ///        datalog2::differential::yaml_extract_tests::probe_real_mutual_module_imports -- --ignored --nocapture
+    #[test]
+    #[ignore = "manual real-data mutual-import probe; run with --ignored"]
+    fn probe_real_mutual_module_imports() {
+        use std::collections::HashMap;
+        let dataset = repo_path(".grafema/grafema.rfdb");
+        assert!(dataset.join("db_config.json").exists(), "no dataset at {}", dataset.display());
+        let tmp = tempfile::tempdir().expect("temp");
+        let work = tmp.path().join("grafema.rfdb");
+        copy_dir_all(&dataset, &work).expect("copy");
+        let _ = std::fs::remove_file(work.join("LOCK"));
+        let manifest = ManifestStore::open(&work).expect("manifest");
+        let store = MultiShardStore::open(&work, &manifest).expect("store");
+        let snap = store.snapshot(&manifest);
+
+        let all_nodes = store.find_nodes_at(&snap, None, None);
+        let module_label: HashMap<u128, String> =
+            all_nodes.iter().map(|n| (n.id, n.semantic_id.clone())).collect();
+        let total_nodes = all_nodes.len() as u64;
+        let total_edges = store.iter_all_edges_at(&snap).len() as u64;
+        let mut nodes_by_type: HashMap<String, u64> = HashMap::new();
+        for n in &all_nodes {
+            *nodes_by_type.entry(n.node_type.clone()).or_insert(0) += 1;
+        }
+        let view = LsmStorageView::capture(Arc::new(store), &manifest);
+        let stats = Stats { total_nodes, total_edges, nodes_by_type };
+
+        let depends_body: String = crate::datalog2::stdlib::DEPENDS_DL
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("@materialize"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let src = format!(
+            "{depends_body}\nmutual(A, B) :- depends(A, B), depends(B, A), lt(A, B)."
+        );
+
+        eprintln!("\n=== REAL mutual module-import probe ===");
+        match evaluate(&view, &src, stats, EvalLimits::none(), EventLog::discard()) {
+            Ok(eval) => {
+                let mut pairs: Vec<(String, String)> = eval
+                    .facts("mutual")
+                    .iter()
+                    .filter_map(|r| {
+                        let a = r.first()?.as_id()?;
+                        let b = r.get(1)?.as_id()?;
+                        let la = module_label.get(&a).cloned().unwrap_or_else(|| format!("{a:x}"));
+                        let lb = module_label.get(&b).cloned().unwrap_or_else(|| format!("{b:x}"));
+                        Some((la, lb))
+                    })
+                    .collect();
+                pairs.sort();
+                eprintln!(
+                    "depends pairs: {} | MUTUAL import pairs: {}",
+                    eval.facts("depends").len(),
+                    pairs.len()
+                );
+                for (a, b) in pairs.iter().take(80) {
+                    eprintln!("  {a}  ⇄  {b}");
+                }
+                if pairs.len() > 80 {
+                    eprintln!("  … {} more", pairs.len() - 80);
+                }
+            }
+            Err(e) => eprintln!("mutual probe eval error ({}): {e}", e.code()),
+        }
+        eprintln!("=== end mutual probe ===\n");
+    }
 }

@@ -708,4 +708,61 @@ mod smoke {
              the cycle but is not a member (nothing imports back from the cycle to x.ts)"
         );
     }
+
+    /// MUTUAL-import detection (a 2-cycle) — the BOUNDED, non-recursive sibling of the
+    /// transitive-closure cycle query. `mutual(A,B) :- depends(A,B), depends(B,A), lt(A,B)`
+    /// is a plain self-join on the materialized `depends/2` (estimate ≈ |depends|², far under
+    /// the §3 guard), so unlike the full closure it runs at scale without tripping E-PLAN-003
+    /// (the recursive-closure q-error documented in `_ai/gaps.md`). `lt(A,B)` emits each mutual
+    /// pair once. Mutual module imports are a real, common architectural smell.
+    ///
+    /// Fixture: a⇄b is a mutual pair; a→c is one-directional (c does not import a), so c is not
+    /// part of any mutual pair.
+    #[test]
+    fn mutual_module_import_is_a_bounded_two_cycle_over_depends() {
+        let n = |sid: &str, ty: &str, file: &str| NodeRow {
+            id: id_of(sid),
+            node_type: ty.to_string(),
+            name: sid.to_string(),
+            file: file.to_string(),
+        };
+        let mut v = FixtureStorageView::new(1);
+        v.put_node(n("m_a", "MODULE", "a.ts"));
+        v.put_node(n("m_b", "MODULE", "b.ts"));
+        v.put_node(n("m_c", "MODULE", "c.ts"));
+        // a⇄b mutual: a.ts imports b.ts AND b.ts imports a.ts.
+        v.put_node(n("ia_b", "IMPORT_BINDING", "a.ts"));
+        v.put_node(n("tb", "FUNCTION", "b.ts"));
+        v.put_node(n("ib_a", "IMPORT_BINDING", "b.ts"));
+        v.put_node(n("ta", "FUNCTION", "a.ts"));
+        // a→c one-directional: a.ts imports c.ts, but c.ts imports nothing back.
+        v.put_node(n("ia_c", "IMPORT_BINDING", "a.ts"));
+        v.put_node(n("tc", "FUNCTION", "c.ts"));
+        edge(&mut v, "ia_b", "tb", "IMPORTS_FROM");
+        edge(&mut v, "ib_a", "ta", "IMPORTS_FROM");
+        edge(&mut v, "ia_c", "tc", "IMPORTS_FROM");
+
+        let depends_body = "depends(Msrc, Mdst) :- edge(Isrc, Idst, \"IMPORTS_FROM\"), \
+             attr(Isrc, \"file\", Fsrc), attr(Idst, \"file\", Fdst), \
+             node(Msrc, \"MODULE\"), attr(Msrc, \"file\", Fsrc), \
+             node(Mdst, \"MODULE\"), attr(Mdst, \"file\", Fdst), neq(Msrc, Mdst).";
+        let src = format!(
+            "{depends_body}\nmutual(A, B) :- depends(A, B), depends(B, A), lt(A, B)."
+        );
+        let stats = Stats { total_nodes: 9, total_edges: 3, ..Default::default() };
+        let eval = evaluate(&v, &src, stats, EvalLimits::none(), EventLog::discard())
+            .expect("evaluate");
+
+        let pairs: Vec<std::collections::BTreeSet<u128>> = eval
+            .facts("mutual")
+            .iter()
+            .map(|r| [r[0].as_id().unwrap(), r[1].as_id().unwrap()].into_iter().collect())
+            .collect();
+        assert_eq!(pairs.len(), 1, "exactly one mutual pair (lt dedups the symmetric direction)");
+        assert_eq!(
+            pairs[0],
+            [id_of("m_a"), id_of("m_b")].into_iter().collect(),
+            "the mutual pair is {{m_a, m_b}}; m_c (one-directional dependent) is not mutual"
+        );
+    }
 }
