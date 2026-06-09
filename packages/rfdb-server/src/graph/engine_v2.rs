@@ -689,6 +689,47 @@ impl GraphEngineV2 {
         Ok(witness)
     }
 
+    /// why-NOT (`explain_gap`): explain why `predicate(key)` is NOT derived — the unbound
+    /// premise that, if supplied, would close the gap (spec §6 coverage). The engine wrapper
+    /// for [`crate::datalog2::exec::explain_gap`], mirroring [`Self::explain_datalog_fact`]
+    /// exactly (one pinned snapshot → BorrowedLsmStorageView → full eval + head-bound replay).
+    /// `None` when the fact is actually derivable (no gap) or no clause head matches the key.
+    /// The companion to [`Self::sim_datalog_v2`]: this names the missing premise, sim verifies
+    /// that adding it produces the fact.
+    pub fn explain_datalog_gap(
+        &self,
+        source: &str,
+        predicate: &str,
+        key: &[crate::datalog::Value],
+        limits: crate::datalog::EvalLimits,
+    ) -> std::result::Result<
+        Option<crate::datalog2::exec::GapWitness>,
+        crate::datalog2::EvalError,
+    > {
+        let program = crate::datalog2::parser_ext::parse_ext_program(source)?;
+        let strat = crate::datalog2::stratify::stratify(&program)?;
+        let rules = program.rules();
+        let snapshot = self.snapshot();
+        let all_nodes = self.store.find_nodes_at(&snapshot, None, None);
+        let mut nodes_by_type: std::collections::HashMap<String, u64> =
+            std::collections::HashMap::new();
+        for n in &all_nodes {
+            *nodes_by_type.entry(n.node_type.clone()).or_insert(0) += 1;
+        }
+        let stats = crate::datalog2::builtin::Stats {
+            total_nodes: all_nodes.len() as u64,
+            total_edges: self.store.edge_count_at(&snapshot) as u64,
+            nodes_by_type,
+        };
+        let plans = crate::datalog2::plan::plan_program(&rules, &strat, &stats)?;
+        let view =
+            crate::datalog2::storage_glue::BorrowedLsmStorageView::new(&self.store, snapshot);
+        let gap = crate::datalog2::exec::explain_gap::<crate::datalog2::tag::BoolTag>(
+            &view, &plans, &rules, &strat, predicate, key, limits,
+        )?;
+        Ok(gap)
+    }
+
     /// Incremental `@materialize` write-back (Gate D): re-materialize a program but commit
     /// only the EDGE DELTA against what is already in the graph, instead of rewriting every
     /// derived edge each run. Returns `(added, removed)` edge counts.
@@ -2284,6 +2325,49 @@ mod tests {
         let after = engine.eval_datalog_v2(src, "depends", EvalLimits::none()).expect("re-eval");
         assert!(after.is_empty(), "sim must NOT commit the hypothetical edit; got {after:?}");
         assert!(!engine.node_exists(99), "the hypothetical node must never reach the committed store");
+    }
+
+    /// `explain_datalog_gap` (engine why-NOT) names the unbound premise of a missing fact — the
+    /// companion to `sim_datalog_v2`. Program: `calls_someone(F) :- node(F,"FUNCTION"),
+    /// edge(F,_,"CALLS")`. f1 calls f2 (so it holds); f3 is a FUNCTION calling nothing, so the
+    /// gap is exactly the missing CALLS edge.
+    #[test]
+    fn explain_datalog_gap_names_missing_premise_through_engine() {
+        use crate::datalog::{EvalLimits, Value};
+        let src = "calls_someone(F) :- node(F, \"FUNCTION\"), edge(F, X, \"CALLS\").";
+
+        let mut engine = GraphEngineV2::create_ephemeral();
+        engine.add_nodes(vec![
+            make_v1_node(1, "FUNCTION", "f1", "a.ts"),
+            make_v1_node(2, "FUNCTION", "f2", "a.ts"),
+            make_v1_node(3, "FUNCTION", "f3", "a.ts"),
+        ]);
+        engine.add_edges(
+            vec![EdgeRecord {
+                src: 1,
+                dst: 2,
+                edge_type: Some("CALLS".to_string()),
+                version: "main".to_string(),
+                metadata: None,
+                deleted: false,
+            }],
+            false,
+        );
+        engine.flush().unwrap();
+
+        // f3 is a FUNCTION but calls nobody → calls_someone(f3) gaps at the CALLS edge premise.
+        let gap = engine
+            .explain_datalog_gap(src, "calls_someone", &[Value::Id(3)], EvalLimits::none())
+            .expect("no error")
+            .expect("calls_someone(f3) is NOT derivable → a gap");
+        assert_eq!(gap.failing_predicate, "edge", "the unbound premise is the CALLS edge");
+        assert!(!gap.failing_is_negative, "a MISSING positive premise (closes by adding)");
+
+        // f1 DOES call someone → no gap.
+        let none = engine
+            .explain_datalog_gap(src, "calls_someone", &[Value::Id(1)], EvalLimits::none())
+            .expect("no error");
+        assert!(none.is_none(), "calls_someone(f1) is derivable → no gap");
     }
 
     #[test]
