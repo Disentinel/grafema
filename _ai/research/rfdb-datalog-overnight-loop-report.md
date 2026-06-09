@@ -80,12 +80,16 @@ mis-run would replace a known-stale graph with a fresh-but-wrong one.
    `DERIVES_FROM` (the consumer side; fewer call-sites than re-pointing all queries) and emit a
    one-shot migration. Low risk once the name is chosen.
 
-2. **sim() production vertical.** Engine primitive proven; the wire (`GraphEngineV2::sim_datalog_v2`
-   + server `SimDatalog{source, hypothetical:[edits]}` + TS/MCP `sim_fact`, mirroring `explain_fact`)
-   is a multi-file feature. Needs an **OverlayStorageView** (base view + in-memory hypothetical Δ) to
-   run sim over the real `LsmStorageView`. *I held off because it's a supervised vertical with no
-   consumer until you greenlight the MCP surface.* Recommendation: green-light — it's the natural
-   companion to `explain_fact` and directly powers "what fact closes this gap?" for agents.
+2. **sim() production vertical.** Engine primitive proven AND **now proven on the REAL store**:
+   `OverlayStorageView` (base `&dyn StorageView` ∪ in-memory hypothetical Δ) is built + verified
+   (`f5ab49f2`) — `sim_on_real_store_predicts_new_depends_without_commit` runs a hypothetical
+   `IMPORTS_FROM` through `depends.dl`/`maintain_incremental` over a live `LsmStorageView` and confirms
+   `sim ≡ scratch(base ∪ Δ)` (622→623 depends) + non-destructive, on real data. The overlay was the
+   risky infra piece and it's done + verified (additive, Gate A unaffected). **REMAINING = only the
+   product surface:** `GraphEngineV2::sim_datalog_v2` (thin wrapper over the proven path) + server
+   `SimDatalog{source, hypothetical:[edits]}` + TS/MCP `sim_fact`, mirroring the `explain_fact` vertical.
+   *Held off ONLY on the user-facing surface (a product decision).* Recommendation: green-light — the
+   hard part is done; it directly powers "what fact closes this gap?" for agents.
 
 3. **Plugin system shape.** *(GROUNDED — corrects an earlier under-grounded version of this item;
    see `datalog-v2-in-the-plugin-pipeline.md`.)* The plugin system already exists: `packages/lang-spec/`
