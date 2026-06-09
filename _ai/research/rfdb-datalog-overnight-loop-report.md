@@ -17,14 +17,29 @@ for you. Running ledger stays in `rfdb-datalog-RESUME.md`; this is the morning-s
 | `c2071947` | coverage-as-negation on the REAL corpus — CALL resolution probe | 13634 CALL sites, 16.2% direct-resolved (honest Layout-A lower bound) |
 | `6e316f49` | gaps: DERIVED_FROM vs DERIVES_FROM edge-vocab fork | 17385 dark edges |
 
-## Real-code findings (the loop ran v2 queries on the actual dogfood graph)
+## ⚠️ STALENESS CAVEAT (added 2026-06-09 after verification)
 
-1. **A real circular dependency in `core`** — surfaced by a bounded mutual-import query
-   (`mutual(A,B) :- depends(A,B), depends(B,A), lt(A,B)`) run on `.grafema/grafema.rfdb` (622 depends
-   pairs → exactly 1 mutual pair, 35.8s):
-   > `packages/core/src/errors/GrafemaError.ts` ⇄ `packages/core/src/diagnostics/DiagnosticCollector.ts`
-   GrafemaError and DiagnosticCollector import each other. Actionable architectural smell, found via
-   the graph, not grep. Probe: `datalog2::differential::yaml_extract_tests::probe_real_mutual_module_imports`.
+**The dogfood graph `.grafema/grafema.rfdb` is ~3 months stale: snapshot dated Mar 4 2026, HEAD is
+Jun 9 2026.** Since then `packages/core` was renamed to `packages/util` and the dead JS-analysis
+pipeline was removed (commit `e063fc4e`). So EVERY "real-code" number below is **as-of-Mar-4**, not
+current HEAD — the v2 ENGINE behavior they exercise is valid, but the specific paths/counts are stale.
+For current numbers, re-run `analyze` to refresh the graph (not done autonomously: a full pipeline run
+is heavy + the data-plane was flaky this session). Lesson recorded:
+[[feedback_verify_graph_freshness_before_real_code_claims]].
+
+## Real-code findings (the loop ran v2 queries on the actual — but STALE — dogfood graph)
+
+1. **A real source-level import cycle** (NOT a runtime circular dependency) — surfaced by a bounded
+   mutual-import query (`mutual(A,B) :- depends(A,B), depends(B,A), lt(A,B)`) on the Mar-4 graph (622
+   depends pairs → exactly 1 mutual pair, 35.8s). The graph reported the OLD `core` paths; **verified
+   against current HEAD** the pair is real but renamed:
+   > `packages/util/src/errors/GrafemaError.ts` ⇄ `packages/util/src/diagnostics/DiagnosticCollector.ts`
+   **Nuance (verified by reading the source):** `GrafemaError.ts:17` imports `Diagnostic` as
+   `import type` (erased at compile time → no runtime edge); only `DiagnosticCollector.ts:20` imports
+   `GrafemaError` as a runtime value. So it is a source-level **type↔value** cycle TypeScript handles
+   fine — a mild smell, not a runtime circular dependency. The v2 query correctly found the mutual
+   IMPORTS_FROM; the severity is lower than "circular dependency" implied. Probe:
+   `datalog2::differential::yaml_extract_tests::probe_real_mutual_module_imports`.
 2. **A planner q-error** (recursive transitive-closure over-estimates → spurious E-PLAN-003) — see
    `_ai/gaps.md`; roadmap task #4. The full transitive-closure cycle query can't run on the real graph
    until the estimator is fixed; the bounded 2-cycle query above is the safe workaround that does run.
