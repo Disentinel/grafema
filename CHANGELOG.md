@@ -12,6 +12,7 @@ All notable changes to this project will be documented in this file.
 - perf(plugins): Datalog-based reimplementations of `shape-tracker`, `type-inference`, `method-call-resolver`, and `shape-verifier`, opt-in behind the `GRAFEMA_DATALOG_PLUGINS` env flag (comma-separated plugin names); the default path is byte-for-byte the existing legacy logic, relocated into `*Legacy` functions (REG-1128 Phase 3b+3c, #265)
 
 ### Bug Fixes
+- fix(cli): `grafema init` / `analyze --quickstart` discovery and `grafema query "X in foo.mts"` file-scope routing now recognize `.mts`/`.cts` TypeScript files — both CLI extension lists had drifted from the orchestrator's authoritative `is_js_ts_file` set, so ESM/CJS TypeScript files were silently excluded from the generated analysis glob and misrouted as symbol scopes (#378)
 - fix(rfdb): edge-lifting attributes hidden nodes to their actual containing function/class by walking `CONTAINS` ancestry, instead of collapsing them onto whichever visible node happens to be first in the file (REG-1132, #265)
 - fix(doctor): `checkServerStatus` removes a stale RFDB socket file so a leftover socket from a crashed server no longer blocks a clean restart (REG-1129, #265)
 
