@@ -127,18 +127,43 @@ byte-identical + alloc-free. Proof `incremental_insertion_work_proportional_to_d
      is now end-to-end queryable from an MCP client** — `explain_fact(predicate="depends", key=[A,B])` explains a
      DEPENDS_ON edge. Follow-up (optional): an MCP↔server integration test (needs a running RFDB server; the Rust
      dispatch + REG-1144 invariant already cover the seam structurally).
-   - 🟡 **sim() — ENGINE PRIMITIVE PROVEN** (`0c2e9c3b`): sim = `maintain_incremental` over a
-     HYPOTHETICAL `BaseDelta` against an overlay view, read-only (no flush/write-back). The
-     incremental engine already has the machinery — sim is the maintain seam in read-only mode.
-     PoC `sim_hypothetical_edit_predicts_derived_facts_without_mutating_base` pins both soundness
-     obligations: (1) SOUND `sim(base,Δ) ≡ scratch(base ∪ Δ)` + predicted edge closes the reach
-     gap; (2) NON-DESTRUCTIVE base+prev eval byte-identical after the what-if. It is the
-     hypothetical-questions dual of `why()` (PUG why-not, apparatus §6): a gap names the unbound
-     premise, sim proves a candidate fact closes it. REMAINING (supervised): production wire
-     vertical — `GraphEngineV2::sim_datalog_v2` + server `SimDatalog{source, hypothetical:[edits]}`
-     command + TS/MCP `sim_fact` tool, mirroring the `explain_fact` vertical. datalog2::exec 21/21.
-   - ⬜ OTHER Gate E (parallel): **stdlib** (more bundled .dl); **docs + events-schema.md**;
-     **Appendix-B migrations**.
+   - ✅ **COVERAGE TRIAD — ENGINE-COMPLETE (overnight 2026-06-09; only MCP wire remains, gated).**
+     Three additive `GraphEngineV2` methods realize the apparatus §6 coverage thesis, all verified:
+     · **why()** = `explain_datalog_fact` (`9a80550a`, pre-existing) — why a fact IS derived.
+     · **why-not()** = `explain_datalog_gap` (`1b3c24ba` datalog2 `explain_gap`/`Executor::witness_gap` +
+       `fd15310d` engine method) — head-bound replay finds the FIRST body premise where bindings drop
+       to empty = the unbound premise. `GapWitness{rule, satisfied, failing_predicate, failing_is_negative}`
+       (negative ⇒ a present blocker, close by REMOVING; positive ⇒ missing, close by ADDING).
+       why() and why-not SHARE the head-bound-replay machinery (one reads the surviving row, the other
+       where rows died). datalog2::exec 22/22, engine_v2 49/49.
+     · **sim()** = `sim_datalog_v2` (`f5ab49f2` `OverlayStorageView` + `29b261f4` engine method +
+       `32697b14` hypothetical NODES too) — read-only what-if over `OverlayStorageView`
+       (base `&dyn StorageView` ∪ in-memory hypothetical nodes/edges), returns `sim ∖ base`. **Proven
+       `sim ≡ scratch(base ∪ Δ)` on the REAL store** (`sim_on_real_store_…`, 622→623 depends).
+     · **The loop, proven end-to-end on the REAL graph** (`a483d43f`,
+       `coverage_loop_why_not_then_sim_closes_a_real_depends_gap`, 115s): gap `depends(utils.ts ⇏
+       Main.hs)` → why-not names the missing import premise → sim adds it → depends now holds ⇒ GAP CLOSED.
+     REMAINING (supervised, ONE gated piece): the MCP/server wire — server `SimDatalog` +
+     `ExplainDatalogGap` Request variants + TS/MCP `sim_fact`/`explain_gap` tools, a trivial dispatch
+     over the three methods, mirroring the shipped `explain_fact` vertical. *UX note:* why-not reports
+     the LEAF failing leg (`attr` file-match), not the ROOT premise (`IMPORTS_FROM`) — raise to root when
+     wiring the coverage tool.
+   - 🟡 **planner q-error (Gate D residual, task #4) — SPEC'D + ANCHORED, NOT fixed** (`24467200`):
+     `derived_estimate` (`plan.rs:668`) sizes EVERY derived leg at the global `total_nodes.max(total_edges)`
+     magnitude (no per-predicate cardinality), so a recursive transitive-closure rule is mis-estimated to
+     ~M^1.5 and trips E-PLAN-003 (`dep_reach` ⇒ 54.3M vs ~622 base pairs). Characterization test
+     `recursive_closure_spuriously_tripped_by_global_magnitude_qerror` (MUST flip when fixed). Fix spec in
+     `_ai/gaps.md`: thread per-predicate cardinality stratum-bottom-up; recursive self-leg uses base-case
+     estimate. NOT done autonomously: estimate-accuracy is NOT gated by Gate A (correctness) → supervised.
+     Bounded queries that avoid the recursion run fine (mutual-import 2-cycle found 1 real cycle:
+     `core/errors/GrafemaError.ts ⇄ core/diagnostics/DiagnosticCollector.ts`, now `util/*` — graph snapshot
+     was ~3mo stale, verified at HEAD; one direction is `import type` ⇒ source-cycle not runtime).
+   - ⬜ OTHER Gate E (parallel): **stdlib** (more bundled .dl — but real edge-vocab shows clean relational
+     candidates beyond depends are scarce, EDB stays imperative, see `datalog-v2-in-the-plugin-pipeline.md`);
+     **docs + events-schema.md**; **Appendix-B migrations**. **Plugin system = `packages/lang-spec`** already
+     exists; v2 migration = additive IDB `.dl` on post-project crossFile edges, depends.dl the template.
+   - **HANDOFF DIGEST**: `_ai/research/rfdb-datalog-overnight-loop-report.md` (decisions waiting on you +
+     ⚠ the dogfood graph `.grafema/grafema.rfdb` is ~3mo stale — re-`analyze` for current numbers).
 
 ## ▶ (historical) NEXT after compaction — resume here
 
