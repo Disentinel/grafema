@@ -117,6 +117,13 @@ on `.grafema/grafema.rfdb`). The differential surfaced these gaps, mapped to spe
 - **Impact:** the 17k emitted `DERIVED_FROM` edges are dark to type-tracing, the archetype
   notation/describe rendering, and any query keyed on `DERIVES_FROM`. Two synonyms split the dataflow
   vocabulary. (Also unclaimed: `AWAITS` 1016, `HAS_EFFECT` 27.)
+- **RE-VERIFIED at HEAD (2026-06-09):** the original counts came from a Mar-4 graph snapshot
+  (`.grafema/grafema.rfdb`, ~3mo stale — see report staleness caveat), but the FORK ITSELF is live at
+  current HEAD: `DERIVED_FROM` is still emitted by `js-analyzer/src/Rules/Expressions.hs`
+  (lines 109/675/685/716/726/757/819/830) + `haskell-analyzer`; `DERIVES_FROM` is still consumed by
+  `types/src/edges.ts`, `util/src/queries/{types,traceValues}.ts`, `util/src/storage/backends/typeValidation.ts`,
+  `util/src/notation/archetypes.ts` (6 emitter files vs 20 consumer files, grep at HEAD). Only the
+  exact 17385 COUNT is stale; the cross-layer split stands and still needs the canonical-name decision.
 - **Why NOT fixed autonomously (2026-06-09 overnight loop):** picking a canonical name is a cross-layer
   vocabulary decision — rename in the analyzers (changes analyzer OUTPUT → needs reanalyze, risks
   dataflow) OR add the synonym to types+queries+cli (two names forever). Analyzer-output change is not
