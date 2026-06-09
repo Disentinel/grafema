@@ -921,6 +921,21 @@ fn walk_node_inner(node: &ruby_prism::Node<'_>, ctx: &mut Ctx) {
                                 extra: HashMap::new(),
                             };
                             ctx.emit_declaration(gn);
+
+                            // HAS_METHOD edge from the enclosing class/module —
+                            // an alias is a real method of its class (callable
+                            // on instances just like the original), so it must
+                            // be linked like a def'd method (see DefNode arm).
+                            if parent_name.is_some() {
+                                let parent_scope =
+                                    ctx.scope_stack[ctx.scope_stack.len() - 1].clone();
+                                ctx.emit_edge(GraphEdge {
+                                    src: parent_scope,
+                                    dst: alias_id,
+                                    edge_type: "HAS_METHOD".to_string(),
+                                    metadata: HashMap::new(),
+                                });
+                            }
                         }
                     }
                     return;
@@ -2224,7 +2239,7 @@ fn walk_node_inner(node: &ruby_prism::Node<'_>, ctx: &mut Ctx) {
             let node_id = semantic_id(&ctx.file, "FUNCTION", &new_name, parent_name.as_deref(), None);
 
             let gn = GraphNode {
-                id: node_id,
+                id: node_id.clone(),
                 node_type: "FUNCTION".to_string(),
                 name: new_name,
                 file: ctx.file.clone(),
@@ -2233,10 +2248,26 @@ fn walk_node_inner(node: &ruby_prism::Node<'_>, ctx: &mut Ctx) {
                 metadata: HashMap::from([
                     Ctx::meta_text("kind", "alias"),
                     Ctx::meta_text("alias_of", &old_name),
+                    // An alias takes the current default visibility, exactly
+                    // like a def — carry it so the public-API surface is
+                    // consistent with def/alias_method (call form).
+                    Ctx::meta_text("visibility", ctx.visibility.as_str()),
                 ]),
                 extra: HashMap::new(),
             };
             ctx.emit_declaration(gn);
+
+            // HAS_METHOD edge from the enclosing class/module — an alias is a
+            // real method of its class, linked like a def'd method.
+            if parent_name.is_some() {
+                let parent_scope = ctx.scope_stack[ctx.scope_stack.len() - 1].clone();
+                ctx.emit_edge(GraphEdge {
+                    src: parent_scope,
+                    dst: node_id,
+                    edge_type: "HAS_METHOD".to_string(),
+                    metadata: HashMap::new(),
+                });
+            }
         }
 
         ruby_prism::Node::AliasGlobalVariableNode { .. } => {
@@ -3462,6 +3493,82 @@ mod tests {
                 i.metadata.get("category").map(|v| v == "parse_error").unwrap_or(false)
             ), "ISSUE node should have category=parse_error");
         }
+    }
+
+    // 19. alias_method (call form) links the alias to its class via HAS_METHOD
+    #[test]
+    fn test_alias_method_emits_has_method() {
+        let a = analyze("class Foo\n  def authenticate; end\n  alias_method :auth, :authenticate\nend");
+
+        // The alias must exist as a FUNCTION node with alias metadata.
+        let functions = find_nodes_by_type(&a, "FUNCTION");
+        let alias = functions
+            .iter()
+            .find(|f| f.name == "auth")
+            .expect("alias_method should create a FUNCTION node named auth");
+        assert_eq!(alias.metadata.get("kind").unwrap(), "alias");
+        assert_eq!(alias.metadata.get("alias_of").unwrap(), "authenticate");
+
+        // The alias must be a member of class Foo, exactly like a def'd method.
+        let has_method = find_edges_by_type(&a, "HAS_METHOD");
+        assert!(
+            has_method
+                .iter()
+                .any(|e| e.src == "test.rb->CLASS->Foo" && e.dst == alias.id),
+            "expected HAS_METHOD edge from CLASS Foo to alias auth, got: {:?}",
+            has_method.iter().map(|e| (&e.src, &e.dst)).collect::<Vec<_>>()
+        );
+    }
+
+    // 20. alias (keyword form) links the alias to its class via HAS_METHOD
+    //     and carries visibility metadata like every other method.
+    #[test]
+    fn test_alias_keyword_emits_has_method_and_visibility() {
+        let a = analyze("class Foo\n  def process_request; end\n  alias old_process process_request\nend");
+
+        let functions = find_nodes_by_type(&a, "FUNCTION");
+        let alias = functions
+            .iter()
+            .find(|f| f.name == "old_process")
+            .expect("alias keyword should create a FUNCTION node named old_process");
+        assert_eq!(alias.metadata.get("kind").unwrap(), "alias");
+        assert_eq!(alias.metadata.get("alias_of").unwrap(), "process_request");
+        // Consistency with def / alias_method: an alias takes the current
+        // default visibility, so it must carry the visibility metadata key.
+        assert_eq!(
+            alias.metadata.get("visibility").expect("keyword alias should carry visibility metadata like def/alias_method"),
+            "public"
+        );
+
+        let has_method = find_edges_by_type(&a, "HAS_METHOD");
+        assert!(
+            has_method
+                .iter()
+                .any(|e| e.src == "test.rb->CLASS->Foo" && e.dst == alias.id),
+            "expected HAS_METHOD edge from CLASS Foo to alias old_process, got: {:?}",
+            has_method.iter().map(|e| (&e.src, &e.dst)).collect::<Vec<_>>()
+        );
+    }
+
+    // 21. A top-level alias (no enclosing class/module) gets NO HAS_METHOD,
+    //     mirroring how top-level def behaves.
+    #[test]
+    fn test_top_level_alias_has_no_has_method() {
+        let a = analyze("def original; end\nalias renamed original\nalias_method :also_renamed, :original");
+
+        // Aliases still produce FUNCTION nodes...
+        let functions = find_nodes_by_type(&a, "FUNCTION");
+        assert!(functions.iter().any(|f| f.name == "renamed"));
+        assert!(functions.iter().any(|f| f.name == "also_renamed"));
+
+        // ...but no HAS_METHOD edge, since there is no enclosing class/module
+        // (the file-level MODULE is excluded by enclosing_class_or_module).
+        let has_method = find_edges_by_type(&a, "HAS_METHOD");
+        assert!(
+            has_method.is_empty(),
+            "top-level aliases must not emit HAS_METHOD, got: {:?}",
+            has_method.iter().map(|e| (&e.src, &e.dst)).collect::<Vec<_>>()
+        );
     }
 
     // =========================================================================
