@@ -8,28 +8,7 @@
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { join } from 'path';
 import * as vscode from 'vscode';
-
-/** All file extensions supported by Grafema's analyzers. */
-const SUPPORTED_EXTENSIONS = [
-  // JavaScript / TypeScript
-  'js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx',
-  // Rust
-  'rs',
-  // Java / Kotlin
-  'java', 'kt', 'kts',
-  // Python
-  'py', 'pyi',
-  // Go
-  'go',
-  // Haskell
-  'hs',
-  // C / C++
-  'c', 'h', 'cpp', 'hpp', 'cc', 'cxx', 'hxx', 'hh', 'inl', 'ipp', 'tpp', 'txx',
-  // Swift / Objective-C
-  'swift', 'm', 'mm',
-  // BEAM (Elixir / Erlang)
-  'ex', 'exs', 'erl', 'hrl',
-];
+import { generateConfigYAML } from './initConfig';
 
 /** Project marker files → language name. */
 const PROJECT_MARKERS = [
@@ -54,36 +33,6 @@ const PROJECT_MARKERS = [
 export function detectProjectType(root: string): string[] {
   const detected = PROJECT_MARKERS.filter(m => existsSync(join(root, m.file)));
   return [...new Set(detected.map(m => m.lang))];
-}
-
-/**
- * Generate config.yaml content as a template string.
- * No YAML library needed — fixed format.
- */
-function generateConfigYAML(): string {
-  const extensions = SUPPORTED_EXTENSIONS.join(',');
-  return `# Grafema Configuration
-# Supported: JS/TS, Rust, Java, Kotlin, Python, Go, Haskell, C/C++, Swift, Elixir/Erlang
-
-version: 1
-root: ".."
-include:
-  - "**/*.{${extensions}}"
-exclude:
-  - "**/*.test.*"
-  - "**/__tests__/**"
-  - "**/node_modules/**"
-  - "**/dist/**"
-  - "**/build/**"
-  - "**/target/**"
-  - "**/vendor/**"
-  - "**/.git/**"
-
-# services:  # Explicit service definitions (overrides auto-discovery)
-#   - name: "api"
-#     path: "."
-#     entryPoint: "src/index.ts"
-`;
 }
 
 export interface InitResult {
