@@ -939,12 +939,81 @@ fn walk_impl_item(item: &syn::ImplItem, ctx: &mut Ctx) {
             ctx.pop_scope();
             ctx.enclosing_fn = prev_fn;
         }
-        syn::ImplItem::Const(_) => {}
-        syn::ImplItem::Type(_) => {}
+        syn::ImplItem::Const(c) => walk_impl_const(c, ctx),
+        syn::ImplItem::Type(t) => walk_impl_type(t, ctx),
         syn::ImplItem::Macro(_) => {}
         syn::ImplItem::Verbatim(_) => {}
         _ => panic!("rust_analyzer: unhandled ImplItem variant"),
     }
+}
+
+/// Emit an associated constant (`const N: usize = 4;`) declared in an `impl`
+/// block as a `VARIABLE` node (`kind=const`), mirroring the top-level
+/// [`walk_const`]. It is nested under the enclosing `IMPL_BLOCK` scope, so
+/// `emit_declaration` wires the `CONTAINS`/`DECLARES` membership edges that make
+/// it answer "what does this impl define" queries. The const initializer is
+/// walked so any references inside it are still captured.
+fn walk_impl_const(c: &syn::ImplItemConst, ctx: &mut Ctx) {
+    let ident = c.ident.to_string();
+    let (line, col) = ctx.span_line_col(c.ident.span());
+    let parent = ctx.scope_id().to_string();
+    let node_id = semantic_id(&ctx.file, "VARIABLE", &ident, Some(&parent), None);
+
+    let mut meta = HashMap::from([
+        Ctx::meta_text("kind", "const"),
+        Ctx::meta_bool("mutable", false),
+        Ctx::meta_text("visibility", vis_to_text(&c.vis)),
+    ]);
+    let type_str = type_to_name(&c.ty);
+    if type_str != "<type>" {
+        meta.insert("typeAnnotation".to_string(), serde_json::Value::String(type_str));
+    }
+
+    ctx.emit_declaration(GraphNode {
+        id: node_id,
+        node_type: "VARIABLE".to_string(),
+        name: ident,
+        file: ctx.file.clone(),
+        line, column: col,
+        end_line: ctx.span_end_line_col(c.ident.span()).0, end_column: ctx.span_end_line_col(c.ident.span()).1,
+        exported: is_pub(&c.vis),
+        metadata: meta,
+        extra: HashMap::new(),
+    });
+
+    walk_expr(&c.expr, ctx);
+}
+
+/// Emit an associated type binding (`type Item = u32;`) declared in an `impl`
+/// block as an `ASSOCIATED_TYPE` node, nested under the enclosing `IMPL_BLOCK`
+/// scope. The concrete bound type is recorded in `aliasedType` metadata — this
+/// is exactly what dispatch / associated-type resolution needs to map a trait's
+/// `Self::Item` back to a concrete type.
+fn walk_impl_type(t: &syn::ImplItemType, ctx: &mut Ctx) {
+    let ident = t.ident.to_string();
+    let (line, col) = ctx.span_line_col(t.ident.span());
+    let parent = ctx.scope_id().to_string();
+    let node_id = semantic_id(&ctx.file, "ASSOCIATED_TYPE", &ident, Some(&parent), None);
+
+    let mut meta = HashMap::from([
+        Ctx::meta_text("visibility", vis_to_text(&t.vis)),
+    ]);
+    let bound = type_to_name(&t.ty);
+    if bound != "<type>" {
+        meta.insert("aliasedType".to_string(), serde_json::Value::String(bound));
+    }
+
+    ctx.emit_declaration(GraphNode {
+        id: node_id,
+        node_type: "ASSOCIATED_TYPE".to_string(),
+        name: ident,
+        file: ctx.file.clone(),
+        line, column: col,
+        end_line: ctx.span_end_line_col(t.ident.span()).0, end_column: ctx.span_end_line_col(t.ident.span()).1,
+        exported: is_pub(&t.vis),
+        metadata: meta,
+        extra: HashMap::new(),
+    });
 }
 
 fn walk_trait(t: &syn::ItemTrait, ctx: &mut Ctx) {
@@ -975,24 +1044,95 @@ fn walk_trait(t: &syn::ItemTrait, ctx: &mut Ctx) {
 
     ctx.push_scope(&node_id, ScopeKind::Trait);
     for trait_item in &t.items {
-        if let syn::TraitItem::Fn(m) = trait_item {
-            let mname = m.sig.ident.to_string();
-            let (ml, mc) = ctx.span_line_col(m.sig.ident.span());
-            let sig_id = semantic_id(&ctx.file, "TYPE_SIGNATURE", &mname, Some(&node_id), None);
-            ctx.emit_node(GraphNode {
-                id: sig_id,
-                node_type: "TYPE_SIGNATURE".to_string(),
-                name: mname,
-                file: ctx.file.clone(),
-                line: ml, column: mc,
-                end_line: ctx.span_end_line_col(m.sig.ident.span()).0, end_column: ctx.span_end_line_col(m.sig.ident.span()).1,
-                exported: false,
-                metadata: HashMap::new(),
-                extra: HashMap::new(),
-            });
+        match trait_item {
+            syn::TraitItem::Fn(m) => {
+                let mname = m.sig.ident.to_string();
+                let (ml, mc) = ctx.span_line_col(m.sig.ident.span());
+                let sig_id = semantic_id(&ctx.file, "TYPE_SIGNATURE", &mname, Some(&node_id), None);
+                ctx.emit_node(GraphNode {
+                    id: sig_id,
+                    node_type: "TYPE_SIGNATURE".to_string(),
+                    name: mname,
+                    file: ctx.file.clone(),
+                    line: ml, column: mc,
+                    end_line: ctx.span_end_line_col(m.sig.ident.span()).0, end_column: ctx.span_end_line_col(m.sig.ident.span()).1,
+                    exported: false,
+                    metadata: HashMap::new(),
+                    extra: HashMap::new(),
+                });
+            }
+            syn::TraitItem::Const(c) => walk_trait_const(c, &node_id, ctx),
+            syn::TraitItem::Type(ty) => walk_trait_type(ty, &node_id, ctx),
+            // Macro / Verbatim — opaque, no graph node.
+            _ => {}
         }
     }
     ctx.pop_scope();
+}
+
+/// Emit a trait's required associated constant (`const SIDES: u32;`) as a
+/// `VARIABLE` node (`kind=const`) nested under the `TRAIT` scope. This mirrors
+/// the impl-side associated const so "what does this trait require" and "what
+/// does this impl provide" sit in the same shape. A `default` value, when
+/// present (`const N: u32 = 3;`), is walked for references.
+fn walk_trait_const(c: &syn::TraitItemConst, trait_id: &str, ctx: &mut Ctx) {
+    let ident = c.ident.to_string();
+    let (line, col) = ctx.span_line_col(c.ident.span());
+    let node_id = semantic_id(&ctx.file, "VARIABLE", &ident, Some(trait_id), None);
+
+    let mut meta = HashMap::from([
+        Ctx::meta_text("kind", "const"),
+        Ctx::meta_bool("mutable", false),
+    ]);
+    let type_str = type_to_name(&c.ty);
+    if type_str != "<type>" {
+        meta.insert("typeAnnotation".to_string(), serde_json::Value::String(type_str));
+    }
+
+    ctx.emit_node(GraphNode {
+        id: node_id,
+        node_type: "VARIABLE".to_string(),
+        name: ident,
+        file: ctx.file.clone(),
+        line, column: col,
+        end_line: ctx.span_end_line_col(c.ident.span()).0, end_column: ctx.span_end_line_col(c.ident.span()).1,
+        exported: false,
+        metadata: meta,
+        extra: HashMap::new(),
+    });
+
+    if let Some((_, expr)) = &c.default {
+        walk_expr(expr, ctx);
+    }
+}
+
+/// Emit a trait's associated type (`type Item;` or `type Item = Foo;`) as an
+/// `ASSOCIATED_TYPE` node nested under the `TRAIT` scope. When the trait
+/// supplies a default binding, the concrete type is recorded in `aliasedType`.
+fn walk_trait_type(t: &syn::TraitItemType, trait_id: &str, ctx: &mut Ctx) {
+    let ident = t.ident.to_string();
+    let (line, col) = ctx.span_line_col(t.ident.span());
+    let node_id = semantic_id(&ctx.file, "ASSOCIATED_TYPE", &ident, Some(trait_id), None);
+
+    let mut meta = HashMap::new();
+    if let Some((_, ty)) = &t.default {
+        let bound = type_to_name(ty);
+        if bound != "<type>" {
+            meta.insert("aliasedType".to_string(), serde_json::Value::String(bound));
+        }
+    }
+
+    ctx.emit_node(GraphNode {
+        id: node_id,
+        node_type: "ASSOCIATED_TYPE".to_string(),
+        name: ident,
+        file: ctx.file.clone(),
+        line, column: col,
+        end_line: ctx.span_end_line_col(t.ident.span()).0, end_column: ctx.span_end_line_col(t.ident.span()).1,
+        exported: false,
+        metadata: meta,
+        extra: HashMap::new(),
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -1971,6 +2111,62 @@ mod tests {
             .find(|n| n.node_type == "RECORD_FIELD" && n.name == "i")
             .unwrap();
         assert_eq!(i.metadata.get("typeAnnotation"), Some(&serde_json::json!("u32")));
+    }
+
+    // Associated items in `impl` blocks are members of the implementing type
+    // exactly like methods are. Methods already emit FUNCTION + CONTAINS, but
+    // associated constants (`const N: usize = 4;`) and associated types
+    // (`type Item = u32;`) were silently dropped, so "what does this impl
+    // define / what is the concrete binding of associated type Item" queries
+    // came back empty.
+    #[test]
+    fn test_impl_associated_const() {
+        let fa = parse_and_analyze("struct Foo; impl Foo { pub const MAX: usize = 100; }");
+        assert!(has_node(&fa, "VARIABLE", "MAX"), "associated const emitted as VARIABLE");
+        let c = fa.nodes.iter()
+            .find(|n| n.node_type == "VARIABLE" && n.name == "MAX")
+            .unwrap();
+        assert_eq!(c.metadata.get("kind"), Some(&serde_json::json!("const")), "kind=const");
+        assert_eq!(c.metadata.get("typeAnnotation"), Some(&serde_json::json!("usize")), "declared type");
+        assert_eq!(c.metadata.get("visibility"), Some(&serde_json::json!("pub")), "pub visibility");
+        assert!(c.exported, "pub associated const is exported");
+        assert!(has_edge(&fa, "CONTAINS", "IMPL_BLOCK", "VARIABLE"), "impl block CONTAINS the const");
+    }
+
+    #[test]
+    fn test_impl_associated_type() {
+        let fa = parse_and_analyze("struct Foo; impl Iterator for Foo { type Item = u32; }");
+        assert!(has_node(&fa, "ASSOCIATED_TYPE", "Item"), "associated type emitted");
+        let t = fa.nodes.iter()
+            .find(|n| n.node_type == "ASSOCIATED_TYPE" && n.name == "Item")
+            .unwrap();
+        // The concrete bound type is what dispatch/type resolution needs.
+        assert_eq!(t.metadata.get("aliasedType"), Some(&serde_json::json!("u32")), "concrete bound type");
+        assert!(has_edge(&fa, "CONTAINS", "IMPL_BLOCK", "ASSOCIATED_TYPE"), "impl block CONTAINS the assoc type");
+    }
+
+    // Trait definitions declare the associated-item contract. The Fn case
+    // already emits a TYPE_SIGNATURE; const/type declarations were dropped.
+    #[test]
+    fn test_trait_associated_const_and_type() {
+        let fa = parse_and_analyze(
+            "pub trait Shape { const SIDES: u32; type Out = f64; fn area(&self) -> f64; }",
+        );
+        assert!(has_node(&fa, "VARIABLE", "SIDES"), "trait associated const");
+        let c = fa.nodes.iter()
+            .find(|n| n.node_type == "VARIABLE" && n.name == "SIDES")
+            .unwrap();
+        assert_eq!(c.metadata.get("kind"), Some(&serde_json::json!("const")), "kind=const");
+        assert_eq!(c.metadata.get("typeAnnotation"), Some(&serde_json::json!("u32")), "declared type");
+
+        assert!(has_node(&fa, "ASSOCIATED_TYPE", "Out"), "trait associated type");
+        let t = fa.nodes.iter()
+            .find(|n| n.node_type == "ASSOCIATED_TYPE" && n.name == "Out")
+            .unwrap();
+        assert_eq!(t.metadata.get("aliasedType"), Some(&serde_json::json!("f64")), "default bound type");
+
+        assert!(has_edge(&fa, "CONTAINS", "TRAIT", "VARIABLE"), "trait CONTAINS the const");
+        assert!(has_edge(&fa, "CONTAINS", "TRAIT", "ASSOCIATED_TYPE"), "trait CONTAINS the assoc type");
     }
 
     #[test]
