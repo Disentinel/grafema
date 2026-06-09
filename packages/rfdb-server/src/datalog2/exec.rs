@@ -2720,6 +2720,44 @@ mod tests {
         assert_eq!(gap.failing_predicate, "edge", "the deepest gap is the missing R3 edge");
     }
 
+    /// A NEGATED premise that fails is a PRESENT blocker, not a missing fact — the gap closes by
+    /// REMOVING it (`failing_is_negative = true`). Program: `safe(X) :- node(X,"FUNCTION"),
+    /// \+ edge(X,Y,"DANGER")`. f2 has a DANGER edge, so `safe(f2)` is blocked at the anti-join.
+    #[test]
+    fn why_not_flags_a_present_blocker_for_a_negated_premise() {
+        use crate::datalog2::exec::explain_gap;
+        let src = "safe(X) :- node(X, \"FUNCTION\"), \\+ edge(X, _, \"DANGER\").";
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let plans = plan_program(
+            &rules,
+            &strat,
+            &Stats { total_nodes: 2, total_edges: 1, ..Default::default() },
+        )
+        .expect("plan");
+        let mut v = FixtureStorageView::new(1);
+        node(&mut v, "f1", "FUNCTION");
+        node(&mut v, "f2", "FUNCTION");
+        edge(&mut v, "f2", "f1", "DANGER"); // f2 has a DANGER edge → safe(f2) is blocked.
+
+        // safe(f2): NOT derived — blocked by the PRESENT danger edge (close by removing it).
+        let gap = explain_gap::<BoolTag>(
+            &v, &plans, &rules, &strat, "safe", &[Value::Id(id_of("f2"))], EvalLimits::none(),
+        )
+        .expect("no error")
+        .expect("safe(f2) is NOT derivable → a gap");
+        assert_eq!(gap.failing_predicate, "edge", "blocked at the negated DANGER-edge premise");
+        assert!(gap.failing_is_negative, "a PRESENT blocker (close by REMOVING), not a missing premise");
+
+        // safe(f1): no danger edge → derivable, no gap.
+        let none = explain_gap::<BoolTag>(
+            &v, &plans, &rules, &strat, "safe", &[Value::Id(id_of("f1"))], EvalLimits::none(),
+        )
+        .unwrap();
+        assert!(none.is_none(), "safe(f1) holds (no DANGER edge) → no gap");
+    }
+
     // ── DRed phase 1: over-delete candidate set ─────────────────────
 
     /// Pre-load each derived predicate's `Total` from a prior `Evaluation`, keyed by the same

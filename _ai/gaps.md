@@ -181,3 +181,19 @@ on `.grafema/grafema.rfdb`). The differential surfaced these gaps, mapped to spe
 - **In-tree anchor:** `datalog2::plan::tests::recursive_closure_spuriously_tripped_by_global_magnitude_qerror`
   reproduces it deterministically (50 edges, 50M nodes → spurious E-PLAN-003) and MUST FLIP to assert
   success when this fix lands.
+
+### why-not (witness_gap) edge case: a NAMED existential var solely in a negated literal (2026-06-09)
+
+- **Observed:** `explain_gap` for `safe(X) :- node(X,"FUNCTION"), \+ edge(X, Y, "DANGER")` (Y a NAMED
+  var used ONLY inside the negation) returned `None` (no gap) for a node that IS blocked by a present
+  DANGER edge — i.e. why-not silently failed to detect a real gap. The WILDCARD form
+  `\+ edge(X, _, "DANGER")` works correctly (gap detected, `failing_is_negative = true`).
+- **Context:** a var appearing only in a negated literal is non-standard / unsafe Datalog (it cannot be
+  positively bound); the wildcard `_` is the correct existential form (and the form the orphan_function
+  rule uses). The anti-join fast path (`build_anti_join_set`/`project_anti_join_key`) is shaped for
+  wildcard/bound positions; a named free var in negation likely falls outside it in the replay path.
+- **NOT a blocker** (the standard wildcard form works), but a FOOTGUN: why-not should not SILENTLY
+  return "no gap" for a non-standard-but-parseable rule. **Follow-up options:** (a) normalize a
+  named-only-in-negation var to a wildcard at parse/plan (and/or reject as unsafe with a coded error);
+  (b) verify whether full eval agrees with the replay on the named-Y semantics (unverified here). Test
+  `why_not_flags_a_present_blocker_for_a_negated_premise` pins the correct wildcard behavior.
