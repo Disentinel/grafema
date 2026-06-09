@@ -232,6 +232,7 @@ Edges:
 | ASYNC_BLOCK | `async { ... }` | (none) | Future-producing block |
 | UNSAFE_BLOCK | `unsafe { ... }` | (none) | Opt-out of safety checks |
 | TYPE_ALIAS | `type Foo = ...` | (none) | Type synonym |
+| TRAIT_ALIAS | `trait Foo = Bar + Baz;` | (none) | Trait synonym (nightly `trait_alias`); bounds in `aliasedType` metadata |
 
 ### Rust-Specific Node Types (no JS analogue)
 

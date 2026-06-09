@@ -488,7 +488,7 @@ fn walk_item(item: &syn::Item, ctx: &mut Ctx) {
         syn::Item::ForeignMod(_) => {}
         syn::Item::Macro(_) => {}
         syn::Item::Union(u) => walk_union(u, ctx),
-        syn::Item::TraitAlias(_) => {}
+        syn::Item::TraitAlias(t) => walk_trait_alias(t, ctx),
         syn::Item::Verbatim(_) => {}
         _ => panic!("rust_analyzer: unhandled Item variant: {}", item_variant_name(item)),
     }
@@ -1105,6 +1105,60 @@ fn walk_type_alias(t: &syn::ItemType, ctx: &mut Ctx) {
         metadata: HashMap::new(),
         extra: HashMap::new(),
     });
+}
+
+// ---------------------------------------------------------------------------
+// Trait alias
+// ---------------------------------------------------------------------------
+
+/// Emit a `TRAIT_ALIAS` node for a `trait Foo = Bar + Baz;` declaration.
+///
+/// A trait alias is a top-level named declaration — the trait analog of a
+/// `type Foo = ...;` alias (see [`walk_type_alias`]). Without this, the
+/// declaration was invisible to the graph: "what does this file define" and
+/// trait-bound lookups could not see it. The right-hand bounds are stored
+/// verbatim in `aliasedType` metadata (purely syntactic, not resolved) so
+/// "aliases to what" queries have the source text to work with.
+fn walk_trait_alias(t: &syn::ItemTraitAlias, ctx: &mut Ctx) {
+    let ident = t.ident.to_string();
+    let (line, col) = ctx.span_line_col(t.ident.span());
+    let node_id = semantic_id(&ctx.file, "TRAIT_ALIAS", &ident, None, None);
+
+    let mut metadata = HashMap::from([Ctx::meta_text("visibility", vis_to_text(&t.vis))]);
+    let bounds = type_param_bounds_to_name(&t.bounds);
+    if !bounds.is_empty() {
+        let (k, v) = Ctx::meta_text("aliasedType", &bounds);
+        metadata.insert(k, v);
+    }
+
+    ctx.emit_declaration(GraphNode {
+        id: node_id,
+        node_type: "TRAIT_ALIAS".to_string(),
+        name: ident,
+        file: ctx.file.clone(),
+        line, column: col,
+        end_line: ctx.span_end_line_col(t.ident.span()).0, end_column: ctx.span_end_line_col(t.ident.span()).1,
+        exported: is_pub(&t.vis),
+        metadata,
+        extra: HashMap::new(),
+    });
+}
+
+/// Render a `+`-separated trait-bound list (`Send + Sync + 'a`) back to source
+/// text. Trait bounds become their path, lifetimes their `'name`; anything
+/// syn can't classify is skipped rather than emitting a placeholder.
+fn type_param_bounds_to_name(
+    bounds: &syn::punctuated::Punctuated<syn::TypeParamBound, syn::token::Plus>,
+) -> String {
+    bounds
+        .iter()
+        .filter_map(|b| match b {
+            syn::TypeParamBound::Trait(tb) => Some(path_to_string(&tb.path)),
+            syn::TypeParamBound::Lifetime(lt) => Some(format!("'{}", lt.ident)),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join(" + ")
 }
 
 // ---------------------------------------------------------------------------
@@ -2083,6 +2137,37 @@ mod tests {
         let fa = parse_and_analyze("pub trait Foo { fn bar(&self); fn baz(&self); }");
         assert!(has_node(&fa, "TRAIT", "Foo"));
         assert_eq!(count_nodes(&fa, "TYPE_SIGNATURE"), 2);
+    }
+
+    #[test]
+    fn test_trait_alias() {
+        // `trait X = A + B;` declares a named, referenceable entity. It must
+        // surface as its own node so "what does this file define" and trait
+        // bound lookups can see it — mirroring how `type X = ...` emits TYPE_ALIAS.
+        let fa = parse_and_analyze("pub trait Service = Send + Sync;");
+        assert!(has_node(&fa, "TRAIT_ALIAS", "Service"), "TRAIT_ALIAS node emitted");
+        assert_eq!(count_nodes(&fa, "TRAIT_ALIAS"), 1);
+        let node = fa
+            .nodes
+            .iter()
+            .find(|n| n.node_type == "TRAIT_ALIAS" && n.name == "Service")
+            .unwrap();
+        assert!(node.exported, "pub trait alias is exported");
+        assert_eq!(node.metadata.get("visibility"), Some(&serde_json::json!("pub")));
+        // Syntactic bounds preserved for "aliases to what" queries.
+        assert_eq!(node.metadata.get("aliasedType"), Some(&serde_json::json!("Send + Sync")));
+    }
+
+    #[test]
+    fn test_private_trait_alias() {
+        let fa = parse_and_analyze("trait Local = Clone;");
+        let node = fa
+            .nodes
+            .iter()
+            .find(|n| n.node_type == "TRAIT_ALIAS" && n.name == "Local")
+            .expect("private trait alias still emitted");
+        assert!(!node.exported, "non-pub trait alias is not exported");
+        assert_eq!(node.metadata.get("aliasedType"), Some(&serde_json::json!("Clone")));
     }
 
     #[test]
