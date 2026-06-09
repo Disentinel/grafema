@@ -85,11 +85,15 @@ mis-run would replace a known-stale graph with a fresh-but-wrong one.
    (`f5ab49f2`) — `sim_on_real_store_predicts_new_depends_without_commit` runs a hypothetical
    `IMPORTS_FROM` through `depends.dl`/`maintain_incremental` over a live `LsmStorageView` and confirms
    `sim ≡ scratch(base ∪ Δ)` (622→623 depends) + non-destructive, on real data. The overlay was the
-   risky infra piece and it's done + verified (additive, Gate A unaffected). **REMAINING = only the
-   product surface:** `GraphEngineV2::sim_datalog_v2` (thin wrapper over the proven path) + server
-   `SimDatalog{source, hypothetical:[edits]}` + TS/MCP `sim_fact`, mirroring the `explain_fact` vertical.
-   *Held off ONLY on the user-facing surface (a product decision).* Recommendation: green-light — the
-   hard part is done; it directly powers "what fact closes this gap?" for agents.
+   risky infra piece and it's done + verified (additive, Gate A unaffected). **`GraphEngineV2::sim_datalog_v2`
+   is ALSO done now** (`29b261f4`): the read-only engine method (snapshot → BorrowedLsmStorageView →
+   OverlayStorageView → eval base+overlay → `sim ∖ base`), verified deterministically
+   (`sim_datalog_v2_predicts_new_depends_without_committing`, engine_v2 48/48). **REMAINING = ONLY the
+   product surface:** server `SimDatalog{source, hypothetical:[edits]}` dispatch calling
+   `engine.sim_datalog_v2` + TS/MCP `sim_fact`, mirroring the `explain_fact` vertical exactly — now a
+   ~30-min wire job, not a feature. *Held off ONLY on the user-facing surface (a product decision: the
+   edit-input wire shape).* Recommendation: green-light — the entire engine layer is done + verified;
+   it directly powers "what fact closes this gap?" for agents.
 
 3. **Plugin system shape.** *(GROUNDED — corrects an earlier under-grounded version of this item;
    see `datalog-v2-in-the-plugin-pipeline.md`.)* The plugin system already exists: `packages/lang-spec/`
