@@ -642,4 +642,70 @@ mod smoke {
              (a deployment-layer coverage gap) so fe2 reaches nothing"
         );
     }
+
+    /// Module dependency-CYCLE detection, built directly on the shipped `depends.dl` body.
+    ///
+    /// This is the clean "second migration" the plugin-pipeline note argues for: a derivation
+    /// whose join keys are already first-class facts (the `file` attr), so it lowers to pure
+    /// Datalog with no fuzzy resolver atom. It also demonstrates v2 recursion stacked on a
+    /// derived relation — `depends/2` (the bundled rule) → transitive closure `dep_reach/2`
+    /// → `cycle/1 :- dep_reach(M, M)` — a real, actionable architectural finding (import cycles)
+    /// expressed in three lines on top of an existing materialized edge.
+    ///
+    /// Topology: a.ts → b.ts → c.ts → a.ts is a 3-module cycle; x.ts imports into the cycle
+    /// (`depends(m_x, m_a)`) but nothing imports back, so x is a dependent, NOT a cycle member.
+    #[test]
+    fn module_dependency_cycles_via_transitive_closure_over_depends() {
+        let n = |sid: &str, ty: &str, file: &str| NodeRow {
+            id: id_of(sid),
+            node_type: ty.to_string(),
+            name: sid.to_string(),
+            file: file.to_string(),
+        };
+        let mut v = FixtureStorageView::new(1);
+        // One MODULE per file (the depends.dl endpoint→module join key).
+        v.put_node(n("m_a", "MODULE", "a.ts"));
+        v.put_node(n("m_b", "MODULE", "b.ts"));
+        v.put_node(n("m_c", "MODULE", "c.ts"));
+        v.put_node(n("m_x", "MODULE", "x.ts"));
+        // Import-binding endpoints: each IMPORTS_FROM goes from a node in the importer's file
+        // to a node in the imported file; depends.dl maps each endpoint to its file's MODULE.
+        v.put_node(n("ia_b", "IMPORT_BINDING", "a.ts")); // a.ts imports from b.ts
+        v.put_node(n("tb", "FUNCTION", "b.ts"));
+        v.put_node(n("ib_c", "IMPORT_BINDING", "b.ts")); // b.ts imports from c.ts
+        v.put_node(n("tc", "FUNCTION", "c.ts"));
+        v.put_node(n("ic_a", "IMPORT_BINDING", "c.ts")); // c.ts imports from a.ts  → closes cycle
+        v.put_node(n("ta", "FUNCTION", "a.ts"));
+        v.put_node(n("ix_a", "IMPORT_BINDING", "x.ts")); // x.ts imports from a.ts  → dependent only
+        v.put_node(n("ta2", "FUNCTION", "a.ts"));
+        edge(&mut v, "ia_b", "tb", "IMPORTS_FROM");
+        edge(&mut v, "ib_c", "tc", "IMPORTS_FROM");
+        edge(&mut v, "ic_a", "ta", "IMPORTS_FROM");
+        edge(&mut v, "ix_a", "ta2", "IMPORTS_FROM");
+
+        // The shipped depends/2 body (sans @materialize) + transitive closure + self-reach.
+        let src = r#"depends(Msrc, Mdst) :- edge(Isrc, Idst, "IMPORTS_FROM"),
+                                            attr(Isrc, "file", Fsrc), attr(Idst, "file", Fdst),
+                                            node(Msrc, "MODULE"), attr(Msrc, "file", Fsrc),
+                                            node(Mdst, "MODULE"), attr(Mdst, "file", Fdst),
+                                            neq(Msrc, Mdst).
+                     dep_reach(A, B) :- depends(A, B).
+                     dep_reach(A, B) :- depends(A, C), dep_reach(C, B).
+                     cycle(M) :- dep_reach(M, M)."#;
+        let stats = Stats { total_nodes: 12, total_edges: 4, ..Default::default() };
+        let eval = evaluate(&v, src, stats, EvalLimits::none(), EventLog::discard())
+            .expect("evaluate");
+
+        let cycle: std::collections::HashSet<u128> = eval
+            .facts("cycle")
+            .iter()
+            .map(|r| r[0].as_id().unwrap())
+            .collect();
+        assert_eq!(
+            cycle,
+            [id_of("m_a"), id_of("m_b"), id_of("m_c")].into_iter().collect(),
+            "exactly the 3 modules on the a→b→c→a import cycle are flagged; m_x depends INTO \
+             the cycle but is not a member (nothing imports back from the cycle to x.ts)"
+        );
+    }
 }
