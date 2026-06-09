@@ -1437,4 +1437,95 @@ guarantees:
         assert_eq!(base_set, base_after, "the what-if must not mutate the committed base");
         eprintln!("=== sim on real store: SOUND + NON-DESTRUCTIVE ===\n");
     }
+
+    /// The apparatus §6 COVERAGE LOOP, end-to-end on the REAL graph: take a module pair that
+    /// the graph does NOT relate, ask why-NOT (which premise is missing), then sim adding that
+    /// premise and confirm it closes the gap. This is "query the graph, not the code" applied to
+    /// a gap: the graph itself says what fact would have to exist, and proves supplying it works.
+    ///
+    ///   gap  := depends(m1, m2) is NOT derived (m1 does not depend on m2)
+    ///   why-not(gap) → the unbound premise is an IMPORTS_FROM bridging their files
+    ///   sim(add that import) → depends(m1, m2) now holds  ⇒ the gap is closed
+    ///
+    /// Run: cargo test --manifest-path packages/rfdb-server/Cargo.toml --lib --release \
+    ///        datalog2::differential::yaml_extract_tests::coverage_loop_why_not_then_sim_closes_a_real_depends_gap -- --ignored --nocapture
+    #[test]
+    #[ignore = "manual real-data coverage-loop proof; run with --ignored (heavy: full depends.dl ×3)"]
+    fn coverage_loop_why_not_then_sim_closes_a_real_depends_gap() {
+        use crate::datalog2::exec::explain_gap;
+        use crate::datalog2::parser_ext::parse_ext_program;
+        use crate::datalog2::plan::plan_program;
+        use crate::datalog2::storage_glue::{EdgeRow, FixtureStorageView, NodeRow, OverlayStorageView};
+        use crate::datalog2::stratify::stratify;
+        use crate::datalog2::tag::BoolTag;
+        use std::collections::BTreeSet;
+
+        let dataset = repo_path(".grafema/grafema.rfdb");
+        assert!(dataset.join("db_config.json").exists(), "no dataset at {}", dataset.display());
+        let tmp = tempfile::tempdir().expect("temp");
+        let work = tmp.path().join("grafema.rfdb");
+        copy_dir_all(&dataset, &work).expect("copy");
+        let _ = std::fs::remove_file(work.join("LOCK"));
+        let manifest = ManifestStore::open(&work).expect("manifest");
+        let store = MultiShardStore::open(&work, &manifest).expect("store");
+        let snap = store.snapshot(&manifest);
+
+        let modules = store.find_nodes_at(&snap, Some("MODULE"), None);
+        let all_nodes = store.find_nodes_at(&snap, None, None);
+        let total_nodes = all_nodes.len() as u64;
+        let total_edges = store.iter_all_edges_at(&snap).len() as u64;
+        let mut nodes_by_type: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+        for n in &all_nodes {
+            *nodes_by_type.entry(n.node_type.clone()).or_insert(0) += 1;
+        }
+        let stats = Stats { total_nodes, total_edges, nodes_by_type };
+        let base = LsmStorageView::capture(Arc::new(store), &manifest);
+
+        let prog = parse_ext_program(crate::datalog2::stdlib::DEPENDS_DL).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let plans = plan_program(&rules, &strat, &stats).expect("plan");
+
+        // Base depends, to pick a pair the graph does NOT relate.
+        let base_eval = evaluate(&base, crate::datalog2::stdlib::DEPENDS_DL, stats.clone(), EvalLimits::none(), EventLog::discard())
+            .expect("base depends eval");
+        let base_depends: BTreeSet<(u128, u128)> = base_eval
+            .facts("depends").iter().filter_map(|r| Some((r.first()?.as_id()?, r.get(1)?.as_id()?))).collect();
+
+        // m1, m2: distinct files, NOT already related.
+        let m1 = modules.iter().find(|n| !n.file.is_empty()).expect("a module with a file");
+        let m2 = modules
+            .iter()
+            .find(|n| !n.file.is_empty() && n.file != m1.file && !base_depends.contains(&(m1.id, n.id)))
+            .expect("a second module m1 does not already depend on");
+        eprintln!("\n=== coverage loop: gap depends({} ⇏ {}) ===", m1.file, m2.file);
+
+        // ── why-NOT: name the missing premise. ──
+        let gap = explain_gap::<BoolTag>(
+            &base, &plans, &rules, &strat, "depends", &[Value::Id(m1.id), Value::Id(m2.id)], EvalLimits::none(),
+        )
+        .expect("explain_gap ran")
+        .expect("depends(m1,m2) is NOT derived → a gap exists");
+        eprintln!(
+            "why-not: failing premise = {} (negative={}) ; satisfied prefix len = {}",
+            gap.failing_predicate, gap.failing_is_negative, gap.satisfied.len()
+        );
+
+        // ── sim: add the missing premise (a new import binding in m1's file → m2). ──
+        let nid = u128::from_le_bytes(blake3::hash(b"coverage:hypo:import").as_bytes()[0..16].try_into().unwrap());
+        let mut delta = FixtureStorageView::new(0);
+        delta.put_node(NodeRow { id: nid, node_type: "IMPORT_BINDING".into(), name: "hypo".into(), file: m1.file.clone() });
+        delta.put_edge(EdgeRow { src: nid, dst: m2.id, edge_type: "IMPORTS_FROM".into() });
+        let overlay = OverlayStorageView::new(&base, delta);
+        let sim_eval = evaluate(&overlay, crate::datalog2::stdlib::DEPENDS_DL, stats, EvalLimits::none(), EventLog::discard())
+            .expect("sim eval");
+        let sim_depends: BTreeSet<(u128, u128)> = sim_eval
+            .facts("depends").iter().filter_map(|r| Some((r.first()?.as_id()?, r.get(1)?.as_id()?))).collect();
+
+        // The loop closes: why-not flagged the gap, sim's added premise derives the fact.
+        assert!(!base_depends.contains(&(m1.id, m2.id)), "precondition: the pair was a genuine gap");
+        assert!(sim_depends.contains(&(m1.id, m2.id)), "sim's hypothetical import CLOSES the gap → depends now holds");
+        eprintln!("sim: depends({} → {}) now holds ⇒ GAP CLOSED. coverage loop proven on real code.", m1.file, m2.file);
+        eprintln!("=== end coverage loop ===\n");
+    }
 }
