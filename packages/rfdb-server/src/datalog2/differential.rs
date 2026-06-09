@@ -1327,4 +1327,114 @@ guarantees:
         }
         eprintln!("=== end mutual probe ===\n");
     }
+
+    /// sim() on the REAL store — proves the `OverlayStorageView` lets the incremental engine
+    /// run a what-if edit against a live `LsmStorageView` WITHOUT committing, and that the
+    /// prediction is sound. The fixture version (`exec.rs`) proved the maintain seam; this
+    /// proves the overlay plumbing scales to the real `storage_v2` read path.
+    ///
+    /// Hypothetical: add one `IMPORTS_FROM` edge bridging two existing modules' files (so
+    /// `depends.dl` derives a new module→module pair). Then assert the two soundness
+    /// obligations on real data:
+    ///   (1) SOUND — `sim ≡ scratch(base ∪ Δ)`: maintain over the overlay equals a full
+    ///       from-scratch eval of the overlay.
+    ///   (2) NON-DESTRUCTIVE — the committed base re-evaluates byte-identically afterwards.
+    /// (depends.dl is the program because it is non-recursive — a recursive closure would trip
+    /// the planner q-error E-PLAN-003 on the real graph, see `_ai/gaps.md`.)
+    ///
+    /// Run: cargo test --manifest-path packages/rfdb-server/Cargo.toml --lib --release \
+    ///        datalog2::differential::yaml_extract_tests::sim_on_real_store_predicts_new_depends_without_commit -- --ignored --nocapture
+    #[test]
+    #[ignore = "manual real-data sim/overlay proof; run with --ignored (heavy: full depends.dl ×2)"]
+    fn sim_on_real_store_predicts_new_depends_without_commit() {
+        use crate::datalog2::exec::maintain_incremental;
+        use crate::datalog2::increment::diff_base;
+        use crate::datalog2::parser_ext::parse_ext_program;
+        use crate::datalog2::plan::plan_program;
+        use crate::datalog2::storage_glue::{EdgeRow, FixtureStorageView, NodeRow, OverlayStorageView};
+        use crate::datalog2::stratify::stratify;
+        use crate::datalog2::tag::BoolTag;
+
+        let dataset = repo_path(".grafema/grafema.rfdb");
+        assert!(dataset.join("db_config.json").exists(), "no dataset at {}", dataset.display());
+        let tmp = tempfile::tempdir().expect("temp");
+        let work = tmp.path().join("grafema.rfdb");
+        copy_dir_all(&dataset, &work).expect("copy");
+        let _ = std::fs::remove_file(work.join("LOCK"));
+        let manifest = ManifestStore::open(&work).expect("manifest");
+        let store = MultiShardStore::open(&work, &manifest).expect("store");
+        let snap = store.snapshot(&manifest);
+
+        // Two existing MODULE nodes with distinct, non-empty files — the endpoints of the
+        // hypothetical cross-file import.
+        let modules = store.find_nodes_at(&snap, Some("MODULE"), None);
+        let m1 = modules.iter().find(|n| !n.file.is_empty()).expect("a module with a file");
+        let m2 = modules
+            .iter()
+            .find(|n| !n.file.is_empty() && n.file != m1.file)
+            .expect("a second module with a different file");
+        let (f1, f2) = (m1.file.clone(), m2.file.clone());
+        eprintln!("\n=== sim on real store: hypothetical {f1} ⇒ {f2} ===");
+
+        // Real-cardinality stats so the planner keys the join off IMPORTS_FROM (not a cross-product).
+        let all_nodes = store.find_nodes_at(&snap, None, None);
+        let total_nodes = all_nodes.len() as u64;
+        let total_edges = store.iter_all_edges_at(&snap).len() as u64;
+        let mut nodes_by_type: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+        for n in &all_nodes {
+            *nodes_by_type.entry(n.node_type.clone()).or_insert(0) += 1;
+        }
+        let stats = Stats { total_nodes, total_edges, nodes_by_type };
+
+        let base = LsmStorageView::capture(Arc::new(store), &manifest);
+
+        // The hypothetical world: two fresh import endpoints carrying f1/f2 + the bridging edge.
+        let nid = |s: &str| -> u128 {
+            u128::from_le_bytes(blake3::hash(s.as_bytes()).as_bytes()[0..16].try_into().unwrap())
+        };
+        let mut delta = FixtureStorageView::new(base.generation());
+        delta.put_node(NodeRow { id: nid("sim:hypo:isrc"), node_type: "IMPORT_BINDING".into(), name: "sim_isrc".into(), file: f1.clone() });
+        delta.put_node(NodeRow { id: nid("sim:hypo:idst"), node_type: "FUNCTION".into(), name: "sim_idst".into(), file: f2.clone() });
+        delta.put_edge(EdgeRow { src: nid("sim:hypo:isrc"), dst: nid("sim:hypo:idst"), edge_type: "IMPORTS_FROM".into() });
+        let overlay = OverlayStorageView::new(&base, delta);
+
+        // Program plumbing (non-recursive depends).
+        let prog = parse_ext_program(crate::datalog2::stdlib::DEPENDS_DL).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let plans = plan_program(&rules, &strat, &stats).expect("plan");
+
+        // base eval (the committed world), the hypothetical base delta, and sim = maintain.
+        let base_eval = evaluate(&base, crate::datalog2::stdlib::DEPENDS_DL, stats.clone(), EvalLimits::none(), EventLog::discard())
+            .expect("base depends eval");
+        let base_delta = diff_base(&base, &overlay);
+        let sim = maintain_incremental::<BoolTag>(
+            &base_eval, &base, &overlay, &base_delta, &plans, &rules, &strat, EvalLimits::none(),
+        )
+        .expect("sim maintain")
+        .expect("depends is single-stratum monotone → Some, not a recompute fallback");
+
+        // scratch eval of the hypothetical world.
+        let scratch = evaluate(&overlay, crate::datalog2::stdlib::DEPENDS_DL, stats, EvalLimits::none(), EventLog::discard())
+            .expect("overlay scratch eval");
+
+        // (1) SOUND.
+        let pair = |e: &crate::datalog2::Evaluation| -> std::collections::BTreeSet<(u128, u128)> {
+            e.facts("depends").iter().filter_map(|r| Some((r.first()?.as_id()?, r.get(1)?.as_id()?))).collect()
+        };
+        let (sim_set, scratch_set, base_set) = (pair(&sim), pair(&scratch), pair(&base_eval));
+        assert_eq!(sim_set, scratch_set, "sim must equal scratch(base ∪ hypothetical) on the real store");
+        // (the hypothetical took effect: the new pair (m1,m2) appears, and it grew the relation)
+        assert!(sim_set.contains(&(m1.id, m2.id)), "sim predicts the new depends({f1} → {f2})");
+        assert!(sim_set.len() >= base_set.len(), "an additive hypothetical never shrinks depends");
+        eprintln!(
+            "base depends: {} | sim depends: {} | new pair present: {} | sim≡scratch: OK",
+            base_set.len(), sim_set.len(), sim_set.contains(&(m1.id, m2.id))
+        );
+
+        // (2) NON-DESTRUCTIVE: the committed base re-evaluates identically.
+        let base_after = pair(&evaluate(&base, crate::datalog2::stdlib::DEPENDS_DL, Stats::default(), EvalLimits::none(), EventLog::discard()).expect("re-eval base"));
+        assert_eq!(base_set, base_after, "the what-if must not mutate the committed base");
+        eprintln!("=== sim on real store: SOUND + NON-DESTRUCTIVE ===\n");
+    }
 }

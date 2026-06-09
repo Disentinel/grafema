@@ -803,6 +803,103 @@ impl StorageView for FixtureStorageView {
     }
 }
 
+// ── Read-only hypothetical overlay (sim / what-if) ─────────────────
+
+/// A read-only OVERLAY of a hypothetical in-memory delta on top of a base [`StorageView`] —
+/// the substrate for `sim()` (what-if queries) over the REAL store WITHOUT committing.
+///
+/// Every read returns `base ∪ delta`. It is the missing piece that lets the incremental
+/// maintenance engine run a hypothetical edit against a live `LsmStorageView`: pass the
+/// overlay as the `cur_view` to `maintain_incremental` with the same delta as the
+/// `BaseDelta`, and the engine computes the derived facts of the hypothetical world while
+/// the committed store is never touched.
+///
+/// Intended for ADDITIVE hypotheticals (new nodes/edges). The delta SHOULD be disjoint from
+/// the base (the caller is asking "what if I ADD this fact", and asserts it is genuinely
+/// absent), so the union needs no cross-source dedup — a duplicated row would merely be
+/// yielded twice, which set-semantics fact identity collapses, but the disjoint contract
+/// keeps the sorted-run merge honest.
+pub(crate) struct OverlayStorageView<'a> {
+    base: &'a dyn StorageView,
+    delta: FixtureStorageView,
+}
+
+impl<'a> OverlayStorageView<'a> {
+    /// Overlay `delta` (an in-memory fixture holding only the hypothetical nodes/edges) on
+    /// top of `base`. The overlay borrows `base`; `delta` is owned.
+    pub(crate) fn new(base: &'a dyn StorageView, delta: FixtureStorageView) -> Self {
+        Self { base, delta }
+    }
+}
+
+impl<'a> StorageView for OverlayStorageView<'a> {
+    fn generation(&self) -> u64 {
+        // The overlay observes the same committed snapshot as `base`, plus an uncommitted
+        // hypothetical; it shares the base's version identity.
+        self.base.generation()
+    }
+
+    fn sorted_run(&self, rel: Relation, order: SortOrder) -> Box<dyn Iterator<Item = Row> + '_> {
+        // Both legs are individually sorted in `order` (base by storage, delta by the
+        // fixture's BTreeMap/sort), so a k-way merge of the two preserves the run contract.
+        let base_rows: Vec<Row> = self.base.sorted_run(rel, order).collect();
+        let delta_rows: Vec<Row> = self.delta.sorted_run(rel, order).collect();
+        Box::new(KMerge::new(vec![base_rows, delta_rows], order))
+    }
+
+    fn scan_nodes_by_type(&self, ty: &str) -> Box<dyn Iterator<Item = NodeRow> + '_> {
+        // `scan_nodes_by_type` carries no order contract (unlike sorted_run), so a plain
+        // concatenation of the two generators is sufficient.
+        let mut rows: Vec<NodeRow> = self.base.scan_nodes_by_type(ty).collect();
+        rows.extend(self.delta.scan_nodes_by_type(ty));
+        Box::new(rows.into_iter())
+    }
+
+    fn scan_edges_by_type(
+        &self,
+        ty: &str,
+        order: EdgeOrder,
+    ) -> Box<dyn Iterator<Item = EdgeRow> + '_> {
+        // This path IS a sorted run (forward/reverse), so re-sort the union to keep the
+        // contract — base and delta are each sorted, the few delta rows merge cheaply.
+        let mut rows: Vec<EdgeRow> = self.base.scan_edges_by_type(ty, order).collect();
+        rows.extend(self.delta.scan_edges_by_type(ty, order));
+        match order {
+            EdgeOrder::Forward => {
+                rows.sort_by(|a, b| a.src.cmp(&b.src).then_with(|| a.dst.cmp(&b.dst)))
+            }
+            EdgeOrder::Reverse => {
+                rows.sort_by(|a, b| a.dst.cmp(&b.dst).then_with(|| a.src.cmp(&b.src)))
+            }
+        }
+        Box::new(rows.into_iter())
+    }
+
+    fn edges_from(&self, src: u128, edge_type: &str) -> Vec<EdgeRow> {
+        let mut v = self.base.edges_from(src, edge_type);
+        v.extend(self.delta.edges_from(src, edge_type));
+        v
+    }
+
+    fn edges_to(&self, dst: u128, edge_type: &str) -> Vec<EdgeRow> {
+        let mut v = self.base.edges_to(dst, edge_type);
+        v.extend(self.delta.edges_to(dst, edge_type));
+        v
+    }
+
+    fn get_node(&self, id: u128) -> Option<NodeRow> {
+        // A hypothetical node shadows the base (additive sim never re-keys an existing id,
+        // but prefer the delta to honour an explicit override if one is supplied).
+        self.delta.get_node(id).or_else(|| self.base.get_node(id))
+    }
+
+    fn nodes_by_attr(&self, key: &str, value: &str) -> Vec<NodeRow> {
+        let mut v = self.base.nodes_by_attr(key, value);
+        v.extend(self.delta.nodes_by_attr(key, value));
+        v
+    }
+}
+
 // ── Tests ──────────────────────────────────────────────────────────
 
 #[cfg(test)]
