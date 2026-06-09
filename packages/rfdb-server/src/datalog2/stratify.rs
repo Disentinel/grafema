@@ -184,6 +184,7 @@ const BUILTINS: &[&str] = &[
     "starts_with",
     "not_starts_with",
     "string_contains",
+    "method_suffix",
     "path",
     "parent_function",
     "resolved_import",

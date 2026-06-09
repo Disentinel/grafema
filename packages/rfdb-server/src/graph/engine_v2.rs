@@ -4351,4 +4351,166 @@ mod tests {
             ratio
         );
     }
+
+    /// The 4th q-error layer regression gate (build-once base legs over the REAL LSM read
+    /// path): the bundled method-calls pack at n=20_000 over an ephemeral LSM store —
+    /// the same synthetic topology as `datalog2::stdlib`'s scaling probe — must
+    /// (a) derive EXACTLY the same fact counts as the identical topology evaluated on the
+    /// in-memory `FixtureStorageView` (in-memory fast / LSM slow was the same-algorithm
+    /// differential that isolated per-probe storage cost), and (b) finish far below the
+    /// per-row-probe catastrophe (>900 s on the real graph): 60 s release bound, actual
+    /// time printed.
+    #[test]
+    fn method_calls_pack_on_real_lsm_store_matches_fixture_and_runs_fast() {
+        use crate::datalog::EvalLimits;
+        use crate::datalog2::storage_glue::{EdgeRow, FixtureStorageView, NodeRow};
+
+        fn id_of(semantic_id: &str) -> u128 {
+            u128::from_le_bytes(
+                blake3::hash(semantic_id.as_bytes()).as_bytes()[0..16]
+                    .try_into()
+                    .unwrap(),
+            )
+        }
+
+        // ── The scaling-probe topology at n, built simultaneously as fixture rows and
+        //    as one engine commit batch (identical ids, columns, and edges). ──
+        let n = 20_000usize;
+        let mut fixture = FixtureStorageView::new(1);
+        let mut nodes_v2: Vec<NodeRecordV2> = Vec::new();
+        let mut edges_v2: Vec<EdgeRecordV2> = Vec::new();
+        {
+            let mut add_node = |sid: &str, ty: &str, name: &str, file: &str| {
+                let id = id_of(sid);
+                fixture.put_node(NodeRow {
+                    id,
+                    node_type: ty.to_string(),
+                    name: name.to_string(),
+                    file: file.to_string(),
+                });
+                nodes_v2.push(NodeRecordV2 {
+                    semantic_id: sid.to_string(),
+                    id,
+                    node_type: ty.to_string(),
+                    name: name.to_string(),
+                    file: file.to_string(),
+                    content_hash: 0,
+                    metadata: String::new(),
+                });
+            };
+            // 1000 methods over 600 names: m{0..400} unique, m{400..600} duplicated 3x.
+            let mut mi = 0;
+            for name_idx in 0..600 {
+                let copies = if name_idx < 400 { 1 } else { 3 };
+                for c in 0..copies {
+                    let sid = format!("M{mi}_{c}");
+                    add_node(&sid, "METHOD", &format!("m{name_idx}"), &format!("f{name_idx}.ts"));
+                    mi += 1;
+                }
+            }
+            add_node("CLS", "CLASS", "Cls", "cls.ts");
+            for i in 0..n {
+                let csid = format!("C{i}");
+                add_node(&csid, "CALL", &format!("recv.m{}", i % 600), &format!("app{}.ts", i % 50));
+                if i % 10 == 0 {
+                    add_node(&format!("PA{i}"), "PROPERTY_ACCESS", "recv", "app.ts");
+                    add_node(&format!("RF{i}"), "REFERENCE", "recv", "app.ts");
+                    add_node(&format!("V{i}"), "VARIABLE", "recv", "app.ts");
+                }
+            }
+            let mut add_edge = |src: &str, dst: &str, ty: &str| {
+                fixture.put_edge(EdgeRow {
+                    src: id_of(src),
+                    dst: id_of(dst),
+                    edge_type: ty.to_string(),
+                });
+                edges_v2.push(EdgeRecordV2 {
+                    src: id_of(src),
+                    dst: id_of(dst),
+                    edge_type: ty.to_string(),
+                    metadata: String::new(),
+                });
+            };
+            for name_idx in 400..600 {
+                let first_copy_sid = format!("M{}_0", 400 + (name_idx - 400) * 3);
+                add_edge("CLS", &first_copy_sid, "HAS_METHOD");
+            }
+            for i in (0..n).step_by(10) {
+                let csid = format!("C{i}");
+                add_edge(&csid, &format!("PA{i}"), "DERIVES_FROM");
+                add_edge(&format!("PA{i}"), &format!("RF{i}"), "READS_FROM");
+                add_edge(&format!("RF{i}"), &format!("V{i}"), "READS_FROM");
+                add_edge(&format!("V{i}"), "CLS", "INSTANCE_OF");
+            }
+        }
+
+        // ── Ground truth: the in-memory fixture evaluation. ──
+        let t_fix = Instant::now();
+        let fix_eval = crate::datalog2::evaluate(
+            &fixture,
+            crate::datalog2::stdlib::METHOD_CALLS_DL,
+            crate::datalog2::builtin::Stats::default(),
+            EvalLimits::none(),
+            crate::datalog2::events::EventLog::discard(),
+        )
+        .expect("fixture eval");
+        let dt_fix = t_fix.elapsed();
+        let fix_unique = fix_eval.facts("resolved_unique_call").len();
+        let fix_inst = fix_eval.facts("resolved_method_call").len();
+        eprintln!("method_calls pack @ n={n} in-memory fixture: {dt_fix:?}");
+        assert!(fix_unique > 0 && fix_inst > 0, "both strategies must fire on the fixture");
+
+        // ── The REAL LSM read path: ephemeral engine, one batch commit + flush. ──
+        let mut engine = GraphEngineV2::create_ephemeral();
+        engine
+            .commit_batch_ext(nodes_v2, edges_v2, &[], HashMap::new(), &[])
+            .expect("commit topology");
+        engine.flush().expect("flush");
+
+        let t0 = Instant::now();
+        // Mirror `eval_datalog_v2`'s stats + pinned-view construction exactly.
+        let snapshot = engine.snapshot();
+        let all_nodes = engine.store.find_nodes_at(&snapshot, None, None);
+        let mut nodes_by_type: HashMap<String, u64> = HashMap::new();
+        for nd in &all_nodes {
+            *nodes_by_type.entry(nd.node_type.clone()).or_insert(0) += 1;
+        }
+        let stats = crate::datalog2::builtin::Stats {
+            total_nodes: all_nodes.len() as u64,
+            total_edges: engine.store.edge_count_at(&snapshot) as u64,
+            nodes_by_type,
+        };
+        let view = crate::datalog2::storage_glue::BorrowedLsmStorageView::new(&engine.store, snapshot);
+        let lsm_eval = crate::datalog2::evaluate(
+            &view,
+            crate::datalog2::stdlib::METHOD_CALLS_DL,
+            stats,
+            EvalLimits::none(),
+            crate::datalog2::events::EventLog::discard(),
+        )
+        .expect("LSM eval");
+        let dt = t0.elapsed();
+        let lsm_unique = lsm_eval.facts("resolved_unique_call").len();
+        let lsm_inst = lsm_eval.facts("resolved_method_call").len();
+        eprintln!(
+            "method_calls pack @ n={n} REAL LSM store: {dt:?} \
+             (resolved_unique={lsm_unique}, instance_of={lsm_inst}); \
+             fixture ground truth: resolved_unique={fix_unique}, instance_of={fix_inst}"
+        );
+
+        // (a) Byte-identical fact counts vs the in-memory evaluation of the same topology.
+        assert_eq!(lsm_unique, fix_unique, "resolved_unique_call counts diverge LSM vs fixture");
+        assert_eq!(lsm_inst, fix_inst, "resolved_method_call counts diverge LSM vs fixture");
+
+        // (b) Perf gate (release builds only — debug is uniformly ~10x slower): the
+        // per-row-probe pathology was >900 s on the real graph; 60 s is a generous bound
+        // for n=20k on the real LSM read path.
+        if cfg!(not(debug_assertions)) {
+            assert!(
+                dt < std::time::Duration::from_secs(60),
+                "method_calls pack on the real LSM store took {dt:?} (bound: 60 s)"
+            );
+        }
+    }
 }
+

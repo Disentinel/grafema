@@ -78,6 +78,19 @@ pub const DEFAULT_ITERATION_CAP: usize = 10_000;
 /// rounds are far bigger — keeps its cost-optimized order (no from-scratch regression).
 const DELTA_LEAD_THRESHOLD: usize = 64;
 
+/// Minimum partial-row count for the build-once extensional fast paths in
+/// [`Executor::join_extensional`]. Below it the per-row registry eval runs unchanged: for
+/// a handful of rows the per-row keyed probes are cheaper than one typed scan, and the
+/// threshold keeps generators (seeded with the single empty row) and the small-Δ
+/// incremental legs on their existing, work-proportional path.
+const BUILD_ONCE_MIN_ROWS: usize = 64;
+
+/// Distinct-id count above which the build-once `attr`/bound-id fast path reads its node
+/// rows from ONE full sorted-node pass instead of one point probe per DISTINCT id. Below
+/// it, per-distinct-id probes win (rows often repeat ids — dedup alone cuts probes); above
+/// it, the single sequential scan beats tens of thousands of random LSM point reads.
+const ATTR_DISTINCT_SCAN_THRESHOLD: usize = 1024;
+
 // ── Errors (invariant I5) ──────────────────────────────────────────
 
 /// Stable, machine-readable executor error codes (invariant I5). A silently-empty result
@@ -251,6 +264,10 @@ pub struct GapWitness {
 /// use.
 type BindRow = BTreeMap<String, Value>;
 
+/// A v2 registry builtin eval body — the per-row evaluation function the build-once fast
+/// paths replicate (and defensively fall back to, row by row).
+type BuiltinEval = fn(&dyn StorageView, &mut Batch, &ArgSpec) -> builtin::BuiltinResult<()>;
+
 // ── The executor ───────────────────────────────────────────────────
 
 /// The semi-naive fixpoint executor, parameterized by the provenance tag.
@@ -271,6 +288,11 @@ pub(crate) struct Executor<'v, T: IdempotentTag> {
     limits: EvalLimits,
     /// Semi-naive iteration cap (`E-EXEC-002` on overflow).
     iteration_cap: usize,
+    /// Row-count threshold for the build-once extensional fast paths
+    /// ([`Self::join_extensional`]). [`BUILD_ONCE_MIN_ROWS`] by default; overridable in
+    /// tests so the build-once and per-row paths can be differentially compared on small
+    /// fixtures (`0` forces build-once everywhere, `usize::MAX` forces per-row).
+    build_once_min_rows: usize,
     /// Always-on event log (spec §11). Default is a discarding log: every emit is a no-op
     /// that allocates nothing, so instrumentation in the hot Δ-loop costs nothing when no
     /// sink is wired. `RefCell` so `evaluate(&self, …)` keeps its immutable signature (the
@@ -289,6 +311,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
             delta_view: None,
             limits: EvalLimits::default(),
             iteration_cap: DEFAULT_ITERATION_CAP,
+            build_once_min_rows: BUILD_ONCE_MIN_ROWS,
             events: RefCell::new(EventLog::discard()),
             _tag: PhantomData,
         }
@@ -306,9 +329,20 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
             delta_view: None,
             limits,
             iteration_cap,
+            build_once_min_rows: BUILD_ONCE_MIN_ROWS,
             events: RefCell::new(EventLog::discard()),
             _tag: PhantomData,
         }
+    }
+
+    /// Override the build-once row threshold (test-only): `0` forces the build-once fast
+    /// paths on every eligible base leg; `usize::MAX` forces the per-row path everywhere.
+    /// Both settings MUST commit identical results — the differential property test
+    /// (`build_once_extensional_paths_match_per_row_multisets`) compares them leg by leg.
+    #[cfg(test)]
+    pub(crate) fn with_build_once_min_rows(mut self, n: usize) -> Self {
+        self.build_once_min_rows = n;
+        self
     }
 
     /// Install a delta-base view (builder-style): the view exposing only `ΔB`, the asserted
@@ -1361,57 +1395,483 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
             }
         }
 
+        // ── Set-at-once positive base-leg joins (build-once, the 4th q-error layer) ──
+        //
+        // On the real LSM store every per-row registry eval is a storage probe; a base leg
+        // fed tens of thousands of partial rows becomes as many LSM probes (in-memory fast
+        // / LSM catastrophically slow, same algorithm — per-probe storage cost is the
+        // bottleneck). For the three dominant row-keyed leg shapes the storage side can be
+        // built ONCE (one typed scan / one batched node read) and hash-probed per row —
+        // the extensional twin of [`Self::join_derived`]'s build-once index. Every shape
+        // outside these, and every row whose key cannot be resolved exactly the way the
+        // per-row path would resolve it, keeps the exact per-row eval (correctness floor;
+        // negative legs are served by the set-at-once anti-join above or per row).
+        if !negated && rows.len() >= self.build_once_min_rows {
+            let fast = match lookup_name {
+                "edge" | "incoming" => {
+                    self.join_edge_bound_built_once(lookup_name, def.eval, atom, leg, &rows)
+                }
+                "node" => self.join_node_membership_built_once(def.eval, atom, leg, &rows),
+                "attr" => self.join_attr_bound_id_built_once(def.eval, atom, leg, &rows),
+                _ => None,
+            };
+            if let Some(joined) = fast {
+                return joined;
+            }
+        }
+
         let mut out: Vec<BindRow> = Vec::new();
         for row in rows {
-            // Resolve args → ArgSpec. Free (unbound) variables get sequential output slots;
-            // the slot→variable map lets us write the produced values back into the row.
-            let (spec, slot_vars) = resolve_arg_spec(atom, &row);
-            let mut batch = Batch::new();
-            // The registry eval returns Err only for a genuine planning fault; the planner
-            // already mode-checked every leg, so a runtime Err here is impossible on a
-            // planned leg. If it ever fired, the safe behavior is "no rows" (never a crash).
-            if (def.eval)(self.view, &mut batch, &spec).is_err() {
-                continue;
-            }
-            // Negative base/builtin leg = anti-join. The planner placed it bound-first, so
-            // every captured Var is already bound; any free arg is a wildcard existence
-            // probe. The row survives iff the eval produced NO matching tuple. (Matches are
-            // never bound back — a negated literal contributes membership, not bindings.)
             if negated {
+                // Negative base/builtin leg = anti-join. The planner placed it bound-first,
+                // so every captured Var is already bound; any free arg is a wildcard
+                // existence probe. The row survives iff the eval produced NO matching tuple
+                // (matches are never bound back — a negated literal contributes membership,
+                // not bindings). An eval Err drops the row (the registry eval returns Err
+                // only for a genuine planning fault, impossible on a planned leg).
+                let (spec, _slot_vars) = resolve_arg_spec(atom, &row);
+                let mut batch = Batch::new();
+                if (def.eval)(self.view, &mut batch, &spec).is_err() {
+                    continue;
+                }
                 if batch.rows.is_empty() {
                     out.push(row);
                 }
-                continue;
-            }
-            for produced in &batch.rows {
-                let mut next = row.clone();
-                let mut ok = true;
-                for (slot, var) in &slot_vars {
-                    match produced.get(*slot) {
-                        Some(val) => {
-                            // If the variable was already bound (shared variable across
-                            // legs), the produced value must agree, else the row is dropped.
-                            if let Some(existing) = next.get(var) {
-                                if existing != val {
-                                    ok = false;
-                                    break;
-                                }
-                            } else {
-                                next.insert(var.clone(), val.clone());
-                            }
-                        }
-                        None => {
-                            ok = false;
-                            break;
-                        }
-                    }
-                }
-                if ok {
-                    out.push(next);
-                }
+            } else {
+                self.positive_row_via_eval(def.eval, atom, &row, &mut out);
             }
         }
         out
+    }
+
+    /// Run the registry eval for ONE row of a POSITIVE base/builtin leg and extend it with
+    /// every produced tuple — the exact per-row path of [`Self::join_extensional`], also
+    /// used verbatim as the build-once fast paths' defensive per-row fallback so a row the
+    /// fast path cannot serve gets byte-identical treatment.
+    fn positive_row_via_eval(
+        &self,
+        eval: BuiltinEval,
+        atom: &Atom,
+        row: &BindRow,
+        out: &mut Vec<BindRow>,
+    ) {
+        // Resolve args → ArgSpec. Free (unbound) variables get sequential output slots;
+        // the slot→variable map lets us write the produced values back into the row.
+        let (spec, slot_vars) = resolve_arg_spec(atom, row);
+        let mut batch = Batch::new();
+        // The registry eval returns Err only for a genuine planning fault; the planner
+        // already mode-checked every leg, so a runtime Err here is impossible on a
+        // planned leg. If it ever fired, the safe behavior is "no rows" (never a crash).
+        if eval(self.view, &mut batch, &spec).is_err() {
+            return;
+        }
+        extend_row_with_batch(row, &batch, &slot_vars, out);
+    }
+
+    /// Build-once hash-join for a positive `edge`/`incoming` leg with a constant type and
+    /// at least one row-bound endpoint, or `None` if the leg's shape is not the build-once
+    /// case (the caller then keeps the exact per-row keyed-probe fallback).
+    ///
+    /// Instead of one keyed storage probe per partial row (`O(rows)` LSM probes), this
+    /// makes ONE pass over the typed edge scan, bucketing tuples by the endpoint(s) the
+    /// rows can resolve — `near → [far]`, `far → [near]`, or a `(near, far)` multiplicity
+    /// map when both endpoints are row-bound — then hash-probes per row
+    /// (`O(edges_of_type + rows)`). Bucket `Vec`s preserve the scan's tuple multiset, so
+    /// the fast path produces exactly the rows (and row multiplicities) the per-row evals
+    /// would have. An adjacency map for one edge type is bounded by that type's edge count
+    /// (≤ ~200k entries on the dogfood graph — acceptable).
+    ///
+    /// Shape requirements (else `None`, fall back):
+    /// * the type position (arg 2) is a ground constant (its string surface equals what
+    ///   the per-row path derives: `Value::from_term_const(s).as_str() == s` for any
+    ///   const; a typed literal surfaces as its decimal text);
+    /// * at least one endpoint is a planner-Bound VARIABLE (the probe key each row
+    ///   carries); the planner's pattern is authoritative on boundness;
+    /// * a non-probe endpoint is a variable or a wildcard — a constant endpoint is rare
+    ///   and stays on the per-row path (correctness over coverage).
+    ///
+    /// Per-row defensive fallbacks (exact per-row eval for THAT row): a probe variable the
+    /// row does not bind, or a probe binding with no id surface — both change the per-row
+    /// eval's access path/mode, so the only safe equivalence is to run it.
+    fn join_edge_bound_built_once(
+        &self,
+        name: &str,
+        eval: BuiltinEval,
+        atom: &Atom,
+        leg: &crate::datalog2::plan::PlanLeg,
+        rows: &[BindRow],
+    ) -> Option<Vec<BindRow>> {
+        use super::builtin::ArgMode;
+        use super::storage_glue::EdgeOrder;
+
+        let args = atom.args();
+        if args.len() != 3 {
+            return None;
+        }
+        let ty: String = match &args[2] {
+            Term::Const(s) => s.clone(),
+            Term::Lit(v) => v.as_str(),
+            // A row-bound variable type would need one bucket map per distinct type;
+            // out of scope — fall back.
+            _ => return None,
+        };
+        // A probe endpoint is a planner-Bound VARIABLE: its id comes from each row.
+        let near_probe =
+            matches!(&args[0], Term::Var(_)) && leg.pattern.first() == Some(&ArgMode::Bound);
+        let far_probe =
+            matches!(&args[1], Term::Var(_)) && leg.pattern.get(1) == Some(&ArgMode::Bound);
+        if !near_probe && !far_probe {
+            // No row-bound endpoint: the leg is a generator/cross-extend — the per-row
+            // path's full typed scan IS the right access already.
+            return None;
+        }
+        for (i, probe) in [(0usize, near_probe), (1usize, far_probe)] {
+            if !probe && matches!(&args[i], Term::Const(_) | Term::Lit(_)) {
+                return None;
+            }
+        }
+
+        let order = if name == "incoming" {
+            EdgeOrder::Reverse
+        } else {
+            EdgeOrder::Forward
+        };
+        // Map a storage EdgeRow's `(src, dst)` to this view's `(near, far)` per direction
+        // — the same mapping `eval_edge_dir` and `build_anti_join_set` apply.
+        let near_far = |src: u128, dst: u128| match order {
+            EdgeOrder::Forward => (src, dst),
+            EdgeOrder::Reverse => (dst, src),
+        };
+
+        // ── Build the hash side ONCE: one typed edge scan. ──
+        enum EdgeIndex {
+            /// Both endpoints row-bound: `(near, far) → multiplicity` (membership + count).
+            Both(HashMap<(u128, u128), usize>),
+            /// Only the near endpoint row-bound: `near → [far]` buckets, in scan order.
+            ByNear(HashMap<u128, Vec<u128>>),
+            /// Only the far endpoint row-bound: `far → [near]` buckets, in scan order.
+            ByFar(HashMap<u128, Vec<u128>>),
+        }
+        let index = if near_probe && far_probe {
+            let mut m: HashMap<(u128, u128), usize> = HashMap::new();
+            for e in self.view.scan_edges_by_type(&ty, order) {
+                let (near, far) = near_far(e.src, e.dst);
+                *m.entry((near, far)).or_insert(0) += 1;
+            }
+            EdgeIndex::Both(m)
+        } else if near_probe {
+            let mut m: HashMap<u128, Vec<u128>> = HashMap::new();
+            for e in self.view.scan_edges_by_type(&ty, order) {
+                let (near, far) = near_far(e.src, e.dst);
+                m.entry(near).or_default().push(far);
+            }
+            EdgeIndex::ByNear(m)
+        } else {
+            let mut m: HashMap<u128, Vec<u128>> = HashMap::new();
+            for e in self.view.scan_edges_by_type(&ty, order) {
+                let (near, far) = near_far(e.src, e.dst);
+                m.entry(far).or_default().push(near);
+            }
+            EdgeIndex::ByFar(m)
+        };
+
+        // ── Probe per row. ──
+        let mut out: Vec<BindRow> = Vec::new();
+        for row in rows {
+            // Resolve a probe endpoint the way `resolve_arg_spec` + `bound_id` would:
+            // the row's value, id-parsed. `Err` ⇒ the per-row eval would take a different
+            // mode/access path ⇒ exact per-row fallback for this row.
+            let resolve = |i: usize| -> Result<u128, ()> {
+                match &args[i] {
+                    Term::Var(v) => match row.get(v) {
+                        Some(val) => val.as_id().ok_or(()),
+                        None => Err(()),
+                    },
+                    _ => Err(()),
+                }
+            };
+            match &index {
+                EdgeIndex::Both(m) => match (resolve(0), resolve(1)) {
+                    (Ok(near), Ok(far)) => {
+                        // Both bound: membership with multiplicity — the per-row eval
+                        // emits one pass per matching stored tuple.
+                        let count = m.get(&(near, far)).copied().unwrap_or(0);
+                        for _ in 0..count {
+                            out.push(row.clone());
+                        }
+                    }
+                    _ => self.positive_row_via_eval(eval, atom, row, &mut out),
+                },
+                EdgeIndex::ByNear(m) => {
+                    self.probe_edge_bucket(m, 0, 1, eval, atom, row, &mut out)
+                }
+                EdgeIndex::ByFar(m) => {
+                    self.probe_edge_bucket(m, 1, 0, eval, atom, row, &mut out)
+                }
+            }
+        }
+        Some(out)
+    }
+
+    /// Probe one row against a single-endpoint edge bucket map (`probe_pos` is the
+    /// row-bound endpoint's argument position, `other_pos` the captured/matched one),
+    /// reproducing the per-row eval's semantics exactly: a free other-variable binds each
+    /// bucket id (with the shared-variable agreement check the generic loop applies); a
+    /// wildcard, or a row-bound other-variable with an id surface, filters/passes with one
+    /// output row per matching stored tuple. Any resolution the per-row path would treat
+    /// differently (unbound probe var, non-id probe surface, non-id other-binding, a
+    /// non-variable other term) falls back to the exact per-row eval for THIS row.
+    #[allow(clippy::too_many_arguments)]
+    fn probe_edge_bucket(
+        &self,
+        buckets: &HashMap<u128, Vec<u128>>,
+        probe_pos: usize,
+        other_pos: usize,
+        eval: BuiltinEval,
+        atom: &Atom,
+        row: &BindRow,
+        out: &mut Vec<BindRow>,
+    ) {
+        let args = atom.args();
+        let probe_id = match &args[probe_pos] {
+            Term::Var(v) => match row.get(v).and_then(Value::as_id) {
+                Some(id) => id,
+                None => {
+                    // Unbound probe var or a binding with no id surface: the per-row
+                    // eval's access path changes — run it exactly.
+                    self.positive_row_via_eval(eval, atom, row, out);
+                    return;
+                }
+            },
+            // The shape check screened constant probe endpoints; defensive.
+            _ => {
+                self.positive_row_via_eval(eval, atom, row, out);
+                return;
+            }
+        };
+        let Some(bucket) = buckets.get(&probe_id) else {
+            // No edges at this key: the per-row eval would produce an empty batch — the
+            // row is dropped.
+            return;
+        };
+        match &args[other_pos] {
+            // Wildcard: existence per stored tuple — one pass row per edge (the per-row
+            // eval emits `push_pass()` per match, and the generic loop replicates the
+            // partial row once per pass).
+            Term::Wildcard => {
+                for _ in bucket {
+                    out.push(row.clone());
+                }
+            }
+            Term::Var(v) => match row.get(v) {
+                // Planner said Free but the row carries a binding (shared variable): the
+                // per-row eval runs in check mode. An id surface filters the bucket; a
+                // non-id surface changes the eval's path — exact fallback.
+                Some(existing) => match existing.as_id() {
+                    Some(fid) => {
+                        for &other in bucket {
+                            if other == fid {
+                                out.push(row.clone());
+                            }
+                        }
+                    }
+                    None => self.positive_row_via_eval(eval, atom, row, out),
+                },
+                // Free output variable: bind each bucket id.
+                None => {
+                    for &other in bucket {
+                        let mut next = row.clone();
+                        next.insert(v.clone(), Value::Id(other));
+                        out.push(next);
+                    }
+                }
+            },
+            // A constant other endpoint was screened out by the shape check; defensive.
+            _ => self.positive_row_via_eval(eval, atom, row, out),
+        }
+    }
+
+    /// Build-once membership probe for a positive `node`/`type` leg with a constant type
+    /// and a row-bound id variable, or `None` if the leg's shape is not the build-once
+    /// case (the caller then keeps the exact per-row point-lookup fallback).
+    ///
+    /// Instead of one `get_node` point probe per partial row, this builds the type's id
+    /// set in ONE typed scan (the same scan the generator mode and the set-at-once
+    /// anti-join use) and probes it O(1) per row. Per-row parity: `get_node(id)` exists
+    /// with `node_type == ty` ⟺ `id` appears in `scan_nodes_by_type(ty)` — one pass row
+    /// per match, the row unchanged (the id is bound, nothing is captured). A bound value
+    /// with no id surface produces no tuple on the per-row path (`bound_id` → `None` →
+    /// empty batch), so the row is dropped identically here.
+    fn join_node_membership_built_once(
+        &self,
+        eval: BuiltinEval,
+        atom: &Atom,
+        leg: &crate::datalog2::plan::PlanLeg,
+        rows: &[BindRow],
+    ) -> Option<Vec<BindRow>> {
+        use super::builtin::ArgMode;
+
+        let args = atom.args();
+        if args.len() != 2 {
+            return None;
+        }
+        let ty: String = match &args[1] {
+            Term::Const(s) => s.clone(),
+            Term::Lit(v) => v.as_str(),
+            // A row-bound variable type is a per-distinct-id point check; rare — fall back.
+            _ => return None,
+        };
+        let id_var = match (&args[0], leg.pattern.first()) {
+            (Term::Var(v), Some(&ArgMode::Bound)) => v,
+            // A free id is the generator (single scan already); a constant id is a point
+            // probe the per-row path handles.
+            _ => return None,
+        };
+
+        // ── Build the membership set ONCE: one typed node scan. ──
+        let members: HashSet<u128> = self.view.scan_nodes_by_type(&ty).map(|n| n.id).collect();
+
+        let mut out: Vec<BindRow> = Vec::new();
+        for row in rows {
+            match row.get(id_var) {
+                // Planner said Bound but the row lacks the binding — exact per-row eval.
+                None => self.positive_row_via_eval(eval, atom, row, &mut out),
+                Some(val) => match val.as_id() {
+                    // Per-row parity: no id surface ⇒ no tuple ⇒ the row is dropped.
+                    None => {}
+                    Some(id) => {
+                        if members.contains(&id) {
+                            out.push(row.clone());
+                        }
+                    }
+                },
+            }
+        }
+        Some(out)
+    }
+
+    /// Build-once point-column join for a positive `attr(Id, "key", V)` leg with a
+    /// row-bound id variable and a constant key, or `None` if the leg's shape is not the
+    /// build-once case (the caller then keeps the exact per-row `get_node` fallback).
+    ///
+    /// The per-row path issues one `get_node` LSM point probe per partial row (the
+    /// `attr(C, "name", F)` leg of the method-calls pack: ~69k probes on the dogfood
+    /// graph). This collects the DISTINCT bound ids the rows actually need first (rows
+    /// often repeat ids — dedup alone cuts probes), then fetches their node rows once:
+    /// per-distinct-id probes below [`ATTR_DISTINCT_SCAN_THRESHOLD`], or ONE sequential
+    /// sorted-node pass above it (a single scan beats tens of thousands of random point
+    /// reads). Each row is then served from the in-memory map with `eval_attr`'s exact
+    /// bound-id semantics: missing node ⇒ drop; key outside the first-class surface ⇒
+    /// coercion miss ⇒ drop (the per-row path's miss counter lives on a per-row `Batch`
+    /// the executor discards, so dropping is observably identical); free value ⇒ bind the
+    /// column as a `Str`; bound value ⇒ §5 `coerce_eq` against the column surface.
+    fn join_attr_bound_id_built_once(
+        &self,
+        eval: BuiltinEval,
+        atom: &Atom,
+        leg: &crate::datalog2::plan::PlanLeg,
+        rows: &[BindRow],
+    ) -> Option<Vec<BindRow>> {
+        use super::builtin::{coerce_eq, first_class_attr, ArgMode, CoerceEq};
+        use super::storage_glue::{NodeRow, Relation, Row, SortOrder};
+
+        let args = atom.args();
+        if args.len() != 3 {
+            return None;
+        }
+        let id_var = match (&args[0], leg.pattern.first()) {
+            (Term::Var(v), Some(&ArgMode::Bound)) => v,
+            // A free id is the generator (served by `join_attr_generator_built_once`); a
+            // constant id is a point probe the per-row path handles.
+            _ => return None,
+        };
+        let key: String = match &args[1] {
+            Term::Const(s) => s.clone(),
+            Term::Lit(v) => v.as_str(),
+            // A variable/wildcard key cannot pre-commit a column read — fall back.
+            _ => return None,
+        };
+
+        // ── Collect the distinct ids the rows actually need. ──
+        let mut distinct: HashSet<u128> = HashSet::new();
+        for row in rows {
+            if let Some(id) = row.get(id_var).and_then(Value::as_id) {
+                distinct.insert(id);
+            }
+        }
+
+        // ── Fetch their node rows ONCE: batched scan above the threshold, else
+        //    per-DISTINCT-id point probes. Both produce the identical id → row map. ──
+        let node_rows: HashMap<u128, NodeRow> = if distinct.len() >= ATTR_DISTINCT_SCAN_THRESHOLD {
+            let mut m: HashMap<u128, NodeRow> = HashMap::with_capacity(distinct.len());
+            for r in self.view.sorted_run(Relation::Nodes, SortOrder::NodeById) {
+                if let Row::Node(n) = r {
+                    if distinct.contains(&n.id) {
+                        m.insert(n.id, n);
+                    }
+                }
+            }
+            m
+        } else {
+            distinct
+                .iter()
+                .filter_map(|&id| self.view.get_node(id).map(|n| (id, n)))
+                .collect()
+        };
+
+        // ── Serve each row from the map with `eval_attr`'s exact bound-id semantics. ──
+        let mut out: Vec<BindRow> = Vec::new();
+        for row in rows {
+            let Some(val) = row.get(id_var) else {
+                // Planner said Bound but the row lacks the binding — exact per-row eval.
+                self.positive_row_via_eval(eval, atom, row, &mut out);
+                continue;
+            };
+            let Some(id) = val.as_id() else {
+                // Per-row parity: no id surface ⇒ `bound_id` → None ⇒ empty batch ⇒ drop.
+                continue;
+            };
+            let Some(node) = node_rows.get(&id) else {
+                // Bound id not present at this generation ⇒ legitimately empty ⇒ drop.
+                continue;
+            };
+            let Some(column) = first_class_attr(node, &key) else {
+                // Key outside the first-class surface ⇒ coercion miss ⇒ tuple non-match.
+                continue;
+            };
+            match &args[2] {
+                // Presence of the column is enough (one pass row).
+                Term::Wildcard => out.push(row.clone()),
+                // Equality check with §5 coercion — `resolve_arg_spec` binds a const via
+                // `Value::from_term_const`, exactly reproduced here.
+                Term::Const(s) => {
+                    if matches!(coerce_eq(&column, &Value::from_term_const(s)), CoerceEq::Match) {
+                        out.push(row.clone());
+                    }
+                }
+                Term::Lit(v) => {
+                    if matches!(coerce_eq(&column, v), CoerceEq::Match) {
+                        out.push(row.clone());
+                    }
+                }
+                Term::Var(v) => match row.get(v) {
+                    // Shared variable already bound by the row: the per-row path resolves
+                    // it to a Bound arg — §5 coercion against the column surface.
+                    Some(expected) => {
+                        if matches!(coerce_eq(&column, expected), CoerceEq::Match) {
+                            out.push(row.clone());
+                        }
+                    }
+                    // Free output variable: bind the column value (as `eval_attr` does).
+                    None => {
+                        let mut next = row.clone();
+                        next.insert(v.clone(), Value::Str(column));
+                        out.push(next);
+                    }
+                },
+            }
+        }
+        Some(out)
     }
 
     /// Build, in ONE keyed/typed scan, the membership key-set for an anti-join over a
@@ -1866,6 +2326,47 @@ impl<'r> Clause<'r> {
 }
 
 // ── Binding / unification helpers ──────────────────────────────────
+
+/// Extend `row` with every produced batch tuple — the positive projection of
+/// [`Executor::join_extensional`]'s per-row path. Each produced tuple yields one clone of
+/// the row with the leg's free output slots bound; a value for an already-bound shared
+/// variable must agree or the candidate is dropped. Shared by the generic per-row loop and
+/// the build-once fast paths' defensive fallback so both bind and agreement-check
+/// identically (a single body — they cannot drift).
+fn extend_row_with_batch(
+    row: &BindRow,
+    batch: &Batch,
+    slot_vars: &[(usize, String)],
+    out: &mut Vec<BindRow>,
+) {
+    for produced in &batch.rows {
+        let mut next = row.clone();
+        let mut ok = true;
+        for (slot, var) in slot_vars {
+            match produced.get(*slot) {
+                Some(val) => {
+                    // If the variable was already bound (shared variable across legs),
+                    // the produced value must agree, else the row is dropped.
+                    if let Some(existing) = next.get(var) {
+                        if existing != val {
+                            ok = false;
+                            break;
+                        }
+                    } else {
+                        next.insert(var.clone(), val.clone());
+                    }
+                }
+                None => {
+                    ok = false;
+                    break;
+                }
+            }
+        }
+        if ok {
+            out.push(next);
+        }
+    }
+}
 
 /// Build the ground tuple for `atom`'s args from a binding row, in arg order. Returns
 /// `None` if any arg is an unbound variable (a fully-bound key was expected, e.g. for an
@@ -3595,4 +4096,134 @@ mod tests {
             "an aborted run must not log a commit"
         );
     }
+
+    /// Differential property test for the build-once extensional fast paths (the 4th
+    /// q-error layer fix): on a fixture covering every special-cased leg shape — edge
+    /// near-bound / far-bound / both-bound / wildcard endpoint, `incoming`, attr
+    /// value-free / value-const / shared-variable / non-first-class key, node membership,
+    /// a dangling edge endpoint (missing node), and a non-id binding probed into an edge
+    /// endpoint (per-row fallback parity) — the build-once path (threshold 0) and the
+    /// per-row path (threshold MAX) must produce IDENTICAL `BindRow` MULTISETS at every
+    /// base leg of every planned clause: same rows, same multiplicities, leg by leg. Then
+    /// the two full evaluations must commit identical fact sets per predicate.
+    #[test]
+    fn build_once_extensional_paths_match_per_row_multisets() {
+        let mut v = FixtureStorageView::new(1);
+        // Type A nodes (two share the name "dup" — duplicate-name fan-out).
+        for (sid, name) in [
+            ("a1", "dup"),
+            ("a2", "dup"),
+            ("a3", "x"),
+            ("a4", "a4"),
+            ("a5", "recv"),
+            ("a6", "zz"),
+        ] {
+            v.put_node(NodeRow {
+                id: id_of(sid),
+                node_type: "A".to_string(),
+                name: name.to_string(),
+                file: "f.js".to_string(),
+            });
+        }
+        // Type B nodes (b1 shares the name "dup" with a1/a2 — the shared-var attr join).
+        for (sid, name) in [("b1", "dup"), ("b2", "y"), ("b3", "b3")] {
+            v.put_node(NodeRow {
+                id: id_of(sid),
+                node_type: "B".to_string(),
+                name: name.to_string(),
+                file: "f.js".to_string(),
+            });
+        }
+        // E edges: fan-out 2 from a1; a4 -> a dangling id (no node row); a5 -> b1.
+        for (s, d) in [("a1", "b1"), ("a1", "b2"), ("a2", "b1"), ("a3", "b3"), ("a5", "b1")] {
+            edge(&mut v, s, d, "E");
+        }
+        v.put_edge(EdgeRow {
+            src: id_of("a4"),
+            dst: id_of("missing-node"),
+            edge_type: "E".to_string(),
+        });
+        // E2 edges: exactly one overlaps E (a1 -> b1) for the both-bound membership check.
+        edge(&mut v, "a1", "b1", "E2");
+        edge(&mut v, "a6", "b3", "E2");
+
+        let src = r#"
+            e_far(X, Y)    :- node(X, "A"), edge(X, Y, "E").
+            e_far_w(X)     :- node(X, "A"), edge(X, _, "E").
+            e_near(Y, X)   :- node(Y, "B"), edge(X, Y, "E").
+            e_in(Y, X)     :- node(Y, "B"), incoming(Y, X, "E").
+            e_both(X, Y)   :- edge(X, Y, "E"), edge(X, Y, "E2").
+            a_free(X, N)   :- node(X, "A"), attr(X, "name", N).
+            a_const(X)     :- node(X, "A"), attr(X, "name", "dup").
+            a_shared(X, Y) :- node(X, "A"), edge(X, Y, "E"), attr(X, "name", N), attr(Y, "name", N).
+            a_meta(X)      :- node(X, "A"), attr(X, "weird_key", _).
+            n_member(X, Y) :- edge(X, Y, "E"), node(Y, "B").
+            str_probe(NM, Y) :- node(C, "A"), attr(C, "name", NM), edge(NM, Y, "E").
+        "#;
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let plans = plan_program(&rules, &strat, &Stats::default()).expect("plan");
+
+        // Threshold 0 forces build-once on every eligible leg; MAX forces per-row always.
+        let fast = Executor::<BoolTag>::new(&v).with_build_once_min_rows(0);
+        let slow = Executor::<BoolTag>::new(&v).with_build_once_min_rows(usize::MAX);
+
+        fn multiset(rows: &[BindRow]) -> HashMap<BindRow, usize> {
+            let mut m: HashMap<BindRow, usize> = HashMap::new();
+            for r in rows {
+                *m.entry(r.clone()).or_insert(0) += 1;
+            }
+            m
+        }
+
+        // Replay every clause leg by leg (all bodies are base/builtin-only by
+        // construction), comparing the two paths' output row MULTISETS at each leg.
+        let mut legs_compared = 0usize;
+        for plan in &plans {
+            let mut rows: Vec<BindRow> = vec![BindRow::new()];
+            for leg in &plan.legs {
+                match &leg.source {
+                    LegSource::Base(_) | LegSource::Builtin(_) => {}
+                    other => panic!("test program must be base/builtin-only, got {other:?}"),
+                }
+                let out_fast = fast.join_extensional(leg, rows.clone());
+                let out_slow = slow.join_extensional(leg, rows.clone());
+                assert_eq!(
+                    multiset(&out_fast),
+                    multiset(&out_slow),
+                    "build-once vs per-row diverge at leg {:?} of rule {} (rows in: {})",
+                    leg.literal,
+                    plan.head,
+                    rows.len()
+                );
+                legs_compared += 1;
+                rows = out_slow;
+            }
+        }
+        assert!(
+            legs_compared >= 20,
+            "the fixture program must exercise a broad leg set, compared only {legs_compared}"
+        );
+
+        // End-to-end: both executors commit identical fact sets per predicate.
+        let e_fast = fast.evaluate(&plans, &rules, &strat).expect("fast eval");
+        let e_slow = slow.evaluate(&plans, &rules, &strat).expect("slow eval");
+        assert_eq!(
+            e_fast.relations.keys().collect::<Vec<_>>(),
+            e_slow.relations.keys().collect::<Vec<_>>()
+        );
+        for (pred, facts_slow) in &e_slow.relations {
+            let f: HashSet<&[Value]> =
+                e_fast.relations[pred].iter().map(|b| b.as_ref()).collect();
+            let s: HashSet<&[Value]> = facts_slow.iter().map(|b| b.as_ref()).collect();
+            assert_eq!(f, s, "fact sets diverge for {pred}");
+        }
+        // Sanity: the shapes actually derived something (no vacuous pass).
+        assert!(!e_slow.relations["e_far"].is_empty());
+        assert!(!e_slow.relations["e_both"].is_empty());
+        assert!(!e_slow.relations["a_shared"].is_empty());
+        assert!(e_slow.relations["a_meta"].is_empty(), "non-first-class key derives nothing");
+    }
 }
+

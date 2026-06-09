@@ -541,7 +541,9 @@ fn eval_edge_dir(
 
 /// First-class node columns `attr` can read at Gate A (the `StorageView` row surface).
 /// Metadata-key attrs are not yet on the row surface and resolve to a coercion miss.
-fn first_class_attr(node: &NodeRow, key: &str) -> Option<String> {
+/// `pub(crate)`: the executor's build-once `attr` fast path reads the SAME column map so
+/// the hash-probed result is byte-identical to this per-row eval.
+pub(crate) fn first_class_attr(node: &NodeRow, key: &str) -> Option<String> {
     match key {
         "name" => Some(node.name.clone()),
         "file" => Some(node.file.clone()),
@@ -640,7 +642,8 @@ fn eval_attr(view: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> Builtin
 }
 
 /// Outcome of comparing a column's string surface against a literal value (spec §5).
-enum CoerceEq {
+/// `pub(crate)`: shared with the executor's build-once `attr` fast path (same coercion).
+pub(crate) enum CoerceEq {
     /// The literal coerced and equals the column.
     Match,
     /// The literal coerced but does not equal the column (ordinary tuple non-match).
@@ -655,7 +658,8 @@ enum CoerceEq {
 /// [`Value::Id`] literal coerces by its decimal surface; if the column has no such surface
 /// the comparison is a coercion miss rather than a silent non-match — the distinction is
 /// what `coercion_misses` records.
-fn coerce_eq(column: &str, expected: &Value) -> CoerceEq {
+/// `pub(crate)`: shared with the executor's build-once `attr` fast path (same coercion).
+pub(crate) fn coerce_eq(column: &str, expected: &Value) -> CoerceEq {
     match expected {
         Value::Str(s) => {
             if column == s {
