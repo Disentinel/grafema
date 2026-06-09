@@ -2,7 +2,7 @@
  * MCP Tool Handlers — barrel export
  */
 
-export { handleQueryGraph, handleFindCalls, handleFindNodes, handleExplainFact } from './query-handlers.js';
+export { handleQueryGraph, handleFindCalls, handleFindNodes, handleExplainFact, handleExplainGap, handleSimDatalog } from './query-handlers.js';
 export { handleTraceAlias, handleTraceDataflow, handleTraceCalls, handleCheckInvariant, handleExplain, handleTraceEffects } from './dataflow-handlers.js';
 export type { ExplainArgs } from './dataflow-handlers.js';
 export { handleDiscoverServices, handleAnalyzeProject, handleGetAnalysisStatus, handleGetStats, handleGetSchema } from './analysis-handlers.js';

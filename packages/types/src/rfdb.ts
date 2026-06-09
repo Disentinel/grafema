@@ -50,6 +50,8 @@ export type RFDBCommand =
   | 'checkGuarantee'
   | 'executeDatalog'
   | 'explainDatalogFact'
+  | 'simDatalog'
+  | 'explainDatalogGap'
   // Cypher
   | 'cypherQuery'
   // Protocol v2 - Multi-Database Commands
@@ -426,6 +428,36 @@ export interface FactWitness {
   body: FactWitnessBody[];
 }
 
+/** A hypothetical node for sim (what-if): decimal-u128 id + the attrs v2 predicates resolve. */
+export interface SimNode {
+  id: string;
+  nodeType: string;
+  name?: string;
+  file?: string;
+}
+
+/** A hypothetical edge for sim: endpoints are decimal-u128 ids, existing OR hypothetical. */
+export interface SimEdge {
+  src: string;
+  dst: string;
+  edgeType: string;
+}
+
+/**
+ * why-not/explain_gap result: why `predicate(key)` is NOT derived — the rule whose gap this
+ * characterizes, the body premises that WERE satisfiable (head-bound, in placement order), and
+ * the first premise no binding satisfies. `failingIsNegative` ⇒ the premise is a negated
+ * literal: a PRESENT fact blocks the derivation (close the gap by removing it), as opposed to
+ * a positive premise that is MISSING (close it by adding it). Returned as `null` when there is
+ * no gap: the fact is derivable, or no clause head matches the key.
+ */
+export interface GapWitness {
+  ruleAstHash: string;
+  satisfied: FactWitnessBody[];
+  failingPredicate: string;
+  failingIsNegative: boolean;
+}
+
 // === CYPHER TYPES ===
 export interface CypherResult {
   columns: string[];
@@ -636,6 +668,18 @@ export interface IRFDBClient {
    * `null` when the fact is not derivable. v2-only (rejects when RFDB_DATALOG_V2 is off).
    */
   explainDatalogFact(source: string, predicate: string, key: string[]): Promise<FactWitness | null>;
+  /**
+   * what-if/sim: predict the NEW `predicate` facts a hypothetical overlay of nodes+edges would
+   * create under a v2 program (empty source ⇒ the bundled depends.dl), WITHOUT committing.
+   * Resolves to the predicted-new ground tuples (sim ∖ base) as wire strings. v2-only.
+   */
+  simDatalog(source: string, predicate: string, nodes: SimNode[], edges: SimEdge[]): Promise<string[][]>;
+  /**
+   * why-not/explain_gap: explain why `predicate(key)` is NOT derived — the satisfied premise
+   * prefix + the first unsatisfiable premise. Resolves to `null` when there is no gap (the fact
+   * is derivable, or no clause head matches). The companion to simDatalog. v2-only.
+   */
+  explainDatalogGap(source: string, predicate: string, key: string[]): Promise<GapWitness | null>;
 
   // Cypher
   cypherQuery(query: string): Promise<CypherResult>;

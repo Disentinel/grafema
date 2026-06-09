@@ -40,6 +40,8 @@ import { getSocketPathOverride } from './state.js';
 import {
   handleQueryGraph,
   handleExplainFact,
+  handleExplainGap,
+  handleSimDatalog,
   handleFindCalls,
   handleFindNodes,
   handleTraceAlias,
@@ -103,6 +105,8 @@ import type {
   GetContextArgs,
   QueryGraphArgs,
   ExplainFactArgs,
+  ExplainGapArgs,
+  SimDatalogArgs,
   FindCallsArgs,
   FindNodesArgs,
   TraceAliasArgs,
@@ -286,6 +290,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
 
       case 'explain_fact':
         result = await handleExplainFact(asArgs<ExplainFactArgs>(args));
+        break;
+
+      case 'sim_datalog':
+        result = await handleSimDatalog(asArgs<SimDatalogArgs>(args));
+        break;
+
+      case 'explain_gap':
+        result = await handleExplainGap(asArgs<ExplainGapArgs>(args));
         break;
 
       case 'trace_effects':

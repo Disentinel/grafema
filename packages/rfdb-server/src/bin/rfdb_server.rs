@@ -276,6 +276,33 @@ pub enum Request {
         key: Vec<String>,
     },
 
+    /// what-if / sim (spec §6, decision #2): predict the NEW `predicate` facts a hypothetical
+    /// overlay of nodes+edges would create under a v2 program (empty `source` ⇒ the bundled
+    /// `depends.dl`), WITHOUT committing anything — a pure read over a version-pinned snapshot
+    /// plus an in-memory overlay (`OverlayStorageView`). Answer = sim ∖ base. v2-only,
+    /// kill-switch gated. Edge endpoints may reference existing OR hypothetical node ids.
+    SimDatalog {
+        source: String,
+        predicate: String,
+        #[serde(default)]
+        nodes: Vec<WireSimNode>,
+        #[serde(default)]
+        edges: Vec<WireSimEdge>,
+    },
+
+    /// why-not / explain_gap (spec §6, Gate E): explain why `predicate(key)` is NOT derived —
+    /// the satisfied body-premise prefix + the first premise no binding satisfies (the gap; for
+    /// a negated premise the gap closes by REMOVING the blocking fact). v2-only, kill-switch
+    /// gated, READ path. A null witness ⇒ the fact IS derivable (no gap) or no clause head
+    /// matches the key. The companion to `SimDatalog`: gap names the missing premise, sim
+    /// verifies that adding it produces the fact.
+    ExplainDatalogGap {
+        source: String,
+        predicate: String,
+        /// Ground key tuple as wire strings (all-digits ⇒ node id, else string literal).
+        key: Vec<String>,
+    },
+
     // Cypher queries
     CypherQuery {
         query: String,
@@ -522,6 +549,10 @@ pub enum Response {
     DatalogResults { results: Vec<WireViolation> },
     ExplainResult(WireExplainResult),
     FactWitness { witness: Option<WireFactWitness> },
+    /// `SimDatalog` rows: each predicted-NEW fact's ground tuple as wire strings.
+    SimResults { rows: Vec<Vec<String>> },
+    /// `ExplainDatalogGap` witness (null ⇒ no gap: derivable, or no head matches).
+    GapWitness { witness: Option<WireGapWitness> },
     CypherResult {
         columns: Vec<String>,
         rows: Vec<Vec<serde_json::Value>>,
@@ -698,6 +729,40 @@ impl From<DatabaseInfo> for WireDatabaseInfo {
 #[serde(rename_all = "camelCase")]
 pub struct WireViolation {
     pub bindings: HashMap<String, String>,
+}
+
+/// A hypothetical node for `SimDatalog` (what-if): decimal-u128 id + the attrs the v2 builtin
+/// predicates resolve (`node/2` type; `attr/3` name/file). The id may be NEW (not in the base).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WireSimNode {
+    pub id: String,
+    pub node_type: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub file: String,
+}
+
+/// A hypothetical edge for `SimDatalog`: endpoints are decimal-u128 ids, existing OR hypothetical.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WireSimEdge {
+    pub src: String,
+    pub dst: String,
+    pub edge_type: String,
+}
+
+/// Wire form of a `GapWitness` (why-not/explain_gap, spec §6): the rule whose gap this
+/// characterizes, the satisfied premise prefix, and the first unsatisfiable premise — positive
+/// (close the gap by ADDING the fact) or negated (`failingIsNegative`: close by REMOVING it).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WireGapWitness {
+    pub rule_ast_hash: String,
+    pub satisfied: Vec<WireBodyFact>,
+    pub failing_predicate: String,
+    pub failing_is_negative: bool,
 }
 
 /// Wire form of a `DerivationWitness` (why()/explain_fact, spec §11): the deriving rule's stable
@@ -1180,6 +1245,8 @@ fn get_operation_name(request: &Request) -> String {
         Request::ExecuteDatalog { .. } => "ExecuteDatalog".to_string(),
         Request::MaterializeDatalog { .. } => "MaterializeDatalog".to_string(),
         Request::ExplainDatalogFact { .. } => "ExplainDatalogFact".to_string(),
+        Request::SimDatalog { .. } => "SimDatalog".to_string(),
+        Request::ExplainDatalogGap { .. } => "ExplainDatalogGap".to_string(),
         Request::IsEndpoint { .. } => "IsEndpoint".to_string(),
         Request::GetNodeIdentifier { .. } => "GetNodeIdentifier".to_string(),
         Request::UpdateNodeVersion { .. } => "UpdateNodeVersion".to_string(),
@@ -1693,6 +1760,28 @@ fn handle_request_with_cancel(
             with_engine_read(session, |engine| {
                 match dispatch_explain_datalog_fact(engine, &source, &predicate, &key, cf) {
                     Ok(witness) => Response::FactWitness { witness },
+                    Err(e) => Response::Error { error: e },
+                }
+            })
+        }
+
+        Request::SimDatalog { source, predicate, nodes, edges } => {
+            // READ path: sim never commits (pinned snapshot + in-memory overlay, sim ∖ base).
+            let cf = cancel_flag.clone();
+            with_engine_read(session, |engine| {
+                match dispatch_sim_datalog(engine, &source, &predicate, &nodes, &edges, cf) {
+                    Ok(rows) => Response::SimResults { rows },
+                    Err(e) => Response::Error { error: e },
+                }
+            })
+        }
+
+        Request::ExplainDatalogGap { source, predicate, key } => {
+            // READ path: why-not is a pure read over the current snapshot (no commit).
+            let cf = cancel_flag.clone();
+            with_engine_read(session, |engine| {
+                match dispatch_explain_datalog_gap(engine, &source, &predicate, &key, cf) {
+                    Ok(witness) => Response::GapWitness { witness },
                     Err(e) => Response::Error { error: e },
                 }
             })
@@ -2967,6 +3056,105 @@ fn dispatch_explain_datalog_fact(
                 tuple: tuple.iter().map(datalog_value_to_wire_string).collect(),
             })
             .collect(),
+    }))
+}
+
+/// `SimDatalog` dispatch (READ path, what-if): predict the NEW `predicate` facts a hypothetical
+/// node/edge overlay would create under a v2 program via [`GraphEngineV2::sim_datalog_v2`]
+/// (spec §6). v2-ONLY and kill-switch-gated (refused with a coded error when `RFDB_DATALOG_V2`
+/// is off, I5 — never a silent empty answer). Empty `source` ⇒ the bundled `depends.dl`. The
+/// committed store is never touched: pinned snapshot + `OverlayStorageView`, answer = sim ∖ base.
+fn dispatch_sim_datalog(
+    engine: &dyn GraphStore,
+    source: &str,
+    predicate: &str,
+    nodes: &[WireSimNode],
+    edges: &[WireSimEdge],
+    cancel_flag: Arc<AtomicBool>,
+) -> std::result::Result<Vec<Vec<String>>, String> {
+    if !datalog_v2_enabled() {
+        return Err("RFDB_DATALOG_V2: sim is a v2-only path; with the kill switch off there is \
+                    no v2 what-if overlay"
+            .to_string());
+    }
+    let v2 = engine.as_any().downcast_ref::<GraphEngineV2>().ok_or_else(|| {
+        "RFDB_DATALOG_V2: sim requires a storage_v2 GraphEngineV2 backend".to_string()
+    })?;
+
+    let program = if source.trim().is_empty() {
+        rfdb::datalog2::stdlib::DEPENDS_DL
+    } else {
+        source
+    };
+
+    // Hypothetical ids are decimal u128 on the wire (same shape the read path emits for node
+    // ids); a non-numeric id is an explicit input error, not a silent skip.
+    fn parse_id(s: &str, what: &str) -> std::result::Result<u128, String> {
+        s.parse::<u128>()
+            .map_err(|_| format!("sim: {what} id must be a decimal u128 string, got {s:?}"))
+    }
+    let mut hyp_nodes = Vec::with_capacity(nodes.len());
+    for n in nodes {
+        hyp_nodes.push((parse_id(&n.id, "node")?, n.node_type.clone(), n.name.clone(), n.file.clone()));
+    }
+    let mut hyp_edges = Vec::with_capacity(edges.len());
+    for e in edges {
+        hyp_edges.push((parse_id(&e.src, "edge src")?, parse_id(&e.dst, "edge dst")?, e.edge_type.clone()));
+    }
+
+    let mut limits = EvalLimits::default();
+    limits.cancelled = Some(cancel_flag);
+
+    v2.sim_datalog_v2(program, predicate, &hyp_nodes, &hyp_edges, limits)
+        .map_err(|e| format!("Datalog v2 sim error [{}]: {}", e.code(), e))
+}
+
+/// `ExplainDatalogGap` dispatch (READ path, why-not): explain why `predicate(key)` is NOT
+/// derived via [`GraphEngineV2::explain_datalog_gap`] (spec §6, Gate E). v2-ONLY and
+/// kill-switch-gated (coded refusal when off, I5). Empty `source` ⇒ the bundled `depends.dl`.
+/// `Ok(None)` ⇒ no gap: the fact is derivable, or no clause head matches the key.
+fn dispatch_explain_datalog_gap(
+    engine: &dyn GraphStore,
+    source: &str,
+    predicate: &str,
+    key: &[String],
+    cancel_flag: Arc<AtomicBool>,
+) -> std::result::Result<Option<WireGapWitness>, String> {
+    if !datalog_v2_enabled() {
+        return Err("RFDB_DATALOG_V2: explain_gap is a v2-only path; with the kill switch off \
+                    there is no v2 why-not"
+            .to_string());
+    }
+    let v2 = engine.as_any().downcast_ref::<GraphEngineV2>().ok_or_else(|| {
+        "RFDB_DATALOG_V2: explain_gap requires a storage_v2 GraphEngineV2 backend".to_string()
+    })?;
+
+    let program = if source.trim().is_empty() {
+        rfdb::datalog2::stdlib::DEPENDS_DL
+    } else {
+        source
+    };
+    let key_vals: Vec<rfdb::datalog::Value> = key.iter().map(|s| wire_string_to_value(s)).collect();
+
+    let mut limits = EvalLimits::default();
+    limits.cancelled = Some(cancel_flag);
+
+    let gap = v2
+        .explain_datalog_gap(program, predicate, &key_vals, limits)
+        .map_err(|e| format!("Datalog v2 explain_gap error [{}]: {}", e.code(), e))?;
+
+    Ok(gap.map(|g| WireGapWitness {
+        rule_ast_hash: g.rule_ast_hash,
+        satisfied: g
+            .satisfied
+            .into_iter()
+            .map(|(predicate, tuple)| WireBodyFact {
+                predicate,
+                tuple: tuple.iter().map(datalog_value_to_wire_string).collect(),
+            })
+            .collect(),
+        failing_predicate: g.failing_predicate,
+        failing_is_negative: g.failing_is_negative,
     }))
 }
 
@@ -7383,6 +7571,169 @@ mod protocol_tests {
         let none = dispatch_explain_datalog_fact(&engine, "", "depends", &[b, a], cf())
             .expect("explain succeeds under v2");
         assert!(none.is_none(), "depends(b,a) is not derivable (only a→b imports) → null witness");
+
+        match prev {
+            Some(v) => std::env::set_var("RFDB_DATALOG_V2", v),
+            None => std::env::remove_var("RFDB_DATALOG_V2"),
+        }
+    }
+
+    /// Decision #2 wire: `SimDatalog` (what-if) predicts the NEW facts a hypothetical overlay
+    /// would create — WITHOUT committing — and is v2-only (coded refusal with the switch off).
+    /// Overlay: a hypothetical MODULE `c` + a hypothetical IMPORTS_FROM b→c over a committed
+    /// a→b graph ⇒ predicts depends(b,c) (and ONLY the new fact: depends(a,b) is base, excluded
+    /// by sim ∖ base). A follow-up read proves nothing was written.
+    #[test]
+    fn dispatch_sim_datalog_predicts_new_facts_without_commit_and_gates_off() {
+        let _guard = DATALOG_V2_ENV_LOCK.lock().unwrap();
+        let prev = std::env::var("RFDB_DATALOG_V2").ok();
+
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let mk_node = |sid: &str, ty: &str| NodeRecord {
+            id: string_to_id(sid),
+            node_type: Some(ty.to_string()),
+            file_id: 0,
+            name_offset: 0,
+            version: "main".to_string(),
+            exported: false,
+            replaces: None,
+            deleted: false,
+            name: Some(sid.to_string()),
+            file: Some(format!("{sid}.js")),
+            metadata: None,
+            semantic_id: Some(sid.to_string()),
+        };
+        engine.add_nodes(vec![mk_node("a", "MODULE"), mk_node("b", "MODULE")]);
+        engine.add_edges(
+            vec![EdgeRecord {
+                src: string_to_id("a"),
+                dst: string_to_id("b"),
+                edge_type: Some("IMPORTS_FROM".to_string()),
+                version: "main".to_string(),
+                metadata: None,
+                deleted: false,
+            }],
+            true,
+        );
+        engine.flush().unwrap();
+
+        let cf = || Arc::new(AtomicBool::new(false));
+        let b = string_to_id("b").to_string();
+        let c_id: u128 = 424242;
+        let hyp_nodes = vec![WireSimNode {
+            id: c_id.to_string(),
+            node_type: "MODULE".to_string(),
+            name: "c".to_string(),
+            file: "c.js".to_string(),
+        }];
+        let hyp_edges = vec![WireSimEdge {
+            src: b.clone(),
+            dst: c_id.to_string(),
+            edge_type: "IMPORTS_FROM".to_string(),
+        }];
+
+        // ── Kill switch OFF → refused (coded), no v2 sim. ──
+        std::env::set_var("RFDB_DATALOG_V2", "off");
+        let off = dispatch_sim_datalog(&engine, "", "depends", &hyp_nodes, &hyp_edges, cf());
+        assert!(off.is_err(), "sim must be refused when the kill switch is off");
+        assert!(off.unwrap_err().contains("v2-only"), "explicit v2-only coded refusal (I5)");
+
+        // ── Kill switch ON → exactly the NEW fact depends(b,c); base depends(a,b) excluded. ──
+        std::env::set_var("RFDB_DATALOG_V2", "on");
+        let rows = dispatch_sim_datalog(&engine, "", "depends", &hyp_nodes, &hyp_edges, cf())
+            .expect("sim succeeds under v2");
+        assert_eq!(
+            rows,
+            vec![vec![b.clone(), c_id.to_string()]],
+            "sim ∖ base = the one predicted fact depends(b,c)"
+        );
+
+        // ── Nothing was committed: no DEPENDS_ON edges, and node `c` does not exist. ──
+        let read_src = r#"result(X, Y) :- edge(X, Y, "DEPENDS_ON")."#;
+        match dispatch_execute_datalog(&engine, read_src, false, cf()) {
+            Ok(DatalogResponse::Violations(v)) => {
+                assert!(v.is_empty(), "sim must not write anything: {v:?}");
+            }
+            Ok(DatalogResponse::Explain(_)) => panic!("expected violations, got explain"),
+            Err(e) => panic!("post-sim read failed: {e}"),
+        }
+
+        // ── A non-numeric hypothetical id is an explicit input error, not a silent skip. ──
+        let bad = vec![WireSimEdge {
+            src: "not-a-number".to_string(),
+            dst: b,
+            edge_type: "IMPORTS_FROM".to_string(),
+        }];
+        let err = dispatch_sim_datalog(&engine, "", "depends", &[], &bad, cf());
+        assert!(err.is_err(), "non-numeric wire id must be a coded input error");
+
+        match prev {
+            Some(v) => std::env::set_var("RFDB_DATALOG_V2", v),
+            None => std::env::remove_var("RFDB_DATALOG_V2"),
+        }
+    }
+
+    /// Decision #2 wire: `ExplainDatalogGap` (why-not) names the first unsatisfiable premise of
+    /// a missing fact, returns NULL for a derivable fact (no gap — the dual of explain_fact),
+    /// and is v2-only (coded refusal with the switch off, I5).
+    #[test]
+    fn dispatch_explain_datalog_gap_names_missing_premise_and_gates_off() {
+        let _guard = DATALOG_V2_ENV_LOCK.lock().unwrap();
+        let prev = std::env::var("RFDB_DATALOG_V2").ok();
+
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let mk_node = |sid: &str, ty: &str| NodeRecord {
+            id: string_to_id(sid),
+            node_type: Some(ty.to_string()),
+            file_id: 0,
+            name_offset: 0,
+            version: "main".to_string(),
+            exported: false,
+            replaces: None,
+            deleted: false,
+            name: Some(sid.to_string()),
+            file: Some(format!("{sid}.js")),
+            metadata: None,
+            semantic_id: Some(sid.to_string()),
+        };
+        engine.add_nodes(vec![mk_node("a", "MODULE"), mk_node("b", "MODULE")]);
+        engine.add_edges(
+            vec![EdgeRecord {
+                src: string_to_id("a"),
+                dst: string_to_id("b"),
+                edge_type: Some("IMPORTS_FROM".to_string()),
+                version: "main".to_string(),
+                metadata: None,
+                deleted: false,
+            }],
+            true,
+        );
+        engine.flush().unwrap();
+
+        let cf = || Arc::new(AtomicBool::new(false));
+        let a = string_to_id("a").to_string();
+        let b = string_to_id("b").to_string();
+
+        // ── Kill switch OFF → refused (coded), no v2 why-not. ──
+        std::env::set_var("RFDB_DATALOG_V2", "off");
+        let off = dispatch_explain_datalog_gap(&engine, "", "depends", &[b.clone(), a.clone()], cf());
+        assert!(off.is_err(), "explain_gap must be refused when the kill switch is off");
+        assert!(off.unwrap_err().contains("v2-only"), "explicit v2-only coded refusal (I5)");
+
+        // ── Kill switch ON → the missing fact depends(b,a) gets a gap witness naming the
+        //    unsatisfiable premise (no IMPORTS_FROM b→a). ──
+        std::env::set_var("RFDB_DATALOG_V2", "on");
+        let gap = dispatch_explain_datalog_gap(&engine, "", "depends", &[b.clone(), a.clone()], cf())
+            .expect("explain_gap succeeds under v2")
+            .expect("depends(b,a) is not derivable → Some gap witness");
+        assert!(!gap.rule_ast_hash.is_empty(), "the gap names the rule it characterizes");
+        assert!(!gap.failing_predicate.is_empty(), "the gap names the unsatisfiable premise");
+        assert!(!gap.failing_is_negative, "the missing premise here is positive (an absent edge)");
+
+        // ── A derivable fact → NULL gap (true 'no gap', distinct from an error). ──
+        let none = dispatch_explain_datalog_gap(&engine, "", "depends", &[a, b], cf())
+            .expect("explain_gap succeeds under v2");
+        assert!(none.is_none(), "depends(a,b) IS derivable → no gap");
 
         match prev {
             Some(v) => std::env::set_var("RFDB_DATALOG_V2", v),

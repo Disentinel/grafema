@@ -13,7 +13,7 @@ import {
   textResult,
   errorResult,
 } from '../utils.js';
-import type { DatalogExplainResult, CypherResult, FactWitness } from '@grafema/types';
+import type { DatalogExplainResult, CypherResult, FactWitness, GapWitness, SimEdge, SimNode } from '@grafema/types';
 import type {
   ToolResult,
   QueryGraphArgs,
@@ -23,6 +23,8 @@ import type {
   DatalogBinding,
   CallResult,
   ExplainFactArgs,
+  ExplainGapArgs,
+  SimDatalogArgs,
 } from '../types.js';
 
 // === QUERY HANDLERS ===
@@ -661,6 +663,114 @@ export async function handleExplainFact(args: ExplainFactArgs): Promise<ToolResu
     for (const f of witness.body) {
       lines.push(`  • ${f.predicate}(${f.tuple.join(', ')})`);
     }
+  }
+  return textResult(guardResponseSize(lines.join('\n')));
+}
+
+/**
+ * sim_datalog (what-if, spec §6): predict the NEW `predicate` facts a hypothetical overlay of
+ * nodes+edges would create — WITHOUT committing anything. Empty `source` ⇒ the bundled
+ * depends.dl (so the common use is "which NEW module dependencies would this import create?").
+ * v2-only. The companion to explain_gap: gap names the missing premise, sim verifies that
+ * adding it produces the fact.
+ */
+export async function handleSimDatalog(args: SimDatalogArgs): Promise<ToolResult> {
+  const { predicate, nodes, edges, source } = args;
+  if (!predicate) {
+    return errorResult('sim_datalog requires `predicate` (string).');
+  }
+  const hypNodes: SimNode[] = (nodes ?? []).map((n) => ({
+    id: String(n.id),
+    nodeType: n.nodeType,
+    name: n.name ?? '',
+    file: n.file ?? '',
+  }));
+  const hypEdges: SimEdge[] = (edges ?? []).map((e) => ({
+    src: String(e.src),
+    dst: String(e.dst),
+    edgeType: e.edgeType,
+  }));
+  if (hypNodes.length === 0 && hypEdges.length === 0) {
+    return errorResult('sim_datalog requires at least one hypothetical node or edge.');
+  }
+
+  const db = await ensureAnalyzed();
+  if (!('simDatalog' in db)) {
+    return errorResult('Backend does not support sim_datalog (needs the RFDB v2 server with RFDB_DATALOG_V2 enabled).');
+  }
+  const fn = (db as unknown as {
+    simDatalog: (s: string, p: string, n: SimNode[], e: SimEdge[]) => Promise<string[][]>;
+  }).simDatalog;
+
+  let rows: string[][];
+  try {
+    rows = await fn.call(db, source ?? '', predicate, hypNodes, hypEdges);
+  } catch (e) {
+    return errorResult(`sim_datalog failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  if (rows.length === 0) {
+    return textResult(
+      `No new facts: the hypothetical change creates no NEW ${predicate}() facts (anything it derives already holds).`,
+    );
+  }
+  const lines = [`${rows.length} NEW ${predicate}() fact(s) the hypothetical change would create:`];
+  for (const row of rows) {
+    lines.push(`  • ${predicate}(${row.join(', ')})`);
+  }
+  return textResult(guardResponseSize(lines.join('\n')));
+}
+
+/**
+ * explain_gap (why-not, spec §6): explain why a fact is NOT derived — the satisfied premise
+ * prefix and the first premise no binding satisfies. Empty `source` ⇒ the bundled depends.dl
+ * (so the common use is "why is there NO dependency A→B?"). v2-only.
+ */
+export async function handleExplainGap(args: ExplainGapArgs): Promise<ToolResult> {
+  const { predicate, key, source } = args;
+  if (!predicate || !Array.isArray(key)) {
+    return errorResult('explain_gap requires `predicate` (string) and `key` (array of wire-string terms).');
+  }
+
+  const db = await ensureAnalyzed();
+  if (!('explainDatalogGap' in db)) {
+    return errorResult('Backend does not support explain_gap (needs the RFDB v2 server with RFDB_DATALOG_V2 enabled).');
+  }
+  const fn = (db as unknown as {
+    explainDatalogGap: (s: string, p: string, k: string[]) => Promise<GapWitness | null>;
+  }).explainDatalogGap;
+
+  let gap: GapWitness | null;
+  try {
+    gap = await fn.call(db, source ?? '', predicate, key.map(String));
+  } catch (e) {
+    return errorResult(`explain_gap failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  const factStr = `${predicate}(${key.join(', ')})`;
+  if (!gap) {
+    return textResult(
+      `No gap: ${factStr} is derivable (it holds — use explain_fact for its derivation), or no rule head matches this key.`,
+    );
+  }
+
+  const lines = [`${factStr} does NOT hold — gap in rule ${gap.ruleAstHash}:`];
+  if (gap.satisfied.length === 0) {
+    lines.push('  satisfied premises: (none)');
+  } else {
+    lines.push('  satisfied premises:');
+    for (const f of gap.satisfied) {
+      lines.push(`    • ${f.predicate}(${f.tuple.join(', ')})`);
+    }
+  }
+  if (gap.failingIsNegative) {
+    lines.push(
+      `  blocking premise: NOT ${gap.failingPredicate}(…) — a PRESENT fact blocks the derivation; the gap closes by REMOVING it.`,
+    );
+  } else {
+    lines.push(
+      `  missing premise: ${gap.failingPredicate}(…) — no binding satisfies it; the gap closes by ADDING such a fact (verify with sim_datalog).`,
+    );
   }
   return textResult(guardResponseSize(lines.join('\n')));
 }
