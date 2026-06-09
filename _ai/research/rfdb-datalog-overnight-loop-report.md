@@ -46,14 +46,20 @@ for you. Running ledger stays in `rfdb-datalog-RESUME.md`; this is the morning-s
    consumer until you greenlight the MCP surface.* Recommendation: green-light — it's the natural
    companion to `explain_fact` and directly powers "what fact closes this gap?" for agents.
 
-3. **Plugin system shape.** The menu item "rewrite analyzers/plugins onto the new system" presumes a
-   concrete plugin loader/format. Today the only bundled mechanism is `datalog2/stdlib.rs`
-   (`include_str!` a `.dl` + dispatch on empty source). The apparatus doc §3 sketches the
-   polyglot-molecule {YAML ⊎ JS ⊎ Datalog} but there is no loader yet. *I did not author speculative
-   stdlib rules — my own `materialize-only-what-queries-need` rule says list the consumer first.*
-   Recommendation: before any analyzer rewrite, define the plugin manifest + loader contract (one
-   design session); then the first migration target is the orchestrator's in-memory DEPENDS_ON
-   derivation, which `depends.dl` already replaces — that's the proof-of-migration with a real consumer.
+3. **Plugin system shape.** *(GROUNDED — corrects an earlier under-grounded version of this item;
+   see `datalog-v2-in-the-plugin-pipeline.md`.)* The plugin system already exists: `packages/lang-spec/`
+   generates analyzer plugins (rule-table + walk/post-file/post-project enrichers) from a language
+   descriptor, with a human-reviewed vocabulary (= archetypes) and an edge-phase model. The v2 seam is
+   concrete: a **post-project** edge with a `crossFile` requirement profile is exactly the apparatus's
+   Datalog atom — currently emitted as a TypeScript `post-project-enricher`, the natural thing to lower
+   to a `.dl` rule-pack + `@materialize`. **`depends.dl` is already the first such migration** (a
+   post-project crossFile MODULE→MODULE edge replacing the orchestrator's TS derivation, proven ≡ on the
+   real corpus). The rule-table is the IR ("future Rust implementation can consume it", README:185) and
+   datalog2 is that runtime. Recommendation: first migration target = the JS analyzer's post-project
+   relational edges (enumerate from `05-edge-requirements.json` `phaseDistribution['post-project']`),
+   following depends.dl's template. *The one fact I couldn't ground from source: whether `rule-table.json`
+   encodes enough to MECHANICALLY lower those edges (stage-10 codegen change) or each is hand-authored
+   like depends.dl — needs a read of a real `{corpus}/.pipeline/` artifact (paid LLM run, not in-tree).*
 
 ## Why I stopped grinding tests
 
