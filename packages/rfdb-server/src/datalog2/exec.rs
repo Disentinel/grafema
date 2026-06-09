@@ -2136,6 +2136,109 @@ mod tests {
         assert!(saw_growth, "some insertion must have grown the transitive closure");
     }
 
+    // ── sim(): hypothetical-edit query (Gate E "new feature") ──
+
+    /// `sim()` answers a why-NOT counterfactual: "IF I added this edge, which derived facts
+    /// would appear?" — without committing the edit. It is exactly `maintain_incremental`
+    /// run over a HYPOTHETICAL `BaseDelta` against an overlay view: the engine already has
+    /// the machinery, so sim is the maintain seam used in read-only mode. This is the
+    /// hypothetical-questions dual of `why()` (PUG-style why-not provenance, apparatus §6):
+    /// a coverage gap names the unbound premise; sim proves a candidate fact closes it.
+    ///
+    /// The test pins the two soundness obligations that make sim trustworthy:
+    ///   (1) SOUND — `sim(base, Δ) ≡ scratch(base ∪ Δ)`: the predicted facts are exactly
+    ///       what a real commit-then-evaluate would have produced.
+    ///   (2) NON-DESTRUCTIVE — the base view and the prior evaluation are byte-identical
+    ///       before and after the what-if; the hypothetical never leaks into committed state.
+    #[test]
+    fn sim_hypothetical_edit_predicts_derived_facts_without_mutating_base() {
+        use crate::datalog2::increment::diff_base;
+
+        // Reachability via transitive closure — the monotone envelope sim relies on.
+        let src = "reach(A, B) :- edge(A, B, \"E\").\n\
+                   reach(A, B) :- edge(A, C, \"E\"), reach(C, B).";
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let plans = plan_program(
+            &rules,
+            &strat,
+            &Stats { total_nodes: 4, total_edges: 4, ..Default::default() },
+        )
+        .expect("plan");
+
+        let nid = |n: &str| id_of(n);
+        let build = |edges: &[(&str, &str)], gen: u64| {
+            let mut v = FixtureStorageView::new(gen);
+            for &(s, d) in edges {
+                v.put_edge(EdgeRow {
+                    src: nid(s),
+                    dst: nid(d),
+                    edge_type: "E".to_string(),
+                });
+            }
+            v
+        };
+        let eval_scratch = |view: &FixtureStorageView| {
+            Executor::<BoolTag>::with_limits(view, EvalLimits::none(), DEFAULT_ITERATION_CAP)
+                .evaluate(&plans, &rules, &strat)
+                .expect("scratch evaluate")
+        };
+        let reaches = |eval: &Evaluation, from: &str, to: &str| {
+            eval.facts("reach").iter().any(|r| {
+                r[0].as_id() == Some(nid(from)) && r[1].as_id() == Some(nid(to))
+            })
+        };
+
+        // Committed base: a -> b -> c, and a dangling target `d`. `a` does NOT reach `d`:
+        // a coverage gap whose unbound premise is "some edge into d".
+        let base_edges = [("a", "b"), ("b", "c")];
+        let base_view = build(&base_edges, 0);
+        let base_eval = eval_scratch(&base_view);
+        assert!(reaches(&base_eval, "a", "c"), "precondition: a reaches c");
+        assert!(!reaches(&base_eval, "a", "d"), "precondition: the gap — a does NOT reach d");
+
+        // The hypothetical edit the gap analysis would propose: c -> d. Build the overlay
+        // view (base ∪ Δ) WITHOUT mutating `base_view`, and the hypothetical delta.
+        let hypo_edges = [("a", "b"), ("b", "c"), ("c", "d")];
+        let hypo_view = build(&hypo_edges, 1);
+        let hypo_delta = diff_base(&base_view, &hypo_view);
+        assert_eq!(hypo_delta.edges.asserted.len(), 1, "exactly one hypothetical edge");
+        assert!(hypo_delta.edges.retracted.is_empty(), "a pure what-if addition");
+
+        // sim() = maintain over the hypothetical delta. Read-only: no flush, no write-back.
+        let simulated = maintain_incremental::<BoolTag>(
+            &base_eval,
+            &base_view,
+            &hypo_view,
+            &hypo_delta,
+            &plans,
+            &rules,
+            &strat,
+            EvalLimits::none(),
+        )
+        .expect("sim maintain")
+        .expect("monotone envelope → Some prediction, not a recompute fallback");
+
+        // (1) SOUND — the prediction equals what a real commit would have derived, AND it
+        // actually closes the gap (a now reaches d transitively through the hypothetical edge).
+        let committed = eval_scratch(&hypo_view);
+        assert_eq!(
+            simulated.relations, committed.relations,
+            "sim must predict exactly scratch(base ∪ hypothetical)"
+        );
+        assert!(reaches(&simulated, "a", "d"), "sim predicts the gap closes: a reaches d");
+
+        // (2) NON-DESTRUCTIVE — the what-if left the committed world untouched: a re-eval of
+        // the original base is byte-identical to `base_eval`, and the gap is still open there.
+        let base_after = eval_scratch(&base_view);
+        assert_eq!(
+            base_eval.relations, base_after.relations,
+            "the hypothetical must not mutate the committed base"
+        );
+        assert!(!reaches(&base_after, "a", "d"), "uncommitted: the real graph still has the gap");
+    }
+
     /// The envelope guard: a program with negation cannot be insertion-maintained (a base
     /// insert can RETRACT a derived fact through `\\+`), so `evaluate_incremental` returns
     /// `None` (recompute) rather than a wrong delta.
