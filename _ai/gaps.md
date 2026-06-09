@@ -127,3 +127,25 @@ on `.grafema/grafema.rfdb`). The differential surfaced these gaps, mapped to spe
   notation) while deciding. Recommend (a): the emitted name is the ground truth; the 17k edges already exist.
 - **Ties to:** I13 edge-vocabulary governance (apparatus doc); the archetype claim-map + W-code would
   have caught this at load time. This fork is the concrete motivation for that mechanism.
+
+## Planner q-error: recursive transitive-closure over-estimates → spurious E-PLAN-003 (2026-06-09)
+
+- **Gap:** the v2 planner rejects a recursive transitive-closure rule with `E-PLAN-003` because its
+  per-rule output estimate compounds instead of saturating. On the real dogfood graph, cycle
+  detection over `depends/2` (`dep_reach(A,B) :- depends(A,C), dep_reach(C,B)`) estimates ~54.3M
+  output facts vs the 10M `MAX_MATERIALIZED_FACTS` guard — despite only ~622 base `depends` pairs
+  (true closure ≤ modules², a few hundred² ≪ 54M).
+- **Evidence:** `datalog2::differential::yaml_extract_tests::probe_real_module_dependency_cycles`
+  (ignored) prints `E-PLAN-003 (dep_reach): per-rule output estimate 54259156 exceeds
+  max_materialized_facts 10000000`. Logic is correct on a fixture
+  (`datalog2::smoke::module_dependency_cycles_via_transitive_closure_over_depends`, green).
+- **Root cause (hypothesis, not yet fixed):** the recursive leg's estimate multiplies the recursive
+  relation's running magnitude by the base, with no fixpoint-saturation discount; transitive closure
+  is bounded by |nodes|² but the estimator treats each iteration as an independent product.
+- **Why NOT fixed autonomously:** the estimator lives next to the prod `MAX_MATERIALIZED_FACTS`
+  safety guard (`plan.rs:43`); changing recursive-rule estimation risks under-guarding real runaway
+  joins. Needs a deliberate estimator change + Gate A re-verify, not an overnight patch.
+- **This is the roadmap's "planner q-error (Gate D)" residual (task #4)**, now with a concrete
+  reproduction on real data. Fix options: (a) cap a recursive rule's estimate at |nodes|^arity
+  (closure can't exceed the universe); (b) saturating estimate for self-recursive legs; (c) a
+  bounded-depth reach formulation for cycle queries specifically.
