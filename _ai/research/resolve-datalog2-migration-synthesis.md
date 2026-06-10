@@ -23,6 +23,17 @@ DECISION: pivot to W6 (build-once index cache on (leg, view-generation) + rayon 
 joins) BEFORE Wave 2b — every further wave compounds the shadow cost; target pack-phase ≤60s
 again at 15+ packs.
 
+## ✅ W6 + PER-STEP GATE VERIFIED (2026-06-10 late night, clean fresh-DB run)
+
+W6 (executor index caches + rayon): **pack phase 223s → 85.4s (2.6×)** at 15 packs.
+Per-step gate (GRAFEMA_SKIP_RESOLVE_STEPS) verified load-bearing on a fresh DB with
+js-local-refs, same-file-calls, class-inheritance, property-access OFF: js_local_refs wrote
+its full 37 595 READS_FROM; final counts vs legacy baseline — READS_FROM 191 853 vs 161 803,
+CALLS 65 630 vs 61 665, IMPORTS_FROM parity. ONE regression: EXTENDS 10 vs 14 (re-export-chain
+inheritance = the pinned Wave-2b subset delta) → **class-inheritance stays legacy until Wave
+2b**; recommended skip set today = js-local-refs, same-file-calls, property-access.
+Full analyze with the gate + W6: **497s**. Commits: W6 + 94c44a42.
+
 ## ✅ WAVE 1 DIFFERENTIAL — PASS (2026-06-10 evening, run B vs legacy baseline)
 
 Run B = full analyze with GRAFEMA_SKIP_RESOLVERS=js,rust + the 8-pack runner: **446s wall**
