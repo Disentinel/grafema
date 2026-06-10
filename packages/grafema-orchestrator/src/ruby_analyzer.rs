@@ -925,6 +925,93 @@ fn walk_node_inner(node: &ruby_prism::Node<'_>, ctx: &mut Ctx) {
                     }
                     return;
                 }
+                "define_method" | "define_singleton_method" => {
+                    // Ruby metaprogramming that defines a real method at load time:
+                    //   define_method(:name) { body }            -> instance method
+                    //   define_singleton_method(:name) { body }  -> singleton/static method
+                    // Emit a FUNCTION node (mirroring `def`) so the method is queryable,
+                    // with the block's parameters and body attributed to it (no spurious
+                    // `<block>` node). Only the statically-resolvable form is handled — a
+                    // literal symbol/string name, no explicit receiver, and a literal block.
+                    // Dynamic names (`define_method(var)`), interpolated symbols, or an
+                    // explicit receiver fall through to general CALL handling below (which
+                    // still walks the block), so nothing is lost and nothing panics.
+                    if cn.receiver().is_none() {
+                        if let Some(args) = cn.arguments() {
+                            let method_name = args
+                                .arguments()
+                                .iter()
+                                .next()
+                                .and_then(|a| extract_symbol_name(&a));
+                            if let (Some(method_name), Some(block)) = (method_name, cn.block()) {
+                                if let Some(bn) = block.as_block_node() {
+                                    let is_singleton = name == "define_singleton_method";
+                                    let parent_name = ctx.enclosing_class_or_module();
+                                    let node_id = semantic_id(
+                                        &ctx.file,
+                                        "FUNCTION",
+                                        &method_name,
+                                        parent_name.as_deref(),
+                                        None,
+                                    );
+
+                                    let mut metadata = HashMap::from([
+                                        Ctx::meta_text("kind", "method"),
+                                        Ctx::meta_text("visibility", ctx.visibility.as_str()),
+                                        Ctx::meta_text("defined_via", name.as_str()),
+                                    ]);
+                                    if is_singleton {
+                                        metadata.insert(
+                                            "static".to_string(),
+                                            serde_json::Value::Bool(true),
+                                        );
+                                    }
+
+                                    let gn = GraphNode {
+                                        id: node_id.clone(),
+                                        node_type: "FUNCTION".to_string(),
+                                        name: method_name.clone(),
+                                        file: ctx.file.clone(),
+                                        line, column: col, end_line, end_column: end_col,
+                                        exported: ctx.visibility == Visibility::Public,
+                                        metadata,
+                                        extra: HashMap::new(),
+                                    };
+                                    ctx.emit_declaration(gn);
+
+                                    // HAS_METHOD edge from enclosing class/module
+                                    if parent_name.is_some() {
+                                        ctx.emit_edge(GraphEdge {
+                                            src: ctx.scope_id().to_string(),
+                                            dst: node_id.clone(),
+                                            edge_type: "HAS_METHOD".to_string(),
+                                            metadata: HashMap::new(),
+                                        });
+                                    }
+
+                                    // Attribute the block's params + body to the new method.
+                                    let prev_fn = ctx.enclosing_fn.take();
+                                    ctx.enclosing_fn = Some(node_id.clone());
+                                    ctx.push_scope(
+                                        &node_id,
+                                        ScopeKind::Function,
+                                        line, col, end_line, end_col,
+                                    );
+                                    if let Some(params) = bn.parameters() {
+                                        walk_node(&params, ctx);
+                                    }
+                                    if let Some(body) = bn.body() {
+                                        walk_node(&body, ctx);
+                                    }
+                                    ctx.pop_scope();
+                                    ctx.enclosing_fn = prev_fn;
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    // Dynamic / non-literal form: fall through to general CALL handling.
+                }
                 _ => {}
             }
 
@@ -3353,6 +3440,84 @@ mod tests {
         let names: Vec<&str> = functions.iter().map(|f| f.name.as_str()).collect();
         assert!(names.contains(&"name"), "expected attr_reader :name to create a FUNCTION node");
         assert!(names.contains(&"age"), "expected attr_reader :age to create a FUNCTION node");
+    }
+
+    // 9a. define_method(:name) { } creates a real FUNCTION + HAS_METHOD edge
+    #[test]
+    fn test_define_method_creates_function() {
+        let a = analyze("class Foo\n  define_method(:bar) { 42 }\nend");
+        let functions = find_nodes_by_type(&a, "FUNCTION");
+        let bar = functions
+            .iter()
+            .find(|f| f.name == "bar")
+            .expect("define_method(:bar) should create a FUNCTION node named bar");
+        assert_eq!(bar.metadata.get("kind").unwrap(), "method");
+        assert_eq!(bar.metadata.get("defined_via").unwrap(), "define_method");
+        // No spurious <block> FUNCTION — the block body belongs to bar.
+        assert!(
+            !functions.iter().any(|f| f.name == "<block>"),
+            "define_method block must be attributed to the method, not a <block> node"
+        );
+
+        let has_method = find_edges_by_type(&a, "HAS_METHOD");
+        assert!(
+            has_method.iter().any(|e| e.dst == bar.id && e.src.contains("Foo")),
+            "Foo should have a HAS_METHOD edge to bar"
+        );
+    }
+
+    // 9b. define_singleton_method(:name) { } marks the method static
+    #[test]
+    fn test_define_singleton_method_static() {
+        let a = analyze("class Foo\n  define_singleton_method(:baz) { 7 }\nend");
+        let functions = find_nodes_by_type(&a, "FUNCTION");
+        let baz = functions
+            .iter()
+            .find(|f| f.name == "baz")
+            .expect("define_singleton_method(:baz) should create a FUNCTION node named baz");
+        assert_eq!(
+            baz.metadata.get("static"),
+            Some(&serde_json::Value::Bool(true)),
+            "define_singleton_method should mark the method static"
+        );
+        assert_eq!(baz.metadata.get("defined_via").unwrap(), "define_singleton_method");
+    }
+
+    // 9c. Calls inside the block are attributed to the synthesized method
+    #[test]
+    fn test_define_method_body_calls_attributed() {
+        let a = analyze("class Foo\n  define_method(:bar) { helper_call }\nend");
+        let bar = find_nodes_by_type(&a, "FUNCTION")
+            .into_iter()
+            .find(|f| f.name == "bar")
+            .expect("bar FUNCTION expected");
+        let call = find_nodes_by_type(&a, "CALL")
+            .into_iter()
+            .find(|c| c.name.contains("helper_call"))
+            .expect("helper_call CALL expected inside the block body");
+        let calls = find_edges_by_type(&a, "CALLS");
+        assert!(
+            calls.iter().any(|e| e.src == bar.id && e.dst == call.id),
+            "helper_call should be CALLS-attributed to the bar method"
+        );
+    }
+
+    // 9d. Dynamic name falls through to general CALL handling (no FUNCTION, no panic)
+    #[test]
+    fn test_define_method_dynamic_name_falls_back() {
+        let a = analyze("class Foo\n  name = :bar\n  define_method(name) { 1 }\nend");
+        // No method FUNCTION is synthesized for a non-literal name.
+        let functions = find_nodes_by_type(&a, "FUNCTION");
+        assert!(
+            !functions.iter().any(|f| f.name == "bar"),
+            "dynamic define_method(name) must not synthesize a 'bar' method"
+        );
+        // The call is preserved as a general CALL node.
+        let calls = find_nodes_by_type(&a, "CALL");
+        assert!(
+            calls.iter().any(|c| c.name.contains("define_method")),
+            "dynamic define_method should fall through to a general CALL node"
+        );
     }
 
     // 10. Scope hierarchy
