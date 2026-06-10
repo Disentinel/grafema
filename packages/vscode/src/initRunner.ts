@@ -9,10 +9,20 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { join } from 'path';
 import * as vscode from 'vscode';
 
-/** All file extensions supported by Grafema's analyzers. */
+/**
+ * All file extensions supported by Grafema's analyzers.
+ *
+ * The JS/TS subset MUST mirror the orchestrator's authoritative
+ * `is_js_ts_file` (packages/grafema-orchestrator/src/analyzer.rs:
+ * `js | jsx | ts | tsx | mjs | cjs | mts | cts`) — the same list the CLI uses
+ * (packages/cli/src/utils/quickstart.ts SUPPORTED_EXTENSIONS). Without
+ * `.mts`/`.cts` here, the generated config `include` glob omits them, so
+ * ESM/CJS TypeScript files are never added to the analysis set even though the
+ * orchestrator would index them — they silently drop out of the graph.
+ */
 const SUPPORTED_EXTENSIONS = [
   // JavaScript / TypeScript
-  'js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx',
+  'js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx', 'mts', 'cts',
   // Rust
   'rs',
   // Java / Kotlin
