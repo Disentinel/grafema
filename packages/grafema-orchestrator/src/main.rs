@@ -1869,6 +1869,13 @@ async fn main() -> Result<()> {
             // 8m. Generate unresolved diagnostics
             let diagnostics_start = std::time::Instant::now();
             {
+                // RFD-65: the resolver commits CALLS/IMPORTS_FROM edges with
+                // defer_index=true, so the index is stale here. Rebuild BEFORE the
+                // negation queries below — otherwise `\+ edge(X, _, "CALLS")` reads a
+                // stale index, over-counts unresolved nodes, and the ISSUE count
+                // alternates between runs depending on L0/L1 compaction timing.
+                rfdb.rebuild_indexes().await.context("Failed to rebuild indexes before unresolved diagnostics")?;
+
                 // Query for unresolved CALL nodes (no outgoing CALLS edge)
                 let unresolved_calls_query = r#"violation(X, Name, File) :- node(X, "CALL"), attr(X, "name", Name), attr(X, "file", File), \+ edge(X, _, "CALLS")."#;
 
@@ -2756,6 +2763,11 @@ async fn main() -> Result<()> {
             // Unresolved diagnostics
             let diagnostics_start = std::time::Instant::now();
             {
+                // RFD-65: rebuild the index before the unresolved-diagnostics negation
+                // queries (resolver commits CALLS/IMPORTS_FROM with defer_index=true);
+                // a stale index here makes the ISSUE count nondeterministic.
+                rfdb.rebuild_indexes().await.context("Failed to rebuild indexes before unresolved diagnostics")?;
+
                 let unresolved_calls_query = r#"violation(X, Name, File) :- node(X, "CALL"), attr(X, "name", Name), attr(X, "file", File), \+ edge(X, _, "CALLS")."#;
                 let unresolved_imports_query = r#"violation(X, Name, File) :- node(X, "IMPORT_BINDING"), attr(X, "name", Name), attr(X, "file", File), \+ edge(X, _, "IMPORTS_FROM")."#;
 

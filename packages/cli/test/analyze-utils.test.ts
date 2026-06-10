@@ -4,7 +4,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { fetchNodeEdgeCounts, exitWithCode } from '../src/commands/analyze.js';
+import { fetchNodeEdgeCounts, exitWithCode } from '../src/commands/analyzeAction.js';
 
 class FakeBackend {
   public nodeCountCalls = 0;

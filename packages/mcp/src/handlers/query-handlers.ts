@@ -527,21 +527,34 @@ async function enrichNodes(
 
 /** Convert a semantic ID to human-readable "name in file.ts" format.
  * Handles: grafema://host/path/file.ts#TYPE->name[scope], path/file.ts#TYPE->name,
- * TYPE-%3Ename (URL-encoded, no file prefix), or raw node IDs. */
-function humanReadableId(semanticId: string): string {
+ * TYPE-%3Ename (URL-encoded, no file prefix), or raw node IDs.
+ *
+ * Exported for unit testing.
+ * @internal */
+export function humanReadableId(semanticId: string): string {
   if (!semanticId) return '?';
-  // Decode URI components first
-  let id = semanticId;
-  try { id = decodeURIComponent(id); } catch { /* keep as-is */ }
 
-  // Find the # separator between file path and node descriptor
-  const hashIdx = id.lastIndexOf('#');
-  let filePart = '';
-  let nodePart = id;
+  // Split file path from node descriptor on the FIRST literal '#' of the RAW
+  // (still percent-encoded) id, BEFORE decoding. The grafema:// URI form encodes
+  // the disambiguation counter ('#N', appended by computeSemanticIdV2 for hash
+  // collisions) as '%23N' inside the fragment. Decoding first and then splitting
+  // on the LAST '#' would mistake that counter for the path/fragment boundary and
+  // corrupt the label. A file path never contains a literal '#'. This mirrors the
+  // canonical parseSemanticIdV2 (packages/util/src/core/SemanticId.ts).
+  const hashIdx = semanticId.indexOf('#');
+  let rawFile = '';
+  let rawNode = semanticId;
   if (hashIdx !== -1) {
-    filePart = id.slice(0, hashIdx);
-    nodePart = id.slice(hashIdx + 1);
+    rawFile = semanticId.slice(0, hashIdx);
+    rawNode = semanticId.slice(hashIdx + 1);
   }
+
+  const decode = (s: string): string => {
+    try { return decodeURIComponent(s); } catch { return s; }
+  };
+  const filePart = decode(rawFile);
+  // Strip the trailing disambiguation counter ('#N') from the decoded descriptor.
+  const nodePart = decode(rawNode).replace(/#\d+$/, '');
 
   const fileName = filePart ? (filePart.split('/').pop() || '') : '';
 

@@ -16,8 +16,15 @@ import { dirname, extname, resolve, join } from 'path';
 /**
  * Default file extensions to try when resolving modules.
  * Order: exact match first, then JS variants, then TS variants.
+ *
+ * MUST stay aligned with the set of JS/TS extensions the orchestrator indexes —
+ * `is_js_ts_file` in packages/grafema-orchestrator/src/analyzer.rs
+ * (`js | jsx | ts | tsx | mjs | cjs | mts | cts`) — otherwise an indexed
+ * definition file becomes unreachable to extensionless/directory imports.
+ * `.mts`/`.cts` are appended last so the resolution order of every
+ * previously-resolving specifier is unchanged.
  */
-export const DEFAULT_EXTENSIONS = ['', '.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx'];
+export const DEFAULT_EXTENSIONS = ['', '.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.mts', '.cts'];
 
 /**
  * TypeScript extension redirects (REG-426).
@@ -35,6 +42,10 @@ const TS_EXTENSION_REDIRECTS: Record<string, string[]> = {
 /**
  * Default index files to try when resolving directory imports.
  * Order: JS variants first (most common), then TS variants.
+ *
+ * Covers the same JS/TS extension set the orchestrator indexes (see
+ * `DEFAULT_EXTENSIONS`). `index.mts`/`index.cts` are appended last so the
+ * resolution order of every previously-resolving directory import is unchanged.
  */
 export const DEFAULT_INDEX_FILES = [
   'index.js',
@@ -42,7 +53,9 @@ export const DEFAULT_INDEX_FILES = [
   'index.mjs',
   'index.cjs',
   'index.jsx',
-  'index.tsx'
+  'index.tsx',
+  'index.mts',
+  'index.cts'
 ];
 
 /**
@@ -87,7 +100,7 @@ export interface ModuleResolutionOptions {
 
   /**
    * Extensions to try (in order).
-   * Default: ['', '.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx']
+   * Default: ['', '.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.mts', '.cts']
    *
    * Empty string '' means try exact path first.
    */
@@ -95,7 +108,7 @@ export interface ModuleResolutionOptions {
 
   /**
    * Index files to try (in order).
-   * Default: ['index.js', 'index.ts', 'index.mjs', 'index.cjs', 'index.jsx', 'index.tsx']
+   * Default: ['index.js', 'index.ts', 'index.mjs', 'index.cjs', 'index.jsx', 'index.tsx', 'index.mts', 'index.cts']
    */
   indexFiles?: string[];
 }

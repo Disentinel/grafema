@@ -223,15 +223,45 @@ fn positive_can_place_and_provides(
             let provides = free_vars(args, bound);
             (true, provides)
         }
-        "incoming" | "path" => {
-            // incoming(dst, src, type) / path(src, dst) — requires first arg bound
+        "incoming" => {
+            // incoming(dst, src, type) is the reverse of edge(src, dst, type):
+            // both are edge-relation predicates that differ only in argument
+            // order. Like `edge`, `incoming` is always placeable (full scan if
+            // dst is unbound) and provides every free Var arg. Requiring a bound
+            // dst here — while `edge` requires nothing — wrongly rejected
+            // placeable enumerations such as `incoming(D, S)` or
+            // `incoming(D, S, "CALLS")` as circular dependencies, even though the
+            // executor can satisfy them (by edge-type index or full scan).
+            let provides = free_vars(args, bound);
+            (true, provides)
+        }
+        "path" => {
+            // path(src, dst) — placeable when AT LEAST ONE endpoint is *concrete*
+            // (a Const or an already-bound Var; a Wildcard does NOT count):
+            //   - src concrete → forward BFS, providing a free dst var
+            //     (`eval_path` (Const, Var/Wildcard/Const) arms);
+            //   - dst concrete → reverse BFS over incoming edges, providing a
+            //     free src var (`eval_path` (Var/Wildcard, Const) arms).
+            // A fully-unbound pair (both Var/Wildcard) is all-pairs reachability
+            // (O(N·E)) and is unsupported — `eval_path` returns nothing for it —
+            // so reorder must NOT report it as placeable, otherwise it would
+            // claim to bind a variable it never produces. This classification
+            // mirrors the supported `eval_path` modes exactly.
             if args.is_empty() {
                 return (true, HashSet::new());
             }
-            let can_place = is_bound_or_const(&args[0], bound);
+            let concrete = |t: &Term| match t {
+                // A numeric literal is as concrete as a quoted constant (spec §5).
+                Term::Const(_) | Term::Lit(_) => true,
+                Term::Var(v) => bound.contains(v),
+                Term::Wildcard => false,
+            };
+            let can_place = concrete(&args[0]) || args.get(1).is_some_and(concrete);
             let mut provides = HashSet::new();
             if can_place {
-                for arg in args.iter().skip(1) {
+                // Whichever side was free becomes bound once the (directional)
+                // BFS runs, so report every free Var arg.
+                for arg in args.iter() {
                     if let Term::Var(v) = arg {
                         if !bound.contains(v) {
                             provides.insert(v.clone());
@@ -327,6 +357,29 @@ fn is_bound_or_const(term: &Term, bound: &HashSet<String>) -> bool {
         Term::Const(_) | Term::Lit(_) | Term::Wildcard => true,
         Term::Var(v) => bound.contains(v),
     }
+}
+
+/// Whether the negation hash-join fast path is sound for `atom`, given that its
+/// existence set is keyed on the endpoint at `key_pos`.
+///
+/// `eval_negation_hash_join` builds a set of node ids for ONE endpoint
+/// (`key_pos`) and rejects every binding whose key is in that set. That
+/// correctly models `\+ edge(X, _, "T")` ("X has no outgoing T edge") only when
+/// the OTHER endpoint is unconstrained — i.e. a `Wildcard`. When the other
+/// endpoint is a `Const` (or an already-bound `Var`), the negation refers to a
+/// SPECIFIC edge — `\+ edge(X, "d", "T")` means "X has no T edge *to d*", not
+/// "X has no T edge at all" — which a single-endpoint existence set cannot
+/// express. In that case this returns `false` so the literal falls through to
+/// the per-binding path (`substitute_atom` + `eval_edge`/`eval_incoming`), which
+/// filters on both endpoints. Without this guard the constant was silently
+/// dropped once the binding count crossed the hash-join threshold, producing a
+/// threshold-dependent wrong answer.
+///
+/// `key_pos` is always 0 or 1 (per `should_hash_join`), so the other endpoint is
+/// the remaining one of `args[0]`/`args[1]`.
+pub(crate) fn negation_hash_join_sound(atom: &super::types::Atom, key_pos: usize) -> bool {
+    let other_pos = if key_pos == 0 { 1 } else { 0 };
+    matches!(atom.args().get(other_pos), Some(Term::Wildcard))
 }
 
 /// Collect all free Var names from args (Var names not yet in bound).

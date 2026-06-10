@@ -12,14 +12,22 @@
  *   const result = await analyzer.analyze();
  */
 
-import { readdirSync, existsSync, lstatSync } from 'fs';
+import { readdirSync, existsSync, lstatSync, realpathSync } from 'fs';
 import { join, relative, extname } from 'path';
 import type { GraphBackend } from '@grafema/types';
 
 /**
- * Supported file extensions by language
+ * Supported file extensions by language.
+ *
+ * The JS/TS set MUST match the orchestrator's authoritative `is_js_ts_file`
+ * (`packages/grafema-orchestrator/src/analyzer.rs`: `js | jsx | ts | tsx |
+ * mjs | cjs | mts | cts`) — that function decides which files are indexed into
+ * the graph as MODULE nodes. If this list omits an extension the orchestrator
+ * indexes, an on-disk file of that extension that is NOT in the graph is never
+ * scanned (see {@link CODE_EXTENSIONS} / `walkDirectory`), so it silently drops
+ * out of `total` and the `unreachable` breakdown — inflating coverage %.
  */
-const JS_SUPPORTED = ['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx'];
+const JS_SUPPORTED = ['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.mts', '.cts'];
 const RUST_SUPPORTED = ['.rs'];
 const SUPPORTED_EXTENSIONS = new Set([...JS_SUPPORTED, ...RUST_SUPPORTED]);
 
@@ -112,9 +120,28 @@ export class CoverageAnalyzer {
   private graph: GraphBackend;
   private projectPath: string;
 
+  /**
+   * @param graph - graph backend to query for MODULE/ISSUE nodes
+   * @param projectPath - absolute project root to scan and to strip from node
+   *   paths. It is realpath'd here (REG-408 class): the graph stores realpath'd
+   *   ABSOLUTE file paths, so a symlinked root (e.g. macOS `/tmp` ->
+   *   `/private/tmp`) would otherwise never `startsWith` an absolute MODULE path
+   *   — keeping the file absolute while {@link scanProjectFiles} emits relative
+   *   paths, double-counting the same file as both `analyzed` and `unreachable`
+   *   and inflating `total`. Callers (`grafema coverage`, MCP `get_coverage`)
+   *   pass a raw `resolve()`'d / user-supplied root, so normalizing here fixes
+   *   every caller in one place. Falls back to the given path if it does not
+   *   exist on disk (the caller's own dbPath check reports a missing project).
+   */
   constructor(graph: GraphBackend, projectPath: string) {
     this.graph = graph;
-    this.projectPath = projectPath;
+    let normalized = projectPath;
+    try {
+      normalized = realpathSync(projectPath);
+    } catch {
+      // Path does not exist (or is not resolvable): keep the raw value.
+    }
+    this.projectPath = normalized;
   }
 
   /**

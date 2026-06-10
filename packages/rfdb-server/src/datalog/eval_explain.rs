@@ -16,6 +16,7 @@ use crate::datalog::types::*;
 use crate::datalog::eval::{Value, Bindings, EvalLimits};
 use super::utils::reorder_literals;
 use super::eval::HASH_JOIN_THRESHOLD;
+use super::eval::numeric_compare;
 
 /// Statistics collected during query execution
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -264,24 +265,29 @@ impl<'a> EvaluatorExplain<'a> {
                 }
             }
 
-            // Check if hash join applies for negation edge/incoming literals
+            // Check if hash join applies for negation edge/incoming literals.
+            // The fast path is only sound when the non-key endpoint is a Wildcard
+            // (see negation_hash_join_sound); a constant/bound endpoint must be
+            // honored, so fall through to the per-binding path in that case.
             if let Literal::Negative(atom) = literal {
                 if let Some((join_var, key_pos)) = self.should_hash_join(atom, &bound_vars, current.len()) {
-                    let start = Instant::now();
-                    current = self.eval_negation_hash_join(atom, &current, &join_var, key_pos);
-                    let duration = start.elapsed();
-                    self.record_step(
-                        "hash_join_negation",
-                        atom.predicate(),
-                        atom.args(),
-                        current.len(),
-                        duration,
-                        Some(format!("key_var={}, key_pos={}", join_var, key_pos)),
-                    );
-                    if current.is_empty() {
-                        break;
+                    if super::utils::negation_hash_join_sound(atom, key_pos) {
+                        let start = Instant::now();
+                        current = self.eval_negation_hash_join(atom, &current, &join_var, key_pos);
+                        let duration = start.elapsed();
+                        self.record_step(
+                            "hash_join_negation",
+                            atom.predicate(),
+                            atom.args(),
+                            current.len(),
+                            duration,
+                            Some(format!("key_var={}, key_pos={}", join_var, key_pos)),
+                        );
+                        if current.is_empty() {
+                            break;
+                        }
+                        continue;
                     }
-                    continue;
                 }
             }
 
@@ -392,6 +398,19 @@ impl<'a> EvaluatorExplain<'a> {
                         }
                     }
 
+                    // Honour an already-bound variable on the dst end — critical
+                    // for self-join patterns like `edge(M, C, T1), edge(C, M, T2)`.
+                    // Without this, the second edge atom rebinds the shared var to
+                    // any outgoing dst, silently producing cross-joined rows.
+                    // Mirror of Evaluator::eval_edge_hash_join (REG-503 parity).
+                    if let Term::Var(var) = dst_term {
+                        if let Some(existing) = bindings.get(var).and_then(|v| v.as_id()) {
+                            if existing != dst_id {
+                                continue;
+                            }
+                        }
+                    }
+
                     let mut new_bindings = bindings.clone();
 
                     match dst_term {
@@ -447,6 +466,17 @@ impl<'a> EvaluatorExplain<'a> {
                     if let Term::Const(expected_src) = src_term {
                         if expected_src.parse::<u128>().ok() != Some(src_id) {
                             continue;
+                        }
+                    }
+
+                    // Honour an already-bound variable on the src end — same bug
+                    // as eval_edge_hash_join for `incoming(A, B, T1), incoming(B, A, T2)`.
+                    // Mirror of Evaluator::eval_incoming_hash_join (REG-503 parity).
+                    if let Term::Var(var) = src_term {
+                        if let Some(existing) = bindings.get(var).and_then(|v| v.as_id()) {
+                            if existing != src_id {
+                                continue;
+                            }
                         }
                     }
 
@@ -582,6 +612,7 @@ impl<'a> EvaluatorExplain<'a> {
             "incoming" => self.eval_incoming(atom),
             "path" => self.eval_path(atom),
             "attr" => self.eval_attr(atom),
+            "attr_edge" => self.eval_attr_edge(atom),
             "neq" => self.eval_neq(atom),
             "gt" | "lt" | "gte" | "lte" => self.eval_numeric_cmp(atom),
             "starts_with" => self.eval_starts_with(atom),
@@ -610,6 +641,7 @@ impl<'a> EvaluatorExplain<'a> {
             "incoming" => self.eval_incoming(atom),
             "path" => self.eval_path(atom),
             "attr" => self.eval_attr(atom),
+            "attr_edge" => self.eval_attr_edge(atom),
             "neq" => self.eval_neq(atom),
             "gt" | "lt" | "gte" | "lte" => self.eval_numeric_cmp(atom),
             "starts_with" => self.eval_starts_with(atom),
@@ -635,10 +667,22 @@ impl<'a> EvaluatorExplain<'a> {
             return vec![];
         }
 
-        let id_term = &args[0];
-        let type_term = &args[1];
+        // A numeric literal behaves like the equivalent quoted constant (spec §5):
+        // normalize `Term::Lit` to its string surface (mirrors eval.rs).
+        let id_norm;
+        let id_term = match &args[0] {
+            Term::Lit(v) => { id_norm = Term::Const(v.as_str()); &id_norm }
+            other => other,
+        };
+        let type_norm;
+        let type_term = match &args[1] {
+            Term::Lit(v) => { type_norm = Term::Const(v.as_str()); &type_norm }
+            other => other,
+        };
 
         match (id_term, type_term) {
+            // Normalized above — unreachable; total without panicking (mirrors eval.rs).
+            (Term::Lit(_), _) | (_, Term::Lit(_)) => vec![],
             // node(X, "type") - find all nodes of type
             (Term::Var(var), Term::Const(node_type)) => {
                 self.stats.find_by_type_calls += 1;
@@ -701,7 +745,73 @@ impl<'a> EvaluatorExplain<'a> {
                 }
                 results
             }
-            _ => vec![],
+            // node(_, "type") - count/check all nodes of type (wildcard id)
+            (Term::Wildcard, Term::Const(node_type)) => {
+                self.stats.find_by_type_calls += 1;
+                let ids = self.engine.find_by_type(node_type);
+                self.stats.nodes_visited += ids.len();
+                ids.into_iter().map(|_| Bindings::new()).collect()
+            }
+            // node("id", _) - check if node exists (wildcard type)
+            (Term::Const(id_str), Term::Wildcard) => {
+                self.stats.get_node_calls += 1;
+                if let Ok(id) = id_str.parse::<u128>() {
+                    if self.engine.get_node(id).is_some() {
+                        self.stats.nodes_visited += 1;
+                        return vec![Bindings::new()];
+                    }
+                }
+                vec![]
+            }
+            // node(_, _) - enumerate all nodes (both wildcards)
+            (Term::Wildcard, Term::Wildcard) => {
+                self.warnings.push("Full node scan: consider binding type".to_string());
+                let type_counts = self.engine.count_nodes_by_type(None);
+                let mut results = vec![];
+                for node_type in type_counts.keys() {
+                    self.stats.find_by_type_calls += 1;
+                    let ids = self.engine.find_by_type(node_type);
+                    self.stats.nodes_visited += ids.len();
+                    for _ in ids {
+                        results.push(Bindings::new());
+                    }
+                }
+                results
+            }
+            // node(X, _) - enumerate all nodes, bind id only
+            (Term::Var(id_var), Term::Wildcard) => {
+                self.warnings.push("Full node scan: consider binding type".to_string());
+                let type_counts = self.engine.count_nodes_by_type(None);
+                let mut results = vec![];
+                for node_type in type_counts.keys() {
+                    self.stats.find_by_type_calls += 1;
+                    let ids = self.engine.find_by_type(node_type);
+                    self.stats.nodes_visited += ids.len();
+                    for id in ids {
+                        let mut b = Bindings::new();
+                        b.set(id_var, Value::Id(id));
+                        results.push(b);
+                    }
+                }
+                results
+            }
+            // node(_, Y) - enumerate all nodes, bind type only
+            (Term::Wildcard, Term::Var(type_var)) => {
+                self.warnings.push("Full node scan: consider binding type".to_string());
+                let type_counts = self.engine.count_nodes_by_type(None);
+                let mut results = vec![];
+                for node_type in type_counts.keys() {
+                    self.stats.find_by_type_calls += 1;
+                    let ids = self.engine.find_by_type(node_type);
+                    self.stats.nodes_visited += ids.len();
+                    for _ in ids {
+                        let mut b = Bindings::new();
+                        b.set(type_var, Value::Str(node_type.clone()));
+                        results.push(b);
+                    }
+                }
+                results
+            }
         }
     }
 
@@ -712,11 +822,16 @@ impl<'a> EvaluatorExplain<'a> {
             return vec![];
         }
 
-        let src_term = &args[0];
+        let src_norm;
+        let src_term = match &args[0] {
+            Term::Lit(v) => { src_norm = Term::Const(v.as_str()); &src_norm }
+            other => other,
+        };
         let dst_term = &args[1];
         let type_term = args.get(2);
 
         match src_term {
+            Term::Lit(_) => vec![], // normalized above; total without panicking
             Term::Const(src_str) => {
                 let src_id = match src_str.parse::<u128>() {
                     Ok(id) => id,
@@ -741,7 +856,11 @@ impl<'a> EvaluatorExplain<'a> {
                         let mut b = Bindings::new();
 
                         match dst_term {
-                            Term::Var(var) => b.set(var, Value::Id(e.dst)),
+                            Term::Var(var) => {
+                                if !b.bind_checked(var, Value::Id(e.dst)) {
+                                    return None;
+                                }
+                            }
                             Term::Const(s) => {
                                 if s.parse::<u128>().ok() != Some(e.dst) {
                                     return None;
@@ -757,7 +876,9 @@ impl<'a> EvaluatorExplain<'a> {
 
                         if let Some(Term::Var(var)) = type_term {
                             if let Some(etype) = e.edge_type {
-                                b.set(var, Value::Str(etype));
+                                if !b.bind_checked(var, Value::Str(etype)) {
+                                    return None;
+                                }
                             }
                         }
 
@@ -798,29 +919,90 @@ impl<'a> EvaluatorExplain<'a> {
                         }
                         true
                     })
-                    .map(|e| {
+                    .filter_map(|e| {
                         let mut b = Bindings::new();
 
                         // Bind source variable
                         b.set(src_var, Value::Id(e.src));
 
-                        // Bind destination
+                        // Bind destination. `bind_checked` enforces equality when
+                        // dst is the SAME variable as src — `edge(X, X)` is a
+                        // self-loop join, not an overwrite that drops the
+                        // e.src == e.dst constraint.
                         if let Term::Var(var) = dst_term {
-                            b.set(var, Value::Id(e.dst));
+                            if !b.bind_checked(var, Value::Id(e.dst)) {
+                                return None;
+                            }
                         }
 
                         // Bind edge type if variable
                         if let Some(Term::Var(var)) = type_term {
                             if let Some(etype) = e.edge_type {
-                                b.set(var, Value::Str(etype));
+                                if !b.bind_checked(var, Value::Str(etype)) {
+                                    return None;
+                                }
                             }
                         }
 
-                        b
+                        Some(b)
                     })
                     .collect()
             }
-            _ => vec![],
+            Term::Wildcard => {
+                // Wildcard src: enumerate all edges, don't bind src
+                let type_filter: Option<&str> = type_term.and_then(|t| match t {
+                    Term::Const(s) => Some(s.as_str()),
+                    _ => None,
+                });
+
+                let edges = if let Some(edge_type) = type_filter {
+                    self.stats.edges_by_type_calls += 1;
+                    self.engine.get_edges_by_type(edge_type)
+                } else {
+                    self.warnings.push("Full edge scan: consider binding source node".to_string());
+                    self.stats.all_edges_calls += 1;
+                    self.engine.get_all_edges()
+                };
+                self.stats.edges_traversed += edges.len();
+
+                let dst_filter: Option<u128> = match dst_term {
+                    Term::Const(s) => s.parse::<u128>().ok(),
+                    _ => None,
+                };
+
+                edges
+                    .into_iter()
+                    .filter(|e| {
+                        if let Some(filter_dst) = dst_filter {
+                            if e.dst != filter_dst {
+                                return false;
+                            }
+                        }
+                        true
+                    })
+                    .filter_map(|e| {
+                        let mut b = Bindings::new();
+
+                        // Bind destination if variable
+                        if let Term::Var(var) = dst_term {
+                            if !b.bind_checked(var, Value::Id(e.dst)) {
+                                return None;
+                            }
+                        }
+
+                        // Bind edge type if variable
+                        if let Some(Term::Var(var)) = type_term {
+                            if let Some(etype) = e.edge_type {
+                                if !b.bind_checked(var, Value::Str(etype)) {
+                                    return None;
+                                }
+                            }
+                        }
+
+                        Some(b)
+                    })
+                    .collect()
+            }
         }
     }
 
@@ -831,11 +1013,16 @@ impl<'a> EvaluatorExplain<'a> {
             return vec![];
         }
 
-        let dst_term = &args[0];
+        let dst_norm;
+        let dst_term = match &args[0] {
+            Term::Lit(v) => { dst_norm = Term::Const(v.as_str()); &dst_norm }
+            other => other,
+        };
         let src_term = &args[1];
         let type_term = args.get(2);
 
         match dst_term {
+            Term::Lit(_) => vec![], // normalized above; total without panicking
             Term::Const(dst_str) => {
                 let dst_id = match dst_str.parse::<u128>() {
                     Ok(id) => id,
@@ -860,7 +1047,11 @@ impl<'a> EvaluatorExplain<'a> {
                         let mut b = Bindings::new();
 
                         match src_term {
-                            Term::Var(var) => b.set(var, Value::Id(e.src)),
+                            Term::Var(var) => {
+                                if !b.bind_checked(var, Value::Id(e.src)) {
+                                    return None;
+                                }
+                            }
                             Term::Const(s) => {
                                 if s.parse::<u128>().ok() != Some(e.src) {
                                     return None;
@@ -876,7 +1067,9 @@ impl<'a> EvaluatorExplain<'a> {
 
                         if let Some(Term::Var(var)) = type_term {
                             if let Some(etype) = e.edge_type {
-                                b.set(var, Value::Str(etype));
+                                if !b.bind_checked(var, Value::Str(etype)) {
+                                    return None;
+                                }
                             }
                         }
 
@@ -895,7 +1088,13 @@ impl<'a> EvaluatorExplain<'a> {
                     self.stats.edges_by_type_calls += 1;
                     self.engine.get_edges_by_type(edge_type)
                 } else {
-                    return vec![];
+                    // Full-scan parity with the plain evaluator's eval_incoming
+                    // Var arm and this fn's own Wildcard-dst arm: returning empty
+                    // here silently dropped every row of an untyped
+                    // `incoming(Dst, Src)` enumeration (false negatives).
+                    self.warnings.push("Full edge scan: consider binding destination node".to_string());
+                    self.stats.all_edges_calls += 1;
+                    self.engine.get_all_edges()
                 };
                 self.stats.edges_traversed += edges.len();
 
@@ -907,9 +1106,16 @@ impl<'a> EvaluatorExplain<'a> {
                         // Bind dst variable
                         b.set(dst_var, Value::Id(e.dst));
 
-                        // Bind src
+                        // Bind src. `bind_checked` enforces equality when src is
+                        // the SAME variable as the (variable) dst — `incoming(X, X)`
+                        // is a self-loop join, not an overwrite that drops the
+                        // e.src == e.dst constraint.
                         match src_term {
-                            Term::Var(var) => b.set(var, Value::Id(e.src)),
+                            Term::Var(var) => {
+                                if !b.bind_checked(var, Value::Id(e.src)) {
+                                    return None;
+                                }
+                            }
                             Term::Const(s) => {
                                 if s.parse::<u128>().ok() != Some(e.src) {
                                     return None;
@@ -925,7 +1131,9 @@ impl<'a> EvaluatorExplain<'a> {
 
                         if let Some(Term::Var(var)) = type_term {
                             if let Some(etype) = e.edge_type {
-                                b.set(var, Value::Str(etype));
+                                if !b.bind_checked(var, Value::Str(etype)) {
+                                    return None;
+                                }
                             }
                         }
 
@@ -933,7 +1141,76 @@ impl<'a> EvaluatorExplain<'a> {
                     })
                     .collect()
             }
-            _ => vec![],
+            Term::Wildcard => {
+                // Wildcard dst: enumerate all edges, don't bind dst
+                let type_filter: Option<&str> = type_term.and_then(|t| match t {
+                    Term::Const(s) => Some(s.as_str()),
+                    _ => None,
+                });
+
+                let edges = if let Some(edge_type) = type_filter {
+                    self.stats.edges_by_type_calls += 1;
+                    self.engine.get_edges_by_type(edge_type)
+                } else {
+                    self.warnings.push("Full edge scan: consider binding destination node".to_string());
+                    self.stats.all_edges_calls += 1;
+                    self.engine.get_all_edges()
+                };
+                self.stats.edges_traversed += edges.len();
+
+                let src_filter: Option<u128> = match src_term {
+                    Term::Const(s) => s.parse::<u128>().ok(),
+                    _ => None,
+                };
+
+                edges
+                    .into_iter()
+                    .filter(|e| {
+                        if let Some(filter_src) = src_filter {
+                            if e.src != filter_src {
+                                return false;
+                            }
+                        }
+                        true
+                    })
+                    .filter_map(|e| {
+                        let mut b = Bindings::new();
+
+                        // Bind src
+                        match src_term {
+                            Term::Var(var) => {
+                                if !b.bind_checked(var, Value::Id(e.src)) {
+                                    return None;
+                                }
+                            }
+                            Term::Const(s) => {
+                                if s.parse::<u128>().ok() != Some(e.src) {
+                                    return None;
+                                }
+                            }
+                            // A numeric literal behaves like the equivalent quoted
+                            // constant (spec §5) — compare by string surface.
+                            Term::Lit(v) => {
+                                if v.as_str().parse::<u128>().ok() != Some(e.src) {
+                                    return None;
+                                }
+                            }
+                            Term::Wildcard => {}
+                        }
+
+                        // Bind edge type if variable
+                        if let Some(Term::Var(var)) = type_term {
+                            if let Some(etype) = e.edge_type {
+                                if !b.bind_checked(var, Value::Str(etype)) {
+                                    return None;
+                                }
+                            }
+                        }
+
+                        Some(b)
+                    })
+                    .collect()
+            }
         }
     }
 
@@ -953,8 +1230,7 @@ impl<'a> EvaluatorExplain<'a> {
             (id_term, attr_term, value_term)
         {
             self.stats.find_by_type_calls += 1;
-            let query = Self::attr_to_query(attr_name, expected_value);
-            let ids = self.engine.find_by_attr(&query);
+            let ids = Self::reverse_attr_lookup(self.engine, attr_name, expected_value);
             self.stats.nodes_visited += ids.len();
             return ids
                 .into_iter()
@@ -1040,6 +1316,107 @@ impl<'a> EvaluatorExplain<'a> {
         }
     }
 
+    /// Evaluate attr_edge(Src, Dst, EdgeType, AttrName, Value) — read a metadata
+    /// attribute off a specific edge. Mirrors `Evaluator::eval_attr_edge` so the
+    /// explain path produces identical bindings to the plain path (REG-315).
+    /// Src/Dst must be bound node IDs; EdgeType and AttrName must be constants;
+    /// Value may be a variable (bind), constant (match), or wildcard (exists).
+    fn eval_attr_edge(&mut self, atom: &Atom) -> Vec<Bindings> {
+        let args = atom.args();
+        if args.len() < 5 {
+            return vec![];
+        }
+
+        let src_term = &args[0];
+        let dst_term = &args[1];
+        let type_term = &args[2];
+        let attr_term = &args[3];
+        let value_term = &args[4];
+
+        // 1. Need bound src ID
+        let src_id = match src_term {
+            Term::Const(s) => match s.parse::<u128>() {
+                Ok(id) => id,
+                Err(_) => return vec![],
+            },
+            _ => return vec![],
+        };
+
+        // 2. Need bound dst ID
+        let dst_id = match dst_term {
+            Term::Const(s) => match s.parse::<u128>() {
+                Ok(id) => id,
+                Err(_) => return vec![],
+            },
+            _ => return vec![],
+        };
+
+        // 3. Need constant edge type
+        let edge_type = match type_term {
+            Term::Const(s) => s.as_str(),
+            _ => return vec![],
+        };
+
+        // 4. Need constant attr name
+        let attr_name = match attr_term {
+            Term::Const(s) => s.as_str(),
+            _ => return vec![],
+        };
+
+        // 5. Find the edge
+        self.stats.outgoing_edge_calls += 1;
+        let edges = self.engine.get_outgoing_edges(src_id, Some(&[edge_type]));
+        self.stats.edges_traversed += edges.len();
+        let edge = match edges.into_iter().find(|e| e.dst == dst_id) {
+            Some(e) => e,
+            None => return vec![],
+        };
+
+        // 6. Parse metadata
+        let metadata_str = match edge.metadata.as_ref() {
+            Some(s) => s,
+            None => return vec![],
+        };
+        let metadata: serde_json::Value = match serde_json::from_str(metadata_str) {
+            Ok(m) => m,
+            Err(_) => return vec![],
+        };
+
+        // 7. Get attribute value using the shared helper (supports nested paths)
+        let attr_value = match crate::datalog::utils::get_metadata_value(&metadata, attr_name) {
+            Some(v) => v,
+            None => return vec![],
+        };
+
+        // 8. Match against value_term (same logic as eval_attr)
+        match value_term {
+            Term::Var(var) => {
+                let mut b = Bindings::new();
+                b.set(var, Value::Str(attr_value));
+                vec![b]
+            }
+            Term::Const(expected) => {
+                if &attr_value == expected {
+                    vec![Bindings::new()]
+                } else {
+                    vec![]
+                }
+            }
+            // A numeric literal compares by its string surface (spec §5), the same
+            // coercion eval_attr applies on the forward path.
+            Term::Lit(v) => {
+                if attr_value == v.as_str() {
+                    vec![Bindings::new()]
+                } else {
+                    vec![]
+                }
+            }
+            Term::Wildcard => {
+                vec![Bindings::new()]
+            }
+        }
+    }
+
     /// Build an AttrQuery from a Datalog attribute name and value.
     fn attr_to_query(attr_name: &str, value: &str) -> AttrQuery {
         let mut query = AttrQuery::default();
@@ -1051,6 +1428,58 @@ impl<'a> EvaluatorExplain<'a> {
             _ => query.metadata_filters = vec![(attr_name.to_string(), value.to_string())],
         }
         query
+    }
+
+    /// Reverse `attr(X, F, V)` lookup — twin of `Evaluator::reverse_attr_lookup`
+    /// (keep both in sync). Restores forward/reverse symmetry for the
+    /// first-class columns `semantic_id`/`id`/`version`, which `AttrQuery`
+    /// cannot express and which `metadata_filters` would silently miss. See the
+    /// doc comment on `Evaluator::reverse_attr_lookup` for the full rationale.
+    fn reverse_attr_lookup(engine: &dyn GraphStore, attr_name: &str, value: &str) -> Vec<u128> {
+        match attr_name {
+            "id" => match value.parse::<u128>() {
+                Ok(id) if engine.get_node(id).is_some() => vec![id],
+                _ => vec![],
+            },
+            "semantic_id" => engine
+                .find_by_attr(&AttrQuery::default())
+                .into_iter()
+                .filter(|id| {
+                    engine.get_node(*id).and_then(|n| n.semantic_id).as_deref() == Some(value)
+                })
+                .collect(),
+            "version" => engine
+                .find_by_attr(&AttrQuery::default())
+                .into_iter()
+                .filter(|id| engine.get_node(*id).map(|n| n.version).as_deref() == Some(value))
+                .collect(),
+            // Nested dotted metadata path — twin of
+            // `Evaluator::reverse_attr_lookup`'s nested-path arm (keep in sync).
+            // The flat `find_by_attr` index cannot match dotted keys that the
+            // forward `get_metadata_value` resolves, so scan with the same
+            // resolver to keep forward/reverse symmetric.
+            name if name.contains('.') => Self::reverse_metadata_scan(engine, name, value),
+            _ => engine.find_by_attr(&Self::attr_to_query(attr_name, value)),
+        }
+    }
+
+    /// Reverse-lookup node ids whose metadata resolves `attr_name` to `value`
+    /// via the forward `get_metadata_value` resolution. Twin of
+    /// `Evaluator::reverse_metadata_scan` (keep in sync).
+    fn reverse_metadata_scan(engine: &dyn GraphStore, attr_name: &str, value: &str) -> Vec<u128> {
+        engine
+            .find_by_attr(&AttrQuery::default())
+            .into_iter()
+            .filter(|id| {
+                engine
+                    .get_node(*id)
+                    .and_then(|n| n.metadata)
+                    .and_then(|m| serde_json::from_str::<serde_json::Value>(&m).ok())
+                    .and_then(|j| crate::datalog::utils::get_metadata_value(&j, attr_name))
+                    .as_deref()
+                    == Some(value)
+            })
+            .collect()
     }
 
     /// Evaluate path(Src, Dst) predicate using BFS
@@ -1074,11 +1503,7 @@ impl<'a> EvaluatorExplain<'a> {
                     Err(_) => return vec![],
                 };
 
-                self.stats.bfs_calls += 1;
-                let reachable = self.engine.bfs(&[src_id], 100, &[]);
-                self.stats.nodes_visited += reachable.len();
-
-                if reachable.contains(&dst_id) {
+                if self.path_reachable(src_id).contains(&dst_id) {
                     vec![Bindings::new()]
                 } else {
                     vec![]
@@ -1090,13 +1515,8 @@ impl<'a> EvaluatorExplain<'a> {
                     Err(_) => return vec![],
                 };
 
-                self.stats.bfs_calls += 1;
-                let reachable = self.engine.bfs(&[src_id], 100, &[]);
-                self.stats.nodes_visited += reachable.len();
-
-                reachable
+                self.path_reachable(src_id)
                     .into_iter()
-                    .filter(|&id| id != src_id)
                     .map(|id| {
                         let mut b = Bindings::new();
                         b.set(var, Value::Id(id));
@@ -1110,18 +1530,30 @@ impl<'a> EvaluatorExplain<'a> {
                     Err(_) => return vec![],
                 };
 
-                self.stats.bfs_calls += 1;
-                let reachable = self.engine.bfs(&[src_id], 100, &[]);
-                self.stats.nodes_visited += reachable.len();
-
-                if reachable.iter().any(|&id| id != src_id) {
-                    vec![Bindings::new()]
-                } else {
+                if self.path_reachable(src_id).is_empty() {
                     vec![]
+                } else {
+                    vec![Bindings::new()]
                 }
             }
             _ => vec![],
         }
+    }
+
+    /// Set of nodes reachable from `src_id` via AT LEAST ONE edge (`path/2`
+    /// semantics). See `Evaluator::path_reachable` for the rationale; BFS is
+    /// seeded from `src_id`'s neighbours so the trivial zero-length self path is
+    /// never counted, while a genuine cycle back to `src_id` still is. Updates
+    /// the explain stats (`bfs_calls`, `nodes_visited`) like the previous code.
+    fn path_reachable(&mut self, src_id: u128) -> Vec<u128> {
+        let frontier = self.engine.neighbors(src_id, &[]);
+        if frontier.is_empty() {
+            return Vec::new();
+        }
+        self.stats.bfs_calls += 1;
+        let reachable = self.engine.bfs(&frontier, 100, &[]);
+        self.stats.nodes_visited += reachable.len();
+        reachable
     }
 
     /// Evaluate neq(X, Y)
@@ -1148,7 +1580,10 @@ impl<'a> EvaluatorExplain<'a> {
         }
     }
 
-    /// Evaluate gt/lt/gte/lte(X, Y) - numeric comparison constraints
+    /// Evaluate gt/lt/gte/lte(X, Y) - numeric comparison constraints.
+    /// Integer operands (including u128 node IDs) are compared exactly via the
+    /// shared [`numeric_compare`] helper (kept in sync with the non-explain
+    /// `Evaluator`); non-numeric strings produce an empty result.
     fn eval_numeric_cmp(&mut self, atom: &Atom) -> Vec<Bindings> {
         let args = atom.args();
         if args.len() < 2 {
@@ -1165,28 +1600,9 @@ impl<'a> EvaluatorExplain<'a> {
             _ => return vec![],
         };
 
-        let left: f64 = match left_str.parse() {
-            Ok(v) => v,
-            Err(_) => return vec![],
-        };
-
-        let right: f64 = match right_str.parse() {
-            Ok(v) => v,
-            Err(_) => return vec![],
-        };
-
-        let pass = match atom.predicate() {
-            "gt" => left > right,
-            "lt" => left < right,
-            "gte" => left >= right,
-            "lte" => left <= right,
-            _ => return vec![],
-        };
-
-        if pass {
-            vec![Bindings::new()]
-        } else {
-            vec![]
+        match numeric_compare(left_str, right_str, atom.predicate()) {
+            Some(true) => vec![Bindings::new()],
+            _ => vec![],
         }
     }
 
@@ -1676,24 +2092,29 @@ impl<'a> EvaluatorExplain<'a> {
                 }
             }
 
-            // Check if hash join applies for negation edge/incoming literals
+            // Check if hash join applies for negation edge/incoming literals.
+            // The fast path is only sound when the non-key endpoint is a Wildcard
+            // (see negation_hash_join_sound); a constant/bound endpoint must be
+            // honored, so fall through to the per-binding path in that case.
             if let Literal::Negative(atom) = literal {
                 if let Some((join_var, key_pos)) = self.should_hash_join(atom, &bound_vars, current.len()) {
-                    let start = Instant::now();
-                    current = self.eval_negation_hash_join(atom, &current, &join_var, key_pos);
-                    let duration = start.elapsed();
-                    self.record_step(
-                        "hash_join_negation",
-                        atom.predicate(),
-                        atom.args(),
-                        current.len(),
-                        duration,
-                        Some(format!("key_var={}, key_pos={}", join_var, key_pos)),
-                    );
-                    if current.is_empty() {
-                        break;
+                    if super::utils::negation_hash_join_sound(atom, key_pos) {
+                        let start = Instant::now();
+                        current = self.eval_negation_hash_join(atom, &current, &join_var, key_pos);
+                        let duration = start.elapsed();
+                        self.record_step(
+                            "hash_join_negation",
+                            atom.predicate(),
+                            atom.args(),
+                            current.len(),
+                            duration,
+                            Some(format!("key_var={}, key_pos={}", join_var, key_pos)),
+                        );
+                        if current.is_empty() {
+                            break;
+                        }
+                        continue;
                     }
-                    continue;
                 }
             }
 

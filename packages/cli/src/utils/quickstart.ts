@@ -9,10 +9,20 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from 
 import { stringify as stringifyYAML } from 'yaml';
 import { GRAFEMA_VERSION, getSchemaVersion } from '@grafema/util';
 
-/** All file extensions supported by Grafema's analyzers. */
+/**
+ * All file extensions supported by Grafema's analyzers.
+ *
+ * The JS/TS subset MUST mirror the orchestrator's authoritative
+ * `is_js_ts_file` (packages/grafema-orchestrator/src/analyzer.rs:
+ * `js | jsx | ts | tsx | mjs | cjs | mts | cts`). Keeping `.mts`/`.cts`
+ * here is what makes ESM/CJS TypeScript files discoverable by
+ * `grafema init` / `analyze --quickstart` and included in the generated
+ * analysis glob — without them such files are indexed by the orchestrator
+ * but never reach the analysis include set.
+ */
 export const SUPPORTED_EXTENSIONS = [
   // JavaScript / TypeScript
-  'js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx',
+  'js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx', 'mts', 'cts',
   // Rust
   'rs',
   // Java / Kotlin

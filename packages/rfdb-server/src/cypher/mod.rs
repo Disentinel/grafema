@@ -15,7 +15,7 @@ pub use ast::*;
 pub use parser::{parse_cypher, ParseError};
 pub use values::{CypherValue, Record};
 pub use executor::{Operator, eval_expr};
-pub use planner::plan;
+pub use planner::{expand_return_star, plan};
 
 use crate::graph::GraphStore;
 use crate::datalog::EvalLimits;
@@ -29,7 +29,10 @@ pub fn execute(
     query_str: &str,
     limits: EvalLimits,
 ) -> Result<CypherResult, CypherError> {
-    let query = parse_cypher(query_str)?;
+    let mut query = parse_cypher(query_str)?;
+    // Expand `RETURN *` into explicit per-variable items BEFORE both planning and
+    // column derivation, so the operator tree and the result header agree.
+    expand_return_star(&mut query)?;
     let mut op = plan(&query, engine, &limits)?;
 
     let columns = query

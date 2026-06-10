@@ -1427,6 +1427,16 @@ impl GraphStore for GraphEngineV2 {
     fn count_edges_by_type(&self, edge_types: Option<&[String]>) -> HashMap<String, usize> {
         let mut counts: HashMap<String, usize> = HashMap::new();
 
+        // Seed explicitly requested non-wildcard types with 0 so callers always
+        // get a key even when no matching edges exist.
+        if let Some(filter) = edge_types {
+            for f in filter.iter() {
+                if !f.ends_with('*') {
+                    counts.entry(f.to_string()).or_insert(0);
+                }
+            }
+        }
+
         // Collect all edges via get_all_edges (already filters tombstoned)
         let all_edges = self.get_all_edges();
 
@@ -4921,6 +4931,46 @@ mod tests {
                 "method_calls pack on the real LSM store took {dt:?} (bound: 60 s)"
             );
         }
+
+    #[test]
+    fn test_count_edges_by_type_zero_seed() {
+        let mut engine = GraphEngineV2::create_ephemeral();
+        engine.add_nodes(vec![
+            make_v1_node(900, "FUNCTION", "a", "src/a.js"),
+            make_v1_node(901, "FUNCTION", "b", "src/a.js"),
+        ]);
+        engine.add_edges(
+            vec![EdgeRecord {
+                src: 900,
+                dst: 901,
+                edge_type: Some("CALLS".to_string()),
+                version: "main".to_string(),
+                metadata: None,
+                deleted: false,
+            }],
+            false,
+        );
+
+        // Requesting a type that has edges — should return the count
+        let result = engine.count_edges_by_type(Some(&["CALLS".to_string()]));
+        assert_eq!(result.get("CALLS"), Some(&1));
+
+        // Requesting a type with zero matching edges — must return 0, not absent
+        let result = engine.count_edges_by_type(Some(&["INSTANCE_OF".to_string()]));
+        assert_eq!(
+            result.get("INSTANCE_OF"),
+            Some(&0),
+            "zero-count key must be present in result"
+        );
+
+        // Wildcard types are NOT seeded — absence is expected when no matches
+        let result = engine.count_edges_by_type(Some(&["INST*".to_string()]));
+        assert_eq!(result.get("INST*"), None, "wildcard key should not be seeded");
+
+        // None filter counts all edges, no zero-seeding
+        let result = engine.count_edges_by_type(None);
+        assert_eq!(result.get("CALLS"), Some(&1));
     }
 }
 
+}

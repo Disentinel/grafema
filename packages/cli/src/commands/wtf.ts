@@ -101,6 +101,15 @@ Examples:
 
       if (!found) {
         spinner.stop();
+        if (options.json) {
+          // --json contract: stdout is always parseable JSON so scripts/agents
+          // don't choke on empty output. Emit a null-result object mirroring the
+          // found-case shape; the human-readable note goes to stderr. Matches
+          // `impact --json` not-found behavior (PR #304).
+          process.stderr.write(`Symbol not found: "${symbol}"\n`);
+          console.log(JSON.stringify({ symbol, node: null, results: [] }, null, 2));
+          return;
+        }
         exitWithError(`Symbol not found: "${symbol}"`, [
           'Check the symbol name and try again',
           'Use: grafema query "<name>" to search available nodes',

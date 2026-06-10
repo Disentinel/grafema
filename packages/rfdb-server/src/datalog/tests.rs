@@ -628,6 +628,208 @@ mod eval_tests {
         assert_eq!(results.len(), 0); // no path
     }
 
+    /// A->B->A two-node cycle plus an isolated node C, for self-reachability tests.
+    fn setup_cycle_graph() -> GraphEngineV2 {
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let mk = |id: u128, name: &str| NodeRecord {
+            id,
+            node_type: Some("FUNCTION".to_string()),
+            name: Some(name.to_string()),
+            file: Some("c.js".to_string()),
+            file_id: 0,
+            name_offset: 0,
+            version: "main".into(),
+            exported: false,
+            replaces: None,
+            deleted: false,
+            metadata: None,
+            semantic_id: None,
+        };
+        engine.add_nodes(vec![mk(100, "a"), mk(101, "b"), mk(102, "c_isolated")]);
+        engine.add_edges(
+            vec![
+                EdgeRecord { src: 100, dst: 101, edge_type: Some("CALLS".into()), version: "main".into(), metadata: None, deleted: false },
+                EdgeRecord { src: 101, dst: 100, edge_type: Some("CALLS".into()), version: "main".into(), metadata: None, deleted: false },
+            ],
+            false,
+        );
+        engine.flush().unwrap();
+        engine
+    }
+
+    // ── path() self-reachability (irreflexive: a node reaches itself only via a
+    //    genuine cycle, never via the trivial zero-length self path) ──
+    //
+    // Regression: `path(src, dst)` seeded BFS from `src` itself, and `bfs` returns
+    // the seed in its result set. The (Const, Const) arm did `reachable.contains(dst)`
+    // without excluding that trivial self-presence, so `path(A, A)` was TRUE for
+    // EVERY node — even an isolated node with no edges — contradicting the (Var) and
+    // (Wildcard) arms which both exclude self. Fixed by seeding BFS from src's
+    // neighbours (≥1 hop), so self counts only when a real edge path returns to src.
+
+    #[test]
+    fn test_eval_path_self_isolated_is_false() {
+        // Node 3 in setup_test_graph has NO outgoing edges → no path to itself.
+        let engine = setup_test_graph();
+        let evaluator = Evaluator::new(&engine);
+        let query = Atom::new("path", vec![Term::constant("3"), Term::constant("3")]);
+        let results = evaluator.query_atom(&query).unwrap();
+        assert_eq!(results.len(), 0, "isolated node must NOT have a path to itself");
+    }
+
+    #[test]
+    fn test_eval_path_self_acyclic_is_false() {
+        // Node 1 reaches 4 and 2 but nothing loops back to 1 → no self path.
+        let engine = setup_test_graph();
+        let evaluator = Evaluator::new(&engine);
+        let query = Atom::new("path", vec![Term::constant("1"), Term::constant("1")]);
+        let results = evaluator.query_atom(&query).unwrap();
+        assert_eq!(results.len(), 0, "acyclic node must NOT have a path to itself");
+    }
+
+    #[test]
+    fn test_eval_path_self_cycle_is_true() {
+        // 100 -> 101 -> 100 is a genuine cycle → path(100, 100) holds.
+        let engine = setup_cycle_graph();
+        let evaluator = Evaluator::new(&engine);
+        let query = Atom::new("path", vec![Term::constant("100"), Term::constant("100")]);
+        let results = evaluator.query_atom(&query).unwrap();
+        assert_eq!(results.len(), 1, "node on a cycle MUST have a path to itself");
+    }
+
+    // ── path() REVERSE reachability: path(X, dst) enumerates ancestors ──
+    //
+    // The directed dual of path(src, X). `path(X, "dst")` must return every node
+    // that can REACH dst (its ancestor set). Before the fix these (Var/Wildcard
+    // source, Const dest) arms fell through to the catch-all and silently
+    // returned NO rows — so "what reaches / depends on dst" answered empty.
+
+    #[test]
+    fn test_eval_path_reverse_enumerates_ancestors() {
+        // Graph: 1 -> 4 -> 2 (CALLS); node 3 is an orphan.
+        // path(X, "2") = nodes that reach 2 = {1, 4}.
+        let engine = setup_test_graph();
+        let evaluator = Evaluator::new(&engine);
+        let query = Atom::new("path", vec![Term::var("X"), Term::constant("2")]);
+        let mut ids: Vec<u128> = evaluator
+            .query_atom(&query)
+            .unwrap()
+            .iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        ids.sort();
+        assert_eq!(ids, vec![1, 4], "reverse path must enumerate ancestors of 2");
+    }
+
+    #[test]
+    fn test_eval_path_reverse_no_ancestors_is_empty() {
+        // Node 1 is a root: nothing reaches it → path(X, "1") is empty.
+        let engine = setup_test_graph();
+        let evaluator = Evaluator::new(&engine);
+        let query = Atom::new("path", vec![Term::var("X"), Term::constant("1")]);
+        let results = evaluator.query_atom(&query).unwrap();
+        assert_eq!(results.len(), 0, "a root node has no ancestors");
+    }
+
+    #[test]
+    fn test_eval_path_reverse_wildcard_existence() {
+        let engine = setup_test_graph();
+        let evaluator = Evaluator::new(&engine);
+        // path(_, "2") - something reaches 2 → exactly one success row.
+        let reach2 = Atom::new("path", vec![Term::Wildcard, Term::constant("2")]);
+        assert_eq!(evaluator.query_atom(&reach2).unwrap().len(), 1);
+        // path(_, "1") - nothing reaches 1 → no rows.
+        let reach1 = Atom::new("path", vec![Term::Wildcard, Term::constant("1")]);
+        assert_eq!(evaluator.query_atom(&reach1).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_eval_path_reverse_includes_cyclic_self() {
+        // 100 <-> 101 cycle. Ancestors of 100: 101 reaches it directly, and 100
+        // reaches itself via the cycle → {100, 101}. Mirrors the forward
+        // test_eval_path_var_includes_cyclic_self.
+        let engine = setup_cycle_graph();
+        let evaluator = Evaluator::new(&engine);
+        let query = Atom::new("path", vec![Term::var("X"), Term::constant("100")]);
+        let mut ids: Vec<u128> = evaluator
+            .query_atom(&query)
+            .unwrap()
+            .iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        ids.sort();
+        assert_eq!(ids, vec![100, 101], "cyclic reverse enumeration includes self (100) and peer (101)");
+    }
+
+    #[test]
+    fn test_eval_path_reverse_via_parsed_query() {
+        // End-to-end through parse_query + eval_query (not just query_atom),
+        // exercising the full pipeline for a single reverse-path literal.
+        let engine = setup_test_graph();
+        let evaluator = Evaluator::new(&engine);
+        let literals = parse_query("path(X, \"2\")").unwrap();
+        let mut ids: Vec<u128> = evaluator
+            .eval_query(&literals)
+            .unwrap()
+            .iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        ids.sort();
+        assert_eq!(ids, vec![1, 4]);
+    }
+
+    #[test]
+    fn test_eval_path_reverse_in_conjunction() {
+        // The real-world shape: "which FUNCTIONs reach node 2?". `reorder_literals`
+        // must place the reverse-path atom first (it provides X via the constant
+        // dst), then the node generator filters. Ancestors of 2 = {1, 4}; only 4
+        // is a FUNCTION (1 is queue:publish).
+        let engine = setup_test_graph();
+        let evaluator = Evaluator::new(&engine);
+        let literals = parse_query("path(X, \"2\"), node(X, \"FUNCTION\")").unwrap();
+        let ids: Vec<u128> = evaluator
+            .eval_query(&literals)
+            .unwrap()
+            .iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        assert_eq!(ids, vec![4], "only FUNCTION ancestor of node 2 is node 4");
+    }
+
+    #[test]
+    fn test_eval_path_var_includes_cyclic_self() {
+        // Enumerating reachable nodes from a cyclic node must include the node
+        // itself (it is genuinely reachable via the cycle), alongside its peer.
+        let engine = setup_cycle_graph();
+        let evaluator = Evaluator::new(&engine);
+        let query = Atom::new("path", vec![Term::constant("100"), Term::var("X")]);
+        let mut ids: Vec<u128> = evaluator
+            .query_atom(&query)
+            .unwrap()
+            .iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        ids.sort();
+        assert_eq!(ids, vec![100, 101], "cyclic enumeration must include self (100) and peer (101)");
+    }
+
+    #[test]
+    fn test_eval_path_var_acyclic_excludes_self() {
+        // Regression guard: for an acyclic source, enumeration is unchanged and
+        // never includes the source itself.
+        let engine = setup_test_graph();
+        let evaluator = Evaluator::new(&engine);
+        let query = Atom::new("path", vec![Term::constant("1"), Term::var("X")]);
+        let mut ids: Vec<u128> = evaluator
+            .query_atom(&query)
+            .unwrap()
+            .iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        ids.sort();
+        assert_eq!(ids, vec![2, 4], "acyclic enumeration unchanged: reaches 4 and 2, not self");
+    }
+
     #[test]
     fn test_eval_rule_simple() {
         let engine = setup_test_graph();
@@ -753,6 +955,38 @@ mod eval_tests {
             .collect();
         srcs.sort();
         assert_eq!(srcs, vec![1, 4]);
+    }
+
+    #[test]
+    fn test_eval_incoming_untyped_var_dst_enumerates_all_edges() {
+        // incoming(D, S) — unbound dst AND no edge-type constant — must enumerate
+        // every edge (binding D=dst, S=src), mirroring edge(S, D) and incoming's
+        // own Wildcard-dst arm. Returning empty here silently drops every row of
+        // an untyped incoming enumeration (false negatives).
+        let engine = setup_test_graph(); // edges: 1->4, 4->2 (CALLS)
+        let evaluator = Evaluator::new(&engine);
+
+        let query = Atom::new("incoming", vec![Term::var("D"), Term::var("S")]);
+        let mut pairs: Vec<(u128, u128)> = evaluator
+            .query_atom(&query)
+            .unwrap()
+            .iter()
+            .filter_map(|b| Some((b.get("D")?.as_id()?, b.get("S")?.as_id()?)))
+            .collect();
+        pairs.sort();
+        // (dst, src): edge 1->4 => (4,1); edge 4->2 => (2,4)
+        assert_eq!(pairs, vec![(2, 4), (4, 1)]);
+
+        // Symmetry: incoming(D, S) must yield the same (dst,src) set as edge(S, D).
+        let edge_query = Atom::new("edge", vec![Term::var("S"), Term::var("D")]);
+        let mut edge_pairs: Vec<(u128, u128)> = evaluator
+            .query_atom(&edge_query)
+            .unwrap()
+            .iter()
+            .filter_map(|b| Some((b.get("D")?.as_id()?, b.get("S")?.as_id()?)))
+            .collect();
+        edge_pairs.sort();
+        assert_eq!(pairs, edge_pairs, "incoming(D,S) must mirror edge(S,D)");
     }
 
     #[test]
@@ -1233,6 +1467,7 @@ mod eval_tests {
                 semantic_id: None,
             },
         ]);
+        engine.flush().unwrap();
 
         let evaluator = Evaluator::new(&engine);
 
@@ -2023,6 +2258,7 @@ mod eval_tests {
                 deleted: false,
             },
         ], false);
+        engine.flush().unwrap();
 
         let evaluator = Evaluator::new(&engine);
 
@@ -2085,6 +2321,7 @@ mod eval_tests {
                 deleted: false,
             },
         ], false);
+        engine.flush().unwrap();
 
         let evaluator = Evaluator::new(&engine);
 
@@ -2136,6 +2373,7 @@ mod eval_tests {
             semantic_id: None,
             },
         ]);
+        engine.flush().unwrap();
 
         // No edges added
 
@@ -2234,6 +2472,144 @@ mod eval_tests {
             "binding values should match between plain and explain evaluators");
     }
 
+    /// The explain evaluator has its OWN copy of `eval_path`; pin its
+    /// self-reachability semantics to the same fix as the plain evaluator so the
+    /// duplicated implementations cannot drift (isolated/acyclic self = false,
+    /// cyclic self = true).
+    #[test]
+    fn test_explain_path_self_reachability_matches_plain() {
+        use crate::datalog::eval_explain::EvaluatorExplain;
+
+        // Isolated node 3 (no edges): path(3, 3) must be empty.
+        let engine = setup_test_graph();
+        let mut explain_eval = EvaluatorExplain::new(&engine, true);
+        let isolated = explain_eval
+            .eval_query(&parse_query("path(\"3\", \"3\")").unwrap())
+            .unwrap();
+        assert_eq!(isolated.bindings.len(), 0, "explain: isolated node has no self path");
+
+        // Cyclic node 100 (100->101->100): path(100, 100) must hold.
+        let cycle = setup_cycle_graph();
+        let mut explain_cycle = EvaluatorExplain::new(&cycle, true);
+        let cyclic = explain_cycle
+            .eval_query(&parse_query("path(\"100\", \"100\")").unwrap())
+            .unwrap();
+        assert_eq!(cyclic.bindings.len(), 1, "explain: cyclic node reaches itself");
+    }
+
+    /// REG-503 parity — wildcard arms.
+    ///
+    /// The plain `Evaluator` has dedicated match arms for every `Term::Wildcard`
+    /// combination in `node` / `edge` / `incoming`. The explain `EvaluatorExplain`
+    /// historically fell through those to `_ => vec![]`, so any atom containing a
+    /// bare `_` returned 0 bindings under `--explain` while plain returned N.
+    /// These tests pin the explain↔plain parity invariant for the wildcard arms.
+    ///
+    /// Each case asserts the explain evaluator's bindings (count, and for bound
+    /// vars the value set) equal the plain evaluator's on the shared test graph
+    /// (ids 1,3 = `queue:publish`, id 2 = `queue:consume`, id 4 = `FUNCTION`;
+    /// edges 1→4 and 4→2, both `CALLS`).
+    fn assert_explain_parity(query: &str, var: Option<&str>) {
+        use crate::datalog::eval_explain::EvaluatorExplain;
+
+        let engine = setup_test_graph();
+
+        let evaluator = Evaluator::new(&engine);
+        let plain = evaluator
+            .eval_query(&parse_query(query).unwrap())
+            .unwrap();
+
+        let mut explain_eval = EvaluatorExplain::new(&engine, true);
+        let explain = explain_eval
+            .eval_query(&parse_query(query).unwrap())
+            .unwrap();
+
+        assert_eq!(
+            plain.len(),
+            explain.bindings.len(),
+            "explain evaluator must produce the same number of bindings as plain for `{query}` (parity)"
+        );
+
+        if let Some(v) = var {
+            let mut plain_vals: Vec<String> =
+                plain.iter().filter_map(|b| b.get(v).map(|x| x.as_str())).collect();
+            plain_vals.sort();
+
+            let mut explain_vals: Vec<String> =
+                explain.bindings.iter().filter_map(|b| b.get(v).cloned()).collect();
+            explain_vals.sort();
+
+            assert_eq!(
+                plain_vals, explain_vals,
+                "explain evaluator must bind `{v}` to the same values as plain for `{query}` (parity)"
+            );
+        }
+    }
+
+    #[test]
+    fn test_explain_node_wildcard_id_matches_plain() {
+        // node(_, "type") — (Wildcard, Const): plain finds 2 publish nodes.
+        assert_explain_parity("node(_, \"queue:publish\")", None);
+    }
+
+    #[test]
+    fn test_explain_node_wildcard_type_matches_plain() {
+        // node(X, _) — (Var, Wildcard): plain enumerates all 4 nodes, binds id.
+        assert_explain_parity("node(X, _)", Some("X"));
+    }
+
+    #[test]
+    fn test_explain_node_wildcard_id_var_type_matches_plain() {
+        // node(_, T) — (Wildcard, Var): plain enumerates all 4 nodes, binds type.
+        assert_explain_parity("node(_, T)", Some("T"));
+    }
+
+    #[test]
+    fn test_explain_node_both_wildcard_matches_plain() {
+        // node(_, _) — (Wildcard, Wildcard): plain enumerates all 4 nodes.
+        assert_explain_parity("node(_, _)", None);
+    }
+
+    #[test]
+    fn test_explain_node_const_wildcard_type_matches_plain() {
+        // node("1", _) — (Const, Wildcard): plain checks node 1 exists.
+        assert_explain_parity("node(\"1\", _)", None);
+    }
+
+    #[test]
+    fn test_explain_edge_wildcard_src_matches_plain() {
+        // edge(_, X, "CALLS") — Wildcard src: plain enumerates 2 CALLS edges, binds dst.
+        assert_explain_parity("edge(_, X, \"CALLS\")", Some("X"));
+    }
+
+    #[test]
+    fn test_explain_incoming_wildcard_dst_matches_plain() {
+        // incoming(_, X, "CALLS") — Wildcard dst: plain enumerates 2 CALLS edges, binds src.
+        assert_explain_parity("incoming(_, X, \"CALLS\")", Some("X"));
+    }
+
+    #[test]
+    fn test_explain_incoming_untyped_var_dst_matches_plain() {
+        // incoming(D, S) — Var dst, NO edge-type constant: the explain evaluator
+        // has its own copy of eval_incoming, so pin the untyped enumeration to
+        // the plain evaluator. Parity alone is insufficient here (both returned 0
+        // before the fix → 0 == 0 would pass), so assert the non-empty count too.
+        use crate::datalog::eval_explain::EvaluatorExplain;
+
+        let engine = setup_test_graph(); // edges: 1->4, 4->2
+        let mut explain_eval = EvaluatorExplain::new(&engine, true);
+        let result = explain_eval
+            .eval_query(&parse_query("incoming(D, S)").unwrap())
+            .unwrap();
+        assert_eq!(
+            result.bindings.len(),
+            2,
+            "explain: untyped incoming(D,S) must enumerate all edges"
+        );
+
+        assert_explain_parity("incoming(D, S)", Some("S"));
+    }
+
     #[test]
     fn test_explain_stats_populated() {
         use crate::datalog::eval_explain::EvaluatorExplain;
@@ -2250,6 +2626,91 @@ mod eval_tests {
             "stats.find_by_type_calls should be > 0 after node query by type");
         assert_eq!(result.stats.total_results, 2,
             "stats.total_results should match number of bindings");
+    }
+
+    // REG-315 / REG-503 regression: the explain evaluator must support the
+    // attr_edge() builtin exactly like the plain evaluator. Before the fix,
+    // EvaluatorExplain omitted attr_edge from its builtin dispatch, so under
+    // `--explain` the atom fell through to derived-predicate lookup (no such
+    // rule) and silently returned zero bindings — making `--explain` change
+    // the answer for any query/guarantee that uses attr_edge.
+    #[test]
+    fn test_explain_attr_edge_matches_plain_evaluator() {
+        use crate::datalog::eval_explain::EvaluatorExplain;
+
+        let mut engine = GraphEngineV2::create_ephemeral();
+
+        engine.add_nodes(vec![
+            NodeRecord {
+                id: 1,
+                node_type: Some("LOOP".to_string()),
+                name: Some("for_loop".to_string()),
+                file: Some("test.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+                semantic_id: None,
+            },
+            NodeRecord {
+                id: 2,
+                node_type: Some("VARIABLE".to_string()),
+                name: Some("items".to_string()),
+                file: Some("test.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+                semantic_id: None,
+            },
+        ]);
+
+        engine.add_edges(vec![
+            EdgeRecord {
+                src: 1,
+                dst: 2,
+                edge_type: Some("ITERATES_OVER".to_string()),
+                version: "main".into(),
+                metadata: Some(r#"{"scale": "nodes", "reason": "array_iteration"}"#.to_string()),
+                deleted: false,
+            },
+        ], false);
+        engine.flush().unwrap();
+
+        // attr_edge(1, 2, "ITERATES_OVER", "scale", X)
+        let query = Atom::new("attr_edge", vec![
+            Term::constant("1"),
+            Term::constant("2"),
+            Term::constant("ITERATES_OVER"),
+            Term::constant("scale"),
+            Term::var("X"),
+        ]);
+
+        // Plain evaluator (ground truth)
+        let plain = Evaluator::new(&engine);
+        let plain_results = plain.query_atom(&query).unwrap();
+        assert_eq!(plain_results.len(), 1, "plain evaluator should bind X once");
+        assert_eq!(plain_results[0].get("X"), Some(&Value::Str("nodes".to_string())));
+
+        // Explain evaluator must produce the SAME binding
+        let mut explain_eval = EvaluatorExplain::new(&engine, true);
+        let explain_result = explain_eval.query(&query);
+        assert_eq!(
+            explain_result.bindings.len(),
+            plain_results.len(),
+            "explain evaluator must produce the same attr_edge bindings as the plain evaluator"
+        );
+        assert_eq!(
+            explain_result.bindings[0].get("X").map(|s| s.as_str()),
+            Some("nodes"),
+            "explain evaluator must bind X to the edge metadata value"
+        );
     }
 
     #[test]
@@ -3729,10 +4190,16 @@ mod attr_reverse_lookup_tests {
     // Before the fix, both would fail to place (circular dep). After the fix,
     // attr reverse provides X, enabling incoming to be placed.
     #[test]
-    fn test_reorder_attr_reverse_before_incoming() {
+    fn test_reorder_incoming_always_placeable_like_edge() {
         use crate::datalog::utils::reorder_literals;
 
-        // incoming requires X bound; attr reverse lookup provides X
+        // `incoming` is the reverse of `edge` and, like `edge`, is always
+        // placeable (full scan if dst is unbound) — it self-seeds and provides
+        // its free vars. So the reorderer does NOT need to hoist a seed provider
+        // ahead of it: the greedy sort keeps the author's order, placing
+        // `incoming` first. (Previously `incoming` was wrongly treated as
+        // requiring a bound dst, which forced `attr` ahead of it and rejected
+        // standalone `incoming(D, S)` enumerations as circular dependencies.)
         let literals = vec![
             Literal::positive(Atom::new("incoming", vec![
                 Term::var("X"),
@@ -3742,16 +4209,27 @@ mod attr_reverse_lookup_tests {
             Literal::positive(Atom::new("attr", vec![
                 Term::var("X"),
                 Term::constant("name"),
-                Term::constant("orders-pub"),
+                Term::constant("processOrder"),
             ])),
         ];
 
         let ordered = reorder_literals(&literals).unwrap();
+        assert_eq!(ordered[0].atom().predicate(), "incoming",
+            "incoming is always placeable (self-seeds) and stays first");
+        assert_eq!(ordered[1].atom().predicate(), "attr");
 
-        // attr should come first (it provides X via reverse lookup)
-        assert_eq!(ordered[0].atom().predicate(), "attr",
-            "attr reverse lookup should be reordered before incoming");
-        assert_eq!(ordered[1].atom().predicate(), "incoming");
+        // End-to-end: the conjunction is valid and order-independent — it binds
+        // X=dst (processOrder=node 4) and Y=src (node 1) for the CALLS edge 1->4.
+        let engine = setup_reverse_lookup_graph();
+        let evaluator = Evaluator::new(&engine);
+        let results = evaluator
+            .eval_query(&parse_query(
+                r#"incoming(X, Y, "CALLS"), attr(X, "name", "processOrder")"#,
+            ).unwrap())
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].get("X"), Some(&Value::Id(4)));
+        assert_eq!(results[0].get("Y"), Some(&Value::Id(1)));
     }
 
     // End-to-end: attr(X, "name", "orders-pub"), edge(X, Y, "CALLS") works
@@ -3973,6 +4451,173 @@ mod attr_first_class_field_tests {
         assert_eq!(result.bindings.len(), 1);
         assert_eq!(result.bindings[0].get("X"), Some(&"10".to_string()));
     }
+
+    // ------------------------------------------------------------------
+    // Reverse lookup for first-class fields version / semantic_id / id.
+    //
+    // RFD-48 added FORWARD `attr(id, F, V)` support for these (tested
+    // above), but the REVERSE path `attr(X, F, V)` routed every non-
+    // name/file/type/exported field through `metadata_filters`, which
+    // only matches the node's metadata JSON. semantic_id / id / version
+    // are first-class columns (NOT in metadata JSON), so reverse lookup
+    // silently returned nothing — asymmetric with forward, a silent
+    // wrong answer for the most fundamental "find the node with this
+    // semantic_id" query. These tests pin the restored symmetry.
+    // ------------------------------------------------------------------
+
+    // Reverse lookup: attr(X, "semantic_id", "...") finds the node by its
+    // canonical identifier. Must mirror the forward test above.
+    #[test]
+    fn test_eval_attr_reverse_semantic_id() {
+        let engine = setup_attr_field_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        let query = Atom::new("attr", vec![
+            Term::var("X"),
+            Term::constant("semantic_id"),
+            Term::constant("lib.js->FUNCTION->exportedFn"),
+        ]);
+        let results = evaluator.query_atom(&query).unwrap();
+        let ids: Vec<u128> = results.iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        assert_eq!(ids, vec![10], "reverse semantic_id must return node 10");
+    }
+
+    // Reverse lookup with a semantic_id that no node has → empty.
+    #[test]
+    fn test_eval_attr_reverse_semantic_id_no_match() {
+        let engine = setup_attr_field_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        let query = Atom::new("attr", vec![
+            Term::var("X"),
+            Term::constant("semantic_id"),
+            Term::constant("does.js->NONE->missing"),
+        ]);
+        let results = evaluator.query_atom(&query).unwrap();
+        assert!(results.is_empty(), "unknown semantic_id must yield no rows");
+    }
+
+    // Forward/reverse symmetry: the value forward returns for node 10's
+    // semantic_id, fed back into the reverse lookup, must return node 10.
+    #[test]
+    fn test_eval_attr_semantic_id_forward_reverse_symmetry() {
+        let engine = setup_attr_field_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        // Forward: get node 10's semantic_id value.
+        let fwd = evaluator.query_atom(&Atom::new("attr", vec![
+            Term::constant("10"),
+            Term::constant("semantic_id"),
+            Term::var("V"),
+        ])).unwrap();
+        let value = match fwd[0].get("V").unwrap() {
+            Value::Str(s) => s.clone(),
+            other => panic!("expected Str, got {:?}", other),
+        };
+
+        // Reverse: that value must resolve back to exactly node 10.
+        let rev = evaluator.query_atom(&Atom::new("attr", vec![
+            Term::var("X"),
+            Term::constant("semantic_id"),
+            Term::constant(&value),
+        ])).unwrap();
+        let ids: Vec<u128> = rev.iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        assert_eq!(ids, vec![10], "forward semantic_id value must reverse to node 10");
+    }
+
+    // Reverse lookup: attr(X, "id", "20") binds X to that node (O(1) by id).
+    #[test]
+    fn test_eval_attr_reverse_id() {
+        let engine = setup_attr_field_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        let query = Atom::new("attr", vec![
+            Term::var("X"),
+            Term::constant("id"),
+            Term::constant("20"),
+        ]);
+        let results = evaluator.query_atom(&query).unwrap();
+        let ids: Vec<u128> = results.iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        assert_eq!(ids, vec![20], "reverse id must return exactly node 20");
+    }
+
+    // Reverse lookup: attr(X, "id", "<nonexistent>") → empty (node absent).
+    #[test]
+    fn test_eval_attr_reverse_id_no_match() {
+        let engine = setup_attr_field_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        let query = Atom::new("attr", vec![
+            Term::var("X"),
+            Term::constant("id"),
+            Term::constant("99999"),
+        ]);
+        let results = evaluator.query_atom(&query).unwrap();
+        assert!(results.is_empty(), "unknown id must yield no rows");
+    }
+
+    // Reverse lookup: attr(X, "version", "main") returns every node at
+    // that version (both fixture nodes are version "main").
+    #[test]
+    fn test_eval_attr_reverse_version() {
+        let engine = setup_attr_field_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        let query = Atom::new("attr", vec![
+            Term::var("X"),
+            Term::constant("version"),
+            Term::constant("main"),
+        ]);
+        let results = evaluator.query_atom(&query).unwrap();
+        let mut ids: Vec<u128> = results.iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        ids.sort();
+        assert_eq!(ids, vec![10, 20], "reverse version must return both nodes");
+    }
+
+    // The pipelined GENERATOR path (eval_generator_chunked) is a SEPARATE copy
+    // of the reverse-attr lookup. A conjunction whose only valid seed is a
+    // reverse semantic_id lookup routes through it. `neq` is a filter (needs X
+    // already bound), so the reorderer must place the reverse `attr` first as
+    // the generator — exercising the generator-path copy, not eval_attr.
+    #[test]
+    fn test_eval_attr_reverse_semantic_id_as_generator() {
+        let engine = setup_attr_field_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        let literals = parse_query(
+            r#"attr(X, "semantic_id", "lib.js->FUNCTION->exportedFn"), neq(X, "0")"#
+        ).unwrap();
+
+        let results = evaluator.eval_query(&literals).unwrap();
+        let ids: Vec<u128> = results.iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        assert_eq!(ids, vec![10], "reverse semantic_id must seed the pipelined generator path");
+    }
+
+    // EvaluatorExplain mirror for reverse semantic_id — both evaluators
+    // must agree (the explain twin shares the same attr logic).
+    #[test]
+    fn test_eval_attr_reverse_semantic_id_explain() {
+        let engine = setup_attr_field_graph();
+        let mut evaluator = EvaluatorExplain::new(&engine, false);
+
+        let literals = parse_query(
+            r#"attr(X, "semantic_id", "app.js->IMPORT->React")"#
+        ).unwrap();
+
+        let result = evaluator.eval_query(&literals).unwrap();
+        assert_eq!(result.bindings.len(), 1);
+        assert_eq!(result.bindings[0].get("X"), Some(&"20".to_string()));
+    }
 }
 
 // ============================================================================
@@ -4085,19 +4730,55 @@ mod edge_type_index_tests {
     }
 
     #[test]
-    fn test_incoming_unbound_dst_var_type_still_empty() {
-        let engine = setup_edge_type_graph();
+    fn test_incoming_unbound_dst_var_type_enumerates_all_edges() {
+        let engine = setup_edge_type_graph(); // edges: 1->2 CALLS, 3->1 CONTAINS
         let evaluator = Evaluator::new(&engine);
 
-        // incoming(X, Y, T) — both dst and type unbound → degenerate, returns empty
+        // incoming(X, Y, T) — dst, src and type all unbound. With no edge-type
+        // constant the edge-type index (RFD-44) cannot apply, so this falls back
+        // to a full scan and enumerates EVERY edge, binding X=dst, Y=src, T=type.
+        // This is the reverse of edge(Y, X, T) and must agree with it; it used to
+        // silently return empty (a false-negative for an untyped enumeration).
         let query = Atom::new("incoming", vec![
             Term::var("X"),
             Term::var("Y"),
             Term::var("T"),
         ]);
 
-        let results = evaluator.query_atom(&query).unwrap();
-        assert!(results.is_empty(), "incoming with all-unbound should return empty");
+        let mut triples: Vec<(u128, u128, String)> = evaluator
+            .query_atom(&query)
+            .unwrap()
+            .iter()
+            .filter_map(|b| {
+                Some((b.get("X")?.as_id()?, b.get("Y")?.as_id()?, b.get("T")?.as_str()))
+            })
+            .collect();
+        triples.sort();
+        // (dst, src, type): CALLS 1->2 => (2,1,CALLS); CONTAINS 3->1 => (1,3,CONTAINS)
+        assert_eq!(
+            triples,
+            vec![
+                (1, 3, "CONTAINS".to_string()),
+                (2, 1, "CALLS".to_string()),
+            ]
+        );
+
+        // Must mirror edge(Y, X, T) (the same edges, src/dst swapped in binding).
+        let edge_query = Atom::new("edge", vec![
+            Term::var("Y"),
+            Term::var("X"),
+            Term::var("T"),
+        ]);
+        let mut edge_triples: Vec<(u128, u128, String)> = evaluator
+            .query_atom(&edge_query)
+            .unwrap()
+            .iter()
+            .filter_map(|b| {
+                Some((b.get("X")?.as_id()?, b.get("Y")?.as_id()?, b.get("T")?.as_str()))
+            })
+            .collect();
+        edge_triples.sort();
+        assert_eq!(triples, edge_triples, "incoming(X,Y,T) must mirror edge(Y,X,T)");
     }
 }
 
@@ -4356,6 +5037,178 @@ mod hash_join_tests {
         let b = &results[0];
         assert_eq!(b.get("A").unwrap().as_id().unwrap(), 1);
         assert_eq!(b.get("B").unwrap().as_id().unwrap(), (n + 1) as u128);
+    }
+
+    /// REG-503 explain↔plain parity for the shared-variable hash-join fix.
+    ///
+    /// The plain `Evaluator` honours an already-bound variable on the non-key
+    /// end of a self-join `edge(M, C, T1), edge(C, M, T2)` (see
+    /// `test_hash_join_shared_var_across_two_edges`). The explain evaluator
+    /// (`EvaluatorExplain`) drives the SAME `eval_edge_hash_join` shape and
+    /// MUST produce identical bindings under `--explain`. Without the bound-var
+    /// guard ported into the explain path, the second edge atom rebinds `M` to
+    /// every `SENDS_MESSAGE` dst, yielding ~n spurious rows — so `--explain`
+    /// silently changes the answer, violating the parity invariant.
+    #[test]
+    fn test_explain_edge_hash_join_shared_var_matches_plain() {
+        use crate::datalog::eval_explain::EvaluatorExplain;
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let n = HASH_JOIN_THRESHOLD + 10;
+
+        let mut nodes = Vec::with_capacity(3 * n);
+        for i in 1..=n {
+            nodes.push(NodeRecord {
+                id: i as u128,
+                node_type: Some("MESSAGE_TYPE".to_string()),
+                name: Some(format!("msg_{}", i)),
+                file: Some("t.ex".to_string()),
+                file_id: 0, name_offset: 0, version: "main".into(),
+                exported: false, replaces: None, deleted: false,
+                metadata: None, semantic_id: None,
+            });
+            nodes.push(NodeRecord {
+                id: (n + i) as u128,
+                node_type: Some("CALL".to_string()),
+                name: Some(format!("call_{}", i)),
+                file: Some("t.ex".to_string()),
+                file_id: 0, name_offset: 0, version: "main".into(),
+                exported: false, replaces: None, deleted: false,
+                metadata: None, semantic_id: None,
+            });
+            nodes.push(NodeRecord {
+                id: (2 * n + i) as u128,
+                node_type: Some("MESSAGE_TYPE".to_string()),
+                name: Some(format!("other_msg_{}", i)),
+                file: Some("t.ex".to_string()),
+                file_id: 0, name_offset: 0, version: "main".into(),
+                exported: false, replaces: None, deleted: false,
+                metadata: None, semantic_id: None,
+            });
+        }
+        engine.add_nodes(nodes);
+
+        let contains: Vec<EdgeRecord> = (1..=n).map(|i| EdgeRecord {
+            src: i as u128,
+            dst: (n + i) as u128,
+            edge_type: Some("CONTAINS".to_string()),
+            version: "main".into(), metadata: None, deleted: false,
+        }).collect();
+        engine.add_edges(contains, false);
+
+        let mut sends: Vec<EdgeRecord> = (1..=n).map(|i| EdgeRecord {
+            src: (n + i) as u128,
+            dst: (2 * n + i) as u128,
+            edge_type: Some("SENDS_MESSAGE".to_string()),
+            version: "main".into(), metadata: None, deleted: false,
+        }).collect();
+        sends.push(EdgeRecord {
+            src: (n + 1) as u128,
+            dst: 1_u128,
+            edge_type: Some("SENDS_MESSAGE".to_string()),
+            version: "main".into(), metadata: None, deleted: false,
+        });
+        engine.add_edges(sends, false);
+        engine.flush().unwrap();
+
+        let query = "edge(M, C, \"CONTAINS\"), edge(C, M, \"SENDS_MESSAGE\")";
+
+        // Plain evaluator: ground truth (exactly one self-loop).
+        let plain = Evaluator::new(&engine);
+        let plain_results = plain.eval_query(&parse_query(query).unwrap()).unwrap();
+        assert_eq!(plain_results.len(), 1, "plain evaluator baseline: one self-loop");
+
+        // Explain evaluator MUST match.
+        let mut explain = EvaluatorExplain::new(&engine, true);
+        let explain_result = explain.eval_query(&parse_query(query).unwrap()).unwrap();
+        assert_eq!(
+            explain_result.bindings.len(), plain_results.len(),
+            "explain evaluator must honour already-bound vars in edge hash-join \
+             (parity with plain evaluator) — got spurious rows under --explain"
+        );
+        let b = &explain_result.bindings[0];
+        assert_eq!(b.get("M").map(String::as_str), Some("1"));
+        assert_eq!(b.get("C").map(String::as_str), Some((n + 1).to_string().as_str()));
+    }
+
+    /// REG-503 explain↔plain parity for the `incoming/3` flavour of the
+    /// shared-variable hash-join fix. Mirror of
+    /// `test_incoming_hash_join_shared_var` through `EvaluatorExplain`.
+    #[test]
+    fn test_explain_incoming_hash_join_shared_var_matches_plain() {
+        use crate::datalog::eval_explain::EvaluatorExplain;
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let n = HASH_JOIN_THRESHOLD + 10;
+
+        let mut nodes = Vec::with_capacity(3 * n);
+        for i in 1..=n {
+            nodes.push(NodeRecord {
+                id: i as u128,
+                node_type: Some("A".to_string()),
+                name: Some(format!("a_{}", i)),
+                file: Some("t.ex".to_string()),
+                file_id: 0, name_offset: 0, version: "main".into(),
+                exported: false, replaces: None, deleted: false,
+                metadata: None, semantic_id: None,
+            });
+            nodes.push(NodeRecord {
+                id: (n + i) as u128,
+                node_type: Some("B".to_string()),
+                name: Some(format!("b_{}", i)),
+                file: Some("t.ex".to_string()),
+                file_id: 0, name_offset: 0, version: "main".into(),
+                exported: false, replaces: None, deleted: false,
+                metadata: None, semantic_id: None,
+            });
+            nodes.push(NodeRecord {
+                id: (2 * n + i) as u128,
+                node_type: Some("A".to_string()),
+                name: Some(format!("other_a_{}", i)),
+                file: Some("t.ex".to_string()),
+                file_id: 0, name_offset: 0, version: "main".into(),
+                exported: false, replaces: None, deleted: false,
+                metadata: None, semantic_id: None,
+            });
+        }
+        engine.add_nodes(nodes);
+
+        let fw: Vec<EdgeRecord> = (1..=n).map(|i| EdgeRecord {
+            src: i as u128,
+            dst: (n + i) as u128,
+            edge_type: Some("F".to_string()),
+            version: "main".into(), metadata: None, deleted: false,
+        }).collect();
+        engine.add_edges(fw, false);
+        let mut bk: Vec<EdgeRecord> = (1..=n).map(|i| EdgeRecord {
+            src: (n + i) as u128,
+            dst: (2 * n + i) as u128,
+            edge_type: Some("G".to_string()),
+            version: "main".into(), metadata: None, deleted: false,
+        }).collect();
+        bk.push(EdgeRecord {
+            src: (n + 1) as u128,
+            dst: 1u128,
+            edge_type: Some("G".to_string()),
+            version: "main".into(), metadata: None, deleted: false,
+        });
+        engine.add_edges(bk, false);
+        engine.flush().unwrap();
+
+        let query = "node(A, \"A\"), incoming(A, B, \"G\"), incoming(B, A, \"F\")";
+
+        let plain = Evaluator::new(&engine);
+        let plain_results = plain.eval_query(&parse_query(query).unwrap()).unwrap();
+        assert_eq!(plain_results.len(), 1, "plain evaluator baseline: one round-trip");
+
+        let mut explain = EvaluatorExplain::new(&engine, true);
+        let explain_result = explain.eval_query(&parse_query(query).unwrap()).unwrap();
+        assert_eq!(
+            explain_result.bindings.len(), plain_results.len(),
+            "explain evaluator must honour already-bound vars in incoming hash-join \
+             (parity with plain evaluator) — got spurious rows under --explain"
+        );
+        let b = &explain_result.bindings[0];
+        assert_eq!(b.get("A").map(String::as_str), Some("1"));
+        assert_eq!(b.get("B").map(String::as_str), Some((n + 1).to_string().as_str()));
     }
 
     /// Regression: when a variable appears in *both* edge atoms on opposite
@@ -4628,6 +5481,148 @@ mod hash_join_tests {
 
         assert_eq!(results.len(), db_count,
             "should find {} functions calling DB queries", db_count);
+    }
+
+    // ------------------------------------------------------------------------
+    // Negation hash join: a constant (or bound-var) NON-KEY endpoint must be
+    // honored.
+    //
+    // `eval_negation_hash_join` keys its existence set on a single endpoint
+    // (`key_pos`). For `\+ edge(X, "d", "T")` the constant dst "d" was silently
+    // dropped once the binding count crossed HASH_JOIN_THRESHOLD, collapsing the
+    // literal into `\+ edge(X, _, "T")` ("X has NO outgoing T edge") — a
+    // threshold-dependent silent wrong answer. These tests pin the correct
+    // per-edge semantics across all three evaluation loops (process_literals,
+    // eval_rule_body_with, and the explain twin), in both edge directions.
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn test_hash_join_negation_const_dst_via_eval_query() {
+        // In setup_hash_join_graph, FUNCTION i calls CALL node (n+i). Targeting
+        // the CALL node of function 1 means ONLY function 1 calls it, so
+        // `\+ edge(X, "<n+1>", "CALLS")` must match every function EXCEPT 1.
+        let n = HASH_JOIN_THRESHOLD + 10;
+        let engine = setup_hash_join_graph(n);
+        let target = (n + 1) as u128;
+
+        let evaluator = Evaluator::new(&engine);
+        let literals = parse_query(&format!(
+            "node(X, \"FUNCTION\"), \\+ edge(X, \"{}\", \"CALLS\")",
+            target
+        )).unwrap();
+        let results = evaluator.eval_query(&literals).unwrap();
+
+        let ids: HashSet<u128> = results.iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+
+        assert_eq!(ids.len(), n - 1,
+            "negation with a const dst must exclude ONLY the caller of that dst");
+        assert!(!ids.contains(&1), "fn 1 calls the target dst -> excluded");
+        assert!(ids.contains(&2), "fn 2 does not call the target dst -> included");
+    }
+
+    #[test]
+    fn test_hash_join_negation_const_dst_via_rule() {
+        // Same property through a derived rule (eval_rule_body_with path).
+        let n = HASH_JOIN_THRESHOLD + 10;
+        let engine = setup_hash_join_graph(n);
+        let target = (n + 1) as u128;
+
+        let mut evaluator = Evaluator::new(&engine);
+        let rule = parse_rule(&format!(
+            "no_call_to(X) :- node(X, \"FUNCTION\"), \\+ edge(X, \"{}\", \"CALLS\").",
+            target
+        )).unwrap();
+        evaluator.add_rule(rule);
+
+        let goal = parse_atom("no_call_to(X)").unwrap();
+        let results = evaluator.query(&goal).unwrap();
+
+        let ids: HashSet<u128> = results.iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        assert_eq!(ids.len(), n - 1,
+            "derived-rule negation with a const dst must honor the dst");
+        assert!(!ids.contains(&1), "fn 1 calls the target dst -> excluded");
+    }
+
+    #[test]
+    fn test_hash_join_negation_const_src_incoming() {
+        // incoming sibling: `\+ incoming(C, "1", "CALLS")` = "no CALLS edge from
+        // node 1 into C". Only CALL node (n+1) has node 1 as its caller, so every
+        // other CALL node must match.
+        let n = HASH_JOIN_THRESHOLD + 10;
+        let engine = setup_hash_join_graph(n);
+
+        let evaluator = Evaluator::new(&engine);
+        let literals = parse_query(
+            "node(C, \"CALL\"), \\+ incoming(C, \"1\", \"CALLS\")"
+        ).unwrap();
+        let results = evaluator.eval_query(&literals).unwrap();
+
+        let ids: HashSet<u128> = results.iter()
+            .filter_map(|b| b.get("C").and_then(|v| v.as_id()))
+            .collect();
+        assert_eq!(ids.len(), n - 1,
+            "only the CALL node called by node 1 must be excluded");
+        assert!(!ids.contains(&((n + 1) as u128)), "CALL n+1 is called by node 1 -> excluded");
+        assert!(ids.contains(&((n + 2) as u128)), "CALL n+2 is called by node 2 -> included");
+    }
+
+    #[test]
+    fn test_hash_join_negation_const_dst_explain_parity() {
+        // The explain twin must agree with the standard evaluator.
+        let n = HASH_JOIN_THRESHOLD + 10;
+        let engine = setup_hash_join_graph(n);
+        let target = (n + 1) as u128;
+
+        let mut explain = EvaluatorExplain::new(&engine, false);
+        let literals = parse_query(&format!(
+            "node(X, \"FUNCTION\"), \\+ edge(X, \"{}\", \"CALLS\")",
+            target
+        )).unwrap();
+        let result = explain.eval_query(&literals).unwrap();
+
+        let ids: HashSet<u128> = result.bindings.iter()
+            .filter_map(|b| b.get("X").and_then(|s| s.parse::<u128>().ok()))
+            .collect();
+        assert_eq!(ids.len(), n - 1, "explain twin must honor the const dst too");
+        assert!(!ids.contains(&1), "fn 1 calls the target dst -> excluded");
+    }
+
+    #[test]
+    fn test_hash_join_negation_wildcard_still_fast_path() {
+        // Regression guard: the wildcard non-key endpoint is the ONLY sound
+        // fast-path case and must keep working — `\+ edge(X, _, "CALLS")`.
+        let n = HASH_JOIN_THRESHOLD + 10;
+        let mut engine = setup_hash_join_graph(n);
+        let mut orphans = Vec::new();
+        for i in (2 * n + 1)..=(2 * n + 5) {
+            orphans.push(NodeRecord {
+                id: i as u128,
+                node_type: Some("FUNCTION".to_string()),
+                name: Some(format!("orphan_{}", i)),
+                file: Some("test.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+                semantic_id: None,
+            });
+        }
+        engine.add_nodes(orphans);
+        engine.flush().unwrap();
+
+        let evaluator = Evaluator::new(&engine);
+        let literals = parse_query(
+            "node(X, \"FUNCTION\"), \\+ edge(X, _, \"CALLS\")"
+        ).unwrap();
+        let results = evaluator.eval_query(&literals).unwrap();
+        assert_eq!(results.len(), 5, "only the 5 orphan functions have no CALLS edge");
     }
 }
 
@@ -5387,6 +6382,635 @@ mod loe_tests {
         assert!(
             result.stats.edges_by_type_calls > 0,
             "explain stats must record edges_by_type_calls > 0"
+        );
+    }
+}
+
+
+
+// ============================================================================
+// numeric_cmp(gt/lt/gte/lte) — integer-exact comparison of large operands
+//
+// The comparison parsed both operands as f64. f64 has a 53-bit mantissa, so any
+// integer above 2^53 (e.g. u128 node IDs, large timestamps / byte offsets stored
+// as metadata) loses precision: two DISTINCT values that differ only in low bits
+// round to the SAME f64. That made `lt(A, B)` return FALSE for distinct IDs
+// (silently dropping rows — e.g. the canonical symmetric-pair-dedup idiom
+// `edge(A,B), edge(B,A), lt(A,B)` lost every pair) and `gte(A, B)` return TRUE
+// for distinct IDs (false positive). These tests pin integer-exact comparison;
+// genuinely fractional operands still fall back to f64.
+// ============================================================================
+
+mod numeric_cmp_u128_precision_tests {
+    use super::*;
+    use crate::graph::{GraphEngineV2, GraphStore};
+    use crate::storage::{NodeRecord, EdgeRecord};
+    use crate::datalog::eval::{Evaluator, Value};
+    use crate::datalog::eval_explain::EvaluatorExplain;
+
+    // 2^60 and 2^60 + 1 — both <= i128::MAX, both round to the SAME f64
+    // (2^60 is exactly representable, 2^60 + 1 is not).
+    const BIG: &str = "1152921504606846976";
+    const BIG_PLUS_1: &str = "1152921504606846977";
+
+    // 2^127 and 2^127 + 1 — both > i128::MAX but < u128::MAX, also f64-equal.
+    // Exercises the u128 fallback (these do not parse as i128).
+    const HUGE: &str = "170141183460469231731687303715884105728";
+    const HUGE_PLUS_1: &str = "170141183460469231731687303715884105729";
+
+    fn cmp(op: &str, a: &str, b: &str) -> usize {
+        let engine = GraphEngineV2::create_ephemeral();
+        let evaluator = Evaluator::new(&engine);
+        let query = Atom::new(op, vec![Term::constant(a), Term::constant(b)]);
+        evaluator.query_atom(&query).unwrap().len()
+    }
+
+    // lt(2^60, 2^60+1) must be TRUE — distinct IDs must not collapse under f64.
+    #[test]
+    fn test_lt_large_ids_not_collapsed() {
+        assert_eq!(cmp("lt", BIG, BIG_PLUS_1), 1, "2^60 < 2^60+1 must hold");
+    }
+
+    // gt(2^60+1, 2^60) must be TRUE.
+    #[test]
+    fn test_gt_large_ids_not_collapsed() {
+        assert_eq!(cmp("gt", BIG_PLUS_1, BIG), 1, "2^60+1 > 2^60 must hold");
+    }
+
+    // gte/lte must NOT treat distinct large IDs as equal (false-positive guard).
+    #[test]
+    fn test_gte_lte_distinct_large_ids_not_falsely_equal() {
+        // 2^60 is strictly less than 2^60+1, so neither >= nor (reversed) <= holds.
+        assert_eq!(cmp("gte", BIG, BIG_PLUS_1), 0, "2^60 >= 2^60+1 must be false");
+        assert_eq!(cmp("lte", BIG_PLUS_1, BIG), 0, "2^60+1 <= 2^60 must be false");
+        // The genuinely-equal case still passes.
+        assert_eq!(cmp("gte", BIG, BIG), 1, "2^60 >= 2^60 must hold");
+        assert_eq!(cmp("lte", BIG, BIG), 1, "2^60 <= 2^60 must hold");
+    }
+
+    // u128 operands above i128::MAX (do not parse as i128) compared exactly.
+    #[test]
+    fn test_cmp_u128_above_i128_max() {
+        assert_eq!(cmp("lt", HUGE, HUGE_PLUS_1), 1, "2^127 < 2^127+1 must hold");
+        assert_eq!(cmp("gt", HUGE_PLUS_1, HUGE), 1, "2^127+1 > 2^127 must hold");
+        assert_eq!(cmp("gte", HUGE, HUGE_PLUS_1), 0, "2^127 >= 2^127+1 must be false");
+    }
+
+    // Regression: fractional and negative operands still work via the f64 fallback.
+    #[test]
+    fn test_float_and_negative_comparisons_still_work() {
+        assert_eq!(cmp("gt", "1000.5", "1000"), 1, "1000.5 > 1000");
+        assert_eq!(cmp("lt", "5", "5.5"), 1, "5 < 5.5 (mixed int/float)");
+        assert_eq!(cmp("gt", "5", "-10"), 1, "5 > -10 (negative)");
+        assert_eq!(cmp("lt", "-10", "5"), 1, "-10 < 5");
+        assert_eq!(cmp("gt", "abc", "100"), 0, "non-numeric → empty");
+    }
+
+    // Realistic end-to-end: the symmetric-pair-dedup idiom over two nodes whose
+    // u128 IDs round to the same f64. `lt(A, B)` must keep the one canonical pair.
+    #[test]
+    fn test_symmetric_pair_dedup_idiom_large_ids() {
+        let a: u128 = BIG.parse().unwrap();
+        let b: u128 = BIG_PLUS_1.parse().unwrap();
+        let mut engine = GraphEngineV2::create_ephemeral();
+        engine.add_nodes(vec![
+            NodeRecord {
+                id: a,
+                node_type: Some("FUNCTION".to_string()),
+                name: Some("alpha".to_string()),
+                file: Some("a.js".to_string()),
+                file_id: 0, name_offset: 0,
+                version: "main".into(),
+                exported: false, replaces: None, deleted: false,
+                metadata: None, semantic_id: None,
+            },
+            NodeRecord {
+                id: b,
+                node_type: Some("FUNCTION".to_string()),
+                name: Some("beta".to_string()),
+                file: Some("b.js".to_string()),
+                file_id: 0, name_offset: 0,
+                version: "main".into(),
+                exported: false, replaces: None, deleted: false,
+                metadata: None, semantic_id: None,
+            },
+        ]);
+        engine.add_edges(vec![
+            EdgeRecord { src: a, dst: b, edge_type: Some("CALLS".to_string()),
+                version: "main".into(), metadata: None, deleted: false },
+            EdgeRecord { src: b, dst: a, edge_type: Some("CALLS".to_string()),
+                version: "main".into(), metadata: None, deleted: false },
+        ], false);
+        engine.flush().unwrap();
+
+        let mut evaluator = Evaluator::new(&engine);
+        let rule = parse_rule(
+            r#"mutual(A, B) :- edge(A, B, "CALLS"), edge(B, A, "CALLS"), lt(A, B)."#
+        ).unwrap();
+        evaluator.add_rule(rule);
+
+        let results = evaluator.query(&parse_atom("mutual(A, B)").unwrap()).unwrap();
+        // Exactly one canonical ordered pair (a < b); not zero (collapsed by f64),
+        // not two (both directions admitted).
+        assert_eq!(results.len(), 1, "dedup must keep exactly one ordered pair");
+        assert_eq!(results[0].get("A"), Some(&Value::Id(a)));
+        assert_eq!(results[0].get("B"), Some(&Value::Id(b)));
+    }
+
+    // EvaluatorExplain twin must agree: lt(2^60, 2^60+1) yields one row.
+    #[test]
+    fn test_numeric_cmp_large_ids_explain_parity() {
+        let engine = GraphEngineV2::create_ephemeral();
+        let mut ev = EvaluatorExplain::new(&engine, false);
+        let result = ev.eval_query(
+            &parse_query(&format!(r#"lt("{}", "{}")"#, BIG, BIG_PLUS_1)).unwrap()
+        ).unwrap();
+        assert_eq!(result.bindings.len(), 1, "explain twin must also pass lt on distinct large IDs");
+    }
+}
+
+
+// ============================================================================
+// attr() reverse lookup — nested metadata dotted paths (forward/reverse symmetry)
+//
+// The forward path `attr(id, "a.b", V)` resolves nested dotted metadata paths
+// via `get_metadata_value` (metadata["a"]["b"]). The reverse path
+// `attr(X, "a.b", "v")` routed dotted keys through `metadata_filters`, which
+// only matches FLAT keys (`parsed.get("a.b")`), so it silently returned nothing
+// while the forward dual resolved it — a silent forward/reverse asymmetry of
+// the same class as the semantic_id/version/id reverse gap (RFD-48). These
+// tests pin the restored symmetry; flat-key reverse is unchanged.
+// ============================================================================
+
+mod attr_reverse_nested_metadata_tests {
+    use super::*;
+    use crate::graph::{GraphEngineV2, GraphStore};
+    use crate::storage::NodeRecord;
+    use crate::datalog::eval::Evaluator;
+    use crate::datalog::eval_explain::EvaluatorExplain;
+
+    fn setup_nested_metadata_graph() -> GraphEngineV2 {
+        let mut engine = GraphEngineV2::create_ephemeral();
+        engine.add_nodes(vec![
+            NodeRecord {
+                id: 1,
+                node_type: Some("SERVICE".to_string()),
+                name: Some("db".to_string()),
+                file: Some("db.js".to_string()),
+                file_id: 0, name_offset: 0,
+                version: "main".into(),
+                exported: false, replaces: None, deleted: false,
+                metadata: Some(r#"{"config":{"port":"5432"},"tier":"data"}"#.to_string()),
+                semantic_id: None,
+            },
+            NodeRecord {
+                id: 2,
+                node_type: Some("SERVICE".to_string()),
+                name: Some("cache".to_string()),
+                file: Some("cache.js".to_string()),
+                file_id: 0, name_offset: 0,
+                version: "main".into(),
+                exported: false, replaces: None, deleted: false,
+                metadata: Some(r#"{"config":{"port":"6379"},"tier":"data"}"#.to_string()),
+                semantic_id: None,
+            },
+        ]);
+        engine.flush().unwrap();
+        engine
+    }
+
+    // Reverse: attr(X, "config.port", "5432") must find node 1, mirroring the
+    // forward attr(1, "config.port", V) = "5432".
+    #[test]
+    fn test_eval_attr_reverse_nested_metadata() {
+        let engine = setup_nested_metadata_graph();
+        let ev = Evaluator::new(&engine);
+
+        let results = ev.query_atom(&Atom::new("attr", vec![
+            Term::var("X"),
+            Term::constant("config.port"),
+            Term::constant("5432"),
+        ])).unwrap();
+
+        let ids: Vec<u128> = results.iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        assert_eq!(ids, vec![1], "reverse nested config.port=5432 must return node 1");
+    }
+
+    // Forward/reverse symmetry over a nested dotted path: the value forward
+    // returns for node 2's config.port, fed back to reverse, returns node 2.
+    #[test]
+    fn test_eval_attr_nested_forward_reverse_symmetry() {
+        let engine = setup_nested_metadata_graph();
+        let ev = Evaluator::new(&engine);
+
+        let fwd = ev.query_atom(&Atom::new("attr", vec![
+            Term::constant("2"),
+            Term::constant("config.port"),
+            Term::var("V"),
+        ])).unwrap();
+        assert_eq!(fwd.len(), 1);
+        let value = match fwd[0].get("V").unwrap() {
+            Value::Str(s) => s.clone(),
+            other => panic!("expected Str, got {:?}", other),
+        };
+        assert_eq!(value, "6379");
+
+        let rev = ev.query_atom(&Atom::new("attr", vec![
+            Term::var("X"),
+            Term::constant("config.port"),
+            Term::constant(&value),
+        ])).unwrap();
+        let ids: Vec<u128> = rev.iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        assert_eq!(ids, vec![2], "forward nested value must reverse to node 2");
+    }
+
+    // A nested path value that no node has → empty.
+    #[test]
+    fn test_eval_attr_reverse_nested_no_match() {
+        let engine = setup_nested_metadata_graph();
+        let ev = Evaluator::new(&engine);
+        let results = ev.query_atom(&Atom::new("attr", vec![
+            Term::var("X"),
+            Term::constant("config.port"),
+            Term::constant("9999"),
+        ])).unwrap();
+        assert!(results.is_empty(), "unknown nested value must yield no rows");
+    }
+
+    // Regression: flat metadata key reverse lookup is unchanged.
+    #[test]
+    fn test_eval_attr_reverse_flat_metadata_still_works() {
+        let engine = setup_nested_metadata_graph();
+        let ev = Evaluator::new(&engine);
+        let results = ev.query_atom(&Atom::new("attr", vec![
+            Term::var("X"),
+            Term::constant("tier"),
+            Term::constant("data"),
+        ])).unwrap();
+        let mut ids: Vec<u128> = results.iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        ids.sort();
+        assert_eq!(ids, vec![1, 2], "flat metadata reverse must still match both nodes");
+    }
+
+    // EvaluatorExplain twin must agree with Evaluator on the reverse nested lookup.
+    #[test]
+    fn test_eval_attr_reverse_nested_explain() {
+        let engine = setup_nested_metadata_graph();
+        let mut ev = EvaluatorExplain::new(&engine, false);
+        let result = ev.eval_query(&parse_query(
+            r#"attr(X, "config.port", "5432")"#
+        ).unwrap()).unwrap();
+        assert_eq!(result.bindings.len(), 1);
+        assert_eq!(result.bindings[0].get("X"), Some(&"1".to_string()));
+    }
+
+    // The pipelined generator path (eval_generator_chunked) has its OWN copy of
+    // the reverse-attr routing. A conjunction whose only valid seed is the
+    // reverse nested attr lookup routes through it (neq is a filter that needs X
+    // already bound, so the reorderer places the reverse attr first as the
+    // generator) — exercising the generator-path copy, not eval_attr.
+    #[test]
+    fn test_eval_attr_reverse_nested_as_generator() {
+        let engine = setup_nested_metadata_graph();
+        let ev = Evaluator::new(&engine);
+        let results = ev.eval_query(&parse_query(
+            r#"attr(X, "config.port", "6379"), neq(X, "0")"#
+        ).unwrap()).unwrap();
+        let ids: Vec<u128> = results.iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        assert_eq!(ids, vec![2], "reverse nested attr must seed the pipelined generator path");
+    }
+}
+
+// ============================================================================
+// attr() reverse lookup — non-primitive flat metadata values (null/object/array)
+//
+// The forward path `attr(id, "k", V)` resolves a flat metadata value via
+// `get_metadata_value` → `value_to_string`, which returns `None` for JSON
+// null/object/array (only String/Number/Bool are exact-matchable primitives),
+// so forward yields no row for these. The reverse path `attr(X, "k", "v")`
+// for a flat key routes through the index-backed `find_by_attr` →
+// `metadata_matches`, whose exact-match arm stringified ANY value (`Null` →
+// `"null"`, objects → order-dependent compact JSON), so it matched rows the
+// forward direction rejects — a silent forward/reverse asymmetry of the same
+// class as the semantic_id/version/id and nested-dotted reverse gaps. The fix
+// makes `metadata_matches` mirror `value_to_string` (null/object/array never
+// match), restoring symmetry on the flat-key fast path. These tests pin it.
+// ============================================================================
+
+mod attr_reverse_nonprimitive_metadata_tests {
+    use super::*;
+    use crate::graph::{GraphEngineV2, GraphStore};
+    use crate::storage::NodeRecord;
+    use crate::datalog::eval::Evaluator;
+    use crate::datalog::eval_explain::EvaluatorExplain;
+
+    // One node carrying a JSON null, object, and array alongside a plain string
+    // metadata value. The string value is the symmetric control.
+    fn setup_nonprimitive_metadata_graph() -> GraphEngineV2 {
+        let mut engine = GraphEngineV2::create_ephemeral();
+        engine.add_nodes(vec![NodeRecord {
+            id: 1,
+            node_type: Some("SERVICE".to_string()),
+            name: Some("svc".to_string()),
+            file: Some("svc.js".to_string()),
+            file_id: 0,
+            name_offset: 0,
+            version: "main".into(),
+            exported: false,
+            replaces: None,
+            deleted: false,
+            metadata: Some(
+                r#"{"flag":null,"obj":{"a":1},"arr":[1,2],"label":"alpha"}"#.to_string(),
+            ),
+            semantic_id: None,
+        }]);
+        engine.flush().unwrap();
+        engine
+    }
+
+    fn reverse_ids(ev: &Evaluator, key: &str, value: &str) -> Vec<u128> {
+        ev.query_atom(&Atom::new(
+            "attr",
+            vec![Term::var("X"), Term::constant(key), Term::constant(value)],
+        ))
+        .unwrap()
+        .iter()
+        .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+        .collect()
+    }
+
+    fn forward_rows(ev: &Evaluator, key: &str) -> usize {
+        ev.query_atom(&Atom::new(
+            "attr",
+            vec![Term::constant("1"), Term::constant(key), Term::var("V")],
+        ))
+        .unwrap()
+        .len()
+    }
+
+    // Forward direction: null/object/array values are not extractable primitives,
+    // so forward `attr(1, k, V)` binds nothing. This is the semantics the reverse
+    // direction must mirror.
+    #[test]
+    fn test_forward_attr_nonprimitive_metadata_yields_nothing() {
+        let engine = setup_nonprimitive_metadata_graph();
+        let ev = Evaluator::new(&engine);
+        assert_eq!(forward_rows(&ev, "flag"), 0, "forward null value must bind nothing");
+        assert_eq!(forward_rows(&ev, "obj"), 0, "forward object value must bind nothing");
+        assert_eq!(forward_rows(&ev, "arr"), 0, "forward array value must bind nothing");
+    }
+
+    // Reverse direction must agree: querying for the stringified null/object/array
+    // must NOT match, because the forward direction rejects these values. Before
+    // the fix, `metadata_matches` stringified them and returned node 1.
+    #[test]
+    fn test_reverse_attr_null_metadata_no_match() {
+        let engine = setup_nonprimitive_metadata_graph();
+        let ev = Evaluator::new(&engine);
+        assert!(
+            reverse_ids(&ev, "flag", "null").is_empty(),
+            "reverse attr(X, flag, \"null\") must not match a JSON null (forward rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_reverse_attr_object_metadata_no_match() {
+        let engine = setup_nonprimitive_metadata_graph();
+        let ev = Evaluator::new(&engine);
+        // The compact serialization the old code compared against.
+        assert!(
+            reverse_ids(&ev, "obj", r#"{"a":1}"#).is_empty(),
+            "reverse attr on a JSON object value must not match (forward rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_reverse_attr_array_metadata_no_match() {
+        let engine = setup_nonprimitive_metadata_graph();
+        let ev = Evaluator::new(&engine);
+        assert!(
+            reverse_ids(&ev, "arr", "[1,2]").is_empty(),
+            "reverse attr on a JSON array value must not match (forward rejects it)"
+        );
+    }
+
+    // Regression: a primitive (string) flat metadata value still round-trips
+    // forward → reverse. The fast index path must be unchanged for primitives.
+    #[test]
+    fn test_reverse_attr_primitive_metadata_still_matches() {
+        let engine = setup_nonprimitive_metadata_graph();
+        let ev = Evaluator::new(&engine);
+        assert_eq!(forward_rows(&ev, "label"), 1, "forward string value binds");
+        assert_eq!(
+            reverse_ids(&ev, "label", "alpha"),
+            vec![1],
+            "reverse string flat metadata must still match node 1"
+        );
+    }
+
+    // EvaluatorExplain twin must agree: reverse null lookup yields no rows.
+    #[test]
+    fn test_reverse_attr_null_metadata_explain_parity() {
+        let engine = setup_nonprimitive_metadata_graph();
+        let mut ev = EvaluatorExplain::new(&engine, false);
+        let result = ev
+            .eval_query(&parse_query(r#"attr(X, "flag", "null")"#).unwrap())
+            .unwrap();
+        assert!(
+            result.bindings.is_empty(),
+            "explain twin must also reject reverse null match"
+        );
+    }
+}
+
+/// Repeated-variable (self-loop) handling for `edge`/`incoming` enumeration.
+///
+/// A variable that appears in BOTH the src and dst position of a single edge
+/// atom — e.g. `edge(X, X, "CALLS")` ("find recursive functions") — is an
+/// equality join: only edges whose src == dst may match. When the shared
+/// variable is still unbound (the atom acts as a generator), the per-edge
+/// binding builder must enforce that equality, not silently overwrite the
+/// earlier binding with the later endpoint.
+mod repeated_var_tests {
+    use super::*;
+    use crate::graph::{GraphEngineV2, GraphStore};
+    use crate::storage::{NodeRecord, EdgeRecord};
+
+    /// Graph with two genuine self-loops and two ordinary edges:
+    ///   1 -> 2  CALLS
+    ///   2 -> 3  CALLS
+    ///   4 -> 4  CALLS        (recursive function — a real self-loop)
+    ///   1 -> 1  REFERENCES   (self-loop of a different type)
+    fn setup_self_loop_graph() -> GraphEngineV2 {
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let mk = |id: u128| NodeRecord {
+            id,
+            node_type: Some("FUNCTION".to_string()),
+            name: Some(format!("fn_{}", id)),
+            file: Some("t.js".to_string()),
+            file_id: 0,
+            name_offset: 0,
+            version: "main".into(),
+            exported: false,
+            replaces: None,
+            deleted: false,
+            metadata: None,
+            semantic_id: None,
+        };
+        engine.add_nodes(vec![mk(1), mk(2), mk(3), mk(4)]);
+        let e = |src: u128, dst: u128, t: &str| EdgeRecord {
+            src,
+            dst,
+            edge_type: Some(t.to_string()),
+            version: "main".into(),
+            metadata: None,
+            deleted: false,
+        };
+        engine.add_edges(
+            vec![
+                e(1, 2, "CALLS"),
+                e(2, 3, "CALLS"),
+                e(4, 4, "CALLS"),
+                e(1, 1, "REFERENCES"),
+            ],
+            false,
+        );
+        engine.flush().unwrap();
+        engine
+    }
+
+    fn ids_of(results: &[Bindings], var: &str) -> Vec<u128> {
+        let mut v: Vec<u128> = results
+            .iter()
+            .filter_map(|b| b.get(var).and_then(|val| val.as_id()))
+            .collect();
+        v.sort_unstable();
+        v.dedup();
+        v
+    }
+
+    #[test]
+    fn test_edge_repeated_var_typed_self_loop_only() {
+        let engine = setup_self_loop_graph();
+        let ev = Evaluator::new(&engine);
+        // edge(X, X, "CALLS") — only the 4->4 recursive CALLS edge qualifies.
+        let results = ev
+            .eval_query(&parse_query(r#"edge(X, X, "CALLS")"#).unwrap())
+            .unwrap();
+        assert_eq!(
+            ids_of(&results, "X"),
+            vec![4],
+            "edge(X, X, \"CALLS\") must return only the self-loop source, not every CALLS edge"
+        );
+    }
+
+    #[test]
+    fn test_edge_repeated_var_untyped_self_loops() {
+        let engine = setup_self_loop_graph();
+        let ev = Evaluator::new(&engine);
+        // edge(X, X) — both self-loops (4->4 CALLS and 1->1 REFERENCES).
+        let results = ev
+            .eval_query(&parse_query(r#"edge(X, X)"#).unwrap())
+            .unwrap();
+        assert_eq!(
+            ids_of(&results, "X"),
+            vec![1, 4],
+            "edge(X, X) must return exactly the self-loop nodes"
+        );
+    }
+
+    #[test]
+    fn test_incoming_repeated_var_typed_self_loop_only() {
+        let engine = setup_self_loop_graph();
+        let ev = Evaluator::new(&engine);
+        // incoming(X, X, "CALLS") — reverse view, same single self-loop.
+        let results = ev
+            .eval_query(&parse_query(r#"incoming(X, X, "CALLS")"#).unwrap())
+            .unwrap();
+        assert_eq!(
+            ids_of(&results, "X"),
+            vec![4],
+            "incoming(X, X, \"CALLS\") must return only the self-loop node"
+        );
+    }
+
+    #[test]
+    fn test_incoming_repeated_var_untyped_self_loops() {
+        let engine = setup_self_loop_graph();
+        let ev = Evaluator::new(&engine);
+        let results = ev
+            .eval_query(&parse_query(r#"incoming(X, X)"#).unwrap())
+            .unwrap();
+        assert_eq!(
+            ids_of(&results, "X"),
+            vec![1, 4],
+            "incoming(X, X) must return exactly the self-loop nodes"
+        );
+    }
+
+    #[test]
+    fn test_edge_distinct_vars_unaffected() {
+        // Regression guard: distinct src/dst variables still enumerate every edge.
+        let engine = setup_self_loop_graph();
+        let ev = Evaluator::new(&engine);
+        let results = ev
+            .eval_query(&parse_query(r#"edge(X, Y, "CALLS")"#).unwrap())
+            .unwrap();
+        // (1,2), (2,3), (4,4) — three CALLS edges.
+        assert_eq!(results.len(), 3, "distinct-var enumeration must be unchanged");
+    }
+
+    #[test]
+    fn test_edge_repeated_var_bound_path_still_correct() {
+        // When X is already bound before the edge atom, evaluation goes through
+        // the Const-src branch (which already filters dst == src correctly).
+        // This guards that the fix does not regress the already-correct path.
+        let engine = setup_self_loop_graph();
+        let ev = Evaluator::new(&engine);
+        let results = ev
+            .eval_query(
+                &parse_query(r#"node(X, "FUNCTION"), edge(X, X, "CALLS")"#).unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            ids_of(&results, "X"),
+            vec![4],
+            "bound-var self-loop path must remain correct"
+        );
+    }
+
+    #[test]
+    fn test_explain_edge_repeated_var_matches_plain() {
+        use crate::datalog::eval_explain::EvaluatorExplain;
+        let engine = setup_self_loop_graph();
+        let plain = Evaluator::new(&engine);
+        let plain_results = plain
+            .eval_query(&parse_query(r#"edge(X, X, "CALLS")"#).unwrap())
+            .unwrap();
+        assert_eq!(ids_of(&plain_results, "X"), vec![4]);
+
+        let mut explain = EvaluatorExplain::new(&engine, true);
+        let explain_result = explain
+            .eval_query(&parse_query(r#"edge(X, X, "CALLS")"#).unwrap())
+            .unwrap();
+        let mut explain_ids: Vec<u128> = explain_result
+            .bindings
+            .iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.parse::<u128>().ok()))
+            .collect();
+        explain_ids.sort_unstable();
+        explain_ids.dedup();
+        assert_eq!(
+            explain_ids, vec![4],
+            "explain evaluator must match plain for repeated-var self-loop"
         );
     }
 }

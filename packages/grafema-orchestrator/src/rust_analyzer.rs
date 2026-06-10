@@ -255,6 +255,39 @@ impl Ctx {
     fn meta_int(key: &str, val: i64) -> (String, serde_json::Value) {
         (key.to_string(), serde_json::json!(val))
     }
+
+    /// Record an unrecognised AST construct without aborting analysis of the file.
+    ///
+    /// `syn`'s `Item`/`Expr`/`Pat`/etc. enums are `#[non_exhaustive]`, and new
+    /// stable variants land with most Rust releases. Historically every walker's
+    /// catch-all arm `panic!`ed on a variant it didn't recognise. Because per-file
+    /// analysis runs inside `spawn_blocking`, that panic was caught upstream
+    /// (`analyze_rust_files_native`) and the ENTIRE file was discarded
+    /// (`analysis: None`) and mislabelled a `parse_error` — so a single
+    /// unrecognised construct (e.g. the `&raw const` operator, stable since Rust
+    /// 1.82) made every node and edge in an otherwise-parseable file vanish from
+    /// the graph. That directly violates the core thesis that the graph must be
+    /// trustworthy enough to query instead of reading the source.
+    ///
+    /// Instead we degrade gracefully: the unknown construct is skipped (its
+    /// children are not walked, so the graph for this file is partial) but the
+    /// rest of the file is still analysed, and the gap is surfaced as a
+    /// `tracing::warn!` so it is visible ("here be dragons") rather than silent.
+    /// `kind` is the enum name (e.g. `"Expr"`); `detail` is a concrete variant
+    /// name when known, or `""` when not.
+    fn warn_unhandled(&self, kind: &str, detail: &str) {
+        if detail.is_empty() {
+            tracing::warn!(
+                "rust_analyzer: unhandled {kind} variant in {} — skipping (graph for this file will be partial)",
+                self.file
+            );
+        } else {
+            tracing::warn!(
+                "rust_analyzer: unhandled {kind} variant `{detail}` in {} — skipping (graph for this file will be partial)",
+                self.file
+            );
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -483,14 +516,16 @@ fn walk_item(item: &syn::Item, ctx: &mut Ctx) {
         syn::Item::Use(u) => walk_use(u, ctx),
         syn::Item::Mod(m) => walk_mod(m, ctx),
         syn::Item::Type(t) => walk_type_alias(t, ctx),
+        // `extern "ABI" { ... }` declares real FFI symbols (fns/statics) that
+        // other code calls/reads — not transparent.
+        syn::Item::ForeignMod(fm) => walk_foreign_mod(fm, ctx),
         // Transparent items — no graph nodes needed
         syn::Item::ExternCrate(_) => {}
-        syn::Item::ForeignMod(_) => {}
         syn::Item::Macro(_) => {}
-        syn::Item::Union(_) => {} // TODO: treat like struct
+        syn::Item::Union(u) => walk_union(u, ctx),
         syn::Item::TraitAlias(_) => {}
         syn::Item::Verbatim(_) => {}
-        _ => panic!("rust_analyzer: unhandled Item variant: {}", item_variant_name(item)),
+        _ => ctx.warn_unhandled("Item", item_variant_name(item)),
     }
 }
 
@@ -737,6 +772,72 @@ fn walk_struct(s: &syn::ItemStruct, ctx: &mut Ctx) {
     }
 }
 
+/// Walk a Rust `union` declaration.
+///
+/// Unions are struct-like aggregate types with the same named-field layout, so
+/// we model them as STRUCT nodes — this lets every struct-aware query, the
+/// layout pass, and the city-map placeable-type list pick them up without
+/// introducing a new node type (which would have to be kept in sync across
+/// `analyzer.rs`, `layout/loader.rs`, and the GUI's placeable set). The
+/// union/struct distinction is preserved in `metadata.declKind = "union"`.
+fn walk_union(u: &syn::ItemUnion, ctx: &mut Ctx) {
+    let ident = u.ident.to_string();
+    let (line, col) = ctx.span_line_col(u.ident.span());
+    let is_exported = is_pub(&u.vis);
+    let node_id = semantic_id(&ctx.file, "STRUCT", &ident, None, None);
+
+    ctx.emit_declaration(GraphNode {
+        id: node_id.clone(),
+        node_type: "STRUCT".to_string(),
+        name: ident.clone(),
+        file: ctx.file.clone(),
+        line, column: col,
+        end_line: ctx.span_end_line_col(u.ident.span()).0, end_column: ctx.span_end_line_col(u.ident.span()).1,
+        exported: is_exported,
+        metadata: HashMap::from([
+            Ctx::meta_text("visibility", vis_to_text(&u.vis)),
+            Ctx::meta_text("declKind", "union"),
+        ]),
+        extra: HashMap::new(),
+    });
+
+    if is_exported {
+        ctx.exports.push(ExportInfo {
+            name: ident, node_id: node_id.clone(), kind: "union".to_string(), source: None,
+        });
+    }
+
+    // Fields — a union always has named fields.
+    for field in &u.fields.named {
+        if let Some(ident) = &field.ident {
+            let fname = ident.to_string();
+            let (fl, fc) = ctx.span_line_col(ident.span());
+            let field_id = semantic_id(&ctx.file, "RECORD_FIELD", &fname, Some(&node_id), None);
+            let mut field_meta = HashMap::new();
+            let type_str = type_to_name(&field.ty);
+            if type_str != "<type>" {
+                field_meta.insert("typeAnnotation".to_string(), serde_json::Value::String(type_str));
+            }
+            ctx.emit_declaration(GraphNode {
+                id: field_id.clone(),
+                node_type: "RECORD_FIELD".to_string(),
+                name: fname,
+                file: ctx.file.clone(),
+                line: fl, column: fc,
+                end_line: ctx.span_end_line_col(ident.span()).0, end_column: ctx.span_end_line_col(ident.span()).1,
+                exported: false,
+                metadata: field_meta,
+                extra: HashMap::new(),
+            });
+            ctx.emit_edge(GraphEdge {
+                src: node_id.clone(), dst: field_id,
+                edge_type: "HAS_FIELD".to_string(),
+                metadata: HashMap::new(),
+            });
+        }
+    }
+}
+
 fn walk_enum(e: &syn::ItemEnum, ctx: &mut Ctx) {
     let ident = e.ident.to_string();
     let (line, col) = ctx.span_line_col(e.ident.span());
@@ -873,11 +974,18 @@ fn walk_impl_item(item: &syn::ImplItem, ctx: &mut Ctx) {
             ctx.pop_scope();
             ctx.enclosing_fn = prev_fn;
         }
-        syn::ImplItem::Const(_) => {}
-        syn::ImplItem::Type(_) => {}
+        syn::ImplItem::Const(c) => {
+            emit_assoc_const(&c.ident, Some(&c.vis), ctx);
+            // Walk the initializer so the constant's value expression (calls,
+            // references, literals) participates in the graph like a free const.
+            walk_expr(&c.expr, ctx);
+        }
+        syn::ImplItem::Type(t) => {
+            emit_assoc_type(&t.ident, Some(&t.vis), ctx);
+        }
         syn::ImplItem::Macro(_) => {}
         syn::ImplItem::Verbatim(_) => {}
-        _ => panic!("rust_analyzer: unhandled ImplItem variant"),
+        _ => ctx.warn_unhandled("ImplItem", ""),
     }
 }
 
@@ -909,24 +1017,98 @@ fn walk_trait(t: &syn::ItemTrait, ctx: &mut Ctx) {
 
     ctx.push_scope(&node_id, ScopeKind::Trait);
     for trait_item in &t.items {
-        if let syn::TraitItem::Fn(m) = trait_item {
-            let mname = m.sig.ident.to_string();
-            let (ml, mc) = ctx.span_line_col(m.sig.ident.span());
-            let sig_id = semantic_id(&ctx.file, "TYPE_SIGNATURE", &mname, Some(&node_id), None);
-            ctx.emit_node(GraphNode {
-                id: sig_id,
-                node_type: "TYPE_SIGNATURE".to_string(),
-                name: mname,
-                file: ctx.file.clone(),
-                line: ml, column: mc,
-                end_line: ctx.span_end_line_col(m.sig.ident.span()).0, end_column: ctx.span_end_line_col(m.sig.ident.span()).1,
-                exported: false,
-                metadata: HashMap::new(),
-                extra: HashMap::new(),
-            });
+        match trait_item {
+            syn::TraitItem::Fn(m) => {
+                let mname = m.sig.ident.to_string();
+                let (ml, mc) = ctx.span_line_col(m.sig.ident.span());
+                let sig_id = semantic_id(&ctx.file, "TYPE_SIGNATURE", &mname, Some(&node_id), None);
+                ctx.emit_node(GraphNode {
+                    id: sig_id,
+                    node_type: "TYPE_SIGNATURE".to_string(),
+                    name: mname,
+                    file: ctx.file.clone(),
+                    line: ml, column: mc,
+                    end_line: ctx.span_end_line_col(m.sig.ident.span()).0, end_column: ctx.span_end_line_col(m.sig.ident.span()).1,
+                    exported: false,
+                    metadata: HashMap::new(),
+                    extra: HashMap::new(),
+                });
+            }
+            // Trait items have no visibility (they are part of the trait's public
+            // contract), hence `None`.
+            syn::TraitItem::Const(c) => {
+                emit_assoc_const(&c.ident, None, ctx);
+                // A trait const may carry a default value: `const N: u32 = 0;`.
+                if let Some((_, expr)) = &c.default {
+                    walk_expr(expr, ctx);
+                }
+            }
+            syn::TraitItem::Type(ty) => {
+                emit_assoc_type(&ty.ident, None, ctx);
+            }
+            _ => {}
         }
     }
     ctx.pop_scope();
+}
+
+/// Emit a VARIABLE node for an associated constant (`const NAME: T [= ...];`)
+/// declared inside an `impl` block or `trait`. Mirrors the free-`const` modelling
+/// (walk_const) — node type VARIABLE, `kind: "const"`, `mutable: false` — but is
+/// parented to the enclosing impl/trait scope via the auto CONTAINS + DECLARES
+/// edges (emit_declaration) and tagged `associated: true` so queries can tell
+/// `Self::NAME` constants apart from free constants. `vis` is `Some` for impl
+/// items (which carry visibility) and `None` for trait items (which do not).
+fn emit_assoc_const(ident: &syn::Ident, vis: Option<&syn::Visibility>, ctx: &mut Ctx) {
+    let name = ident.to_string();
+    let (line, col) = ctx.span_line_col(ident.span());
+    let parent = ctx.scope_id().to_string();
+    let node_id = semantic_id(&ctx.file, "VARIABLE", &name, Some(&parent), None);
+
+    let mut metadata = HashMap::from([
+        Ctx::meta_text("kind", "const"),
+        Ctx::meta_bool("mutable", false),
+        Ctx::meta_bool("associated", true),
+    ]);
+    if let Some(v) = vis {
+        let (k, val) = Ctx::meta_text("visibility", vis_to_text(v));
+        metadata.insert(k, val);
+    }
+
+    ctx.emit_declaration(GraphNode {
+        id: node_id,
+        node_type: "VARIABLE".to_string(),
+        name,
+        file: ctx.file.clone(),
+        line, column: col,
+        end_line: ctx.span_end_line_col(ident.span()).0, end_column: ctx.span_end_line_col(ident.span()).1,
+        exported: vis.map(is_pub).unwrap_or(false),
+        metadata,
+        extra: HashMap::new(),
+    });
+}
+
+/// Emit a TYPE_ALIAS node for an associated type (`type NAME [= ...];`) declared
+/// inside an `impl` block or `trait`. Mirrors the free type-alias modelling
+/// (walk_type_alias) but is parented to the enclosing impl/trait scope and tagged
+/// `associated: true`. `vis` is `Some` for impl items and `None` for trait items.
+fn emit_assoc_type(ident: &syn::Ident, vis: Option<&syn::Visibility>, ctx: &mut Ctx) {
+    let name = ident.to_string();
+    let (line, col) = ctx.span_line_col(ident.span());
+    let parent = ctx.scope_id().to_string();
+    let node_id = semantic_id(&ctx.file, "TYPE_ALIAS", &name, Some(&parent), None);
+
+    ctx.emit_declaration(GraphNode {
+        id: node_id,
+        node_type: "TYPE_ALIAS".to_string(),
+        name,
+        file: ctx.file.clone(),
+        line, column: col,
+        end_line: ctx.span_end_line_col(ident.span()).0, end_column: ctx.span_end_line_col(ident.span()).1,
+        exported: vis.map(is_pub).unwrap_or(false),
+        metadata: HashMap::from([Ctx::meta_bool("associated", true)]),
+        extra: HashMap::new(),
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -1042,6 +1224,150 @@ fn walk_type_alias(t: &syn::ItemType, ctx: &mut Ctx) {
 }
 
 // ---------------------------------------------------------------------------
+// Foreign (FFI) declarations — `extern "ABI" { ... }`
+// ---------------------------------------------------------------------------
+
+/// Walk an `extern "ABI" { ... }` foreign module.
+///
+/// Foreign items are *declarations without bodies*: the functions and statics
+/// they introduce are real symbols that other code calls / reads, so they must
+/// appear in the graph — otherwise every call into FFI is a dangling,
+/// unresolvable edge. Each item is modelled like its in-Rust counterpart
+/// (foreign `fn` → FUNCTION, foreign `static` → VARIABLE kind=static, foreign
+/// opaque `type` → TYPE_ALIAS) and tagged `metadata["foreign"] = true` plus the
+/// block's `abi`, so queries can distinguish FFI symbols. There is no body to
+/// walk; parameter nodes (and their type annotations) are still emitted so the
+/// signature is queryable.
+fn walk_foreign_mod(fm: &syn::ItemForeignMod, ctx: &mut Ctx) {
+    // `extern { ... }` with no explicit ABI string defaults to "C".
+    let abi = fm
+        .abi
+        .name
+        .as_ref()
+        .map(|s| s.value())
+        .unwrap_or_else(|| "C".to_string());
+    for item in &fm.items {
+        match item {
+            syn::ForeignItem::Fn(f) => walk_foreign_fn(f, &abi, ctx),
+            syn::ForeignItem::Static(s) => walk_foreign_static(s, &abi, ctx),
+            syn::ForeignItem::Type(t) => walk_foreign_type(t, ctx),
+            // A foreign macro expands at a different stage and a verbatim item is
+            // unparsed tokens — neither introduces a resolvable symbol here.
+            syn::ForeignItem::Macro(_) => {}
+            syn::ForeignItem::Verbatim(_) => {}
+            _ => ctx.warn_unhandled("ForeignItem", ""),
+        }
+    }
+}
+
+/// Foreign function declaration (`extern` block `fn`). Mirrors `walk_fn` but has
+/// no body: emits a FUNCTION node tagged `foreign`/`abi` and walks the signature
+/// parameters. Registered in the enclosing (module) scope so same-file calls
+/// resolve to it via the deferred-CALLS scope walk.
+fn walk_foreign_fn(f: &syn::ForeignItemFn, abi: &str, ctx: &mut Ctx) {
+    let ident = f.sig.ident.to_string();
+    let (line, col) = ctx.span_line_col(f.sig.ident.span());
+    let (end_line, end_col) = ctx.span_end_line_col(f.sig.ident.span());
+    let is_exported = is_pub(&f.vis);
+    let node_id = semantic_id(&ctx.file, "FUNCTION", &ident, None, None);
+
+    let mut fn_meta = HashMap::from([
+        Ctx::meta_text("visibility", vis_to_text(&f.vis)),
+        Ctx::meta_bool("async", f.sig.asyncness.is_some()),
+        Ctx::meta_bool("unsafe", f.sig.unsafety.is_some()),
+        Ctx::meta_bool("const", f.sig.constness.is_some()),
+        Ctx::meta_bool("foreign", true),
+        Ctx::meta_text("abi", abi),
+    ]);
+    if let syn::ReturnType::Type(_, ty) = &f.sig.output {
+        let return_type = type_to_name(ty);
+        if return_type != "<type>" {
+            let (k, v) = Ctx::meta_text("returnType", &return_type);
+            fn_meta.insert(k, v);
+        }
+    }
+    ctx.emit_declaration(GraphNode {
+        id: node_id.clone(),
+        node_type: "FUNCTION".to_string(),
+        name: ident.clone(),
+        file: ctx.file.clone(),
+        line, column: col,
+        end_line, end_column: end_col,
+        exported: is_exported,
+        metadata: fn_meta,
+        extra: HashMap::new(),
+    });
+
+    if is_exported {
+        ctx.exports.push(ExportInfo {
+            name: ident.clone(),
+            node_id: node_id.clone(),
+            kind: "function".to_string(),
+            source: None,
+        });
+    }
+
+    // No body — walk only the signature parameters.
+    for param in &f.sig.inputs {
+        walk_fn_param(param, &node_id, ctx);
+    }
+}
+
+/// Foreign static declaration (`extern` block `static`). Mirrors `walk_static`
+/// but has no initializer: emits a VARIABLE node (kind=static) tagged `foreign`.
+fn walk_foreign_static(s: &syn::ForeignItemStatic, abi: &str, ctx: &mut Ctx) {
+    let ident = s.ident.to_string();
+    let (line, col) = ctx.span_line_col(s.ident.span());
+    let (end_line, end_col) = ctx.span_end_line_col(s.ident.span());
+    let is_exported = is_pub(&s.vis);
+    let is_mut = matches!(s.mutability, syn::StaticMutability::Mut(_));
+    let node_id = semantic_id(&ctx.file, "VARIABLE", &ident, None, None);
+
+    ctx.emit_declaration(GraphNode {
+        id: node_id.clone(),
+        node_type: "VARIABLE".to_string(),
+        name: ident.clone(),
+        file: ctx.file.clone(),
+        line, column: col,
+        end_line, end_column: end_col,
+        exported: is_exported,
+        metadata: HashMap::from([
+            Ctx::meta_text("kind", "static"),
+            Ctx::meta_bool("mutable", is_mut),
+            Ctx::meta_text("visibility", vis_to_text(&s.vis)),
+            Ctx::meta_bool("foreign", true),
+            Ctx::meta_text("abi", abi),
+        ]),
+        extra: HashMap::new(),
+    });
+
+    if is_exported {
+        ctx.exports.push(ExportInfo {
+            name: ident, node_id, kind: "variable".to_string(), source: None,
+        });
+    }
+}
+
+/// Foreign opaque type declaration (`extern` block `type Foo;`). Mirrors
+/// `walk_type_alias` but the type has no aliased target; tagged `foreign`.
+fn walk_foreign_type(t: &syn::ForeignItemType, ctx: &mut Ctx) {
+    let ident = t.ident.to_string();
+    let (line, col) = ctx.span_line_col(t.ident.span());
+    let (end_line, end_col) = ctx.span_end_line_col(t.ident.span());
+    ctx.emit_declaration(GraphNode {
+        id: semantic_id(&ctx.file, "TYPE_ALIAS", &ident, None, None),
+        node_type: "TYPE_ALIAS".to_string(),
+        name: ident,
+        file: ctx.file.clone(),
+        line, column: col,
+        end_line, end_column: end_col,
+        exported: is_pub(&t.vis),
+        metadata: HashMap::from([Ctx::meta_bool("foreign", true)]),
+        extra: HashMap::new(),
+    });
+}
+
+// ---------------------------------------------------------------------------
 // Block / Statement
 // ---------------------------------------------------------------------------
 
@@ -1056,7 +1382,7 @@ fn walk_stmt(stmt: &syn::Stmt, ctx: &mut Ctx) {
         syn::Stmt::Local(local) => walk_let(local, ctx),
         syn::Stmt::Item(item) => walk_item(item, ctx),
         syn::Stmt::Expr(expr, _semi) => walk_expr(expr, ctx),
-        syn::Stmt::Macro(_) => {}
+        syn::Stmt::Macro(m) => walk_macro(&m.mac, ctx),
     }
 }
 
@@ -1082,6 +1408,66 @@ fn walk_let(local: &syn::Local, ctx: &mut Ctx) {
                     dst: init_node_id.clone(),
                     edge_type: "ASSIGNED_FROM".to_string(),
                     metadata: HashMap::new(),
+                });
+            }
+        }
+    }
+}
+
+/// Walk a Rust macro invocation: `name!(...)`, `name![...]`, or `name!{...}`.
+///
+/// `syn` does not expand macros, so the body is an opaque `TokenStream` rather
+/// than a parsed AST. We model the invocation itself as a CALL node tagged
+/// `macro=true` — honouring the KNOWN_LIMITATIONS contract that "macro
+/// invocations appear as CALL nodes" and letting downstream passes tell a
+/// macro call apart from a real function call. We do NOT defer a CALLS
+/// reference for the macro name: `foo!` is not the function `foo`.
+///
+/// Best-effort, we then parse the body as a comma-separated expression list and
+/// walk each argument, so calls/references nested inside common function-like
+/// macros (`vec![a(), b]`, `println!("{}", compute())`, `assert_eq!(x, y())`)
+/// are still recorded in the graph — otherwise they would be silently lost.
+/// Macros whose body is not an expression list (e.g. `matches!`, `quote!`)
+/// simply contribute no argument edges; the parse failure is swallowed, never
+/// a panic.
+fn walk_macro(mac: &syn::Macro, ctx: &mut Ctx) {
+    let name = path_to_string(&mac.path);
+    let span = mac.path.segments.last()
+        .map(|s| s.ident.span())
+        .unwrap_or_else(Span::call_site);
+    let (line, col) = ctx.span_line_col(span);
+    let parent = ctx.enclosing_fn.as_deref();
+    let hash = ctx.pos_hash(line, col);
+    let node_id = semantic_id(&ctx.file, "CALL", &name, parent, Some(&hash));
+    let (end_line, end_col) = ctx.span_end_line_col(span);
+
+    ctx.emit_node(GraphNode {
+        id: node_id.clone(),
+        node_type: "CALL".to_string(),
+        name: name.clone(),
+        file: ctx.file.clone(),
+        line, column: col,
+        end_line, end_column: end_col,
+        exported: false,
+        metadata: HashMap::from([
+            Ctx::meta_bool("method", false),
+            Ctx::meta_bool("macro", true),
+        ]),
+        extra: HashMap::new(),
+    });
+
+    // Best-effort argument walking; non-expression bodies are skipped safely.
+    if let Ok(args) = mac.parse_body_with(
+        syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated,
+    ) {
+        for (i, arg) in args.iter().enumerate() {
+            walk_expr(arg, ctx);
+            if let Some(arg_id) = expr_node_id(arg, ctx) {
+                ctx.emit_edge(GraphEdge {
+                    src: node_id.clone(),
+                    dst: arg_id,
+                    edge_type: "PASSES_ARGUMENT".to_string(),
+                    metadata: HashMap::from([Ctx::meta_int("index", i as i64)]),
                 });
             }
         }
@@ -1278,7 +1664,7 @@ fn walk_pat_bindings(pat: &syn::Pat, kind: &str, ctx: &mut Ctx) {
         syn::Pat::Const(_) => {
             // const block pattern — no variable bindings
         }
-        _ => panic!("rust_analyzer: unhandled Pat variant in walk_pat_bindings"),
+        _ => ctx.warn_unhandled("Pat", ""),
     }
 }
 
@@ -1615,12 +2001,23 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
                 extra: HashMap::new(),
             });
         }
-        syn::Expr::Macro(_) => {}
-        syn::Expr::Const(_) => {}
+        syn::Expr::Macro(e) => walk_macro(&e.mac, ctx),
+        // Inline `const { ... }` block — walk its body like Unsafe/Async blocks
+        // so nested calls/references are not silently dropped from the graph.
+        syn::Expr::Const(e) => walk_block(&e.block, ctx),
         syn::Expr::Infer(_) => {}
         syn::Expr::Verbatim(_) => {}
 
-        _ => panic!("rust_analyzer: unhandled Expr variant"),
+        // Raw reference operator `&raw const expr` / `&raw mut expr`
+        // (stable since Rust 1.82). The operand is a place expression that may
+        // contain nested calls/references; walk it like `Reference`/`Unary` so
+        // they reach the graph.
+        syn::Expr::RawAddr(e) => walk_expr(&e.expr, ctx),
+        // `try { ... }` block (unstable): carries a `syn::Block` like
+        // `Unsafe`/`Async`; walk its body so nested calls/references survive.
+        syn::Expr::TryBlock(e) => walk_block(&e.block, ctx),
+
+        _ => ctx.warn_unhandled("Expr", ""),
     }
 }
 
@@ -1792,6 +2189,20 @@ mod tests {
     }
 
     #[test]
+    fn test_inline_const_block_walks_body() {
+        // syn::Expr::Const — inline `const { ... }` block expression (Rust 1.79+).
+        // Its body is a syn::Block and must be walked like Expr::Unsafe / Expr::Async,
+        // otherwise nested calls/references are silently dropped from the call graph.
+        let fa = parse_and_analyze(
+            "fn main() { let _x = const { helper() }; }  const fn helper() -> i32 { 0 }",
+        );
+        assert!(
+            has_node(&fa, "CALL", "helper"),
+            "CALL helper nested in inline const block must be emitted"
+        );
+    }
+
+    #[test]
     fn test_let_binding() {
         let fa = parse_and_analyze("fn main() { let x = 42; let mut y = x; }");
         assert_eq!(count_nodes(&fa, "VARIABLE"), 2);
@@ -1813,6 +2224,43 @@ mod tests {
         let fa = parse_and_analyze("fn main() { let x: u64 = 42; }");
         let x = fa.nodes.iter().find(|n| n.node_type == "VARIABLE" && n.name == "x").unwrap();
         assert_eq!(x.metadata.get("typeAnnotation"), Some(&serde_json::json!("u64")));
+    }
+
+    #[test]
+    fn test_raw_ref_operand_is_walked() {
+        // `&raw const expr` / `&raw mut expr` is the raw-reference operator,
+        // STABLE since Rust 1.82. Its operand is a place expression that can
+        // contain nested calls/references. Before the fix this variant fell
+        // through `walk_expr`'s unhandled-variant `panic!`, so the entire file
+        // was dropped from the graph (analysis: None) — not just the operand.
+        // The operand must be walked like `Reference`/`Unary`/`Cast`.
+        let fa = parse_and_analyze(
+            "fn main() { let _p = &raw mut buf()[idx()]; }  \
+             fn buf() -> [u8; 4] { [0; 4] }  fn idx() -> usize { 0 }",
+        );
+        assert!(
+            has_node(&fa, "CALL", "buf"),
+            "CALL buf nested in &raw mut operand must be emitted (file not dropped)"
+        );
+        assert!(
+            has_node(&fa, "CALL", "idx"),
+            "CALL idx nested in the raw-ref index must be emitted"
+        );
+    }
+
+    #[test]
+    fn test_try_block_body_is_walked() {
+        // `try { ... }` block (unstable): like `&raw`, it previously fell
+        // through to the unhandled-variant `panic!`. It carries a `syn::Block`
+        // and must be walked like `Unsafe`/`Async` so nested calls survive.
+        let fa = parse_and_analyze(
+            "fn main() { let _r: Result<(), ()> = try { helper()?; }; }  \
+             fn helper() -> Result<(), ()> { Ok(()) }",
+        );
+        assert!(
+            has_node(&fa, "CALL", "helper"),
+            "CALL helper nested in try-block body must be emitted (file not dropped)"
+        );
     }
 
     #[test]
@@ -1879,6 +2327,32 @@ mod tests {
         assert!(has_node(&fa, "RECORD_FIELD", "bar"));
         assert!(has_node(&fa, "RECORD_FIELD", "baz"));
         assert!(has_edge(&fa, "HAS_FIELD", "STRUCT", "RECORD_FIELD"));
+    }
+
+    #[test]
+    fn test_union_with_fields() {
+        // Rust `union`s are struct-like: same named-field layout, same role as a
+        // declared aggregate type. We emit them as STRUCT nodes (so every
+        // struct-aware query, layout pass, and the city-map placeable list pick
+        // them up without new node-type plumbing) and tag declKind=union so the
+        // union/struct distinction survives in the graph.
+        let fa = parse_and_analyze("pub union MyUnion { pub i: u32, f: f32 }");
+        assert!(has_node(&fa, "STRUCT", "MyUnion"), "union emitted as STRUCT node");
+        assert!(has_node(&fa, "RECORD_FIELD", "i"), "union field i");
+        assert!(has_node(&fa, "RECORD_FIELD", "f"), "union field f");
+        assert!(has_edge(&fa, "HAS_FIELD", "STRUCT", "RECORD_FIELD"), "HAS_FIELD edge");
+
+        let u = fa.nodes.iter()
+            .find(|n| n.node_type == "STRUCT" && n.name == "MyUnion")
+            .unwrap();
+        assert_eq!(u.metadata.get("declKind"), Some(&serde_json::json!("union")), "tagged declKind=union");
+        assert!(u.exported, "pub union is exported");
+
+        // Field type annotations are preserved exactly like struct fields.
+        let i = fa.nodes.iter()
+            .find(|n| n.node_type == "RECORD_FIELD" && n.name == "i")
+            .unwrap();
+        assert_eq!(i.metadata.get("typeAnnotation"), Some(&serde_json::json!("u32")));
     }
 
     #[test]
@@ -2064,16 +2538,30 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "unhandled")]
-    fn test_fail_early_on_unknown() {
-        // This test verifies the fail-early policy.
-        // syn::Expr::Verbatim won't panic (it's handled), but we can verify
-        // the mechanism works by checking that unknown items would panic.
-        // For now, verify that the module compiles with the panic branches.
-        let _ = parse_and_analyze("fn main() {}");
-        // If we get here, the basic case works. The panic branches are tested
-        // by the compiler — they exist in the match arms.
-        panic!("unhandled — test sentinel");
+    fn test_unhandled_expr_variant_degrades_gracefully() {
+        // `&raw const`/`&raw mut` (the raw-reference operator, stable since Rust
+        // 1.82) parses as `syn::Expr::RawAddr`, a variant this walker does not
+        // recognise, so it falls to the catch-all arm in `walk_expr`. That arm
+        // used to `panic!`; because per-file analysis runs inside
+        // `spawn_blocking`, the panic was caught upstream and the ENTIRE file was
+        // discarded (`analysis: None`, mislabelled `parse_error`).
+        //
+        // Invariant under test: one unrecognised construct must NOT erase the
+        // rest of an otherwise-parseable file. The file is still analysed; the
+        // unknown construct is simply skipped.
+        let fa = parse_and_analyze(
+            "fn make() { let x = 0u8; let p = &raw const x; helper(); } fn helper() {}",
+        );
+        assert!(has_node(&fa, "MODULE", "test"), "MODULE node survives");
+        assert!(has_node(&fa, "FUNCTION", "make"), "FUNCTION make survives");
+        assert!(
+            has_node(&fa, "FUNCTION", "helper"),
+            "sibling FUNCTION helper survives the unhandled RawAddr expr"
+        );
+        assert!(
+            has_node(&fa, "CALL", "helper"),
+            "CALL helper after the unhandled expr is still emitted"
+        );
     }
 
     #[test]
@@ -2193,5 +2681,205 @@ mod tests {
             .filter(|e| e.edge_type == "READS_FROM" && e.src.contains("PROPERTY_ACCESS"))
             .collect();
         assert!(!reads.is_empty(), "PROPERTY_ACCESS should have READS_FROM");
+    }
+
+    // -----------------------------------------------------------------------
+    // Foreign (FFI) declarations — `extern "C" { ... }` blocks
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_foreign_fn_emits_function_node() {
+        let fa = parse_and_analyze(r#"extern "C" { fn malloc(size: usize) -> *mut u8; }"#);
+        assert!(has_node(&fa, "FUNCTION", "malloc"), "foreign fn -> FUNCTION node");
+        let f = fa.nodes.iter()
+            .find(|n| n.node_type == "FUNCTION" && n.name == "malloc")
+            .unwrap();
+        assert_eq!(f.metadata.get("foreign"), Some(&serde_json::json!(true)), "tagged foreign=true");
+        assert_eq!(f.metadata.get("abi"), Some(&serde_json::json!("C")), "abi recorded");
+        // Declared in module scope so it is a resolution target.
+        assert!(has_edge(&fa, "CONTAINS", "MODULE", "FUNCTION->malloc"), "CONTAINS from module");
+        assert!(has_edge(&fa, "DECLARES", "MODULE", "FUNCTION->malloc"), "DECLARES from module");
+    }
+
+    #[test]
+    fn test_foreign_fn_params_walked() {
+        let fa = parse_and_analyze(
+            r#"extern "C" { fn write(fd: i32, buf: *const u8, n: usize) -> isize; }"#
+        );
+        assert!(has_node(&fa, "PARAMETER", "fd"), "param fd");
+        assert!(has_node(&fa, "PARAMETER", "buf"), "param buf");
+        assert!(has_node(&fa, "PARAMETER", "n"), "param n");
+        let fd = fa.nodes.iter()
+            .find(|n| n.node_type == "PARAMETER" && n.name == "fd")
+            .unwrap();
+        assert_eq!(fd.metadata.get("typeAnnotation"), Some(&serde_json::json!("i32")));
+    }
+
+    #[test]
+    fn test_foreign_static_emits_variable() {
+        let fa = parse_and_analyze(r#"extern "C" { static mut errno: i32; }"#);
+        assert!(has_node(&fa, "VARIABLE", "errno"), "foreign static -> VARIABLE node");
+        let v = fa.nodes.iter()
+            .find(|n| n.node_type == "VARIABLE" && n.name == "errno")
+            .unwrap();
+        assert_eq!(v.metadata.get("kind"), Some(&serde_json::json!("static")));
+        assert_eq!(v.metadata.get("mutable"), Some(&serde_json::json!(true)));
+        assert_eq!(v.metadata.get("foreign"), Some(&serde_json::json!(true)));
+    }
+
+    #[test]
+    fn test_foreign_opaque_type_emits_type_alias() {
+        let fa = parse_and_analyze(r#"extern "C" { type Opaque; }"#);
+        assert!(has_node(&fa, "TYPE_ALIAS", "Opaque"), "foreign type -> TYPE_ALIAS node");
+        let t = fa.nodes.iter()
+            .find(|n| n.node_type == "TYPE_ALIAS" && n.name == "Opaque")
+            .unwrap();
+        assert_eq!(t.metadata.get("foreign"), Some(&serde_json::json!(true)));
+    }
+
+    #[test]
+    fn test_call_to_foreign_fn_resolves() {
+        // A same-file call to a foreign fn must resolve to the foreign FUNCTION
+        // declaration via the deferred-CALLS scope-chain walk.
+        let fa = parse_and_analyze(
+            r#"extern "C" { fn abs(x: i32) -> i32; } fn main() { let _ = abs(-3); }"#
+        );
+        assert!(has_node(&fa, "FUNCTION", "abs"), "foreign FUNCTION abs");
+        assert!(has_node(&fa, "CALL", "abs"), "CALL abs");
+        let calls: Vec<_> = fa.edges.iter()
+            .filter(|e| e.edge_type == "CALLS" && e.dst.contains("FUNCTION->abs"))
+            .collect();
+        assert!(!calls.is_empty(), "CALLS edge resolves to foreign fn abs");
+    }
+
+    #[test]
+    fn test_foreign_variadic_fn_no_panic() {
+        // C variadics (`...`) live in sig.variadic, not sig.inputs — must not panic.
+        let fa = parse_and_analyze(r#"extern "C" { fn printf(fmt: *const u8, ...) -> i32; }"#);
+        assert!(has_node(&fa, "FUNCTION", "printf"), "variadic foreign fn -> FUNCTION");
+        assert!(has_node(&fa, "PARAMETER", "fmt"), "fixed param fmt emitted");
+    }
+
+    #[test]
+    fn test_empty_extern_block_no_panic() {
+        let fa = parse_and_analyze(r#"extern "C" {}"#);
+        assert_eq!(count_nodes(&fa, "FUNCTION"), 0, "empty extern block emits no fns");
+    }
+
+    #[test]
+    fn test_bare_extern_block_defaults_abi_c() {
+        // `extern { ... }` with no explicit ABI string defaults to "C".
+        let fa = parse_and_analyze(r#"extern { fn puts(s: *const u8) -> i32; }"#);
+        let f = fa.nodes.iter()
+            .find(|n| n.node_type == "FUNCTION" && n.name == "puts")
+            .expect("FUNCTION puts");
+        assert_eq!(f.metadata.get("abi"), Some(&serde_json::json!("C")));
+    // Associated items inside `impl` blocks and `trait` definitions used to be
+    // silently dropped (ImplItem::Const/Type were empty no-ops; walk_trait only
+    // matched TraitItem::Fn), so `Self::MAX` and associated-type queries returned
+    // nothing. They are now modelled like their free counterparts (const ->
+    // VARIABLE, type -> TYPE_ALIAS), parented to the enclosing impl/trait via the
+    // auto CONTAINS + DECLARES edges, with metadata `associated: true`.
+    #[test]
+    fn test_impl_associated_const() {
+        let fa = parse_and_analyze("struct Foo; impl Foo { const MAX: u32 = 10; }");
+        assert!(has_node(&fa, "VARIABLE", "MAX"), "associated const -> VARIABLE");
+        let c = fa.nodes.iter()
+            .find(|n| n.node_type == "VARIABLE" && n.name == "MAX").unwrap();
+        assert_eq!(c.metadata.get("kind"), Some(&serde_json::json!("const")));
+        assert_eq!(c.metadata.get("associated"), Some(&serde_json::json!(true)));
+        assert!(has_edge(&fa, "CONTAINS", "IMPL_BLOCK", "VARIABLE"), "IMPL_BLOCK CONTAINS const");
+        assert!(has_edge(&fa, "DECLARES", "IMPL_BLOCK", "VARIABLE"), "IMPL_BLOCK DECLARES const");
+        // The initializer expression is walked (literal 10 emitted).
+        assert!(has_node(&fa, "LITERAL", "10"), "const initializer literal walked");
+    }
+
+    #[test]
+    fn test_impl_associated_type() {
+        let fa = parse_and_analyze("struct Foo; impl Foo { type Out = i32; }");
+        assert!(has_node(&fa, "TYPE_ALIAS", "Out"), "associated type -> TYPE_ALIAS");
+        let t = fa.nodes.iter()
+            .find(|n| n.node_type == "TYPE_ALIAS" && n.name == "Out").unwrap();
+        assert_eq!(t.metadata.get("associated"), Some(&serde_json::json!(true)));
+        assert!(has_edge(&fa, "CONTAINS", "IMPL_BLOCK", "TYPE_ALIAS"), "IMPL_BLOCK CONTAINS type");
+    }
+
+    #[test]
+    fn test_trait_associated_const() {
+        let fa = parse_and_analyze("pub trait Limits { const MAX: u32; const MIN: u32 = 0; }");
+        assert!(has_node(&fa, "VARIABLE", "MAX"), "required associated const");
+        assert!(has_node(&fa, "VARIABLE", "MIN"), "defaulted associated const");
+        assert!(has_edge(&fa, "CONTAINS", "TRAIT", "VARIABLE"), "TRAIT CONTAINS const");
+        // The default initializer expression is walked (literal 0 emitted).
+        assert!(has_node(&fa, "LITERAL", "0"), "default const initializer walked");
+    }
+
+    #[test]
+    fn test_trait_associated_type() {
+        let fa = parse_and_analyze("pub trait Container { type Item; fn get(&self); }");
+        assert!(has_node(&fa, "TYPE_ALIAS", "Item"), "associated type decl -> TYPE_ALIAS");
+        assert!(has_edge(&fa, "CONTAINS", "TRAIT", "TYPE_ALIAS"), "TRAIT CONTAINS type");
+        // The function signature is still emitted alongside the associated type.
+        assert_eq!(count_nodes(&fa, "TYPE_SIGNATURE"), 1);
+    // ── Macro invocations ───────────────────────────────────────────────
+    // `syn` does not expand macros, so before this fix `Expr::Macro` and
+    // `Stmt::Macro` were dropped entirely. That violated KNOWN_LIMITATIONS'
+    // contract ("macro invocations appear as CALL nodes") and, worse, lost
+    // every call/reference nested inside macro arguments from the graph.
+
+    #[test]
+    fn test_macro_invocation_emits_call_node() {
+        let fa = parse_and_analyze("fn main() { println!(\"hello\"); }");
+        let call = fa.nodes.iter()
+            .find(|n| n.node_type == "CALL" && n.name == "println")
+            .expect("macro invocation should emit a CALL node");
+        assert_eq!(call.metadata.get("macro"), Some(&serde_json::json!(true)),
+            "macro CALL node tagged macro=true to distinguish from real fn calls");
+        assert_eq!(call.metadata.get("method"), Some(&serde_json::json!(false)),
+            "macro CALL is not a method call");
+    }
+
+    #[test]
+    fn test_nested_call_inside_macro_is_walked() {
+        // The real cost of dropping Expr::Macro: calls nested in macro args
+        // vanish from the graph. compute() inside println! must be captured.
+        let fa = parse_and_analyze(
+            "fn main() { println!(\"{}\", compute()); } fn compute() -> i32 { 0 }"
+        );
+        assert!(has_node(&fa, "CALL", "compute"),
+            "call nested inside a macro argument must be walked into the graph");
+        // The macro CALL passes the nested call as an argument.
+        assert!(has_edge(&fa, "PASSES_ARGUMENT", "CALL", "CALL"),
+            "macro should emit PASSES_ARGUMENT to its walked expression args");
+    }
+
+    #[test]
+    fn test_macro_expr_and_stmt_positions_walk_args() {
+        // `vec![...]` as a let initializer is Expr::Macro; `assert_eq!(...)` as a
+        // bare statement is Stmt::Macro. Both must emit CALL nodes and walk their
+        // comma-separated expression arguments.
+        let fa = parse_and_analyze(
+            "fn main() {
+                let v = vec![first(), second()];
+                assert_eq!(left(), right());
+            }
+            fn first() {} fn second() {} fn left() {} fn right() {}"
+        );
+        assert!(has_node(&fa, "CALL", "vec"), "vec! emits CALL (Expr::Macro)");
+        assert!(has_node(&fa, "CALL", "assert_eq"), "assert_eq! emits CALL (Stmt::Macro)");
+        for callee in ["first", "second", "left", "right"] {
+            assert!(has_node(&fa, "CALL", callee),
+                "nested call {callee} inside a macro must be walked");
+        }
+    }
+
+    #[test]
+    fn test_non_expression_macro_body_no_panic() {
+        // A macro whose body is not a comma-separated expression list (here a
+        // match-style pattern arm) must not panic and must still emit the macro
+        // CALL node — argument walking is strictly best-effort.
+        let fa = parse_and_analyze("fn main() { let _ = matches!(x, Some(_)); }");
+        assert!(has_node(&fa, "CALL", "matches"),
+            "matches! emits a CALL node even though its body isn't an expr list");
     }
 }

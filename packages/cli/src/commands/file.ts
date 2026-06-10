@@ -16,7 +16,8 @@ import { resolve, join, relative, normalize } from 'path';
 import { existsSync, realpathSync } from 'fs';
 import { RFDBServerBackend, FileOverview } from '@grafema/util';
 import type { FileOverviewResult, FunctionOverview } from '@grafema/util';
-import { exitWithError } from '../utils/errorFormatter.js';
+import { exitWithError, emitJsonNotFound } from '../utils/errorFormatter.js';
+import { resolveProjectRoot } from '../utils/pathUtils.js';
 import { Spinner } from '../utils/spinner.js';
 
 interface FileOptions {
@@ -50,15 +51,7 @@ Output shows:
 Use 'grafema context <id>' to dive deeper into any specific entity.
 `)
   .action(async (file: string, options: FileOptions) => {
-    // realpath the project root so it shares a base with the realpath'd file
-    // path computed below; otherwise relative() breaks when the root is a
-    // symlink (e.g. macOS /tmp -> /private/tmp), and the file reads NOT_ANALYZED.
-    let projectPath = resolve(options.project);
-    try {
-      projectPath = realpathSync(projectPath);
-    } catch {
-      // Project dir missing — leave resolved; the dbPath check below reports it.
-    }
+    const projectPath = resolveProjectRoot(options.project);
     const grafemaDir = join(projectPath, '.grafema');
     const dbPath = join(grafemaDir, 'graph.rfdb');
 
@@ -79,6 +72,15 @@ Use 'grafema context <id>' to dive deeper into any specific entity.
 
     const resolvedPath = resolve(projectPath, filePath);
     if (!existsSync(resolvedPath)) {
+      if (options.json) {
+        // --json contract: stdout is always parseable JSON. Mirror the
+        // FileOverviewResult shape with a NOT_FOUND status; human note to stderr.
+        emitJsonNotFound(
+          { file, status: 'NOT_FOUND', imports: [], exports: [], classes: [], functions: [], variables: [] },
+          `File not found: ${file}`,
+        );
+        return;
+      }
       exitWithError(`File not found: ${file}`, [
         'Check the file path and try again',
       ]);

@@ -348,14 +348,25 @@ export async function handleRecall(args: RecallArgs): Promise<ToolResult> {
 
 export interface SemanticSearchArgs {
   query: string;
-  limit?: number;
+  top_k?: number;
   domain?: string;
 }
 
-export async function handleSemanticSearch(args: SemanticSearchArgs): Promise<ToolResult> {
+/**
+ * Handle the `semantic_search` MCP tool.
+ *
+ * @param args - tool input. `top_k` (matching the published schema) caps the
+ *   number of results; defaults to 10 per the schema's documented default.
+ * @param clientOverride - optional RFDB client, injected by tests; production
+ *   callers omit it and the shared knowledge client is used.
+ */
+export async function handleSemanticSearch(
+  args: SemanticSearchArgs,
+  clientOverride?: RFDBClient,
+): Promise<ToolResult> {
   try {
-    const client = await getKnowledgeClient();
-    const limit = args.limit ?? 20;
+    const client = clientOverride ?? await getKnowledgeClient();
+    const limit = args.top_k ?? 10;
 
     // TODO: Wire to RFDB embedding engine when enabled.
     // For now, fall back to substring search via queryNodes.
@@ -378,9 +389,9 @@ export async function handleSemanticSearch(args: SemanticSearchArgs): Promise<To
     for (let i = 0; i < results.length; i++) {
       const node = results[i];
       const meta = parseMeta(node);
-      // Pseudo-similarity score based on match quality (placeholder until embeddings)
-      const similarity = (1.0 - (i * 0.05)).toFixed(2);
-      lines.push(`${i + 1}. [${similarity}] ${node.name} (${node.nodeType})`);
+      // NOTE: this is substring matching, not embeddings — do not fabricate a
+      // similarity score (it would read to an agent as a real metric). Just rank.
+      lines.push(`${i + 1}. ${node.name} (${node.nodeType})`);
       if (meta.domain) lines.push(`   Domain: ${meta.domain}`);
       if (meta.content) lines.push(`   ${String(meta.content).slice(0, 200)}`);
       lines.push('');

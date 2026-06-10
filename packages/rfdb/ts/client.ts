@@ -108,7 +108,10 @@ export class RFDBClient extends BaseRFDBClient {
   }
 
   /**
-   * Enhance connection errors with helpful messages about --auto-start
+   * Enhance connection errors with helpful guidance on starting the RFDB server.
+   * Hints point at the manual remedy `rfdb-server start`: auto-start is the
+   * default (disable via `--no-auto-start`), and the former opt-in
+   * `--auto-start` flag was removed (commander rejects it as unknown).
    */
   private _enhanceConnectionError(err: NodeJS.ErrnoException): Error {
     const code = err.code;
@@ -116,7 +119,7 @@ export class RFDBClient extends BaseRFDBClient {
     if (code === 'EPIPE' || code === 'ECONNRESET') {
       return new Error(
         `RFDB server connection lost (${code}). The server may have crashed or been stopped.\n` +
-        `Try running with --auto-start flag to automatically start the server, or manually start it with:\n` +
+        `It normally auto-starts by default; if you disabled that with --no-auto-start, restart it with:\n` +
         `  rfdb-server start`
       );
     }
@@ -124,7 +127,7 @@ export class RFDBClient extends BaseRFDBClient {
     if (code === 'ENOENT') {
       return new Error(
         `RFDB server socket not found at ${this.socketPath}.\n` +
-        `The server is not running. Use --auto-start flag to automatically start it, or manually start with:\n` +
+        `The server is not running. It normally auto-starts by default; if you disabled that with --no-auto-start, start it with:\n` +
         `  rfdb-server start`
       );
     }
@@ -132,7 +135,7 @@ export class RFDBClient extends BaseRFDBClient {
     if (code === 'ECONNREFUSED') {
       return new Error(
         `Cannot connect to RFDB server at ${this.socketPath} (connection refused).\n` +
-        `The server may not be running. Use --auto-start flag to automatically start it, or manually start with:\n` +
+        `The server may not be running. It normally auto-starts by default; if you disabled that with --no-auto-start, start it with:\n` +
         `  rfdb-server start`
       );
     }

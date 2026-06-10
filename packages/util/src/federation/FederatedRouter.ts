@@ -20,6 +20,7 @@ import type { WireNode, WireEdge } from '@grafema/types';
 import type { ShardDiscovery, ShardRegistration } from './ShardDiscovery.js';
 import type { ManifestResolver } from '../manifest/index.js';
 import type { ResolveResult } from '../manifest/resolver.js';
+import { parseSemanticIdV2 } from '../core/SemanticId.js';
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -400,10 +401,30 @@ function parseEdgeMetadata(metadata?: string): Record<string, string> {
   }
 }
 
-/** Extract symbol name from the last segment of a semantic ID. */
-function extractSymbolFromId(semanticId: string): string | null {
+/**
+ * Extract symbol name from a semantic ID, in either wire format.
+ *
+ * - Arrow format: "file.ts->FUNCTION->myFunc" → "myFunc"
+ * - URI format:   "grafema://localhost/proj/file.ts#FUNCTION-%3EmyFunc" → "myFunc"
+ *
+ * The grafema:// URI form (produced by the analysis pipeline's to_uri_format())
+ * percent-encodes the '>' of every '->' as '%3E', so a URI-format id contains no
+ * literal '->'. The old `split('->')` path therefore yielded a single part and
+ * returned null for every URI-format id — silently degrading symbol-level
+ * manifest resolution in tryManifestFallback to a wildcard. URI ids are delegated
+ * to the canonical parseSemanticIdV2; the arrow fast-path is preserved verbatim.
+ *
+ * Exported for unit testing.
+ * @internal
+ */
+export function extractSymbolFromId(semanticId: string): string | null {
   if (!semanticId) return null;
-  // "file.ts->FUNCTION->myFunc" → "myFunc"
+  // URI-format ids carry no literal '->'; delegate to the canonical parser.
+  if (semanticId.startsWith('grafema://')) {
+    const parsed = parseSemanticIdV2(semanticId);
+    return parsed ? parsed.name : null;
+  }
+  // Arrow format: "file.ts->FUNCTION->myFunc" → "myFunc"
   const parts = semanticId.split('->');
   return parts.length >= 3 ? parts[parts.length - 1] : null;
 }

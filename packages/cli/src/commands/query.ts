@@ -15,7 +15,7 @@ import { toRelativeDisplay } from '../utils/pathUtils.js';
 import { existsSync } from 'fs';
 import { RFDBServerBackend, parseSemanticId, parseSemanticIdV2, findCallsInFunction as findCallsInFunctionCore, findContainingFunction as findContainingFunctionCore } from '@grafema/util';
 import { formatNodeDisplay, formatNodeInline, formatLocation } from '../utils/formatNode.js';
-import { exitWithError } from '../utils/errorFormatter.js';
+import { exitWithError, emitJsonNotFound } from '../utils/errorFormatter.js';
 import { Spinner } from '../utils/spinner.js';
 import { extractQueriedTypes, findSimilarTypes } from '../utils/queryHints.js';
 import type { DatalogExplainResult, CypherResult } from '@grafema/types';
@@ -229,6 +229,13 @@ Examples:
       const hasScope = query.file !== null || query.scopes.length > 0;
 
       if (nodes.length === 0) {
+        // --json contract: stdout is always parseable JSON. The success path
+        // (below) emits a JSON array of nodes, so an empty result mirrors it with
+        // `[]`; the human "No results" note + suggestions go to stderr.
+        if (options.json) {
+          emitJsonNotFound([], `No results for "${pattern}"`);
+          return;
+        }
         console.log(`No results for "${pattern}"`);
         if (hasScope) {
           console.log(`  Try: grafema query "${query.name}" (search all scopes)`);
@@ -388,7 +395,8 @@ export function parseQuery(pattern: string): ParsedQuery {
  *
  * Heuristics:
  * - Contains "/" -> file path
- * - Ends with .ts, .js, .tsx, .jsx, .mjs, .cjs -> file path
+ * - Ends with a JS/TS extension (.ts/.js/.tsx/.jsx/.mjs/.cjs/.mts/.cts) -> file path
+ *   (mirrors the orchestrator's authoritative `is_js_ts_file` in analyzer.rs)
  *
  * Examples:
  *   "src/app.ts" -> true
@@ -401,8 +409,8 @@ export function isFileScope(scope: string): boolean {
   // Contains path separator
   if (scope.includes('/')) return true;
 
-  // Ends with common JS/TS extensions
-  const fileExtensions = /\.(ts|js|tsx|jsx|mjs|cjs)$/i;
+  // Ends with common JS/TS extensions (kept in sync with analyzer.rs is_js_ts_file)
+  const fileExtensions = /\.(ts|js|tsx|jsx|mjs|cjs|mts|cts)$/i;
   if (fileExtensions.test(scope)) return true;
 
   return false;

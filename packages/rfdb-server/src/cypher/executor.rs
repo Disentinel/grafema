@@ -311,6 +311,21 @@ impl<'a> Operator for Expand<'a> {
                         .unwrap_or(0);
                     let target_id = self.target_id(edge, src_node_id);
 
+                    // Repeated-variable constraint: if `dst_var` is already
+                    // bound (the pattern reuses this node variable, e.g.
+                    // `(a)-[:R]->(a)` or `(m)-[:R1]->(c)-[:R2]->(m)`), the
+                    // discovered target must equal the existing binding —
+                    // Cypher requires the same variable to denote the same
+                    // node. Overwriting it would fabricate rows for
+                    // non-existent self-loops/cycles, so skip on mismatch.
+                    if let Some(ref dv) = self.dst_var {
+                        if let Some(existing) = input_rec.get(dv).and_then(|v| v.as_node_id()) {
+                            if existing != target_id {
+                                continue;
+                            }
+                        }
+                    }
+
                     if let Some(target_rec) = self.engine.get_node(target_id) {
                         self.limits.track_intermediate()?;
                         let mut out = input_rec.clone();
@@ -412,7 +427,15 @@ impl<'a> VarLengthExpand<'a> {
         };
 
         while let Some((node_id, depth)) = queue.pop_front() {
-            if depth >= self.min_depth && depth > 0 {
+            // Emit a node once its depth reaches the lower bound. `depth >=
+            // min_depth` alone is correct for every bound: for the usual
+            // `min_depth >= 1` it already excludes the start node (depth 0), and
+            // for a ZERO lower bound (`*0` / `*0..N`) it includes the start node
+            // bound to itself — the openCypher zero-length path. A prior `&&
+            // depth > 0` guard unconditionally dropped depth 0, silently omitting
+            // the start node from `*0` patterns (e.g. the `-[:CONTAINS*0..]->`
+            // "self-or-descendants" idiom).
+            if depth >= self.min_depth {
                 result.push(node_id);
             }
             if depth >= self.max_depth {
@@ -456,6 +479,19 @@ impl<'a> Operator for VarLengthExpand<'a> {
                 while self.result_pos < self.results.len() {
                     let nid = self.results[self.result_pos];
                     self.result_pos += 1;
+
+                    // Repeated-variable constraint (see Expand::next): if
+                    // `dst_var` is already bound (e.g. `(a)-[:R*1..2]->(a)`),
+                    // a reached node must equal the existing binding rather
+                    // than overwrite it. Skip on mismatch to avoid fabricating
+                    // rows that rebind the variable to a different node.
+                    if let Some(ref dv) = self.dst_var {
+                        if let Some(existing) = input_rec.get(dv).and_then(|v| v.as_node_id()) {
+                            if existing != nid {
+                                continue;
+                            }
+                        }
+                    }
 
                     if let Some(node_rec) = self.engine.get_node(nid) {
                         self.limits.track_intermediate()?;
@@ -629,9 +665,7 @@ impl<'a> Sort<'a> {
             for (expr, dir) in order_by {
                 let va = eval_expr(expr, a);
                 let vb = eval_expr(expr, b);
-                let cmp = va
-                    .partial_cmp_values(&vb)
-                    .unwrap_or(std::cmp::Ordering::Equal);
+                let cmp = order_cmp(&va, &vb);
                 let cmp = match dir {
                     SortDir::Asc => cmp,
                     SortDir::Desc => cmp.reverse(),
@@ -840,57 +874,71 @@ pub fn eval_expr(expr: &Expr, record: &Record) -> CypherValue {
         }
 
         Expr::And(lhs, rhs) => {
-            let l = eval_expr(lhs, record);
-            if !l.is_truthy() {
+            // Kleene three-valued AND. FALSE dominates (short-circuits even past a
+            // NULL operand: `null AND false = false`); otherwise NULL is contagious
+            // (`true AND null = null`, `null AND true = null`). Collapsing a NULL
+            // operand to `Bool(false)` here would be wrong under `NOT`: it makes
+            // `NOT (null AND true)` become `NOT false = true`, wrongly admitting a
+            // row whose predicate is unknown. See `Expr::Not` below for the
+            // complementary NULL-preserving rule. Non-NULL operands fall through
+            // `kleene_truth` to `is_truthy()`, so their behaviour is unchanged.
+            let l = kleene_truth(&eval_expr(lhs, record));
+            if l == Some(false) {
                 return CypherValue::Bool(false);
             }
-            let r = eval_expr(rhs, record);
-            CypherValue::Bool(r.is_truthy())
+            let r = kleene_truth(&eval_expr(rhs, record));
+            kleene_value(match (l, r) {
+                (_, Some(false)) => Some(false),
+                (Some(true), Some(true)) => Some(true),
+                _ => None,
+            })
         }
 
         Expr::Or(lhs, rhs) => {
-            let l = eval_expr(lhs, record);
-            if l.is_truthy() {
+            // Kleene three-valued OR. TRUE dominates (`null OR true = true`);
+            // otherwise NULL is contagious (`null OR false = null`, `false OR
+            // null = null`). As with AND, collapsing a NULL operand to
+            // `Bool(false)` would wrongly admit rows under `NOT`.
+            let l = kleene_truth(&eval_expr(lhs, record));
+            if l == Some(true) {
                 return CypherValue::Bool(true);
             }
-            let r = eval_expr(rhs, record);
-            CypherValue::Bool(r.is_truthy())
+            let r = kleene_truth(&eval_expr(rhs, record));
+            kleene_value(match (l, r) {
+                (_, Some(true)) => Some(true),
+                (Some(false), Some(false)) => Some(false),
+                _ => None,
+            })
         }
 
         Expr::Not(inner) => {
+            // Three-valued logic: NOT NULL is NULL, not TRUE. Without this, a
+            // predicate that evaluates to NULL (e.g. a string predicate against
+            // an absent property) would be flipped to a definite TRUE and
+            // wrongly admit the row in `WHERE NOT ...`.
             let v = eval_expr(inner, record);
-            CypherValue::Bool(!v.is_truthy())
+            match v {
+                CypherValue::Null => CypherValue::Null,
+                _ => CypherValue::Bool(!v.is_truthy()),
+            }
         }
 
         Expr::Contains(lhs, rhs) => {
             let l = eval_expr(lhs, record);
             let r = eval_expr(rhs, record);
-            match (&l, &r) {
-                (CypherValue::Str(a), CypherValue::Str(b)) => CypherValue::Bool(a.contains(b.as_str())),
-                _ => CypherValue::Bool(false),
-            }
+            eval_string_predicate(l, r, |a, b| a.contains(b))
         }
 
         Expr::StartsWith(lhs, rhs) => {
             let l = eval_expr(lhs, record);
             let r = eval_expr(rhs, record);
-            match (&l, &r) {
-                (CypherValue::Str(a), CypherValue::Str(b)) => {
-                    CypherValue::Bool(a.starts_with(b.as_str()))
-                }
-                _ => CypherValue::Bool(false),
-            }
+            eval_string_predicate(l, r, |a, b| a.starts_with(b))
         }
 
         Expr::EndsWith(lhs, rhs) => {
             let l = eval_expr(lhs, record);
             let r = eval_expr(rhs, record);
-            match (&l, &r) {
-                (CypherValue::Str(a), CypherValue::Str(b)) => {
-                    CypherValue::Bool(a.ends_with(b.as_str()))
-                }
-                _ => CypherValue::Bool(false),
-            }
+            eval_string_predicate(l, r, |a, b| a.ends_with(b))
         }
 
         Expr::IsNull(inner) => {
@@ -922,6 +970,56 @@ pub fn eval_expr(expr: &Expr, record: &Record) -> CypherValue {
 
 // ─── Helper functions ───────────────────────────────────────────────────────
 
+/// Ordering comparator for `ORDER BY`, applied in the *ascending* direction
+/// (callers reverse it for `DESC`).
+///
+/// Implements Cypher/Neo4j ordering semantics for NULL: a null value is
+/// considered **greater than** any non-null value, so it sorts LAST under
+/// ascending order and FIRST under descending order (see the Neo4j Cypher
+/// manual, "Ordering null"). This deliberately differs from
+/// [`CypherValue::partial_cmp_values`], which treats null as the smallest
+/// value — that comparator is shared with WHERE-clause comparisons
+/// (`eval_binop`) and must not change. ORDER BY needs its own null rule, so
+/// it lives here rather than in the shared value comparator.
+///
+/// Non-null, mutually-incomparable values (e.g. a Str vs an Int, or two
+/// Node values) fall back to `Ordering::Equal`, preserving the prior
+/// best-effort behaviour for heterogeneous columns.
+fn order_cmp(a: &CypherValue, b: &CypherValue) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    match (a, b) {
+        (CypherValue::Null, CypherValue::Null) => Ordering::Equal,
+        // null is greater than any non-null value -> sorts last ascending.
+        (CypherValue::Null, _) => Ordering::Greater,
+        (_, CypherValue::Null) => Ordering::Less,
+        _ => a.partial_cmp_values(b).unwrap_or(Ordering::Equal),
+    }
+}
+
+/// Evaluate a Cypher string predicate (CONTAINS / STARTS WITH / ENDS WITH)
+/// over already-evaluated operands, applying three-valued logic.
+///
+/// Semantics (matching Neo4j):
+/// - if EITHER operand is NULL, the result is NULL (so that `NOT pred` stays
+///   NULL and the row is excluded, rather than being flipped to a definite
+///   TRUE and wrongly admitted);
+/// - if both operands are strings, return `Bool(test(a, b))`;
+/// - any other (non-NULL, non-string) combination yields `Bool(false)`,
+///   preserving the engine's prior behavior for type mismatches.
+fn eval_string_predicate(
+    lhs: CypherValue,
+    rhs: CypherValue,
+    test: impl Fn(&str, &str) -> bool,
+) -> CypherValue {
+    if matches!(lhs, CypherValue::Null) || matches!(rhs, CypherValue::Null) {
+        return CypherValue::Null;
+    }
+    match (&lhs, &rhs) {
+        (CypherValue::Str(a), CypherValue::Str(b)) => CypherValue::Bool(test(a, b)),
+        _ => CypherValue::Bool(false),
+    }
+}
+
 /// Convert a CypherLiteral to a CypherValue.
 fn literal_to_value(lit: &CypherLiteral) -> CypherValue {
     match lit {
@@ -942,30 +1040,62 @@ fn eval_literal_expr(expr: &Expr) -> CypherValue {
 }
 
 /// Evaluate a binary comparison operator.
+///
+/// Follows Cypher three-valued logic: a comparison where either operand is NULL
+/// evaluates to NULL (unknown), never to a definite boolean. This matters in a
+/// `WHERE` clause — a NULL predicate is not truthy, so the row is excluded. Without
+/// this guard the ordering operators delegated to `partial_cmp_values`, which orders
+/// NULL as Less-than-everything (so `null < x` was `true`), and `Neq` returned `true`
+/// for `null <> x` — both wrongly admitting rows whose compared property is absent.
 fn eval_binop(l: &CypherValue, op: BinOp, r: &CypherValue) -> CypherValue {
+    if matches!(l, CypherValue::Null) || matches!(r, CypherValue::Null) {
+        return CypherValue::Null;
+    }
     match op {
         BinOp::Eq => CypherValue::Bool(l == r),
         BinOp::Neq => CypherValue::Bool(l != r),
-        BinOp::Lt => CypherValue::Bool(
-            l.partial_cmp_values(r)
-                .map(|o| o == std::cmp::Ordering::Less)
-                .unwrap_or(false),
-        ),
-        BinOp::Gt => CypherValue::Bool(
-            l.partial_cmp_values(r)
-                .map(|o| o == std::cmp::Ordering::Greater)
-                .unwrap_or(false),
-        ),
-        BinOp::Lte => CypherValue::Bool(
-            l.partial_cmp_values(r)
-                .map(|o| o != std::cmp::Ordering::Greater)
-                .unwrap_or(false),
-        ),
-        BinOp::Gte => CypherValue::Bool(
-            l.partial_cmp_values(r)
-                .map(|o| o != std::cmp::Ordering::Less)
-                .unwrap_or(false),
-        ),
+        // Ordering operators follow three-valued logic for INCOMPARABLE operands.
+        // `partial_cmp_values` returns `None` when the two non-NULL operands cannot
+        // be ordered against each other (e.g. String vs Int, Bool vs number, Node,
+        // or a NaN float). Per Cypher/Neo4j this is UNKNOWN → NULL, not a definite
+        // `false`: a previous `.unwrap_or(false)` here meant `NOT (Str < Int)`
+        // flipped to a definite `true` and wrongly admitted the row in `WHERE`.
+        // (NULL operands are already short-circuited to NULL at the top of this fn,
+        // so they never reach `partial_cmp_values`; this guard covers only the
+        // non-NULL-but-incomparable case — the sibling of #341/#348/#352.)
+        BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte => match l.partial_cmp_values(r) {
+            Some(ord) => CypherValue::Bool(match op {
+                BinOp::Lt => ord == std::cmp::Ordering::Less,
+                BinOp::Gt => ord == std::cmp::Ordering::Greater,
+                BinOp::Lte => ord != std::cmp::Ordering::Greater,
+                BinOp::Gte => ord != std::cmp::Ordering::Less,
+                _ => unreachable!("outer arm restricts op to ordering comparisons"),
+            }),
+            None => CypherValue::Null,
+        },
+    }
+}
+
+/// Classify a Cypher value for Kleene (three-valued) boolean logic.
+///
+/// Returns `None` for NULL (the UNKNOWN truth value) and `Some(bool)` for any
+/// definite value, reusing `is_truthy()` so non-NULL operands keep the engine's
+/// existing loose truthiness (e.g. `Int(0)` → `Some(false)`). Used by the `AND`
+/// and `OR` arms of `eval_expr` so a NULL operand propagates as NULL instead of
+/// collapsing to a definite boolean (which is wrong under `NOT`).
+fn kleene_truth(v: &CypherValue) -> Option<bool> {
+    match v {
+        CypherValue::Null => None,
+        other => Some(other.is_truthy()),
+    }
+}
+
+/// Reconstruct a Cypher value from a Kleene truth: `None` → NULL, `Some(b)` →
+/// `Bool(b)`. Inverse of `kleene_truth` for the definite cases.
+fn kleene_value(t: Option<bool>) -> CypherValue {
+    match t {
+        Some(b) => CypherValue::Bool(b),
+        None => CypherValue::Null,
     }
 }
 
@@ -1001,7 +1131,11 @@ fn edge_record_to_value(edge: &EdgeRecord) -> CypherValue {
 }
 
 /// Format a RETURN expression as a column name.
-fn format_return_expr(expr: &Expr) -> String {
+///
+/// `pub(crate)` so the planner can reconstruct the exact group-key column names
+/// produced by `HashAggregate` when rewriting `ORDER BY` expressions (an
+/// aggregate query sorts over these produced columns, not the raw pattern).
+pub(crate) fn format_return_expr(expr: &Expr) -> String {
     match expr {
         Expr::Property(var, prop) => format!("{}.{}", var, prop),
         Expr::Variable(v) => v.clone(),
@@ -1011,14 +1145,25 @@ fn format_return_expr(expr: &Expr) -> String {
     }
 }
 
-/// Convert a CypherValue to a string for use as a group key in HashAggregate.
+/// Convert a CypherValue into a `GROUP BY` bucket key for HashAggregate.
+///
+/// Two values must map to the SAME key iff they are equal under
+/// `CypherValue`'s `PartialEq` (the relation `GROUP BY` groups on). The first
+/// character is a per-type discriminant, so values of different types can never
+/// collide even when they render to the same text — `Int(5)` (`"#5"`),
+/// `Str("5")` (`"S5"`), `Bool(true)` (`"Btrue"`) and `Null` (`"N"`) are all
+/// distinct buckets. `Int` and `Float` deliberately share the `#` numeric
+/// namespace because `Int(5) == Float(5.0)` holds (`values.rs` PartialEq), so
+/// `5` and `5.0` must group together — and they do, since `5.0_f64` renders to
+/// `"5"`. Without the discriminant a bare `to_string()` silently merged
+/// distinct-typed values (e.g. `Int(5)` with `Str("5")`) into one group.
 fn value_to_group_key(val: &CypherValue) -> String {
     match val {
-        CypherValue::Null => "__null__".to_string(),
-        CypherValue::Bool(b) => b.to_string(),
-        CypherValue::Int(i) => i.to_string(),
-        CypherValue::Float(f) => f.to_string(),
-        CypherValue::Str(s) => s.clone(),
-        CypherValue::Node { id, .. } => id.to_string(),
+        CypherValue::Null => "N".to_string(),
+        CypherValue::Bool(b) => format!("B{b}"),
+        CypherValue::Int(i) => format!("#{i}"),
+        CypherValue::Float(f) => format!("#{f}"),
+        CypherValue::Str(s) => format!("S{s}"),
+        CypherValue::Node { id, .. } => format!("@{id}"),
     }
 }

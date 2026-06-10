@@ -15,9 +15,9 @@
 import { Command } from 'commander';
 import { resolve, join, relative, normalize } from 'path';
 import { existsSync, realpathSync } from 'fs';
-import { toRelativeDisplay } from '../utils/pathUtils.js';
+import { toRelativeDisplay, resolveProjectRoot } from '../utils/pathUtils.js';
 import { RFDBServerBackend, FileExplainer, type EnhancedNode } from '@grafema/util';
-import { exitWithError } from '../utils/errorFormatter.js';
+import { exitWithError, emitJsonNotFound } from '../utils/errorFormatter.js';
 
 interface ExplainOptions {
   project: string;
@@ -45,15 +45,7 @@ If a file shows NOT_ANALYZED:
   - Check if file is excluded in config
 `)
   .action(async (file: string, options: ExplainOptions) => {
-    // realpath the project root so it shares a base with the realpath'd file
-    // path computed below; otherwise relative() breaks when the root is a
-    // symlink (e.g. macOS /tmp -> /private/tmp), and the file reads NOT_ANALYZED.
-    let projectPath = resolve(options.project);
-    try {
-      projectPath = realpathSync(projectPath);
-    } catch {
-      // Project dir missing — leave resolved; the dbPath check below reports it.
-    }
+    const projectPath = resolveProjectRoot(options.project);
     const grafemaDir = join(projectPath, '.grafema');
     const dbPath = join(grafemaDir, 'graph.rfdb');
 
@@ -78,6 +70,15 @@ If a file shows NOT_ANALYZED:
     // Resolve to absolute path for graph lookup
     const resolvedPath = resolve(projectPath, filePath);
     if (!existsSync(resolvedPath)) {
+      if (options.json) {
+        // --json contract: stdout is always parseable JSON. Mirror the
+        // FileExplainResult shape with a NOT_FOUND status; human note to stderr.
+        emitJsonNotFound(
+          { file, status: 'NOT_FOUND', nodes: [], byType: {}, totalCount: 0 },
+          `File not found: ${file}`,
+        );
+        return;
+      }
       exitWithError(`File not found: ${file}`, [
         'Check the file path and try again',
       ]);

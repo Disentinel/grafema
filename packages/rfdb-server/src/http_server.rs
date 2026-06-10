@@ -1608,6 +1608,12 @@ fn build_visibility_index(
         nid_to_visible.insert(nr.id, nr.idx);
     }
 
+    // Edge-lifting maps non-visible nodes to their containing visible
+    // node so that semantic edges (CALLS, IMPORTS_FROM, etc.) between
+    // them can be aggregated up to the visible level. Previously this
+    // required a per-request full scan of all nodes (~20–30s on 326k
+    // nodes). We now consult a process-wide cached file→node-ids index
+    // built exactly once per server lifetime.
     // Build CONTAINS parent map so non-visible nodes lift to their actual
     // containing function/class rather than whichever visible node happens
     // to be first in the file (REG-1132). Skips layout-pack synthetic edges.

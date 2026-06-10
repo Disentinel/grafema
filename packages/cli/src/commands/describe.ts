@@ -19,7 +19,7 @@ import {
   PERSPECTIVES,
 } from '@grafema/util';
 import type { DescribeOptions } from '@grafema/util';
-import { exitWithError } from '../utils/errorFormatter.js';
+import { exitWithError, emitJsonNotFound } from '../utils/errorFormatter.js';
 import { Spinner } from '../utils/spinner.js';
 
 interface DescribeCommandOptions {
@@ -110,6 +110,13 @@ Examples:
 
       if (!node) {
         spinner.stop();
+        if (options.json) {
+          emitJsonNotFound(
+            { target: null, dsl: null, subgraph: { rootNodes: 0, edges: 0, nodes: 0 } },
+            `Target not found: "${target}"`,
+          );
+          return;
+        }
         exitWithError(`Target not found: "${target}"`, [
           'Use: grafema query "<name>" to find available nodes',
           'Try: semantic ID, file path, or node name',

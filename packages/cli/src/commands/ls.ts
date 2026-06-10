@@ -15,7 +15,7 @@ import { resolve, join } from 'path';
 import { toRelativeDisplay } from '../utils/pathUtils.js';
 import { existsSync } from 'fs';
 import { RFDBServerBackend } from '@grafema/util';
-import { exitWithError } from '../utils/errorFormatter.js';
+import { exitWithError, emitJsonNotFound } from '../utils/errorFormatter.js';
 import { Spinner } from '../utils/spinner.js';
 
 interface LsOptions {
@@ -25,7 +25,7 @@ interface LsOptions {
   limit: string;
 }
 
-interface NodeInfo {
+export interface NodeInfo {
   id: string;
   type: string;
   name: string;
@@ -40,7 +40,7 @@ interface NodeInfo {
 
 export const lsCommand = new Command('ls')
   .description('List nodes by type')
-  .requiredOption('-t, --type <nodeType>', 'Node type to list (required)')
+  .option('-t, --type <nodeType>', 'Node type to list (required)')
   .option('-p, --project <path>', 'Project path', '.')
   .option('-j, --json', 'Output as JSON')
   .option('-l, --limit <n>', 'Limit results (default: 50)', '50')
@@ -57,6 +57,13 @@ Discover available types:
   grafema types                           List all types with counts
 `)
   .action(async (options: LsOptions) => {
+    if (!options.type) {
+      exitWithError("Type filter required for 'ls' command", [
+        'Run: grafema types    to see available types',
+        'Usage: grafema ls --type <type>',
+      ]);
+    }
+
     const projectPath = resolve(options.project);
     const grafemaDir = join(projectPath, '.grafema');
     const dbPath = join(grafemaDir, 'graph.rfdb');
@@ -79,6 +86,10 @@ Discover available types:
       const typeCounts = await backend.countNodesByType();
       if (!typeCounts[nodeType]) {
         spinner.stop();
+        if (options.json) {
+          emitJsonNotFound({ type: nodeType, nodes: [], showing: 0, total: 0 }, `No nodes of type "${nodeType}" found`);
+          return;
+        }
         const availableTypes = Object.keys(typeCounts).sort();
         exitWithError(`No nodes of type "${nodeType}" found`, [
           'Available types:',
@@ -122,9 +133,8 @@ Discover available types:
         console.log(`[${nodeType}] (${showing}${showing < totalCount ? ` of ${totalCount}` : ''}):`);
         console.log('');
 
-        for (const node of nodes) {
-          const display = formatNodeForList(node, nodeType, projectPath);
-          console.log(`  ${display}`);
+        for (const line of formatNodeList(nodes, nodeType, projectPath)) {
+          console.log(`  ${line}`);
         }
 
         if (showing < totalCount) {
@@ -172,4 +182,17 @@ function formatNodeForList(node: NodeInfo, nodeType: string, projectPath: string
   // Default: name (location)
   const name = node.name || node.id;
   return loc ? `${name}  (${loc})` : name;
+}
+
+/**
+ * Format a whole node list for display, disambiguating entries whose base
+ * display string collides (REG-279). Same-name/same-location nodes are
+ * otherwise indistinguishable; for those (and only those) the semantic ID is
+ * appended so the user can tell them apart. Unique entries are left untouched.
+ */
+export function formatNodeList(nodes: NodeInfo[], nodeType: string, projectPath: string): string[] {
+  const base = nodes.map((n) => formatNodeForList(n, nodeType, projectPath));
+  const counts = new Map<string, number>();
+  for (const b of base) counts.set(b, (counts.get(b) ?? 0) + 1);
+  return base.map((b, i) => ((counts.get(b) ?? 0) > 1 ? `${b}  [${nodes[i].id}]` : b));
 }
