@@ -20,6 +20,7 @@ import type {
   FindCallsArgs,
   FindNodesArgs,
   GraphNode,
+  GraphEdge,
   DatalogBinding,
   CallResult,
 } from '../types.js';
@@ -214,8 +215,28 @@ export async function handleQueryGraph(args: QueryGraphArgs): Promise<ToolResult
   }
 }
 
-export async function handleFindCalls(args: FindCallsArgs): Promise<ToolResult> {
-  const db = await ensureAnalyzed();
+/**
+ * Minimal backend interface for the find_calls logic. Lets the logic be
+ * unit-tested with an in-memory mock backend (see test/find-calls.test.ts)
+ * without a live RFDB server — mirrors the pattern in graph-handlers.ts and
+ * behavior-handlers.ts.
+ */
+interface FindCallsBackendLike {
+  getNode(id: string): Promise<GraphNode | null>;
+  queryNodes(filter: Record<string, unknown>): AsyncIterable<GraphNode>;
+  getOutgoingEdges(id: string, types?: string[] | null): Promise<GraphEdge[]>;
+  getIncomingEdges(id: string, types?: string[] | null): Promise<GraphEdge[]>;
+}
+
+/**
+ * find_calls logic: list call-sites of a function — both direct CALL nodes
+ * ("foo()" / "obj.foo()") and callback usages where the function is passed as
+ * an argument (caller → PASSES_ARGUMENT → REFERENCE "foo").
+ *
+ * Exported for unit testing with a mock backend; production routing goes through
+ * {@link handleFindCalls}.
+ */
+export async function findCallsLogic(db: FindCallsBackendLike, args: FindCallsArgs): Promise<ToolResult> {
   const { name, limit: requestedLimit, offset: requestedOffset, className } = args;
 
   const limit = normalizeLimit(requestedLimit);
@@ -272,34 +293,39 @@ export async function handleFindCalls(args: FindCallsArgs): Promise<ToolResult> 
     });
   }
 
-  // Also find callback usages: where the function is passed as argument
-  // Pattern: CALL "action" → PASSES_ARGUMENT → REFERENCE "analyzeAction" → READS_FROM → FUNCTION
-  // Search: REFERENCE nodes with matching name that have incoming PASSES_ARGUMENT
-  if (totalMatched === 0 || calls.length < limit) {
-    for await (const ref of db.queryNodes({ type: 'REFERENCE', name })) {
-      const inEdges = await db.getIncomingEdges(ref.id, ['PASSES_ARGUMENT' as any]);
-      if (inEdges.length === 0) continue;
+  // Also find callback usages: where the function is passed as argument.
+  // Pattern: caller → PASSES_ARGUMENT → REFERENCE "foo".
+  // This pass ALWAYS runs — it must NOT be gated on `calls.length < limit`.
+  // Callback usages are a distinct, name-indexed REFERENCE node set, so they
+  // must be counted toward `totalMatched` for an accurate total and a correct
+  // `hasMore`/pagination hint even when direct CALL matches already fill the
+  // requested page; otherwise find_calls silently under-reports and hides every
+  // callback call-site. The REFERENCE query is name-indexed (cheaper than the
+  // unindexed full CALL scan above), so running it unconditionally is not a
+  // perf regression.
+  for await (const ref of db.queryNodes({ type: 'REFERENCE', name })) {
+    const inEdges = await db.getIncomingEdges(ref.id, ['PASSES_ARGUMENT']);
+    if (inEdges.length === 0) continue;
 
-      totalMatched++;
-      if (skipped < offset) { skipped++; continue; }
-      if (calls.length >= limit) continue;
+    totalMatched++;
+    if (skipped < offset) { skipped++; continue; }
+    if (calls.length >= limit) continue;
 
-      const callerNode = await db.getNode(inEdges[0].src);
-      calls.push({
-        id: ref.id,
-        name: `${callerNode?.name ?? '?'}(${name})`,
-        object: undefined,
-        file: ref.file,
-        line: ref.line,
-        resolved: true,
-        target: callerNode ? {
-          type: callerNode.type,
-          name: callerNode.name ?? '',
-          file: callerNode.file,
-          line: callerNode.line,
-        } : null,
-      });
-    }
+    const callerNode = await db.getNode(inEdges[0].src);
+    calls.push({
+      id: ref.id,
+      name: `${callerNode?.name ?? '?'}(${name})`,
+      object: undefined,
+      file: ref.file,
+      line: ref.line,
+      resolved: true,
+      target: callerNode ? {
+        type: callerNode.type,
+        name: callerNode.name ?? '',
+        file: callerNode.file,
+        line: callerNode.line,
+      } : null,
+    });
   }
 
   if (totalMatched === 0) {
@@ -325,6 +351,12 @@ export async function handleFindCalls(args: FindCallsArgs): Promise<ToolResult> 
     JSON.stringify(serializeBigInt(calls), null, 2);
 
   return textResult(guardResponseSize(responseText));
+}
+
+/** MCP routing entry point for find_calls — resolves the live backend then delegates. */
+export async function handleFindCalls(args: FindCallsArgs): Promise<ToolResult> {
+  const db = await ensureAnalyzed();
+  return findCallsLogic(db as unknown as FindCallsBackendLike, args);
 }
 
 function formatExplainOutput(result: DatalogExplainResult): string {
