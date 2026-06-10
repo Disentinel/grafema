@@ -23,6 +23,21 @@ DECISION: pivot to W6 (build-once index cache on (leg, view-generation) + rayon 
 joins) BEFORE Wave 2b — every further wave compounds the shadow cost; target pack-phase ≤60s
 again at 15+ packs.
 
+## POST-MERGE BASELINE (2026-06-11, after merging main fa76f1d1 + native rebuilds)
+
+Fresh gated analyze on the merged tree: **491 535 nodes / 1 037 299 edges** (was 425k/904k —
+main's rust-analyzer enrichment: macros-as-CALLs, unions, FFI, assoc consts = +15% graph).
+Total 962s; phases: analysis 86s, commit 84s, resolve 492s, diagnostics 21s, depends-window
+345s (≈15s depends + **330s packs**). Pack regressions vs the 85s post-W6 number, driven by
+the macro-CALL explosion: rust_calls 16→68s (+3 013 edges incl. macro-name resolution),
+js_builtins_nodes+edges 71s (new packs), js_property_access_full 47s. Packs remain correct
+(js_local_refs 37 751, all firing) — the COST model changed under us.
+
+NEXT LEVERS for the pack phase on the new baseline: (1) macro-CALL filtering in name-resolution
+packs (analyzer tags macro=true — decide whether println!-class macro invocations belong in
+CALLS resolution at all); (2) W9 stats + the BindRow/Vec<Value> representation (the measured
+join_derived hot spot); (3) Wave 3 gating retires more legacy offsetting the cost.
+
 ## ✅ WAVE 2B DONE (2026-06-11) — EXTENDS gap closed 14/14; my chain hypothesis REFUTED
 
 The "EXTENDS 14→10 = re-export-chain inheritance" claim below is WRONG (live-probed): the 4
