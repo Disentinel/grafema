@@ -22,8 +22,23 @@ permissions:
   contents: write
 
 jobs:
+  prepare-release:
+    name: Prepare GitHub Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create release (idempotent)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --repo "${{ github.repository }}" \
+            --verify-tag \
+            --title "${{ github.ref_name }}" \
+            || true
+
   build:
     name: Build ${{ matrix.binary }} (${{ matrix.platform }})
+    needs: [prepare-release]
     runs-on: ${{ matrix.os }}
 
     strategy:
