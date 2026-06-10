@@ -66,6 +66,10 @@ fn offset_to_line_col(offset: usize, line_starts: &[usize]) -> (i64, i64) {
 enum ScopeKind {
     Module,
     Class,
+    /// A singleton class body (`class << self` / `class << obj`). Treated as a
+    /// class-like scope for attribution, but every `def` inside it defines a
+    /// singleton (class/static) method on the receiver, not an instance method.
+    SingletonClass,
     Function,
     Block,
 }
@@ -74,7 +78,8 @@ impl ScopeKind {
     fn as_str(self) -> &'static str {
         match self {
             ScopeKind::Module => "module",
-            ScopeKind::Class => "class",
+            // A singleton class is still a class for any string-kind consumer.
+            ScopeKind::Class | ScopeKind::SingletonClass => "class",
             ScopeKind::Function => "function",
             ScopeKind::Block => "block",
         }
@@ -264,7 +269,9 @@ impl Ctx {
     /// Extract the parent class/module name from the current scope stack, if inside one.
     fn enclosing_class_or_module(&self) -> Option<String> {
         for (sid, kind) in self.scope_stack.iter().zip(self.scope_kinds.iter()).rev() {
-            if matches!(kind, ScopeKind::Class | ScopeKind::Module) && sid != &self.module_id {
+            if matches!(kind, ScopeKind::Class | ScopeKind::SingletonClass | ScopeKind::Module)
+                && sid != &self.module_id
+            {
                 if let Some(name) = sid.rsplit("->").next() {
                     // Strip [in:...] and [h:...]
                     let name = name.split('[').next().unwrap_or(name);
@@ -273,6 +280,22 @@ impl Ctx {
             }
         }
         None
+    }
+
+    /// True when the nearest enclosing class-like scope is a singleton class
+    /// (`class << self` / `class << obj`). A bare `def` in such a scope defines a
+    /// class/static method, so it must be marked `static: true`. Intervening
+    /// function/block scopes are skipped; a nested regular `class`/`module` ends
+    /// the search (its methods are instance methods, not static).
+    fn nearest_class_is_singleton(&self) -> bool {
+        for kind in self.scope_kinds.iter().rev() {
+            match kind {
+                ScopeKind::SingletonClass => return true,
+                ScopeKind::Class | ScopeKind::Module => return false,
+                _ => {}
+            }
+        }
+        false
     }
 }
 
@@ -661,7 +684,7 @@ fn walk_node_inner(node: &ruby_prism::Node<'_>, ctx: &mut Ctx) {
             };
             ctx.emit_node(gn);
 
-            ctx.push_scope(&node_id, ScopeKind::Class, line, col, end_line, end_col);
+            ctx.push_scope(&node_id, ScopeKind::SingletonClass, line, col, end_line, end_col);
             if let Some(body) = scn.body() {
                 walk_node(&body, ctx);
             }
@@ -675,7 +698,11 @@ fn walk_node_inner(node: &ruby_prism::Node<'_>, ctx: &mut Ctx) {
             let (line, col) = ctx.loc_line_col(loc.start_offset());
             let (end_line, end_col) = ctx.loc_line_col(loc.end_offset());
 
-            let is_static = dn.receiver().is_some();
+            // A method is a class/static method when written as `def self.foo`
+            // (explicit receiver) OR when defined inside a singleton class body
+            // (`class << self` / `class << obj`), where every bare `def` defines a
+            // singleton method on the receiver.
+            let is_static = dn.receiver().is_some() || ctx.nearest_class_is_singleton();
             let parent_name = ctx.enclosing_class_or_module();
             let node_id = semantic_id(&ctx.file, "FUNCTION", &name, parent_name.as_deref(), None);
 
@@ -3462,6 +3489,48 @@ mod tests {
                 i.metadata.get("category").map(|v| v == "parse_error").unwrap_or(false)
             ), "ISSUE node should have category=parse_error");
         }
+    }
+
+    // 19. Methods defined inside `class << self` are class (static) methods
+    #[test]
+    fn test_singleton_class_methods_are_static() {
+        // The canonical Ruby idiom for defining class methods: every `def` inside
+        // `class << self` defines a singleton method on the receiver, i.e. a class
+        // method — semantically identical to `def self.foo`. The graph must mark
+        // them `static: true`, otherwise an agent asking "what are the class methods
+        // of Foo?" misses them and "instance methods of Foo" wrongly includes them.
+        let a = analyze(
+            "class Foo\n  class << self\n    def build; end\n    def configure; end\n  end\n  def run; end\nend",
+        );
+        let functions = find_nodes_by_type(&a, "FUNCTION");
+
+        let is_static = |name: &str| -> bool {
+            functions
+                .iter()
+                .find(|f| f.name == name)
+                .and_then(|f| f.metadata.get("static"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        };
+
+        assert!(is_static("build"), "`def build` inside `class << self` must be static=true");
+        assert!(is_static("configure"), "`def configure` inside `class << self` must be static=true");
+        // A normal instance method on the same class must remain non-static.
+        assert!(!is_static("run"), "`def run` (plain instance method) must not be static");
+    }
+
+    // 20. `class << obj` also yields singleton (static) methods
+    #[test]
+    fn test_singleton_class_of_object_methods_are_static() {
+        let a = analyze("obj = Object.new\nclass << obj\n  def special; end\nend");
+        let functions = find_nodes_by_type(&a, "FUNCTION");
+        let special_static = functions
+            .iter()
+            .find(|f| f.name == "special")
+            .and_then(|f| f.metadata.get("static"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        assert!(special_static, "`def special` inside `class << obj` must be static=true");
     }
 
     // =========================================================================
