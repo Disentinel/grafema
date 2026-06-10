@@ -11,26 +11,18 @@
 ## Step 1: Install
 
 ```bash
-npm install grafema
+npm install -g grafema
 ```
 
-## Step 2: Initialize (30 seconds)
+## Step 2: Index (1-2 minutes)
 
 In your project directory:
 
 ```bash
-grafema init
+grafema analyze --quickstart
 ```
 
-This creates `.grafema/config.yaml` with default settings. Grafema automatically detects your project language (JS or TS) and configures file patterns.
-
-## Step 3: Analyze (1-2 minutes)
-
-Build the code graph:
-
-```bash
-grafema analyze
-```
+`--quickstart` auto-detects your project languages, generates `.grafema/config.yaml`, and builds the code graph in one step.
 
 Expected output:
 ```
@@ -40,7 +32,14 @@ Analysis complete
   Edges: 5,123
 ```
 
-## Step 4: Explore
+**Two-step alternative** — if you want to review the config before indexing:
+
+```bash
+grafema init        # generates .grafema/config.yaml
+grafema analyze     # builds the graph
+```
+
+## Step 3: Explore
 
 ### What's in a file?
 
@@ -80,7 +79,7 @@ grafema overview
 
 Shows node/edge counts by type — modules, functions, classes, call sites.
 
-## Step 5: AI Integration (MCP)
+## Step 4: AI Integration (MCP)
 
 Add to `.mcp.json` in your project root:
 
@@ -95,9 +94,9 @@ Add to `.mcp.json` in your project root:
 }
 ```
 
-Now Claude Code (or any MCP client) can query your codebase graph instead of reading files. Available tools include `find_nodes`, `find_calls`, `trace_dataflow`, `get_file_overview`, `describe`, and 20+ more.
+Now Claude Code (or any MCP client) can query your codebase graph instead of reading files. Available tools include `find_nodes`, `find_calls`, `trace_dataflow`, `get_file_overview`, `describe`, and 30+ more.
 
-## Step 6: Health Check
+## Step 5: Health Check
 
 ```bash
 grafema doctor
@@ -110,7 +109,7 @@ Checks binary availability, RFDB server status, and common issues.
 The generated `.grafema/config.yaml` uses minimal defaults:
 
 ```yaml
-version: "0.3"
+version: "0.3.29"
 root: ".."
 include:
   - "src/**/*.{ts,tsx,js,jsx}"
