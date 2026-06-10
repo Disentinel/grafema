@@ -843,6 +843,119 @@ mod executor_tests {
         EvalLimits::default()
     }
 
+    // ── Whole-node RETURN must carry analyzer metadata ───────────────────
+    //
+    // Returning a whole node (`RETURN n` / `RETURN *`) serializes it via
+    // `CypherValue::to_json`. Grafema stores most node properties (line,
+    // column, signature, params, visibility, …) in the `metadata` JSON blob,
+    // and `property()` already treats those as first-class — `n.lineCount`
+    // resolves to the metadata field. Faithful Cypher (and the AI-first
+    // thesis: an agent inspects nodes by querying the graph) requires the
+    // whole-node form to expose the SAME properties. Regression guard:
+    // `to_json` previously emitted only the canonical columns (id/type/name/
+    // file/exported/semanticId) and silently dropped every metadata field, so
+    // `n.lineCount` worked but `RETURN n` came back without `lineCount`.
+
+    #[test]
+    fn return_whole_node_includes_metadata_properties() {
+        let engine = create_test_graph();
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION {name: 'main'}) RETURN n",
+            EvalLimits::none(),
+        )
+        .unwrap();
+
+        assert_eq!(result.row_count, 1);
+        let node = result.rows[0][0]
+            .as_object()
+            .expect("RETURN n must serialize to a JSON object");
+
+        // Canonical fields still present and authoritative.
+        assert_eq!(node.get("name").and_then(|v| v.as_str()), Some("main"));
+        assert_eq!(node.get("type").and_then(|v| v.as_str()), Some("FUNCTION"));
+        assert_eq!(
+            node.get("semanticId").and_then(|v| v.as_str()),
+            Some("main@src/app.js")
+        );
+
+        // The bug: the `lineCount` metadata property must survive into the
+        // whole-node object, preserving its numeric type (not stringified).
+        assert_eq!(
+            node.get("lineCount").and_then(|v| v.as_i64()),
+            Some(42),
+            "RETURN n must include metadata property lineCount, got {:?}",
+            node
+        );
+    }
+
+    #[test]
+    fn return_whole_node_metadata_cannot_shadow_canonical_fields() {
+        // A hostile/legacy metadata blob carries keys that collide with the
+        // canonical node fields AND a genuine extra field. The canonical fields
+        // must win (reserved keys skipped), while the non-reserved `visibility`
+        // field is merged. Also exercises the graceful path for a node whose
+        // metadata is NOT a JSON object (here a JSON array → ignored, no panic).
+        let mut engine = GraphEngineV2::create_ephemeral();
+        engine.add_nodes(vec![
+            NodeRecord {
+                id: 100,
+                node_type: Some("FUNCTION".to_string()),
+                name: Some("real".to_string()),
+                file: Some("src/real.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: true,
+                replaces: None,
+                deleted: false,
+                metadata: Some(
+                    r#"{"name": "spoof", "type": "CLASS", "id": "999", "visibility": "public"}"#
+                        .to_string(),
+                ),
+                semantic_id: Some("real@src/real.js".to_string()),
+            },
+            NodeRecord {
+                id: 101,
+                node_type: Some("FUNCTION".to_string()),
+                name: Some("arrmeta".to_string()),
+                file: Some("src/real.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: Some(r#"[1, 2, 3]"#.to_string()),
+                semantic_id: None,
+            },
+        ]);
+
+        let result = execute(
+            &engine,
+            "MATCH (n:FUNCTION {name: 'real'}) RETURN n",
+            EvalLimits::none(),
+        )
+        .unwrap();
+        let node = result.rows[0][0].as_object().unwrap();
+        // Canonical fields are authoritative — metadata cannot shadow them.
+        assert_eq!(node.get("name").and_then(|v| v.as_str()), Some("real"));
+        assert_eq!(node.get("type").and_then(|v| v.as_str()), Some("FUNCTION"));
+        assert_eq!(node.get("id").and_then(|v| v.as_str()), Some("100"));
+        // The genuine extra metadata field is merged.
+        assert_eq!(node.get("visibility").and_then(|v| v.as_str()), Some("public"));
+
+        // Non-object metadata is ignored without panicking; canonical fields stay.
+        let arr = execute(
+            &engine,
+            "MATCH (n:FUNCTION {name: 'arrmeta'}) RETURN n",
+            EvalLimits::none(),
+        )
+        .unwrap();
+        let arr_node = arr.rows[0][0].as_object().unwrap();
+        assert_eq!(arr_node.get("name").and_then(|v| v.as_str()), Some("arrmeta"));
+    }
+
     // ── NodeScan tests ──────────────────────────────────────────────────
 
     #[test]

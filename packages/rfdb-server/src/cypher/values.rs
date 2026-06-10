@@ -94,11 +94,37 @@ impl CypherValue {
                 node_type,
                 name,
                 file,
+                metadata,
                 semantic_id,
                 exported,
-                ..
             } => {
                 let mut map = serde_json::Map::new();
+
+                // Merge the `metadata` JSON blob FIRST so that the canonical
+                // node fields below stay authoritative and overwrite any
+                // colliding metadata key (mirrors `property()`, where the
+                // known-field arms take precedence over the metadata fallback).
+                // Grafema stores most node properties (line, column, signature,
+                // params, visibility, …) in this blob; without merging it,
+                // `RETURN n` / `RETURN *` silently dropped them even though
+                // `n.<prop>` resolves them via `property()`.
+                if let Some(meta_str) = metadata {
+                    if let Ok(serde_json::Value::Object(obj)) =
+                        serde_json::from_str::<serde_json::Value>(meta_str)
+                    {
+                        for (k, v) in obj {
+                            // Skip keys reserved for the canonical fields so
+                            // metadata can never shadow id/type/name/file/
+                            // exported/semanticId (matches the RFDBServerBackend
+                            // `_parseNode` exclusion set on the TS side, REG-325).
+                            if is_reserved_node_key(&k) {
+                                continue;
+                            }
+                            map.insert(k, v);
+                        }
+                    }
+                }
+
                 map.insert(
                     "id".to_string(),
                     serde_json::Value::String(id.to_string()),
@@ -165,6 +191,29 @@ impl CypherValue {
             _ => None,
         }
     }
+}
+
+/// Keys reserved for the canonical node fields emitted by [`CypherValue::to_json`].
+///
+/// A metadata field carrying one of these names must NOT overwrite the
+/// authoritative node field of the same name when the `metadata` blob is merged
+/// into a whole-node object. Mirrors the exclusion set used by the TypeScript
+/// `RFDBServerBackend._parseNode` (REG-325): both `semanticId` and its snake_case
+/// spelling `semantic_id` are reserved because `property()` resolves either to the
+/// node's `semantic_id` field, and `nodeType` / `originalId` are reserved because
+/// they are internal aliases of `type` / `id`.
+fn is_reserved_node_key(key: &str) -> bool {
+    matches!(
+        key,
+        "id" | "type"
+            | "name"
+            | "file"
+            | "exported"
+            | "semanticId"
+            | "semantic_id"
+            | "nodeType"
+            | "originalId"
+    )
 }
 
 impl PartialEq for CypherValue {
