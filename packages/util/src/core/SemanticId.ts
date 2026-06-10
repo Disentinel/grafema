@@ -296,7 +296,8 @@ export function parseSemanticIdV2(id: string): ParsedSemanticIdV2 | null {
         .replaceAll('%3E', '>').replaceAll('%3e', '>')
         .replaceAll('%5B', '[').replaceAll('%5b', '[')
         .replaceAll('%5D', ']').replaceAll('%5d', ']')
-        .replaceAll('%23', '#');
+        .replaceAll('%23', '#')
+        .replaceAll('%25', '%'); // decode the escaped '%' LAST (see GrafemaUri.decodeFragment)
       return parseSemanticIdV2(decoded);
     }
 
@@ -307,7 +308,8 @@ export function parseSemanticIdV2(id: string): ParsedSemanticIdV2 | null {
         .replaceAll('%3E', '>').replaceAll('%3e', '>')
         .replaceAll('%5B', '[').replaceAll('%5b', '[')
         .replaceAll('%5D', ']').replaceAll('%5d', ']')
-        .replaceAll('%23', '#');
+        .replaceAll('%23', '#')
+        .replaceAll('%25', '%'); // decode the escaped '%' LAST (see GrafemaUri.decodeFragment)
 
       if (decoded === 'MODULE') {
         const segments = pathPart.split('/');

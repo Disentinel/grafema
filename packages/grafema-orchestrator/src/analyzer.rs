@@ -328,11 +328,20 @@ pub fn is_js_ts_file(path: &Path) -> bool {
 }
 
 /// Encode a fragment string for use in a grafema:// URI.
-/// Only 4 chars need percent-encoding in fragments: > [ ] #
+/// Percent-encode the chars that are structural in a fragment: the delimiters
+/// `> [ ] #` plus the escape char `%` itself.
+///
+/// Escaping `%` (-> `%25`) is what keeps the encoding reversible: the TS decoder
+/// (`@grafema/util` `decodeFragment` / `parseSemanticIdV2`) turns `%3E` back into
+/// `>`, so a raw name/path that already contains `%` (or a literal `%3E`/`%5B`/
+/// `%5D`/`%23` substring — e.g. a string-literal CALL target or an on-disk file
+/// path with `%`) would be silently corrupted on the compact<->URI round-trip if
+/// `%` were left unescaped. The decoder reverses `%25` last.
 fn encode_fragment(raw: &str) -> String {
     let mut out = String::with_capacity(raw.len() + 16);
     for ch in raw.chars() {
         match ch {
+            '%' => out.push_str("%25"),
             '>' => out.push_str("%3E"),
             '[' => out.push_str("%5B"),
             ']' => out.push_str("%5D"),
@@ -6628,6 +6637,21 @@ mod tests {
         assert_eq!(encode_fragment("FN->a[in:x,h:ff00]#1"), "FN-%3Ea%5Bin:x,h:ff00%5D%231");
         // Chars that DON'T need encoding
         assert_eq!(encode_fragment("name:with,commas-and.dots"), "name:with,commas-and.dots");
+    }
+
+    #[test]
+    fn test_encode_fragment_escapes_percent() {
+        // The escape char '%' must itself be escaped, otherwise the encoding is
+        // not reversible: a raw name/path containing '%' (or a literal '%3E')
+        // would be silently corrupted by the TS decoder. See encode_fragment doc.
+        assert_eq!(encode_fragment("100%"), "100%25");
+        assert_eq!(encode_fragment("a%b"), "a%25b");
+        // A literal "%3E" in the raw input must survive: it becomes "%253E",
+        // which the decoder reverses (%3E->'>' first, then %25->'%' last) to "%3E"
+        // rather than collapsing to ">".
+        assert_eq!(encode_fragment("a%3Eb"), "a%253Eb");
+        // The '%' of an already-encoded delimiter is escaped too.
+        assert_eq!(encode_fragment("CALL->src/a%b.rs"), "CALL-%3Esrc/a%25b.rs");
     }
 
     #[test]

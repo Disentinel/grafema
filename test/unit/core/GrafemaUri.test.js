@@ -35,6 +35,52 @@ describe('GrafemaUri', () => {
     });
   });
 
+  // The fragment encoder is a percent-encoder, so its own escape character '%'
+  // MUST itself be escaped (-> %25), otherwise the encoding is not reversible:
+  // a raw name/path containing '%' (or a literal '%3E'/'%5B'/'%5D'/'%23'
+  // substring) is silently corrupted on the compact<->URI round-trip that the
+  // Rust orchestrator (to_uri_format) and @grafema/util consumers rely on.
+  // Node names/paths can legitimately contain '%' (string-literal-derived CALL
+  // targets, dynamic property keys, on-disk file paths).
+  describe('encodeFragment / decodeFragment — percent-escape', () => {
+    it('escapes the % escape character itself as %25', () => {
+      assert.equal(encodeFragment('a%b'), 'a%25b');
+      assert.equal(encodeFragment('100%'), '100%25');
+    });
+    it('does not corrupt a literal "%3E" in the raw input', () => {
+      // Without escaping '%', encodeFragment is a no-op on "a%3Eb" and
+      // decodeFragment then turns the literal "%3E" into ">", losing data.
+      assert.equal(encodeFragment('a%3Eb'), 'a%253Eb');
+      assert.equal(decodeFragment(encodeFragment('a%3Eb')), 'a%3Eb');
+    });
+    it('round-trips strings containing % losslessly', () => {
+      for (const raw of [
+        '50%',
+        'pct%3Eval',
+        'a%5Bb%5Dc',
+        'weird%23name',
+        'CALL->fn[in:src/a%b.rs->FUNCTION->g,h:1234]#2',
+        '%25already-encoded-looking',
+      ]) {
+        assert.equal(decodeFragment(encodeFragment(raw)), raw, `lossy round-trip for: ${raw}`);
+      }
+    });
+    it('decodes %25 back to % (and applies it last, so %253E -> %3E)', () => {
+      assert.equal(decodeFragment('%25'), '%');
+      assert.equal(decodeFragment('%253E'), '%3E');
+    });
+  });
+
+  describe('full URI round-trip with % in name', () => {
+    it('parseSemanticIdV2 recovers a name containing %3E', () => {
+      const uri = toGrafemaUri('src/app.ts->VARIABLE->pct%3Eval', 'localhost/grafema');
+      const parsed = parseSemanticIdV2(uri);
+      assert.ok(parsed);
+      assert.equal(parsed.type, 'VARIABLE');
+      assert.equal(parsed.name, 'pct%3Eval');
+    });
+  });
+
   describe('toGrafemaUri', () => {
     it('converts standard file-based node', () => {
       assert.equal(

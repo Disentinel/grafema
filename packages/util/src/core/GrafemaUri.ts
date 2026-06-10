@@ -5,7 +5,7 @@
  * Virtual nodes: grafema://{authority}/_/{encoded_full_id}
  * Module nodes: grafema://{authority}/{file}#MODULE
  *
- * Fragment encoding: only > [ ] # need percent-encoding.
+ * Fragment encoding: > [ ] # and the escape char % itself need percent-encoding.
  */
 
 const GRAFEMA_SCHEME = 'grafema://';
@@ -19,13 +19,20 @@ export function isGrafemaUri(str: string): boolean {
 
 /**
  * Encode a fragment string for grafema:// URIs.
- * Only 4 chars need percent-encoding: > [ ] #
+ *
+ * Five chars need percent-encoding: the structural delimiters `> [ ] #` and the
+ * escape char `%` itself. Escaping `%` (-> `%25`) is what makes the encoding
+ * reversible: without it a raw name/path that already contains `%` (or a literal
+ * `%3E`/`%5B`/`%5D`/`%23` substring) would be silently corrupted by
+ * {@link decodeFragment}. See {@link decodeFragment} for the matching decode
+ * order.
  */
 export function encodeFragment(raw: string): string {
   let out = '';
   for (let i = 0; i < raw.length; i++) {
     const ch = raw[i];
     switch (ch) {
+      case '%': out += '%25'; break;
       case '>': out += '%3E'; break;
       case '[': out += '%5B'; break;
       case ']': out += '%5D'; break;
@@ -38,6 +45,12 @@ export function encodeFragment(raw: string): string {
 
 /**
  * Decode a percent-encoded fragment back to raw string.
+ *
+ * `%25` (the encoded `%`) MUST be decoded LAST: the per-char encoder only ever
+ * emits a literal `%` as the start of one of the five escape sequences, so the
+ * structural escapes (`%3E`/`%5B`/`%5D`/`%23`) are decoded first and `%25` ->
+ * `%` is applied afterwards. This makes e.g. a raw `%3E` (encoded as `%253E`)
+ * round-trip back to `%3E` rather than collapsing to `>`.
  */
 export function decodeFragment(encoded: string): string {
   return encoded
@@ -47,7 +60,8 @@ export function decodeFragment(encoded: string): string {
     .replaceAll('%5b', '[')
     .replaceAll('%5D', ']')
     .replaceAll('%5d', ']')
-    .replaceAll('%23', '#');
+    .replaceAll('%23', '#')
+    .replaceAll('%25', '%');
 }
 
 /**
