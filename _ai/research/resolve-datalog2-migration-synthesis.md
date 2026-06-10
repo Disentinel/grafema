@@ -23,6 +23,22 @@ DECISION: pivot to W6 (build-once index cache on (leg, view-generation) + rayon 
 joins) BEFORE Wave 2b — every further wave compounds the shadow cost; target pack-phase ≤60s
 again at 15+ packs.
 
+## ✅ WAVE 2B DONE (2026-06-11) — EXTENDS gap closed 14/14; my chain hypothesis REFUTED
+
+The "EXTENDS 14→10 = re-export-chain inheritance" claim below is WRONG (live-probed): the 4
+edges are BUILTIN superclasses (Error ×2 via globals, EventEmitter ×2 via bare 'events'
+imports), legacy-sourced from shape-tracker's builtin-class index which deterministically
+misses them in gated runs (pre-existing bug, now moot). Closed by mechanism: A3/A4 arms in
+js_class_inheritance. Zero re-export-chain inheritance exists in this corpus — the chain
+machinery (visible() fixpoint) was still built and feeds bindings/cross-file/inheritance.
+Also: js_builtins_nodes+edges packs (163 facts, byte-identical EXTERNAL sids), and a 5th
+planner layer (intra-stratum estimate publishing) that UN-BROKE two silently-failing packs
+(rust_cross_methods_ctor, rust_receiver_typing → now 3 + 201 edges live) + a regression gate
+planning every pack under dogfood-scale Stats. Gated fresh-DB: EXTENDS 14, READS_FROM 192 194,
+CALLS 66 029, 16 packs, 506s. Recommended skip set can now INCLUDE class-inheritance (4 steps).
+Next: Wave 3 (path kit → import-resolution + builtins step gating → full js/rust gate +
+re-differential), Wave 4 (globals), then haskell/beam/plugins.
+
 ## ✅ W6 + PER-STEP GATE VERIFIED (2026-06-10 late night, clean fresh-DB run)
 
 W6 (executor index caches + rayon): **pack phase 223s → 85.4s (2.6×)** at 15 packs.
