@@ -14,8 +14,14 @@ I have enough grounding (verified the stdlib packs exist, the prior synthesis do
 | 3 (path kit → module kernels → GATE legacy js/rust + re-differential) | | |
 | 4 (runtime-globals facts) | | haskell/beam/type-inference/shape-tracker unscheduled |
 
-15 packs in the runner, all shadow-mode alongside legacy. Shadow cost re-measure pending
-(38.6s @ 7 packs in W5).
+15 packs in the runner, all shadow-mode alongside legacy. **Shadow cost MEASURED (2026-06-11
+night): ~223s of pack eval per analyze (528s total)** — js_property_access_full 44.6s,
+axum_routes 31.0s, js_local_refs 24.0s, rust_calls 23.9s, js_same_file_calls 23.7s, rest ≤14s.
+Most packs wrote 0 edges (additive dedup vs legacy — shadow working as designed); supersets:
+method_calls +3175, rust_calls +798, shape_verifier +613, js_property_access_full +559.
+DECISION: pivot to W6 (build-once index cache on (leg, view-generation) + rayon row-parallel
+joins) BEFORE Wave 2b — every further wave compounds the shadow cost; target pack-phase ≤60s
+again at 15+ packs.
 
 ## ✅ WAVE 1 DIFFERENTIAL — PASS (2026-06-10 evening, run B vs legacy baseline)
 
