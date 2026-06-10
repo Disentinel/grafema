@@ -7,6 +7,20 @@ use clap::{Parser, Subcommand};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
+/// Canonical stdlib rule-pack execution order — pack-runner v0 (analyze phase 9).
+///
+/// ORDER IS A CONTRACT, not a convenience: `@stdlib/shape_verifier` reads CALLS
+/// edges as EDB (its skip-resolved negation `\+ edge(C, _, "CALLS")`), so it MUST
+/// run after `@stdlib/method_calls`, which materializes them. Full canonical order
+/// is depends → method_calls → shape_verifier → axum_routes; the depends pack runs
+/// separately first (the `materialize_datalog("")` call below, which the server
+/// resolves to the bundled `depends.dl`).
+const STDLIB_RULE_PACKS: &[&str] = &[
+    "@stdlib/method_calls",
+    "@stdlib/shape_verifier",
+    "@stdlib/axum_routes",
+];
+
 
 /// Tag virtual resolution output nodes with a synthetic file for cleanup.
 ///
@@ -1799,6 +1813,45 @@ async fn main() -> Result<()> {
                     "DEPENDS_ON derived by RFDB Datalog v2 @materialize"
                 );
                 profile!("depends_on_complete_v2", "edges" => written as usize);
+
+                // Pack-runner v0: after the depends materialize succeeds, run the
+                // remaining canonical stdlib rule packs (see STDLIB_RULE_PACKS for the
+                // ordering contract). A broken pack must not kill analyze: log loud and
+                // skip to the next pack. Exception: a method_calls failure additionally
+                // warns that shape_verifier may over-report, since shape_verifier reads
+                // the CALLS edges method_calls materializes.
+                for pack in STDLIB_RULE_PACKS {
+                    let pack_start = std::time::Instant::now();
+                    match rfdb.materialize_datalog(pack).await {
+                        Ok(pack_edges) => {
+                            let pack_ms = pack_start.elapsed().as_millis() as u64;
+                            tracing::info!(
+                                pack = *pack,
+                                ms = pack_ms,
+                                edges = pack_edges,
+                                "Rule pack materialized"
+                            );
+                            profile!("rule_pack_complete",
+                                "pack" => pack,
+                                "ms" => pack_ms,
+                                "edges" => pack_edges as usize);
+                        }
+                        Err(err) => {
+                            tracing::error!(
+                                pack = *pack,
+                                error = %format!("{err:#}"),
+                                "Rule pack @materialize FAILED — skipping to next pack"
+                            );
+                            if *pack == "@stdlib/method_calls" {
+                                tracing::warn!(
+                                    "@stdlib/method_calls failed: @stdlib/shape_verifier reads \
+                                     its CALLS edges as EDB, so shape-violation results may \
+                                     over-report unresolved calls"
+                                );
+                            }
+                        }
+                    }
+                }
             } else if !all_imports_from_edges.is_empty() {
                 // ── LEGACY fallback (P3): in-orchestrator sid-parse derivation. Lossy on
                 // `MODULE#`-sid (Haskell) endpoints; superseded by the v2 path above. Kept runnable

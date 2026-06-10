@@ -2948,6 +2948,40 @@ fn dispatch_execute_datalog(
     execute_datalog(engine, source, explain, cancel_flag)
 }
 
+/// Resolve a wire `source` to the Datalog v2 program text — THE pack-resolution contract,
+/// shared by every dispatcher that defaults an empty source to the bundled `depends.dl`
+/// (`MaterializeDatalog`, `ExplainDatalogFact`, `ExplainDatalogGap`, `SimDatalog`):
+/// - `""` (or whitespace) ⇒ the bundled `depends.dl` (the EXISTING orchestrator contract);
+/// - `"@stdlib/<name>"` ⇒ the named bundled pack from [`rfdb::datalog2::stdlib::STDLIB_PACKS`]
+///   (`@stdlib/depends` is the named alias of the empty-source default);
+/// - an unknown `"@stdlib/<name>"` ⇒ the coded `E-MAT-007` error naming the pack and
+///   listing the known packs — never a silent fallback to running `"@stdlib/…"` as
+///   program text (I5);
+/// - anything else ⇒ explicit program text, passed through untouched.
+///
+/// Pack ORDER is a contract for sequential callers (`shape_verifier` reads CALLS as EDB,
+/// so it must run after `method_calls`) — see the registry docs in `datalog2/stdlib.rs`.
+fn resolve_pack_source(source: &str) -> std::result::Result<&str, String> {
+    let trimmed = source.trim();
+    if trimmed.is_empty() {
+        return Ok(rfdb::datalog2::stdlib::DEPENDS_DL);
+    }
+    if let Some(name) = trimmed.strip_prefix("@stdlib/") {
+        return rfdb::datalog2::stdlib::stdlib_pack(name).ok_or_else(|| {
+            let known = rfdb::datalog2::stdlib::STDLIB_PACKS
+                .iter()
+                .map(|(n, _)| format!("@stdlib/{n}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "Datalog v2 pack resolution error [E-MAT-007]: unknown stdlib pack \
+                 \"@stdlib/{name}\"; known packs: {known}"
+            )
+        });
+    }
+    Ok(source)
+}
+
 /// `MaterializeDatalog` dispatch (WRITE path): run a v2 `@materialize` program and commit the
 /// materialized edges in ONE atomic generation, returning the edges-written count.
 ///
@@ -2988,14 +3022,10 @@ fn dispatch_materialize_datalog(
     limits.deadline =
         Some(std::time::Instant::now() + std::time::Duration::from_secs(materialize_deadline_secs));
 
-    // An empty `source` means "run the canonical bundled rule" — the orchestrator triggers
-    // DEPENDS_ON derivation without shipping the rule text (single source of truth, no drift).
-    // A non-empty source runs that explicit program (tests / future materialized rules).
-    let program = if source.trim().is_empty() {
-        rfdb::datalog2::stdlib::DEPENDS_DL
-    } else {
-        source
-    };
+    // Empty source ⇒ the canonical bundled depends.dl; "@stdlib/<name>" ⇒ a named bundled
+    // pack (E-MAT-007 when unknown); anything else ⇒ explicit program text. The single
+    // source of truth is `resolve_pack_source` — no drift between dispatchers.
+    let program = resolve_pack_source(source)?;
 
     // Gate D2: the cached entry MAINTAINS the derived relations across calls against this
     // long-lived per-database engine (work-proportional on the 2nd+ run) and commits only the
@@ -3032,11 +3062,7 @@ fn dispatch_explain_datalog_fact(
             "RFDB_DATALOG_V2: explain_fact requires a storage_v2 GraphEngineV2 backend".to_string()
         })?;
 
-    let program = if source.trim().is_empty() {
-        rfdb::datalog2::stdlib::DEPENDS_DL
-    } else {
-        source
-    };
+    let program = resolve_pack_source(source)?;
     let key_vals: Vec<rfdb::datalog::Value> = key.iter().map(|s| wire_string_to_value(s)).collect();
 
     let mut limits = EvalLimits::default();
@@ -3081,11 +3107,7 @@ fn dispatch_sim_datalog(
         "RFDB_DATALOG_V2: sim requires a storage_v2 GraphEngineV2 backend".to_string()
     })?;
 
-    let program = if source.trim().is_empty() {
-        rfdb::datalog2::stdlib::DEPENDS_DL
-    } else {
-        source
-    };
+    let program = resolve_pack_source(source)?;
 
     // Hypothetical ids are decimal u128 on the wire (same shape the read path emits for node
     // ids); a non-numeric id is an explicit input error, not a silent skip.
@@ -3129,11 +3151,7 @@ fn dispatch_explain_datalog_gap(
         "RFDB_DATALOG_V2: explain_gap requires a storage_v2 GraphEngineV2 backend".to_string()
     })?;
 
-    let program = if source.trim().is_empty() {
-        rfdb::datalog2::stdlib::DEPENDS_DL
-    } else {
-        source
-    };
+    let program = resolve_pack_source(source)?;
     let key_vals: Vec<rfdb::datalog::Value> = key.iter().map(|s| wire_string_to_value(s)).collect();
 
     let mut limits = EvalLimits::default();
@@ -7499,6 +7517,91 @@ mod protocol_tests {
             Ok(DatalogResponse::Explain(_)) => panic!("expected violations, got an explain result"),
             Err(e) => panic!("v2 read of DEPENDS_ON failed: {e}"),
         }
+
+        match prev {
+            Some(v) => std::env::set_var("RFDB_DATALOG_V2", v),
+            None => std::env::remove_var("RFDB_DATALOG_V2"),
+        }
+    }
+
+    /// The `@stdlib/` pack-resolution wire contract on the dispatchers: `"@stdlib/depends"`
+    /// is the named alias of the empty-source default (same program, idempotent across the
+    /// two spellings), every registered pack name resolves and RUNS (zero derivations on a
+    /// graph without its inputs — never a resolution error), an unknown `@stdlib/<name>` is
+    /// the coded `E-MAT-007` error naming the pack and listing the known packs, and the
+    /// READ dispatchers share the same resolver.
+    #[test]
+    fn dispatch_materialize_datalog_resolves_stdlib_packs() {
+        let _guard = DATALOG_V2_ENV_LOCK.lock().unwrap();
+        let prev = std::env::var("RFDB_DATALOG_V2").ok();
+        std::env::set_var("RFDB_DATALOG_V2", "on");
+
+        // Module `a` IMPORTS_FROM module `b` — the depends.dl input shape.
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let mk_node = |sid: &str, ty: &str| NodeRecord {
+            id: string_to_id(sid),
+            node_type: Some(ty.to_string()),
+            file_id: 0,
+            name_offset: 0,
+            version: "main".to_string(),
+            exported: false,
+            replaces: None,
+            deleted: false,
+            name: Some(sid.to_string()),
+            file: Some(format!("{sid}.js")),
+            metadata: None,
+            semantic_id: Some(sid.to_string()),
+        };
+        engine.add_nodes(vec![mk_node("a", "MODULE"), mk_node("b", "MODULE")]);
+        engine.add_edges(
+            vec![EdgeRecord {
+                src: string_to_id("a"),
+                dst: string_to_id("b"),
+                edge_type: Some("IMPORTS_FROM".to_string()),
+                version: "main".to_string(),
+                metadata: None,
+                deleted: false,
+            }],
+            true,
+        );
+        engine.flush().unwrap();
+        let cf = || Arc::new(AtomicBool::new(false));
+
+        // "@stdlib/depends" writes the DEPENDS_ON edge; the empty-source spelling then
+        // re-runs the SAME program and adds nothing — alias ≡ default, proven on output.
+        let written = dispatch_materialize_datalog(&mut engine, "@stdlib/depends", cf())
+            .expect("@stdlib/depends must resolve and run");
+        assert_eq!(written, 1, "one IMPORTS_FROM → one DEPENDS_ON via the named alias");
+        let again = dispatch_materialize_datalog(&mut engine, "", cf())
+            .expect("empty source must keep resolving to the bundled depends.dl");
+        assert_eq!(again, 0, "the empty-source default is the same program (idempotent)");
+
+        // Every other registered pack resolves and runs (no inputs here → 0 edges).
+        for pack in ["@stdlib/method_calls", "@stdlib/shape_verifier", "@stdlib/axum_routes"] {
+            let n = dispatch_materialize_datalog(&mut engine, pack, cf())
+                .unwrap_or_else(|e| panic!("{pack} must resolve and run: {e}"));
+            assert_eq!(n, 0, "{pack} has no inputs on this graph — zero edges, no error");
+        }
+
+        // Unknown pack: coded, names the pack, lists the known packs — never silently
+        // parsed as program text.
+        let err = dispatch_materialize_datalog(&mut engine, "@stdlib/bogus", cf())
+            .expect_err("unknown stdlib pack must be a coded error");
+        assert!(err.contains("E-MAT-007"), "must carry the E-MAT-007 code: {err}");
+        assert!(err.contains("@stdlib/bogus"), "must name the unknown pack: {err}");
+        for known in [
+            "@stdlib/depends",
+            "@stdlib/method_calls",
+            "@stdlib/shape_verifier",
+            "@stdlib/axum_routes",
+        ] {
+            assert!(err.contains(known), "must list known pack {known}: {err}");
+        }
+
+        // The READ dispatchers share the resolver (factored, not copy-pasted).
+        let read_err = dispatch_explain_datalog_fact(&engine, "@stdlib/bogus", "depends", &[], cf())
+            .expect_err("explain_fact must reject the unknown pack too");
+        assert!(read_err.contains("E-MAT-007"), "shared E-MAT-007 path: {read_err}");
 
         match prev {
             Some(v) => std::env::set_var("RFDB_DATALOG_V2", v),

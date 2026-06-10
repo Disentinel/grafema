@@ -40,6 +40,50 @@ pub const DEPENDS_DL: &str = include_str!("stdlib/depends.dl");
 /// - `resolved_unique_call`: the method name is unique across all METHOD nodes.
 pub const METHOD_CALLS_DL: &str = include_str!("stdlib/method_calls.dl");
 
+/// The bundled shape-verification rule pack — the in-engine replacement for the
+/// `plugins/shape-verifier.mjs` batch plugin. Flags dotted CALLs whose receiver's
+/// declared type (CLASS/INTERFACE, EXTENDS-closed) lacks the called member, as
+/// `@materialize(edge_type = "SHAPE_VIOLATION", mode = "exclusive", meta(method))`
+/// edges CALL → type (the type is pack-owned, so fixed violations retract on rerun).
+///
+/// ORDERING: must run AFTER [`METHOD_CALLS_DL`] — its skip-resolved filter reads
+/// CALLS as EDB (legal here: this program does not materialize CALLS).
+pub const SHAPE_VERIFIER_DL: &str = include_str!("stdlib/shape_verifier.dl");
+
+/// The bundled Axum route-detection rule pack — the edges half of
+/// `plugins/axum-route-detector.mjs` (`http:route` NODE creation is deferred to
+/// node-materialization). Derives, from `.route("/path", get(handler))` calls in
+/// Rust files (argument positions read via `edge_attr` on PASSES_ARGUMENT `index`):
+/// - `ROUTES_TO`  (route CALL → handler, `meta(method, path)`),
+/// - `HANDLED_BY` (path LITERAL → handler, `meta(method)`).
+///
+/// Both target types are pre-registered SHARED vocabulary
+/// (`packages/types/src/edges.ts`) ⇒ `mode = "additive"` on both heads.
+pub const AXUM_ROUTES_DL: &str = include_str!("stdlib/axum_routes.dl");
+
+/// The named stdlib rule packs, addressable on the wire as `"@stdlib/<name>"`
+/// (`MaterializeDatalog` and the other empty-source-defaulting dispatchers), listed
+/// in CANONICAL RUN ORDER. The order is a CONTRACT, not cosmetics:
+/// `shape_verifier` reads CALLS as EDB (its skip-resolved negation), so it MUST run
+/// after `method_calls` has committed its CALLS edges — an orchestrator running the
+/// packs sequentially must preserve this order:
+/// depends → method_calls → shape_verifier → axum_routes.
+pub const STDLIB_PACKS: &[(&str, &str)] = &[
+    ("depends", DEPENDS_DL),
+    ("method_calls", METHOD_CALLS_DL),
+    ("shape_verifier", SHAPE_VERIFIER_DL),
+    ("axum_routes", AXUM_ROUTES_DL),
+];
+
+/// Look up a bundled pack by its wire name (the `<name>` in `"@stdlib/<name>"`).
+/// `None` for an unknown name — the caller owns the coded error (E-MAT-007).
+pub fn stdlib_pack(name: &str) -> Option<&'static str> {
+    STDLIB_PACKS
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, src)| *src)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -348,5 +392,312 @@ mod tests {
             ratio < 10.0,
             "method_calls pack scales super-linearly: 4x input cost {ratio:.1}x"
         );
+    }
+
+    /// An edge plus a metadata blob attached to it (for `edge_attr` probes —
+    /// PASSES_ARGUMENT `index` etc.).
+    fn edge_meta(v: &mut FixtureStorageView, src: &str, dst: &str, ty: &str, meta: &str) {
+        edge(v, src, dst, ty);
+        v.put_edge_metadata(id_of(src), id_of(dst), ty, meta);
+    }
+
+    /// The (src, dst, meta-columns) triples of a 3-ary materialized predicate.
+    fn triples(
+        eval: &crate::datalog2::exec::Evaluation,
+        pred: &str,
+    ) -> BTreeSet<(u128, u128, String)> {
+        eval.facts(pred)
+            .into_iter()
+            .map(|row| {
+                (
+                    row[0].as_id().expect("arg0 id"),
+                    row[1].as_id().expect("arg1 id"),
+                    row[2].as_str(),
+                )
+            })
+            .collect()
+    }
+
+    /// The bundled shape-verifier pack reproduces the plugin's violation semantics on a
+    /// fixture covering every receiver path and every documented parity point:
+    /// - own member (c1), EXTENDS-inherited member (c2) → no violation;
+    /// - missing member via the PA-fallback chain (c3) → violation (c3, Foo, "qux");
+    /// - already-resolved calls (c4 CALLS, c12 CALLS_REMOTE) → skipped;
+    /// - dotless call (c5) → nothing;
+    /// - INTERFACE with HAS_PROPERTY member (c6 ok, c7 violation);
+    /// - receiver typed by a non-shape (FUNCTION) → nothing (c8, shape_known);
+    /// - multi-receiver shape_ok suppression (c9: Foo has bar, Base does not — the
+    ///   set-semantics delta vs the plugin's first-INSTANCE_OF pick);
+    /// - PLUGIN-PARITY GUARD: a direct READS_FROM (even typeless) SUPPRESSES the
+    ///   DERIVES_FROM→PROPERTY_ACCESS fallback (c10 → nothing);
+    /// - rf2-undefined fallback: a REFERENCE with no READS_FROM is itself the
+    ///   declaration (c11 → violation via r2's own INSTANCE_OF).
+    #[test]
+    fn shape_verifier_flags_missing_members_with_plugin_parity() {
+        let mut v = FixtureStorageView::new(1);
+
+        // Shapes: Foo EXTENDS Base; interface IShape with a property member.
+        named_node(&mut v, "base", "Base", "CLASS", "base.ts");
+        named_node(&mut v, "mbaz", "baz", "METHOD", "base.ts");
+        edge(&mut v, "base", "mbaz", "HAS_METHOD");
+        named_node(&mut v, "foo", "Foo", "CLASS", "foo.ts");
+        named_node(&mut v, "mbar", "bar", "METHOD", "foo.ts");
+        edge(&mut v, "foo", "mbar", "HAS_METHOD");
+        edge(&mut v, "foo", "base", "EXTENDS");
+        named_node(&mut v, "ishape", "IShape", "INTERFACE", "shape.ts");
+        named_node(&mut v, "parea", "area", "PROPERTY", "shape.ts");
+        edge(&mut v, "ishape", "parea", "HAS_PROPERTY");
+
+        // Receiver chain A (PA fallback): CALL -DERIVES_FROM-> pa1 -READS_FROM-> r1
+        // (REFERENCE) -READS_FROM-> v1 (VARIABLE) -INSTANCE_OF-> Foo.
+        named_node(&mut v, "v1", "x", "VARIABLE", "app.ts");
+        edge(&mut v, "v1", "foo", "INSTANCE_OF");
+        named_node(&mut v, "r1", "x", "REFERENCE", "app.ts");
+        edge(&mut v, "r1", "v1", "READS_FROM");
+        named_node(&mut v, "pa1", "x", "PROPERTY_ACCESS", "app.ts");
+        edge(&mut v, "pa1", "r1", "READS_FROM");
+
+        named_node(&mut v, "c1", "x.bar", "CALL", "app.ts"); // own method — ok
+        edge(&mut v, "c1", "pa1", "DERIVES_FROM");
+        named_node(&mut v, "c2", "x.baz", "CALL", "app.ts"); // inherited via EXTENDS — ok
+        edge(&mut v, "c2", "pa1", "DERIVES_FROM");
+        named_node(&mut v, "c3", "x.qux", "CALL", "app.ts"); // VIOLATION (c3, Foo)
+        edge(&mut v, "c3", "pa1", "DERIVES_FROM");
+        named_node(&mut v, "c4", "x.qux", "CALL", "app.ts"); // resolved (CALLS) — skipped
+        edge(&mut v, "c4", "pa1", "DERIVES_FROM");
+        edge(&mut v, "c4", "mbar", "CALLS");
+        named_node(&mut v, "c12", "x.qux", "CALL", "app.ts"); // resolved (CALLS_REMOTE) — skipped
+        edge(&mut v, "c12", "pa1", "DERIVES_FROM");
+        edge(&mut v, "c12", "mbar", "CALLS_REMOTE");
+        named_node(&mut v, "c5", "plain", "CALL", "app.ts"); // dotless — nothing
+
+        // Receiver chain B (direct READS_FROM, no REFERENCE hop) onto the interface.
+        named_node(&mut v, "v2", "s", "VARIABLE", "app.ts");
+        edge(&mut v, "v2", "ishape", "INSTANCE_OF");
+        named_node(&mut v, "c6", "s.area", "CALL", "app.ts"); // HAS_PROPERTY member — ok
+        edge(&mut v, "c6", "v2", "READS_FROM");
+        named_node(&mut v, "c7", "s.missing", "CALL", "app.ts"); // VIOLATION (c7, IShape)
+        edge(&mut v, "c7", "v2", "READS_FROM");
+
+        // Unknown shape: receiver typed by a FUNCTION node — not CLASS/INTERFACE.
+        named_node(&mut v, "v3", "z", "VARIABLE", "app.ts");
+        named_node(&mut v, "fn1", "factory", "FUNCTION", "app.ts");
+        edge(&mut v, "v3", "fn1", "INSTANCE_OF");
+        named_node(&mut v, "c8", "z.qux", "CALL", "app.ts"); // shape_known fails — nothing
+        edge(&mut v, "c8", "v3", "READS_FROM");
+
+        // Multi-receiver shape_ok suppression: v1→Foo carries bar, v4→Base does not.
+        named_node(&mut v, "v4", "m", "VARIABLE", "app.ts");
+        edge(&mut v, "v4", "base", "INSTANCE_OF");
+        named_node(&mut v, "c9", "m.bar", "CALL", "app.ts"); // suppressed — NO violation
+        edge(&mut v, "c9", "v1", "READS_FROM");
+        edge(&mut v, "c9", "v4", "READS_FROM");
+
+        // Direct-READS_FROM precedence: a typeless direct receiver BLOCKS the PA path
+        // (plugin consults the PA fallback only when readsFrom.length === 0).
+        named_node(&mut v, "u1", "w", "VARIABLE", "app.ts"); // no INSTANCE_OF
+        named_node(&mut v, "c10", "w.qux", "CALL", "app.ts"); // NO violation
+        edge(&mut v, "c10", "u1", "READS_FROM");
+        edge(&mut v, "c10", "pa1", "DERIVES_FROM"); // would reach Foo (lacks qux) if unguarded
+
+        // rf2-undefined fallback: a REFERENCE with no outgoing READS_FROM is itself
+        // checked for INSTANCE_OF (shape-verifier.mjs:191-196).
+        named_node(&mut v, "r2", "q", "REFERENCE", "app.ts");
+        edge(&mut v, "r2", "foo", "INSTANCE_OF");
+        named_node(&mut v, "c11", "q.qux", "CALL", "app.ts"); // VIOLATION (c11, Foo)
+        edge(&mut v, "c11", "r2", "READS_FROM");
+
+        let (eval, specs) = evaluate_with_materialize(
+            &v,
+            SHAPE_VERIFIER_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("shape_verifier.dl evaluates");
+
+        assert_eq!(
+            triples(&eval, "shape_violation"),
+            BTreeSet::from([
+                (id_of("c3"), id_of("foo"), "qux".to_string()),
+                (id_of("c7"), id_of("ishape"), "missing".to_string()),
+                (id_of("c11"), id_of("foo"), "qux".to_string()),
+            ]),
+            "exactly c3/c7/c11 violate; resolved, shape_ok, typeless-direct and \
+             unknown-shape calls derive nothing"
+        );
+
+        // One SHAPE_VIOLATION spec: pack-owned type ⇒ exclusive; method name in meta.
+        let sv_specs: Vec<_> = specs
+            .iter()
+            .filter(|s| s.edge_type == "SHAPE_VIOLATION")
+            .collect();
+        assert_eq!(sv_specs.len(), 1, "exactly one SHAPE_VIOLATION head");
+        assert!(
+            !sv_specs[0].additive,
+            "SHAPE_VIOLATION is pack-owned — exclusive mode (violations retract when fixed)"
+        );
+        assert_eq!(
+            sv_specs[0].meta,
+            vec!["method".to_string()],
+            "the violated method name is projected into edge metadata"
+        );
+    }
+
+    /// The bundled axum-routes pack derives ROUTES_TO/HANDLED_BY from
+    /// `.route("/path", wrapper(handler))` calls using PASSES_ARGUMENT `index` edge
+    /// metadata, with the plugin's gates:
+    /// - happy path with a recognized lowercase wrapper (r1 → GET) and an UPPERCASE
+    ///   wrapper name (r2 → POST, the str_lower/.toLowerCase() parity);
+    /// - plugin parity: a NON-wrapper CALL second argument still yields its first
+    ///   argument as the handler, method defaults to GET (r5 → state);
+    /// - negatives: non-.rs file (r3), path without leading "/" (r4), fewer than two
+    ///   arguments (r6), a CALL not named "route" (r7), and a non-CALL second
+    ///   argument (r8 — no handler endpoint, hence no edges).
+    #[test]
+    fn axum_routes_derives_routes_to_and_handled_by() {
+        let mut v = FixtureStorageView::new(1);
+        let idx0 = r#"{"index":0}"#;
+        let idx1 = r#"{"index":1}"#;
+
+        // r1: .route("/users", get(list_users)) in a Rust file.
+        named_node(&mut v, "r1", "route", "CALL", "src/main.rs");
+        named_node(&mut v, "p1", "/users", "LITERAL", "src/main.rs");
+        named_node(&mut v, "g1", "get", "CALL", "src/main.rs");
+        named_node(&mut v, "h1", "list_users", "FUNCTION", "src/handlers.rs");
+        edge_meta(&mut v, "r1", "p1", "PASSES_ARGUMENT", idx0);
+        edge_meta(&mut v, "r1", "g1", "PASSES_ARGUMENT", idx1);
+        edge_meta(&mut v, "g1", "h1", "PASSES_ARGUMENT", idx0);
+
+        // r2: uppercase wrapper name — str_lower matches the plugin's toLowerCase().
+        named_node(&mut v, "r2", "route", "CALL", "src/api.rs");
+        named_node(&mut v, "p2", "/items", "LITERAL", "src/api.rs");
+        named_node(&mut v, "w2", "POST", "CALL", "src/api.rs");
+        named_node(&mut v, "h2", "create_item", "FUNCTION", "src/api.rs");
+        edge_meta(&mut v, "r2", "p2", "PASSES_ARGUMENT", idx0);
+        edge_meta(&mut v, "r2", "w2", "PASSES_ARGUMENT", idx1);
+        edge_meta(&mut v, "w2", "h2", "PASSES_ARGUMENT", idx0);
+
+        // r3 NEGATIVE: identical shape but a .js file — the language gate drops it.
+        named_node(&mut v, "r3", "route", "CALL", "src/app.js");
+        named_node(&mut v, "p3", "/js", "LITERAL", "src/app.js");
+        named_node(&mut v, "g3", "get", "CALL", "src/app.js");
+        named_node(&mut v, "h3", "js_handler", "FUNCTION", "src/app.js");
+        edge_meta(&mut v, "r3", "p3", "PASSES_ARGUMENT", idx0);
+        edge_meta(&mut v, "r3", "g3", "PASSES_ARGUMENT", idx1);
+        edge_meta(&mut v, "g3", "h3", "PASSES_ARGUMENT", idx0);
+
+        // r4 NEGATIVE: path literal without the leading "/" — plugin `continue`s.
+        named_node(&mut v, "r4", "route", "CALL", "src/lib.rs");
+        named_node(&mut v, "p4", "users", "LITERAL", "src/lib.rs");
+        named_node(&mut v, "w4", "post", "CALL", "src/lib.rs");
+        edge_meta(&mut v, "r4", "p4", "PASSES_ARGUMENT", idx0);
+        edge_meta(&mut v, "r4", "w4", "PASSES_ARGUMENT", idx1);
+        edge_meta(&mut v, "w4", "h2", "PASSES_ARGUMENT", idx0);
+
+        // r5 PLUGIN PARITY: .route("/raw", my_service(state)) — handler from ANY CALL
+        // second argument (the HTTP_METHODS check never gated the handler), GET default.
+        named_node(&mut v, "r5", "route", "CALL", "src/raw.rs");
+        named_node(&mut v, "p5", "/raw", "LITERAL", "src/raw.rs");
+        named_node(&mut v, "w5", "my_service", "CALL", "src/raw.rs");
+        named_node(&mut v, "st5", "state", "VARIABLE", "src/raw.rs");
+        edge_meta(&mut v, "r5", "p5", "PASSES_ARGUMENT", idx0);
+        edge_meta(&mut v, "r5", "w5", "PASSES_ARGUMENT", idx1);
+        edge_meta(&mut v, "w5", "st5", "PASSES_ARGUMENT", idx0);
+
+        // r6 NEGATIVE: only ONE argument — the plugin's `args.length < 2` skip.
+        named_node(&mut v, "r6", "route", "CALL", "src/one.rs");
+        named_node(&mut v, "p6", "/solo", "LITERAL", "src/one.rs");
+        edge_meta(&mut v, "r6", "p6", "PASSES_ARGUMENT", idx0);
+
+        // r7 NEGATIVE: a non-route CALL with the full argument shape — name gate.
+        named_node(&mut v, "r7", "mount", "CALL", "src/main.rs");
+        edge_meta(&mut v, "r7", "p1", "PASSES_ARGUMENT", idx0);
+        edge_meta(&mut v, "r7", "g1", "PASSES_ARGUMENT", idx1);
+
+        // r8: second argument is not a CALL — no handler endpoint, hence no edges
+        // (the plugin minted a handler-less GET http:route node; node creation is the
+        // documented out-of-scope residue).
+        named_node(&mut v, "r8", "route", "CALL", "src/ref.rs");
+        named_node(&mut v, "p8", "/ref", "LITERAL", "src/ref.rs");
+        named_node(&mut v, "ref8", "make_router", "REFERENCE", "src/ref.rs");
+        edge_meta(&mut v, "r8", "p8", "PASSES_ARGUMENT", idx0);
+        edge_meta(&mut v, "r8", "ref8", "PASSES_ARGUMENT", idx1);
+
+        let (eval, specs) = evaluate_with_materialize(
+            &v,
+            AXUM_ROUTES_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("axum_routes.dl evaluates");
+
+        // routes_to(C, H, Method, Path): route CALL → handler.
+        let routes: BTreeSet<(u128, u128, String, String)> = eval
+            .facts("routes_to")
+            .into_iter()
+            .map(|row| {
+                (
+                    row[0].as_id().expect("src id"),
+                    row[1].as_id().expect("dst id"),
+                    row[2].as_str(),
+                    row[3].as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            routes,
+            BTreeSet::from([
+                (id_of("r1"), id_of("h1"), "GET".to_string(), "/users".to_string()),
+                (id_of("r2"), id_of("h2"), "POST".to_string(), "/items".to_string()),
+                (id_of("r5"), id_of("st5"), "GET".to_string(), "/raw".to_string()),
+            ]),
+            "exactly r1/r2/r5 route; r3 (.js), r4 (no slash), r6 (<2 args), r7 (name), \
+             r8 (non-CALL arg) derive nothing"
+        );
+
+        // handled_by(P, H, Method): path LITERAL → handler.
+        assert_eq!(
+            triples(&eval, "handled_by"),
+            BTreeSet::from([
+                (id_of("p1"), id_of("h1"), "GET".to_string()),
+                (id_of("p2"), id_of("h2"), "POST".to_string()),
+                (id_of("p5"), id_of("st5"), "GET".to_string()),
+            ]),
+            "path literals of the routed calls map to their handlers"
+        );
+
+        // Both heads target SHARED vocabulary ⇒ additive is MANDATORY; meta carries
+        // method (+ path on ROUTES_TO).
+        let spec_of = |ty: &str| {
+            let matched: Vec<_> = specs.iter().filter(|s| s.edge_type == ty).collect();
+            assert_eq!(matched.len(), 1, "exactly one {ty} head");
+            matched[0].clone()
+        };
+        let routes_spec = spec_of("ROUTES_TO");
+        assert!(routes_spec.additive, "ROUTES_TO is shared vocabulary — additive");
+        assert_eq!(routes_spec.meta, vec!["method".to_string(), "path".to_string()]);
+        let handled_spec = spec_of("HANDLED_BY");
+        assert!(handled_spec.additive, "HANDLED_BY is shared vocabulary — additive");
+        assert_eq!(handled_spec.meta, vec!["method".to_string()]);
+    }
+
+    /// The wire-addressable pack registry: canonical order (an ordering CONTRACT —
+    /// shape_verifier reads CALLS as EDB so it must follow method_calls), name → source
+    /// lookup, and None for unknown names (the dispatcher owns the E-MAT-007 error).
+    #[test]
+    fn stdlib_pack_registry_resolves_names_in_canonical_order() {
+        let names: Vec<&str> = STDLIB_PACKS.iter().map(|(n, _)| *n).collect();
+        assert_eq!(
+            names,
+            vec!["depends", "method_calls", "shape_verifier", "axum_routes"],
+            "canonical run order: depends → method_calls → shape_verifier → axum_routes"
+        );
+        assert_eq!(stdlib_pack("depends"), Some(DEPENDS_DL));
+        assert_eq!(stdlib_pack("method_calls"), Some(METHOD_CALLS_DL));
+        assert_eq!(stdlib_pack("shape_verifier"), Some(SHAPE_VERIFIER_DL));
+        assert_eq!(stdlib_pack("axum_routes"), Some(AXUM_ROUTES_DL));
+        assert_eq!(stdlib_pack("nope"), None, "unknown pack name resolves to None");
     }
 }
