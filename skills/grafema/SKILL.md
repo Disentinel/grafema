@@ -8,7 +8,7 @@ description: |
   bug, (4) planning a refactor and needing impact analysis, (5) grep returned
   0 hits or 20+ hits and you can't narrow it down, (6) about to modify a function
   without knowing its callers.
-version: 0.1.0
+version: 0.2.0
 date: 2026-06-10
 ---
 
@@ -24,6 +24,16 @@ reading and re-deriving structure from files is expensive.
 lookups grep is faster and cheaper. The graph wins when the answer lives in
 *relationships* (who calls this? where does this value come from?) rather than
 in *text*. Route by the question, not by habit.
+
+**Scale factor — check this FIRST (it comes free with `get_stats`).** The tier
+table assumes a codebase where textual search degrades: large, multi-service,
+aliased, indirect. On a small repo (roughly <300 files / <50K graph nodes)
+grep+read is competitive at EVERY tier — measured on a 142-file codebase, plain
+grep matched graph answers on caller-enumeration at ~1/7th the cost and on
+dataflow tracing at ~1/2. There, use the graph only after text search has
+actually failed, or when the question crosses 2+ indirection hops (re-exports,
+dynamic dispatch, cross-service calls). The graph's edge grows with size: in
+200K+-node codebases file-hopping costs explode while graph-query cost stays flat.
 
 ## Tier table — route by question type
 
@@ -45,6 +55,7 @@ in *text*. Route by the question, not by habit.
 - Grep returned **0 hits** and you don't know the synonyms → `find_nodes` with partial name.
 - Grep returned **20+ hits** across many files → `find_calls`/`get_context` on the real symbol instead of eyeballing matches.
 - The symbol is **re-exported, aliased, or dynamically dispatched** → text search lies; use Tier 3.
+- **Don't flail on names:** if two `find_nodes` calls miss, stop guessing name variants — `get_file_overview` the most likely file, or grep the literal string to anchor, then return to the graph with the exact name.
 - You are about to **edit a function** → `find_calls` on it first. Non-negotiable for shared code.
 - The bug is a **wrong value at a distance** (set in one place, wrong in another) → `trace_dataflow` backward from the symptom. This is the single highest-payoff graph call.
 
