@@ -1075,4 +1075,53 @@ mod tests {
         let result = parse_python_source(source, "<test>");
         assert!(result.is_err());
     }
+
+    // -----------------------------------------------------------------------
+    // Relative-import `level` (leading-dot count)
+    //
+    // `from .models import User` (level=1) must be distinguishable from
+    // `from models import User` (level=0). The downstream Python analyzer
+    // reconstructs the leading dots from `level` (Rules/Imports.hs:
+    // `dots = T.replicate level "."`) and resolves relative imports from it.
+    // Dropping `level` collapses every relative import to an absolute one.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_import_from_relative_single_dot() {
+        // `from . import sibling` — module is None, one leading dot.
+        let source = "from . import sibling\n";
+        let val: Value =
+            serde_json::from_str(&parse_python_source(source, "<test>").unwrap()).unwrap();
+        let stmt = &val["body"][0];
+        assert_eq!(stmt["type"], "ImportFrom");
+        assert!(stmt["module"].is_null(), "module should be null for `from . import`");
+        assert_eq!(stmt["level"], 1, "single leading dot must encode level=1");
+    }
+
+    #[test]
+    fn test_import_from_relative_with_module() {
+        // `from ..pkg.sub import x` — two leading dots + dotted module.
+        let source = "from ..pkg.sub import x\n";
+        let val: Value =
+            serde_json::from_str(&parse_python_source(source, "<test>").unwrap()).unwrap();
+        let stmt = &val["body"][0];
+        assert_eq!(stmt["type"], "ImportFrom");
+        assert_eq!(stmt["module"], "pkg.sub");
+        assert_eq!(stmt["level"], 2, "two leading dots must encode level=2");
+    }
+
+    #[test]
+    fn test_import_from_absolute_level_zero() {
+        // `from os.path import join` — absolute import, no leading dots.
+        let source = "from os.path import join\n";
+        let val: Value =
+            serde_json::from_str(&parse_python_source(source, "<test>").unwrap()).unwrap();
+        let stmt = &val["body"][0];
+        assert_eq!(stmt["type"], "ImportFrom");
+        assert_eq!(stmt["module"], "os.path");
+        // Absolute imports carry level=0 (never null/omitted), so the
+        // downstream `.:? "level" .!= 0` default is exercised consistently and
+        // a relative import can never be mistaken for an absolute one.
+        assert_eq!(stmt["level"], 0, "absolute import must encode level=0");
+    }
 }
