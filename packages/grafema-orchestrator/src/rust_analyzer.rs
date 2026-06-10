@@ -1399,6 +1399,14 @@ fn walk_let(local: &syn::Local, ctx: &mut Ctx) {
     if let Some(init) = &local.init {
         walk_expr(&init.expr, ctx);
 
+        // `let PAT = EXPR else { ... }` (let-else): the divergent `else` block
+        // lives in `init.diverge`, separate from `init.expr`. Walk it so calls
+        // and references inside the `else` block (commonly `return`/`bail!`/
+        // panic paths) are not silently dropped from the graph.
+        if let Some((_else_token, diverge)) = &init.diverge {
+            walk_expr(diverge, ctx);
+        }
+
         // ASSIGNED_FROM edges: each binding ← init expression
         // For simple expressions (path, lit), emit direct edge
         if let Some(init_node_id) = expr_node_id(&init.expr, ctx) {
@@ -2211,6 +2219,27 @@ mod tests {
     }
 
     #[test]
+    fn test_let_else_diverge_block_walks_calls() {
+        // `let PAT = EXPR else { ... }` (let-else, stable since Rust 1.65).
+        // syn models the divergent `else { ... }` block as `LocalInit.diverge`,
+        // a separate field from `init.expr`. walk_let must descend into it,
+        // otherwise every call/reference inside the `else` block is silently
+        // dropped from the graph — the same class as the inline-const / macro
+        // walk-body gaps above.
+        let fa = parse_and_analyze(
+            "fn main() { let Some(x) = maybe() else { fallback(); return; }; let _ = x; }
+             fn maybe() -> Option<i32> { None } fn fallback() {}",
+        );
+        // The initializer side already worked; assert it as a baseline.
+        assert!(has_node(&fa, "CALL", "maybe"), "CALL maybe from let-else initializer");
+        // The regression target: the call inside the `else` block.
+        assert!(
+            has_node(&fa, "CALL", "fallback"),
+            "CALL fallback nested in let-else `else` block must be walked into the graph"
+        );
+    }
+
+    #[test]
     fn test_type_annotation_on_param() {
         let fa = parse_and_analyze("fn foo(x: i32, seg: NodeSegmentV2) {}");
         let x = fa.nodes.iter().find(|n| n.node_type == "PARAMETER" && n.name == "x").unwrap();
@@ -2774,6 +2803,8 @@ mod tests {
             .find(|n| n.node_type == "FUNCTION" && n.name == "puts")
             .expect("FUNCTION puts");
         assert_eq!(f.metadata.get("abi"), Some(&serde_json::json!("C")));
+    }
+
     // Associated items inside `impl` blocks and `trait` definitions used to be
     // silently dropped (ImplItem::Const/Type were empty no-ops; walk_trait only
     // matched TraitItem::Fn), so `Self::MAX` and associated-type queries returned
@@ -2821,6 +2852,8 @@ mod tests {
         assert!(has_edge(&fa, "CONTAINS", "TRAIT", "TYPE_ALIAS"), "TRAIT CONTAINS type");
         // The function signature is still emitted alongside the associated type.
         assert_eq!(count_nodes(&fa, "TYPE_SIGNATURE"), 1);
+    }
+
     // ── Macro invocations ───────────────────────────────────────────────
     // `syn` does not expand macros, so before this fix `Expr::Macro` and
     // `Stmt::Macro` were dropped entirely. That violated KNOWN_LIMITATIONS'
