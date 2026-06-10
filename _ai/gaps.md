@@ -286,3 +286,14 @@ identical across generations are not tombstoned by changed-file deletion).
    the plugin retires (pack can't rewrite or retract it). Document or co-own _source='shape-verifier'.
 7. **Cache pinning for always-scratch programs**: node-materializing entries still pin prior
    snapshots in datalog2_materialize_cache for zero benefit; skip the insert.
+
+## Two JS-analyzer producer bugs found by Wave-0 live probing (2026-06-10, wf_07c95bfd-e52)
+
+1. **Multi-declarator export loses declarators 2+**: `export const a = 1, b = 2` emits the
+   EXPORTS edge and the export-index entry only for `a` (Declarations.hs:617-621 one-edge vs
+   :137 per-declarator flag); `b` has exported=true node-level but is invisible to EXPORT-based
+   consumers. Zero instances in the dogfood corpus (verified by grep) so the differential harness
+   is unaffected — but a REAL subset-delta on other corpora. Fix in Declarations.hs.
+2. **EXPORT sid collision**: two `export` statements in one file both emit semantic id
+   `<file>->EXPORT->named` and merge into ONE node in-graph. Latent producer bug; fix the sid to
+   include position/name.

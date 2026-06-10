@@ -209,6 +209,62 @@ fn resolve_jobs_notice(flag: &str, requested: Option<usize>) -> Option<String> {
     }
 }
 
+/// Language keys accepted by `GRAFEMA_SKIP_RESOLVERS` (per-language native
+/// resolve skip-flags for the resolve→datalog2 differential harness,
+/// `_ai/research/resolve-datalog2-migration-synthesis.md` Wave 0).
+const SKIP_RESOLVER_KEYS: [&str; 11] = [
+    "js", "rust", "haskell", "beam", "java", "kotlin", "python", "go", "cpp", "swift", "objc",
+];
+
+/// Parse a `GRAFEMA_SKIP_RESOLVERS` value (comma-separated language keys,
+/// case-insensitive, whitespace-tolerant) into the set of skipped keys.
+/// Unknown keys are surfaced loudly and dropped — a typo must not silently
+/// leave a native resolver running when the harness expects it disabled.
+fn parse_skip_resolvers(raw: &str) -> std::collections::HashSet<String> {
+    let mut keys = std::collections::HashSet::new();
+    for key in raw.split(',').map(|k| k.trim().to_ascii_lowercase()) {
+        if key.is_empty() {
+            continue;
+        }
+        if SKIP_RESOLVER_KEYS.contains(&key.as_str()) {
+            keys.insert(key);
+        } else {
+            tracing::warn!(
+                "GRAFEMA_SKIP_RESOLVERS: unknown language key '{key}' ignored (known keys: {})",
+                SKIP_RESOLVER_KEYS.join(", ")
+            );
+        }
+    }
+    keys
+}
+
+/// Whether the native resolve phase for `lang_key` is disabled via the
+/// `GRAFEMA_SKIP_RESOLVERS` env var (comma-separated keys, see
+/// [`SKIP_RESOLVER_KEYS`]). Used by the datalog2 differential harness to run
+/// analyze WITHOUT a native resolver so a Datalog pack produces the edges
+/// instead. Unset / empty = never skip (no behavior change).
+///
+/// Cross-language phases are skipped when EITHER constituent language is
+/// listed (apple-cross = swift+objc, jvm-cross = java+kotlin); `objc` only
+/// affects apple-cross — there is no Obj-C-only resolve phase.
+///
+/// Returns `true` with a loud warning naming the flag when skipped.
+fn skip_resolver(lang_key: &str) -> bool {
+    static SKIPPED: std::sync::OnceLock<std::collections::HashSet<String>> =
+        std::sync::OnceLock::new();
+    let skipped = SKIPPED.get_or_init(|| {
+        parse_skip_resolvers(&std::env::var("GRAFEMA_SKIP_RESOLVERS").unwrap_or_default())
+    });
+    if skipped.contains(lang_key) {
+        tracing::warn!(
+            "GRAFEMA_SKIP_RESOLVERS: skipping the native {lang_key} resolve phase — \
+             its edges must come from a Datalog pack (differential-harness mode)"
+        );
+        return true;
+    }
+    false
+}
+
 /// Detect available system memory in GB.
 ///
 /// Linux: reads MemAvailable from /proc/meminfo (accounts for caches/buffers).
@@ -1106,7 +1162,7 @@ async fn main() -> Result<()> {
             let file_to_module = build_file_to_module_map(&mut rfdb).await;
 
             // 8. Run JS resolution with per-file streaming (build-index + resolve-file)
-            if js_file_count > 0 {
+            if js_file_count > 0 && !skip_resolver("js") {
                 let lang_start = std::time::Instant::now();
                 eprintln!("  Resolution: JS/TS (per-file streaming, 1 worker)...");
                 profile!("js_resolve_start", "workers" => 1);
@@ -1185,7 +1241,7 @@ async fn main() -> Result<()> {
             }
 
             // 8a. Run Haskell resolution (streaming)
-            if !hs_files.is_empty() {
+            if !hs_files.is_empty() && !skip_resolver("haskell") {
                 let lang_start = std::time::Instant::now();
                 profile!("haskell_resolve_start");
                 let hs_pool_config = process_pool::PoolConfig {
@@ -1233,7 +1289,7 @@ async fn main() -> Result<()> {
             }
 
             // 8b. Run Rust resolution (streaming)
-            if !rs_files.is_empty() {
+            if !rs_files.is_empty() && !skip_resolver("rust") {
                 let lang_start = std::time::Instant::now();
                 profile!("rust_resolve_start");
                 let rs_pool_config = process_pool::PoolConfig {
@@ -1282,7 +1338,7 @@ async fn main() -> Result<()> {
             }
 
             // 8c. Run Java resolution (streaming)
-            if !java_files.is_empty() {
+            if !java_files.is_empty() && !skip_resolver("java") {
                 let lang_start = std::time::Instant::now();
                 profile!("java_resolve_start");
                 let pool_cfg = process_pool::PoolConfig {
@@ -1318,7 +1374,7 @@ async fn main() -> Result<()> {
             }
 
             // 8d. Run Kotlin resolution (streaming)
-            if !kotlin_files.is_empty() {
+            if !kotlin_files.is_empty() && !skip_resolver("kotlin") {
                 let lang_start = std::time::Instant::now();
                 profile!("kotlin_resolve_start");
                 let pool_cfg = process_pool::PoolConfig {
@@ -1354,7 +1410,7 @@ async fn main() -> Result<()> {
             }
 
             // 8e. Run Python resolution (streaming)
-            if !py_files.is_empty() {
+            if !py_files.is_empty() && !skip_resolver("python") {
                 let lang_start = std::time::Instant::now();
                 profile!("python_resolve_start");
                 let pool_cfg = process_pool::PoolConfig {
@@ -1390,7 +1446,7 @@ async fn main() -> Result<()> {
             }
 
             // 8f. Run Go resolution (streaming)
-            if !go_files.is_empty() {
+            if !go_files.is_empty() && !skip_resolver("go") {
                 let lang_start = std::time::Instant::now();
                 profile!("go_resolve_start");
                 let go_module_path = config::discover_go_module_path(&cfg.root);
@@ -1435,7 +1491,7 @@ async fn main() -> Result<()> {
             }
 
             // 8g. Run Swift resolution (streaming)
-            if !swift_files.is_empty() {
+            if !swift_files.is_empty() && !skip_resolver("swift") {
                 let lang_start = std::time::Instant::now();
                 profile!("swift_resolve_start");
                 let pool_cfg = process_pool::PoolConfig {
@@ -1471,7 +1527,11 @@ async fn main() -> Result<()> {
             }
 
             // 8h. Run Apple cross-language resolution (streaming, Swift + Obj-C)
-            if !swift_files.is_empty() && !objc_files.is_empty() {
+            if !swift_files.is_empty()
+                && !objc_files.is_empty()
+                && !skip_resolver("swift")
+                && !skip_resolver("objc")
+            {
                 let lang_start = std::time::Instant::now();
                 profile!("apple_cross_resolve_start");
                 let pool_cfg = process_pool::PoolConfig {
@@ -1505,7 +1565,11 @@ async fn main() -> Result<()> {
             }
 
             // 8i. Run JVM cross-language resolution (streaming, Java + Kotlin)
-            if !java_files.is_empty() && !kotlin_files.is_empty() {
+            if !java_files.is_empty()
+                && !kotlin_files.is_empty()
+                && !skip_resolver("java")
+                && !skip_resolver("kotlin")
+            {
                 let lang_start = std::time::Instant::now();
                 profile!("jvm_cross_resolve_start");
                 let pool_cfg = process_pool::PoolConfig {
@@ -1544,7 +1608,7 @@ async fn main() -> Result<()> {
             }
 
             // 8j. Run C/C++ resolution (streaming)
-            if !cpp_files.is_empty() {
+            if !cpp_files.is_empty() && !skip_resolver("cpp") {
                 let lang_start = std::time::Instant::now();
                 profile!("cpp_resolve_start");
                 let pool_cfg = process_pool::PoolConfig {
@@ -1580,7 +1644,7 @@ async fn main() -> Result<()> {
             }
 
             // 8k. Run BEAM resolution (streaming)
-            if !beam_files.is_empty() {
+            if !beam_files.is_empty() && !skip_resolver("beam") {
                 let lang_start = std::time::Instant::now();
                 profile!("beam_resolve_start");
                 let pool_cfg = process_pool::PoolConfig {
@@ -2111,7 +2175,7 @@ async fn main() -> Result<()> {
             let mut all_imports_from_edges: Vec<(String, String)> = Vec::new();
 
             // --- JS resolution (per-file streaming) ---
-            if detected_langs.contains(&config::Language::JavaScript) {
+            if detected_langs.contains(&config::Language::JavaScript) && !skip_resolver("js") {
                 let lang_start = std::time::Instant::now();
                 eprintln!("  Resolve: JS/TS (per-file streaming, 1 worker)...");
 
@@ -2161,7 +2225,7 @@ async fn main() -> Result<()> {
             }
 
             // --- Haskell resolution ---
-            if detected_langs.contains(&config::Language::Haskell) {
+            if detected_langs.contains(&config::Language::Haskell) && !skip_resolver("haskell") {
                 let lang_start = std::time::Instant::now();
                 eprintln!("  Resolve: Haskell...");
                 let pool_cfg = process_pool::PoolConfig {
@@ -2202,7 +2266,7 @@ async fn main() -> Result<()> {
             }
 
             // --- Rust resolution ---
-            if detected_langs.contains(&config::Language::Rust) {
+            if detected_langs.contains(&config::Language::Rust) && !skip_resolver("rust") {
                 let lang_start = std::time::Instant::now();
                 eprintln!("  Resolve: Rust...");
                 let pool_cfg = process_pool::PoolConfig {
@@ -2244,7 +2308,7 @@ async fn main() -> Result<()> {
             }
 
             // --- Java resolution ---
-            if detected_langs.contains(&config::Language::Java) {
+            if detected_langs.contains(&config::Language::Java) && !skip_resolver("java") {
                 let lang_start = std::time::Instant::now();
                 eprintln!("  Resolve: Java...");
                 let pool_cfg = process_pool::PoolConfig {
@@ -2275,7 +2339,7 @@ async fn main() -> Result<()> {
             }
 
             // --- Kotlin resolution ---
-            if detected_langs.contains(&config::Language::Kotlin) {
+            if detected_langs.contains(&config::Language::Kotlin) && !skip_resolver("kotlin") {
                 let lang_start = std::time::Instant::now();
                 eprintln!("  Resolve: Kotlin...");
                 let pool_cfg = process_pool::PoolConfig {
@@ -2306,7 +2370,7 @@ async fn main() -> Result<()> {
             }
 
             // --- Python resolution ---
-            if detected_langs.contains(&config::Language::Python) {
+            if detected_langs.contains(&config::Language::Python) && !skip_resolver("python") {
                 let lang_start = std::time::Instant::now();
                 eprintln!("  Resolve: Python...");
                 let pool_cfg = process_pool::PoolConfig {
@@ -2337,7 +2401,7 @@ async fn main() -> Result<()> {
             }
 
             // --- Go resolution ---
-            if detected_langs.contains(&config::Language::Go) {
+            if detected_langs.contains(&config::Language::Go) && !skip_resolver("go") {
                 let lang_start = std::time::Instant::now();
                 eprintln!("  Resolve: Go...");
                 let go_module_path = config::discover_go_module_path(&cfg.root);
@@ -2377,7 +2441,7 @@ async fn main() -> Result<()> {
             }
 
             // --- Swift resolution ---
-            if detected_langs.contains(&config::Language::Swift) {
+            if detected_langs.contains(&config::Language::Swift) && !skip_resolver("swift") {
                 let lang_start = std::time::Instant::now();
                 eprintln!("  Resolve: Swift...");
                 let pool_cfg = process_pool::PoolConfig {
@@ -2410,6 +2474,8 @@ async fn main() -> Result<()> {
             // --- Apple cross-language resolution (Swift + Obj-C) ---
             if detected_langs.contains(&config::Language::Swift)
                 && detected_langs.contains(&config::Language::ObjectiveC)
+                && !skip_resolver("swift")
+                && !skip_resolver("objc")
             {
                 let lang_start = std::time::Instant::now();
                 eprintln!("  Resolve: Apple cross-language...");
@@ -2441,6 +2507,8 @@ async fn main() -> Result<()> {
             // --- JVM cross-language resolution (Java + Kotlin) ---
             if detected_langs.contains(&config::Language::Java)
                 && detected_langs.contains(&config::Language::Kotlin)
+                && !skip_resolver("java")
+                && !skip_resolver("kotlin")
             {
                 let lang_start = std::time::Instant::now();
                 eprintln!("  Resolve: JVM cross-language...");
@@ -2475,7 +2543,7 @@ async fn main() -> Result<()> {
             }
 
             // --- C/C++ resolution ---
-            if detected_langs.contains(&config::Language::Cpp) {
+            if detected_langs.contains(&config::Language::Cpp) && !skip_resolver("cpp") {
                 let lang_start = std::time::Instant::now();
                 eprintln!("  Resolve: C/C++...");
                 let pool_cfg = process_pool::PoolConfig {
@@ -2506,7 +2574,7 @@ async fn main() -> Result<()> {
             }
 
             // --- BEAM resolution ---
-            if detected_langs.contains(&config::Language::Beam) {
+            if detected_langs.contains(&config::Language::Beam) && !skip_resolver("beam") {
                 let lang_start = std::time::Instant::now();
                 eprintln!("  Resolve: BEAM...");
                 let pool_cfg = process_pool::PoolConfig {
@@ -3051,6 +3119,42 @@ mod tests {
         assert!(resolve_jobs_notice("--jobs", Some(0)).is_some());
         // The flag name is threaded through (resolve subcommand uses --jobs).
         assert!(resolve_jobs_notice("--jobs", Some(4)).unwrap().contains("--jobs"));
+    }
+
+    /// Wave-0 skip-flags (resolve→datalog2 synthesis): unset/empty env value must
+    /// change nothing — no language is skipped.
+    #[test]
+    fn skip_resolvers_empty_means_no_skip() {
+        assert!(parse_skip_resolvers("").is_empty());
+        assert!(parse_skip_resolvers("  ").is_empty());
+        assert!(parse_skip_resolvers(",,").is_empty());
+    }
+
+    /// Comma-separated keys parse case-insensitively, whitespace-tolerant, and
+    /// every documented language key is accepted.
+    #[test]
+    fn skip_resolvers_parses_listed_keys() {
+        let set = parse_skip_resolvers(" js, RUST ,haskell");
+        assert!(set.contains("js") && set.contains("rust") && set.contains("haskell"));
+        assert_eq!(set.len(), 3);
+
+        // All 11 documented keys round-trip.
+        let all = SKIP_RESOLVER_KEYS.join(",");
+        let set = parse_skip_resolvers(&all);
+        for key in SKIP_RESOLVER_KEYS {
+            assert!(set.contains(key), "key '{key}' must be accepted");
+        }
+        assert_eq!(set.len(), SKIP_RESOLVER_KEYS.len());
+    }
+
+    /// A typo'd key must not poison the set: it is dropped (and warned about),
+    /// while valid keys in the same list still take effect.
+    #[test]
+    fn skip_resolvers_drops_unknown_keys() {
+        let set = parse_skip_resolvers("js,javascrpt,rust");
+        assert!(set.contains("js") && set.contains("rust"));
+        assert!(!set.contains("javascrpt"));
+        assert_eq!(set.len(), 2);
     }
 
     /// P3 (spec `:63` b): assert the legacy DEPENDS_ON fallback EXECUTES (its execution counter
