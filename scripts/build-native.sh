@@ -33,7 +33,11 @@ compute_hash() {
   # Include all source files, sorted for determinism.
   # Run find from inside the package dir so paths are relative (src/...),
   # matching the Rust orchestrator's hash computation.
-  (cd "$dir" && find src -type f \( -name '*.hs' -o -name '*.rs' \) 2>/dev/null | sort | \
+  # LC_ALL=C pins a byte-wise sort independent of the build host's locale, so the
+  # order matches the orchestrator's compute_source_hash (Rust string ordering).
+  # Without it, a glibc UTF-8 locale collates punctuation differently and the
+  # recomputed hash would not equal this .build-hash.
+  (cd "$dir" && find src -type f \( -name '*.hs' -o -name '*.rs' \) 2>/dev/null | LC_ALL=C sort | \
     xargs shasum -a 256 2>/dev/null | shasum -a 256 | cut -d' ' -f1)
 }
 

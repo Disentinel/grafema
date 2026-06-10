@@ -62,13 +62,30 @@ pub fn compute_source_hash(pkg_dir: &Path) -> Option<String> {
         return None;
     }
 
-    // Collect all source files, sorted
-    let mut files = BTreeSet::new();
-    collect_source_files(&src_dir, &mut files);
+    // Collect all source files (BTreeSet de-duplicates).
+    let mut file_set = BTreeSet::new();
+    collect_source_files(&src_dir, &mut file_set);
 
-    if files.is_empty() {
+    if file_set.is_empty() {
         return None;
     }
+
+    // Order files exactly like the shell pipeline in build-native.sh:
+    //   find src -type f ... | LC_ALL=C sort
+    // which byte-sorts the relative-path STRINGS ("src/Walker.hs" < "src/Walker/Types.hs"
+    // because '.' 0x2E < '/' 0x2F). A BTreeSet<PathBuf> iterates in PathBuf *component*
+    // order, which orders "src/Walker/Types.hs" before "src/Walker.hs" — a different
+    // sequence (hence a different final hash) whenever a file shares a name prefix with
+    // a sibling directory (the idiomatic nested-module layout, e.g. a `Walker` module
+    // with `Walker/` submodules). Re-sort by the same string `find | sort` produces so
+    // the recomputed hash equals the `.build-hash` sidecar and verify_binary doesn't
+    // falsely abort a fresh build with "Stale binary detected".
+    let mut files: Vec<PathBuf> = file_set.into_iter().collect();
+    files.sort_by(|a, b| {
+        let ra = a.strip_prefix(pkg_dir).unwrap_or(a).to_string_lossy();
+        let rb = b.strip_prefix(pkg_dir).unwrap_or(b).to_string_lossy();
+        ra.cmp(&rb)
+    });
 
     // Replicate the shell script's approach:
     // find src/ -type f \( -name '*.hs' -o -name '*.rs' \) | sort | xargs shasum -a 256 | shasum -a 256
@@ -273,6 +290,52 @@ mod tests {
         fs::write(src.join("Lib.hs"), "module Lib where\nfoo = 43\n").unwrap();
         let hash3 = compute_source_hash(&tmp).unwrap();
         assert_ne!(hash1, hash3, "Hash should change when source changes");
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_nested_module_matches_string_sort_order() {
+        // Regression: a `Foo.hs` file sitting beside a `Foo/` directory is the
+        // idiomatic nested-module layout (e.g. `src/Walker.hs` + `src/Walker/Types.hs`).
+        // The `.build-hash` sidecar is written by build-native.sh, which orders files
+        // with `find src ... | sort` — a byte-wise sort of the path STRINGS, so
+        // "src/Walker.hs" precedes "src/Walker/Types.hs" ('.' 0x2E < '/' 0x2F).
+        // `compute_source_hash` must reproduce that exact order, otherwise the
+        // recomputed hash differs from `.build-hash` and `verify_binary` falsely
+        // aborts analysis with "Stale binary detected" on a perfectly fresh build.
+        let tmp = std::env::temp_dir().join(format!("grafema-hash-nested-{}", std::process::id()));
+        let src = tmp.join("src");
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(src.join("Walker")).unwrap();
+
+        fs::write(src.join("Main.hs"), "module Main where\n").unwrap();
+        fs::write(src.join("Walker.hs"), "module Walker where\n").unwrap();
+        fs::write(src.join("Walker").join("Types.hs"), "module Walker.Types where\n").unwrap();
+
+        // Oracle: replicate the shell pipeline's ordering independently — sort the
+        // relative-path strings (byte order, == `LC_ALL=C sort`), then for each file
+        // emit "sha256(content)  relpath\n" and hash the concatenation.
+        use std::fmt::Write;
+        let mut rels: Vec<(String, PathBuf)> = vec![
+            ("src/Main.hs".to_string(), src.join("Main.hs")),
+            ("src/Walker.hs".to_string(), src.join("Walker.hs")),
+            ("src/Walker/Types.hs".to_string(), src.join("Walker").join("Types.hs")),
+        ];
+        rels.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut expected_concat = String::new();
+        for (rel, path) in &rels {
+            let content = fs::read(path).unwrap();
+            let _ = writeln!(expected_concat, "{}  {}", sha256_hex(&content), rel);
+        }
+        let expected = sha256_hex(expected_concat.as_bytes());
+
+        let actual = compute_source_hash(&tmp).unwrap();
+        assert_eq!(
+            actual, expected,
+            "compute_source_hash must order files by path STRING (matching \
+             `find src | sort`), not by PathBuf component order"
+        );
 
         let _ = fs::remove_dir_all(&tmp);
     }
