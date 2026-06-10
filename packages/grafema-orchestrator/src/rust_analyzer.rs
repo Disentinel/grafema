@@ -1861,7 +1861,9 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
             });
         }
         syn::Expr::Macro(_) => {}
-        syn::Expr::Const(_) => {}
+        // Inline `const { ... }` block — walk its body like Unsafe/Async blocks
+        // so nested calls/references are not silently dropped from the graph.
+        syn::Expr::Const(e) => walk_block(&e.block, ctx),
         syn::Expr::Infer(_) => {}
         syn::Expr::Verbatim(_) => {}
 
@@ -2034,6 +2036,20 @@ mod tests {
         assert!(has_node(&fa, "CALL", "push"), "CALL push");
         let call = fa.nodes.iter().find(|n| n.node_type == "CALL" && n.name == "push").unwrap();
         assert_eq!(call.metadata.get("method"), Some(&serde_json::json!(true)));
+    }
+
+    #[test]
+    fn test_inline_const_block_walks_body() {
+        // syn::Expr::Const — inline `const { ... }` block expression (Rust 1.79+).
+        // Its body is a syn::Block and must be walked like Expr::Unsafe / Expr::Async,
+        // otherwise nested calls/references are silently dropped from the call graph.
+        let fa = parse_and_analyze(
+            "fn main() { let _x = const { helper() }; }  const fn helper() -> i32 { 0 }",
+        );
+        assert!(
+            has_node(&fa, "CALL", "helper"),
+            "CALL helper nested in inline const block must be emitted"
+        );
     }
 
     #[test]
