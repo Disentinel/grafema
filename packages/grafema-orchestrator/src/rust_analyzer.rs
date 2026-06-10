@@ -2008,6 +2008,15 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
         syn::Expr::Infer(_) => {}
         syn::Expr::Verbatim(_) => {}
 
+        // Raw reference operator `&raw const expr` / `&raw mut expr`
+        // (stable since Rust 1.82). The operand is a place expression that may
+        // contain nested calls/references; walk it like `Reference`/`Unary` so
+        // they reach the graph.
+        syn::Expr::RawAddr(e) => walk_expr(&e.expr, ctx),
+        // `try { ... }` block (unstable): carries a `syn::Block` like
+        // `Unsafe`/`Async`; walk its body so nested calls/references survive.
+        syn::Expr::TryBlock(e) => walk_block(&e.block, ctx),
+
         _ => ctx.warn_unhandled("Expr", ""),
     }
 }
@@ -2215,6 +2224,43 @@ mod tests {
         let fa = parse_and_analyze("fn main() { let x: u64 = 42; }");
         let x = fa.nodes.iter().find(|n| n.node_type == "VARIABLE" && n.name == "x").unwrap();
         assert_eq!(x.metadata.get("typeAnnotation"), Some(&serde_json::json!("u64")));
+    }
+
+    #[test]
+    fn test_raw_ref_operand_is_walked() {
+        // `&raw const expr` / `&raw mut expr` is the raw-reference operator,
+        // STABLE since Rust 1.82. Its operand is a place expression that can
+        // contain nested calls/references. Before the fix this variant fell
+        // through `walk_expr`'s unhandled-variant `panic!`, so the entire file
+        // was dropped from the graph (analysis: None) — not just the operand.
+        // The operand must be walked like `Reference`/`Unary`/`Cast`.
+        let fa = parse_and_analyze(
+            "fn main() { let _p = &raw mut buf()[idx()]; }  \
+             fn buf() -> [u8; 4] { [0; 4] }  fn idx() -> usize { 0 }",
+        );
+        assert!(
+            has_node(&fa, "CALL", "buf"),
+            "CALL buf nested in &raw mut operand must be emitted (file not dropped)"
+        );
+        assert!(
+            has_node(&fa, "CALL", "idx"),
+            "CALL idx nested in the raw-ref index must be emitted"
+        );
+    }
+
+    #[test]
+    fn test_try_block_body_is_walked() {
+        // `try { ... }` block (unstable): like `&raw`, it previously fell
+        // through to the unhandled-variant `panic!`. It carries a `syn::Block`
+        // and must be walked like `Unsafe`/`Async` so nested calls survive.
+        let fa = parse_and_analyze(
+            "fn main() { let _r: Result<(), ()> = try { helper()?; }; }  \
+             fn helper() -> Result<(), ()> { Ok(()) }",
+        );
+        assert!(
+            has_node(&fa, "CALL", "helper"),
+            "CALL helper nested in try-block body must be emitted (file not dropped)"
+        );
     }
 
     #[test]
