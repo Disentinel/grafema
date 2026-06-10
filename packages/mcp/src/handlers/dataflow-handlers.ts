@@ -271,7 +271,9 @@ export async function handleExplain(args: ExplainArgs): Promise<ToolResult> {
   const dfDb = db as unknown as DataflowBackend;
   const sections: string[] = [];
 
-  const nodeType = targetNode.nodeType || targetNode.type;
+  // RFDBServerBackend._parseNode emits the canonical `type` field and strips
+  // `nodeType`, so read `type` (the old `nodeType ||` prefix was always undefined).
+  const nodeType = targetNode.type;
   const nodeName = targetNode.name || target;
   const nodeFile = targetNode.file || '';
 
@@ -295,13 +297,13 @@ export async function handleExplain(args: ExplainArgs): Promise<ToolResult> {
     for (const edge of allOutEdges.slice(0, 15)) {
       if (['CALLS', 'CONTAINS', 'HAS_SCOPE'].includes(edge.type)) {
         const dst = await db.getNode(edge.dst);
-        if (dst) outSummary.push(`${edge.type} → ${dst.nodeType} "${dst.name}"`);
+        if (dst) outSummary.push(`${edge.type} → ${dst.type} "${dst.name}"`);
       }
     }
     for (const edge of allInEdges.slice(0, 15)) {
       if (['CALLS', 'CONTAINS'].includes(edge.type)) {
         const src = await db.getNode(edge.src);
-        if (src) inSummary.push(`${edge.type} ← ${src.nodeType} "${src.name}"`);
+        if (src) inSummary.push(`${edge.type} ← ${src.type} "${src.name}"`);
       }
     }
     if (outSummary.length) sections.push(`### Outgoing\n${outSummary.join('\n')}`);
