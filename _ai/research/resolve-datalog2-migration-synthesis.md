@@ -2,6 +2,34 @@ I have enough grounding (verified the stdlib packs exist, the prior synthesis do
 
 # Resolver → datalog2 migration — synthesis (resolve round, 2026-06-10)
 
+## ✅ WAVE 1 DIFFERENTIAL — PASS (2026-06-10 evening, run B vs legacy baseline)
+
+Run B = full analyze with GRAFEMA_SKIP_RESOLVERS=js,rust + the 8-pack runner: **446s wall**
+(vs 576s with legacy js/rust on), packs: js_local_refs 21.0s/37 595 READS_FROM,
+js_same_file_calls 23.7s/715, js_this_method_calls 8.3s/1, rust_calls 17.9s/7 995,
+method_calls 5.6s/2 660, shape_verifier 7.5s/14, axum_routes 28.3s/18.
+
+Sampled per-node differential (1 200 REFERENCE + 1 200 CALL nodes, keyed queryEdges probes —
+bulk getAllEdges is NOT viable: v3 sid-resolution AND client-side parse both blow 900s):
+- **REFERENCE→READS_FROM recall 98.5%** (931/945; +169 pack-only = documented set-semantics
+  superset deltas; 14 legacy-only ≈ delta classes).
+- CALL→CALLS overall recall 42.3% — **fully classified**: of 616 legacy-only edges, 430
+  cross-file(rs) (≈all → <runtime/rust> globals = Wave 4 + cross-crate = Wave 1b), 150
+  cross-file(ts) (runtime/js globals + Wave-1b cross-file), 20 builtins (Wave 2), 12
+  cross-file(hs) = the haskell resolver's OWN run-to-run nondeterminism (ambiguous emitEdge
+  across 16 packages; it ran in BOTH runs), and **only 4 SAME-FILE misses = the true Wave-1
+  scope gap (0.6%)** (3 rs same-name fn-call corners + 1 call-through-variable).
+- **In-scope verdict: Wave 1 ≈ 99.4% same-file CALLS recall, 98.5% READS_FROM — PASS.**
+
+Production stance: legacy resolvers stay ON alongside the packs (additive dedup makes the
+overlap free) until Waves 1b–3 cover cross-file + builtins + globals; GRAFEMA_SKIP_RESOLVERS
+remains the harness/feature flag. js_this_method_calls produced 1 edge in shadow — expected:
+the B1 arm of js_same_file_calls covers the bulk and the file-flat exactly-one rule is strict;
+revisit when legacy is gated. Side-findings: getAllEdges wire API unusable at 860k edges (v3
+sid-resolution per edge; W9 note), abandoned bulk dumps grind servers for 15+ min after client
+death (the W8 disconnect-cancel bug, observed 3× today).
+
+
 Source: verified specs + adversarial verdicts for **js-resolve** (8 resolvers, `packages/grafema-resolve/src/`) and **rust-resolve** (5 commands, `packages/rust-resolve/src/`), this round. Prior round (plugins): `plugin-datalog2-migration-specs.json` / `plugin-datalog2-migration-synthesis.md`. Reference pattern: `packages/rfdb-server/src/datalog2/stdlib/{depends,method_calls,shape_verifier,axum_routes}.dl` + their `stdlib.rs` fixture tests. All js-resolve verdict corrections are folded in below (notably: the builtins delta was **backwards**, `binding_import` emits **wrong** edges without `node_attr`, the module-existence check is ExportIndex not MODULE-presence, the workspace sub-path arm and the builtins direct-call arm were dropped, ground-facts support is parse-only evidence).
 
 Branch: `feat/datalog`. Orchestrator drive points: JS `main.rs:1108-1186` (+ second full-graph pass `:1151-1168`), Rust `main.rs:1236-1283` (`stream_and_resolve_single_worker`, commands `rust-imports / rust-calls / rust-cross-methods / rust-trait-resolve / rust-globals`). Each language's resolve phase is independently skippable for the differential harness.
