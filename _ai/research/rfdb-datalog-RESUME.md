@@ -40,6 +40,25 @@ the §8 maps: `_ai/research/rfdb-datalog-gateB-residual-map.md`.
 **Standing (user, 2026-06-07):** commit freely on `feat/datalog` without asking; NEVER push
 without explicit permission.
 
+## ✅ W5 FINAL MEASUREMENT (2026-06-10 10:37) — the user's end-goal MET
+
+Fresh full reanalysis of grafema (rm -rf graph.rfdb, RFDB_DATALOG_V2=on, all four packs via the
+orchestrator pack-runner, the 3 replaced .mjs plugins + dangling semantic-bridge removed from
+.grafema/config.yaml):
+
+| Datalog phase (target ≤60s vs the 900s timeout) | time | output |
+|---|---|---|
+| depends.dl (scratch, cold engine) | 8.7s (was 202-392s) | 1724 DEPENDS_ON |
+| @stdlib/method_calls | 4.2s | 2628 CALLS (plugin: 60s timeout, 0) |
+| @stdlib/shape_verifier | 5.7s | 0 (no violations on own code; mechanics fixture+smoke-proven) |
+| @stdlib/axum_routes | 20.0s | 18 route edges (grafema's real axum routes) |
+| **TOTAL datalog phase** | **38.6s** | |
+
+Full analyze wall: **576s = 9.6 min** (prev clean run 1397s): analysis 90s, commit 87s,
+resolve 429s (now 75% of wall — the next analyze-wall lever, W7), diagnostics 8.4s.
+Graph: 414 871 nodes / 761 488 edges. axum_routes @20s is the slowest pack — W6 (parallel eval)
+and W9 (stats) territory.
+
 ## ROADMAP W6-W9 — big-codebase scaling (user-approved 2026-06-10, after W5)
 
 - **W6 — parallel eval (rayon) + build-once index cache.** Evaluator is single-threaded (0 rayon
