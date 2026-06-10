@@ -266,3 +266,23 @@ ephemeral. Until then: the only real clear is `rm -rf .grafema/graph.rfdb` befor
 **Also:** why do exactly ~15.5k edges survive `--force` per-file deletion while the rest are
 superseded? Worth understanding the per-file delete path (suspect: edges whose src node id is
 identical across generations are not tombstoned by changed-file deletion).
+
+## @materialize_node advisory follow-ups (W4 review wf_4abcf48c-1d8, 2026-06-10 — none blocking)
+
+1. **All-numeric semantic-id drift**: plan_node_writeback blake3-hashes unconditionally;
+   the wire writer string_to_id() parses decimal FIRST — a bare-decimal sid mints a divergent
+   u128. Unreachable by shipped packs (prefixed sids); extend E-MAT-010 to reject all-decimal sids.
+2. **Auto-flush can tear run isolation under buffer pressure**: add_nodes/add_edges end with
+   maybe_auto_flush which publishes WITHOUT the run's pending tombstones — a mid-delta flush
+   shows adds before retractions (self-heals at the explicit flush). Suppress auto-flush during
+   materialize write-back or weaken the one-flush docstring.
+3. **attr(X,"type",T) bypasses the node-feedback stratifier dependency** (edge axis has no such
+   bypass — edge_attr can't read the edge type). Track attr-type-const in node_type_arg or fix docs.
+4. **O(owned²)**: removed_node_ids is a Vec scanned per node of the type; HashSet one-liner.
+5. **Never-rewrite staleness for OWNED nodes**: a re-derived owned node with a CHANGED surface
+   (e.g. ISSUE message after method rename on the same CALL) keeps the stale payload forever —
+   diverges from the plugin's last-write-wins; rewrite owned-changed nodes or record the delta.
+6. **Mixed-producer transition**: a plugin-written ISSUE at the same id is owned by NOBODY after
+   the plugin retires (pack can't rewrite or retract it). Document or co-own _source='shape-verifier'.
+7. **Cache pinning for always-scratch programs**: node-materializing entries still pin prior
+   snapshots in datalog2_materialize_cache for zero benefit; skip the insert.
