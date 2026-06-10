@@ -255,6 +255,39 @@ impl Ctx {
     fn meta_int(key: &str, val: i64) -> (String, serde_json::Value) {
         (key.to_string(), serde_json::json!(val))
     }
+
+    /// Record an unrecognised AST construct without aborting analysis of the file.
+    ///
+    /// `syn`'s `Item`/`Expr`/`Pat`/etc. enums are `#[non_exhaustive]`, and new
+    /// stable variants land with most Rust releases. Historically every walker's
+    /// catch-all arm `panic!`ed on a variant it didn't recognise. Because per-file
+    /// analysis runs inside `spawn_blocking`, that panic was caught upstream
+    /// (`analyze_rust_files_native`) and the ENTIRE file was discarded
+    /// (`analysis: None`) and mislabelled a `parse_error` — so a single
+    /// unrecognised construct (e.g. the `&raw const` operator, stable since Rust
+    /// 1.82) made every node and edge in an otherwise-parseable file vanish from
+    /// the graph. That directly violates the core thesis that the graph must be
+    /// trustworthy enough to query instead of reading the source.
+    ///
+    /// Instead we degrade gracefully: the unknown construct is skipped (its
+    /// children are not walked, so the graph for this file is partial) but the
+    /// rest of the file is still analysed, and the gap is surfaced as a
+    /// `tracing::warn!` so it is visible ("here be dragons") rather than silent.
+    /// `kind` is the enum name (e.g. `"Expr"`); `detail` is a concrete variant
+    /// name when known, or `""` when not.
+    fn warn_unhandled(&self, kind: &str, detail: &str) {
+        if detail.is_empty() {
+            tracing::warn!(
+                "rust_analyzer: unhandled {kind} variant in {} — skipping (graph for this file will be partial)",
+                self.file
+            );
+        } else {
+            tracing::warn!(
+                "rust_analyzer: unhandled {kind} variant `{detail}` in {} — skipping (graph for this file will be partial)",
+                self.file
+            );
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -492,7 +525,7 @@ fn walk_item(item: &syn::Item, ctx: &mut Ctx) {
         syn::Item::Union(u) => walk_union(u, ctx),
         syn::Item::TraitAlias(_) => {}
         syn::Item::Verbatim(_) => {}
-        _ => panic!("rust_analyzer: unhandled Item variant: {}", item_variant_name(item)),
+        _ => ctx.warn_unhandled("Item", item_variant_name(item)),
     }
 }
 
@@ -945,7 +978,7 @@ fn walk_impl_item(item: &syn::ImplItem, ctx: &mut Ctx) {
         syn::ImplItem::Type(_) => {}
         syn::ImplItem::Macro(_) => {}
         syn::ImplItem::Verbatim(_) => {}
-        _ => panic!("rust_analyzer: unhandled ImplItem variant"),
+        _ => ctx.warn_unhandled("ImplItem", ""),
     }
 }
 
@@ -1141,7 +1174,7 @@ fn walk_foreign_mod(fm: &syn::ItemForeignMod, ctx: &mut Ctx) {
             // unparsed tokens — neither introduces a resolvable symbol here.
             syn::ForeignItem::Macro(_) => {}
             syn::ForeignItem::Verbatim(_) => {}
-            _ => panic!("rust_analyzer: unhandled ForeignItem variant"),
+            _ => ctx.warn_unhandled("ForeignItem", ""),
         }
     }
 }
@@ -1490,7 +1523,7 @@ fn walk_pat_bindings(pat: &syn::Pat, kind: &str, ctx: &mut Ctx) {
         syn::Pat::Const(_) => {
             // const block pattern — no variable bindings
         }
-        _ => panic!("rust_analyzer: unhandled Pat variant in walk_pat_bindings"),
+        _ => ctx.warn_unhandled("Pat", ""),
     }
 }
 
@@ -1832,7 +1865,7 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
         syn::Expr::Infer(_) => {}
         syn::Expr::Verbatim(_) => {}
 
-        _ => panic!("rust_analyzer: unhandled Expr variant"),
+        _ => ctx.warn_unhandled("Expr", ""),
     }
 }
 
@@ -2302,16 +2335,30 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "unhandled")]
-    fn test_fail_early_on_unknown() {
-        // This test verifies the fail-early policy.
-        // syn::Expr::Verbatim won't panic (it's handled), but we can verify
-        // the mechanism works by checking that unknown items would panic.
-        // For now, verify that the module compiles with the panic branches.
-        let _ = parse_and_analyze("fn main() {}");
-        // If we get here, the basic case works. The panic branches are tested
-        // by the compiler — they exist in the match arms.
-        panic!("unhandled — test sentinel");
+    fn test_unhandled_expr_variant_degrades_gracefully() {
+        // `&raw const`/`&raw mut` (the raw-reference operator, stable since Rust
+        // 1.82) parses as `syn::Expr::RawAddr`, a variant this walker does not
+        // recognise, so it falls to the catch-all arm in `walk_expr`. That arm
+        // used to `panic!`; because per-file analysis runs inside
+        // `spawn_blocking`, the panic was caught upstream and the ENTIRE file was
+        // discarded (`analysis: None`, mislabelled `parse_error`).
+        //
+        // Invariant under test: one unrecognised construct must NOT erase the
+        // rest of an otherwise-parseable file. The file is still analysed; the
+        // unknown construct is simply skipped.
+        let fa = parse_and_analyze(
+            "fn make() { let x = 0u8; let p = &raw const x; helper(); } fn helper() {}",
+        );
+        assert!(has_node(&fa, "MODULE", "test"), "MODULE node survives");
+        assert!(has_node(&fa, "FUNCTION", "make"), "FUNCTION make survives");
+        assert!(
+            has_node(&fa, "FUNCTION", "helper"),
+            "sibling FUNCTION helper survives the unhandled RawAddr expr"
+        );
+        assert!(
+            has_node(&fa, "CALL", "helper"),
+            "CALL helper after the unhandled expr is still emitted"
+        );
     }
 
     #[test]
