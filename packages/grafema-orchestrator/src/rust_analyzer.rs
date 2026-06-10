@@ -974,8 +974,15 @@ fn walk_impl_item(item: &syn::ImplItem, ctx: &mut Ctx) {
             ctx.pop_scope();
             ctx.enclosing_fn = prev_fn;
         }
-        syn::ImplItem::Const(_) => {}
-        syn::ImplItem::Type(_) => {}
+        syn::ImplItem::Const(c) => {
+            emit_assoc_const(&c.ident, Some(&c.vis), ctx);
+            // Walk the initializer so the constant's value expression (calls,
+            // references, literals) participates in the graph like a free const.
+            walk_expr(&c.expr, ctx);
+        }
+        syn::ImplItem::Type(t) => {
+            emit_assoc_type(&t.ident, Some(&t.vis), ctx);
+        }
         syn::ImplItem::Macro(_) => {}
         syn::ImplItem::Verbatim(_) => {}
         _ => ctx.warn_unhandled("ImplItem", ""),
@@ -1010,24 +1017,98 @@ fn walk_trait(t: &syn::ItemTrait, ctx: &mut Ctx) {
 
     ctx.push_scope(&node_id, ScopeKind::Trait);
     for trait_item in &t.items {
-        if let syn::TraitItem::Fn(m) = trait_item {
-            let mname = m.sig.ident.to_string();
-            let (ml, mc) = ctx.span_line_col(m.sig.ident.span());
-            let sig_id = semantic_id(&ctx.file, "TYPE_SIGNATURE", &mname, Some(&node_id), None);
-            ctx.emit_node(GraphNode {
-                id: sig_id,
-                node_type: "TYPE_SIGNATURE".to_string(),
-                name: mname,
-                file: ctx.file.clone(),
-                line: ml, column: mc,
-                end_line: ctx.span_end_line_col(m.sig.ident.span()).0, end_column: ctx.span_end_line_col(m.sig.ident.span()).1,
-                exported: false,
-                metadata: HashMap::new(),
-                extra: HashMap::new(),
-            });
+        match trait_item {
+            syn::TraitItem::Fn(m) => {
+                let mname = m.sig.ident.to_string();
+                let (ml, mc) = ctx.span_line_col(m.sig.ident.span());
+                let sig_id = semantic_id(&ctx.file, "TYPE_SIGNATURE", &mname, Some(&node_id), None);
+                ctx.emit_node(GraphNode {
+                    id: sig_id,
+                    node_type: "TYPE_SIGNATURE".to_string(),
+                    name: mname,
+                    file: ctx.file.clone(),
+                    line: ml, column: mc,
+                    end_line: ctx.span_end_line_col(m.sig.ident.span()).0, end_column: ctx.span_end_line_col(m.sig.ident.span()).1,
+                    exported: false,
+                    metadata: HashMap::new(),
+                    extra: HashMap::new(),
+                });
+            }
+            // Trait items have no visibility (they are part of the trait's public
+            // contract), hence `None`.
+            syn::TraitItem::Const(c) => {
+                emit_assoc_const(&c.ident, None, ctx);
+                // A trait const may carry a default value: `const N: u32 = 0;`.
+                if let Some((_, expr)) = &c.default {
+                    walk_expr(expr, ctx);
+                }
+            }
+            syn::TraitItem::Type(ty) => {
+                emit_assoc_type(&ty.ident, None, ctx);
+            }
+            _ => {}
         }
     }
     ctx.pop_scope();
+}
+
+/// Emit a VARIABLE node for an associated constant (`const NAME: T [= ...];`)
+/// declared inside an `impl` block or `trait`. Mirrors the free-`const` modelling
+/// (walk_const) — node type VARIABLE, `kind: "const"`, `mutable: false` — but is
+/// parented to the enclosing impl/trait scope via the auto CONTAINS + DECLARES
+/// edges (emit_declaration) and tagged `associated: true` so queries can tell
+/// `Self::NAME` constants apart from free constants. `vis` is `Some` for impl
+/// items (which carry visibility) and `None` for trait items (which do not).
+fn emit_assoc_const(ident: &syn::Ident, vis: Option<&syn::Visibility>, ctx: &mut Ctx) {
+    let name = ident.to_string();
+    let (line, col) = ctx.span_line_col(ident.span());
+    let parent = ctx.scope_id().to_string();
+    let node_id = semantic_id(&ctx.file, "VARIABLE", &name, Some(&parent), None);
+
+    let mut metadata = HashMap::from([
+        Ctx::meta_text("kind", "const"),
+        Ctx::meta_bool("mutable", false),
+        Ctx::meta_bool("associated", true),
+    ]);
+    if let Some(v) = vis {
+        let (k, val) = Ctx::meta_text("visibility", vis_to_text(v));
+        metadata.insert(k, val);
+    }
+
+    ctx.emit_declaration(GraphNode {
+        id: node_id,
+        node_type: "VARIABLE".to_string(),
+        name,
+        file: ctx.file.clone(),
+        line, column: col,
+        end_line: ctx.span_end_line_col(ident.span()).0, end_column: ctx.span_end_line_col(ident.span()).1,
+        exported: vis.map(is_pub).unwrap_or(false),
+        metadata,
+        extra: HashMap::new(),
+    });
+}
+
+/// Emit a TYPE_ALIAS node for an associated type (`type NAME [= ...];`) declared
+/// inside an `impl` block or `trait`. Mirrors the free type-alias modelling
+/// (walk_type_alias) but is parented to the enclosing impl/trait scope and tagged
+/// `associated: true`. `vis` is `Some` for impl items and `None` for trait items.
+fn emit_assoc_type(ident: &syn::Ident, vis: Option<&syn::Visibility>, ctx: &mut Ctx) {
+    let name = ident.to_string();
+    let (line, col) = ctx.span_line_col(ident.span());
+    let parent = ctx.scope_id().to_string();
+    let node_id = semantic_id(&ctx.file, "TYPE_ALIAS", &name, Some(&parent), None);
+
+    ctx.emit_declaration(GraphNode {
+        id: node_id,
+        node_type: "TYPE_ALIAS".to_string(),
+        name,
+        file: ctx.file.clone(),
+        line, column: col,
+        end_line: ctx.span_end_line_col(ident.span()).0, end_column: ctx.span_end_line_col(ident.span()).1,
+        exported: vis.map(is_pub).unwrap_or(false),
+        metadata: HashMap::from([Ctx::meta_bool("associated", true)]),
+        extra: HashMap::new(),
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -2587,5 +2668,52 @@ mod tests {
             .find(|n| n.node_type == "FUNCTION" && n.name == "puts")
             .expect("FUNCTION puts");
         assert_eq!(f.metadata.get("abi"), Some(&serde_json::json!("C")));
+    // Associated items inside `impl` blocks and `trait` definitions used to be
+    // silently dropped (ImplItem::Const/Type were empty no-ops; walk_trait only
+    // matched TraitItem::Fn), so `Self::MAX` and associated-type queries returned
+    // nothing. They are now modelled like their free counterparts (const ->
+    // VARIABLE, type -> TYPE_ALIAS), parented to the enclosing impl/trait via the
+    // auto CONTAINS + DECLARES edges, with metadata `associated: true`.
+    #[test]
+    fn test_impl_associated_const() {
+        let fa = parse_and_analyze("struct Foo; impl Foo { const MAX: u32 = 10; }");
+        assert!(has_node(&fa, "VARIABLE", "MAX"), "associated const -> VARIABLE");
+        let c = fa.nodes.iter()
+            .find(|n| n.node_type == "VARIABLE" && n.name == "MAX").unwrap();
+        assert_eq!(c.metadata.get("kind"), Some(&serde_json::json!("const")));
+        assert_eq!(c.metadata.get("associated"), Some(&serde_json::json!(true)));
+        assert!(has_edge(&fa, "CONTAINS", "IMPL_BLOCK", "VARIABLE"), "IMPL_BLOCK CONTAINS const");
+        assert!(has_edge(&fa, "DECLARES", "IMPL_BLOCK", "VARIABLE"), "IMPL_BLOCK DECLARES const");
+        // The initializer expression is walked (literal 10 emitted).
+        assert!(has_node(&fa, "LITERAL", "10"), "const initializer literal walked");
+    }
+
+    #[test]
+    fn test_impl_associated_type() {
+        let fa = parse_and_analyze("struct Foo; impl Foo { type Out = i32; }");
+        assert!(has_node(&fa, "TYPE_ALIAS", "Out"), "associated type -> TYPE_ALIAS");
+        let t = fa.nodes.iter()
+            .find(|n| n.node_type == "TYPE_ALIAS" && n.name == "Out").unwrap();
+        assert_eq!(t.metadata.get("associated"), Some(&serde_json::json!(true)));
+        assert!(has_edge(&fa, "CONTAINS", "IMPL_BLOCK", "TYPE_ALIAS"), "IMPL_BLOCK CONTAINS type");
+    }
+
+    #[test]
+    fn test_trait_associated_const() {
+        let fa = parse_and_analyze("pub trait Limits { const MAX: u32; const MIN: u32 = 0; }");
+        assert!(has_node(&fa, "VARIABLE", "MAX"), "required associated const");
+        assert!(has_node(&fa, "VARIABLE", "MIN"), "defaulted associated const");
+        assert!(has_edge(&fa, "CONTAINS", "TRAIT", "VARIABLE"), "TRAIT CONTAINS const");
+        // The default initializer expression is walked (literal 0 emitted).
+        assert!(has_node(&fa, "LITERAL", "0"), "default const initializer walked");
+    }
+
+    #[test]
+    fn test_trait_associated_type() {
+        let fa = parse_and_analyze("pub trait Container { type Item; fn get(&self); }");
+        assert!(has_node(&fa, "TYPE_ALIAS", "Item"), "associated type decl -> TYPE_ALIAS");
+        assert!(has_edge(&fa, "CONTAINS", "TRAIT", "TYPE_ALIAS"), "TRAIT CONTAINS type");
+        // The function signature is still emitted alongside the associated type.
+        assert_eq!(count_nodes(&fa, "TYPE_SIGNATURE"), 1);
     }
 }
