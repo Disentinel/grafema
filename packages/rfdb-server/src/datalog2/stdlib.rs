@@ -114,27 +114,73 @@ pub const JS_THIS_METHOD_CALLS_DL: &str = include_str!("stdlib/js_this_method_ca
 /// additive, `resolvedVia = "rust-calls"` meta.
 pub const RUST_CALLS_DL: &str = include_str!("stdlib/rust_calls.dl");
 
+/// The bundled Rust resolved-constructor receiver-typing pack (Wave 1b) — the
+/// in-engine replacement for the resolved-constructor ARM of the
+/// `RustCrossMethodCalls.hs` resolver: `let w = Widget::new(); w.render()` —
+/// the receiver's init CALL resolved (committed CALLS edge) to a method of
+/// `impl TName` AND the init name contains `"TName::"` ⇒ method calls through
+/// that receiver resolve to `TName`'s IMPL_BLOCK methods (HAS_METHOD prelude
+/// shape). Reads CALLS from STORAGE while materializing CALLS (positive
+/// self-read, stratifier-accepted) — MUST run AFTER [`RUST_CALLS_DL`], the
+/// cross-pack EDB seam. Coverage SUBSET of the resolver arm (requires the init
+/// call to have resolved) — deltas numbered in the `.dl` header. `CALLS`
+/// additive, `resolvedVia = "rust-cross-method"` + `receiverType` meta.
+pub const RUST_CROSS_METHODS_CTOR_DL: &str = include_str!("stdlib/rust_cross_methods_ctor.dl");
+
+/// The bundled JS/TS cross-file call-resolution pack (Wave 1b, HYBRID) — the
+/// in-engine replacement for the DIRECT + NAMESPACE arms of `CrossFileCalls.hs`,
+/// consuming the LEGACY import resolver's committed `IMPORTS_FROM` edges as EDB
+/// (the import-binding producer is not migrated yet; its edges exist at pack
+/// time because analysis + legacy resolution run before the pack-runner). The
+/// Wave-1 review's localName-aliasing caveat does NOT apply: the legacy producer
+/// already disambiguated via importedName when it created the edge. Namespace
+/// arm = "binding -IMPORTS_FROM-> MODULE" (the structural `importedName == "*"`
+/// substitute) + export lookup; EXPORT_BINDING members excluded (aliased-name
+/// false positives — node_attr/Wave 2). `CALLS` additive,
+/// `resolvedVia = "cross-file-calls"` meta.
+pub const JS_CROSS_FILE_CALLS_DL: &str = include_str!("stdlib/js_cross_file_calls.dl");
+
+/// The bundled JS/TS namespace-import property-access pack (Wave 1b, HYBRID) —
+/// the in-engine replacement for the NAMESPACE arm of `PropertyAccess.hs`
+/// (`import * as utils; utils.config` → `READS_FROM` the export target,
+/// matching what legacy emits: `resolvedVia = "property-access"`). Same EDB
+/// seam and exported_in shape as [`JS_CROSS_FILE_CALLS_DL`]; the resolver's
+/// other arms (this/static via metadata.base) are node_attr-blocked Wave 2.
+/// `READS_FROM` additive.
+pub const JS_PROPERTY_ACCESS_NS_DL: &str = include_str!("stdlib/js_property_access_ns.dl");
+
 /// The named stdlib rule packs, addressable on the wire as `"@stdlib/<name>"`
 /// (`MaterializeDatalog` and the other empty-source-defaulting dispatchers), listed
 /// in CANONICAL RUN ORDER. The order is a CONTRACT, not cosmetics — producers run
 /// strictly before consumers:
-/// - the four resolver packs (`js_local_refs`, `js_same_file_calls`,
+/// - the four Wave-1 resolver packs (`js_local_refs`, `js_same_file_calls`,
 ///   `js_this_method_calls`, `rust_calls`) produce the `READS_FROM`/`CALLS` state
 ///   that the downstream packs consume;
+/// - `rust_cross_methods_ctor` (Wave 1b) reads the CALLS edges `rust_calls`
+///   committed as storage EDB (the resolved-constructor seam), so it runs
+///   strictly after `rust_calls`;
+/// - `js_cross_file_calls` and `js_property_access_ns` (Wave 1b, hybrid) consume
+///   the LEGACY import resolver's IMPORTS_FROM edges as EDB — present since
+///   analysis time — and, as CALLS/READS_FROM producers, must precede the fuzzy
+///   fallback and the negators below;
 /// - `method_calls` (the fuzzy fallback) reads `READS_FROM` receiver chains as
-///   EDB, so it runs after `js_local_refs` has committed them;
+///   EDB, so it runs after every READS_FROM producer above;
 /// - `shape_verifier` NEGATES `CALLS` (skip-resolved) and `READS_FROM` (the
 ///   PA-fallback guard) as EDB, so it MUST run after every CALLS/READS_FROM
 ///   producer above — running earlier would flag calls a later pack resolves.
 /// An orchestrator running the packs sequentially must preserve this order:
 /// depends → js_local_refs → js_same_file_calls → js_this_method_calls →
-/// rust_calls → method_calls → shape_verifier → axum_routes.
+/// rust_calls → rust_cross_methods_ctor → js_cross_file_calls →
+/// js_property_access_ns → method_calls → shape_verifier → axum_routes.
 pub const STDLIB_PACKS: &[(&str, &str)] = &[
     ("depends", DEPENDS_DL),
     ("js_local_refs", JS_LOCAL_REFS_DL),
     ("js_same_file_calls", JS_SAME_FILE_CALLS_DL),
     ("js_this_method_calls", JS_THIS_METHOD_CALLS_DL),
     ("rust_calls", RUST_CALLS_DL),
+    ("rust_cross_methods_ctor", RUST_CROSS_METHODS_CTOR_DL),
+    ("js_cross_file_calls", JS_CROSS_FILE_CALLS_DL),
+    ("js_property_access_ns", JS_PROPERTY_ACCESS_NS_DL),
     ("method_calls", METHOD_CALLS_DL),
     ("shape_verifier", SHAPE_VERIFIER_DL),
     ("axum_routes", AXUM_ROUTES_DL),
@@ -984,11 +1030,16 @@ mod tests {
                 "js_same_file_calls",
                 "js_this_method_calls",
                 "rust_calls",
+                "rust_cross_methods_ctor",
+                "js_cross_file_calls",
+                "js_property_access_ns",
                 "method_calls",
                 "shape_verifier",
                 "axum_routes",
             ],
-            "canonical run order: depends → resolver packs → method_calls → \
+            "canonical run order: depends → Wave-1 resolver packs → Wave-1b packs \
+             (rust_cross_methods_ctor after rust_calls — the CALLS EDB seam; the \
+             js hybrid packs before the fuzzy fallback) → method_calls → \
              shape_verifier → axum_routes (producers strictly before consumers)"
         );
         assert_eq!(stdlib_pack("depends"), Some(DEPENDS_DL));
@@ -999,6 +1050,15 @@ mod tests {
             Some(JS_THIS_METHOD_CALLS_DL)
         );
         assert_eq!(stdlib_pack("rust_calls"), Some(RUST_CALLS_DL));
+        assert_eq!(
+            stdlib_pack("rust_cross_methods_ctor"),
+            Some(RUST_CROSS_METHODS_CTOR_DL)
+        );
+        assert_eq!(stdlib_pack("js_cross_file_calls"), Some(JS_CROSS_FILE_CALLS_DL));
+        assert_eq!(
+            stdlib_pack("js_property_access_ns"),
+            Some(JS_PROPERTY_ACCESS_NS_DL)
+        );
         assert_eq!(stdlib_pack("method_calls"), Some(METHOD_CALLS_DL));
         assert_eq!(stdlib_pack("shape_verifier"), Some(SHAPE_VERIFIER_DL));
         assert_eq!(stdlib_pack("axum_routes"), Some(AXUM_ROUTES_DL));
@@ -1593,5 +1653,381 @@ mod tests {
                 .all(|s| s.meta == vec!["resolvedVia".to_string()]),
             "resolvedVia is projected on both heads"
         );
+    }
+
+    /// The (src, dst, meta1, meta2) quads of a 4-ary materialized predicate.
+    fn quads(
+        eval: &crate::datalog2::exec::Evaluation,
+        pred: &str,
+    ) -> BTreeSet<(u128, u128, String, String)> {
+        eval.facts(pred)
+            .into_iter()
+            .map(|row| {
+                (
+                    row[0].as_id().expect("arg0 id"),
+                    row[1].as_id().expect("arg1 id"),
+                    row[2].as_str(),
+                    row[3].as_str(),
+                )
+            })
+            .collect()
+    }
+
+    /// The bundled rust_cross_methods_ctor pack (Wave 1b) reproduces the
+    /// resolved-constructor arm of RustCrossMethodCalls.hs with every gate pinned:
+    /// - happy path: `let w = Widget::new(); w.render()` — receiver REFERENCE deref,
+    ///   ASSIGNED_FROM → init CALL with a COMMITTED CALLS edge to a method of
+    ///   `impl Widget`, init name contains "Widget::" → CALLS (c_m → render);
+    /// - direct (non-REFERENCE) receiver declaration — the identity deref clause;
+    /// - DELTA 1 PINNED (the coverage-subset delta): an UNRESOLVED init call
+    ///   (no CALLS edge) derives nothing, even though the resolver's textual
+    ///   heuristic would have fired on "Widget::new";
+    /// - constructor gate: an init resolved to an impl method whose own call name
+    ///   lacks "TName::" ("make") derives nothing;
+    /// - init resolved to a FREE function (no impl) derives nothing;
+    /// - method name not on the impl derives nothing;
+    /// - chained receiver (READS_FROM → PROPERTY_ACCESS, no ASSIGNED_FROM) derives
+    ///   nothing (DELTA 6's harmless side);
+    /// - non-.rs file gate;
+    /// - DELTA 3 PINNED: two same-named IMPL_BLOCKs — an edge per candidate's member.
+    #[test]
+    fn rust_cross_methods_ctor_resolves_constructor_typed_receivers() {
+        let mut v = FixtureStorageView::new(1);
+
+        // impl Widget { fn new(); fn render() } — the graph-native ImplMethodIndex.
+        named_node(&mut v, "ib_w", "Widget", "IMPL_BLOCK", "widget.rs");
+        named_node(&mut v, "f_new", "new", "FUNCTION", "widget.rs");
+        named_node(&mut v, "f_render", "render", "FUNCTION", "widget.rs");
+        edge(&mut v, "ib_w", "f_new", "HAS_METHOD");
+        edge(&mut v, "ib_w", "f_render", "HAS_METHOD");
+
+        // Happy path: w = Widget::new() (init RESOLVED — committed CALLS edge);
+        // w.render() through the REFERENCE deref hop.
+        named_node(&mut v, "init1", "Widget::new", "CALL", "a.rs");
+        edge(&mut v, "init1", "f_new", "CALLS"); // the rust_calls EDB seam
+        named_node(&mut v, "v_w", "w", "VARIABLE", "a.rs");
+        edge(&mut v, "v_w", "init1", "ASSIGNED_FROM");
+        named_node(&mut v, "ref_w", "w", "REFERENCE", "a.rs");
+        edge(&mut v, "ref_w", "v_w", "READS_FROM");
+        named_node(&mut v, "c_m", "render", "CALL", "a.rs");
+        edge(&mut v, "c_m", "ref_w", "READS_FROM");
+
+        // Direct receiver-declaration shape (no REFERENCE hop) — identity clause.
+        named_node(&mut v, "init2", "Widget::new", "CALL", "b.rs");
+        edge(&mut v, "init2", "f_new", "CALLS");
+        named_node(&mut v, "v_d", "d", "VARIABLE", "b.rs");
+        edge(&mut v, "v_d", "init2", "ASSIGNED_FROM");
+        named_node(&mut v, "c_direct", "render", "CALL", "b.rs");
+        edge(&mut v, "c_direct", "v_d", "READS_FROM");
+
+        // DELTA 1 (subset pin): init NOT resolved — no CALLS edge — derives nothing
+        // (the resolver's textual heuristic would have typed this receiver).
+        named_node(&mut v, "init3", "Widget::new", "CALL", "c.rs");
+        named_node(&mut v, "v_u", "u", "VARIABLE", "c.rs");
+        edge(&mut v, "v_u", "init3", "ASSIGNED_FROM");
+        named_node(&mut v, "c_unres", "render", "CALL", "c.rs");
+        edge(&mut v, "c_unres", "v_u", "READS_FROM");
+
+        // Constructor gate: init resolved to impl-method "new" but the call is
+        // named "make" — no "Widget::" containment — derives nothing.
+        named_node(&mut v, "init4", "make", "CALL", "d.rs");
+        edge(&mut v, "init4", "f_new", "CALLS");
+        named_node(&mut v, "v_g", "g", "VARIABLE", "d.rs");
+        edge(&mut v, "v_g", "init4", "ASSIGNED_FROM");
+        named_node(&mut v, "c_gate", "render", "CALL", "d.rs");
+        edge(&mut v, "c_gate", "v_g", "READS_FROM");
+
+        // Free-function init: resolved, but the target is in no IMPL_BLOCK.
+        named_node(&mut v, "f_free", "make_widget", "FUNCTION", "free.rs");
+        named_node(&mut v, "init5", "make_widget", "CALL", "e.rs");
+        edge(&mut v, "init5", "f_free", "CALLS");
+        named_node(&mut v, "v_f", "f", "VARIABLE", "e.rs");
+        edge(&mut v, "v_f", "init5", "ASSIGNED_FROM");
+        named_node(&mut v, "c_freefn", "render", "CALL", "e.rs");
+        edge(&mut v, "c_freefn", "v_f", "READS_FROM");
+
+        // Method not on the impl: typed receiver, but "missing" has no member.
+        named_node(&mut v, "c_miss", "missing", "CALL", "a.rs");
+        edge(&mut v, "c_miss", "ref_w", "READS_FROM");
+
+        // Chained receiver: READS_FROM target is a PROPERTY_ACCESS (no
+        // ASSIGNED_FROM) — identity deref, then nothing.
+        named_node(&mut v, "pa_x", "x.y", "PROPERTY_ACCESS", "a.rs");
+        named_node(&mut v, "c_chain", "render", "CALL", "a.rs");
+        edge(&mut v, "c_chain", "pa_x", "READS_FROM");
+
+        // File gate: the identical happy shape in a .ts file derives nothing.
+        named_node(&mut v, "init6", "Widget::new", "CALL", "app.ts");
+        edge(&mut v, "init6", "f_new", "CALLS");
+        named_node(&mut v, "v_ts", "t", "VARIABLE", "app.ts");
+        edge(&mut v, "v_ts", "init6", "ASSIGNED_FROM");
+        named_node(&mut v, "c_ts", "render", "CALL", "app.ts");
+        edge(&mut v, "c_ts", "v_ts", "READS_FROM");
+
+        // DELTA 3 (superset pin): a SECOND impl Widget in another file also
+        // carrying "render" — the happy-path call derives an edge per candidate.
+        named_node(&mut v, "ib_w2", "Widget", "IMPL_BLOCK", "widget2.rs");
+        named_node(&mut v, "f_render2", "render", "FUNCTION", "widget2.rs");
+        edge(&mut v, "ib_w2", "f_render2", "HAS_METHOD");
+
+        let (eval, specs, _node_specs) = evaluate_with_materialize(
+            &v,
+            RUST_CROSS_METHODS_CTOR_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("rust_cross_methods_ctor.dl evaluates");
+
+        let via = |pairs: &[(&str, &str)]| -> BTreeSet<(u128, u128, String, String)> {
+            pairs
+                .iter()
+                .map(|(c, t)| {
+                    (
+                        id_of(c),
+                        id_of(t),
+                        "rust-cross-method".to_string(),
+                        "Widget".to_string(),
+                    )
+                })
+                .collect()
+        };
+        assert_eq!(
+            quads(&eval, "rust_ctor_method_call"),
+            via(&[
+                ("c_m", "f_render"),
+                ("c_m", "f_render2"),
+                ("c_direct", "f_render"),
+                ("c_direct", "f_render2"),
+            ]),
+            "happy + direct-decl resolve (each to BOTH same-named impls' member — \
+             DELTA 3); unresolved init (DELTA 1), gate-less 'make', free-fn init, \
+             missing member, chained PA receiver and .ts file derive nothing"
+        );
+
+        // CALLS is shared vocabulary — additive, with both meta columns projected.
+        let calls_specs: Vec<_> = specs.iter().filter(|s| s.edge_type == "CALLS").collect();
+        assert_eq!(calls_specs.len(), 1, "exactly one CALLS head");
+        assert!(calls_specs[0].additive, "CALLS is shared — additive");
+        assert_eq!(
+            calls_specs[0].meta,
+            vec!["resolvedVia".to_string(), "receiverType".to_string()],
+            "resolvedVia + receiverType ride as meta columns"
+        );
+    }
+
+    /// The bundled js_cross_file_calls pack (Wave 1b, hybrid) resolves both arms
+    /// over the LEGACY producer's IMPORTS_FROM edges:
+    /// - A1 direct: dotless call through a binding's edge — plain, ALIASED
+    ///   (`import {x as y}` — the caveat-does-not-apply pin: the legacy edge
+    ///   already disambiguated) and DEFAULT (endpoint = the EXPORT "default"
+    ///   node, legacy-parity);
+    /// - A1 negatives: a dotless call on a NAMESPACE binding (MODULE target,
+    ///   DELTA 3 guard), a call that is no binding, the .rs file gate;
+    /// - A2 namespace: member via EXPORT -EXPORTS-> decl; ns.default via the
+    ///   EXPORT node; multi-dot "utils.a.b" derives NOTHING (concat-equality
+    ///   first-dot parity); EXPORT_BINDING members EXCLUDED (DELTA 4 pin);
+    ///   unknown member and non-binding receiver derive nothing;
+    /// - DELTA 5 PINNED: duplicate same-name exports derive an edge each.
+    #[test]
+    fn js_cross_file_calls_direct_and_namespace_arms() {
+        let mut v = FixtureStorageView::new(1);
+
+        // Target module utils.ts with its exports.
+        named_node(&mut v, "m_utils", "utils", "MODULE", "utils.ts");
+        named_node(&mut v, "e_named", "named", "EXPORT", "utils.ts");
+        named_node(&mut v, "f_helper", "helper", "FUNCTION", "utils.ts");
+        edge(&mut v, "e_named", "f_helper", "EXPORTS");
+        named_node(&mut v, "e_def_u", "default", "EXPORT", "utils.ts");
+        // An export-binding member (`export { fromBarrel }`) — DELTA 4: excluded.
+        named_node(&mut v, "eb_barrel", "fromBarrel", "EXPORT_BINDING", "utils.ts");
+        edge(&mut v, "e_named", "eb_barrel", "EXPORTS");
+        // DELTA 5: two same-named exported declarations.
+        named_node(&mut v, "f_dup1", "dup", "FUNCTION", "utils.ts");
+        named_node(&mut v, "f_dup2", "dup", "FUNCTION", "utils.ts");
+        edge(&mut v, "e_named", "f_dup1", "EXPORTS");
+        edge(&mut v, "e_named", "f_dup2", "EXPORTS");
+        // A multi-dot trap: an export literally named "b" must NOT match "utils.a.b".
+        named_node(&mut v, "f_b", "b", "FUNCTION", "utils.ts");
+        edge(&mut v, "e_named", "f_b", "EXPORTS");
+
+        // A1 plain: import { greet } — binding edge to the target FUNCTION.
+        named_node(&mut v, "f_greet", "greet", "FUNCTION", "greet.ts");
+        named_node(&mut v, "b_greet", "greet", "IMPORT_BINDING", "app.ts");
+        edge(&mut v, "b_greet", "f_greet", "IMPORTS_FROM");
+        named_node(&mut v, "c_direct", "greet", "CALL", "app.ts");
+
+        // A1 aliased: import { orig as renamed } — legacy already disambiguated.
+        named_node(&mut v, "f_orig", "orig", "FUNCTION", "greet.ts");
+        named_node(&mut v, "b_renamed", "renamed", "IMPORT_BINDING", "app.ts");
+        edge(&mut v, "b_renamed", "f_orig", "IMPORTS_FROM");
+        named_node(&mut v, "c_aliased", "renamed", "CALL", "app.ts");
+
+        // A1 default: import Foo from './foo' — endpoint is the EXPORT "default"
+        // node (the legacy resolver's own endpoint, parity).
+        named_node(&mut v, "e_def_foo", "default", "EXPORT", "foo.ts");
+        named_node(&mut v, "b_foo", "Foo", "IMPORT_BINDING", "app.ts");
+        edge(&mut v, "b_foo", "e_def_foo", "IMPORTS_FROM");
+        named_node(&mut v, "c_default", "Foo", "CALL", "app.ts");
+
+        // Namespace binding: import * as utils — edge to the MODULE node.
+        named_node(&mut v, "b_ns", "utils", "IMPORT_BINDING", "app.ts");
+        edge(&mut v, "b_ns", "m_utils", "IMPORTS_FROM");
+        // A1 negative (DELTA 3 guard): dotless call on the namespace binding.
+        named_node(&mut v, "c_nsdirect", "utils", "CALL", "app.ts");
+
+        // A2: namespace member calls.
+        named_node(&mut v, "c_ns", "utils.helper", "CALL", "app.ts");
+        named_node(&mut v, "c_nsdef", "utils.default", "CALL", "app.ts");
+        named_node(&mut v, "c_nsdup", "utils.dup", "CALL", "app.ts");
+        named_node(&mut v, "c_md", "utils.a.b", "CALL", "app.ts"); // multi-dot pin
+        named_node(&mut v, "c_barrel", "utils.fromBarrel", "CALL", "app.ts"); // DELTA 4
+        named_node(&mut v, "c_nsmiss", "utils.missing", "CALL", "app.ts");
+        named_node(&mut v, "c_nobind", "other.helper", "CALL", "app.ts");
+
+        // Negatives: not a binding; the file gate (.rs shape).
+        named_node(&mut v, "c_local", "localFn", "CALL", "app.ts");
+        named_node(&mut v, "b_rs", "rsfn", "IMPORT_BINDING", "main.rs");
+        named_node(&mut v, "f_rs", "rsfn", "FUNCTION", "lib.rs");
+        edge(&mut v, "b_rs", "f_rs", "IMPORTS_FROM");
+        named_node(&mut v, "c_rs", "rsfn", "CALL", "main.rs");
+
+        let (eval, specs, _node_specs) = evaluate_with_materialize(
+            &v,
+            JS_CROSS_FILE_CALLS_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("js_cross_file_calls.dl evaluates");
+
+        let via = |pairs: &[(&str, &str)]| -> BTreeSet<(u128, u128, String)> {
+            pairs
+                .iter()
+                .map(|(c, t)| (id_of(c), id_of(t), "cross-file-calls".to_string()))
+                .collect()
+        };
+        assert_eq!(
+            triples(&eval, "xf_direct_call"),
+            via(&[
+                ("c_direct", "f_greet"),
+                ("c_aliased", "f_orig"),
+                ("c_default", "e_def_foo"),
+            ]),
+            "A1: plain + aliased + default bindings resolve through the legacy \
+             edge; the namespace binding's MODULE target (DELTA 3), non-bindings \
+             and the .rs file derive nothing"
+        );
+        assert_eq!(
+            triples(&eval, "xf_ns_call"),
+            via(&[
+                ("c_ns", "f_helper"),
+                ("c_nsdef", "e_def_u"),
+                ("c_nsdup", "f_dup1"),
+                ("c_nsdup", "f_dup2"),
+            ]),
+            "A2: exported member, ns.default (the EXPORT node) and BOTH dup \
+             exports (DELTA 5); multi-dot 'utils.a.b', the EXPORT_BINDING member \
+             (DELTA 4), unknown member and non-binding receiver derive nothing"
+        );
+
+        // Both heads are CALLS + additive (shared vocabulary) with resolvedVia.
+        let calls_specs: Vec<_> = specs.iter().filter(|s| s.edge_type == "CALLS").collect();
+        assert_eq!(calls_specs.len(), 2, "two CALLS heads (direct + namespace)");
+        assert!(
+            calls_specs.iter().all(|s| s.additive),
+            "CALLS is shared with the analyzers — additive is mandatory"
+        );
+        assert!(
+            calls_specs
+                .iter()
+                .all(|s| s.meta == vec!["resolvedVia".to_string()]),
+            "resolvedVia is projected on both heads"
+        );
+    }
+
+    /// The bundled js_property_access_ns pack (Wave 1b, hybrid) resolves the
+    /// namespace arm of PropertyAccess.hs over the legacy IMPORTS_FROM edges:
+    /// - member read via EXPORT -EXPORTS-> decl → READS_FROM (the legacy edge
+    ///   type + resolvedVia="property-access");
+    /// - ns.default resolves to the EXPORT "default" node;
+    /// - DELTA 3 PINNED: duplicate same-name exports derive an edge each;
+    /// - negatives: multi-dot "utils.a.b" (concat-equality first-dot parity),
+    ///   EXPORT_BINDING member (DELTA 2), unknown member, non-binding receiver,
+    ///   dotless PA name, the .rs file gate.
+    #[test]
+    fn js_property_access_ns_resolves_namespace_members() {
+        let mut v = FixtureStorageView::new(1);
+
+        // Target module + exports.
+        named_node(&mut v, "m_utils", "utils", "MODULE", "utils.ts");
+        named_node(&mut v, "e_named", "named", "EXPORT", "utils.ts");
+        named_node(&mut v, "v_config", "config", "VARIABLE", "utils.ts");
+        edge(&mut v, "e_named", "v_config", "EXPORTS");
+        named_node(&mut v, "e_def", "default", "EXPORT", "utils.ts");
+        named_node(&mut v, "eb_x", "x", "EXPORT_BINDING", "utils.ts");
+        edge(&mut v, "e_named", "eb_x", "EXPORTS");
+        named_node(&mut v, "v_dup1", "dup", "VARIABLE", "utils.ts");
+        named_node(&mut v, "v_dup2", "dup", "CONSTANT", "utils.ts");
+        edge(&mut v, "e_named", "v_dup1", "EXPORTS");
+        edge(&mut v, "e_named", "v_dup2", "EXPORTS");
+        named_node(&mut v, "v_b", "b", "VARIABLE", "utils.ts");
+        edge(&mut v, "e_named", "v_b", "EXPORTS");
+
+        // Namespace binding in app.ts.
+        named_node(&mut v, "b_ns", "utils", "IMPORT_BINDING", "app.ts");
+        edge(&mut v, "b_ns", "m_utils", "IMPORTS_FROM");
+
+        // Property accesses.
+        named_node(&mut v, "pa_ok", "utils.config", "PROPERTY_ACCESS", "app.ts");
+        named_node(&mut v, "pa_def", "utils.default", "PROPERTY_ACCESS", "app.ts");
+        named_node(&mut v, "pa_dup", "utils.dup", "PROPERTY_ACCESS", "app.ts");
+        named_node(&mut v, "pa_md", "utils.a.b", "PROPERTY_ACCESS", "app.ts"); // multi-dot
+        named_node(&mut v, "pa_eb", "utils.x", "PROPERTY_ACCESS", "app.ts"); // DELTA 2
+        named_node(&mut v, "pa_miss", "utils.missing", "PROPERTY_ACCESS", "app.ts");
+        named_node(&mut v, "pa_nobind", "other.config", "PROPERTY_ACCESS", "app.ts");
+        named_node(&mut v, "pa_dotless", "utils", "PROPERTY_ACCESS", "app.ts");
+
+        // File gate: same shape via a .rs file derives nothing.
+        named_node(&mut v, "b_rs", "utils", "IMPORT_BINDING", "main.rs");
+        edge(&mut v, "b_rs", "m_utils", "IMPORTS_FROM");
+        named_node(&mut v, "pa_rs", "utils.config", "PROPERTY_ACCESS", "main.rs");
+
+        let (eval, specs, _node_specs) = evaluate_with_materialize(
+            &v,
+            JS_PROPERTY_ACCESS_NS_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("js_property_access_ns.dl evaluates");
+
+        let via = |pairs: &[(&str, &str)]| -> BTreeSet<(u128, u128, String)> {
+            pairs
+                .iter()
+                .map(|(pa, t)| (id_of(pa), id_of(t), "property-access".to_string()))
+                .collect()
+        };
+        assert_eq!(
+            triples(&eval, "pa_ns_read"),
+            via(&[
+                ("pa_ok", "v_config"),
+                ("pa_def", "e_def"),
+                ("pa_dup", "v_dup1"),
+                ("pa_dup", "v_dup2"),
+            ]),
+            "namespace member, ns.default and BOTH dup exports (DELTA 3) resolve; \
+             multi-dot, EXPORT_BINDING member (DELTA 2), unknown member, \
+             non-binding receiver, dotless name and .rs file derive nothing"
+        );
+
+        // READS_FROM is shared vocabulary — additive, resolvedVia projected.
+        let rf_specs: Vec<_> = specs
+            .iter()
+            .filter(|s| s.edge_type == "READS_FROM")
+            .collect();
+        assert_eq!(rf_specs.len(), 1, "exactly one READS_FROM head");
+        assert!(rf_specs[0].additive, "READS_FROM is shared — additive");
+        assert_eq!(rf_specs[0].meta, vec!["resolvedVia".to_string()]);
     }
 }

@@ -16,6 +16,13 @@ use std::path::PathBuf;
 ///   JsLocalRefs.hs / SameFileCalls.hs / JsThisMethodCalls.hs /
 ///   RustCallResolution.hs) produce the READS_FROM/CALLS state the downstream
 ///   packs consume;
+/// - the three Wave-1b packs run after them: `rust_cross_methods_ctor` reads the
+///   CALLS edges `rust_calls` committed as storage EDB (the resolved-constructor
+///   seam — MUST follow `rust_calls`); `js_cross_file_calls` and
+///   `js_property_access_ns` (hybrid) consume the LEGACY import resolver's
+///   IMPORTS_FROM edges as EDB (present since the resolve phase) and, as
+///   CALLS/READS_FROM producers, must precede the fuzzy fallback and the
+///   negators below;
 /// - `@stdlib/method_calls` (the fuzzy fallback) reads READS_FROM receiver chains
 ///   as EDB, so it runs after `js_local_refs` has committed them;
 /// - `@stdlib/shape_verifier` NEGATES CALLS (`\+ edge(C, _, "CALLS")`, its
@@ -23,7 +30,8 @@ use std::path::PathBuf;
 ///   MUST run after EVERY CALLS/READS_FROM producer above — running earlier would
 ///   flag calls a later pack resolves.
 /// Full canonical order is depends → js_local_refs → js_same_file_calls →
-/// js_this_method_calls → rust_calls → method_calls → shape_verifier →
+/// js_this_method_calls → rust_calls → rust_cross_methods_ctor →
+/// js_cross_file_calls → js_property_access_ns → method_calls → shape_verifier →
 /// axum_routes; the depends pack runs separately first (the
 /// `materialize_datalog("")` call below, which the server resolves to the bundled
 /// `depends.dl`). The server-side registry (`rfdb-server/src/datalog2/stdlib.rs`
@@ -33,6 +41,9 @@ const STDLIB_RULE_PACKS: &[&str] = &[
     "@stdlib/js_same_file_calls",
     "@stdlib/js_this_method_calls",
     "@stdlib/rust_calls",
+    "@stdlib/rust_cross_methods_ctor",
+    "@stdlib/js_cross_file_calls",
+    "@stdlib/js_property_access_ns",
     "@stdlib/method_calls",
     "@stdlib/shape_verifier",
     "@stdlib/axum_routes",

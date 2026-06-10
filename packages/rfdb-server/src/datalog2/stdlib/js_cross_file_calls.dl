@@ -1,0 +1,124 @@
+% js_cross_file_calls.dl — in-engine replacement for the DIRECT + NAMESPACE arms of
+% the CrossFileCalls.hs resolver (packages/grafema-resolve/src/CrossFileCalls.hs:
+% resolveCallee:86-107 → resolveInModule:111-121): CALLS edges for calls whose
+% callee was imported from another file. Wave 1b — the HYBRID producer/consumer
+% split: this pack CONSUMES the legacy import resolver's committed IMPORTS_FROM
+% edges as EDB (the import-binding PRODUCER — ImportResolution.hs — is NOT
+% migrated yet; its edges exist at pack time because analysis + legacy resolution
+% run strictly before the pack-runner phase).
+%
+% TWO ARMS, exactly the resolver's:
+%   A1 direct call  "greet()"      — the callee name (dotless) is an import
+%      binding in the call's file; follow the binding's IMPORTS_FROM edge to the
+%      resolved target (Hs:102-107).
+%   A2 namespace call "utils.greet()" — the first-dot prefix names a NAMESPACE
+%      import binding (`import * as utils`); resolve the member among the target
+%      module's exports (Hs:88-100). "binding -IMPORTS_FROM-> MODULE" is the
+%      structural substitute for the resolver's importedName == "*" metadata
+%      check — ONLY namespace bindings get MODULE targets
+%      (ImportResolution.hs:316-319).
+%
+% ALIASING NOTE (the Wave-1-review caveat does NOT apply here): matching an
+% import by localName alone mis-resolves `import {x as y}` / default imports —
+% but this pack never re-resolves; it follows the IMPORTS_FROM edge the LEGACY
+% producer created, and the legacy producer already disambiguated via the
+% importedName metadata when it created that edge. Aliased and default direct
+% imports therefore resolve CORRECTLY here (`import Foo from './Foo'` follows
+% the binding's edge to the EXPORT "default" node — same endpoint the legacy
+% resolver's own CALLS edge used, ImportResolution.hs:126,371).
+%
+% MULTI-DOT NAMES ARE NOT A DELTA: the resolver splits on the FIRST dot
+% (T.breakOn ".", Hs:88); the concat-equality construction
+% (Full == NS ++ "." ++ Member, concat in check mode) reproduces that split
+% exactly — "utils.a.b" only matches an export literally named "a.b", which
+% never exists, same as the resolver's export-index miss. (This corrects the
+% migration synthesis' anticipated method_suffix superset delta — eliminated
+% by construction, as in js_this_method_calls.dl.)
+%
+% CALLS is SHARED vocabulary ⇒ mode = "additive" on both heads.
+%
+% NUMBERED DELTAS vs the resolver (everything not listed is exact):
+%   DELTA 1 (endpoint, point-wise different): re-exported direct imports — the
+%     resolver's own CALLS edge pointed at the FIRST-LEVEL export entry (the
+%     EXPORT_BINDING node; resolveInModule never followed chains, Hs:111-121),
+%     while the legacy IMPORT resolver's IMPORTS_FROM edge collapsed the
+%     re-export chain to the FINAL declaration (ImportResolution.hs:363-407).
+%     Following the edge inherits the chain-collapsed endpoint.
+%   DELTA 2 (superset): direct imports resolved THROUGH star re-exports or from
+%     WORKSPACE packages — the resolver's binding index was relative-specifier-
+%     only (Hs:54) and resolveInModule had no star probe; the legacy import
+%     resolver handled both, so the binding's edge exists and the pack emits.
+%   DELTA 3 (not reproduced — legacy artifact): a DOTLESS call on a namespace
+%     binding (`utils()`) could in the resolver match a star re-export entry
+%     (eeName == "*") in the target module and emit CALLS → that EXPORT node;
+%     the pack's `\+ node(T, "MODULE")` guard plus the export join shape emit
+%     nothing for it (deliberate: the legacy edge was meaningless).
+%   DELTA 4 (subset, node_attr-blocked — Wave 2): namespace members that are
+%     EXPORT_BINDING entries (`export { foo }`, `export { foo as bar } from …`)
+%     are EXCLUDED from exported_in: EXPORT_BINDING.name is the LOCAL name and
+%     the exported alias lives in metadata (exportedName, Declarations.hs:726-731)
+%     — matching by localName would emit WRONG edges for aliased re-exports
+%     (false positives are not acceptable; subset-by-omission is). Bounded by
+%     the count of EXPORT -EXPORTS-> EXPORT_BINDING edges in ns-imported modules.
+%   DELTA 5 (superset): duplicate same-name exports in one file — the resolver's
+%     findMatchingExport took the FIRST entry (ImportResolution.hs:353-357); set
+%     semantics derives an edge per candidate. (Also: the multi-declarator
+%     `export const a = 1, b = 2` analyzer bug — one EXPORTS edge — hits BOTH
+%     sides' visibility equally for the ns arm; zero instances in the dogfood
+%     corpus, _ai/gaps.md Wave-0 findings.)
+%   DELTA 6 (metadata): resolvedVia="cross-file-calls" projected as a meta
+%     column; engine provenance (_source/_generation) added.
+%   DELTA 7 (file gate): the resolver's effective gate was the orchestrator's
+%     detect_language == JavaScript stream filter (8 extensions) — the js_call
+%     clause set below (one clause per extension; a derived gate or an
+%     extension-facts relation is planner-infeasible, see js_same_file_calls.dl
+%     ENCODING NOTES).
+
+% Every named CALL in a JS/TS file — the 8-extension language gate (DELTA 7).
+js_call(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".js"), attr(C, "name", N), neq(N, "").
+js_call(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".jsx"), attr(C, "name", N), neq(N, "").
+js_call(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".ts"), attr(C, "name", N), neq(N, "").
+js_call(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".tsx"), attr(C, "name", N), neq(N, "").
+js_call(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".mjs"), attr(C, "name", N), neq(N, "").
+js_call(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".cjs"), attr(C, "name", N), neq(N, "").
+js_call(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".mts"), attr(C, "name", N), neq(N, "").
+js_call(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".cts"), attr(C, "name", N), neq(N, "").
+
+dotted(C) :- node(C, "CALL"), attr(C, "name", N), string_contains(N, ".").
+
+% A1: direct call through a resolved import binding — follow the LEGACY
+% producer's IMPORTS_FROM edge (EDB seam). MODULE targets are namespace
+% bindings, not callees (DELTA 3).
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+xf_direct_call(C, T, "cross-file-calls") :-
+    js_call(C, F, N), \+ dotted(C),
+    node(B, "IMPORT_BINDING"), attr(B, "file", F), attr(B, "name", N),
+    edge(B, T, "IMPORTS_FROM"),
+    \+ node(T, "MODULE").
+
+% Namespace bindings: importer file × local name → target module file
+% (the structural importedName == "*" substitute, see header).
+ns_module(F, NS, TF) :-
+    node(B, "IMPORT_BINDING"), attr(B, "file", F), attr(B, "name", NS), neq(NS, ""),
+    edge(B, M, "IMPORTS_FROM"), node(M, "MODULE"), attr(M, "file", TF).
+
+% A file's exports, by name — the EXPORT -EXPORTS-> target shape (the
+% gnExported-flag substitute; the exported flag is not on the attr surface).
+% EXPORT_BINDING targets excluded: DELTA 4 (aliased-name false positives).
+exported_in(TF, N, T) :-
+    node(E, "EXPORT"), attr(E, "file", TF),
+    edge(E, T, "EXPORTS"), \+ node(T, "EXPORT_BINDING"),
+    attr(T, "name", N), neq(N, "").
+% The default export surfaces as the EXPORT node itself, under the name
+% "default" — the resolver's export-index entry shape (ImportResolution.hs:125-126).
+exported_in(TF, "default", E) :-
+    node(E, "EXPORT"), attr(E, "name", "default"), attr(E, "file", TF).
+
+% A2: namespace member call — Full == NS ++ "." ++ Member (first-dot split via
+% concat-equality, see header), member resolved among the target module's exports.
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+xf_ns_call(C, T, "cross-file-calls") :-
+    js_call(C, F, Full),
+    ns_module(F, NS, TF),
+    exported_in(TF, MN, T),
+    concat(NS, ".", Pfx), concat(Pfx, MN, Full).

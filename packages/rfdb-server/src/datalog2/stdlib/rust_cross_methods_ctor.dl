@@ -1,0 +1,112 @@
+% rust_cross_methods_ctor.dl — the RESOLVED-CONSTRUCTOR receiver-typing arm of the
+% RustCrossMethodCalls.hs resolver (packages/rust-resolve/src/RustCrossMethodCalls.hs:
+% traceVariableType:112-118 → typeFromExpression:121-130 → constructorTypeFromCallName:
+% 134-145 → impl-method dispatch :195-211): `let w = Widget::new(); w.render()` —
+% the receiver variable's init CALL identifies the type, method calls through that
+% variable resolve to the type's IMPL_BLOCK methods. Wave 1b.
+%
+% HOW THE TYPE IS IDENTIFIED (the in-graph replacement for the resolver's textual
+% CamelCase-second-to-last-segment heuristic, Hs:134-145):
+%   the init CALL's committed CALLS edge (storage EDB — see ORDERING) points at a
+%   FUNCTION that is a HAS_METHOD member of an IMPL_BLOCK whose name is the type
+%   (IMPL_BLOCK.name = self_ty, rust_analyzer.rs:792-797; HAS_METHOD :859-864),
+%   AND the init call's name textually contains "TName::" (the constructor gate —
+%   without it, `let n = list.len(); n.method()` would type `n` as the LIST's type
+%   because `len` is also an impl method).
+%
+% ORDERING (cross-pack EDB seam — a runner CONTRACT, like shape_verifier's):
+%   this pack reads `edge(Init, Ctor, "CALLS")` from STORAGE while itself
+%   materializing CALLS. The stratifier accepts positive same-type storage
+%   self-reads (E-STRAT-001 is negation-only — the Wave-0 probe in stdlib.rs,
+%   `positive_same_type_storage_self_read_stratifies_and_reads_pre_run_state`),
+%   and base edge() sees ONLY pre-run storage. The init calls' CALLS edges are
+%   committed by the rust_calls pack, so this pack MUST run AFTER rust_calls in
+%   the declared pack order; its own newly-derived CALLS edges are NOT visible
+%   to itself within the run (chained `let b = a.widget(); b.render()` typing
+%   would lag — out of scope, see DELTA 1).
+%
+% RECEIVER SHAPE (Wave-0-verified Rust shape): a method call carries a direct
+% CALL -READS_FROM-> receiver edge (plain calls never get one — the method-call
+% discriminator, rust_analyzer.rs:1358-1370). The direct target is the
+% position-hashed REFERENCE expression node; the scope-resolved hop is the
+% REFERENCE's own READS_FROM to the declaration (rust_analyzer.rs:1408-1412) —
+% the method_calls.dl receiver_decl deref idiom, per the verified spec verdict.
+%
+% CALLS is SHARED vocabulary ⇒ mode = "additive" is mandatory.
+%
+% NUMBERED DELTAS vs the resolver (everything not listed is exact for this arm):
+%   DELTA 1 (subset — THE coverage-subset delta of this arm): the pack requires
+%     the init call to have RESOLVED (a committed CALLS edge). The resolver's
+%     textual heuristic also fired on UNRESOLVED `Type::method()` init calls
+%     (e.g. cross-file constructors rust_calls can't see) — those receivers stay
+%     untyped here. Classifiable: every miss is an init CALL with no CALLS edge.
+%     (The other resolver strategies — typeAnnotation, returnType, self-field,
+%     dyn-trait — are node_attr-blocked Wave 2, NOT this pack; the returnType
+%     branch was dead in production anyway: the orchestrator ships the resolver
+%     only ASSIGNED_FROM edges, plugin.rs:1306.)
+%   DELTA 2 (gate substitution): the resolver's uppercase-first-letter test on
+%     the second-to-last "::"-segment (Hs:140-145) is replaced by "TName names a
+%     real IMPL_BLOCK and InitName contains 'TName::'" — tighter on real types
+%     (no false CamelCase modules), and it fires for a lowercase-named impl type
+%     where the resolver's case test refused (superset corner, rare).
+%   DELTA 3 (superset): same-named IMPL_BLOCKs across files — the resolver's
+%     project-global ImplMethodIndex was Map last-wins (ONE arbitrary edge,
+%     Hs:50-58); set semantics derives an edge per candidate impl's member.
+%   DELTA 4 (precision, point-wise different): the receiver is bound STRUCTURALLY
+%     through the scope-resolved READS_FROM chain, not the resolver's whole-file
+%     last-wins (file, name) VarIndex (Hs:84-91) — shadowed receivers resolve to
+%     the right declaration; receivers whose declaration is not VARIABLE/PARAMETER
+%     (e.g. a CONSTANT with an ASSIGNED_FROM init) now type too.
+%   DELTA 5 (metadata): resolvedVia="rust-cross-method" + receiverType=TName
+%     projected as meta columns (the resolver's receiverType was the raw
+%     annotation string; for THIS arm the resolver's value was the same bare
+%     type name). Engine provenance (_source/_generation) added.
+%   DELTA 6 (discriminator proxy): "has a READS_FROM receiver" replaces
+%     metadata method=true + receiver≠"<expr>" (Hs:170-172,230-233). Method
+%     calls whose deferred receiver lookup failed have no READS_FROM edge and
+%     are skipped on both sides; "<expr>" receivers surface as PROPERTY_ACCESS/
+%     CALL READS_FROM targets, which carry no ASSIGNED_FROM and derive nothing.
+
+% Every named CALL in a Rust file (the resolver's effective gate was the
+% orchestrator streaming only detect_language == Rust nodes).
+rs_call(C, N) :-
+    node(C, "CALL"), attr(C, "file", F), ends_with(F, ".rs"),
+    attr(C, "name", N), neq(N, "").
+
+% The receiver VALUE node: direct CALL -READS_FROM-> receiver (the Wave-0 Rust
+% shape; doubles as the method-call discriminator, DELTA 6).
+receiver_var(C, V) :- rs_call(C, N), edge(C, V, "READS_FROM").
+
+% Deref one REFERENCE hop to the declaration; identity otherwise (the
+% method_calls.dl receiver_decl idiom — spec-verdict correction).
+receiver_decl(C, D) :- receiver_var(C, V), node(V, "REFERENCE"), edge(V, D, "READS_FROM").
+receiver_decl(C, D) :- receiver_var(C, D), \+ node(D, "REFERENCE").
+
+% (typeName, methodName) → method node: the graph-native ImplMethodIndex
+% (IMPL_BLOCK.name = self_ty -HAS_METHOD-> FUNCTION) — replaces the resolver's
+% "IMPL_BLOCK->TypeName" semantic-id parsing (Hs:50-58). DELTA 3 applies.
+impl_method(TName, MName, M) :-
+    node(IB, "IMPL_BLOCK"), attr(IB, "name", TName), neq(TName, ""),
+    edge(IB, M, "HAS_METHOD"),
+    node(M, "FUNCTION"), attr(M, "name", MName), neq(MName, "").
+
+% Receiver-declaration typing via the resolved constructor: the declaration's
+% init CALL resolved (storage CALLS edge — the rust_calls EDB seam) to a method
+% of `impl TName`, and the init call's own name contains "TName::" (the
+% constructor gate, DELTA 2).
+recv_type(D, TName) :-
+    edge(D, Init, "ASSIGNED_FROM"),
+    node(Init, "CALL"), attr(Init, "name", InitName),
+    edge(Init, Ctor, "CALLS"),
+    impl_method(TName, CtorName, Ctor),
+    concat(TName, "::", Pfx),
+    string_contains(InitName, Pfx).
+
+% The dispatch: a method call through a constructor-typed receiver resolves to
+% the type's impl method bearing the call's (bare) method name.
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia, receiverType))
+rust_ctor_method_call(C, M, "rust-cross-method", TName) :-
+    rs_call(C, MName),
+    receiver_decl(C, D),
+    recv_type(D, TName),
+    impl_method(TName, MName, M).

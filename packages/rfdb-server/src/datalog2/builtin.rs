@@ -936,6 +936,40 @@ fn eval_edge_attr(view: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> Bu
     Ok(())
 }
 
+// ── Function: node_attr (node-metadata point probe) ────────────────
+
+/// `node_attr(NodeId, Key, Val)` — read a TOP-LEVEL string/number field `Key` from the
+/// metadata JSON of the bound node `NodeId` (the node twin of `edge_attr`, served by the
+/// one-node point probe [`StorageView::node_metadata`] — the id is already bound, §8.3).
+/// Free arg2 binds the field's string surface (a JSON string verbatim, a JSON number by
+/// its JSON text); bound arg2 equality-filters.
+///
+/// Missing node, node without metadata, unparseable metadata, missing key, or a
+/// non-scalar value (bool/null/array/object) ⇒ NO row — a tuple non-match, never an
+/// error (the graph legitimately contains nodes without the asked-for field).
+fn eval_node_attr(view: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> BuiltinResult<()> {
+    let Some(id) = bound_id(&spec.args[0]) else {
+        return Ok(());
+    };
+    let Some(key) = bound_str(&spec.args[1]) else {
+        return Ok(());
+    };
+    let Some(blob) = view.node_metadata(id) else {
+        return Ok(());
+    };
+    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&blob) else {
+        return Ok(());
+    };
+    let produced = match parsed.get(&key) {
+        Some(serde_json::Value::String(s)) => s.clone(),
+        Some(serde_json::Value::Number(n)) => n.to_string(),
+        // Absent key or a non-scalar (bool/null/array/object) value: no row.
+        _ => return Ok(()),
+    };
+    bind_or_check(out, spec, 2, &produced);
+    Ok(())
+}
+
 // ── Mode tables ────────────────────────────────────────────────────
 
 use ArgMode::{Bound as B, Free as F};
@@ -983,6 +1017,14 @@ const CONCAT_MODES: &[Mode] = &[Mode { args: &[B, B, F] }, Mode { args: &[B, B, 
 const EDGE_ATTR_MODES: &[Mode] = &[
     Mode { args: &[B, B, B, B, F] },
     Mode { args: &[B, B, B, B, B] },
+];
+
+/// `node_attr/3` modes: the node id and the metadata key are always bound (a point probe
+/// on a bound node — there is deliberately NO generator mode, unlike `attr`'s [F,B,B]);
+/// the value is free (bind) or bound (check).
+const NODE_ATTR_MODES: &[Mode] = &[
+    Mode { args: &[B, B, F] },
+    Mode { args: &[B, B, B] },
 ];
 
 // ── The registry (one registration point) ──────────────────────────
@@ -1131,6 +1173,13 @@ pub fn registry() -> Vec<BuiltinDef> {
             kind: BuiltinKind::Function,
             eval: eval_edge_attr,
         },
+        BuiltinDef {
+            name: "node_attr",
+            arity: 3,
+            modes: NODE_ATTR_MODES,
+            kind: BuiltinKind::Function,
+            eval: eval_node_attr,
+        },
     ]
 }
 
@@ -1246,6 +1295,7 @@ mod tests {
             "basename",
             "strip_quotes",
             "edge_attr",
+            "node_attr",
         ] {
             assert!(lookup(name).is_some(), "missing builtin {name}");
         }
@@ -1503,6 +1553,9 @@ mod tests {
         }
         fn edge_metadata(&self, src: u128, dst: u128, edge_type: &str) -> Option<String> {
             self.inner.edge_metadata(src, dst, edge_type)
+        }
+        fn node_metadata(&self, id: u128) -> Option<String> {
+            self.inner.node_metadata(id)
         }
     }
 
@@ -2201,5 +2254,149 @@ mod tests {
             s("kb.queryNodes:instance_of"),
             "name ++ ':' ++ metadata-via, derived through two concat hops"
         );
+    }
+
+    // ── node_attr ──────────────────────────────────────────────────
+
+    /// Fixture: f1 with metadata; f2 without; mirrors `edge_attr_fixture` on the node axis.
+    fn node_attr_fixture() -> FixtureStorageView {
+        let mut v = FixtureStorageView::new(1);
+        for (sid, ty, name) in [
+            ("f1", "FUNCTION", "handler"),
+            ("f2", "FUNCTION", "helper"),
+        ] {
+            v.put_node(GlueNodeRow {
+                id: id_of(sid),
+                node_type: ty.to_string(),
+                name: name.to_string(),
+                file: "a/file.js".to_string(),
+            });
+        }
+        v.put_node_metadata(
+            id_of("f1"),
+            r#"{"kind":"arrow","line":42,"flags":[1,2],"ok":true}"#,
+        );
+        v
+    }
+
+    fn run_node_attr(view: &dyn StorageView, id: &str, key: &str, val: ArgValue) -> Batch {
+        let def = lookup("node_attr").unwrap();
+        let spec = ArgSpec::new(vec![
+            ArgValue::Bound(Value::Id(id_of(id))),
+            ArgValue::Bound(s(key)),
+            val,
+        ]);
+        def.check_mode(&spec).expect("mode supported");
+        let mut out = Batch::new();
+        (def.eval)(view, &mut out, &spec).expect("eval ok");
+        out
+    }
+
+    #[test]
+    fn node_attr_binds_string_and_number_fields() {
+        let v = node_attr_fixture();
+        // String field → its value verbatim.
+        let out = run_node_attr(&v, "f1", "kind", ArgValue::Free { slot: 0 });
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(out.rows[0][0], s("arrow"));
+        // Number field → its JSON text surface.
+        let out = run_node_attr(&v, "f1", "line", ArgValue::Free { slot: 0 });
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(out.rows[0][0], s("42"));
+    }
+
+    #[test]
+    fn node_attr_missing_or_nonscalar_is_no_row_never_error() {
+        let v = node_attr_fixture();
+        // Missing key.
+        assert_eq!(run_node_attr(&v, "f1", "nope", ArgValue::Free { slot: 0 }).rows.len(), 0);
+        // Non-scalar values: array and bool are NOT string/number fields.
+        assert_eq!(run_node_attr(&v, "f1", "flags", ArgValue::Free { slot: 0 }).rows.len(), 0);
+        assert_eq!(run_node_attr(&v, "f1", "ok", ArgValue::Free { slot: 0 }).rows.len(), 0);
+        // Node exists but carries no metadata.
+        assert_eq!(run_node_attr(&v, "f2", "kind", ArgValue::Free { slot: 0 }).rows.len(), 0);
+        // No such node.
+        assert_eq!(run_node_attr(&v, "nope", "kind", ArgValue::Free { slot: 0 }).rows.len(), 0);
+    }
+
+    #[test]
+    fn node_attr_check_mode_and_unsupported_mode() {
+        let v = node_attr_fixture();
+        // [B,B,B] equality check.
+        assert_eq!(
+            run_node_attr(&v, "f1", "kind", ArgValue::Bound(s("arrow"))).rows.len(),
+            1
+        );
+        assert_eq!(
+            run_node_attr(&v, "f1", "kind", ArgValue::Bound(s("declaration"))).rows.len(),
+            0
+        );
+        // A free id is not a supported mode (the probe needs the bound id — there is
+        // deliberately NO generator mode, unlike `attr`'s [F,B,B]).
+        let def = lookup("node_attr").unwrap();
+        let spec = ArgSpec::new(vec![
+            ArgValue::Free { slot: 0 },
+            ArgValue::Bound(s("kind")),
+            ArgValue::Bound(s("arrow")),
+        ]);
+        let err = def.check_mode(&spec).unwrap_err();
+        assert_eq!(err.code.as_str(), "E-PLAN-001");
+        assert!(err.required_bindings.contains(&0));
+    }
+
+    #[test]
+    fn node_attr_real_lsm_store_reads_committed_node_metadata() {
+        // Same probe over the REAL store: commit a node carrying metadata and read the
+        // field back through the snapshot point lookup (LsmStorageView).
+        let mut store = MultiShardStore::ephemeral(4);
+        let mut manifest = ManifestStore::ephemeral();
+        let mut n1 = node_rec("f1", "FUNCTION", "handler", "a/file.js");
+        n1.metadata = r#"{"kind":"arrow","line":42}"#.to_string();
+        let nodes = vec![n1, node_rec("f2", "FUNCTION", "helper", "a/file.js")];
+        store
+            .commit_batch(
+                nodes,
+                vec![],
+                &["a/file.js".to_string()],
+                HashMap::new(),
+                &mut manifest,
+            )
+            .unwrap();
+        let view = LsmStorageView::capture(Arc::new(store), &manifest);
+
+        let out = run_node_attr(&view, "f1", "kind", ArgValue::Free { slot: 0 });
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(out.rows[0][0], s("arrow"));
+        let out = run_node_attr(&view, "f1", "line", ArgValue::Free { slot: 0 });
+        assert_eq!(out.rows[0][0], s("42"));
+        // Missing key / no metadata on the real path: no row, no error.
+        assert_eq!(run_node_attr(&view, "f1", "nope", ArgValue::Free { slot: 0 }).rows.len(), 0);
+        assert_eq!(run_node_attr(&view, "f2", "kind", ArgValue::Free { slot: 0 }).rows.len(), 0);
+    }
+
+    // ── rule-level: node_attr through the full evaluate() entry ──
+
+    /// End-to-end (parse → stratify → plan → fixpoint): a rule filtering on a node's
+    /// metadata field derives exactly the node carrying it — f2 (no metadata) produces
+    /// nothing.
+    #[test]
+    fn rule_level_node_attr_via_evaluate() {
+        use crate::datalog::EvalLimits;
+        use crate::datalog2::events::EventLog;
+        use crate::datalog2::evaluate;
+
+        let v = node_attr_fixture();
+        let src = r#"arrow_fn(F, L) :-
+                       node(F, "FUNCTION"),
+                       node_attr(F, "kind", "arrow"),
+                       node_attr(F, "line", L)."#;
+        let stats = Stats { total_nodes: 2, total_edges: 0, ..Default::default() };
+        let eval = evaluate(&v, src, stats, EvalLimits::none(), EventLog::discard())
+            .expect("evaluate");
+
+        let facts = eval.facts("arrow_fn");
+        assert_eq!(facts.len(), 1, "only the metadata-carrying FUNCTION derives");
+        assert_eq!(facts[0][0], Value::Id(id_of("f1")));
+        assert_eq!(facts[0][1], s("42"), "number field surfaces as JSON text");
     }
 }

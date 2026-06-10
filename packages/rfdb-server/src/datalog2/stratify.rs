@@ -37,8 +37,9 @@
 //! predicate; a **variable** node type conservatively depends on all node-materialized
 //! predicates (the same `W-STRAT-001`). The axes never cross: a variable edge type
 //! depends only on edge materializers, a variable node type only on node materializers.
-//! (Reads of a materialized node's *fields* via `attr(X, …)` are not tracked — the same
-//! deliberate boundary as edge metadata reads via `edge_attr` on the edge axis.)
+//! (Reads of a materialized node's *fields* via `attr(X, …)`/`node_attr(X, …)` are not
+//! tracked — the same deliberate boundary as edge metadata reads via `edge_attr` on the
+//! edge axis.)
 //!
 //! # Algorithm
 //!
@@ -200,6 +201,7 @@ const BUILTINS: &[&str] = &[
     "basename",
     "strip_quotes",
     "edge_attr",
+    "node_attr",
     "path",
     "parent_function",
     "resolved_import",

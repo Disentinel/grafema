@@ -2146,8 +2146,10 @@ fn preload_relations<T: IdempotentTag>(
 /// the prior and new base views, and the [`BaseDelta`] between them, returns the maintained
 /// `Evaluation` — provably equal to a from-scratch [`Executor::evaluate`] of the new base —
 /// or `Ok(None)` when the program is outside the sound envelope (any negation, more than
-/// one derived stratum, or an `edge_attr` literal — its metadata-blob input is invisible
-/// to `diff_base`'s bare-triple edge diff) and the caller must recompute.
+/// one derived stratum, an `edge_attr`/`node_attr` literal, or an `attr` GENERATOR leg
+/// whose key is not a first-class column — these read METADATA blobs or the `exported`
+/// column, both invisible to `diff_base`'s diffed tuples: edges diff as bare
+/// `[src, type, dst]`, nodes as `[id, type, name, file]`) and the caller must recompute.
 ///
 /// Order: **delete then insert**. DRed (over-delete on the PRIOR base reading `ΔB⁻`, remove
 /// the candidates, re-derive the still-supported ones against the new base) yields the LFP of
@@ -2166,16 +2168,39 @@ pub(crate) fn maintain_incremental<T: IdempotentTag>(
 ) -> ExecResult<Option<Evaluation>> {
     // Envelope: insertion is non-monotone under negation (a base insert can retract through
     // `\+`), and cross-stratum delta threading is not yet implemented — recompute instead.
-    // `edge_attr` is also outside the envelope: it reads the edge METADATA blob
-    // (`StorageView::edge_metadata`), which is NOT part of the diffed base tuples
-    // (`diff_base` diffs edges as bare `[src, type, dst]`), so a metadata-only change
-    // yields an EMPTY `BaseDelta` and a silent maintained≠scratch divergence.
+    // `edge_attr` and `node_attr` are also outside the envelope: they read METADATA blobs
+    // (`StorageView::edge_metadata` / `StorageView::node_metadata`), which are NOT part of
+    // the diffed base tuples (`diff_base` diffs edges as bare `[src, type, dst]` and nodes
+    // as `[id, type, name, file]`), so a metadata-only change yields an EMPTY `BaseDelta`
+    // and a silent maintained≠scratch divergence.
     let outside_envelope = rules.iter().any(|r| {
-        r.body()
-            .iter()
-            .any(|l| l.is_negative() || l.atom().predicate() == "edge_attr")
+        r.body().iter().any(|l| {
+            l.is_negative() || matches!(l.atom().predicate(), "edge_attr" | "node_attr")
+        })
     });
-    if outside_envelope || strat.strata.len() > 1 {
+    // `attr`'s GENERATOR mode (free or wildcard id — ATTR_MODES [F,B,B] / the wildcard
+    // existence path) is inside the envelope only for the first-class column keys
+    // `name`/`file`/`type`: those are columns of the diffed node tuple, and the delta view
+    // serves them. ANY other key (`exported`, `id`, a metadata key, or a non-constant key)
+    // routes through `snapshot_nodes_by_attr`'s exported/metadata filter slots — data
+    // `diff_base` cannot see, the same silent maintained≠scratch hazard. Bound-id `attr`
+    // is always inside: it reads only `first_class_attr` columns (a metadata key there is
+    // a deterministic coercion miss, never a blob read). Checked on the PLANS because the
+    // generator mode is a join-order fact, not a syntactic one — except a wildcard id,
+    // which the planner patterns as Bound but `eval_attr` routes through the generator.
+    let attr_generator_outside = plans.iter().any(|p| {
+        p.legs.iter().any(|leg| {
+            let atom = leg.literal.atom();
+            atom.predicate() == "attr"
+                && (leg.pattern.first() == Some(&builtin::ArgMode::Free)
+                    || matches!(atom.args().first(), Some(Term::Wildcard)))
+                && !matches!(
+                    atom.args().get(1),
+                    Some(Term::Const(k)) if matches!(k.as_str(), "name" | "file" | "type")
+                )
+        })
+    });
+    if outside_envelope || attr_generator_outside || strat.strata.len() > 1 {
         return Ok(None);
     }
 
@@ -2996,6 +3021,157 @@ mod tests {
         assert!(out.is_none(), "edge_attr → recompute fallback, never stale maintained facts");
     }
 
+    /// The envelope guard for `node_attr`: its input is the NODE METADATA blob, which
+    /// `diff_base` cannot see (nodes diff as `[id, type, name, file]` tuples — no metadata
+    /// column). The test first PROVES the hazard — a node-metadata-only change yields an
+    /// EMPTY `BaseDelta` while the from-scratch results differ — then asserts
+    /// `maintain_incremental` refuses such a program (returns `None` → recompute) instead
+    /// of silently keeping stale facts. The exact node twin of the `edge_attr` guard.
+    #[test]
+    fn incremental_refuses_node_attr_returns_none() {
+        let src = "arrow_fn(A) :- node(A, \"FUNCTION\"), node_attr(A, \"kind\", \"arrow\").";
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let stats = Stats { total_nodes: 1, total_edges: 0, ..Default::default() };
+        let plans = plan_program(&rules, &strat, &stats).expect("plan");
+
+        // Same node tuple (id/type/name/file) in both generations; ONLY the metadata
+        // blob changes.
+        let mk = |meta: &str, gen: u64| {
+            let mut v = FixtureStorageView::new(gen);
+            node(&mut v, "a", "FUNCTION");
+            v.put_node_metadata(id_of("a"), meta);
+            v
+        };
+        let prev_view = mk("{\"kind\":\"arrow\"}", 1);
+        let cur_view = mk("{\"kind\":\"declaration\"}", 2);
+
+        // The hazard, demonstrated: the base diff is EMPTY, yet scratch results differ.
+        let base_delta = crate::datalog2::increment::diff_base(&prev_view, &cur_view);
+        assert_eq!(base_delta.len(), 0, "node-metadata-only change is invisible to diff_base");
+        let prev = run(src, &prev_view, stats.clone());
+        let cur_scratch = run(src, &cur_view, stats);
+        assert_ne!(
+            prev.relations, cur_scratch.relations,
+            "scratch DOES see the metadata change (arrow_fn fact must disappear)"
+        );
+
+        // The guard: a program mentioning node_attr is outside the envelope → recompute.
+        let out = maintain_incremental::<BoolTag>(
+            &prev, &prev_view, &cur_view, &base_delta, &plans, &rules, &strat, EvalLimits::none(),
+        )
+        .expect("no executor error");
+        assert!(out.is_none(), "node_attr → recompute fallback, never stale maintained facts");
+    }
+
+    /// The envelope guard for `attr`'s GENERATOR mode with a non-first-class key:
+    /// `attr(F, "kind", "arrow")` with a free id routes the key through the real view's
+    /// metadata filter slots (`snapshot_nodes_by_attr`: anything outside `name`/`file`/
+    /// `type` → `exported`-column or metadata-filter lookup), which `diff_base` cannot see
+    /// (nodes diff as `[id, type, name, file]`) — so a metadata-only change yields an EMPTY
+    /// `BaseDelta` and a silent maintained≠scratch divergence, exactly the `node_attr`
+    /// hazard through a different door. The fixture's `nodes_by_attr` deliberately serves
+    /// only first-class keys, so the divergence itself is only reachable on the LSM view;
+    /// this test pins the REFUSAL (returns `None` → recompute) for both a metadata key and
+    /// the `exported` column.
+    #[test]
+    fn incremental_refuses_attr_metadata_generator_returns_none() {
+        let stats = Stats { total_nodes: 1, total_edges: 0, ..Default::default() };
+        let mk = |gen: u64| {
+            let mut v = FixtureStorageView::new(gen);
+            node(&mut v, "a", "FUNCTION");
+            v
+        };
+        let prev_view = mk(1);
+        let cur_view = mk(2);
+        let base_delta = crate::datalog2::increment::diff_base(&prev_view, &cur_view);
+        assert_eq!(base_delta.len(), 0, "tuple-identical generations diff empty");
+
+        for src in [
+            "arrow_fn(A) :- attr(A, \"kind\", \"arrow\").",
+            "exported_fn(A) :- attr(A, \"exported\", \"true\").",
+        ] {
+            let prog = parse_ext_program(src).expect("parse");
+            let strat = stratify(&prog).expect("stratify");
+            let rules = prog.rules();
+            let plans = plan_program(&rules, &strat, &stats).expect("plan");
+            let prev = run(src, &prev_view, stats.clone());
+            let out = maintain_incremental::<BoolTag>(
+                &prev, &prev_view, &cur_view, &base_delta, &plans, &rules, &strat,
+                EvalLimits::none(),
+            )
+            .expect("no executor error");
+            assert!(
+                out.is_none(),
+                "attr generator with non-first-class key → recompute fallback ({src})"
+            );
+        }
+    }
+
+    /// A WILDCARD id is the generator in disguise: the planner patterns `_` as Bound
+    /// (`is_bound_or_const`), but `eval_attr` routes it through the same `nodes_by_attr`
+    /// existence path as a free id — so the envelope guard must catch it syntactically,
+    /// not from the plan pattern. (A wildcard-id `attr` shares no variable with any other
+    /// literal, so the only plannable form is the ground existence probe.)
+    #[test]
+    fn incremental_refuses_attr_wildcard_id_metadata_key() {
+        let src = "flag(\"y\") :- attr(_, \"kind\", \"arrow\").";
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let stats = Stats { total_nodes: 1, total_edges: 0, ..Default::default() };
+        let plans = plan_program(&rules, &strat, &stats).expect("plan");
+
+        let mut prev_view = FixtureStorageView::new(1);
+        node(&mut prev_view, "a", "FUNCTION");
+        let mut cur_view = FixtureStorageView::new(2);
+        node(&mut cur_view, "a", "FUNCTION");
+        let base_delta = crate::datalog2::increment::diff_base(&prev_view, &cur_view);
+
+        let prev = run(src, &prev_view, stats);
+        let out = maintain_incremental::<BoolTag>(
+            &prev, &prev_view, &cur_view, &base_delta, &plans, &rules, &strat,
+            EvalLimits::none(),
+        )
+        .expect("no executor error");
+        assert!(out.is_none(), "wildcard-id attr with metadata key → recompute fallback");
+    }
+
+    /// The guard must NOT over-refuse: an `attr` generator on a FIRST-CLASS key
+    /// (`name`/`file`/`type`) reads only columns of the diffed node tuple — the stdlib
+    /// `depends` rule is built on `attr(FreeId, "file", F)` generators, and refusing them
+    /// would silently turn every `@materialize` maintain back into a full recompute.
+    /// Maintained must stay available AND ≡ scratch across a node insertion.
+    #[test]
+    fn incremental_keeps_attr_first_class_generator_inside_envelope() {
+        let src = "in_f(A) :- attr(A, \"file\", \"f.js\").";
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let stats = Stats { total_nodes: 2, total_edges: 0, ..Default::default() };
+        let plans = plan_program(&rules, &strat, &stats).expect("plan");
+
+        let mut prev_view = FixtureStorageView::new(1);
+        node(&mut prev_view, "a", "FUNCTION");
+        let mut cur_view = FixtureStorageView::new(2);
+        node(&mut cur_view, "a", "FUNCTION");
+        node(&mut cur_view, "b", "FUNCTION");
+
+        let base_delta = crate::datalog2::increment::diff_base(&prev_view, &cur_view);
+        assert_eq!(base_delta.len(), 1, "one asserted node");
+
+        let prev = run(src, &prev_view, stats.clone());
+        let maintained = maintain_incremental::<BoolTag>(
+            &prev, &prev_view, &cur_view, &base_delta, &plans, &rules, &strat,
+            EvalLimits::none(),
+        )
+        .expect("no executor error")
+        .expect("first-class attr generator stays INSIDE the maintain envelope");
+        let scratch = run(src, &cur_view, stats);
+        assert_eq!(maintained.relations, scratch.relations, "maintained ≡ scratch");
+    }
+
     /// DRed end-to-end: deleting a base edge whose derived fact still has an ALTERNATE
     /// derivation must KEEP that fact (over-delete marks it, re-derive restores it). Diamond
     /// a→b, a→c, b→d, c→d; delete b→d; `(a,d)` survives via a→c→d.
@@ -3659,6 +3835,9 @@ mod tests {
         fn edge_metadata(&self, src: u128, dst: u128, edge_type: &str) -> Option<String> {
             self.inner.edge_metadata(src, dst, edge_type)
         }
+        fn node_metadata(&self, id: u128) -> Option<String> {
+            self.inner.node_metadata(id)
+        }
     }
 
     /// Wraps a fixture view and counts the TOTAL number of base rows the run touches across
@@ -3727,6 +3906,11 @@ mod tests {
         }
         fn edge_metadata(&self, src: u128, dst: u128, edge_type: &str) -> Option<String> {
             let r = self.inner.edge_metadata(src, dst, edge_type);
+            self.bump(r.is_some() as usize);
+            r
+        }
+        fn node_metadata(&self, id: u128) -> Option<String> {
+            let r = self.inner.node_metadata(id);
             self.bump(r.is_some() as usize);
             r
         }
