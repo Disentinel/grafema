@@ -3,4 +3,4 @@ packages:
   ../grafema-common
 
 constraints:
-  libyaml +system-libyaml
+  libyaml -system-libyaml

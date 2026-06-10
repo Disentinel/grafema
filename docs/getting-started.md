@@ -145,5 +145,22 @@ Grafema currently requires a `package.json`. Run `npm init -y` to create one.
 Run `grafema doctor` to check which binaries are available and where they're expected.
 Run `grafema upgrade` to clean stale artifacts and download fresh binaries.
 
+**"error while loading shared libraries: libyaml-0.so.2"** (Linux slim containers)
+
+On minimal Linux images (e.g. `node:22-slim`, Alpine-based containers), the `libyaml` C library may not be present, causing resolution to fail:
+
+```
+grafema-resolve: error while loading shared libraries: libyaml-0.so.2: cannot open shared object file
+build-index request failed: Broken pipe
+```
+
+Workaround until a statically-linked binary is available:
+
+```bash
+apt-get install -y libyaml-0-2
+```
+
+On Alpine: `apk add libyaml`. On standard Ubuntu/Debian developer machines, `libyaml-0-2` is installed by default — this affects slim/minimal images only.
+
 **Upgrading from an older version**
 Run `grafema upgrade` to remove stale binaries from `~/.grafema/bin/` and download the current versions. Use `grafema upgrade --lang js,python` to install only specific language analyzers.
