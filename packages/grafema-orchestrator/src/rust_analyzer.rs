@@ -1925,7 +1925,7 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
             let hash = ctx.pos_hash(line, col);
             let node_id = semantic_id(&ctx.file, "CLOSURE", "<closure>", parent, Some(&hash));
             ctx.emit_node(GraphNode {
-                id: node_id,
+                id: node_id.clone(),
                 node_type: "CLOSURE".to_string(),
                 name: "<closure>".to_string(),
                 file: ctx.file.clone(),
@@ -1938,7 +1938,22 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
                 ]),
                 extra: HashMap::new(),
             });
+            // A closure is a function boundary, like a free `fn` (see walk_fn):
+            // its inputs bind as parameters and its body must run inside a
+            // Function scope with `enclosing_fn` pointing at the closure, so
+            // closure parameters become PARAMETER nodes (dataflow can reach
+            // them) and nested calls/references are CONTAINED by the closure
+            // rather than mis-attributed to the enclosing function. Captures of
+            // outer variables still resolve: the closure's parent scope is the
+            // enclosing scope, and deferred refs walk `scope_parents` upward.
+            let prev_fn = ctx.enclosing_fn.replace(node_id.clone());
+            ctx.push_scope(&node_id, ScopeKind::Function);
+            for input in &e.inputs {
+                walk_pat_bindings(input, "param", ctx);
+            }
             walk_expr(&e.body, ctx);
+            ctx.pop_scope();
+            ctx.enclosing_fn = prev_fn;
         }
 
         // ── RETURN ──────────────────────────────────────────────────
@@ -2461,6 +2476,55 @@ mod tests {
     }
 
     #[test]
+    fn test_closure_params_bind_and_body_is_scoped() {
+        // A closure is a function boundary, exactly like a free `fn`: its
+        // parameters must bind as PARAMETER nodes and the calls/references in
+        // its body must be CONTAINED by the CLOSURE node — not silently
+        // attributed to the enclosing function. Before the fix, walk_expr's
+        // `Expr::Closure` arm emitted the CLOSURE node and then walked only the
+        // body, never iterating `e.inputs` nor pushing the closure as a scope.
+        // Result: closure parameters were invisible to the graph (no PARAMETER
+        // node, so dataflow could not flow into them) and every nested call
+        // hung off the outer fn while the CLOSURE node contained nothing.
+        // Closures are ubiquitous in idiomatic Rust (`.map`, `.filter`,
+        // `and_then`, thread::spawn), so this dropped a large slice of the
+        // call/dataflow graph. The fix mirrors walk_fn (params bind, body runs
+        // inside a Function scope with `enclosing_fn` set to the closure).
+        let fa = parse_and_analyze(
+            "fn main() { let f = |x| helper(x); }  fn helper(n: i32) -> i32 { n }",
+        );
+        // Closure parameter `x` is bound as a PARAMETER node.
+        assert!(
+            has_node(&fa, "PARAMETER", "x"),
+            "closure parameter x must bind as a PARAMETER node"
+        );
+        // The call inside the closure body is CONTAINED by the CLOSURE node,
+        // not by the enclosing `main` function.
+        assert!(
+            has_edge(&fa, "CONTAINS", "CLOSURE", "CALL->helper"),
+            "CALL helper must be CONTAINED by the CLOSURE, not the outer fn"
+        );
+    }
+
+    #[test]
+    fn test_closure_capture_still_resolves_and_no_param_ok() {
+        // Making the closure a Function scope must NOT break capture of outer
+        // variables: a reference inside the closure body to a binding declared
+        // in the enclosing scope still resolves, because resolve_refs walks
+        // `scope_parents` upward and the closure's parent is the enclosing
+        // scope. Also exercises the zero-parameter closure edge case.
+        let fa = parse_and_analyze("fn main() { let v = 1; let f = || v; }");
+        // The captured outer variable `v` resolves from inside the closure.
+        assert!(
+            has_edge(&fa, "READS_FROM", "REFERENCE->v", "VARIABLE->v"),
+            "captured outer var `v` must still resolve from the closure body"
+        );
+        // Zero-param closure produced exactly one CLOSURE node, no spurious params.
+        assert_eq!(count_nodes(&fa, "CLOSURE"), 1, "one closure node");
+        assert_eq!(count_nodes(&fa, "PARAMETER"), 0, "no params for `|| v`");
+    }
+
+    #[test]
     fn test_trait_definition() {
         let fa = parse_and_analyze("pub trait Foo { fn bar(&self); fn baz(&self); }");
         assert!(has_node(&fa, "TRAIT", "Foo"));
@@ -2774,6 +2838,8 @@ mod tests {
             .find(|n| n.node_type == "FUNCTION" && n.name == "puts")
             .expect("FUNCTION puts");
         assert_eq!(f.metadata.get("abi"), Some(&serde_json::json!("C")));
+    }
+
     // Associated items inside `impl` blocks and `trait` definitions used to be
     // silently dropped (ImplItem::Const/Type were empty no-ops; walk_trait only
     // matched TraitItem::Fn), so `Self::MAX` and associated-type queries returned
@@ -2821,6 +2887,8 @@ mod tests {
         assert!(has_edge(&fa, "CONTAINS", "TRAIT", "TYPE_ALIAS"), "TRAIT CONTAINS type");
         // The function signature is still emitted alongside the associated type.
         assert_eq!(count_nodes(&fa, "TYPE_SIGNATURE"), 1);
+    }
+
     // ── Macro invocations ───────────────────────────────────────────────
     // `syn` does not expand macros, so before this fix `Expr::Macro` and
     // `Stmt::Macro` were dropped entirely. That violated KNOWN_LIMITATIONS'
