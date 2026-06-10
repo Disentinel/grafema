@@ -93,14 +93,25 @@ impl CompileCommandsDb {
                 let mut filtered = Vec::new();
                 let mut iter = cmd.arguments.iter().peekable();
                 while let Some(arg) = iter.next() {
-                    if arg.starts_with("-I") || arg.starts_with("-D") || arg.starts_with("-std=") {
-                        filtered.push(arg.clone());
-                    } else if arg == "-isystem" || arg == "-include" {
+                    // Space-separated form: the flag and its value are two argv
+                    // entries (e.g. `-I dir`, `-D NAME`, `-isystem dir`). Both
+                    // gcc and clang accept this, and compile_commands.json
+                    // `arguments` arrays preserve it. The exact-match checks must
+                    // precede the `starts_with` checks below, since "-I" also
+                    // starts with "-I" — otherwise the value is silently dropped
+                    // and libclang gets a bare flag (broken header/macro lookup).
+                    if arg == "-I" || arg == "-D" || arg == "-isystem" || arg == "-include" {
                         filtered.push(arg.clone());
                         if let Some(next) = iter.next() {
                             filtered.push(next.clone());
                         }
-                    } else if arg.starts_with("-isystem") || arg.starts_with("-include") {
+                    } else if arg.starts_with("-I")
+                        || arg.starts_with("-D")
+                        || arg.starts_with("-std=")
+                        || arg.starts_with("-isystem")
+                        || arg.starts_with("-include")
+                    {
+                        // Combined form: -I/path, -DNAME, -std=c++17, -isystemX.
                         filtered.push(arg.clone());
                     }
                 }
@@ -1275,4 +1286,66 @@ pub fn is_c_file(path: &Path) -> bool {
         .and_then(|e| e.to_str())
         .map(|e| e == "c")
         .unwrap_or(false)
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a one-entry CompileCommandsDb keyed on `/proj/foo.cpp` with the
+    /// given argv. Used to exercise `get_args` without touching libclang.
+    fn db_with(arguments: Vec<&str>) -> CompileCommandsDb {
+        let mut entries = HashMap::new();
+        entries.insert(
+            PathBuf::from("/proj/foo.cpp"),
+            CompileCommand {
+                directory: PathBuf::from("/proj"),
+                arguments: arguments.into_iter().map(String::from).collect(),
+            },
+        );
+        CompileCommandsDb { entries }
+    }
+
+    /// `-I` and its directory are two separate argv entries (the space-separated
+    /// form, e.g. `cc -I dir`). Both must survive filtering — dropping the
+    /// directory leaves libclang with a bare `-I` and broken header resolution.
+    #[test]
+    fn get_args_keeps_space_separated_include_dir() {
+        let db = db_with(vec!["c++", "-I", "/proj/include", "-c", "/proj/foo.cpp"]);
+        let got = db.get_args(Path::new("/proj/foo.cpp"));
+        assert_eq!(got, vec!["-I".to_string(), "/proj/include".to_string()]);
+    }
+
+    /// `-D NAME` (space-separated define) must keep its value too.
+    #[test]
+    fn get_args_keeps_space_separated_define() {
+        let db = db_with(vec!["cc", "-D", "DEBUG=1", "-c", "/proj/foo.cpp"]);
+        let got = db.get_args(Path::new("/proj/foo.cpp"));
+        assert_eq!(got, vec!["-D".to_string(), "DEBUG=1".to_string()]);
+    }
+
+    /// Combined forms (`-I/path`, `-DNAME`, `-std=`) and separated `-isystem`
+    /// must keep working exactly as before — guards against over-eager merging.
+    #[test]
+    fn get_args_preserves_combined_and_isystem() {
+        let db = db_with(vec![
+            "c++", "-I/proj/inc", "-DFOO=1", "-std=c++17", "-isystem", "/usr/include",
+            "-O2", "-c", "/proj/foo.cpp",
+        ]);
+        let got = db.get_args(Path::new("/proj/foo.cpp"));
+        assert_eq!(
+            got,
+            vec![
+                "-I/proj/inc".to_string(),
+                "-DFOO=1".to_string(),
+                "-std=c++17".to_string(),
+                "-isystem".to_string(),
+                "/usr/include".to_string(),
+            ]
+        );
+    }
 }
