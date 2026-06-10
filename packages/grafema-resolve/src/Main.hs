@@ -21,10 +21,26 @@ import Grafema.Types (GraphNode)
 import Grafema.Protocol (PluginCommand(..), readFrame, writeFrame, encodeMsgpack, decodeMsgpack, pluginCommandToMsgpack, readNodesFromStdin, writeCommandsToStdout)
 import Grafema.RuntimeGlobals (NameStrategy(..), NodeFilter(..), SymbolDB, loadSymbolDB, resolveAll)
 import ImportResolution (ExportIndex, WorkspaceMap, ModuleIndex)
+import qualified Data.Set as Set
+
 import qualified Data.Binary as Binary
 import qualified Data.MessagePack as MP
 import qualified Data.Vector as V
 import qualified Data.Map.Strict as Map
+
+-- | Per-step resolver gating (the resolve→datalog2 migration seam): the
+-- GRAFEMA_SKIP_RESOLVE_STEPS env var carries a comma-separated list of step
+-- names whose legacy implementation is SKIPPED because a datalog2 rule pack
+-- now produces those edges in-engine. Unset/empty = no behavior change.
+-- Known names: same-file-calls, js-local-refs, runtime-globals, builtins,
+-- import-resolution, cross-file-calls, property-access, class-inheritance.
+getSkipSteps :: IO (Set.Set String)
+getSkipSteps = do
+  mv <- lookupEnv "GRAFEMA_SKIP_RESOLVE_STEPS"
+  case mv of
+    Nothing -> pure Set.empty
+    Just v  -> pure (Set.fromList (words (map (\c -> if c == ',' then ' ' else c) v)))
+
 
 -- | A workspace package mapping: npm name → entry point file path.
 data WorkspacePackage = WorkspacePackage
@@ -163,14 +179,18 @@ daemonLoop symbolDb stateRef indexRef = do
               -- Run resolvers sequentially via evaluate to ensure each
               -- resolver's indexes are GC-eligible before the next runs.
               -- The ++ chain is lazy so encodeMsgpack serializes incrementally.
-              let r1 = SameFileCalls.resolveAll allNodes
-              let r2 = JsLocalRefs.resolveAll allNodes
-              let r3 = resolveAll jsStrategy symbolDb allNodes
-              let r4 = Builtins.resolveAll allNodes
-              r5 <- ImportResolution.resolveAllWithWorkspace allNodes wsList
-              let r6 = CrossFileCalls.resolveAll allNodes
-              let r7 = PropertyAccess.resolveAll allNodes
-              let r8 = ClassInheritance.resolveAll allNodes
+              skips <- getSkipSteps
+              let gate n xs = if Set.member n skips then [] else xs
+              let r1 = gate "same-file-calls" (SameFileCalls.resolveAll allNodes)
+              let r2 = gate "js-local-refs" (JsLocalRefs.resolveAll allNodes)
+              let r3 = gate "runtime-globals" (resolveAll jsStrategy symbolDb allNodes)
+              let r4 = gate "builtins" (Builtins.resolveAll allNodes)
+              r5 <- if Set.member "import-resolution" skips
+                      then pure []
+                      else ImportResolution.resolveAllWithWorkspace allNodes wsList
+              let r6 = gate "cross-file-calls" (CrossFileCalls.resolveAll allNodes)
+              let r7 = gate "property-access" (PropertyAccess.resolveAll allNodes)
+              let r8 = gate "class-inheritance" (ClassInheritance.resolveAll allNodes)
               let result = r1 ++ r2 ++ r3 ++ r4 ++ r5 ++ r6 ++ r7 ++ r8
               -- Encode directly to msgpack, bypassing aeson intermediate
               let msgpackResult = MP.ObjectMap $ V.fromList
@@ -203,16 +223,20 @@ daemonLoop symbolDb stateRef indexRef = do
                 Just indexes -> do
                   let fileNodes = drNodes req
                   -- Run all 7 resolvers on just this file's nodes
-                  let r1 = SameFileCalls.resolveAll fileNodes
-                  let r2 = JsLocalRefs.resolveAll fileNodes
-                  let r3 = resolveAll jsStrategy symbolDb fileNodes
-                  let r4 = Builtins.resolveAll fileNodes
+                  skips <- getSkipSteps
+                  let gate n xs = if Set.member n skips then [] else xs
+                  let r1 = gate "same-file-calls" (SameFileCalls.resolveAll fileNodes)
+                  let r2 = gate "js-local-refs" (JsLocalRefs.resolveAll fileNodes)
+                  let r3 = gate "runtime-globals" (resolveAll jsStrategy symbolDb fileNodes)
+                  let r4 = gate "builtins" (Builtins.resolveAll fileNodes)
                   -- For import resolution: use pre-built export index + workspace map + module index
-                  r5 <- ImportResolution.resolveFileWithIndex (riExportIndex indexes) (riWorkspaceMap indexes) (riModuleIndex indexes) fileNodes
+                  r5 <- if Set.member "import-resolution" skips
+                          then pure []
+                          else ImportResolution.resolveFileWithIndex (riExportIndex indexes) (riWorkspaceMap indexes) (riModuleIndex indexes) fileNodes
                   -- For cross-file calls: use pre-built export index
-                  let r6 = CrossFileCalls.resolveFileWithIndex (riExportIndex indexes) fileNodes
-                  let r7 = PropertyAccess.resolveFileWithIndex (riExportIndex indexes) fileNodes
-                  let r8 = ClassInheritance.resolveFileWithIndex (riExportIndex indexes) fileNodes
+                  let r6 = gate "cross-file-calls" (CrossFileCalls.resolveFileWithIndex (riExportIndex indexes) fileNodes)
+                  let r7 = gate "property-access" (PropertyAccess.resolveFileWithIndex (riExportIndex indexes) fileNodes)
+                  let r8 = gate "class-inheritance" (ClassInheritance.resolveFileWithIndex (riExportIndex indexes) fileNodes)
                   let result = r1 ++ r2 ++ r3 ++ r4 ++ r5 ++ r6 ++ r7 ++ r8
                   -- Encode directly to msgpack, bypassing aeson intermediate
                   let msgpackResult = MP.ObjectMap $ V.fromList

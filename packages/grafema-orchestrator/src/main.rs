@@ -1257,10 +1257,32 @@ async fn main() -> Result<()> {
                         drop(handles);
 
                         // Second pass: graph-traversal resolvers (this.method() + CALL-based globals)
+                        // Per-step gating (the resolve→datalog2 migration seam): steps whose
+                        // datalog2 pack is load-bearing are listed in GRAFEMA_SKIP_RESOLVE_STEPS
+                        // (comma-separated; the per-file steps are gated inside the resolver
+                        // daemon by the same variable).
+                        let skip_steps: std::collections::HashSet<String> =
+                            std::env::var("GRAFEMA_SKIP_RESOLVE_STEPS")
+                                .unwrap_or_default()
+                                .split(',')
+                                .map(|s| s.trim().to_string())
+                                .filter(|s| !s.is_empty())
+                                .collect();
+                        let second_pass_cmds: Vec<(&str, &[plugin::WorkspacePackageWire])> =
+                            [("js-this-method-calls", &[] as &[plugin::WorkspacePackageWire]), ("runtime-call-globals", &[])]
+                                .into_iter()
+                                .filter(|(name, _)| {
+                                    let keep = !skip_steps.contains(*name);
+                                    if !keep {
+                                        tracing::warn!(step = name, "Legacy resolve step skipped (GRAFEMA_SKIP_RESOLVE_STEPS) — datalog2 pack is load-bearing");
+                                    }
+                                    keep
+                                })
+                                .collect();
                         let second_pass = plugin::stream_and_resolve_single_worker(
                             &mut rfdb,
                             &[config::Language::JavaScript],
-                            &[("js-this-method-calls", &[]), ("runtime-call-globals", &[])],
+                            &second_pass_cmds,
                             &resolve_pool,
                         ).await.unwrap_or_default();
                         for (cmd, mut o) in second_pass {
