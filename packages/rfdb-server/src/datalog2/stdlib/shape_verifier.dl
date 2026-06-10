@@ -2,9 +2,10 @@
 % (the 60s-timeout N+1 IPC plugin → one bottom-up program).
 %
 % Flags dotted CALLs whose receiver's declared type (CLASS/INTERFACE, EXTENDS-closed)
-% lacks the called member, as SHAPE_VIOLATION edges CALL → type node. The violated
-% method name rides on the edge via meta(method) (the plugin put it in its ISSUE
-% node's metadata; the ISSUE node itself is node creation — outside @materialize).
+% lacks the called member, as SHAPE_VIOLATION edges CALL → type node PLUS one ISSUE
+% node per violating call (@materialize_node — the node half the plugin produced).
+% The violated method name rides on the edge via meta(method) and on the ISSUE node
+% via meta(method, receiverType).
 %
 % ORDERING CONTRACT: MUST run AFTER @stdlib/method_calls. The unresolved-call filter
 % below reads CALLS as EDB, so the calls method_calls resolves must already be
@@ -91,3 +92,37 @@ shape_violation(C, T, MName) :-
     receiver_shape(C, T),
     \+ member_name(T, MName),
     \+ shape_ok(C).
+
+% The ISSUE node per violation — the node half of the plugin (shape-verifier.mjs:110-124).
+% Semantic id "issue::shape-violation::<decimal call id>" matches the plugin's
+% issue::shape-violation::<callId> convention (concat surfaces the bound CALL id as its
+% decimal u128 — deterministic, and the engine derives the node's u128 id from this
+% string by the production BLAKE3 convention, so a re-run of the plugin would collide
+% with = dedup against the same node). Name is the plugin's message verbatim:
+% "Method .<method> not found on <TypeName>".
+%
+% mode = "exclusive" is PROVENANCE-SCOPED for nodes (the engine contract, deliberately
+% unlike the type-wide edge exclusive): the owned set is ISSUE nodes whose
+% metadata._source equals THIS rule's hash — the orchestrator diagnostics phase's 18k+
+% ISSUE nodes carry a different _source and are never touched. A violation fixed in
+% code (or newly resolved) therefore retracts ITS ISSUE node on the next run without
+% disturbing any other producer's issues.
+%
+% RECORDED DELTAS vs the plugin's node (deliberate):
+%   - metadata: provenance is _source = <rule hash> + _generation (the engine
+%     convention) instead of _source = 'shape-verifier'; meta carries
+%     method + receiverType, while the plugin also stored severity/category/callName/
+%     line (all derivable from the CALL node the SHAPE_VIOLATION edge starts at — not
+%     duplicated here).
+%   - a call violating against MULTIPLE receiver types yields ONE node (the id is keyed
+%     on the call alone, exactly like the plugin's id) — which type's message/meta
+%     lands is set-order-defined (the plugin had the same last-write-wins collision).
+@materialize_node(node_type = "ISSUE", mode = "exclusive", meta(method, receiverType))
+shape_issue(Sid, Msg, File, MName, TName) :-
+    shape_violation(C, T, MName),
+    attr(C, "file", File),
+    attr(T, "name", TName),
+    concat("issue::shape-violation::", C, Sid),
+    concat("Method .", MName, Msg1),
+    concat(Msg1, " not found on ", Msg2),
+    concat(Msg2, TName, Msg).

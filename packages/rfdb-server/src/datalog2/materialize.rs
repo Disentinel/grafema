@@ -56,11 +56,44 @@
 //! agree on the endpoints but differ in a meta column are ONE edge — which fact's metadata
 //! lands is storage-order-defined, not specified. Programs needing per-fact identity must
 //! put the distinguishing value into an endpoint, not into meta.
+//!
+//! # `@materialize_node(node_type = "T", mode = …, meta(…))` — projecting facts to NODES
+//!
+//! The node twin of `@materialize`: a rule head `p(SemanticId, Name, File, MetaCol…)` of
+//! arity `3 + len(meta)` projects each derived fact to a graph NODE. Column 0 is the
+//! node's semantic-id STRING (the rule constructs it, typically with `concat` — a bound
+//! `Value::Id` input surfaces as its decimal u128, which is deterministic and usable as
+//! an id component); column 1 is the node `name`; column 2 its `file`; the i-th `meta`
+//! name takes column `3 + i`'s string surface into the node's metadata JSON, after the
+//! provenance stamp. The node's u128 `id` is derived from the semantic id by THE
+//! production convention ([`crate::graph::string_id_to_u128`]: BLAKE3, first 16 bytes,
+//! little-endian) — identical to what the server's writer (`string_to_id`) computes, so
+//! a rule-built semantic id collides exactly with (= dedups against) the same id written
+//! by an analyzer/plugin.
+//!
+//! Node identity is the `id` (hence the semantic id). Two derived facts agreeing on the
+//! semantic id are ONE node — the planner dedups by id, and which fact's name/file/meta
+//! lands is storage-order-defined (the edge meta-identity caveat, verbatim). An already-
+//! present node is never rewritten by the write-back (both modes), so a foreign producer's
+//! node with the same semantic id keeps its own metadata.
+//!
+//! ## Node `mode` semantics — exclusive is PROVENANCE-SCOPED (unlike edges)
+//!
+//! - `mode = "additive"`: only ADD nodes whose id is absent; never delete.
+//! - `mode = "exclusive"` (default): the prior owned set is the nodes of `node_type`
+//!   whose `metadata._source` equals THIS rule's `rule_ast_hash` — NOT all nodes of the
+//!   type. Owned nodes not re-derived this run are tombstoned. This deliberately differs
+//!   from EDGE exclusive mode, which is type-wide (the depends.dl/DEPENDS_ON contract:
+//!   the program owns the whole edge type). Node types are routinely SHARED across
+//!   producers — `ISSUE` is also written by the orchestrator diagnostics phase (18k+
+//!   nodes on the real graph) — so a type-wide node exclusive would tombstone foreign
+//!   producers' nodes, the exact hazard `mode = "additive"` was added to fix for edges.
+//!   Node exclusive is provenance-scoped from day one.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::datalog::{Atom, Literal, Rule, Term, Value};
-use crate::storage_v2::types::EdgeRecordV2;
+use crate::storage_v2::types::{EdgeRecordV2, NodeRecordV2};
 
 use super::exec::Evaluation;
 use super::parser_ext::{Annotation, ExtProgram};
@@ -157,6 +190,168 @@ pub fn collect_materialize_specs(
         }
     }
     Ok(out)
+}
+
+/// One `@materialize_node(node_type="T")` directive resolved against its rule's head
+/// predicate — the node twin of [`MaterializeSpec`] (module docs, node section).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NodeMaterializeSpec {
+    /// The head predicate whose derived facts are projected to nodes.
+    pub predicate: String,
+    /// The target node type `T` (the `node_type=` payload).
+    pub node_type: String,
+    /// The stable provenance stamp for THIS rule (`_source`), invariant under whitespace
+    /// and variable renaming (see [`rule_ast_hash`]).
+    pub rule_ast_hash: String,
+    /// `mode = "additive"`: only ADD absent nodes, never delete. Default `false` =
+    /// exclusive, which for NODES is PROVENANCE-SCOPED (module docs): the owned set is
+    /// `node_type` ∩ `metadata._source == rule_ast_hash`, never the whole type.
+    pub additive: bool,
+    /// The `meta(...)` field names, in source order: the i-th name projects head column
+    /// `3 + i` into the written node's metadata. Empty when the rule has no `meta(...)`.
+    pub meta: Vec<String>,
+}
+
+/// Extract every `@materialize_node(node_type="T")` directive from a parsed program —
+/// the node twin of [`collect_materialize_specs`]. Coded rejections (I5, never a silent
+/// skip): a missing `node_type=` key (`E-MAT-008`), an unknown `mode` (`E-MAT-006`, the
+/// shared mode taxonomy), and a rule carrying BOTH `@materialize` and
+/// `@materialize_node` (`E-MAT-011` — the two contracts demand incompatible head shapes:
+/// id endpoints in columns 0/1 vs a semantic-id string in column 0).
+pub fn collect_materialize_node_specs(
+    program: &ExtProgram,
+) -> Result<Vec<NodeMaterializeSpec>, MaterializeError> {
+    let mut out = Vec::new();
+    for item in &program.items {
+        let has_edge_materialize = item
+            .annotations
+            .iter()
+            .any(|a| matches!(a, Annotation::Materialize { .. }));
+        for ann in &item.annotations {
+            let Annotation::MaterializeNode { pairs, meta } = ann else {
+                continue;
+            };
+            if has_edge_materialize {
+                return Err(MaterializeError {
+                    code: "E-MAT-011",
+                    detail: format!(
+                        "rule '{}' carries both @materialize and @materialize_node: one head \
+                         cannot be both an edge projection (id endpoints in columns 0/1) and a \
+                         node projection (semantic-id string in column 0)",
+                        item.rule.head().predicate()
+                    ),
+                });
+            }
+            let node_type = pairs
+                .iter()
+                .find(|kv| kv.key == "node_type")
+                .map(|kv| kv.value.clone())
+                .ok_or_else(|| MaterializeError {
+                    code: "E-MAT-008",
+                    detail: format!(
+                        "@materialize_node on predicate '{}' is missing the required node_type= key",
+                        item.rule.head().predicate()
+                    ),
+                })?;
+            let additive = match pairs.iter().find(|kv| kv.key == "mode").map(|kv| kv.value.as_str()) {
+                None | Some("exclusive") => false,
+                Some("additive") => true,
+                Some(other) => {
+                    return Err(MaterializeError {
+                        code: "E-MAT-006",
+                        detail: format!(
+                            "@materialize_node on predicate '{}' has unknown mode '{}' (expected \"additive\" or \"exclusive\")",
+                            item.rule.head().predicate(),
+                            other
+                        ),
+                    })
+                }
+            };
+            out.push(NodeMaterializeSpec {
+                predicate: item.rule.head().predicate().to_string(),
+                node_type,
+                rule_ast_hash: rule_ast_hash(&item.rule),
+                additive,
+                meta: meta.clone(),
+            });
+        }
+    }
+    Ok(out)
+}
+
+/// Build the [`NodeRecordV2`] write-back batch for one run — the node twin of
+/// [`plan_writeback`]. For every node-materialized predicate, project each derived fact
+/// `p(SemanticId, Name, File, MetaCol…)` to a node of `spec.node_type` whose u128 id is
+/// [`crate::graph::string_id_to_u128`] of the semantic-id column (the production writer's
+/// derivation), stamped `{"_source": rule_ast_hash, "_generation": generation, …meta}`.
+///
+/// Coded aborts BEFORE any commit (I5): a head whose arity is not `3 + len(meta)`
+/// (`E-MAT-009`, the node mirror of `E-MAT-002`), and a semantic-id column that is not a
+/// non-empty string (`E-MAT-010` — column 0 must be the rule-constructed semantic id;
+/// a bare node id there is almost certainly a misordered head).
+///
+/// Facts agreeing on the derived id are ONE node: the batch is deduped by id,
+/// first-encountered fact wins (which name/file/meta surface lands for a duplicated
+/// semantic id is storage-order-defined — the edge meta-identity caveat, module docs).
+pub fn plan_node_writeback(
+    specs: &[NodeMaterializeSpec],
+    evaluation: &Evaluation,
+    generation: u64,
+) -> Result<Vec<NodeRecordV2>, MaterializeError> {
+    let mut nodes = Vec::new();
+    let mut seen: HashSet<u128> = HashSet::new();
+    for spec in specs {
+        let provenance = provenance_metadata(&spec.rule_ast_hash, generation);
+        let expected_arity = 3 + spec.meta.len();
+        for fact in evaluation.facts(&spec.predicate) {
+            if fact.len() != expected_arity {
+                return Err(MaterializeError {
+                    code: "E-MAT-009",
+                    detail: format!(
+                        "@materialize_node(node_type=\"{}\") requires head arity {} for {} \
+                         (semantic_id, name, file + {} meta column(s)); got arity {}",
+                        spec.node_type,
+                        expected_arity,
+                        spec.predicate,
+                        spec.meta.len(),
+                        fact.len()
+                    ),
+                });
+            }
+            let semantic_id = match &fact[0] {
+                Value::Str(s) if !s.is_empty() => s.clone(),
+                other => {
+                    return Err(MaterializeError {
+                        code: "E-MAT-010",
+                        detail: format!(
+                            "@materialize_node predicate '{}' semantic-id column (head column 0) \
+                             must be a non-empty string; got {:?}",
+                            spec.predicate, other
+                        ),
+                    })
+                }
+            };
+            let id = crate::graph::string_id_to_u128(&semantic_id);
+            if !seen.insert(id) {
+                continue; // duplicate semantic id within the run — one node (module docs)
+            }
+            let metadata = if spec.meta.is_empty() {
+                provenance.clone()
+            } else {
+                meta_metadata(&provenance, &spec.meta, &fact[3..])
+            };
+            nodes.push(NodeRecordV2 {
+                semantic_id,
+                id,
+                node_type: spec.node_type.clone(),
+                name: fact[1].as_str(),
+                file: fact[2].as_str(),
+                content_hash: 0,
+                metadata,
+            });
+        }
+    }
+    Ok(nodes)
 }
 
 /// Build the [`EdgeRecordV2`] write-back batch for one run: for every materialized
@@ -512,6 +707,132 @@ mod tests {
         assert_eq!(meta["_generation"], serde_json::json!(9));
         assert_eq!(meta["method"], serde_json::json!("say \"hi\""));
         assert_eq!(meta["line"], serde_json::json!("42"), "string surface, always a JSON string");
+    }
+
+    // ── @materialize_node ───────────────────────────────────────────
+
+    #[test]
+    fn collect_node_specs_reads_node_type_mode_and_meta() {
+        let src = r#"@materialize_node(node_type = "ISSUE", mode = "exclusive", meta(method))
+                     issue(Sid, N, F, M) :- node(C, "CALL"), attr(C, "name", N),
+                                            attr(C, "file", F), method_suffix(N, M),
+                                            concat("issue::", C, Sid)."#;
+        let prog = parse_ext_program(src).expect("parse");
+        let specs = collect_materialize_node_specs(&prog).expect("specs");
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].predicate, "issue");
+        assert_eq!(specs[0].node_type, "ISSUE");
+        assert!(!specs[0].additive, "exclusive ⇒ additive=false");
+        assert_eq!(specs[0].meta, vec!["method".to_string()]);
+        assert!(!specs[0].rule_ast_hash.is_empty());
+        // The edge collector ignores node directives and vice versa.
+        assert!(collect_materialize_specs(&prog).expect("edge specs").is_empty());
+    }
+
+    #[test]
+    fn collect_node_specs_coded_rejections() {
+        // Missing node_type ⇒ E-MAT-008.
+        let missing = r#"@materialize_node(mode = "additive")
+                         p(S, N, F) :- node(X, "CALL"), attr(X, "name", N), attr(X, "file", F), concat("i::", X, S)."#;
+        let err = collect_materialize_node_specs(&parse_ext_program(missing).expect("parse"))
+            .expect_err("must reject");
+        assert_eq!(err.code, "E-MAT-008");
+
+        // Unknown mode ⇒ E-MAT-006 (the shared mode taxonomy).
+        let badmode = r#"@materialize_node(node_type = "ISSUE", mode = "replace")
+                         p(S, N, F) :- node(X, "CALL"), attr(X, "name", N), attr(X, "file", F), concat("i::", X, S)."#;
+        let err = collect_materialize_node_specs(&parse_ext_program(badmode).expect("parse"))
+            .expect_err("must reject");
+        assert_eq!(err.code, "E-MAT-006");
+
+        // BOTH @materialize and @materialize_node on one rule ⇒ E-MAT-011 (incompatible
+        // head contracts: id endpoints vs semantic-id string).
+        let both = r#"@materialize(edge_type = "T")
+                      @materialize_node(node_type = "ISSUE")
+                      p(A, B, C) :- edge(A, B, "E"), attr(A, "name", C)."#;
+        let err = collect_materialize_node_specs(&parse_ext_program(both).expect("parse"))
+            .expect_err("must reject");
+        assert_eq!(err.code, "E-MAT-011");
+    }
+
+    #[test]
+    fn plan_node_writeback_derives_production_ids_with_provenance_and_meta() {
+        let mut eval = Evaluation::default();
+        eval.relations.insert(
+            "issue".to_string(),
+            vec![
+                vec![
+                    Value::Str("issue::shape-violation::42".to_string()),
+                    Value::Str("Method .qux not found on Foo".to_string()),
+                    Value::Str("app.ts".to_string()),
+                    Value::Str("qux".to_string()),
+                ]
+                .into_boxed_slice(),
+                // A duplicate semantic id — must dedup to ONE node (first wins).
+                vec![
+                    Value::Str("issue::shape-violation::42".to_string()),
+                    Value::Str("Method .qux not found on Bar".to_string()),
+                    Value::Str("app.ts".to_string()),
+                    Value::Str("qux".to_string()),
+                ]
+                .into_boxed_slice(),
+            ],
+        );
+        let specs = vec![NodeMaterializeSpec {
+            predicate: "issue".to_string(),
+            node_type: "ISSUE".to_string(),
+            rule_ast_hash: "h9".to_string(),
+            additive: false,
+            meta: vec!["method".to_string()],
+        }];
+        let nodes = plan_node_writeback(&specs, &eval, 5).expect("plan");
+        assert_eq!(nodes.len(), 1, "duplicate semantic id dedups to one node");
+        let n = &nodes[0];
+        assert_eq!(n.semantic_id, "issue::shape-violation::42");
+        // THE production id convention: BLAKE3(semantic_id)[0..16] little-endian — the
+        // same derivation the server writer (`string_to_id`) and the analyzers use.
+        assert_eq!(n.id, crate::graph::string_id_to_u128("issue::shape-violation::42"));
+        assert_eq!(n.node_type, "ISSUE");
+        assert_eq!(n.name, "Method .qux not found on Foo", "first fact wins");
+        assert_eq!(n.file, "app.ts");
+        assert_eq!(n.content_hash, 0);
+        let meta: serde_json::Value = serde_json::from_str(&n.metadata).expect("valid JSON");
+        assert_eq!(meta["_source"], serde_json::json!("h9"));
+        assert_eq!(meta["_generation"], serde_json::json!(5));
+        assert_eq!(meta["method"], serde_json::json!("qux"));
+    }
+
+    #[test]
+    fn plan_node_writeback_coded_aborts() {
+        // Arity ≠ 3 + len(meta) ⇒ E-MAT-009 (the node mirror of E-MAT-002).
+        let mut eval = Evaluation::default();
+        eval.relations.insert(
+            "issue".to_string(),
+            vec![vec![Value::Str("sid".into()), Value::Str("n".into())].into_boxed_slice()],
+        );
+        let spec = NodeMaterializeSpec {
+            predicate: "issue".to_string(),
+            node_type: "ISSUE".to_string(),
+            rule_ast_hash: "h".to_string(),
+            additive: true,
+            meta: Vec::new(),
+        };
+        let err = plan_node_writeback(std::slice::from_ref(&spec), &eval, 1)
+            .expect_err("arity 2 ≠ 3");
+        assert_eq!(err.code, "E-MAT-009");
+
+        // Semantic-id column not a non-empty string ⇒ E-MAT-010 (an id in column 0 is a
+        // misordered head; an empty string names nothing).
+        for bad in [Value::Id(7), Value::Str(String::new())] {
+            let mut eval = Evaluation::default();
+            eval.relations.insert(
+                "issue".to_string(),
+                vec![vec![bad, Value::Str("n".into()), Value::Str("f".into())].into_boxed_slice()],
+            );
+            let err = plan_node_writeback(std::slice::from_ref(&spec), &eval, 1)
+                .expect_err("bad semantic-id column");
+            assert_eq!(err.code, "E-MAT-010");
+        }
     }
 
     #[test]

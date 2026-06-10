@@ -44,21 +44,32 @@ pub const METHOD_CALLS_DL: &str = include_str!("stdlib/method_calls.dl");
 /// `plugins/shape-verifier.mjs` batch plugin. Flags dotted CALLs whose receiver's
 /// declared type (CLASS/INTERFACE, EXTENDS-closed) lacks the called member, as
 /// `@materialize(edge_type = "SHAPE_VIOLATION", mode = "exclusive", meta(method))`
-/// edges CALL → type (the type is pack-owned, so fixed violations retract on rerun).
+/// edges CALL → type (the type is pack-owned, so fixed violations retract on rerun),
+/// PLUS one `@materialize_node(node_type = "ISSUE", mode = "exclusive",
+/// meta(method, receiverType))` node per violating call — semantic id
+/// `issue::shape-violation::<decimal call id>` (the plugin's id convention), name
+/// `Method .<m> not found on <Type>` (the plugin's message). Node exclusive mode is
+/// PROVENANCE-SCOPED: the orchestrator diagnostics phase's ISSUE nodes are untouched.
 ///
 /// ORDERING: must run AFTER [`METHOD_CALLS_DL`] — its skip-resolved filter reads
 /// CALLS as EDB (legal here: this program does not materialize CALLS).
 pub const SHAPE_VERIFIER_DL: &str = include_str!("stdlib/shape_verifier.dl");
 
-/// The bundled Axum route-detection rule pack — the edges half of
-/// `plugins/axum-route-detector.mjs` (`http:route` NODE creation is deferred to
-/// node-materialization). Derives, from `.route("/path", get(handler))` calls in
-/// Rust files (argument positions read via `edge_attr` on PASSES_ARGUMENT `index`):
+/// The bundled Axum route-detection rule pack — `plugins/axum-route-detector.mjs`
+/// ported as edges + the `http:route` node. Derives, from `.route("/path",
+/// get(handler))` calls in Rust files (argument positions read via `edge_attr` on
+/// PASSES_ARGUMENT `index`):
 /// - `ROUTES_TO`  (route CALL → handler, `meta(method, path)`),
-/// - `HANDLED_BY` (path LITERAL → handler, `meta(method)`).
+/// - `HANDLED_BY` (path LITERAL → handler, `meta(method)`),
+/// - one `@materialize_node(node_type = "http:route", mode = "exclusive",
+///   meta(method, path))` node per route — semantic id `http:route::<METHOD>::<PATH>`,
+///   name = the path, handler not required (plugin parity). The plugin's
+///   EXPOSES/HANDLES edges to the route node are NOT ported (same-run node→edge
+///   endpoints are out of scope — see the `.dl` header).
 ///
-/// Both target types are pre-registered SHARED vocabulary
-/// (`packages/types/src/edges.ts`) ⇒ `mode = "additive"` on both heads.
+/// Both target edge types are pre-registered SHARED vocabulary
+/// (`packages/types/src/edges.ts`) ⇒ `mode = "additive"` on both edge heads; the node
+/// head is exclusive (provenance-scoped, safe on the shared `http:route` type).
 pub const AXUM_ROUTES_DL: &str = include_str!("stdlib/axum_routes.dl");
 
 /// The named stdlib rule packs, addressable on the wire as `"@stdlib/<name>"`
@@ -177,7 +188,7 @@ mod tests {
         let mut v = FixtureStorageView::new(1);
         node(&mut v, "m_a", "MODULE", "a.ts");
 
-        let (_eval, specs) = evaluate_with_materialize(
+        let (_eval, specs, _node_specs) = evaluate_with_materialize(
             &v,
             DEPENDS_DL,
             Stats::default(),
@@ -240,7 +251,7 @@ mod tests {
         // c4: not a method call (no dot) — must derive nothing.
         named_node(&mut v, "c4", "plainCall", "CALL", "app.ts");
 
-        let (eval, specs) = evaluate_with_materialize(
+        let (eval, specs, _node_specs) = evaluate_with_materialize(
             &v,
             METHOD_CALLS_DL,
             Stats::default(),
@@ -507,7 +518,7 @@ mod tests {
         named_node(&mut v, "c11", "q.qux", "CALL", "app.ts"); // VIOLATION (c11, Foo)
         edge(&mut v, "c11", "r2", "READS_FROM");
 
-        let (eval, specs) = evaluate_with_materialize(
+        let (eval, specs, node_specs) = evaluate_with_materialize(
             &v,
             SHAPE_VERIFIER_DL,
             Stats::default(),
@@ -542,6 +553,52 @@ mod tests {
             vec!["method".to_string()],
             "the violated method name is projected into edge metadata"
         );
+
+        // The ISSUE node per violation (the plugin's node half): semantic id keyed on
+        // the call's decimal id, the plugin's message as the name, the call's file.
+        let issues: BTreeSet<(String, String, String, String, String)> = eval
+            .facts("shape_issue")
+            .into_iter()
+            .map(|row| {
+                (
+                    row[0].as_str(),
+                    row[1].as_str(),
+                    row[2].as_str(),
+                    row[3].as_str(),
+                    row[4].as_str(),
+                )
+            })
+            .collect();
+        let issue = |call: &str, m: &str, t: &str| {
+            (
+                format!("issue::shape-violation::{}", id_of(call)),
+                format!("Method .{m} not found on {t}"),
+                "app.ts".to_string(),
+                m.to_string(),
+                t.to_string(),
+            )
+        };
+        assert_eq!(
+            issues,
+            BTreeSet::from([
+                issue("c3", "qux", "Foo"),
+                issue("c7", "missing", "IShape"),
+                issue("c11", "qux", "Foo"),
+            ]),
+            "one ISSUE per violating call, plugin id convention + message format"
+        );
+
+        // The node spec: ISSUE, provenance-scoped exclusive, meta(method, receiverType).
+        assert_eq!(node_specs.len(), 1, "exactly one node-materialized head");
+        let ns = &node_specs[0];
+        assert_eq!(ns.predicate, "shape_issue");
+        assert_eq!(ns.node_type, "ISSUE");
+        assert!(
+            !ns.additive,
+            "exclusive (provenance-scoped): fixed violations retract their ISSUE node \
+             without touching the orchestrator diagnostics phase's ISSUE nodes"
+        );
+        assert_eq!(ns.meta, vec!["method".to_string(), "receiverType".to_string()]);
     }
 
     /// The bundled axum-routes pack derives ROUTES_TO/HANDLED_BY from
@@ -615,16 +672,16 @@ mod tests {
         edge_meta(&mut v, "r7", "p1", "PASSES_ARGUMENT", idx0);
         edge_meta(&mut v, "r7", "g1", "PASSES_ARGUMENT", idx1);
 
-        // r8: second argument is not a CALL — no handler endpoint, hence no edges
-        // (the plugin minted a handler-less GET http:route node; node creation is the
-        // documented out-of-scope residue).
+        // r8: second argument is not a CALL — no handler endpoint, hence no EDGES, but
+        // the http_route_node rule still mints the handler-less GET route node
+        // (plugin parity, delta 4).
         named_node(&mut v, "r8", "route", "CALL", "src/ref.rs");
         named_node(&mut v, "p8", "/ref", "LITERAL", "src/ref.rs");
         named_node(&mut v, "ref8", "make_router", "REFERENCE", "src/ref.rs");
         edge_meta(&mut v, "r8", "p8", "PASSES_ARGUMENT", idx0);
         edge_meta(&mut v, "r8", "ref8", "PASSES_ARGUMENT", idx1);
 
-        let (eval, specs) = evaluate_with_materialize(
+        let (eval, specs, node_specs) = evaluate_with_materialize(
             &v,
             AXUM_ROUTES_DL,
             Stats::default(),
@@ -681,6 +738,55 @@ mod tests {
         let handled_spec = spec_of("HANDLED_BY");
         assert!(handled_spec.additive, "HANDLED_BY is shared vocabulary — additive");
         assert_eq!(handled_spec.meta, vec!["method".to_string()]);
+
+        // The http:route NODE per route (the plugin's node half): semantic id
+        // "http:route::<METHOD>::<PATH>", name = path, file = the route call's file.
+        // r8 (non-CALL second argument) gets its handler-LESS node — plugin parity,
+        // delta 4 — even though it derives no edges.
+        let route_nodes: BTreeSet<(String, String, String, String, String)> = eval
+            .facts("http_route_node")
+            .into_iter()
+            .map(|row| {
+                (
+                    row[0].as_str(),
+                    row[1].as_str(),
+                    row[2].as_str(),
+                    row[3].as_str(),
+                    row[4].as_str(),
+                )
+            })
+            .collect();
+        let rn = |m: &str, p: &str, f: &str| {
+            (
+                format!("http:route::{m}::{p}"),
+                p.to_string(),
+                f.to_string(),
+                m.to_string(),
+                p.to_string(),
+            )
+        };
+        assert_eq!(
+            route_nodes,
+            BTreeSet::from([
+                rn("GET", "/users", "src/main.rs"),
+                rn("POST", "/items", "src/api.rs"),
+                rn("GET", "/raw", "src/raw.rs"),
+                rn("GET", "/ref", "src/ref.rs"),
+            ]),
+            "r1/r2/r5 + the handler-less r8 mint route nodes; r3/r4/r6/r7 do not"
+        );
+
+        // The node spec: http:route, provenance-scoped exclusive, meta(method, path).
+        assert_eq!(node_specs.len(), 1, "exactly one node-materialized head");
+        let ns = &node_specs[0];
+        assert_eq!(ns.predicate, "http_route_node");
+        assert_eq!(ns.node_type, "http:route");
+        assert!(
+            !ns.additive,
+            "exclusive (provenance-scoped): removed routes retract their node; other \
+             producers' http:route nodes are never touched"
+        );
+        assert_eq!(ns.meta, vec!["method".to_string(), "path".to_string()]);
     }
 
     /// The wire-addressable pack registry: canonical order (an ordering CONTRACT —

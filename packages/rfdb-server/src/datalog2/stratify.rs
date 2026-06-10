@@ -31,6 +31,15 @@
 //! materialized predicates, and the construction records `W-STRAT-001` (placed in the
 //! top stratum by the resulting ordering — it sinks below every materializer).
 //!
+//! `@materialize_node(node_type = "T")` has the exact NODE analog: a rule whose body
+//! reads `node(X, "T")` (or `type(X, "T")`) in a program that node-materializes `"T"`
+//! has the same cross-run storage feedback, so it depends on the node-materializing
+//! predicate; a **variable** node type conservatively depends on all node-materialized
+//! predicates (the same `W-STRAT-001`). The axes never cross: a variable edge type
+//! depends only on edge materializers, a variable node type only on node materializers.
+//! (Reads of a materialized node's *fields* via `attr(X, …)` are not tracked — the same
+//! deliberate boundary as edge metadata reads via `edge_attr` on the edge axis.)
+//!
 //! # Algorithm
 //!
 //! 1. Collect the derived-predicate set (rule heads) and the `@materialize` map
@@ -219,6 +228,24 @@ fn materialized_edge_type(item: &Item) -> Option<String> {
     None
 }
 
+/// Extract the `@materialize_node(node_type = "T")` node type declared on an item, if
+/// any — the node twin of [`materialized_edge_type`]. A rule node-materializing `"T"`
+/// is a storage-level producer for any `node(X, "T")` / `type(X, "T")` reader: the `"T"`
+/// nodes it writes do not exist until it has run (the same cross-run feedback as edge
+/// materialization, treated with the same conservative dependency).
+fn materialized_node_type(item: &Item) -> Option<String> {
+    for ann in &item.annotations {
+        if let Annotation::MaterializeNode { pairs, .. } = ann {
+            for kv in pairs {
+                if kv.key == "node_type" {
+                    return Some(kv.value.clone());
+                }
+            }
+        }
+    }
+    None
+}
+
 /// The edge-type argument of an `edge`/`incoming` literal, if it is the 3-arg form.
 ///
 /// Returns:
@@ -238,6 +265,27 @@ fn edge_type_arg(lit: &Literal) -> Option<Option<String>> {
         Some(Term::Lit(v)) => Some(Some(v.as_str())),
         Some(Term::Var(_)) | Some(Term::Wildcard) => Some(None),
         // Fewer than 3 args (e.g. `edge(X, Y)`): no edge-type dependency.
+        None => None,
+    }
+}
+
+/// The node-type argument of a `node`/`type` literal, if present — the node twin of
+/// [`edge_type_arg`], mirroring its contract exactly:
+/// - `Some(Some(t))` — a constant node type `"t"` (second arg `Const`/`Lit`);
+/// - `Some(None)` — a *variable* node type (`Var`/`Wildcard`); the reader conservatively
+///   depends on all node-materialized predicates (W-STRAT-001);
+/// - `None` — not a node/type relation, or the untyped 1-arg `node(X)` form (no type
+///   dependency, mirroring the 2-arg `edge(X, Y)` leniency).
+fn node_type_arg(lit: &Literal) -> Option<Option<String>> {
+    let atom = lit.atom();
+    let pred = atom.predicate();
+    if pred != "node" && pred != "type" {
+        return None;
+    }
+    match atom.args().get(1) {
+        Some(Term::Const(t)) => Some(Some(t.clone())),
+        Some(Term::Lit(v)) => Some(Some(v.as_str())),
+        Some(Term::Var(_)) | Some(Term::Wildcard) => Some(None),
         None => None,
     }
 }
@@ -265,6 +313,8 @@ fn build_dep_graph(
 
     // @materialize map: edge_type -> set of predicates that materialize it.
     let mut materialize_map: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    // @materialize_node map: node_type -> set of predicates that node-materialize it.
+    let mut node_materialize_map: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for item in &program.items {
         if let Some(ety) = materialized_edge_type(item) {
             materialize_map
@@ -272,9 +322,21 @@ fn build_dep_graph(
                 .or_default()
                 .insert(item.rule.head().predicate().to_string());
         }
+        if let Some(nty) = materialized_node_type(item) {
+            node_materialize_map
+                .entry(nty)
+                .or_default()
+                .insert(item.rule.head().predicate().to_string());
+        }
     }
-    // All materialized predicates (for the conservative variable-edge-type case).
+    // All materialized predicates (for the conservative variable-type cases), per axis:
+    // a variable EDGE type depends on the edge materializers, a variable NODE type on the
+    // node materializers — never cross-axis.
     let all_materialized: BTreeSet<String> = materialize_map
+        .values()
+        .flat_map(|s| s.iter().cloned())
+        .collect();
+    let all_node_materialized: BTreeSet<String> = node_materialize_map
         .values()
         .flat_map(|s| s.iter().cloned())
         .collect();
@@ -283,14 +345,19 @@ fn build_dep_graph(
     let mut warned_conservative = false;
     let mut warnings: Vec<StratWarning> = Vec::new();
 
+    let maps = MaterializeMaps {
+        edge: &materialize_map,
+        all_edge: &all_materialized,
+        node: &node_materialize_map,
+        all_node: &all_node_materialized,
+    };
     for item in &program.items {
         let head = item.rule.head().predicate().to_string();
         add_body_deps(
             &item.rule,
             &head,
             &derived,
-            &materialize_map,
-            &all_materialized,
+            &maps,
             &mut edges,
             &mut warned_conservative,
             &mut warnings,
@@ -300,14 +367,22 @@ fn build_dep_graph(
     (derived, edges, warnings)
 }
 
+/// The per-program materialize producer maps, by axis (edge vs node), threaded through
+/// [`add_body_deps`]: concrete-type readers depend on that type's producers; variable-
+/// type readers conservatively depend on ALL producers of the same axis (W-STRAT-001).
+struct MaterializeMaps<'a> {
+    edge: &'a BTreeMap<String, BTreeSet<String>>,
+    all_edge: &'a BTreeSet<String>,
+    node: &'a BTreeMap<String, BTreeSet<String>>,
+    all_node: &'a BTreeSet<String>,
+}
+
 /// Add all dependency edges contributed by one rule's body.
-#[allow(clippy::too_many_arguments)]
 fn add_body_deps(
     rule: &Rule,
     head: &str,
     derived: &BTreeSet<String>,
-    materialize_map: &BTreeMap<String, BTreeSet<String>>,
-    all_materialized: &BTreeSet<String>,
+    maps: &MaterializeMaps<'_>,
     edges: &mut Vec<DepEdge>,
     warned_conservative: &mut bool,
     warnings: &mut Vec<StratWarning>,
@@ -330,12 +405,17 @@ fn add_body_deps(
             continue;
         }
 
-        // 2. Storage-level @materialize dependency through a base edge/incoming literal.
-        if let Some(type_arg) = edge_type_arg(lit) {
+        // 2. Storage-level materialize dependency through a base literal — the same
+        //    construction on both axes: `edge`/`incoming` readers vs `@materialize`
+        //    producers, `node`/`type` readers vs `@materialize_node` producers.
+        let type_read = edge_type_arg(lit)
+            .map(|arg| (arg, maps.edge, maps.all_edge))
+            .or_else(|| node_type_arg(lit).map(|arg| (arg, maps.node, maps.all_node)));
+        if let Some((type_arg, producer_map, all_producers)) = type_read {
             match type_arg {
-                Some(ety) => {
-                    // Concrete edge type: depend on whoever materializes exactly that type.
-                    if let Some(producers) = materialize_map.get(&ety) {
+                Some(ty) => {
+                    // Concrete type: depend on whoever materializes exactly that type.
+                    if let Some(producers) = producer_map.get(&ty) {
                         for producer in producers {
                             edges.push(DepEdge {
                                 from: head.to_string(),
@@ -346,10 +426,10 @@ fn add_body_deps(
                     }
                 }
                 None => {
-                    // Variable edge type: conservatively depend on all materializers
+                    // Variable type: conservatively depend on all same-axis materializers
                     // (W-STRAT-001), as long as there is at least one.
-                    if !all_materialized.is_empty() {
-                        for producer in all_materialized {
+                    if !all_producers.is_empty() {
+                        for producer in all_producers {
                             edges.push(DepEdge {
                                 from: head.to_string(),
                                 to: producer.clone(),
@@ -368,7 +448,7 @@ fn add_body_deps(
 
         // 3. Otherwise it is a base relation or builtin — no dependency edge.
         debug_assert!(
-            is_extensional(body_pred) || edge_type_arg(lit).is_some() || derived.contains(body_pred),
+            is_extensional(body_pred) || derived.contains(body_pred),
             "body predicate '{body_pred}' is neither derived, materialize-linked, base, nor builtin"
         );
     }
@@ -687,6 +767,77 @@ mod tests {
             dep < chain,
             "depends (materializer, stratum {dep}) must be below chain (reader, stratum {chain})"
         );
+    }
+
+    #[test]
+    fn materialize_node_type_creates_storage_level_dependency() {
+        // The NODE analog of the edge feedback: `mkissue` node-materializes ISSUE;
+        // `reader` reads node(X, "ISSUE"), so it depends on `mkissue` even though it
+        // never names it directly — the same cross-run storage feedback, mirrored.
+        let src = r#"
+            @materialize_node(node_type = "ISSUE")
+            mkissue(S, N, F) :- node(C, "CALL"), attr(C, "name", N), attr(C, "file", F),
+                                concat("issue::", C, S).
+            reader(X) :- node(X, "ISSUE").
+        "#;
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        assert_eq!(strat.strata.len(), 2);
+        let mk = stratum_of(&strat, "mkissue");
+        let rd = stratum_of(&strat, "reader");
+        assert!(
+            mk < rd,
+            "mkissue (node materializer, stratum {mk}) must be below reader (stratum {rd})"
+        );
+        // A reader of an UNRELATED node type takes no dependency (single stratum).
+        let unrelated = r#"
+            @materialize_node(node_type = "ISSUE")
+            mkissue(S, N, F) :- node(C, "CALL"), attr(C, "name", N), attr(C, "file", F),
+                                concat("issue::", C, S).
+            other(X) :- node(X, "FUNCTION").
+        "#;
+        let strat2 = stratify(&parse_ext_program(unrelated).expect("parse")).expect("stratify");
+        assert_eq!(strat2.strata.len(), 1, "unrelated node-type read takes no dependency");
+    }
+
+    #[test]
+    fn variable_node_type_depends_on_all_node_materializers_and_warns() {
+        // node(X, Ty) with a VARIABLE type → conservative dependency on every NODE
+        // materializer (the same W-STRAT-001 treatment as the variable edge type).
+        let src = r#"
+            @materialize_node(node_type = "ISSUE")
+            mkissue(S, N, F) :- node(C, "CALL"), attr(C, "name", N), attr(C, "file", F),
+                                concat("issue::", C, S).
+            reader(X, Ty) :- node(X, Ty).
+        "#;
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        assert!(
+            strat.warnings.contains(&StratWarning::ConservativeMaterializeDep),
+            "variable node-type read must warn W-STRAT-001"
+        );
+        let mk = stratum_of(&strat, "mkissue");
+        let rd = stratum_of(&strat, "reader");
+        assert!(mk < rd, "reader must sink below the node materializer");
+    }
+
+    #[test]
+    fn variable_edge_type_does_not_depend_on_node_materializers() {
+        // The axes never cross: a variable EDGE type in a program with only NODE
+        // materializers takes no conservative dependency (and vice versa).
+        let src = r#"
+            @materialize_node(node_type = "ISSUE")
+            mkissue(S, N, F) :- node(C, "CALL"), attr(C, "name", N), attr(C, "file", F),
+                                concat("issue::", C, S).
+            reader(X, Y, Ty) :- edge(X, Y, Ty).
+        "#;
+        let strat = stratify(&parse_ext_program(src).expect("parse")).expect("stratify");
+        assert_eq!(
+            strat.strata.len(),
+            1,
+            "a variable edge-type read must not depend on node materializers"
+        );
+        assert!(strat.warnings.is_empty(), "no conservative dep ⇒ no W-STRAT-001");
     }
 
     #[test]

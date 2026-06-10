@@ -194,6 +194,20 @@ pub enum Annotation {
         /// The `meta(...)` group's field names, in order. Empty when absent.
         meta: Vec<String>,
     },
+    /// `@materialize_node(kvpairs [, meta(names)])` — project the predicate to real
+    /// graph NODES (the node twin of `Materialize`). `pairs` carry `node_type = "T"`
+    /// (required downstream, `E-MAT-008`) and the optional `mode = "additive"|"exclusive"`;
+    /// `meta` names project head columns `3 + i` into the written node's metadata. The
+    /// head shape is `p(SemanticId, Name, File, MetaCol…)` — arity `3 + len(meta)`
+    /// (see `materialize.rs` module docs). The payload grammar is byte-identical to
+    /// `@materialize` ([`parse_materialize_payload`]), including the `_`-prefix
+    /// reservation of provenance keys.
+    MaterializeNode {
+        /// The `key = value` pairs of the payload.
+        pairs: Vec<KvPair>,
+        /// The `meta(...)` group's field names, in order. Empty when absent.
+        meta: Vec<String>,
+    },
     /// `@lattice(kvpairs)` — lattice value join config (Gate C). Raw pairs retained.
     Lattice(Vec<KvPair>),
 }
@@ -392,6 +406,10 @@ impl<'a> Framer<'a> {
             "materialize" => {
                 let (pairs, meta) = parse_materialize_payload(inner, inner_start)?;
                 Ok(Annotation::Materialize { pairs, meta })
+            }
+            "materialize_node" => {
+                let (pairs, meta) = parse_materialize_payload(inner, inner_start)?;
+                Ok(Annotation::MaterializeNode { pairs, meta })
             }
             "lattice" => Ok(Annotation::Lattice(parse_kvpairs(inner, inner_start)?)),
             other => Err(ExtParseError::new(
@@ -1122,6 +1140,39 @@ mod tests {
             let err = parse_ext_program(src).expect_err("must reject");
             assert_eq!(err.code, ErrorCode::AnnotationSyntax, "case: {src}");
         }
+    }
+
+    /// `@materialize_node` parses through the SHARED payload grammar: `node_type` /
+    /// `mode` pairs plus a `meta(...)` group, framed exactly like `@materialize`
+    /// (nested parens, commas inside the group). The variant — not the payload shape —
+    /// is what distinguishes node from edge materialization downstream.
+    #[test]
+    fn materialize_node_annotation_parses_pairs_and_meta() {
+        let src = r#"@materialize_node(node_type = "ISSUE", mode = "exclusive", meta(method, receiverType))
+            issue(Sid, Name, File, M, T) :- violation(C, T0, M), attr(C, "file", File),
+                                            concat("issue::", C, Sid), attr(C, "name", Name), attr(T0, "name", T)."#;
+        let prog = parse_ext_program(src).expect("parse");
+        assert_eq!(prog.items.len(), 1);
+        match &prog.items[0].annotations[0] {
+            Annotation::MaterializeNode { pairs, meta } => {
+                assert_eq!(pairs.len(), 2);
+                assert_eq!((pairs[0].key.as_str(), pairs[0].value.as_str()), ("node_type", "ISSUE"));
+                assert_eq!((pairs[1].key.as_str(), pairs[1].value.as_str()), ("mode", "exclusive"));
+                assert_eq!(meta, &vec!["method".to_string(), "receiverType".to_string()]);
+            }
+            other => panic!("expected @materialize_node, got {other:?}"),
+        }
+    }
+
+    /// The shared payload grammar's rejections apply to `@materialize_node` verbatim
+    /// (reserved `_`-prefixed meta names guard the provenance stamp keys).
+    #[test]
+    fn materialize_node_meta_reserved_name_rejected() {
+        let src = r#"@materialize_node(node_type = "ISSUE", meta(_source))
+            issue(Sid, N, F, X) :- node(C, "CALL"), attr(C, "name", N), attr(C, "file", F),
+                                   concat("i::", C, Sid), attr(C, "line", X)."#;
+        let err = parse_ext_program(src).expect_err("must reject");
+        assert_eq!(err.code, ErrorCode::AnnotationSyntax);
     }
 
     /// Backward compatibility of the balanced-paren payload scan: every pre-meta payload

@@ -1,12 +1,18 @@
-% axum_routes.dl — in-engine port of plugins/axum-route-detector.mjs (the edges half;
-% the 60s-timeout batch plugin did N+1 IPC per `.route(...)` call → one bottom-up
-% program over the PASSES_ARGUMENT `index` edge metadata via edge_attr).
+% axum_routes.dl — in-engine port of plugins/axum-route-detector.mjs (edges + the
+% http:route node; the 60s-timeout batch plugin did N+1 IPC per `.route(...)` call →
+% one bottom-up program over the PASSES_ARGUMENT `index` edge metadata via edge_attr).
 %
-% NOT ported (deliberately OUT OF SCOPE, deferred to node-materialization): the
-% synthetic `http:route` NODE (`http:route:METHOD:PATH@file` with {method, path,
-% framework} metadata) and the EXPOSES/HANDLES edges touching it — @materialize
-% writes EDGES between EXISTING nodes only. Until @materialize_node lands, the nodes
-% that already carry the route identity stand in for it:
+% The synthetic `http:route` NODE is ported via @materialize_node (the http_route_node
+% rule at the bottom): one node per recognized route, semantic id
+% "http:route::<METHOD>::<PATH>", name = the path, file = the registration call's
+% file, meta(method, path). NOT ported (deliberately LIMITED IN SCOPE): the plugin's
+% EXPOSES (route CALL → http:route) and HANDLES (http:route → handler) edges — a
+% @materialize edge endpoint must be a node-ID column of the head, and the freshly
+% minted route node's id only exists as the BLAKE3 of a STRING the rule builds;
+% wiring same-run node→edge endpoints through value_to_id would be endpoint-resolution
+% hackery, so those edges stay out until edge endpoints can name a semantic id
+% first-class. The direct edges between PRE-EXISTING nodes carry the same information
+% meanwhile:
 %   ROUTES_TO  : route-registration CALL → handler, meta(method, path)
 %   HANDLED_BY : path LITERAL → handler,            meta(method)
 % (the LITERAL's own `name` IS the path, so HANDLED_BY gives the path-keyed handler
@@ -40,8 +46,9 @@
 %      both the plugin and this pack.
 %   4. When args[1] is NOT a CALL, or is a CALL with no argument edges, the plugin
 %      still minted a GET http:route node with no handler; this pack derives NO edges
-%      for that call (there is no handler endpoint to point at) — the residue is
-%      exactly the out-of-scope node half.
+%      for that call (there is no handler endpoint to point at) — but the
+%      http_route_node rule DOES mint the handler-less route node, matching the
+%      plugin (the node never required a resolved handler).
 %   5. The method string is matched case-insensitively via str_lower (the plugin's
 %      .toLowerCase()) and emitted UPPERCASE ("GET"/"POST"/…) like the plugin, one
 %      clause per method.
@@ -110,3 +117,30 @@ handled_by(P, H, M) :-
     route_path_arg(C, P, _),
     handler(C, H),
     route_method(C, M).
+
+% ── The materialized http:route NODE (the plugin's node half) ──
+% Semantic id "http:route::<METHOD>::<PATH>" — one node per (method, path) route.
+% RECORDED DELTAS vs the plugin's node (deliberate):
+%   - id: the plugin minted `http:route:METHOD:PATH@file` (one node PER FILE
+%     registering the same route); this id drops the @file suffix so the same logical
+%     route registered from two files is ONE node (which file column lands is
+%     set-order-defined — the meta-identity caveat).
+%   - name: the path (the plugin used "METHOD PATH"); the method rides in meta and in
+%     the semantic id.
+%   - metadata: provenance _source = <rule hash> + _generation (the engine convention,
+%     not 'axum-route-detector') + meta(method, path); `framework: axum` is not stored
+%     (this pack IS the axum detector — derivable from provenance).
+% mode = "exclusive" (PROVENANCE-SCOPED for nodes, the engine contract): only nodes
+% stamped with THIS rule's _source are owned, so http:route nodes minted by other
+% producers (the legacy plugin, libraryCallbackEnricher's express/mcp routes) are
+% never touched, while a route removed from the code retracts its node on the next
+% run. A handler is NOT required (plugin parity, delta 4): a route whose second
+% argument resolves to no handler still gets its node.
+@materialize_node(node_type = "http:route", mode = "exclusive", meta(method, path))
+http_route_node(Sid, Path, File, M, Path) :-
+    route_path_arg(C, _, Path),
+    route_method(C, M),
+    attr(C, "file", File),
+    concat("http:route::", M, S1),
+    concat(S1, "::", S2),
+    concat(S2, Path, Sid).

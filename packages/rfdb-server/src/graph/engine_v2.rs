@@ -522,18 +522,25 @@ impl GraphEngineV2 {
     ///    eval entry ([`crate::datalog2::evaluate_with_materialize`]) to the fixpoint. The
     ///    target generation is `snapshot.version + 1` — the version the written edges
     ///    become visible at (the orchestrator's `_generation` convention).
-    /// 2. Project ALL `@materialize` predicates of the run to one [`EdgeRecordV2`] batch,
-    ///    each stamped `{"_source": rule_ast_hash, "_generation": generation}`.
+    /// 2. Project ALL `@materialize` predicates of the run to one [`EdgeRecordV2`] batch
+    ///    and ALL `@materialize_node` predicates to one [`NodeRecordV2`] batch, each
+    ///    stamped `{"_source": rule_ast_hash, "_generation": generation}`. Node ids
+    ///    derive from the head's semantic-id column by the production convention
+    ///    (BLAKE3[0..16] LE); planned nodes whose id ALREADY exists at the snapshot are
+    ///    dropped (never rewrite a present node — additive dedup; this path never
+    ///    deletes, so node `mode = "exclusive"` retraction lives on the delta path,
+    ///    exactly like edge exclusive tombstoning).
     /// 3. Commit the entire batch with a SINGLE [`Self::commit_batch_ext`] (empty
     ///    `changed_files` → additive, no tombstoning of existing data; the underlying
-    ///    `commit_batch_ext` flips the manifest exactly once via `commit_edit`).
+    ///    `commit_batch_ext` flips the manifest exactly once via `commit_edit` — nodes
+    ///    and edges land in ONE atomic generation).
     ///
     /// A mid-run failure (parse/stratify/plan/exec/mis-shaped materialized head) returns
     /// the error BEFORE step 3, so nothing is committed and the prior committed generation
-    /// stays intact (abort-no-commit). When no rule carries `@materialize`, the run derives
-    /// facts and commits nothing (0 edges).
+    /// stays intact (abort-no-commit). When no rule carries `@materialize` /
+    /// `@materialize_node`, the run derives facts and commits nothing.
     ///
-    /// Returns the number of edges written back.
+    /// Returns the number of edges + nodes written back.
     pub fn eval_datalog_v2_materialize(
         &mut self,
         source: &str,
@@ -557,9 +564,11 @@ impl GraphEngineV2 {
             nodes_by_type,
         };
 
-        let (evaluation, specs) = {
-            let view =
-                crate::datalog2::storage_glue::BorrowedLsmStorageView::new(&self.store, snapshot);
+        let (evaluation, specs, node_specs) = {
+            let view = crate::datalog2::storage_glue::BorrowedLsmStorageView::new(
+                &self.store,
+                snapshot.clone(),
+            );
             crate::datalog2::evaluate_with_materialize(
                 &view,
                 source,
@@ -569,19 +578,26 @@ impl GraphEngineV2 {
             )?
         };
 
-        // ── Step 2: project ALL @materialize predicates → one edge batch. ──
-        // A mis-shaped materialized head aborts here (coded), before any commit.
+        // ── Step 2: project @materialize → one edge batch, @materialize_node → one node
+        // batch. A mis-shaped materialized head aborts here (coded), before any commit.
         let edges =
             crate::datalog2::materialize::plan_writeback(&specs, &evaluation, generation)?;
-        if edges.is_empty() {
+        let nodes: Vec<NodeRecordV2> =
+            crate::datalog2::materialize::plan_node_writeback(&node_specs, &evaluation, generation)?
+                .into_iter()
+                // Never rewrite a node that already exists (additive dedup by id; a
+                // foreign producer's node with the same semantic id keeps its metadata).
+                .filter(|n| !self.store.node_exists_at(&snapshot, n.id))
+                .collect();
+        if edges.is_empty() && nodes.is_empty() {
             return Ok(0);
         }
-        let written = edges.len();
+        let written = edges.len() + nodes.len();
 
         // ── Step 3: single atomic commit (one manifest flip). ──
         // Empty `changed_files` ⇒ additive (no tombstoning of existing nodes/edges); the
-        // whole run's edges land under `generation` with a single `commit_edit`.
-        self.commit_batch_ext(Vec::new(), edges, &[], std::collections::HashMap::new(), &[])
+        // whole run's nodes AND edges land under `generation` with a single `commit_edit`.
+        self.commit_batch_ext(nodes, edges, &[], std::collections::HashMap::new(), &[])
             .map_err(|e| {
                 crate::datalog2::EvalError::Materialize(crate::datalog2::materialize::MaterializeError {
                     code: "E-MAT-004",
@@ -602,9 +618,16 @@ impl GraphEngineV2 {
     /// [`crate::datalog2::exec::maintain_incremental`] (DRed deletion + insertion). Returns the
     /// maintained [`Evaluation`] — provably equal to a from-scratch eval of the current
     /// snapshot — for the sound monotone envelope, or `Ok(None)` when the program is outside
-    /// it (negation / multiple derived strata) and the caller must recompute from scratch. A
-    /// pure read over the two snapshots: no commit happens here (projecting the maintained
-    /// relations back to edges is the write-back caller's concern).
+    /// it (negation / multiple derived strata / ANY `@materialize_node` spec) and the caller
+    /// must recompute from scratch. A pure read over the two snapshots: no commit happens
+    /// here (projecting the maintained relations back to edges is the write-back caller's
+    /// concern).
+    ///
+    /// Node-materializing programs are categorically OUTSIDE the maintain envelope for now:
+    /// the node write-back's provenance-scoped owned-set diff and the potential cross-run
+    /// node feedback (a rule reading the node type it materializes) are unproven under a
+    /// maintained (delta-seeded) evaluation — scratch is the correctness floor (I5). The
+    /// refusal here covers every maintain consumer (the cached production path included).
     pub fn maintain_datalog_v2(
         &self,
         source: &str,
@@ -614,6 +637,9 @@ impl GraphEngineV2 {
     ) -> std::result::Result<Option<crate::datalog2::exec::Evaluation>, crate::datalog2::EvalError>
     {
         let program = crate::datalog2::parser_ext::parse_ext_program(source)?;
+        if !crate::datalog2::materialize::collect_materialize_node_specs(&program)?.is_empty() {
+            return Ok(None);
+        }
         let strat = crate::datalog2::stratify::stratify(&program)?;
         let rules = program.rules();
 
@@ -762,7 +788,7 @@ impl GraphEngineV2 {
             total_edges: self.store.edge_count_at(&snapshot) as u64,
             nodes_by_type,
         };
-        let (evaluation, specs) = {
+        let (evaluation, specs, node_specs) = {
             let view = crate::datalog2::storage_glue::BorrowedLsmStorageView::new(
                 &self.store,
                 snapshot.clone(),
@@ -775,7 +801,7 @@ impl GraphEngineV2 {
                 crate::datalog2::events::EventLog::discard(),
             )?
         };
-        self.materialize_writeback_delta(&evaluation, &specs, &snapshot, generation)
+        self.materialize_writeback_delta(&evaluation, &specs, &node_specs, &snapshot, generation)
     }
 
     /// Work-proportional `@materialize` (Gate D2): incrementally MAINTAIN the program's derived
@@ -798,13 +824,14 @@ impl GraphEngineV2 {
         let snapshot = self.snapshot();
         let generation = snapshot.version + 1;
         // Specs come from a parse alone (no eval needed) — the maintained branch must know the
-        // target edge types without re-deriving.
+        // target edge/node types without re-deriving.
         let program = crate::datalog2::parser_ext::parse_ext_program(source)?;
         let specs = crate::datalog2::materialize::collect_materialize_specs(&program)?;
+        let node_specs = crate::datalog2::materialize::collect_materialize_node_specs(&program)?;
 
         let evaluation =
             self.derive_for_materialize(source, Some((prev_snapshot, prev)), &snapshot, limits)?;
-        self.materialize_writeback_delta(&evaluation, &specs, &snapshot, generation)
+        self.materialize_writeback_delta(&evaluation, &specs, &node_specs, &snapshot, generation)
     }
 
     /// Work-proportional `@materialize` with an in-engine cross-call cache (Gate D2). On a cache
@@ -831,6 +858,7 @@ impl GraphEngineV2 {
         let generation = snapshot.version + 1;
         let program = crate::datalog2::parser_ext::parse_ext_program(source)?;
         let specs = crate::datalog2::materialize::collect_materialize_specs(&program)?;
+        let node_specs = crate::datalog2::materialize::collect_materialize_node_specs(&program)?;
 
         // Clone the prior entry out so the `&self` maintain borrow doesn't collide with the
         // `&mut self` write-back; cloning the ReadSnapshot bumps its pin (released on drop).
@@ -840,7 +868,8 @@ impl GraphEngineV2 {
             self.derive_for_materialize(source, prior, &snapshot, limits)?
         };
 
-        let counts = self.materialize_writeback_delta(&evaluation, &specs, &snapshot, generation)?;
+        let counts =
+            self.materialize_writeback_delta(&evaluation, &specs, &node_specs, &snapshot, generation)?;
         // Refresh the cache to this generation (drops & unpins the previous one).
         self.datalog2_materialize_cache.insert(key, (snapshot, evaluation));
         Ok(counts)
@@ -904,26 +933,35 @@ impl GraphEngineV2 {
         .0)
     }
 
-    /// Commit ONLY the edge delta of a freshly-derived `@materialize` result against what is
-    /// already in the graph: the currently-materialized edges of each spec's `edge_type` ARE
-    /// the prior derived state (no extra cross-run storage). Facts new this run are added
-    /// (buffered); facts gone this run are edge-tombstoned. A single [`Self::flush`] applies the
-    /// additions and tombstones together (one manifest advance, run isolation). A mis-shaped
-    /// materialized head aborts in [`plan_writeback`] BEFORE any mutation (abort-no-commit).
-    /// Returns `(added, removed)` edge counts. Shared by the full-incremental and
-    /// maintain-incremental `@materialize` entries.
+    /// Commit ONLY the delta of a freshly-derived `@materialize` / `@materialize_node`
+    /// result against what is already in the graph: the currently-materialized edges of each
+    /// spec's `edge_type` ARE the prior derived edge state (no extra cross-run storage), and
+    /// for an EXCLUSIVE node spec the prior owned state is the nodes of its `node_type`
+    /// whose `metadata._source` equals that rule's hash (provenance-scoped — never the whole
+    /// type; see the materialize module docs for why node exclusive differs from edge
+    /// exclusive). Facts new this run are added (buffered); edge facts gone this run are
+    /// edge-tombstoned; OWNED nodes not re-derived this run are node-tombstoned. A single
+    /// [`Self::flush`] applies ALL additions and tombstones together — nodes and edges in
+    /// one manifest advance (run isolation). A mis-shaped materialized head aborts in
+    /// [`plan_writeback`] / [`plan_node_writeback`] BEFORE any mutation (abort-no-commit).
+    /// Returns `(added, removed)` counts summed over edges + nodes. Shared by the
+    /// full-incremental and maintain-incremental `@materialize` entries.
     fn materialize_writeback_delta(
         &mut self,
         evaluation: &crate::datalog2::exec::Evaluation,
         specs: &[crate::datalog2::materialize::MaterializeSpec],
+        node_specs: &[crate::datalog2::materialize::NodeMaterializeSpec],
         snapshot: &crate::storage_v2::read_snapshot::ReadSnapshot,
         generation: u64,
     ) -> std::result::Result<(usize, usize), crate::datalog2::EvalError> {
         use std::collections::HashSet;
 
-        // The full derived edge set (also the abort-no-commit shape check).
+        // The full derived edge + node sets (also the abort-no-commit shape checks; BOTH
+        // plans run before ANY mutation below, so either rejection commits nothing).
         let new_edges =
             crate::datalog2::materialize::plan_writeback(specs, evaluation, generation)?;
+        let new_nodes =
+            crate::datalog2::materialize::plan_node_writeback(node_specs, evaluation, generation)?;
         let new_keys: HashSet<(u128, u128, String)> = new_edges
             .iter()
             .map(|e| (e.src, e.dst, e.edge_type.clone()))
@@ -955,10 +993,50 @@ impl GraphEngineV2 {
             .filter(|k| !new_keys.contains(k) && !additive_types.contains(&k.2))
             .collect();
 
-        // ── Phase 2: apply the delta (one flush commits adds + tombstones). ──
-        let (n_added, n_removed) = (added.len(), removed.len());
+        // ── Node delta. Adds: planned nodes whose id is ABSENT at the snapshot (a present
+        // node is never rewritten, both modes — a foreign producer's node with the same
+        // semantic id keeps its own name/file/metadata). Removes: per EXCLUSIVE spec, the
+        // provenance-scoped owned set (`node_type` ∩ `metadata._source == rule_ast_hash`)
+        // minus everything derived this run. A node id derived by ANY spec this run is
+        // kept, so overlapping specs never flap each other's nodes.
+        let new_node_ids: HashSet<u128> = new_nodes.iter().map(|n| n.id).collect();
+        let added_nodes: Vec<NodeRecordV2> = new_nodes
+            .into_iter()
+            .filter(|n| !self.store.node_exists_at(snapshot, n.id))
+            .collect();
+        let mut removed_node_ids: Vec<u128> = Vec::new();
+        for spec in node_specs {
+            if spec.additive {
+                continue; // additive: never delete (the whole point of the mode)
+            }
+            for n in self
+                .store
+                .find_nodes_at(snapshot, Some(&spec.node_type), None)
+            {
+                if new_node_ids.contains(&n.id) || removed_node_ids.contains(&n.id) {
+                    continue;
+                }
+                // Owned iff the stored provenance stamp names THIS rule. A foreign
+                // `_source` (another rule, an orchestrator phase, a plugin) — or no
+                // metadata at all — is NOT owned and is never tombstoned.
+                let owned = serde_json::from_str::<serde_json::Value>(&n.metadata)
+                    .ok()
+                    .and_then(|m| m.get("_source").and_then(|s| s.as_str().map(String::from)))
+                    .is_some_and(|s| s == spec.rule_ast_hash);
+                if owned {
+                    removed_node_ids.push(n.id);
+                }
+            }
+        }
+
+        // ── Phase 2: apply the delta (ONE flush commits node+edge adds + tombstones). ──
+        let n_added = added.len() + added_nodes.len();
+        let n_removed = removed.len() + removed_node_ids.len();
         if n_added == 0 && n_removed == 0 {
             return Ok((0, 0));
+        }
+        for id in &removed_node_ids {
+            self.delete_node(*id);
         }
         for (s, d, t) in &removed {
             self.delete_edge(*s, *d, t);
@@ -966,6 +1044,10 @@ impl GraphEngineV2 {
         if !added.is_empty() {
             let v1: Vec<EdgeRecord> = added.iter().map(edge_v2_to_v1).collect();
             self.add_edges(v1, true);
+        }
+        if !added_nodes.is_empty() {
+            let v1: Vec<NodeRecord> = added_nodes.iter().map(node_v2_to_v1).collect();
+            self.add_nodes(v1);
         }
         self.flush().map_err(|e| {
             crate::datalog2::EvalError::Materialize(crate::datalog2::materialize::MaterializeError {
@@ -3758,6 +3840,270 @@ mod tests {
         assert!(engine.store.get_edges_by_type_at(&engine.snapshot(), "T").is_empty());
     }
 
+    // ── @materialize_node write-back ──────────────────────────────────
+
+    /// The node-program every `@materialize_node` engine test shares: one ISSUE node per
+    /// FUNCTION, semantic id `issue::fn::<decimal node id>` (concat over the bound id's
+    /// decimal surface), name = the function's name, file = its file, `meta(fname)`.
+    const NODE_PROG: &str = r#"@materialize_node(node_type = "ISSUE", mode = "exclusive", meta(fname))
+        issue(Sid, Name, File, Name) :- node(X, "FUNCTION"), attr(X, "name", Name),
+                                        attr(X, "file", File), concat("issue::fn::", X, Sid)."#;
+
+    /// The provenance `_source` hash of [`NODE_PROG`]'s rule.
+    fn node_prog_hash() -> String {
+        let prog = crate::datalog2::parser_ext::parse_ext_program(NODE_PROG).unwrap();
+        crate::datalog2::materialize::rule_ast_hash(&prog.items[0].rule)
+    }
+
+    /// Plain-path node write-back: a `@materialize_node` rule creates the node with the
+    /// PRODUCTION id derivation (BLAKE3(semantic_id)[0..16] LE), the provenance stamp +
+    /// meta fields, in ONE atomic generation; a re-run adds nothing (dedup by id) and
+    /// never rewrites the existing node.
+    #[test]
+    fn materialize_node_writeback_creates_nodes_with_production_ids() {
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let f = make_v2_node("a.js->FUNCTION->f", "FUNCTION", "f", "a.js");
+        let fid = f.id;
+        engine
+            .commit_batch_ext(vec![f], Vec::new(), &["a.js".to_string()], HashMap::new(), &[])
+            .expect("base commit");
+        let version_before = engine.snapshot().version;
+        let gen = version_before + 1;
+
+        let written = engine
+            .eval_datalog_v2_materialize(NODE_PROG, crate::datalog::EvalLimits::none())
+            .expect("node write-back");
+        assert_eq!(written, 1, "one FUNCTION → one ISSUE node");
+        assert_eq!(
+            engine.snapshot().version,
+            version_before + 1,
+            "single atomic generation (one manifest flip)"
+        );
+
+        // The node landed under the production id convention.
+        let sid = format!("issue::fn::{fid}");
+        let expected_id = crate::graph::string_id_to_u128(&sid);
+        let snap = engine.snapshot();
+        let n = engine
+            .store
+            .get_node_at(&snap, expected_id)
+            .expect("ISSUE node exists at BLAKE3(semantic_id)[0..16] LE");
+        assert_eq!(n.semantic_id, sid);
+        assert_eq!(n.node_type, "ISSUE");
+        assert_eq!(n.name, "f");
+        assert_eq!(n.file, "a.js");
+        let meta: serde_json::Value = serde_json::from_str(&n.metadata).expect("JSON");
+        assert_eq!(meta["_source"], serde_json::Value::String(node_prog_hash()));
+        assert_eq!(meta["_generation"], serde_json::json!(gen));
+        assert_eq!(meta["fname"], serde_json::json!("f"));
+
+        // Re-run (plain path): the node already exists → nothing written, no new flip.
+        let v2 = engine.snapshot().version;
+        let written2 = engine
+            .eval_datalog_v2_materialize(NODE_PROG, crate::datalog::EvalLimits::none())
+            .expect("re-run");
+        assert_eq!(written2, 0, "additive dedup: an existing id is never re-added");
+        assert_eq!(engine.snapshot().version, v2, "a no-op run commits nothing");
+    }
+
+    /// Node `mode = "exclusive"` is PROVENANCE-SCOPED: the retraction set is
+    /// `node_type` ∩ `metadata._source == this rule's hash` — a planted FOREIGN ISSUE
+    /// node (different `_source`, the orchestrator-diagnostics shape) survives every
+    /// run untouched, while an owned-stale node (this rule's `_source`, no longer
+    /// derived) is tombstoned; and when the deriving base fact disappears, the derived
+    /// node retracts too — still without touching the foreign node.
+    #[test]
+    fn materialize_node_exclusive_retraction_is_provenance_scoped() {
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let hash = node_prog_hash();
+
+        let f = make_v2_node("a.js->FUNCTION->f", "FUNCTION", "f", "a.js");
+        let fid = f.id;
+        // FOREIGN ISSUE node: same type, a different producer's _source. MUST survive.
+        let mut foreign = make_v2_node("issue::orchestrator::1", "ISSUE", "diag", "b.js");
+        foreign.metadata = r#"{"_source":"orchestrator-diagnostics","severity":"warning"}"#.to_string();
+        let foreign_id = foreign.id;
+        let foreign_meta = foreign.metadata.clone();
+        // OWNED-STALE ISSUE node: THIS rule's _source, but its semantic id is not derived
+        // by the current run. MUST be tombstoned.
+        let mut stale = make_v2_node("issue::fn::999", "ISSUE", "gone", "c.js");
+        stale.metadata = format!(r#"{{"_source":"{hash}","_generation":1}}"#);
+        let stale_id = stale.id;
+        engine
+            .commit_batch_ext(
+                vec![f, foreign, stale],
+                Vec::new(),
+                &["a.js".to_string(), "b.js".to_string(), "c.js".to_string()],
+                HashMap::new(),
+                &[],
+            )
+            .expect("base commit");
+
+        // Run 1: adds the derived ISSUE (for f), removes the owned-stale; foreign intact.
+        let (added, removed) = engine
+            .eval_datalog_v2_materialize_incremental(NODE_PROG, crate::datalog::EvalLimits::none())
+            .expect("exclusive write-back");
+        assert_eq!((added, removed), (1, 1), "one derived node added, one owned-stale tombstoned");
+        let snap = engine.snapshot();
+        let derived_id = crate::graph::string_id_to_u128(&format!("issue::fn::{fid}"));
+        assert!(engine.store.node_exists_at(&snap, derived_id), "derived ISSUE exists");
+        assert!(!engine.store.node_exists_at(&snap, stale_id), "owned-stale retracted");
+        let foreign_node = engine
+            .store
+            .get_node_at(&snap, foreign_id)
+            .expect("foreign ISSUE survives a provenance-scoped exclusive run");
+        assert_eq!(foreign_node.metadata, foreign_meta, "foreign node not rewritten");
+
+        // Run 2 (no base change): a no-op — the derived node is owned AND re-derived.
+        let (a2, r2) = engine
+            .eval_datalog_v2_materialize_incremental(NODE_PROG, crate::datalog::EvalLimits::none())
+            .expect("idempotent re-run");
+        assert_eq!((a2, r2), (0, 0));
+
+        // Remove the deriving FUNCTION → its ISSUE retracts; foreign STILL intact.
+        engine.delete_node(fid);
+        engine.flush().expect("flush deletion");
+        let (a3, r3) = engine
+            .eval_datalog_v2_materialize_incremental(NODE_PROG, crate::datalog::EvalLimits::none())
+            .expect("retraction run");
+        assert_eq!((a3, r3), (0, 1), "the no-longer-derived owned node retracts");
+        let snap3 = engine.snapshot();
+        assert!(!engine.store.node_exists_at(&snap3, derived_id));
+        assert!(
+            engine.store.node_exists_at(&snap3, foreign_id),
+            "foreign ISSUE survives the retraction run too"
+        );
+    }
+
+    /// Node + edge write-back of ONE program commit in the SAME single flush (one
+    /// atomic generation): one run, exactly one manifest advance, both the
+    /// `@materialize` edge and the `@materialize_node` node visible after it.
+    #[test]
+    fn materialize_node_and_edge_writeback_share_one_flush() {
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let a = make_v2_node("a.js->FUNCTION->fa", "FUNCTION", "fa", "a.js");
+        let b = make_v2_node("b.js->FUNCTION->fb", "FUNCTION", "fb", "b.js");
+        let (id_a, id_b) = (a.id, b.id);
+        let link = EdgeRecordV2 {
+            src: id_a,
+            dst: id_b,
+            edge_type: "LINKS".to_string(),
+            metadata: String::new(),
+        };
+        engine
+            .commit_batch_ext(
+                vec![a, b],
+                vec![link],
+                &["a.js".to_string(), "b.js".to_string()],
+                HashMap::new(),
+                &[],
+            )
+            .expect("base commit");
+        let version_before = engine.snapshot().version;
+
+        let src = r#"@materialize(edge_type = "DERIVED_E")
+            e(X, Y) :- edge(X, Y, "LINKS").
+            @materialize_node(node_type = "NOTE")
+            n(Sid, Name, File) :- node(X, "FUNCTION"), attr(X, "name", Name),
+                                  attr(X, "file", File), concat("note::", X, Sid)."#;
+        let (added, removed) = engine
+            .eval_datalog_v2_materialize_incremental(src, crate::datalog::EvalLimits::none())
+            .expect("mixed write-back");
+        assert_eq!((added, removed), (3, 0), "1 edge + 2 nodes added, nothing removed");
+        assert_eq!(
+            engine.snapshot().version,
+            version_before + 1,
+            "nodes and edges commit in ONE flush (one manifest advance)"
+        );
+        let snap = engine.snapshot();
+        assert_eq!(engine.store.get_edges_by_type_at(&snap, "DERIVED_E").len(), 1);
+        assert!(engine
+            .store
+            .node_exists_at(&snap, crate::graph::string_id_to_u128(&format!("note::{id_a}"))));
+        assert!(engine
+            .store
+            .node_exists_at(&snap, crate::graph::string_id_to_u128(&format!("note::{id_b}"))));
+    }
+
+    /// A `@materialize_node` head whose arity is not `3 + len(meta)` aborts the run with
+    /// the coded `E-MAT-009` BEFORE any mutation — abort-no-commit on both write paths.
+    #[test]
+    fn materialize_node_arity_mismatch_aborts_no_commit() {
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let f = make_v2_node("a.js->FUNCTION->f", "FUNCTION", "f", "a.js");
+        engine
+            .commit_batch_ext(vec![f], Vec::new(), &["a.js".to_string()], HashMap::new(), &[])
+            .expect("base commit");
+        let version_before = engine.snapshot().version;
+
+        // Arity 2 head (semantic id + name, file missing) under @materialize_node.
+        let src = r#"@materialize_node(node_type = "ISSUE")
+            bad(Sid, Name) :- node(X, "FUNCTION"), attr(X, "name", Name), concat("i::", X, Sid)."#;
+
+        let err = engine
+            .eval_datalog_v2_materialize(src, crate::datalog::EvalLimits::none())
+            .expect_err("arity 2 ≠ 3 must abort (plain path)");
+        assert_eq!(err.code(), "E-MAT-009");
+        let err = engine
+            .eval_datalog_v2_materialize_incremental(src, crate::datalog::EvalLimits::none())
+            .expect_err("arity 2 ≠ 3 must abort (delta path)");
+        assert_eq!(err.code(), "E-MAT-009");
+
+        assert_eq!(
+            engine.snapshot().version,
+            version_before,
+            "abort-no-commit: the prior generation is intact on both paths"
+        );
+        assert!(engine
+            .store
+            .find_nodes_at(&engine.snapshot(), Some("ISSUE"), None)
+            .is_empty());
+    }
+
+    /// A program containing ANY `@materialize_node` spec is OUTSIDE the D2 maintain
+    /// envelope: `maintain_datalog_v2` refuses (`Ok(None)`), and the cached production
+    /// path keeps working through the from-scratch correctness floor (zero maintain
+    /// hits across repeat runs, results still exact).
+    #[test]
+    fn materialize_node_program_is_outside_maintain_envelope() {
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let f = make_v2_node("a.js->FUNCTION->f", "FUNCTION", "f", "a.js");
+        let fid = f.id;
+        engine
+            .commit_batch_ext(vec![f], Vec::new(), &["a.js".to_string()], HashMap::new(), &[])
+            .expect("base commit");
+
+        // Direct refusal: the maintain entry returns None before touching prev.
+        let prev = crate::datalog2::exec::Evaluation::default();
+        let prev_snapshot = engine.snapshot();
+        let out = engine
+            .maintain_datalog_v2(NODE_PROG, &prev, prev_snapshot, crate::datalog::EvalLimits::none())
+            .expect("no error");
+        assert!(out.is_none(), "node-materializing program → maintain refusal (scratch floor)");
+
+        // Production cached path: both runs derive from scratch (no maintain hit), the
+        // write-back still works and the 2nd run is the exact no-op.
+        let (a1, r1) = engine
+            .eval_datalog_v2_materialize_cached(NODE_PROG, crate::datalog::EvalLimits::none())
+            .expect("cached run 1");
+        assert_eq!((a1, r1), (1, 0));
+        let (a2, r2) = engine
+            .eval_datalog_v2_materialize_cached(NODE_PROG, crate::datalog::EvalLimits::none())
+            .expect("cached run 2");
+        assert_eq!((a2, r2), (0, 0));
+        assert_eq!(
+            engine
+                .datalog2_maintain_hits
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0,
+            "a node-materializing program must never take the maintain path"
+        );
+        let snap = engine.snapshot();
+        assert!(engine
+            .store
+            .node_exists_at(&snap, crate::graph::string_id_to_u128(&format!("issue::fn::{fid}"))));
+    }
+
     // ── Gate C EXIT on real storage: maintain_datalog_v2 ≡ scratch ───
 
     /// The Gate C EXIT on a live `storage_v2` graph (not the in-memory fixture): across a
@@ -3994,7 +4340,7 @@ mod tests {
                 nodes_by_type: nbt,
             };
             let view = crate::datalog2::storage_glue::BorrowedLsmStorageView::new(&engine.store, snap);
-            let (eval, _specs) = crate::datalog2::evaluate_with_materialize(
+            let (eval, _specs, _node_specs) = crate::datalog2::evaluate_with_materialize(
                 &view,
                 src,
                 stats,
@@ -4126,7 +4472,7 @@ mod tests {
                 nodes_by_type: nbt,
             };
             let view = crate::datalog2::storage_glue::BorrowedLsmStorageView::new(&engine.store, snap);
-            let (eval, _s) = crate::datalog2::evaluate_with_materialize(
+            let (eval, _s, _ns) = crate::datalog2::evaluate_with_materialize(
                 &view,
                 src,
                 stats,
@@ -4238,7 +4584,7 @@ mod tests {
                 nodes_by_type: nbt,
             };
             let view = crate::datalog2::storage_glue::BorrowedLsmStorageView::new(&engine.store, snap);
-            let (eval, _s) = crate::datalog2::evaluate_with_materialize(
+            let (eval, _s, _ns) = crate::datalog2::evaluate_with_materialize(
                 &view,
                 src,
                 stats,

@@ -56,7 +56,10 @@ use binding::{BindingConflict, BindingTable};
 use builtin::Stats;
 use events::EventLog;
 use exec::{DEFAULT_ITERATION_CAP, Evaluation, ExecError, Executor};
-use materialize::{collect_materialize_specs, MaterializeError, MaterializeSpec};
+use materialize::{
+    collect_materialize_node_specs, collect_materialize_specs, MaterializeError,
+    MaterializeSpec, NodeMaterializeSpec,
+};
 use parser_ext::{parse_ext_program, ExtParseError};
 use plan::{plan_program, PlanError};
 use storage_glue::StorageView;
@@ -176,28 +179,31 @@ pub(crate) fn evaluate(
     limits: EvalLimits,
     events: EventLog,
 ) -> Result<Evaluation, EvalError> {
-    let (evaluation, _specs) = evaluate_with_materialize(view, source, stats, limits, events)?;
+    let (evaluation, _specs, _node_specs) =
+        evaluate_with_materialize(view, source, stats, limits, events)?;
     Ok(evaluation)
 }
 
-/// Evaluate a program AND surface its `@materialize` write-back plan — the entry the v2
-/// `@materialize` write-back path uses.
+/// Evaluate a program AND surface its `@materialize` / `@materialize_node` write-back
+/// plans — the entry the v2 write-back path uses.
 ///
 /// Runs the identical single pipeline as [`evaluate`] (parse → stratify → plan → fixpoint;
 /// I8 — there is no second eval path) and, after the fixpoint commits, collects the
-/// program's `@materialize(edge_type="T")` directives into [`MaterializeSpec`]s (each with
+/// program's `@materialize(edge_type="T")` directives into [`MaterializeSpec`]s and its
+/// `@materialize_node(node_type="T")` directives into [`NodeMaterializeSpec`]s (each with
 /// the stable [`materialize::rule_ast_hash`] provenance stamp). The *projection* of those
-/// specs to graph edges and the single atomic commit are the engine adapter's job: this
-/// entry stays a pure function of its arguments (no storage write, I1/I10). Collecting the
-/// specs cannot fail on a well-formed annotation; a `@materialize` missing `edge_type=` is
-/// rejected here (coded `E-MAT-001`) before the caller commits anything.
+/// specs to graph edges/nodes and the single atomic commit are the engine adapter's job:
+/// this entry stays a pure function of its arguments (no storage write, I1/I10). A
+/// malformed directive (`E-MAT-001` missing `edge_type=`, `E-MAT-008` missing
+/// `node_type=`, `E-MAT-006` unknown mode, `E-MAT-011` both directives on one rule) is
+/// rejected here before the caller commits anything.
 pub(crate) fn evaluate_with_materialize(
     view: &dyn StorageView,
     source: &str,
     stats: Stats,
     limits: EvalLimits,
     events: EventLog,
-) -> Result<(Evaluation, Vec<MaterializeSpec>), EvalError> {
+) -> Result<(Evaluation, Vec<MaterializeSpec>, Vec<NodeMaterializeSpec>), EvalError> {
     let program = parse_ext_program(source)?;
     // §9.3 binding gate: pin one (semiring_id, arity) per predicate before any derivation,
     // so a malformed program aborts before the fixpoint and before any commit. Uniform
@@ -213,7 +219,8 @@ pub(crate) fn evaluate_with_materialize(
         .with_events(events);
     let evaluation = executor.evaluate(&plans, &rules, &strat)?;
     let specs = collect_materialize_specs(&program)?;
-    Ok((evaluation, specs))
+    let node_specs = collect_materialize_node_specs(&program)?;
+    Ok((evaluation, specs, node_specs))
 }
 
 // ── Router note: the `RFDB_DATALOG_V2` kill switch (P3) ─────────────
