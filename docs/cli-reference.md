@@ -1564,6 +1564,7 @@ grafema wtf featureId --depth 15
 
 - Symbol resolution falls back to fuzzy match if the literal name doesn't exist. Quote the symbol or pass `--no-fuzzy` for strict.
 - Cross-package traces depend on `grafema analyze` having seen both sides. Re-run `grafema analyze` if a recently-added dependency isn't traced.
+- `wtf` traces **variables, parameters, and property accesses** — not function or class names. `grafema wtf validateSession` returns "Symbol not found" even if the function is in the graph. For callers of a function, use `who`; for downstream impact analysis, use `impact`.
 
 ### See also
 
