@@ -879,6 +879,14 @@ fn walk_enum(e: &syn::ItemEnum, ctx: &mut Ctx) {
             metadata: HashMap::new(),
             extra: HashMap::new(),
         });
+
+        // Explicit discriminant `= EXPR` (`enum E { A = BASE + offset() }`):
+        // a const expression that may contain nested CALL/REFERENCE/
+        // PROPERTY_ACCESS nodes. Walk it like a const/static initializer so
+        // those are not silently dropped from the graph.
+        if let Some((_eq, expr)) = &variant.discriminant {
+            walk_expr(expr, ctx);
+        }
     }
 }
 
@@ -2264,6 +2272,32 @@ mod tests {
     }
 
     #[test]
+    fn test_enum_variant_discriminant_is_walked() {
+        // A `syn::Variant` carries `discriminant: Option<(Eq, Expr)>` — the
+        // explicit `= EXPR` value on a C-like enum variant
+        // (`enum E { A = compute() }`). That const expression can contain
+        // CALL / REFERENCE / PROPERTY_ACCESS nodes. `walk_enum` iterated
+        // variants but only read `variant.ident`, never the discriminant, so
+        // every call/reference inside a discriminant was silently dropped from
+        // the graph (same walk-gap class as inline-const / let-else-diverge /
+        // trait-default-method body gaps). Now the discriminant expression is
+        // walked like a const/static initializer.
+        let fa = parse_and_analyze(
+            "const BASE: isize = 10; \
+             const fn offset() -> isize { 1 } \
+             enum Opcode { Add = BASE + offset(), Sub = offset() * 2 }",
+        );
+        assert!(
+            has_node(&fa, "CALL", "offset"),
+            "CALL offset nested in an enum variant discriminant must be emitted"
+        );
+        assert!(
+            has_node(&fa, "REFERENCE", "BASE"),
+            "REFERENCE BASE nested in an enum variant discriminant must be emitted"
+        );
+    }
+
+    #[test]
     fn test_type_annotation_reference() {
         let fa = parse_and_analyze("fn foo(seg: &NodeSegmentV2) {}");
         let seg = fa.nodes.iter().find(|n| n.node_type == "PARAMETER" && n.name == "seg").unwrap();
@@ -2774,6 +2808,8 @@ mod tests {
             .find(|n| n.node_type == "FUNCTION" && n.name == "puts")
             .expect("FUNCTION puts");
         assert_eq!(f.metadata.get("abi"), Some(&serde_json::json!("C")));
+    }
+
     // Associated items inside `impl` blocks and `trait` definitions used to be
     // silently dropped (ImplItem::Const/Type were empty no-ops; walk_trait only
     // matched TraitItem::Fn), so `Self::MAX` and associated-type queries returned
@@ -2821,6 +2857,8 @@ mod tests {
         assert!(has_edge(&fa, "CONTAINS", "TRAIT", "TYPE_ALIAS"), "TRAIT CONTAINS type");
         // The function signature is still emitted alongside the associated type.
         assert_eq!(count_nodes(&fa, "TYPE_SIGNATURE"), 1);
+    }
+
     // ── Macro invocations ───────────────────────────────────────────────
     // `syn` does not expand macros, so before this fix `Expr::Macro` and
     // `Stmt::Macro` were dropped entirely. That violated KNOWN_LIMITATIONS'
