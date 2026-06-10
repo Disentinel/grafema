@@ -35,7 +35,7 @@ Welcome to the party!
 ## Quick Start
 
 ```bash
-npm install grafema
+npm install -g grafema
 grafema analyze --quickstart
 ```
 
