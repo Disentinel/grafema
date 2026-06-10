@@ -124,7 +124,7 @@ pub(crate) enum SortOrder {
 
 /// Order for [`StorageView::scan_edges_by_type`]: forward serves `edge()`, reverse serves
 /// `incoming()`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum EdgeOrder {
     /// `(src, dst)` ascending — for `edge(src, Dst, T)`.
     Forward,
@@ -297,7 +297,12 @@ impl Iterator for KMerge {
 ///
 /// §8.3: the only permitted point lookup is [`StorageView::get_node`] on an already-bound
 /// id; the fixpoint hot path uses sorted runs and typed scans exclusively.
-pub(crate) trait StorageView {
+///
+/// `Sync` is a supertrait: every view is an IMMUTABLE snapshot (generation-pinned), so
+/// shared cross-thread reads are safe by construction, and the executor's row-parallel
+/// join loops (rayon) require `&dyn StorageView: Send`. Test views that count accesses
+/// must use atomics, not `Cell`.
+pub(crate) trait StorageView: Sync {
     /// Version-pinned snapshot identity. Stable for the life of the view; two reads at the
     /// same generation observe the same committed data.
     fn generation(&self) -> u64;

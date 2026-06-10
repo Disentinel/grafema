@@ -49,10 +49,13 @@
 // dead-code lint would fire on the whole module despite the API being complete and tested.
 #![allow(dead_code)]
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::marker::PhantomData;
+use std::sync::Arc;
 use std::time::Instant;
+
+use rayon::prelude::*;
 
 use crate::datalog::{Atom, EvalLimits, Rule, Term, Value};
 
@@ -90,6 +93,19 @@ const BUILD_ONCE_MIN_ROWS: usize = 64;
 /// it, per-distinct-id probes win (rows often repeat ids — dedup alone cuts probes); above
 /// it, the single sequential scan beats tens of thousands of random LSM point reads.
 const ATTR_DISTINCT_SCAN_THRESHOLD: usize = 1024;
+
+/// Minimum partial-row count for the rayon row-parallel probe loops. Below it the
+/// sequential loop (the reference implementation) runs unchanged — small legs and small
+/// semi-naive Δ rounds must not pay thread-pool dispatch overhead. The parallel path
+/// splits rows into ordered chunks, probes each chunk into its own output vector, and
+/// concatenates the chunk outputs IN ORDER, so its output is byte-identical to the
+/// sequential loop's (same multiset, same order — determinism, I1).
+const PAR_MIN_ROWS: usize = 1024;
+
+/// Rows per rayon work unit in the parallel probe loops. Small enough to load-balance
+/// skewed probe costs across the pool, large enough that per-chunk vector overhead stays
+/// negligible.
+const PAR_CHUNK_ROWS: usize = 256;
 
 // ── Errors (invariant I5) ──────────────────────────────────────────
 
@@ -268,6 +284,173 @@ type BindRow = BTreeMap<String, Value>;
 /// paths replicate (and defensively fall back to, row by row).
 type BuiltinEval = fn(&dyn StorageView, &mut Batch, &ArgSpec) -> builtin::BuiltinResult<()>;
 
+// ── Row-parallel join driver (Part B) ──────────────────────────────
+//
+// Every join probe loop in this module has the shape `for row in rows { per_row(row, &mut
+// out) }` over a SHARED immutable index/view — per-row pure, no cross-row state. This
+// driver runs that shape sequentially below [`PAR_MIN_ROWS`] (the reference
+// implementation, byte-identical to the historical loops) and rayon-chunk-parallel at or
+// above it. Chunk outputs are collected with an indexed parallel iterator and flattened
+// IN CHUNK ORDER, so the parallel output equals the sequential output exactly (same rows,
+// same order — not merely the same multiset).
+//
+// `per_row` must capture only `Sync` state: the executor itself is NOT `Sync` (it owns
+// `RefCell`s for the event log and the Part-A index caches), so callers fetch/build any
+// cached index BEFORE calling this and capture the index + the `&dyn StorageView` (whose
+// trait carries a `Sync` supertrait) — never `&self`.
+fn par_join_rows<F>(rows: &[BindRow], per_row: F) -> Vec<BindRow>
+where
+    F: Fn(&BindRow, &mut Vec<BindRow>) + Sync,
+{
+    if rows.len() < PAR_MIN_ROWS {
+        let mut out = Vec::new();
+        for row in rows {
+            per_row(row, &mut out);
+        }
+        return out;
+    }
+    let chunks: Vec<Vec<BindRow>> = rows
+        .par_chunks(PAR_CHUNK_ROWS)
+        .map(|chunk| {
+            let mut out = Vec::new();
+            for row in chunk {
+                per_row(row, &mut out);
+            }
+            out
+        })
+        .collect();
+    let mut out = Vec::with_capacity(chunks.iter().map(Vec::len).sum());
+    for c in chunks {
+        out.extend(c);
+    }
+    out
+}
+
+// ── Part A: executor-owned build-once index caches ─────────────────
+
+/// Key of a cached typed-edge join index: `(edge type, scan order, shape)` where shape is
+/// which endpoints the rows can probe (both / near-only / far-only). Two legs anywhere in
+/// the program (any rule, any stratum, any semi-naive iteration) that need the same index
+/// content share one build — the index depends only on the view (immutable for the
+/// executor's lifetime) and this key, never on the probing rows.
+type EdgeIndexKey = (String, super::storage_glue::EdgeOrder, EdgeProbeShape);
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum EdgeProbeShape {
+    Both,
+    ByNear,
+    ByFar,
+}
+
+/// A built typed-edge join index (the hash side of
+/// [`Executor::join_edge_bound_built_once`]), built from ONE `scan_edges_by_type` pass.
+enum EdgeIndex {
+    /// Both endpoints row-bound: `(near, far) → multiplicity` (membership + count).
+    Both(HashMap<(u128, u128), usize>),
+    /// Only the near endpoint row-bound: `near → [far]` buckets, in scan order.
+    ByNear(HashMap<u128, Vec<u128>>),
+    /// Only the far endpoint row-bound: `far → [near]` buckets, in scan order.
+    ByFar(HashMap<u128, Vec<u128>>),
+}
+
+/// Key of a cached set-at-once anti-join membership set: the negated leg's predicate
+/// family (`edge`/`incoming` vs `node`/`type`), the constant type, and which argument
+/// positions are variables (the projection mask — [`project_anti_join_key`] keys rows on
+/// exactly the variable positions, so two atoms with the same mask share one set).
+type AntiJoinKey = (&'static str, String, [bool; 2]);
+
+/// The Part-A caches, owned by one [`Executor`] — i.e. scoped to ONE immutable snapshot
+/// view (`Executor::view` never changes; incremental phases that read a different base
+/// construct a fresh executor, see [`maintain_incremental`]). Within that scope every
+/// base-relation index is a pure function of its key, so it is built ONCE and reused
+/// across legs, clauses, strata, and semi-naive iterations — the W1 finding was that
+/// these were rebuilt per `join_*` call, i.e. per leg per clause per Δ-round.
+///
+/// `RefCell` (not a lock): the executor evaluates clauses single-threaded; only the
+/// per-ROW probe loops fan out, and they receive a pre-fetched `Arc` clone of the index,
+/// never the cache itself. Values are `Arc` so a fetched index stays alive (and shareable
+/// across rayon workers) independent of the `RefCell` borrow.
+///
+/// Derived-relation indexes ([`Executor::join_derived`]) are deliberately NOT cached: a
+/// recursive leg's source (Δ, or a same-stratum Total) genuinely changes every iteration,
+/// and the index holds borrows into the relation store that a cache cannot outlive; a
+/// frozen lower-stratum leg is rebuilt per Δ-round, but its build is O(|relation|) over an
+/// in-memory map — storage scans, the measured cost driver, are what this cache removes.
+///
+/// Memory: bounded by the base relations the program actually touches (one bucket map per
+/// distinct (edge type, order, shape), one id-set per node type, one value→ids map per
+/// first-class attr key, at most one full node-row map) — the same magnitude the
+/// uncached code allocated TRANSIENTLY on every single call.
+struct IndexCaches {
+    edge: RefCell<HashMap<EdgeIndexKey, Arc<EdgeIndex>>>,
+    /// Node-membership sets for `node(BoundId, "Ty")` legs, keyed by type.
+    node_members: RefCell<HashMap<String, Arc<HashSet<u128>>>>,
+    /// `value → [id]` generator indexes for `attr(FreeId, key, V)`, keyed by the
+    /// first-class column key (`name`/`file`/`type`).
+    attr_gen: RefCell<HashMap<String, Arc<HashMap<String, Vec<u128>>>>>,
+    /// The FULL `id → NodeRow` map, built lazily on the first attr/bound-id leg whose
+    /// distinct-id count crosses [`ATTR_DISTINCT_SCAN_THRESHOLD`] (one sorted-node pass —
+    /// the same pass the uncached code made per call, which kept only that call's ids and
+    /// threw the rest away). Once built, every later attr/bound-id leg of ANY size is
+    /// served from it.
+    node_rows_full: RefCell<Option<Arc<HashMap<u128, super::storage_glue::NodeRow>>>>,
+    /// Set-at-once anti-join membership sets.
+    anti_join: RefCell<HashMap<AntiJoinKey, Arc<HashSet<Vec<Value>>>>>,
+    /// `(near, far)` tuples of one typed edge scan IN SCAN ORDER, keyed by `(type,
+    /// order)` — serves the fully-free `edge`/`incoming` GENERATOR leg, whose per-row
+    /// eval re-scans storage on EVERY call (every Δ-round of a recursive stratum re-leads
+    /// with the same generator; multiple clauses lead with the same one). Scan order is
+    /// preserved so the cached emission is byte-identical to `eval_edge_dir`'s.
+    edge_pairs: RefCell<HashMap<(String, super::storage_glue::EdgeOrder), Arc<Vec<(u128, u128)>>>>,
+    /// Node ids of one typed node scan in scan order, keyed by type — the free `node`/
+    /// `type` generator twin of `edge_pairs`.
+    node_ids: RefCell<HashMap<String, Arc<Vec<u128>>>>,
+    /// Measure-first counters: how many index BUILDS actually ran vs how many calls were
+    /// served from cache. Observational only (never affect the committed result).
+    builds: Cell<u64>,
+    hits: Cell<u64>,
+}
+
+impl IndexCaches {
+    fn new() -> Self {
+        Self {
+            edge: RefCell::new(HashMap::new()),
+            node_members: RefCell::new(HashMap::new()),
+            attr_gen: RefCell::new(HashMap::new()),
+            node_rows_full: RefCell::new(None),
+            anti_join: RefCell::new(HashMap::new()),
+            edge_pairs: RefCell::new(HashMap::new()),
+            node_ids: RefCell::new(HashMap::new()),
+            builds: Cell::new(0),
+            hits: Cell::new(0),
+        }
+    }
+
+    /// Fetch the cached value for `key` in `map`, or build it with `build` and cache it.
+    /// Counts a hit or a build (the proof anchor for the cache tests).
+    fn get_or_build<K, V>(
+        &self,
+        map: &RefCell<HashMap<K, Arc<V>>>,
+        key: K,
+        build: impl FnOnce() -> V,
+    ) -> Arc<V>
+    where
+        K: std::hash::Hash + Eq,
+    {
+        if let Some(found) = map.borrow().get(&key) {
+            self.hits.set(self.hits.get() + 1);
+            return Arc::clone(found);
+        }
+        // Build OUTSIDE the borrow: the build closure reads storage and may take long;
+        // nothing re-enters this cache during a build (joins don't nest), but keeping the
+        // borrow scope minimal is free insurance.
+        let built = Arc::new(build());
+        map.borrow_mut().insert(key, Arc::clone(&built));
+        self.builds.set(self.builds.get() + 1);
+        built
+    }
+}
+
 // ── The executor ───────────────────────────────────────────────────
 
 /// The semi-naive fixpoint executor, parameterized by the provenance tag.
@@ -298,6 +481,12 @@ pub(crate) struct Executor<'v, T: IdempotentTag> {
     /// sink is wired. `RefCell` so `evaluate(&self, …)` keeps its immutable signature (the
     /// log is observational and must not affect the committed result — I9/I1).
     events: RefCell<EventLog>,
+    /// Part-A build-once index caches: every base-relation join index is a pure function
+    /// of (its key, `view`) and `view` is immutable for this executor's lifetime, so each
+    /// is built ONCE here and reused across legs, clauses, strata, and semi-naive
+    /// iterations. See [`IndexCaches`] for the per-index keying and the derived-relation
+    /// exclusion rationale.
+    caches: IndexCaches,
     /// Carries the tag type without storing a value.
     _tag: PhantomData<T>,
 }
@@ -313,6 +502,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
             iteration_cap: DEFAULT_ITERATION_CAP,
             build_once_min_rows: BUILD_ONCE_MIN_ROWS,
             events: RefCell::new(EventLog::discard()),
+            caches: IndexCaches::new(),
             _tag: PhantomData,
         }
     }
@@ -331,6 +521,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
             iteration_cap,
             build_once_min_rows: BUILD_ONCE_MIN_ROWS,
             events: RefCell::new(EventLog::discard()),
+            caches: IndexCaches::new(),
             _tag: PhantomData,
         }
     }
@@ -343,6 +534,15 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
     pub(crate) fn with_build_once_min_rows(mut self, n: usize) -> Self {
         self.build_once_min_rows = n;
         self
+    }
+
+    /// Part-A cache counters: `(builds, hits)` — how many build-once base-leg indexes
+    /// were actually BUILT vs served from this executor's cache. The proof anchor for
+    /// the index-cache tests (a recursive stratum must show `builds` independent of the
+    /// iteration count). Observational only.
+    #[cfg(test)]
+    pub(crate) fn index_cache_counts(&self) -> (u64, u64) {
+        (self.caches.builds.get(), self.caches.hits.get())
     }
 
     /// Install a delta-base view (builder-style): the view exposing only `ΔB`, the asserted
@@ -1232,21 +1432,22 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         if negated {
             // Anti-join: every arg is bound (planner ordered bound-first). Build the
             // fact-key set ONCE; each row is then an O(1) membership probe. (The per-row
-            // `values().any()` scan made every anti-join O(rows × facts).)
+            // `values().any()` scan made every anti-join O(rows × facts).) NOT cached
+            // (Part A exclusion): the source relation can change between Δ-rounds, and
+            // the set borrows its keys from the relation store.
             let keys: std::collections::HashSet<&[Value]> =
                 source.values().map(|f| f.key.as_ref()).collect();
-            for row in rows {
-                let present = match bind_atom_args(atom, &row) {
+            return par_join_rows(&rows, |row, out| {
+                let present = match bind_atom_args(atom, row) {
                     Some(key) => keys.contains(key.as_slice()),
                     // A key that cannot be fully bound is treated as "no match" — the row
                     // survives. The planner guarantees this does not happen for a safe rule.
                     None => false,
                 };
                 if !present {
-                    out.push(row);
+                    out.push(row.clone());
                 }
-            }
-            return out;
+            });
         }
 
         // Positive: BUILD-ONCE hash-join. Index the relation by the leg's BOUND argument
@@ -1276,6 +1477,11 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
             return out;
         }
 
+        // NOT cached (Part A exclusion, documented on [`IndexCaches`]): a recursive leg's
+        // source (Δ / same-stratum Total) genuinely changes every iteration, and the index
+        // borrows `&DerivedFact` out of the relation store — an executor-lifetime cache
+        // cannot hold those borrows. The build is an in-memory O(|relation|) pass; the
+        // storage-scan rebuilds Part A targets are the measured cost driver.
         let arity = atom.args().len();
         let mut index: HashMap<Vec<Value>, Vec<&DerivedFact<T>>> = HashMap::new();
         for fact in source.values() {
@@ -1285,12 +1491,12 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
             let k: Vec<Value> = bound_positions.iter().map(|&i| fact.key[i].clone()).collect();
             index.entry(k).or_default().push(fact);
         }
-        for row in rows {
-            match derived_probe_key(atom, &bound_positions, &row) {
+        par_join_rows(&rows, |row, out| {
+            match derived_probe_key(atom, &bound_positions, row) {
                 Some(probe) => {
                     if let Some(bucket) = index.get(&probe) {
                         for fact in bucket {
-                            if let Some(extended) = unify_atom(atom, &fact.key, &row) {
+                            if let Some(extended) = unify_atom(atom, &fact.key, row) {
                                 out.push(extended);
                             }
                         }
@@ -1301,14 +1507,13 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
                 // speed; must not silently drop the row).
                 None => {
                     for fact in source.values() {
-                        if let Some(extended) = unify_atom(atom, &fact.key, &row) {
+                        if let Some(extended) = unify_atom(atom, &fact.key, row) {
                             out.push(extended);
                         }
                     }
                 }
             }
-        }
-        out
+        })
     }
 
     /// Join a base/builtin leg into the partial rows via the v2 registry eval body.
@@ -1352,14 +1557,15 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         // returned unchanged.
         if negated {
             if let Some(membership) = self.build_anti_join_set(name, atom) {
-                let mut out: Vec<BindRow> = Vec::with_capacity(rows.len());
-                for row in rows {
-                    match project_anti_join_key(atom, &row) {
+                let view = self.view;
+                let eval = def.eval;
+                return par_join_rows(&rows, |row, out| {
+                    match project_anti_join_key(atom, row) {
                         // Row's projected key tuple present in the membership set ⇒ a match
                         // exists ⇒ the anti-join drops the row. Absent ⇒ the row survives.
                         Some(key) => {
                             if !membership.contains(&key) {
-                                out.push(row);
+                                out.push(row.clone());
                             }
                         }
                         // A key position is unexpectedly unbound for this row (the planner
@@ -1367,13 +1573,12 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
                         // exact per-row eval for this row so correctness never depends on the
                         // fast path's preconditions.
                         None => {
-                            if self.anti_join_row_passes(def.eval, atom, &row) {
-                                out.push(row);
+                            if anti_join_row_passes_on(view, eval, atom, row) {
+                                out.push(row.clone());
                             }
                         }
                     }
-                }
-                return out;
+                });
             }
         }
 
@@ -1391,6 +1596,28 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         // the free id position (`Value::Id`), nothing else is captured.
         if !negated && name == "attr" {
             if let Some(joined) = self.join_attr_generator_built_once(leg, atom, &rows) {
+                return joined;
+            }
+        }
+
+        // ── Cached free GENERATORS (Part A) ──
+        //
+        // A fully-free `edge`/`incoming`/`node` generator leg re-scans storage on EVERY
+        // call: every Δ-round of a recursive stratum re-evaluates the clause and re-leads
+        // with the same generator, and multiple clauses of one program lead with the same
+        // one. Serve it from the executor-cached scan-order tuple list instead — built
+        // once per (type, order) per evaluation, emission byte-identical to the per-row
+        // eval's (same tuples, same scan order). `build_once_min_rows == usize::MAX` (the
+        // documented force-per-row sentinel) disables these like every other fast path.
+        if !negated {
+            let gen = match lookup_name {
+                "edge" | "incoming" => {
+                    self.join_edge_generator_cached(lookup_name, def.eval, atom, leg, &rows)
+                }
+                "node" => self.join_node_generator_cached(def.eval, atom, leg, &rows),
+                _ => None,
+            };
+            if let Some(joined) = gen {
                 return joined;
             }
         }
@@ -1420,8 +1647,13 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
             }
         }
 
-        let mut out: Vec<BindRow> = Vec::new();
-        for row in rows {
+        // Generic per-row registry eval (the reference path). Row-parallel at scale: each
+        // row's eval reads only the shared immutable view (the trait carries `Sync`), and
+        // per-row purity holds for every registry builtin including Function builtins and
+        // negated existence probes.
+        let view = self.view;
+        let eval = def.eval;
+        par_join_rows(&rows, |row, out| {
             if negated {
                 // Negative base/builtin leg = anti-join. The planner placed it bound-first,
                 // so every captured Var is already bound; any free arg is a wildcard
@@ -1429,43 +1661,218 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
                 // (matches are never bound back — a negated literal contributes membership,
                 // not bindings). An eval Err drops the row (the registry eval returns Err
                 // only for a genuine planning fault, impossible on a planned leg).
-                let (spec, _slot_vars) = resolve_arg_spec(atom, &row);
+                let (spec, _slot_vars) = resolve_arg_spec(atom, row);
                 let mut batch = Batch::new();
-                if (def.eval)(self.view, &mut batch, &spec).is_err() {
-                    continue;
+                if eval(view, &mut batch, &spec).is_err() {
+                    return;
                 }
                 if batch.rows.is_empty() {
-                    out.push(row);
+                    out.push(row.clone());
                 }
             } else {
-                self.positive_row_via_eval(def.eval, atom, &row, &mut out);
+                positive_row_via_eval_on(view, eval, atom, row, out);
             }
-        }
-        out
+        })
     }
 
-    /// Run the registry eval for ONE row of a POSITIVE base/builtin leg and extend it with
-    /// every produced tuple — the exact per-row path of [`Self::join_extensional`], also
-    /// used verbatim as the build-once fast paths' defensive per-row fallback so a row the
-    /// fast path cannot serve gets byte-identical treatment.
-    fn positive_row_via_eval(
+    /// Cached fully-free `edge`/`incoming` GENERATOR (Part A), or `None` if the leg is
+    /// not the free-generator shape (a bound endpoint, a constant endpoint, a non-const
+    /// type — the caller then tries the bound-probe build-once path / per-row eval).
+    ///
+    /// `eval_edge_dir`'s both-free mode runs one full `scan_edges_by_type` per CALL; this
+    /// serves the same tuples from one cached scan-order pair list per `(type, order)`,
+    /// replicating the per-row eval's emission exactly: per scanned edge, each free
+    /// endpoint VARIABLE binds `Value::Id` with the shared-variable agreement check
+    /// (`edge(X, X, "T")` keeps only self-loops), wildcards bind nothing (one pass row
+    /// per tuple). A row that already binds an endpoint variable would put the per-row
+    /// eval in keyed-probe mode — exact per-row fallback for that row.
+    fn join_edge_generator_cached(
+        &self,
+        name: &str,
+        eval: BuiltinEval,
+        atom: &Atom,
+        leg: &crate::datalog2::plan::PlanLeg,
+        rows: &[BindRow],
+    ) -> Option<Vec<BindRow>> {
+        use super::builtin::ArgMode;
+        use super::storage_glue::EdgeOrder;
+
+        // The documented force-per-row sentinel disables every fast path.
+        if self.build_once_min_rows == usize::MAX {
+            return None;
+        }
+        let args = atom.args();
+        if args.len() != 3 {
+            return None;
+        }
+        let ty: String = match &args[2] {
+            Term::Const(s) => s.clone(),
+            Term::Lit(v) => v.as_str(),
+            _ => return None,
+        };
+        // Both endpoints must be free: a wildcard, or a variable the planner left Free.
+        for i in [0usize, 1] {
+            match &args[i] {
+                Term::Wildcard => {}
+                Term::Var(_) => {
+                    if leg.pattern.get(i) == Some(&ArgMode::Bound) {
+                        return None;
+                    }
+                }
+                _ => return None,
+            }
+        }
+        let order = if name == "incoming" {
+            EdgeOrder::Reverse
+        } else {
+            EdgeOrder::Forward
+        };
+        // Only build/fetch the index if some row actually needs the free enumeration: the
+        // executor's Δ-lead reorder can run a plan-Free leg AFTER the Δ leg bound its
+        // variables, putting every row on the keyed per-row path — building a full-scan
+        // cache there would charge an incremental run O(base) storage work for nothing
+        // (the work-proportionality gate). All-keyed rows ⇒ `None` ⇒ the exact per-row
+        // eval, identical to this path's own per-row fallback.
+        let row_needs_enumeration = |row: &BindRow| {
+            args[..2].iter().all(|t| match t {
+                Term::Var(v) => !row.contains_key(v),
+                _ => true, // a wildcard never binds
+            })
+        };
+        if !rows.iter().any(row_needs_enumeration) {
+            return None;
+        }
+
+        // ── The tuple list: one typed scan, in scan order, cached per (type, order). ──
+        let view = self.view;
+        let pairs: Arc<Vec<(u128, u128)>> =
+            self.caches.get_or_build(&self.caches.edge_pairs, (ty.clone(), order), || {
+                view.scan_edges_by_type(&ty, order)
+                    .map(|e| match order {
+                        EdgeOrder::Forward => (e.src, e.dst),
+                        EdgeOrder::Reverse => (e.dst, e.src),
+                    })
+                    .collect()
+            });
+
+        let out = par_join_rows(rows, |row, out| {
+            // Defensive: a row-bound endpoint variable means the per-row eval would
+            // resolve it Bound and take the keyed path — run it exactly for this row.
+            for i in [0usize, 1] {
+                if let Term::Var(v) = &args[i] {
+                    if row.contains_key(v) {
+                        positive_row_via_eval_on(view, eval, atom, row, out);
+                        return;
+                    }
+                }
+            }
+            for &(near, far) in pairs.iter() {
+                let mut next = row.clone();
+                let mut ok = true;
+                for (i, val) in [(0usize, near), (1usize, far)] {
+                    if let Term::Var(v) = &args[i] {
+                        match next.get(v) {
+                            // The shared-variable agreement check (edge(X, X, "T")):
+                            // the second occurrence must equal the first.
+                            Some(existing) => {
+                                if *existing != Value::Id(val) {
+                                    ok = false;
+                                    break;
+                                }
+                            }
+                            None => {
+                                next.insert(v.clone(), Value::Id(val));
+                            }
+                        }
+                    }
+                }
+                if ok {
+                    out.push(next);
+                }
+            }
+        });
+        Some(out)
+    }
+
+    /// Cached fully-free `node`/`type` GENERATOR (Part A) — the node twin of
+    /// [`Self::join_edge_generator_cached`]. `eval_node`'s free-id mode runs one full
+    /// `scan_nodes_by_type` per CALL; this serves the same ids from one cached scan-order
+    /// list per type: a free id variable binds `Value::Id` per scanned node, a wildcard
+    /// id passes the row once per scanned node. `None` for any other shape (bound or
+    /// constant id, non-const type) — the per-row eval stays exact.
+    fn join_node_generator_cached(
         &self,
         eval: BuiltinEval,
         atom: &Atom,
-        row: &BindRow,
-        out: &mut Vec<BindRow>,
-    ) {
-        // Resolve args → ArgSpec. Free (unbound) variables get sequential output slots;
-        // the slot→variable map lets us write the produced values back into the row.
-        let (spec, slot_vars) = resolve_arg_spec(atom, row);
-        let mut batch = Batch::new();
-        // The registry eval returns Err only for a genuine planning fault; the planner
-        // already mode-checked every leg, so a runtime Err here is impossible on a
-        // planned leg. If it ever fired, the safe behavior is "no rows" (never a crash).
-        if eval(self.view, &mut batch, &spec).is_err() {
-            return;
+        leg: &crate::datalog2::plan::PlanLeg,
+        rows: &[BindRow],
+    ) -> Option<Vec<BindRow>> {
+        use super::builtin::ArgMode;
+
+        if self.build_once_min_rows == usize::MAX {
+            return None;
         }
-        extend_row_with_batch(row, &batch, &slot_vars, out);
+        let args = atom.args();
+        if args.len() != 2 {
+            return None;
+        }
+        let ty: String = match &args[1] {
+            Term::Const(s) => s.clone(),
+            Term::Lit(v) => v.as_str(),
+            _ => return None,
+        };
+        match &args[0] {
+            Term::Wildcard => {}
+            Term::Var(_) => {
+                if leg.pattern.first() == Some(&ArgMode::Bound) {
+                    return None;
+                }
+            }
+            _ => return None,
+        }
+        // As in the edge generator: only build the cache if some row actually needs the
+        // free enumeration (the Δ-lead reorder can bind a plan-Free id variable at run
+        // time, putting every row on the keyed point-check path).
+        let row_needs_enumeration = |row: &BindRow| match &args[0] {
+            Term::Var(v) => !row.contains_key(v),
+            _ => true,
+        };
+        if !rows.iter().any(row_needs_enumeration) {
+            return None;
+        }
+
+        // ── The id list: one typed scan, in scan order, cached per type. ──
+        let view = self.view;
+        let ids: Arc<Vec<u128>> =
+            self.caches.get_or_build(&self.caches.node_ids, ty.clone(), || {
+                view.scan_nodes_by_type(&ty).map(|n| n.id).collect()
+            });
+
+        let out = par_join_rows(rows, |row, out| {
+            match &args[0] {
+                Term::Var(v) if row.contains_key(v) => {
+                    // Row-bound id variable: the per-row eval would run the point check —
+                    // exact per-row fallback for this row.
+                    positive_row_via_eval_on(view, eval, atom, row, out);
+                }
+                Term::Var(v) => {
+                    for &id in ids.iter() {
+                        let mut next = row.clone();
+                        next.insert(v.clone(), Value::Id(id));
+                        out.push(next);
+                    }
+                }
+                // Wildcard id: existence per scanned node — one pass row per match.
+                Term::Wildcard => {
+                    for _ in ids.iter() {
+                        out.push(row.clone());
+                    }
+                }
+                // Screened by the shape check; defensive.
+                _ => positive_row_via_eval_on(view, eval, atom, row, out),
+            }
+        });
+        Some(out)
     }
 
     /// Build-once hash-join for a positive `edge`/`incoming` leg with a constant type and
@@ -1543,41 +1950,48 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
             EdgeOrder::Reverse => (dst, src),
         };
 
-        // ── Build the hash side ONCE: one typed edge scan. ──
-        enum EdgeIndex {
-            /// Both endpoints row-bound: `(near, far) → multiplicity` (membership + count).
-            Both(HashMap<(u128, u128), usize>),
-            /// Only the near endpoint row-bound: `near → [far]` buckets, in scan order.
-            ByNear(HashMap<u128, Vec<u128>>),
-            /// Only the far endpoint row-bound: `far → [near]` buckets, in scan order.
-            ByFar(HashMap<u128, Vec<u128>>),
-        }
-        let index = if near_probe && far_probe {
-            let mut m: HashMap<(u128, u128), usize> = HashMap::new();
-            for e in self.view.scan_edges_by_type(&ty, order) {
-                let (near, far) = near_far(e.src, e.dst);
-                *m.entry((near, far)).or_insert(0) += 1;
-            }
-            EdgeIndex::Both(m)
+        // ── The hash side: ONE typed edge scan, cached on (type, order, shape) for the
+        //    executor's lifetime (Part A — the view is immutable, so the index is too;
+        //    previously rebuilt on EVERY call, i.e. per leg per clause per Δ-round).
+        let shape = if near_probe && far_probe {
+            EdgeProbeShape::Both
         } else if near_probe {
-            let mut m: HashMap<u128, Vec<u128>> = HashMap::new();
-            for e in self.view.scan_edges_by_type(&ty, order) {
-                let (near, far) = near_far(e.src, e.dst);
-                m.entry(near).or_default().push(far);
-            }
-            EdgeIndex::ByNear(m)
+            EdgeProbeShape::ByNear
         } else {
-            let mut m: HashMap<u128, Vec<u128>> = HashMap::new();
-            for e in self.view.scan_edges_by_type(&ty, order) {
-                let (near, far) = near_far(e.src, e.dst);
-                m.entry(far).or_default().push(near);
-            }
-            EdgeIndex::ByFar(m)
+            EdgeProbeShape::ByFar
         };
+        let view = self.view;
+        let index: Arc<EdgeIndex> =
+            self.caches
+                .get_or_build(&self.caches.edge, (ty.clone(), order, shape), || match shape {
+                    EdgeProbeShape::Both => {
+                        let mut m: HashMap<(u128, u128), usize> = HashMap::new();
+                        for e in view.scan_edges_by_type(&ty, order) {
+                            let (near, far) = near_far(e.src, e.dst);
+                            *m.entry((near, far)).or_insert(0) += 1;
+                        }
+                        EdgeIndex::Both(m)
+                    }
+                    EdgeProbeShape::ByNear => {
+                        let mut m: HashMap<u128, Vec<u128>> = HashMap::new();
+                        for e in view.scan_edges_by_type(&ty, order) {
+                            let (near, far) = near_far(e.src, e.dst);
+                            m.entry(near).or_default().push(far);
+                        }
+                        EdgeIndex::ByNear(m)
+                    }
+                    EdgeProbeShape::ByFar => {
+                        let mut m: HashMap<u128, Vec<u128>> = HashMap::new();
+                        for e in view.scan_edges_by_type(&ty, order) {
+                            let (near, far) = near_far(e.src, e.dst);
+                            m.entry(far).or_default().push(near);
+                        }
+                        EdgeIndex::ByFar(m)
+                    }
+                });
 
-        // ── Probe per row. ──
-        let mut out: Vec<BindRow> = Vec::new();
-        for row in rows {
+        // ── Probe per row (row-parallel at scale; index + view shared immutable). ──
+        let out = par_join_rows(rows, |row, out| {
             // Resolve a probe endpoint the way `resolve_arg_spec` + `bound_id` would:
             // the row's value, id-parsed. `Err` ⇒ the per-row eval would take a different
             // mode/access path ⇒ exact per-row fallback for this row.
@@ -1590,7 +2004,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
                     _ => Err(()),
                 }
             };
-            match &index {
+            match &*index {
                 EdgeIndex::Both(m) => match (resolve(0), resolve(1)) {
                     (Ok(near), Ok(far)) => {
                         // Both bound: membership with multiplicity — the per-row eval
@@ -1600,95 +2014,13 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
                             out.push(row.clone());
                         }
                     }
-                    _ => self.positive_row_via_eval(eval, atom, row, &mut out),
+                    _ => positive_row_via_eval_on(view, eval, atom, row, out),
                 },
-                EdgeIndex::ByNear(m) => {
-                    self.probe_edge_bucket(m, 0, 1, eval, atom, row, &mut out)
-                }
-                EdgeIndex::ByFar(m) => {
-                    self.probe_edge_bucket(m, 1, 0, eval, atom, row, &mut out)
-                }
+                EdgeIndex::ByNear(m) => probe_edge_bucket(view, m, 0, 1, eval, atom, row, out),
+                EdgeIndex::ByFar(m) => probe_edge_bucket(view, m, 1, 0, eval, atom, row, out),
             }
-        }
+        });
         Some(out)
-    }
-
-    /// Probe one row against a single-endpoint edge bucket map (`probe_pos` is the
-    /// row-bound endpoint's argument position, `other_pos` the captured/matched one),
-    /// reproducing the per-row eval's semantics exactly: a free other-variable binds each
-    /// bucket id (with the shared-variable agreement check the generic loop applies); a
-    /// wildcard, or a row-bound other-variable with an id surface, filters/passes with one
-    /// output row per matching stored tuple. Any resolution the per-row path would treat
-    /// differently (unbound probe var, non-id probe surface, non-id other-binding, a
-    /// non-variable other term) falls back to the exact per-row eval for THIS row.
-    #[allow(clippy::too_many_arguments)]
-    fn probe_edge_bucket(
-        &self,
-        buckets: &HashMap<u128, Vec<u128>>,
-        probe_pos: usize,
-        other_pos: usize,
-        eval: BuiltinEval,
-        atom: &Atom,
-        row: &BindRow,
-        out: &mut Vec<BindRow>,
-    ) {
-        let args = atom.args();
-        let probe_id = match &args[probe_pos] {
-            Term::Var(v) => match row.get(v).and_then(Value::as_id) {
-                Some(id) => id,
-                None => {
-                    // Unbound probe var or a binding with no id surface: the per-row
-                    // eval's access path changes — run it exactly.
-                    self.positive_row_via_eval(eval, atom, row, out);
-                    return;
-                }
-            },
-            // The shape check screened constant probe endpoints; defensive.
-            _ => {
-                self.positive_row_via_eval(eval, atom, row, out);
-                return;
-            }
-        };
-        let Some(bucket) = buckets.get(&probe_id) else {
-            // No edges at this key: the per-row eval would produce an empty batch — the
-            // row is dropped.
-            return;
-        };
-        match &args[other_pos] {
-            // Wildcard: existence per stored tuple — one pass row per edge (the per-row
-            // eval emits `push_pass()` per match, and the generic loop replicates the
-            // partial row once per pass).
-            Term::Wildcard => {
-                for _ in bucket {
-                    out.push(row.clone());
-                }
-            }
-            Term::Var(v) => match row.get(v) {
-                // Planner said Free but the row carries a binding (shared variable): the
-                // per-row eval runs in check mode. An id surface filters the bucket; a
-                // non-id surface changes the eval's path — exact fallback.
-                Some(existing) => match existing.as_id() {
-                    Some(fid) => {
-                        for &other in bucket {
-                            if other == fid {
-                                out.push(row.clone());
-                            }
-                        }
-                    }
-                    None => self.positive_row_via_eval(eval, atom, row, out),
-                },
-                // Free output variable: bind each bucket id.
-                None => {
-                    for &other in bucket {
-                        let mut next = row.clone();
-                        next.insert(v.clone(), Value::Id(other));
-                        out.push(next);
-                    }
-                }
-            },
-            // A constant other endpoint was screened out by the shape check; defensive.
-            _ => self.positive_row_via_eval(eval, atom, row, out),
-        }
     }
 
     /// Build-once membership probe for a positive `node`/`type` leg with a constant type
@@ -1728,14 +2060,18 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
             _ => return None,
         };
 
-        // ── Build the membership set ONCE: one typed node scan. ──
-        let members: HashSet<u128> = self.view.scan_nodes_by_type(&ty).map(|n| n.id).collect();
+        // ── The membership set: one typed node scan, cached per type for the executor's
+        //    lifetime (Part A; previously rebuilt on every call).
+        let view = self.view;
+        let members: Arc<HashSet<u128>> =
+            self.caches.get_or_build(&self.caches.node_members, ty.clone(), || {
+                view.scan_nodes_by_type(&ty).map(|n| n.id).collect()
+            });
 
-        let mut out: Vec<BindRow> = Vec::new();
-        for row in rows {
+        let out = par_join_rows(rows, |row, out| {
             match row.get(id_var) {
                 // Planner said Bound but the row lacks the binding — exact per-row eval.
-                None => self.positive_row_via_eval(eval, atom, row, &mut out),
+                None => positive_row_via_eval_on(view, eval, atom, row, out),
                 Some(val) => match val.as_id() {
                     // Per-row parity: no id surface ⇒ no tuple ⇒ the row is dropped.
                     None => {}
@@ -1746,7 +2082,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
                     }
                 },
             }
-        }
+        });
         Some(out)
     }
 
@@ -1792,52 +2128,73 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
             _ => return None,
         };
 
-        // ── Collect the distinct ids the rows actually need. ──
-        let mut distinct: HashSet<u128> = HashSet::new();
-        for row in rows {
-            if let Some(id) = row.get(id_var).and_then(Value::as_id) {
-                distinct.insert(id);
+        // ── The node rows the rows' bound ids resolve to. Part A: the first call whose
+        //    DISTINCT-id count crosses [`ATTR_DISTINCT_SCAN_THRESHOLD`] builds the FULL
+        //    `id → NodeRow` map in one sorted-node pass and caches it for the executor's
+        //    lifetime (the uncached code made that same full pass on EVERY such call,
+        //    keeping only that call's ids); every later call of any size is served from
+        //    it. Below the threshold (and before any big call), per-DISTINCT-id point
+        //    probes win and stay uncached — they are already proportional to the rows.
+        //    Both sources give identical lookups: `get_node(id)` ≡ the sorted run's row
+        //    for `id` (same snapshot, same columns).
+        let view = self.view;
+        let cached_full: Option<Arc<HashMap<u128, NodeRow>>> =
+            self.caches.node_rows_full.borrow().clone();
+        let node_rows: Arc<HashMap<u128, NodeRow>> = match cached_full {
+            Some(full) => {
+                self.caches.hits.set(self.caches.hits.get() + 1);
+                full
             }
-        }
-
-        // ── Fetch their node rows ONCE: batched scan above the threshold, else
-        //    per-DISTINCT-id point probes. Both produce the identical id → row map. ──
-        let node_rows: HashMap<u128, NodeRow> = if distinct.len() >= ATTR_DISTINCT_SCAN_THRESHOLD {
-            let mut m: HashMap<u128, NodeRow> = HashMap::with_capacity(distinct.len());
-            for r in self.view.sorted_run(Relation::Nodes, SortOrder::NodeById) {
-                if let Row::Node(n) = r {
-                    if distinct.contains(&n.id) {
-                        m.insert(n.id, n);
+            None => {
+                // Collect the distinct ids the rows actually need (rows often repeat ids —
+                // dedup alone cuts probes).
+                let mut distinct: HashSet<u128> = HashSet::new();
+                for row in rows {
+                    if let Some(id) = row.get(id_var).and_then(Value::as_id) {
+                        distinct.insert(id);
                     }
                 }
+                if distinct.len() >= ATTR_DISTINCT_SCAN_THRESHOLD {
+                    let mut m: HashMap<u128, NodeRow> = HashMap::new();
+                    for r in view.sorted_run(Relation::Nodes, SortOrder::NodeById) {
+                        if let Row::Node(n) = r {
+                            m.insert(n.id, n);
+                        }
+                    }
+                    let full = Arc::new(m);
+                    *self.caches.node_rows_full.borrow_mut() = Some(Arc::clone(&full));
+                    self.caches.builds.set(self.caches.builds.get() + 1);
+                    full
+                } else {
+                    Arc::new(
+                        distinct
+                            .iter()
+                            .filter_map(|&id| view.get_node(id).map(|n| (id, n)))
+                            .collect(),
+                    )
+                }
             }
-            m
-        } else {
-            distinct
-                .iter()
-                .filter_map(|&id| self.view.get_node(id).map(|n| (id, n)))
-                .collect()
         };
 
-        // ── Serve each row from the map with `eval_attr`'s exact bound-id semantics. ──
-        let mut out: Vec<BindRow> = Vec::new();
-        for row in rows {
+        // ── Serve each row from the map with `eval_attr`'s exact bound-id semantics
+        //    (row-parallel at scale). ──
+        let out = par_join_rows(rows, |row, out| {
             let Some(val) = row.get(id_var) else {
                 // Planner said Bound but the row lacks the binding — exact per-row eval.
-                self.positive_row_via_eval(eval, atom, row, &mut out);
-                continue;
+                positive_row_via_eval_on(view, eval, atom, row, out);
+                return;
             };
             let Some(id) = val.as_id() else {
                 // Per-row parity: no id surface ⇒ `bound_id` → None ⇒ empty batch ⇒ drop.
-                continue;
+                return;
             };
             let Some(node) = node_rows.get(&id) else {
                 // Bound id not present at this generation ⇒ legitimately empty ⇒ drop.
-                continue;
+                return;
             };
             let Some(column) = first_class_attr(node, &key) else {
                 // Key outside the first-class surface ⇒ coercion miss ⇒ tuple non-match.
-                continue;
+                return;
             };
             match &args[2] {
                 // Presence of the column is enough (one pass row).
@@ -1870,7 +2227,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
                     }
                 },
             }
-        }
+        });
         Some(out)
     }
 
@@ -1891,8 +2248,14 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
     ///   single typed scan `scan_edges_by_type`.
     /// * `node`/`type`: the type position (arg 1) is a bound constant; the id position is a
     ///   variable or wildcard. Built from the single typed scan `scan_nodes_by_type`.
-    fn build_anti_join_set(&self, name: &str, atom: &Atom) -> Option<HashSet<Vec<Value>>> {
+    ///
+    /// Part A: cached on `(predicate family, type, variable-position mask)` for the
+    /// executor's lifetime — the set depends on the immutable view and the projection
+    /// mask only (`type` is canonicalized to `node`; `edge` vs `incoming` stay distinct,
+    /// their near/far projections differ).
+    fn build_anti_join_set(&self, name: &str, atom: &Atom) -> Option<Arc<HashSet<Vec<Value>>>> {
         let args = atom.args();
+        let view = self.view;
         match name {
             "edge" | "incoming" => {
                 if args.len() != 3 {
@@ -1914,23 +2277,34 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
                 } else {
                     super::storage_glue::EdgeOrder::Forward
                 };
-                let mut set: HashSet<Vec<Value>> = HashSet::new();
-                for e in self.view.scan_edges_by_type(&ty, order) {
-                    // Map storage (src,dst) to this view's (near, far) per direction.
-                    let (near, far) = match order {
-                        super::storage_glue::EdgeOrder::Forward => (e.src, e.dst),
-                        super::storage_glue::EdgeOrder::Reverse => (e.dst, e.src),
-                    };
-                    let mut key: Vec<Value> = Vec::new();
-                    if matches!(args[0], Term::Var(_)) {
-                        key.push(Value::Id(near));
-                    }
-                    if matches!(args[1], Term::Var(_)) {
-                        key.push(Value::Id(far));
-                    }
-                    set.insert(key);
-                }
-                Some(set)
+                let kind: &'static str = if name == "incoming" { "incoming" } else { "edge" };
+                let mask = [
+                    matches!(args[0], Term::Var(_)),
+                    matches!(args[1], Term::Var(_)),
+                ];
+                Some(self.caches.get_or_build(
+                    &self.caches.anti_join,
+                    (kind, ty.clone(), mask),
+                    || {
+                        let mut set: HashSet<Vec<Value>> = HashSet::new();
+                        for e in view.scan_edges_by_type(&ty, order) {
+                            // Map storage (src,dst) to this view's (near, far) per direction.
+                            let (near, far) = match order {
+                                super::storage_glue::EdgeOrder::Forward => (e.src, e.dst),
+                                super::storage_glue::EdgeOrder::Reverse => (e.dst, e.src),
+                            };
+                            let mut key: Vec<Value> = Vec::new();
+                            if mask[0] {
+                                key.push(Value::Id(near));
+                            }
+                            if mask[1] {
+                                key.push(Value::Id(far));
+                            }
+                            set.insert(key);
+                        }
+                        set
+                    },
+                ))
             }
             "node" | "type" => {
                 if args.len() != 2 {
@@ -1945,42 +2319,25 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
                 if matches!(args[0], Term::Const(_)) {
                     return None;
                 }
-                let mut set: HashSet<Vec<Value>> = HashSet::new();
-                for n in self.view.scan_nodes_by_type(&ty) {
-                    let mut key: Vec<Value> = Vec::new();
-                    if matches!(args[0], Term::Var(_)) {
-                        key.push(Value::Id(n.id));
-                    }
-                    set.insert(key);
-                }
-                Some(set)
+                let mask = [matches!(args[0], Term::Var(_)), false];
+                Some(self.caches.get_or_build(
+                    &self.caches.anti_join,
+                    ("node", ty.clone(), mask),
+                    || {
+                        let mut set: HashSet<Vec<Value>> = HashSet::new();
+                        for n in view.scan_nodes_by_type(&ty) {
+                            let mut key: Vec<Value> = Vec::new();
+                            if mask[0] {
+                                key.push(Value::Id(n.id));
+                            }
+                            set.insert(key);
+                        }
+                        set
+                    },
+                ))
             }
             _ => None,
         }
-    }
-
-    /// Exact per-row anti-join fallback for a single row: run the registry eval and report
-    /// whether the row survives (no matching tuple produced). Used only when the row's key
-    /// could not be projected for the set probe (a safety net the planner makes unreachable
-    /// on a safe rule).
-    fn anti_join_row_passes(
-        &self,
-        eval: fn(
-            &dyn StorageView,
-            &mut Batch,
-            &ArgSpec,
-        ) -> super::builtin::BuiltinResult<()>,
-        atom: &Atom,
-        row: &BindRow,
-    ) -> bool {
-        let (spec, _slot_vars) = resolve_arg_spec(atom, row);
-        let mut batch = Batch::new();
-        if eval(self.view, &mut batch, &spec).is_err() {
-            // An eval fault drops the row from a positive leg; for an anti-join the safe,
-            // membership-preserving choice is "no match found" so the row survives.
-            return true;
-        }
-        batch.rows.is_empty()
     }
 
     /// Build-once hash-join for the positive `attr(FreeId, "key", Value)` value-generator,
@@ -2031,25 +2388,37 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         if !matches!(key, "name" | "file" | "type") {
             return None;
         }
-
-        // ── Build the hash side ONCE: value → [id] over one sorted-node pass. ──
-        let mut index: HashMap<String, Vec<u128>> = HashMap::new();
-        for row in self.view.sorted_run(Relation::Nodes, SortOrder::NodeById) {
-            if let Row::Node(n) = row {
-                let col = match key {
-                    "name" => n.name,
-                    "file" => n.file,
-                    "type" => n.node_type,
-                    _ => unreachable!("key matched above"),
-                };
-                index.entry(col).or_default().push(n.id);
-            }
+        // A wildcard value is an existence probe, not a value join — fall back. (The
+        // value term is row-independent; screening it here, before the row loop, is what
+        // the per-row screen did on the first row.)
+        let value_term = &args[2];
+        if matches!(value_term, Term::Wildcard) {
+            return None;
         }
 
-        // ── Probe per row by the value's string surface (§5), binding the free id. ──
-        let value_term = &args[2];
-        let mut out: Vec<BindRow> = Vec::new();
-        for row in rows {
+        // ── The hash side: `value → [id]` over one sorted-node pass, cached per column
+        //    key for the executor's lifetime (Part A; previously rebuilt on every call).
+        let view = self.view;
+        let index: Arc<HashMap<String, Vec<u128>>> =
+            self.caches.get_or_build(&self.caches.attr_gen, key.to_string(), || {
+                let mut index: HashMap<String, Vec<u128>> = HashMap::new();
+                for row in view.sorted_run(Relation::Nodes, SortOrder::NodeById) {
+                    if let Row::Node(n) = row {
+                        let col = match key {
+                            "name" => n.name,
+                            "file" => n.file,
+                            "type" => n.node_type,
+                            _ => unreachable!("key matched above"),
+                        };
+                        index.entry(col).or_default().push(n.id);
+                    }
+                }
+                index
+            });
+
+        // ── Probe per row by the value's string surface (§5), binding the free id
+        //    (row-parallel at scale). ──
+        let out = par_join_rows(rows, |row, out| {
             let value = match value_term {
                 Term::Const(s) => Value::from_term_const(s),
                 // A typed literal is already a ground `Value`; use it directly.
@@ -2058,14 +2427,14 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
                     Some(val) => val.clone(),
                     // The value var is unexpectedly unbound (the planner makes this
                     // unreachable for a placed generator leg); this row contributes nothing.
-                    None => continue,
+                    None => return,
                 },
-                // A wildcard value is an existence probe, screened out above; defensive.
-                Term::Wildcard => return None,
+                // Screened before the loop; defensive.
+                Term::Wildcard => return,
             };
             let surface = value_surface(&value);
             let Some(ids) = index.get(&surface) else {
-                continue;
+                return;
             };
             for &id in ids {
                 let mut next = row.clone();
@@ -2083,7 +2452,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
                     }
                 }
             }
-        }
+        });
         Some(out)
     }
 
@@ -2355,6 +2724,132 @@ impl<'r> Clause<'r> {
             })
             .collect()
     }
+}
+
+// ── Per-row eval bodies (free functions: callable from the rayon row-parallel loops,
+//    which must not capture `&Executor` — it owns `RefCell`s and is not `Sync`) ────────
+
+/// Run the registry eval for ONE row of a POSITIVE base/builtin leg against `view` and
+/// extend it with every produced tuple — the exact per-row path of
+/// [`Executor::join_extensional`], also used verbatim as the build-once fast paths'
+/// defensive per-row fallback so a row the fast path cannot serve gets byte-identical
+/// treatment.
+fn positive_row_via_eval_on(
+    view: &dyn StorageView,
+    eval: BuiltinEval,
+    atom: &Atom,
+    row: &BindRow,
+    out: &mut Vec<BindRow>,
+) {
+    // Resolve args → ArgSpec. Free (unbound) variables get sequential output slots;
+    // the slot→variable map lets us write the produced values back into the row.
+    let (spec, slot_vars) = resolve_arg_spec(atom, row);
+    let mut batch = Batch::new();
+    // The registry eval returns Err only for a genuine planning fault; the planner
+    // already mode-checked every leg, so a runtime Err here is impossible on a
+    // planned leg. If it ever fired, the safe behavior is "no rows" (never a crash).
+    if eval(view, &mut batch, &spec).is_err() {
+        return;
+    }
+    extend_row_with_batch(row, &batch, &slot_vars, out);
+}
+
+/// Probe one row against a single-endpoint edge bucket map (`probe_pos` is the
+/// row-bound endpoint's argument position, `other_pos` the captured/matched one),
+/// reproducing the per-row eval's semantics exactly: a free other-variable binds each
+/// bucket id (with the shared-variable agreement check the generic loop applies); a
+/// wildcard, or a row-bound other-variable with an id surface, filters/passes with one
+/// output row per matching stored tuple. Any resolution the per-row path would treat
+/// differently (unbound probe var, non-id probe surface, non-id other-binding, a
+/// non-variable other term) falls back to the exact per-row eval for THIS row.
+#[allow(clippy::too_many_arguments)]
+fn probe_edge_bucket(
+    view: &dyn StorageView,
+    buckets: &HashMap<u128, Vec<u128>>,
+    probe_pos: usize,
+    other_pos: usize,
+    eval: BuiltinEval,
+    atom: &Atom,
+    row: &BindRow,
+    out: &mut Vec<BindRow>,
+) {
+    let args = atom.args();
+    let probe_id = match &args[probe_pos] {
+        Term::Var(v) => match row.get(v).and_then(Value::as_id) {
+            Some(id) => id,
+            None => {
+                // Unbound probe var or a binding with no id surface: the per-row
+                // eval's access path changes — run it exactly.
+                positive_row_via_eval_on(view, eval, atom, row, out);
+                return;
+            }
+        },
+        // The shape check screened constant probe endpoints; defensive.
+        _ => {
+            positive_row_via_eval_on(view, eval, atom, row, out);
+            return;
+        }
+    };
+    let Some(bucket) = buckets.get(&probe_id) else {
+        // No edges at this key: the per-row eval would produce an empty batch — the
+        // row is dropped.
+        return;
+    };
+    match &args[other_pos] {
+        // Wildcard: existence per stored tuple — one pass row per edge (the per-row
+        // eval emits `push_pass()` per match, and the generic loop replicates the
+        // partial row once per pass).
+        Term::Wildcard => {
+            for _ in bucket {
+                out.push(row.clone());
+            }
+        }
+        Term::Var(v) => match row.get(v) {
+            // Planner said Free but the row carries a binding (shared variable): the
+            // per-row eval runs in check mode. An id surface filters the bucket; a
+            // non-id surface changes the eval's path — exact fallback.
+            Some(existing) => match existing.as_id() {
+                Some(fid) => {
+                    for &other in bucket {
+                        if other == fid {
+                            out.push(row.clone());
+                        }
+                    }
+                }
+                None => positive_row_via_eval_on(view, eval, atom, row, out),
+            },
+            // Free output variable: bind each bucket id.
+            None => {
+                for &other in bucket {
+                    let mut next = row.clone();
+                    next.insert(v.clone(), Value::Id(other));
+                    out.push(next);
+                }
+            }
+        },
+        // A constant other endpoint was screened out by the shape check; defensive.
+        _ => positive_row_via_eval_on(view, eval, atom, row, out),
+    }
+}
+
+/// Exact per-row anti-join fallback for a single row: run the registry eval against
+/// `view` and report whether the row survives (no matching tuple produced). Used only
+/// when the row's key could not be projected for the set probe (a safety net the planner
+/// makes unreachable on a safe rule).
+fn anti_join_row_passes_on(
+    view: &dyn StorageView,
+    eval: BuiltinEval,
+    atom: &Atom,
+    row: &BindRow,
+) -> bool {
+    let (spec, _slot_vars) = resolve_arg_spec(atom, row);
+    let mut batch = Batch::new();
+    if eval(view, &mut batch, &spec).is_err() {
+        // An eval fault drops the row from a positive leg; for an anti-join the safe,
+        // membership-preserving choice is "no match found" so the row survives.
+        return true;
+    }
+    batch.rows.is_empty()
 }
 
 // ── Binding / unification helpers ──────────────────────────────────
@@ -3356,7 +3851,7 @@ mod tests {
                 .evaluate(&plans, &rules, &strat)
                 .expect("scratch");
             assert_eq!(maintained.relations, scratch.relations, "k={k}: still ≡ scratch");
-            (pv.rows.get() + cv.rows.get(), sv.rows.get())
+            (pv.rows.load(Ordering::Relaxed) + cv.rows.load(Ordering::Relaxed), sv.rows.load(Ordering::Relaxed))
         };
 
         let (m_small, s_small) = measure(6);
@@ -3764,31 +4259,31 @@ mod tests {
     // ── anti-join over a negated BASE leg is set-at-once (bounded scans) ──
 
     use crate::datalog2::storage_glue::{EdgeOrder, NodeRow as GlueNodeRow};
-    use std::cell::Cell;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// Wraps a fixture view and counts how many full typed relation scans the run issues,
     /// so a test can assert the set-at-once anti-join touches each negated base relation a
     /// BOUNDED number of times (independent of the row count) — not once per row.
     struct ScanCountingView {
         inner: FixtureStorageView,
-        edge_scans: Cell<usize>,
-        node_scans: Cell<usize>,
+        edge_scans: AtomicUsize,
+        node_scans: AtomicUsize,
         /// Full attr-index reverse lookups (`nodes_by_attr`) — the per-row cost the
         /// build-once attr hash-join eliminates.
-        attr_calls: Cell<usize>,
+        attr_calls: AtomicUsize,
         /// Sorted-node passes (`sorted_run(Nodes, …)`) — the bounded build side of the
         /// build-once attr hash-join.
-        node_sorted_runs: Cell<usize>,
+        node_sorted_runs: AtomicUsize,
     }
 
     impl ScanCountingView {
         fn new(inner: FixtureStorageView) -> Self {
             Self {
                 inner,
-                edge_scans: Cell::new(0),
-                node_scans: Cell::new(0),
-                attr_calls: Cell::new(0),
-                node_sorted_runs: Cell::new(0),
+                edge_scans: AtomicUsize::new(0),
+                node_scans: AtomicUsize::new(0),
+                attr_calls: AtomicUsize::new(0),
+                node_sorted_runs: AtomicUsize::new(0),
             }
         }
     }
@@ -3803,12 +4298,12 @@ mod tests {
             order: crate::datalog2::storage_glue::SortOrder,
         ) -> Box<dyn Iterator<Item = crate::datalog2::storage_glue::Row> + '_> {
             if rel == crate::datalog2::storage_glue::Relation::Nodes {
-                self.node_sorted_runs.set(self.node_sorted_runs.get() + 1);
+                self.node_sorted_runs.fetch_add(1, Ordering::Relaxed);
             }
             self.inner.sorted_run(rel, order)
         }
         fn scan_nodes_by_type(&self, ty: &str) -> Box<dyn Iterator<Item = GlueNodeRow> + '_> {
-            self.node_scans.set(self.node_scans.get() + 1);
+            self.node_scans.fetch_add(1, Ordering::Relaxed);
             self.inner.scan_nodes_by_type(ty)
         }
         fn scan_edges_by_type(
@@ -3816,7 +4311,7 @@ mod tests {
             ty: &str,
             order: EdgeOrder,
         ) -> Box<dyn Iterator<Item = EdgeRow> + '_> {
-            self.edge_scans.set(self.edge_scans.get() + 1);
+            self.edge_scans.fetch_add(1, Ordering::Relaxed);
             self.inner.scan_edges_by_type(ty, order)
         }
         fn edges_from(&self, src: u128, edge_type: &str) -> Vec<EdgeRow> {
@@ -3829,7 +4324,7 @@ mod tests {
             self.inner.get_node(id)
         }
         fn nodes_by_attr(&self, key: &str, value: &str) -> Vec<GlueNodeRow> {
-            self.attr_calls.set(self.attr_calls.get() + 1);
+            self.attr_calls.fetch_add(1, Ordering::Relaxed);
             self.inner.nodes_by_attr(key, value)
         }
         fn edge_metadata(&self, src: u128, dst: u128, edge_type: &str) -> Option<String> {
@@ -3847,14 +4342,14 @@ mod tests {
     /// delta plus the bounded slices its propagation probes.
     struct WorkCountingView {
         inner: FixtureStorageView,
-        rows: Cell<usize>,
+        rows: AtomicUsize,
     }
     impl WorkCountingView {
         fn new(inner: FixtureStorageView) -> Self {
-            Self { inner, rows: Cell::new(0) }
+            Self { inner, rows: AtomicUsize::new(0) }
         }
         fn bump(&self, n: usize) {
-            self.rows.set(self.rows.get() + n);
+            self.rows.fetch_add(n, Ordering::Relaxed);
         }
     }
     impl StorageView for WorkCountingView {
@@ -3966,16 +4461,92 @@ mod tests {
         // scan, regardless of the 50 candidate rows. The bound is small and constant —
         // crucially NOT proportional to the row count (which a per-row anti-join would be).
         assert!(
-            view.edge_scans.get() <= 1,
+            view.edge_scans.load(Ordering::Relaxed) <= 1,
             "set-at-once anti-join scans the CALLS relation at most once (got {}), \
              not once per row",
-            view.edge_scans.get()
+            view.edge_scans.load(Ordering::Relaxed)
         );
         assert!(
-            view.edge_scans.get() < n,
+            view.edge_scans.load(Ordering::Relaxed) < n,
             "edge scans ({}) must be bounded, not O(rows={})",
-            view.edge_scans.get(),
+            view.edge_scans.load(Ordering::Relaxed),
             n
+        );
+    }
+
+    // ── Part A: the executor-owned index cache survives semi-naive iterations ──
+
+    /// A RECURSIVE rule (transitive closure over a chain) drives the Δ-loop through ~n
+    /// iterations, and every iteration re-applies the clause's base `edge` leg. Before the
+    /// executor-owned index cache, `join_edge_bound_built_once` re-built its hash side —
+    /// one FULL `scan_edges_by_type` pass — on every iteration ("build-once" was per CALL,
+    /// not per evaluation: the W1 review finding). With the cache the index is built once
+    /// per (type, order, shape) per EVALUATION: the typed-edge scan count must be O(1),
+    /// independent of the iteration count, and the executor's cache counters must show
+    /// iterations-many hits against a constant number of builds.
+    #[test]
+    fn recursive_closure_builds_edge_index_once_across_iterations() {
+        let n = 48usize; // chain length ⇒ ~n Δ-rounds to saturate the closure
+        let mut v = FixtureStorageView::new(1);
+        for i in 0..=n {
+            node(&mut v, &format!("c{i}"), "STEP");
+        }
+        for i in 0..n {
+            edge(&mut v, &format!("c{i}"), &format!("c{}", i + 1), "NEXT");
+        }
+        let view = ScanCountingView::new(v);
+        let src = r#"
+            reach(X, Y) :- edge(X, Y, "NEXT").
+            reach(X, Y) :- reach(X, Z), edge(Z, Y, "NEXT").
+        "#;
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let stats = Stats {
+            total_nodes: (n + 1) as u64,
+            total_edges: n as u64,
+            ..Default::default()
+        };
+        let plans = plan_program(&rules, &strat, &stats).expect("plan");
+        // Force the build-once fast paths on every eligible leg regardless of the Δ row
+        // count, so the small fixture exercises exactly the code path the big packs take.
+        let exec =
+            Executor::<BoolTag>::with_limits(&view, EvalLimits::none(), DEFAULT_ITERATION_CAP)
+                .with_build_once_min_rows(0);
+        let eval = exec.evaluate(&plans, &rules, &strat).expect("evaluate");
+
+        // Correctness floor: the closure of a chain c0→…→cn has n(n+1)/2 pairs.
+        assert_eq!(
+            eval.facts("reach").len(),
+            n * (n + 1) / 2,
+            "transitive closure of an {n}-edge chain"
+        );
+
+        // The cache proof, at the storage boundary: the typed NEXT scan ran a bounded,
+        // iteration-independent number of times (one per cached index shape — the
+        // recursive clause's bound-endpoint index, plus at most one generator pass for
+        // the non-recursive seed clause), NOT once per Δ-round.
+        let scans = view.edge_scans.load(Ordering::Relaxed);
+        assert!(
+            scans <= 3,
+            "typed edge scans must be O(1) per evaluation (got {scans}); \
+             before the index cache this was O(iterations) ≈ {n}"
+        );
+        assert!(
+            scans < n / 2,
+            "edge scans ({scans}) must not grow with the ~{n} Δ-iterations"
+        );
+
+        // And at the executor's own counters: the Δ-loop served the edge leg from cache
+        // on (almost) every iteration — many hits, a constant number of builds.
+        let (builds, hits) = exec.index_cache_counts();
+        assert!(
+            builds <= 2,
+            "at most one index build per cached shape (got {builds})"
+        );
+        assert!(
+            hits as usize >= n / 2,
+            "the ~{n} Δ-iterations must be served from the cache (got {hits} hits)"
         );
     }
 
@@ -4033,16 +4604,16 @@ mod tests {
 
         // The build-once hash-join NEVER routes the generator through the per-row attr index.
         assert_eq!(
-            view.attr_calls.get(),
+            view.attr_calls.load(Ordering::Relaxed),
             0,
             "attr value-generator must be built once (sorted_run), never per-row nodes_by_attr"
         );
         // The hash side is built with a BOUNDED number of sorted-node passes — crucially NOT
         // proportional to the n driver rows (a per-row build would be ≥ n).
         assert!(
-            view.node_sorted_runs.get() < n,
+            view.node_sorted_runs.load(Ordering::Relaxed) < n,
             "sorted-node passes ({}) must be bounded, not O(rows={})",
-            view.node_sorted_runs.get(),
+            view.node_sorted_runs.load(Ordering::Relaxed),
             n
         );
     }

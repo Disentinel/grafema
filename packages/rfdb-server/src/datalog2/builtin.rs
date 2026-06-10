@@ -1522,25 +1522,25 @@ mod tests {
     // ── keyed-probe access path (no full-type scan when an endpoint is bound) ──
 
     use super::super::storage_glue::{EdgeRow, FixtureStorageView, NodeRow as GlueNodeRow};
-    use std::cell::Cell;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// A `StorageView` that delegates to a fixture but counts which access path each call
     /// takes, so a test can assert that a bound endpoint is served by a *keyed* probe and
     /// NEVER by the full `scan_edges_by_type`.
     struct CountingView {
         inner: FixtureStorageView,
-        scans: Cell<usize>,
-        from_probes: Cell<usize>,
-        to_probes: Cell<usize>,
+        scans: AtomicUsize,
+        from_probes: AtomicUsize,
+        to_probes: AtomicUsize,
     }
 
     impl CountingView {
         fn new(inner: FixtureStorageView) -> Self {
             Self {
                 inner,
-                scans: Cell::new(0),
-                from_probes: Cell::new(0),
-                to_probes: Cell::new(0),
+                scans: AtomicUsize::new(0),
+                from_probes: AtomicUsize::new(0),
+                to_probes: AtomicUsize::new(0),
             }
         }
     }
@@ -1564,15 +1564,15 @@ mod tests {
             ty: &str,
             order: EdgeOrder,
         ) -> Box<dyn Iterator<Item = EdgeRow> + '_> {
-            self.scans.set(self.scans.get() + 1);
+            self.scans.fetch_add(1, Ordering::Relaxed);
             self.inner.scan_edges_by_type(ty, order)
         }
         fn edges_from(&self, src: u128, edge_type: &str) -> Vec<EdgeRow> {
-            self.from_probes.set(self.from_probes.get() + 1);
+            self.from_probes.fetch_add(1, Ordering::Relaxed);
             self.inner.edges_from(src, edge_type)
         }
         fn edges_to(&self, dst: u128, edge_type: &str) -> Vec<EdgeRow> {
-            self.to_probes.set(self.to_probes.get() + 1);
+            self.to_probes.fetch_add(1, Ordering::Relaxed);
             self.inner.edges_to(dst, edge_type)
         }
         fn get_node(&self, id: u128) -> Option<GlueNodeRow> {
@@ -1637,9 +1637,9 @@ mod tests {
         let out = run_on(&view, "edge", spec);
         assert_eq!(out.rows.len(), 1, "fn1 CALLS fn2");
         assert_eq!(out.rows[0][0], Value::Id(id_of("a/fn2")));
-        assert_eq!(view.scans.get(), 0, "no full-type scan for a bound src");
-        assert_eq!(view.from_probes.get(), 1, "served by one keyed edges_from probe");
-        assert_eq!(view.to_probes.get(), 0);
+        assert_eq!(view.scans.load(Ordering::Relaxed), 0, "no full-type scan for a bound src");
+        assert_eq!(view.from_probes.load(Ordering::Relaxed), 1, "served by one keyed edges_from probe");
+        assert_eq!(view.to_probes.load(Ordering::Relaxed), 0);
     }
 
     #[test]
@@ -1654,9 +1654,9 @@ mod tests {
         let out = run_on(&view, "edge", spec);
         assert_eq!(out.rows.len(), 1, "fn2 CALLS cls1");
         assert_eq!(out.rows[0][0], Value::Id(id_of("a/fn2")), "binds the free src");
-        assert_eq!(view.scans.get(), 0, "no full-type scan for a bound dst");
-        assert_eq!(view.to_probes.get(), 1, "served by one keyed edges_to probe");
-        assert_eq!(view.from_probes.get(), 0);
+        assert_eq!(view.scans.load(Ordering::Relaxed), 0, "no full-type scan for a bound dst");
+        assert_eq!(view.to_probes.load(Ordering::Relaxed), 1, "served by one keyed edges_to probe");
+        assert_eq!(view.from_probes.load(Ordering::Relaxed), 0);
     }
 
     #[test]
@@ -1671,9 +1671,9 @@ mod tests {
         let out = run_on(&view, "incoming", spec);
         assert_eq!(out.rows.len(), 1);
         assert_eq!(out.rows[0][0], Value::Id(id_of("a/fn2")));
-        assert_eq!(view.scans.get(), 0, "no full-type scan for a bound dst (reverse)");
-        assert_eq!(view.to_probes.get(), 1, "reverse near=dst → keyed edges_to");
-        assert_eq!(view.from_probes.get(), 0);
+        assert_eq!(view.scans.load(Ordering::Relaxed), 0, "no full-type scan for a bound dst (reverse)");
+        assert_eq!(view.to_probes.load(Ordering::Relaxed), 1, "reverse near=dst → keyed edges_to");
+        assert_eq!(view.from_probes.load(Ordering::Relaxed), 0);
     }
 
     #[test]
@@ -1689,9 +1689,9 @@ mod tests {
         // a/fn2 -CALLS-> b/cls1 ; incoming(dst=cls1, src=fn2) → near (dst) free binds cls1.
         assert_eq!(out.rows.len(), 1);
         assert_eq!(out.rows[0][0], Value::Id(id_of("b/cls1")));
-        assert_eq!(view.scans.get(), 0, "no full-type scan for a bound src (reverse)");
-        assert_eq!(view.from_probes.get(), 1, "reverse far=src → keyed edges_from");
-        assert_eq!(view.to_probes.get(), 0);
+        assert_eq!(view.scans.load(Ordering::Relaxed), 0, "no full-type scan for a bound src (reverse)");
+        assert_eq!(view.from_probes.load(Ordering::Relaxed), 1, "reverse far=src → keyed edges_from");
+        assert_eq!(view.to_probes.load(Ordering::Relaxed), 0);
     }
 
     #[test]
@@ -1705,8 +1705,8 @@ mod tests {
         ]);
         let out = run_on(&view, "edge", present);
         assert_eq!(out.rows.len(), 1, "fn1 CALLS fn2 exists");
-        assert_eq!(view.scans.get(), 0, "triple check uses the keyed near probe");
-        assert_eq!(view.from_probes.get(), 1);
+        assert_eq!(view.scans.load(Ordering::Relaxed), 0, "triple check uses the keyed near probe");
+        assert_eq!(view.from_probes.load(Ordering::Relaxed), 1);
     }
 
     #[test]
@@ -1720,9 +1720,9 @@ mod tests {
         ]);
         let out = run_on(&view, "edge", spec);
         assert_eq!(out.rows.len(), 2, "two CALLS edges");
-        assert_eq!(view.scans.get(), 1, "fully-free generator uses the typed scan");
-        assert_eq!(view.from_probes.get(), 0);
-        assert_eq!(view.to_probes.get(), 0);
+        assert_eq!(view.scans.load(Ordering::Relaxed), 1, "fully-free generator uses the typed scan");
+        assert_eq!(view.from_probes.load(Ordering::Relaxed), 0);
+        assert_eq!(view.to_probes.load(Ordering::Relaxed), 0);
     }
 
     // ── attr (+ coercion) ──────────────────────────────────────────
