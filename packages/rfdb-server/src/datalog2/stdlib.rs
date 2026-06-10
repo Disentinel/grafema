@@ -72,15 +72,69 @@ pub const SHAPE_VERIFIER_DL: &str = include_str!("stdlib/shape_verifier.dl");
 /// head is exclusive (provenance-scoped, safe on the shared `http:route` type).
 pub const AXUM_ROUTES_DL: &str = include_str!("stdlib/axum_routes.dl");
 
+/// The bundled JS/TS local-reference resolution pack — the in-engine replacement
+/// for the `JsLocalRefs.hs` resolver (the #1 edge producer per the perf memory:
+/// REFERENCE → same-file declaration `READS_FROM` over 8 declaration types,
+/// skipping import bindings and a compiled-in 97-name runtime-global list,
+/// reproduced verbatim as ground facts). File-flat by design — the resolver
+/// matched on (file, name) only (parity over ambition). `READS_FROM` is SHARED
+/// vocabulary ⇒ `mode = "additive"`; `resolvedVia = "js-local-refs"` rides as a
+/// meta column. Deltas (set-semantics superset on duplicate decls, the 8-extension
+/// language gate) are numbered in the `.dl` header.
+pub const JS_LOCAL_REFS_DL: &str = include_str!("stdlib/js_local_refs.dl");
+
+/// The bundled JS/TS same-file call-resolution pack — the in-engine replacement
+/// for the `SameFileCalls.hs` resolver. Five arms: direct call → FUNCTION,
+/// → VARIABLE/CONSTANT (FUNCTION-precedence ladder via negation), uppercase
+/// constructor → CLASS (26 `upper/1` ground facts + `starts_with`),
+/// this/super/`<obj>` method calls via the Wave-0-verified SCOPE chain
+/// (CONTAINS + owner-vs-lexical-filtered HAS_SCOPE parents — replaces the
+/// resolver's line-range containment), and `ClassName.staticMethod` via the
+/// concat-equality first-dot split. All heads `CALLS` additive with
+/// `resolvedVia = "same-file-calls"` meta. Scope-chain vs line-containment
+/// deltas are numbered in the `.dl` header.
+pub const JS_SAME_FILE_CALLS_DL: &str = include_str!("stdlib/js_same_file_calls.dl");
+
+/// The bundled JS/TS `this.method()` resolution pack — the in-engine replacement
+/// for the `JsThisMethodCalls.hs` resolver, which was the sole occupant of the
+/// orchestrator's SECOND full-graph streaming pass (pure IPC, now dead).
+/// File-flat (file, name) METHOD lookup with the exactly-one neq/ambig idiom,
+/// the resolver's own 6-extension gate, and the concat-equality construction
+/// that reproduces the resolver's "this." strip exactly (multi-dot names are
+/// NOT a delta). `CALLS` additive, `resolvedVia = "js-this-method-calls"` meta.
+pub const JS_THIS_METHOD_CALLS_DL: &str = include_str!("stdlib/js_this_method_calls.dl");
+
+/// The bundled Rust same-file call-resolution pack — the in-engine replacement
+/// for the `RustCallResolution.hs` resolver: exact (file, name) CALL → FUNCTION
+/// match (also covers receiver-shaped method calls and qualified assoc-fn
+/// names — the resolver never conditioned on the receiver), then the
+/// `'::'`-suffix fallback (concat-built `"::" ++ name` suffix + `ends_with`),
+/// gated by the `\+ has_exact` preference negation. The resolved-constructor
+/// arm is deliberately NOT here (Wave 1b, `rust_cross_methods_ctor`). `CALLS`
+/// additive, `resolvedVia = "rust-calls"` meta.
+pub const RUST_CALLS_DL: &str = include_str!("stdlib/rust_calls.dl");
+
 /// The named stdlib rule packs, addressable on the wire as `"@stdlib/<name>"`
 /// (`MaterializeDatalog` and the other empty-source-defaulting dispatchers), listed
-/// in CANONICAL RUN ORDER. The order is a CONTRACT, not cosmetics:
-/// `shape_verifier` reads CALLS as EDB (its skip-resolved negation), so it MUST run
-/// after `method_calls` has committed its CALLS edges — an orchestrator running the
-/// packs sequentially must preserve this order:
-/// depends → method_calls → shape_verifier → axum_routes.
+/// in CANONICAL RUN ORDER. The order is a CONTRACT, not cosmetics — producers run
+/// strictly before consumers:
+/// - the four resolver packs (`js_local_refs`, `js_same_file_calls`,
+///   `js_this_method_calls`, `rust_calls`) produce the `READS_FROM`/`CALLS` state
+///   that the downstream packs consume;
+/// - `method_calls` (the fuzzy fallback) reads `READS_FROM` receiver chains as
+///   EDB, so it runs after `js_local_refs` has committed them;
+/// - `shape_verifier` NEGATES `CALLS` (skip-resolved) and `READS_FROM` (the
+///   PA-fallback guard) as EDB, so it MUST run after every CALLS/READS_FROM
+///   producer above — running earlier would flag calls a later pack resolves.
+/// An orchestrator running the packs sequentially must preserve this order:
+/// depends → js_local_refs → js_same_file_calls → js_this_method_calls →
+/// rust_calls → method_calls → shape_verifier → axum_routes.
 pub const STDLIB_PACKS: &[(&str, &str)] = &[
     ("depends", DEPENDS_DL),
+    ("js_local_refs", JS_LOCAL_REFS_DL),
+    ("js_same_file_calls", JS_SAME_FILE_CALLS_DL),
+    ("js_this_method_calls", JS_THIS_METHOD_CALLS_DL),
+    ("rust_calls", RUST_CALLS_DL),
     ("method_calls", METHOD_CALLS_DL),
     ("shape_verifier", SHAPE_VERIFIER_DL),
     ("axum_routes", AXUM_ROUTES_DL),
@@ -915,17 +969,36 @@ mod tests {
     }
 
     /// The wire-addressable pack registry: canonical order (an ordering CONTRACT —
-    /// shape_verifier reads CALLS as EDB so it must follow method_calls), name → source
-    /// lookup, and None for unknown names (the dispatcher owns the E-MAT-007 error).
+    /// the resolver packs produce the READS_FROM/CALLS state that method_calls
+    /// reads positively and shape_verifier negates, so producers come strictly
+    /// before consumers), name → source lookup, and None for unknown names (the
+    /// dispatcher owns the E-MAT-007 error).
     #[test]
     fn stdlib_pack_registry_resolves_names_in_canonical_order() {
         let names: Vec<&str> = STDLIB_PACKS.iter().map(|(n, _)| *n).collect();
         assert_eq!(
             names,
-            vec!["depends", "method_calls", "shape_verifier", "axum_routes"],
-            "canonical run order: depends → method_calls → shape_verifier → axum_routes"
+            vec![
+                "depends",
+                "js_local_refs",
+                "js_same_file_calls",
+                "js_this_method_calls",
+                "rust_calls",
+                "method_calls",
+                "shape_verifier",
+                "axum_routes",
+            ],
+            "canonical run order: depends → resolver packs → method_calls → \
+             shape_verifier → axum_routes (producers strictly before consumers)"
         );
         assert_eq!(stdlib_pack("depends"), Some(DEPENDS_DL));
+        assert_eq!(stdlib_pack("js_local_refs"), Some(JS_LOCAL_REFS_DL));
+        assert_eq!(stdlib_pack("js_same_file_calls"), Some(JS_SAME_FILE_CALLS_DL));
+        assert_eq!(
+            stdlib_pack("js_this_method_calls"),
+            Some(JS_THIS_METHOD_CALLS_DL)
+        );
+        assert_eq!(stdlib_pack("rust_calls"), Some(RUST_CALLS_DL));
         assert_eq!(stdlib_pack("method_calls"), Some(METHOD_CALLS_DL));
         assert_eq!(stdlib_pack("shape_verifier"), Some(SHAPE_VERIFIER_DL));
         assert_eq!(stdlib_pack("axum_routes"), Some(AXUM_ROUTES_DL));
@@ -1079,6 +1152,446 @@ mod tests {
             calls_specs,
             BTreeSet::from(["ctor_method_call", "rust_calls"]),
             "two rules may materialize the same edge type"
+        );
+    }
+
+    /// The bundled js_local_refs pack reproduces JsLocalRefs.hs on a fixture covering
+    /// every arm, every skip-set, one negative per arm, and the pinned deltas:
+    /// - all 8 declaration types resolve a same-file REFERENCE (arm coverage);
+    /// - the imported(F,N) skip-set (IMPORT_BINDING) suppresses resolution;
+    /// - the rt_global ground-facts skip-list suppresses resolution ("console");
+    /// - cross-file declarations never match (file-flat negative);
+    /// - non-JS files are gated out (a .rs REFERENCE with a same-file match);
+    /// - empty names never match (the resolver's index exclusion);
+    /// - DELTA 1 PINNED: duplicate (file,name) declarations derive an edge to EVERY
+    ///   candidate (the resolver's Map kept one arbitrary winner — deriving what the
+    ///   delta says, not what the resolver did).
+    #[test]
+    fn js_local_refs_resolves_same_file_decls_with_skip_sets() {
+        let mut v = FixtureStorageView::new(1);
+
+        // One declaration + one reference per declaration type (all in app.ts).
+        let decls = [
+            ("d_fn", "helper", "FUNCTION"),
+            ("d_var", "state", "VARIABLE"),
+            ("d_const", "LIMIT", "CONSTANT"),
+            ("d_class", "Engine", "CLASS"),
+            ("d_param", "input", "PARAMETER"),
+            ("d_iface", "Shape", "INTERFACE"),
+            ("d_enum", "Color", "ENUM"),
+            ("d_syn", "Alias", "TYPE_SYNONYM"),
+        ];
+        for (sid, name, ty) in decls {
+            named_node(&mut v, sid, name, ty, "app.ts");
+            named_node(&mut v, &format!("r_{sid}"), name, "REFERENCE", "app.ts");
+        }
+
+        // Skip-set 1: imported name (IMPORT_BINDING shadows the local FUNCTION).
+        named_node(&mut v, "b_ext", "ext", "IMPORT_BINDING", "app.ts");
+        named_node(&mut v, "d_ext", "ext", "FUNCTION", "app.ts");
+        named_node(&mut v, "r_ext", "ext", "REFERENCE", "app.ts");
+
+        // Skip-set 2: runtime global ("console" is on the 97-name facts list).
+        named_node(&mut v, "d_console", "console", "VARIABLE", "app.ts");
+        named_node(&mut v, "r_console", "console", "REFERENCE", "app.ts");
+
+        // Negative: declaration only in ANOTHER file.
+        named_node(&mut v, "d_far", "far", "FUNCTION", "b.ts");
+        named_node(&mut v, "r_far", "far", "REFERENCE", "app.ts");
+
+        // Negative: non-JS file (gate).
+        named_node(&mut v, "d_rfn", "rfn", "FUNCTION", "main.rs");
+        named_node(&mut v, "r_rfn", "rfn", "REFERENCE", "main.rs");
+
+        // Negative: empty names never match.
+        named_node(&mut v, "d_empty", "", "FUNCTION", "app.ts");
+        named_node(&mut v, "r_empty", "", "REFERENCE", "app.ts");
+
+        // DELTA 1: duplicate (file,name) decls — derive BOTH.
+        named_node(&mut v, "d_dup_v", "dup", "VARIABLE", "app.ts");
+        named_node(&mut v, "d_dup_p", "dup", "PARAMETER", "app.ts");
+        named_node(&mut v, "r_dup", "dup", "REFERENCE", "app.ts");
+
+        let (eval, specs, _node_specs) = evaluate_with_materialize(
+            &v,
+            JS_LOCAL_REFS_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("js_local_refs.dl evaluates");
+
+        let mut expected: BTreeSet<(u128, u128, String)> = decls
+            .iter()
+            .map(|(sid, _, _)| {
+                (
+                    id_of(&format!("r_{sid}")),
+                    id_of(sid),
+                    "js-local-refs".to_string(),
+                )
+            })
+            .collect();
+        expected.insert((id_of("r_dup"), id_of("d_dup_v"), "js-local-refs".to_string()));
+        expected.insert((id_of("r_dup"), id_of("d_dup_p"), "js-local-refs".to_string()));
+        assert_eq!(
+            triples(&eval, "js_local_ref"),
+            expected,
+            "all 8 decl types + BOTH dup candidates (DELTA 1); imported/rt_global/\
+             cross-file/.rs/empty-name references derive nothing"
+        );
+
+        // READS_FROM is shared vocabulary — additive, with resolvedVia projected.
+        let rf_specs: Vec<_> = specs
+            .iter()
+            .filter(|s| s.edge_type == "READS_FROM")
+            .collect();
+        assert_eq!(rf_specs.len(), 1, "exactly one READS_FROM head");
+        assert!(rf_specs[0].additive, "READS_FROM is shared — additive");
+        assert_eq!(rf_specs[0].meta, vec!["resolvedVia".to_string()]);
+    }
+
+    /// The bundled js_same_file_calls pack reproduces SameFileCalls.hs arm by arm:
+    /// - A1 direct → FUNCTION; the FUNCTION-over-VARIABLE preference ladder
+    ///   (a name that is both resolves ONLY to the FUNCTION);
+    /// - A2 direct → VARIABLE/CONSTANT, with DELTA 1 PINNED (both var+const derive);
+    /// - A3 uppercase ctor → CLASS, with a lowercase negative AND the ladder
+    ///   suppression (a VARIABLE of the same name beats the CLASS);
+    /// - the import-binding skip-set on direct calls;
+    /// - B1 this./super./<obj>. via the Wave-0 scope chain (block scope →
+    ///   lexical parent → METHOD owner → class), with the multi-dot exactness
+    ///   pin ("this.a.b" derives NOTHING — concat-equality first-dot parity), a
+    ///   not-in-class negative, and DELTA 2a PINNED (nested classes derive an
+    ///   edge per enclosing class where the resolver's exactly-one rule skipped);
+    /// - B2 ClassName.staticMethod with a lowercase-receiver negative;
+    /// - the .rs file-gate negative.
+    #[test]
+    fn js_same_file_calls_resolves_all_arms_with_preference_ladder() {
+        let mut v = FixtureStorageView::new(1);
+
+        // A1: direct call → FUNCTION.
+        named_node(&mut v, "f_run", "run", "FUNCTION", "app.ts");
+        named_node(&mut v, "c_fn", "run", "CALL", "app.ts");
+
+        // Ladder: FUNCTION beats VARIABLE.
+        named_node(&mut v, "f_make", "make", "FUNCTION", "app.ts");
+        named_node(&mut v, "v_make", "make", "VARIABLE", "app.ts");
+        named_node(&mut v, "c_pref", "make", "CALL", "app.ts");
+
+        // A2 + DELTA 1: VARIABLE and CONSTANT both derive (no FUNCTION).
+        named_node(&mut v, "v_cb", "cb", "VARIABLE", "app.ts");
+        named_node(&mut v, "k_cb", "cb", "CONSTANT", "app.ts");
+        named_node(&mut v, "c_var", "cb", "CALL", "app.ts");
+
+        // A3: uppercase ctor → CLASS; lowercase negative; ladder suppression.
+        named_node(&mut v, "cls_widget", "Widget", "CLASS", "app.ts");
+        named_node(&mut v, "c_ctor", "Widget", "CALL", "app.ts");
+        named_node(&mut v, "cls_low", "widget2", "CLASS", "app.ts");
+        named_node(&mut v, "c_low", "widget2", "CALL", "app.ts");
+        named_node(&mut v, "v_box", "Box", "VARIABLE", "app.ts");
+        named_node(&mut v, "cls_box", "Box", "CLASS", "app.ts");
+        named_node(&mut v, "c_box", "Box", "CALL", "app.ts");
+
+        // Import-binding skip on direct calls.
+        named_node(&mut v, "b_ext", "ext", "IMPORT_BINDING", "app.ts");
+        named_node(&mut v, "f_ext", "ext", "FUNCTION", "app.ts");
+        named_node(&mut v, "c_ext", "ext", "CALL", "app.ts");
+
+        // B1 scope-chain fixture: class App { init() { { this.render() } } }.
+        // Owner-vs-lexical shape: METHOD m_init -HAS_SCOPE-> s_fn (function scope);
+        // s_fn -HAS_SCOPE-> s_blk (lexical child block); s_blk -CONTAINS-> calls.
+        named_node(&mut v, "cls_app", "App", "CLASS", "app.ts");
+        named_node(&mut v, "m_init", "init", "METHOD", "app.ts");
+        named_node(&mut v, "m_render", "render", "METHOD", "app.ts");
+        named_node(&mut v, "m_b", "b", "METHOD", "app.ts");
+        edge(&mut v, "cls_app", "m_init", "HAS_METHOD");
+        edge(&mut v, "cls_app", "m_render", "HAS_METHOD");
+        edge(&mut v, "cls_app", "m_b", "HAS_METHOD");
+        named_node(&mut v, "s_fn", "function", "SCOPE", "app.ts");
+        named_node(&mut v, "s_blk", "block", "SCOPE", "app.ts");
+        edge(&mut v, "m_init", "s_fn", "HAS_SCOPE");
+        edge(&mut v, "s_fn", "s_blk", "HAS_SCOPE");
+        named_node(&mut v, "c_this", "this.render", "CALL", "app.ts");
+        named_node(&mut v, "c_super", "super.render", "CALL", "app.ts");
+        named_node(&mut v, "c_obj", "<obj>.render", "CALL", "app.ts");
+        named_node(&mut v, "c_md", "this.a.b", "CALL", "app.ts"); // multi-dot pin
+        edge(&mut v, "s_blk", "c_this", "CONTAINS");
+        edge(&mut v, "s_blk", "c_super", "CONTAINS");
+        edge(&mut v, "s_blk", "c_obj", "CONTAINS");
+        edge(&mut v, "s_blk", "c_md", "CONTAINS");
+
+        // B1 negative: this-call inside a plain function (no class).
+        named_node(&mut v, "f_free", "standalone", "FUNCTION", "app.ts");
+        named_node(&mut v, "s_free", "function", "SCOPE", "app.ts");
+        edge(&mut v, "f_free", "s_free", "HAS_SCOPE");
+        named_node(&mut v, "c_free", "this.render", "CALL", "app.ts");
+        edge(&mut v, "s_free", "c_free", "CONTAINS");
+
+        // DELTA 2a: class Inner nested inside Outer's method — "this.m" derives
+        // an edge for BOTH enclosing classes' "m" (the resolver skipped: its
+        // line-containment demanded exactly one containing class range).
+        named_node(&mut v, "cls_out", "Outer", "CLASS", "app.ts");
+        named_node(&mut v, "m_out", "wrap", "METHOD", "app.ts");
+        named_node(&mut v, "mo_m", "m", "METHOD", "app.ts");
+        edge(&mut v, "cls_out", "m_out", "HAS_METHOD");
+        edge(&mut v, "cls_out", "mo_m", "HAS_METHOD");
+        named_node(&mut v, "cls_in", "Inner", "CLASS", "app.ts");
+        named_node(&mut v, "m_in", "inner", "METHOD", "app.ts");
+        named_node(&mut v, "mi_m", "m", "METHOD", "app.ts");
+        edge(&mut v, "cls_in", "m_in", "HAS_METHOD");
+        edge(&mut v, "cls_in", "mi_m", "HAS_METHOD");
+        named_node(&mut v, "s_out", "function", "SCOPE", "app.ts");
+        named_node(&mut v, "s_in", "function", "SCOPE", "app.ts");
+        edge(&mut v, "m_out", "s_out", "HAS_SCOPE");
+        edge(&mut v, "m_in", "s_in", "HAS_SCOPE");
+        edge(&mut v, "s_out", "s_in", "HAS_SCOPE"); // lexical nesting
+        named_node(&mut v, "c_nest", "this.m", "CALL", "app.ts");
+        edge(&mut v, "s_in", "c_nest", "CONTAINS");
+
+        // B2: static method call; lowercase-receiver negative.
+        named_node(&mut v, "m_create", "create", "METHOD", "app.ts");
+        edge(&mut v, "cls_app", "m_create", "HAS_METHOD");
+        named_node(&mut v, "c_stat", "App.create", "CALL", "app.ts");
+        named_node(&mut v, "cls_tools", "tools", "CLASS", "app.ts");
+        named_node(&mut v, "m_fmt", "fmt", "METHOD", "app.ts");
+        edge(&mut v, "cls_tools", "m_fmt", "HAS_METHOD");
+        named_node(&mut v, "c_lstat", "tools.fmt", "CALL", "app.ts");
+
+        // File gate negative: identical direct-call shape in a .rs file.
+        named_node(&mut v, "f_rs", "run", "FUNCTION", "main.rs");
+        named_node(&mut v, "c_rs", "run", "CALL", "main.rs");
+
+        let (eval, specs, _node_specs) = evaluate_with_materialize(
+            &v,
+            JS_SAME_FILE_CALLS_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("js_same_file_calls.dl evaluates");
+
+        let via = |pairs: &[(&str, &str)]| -> BTreeSet<(u128, u128, String)> {
+            pairs
+                .iter()
+                .map(|(c, t)| (id_of(c), id_of(t), "same-file-calls".to_string()))
+                .collect()
+        };
+        assert_eq!(
+            triples(&eval, "sf_call_fn"),
+            via(&[("c_fn", "f_run"), ("c_pref", "f_make")]),
+            "A1: direct→FUNCTION; the ladder gives c_pref ONLY the FUNCTION"
+        );
+        assert_eq!(
+            triples(&eval, "sf_call_var"),
+            via(&[("c_var", "v_cb"), ("c_var", "k_cb"), ("c_box", "v_box")]),
+            "A2: var/const arm — DELTA 1 derives both cb candidates; Box's VARIABLE \
+             wins over its CLASS; 'make' is suppressed by its FUNCTION"
+        );
+        assert_eq!(
+            triples(&eval, "sf_call_ctor"),
+            via(&[("c_ctor", "cls_widget")]),
+            "A3: uppercase ctor only — lowercase 'widget2' and var-shadowed 'Box' derive nothing"
+        );
+        assert_eq!(
+            triples(&eval, "sf_call_this"),
+            via(&[
+                ("c_this", "m_render"),
+                ("c_super", "m_render"),
+                ("c_obj", "m_render"),
+                ("c_nest", "mi_m"),
+                ("c_nest", "mo_m"),
+            ]),
+            "B1: this/super/<obj> resolve through the scope chain; 'this.a.b' and the \
+             class-less c_free derive NOTHING; c_nest derives BOTH enclosing classes' \
+             member (DELTA 2a pinned)"
+        );
+        assert_eq!(
+            triples(&eval, "sf_call_static"),
+            via(&[("c_stat", "m_create")]),
+            "B2: ClassName.staticMethod; lowercase receiver 'tools.fmt' derives nothing"
+        );
+
+        // Every head is CALLS + additive (shared vocabulary) with resolvedVia meta.
+        let calls_specs: Vec<_> = specs.iter().filter(|s| s.edge_type == "CALLS").collect();
+        assert_eq!(calls_specs.len(), 5, "five CALLS heads (A1, A2, A3, B1, B2)");
+        assert!(
+            calls_specs.iter().all(|s| s.additive),
+            "CALLS is shared with the analyzers — every head must be additive"
+        );
+        assert!(
+            calls_specs
+                .iter()
+                .all(|s| s.meta == vec!["resolvedVia".to_string()]),
+            "resolvedVia is projected on every head"
+        );
+    }
+
+    /// The bundled js_this_method_calls pack reproduces JsThisMethodCalls.hs exactly:
+    /// - unique same-file METHOD resolves (the arm firing);
+    /// - two same-named METHODs in the file → ambiguity skip (the neq/ambig idiom);
+    /// - "this.a.b" derives NOTHING even with a METHOD named "b" present — the
+    ///   concat-equality construction reproduces the resolver's stripThis miss and
+    ///   CORRECTS the migration spec's anticipated method_suffix superset delta;
+    /// - non-this calls, cross-file methods, .rs files derive nothing;
+    /// - DELTA 2 PINNED: .mts is rejected (the resolver's OWN 6-extension gate,
+    ///   narrower than the orchestrator's 8-extension stream filter).
+    #[test]
+    fn js_this_method_calls_unique_method_with_ambiguity_skip() {
+        let mut v = FixtureStorageView::new(1);
+
+        // Arm fires: unique "save" METHOD in app.ts.
+        named_node(&mut v, "m_save", "save", "METHOD", "app.ts");
+        named_node(&mut v, "c1", "this.save", "CALL", "app.ts");
+
+        // Ambiguity skip: two "load" METHODs in app.ts.
+        named_node(&mut v, "m_load1", "load", "METHOD", "app.ts");
+        named_node(&mut v, "m_load2", "load", "METHOD", "app.ts");
+        named_node(&mut v, "c2", "this.load", "CALL", "app.ts");
+
+        // Multi-dot exactness pin: METHOD "b" exists, "this.a.b" must NOT resolve.
+        named_node(&mut v, "m_b", "b", "METHOD", "app.ts");
+        named_node(&mut v, "c3", "this.a.b", "CALL", "app.ts");
+
+        // File gate: .rs is not JS.
+        named_node(&mut v, "m_go", "go", "METHOD", "main.rs");
+        named_node(&mut v, "c4", "this.go", "CALL", "main.rs");
+
+        // Prefix negative: not a this-call.
+        named_node(&mut v, "c5", "notthis.save", "CALL", "app.ts");
+
+        // Cross-file negative: METHOD only in b.ts.
+        named_node(&mut v, "m_far", "far", "METHOD", "b.ts");
+        named_node(&mut v, "c6", "this.far", "CALL", "app.ts");
+
+        // DELTA 2 pin: .mts rejected by the resolver's own 6-extension gate.
+        named_node(&mut v, "m_mts", "save", "METHOD", "app.mts");
+        named_node(&mut v, "c7", "this.save", "CALL", "app.mts");
+
+        let (eval, specs, _node_specs) = evaluate_with_materialize(
+            &v,
+            JS_THIS_METHOD_CALLS_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("js_this_method_calls.dl evaluates");
+
+        assert_eq!(
+            triples(&eval, "js_this_method_call"),
+            BTreeSet::from([(
+                id_of("c1"),
+                id_of("m_save"),
+                "js-this-method-calls".to_string()
+            )]),
+            "exactly c1→m_save: ambiguous 'load', multi-dot 'this.a.b', .rs, non-this, \
+             cross-file and .mts (DELTA 2) all derive nothing"
+        );
+
+        let calls_specs: Vec<_> = specs.iter().filter(|s| s.edge_type == "CALLS").collect();
+        assert_eq!(calls_specs.len(), 1, "exactly one CALLS head");
+        assert!(calls_specs[0].additive, "CALLS is shared — additive");
+        assert_eq!(calls_specs[0].meta, vec!["resolvedVia".to_string()]);
+    }
+
+    /// The bundled rust_calls pack reproduces RustCallResolution.hs:
+    /// - R1 exact (file,name) match, including a receiver-shaped method call (the
+    ///   Wave-0 direct CALL -READS_FROM-> receiver — the resolver never conditioned
+    ///   on it, the bare-name exact arm covers it);
+    /// - R2 '::'-suffix fallback with the segment boundary ("do_y" must NOT match
+    ///   FUNCTION "y") and the exact-beats-suffix preference negation;
+    /// - cross-file and non-.rs negatives;
+    /// - DELTA 1 PINNED: duplicate (file,name) FUNCTIONs derive an edge per
+    ///   candidate (the resolver's Map kept the last one);
+    /// - DELTA 2 PINNED: a multi-segment FUNCTION name ("b::c") matches via the
+    ///   suffix arm (the resolver's lastSegment comparison never could).
+    #[test]
+    fn rust_calls_exact_then_suffix_fallback() {
+        let mut v = FixtureStorageView::new(1);
+
+        // R1 exact.
+        named_node(&mut v, "f_helper", "helper", "FUNCTION", "lib.rs");
+        named_node(&mut v, "c1", "helper", "CALL", "lib.rs");
+
+        // R2 suffix.
+        named_node(&mut v, "f_helper2", "helper2", "FUNCTION", "lib.rs");
+        named_node(&mut v, "c2", "utils::helper2", "CALL", "lib.rs");
+
+        // Exact beats suffix: both "m::foo" and "foo" exist; only the exact fires.
+        named_node(&mut v, "f_qual", "m::foo", "FUNCTION", "lib.rs");
+        named_node(&mut v, "f_foo", "foo", "FUNCTION", "lib.rs");
+        named_node(&mut v, "c3", "m::foo", "CALL", "lib.rs");
+
+        // Method call with a Wave-0 receiver shape — resolves by bare name (R1).
+        named_node(&mut v, "f_process", "process", "FUNCTION", "lib.rs");
+        named_node(&mut v, "c4", "process", "CALL", "lib.rs");
+        named_node(&mut v, "recv", "w", "REFERENCE", "lib.rs");
+        edge(&mut v, "c4", "recv", "READS_FROM");
+
+        // Cross-file negative.
+        named_node(&mut v, "f_far", "far", "FUNCTION", "other.rs");
+        named_node(&mut v, "c5", "far", "CALL", "lib.rs");
+
+        // File gate negative: same shape in a .ts file.
+        named_node(&mut v, "f_js", "jsfn", "FUNCTION", "app.ts");
+        named_node(&mut v, "c6", "jsfn", "CALL", "app.ts");
+
+        // Suffix boundary negative: "do_y" must not match FUNCTION "y".
+        named_node(&mut v, "f_y", "y", "FUNCTION", "lib.rs");
+        named_node(&mut v, "c7", "do_y", "CALL", "lib.rs");
+
+        // DELTA 1: two `fn new` in one file — both derive.
+        named_node(&mut v, "f_new1", "new", "FUNCTION", "lib.rs");
+        named_node(&mut v, "f_new2", "new", "FUNCTION", "lib.rs");
+        named_node(&mut v, "c8", "Widget::new", "CALL", "lib.rs");
+
+        // DELTA 2: multi-segment FUNCTION name matches as a suffix.
+        named_node(&mut v, "f_bc", "b::c", "FUNCTION", "lib.rs");
+        named_node(&mut v, "c9", "a::b::c", "CALL", "lib.rs");
+
+        let (eval, specs, _node_specs) = evaluate_with_materialize(
+            &v,
+            RUST_CALLS_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("rust_calls.dl evaluates");
+
+        let via = |pairs: &[(&str, &str)]| -> BTreeSet<(u128, u128, String)> {
+            pairs
+                .iter()
+                .map(|(c, t)| (id_of(c), id_of(t), "rust-calls".to_string()))
+                .collect()
+        };
+        assert_eq!(
+            triples(&eval, "rust_call"),
+            via(&[("c1", "f_helper"), ("c3", "f_qual"), ("c4", "f_process")]),
+            "R1: exact matches incl. the qualified name and the receiver-shaped \
+             method call; cross-file/.ts/empty negatives derive nothing"
+        );
+        assert_eq!(
+            triples(&eval, "rust_suffix_call"),
+            via(&[
+                ("c2", "f_helper2"),
+                ("c8", "f_new1"),
+                ("c8", "f_new2"),
+                ("c9", "f_bc"),
+            ]),
+            "R2: suffix fallback — c3 is suppressed by its exact match (preference \
+             negation), 'do_y' misses the '::y' boundary, c8 derives BOTH dup \
+             functions (DELTA 1), c9 matches the multi-segment name (DELTA 2)"
+        );
+
+        let calls_specs: Vec<_> = specs.iter().filter(|s| s.edge_type == "CALLS").collect();
+        assert_eq!(calls_specs.len(), 2, "two CALLS heads (exact + suffix)");
+        assert!(
+            calls_specs.iter().all(|s| s.additive),
+            "CALLS is shared with the analyzers — additive is mandatory"
+        );
+        assert!(
+            calls_specs
+                .iter()
+                .all(|s| s.meta == vec!["resolvedVia".to_string()]),
+            "resolvedVia is projected on both heads"
         );
     }
 }

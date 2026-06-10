@@ -1,0 +1,60 @@
+% js_this_method_calls.dl — in-engine replacement for the JsThisMethodCalls.hs
+% resolver (packages/grafema-resolve/src/JsThisMethodCalls.hs:29-76). This was the
+% sole reason for the orchestrator's SECOND full-graph streaming pass
+% (main.rs js-this-method-calls — pure IPC overhead); the pack kills that pass.
+%
+% Resolver semantics reproduced EXACTLY (deliberately file-flat — the resolver
+% never looked at the enclosing class; parity over ambition. The scope-aware
+% enclosing-class arm lives in js_same_file_calls.dl B1, which legacy ALSO ran on
+% the same calls — the two packs overlap on additive CALLS exactly as the two
+% resolvers did):
+%   - CALL whose name starts with "this." in a JS/TS file (the resolver's OWN
+%     6-extension gate, Hs:45 — see DELTA 2);
+%   - the rest of the name after "this." is looked up among the file's METHOD
+%     nodes by (file, name) (Hs:29-36);
+%   - resolve ONLY when exactly one candidate exists (Hs:56-66) — the documented
+%     neq/ambig negation idiom;
+%   - empty method names never indexed (Hs:35) — the neq(MN, "") guard.
+%
+% Multi-dot names are NOT a delta: concat in check mode pins
+% Full == "this." ++ MethodName — "this.a.b" only matches a METHOD literally
+% named "a.b" (never exists), identical to the resolver's index miss after
+% stripThis. This CORRECTS the migration spec's anticipated method_suffix
+% superset delta — eliminated by construction.
+%
+% CALLS is SHARED vocabulary ⇒ mode = "additive".
+%
+% NUMBERED DELTAS vs the resolver (everything not listed is exact):
+%   DELTA 1 (metadata): resolvedVia="js-this-method-calls" projected as a meta
+%     column; engine provenance (_source/_generation) added.
+%   DELTA 2 (file gate, exact parity — recorded for the harness): the pack uses
+%     the resolver's own 6-extension gate (.ts/.tsx/.js/.jsx/.mjs/.cjs, Hs:45),
+%     which is NARROWER than the orchestrator's 8-extension stream filter —
+%     .mts/.cts this-calls were streamed to the resolver and rejected by it;
+%     the pack rejects them identically.
+
+% The resolver's own JS/TS gate — 6 extensions (Hs:45), NOT the orchestrator's 8 —
+% expanded as one clause per extension with a CONSTANT ends_with filter. (A
+% derived jsts6(F) gate is planner-infeasible — a filter cannot BIND a head
+% variable — and an extension-facts relation joined via ends_with(F, E) is a §3
+% cross-join: the fact leg shares no bound variable with the body.) Each clause
+% also pins the "this." prefix early (constant starts_with).
+this_call6(C, F, Full) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".ts"), attr(C, "name", Full), starts_with(Full, "this.").
+this_call6(C, F, Full) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".tsx"), attr(C, "name", Full), starts_with(Full, "this.").
+this_call6(C, F, Full) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".js"), attr(C, "name", Full), starts_with(Full, "this.").
+this_call6(C, F, Full) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".jsx"), attr(C, "name", Full), starts_with(Full, "this.").
+this_call6(C, F, Full) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".mjs"), attr(C, "name", Full), starts_with(Full, "this.").
+this_call6(C, F, Full) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".cjs"), attr(C, "name", Full), starts_with(Full, "this.").
+
+% (file, name) → METHOD node (the resolver's MethodIndex, Hs:29-36).
+meth(F, N, M) :- node(M, "METHOD"), attr(M, "file", F), attr(M, "name", N), neq(N, "").
+
+% More than one same-named METHOD in the file — the exactly-one guard (Hs:56-66).
+ambig(F, N) :- meth(F, N, M1), meth(F, N, M2), neq(M1, M2).
+
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+js_this_method_call(C, M, "js-this-method-calls") :-
+    this_call6(C, F, Full),
+    meth(F, MN, M),
+    \+ ambig(F, MN),
+    concat("this.", MN, Full).

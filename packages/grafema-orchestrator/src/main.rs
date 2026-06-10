@@ -9,13 +9,30 @@ use std::path::PathBuf;
 
 /// Canonical stdlib rule-pack execution order — pack-runner v0 (analyze phase 9).
 ///
-/// ORDER IS A CONTRACT, not a convenience: `@stdlib/shape_verifier` reads CALLS
-/// edges as EDB (its skip-resolved negation `\+ edge(C, _, "CALLS")`), so it MUST
-/// run after `@stdlib/method_calls`, which materializes them. Full canonical order
-/// is depends → method_calls → shape_verifier → axum_routes; the depends pack runs
-/// separately first (the `materialize_datalog("")` call below, which the server
-/// resolves to the bundled `depends.dl`).
+/// ORDER IS A CONTRACT, not a convenience — producers run strictly before
+/// consumers:
+/// - the four RESOLVER packs (`js_local_refs`, `js_same_file_calls`,
+///   `js_this_method_calls`, `rust_calls` — the Wave-1 in-engine replacements for
+///   JsLocalRefs.hs / SameFileCalls.hs / JsThisMethodCalls.hs /
+///   RustCallResolution.hs) produce the READS_FROM/CALLS state the downstream
+///   packs consume;
+/// - `@stdlib/method_calls` (the fuzzy fallback) reads READS_FROM receiver chains
+///   as EDB, so it runs after `js_local_refs` has committed them;
+/// - `@stdlib/shape_verifier` NEGATES CALLS (`\+ edge(C, _, "CALLS")`, its
+///   skip-resolved filter) and READS_FROM (its PA-fallback guard) as EDB, so it
+///   MUST run after EVERY CALLS/READS_FROM producer above — running earlier would
+///   flag calls a later pack resolves.
+/// Full canonical order is depends → js_local_refs → js_same_file_calls →
+/// js_this_method_calls → rust_calls → method_calls → shape_verifier →
+/// axum_routes; the depends pack runs separately first (the
+/// `materialize_datalog("")` call below, which the server resolves to the bundled
+/// `depends.dl`). The server-side registry (`rfdb-server/src/datalog2/stdlib.rs`
+/// STDLIB_PACKS) documents the same order — keep the two in sync.
 const STDLIB_RULE_PACKS: &[&str] = &[
+    "@stdlib/js_local_refs",
+    "@stdlib/js_same_file_calls",
+    "@stdlib/js_this_method_calls",
+    "@stdlib/rust_calls",
     "@stdlib/method_calls",
     "@stdlib/shape_verifier",
     "@stdlib/axum_routes",

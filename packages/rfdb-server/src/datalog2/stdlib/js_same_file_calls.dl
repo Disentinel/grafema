@@ -1,0 +1,197 @@
+% js_same_file_calls.dl — in-engine replacement for the SameFileCalls.hs resolver
+% (packages/grafema-resolve/src/SameFileCalls.hs:95-154): CALLS edges for calls
+% whose callee is defined in the same file. Four arms, exactly the resolver's:
+%
+%   A1 direct call  "foo()"            → same-file FUNCTION            (Hs:127-128)
+%   A2 direct call  "foo()"            → same-file VARIABLE/CONSTANT
+%                                        (arrow fns), only when no FUNCTION wins
+%                                        (the Map-merge precedence, Hs:52-66)
+%   A3 direct ctor  "Foo()"            → same-file CLASS, uppercase-first only,
+%                                        only when A1/A2 found nothing (Hs:130-134)
+%   B1 this/super/<obj> method call    → enclosing class's method     (Hs:141-147)
+%   B2 ClassName.staticMethod()        → that class's method, ClassName
+%                                        uppercase-first               (Hs:149-152)
+%
+% Direct calls (A*) SKIP names that are import bindings (handled by
+% CrossFileCalls/Builtins, Hs:119); the method arms (B*) never consulted the
+% import index — neither do we.
+%
+% CALLS is SHARED vocabulary ⇒ mode = "additive" on every head.
+%
+% ENCODING NOTES (planner §3 feasibility, learned the hard way):
+%   - A derived gate predicate (jsts(F) :- ends_with(F, ".js")) is infeasible —
+%     a filter cannot BIND a head variable. A small fact relation joined through
+%     a filter (jsts_ext(E), ends_with(F, E); upper(L), starts_with(N, L);
+%     this_prefix(P), …) is a §3 CROSS-JOIN — the fact leg shares no bound
+%     variable with the body. Both idioms are therefore expanded into one clause
+%     per constant: 8 extension clauses (js_call), 26 uppercase clauses
+%     (uc_class), 3 prefix clauses (this_call / sf_this).
+%   - Multi-dot call names are NOT a delta: the resolver splits on the FIRST dot
+%     (T.breakOn ".", Hs:110); the concat-equality construction
+%     (Full = Prefix ++ MemberName, concat in check mode) reproduces that split
+%     exactly — "this.a.b" only matches a member literally named "a.b", which
+%     never exists, same as the resolver's index miss.
+%
+% NUMBERED DELTAS vs the resolver (everything not listed is exact):
+%   DELTA 1 (superset): a name that is BOTH a VARIABLE and a CONSTANT in one file —
+%     the resolver's single Map kept one arbitrary last-wins winner (Hs:52-60);
+%     arm A2 derives both. (FUNCTION-over-VARIABLE/CONSTANT precedence itself is
+%     exact — the negation ladder.) Same for duplicate same-type (file, name) keys
+%     in every arm: all candidates instead of the Map's last one.
+%   DELTA 2 (point-wise different): B1's enclosing class comes from the live SCOPE
+%     chain (CALL <-CONTAINS- SCOPE, lexical parents via SCOPE-typed HAS_SCOPE
+%     sources, owner = METHOD/FUNCTION-typed HAS_SCOPE source — the Wave-0-verified
+%     shape) instead of CLASS line-range containment (ResolveUtil.hs:82-89; SCOPE
+%     nodes carry no line metadata, so no line fallback exists):
+%       2a (superset): nested classes — the resolver demanded EXACTLY ONE containing
+%           class range and skipped on ambiguity (ResolveUtil.hs:87-89); the chain
+%           derives an edge for EVERY enclosing class that has the member.
+%       2b (subset): a call lexically inside a class but not inside any method body
+%           (property initializer, static block) had a containing line range but has
+%           no METHOD/FUNCTION scope owner — the pack misses it.
+%       2c (precision): the class is bound as a NODE through the chain; two
+%           same-named classes in one file no longer collide (the resolver's
+%           name-keyed method index was last-wins, Hs:70-78).
+%   DELTA 3 (structural substitute): class membership is CLASS -HAS_METHOD-> member
+%     instead of parsing "[in:ClassName]" out of semantic ids (Hs:70-78,
+%     ResolveUtil.hs:38-49). Wave-0: HAS_METHOD coverage is structural truth
+%     (zero-member classes are genuinely empty). B2 additionally requires the CLASS
+%     node itself where the resolver only consulted the method index — equivalent
+%     whenever the [in:Class] marker came from a real class, i.e. always.
+%   DELTA 4 (metadata): resolvedVia="same-file-calls" projected as a meta column;
+%     engine provenance (_source/_generation) added.
+%   DELTA 5 (file gate): the resolver's effective gate was the orchestrator's
+%     detect_language == JavaScript stream filter (8 extensions) — the js_call
+%     clause set below.
+
+% Every CALL in a JS/TS file with its (file, name) — the 8-extension language
+% gate (DELTA 5), one clause per extension (see ENCODING NOTES).
+js_call(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".js"), attr(C, "name", N), neq(N, "").
+js_call(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".jsx"), attr(C, "name", N), neq(N, "").
+js_call(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".ts"), attr(C, "name", N), neq(N, "").
+js_call(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".tsx"), attr(C, "name", N), neq(N, "").
+js_call(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".mjs"), attr(C, "name", N), neq(N, "").
+js_call(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".cjs"), attr(C, "name", N), neq(N, "").
+js_call(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".mts"), attr(C, "name", N), neq(N, "").
+js_call(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".cts"), attr(C, "name", N), neq(N, "").
+
+% Imported names per file (ResolveUtil.hs buildImportIndex) — direct-call skip-set.
+imported(F, N) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), attr(B, "name", N).
+
+% ── Direct-call arms (callee name has NO dot) ──────────────────────────────────
+
+dotted(C) :- node(C, "CALL"), attr(C, "name", N), string_contains(N, ".").
+
+% A direct (dotless) call in a JS file whose name is not an import binding.
+plain_call(C, F, N) :- js_call(C, F, N), \+ dotted(C), \+ imported(F, N).
+
+func_named(F, N, T)     :- node(T, "FUNCTION"), attr(T, "file", F), attr(T, "name", N).
+varconst_named(F, N, T) :- node(T, "VARIABLE"), attr(T, "file", F), attr(T, "name", N).
+varconst_named(F, N, T) :- node(T, "CONSTANT"), attr(T, "file", F), attr(T, "name", N).
+class_named(F, N, T)    :- node(T, "CLASS"),    attr(T, "file", F), attr(T, "name", N).
+has_func(F, N)     :- func_named(F, N, T).
+has_varconst(F, N) :- varconst_named(F, N, T).
+
+% Uppercase-first-named classes — the constructor heuristic's test (Hs:131,149),
+% one clause per letter (no char-class builtin; a 26-fact relation would be a
+% §3 cross-join — see ENCODING NOTES). Shared by arms A3 and B2.
+uc_class(F, N, T) :- class_named(F, N, T), starts_with(N, "A").
+uc_class(F, N, T) :- class_named(F, N, T), starts_with(N, "B").
+uc_class(F, N, T) :- class_named(F, N, T), starts_with(N, "C").
+uc_class(F, N, T) :- class_named(F, N, T), starts_with(N, "D").
+uc_class(F, N, T) :- class_named(F, N, T), starts_with(N, "E").
+uc_class(F, N, T) :- class_named(F, N, T), starts_with(N, "F").
+uc_class(F, N, T) :- class_named(F, N, T), starts_with(N, "G").
+uc_class(F, N, T) :- class_named(F, N, T), starts_with(N, "H").
+uc_class(F, N, T) :- class_named(F, N, T), starts_with(N, "I").
+uc_class(F, N, T) :- class_named(F, N, T), starts_with(N, "J").
+uc_class(F, N, T) :- class_named(F, N, T), starts_with(N, "K").
+uc_class(F, N, T) :- class_named(F, N, T), starts_with(N, "L").
+uc_class(F, N, T) :- class_named(F, N, T), starts_with(N, "M").
+uc_class(F, N, T) :- class_named(F, N, T), starts_with(N, "N").
+uc_class(F, N, T) :- class_named(F, N, T), starts_with(N, "O").
+uc_class(F, N, T) :- class_named(F, N, T), starts_with(N, "P").
+uc_class(F, N, T) :- class_named(F, N, T), starts_with(N, "Q").
+uc_class(F, N, T) :- class_named(F, N, T), starts_with(N, "R").
+uc_class(F, N, T) :- class_named(F, N, T), starts_with(N, "S").
+uc_class(F, N, T) :- class_named(F, N, T), starts_with(N, "T").
+uc_class(F, N, T) :- class_named(F, N, T), starts_with(N, "U").
+uc_class(F, N, T) :- class_named(F, N, T), starts_with(N, "V").
+uc_class(F, N, T) :- class_named(F, N, T), starts_with(N, "W").
+uc_class(F, N, T) :- class_named(F, N, T), starts_with(N, "X").
+uc_class(F, N, T) :- class_named(F, N, T), starts_with(N, "Y").
+uc_class(F, N, T) :- class_named(F, N, T), starts_with(N, "Z").
+
+% A1: FUNCTION wins outright.
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+sf_call_fn(C, T, "same-file-calls") :-
+    plain_call(C, F, N), func_named(F, N, T).
+
+% A2: VARIABLE/CONSTANT only when no same-(file,name) FUNCTION exists
+% (the resolver's FUNCTION-last Map merge, Hs:52-66). DELTA 1.
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+sf_call_var(C, T, "same-file-calls") :-
+    plain_call(C, F, N), \+ has_func(F, N), varconst_named(F, N, T).
+
+% A3: uppercase-first constructor fallback, only when the function index had
+% nothing at all (Hs:129-134).
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+sf_call_ctor(C, T, "same-file-calls") :-
+    plain_call(C, F, N),
+    \+ has_func(F, N), \+ has_varconst(F, N),
+    uc_class(F, N, T).
+
+% ── Scope chain (Wave-0 verified shape) — B1's enclosing class ────────────────
+% Seeded ONLY from this/super/<obj> calls (planner-filter-before-generator: the
+% closure must not enumerate every scope content in the graph). One clause per
+% prefix constant (a this_prefix fact relation would be a §3 cross-join).
+
+this_call(C, Full) :- js_call(C, F, Full), starts_with(Full, "this.").
+this_call(C, Full) :- js_call(C, F, Full), starts_with(Full, "super.").
+this_call(C, Full) :- js_call(C, F, Full), starts_with(Full, "<obj>.").
+
+% The scope directly containing the call, then lexical parents: a scope's
+% HAS_SCOPE sources are its owner (FUNCTION/METHOD) AND its lexical parent
+% scope — the node-type filter separates them (the Wave-0 owner-vs-lexical
+% nuance).
+encl_scope(C, S) :- this_call(C, Full), edge(S, C, "CONTAINS"), node(S, "SCOPE").
+encl_scope(C, S2) :- encl_scope(C, S), edge(S2, S, "HAS_SCOPE"), node(S2, "SCOPE").
+
+% Scope owners along the chain (METHOD for class methods; FUNCTION kept for
+% parity with the resolver's FUNCTION|METHOD member index, Hs:75).
+encl_member(C, M) :- encl_scope(C, S), edge(M, S, "HAS_SCOPE"), node(M, "METHOD").
+encl_member(C, M) :- encl_scope(C, S), edge(M, S, "HAS_SCOPE"), node(M, "FUNCTION").
+
+% Every enclosing class of the call (DELTA 2: all of them, not the unique
+% line-range winner).
+encl_class(C, Cls) :- encl_member(C, M), edge(Cls, M, "HAS_METHOD"), node(Cls, "CLASS").
+
+% B1: this./super./<obj>. method call → a member of an enclosing class.
+% concat in check mode pins Full == Prefix ++ MemberName — the resolver's
+% first-dot split, exactly (see header). One clause per prefix constant.
+sf_this(C, T) :-
+    this_call(C, Full), encl_class(C, Cls),
+    edge(Cls, T, "HAS_METHOD"), attr(T, "name", MN), neq(MN, ""),
+    concat("this.", MN, Full).
+sf_this(C, T) :-
+    this_call(C, Full), encl_class(C, Cls),
+    edge(Cls, T, "HAS_METHOD"), attr(T, "name", MN), neq(MN, ""),
+    concat("super.", MN, Full).
+sf_this(C, T) :-
+    this_call(C, Full), encl_class(C, Cls),
+    edge(Cls, T, "HAS_METHOD"), attr(T, "name", MN), neq(MN, ""),
+    concat("<obj>.", MN, Full).
+
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+sf_call_this(C, T, "same-file-calls") :- sf_this(C, T).
+
+% B2: ClassName.staticMethod() — uppercase-first class name, same file as the
+% call, member via HAS_METHOD; Full == ClassName ++ "." ++ MemberName via the
+% two-step concat check (exact first-dot parity, DELTA 3 for the structural
+% membership substitute).
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+sf_call_static(C, T, "same-file-calls") :-
+    js_call(C, F, Full),
+    uc_class(F, CN, Cls),
+    edge(Cls, T, "HAS_METHOD"), attr(T, "name", MN), neq(MN, ""),
+    concat(CN, ".", Pfx), concat(Pfx, MN, Full).

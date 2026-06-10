@@ -7577,7 +7577,15 @@ mod protocol_tests {
         assert_eq!(again, 0, "the empty-source default is the same program (idempotent)");
 
         // Every other registered pack resolves and runs (no inputs here → 0 edges).
-        for pack in ["@stdlib/method_calls", "@stdlib/shape_verifier", "@stdlib/axum_routes"] {
+        for pack in [
+            "@stdlib/js_local_refs",
+            "@stdlib/js_same_file_calls",
+            "@stdlib/js_this_method_calls",
+            "@stdlib/rust_calls",
+            "@stdlib/method_calls",
+            "@stdlib/shape_verifier",
+            "@stdlib/axum_routes",
+        ] {
             let n = dispatch_materialize_datalog(&mut engine, pack, cf())
                 .unwrap_or_else(|e| panic!("{pack} must resolve and run: {e}"));
             assert_eq!(n, 0, "{pack} has no inputs on this graph — zero edges, no error");
@@ -7591,6 +7599,10 @@ mod protocol_tests {
         assert!(err.contains("@stdlib/bogus"), "must name the unknown pack: {err}");
         for known in [
             "@stdlib/depends",
+            "@stdlib/js_local_refs",
+            "@stdlib/js_same_file_calls",
+            "@stdlib/js_this_method_calls",
+            "@stdlib/rust_calls",
             "@stdlib/method_calls",
             "@stdlib/shape_verifier",
             "@stdlib/axum_routes",
