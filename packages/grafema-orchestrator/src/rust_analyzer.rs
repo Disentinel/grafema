@@ -1023,7 +1023,7 @@ fn walk_trait(t: &syn::ItemTrait, ctx: &mut Ctx) {
                 let (ml, mc) = ctx.span_line_col(m.sig.ident.span());
                 let sig_id = semantic_id(&ctx.file, "TYPE_SIGNATURE", &mname, Some(&node_id), None);
                 ctx.emit_node(GraphNode {
-                    id: sig_id,
+                    id: sig_id.clone(),
                     node_type: "TYPE_SIGNATURE".to_string(),
                     name: mname,
                     file: ctx.file.clone(),
@@ -1033,6 +1033,21 @@ fn walk_trait(t: &syn::ItemTrait, ctx: &mut Ctx) {
                     metadata: HashMap::new(),
                     extra: HashMap::new(),
                 });
+                // A trait method may carry a *default body*
+                // (`fn f(&self) { ... }`), exposed by syn as
+                // `TraitItemFn.default: Option<Block>`. Walk it so nested
+                // calls/references survive instead of being dropped — same
+                // walk-body invariant as impl methods and ImplItem::Const.
+                // Mirror impl-method handling: descend under a Function scope
+                // parented to the signature node, so emitted CALL/REFERENCE
+                // nodes are CONTAINED by it and resolve in a function boundary.
+                if let Some(body) = &m.default {
+                    let prev_fn = ctx.enclosing_fn.replace(sig_id.clone());
+                    ctx.push_scope(&sig_id, ScopeKind::Function);
+                    walk_block(body, ctx);
+                    ctx.pop_scope();
+                    ctx.enclosing_fn = prev_fn;
+                }
             }
             // Trait items have no visibility (they are part of the trait's public
             // contract), hence `None`.
@@ -2774,6 +2789,8 @@ mod tests {
             .find(|n| n.node_type == "FUNCTION" && n.name == "puts")
             .expect("FUNCTION puts");
         assert_eq!(f.metadata.get("abi"), Some(&serde_json::json!("C")));
+    }
+
     // Associated items inside `impl` blocks and `trait` definitions used to be
     // silently dropped (ImplItem::Const/Type were empty no-ops; walk_trait only
     // matched TraitItem::Fn), so `Self::MAX` and associated-type queries returned
@@ -2821,6 +2838,31 @@ mod tests {
         assert!(has_edge(&fa, "CONTAINS", "TRAIT", "TYPE_ALIAS"), "TRAIT CONTAINS type");
         // The function signature is still emitted alongside the associated type.
         assert_eq!(count_nodes(&fa, "TYPE_SIGNATURE"), 1);
+    }
+
+    #[test]
+    fn test_trait_default_method_body_walks_calls() {
+        // A trait method may carry a *default body* (`fn f(&self) { ... }`), which
+        // syn exposes as `TraitItemFn.default: Option<Block>`. walk_trait used to
+        // emit only the TYPE_SIGNATURE from the signature and never walk the body,
+        // so every call/reference inside a default implementation was silently
+        // dropped from the graph (same class as the let-else / ImplItem::Const
+        // walk-body gaps). `helper()` below must reach the graph as a CALL node.
+        let fa = parse_and_analyze(
+            "pub trait Greeter {
+                fn greet(&self) { helper(); }
+                fn required(&self);
+            }
+            fn helper() {}"
+        );
+        assert!(has_node(&fa, "CALL", "helper"),
+            "call inside a trait default-method body must be walked into the graph");
+        // The signature is still emitted for the defaulted method (and the
+        // required one), so signature modelling is unchanged by the body walk.
+        assert_eq!(count_nodes(&fa, "TYPE_SIGNATURE"), 2,
+            "both the defaulted and required methods emit TYPE_SIGNATURE nodes");
+    }
+
     // ── Macro invocations ───────────────────────────────────────────────
     // `syn` does not expand macros, so before this fix `Expr::Macro` and
     // `Stmt::Macro` were dropped entirely. That violated KNOWN_LIMITATIONS'
