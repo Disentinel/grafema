@@ -347,6 +347,18 @@ pub(crate) trait StorageView {
     /// (`find_node_ids_by_attr_at`), so it is the same index path v1 uses — not a full scan
     /// the engine post-filters. A key/value that matches no node yields an empty vec.
     fn nodes_by_attr(&self, key: &str, value: &str) -> Vec<NodeRow>;
+
+    /// Raw metadata JSON of the edge `src -[edge_type]-> dst`, for an already-bound edge
+    /// triple (the `edge_attr` builtin's point probe — never inside a generator).
+    ///
+    /// Returns `Some(json)` when the edge exists and carries non-empty metadata; `None`
+    /// when the edge is absent OR carries none (`""` is storage's "no metadata" marker).
+    /// The string is the stored blob verbatim — parsing/validation is the caller's concern
+    /// (a non-JSON blob is the caller's tuple non-match, never this layer's error). Served
+    /// through the same snapshot-pinned keyed source index as [`StorageView::edges_from`].
+    /// Note `OverlayStorageView`: hypothetical delta edges carry no metadata today, so a
+    /// delta-only edge yields `None`.
+    fn edge_metadata(&self, src: u128, dst: u128, edge_type: &str) -> Option<String>;
 }
 
 // ── Real impl over a version-pinned ReadSnapshot ───────────────────
@@ -511,6 +523,24 @@ fn snapshot_edges_to(
         .collect()
 }
 
+/// Metadata blob of one bound edge triple, via the snapshot-pinned source index (the same
+/// keyed probe as [`snapshot_edges_from`], filtered to the bound `dst`). Empty stored
+/// metadata (`""`, storage's "none" marker) normalizes to `None`.
+fn snapshot_edge_metadata(
+    store: &MultiShardStore,
+    snapshot: &ReadSnapshot,
+    src: u128,
+    dst: u128,
+    edge_type: &str,
+) -> Option<String> {
+    store
+        .get_outgoing_edges_at(snapshot, src, Some(&[edge_type]))
+        .into_iter()
+        .find(|r| r.dst == dst)
+        .map(|r| r.metadata)
+        .filter(|m| !m.is_empty())
+}
+
 fn snapshot_get_node(store: &MultiShardStore, snapshot: &ReadSnapshot, id: u128) -> Option<NodeRow> {
     store.get_node_at(snapshot, id).map(|r| NodeRow {
         id: r.id,
@@ -604,6 +634,10 @@ impl StorageView for LsmStorageView {
     fn nodes_by_attr(&self, key: &str, value: &str) -> Vec<NodeRow> {
         snapshot_nodes_by_attr(&self.store, &self.snapshot, key, value)
     }
+
+    fn edge_metadata(&self, src: u128, dst: u128, edge_type: &str) -> Option<String> {
+        snapshot_edge_metadata(&self.store, &self.snapshot, src, dst, edge_type)
+    }
 }
 
 // ── Borrowing impl over a version-pinned ReadSnapshot (router path) ─
@@ -668,6 +702,10 @@ impl<'a> StorageView for BorrowedLsmStorageView<'a> {
     fn nodes_by_attr(&self, key: &str, value: &str) -> Vec<NodeRow> {
         snapshot_nodes_by_attr(self.store, &self.snapshot, key, value)
     }
+
+    fn edge_metadata(&self, src: u128, dst: u128, edge_type: &str) -> Option<String> {
+        snapshot_edge_metadata(self.store, &self.snapshot, src, dst, edge_type)
+    }
 }
 
 // ── In-memory fixture impl (tests only) ────────────────────────────
@@ -687,6 +725,11 @@ pub(crate) struct FixtureStorageView {
     nodes: BTreeMap<u128, NodeRow>,
     /// Edges keyed by `(src, type, dst)` for the forward order.
     edges_fwd: BTreeMap<(u128, String, u128), EdgeRow>,
+    /// Metadata blobs by edge key — a SIDE map (an [`EdgeRow`] carries no metadata column;
+    /// the engine's join surface stays the bare triple). Only edges explicitly given
+    /// metadata via [`FixtureStorageView::put_edge_metadata`] appear here, mirroring the
+    /// real impl's "empty blob ⇒ `None`" normalization.
+    edge_meta: BTreeMap<(u128, String, u128), String>,
 }
 
 impl FixtureStorageView {
@@ -696,6 +739,7 @@ impl FixtureStorageView {
             generation,
             nodes: BTreeMap::new(),
             edges_fwd: BTreeMap::new(),
+            edge_meta: BTreeMap::new(),
         }
     }
 
@@ -708,6 +752,19 @@ impl FixtureStorageView {
     pub(crate) fn put_edge(&mut self, row: EdgeRow) {
         self.edges_fwd
             .insert((row.src, row.edge_type.clone(), row.dst), row);
+    }
+
+    /// Attach a metadata JSON blob to an (already-inserted or later-inserted) edge triple.
+    /// A non-empty blob makes [`StorageView::edge_metadata`] return `Some(blob)` for the
+    /// triple; an empty blob mirrors storage's "no metadata" marker (`None`).
+    #[cfg(test)]
+    pub(crate) fn put_edge_metadata(&mut self, src: u128, dst: u128, edge_type: &str, meta: &str) {
+        if meta.is_empty() {
+            self.edge_meta.remove(&(src, edge_type.to_string(), dst));
+        } else {
+            self.edge_meta
+                .insert((src, edge_type.to_string(), dst), meta.to_string());
+        }
     }
 }
 
@@ -800,6 +857,14 @@ impl StorageView for FixtureStorageView {
             })
             .cloned()
             .collect()
+    }
+
+    fn edge_metadata(&self, src: u128, dst: u128, edge_type: &str) -> Option<String> {
+        // Only blobs explicitly attached via `put_edge_metadata` exist; an edge without one
+        // (including every plain `put_edge`) is `None` — the real impl's "" normalization.
+        self.edge_meta
+            .get(&(src, edge_type.to_string(), dst))
+            .cloned()
     }
 }
 
@@ -897,6 +962,15 @@ impl<'a> StorageView for OverlayStorageView<'a> {
         let mut v = self.base.nodes_by_attr(key, value);
         v.extend(self.delta.nodes_by_attr(key, value));
         v
+    }
+
+    fn edge_metadata(&self, src: u128, dst: u128, edge_type: &str) -> Option<String> {
+        // A committed edge's blob comes from the base; hypothetical delta edges carry no
+        // metadata today (the fixture delta only gets one if a test attaches it), so a
+        // delta-only edge correctly yields `None`.
+        self.base
+            .edge_metadata(src, dst, edge_type)
+            .or_else(|| self.delta.edge_metadata(src, dst, edge_type))
     }
 }
 
@@ -1246,5 +1320,86 @@ mod tests {
         let nodes: Vec<Row> = overlay.sorted_run(Relation::Nodes, SortOrder::NodeById).collect();
         assert_eq!(nodes.len(), 4, "three base + one delta node");
         assert_monotone(nodes.into_iter(), SortOrder::NodeById);
+    }
+
+    /// `edge_metadata` parity: the real LSM view surfaces a committed edge's metadata blob
+    /// verbatim; the fixture mirrors it via `put_edge_metadata`; an absent edge OR an edge
+    /// whose stored blob is empty (`""` = storage's "none") yields `None` on both.
+    #[test]
+    fn edge_metadata_real_and_fixture_parity() {
+        // Real store: one edge WITH metadata, one with the empty marker.
+        let mut store = MultiShardStore::ephemeral(4);
+        let mut manifest = ManifestStore::ephemeral();
+        let mut with_meta = edge_rec("a/fn1", "a/fn2", "CALLS");
+        with_meta.metadata = r#"{"via":"instance_of"}"#.to_string();
+        let without_meta = edge_rec("a/fn1", "b/cls1", "CONTAINS");
+        store
+            .commit_batch(
+                tiny_nodes(),
+                vec![with_meta, without_meta],
+                &["a/file.js".to_string(), "b/file.js".to_string()],
+                HashMap::new(),
+                &mut manifest,
+            )
+            .unwrap();
+        let real = LsmStorageView::capture(Arc::new(store), &manifest);
+
+        // Fixture twin.
+        let mut fixture = build_fixture_view();
+        fixture.put_edge_metadata(
+            id_of("a/fn1"),
+            id_of("a/fn2"),
+            "CALLS",
+            r#"{"via":"instance_of"}"#,
+        );
+
+        for view in [&real as &dyn StorageView, &fixture as &dyn StorageView] {
+            assert_eq!(
+                view.edge_metadata(id_of("a/fn1"), id_of("a/fn2"), "CALLS").as_deref(),
+                Some(r#"{"via":"instance_of"}"#),
+                "blob surfaced verbatim"
+            );
+            assert_eq!(
+                view.edge_metadata(id_of("a/fn1"), id_of("b/cls1"), "CONTAINS"),
+                None,
+                "empty stored blob normalizes to None"
+            );
+            assert_eq!(
+                view.edge_metadata(id_of("a/fn1"), id_of("a/fn2"), "NOPE"),
+                None,
+                "wrong type → no edge → None"
+            );
+            assert_eq!(
+                view.edge_metadata(0xdead_beef, id_of("a/fn2"), "CALLS"),
+                None,
+                "absent edge → None"
+            );
+        }
+    }
+
+    /// Overlay: a base edge's metadata is visible through the overlay; a delta-only
+    /// (hypothetical) edge carries no metadata today → `None`.
+    #[test]
+    fn overlay_edge_metadata_base_visible_delta_none() {
+        let mut base = build_fixture_view();
+        base.put_edge_metadata(id_of("a/fn1"), id_of("a/fn2"), "CALLS", r#"{"k":"v"}"#);
+        let mut delta = FixtureStorageView::new(1);
+        delta.put_edge(EdgeRow {
+            src: id_of("a/fn1"),
+            dst: id_of("c/fn3"),
+            edge_type: "CALLS".to_string(),
+        });
+        let overlay = OverlayStorageView::new(&base, delta);
+
+        assert_eq!(
+            overlay.edge_metadata(id_of("a/fn1"), id_of("a/fn2"), "CALLS").as_deref(),
+            Some(r#"{"k":"v"}"#),
+            "base edge's blob visible through the overlay"
+        );
+        assert_eq!(
+            overlay.edge_metadata(id_of("a/fn1"), id_of("c/fn3"), "CALLS"),
+            None,
+            "hypothetical delta edge carries no metadata"
+        );
     }
 }

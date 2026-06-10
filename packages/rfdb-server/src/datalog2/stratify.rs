@@ -185,6 +185,12 @@ const BUILTINS: &[&str] = &[
     "not_starts_with",
     "string_contains",
     "method_suffix",
+    "ends_with",
+    "concat",
+    "str_lower",
+    "basename",
+    "strip_quotes",
+    "edge_attr",
     "path",
     "parent_function",
     "resolved_import",
@@ -202,7 +208,7 @@ fn is_extensional(pred: &str) -> bool {
 /// stratification.
 fn materialized_edge_type(item: &Item) -> Option<String> {
     for ann in &item.annotations {
-        if let Annotation::Materialize(pairs) = ann {
+        if let Annotation::Materialize { pairs, .. } = ann {
             for kv in pairs {
                 if kv.key == "edge_type" {
                     return Some(kv.value.clone());

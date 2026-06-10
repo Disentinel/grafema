@@ -3580,6 +3580,70 @@ mod tests {
         );
     }
 
+    /// `meta(...)` projection through the REAL write-back path (the meta twin of
+    /// [`materialize_writeback_produces_edges_with_provenance`]): a 4-ary head
+    /// `dep(X, Y, NX, NY)` with `meta(src_name, dst_name)` writes ONE edge whose metadata
+    /// carries the provenance stamp PLUS the two projected head columns; and the
+    /// `(src, dst, edge_type)` diff identity ignores meta — a second run is a no-op.
+    #[test]
+    fn materialize_writeback_meta_projects_head_columns_into_edge_metadata() {
+        let mut engine = GraphEngineV2::create_ephemeral();
+
+        let a = make_v2_node("a.js->MODULE->a", "MODULE", "a", "a.js");
+        let b = make_v2_node("b.js->MODULE->b", "MODULE", "b", "b.js");
+        let (id_a, id_b) = (a.id, b.id);
+        let import_edge = EdgeRecordV2 {
+            src: id_a,
+            dst: id_b,
+            edge_type: "IMPORTS_FROM".to_string(),
+            metadata: String::new(),
+        };
+        engine
+            .commit_batch_ext(
+                vec![a, b],
+                vec![import_edge],
+                &["a.js".to_string(), "b.js".to_string()],
+                HashMap::new(),
+                &[],
+            )
+            .expect("base commit");
+        let gen = engine.snapshot().version + 1;
+
+        let src = r#"@materialize(edge_type = "DEPENDS_ON", meta(src_name, dst_name))
+                     dep(X, Y, NX, NY) :- edge(X, Y, "IMPORTS_FROM"),
+                                          attr(X, "name", NX), attr(Y, "name", NY)."#;
+        let written = engine
+            .eval_datalog_v2_materialize(src, crate::datalog::EvalLimits::none())
+            .expect("write-back");
+        assert_eq!(written, 1, "one IMPORTS_FROM → one DEPENDS_ON edge");
+
+        let snap = engine.snapshot();
+        let deps = engine.store.get_edges_by_type_at(&snap, "DEPENDS_ON");
+        assert_eq!(deps.len(), 1);
+        assert_eq!((deps[0].src, deps[0].dst), (id_a, id_b));
+
+        // Metadata = provenance + the two meta fields (string surfaces of head cols 2/3).
+        let meta: serde_json::Value =
+            serde_json::from_str(&deps[0].metadata).expect("metadata is JSON");
+        let parsed = crate::datalog2::parser_ext::parse_ext_program(src).unwrap();
+        let expected_hash =
+            crate::datalog2::materialize::rule_ast_hash(&parsed.items[0].rule);
+        assert_eq!(meta["_source"], serde_json::Value::String(expected_hash));
+        assert_eq!(meta["_generation"], serde_json::json!(gen));
+        assert_eq!(meta["src_name"], serde_json::json!("a"));
+        assert_eq!(meta["dst_name"], serde_json::json!("b"));
+
+        // Identity stays (src, dst, edge_type): re-running the SAME program through the
+        // delta write-back adds/removes nothing — the existing edge is not rewritten for
+        // meta, and exactly one DEPENDS_ON edge remains.
+        let (added, removed) = engine
+            .eval_datalog_v2_materialize_incremental(src, crate::datalog::EvalLimits::none())
+            .expect("incremental re-run");
+        assert_eq!((added, removed), (0, 0), "meta does not change edge identity");
+        let snap2 = engine.snapshot();
+        assert_eq!(engine.store.get_edges_by_type_at(&snap2, "DEPENDS_ON").len(), 1);
+    }
+
     /// `mode = "additive"`: a program materializing into a SHARED edge type must never
     /// tombstone edges it did not derive. Pre-existing (analyzer-style) CALLS edge survives
     /// an incremental materialize whose program derives a DIFFERENT CALLS edge; a second

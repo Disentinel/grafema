@@ -182,9 +182,18 @@ pub enum Annotation {
     Tag(String),
     /// `@tag_from(kvpairs)` — tag-from-attribute binding (Gate C). Raw pairs retained.
     TagFrom(Vec<KvPair>),
-    /// `@materialize(kvpairs)` — project the predicate to real edges/nodes (Gate B
-    /// write-back). Pairs (e.g. `edge_type = "DEPENDS_ON"`) retained for stratification.
-    Materialize(Vec<KvPair>),
+    /// `@materialize(kvpairs [, meta(names)])` — project the predicate to real
+    /// edges/nodes (Gate B write-back). `pairs` (e.g. `edge_type = "DEPENDS_ON"`) are
+    /// retained for stratification; `meta` holds the OPTIONAL `meta(name1, name2, …)`
+    /// group's field names in source order — the i-th name projects head column `2 + i`
+    /// into the written edge's metadata (see `materialize.rs` module docs). Programs
+    /// without a `meta(...)` group parse exactly as before (`meta` is empty).
+    Materialize {
+        /// The `key = value` pairs of the payload.
+        pairs: Vec<KvPair>,
+        /// The `meta(...)` group's field names, in order. Empty when absent.
+        meta: Vec<String>,
+    },
     /// `@lattice(kvpairs)` — lattice value join config (Gate C). Raw pairs retained.
     Lattice(Vec<KvPair>),
 }
@@ -346,20 +355,44 @@ impl<'a> Framer<'a> {
         }
         self.pos += 1;
         let inner_start = self.pos;
-        let close = self.rest().find(')').ok_or_else(|| {
-            ExtParseError::new(
+        // Balanced-paren payload scan (string-literal aware): the payload may itself
+        // contain a parenthesised group (`@materialize(…, meta(method, line))`), so the
+        // closing `)` is the one that returns the depth to zero — not the first one.
+        let mut depth: usize = 1;
+        let mut in_string = false;
+        while self.pos < self.bytes.len() && depth > 0 {
+            let c = self.bytes[self.pos];
+            if in_string {
+                if c == b'"' {
+                    in_string = false;
+                }
+            } else {
+                match c {
+                    b'"' => in_string = true,
+                    b'(' => depth += 1,
+                    b')' => depth -= 1,
+                    _ => {}
+                }
+            }
+            self.pos += 1;
+        }
+        if depth > 0 {
+            return Err(ExtParseError::new(
                 ErrorCode::AnnotationSyntax,
                 format!("unterminated @{name}(...)"),
                 inner_start,
-            )
-        })?;
-        let inner = &self.input[inner_start..inner_start + close];
-        self.pos = inner_start + close + 1; // consume ')'
+            ));
+        }
+        // `self.pos` sits just past the matching ')'.
+        let inner = &self.input[inner_start..self.pos - 1];
 
         match name {
             "tag" => Ok(Annotation::Tag(inner.trim().to_string())),
             "tag_from" => Ok(Annotation::TagFrom(parse_kvpairs(inner, inner_start)?)),
-            "materialize" => Ok(Annotation::Materialize(parse_kvpairs(inner, inner_start)?)),
+            "materialize" => {
+                let (pairs, meta) = parse_materialize_payload(inner, inner_start)?;
+                Ok(Annotation::Materialize { pairs, meta })
+            }
             "lattice" => Ok(Annotation::Lattice(parse_kvpairs(inner, inner_start)?)),
             other => Err(ExtParseError::new(
                 ErrorCode::AnnotationSyntax,
@@ -550,17 +583,21 @@ fn parse_kvpairs(inner: &str, base: usize) -> Result<Vec<KvPair>, ExtParseError>
     Ok(pairs)
 }
 
-/// Split on commas that are not inside a string literal (annotation payloads are flat).
+/// Split on commas that are not inside a string literal or a parenthesised group
+/// (`edge_type = "T", meta(method, line)` splits into two parts, not three).
 fn split_top_level_commas(s: &str) -> Vec<&str> {
     let bytes = s.as_bytes();
     let mut parts = Vec::new();
     let mut start = 0;
     let mut in_string = false;
+    let mut depth: usize = 0;
     let mut i = 0;
     while i < bytes.len() {
         match bytes[i] {
             b'"' => in_string = !in_string,
-            b',' if !in_string => {
+            b'(' if !in_string => depth += 1,
+            b')' if !in_string => depth = depth.saturating_sub(1),
+            b',' if !in_string && depth == 0 => {
                 parts.push(&s[start..i]);
                 start = i + 1;
             }
@@ -570,6 +607,99 @@ fn split_top_level_commas(s: &str) -> Vec<&str> {
     }
     parts.push(&s[start..]);
     parts
+}
+
+/// Parse the `@materialize(...)` payload: ordinary `key = value` pairs plus at most one
+/// `meta(name1, name2, …)` group naming the head columns (beyond the two edge endpoints)
+/// to project into the written edge's metadata, in order.
+///
+/// Backward compatible by construction: a payload without `meta(...)` takes exactly the
+/// [`parse_kvpairs`] path per part. Rejections (all `E-ANNOT-001`, I5): a duplicate
+/// `meta(...)` group, an empty `meta()`, a name that is not a plain identifier, a
+/// duplicate name, or a `_`-prefixed name (reserved for the provenance stamp's
+/// `_source`/`_generation` keys).
+fn parse_materialize_payload(
+    inner: &str,
+    base: usize,
+) -> Result<(Vec<KvPair>, Vec<String>), ExtParseError> {
+    let trimmed = inner.trim();
+    let mut pairs = Vec::new();
+    let mut meta: Vec<String> = Vec::new();
+    let mut saw_meta = false;
+    if trimmed.is_empty() {
+        return Ok((pairs, meta));
+    }
+    for part in split_top_level_commas(trimmed) {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        // The meta(...) group: `meta` followed by a parenthesised name list.
+        if let Some(rest) = part.strip_prefix("meta") {
+            let rest = rest.trim_start();
+            if let Some(group) = rest.strip_prefix('(') {
+                let Some(names) = group.strip_suffix(')') else {
+                    return Err(ExtParseError::new(
+                        ErrorCode::AnnotationSyntax,
+                        "unterminated meta(...) group in @materialize",
+                        base,
+                    ));
+                };
+                if saw_meta {
+                    return Err(ExtParseError::new(
+                        ErrorCode::AnnotationSyntax,
+                        "@materialize allows at most one meta(...) group",
+                        base,
+                    ));
+                }
+                saw_meta = true;
+                if names.trim().is_empty() {
+                    return Err(ExtParseError::new(
+                        ErrorCode::AnnotationSyntax,
+                        "meta() group requires at least one field name",
+                        base,
+                    ));
+                }
+                for name in names.split(',') {
+                    let name = name.trim();
+                    let valid = !name.is_empty()
+                        && name
+                            .chars()
+                            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+                        && !name.starts_with(|c: char| c.is_ascii_digit());
+                    if !valid {
+                        return Err(ExtParseError::new(
+                            ErrorCode::AnnotationSyntax,
+                            format!("meta(...) field name '{name}' is not a plain identifier"),
+                            base,
+                        ));
+                    }
+                    if name.starts_with('_') {
+                        return Err(ExtParseError::new(
+                            ErrorCode::AnnotationSyntax,
+                            format!(
+                                "meta(...) field name '{name}' is reserved: '_'-prefixed keys \
+                                 belong to the provenance stamp (_source/_generation)"
+                            ),
+                            base,
+                        ));
+                    }
+                    if meta.iter().any(|m| m == name) {
+                        return Err(ExtParseError::new(
+                            ErrorCode::AnnotationSyntax,
+                            format!("duplicate meta(...) field name '{name}'"),
+                            base,
+                        ));
+                    }
+                    meta.push(name.to_string());
+                }
+                continue;
+            }
+        }
+        // An ordinary `key = value` pair — delegate to the shared pair grammar.
+        pairs.extend(parse_kvpairs(part, base)?);
+    }
+    Ok((pairs, meta))
 }
 
 /// Detect an aggregate body literal (`Var = agg { ... }`) in a clause's body text.
@@ -938,10 +1068,73 @@ mod tests {
         let anns = &prog.items[0].annotations;
         assert_eq!(anns.len(), 1);
         match &anns[0] {
-            Annotation::Materialize(pairs) => {
+            Annotation::Materialize { pairs, meta } => {
                 assert_eq!(pairs.len(), 1);
                 assert_eq!(pairs[0].key, "edge_type");
                 assert_eq!(pairs[0].value, "DEPENDS_ON");
+                assert!(meta.is_empty(), "no meta(...) group → empty meta");
+            }
+            other => panic!("expected @materialize, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn materialize_meta_group_parses_names_in_order() {
+        // The full §-syntax: edge_type + mode + meta(...) in one payload; the nested
+        // parens and the commas inside meta(...) must not break the framing.
+        let src = r#"@materialize(edge_type = "CALLS", mode = "additive", meta(method, line))
+            resolved(C, M, Name, L) :- edge(C, M, "CALLS"), attr(C, "name", Name), attr(C, "line", L)."#;
+        let prog = parse_ext_program(src).expect("parse");
+        assert_eq!(prog.items.len(), 1, "the rule clause after the annotation parses");
+        match &prog.items[0].annotations[0] {
+            Annotation::Materialize { pairs, meta } => {
+                assert_eq!(pairs.len(), 2);
+                assert_eq!((pairs[0].key.as_str(), pairs[0].value.as_str()), ("edge_type", "CALLS"));
+                assert_eq!((pairs[1].key.as_str(), pairs[1].value.as_str()), ("mode", "additive"));
+                assert_eq!(meta, &vec!["method".to_string(), "line".to_string()]);
+            }
+            other => panic!("expected @materialize, got {other:?}"),
+        }
+        // The head kept its full arity (4): meta consumes columns 2..; nothing is split off.
+        assert_eq!(prog.items[0].rule.head().arity(), 4);
+    }
+
+    #[test]
+    fn materialize_meta_group_rejections_are_coded() {
+        let cases = [
+            // Empty group.
+            r#"@materialize(edge_type = "T", meta())
+               p(A, B) :- edge(A, B, "E")."#,
+            // Duplicate field name.
+            r#"@materialize(edge_type = "T", meta(m, m))
+               p(A, B, X, Y) :- edge(A, B, "E"), attr(A, "name", X), attr(B, "name", Y)."#,
+            // Reserved '_'-prefixed name (provenance keys).
+            r#"@materialize(edge_type = "T", meta(_source))
+               p(A, B, X) :- edge(A, B, "E"), attr(A, "name", X)."#,
+            // Not a plain identifier.
+            r#"@materialize(edge_type = "T", meta(a-b))
+               p(A, B, X) :- edge(A, B, "E"), attr(A, "name", X)."#,
+            // Two meta groups.
+            r#"@materialize(edge_type = "T", meta(a), meta(b))
+               p(A, B, X, Y) :- edge(A, B, "E"), attr(A, "name", X), attr(B, "name", Y)."#,
+        ];
+        for src in cases {
+            let err = parse_ext_program(src).expect_err("must reject");
+            assert_eq!(err.code, ErrorCode::AnnotationSyntax, "case: {src}");
+        }
+    }
+
+    /// Backward compatibility of the balanced-paren payload scan: every pre-meta payload
+    /// shape (flat pairs, quoted values with commas/parens inside strings) parses as before.
+    #[test]
+    fn materialize_payload_without_meta_is_unchanged() {
+        let src = r#"@materialize(edge_type = "DEPENDS_ON", mode = "exclusive")
+            dep(X, Y) :- edge(X, Y, "IMPORTS_FROM (weird, name)")."#;
+        let prog = parse_ext_program(src).expect("parse");
+        match &prog.items[0].annotations[0] {
+            Annotation::Materialize { pairs, meta } => {
+                assert_eq!(pairs.len(), 2);
+                assert!(meta.is_empty());
             }
             other => panic!("expected @materialize, got {other:?}"),
         }

@@ -597,12 +597,31 @@ fn positive_can_place_and_provides(
             (can_place, provides)
         }
         "neq" | "gt" | "lt" | "gte" | "lte" | "starts_with" | "not_starts_with"
-        | "string_contains" => {
+        | "string_contains" | "ends_with" => {
             let all_bound = args.iter().all(|t| match t {
                 Term::Var(v) => bound.contains(v),
                 _ => true,
             });
             (all_bound, HashSet::new())
+        }
+        // Function builtins deriving ONE output from already-bound inputs (the
+        // `method_suffix` family): every position except the LAST is an input that must be
+        // bound before the leg is placeable; the last position is the output, provided if
+        // free (else an equality check). Mirrors the registry modes exactly
+        // (STR_FN2_MODES / CONCAT_MODES / EDGE_ATTR_MODES), so a rule whose output is
+        // genuinely underivable stays unplaceable here (E-PLAN-002 unsafe rule) instead of
+        // reaching eval and tripping a confusing E-PLAN-001.
+        "concat" | "str_lower" | "basename" | "strip_quotes" | "edge_attr" => {
+            if args.is_empty() {
+                return (true, HashSet::new());
+            }
+            let out_pos = args.len() - 1;
+            let inputs_bound = args[..out_pos].iter().all(|t| is_bound_or_const(t, bound));
+            if inputs_bound {
+                (true, provides_if_free(&args[out_pos], bound))
+            } else {
+                (false, HashSet::new())
+            }
         }
         "resolved_import" => {
             if args.len() < 2 {
@@ -648,6 +667,12 @@ fn is_filter_or_function(pred: &str) -> bool {
             | "starts_with"
             | "not_starts_with"
             | "string_contains"
+            | "ends_with"
+            | "concat"
+            | "str_lower"
+            | "basename"
+            | "strip_quotes"
+            | "edge_attr"
             | "attr"
             | "parent_function"
             | "resolved_import"

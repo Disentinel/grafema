@@ -31,6 +31,31 @@
 //! encoded with fixed tag bytes — so two rules that differ only in whitespace or variable
 //! names hash identically, while any change to predicates, constants, arity, negation, or
 //! literal order changes the hash.
+//!
+//! # `meta(...)` — projecting head columns into edge metadata
+//!
+//! `@materialize(edge_type = "T", meta(name1, name2, …))` projects EXTRA head columns into
+//! the written edge's metadata JSON. The head must then have arity `2 + len(meta)`:
+//! columns 0/1 stay the edge endpoints, and the i-th `meta` name (0-based, in source
+//! order) takes head column `2 + i`'s string surface. Example:
+//!
+//! ```text
+//! @materialize(edge_type = "CALLS", meta(method, line))
+//! resolved(C, M, Name, L) :- …      % C→M edge; metadata {"method": Name, "line": L}
+//! ```
+//!
+//! The written metadata is the provenance stamp plus the meta fields:
+//! `{"_source": …, "_generation": …, "name1": <surface>, "name2": <surface>}` (meta values
+//! are always JSON strings — the §5 string surface; `_`-prefixed names are reserved and
+//! rejected at parse). An arity mismatch (head ≠ `2 + len(meta)`) aborts the run with the
+//! coded `E-MAT-002` BEFORE any commit, exactly like a non-binary head without `meta`.
+//!
+//! `meta` does NOT change edge identity: dedup/diff stays keyed on `(src, dst, edge_type)`.
+//! Consequences: (a) for an ADDITIVE spec an already-present edge is NOT rewritten just
+//! because its metadata differs from the freshly-derived meta; (b) two derived facts that
+//! agree on the endpoints but differ in a meta column are ONE edge — which fact's metadata
+//! lands is storage-order-defined, not specified. Programs needing per-fact identity must
+//! put the distinguishing value into an endpoint, not into meta.
 
 use std::collections::HashMap;
 
@@ -75,6 +100,10 @@ pub struct MaterializeSpec {
     /// type as owned by the program and deletes the underived ones. Default `false`
     /// (exclusive — the depends.dl/DEPENDS_ON contract, reanalysis supersedes).
     pub additive: bool,
+    /// The `meta(...)` field names, in source order: the i-th name projects head column
+    /// `2 + i` into the written edge's metadata (module docs). Empty when the rule has no
+    /// `meta(...)` group — the legacy binary-head contract, byte-identical metadata.
+    pub meta: Vec<String>,
 }
 
 /// Extract every `@materialize(edge_type="T")` directive from a parsed program, paired
@@ -90,7 +119,7 @@ pub fn collect_materialize_specs(
     let mut out = Vec::new();
     for item in &program.items {
         for ann in &item.annotations {
-            let Annotation::Materialize(pairs) = ann else {
+            let Annotation::Materialize { pairs, meta } = ann else {
                 continue;
             };
             let edge_type = pairs
@@ -123,6 +152,7 @@ pub fn collect_materialize_specs(
                 edge_type,
                 rule_ast_hash: rule_ast_hash(&item.rule),
                 additive,
+                meta: meta.clone(),
             });
         }
     }
@@ -148,16 +178,22 @@ pub fn plan_writeback(
 ) -> Result<Vec<EdgeRecordV2>, MaterializeError> {
     let mut edges = Vec::new();
     for spec in specs {
-        let metadata = provenance_metadata(&spec.rule_ast_hash, generation);
+        // Without meta() the metadata is the bare provenance stamp, shared by every fact
+        // of the spec (built once, byte-identical to the pre-meta contract). With meta()
+        // it is per-fact (the projected columns differ), built below.
+        let provenance = provenance_metadata(&spec.rule_ast_hash, generation);
+        let expected_arity = 2 + spec.meta.len();
         for fact in evaluation.facts(&spec.predicate) {
-            if fact.len() != 2 {
+            if fact.len() != expected_arity {
                 return Err(MaterializeError {
                     code: "E-MAT-002",
                     detail: format!(
-                        "@materialize(edge_type=\"{}\") requires a binary head {}(A, B); \
-                         got arity {} — only a binary predicate projects to a graph edge",
+                        "@materialize(edge_type=\"{}\") requires head arity {} for {} \
+                         (2 endpoint columns + {} meta column(s)); got arity {}",
                         spec.edge_type,
+                        expected_arity,
                         spec.predicate,
+                        spec.meta.len(),
                         fact.len()
                     ),
                 });
@@ -176,11 +212,16 @@ pub fn plan_writeback(
                     spec.predicate, fact[1]
                 ),
             })?;
+            let metadata = if spec.meta.is_empty() {
+                provenance.clone()
+            } else {
+                meta_metadata(&provenance, &spec.meta, &fact[2..])
+            };
             edges.push(EdgeRecordV2 {
                 src,
                 dst,
                 edge_type: spec.edge_type.clone(),
-                metadata: metadata.clone(),
+                metadata,
             });
         }
     }
@@ -195,6 +236,25 @@ fn provenance_metadata(rule_ast_hash: &str, generation: u64) -> String {
         r#"{{"_source":"{}","_generation":{}}}"#,
         rule_ast_hash, generation
     )
+}
+
+/// The per-fact metadata JSON for a `meta(...)` spec: the provenance stamp's fields plus
+/// each meta name bound to its head column's STRING SURFACE (always a JSON string —
+/// `serde_json`-escaped, so any surface round-trips). `names` and `columns` are the same
+/// length by the caller's arity check; names are parse-validated plain identifiers
+/// (never `_`-prefixed, so they cannot collide with the provenance keys).
+fn meta_metadata(provenance: &str, names: &[String], columns: &[Value]) -> String {
+    let mut out = String::with_capacity(provenance.len() + 32 * names.len());
+    // Splice the meta fields before the provenance object's closing brace.
+    out.push_str(&provenance[..provenance.len() - 1]);
+    for (name, value) in names.iter().zip(columns) {
+        out.push(',');
+        out.push_str(&serde_json::Value::String(name.clone()).to_string());
+        out.push(':');
+        out.push_str(&serde_json::Value::String(value.as_str()).to_string());
+    }
+    out.push('}');
+    out
 }
 
 /// Resolve a head column to a node id: a [`Value::Id`] directly, or a [`Value::Str`] that
@@ -328,6 +388,21 @@ mod tests {
         assert_ne!(h, rule_ast_hash(&diff_pred), "predicate change must change hash");
     }
 
+    /// PIN: the bundled `depends.dl` rule's `rule_ast_hash` — the provenance `_source` stamp
+    /// every materialized DEPENDS_ON edge carries and the D2 maintain cache keys off. This
+    /// literal was captured BEFORE the `meta(...)` parser extension landed; the test proves
+    /// programs without `meta()` (and the AST they parse to) hash IDENTICALLY after it.
+    #[test]
+    fn depends_dl_rule_ast_hash_is_pinned() {
+        let prog = parse_ext_program(crate::datalog2::stdlib::DEPENDS_DL).expect("parse depends.dl");
+        assert_eq!(prog.items.len(), 1);
+        assert_eq!(
+            rule_ast_hash(&prog.items[0].rule),
+            "000b8fb9110c10193432fe9f6c18a5f681bd99f7b7b21263440931e55e963b9a",
+            "depends.dl provenance hash drifted — _source/maintain-cache identity would break"
+        );
+    }
+
     #[test]
     fn collect_specs_reads_edge_type_and_predicate() {
         let src = r#"@materialize(edge_type = "DEPENDS_ON")
@@ -364,6 +439,7 @@ mod tests {
             edge_type: "DEPENDS_ON".to_string(),
             rule_ast_hash: "abc123".to_string(),
             additive: false,
+            meta: Vec::new(),
         }];
         let edges = plan_writeback(&specs, &eval, 7).expect("plan");
         assert_eq!(edges.len(), 2);
@@ -386,8 +462,91 @@ mod tests {
             edge_type: "T".to_string(),
             rule_ast_hash: "h".to_string(),
             additive: false,
+            meta: Vec::new(),
         }];
         let err = plan_writeback(&specs, &eval, 1).expect_err("unary head must be rejected");
+        assert_eq!(err.code, "E-MAT-002");
+    }
+
+    // ── meta(...) projection ────────────────────────────────────────
+
+    #[test]
+    fn collect_specs_reads_meta_names() {
+        let src = r#"@materialize(edge_type = "CALLS", mode = "additive", meta(method, line))
+                     resolved(C, M, N, L) :- edge(C, M, "X"), attr(C, "name", N), attr(C, "line", L)."#;
+        let prog = parse_ext_program(src).expect("parse");
+        let specs = collect_materialize_specs(&prog).expect("specs");
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].edge_type, "CALLS");
+        assert!(specs[0].additive);
+        assert_eq!(specs[0].meta, vec!["method".to_string(), "line".to_string()]);
+    }
+
+    #[test]
+    fn plan_writeback_projects_meta_columns_into_metadata() {
+        let mut eval = Evaluation::default();
+        eval.relations.insert(
+            "resolved".to_string(),
+            vec![vec![
+                Value::Id(10),
+                Value::Id(20),
+                // A surface needing JSON escaping proves the values are escaped, not spliced.
+                Value::Str("say \"hi\"".to_string()),
+                // A typed numeric column projects by its string surface.
+                Value::Int(42),
+            ]
+            .into_boxed_slice()],
+        );
+        let specs = vec![MaterializeSpec {
+            predicate: "resolved".to_string(),
+            edge_type: "CALLS".to_string(),
+            rule_ast_hash: "h1".to_string(),
+            additive: true,
+            meta: vec!["method".to_string(), "line".to_string()],
+        }];
+        let edges = plan_writeback(&specs, &eval, 9).expect("plan");
+        assert_eq!(edges.len(), 1);
+        assert_eq!((edges[0].src, edges[0].dst), (10, 20));
+        let meta: serde_json::Value = serde_json::from_str(&edges[0].metadata).expect("valid JSON");
+        assert_eq!(meta["_source"], serde_json::json!("h1"));
+        assert_eq!(meta["_generation"], serde_json::json!(9));
+        assert_eq!(meta["method"], serde_json::json!("say \"hi\""));
+        assert_eq!(meta["line"], serde_json::json!("42"), "string surface, always a JSON string");
+    }
+
+    #[test]
+    fn plan_writeback_meta_arity_mismatch_is_coded_abort() {
+        // meta(method) demands arity 3; a binary fact must abort with E-MAT-002 (and the
+        // caller commits nothing — abort-no-commit, same as the legacy non-binary case).
+        let mut eval = Evaluation::default();
+        eval.relations.insert(
+            "resolved".to_string(),
+            vec![vec![Value::Id(10), Value::Id(20)].into_boxed_slice()],
+        );
+        let specs = vec![MaterializeSpec {
+            predicate: "resolved".to_string(),
+            edge_type: "CALLS".to_string(),
+            rule_ast_hash: "h".to_string(),
+            additive: false,
+            meta: vec!["method".to_string()],
+        }];
+        let err = plan_writeback(&specs, &eval, 1).expect_err("arity 2 ≠ 2 + 1 meta");
+        assert_eq!(err.code, "E-MAT-002");
+
+        // And the inverse: an arity-3 head WITHOUT meta stays rejected too.
+        let mut eval3 = Evaluation::default();
+        eval3.relations.insert(
+            "resolved".to_string(),
+            vec![vec![Value::Id(10), Value::Id(20), Value::Str("x".into())].into_boxed_slice()],
+        );
+        let bare = vec![MaterializeSpec {
+            predicate: "resolved".to_string(),
+            edge_type: "CALLS".to_string(),
+            rule_ast_hash: "h".to_string(),
+            additive: false,
+            meta: Vec::new(),
+        }];
+        let err = plan_writeback(&bare, &eval3, 1).expect_err("arity 3 without meta");
         assert_eq!(err.code, "E-MAT-002");
     }
 }

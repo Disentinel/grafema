@@ -2145,8 +2145,9 @@ fn preload_relations<T: IdempotentTag>(
 /// (spec §9.1/§9.2), composing DRed deletion and insertion. Given the prior [`Evaluation`],
 /// the prior and new base views, and the [`BaseDelta`] between them, returns the maintained
 /// `Evaluation` — provably equal to a from-scratch [`Executor::evaluate`] of the new base —
-/// or `Ok(None)` when the program is outside the sound envelope (any negation, or more than
-/// one derived stratum) and the caller must recompute.
+/// or `Ok(None)` when the program is outside the sound envelope (any negation, more than
+/// one derived stratum, or an `edge_attr` literal — its metadata-blob input is invisible
+/// to `diff_base`'s bare-triple edge diff) and the caller must recompute.
 ///
 /// Order: **delete then insert**. DRed (over-delete on the PRIOR base reading `ΔB⁻`, remove
 /// the candidates, re-derive the still-supported ones against the new base) yields the LFP of
@@ -2165,10 +2166,16 @@ pub(crate) fn maintain_incremental<T: IdempotentTag>(
 ) -> ExecResult<Option<Evaluation>> {
     // Envelope: insertion is non-monotone under negation (a base insert can retract through
     // `\+`), and cross-stratum delta threading is not yet implemented — recompute instead.
-    let has_negation = rules
-        .iter()
-        .any(|r| r.body().iter().any(|l| l.is_negative()));
-    if has_negation || strat.strata.len() > 1 {
+    // `edge_attr` is also outside the envelope: it reads the edge METADATA blob
+    // (`StorageView::edge_metadata`), which is NOT part of the diffed base tuples
+    // (`diff_base` diffs edges as bare `[src, type, dst]`), so a metadata-only change
+    // yields an EMPTY `BaseDelta` and a silent maintained≠scratch divergence.
+    let outside_envelope = rules.iter().any(|r| {
+        r.body()
+            .iter()
+            .any(|l| l.is_negative() || l.atom().predicate() == "edge_attr")
+    });
+    if outside_envelope || strat.strata.len() > 1 {
         return Ok(None);
     }
 
@@ -2947,6 +2954,48 @@ mod tests {
         assert!(out.is_none(), "negation → recompute fallback, never a wrong increment");
     }
 
+    /// The envelope guard for `edge_attr`: its input is the edge METADATA blob, which
+    /// `diff_base` cannot see (edges diff as bare `[src, type, dst]` triples). The test
+    /// first PROVES the hazard — a metadata-only change yields an EMPTY `BaseDelta` while
+    /// the from-scratch results differ — then asserts `maintain_incremental` refuses such
+    /// a program (returns `None` → recompute) instead of silently keeping stale facts.
+    #[test]
+    fn incremental_refuses_edge_attr_returns_none() {
+        let src = "via_import(A, B) :- edge(A, B, \"CALLS\"), edge_attr(A, B, \"CALLS\", \"via\", \"import\").";
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let stats = Stats { total_nodes: 2, total_edges: 1, ..Default::default() };
+        let plans = plan_program(&rules, &strat, &stats).expect("plan");
+
+        // Same edge triple in both generations; ONLY the metadata blob changes.
+        let mk = |meta: &str, gen: u64| {
+            let mut v = FixtureStorageView::new(gen);
+            edge(&mut v, "a", "b", "CALLS");
+            v.put_edge_metadata(id_of("a"), id_of("b"), "CALLS", meta);
+            v
+        };
+        let prev_view = mk("{\"via\":\"import\"}", 1);
+        let cur_view = mk("{\"via\":\"dynamic\"}", 2);
+
+        // The hazard, demonstrated: the base diff is EMPTY, yet scratch results differ.
+        let base_delta = crate::datalog2::increment::diff_base(&prev_view, &cur_view);
+        assert_eq!(base_delta.len(), 0, "metadata-only change is invisible to diff_base");
+        let prev = run(src, &prev_view, stats.clone());
+        let cur_scratch = run(src, &cur_view, stats);
+        assert_ne!(
+            prev.relations, cur_scratch.relations,
+            "scratch DOES see the metadata change (via_import fact must disappear)"
+        );
+
+        // The guard: a program mentioning edge_attr is outside the envelope → recompute.
+        let out = maintain_incremental::<BoolTag>(
+            &prev, &prev_view, &cur_view, &base_delta, &plans, &rules, &strat, EvalLimits::none(),
+        )
+        .expect("no executor error");
+        assert!(out.is_none(), "edge_attr → recompute fallback, never stale maintained facts");
+    }
+
     /// DRed end-to-end: deleting a base edge whose derived fact still has an ALTERNATE
     /// derivation must KEEP that fact (over-delete marks it, re-derive restores it). Diamond
     /// a→b, a→c, b→d, c→d; delete b→d; `(a,d)` survives via a→c→d.
@@ -3607,6 +3656,9 @@ mod tests {
             self.attr_calls.set(self.attr_calls.get() + 1);
             self.inner.nodes_by_attr(key, value)
         }
+        fn edge_metadata(&self, src: u128, dst: u128, edge_type: &str) -> Option<String> {
+            self.inner.edge_metadata(src, dst, edge_type)
+        }
     }
 
     /// Wraps a fixture view and counts the TOTAL number of base rows the run touches across
@@ -3672,6 +3724,11 @@ mod tests {
             let rows = self.inner.nodes_by_attr(key, value);
             self.bump(rows.len());
             rows
+        }
+        fn edge_metadata(&self, src: u128, dst: u128, edge_type: &str) -> Option<String> {
+            let r = self.inner.edge_metadata(src, dst, edge_type);
+            self.bump(r.is_some() as usize);
+            r
         }
     }
 

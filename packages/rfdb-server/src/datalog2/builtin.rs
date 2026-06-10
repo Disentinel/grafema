@@ -807,6 +807,135 @@ fn eval_string_contains(_v: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -
     Ok(())
 }
 
+/// `ends_with(Value, Suffix)` — both bound; pass iff `Value` ends with `Suffix`. The
+/// suffix twin of `starts_with` (string surfaces per spec §5).
+fn eval_ends_with(_v: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> BuiltinResult<()> {
+    if let (Some(v), Some(s)) = (bound_str(&spec.args[0]), bound_str(&spec.args[1])) {
+        if v.ends_with(&s) {
+            out.push_pass();
+        }
+    }
+    Ok(())
+}
+
+// ── Functions: string derivations (concat / str_lower / basename / strip_quotes) ──
+
+/// Shared tail of the [B…,F]/[B…,B] function builtins (the `method_suffix` discipline):
+/// the computed `produced` value either BINDS the output position (free/captured),
+/// passes existence (wildcard), or FILTERS on equality with an already-bound output.
+fn bind_or_check(out: &mut Batch, spec: &ArgSpec, pos: usize, produced: &str) {
+    if spec.args[pos].mode() == ArgMode::Free {
+        match free_slot(&spec.args[pos]) {
+            Some(slot) => {
+                let width = spec.output_arity();
+                out.push(emit_row(width, &[(slot, Value::Str(produced.to_string()))]));
+            }
+            // Wildcard output column: pure existence of a produced value.
+            None => out.push_pass(),
+        }
+    } else if bound_str(&spec.args[pos]).as_deref() == Some(produced) {
+        out.push_pass();
+    }
+}
+
+/// `concat(A, B, Out)` — string concatenation of the two bound §5 string surfaces.
+/// Function kind: a free arg2 binds `A ++ B`; a bound arg2 filters on equality with it.
+fn eval_concat(_v: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> BuiltinResult<()> {
+    let (Some(a), Some(b)) = (bound_str(&spec.args[0]), bound_str(&spec.args[1])) else {
+        return Ok(());
+    };
+    let produced = format!("{a}{b}");
+    bind_or_check(out, spec, 2, &produced);
+    Ok(())
+}
+
+/// `str_lower(S, L)` — `L` is the ASCII-lowercased surface of `S` (`to_ascii_lowercase`;
+/// non-ASCII characters pass through unchanged — identifiers/paths/edge types are the
+/// intended domain, not locale-aware text). Free arg1 binds; bound arg1 equality-filters.
+fn eval_str_lower(_v: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> BuiltinResult<()> {
+    let Some(s) = bound_str(&spec.args[0]) else {
+        return Ok(());
+    };
+    let produced = s.to_ascii_lowercase();
+    bind_or_check(out, spec, 1, &produced);
+    Ok(())
+}
+
+/// `basename(P, B)` — the substring after the LAST `/` of a path (`"a/b/c.js"` →
+/// `"c.js"`); identity when the path has no `/` (`"c.js"` → `"c.js"`). NO row when the
+/// result is empty (a trailing slash, `"a/b/"`): an empty basename names nothing
+/// (mirrors `method_suffix`'s empty-suffix skip). Free arg1 binds; bound arg1 filters.
+fn eval_basename(_v: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> BuiltinResult<()> {
+    let Some(p) = bound_str(&spec.args[0]) else {
+        return Ok(());
+    };
+    let produced = match p.rfind('/') {
+        Some(slash) => &p[slash + 1..],
+        None => p.as_str(),
+    };
+    if produced.is_empty() {
+        return Ok(());
+    }
+    bind_or_check(out, spec, 1, produced);
+    Ok(())
+}
+
+/// `strip_quotes(R, V)` — `V` is `R` minus ONE pair of surrounding MATCHING quotes
+/// (`"x"` → `x`, `'x'` → `x`, `""x""` → `"x"`); identity when `R` is not so wrapped
+/// (unquoted, mismatched `"x'`, or too short to carry a pair). Free arg1 binds; bound
+/// arg1 equality-filters. A wrapped empty string (`""` → ``) still produces its row —
+/// the empty VALUE is a legitimate stripping result, unlike `basename`'s empty name.
+fn eval_strip_quotes(_v: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> BuiltinResult<()> {
+    let Some(r) = bound_str(&spec.args[0]) else {
+        return Ok(());
+    };
+    let bytes = r.as_bytes();
+    let produced = if bytes.len() >= 2
+        && (bytes[0] == b'"' || bytes[0] == b'\'')
+        && bytes[bytes.len() - 1] == bytes[0]
+    {
+        &r[1..r.len() - 1]
+    } else {
+        r.as_str()
+    };
+    bind_or_check(out, spec, 1, produced);
+    Ok(())
+}
+
+// ── Function: edge_attr (edge-metadata point probe) ────────────────
+
+/// `edge_attr(Src, Dst, Type, Key, Val)` — read a TOP-LEVEL string/number field `Key`
+/// from the metadata JSON of the bound edge `Src -[Type]-> Dst` (the metadata twin of
+/// `attr`, served by the one-edge point probe [`StorageView::edge_metadata`] — all of
+/// src/dst/type are already bound, §8.3). Free arg4 binds the field's string surface
+/// (a JSON string verbatim, a JSON number by its JSON text); bound arg4 equality-filters.
+///
+/// Missing edge, edge without metadata, unparseable metadata, missing key, or a
+/// non-scalar value (bool/null/array/object) ⇒ NO row — a tuple non-match, never an
+/// error (the graph legitimately contains edges without the asked-for field).
+fn eval_edge_attr(view: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> BuiltinResult<()> {
+    let (Some(src), Some(dst)) = (bound_id(&spec.args[0]), bound_id(&spec.args[1])) else {
+        return Ok(());
+    };
+    let (Some(ty), Some(key)) = (bound_str(&spec.args[2]), bound_str(&spec.args[3])) else {
+        return Ok(());
+    };
+    let Some(blob) = view.edge_metadata(src, dst, &ty) else {
+        return Ok(());
+    };
+    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&blob) else {
+        return Ok(());
+    };
+    let produced = match parsed.get(&key) {
+        Some(serde_json::Value::String(s)) => s.clone(),
+        Some(serde_json::Value::Number(n)) => n.to_string(),
+        // Absent key or a non-scalar (bool/null/array/object) value: no row.
+        _ => return Ok(()),
+    };
+    bind_or_check(out, spec, 4, &produced);
+    Ok(())
+}
+
 // ── Mode tables ────────────────────────────────────────────────────
 
 use ArgMode::{Bound as B, Free as F};
@@ -840,6 +969,21 @@ const FILTER2_MODES: &[Mode] = &[Mode { args: &[B, B] }];
 /// `method_suffix/2` modes: the full dotted name (arg0) must be bound; the method-name
 /// column (arg1) is either free (bind the extracted suffix) or bound (equality check).
 const METHOD_SUFFIX_MODES: &[Mode] = &[Mode { args: &[B, F] }, Mode { args: &[B, B] }];
+
+/// Unary string-function modes (`str_lower`/`basename`/`strip_quotes`): the input (arg0)
+/// must be bound; the output (arg1) is either free (bind) or bound (equality check) —
+/// the same discipline as [`METHOD_SUFFIX_MODES`].
+const STR_FN2_MODES: &[Mode] = &[Mode { args: &[B, F] }, Mode { args: &[B, B] }];
+
+/// `concat/3` modes: both inputs bound; the output is free (bind) or bound (check).
+const CONCAT_MODES: &[Mode] = &[Mode { args: &[B, B, F] }, Mode { args: &[B, B, B] }];
+
+/// `edge_attr/5` modes: the edge triple (src, dst, type) and the metadata key are always
+/// bound (a point probe on a bound edge); the value is free (bind) or bound (check).
+const EDGE_ATTR_MODES: &[Mode] = &[
+    Mode { args: &[B, B, B, B, F] },
+    Mode { args: &[B, B, B, B, B] },
+];
 
 // ── The registry (one registration point) ──────────────────────────
 
@@ -944,6 +1088,48 @@ pub fn registry() -> Vec<BuiltinDef> {
             modes: METHOD_SUFFIX_MODES,
             kind: BuiltinKind::Function,
             eval: eval_method_suffix,
+        },
+        BuiltinDef {
+            name: "ends_with",
+            arity: 2,
+            modes: FILTER2_MODES,
+            kind: BuiltinKind::Filter,
+            eval: eval_ends_with,
+        },
+        BuiltinDef {
+            name: "concat",
+            arity: 3,
+            modes: CONCAT_MODES,
+            kind: BuiltinKind::Function,
+            eval: eval_concat,
+        },
+        BuiltinDef {
+            name: "str_lower",
+            arity: 2,
+            modes: STR_FN2_MODES,
+            kind: BuiltinKind::Function,
+            eval: eval_str_lower,
+        },
+        BuiltinDef {
+            name: "basename",
+            arity: 2,
+            modes: STR_FN2_MODES,
+            kind: BuiltinKind::Function,
+            eval: eval_basename,
+        },
+        BuiltinDef {
+            name: "strip_quotes",
+            arity: 2,
+            modes: STR_FN2_MODES,
+            kind: BuiltinKind::Function,
+            eval: eval_strip_quotes,
+        },
+        BuiltinDef {
+            name: "edge_attr",
+            arity: 5,
+            modes: EDGE_ATTR_MODES,
+            kind: BuiltinKind::Function,
+            eval: eval_edge_attr,
         },
     ]
 }
@@ -1053,8 +1239,41 @@ mod tests {
             "starts_with",
             "not_starts_with",
             "string_contains",
+            "method_suffix",
+            "ends_with",
+            "concat",
+            "str_lower",
+            "basename",
+            "strip_quotes",
+            "edge_attr",
         ] {
             assert!(lookup(name).is_some(), "missing builtin {name}");
+        }
+    }
+
+    /// Every registered builtin must ALSO be known to the stratifier (the `BUILTINS` array
+    /// in stratify.rs) so it is never mistaken for a derived predicate — method_suffix was
+    /// once registered here but forgotten there (debug_assert panic). Pin the pairing for
+    /// the whole registry so a future builtin cannot repeat the miss.
+    #[test]
+    fn every_registered_builtin_is_extensional_for_the_stratifier() {
+        for def in registry() {
+            let args = (0..def.arity)
+                .map(|i| format!("V{i}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let src = format!("p(V0) :- {}({args}).", def.name);
+            let prog =
+                crate::datalog2::parser_ext::parse_ext_program(&src).expect("probe rule parses");
+            let strat = crate::datalog2::stratify::stratify(&prog).expect("stratifies");
+            assert_eq!(
+                strat.strata.len(),
+                1,
+                "builtin `{}` must be extensional (one stratum, only `p` derived) — \
+                 is it missing from stratify.rs BUILTINS?",
+                def.name
+            );
+            assert_eq!(strat.strata[0].predicates, vec!["p".to_string()]);
         }
     }
 
@@ -1281,6 +1500,9 @@ mod tests {
         }
         fn nodes_by_attr(&self, key: &str, value: &str) -> Vec<GlueNodeRow> {
             self.inner.nodes_by_attr(key, value)
+        }
+        fn edge_metadata(&self, src: u128, dst: u128, edge_type: &str) -> Option<String> {
+            self.inner.edge_metadata(src, dst, edge_type)
         }
     }
 
@@ -1690,4 +1912,294 @@ mod tests {
         assert_eq!(run("string_contains", sc_no).rows.len(), 0);
     }
 
+    // ── ends_with ──────────────────────────────────────────────────
+
+    #[test]
+    fn ends_with_passes_on_suffix_only() {
+        let hit = ArgSpec::new(vec![ArgValue::Bound(s("src/app.test.js")), ArgValue::Bound(s(".js"))]);
+        assert_eq!(run("ends_with", hit).rows.len(), 1);
+        let miss = ArgSpec::new(vec![ArgValue::Bound(s("src/app.test.js")), ArgValue::Bound(s(".ts"))]);
+        assert_eq!(run("ends_with", miss).rows.len(), 0);
+        // A PREFIX is not a suffix (the starts_with complement check).
+        let prefix = ArgSpec::new(vec![ArgValue::Bound(s("src/app.js")), ArgValue::Bound(s("src/"))]);
+        assert_eq!(run("ends_with", prefix).rows.len(), 0);
+    }
+
+    // ── concat ─────────────────────────────────────────────────────
+
+    #[test]
+    fn concat_binds_and_checks() {
+        // [B, B, F] — bind the concatenation.
+        let bind = ArgSpec::new(vec![
+            ArgValue::Bound(s("kb.")),
+            ArgValue::Bound(s("queryNodes")),
+            ArgValue::Free { slot: 0 },
+        ]);
+        let out = run("concat", bind);
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(out.rows[0][0], s("kb.queryNodes"));
+
+        // [B, B, B] — equality check: pass and non-match.
+        let hit = ArgSpec::new(vec![
+            ArgValue::Bound(s("a")),
+            ArgValue::Bound(s("b")),
+            ArgValue::Bound(s("ab")),
+        ]);
+        assert_eq!(run("concat", hit).rows.len(), 1);
+        let miss = ArgSpec::new(vec![
+            ArgValue::Bound(s("a")),
+            ArgValue::Bound(s("b")),
+            ArgValue::Bound(s("ba")),
+        ]);
+        assert_eq!(run("concat", miss).rows.len(), 0);
+    }
+
+    #[test]
+    fn concat_free_input_is_unsupported_mode() {
+        // concat(Free, B, F) — both inputs must be bound first (E-PLAN-001 names arg 0).
+        let def = lookup("concat").unwrap();
+        let spec = ArgSpec::new(vec![
+            ArgValue::Free { slot: 0 },
+            ArgValue::Bound(s("b")),
+            ArgValue::Free { slot: 1 },
+        ]);
+        let err = def.check_mode(&spec).unwrap_err();
+        assert_eq!(err.code.as_str(), "E-PLAN-001");
+        assert!(err.required_bindings.contains(&0), "must name the free input");
+    }
+
+    // ── str_lower ──────────────────────────────────────────────────
+
+    #[test]
+    fn str_lower_binds_ascii_lowercase_and_checks() {
+        let bind = ArgSpec::new(vec![ArgValue::Bound(s("HTTP_Route")), ArgValue::Free { slot: 0 }]);
+        let out = run("str_lower", bind);
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(out.rows[0][0], s("http_route"));
+
+        let hit = ArgSpec::new(vec![ArgValue::Bound(s("ABC")), ArgValue::Bound(s("abc"))]);
+        assert_eq!(run("str_lower", hit).rows.len(), 1);
+        let miss = ArgSpec::new(vec![ArgValue::Bound(s("ABC")), ArgValue::Bound(s("ABC"))]);
+        assert_eq!(run("str_lower", miss).rows.len(), 0, "output position is the LOWERED surface");
+    }
+
+    // ── basename ───────────────────────────────────────────────────
+
+    #[test]
+    fn basename_after_last_slash_identity_and_empty_skip() {
+        // Substring after the LAST '/'.
+        let deep = ArgSpec::new(vec![ArgValue::Bound(s("src/a/b/file.js")), ArgValue::Free { slot: 0 }]);
+        let out = run("basename", deep);
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(out.rows[0][0], s("file.js"));
+
+        // No '/' → identity.
+        let flat = ArgSpec::new(vec![ArgValue::Bound(s("file.js")), ArgValue::Free { slot: 0 }]);
+        let out = run("basename", flat);
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(out.rows[0][0], s("file.js"));
+
+        // Trailing slash → empty basename → NO row (mirrors method_suffix's empty skip).
+        let trailing = ArgSpec::new(vec![ArgValue::Bound(s("src/dir/")), ArgValue::Free { slot: 0 }]);
+        assert_eq!(run("basename", trailing).rows.len(), 0);
+
+        // [B, B] check mode.
+        let hit = ArgSpec::new(vec![ArgValue::Bound(s("a/b.js")), ArgValue::Bound(s("b.js"))]);
+        assert_eq!(run("basename", hit).rows.len(), 1);
+        let miss = ArgSpec::new(vec![ArgValue::Bound(s("a/b.js")), ArgValue::Bound(s("a"))]);
+        assert_eq!(run("basename", miss).rows.len(), 0);
+    }
+
+    // ── strip_quotes ───────────────────────────────────────────────
+
+    #[test]
+    fn strip_quotes_one_matching_pair_else_identity() {
+        let case = |input: &str, expect: &str| {
+            let spec = ArgSpec::new(vec![ArgValue::Bound(s(input)), ArgValue::Free { slot: 0 }]);
+            let out = run("strip_quotes", spec);
+            assert_eq!(out.rows.len(), 1, "strip_quotes({input:?}) must produce one row");
+            assert_eq!(out.rows[0][0], s(expect), "strip_quotes({input:?})");
+        };
+        case("\"./util\"", "./util"); // double quotes stripped
+        case("'./util'", "./util"); // single quotes stripped
+        case("\"\"x\"\"", "\"x\""); // exactly ONE pair stripped
+        case("./util", "./util"); // unquoted → identity
+        case("\"./util'", "\"./util'"); // MISMATCHED pair → identity
+        case("\"", "\""); // a lone quote (len 1) → identity
+        case("\"\"", ""); // a wrapped empty string strips to the empty VALUE (a row)
+
+        // [B, B] check mode.
+        let hit = ArgSpec::new(vec![ArgValue::Bound(s("'x'")), ArgValue::Bound(s("x"))]);
+        assert_eq!(run("strip_quotes", hit).rows.len(), 1);
+        let miss = ArgSpec::new(vec![ArgValue::Bound(s("'x'")), ArgValue::Bound(s("'x'"))]);
+        assert_eq!(run("strip_quotes", miss).rows.len(), 0);
+    }
+
+    // ── edge_attr ──────────────────────────────────────────────────
+
+    /// Fixture: c1 -CALLS-> m1 with metadata; c2 -CALLS-> m1 without; plus a node set.
+    fn edge_attr_fixture() -> FixtureStorageView {
+        let mut v = FixtureStorageView::new(1);
+        for (sid, ty, name) in [
+            ("c1", "CALL", "kb.queryNodes"),
+            ("c2", "CALL", "other.run"),
+            ("m1", "METHOD", "queryNodes"),
+        ] {
+            v.put_node(GlueNodeRow {
+                id: id_of(sid),
+                node_type: ty.to_string(),
+                name: name.to_string(),
+                file: "a/file.js".to_string(),
+            });
+        }
+        for src in ["c1", "c2"] {
+            v.put_edge(EdgeRow {
+                src: id_of(src),
+                dst: id_of("m1"),
+                edge_type: "CALLS".to_string(),
+            });
+        }
+        v.put_edge_metadata(
+            id_of("c1"),
+            id_of("m1"),
+            "CALLS",
+            r#"{"via":"instance_of","line":42,"flags":[1,2],"ok":true}"#,
+        );
+        v
+    }
+
+    fn run_edge_attr(view: &dyn StorageView, src: &str, dst: &str, ty: &str, key: &str, val: ArgValue) -> Batch {
+        let def = lookup("edge_attr").unwrap();
+        let spec = ArgSpec::new(vec![
+            ArgValue::Bound(Value::Id(id_of(src))),
+            ArgValue::Bound(Value::Id(id_of(dst))),
+            ArgValue::Bound(s(ty)),
+            ArgValue::Bound(s(key)),
+            val,
+        ]);
+        def.check_mode(&spec).expect("mode supported");
+        let mut out = Batch::new();
+        (def.eval)(view, &mut out, &spec).expect("eval ok");
+        out
+    }
+
+    #[test]
+    fn edge_attr_binds_string_and_number_fields() {
+        let v = edge_attr_fixture();
+        // String field → its value verbatim.
+        let out = run_edge_attr(&v, "c1", "m1", "CALLS", "via", ArgValue::Free { slot: 0 });
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(out.rows[0][0], s("instance_of"));
+        // Number field → its JSON text surface.
+        let out = run_edge_attr(&v, "c1", "m1", "CALLS", "line", ArgValue::Free { slot: 0 });
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(out.rows[0][0], s("42"));
+    }
+
+    #[test]
+    fn edge_attr_missing_or_nonscalar_is_no_row_never_error() {
+        let v = edge_attr_fixture();
+        // Missing key.
+        assert_eq!(run_edge_attr(&v, "c1", "m1", "CALLS", "nope", ArgValue::Free { slot: 0 }).rows.len(), 0);
+        // Non-scalar values: array and bool are NOT string/number fields.
+        assert_eq!(run_edge_attr(&v, "c1", "m1", "CALLS", "flags", ArgValue::Free { slot: 0 }).rows.len(), 0);
+        assert_eq!(run_edge_attr(&v, "c1", "m1", "CALLS", "ok", ArgValue::Free { slot: 0 }).rows.len(), 0);
+        // Edge exists but carries no metadata.
+        assert_eq!(run_edge_attr(&v, "c2", "m1", "CALLS", "via", ArgValue::Free { slot: 0 }).rows.len(), 0);
+        // No such edge (wrong type / wrong endpoints).
+        assert_eq!(run_edge_attr(&v, "c1", "m1", "NOPE", "via", ArgValue::Free { slot: 0 }).rows.len(), 0);
+        assert_eq!(run_edge_attr(&v, "m1", "c1", "CALLS", "via", ArgValue::Free { slot: 0 }).rows.len(), 0);
+    }
+
+    #[test]
+    fn edge_attr_check_mode_and_unsupported_mode() {
+        let v = edge_attr_fixture();
+        // [B,B,B,B,B] equality check.
+        assert_eq!(
+            run_edge_attr(&v, "c1", "m1", "CALLS", "via", ArgValue::Bound(s("instance_of"))).rows.len(),
+            1
+        );
+        assert_eq!(
+            run_edge_attr(&v, "c1", "m1", "CALLS", "via", ArgValue::Bound(s("unique"))).rows.len(),
+            0
+        );
+        // A free endpoint is not a supported mode (the probe needs the bound triple).
+        let def = lookup("edge_attr").unwrap();
+        let spec = ArgSpec::new(vec![
+            ArgValue::Free { slot: 0 },
+            ArgValue::Bound(Value::Id(id_of("m1"))),
+            ArgValue::Bound(s("CALLS")),
+            ArgValue::Bound(s("via")),
+            ArgValue::Free { slot: 1 },
+        ]);
+        let err = def.check_mode(&spec).unwrap_err();
+        assert_eq!(err.code.as_str(), "E-PLAN-001");
+        assert!(err.required_bindings.contains(&0));
+    }
+
+    #[test]
+    fn edge_attr_real_lsm_store_reads_committed_edge_metadata() {
+        // Same probe over the REAL store: commit an edge carrying metadata and read the
+        // field back through the snapshot-pinned keyed index (LsmStorageView).
+        let mut store = MultiShardStore::ephemeral(4);
+        let mut manifest = ManifestStore::ephemeral();
+        let nodes = vec![
+            node_rec("c1", "CALL", "kb.queryNodes", "a/file.js"),
+            node_rec("m1", "METHOD", "queryNodes", "b/file.js"),
+        ];
+        let mut e = edge_rec("c1", "m1", "CALLS");
+        e.metadata = r#"{"via":"instance_of","line":42}"#.to_string();
+        store
+            .commit_batch(
+                nodes,
+                vec![e],
+                &["a/file.js".to_string(), "b/file.js".to_string()],
+                HashMap::new(),
+                &mut manifest,
+            )
+            .unwrap();
+        let view = LsmStorageView::capture(Arc::new(store), &manifest);
+
+        let out = run_edge_attr(&view, "c1", "m1", "CALLS", "via", ArgValue::Free { slot: 0 });
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(out.rows[0][0], s("instance_of"));
+        let out = run_edge_attr(&view, "c1", "m1", "CALLS", "line", ArgValue::Free { slot: 0 });
+        assert_eq!(out.rows[0][0], s("42"));
+        // Missing key on the real path: no row, no error.
+        assert_eq!(run_edge_attr(&view, "c1", "m1", "CALLS", "nope", ArgValue::Free { slot: 0 }).rows.len(), 0);
+    }
+
+    // ── rule-level: concat + edge_attr through the full evaluate() entry ──
+
+    /// End-to-end (parse → stratify → plan → fixpoint): a rule joining `edge_attr` (the
+    /// metadata field of a CALLS edge) with a two-step `concat` derives exactly the call
+    /// whose edge carries the field — the c2 edge without metadata produces nothing.
+    #[test]
+    fn rule_level_concat_and_edge_attr_via_evaluate() {
+        use crate::datalog::EvalLimits;
+        use crate::datalog2::events::EventLog;
+        use crate::datalog2::evaluate;
+
+        let v = edge_attr_fixture();
+        let src = r#"linked(C, M, S) :-
+                       node(C, "CALL"),
+                       edge(C, M, "CALLS"),
+                       edge_attr(C, M, "CALLS", "via", V),
+                       attr(C, "name", N),
+                       concat(N, ":", T),
+                       concat(T, V, S)."#;
+        let stats = Stats { total_nodes: 3, total_edges: 2, ..Default::default() };
+        let eval = evaluate(&v, src, stats, EvalLimits::none(), EventLog::discard())
+            .expect("evaluate");
+
+        let facts = eval.facts("linked");
+        assert_eq!(facts.len(), 1, "only the metadata-carrying CALLS edge links");
+        assert_eq!(facts[0][0], Value::Id(id_of("c1")));
+        assert_eq!(facts[0][1], Value::Id(id_of("m1")));
+        assert_eq!(
+            facts[0][2],
+            s("kb.queryNodes:instance_of"),
+            "name ++ ':' ++ metadata-via, derived through two concat hops"
+        );
+    }
 }
