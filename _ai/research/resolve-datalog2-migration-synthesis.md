@@ -2,6 +2,21 @@ I have enough grounding (verified the stdlib packs exist, the prior synthesis do
 
 # Resolver → datalog2 migration — synthesis (resolve round, 2026-06-10)
 
+## W6-R WAVE LEDGER (updated 2026-06-10 night)
+
+| Wave | Status | Notes |
+|---|---|---|
+| 0 preconditions | ✅ ddd8e6d3 | facts e2e, live shapes (2 producer bugs found), stratifier self-read, GRAFEMA_SKIP_RESOLVERS |
+| 1 | ✅ + differential PASS | READS_FROM 98.5%, in-scope CALLS 99.4%; 612/616 misses = later-wave classes |
+| 1b + node_attr | ✅ | + attr-generator maintain-envelope fix (4th invariant catch by review) |
+| 2 + strip_prefix | ✅ b89c3c90 | 5 packs incl. WHOLE ClassInheritance + RustTraitResolution resolvers; cross-language index-leakage fix (5th catch) |
+| 2b (re-export chains, builtins pack) | next | |
+| 3 (path kit → module kernels → GATE legacy js/rust + re-differential) | | |
+| 4 (runtime-globals facts) | | haskell/beam/type-inference/shape-tracker unscheduled |
+
+15 packs in the runner, all shadow-mode alongside legacy. Shadow cost re-measure pending
+(38.6s @ 7 packs in W5).
+
 ## ✅ WAVE 1 DIFFERENTIAL — PASS (2026-06-10 evening, run B vs legacy baseline)
 
 Run B = full analyze with GRAFEMA_SKIP_RESOLVERS=js,rust + the 8-pack runner: **446s wall**
