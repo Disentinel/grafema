@@ -40,6 +40,25 @@ the §8 maps: `_ai/research/rfdb-datalog-gateB-residual-map.md`.
 **Standing (user, 2026-06-07):** commit freely on `feat/datalog` without asking; NEVER push
 without explicit permission.
 
+## ROADMAP W6-W9 — big-codebase scaling (user-approved 2026-06-10, after W5)
+
+- **W6 — parallel eval (rayon) + build-once index cache.** Evaluator is single-threaded (0 rayon
+  in datalog2/); post-W1 it is rayon-ready: par_chunks over rows within a semi-naive iteration,
+  rules-within-stratum parallel, INTER-PACK concurrency on pinned MVCC snapshots (write-backs
+  serialized; method_calls→shape_verifier ordering kept). Plus (leg, view-generation) cache for
+  build-once indexes (W1 review: rebuilt per fixpoint iteration). Expect 4-6× on 8-10 cores.
+- **W7 — write path:** tiered/partial L1 compaction (C3 gap 1: full-rewrite O(DB) per round,
+  ms/commit 22.5→49.6 over 600→4000 commits); interior-mutability Shard for concurrent-path
+  auto-compaction (C3 gap 2); orchestrator concurrent commits exploiting B4/C1 (main.rs:753
+  serial awaits today).
+- **W8 — long-lived server robustness:** cancel-on-disconnect (server observed twice at 96% CPU
+  grinding dead clients' queries), persistent GraphEngineV2::clear() (the --clear placebo gap),
+  durable-across-restart D2 pin (metadata sidecar, NOT manifest tags). Then flip
+  RFDB_DATALOG_V2 default=on (decision #9 — perf blocker now removed).
+- **W9 — planner/exec stats maturity:** edges_by_type oracle in Stats (const-type edge scans
+  estimate √total_edges today), attr distinct-scan transient cap (>1024 ids materializes the
+  full node run per leg call), thread per-predicate estimates into order_literals.
+
 ## SESSION 2026-06-10 — user pivot: «MVCC с параллельностью + боттлнеки плагинов/ресолверов за счёт datalog2»
 
 - **MVCC ground truth:** branch `rfdb-mvcc` (B1–B5, C1 group-commit 3.12x, C2 bulk-load, C3
