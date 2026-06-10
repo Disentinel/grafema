@@ -45,13 +45,29 @@
 % exact parity.
 %
 % NUMBERED DELTAS vs the resolver (everything not listed is exact):
-%   DELTA 1 (subset — Wave 2b, re-export chains): bindings whose matched export
-%     entry is a re-export EXPORT_BINDING, and bindings resolved through STAR
-%     re-export probing (tryStarReExports, Hs:389-407), derive NOTHING here —
-%     the chain/star recursion is the Wave-2b/3 step (visible() fixpoint over
-%     RE_EXPORTS + strip_prefix). The legacy producer still emits the
-%     chain-collapsed edge, so the graph loses nothing in the hybrid phase.
-%     Bounded by the count of source-stamped EXPORT_BINDINGs + star EXPORTs.
+%   DELTA 1 (Wave 2b — re-export chains, PARTIALLY CLOSED): the binding now
+%     resolves through the visible() fixpoint (the in-pack port of
+%     handleExportEntry/tryStarReExports, ImportResolution.hs:363-407):
+%     named re-export EXPORT_BINDINGs are FOLLOWED (with local-name rebinding,
+%     Hs:373-386) and star re-exports recurse through their committed
+%     RE_EXPORTS edge (the legacy resolveStarReExports seam, Hs:563-606).
+%     The depth-10 cap and the visited set (Hs:84-85, :328-335) are subsumed
+%     by the set-semantics fixpoint (cycles converge; no cap needed).
+%     REMAINING SUBSET (bounded, Wave 3): a NAMED re-export's source
+%     specifier has NO committed seam — no IMPORT node exists for
+%     `export { x } from './y'` (Declarations.hs:599-644 emits only the
+%     EXPORT_BINDING; legacy resolveAll resolves IMPORT_BINDINGs only,
+%     ImportResolution.hs:470) — so its hop resolves ONLY when the same file
+%     also imports the same specifier (the resolved_at IMPORT→MODULE join
+%     below). Star hops always resolve (RE_EXPORTS is committed per star
+%     EXPORT). The legacy producer still emits every chain-collapsed edge, so
+%     the hybrid graph loses nothing; full named-hop parity needs the Wave-3
+%     path kit.
+%   DELTA 1b (superset, set semantics — the two verdict-recorded preferences):
+%     the resolver probed stars only on a direct-match MISS (resolveFromFile,
+%     Hs:337-350) and took the FIRST of multiple star sources (Hs:404-407);
+%     visible() fires direct and star arms both, across ALL star sources —
+%     extra derivations where a name is reachable both ways.
 %   DELTA 2 (superset): duplicate same-name exports in one file — the
 %     resolver's findMatchingExport took the FIRST entry (Hs:353-357); set
 %     semantics derives an edge per candidate.
@@ -62,8 +78,8 @@
 %     recorded for the differential.
 %   DELTA 4 (metadata/diagnostics): the resolver's stderr warnings (unresolvable
 %     module, missing importedName, cycle/depth caps) have no pack analog; the
-%     depth-10 cap and visited set are irrelevant while DELTA 1 holds (no chain
-%     following at all).
+%     depth-10 cap and visited set are subsumed by the visible() fixpoint
+%     (DELTA 1) — a chain the resolver refused at depth 11 derives here.
 %   DELTA 5 (file gate): the resolver's effective gate was the orchestrator's
 %     detect_language == JavaScript stream filter (8 extensions) — the js_b
 %     clause set below (one clause per extension; a derived gate is
@@ -121,7 +137,35 @@ exported_in(TF, N, EB) :-
     \+ eb_reexport(EB),
     node_attr(EB, "exportedName", N), neq(N, "").
 
+% ── The re-export chain (Wave 2b): visible(TF, N, T) = name N is reachable
+%    among TF's exports, chain-collapsed to the FINAL node T ────────────────
+
+% A named re-export's target file: the re-exporting file's own legacy
+% IMPORT → MODULE edge where one exists (the bounded seam — DELTA 1).
+resolved_at(F, S, TF) :-
+    node(I, "IMPORT"), attr(I, "file", F), attr(I, "name", S),
+    edge(I, M, "IMPORTS_FROM"), node(M, "MODULE"), attr(M, "file", TF).
+
+% Named re-export step: `export { LN as EN } from S` in file F — follow into
+% TF2 under the LOCAL name (the Hs:373 rebinding; eb_reexport defined above).
+reexp(F, EN, LN, TF2) :-
+    node(EB, "EXPORT_BINDING"), attr(EB, "file", F), attr(EB, "name", LN), neq(LN, ""),
+    node_attr(EB, "source", S),
+    node_attr(EB, "exportedName", EN), neq(EN, ""),
+    resolved_at(F, S, TF2).
+
+% Star re-export step: `export * from S` in F — the star EXPORT's committed
+% RE_EXPORTS edge IS the resolved target module (Hs:563-606 seam).
+star_src(F, TF2) :-
+    node(E, "EXPORT"), attr(E, "file", F), attr(E, "name", N), starts_with(N, "*:"),
+    edge(E, M, "RE_EXPORTS"), node(M, "MODULE"), attr(M, "file", TF2).
+
+visible(TF, N, T) :- exported_in(TF, N, T).
+visible(F, EN, T) :- reexp(F, EN, LN, TF2), visible(TF2, LN, T).
+visible(F, N, T)  :- star_src(F, TF2), visible(TF2, N, T).
+
 % B1 + B2: the binding resolves to the target file's export matching the
-% ORIGINAL imported name (named/aliased by IN; default via clause 2/3).
+% ORIGINAL imported name (named/aliased by IN; default via clause 2/3),
+% re-export chains collapsed to the final node by visible() (Wave 2b).
 @materialize(edge_type = "IMPORTS_FROM", mode = "additive")
-binding_import(B, T) :- b_named(B, TF, IN), exported_in(TF, IN, T).
+binding_import(B, T) :- b_named(B, TF, IN), visible(TF, IN, T).

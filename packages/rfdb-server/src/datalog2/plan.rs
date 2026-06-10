@@ -198,6 +198,22 @@ pub fn plan_program(
         // Non-recursive (base-case) rules first: their estimates seed the self-leg bound
         // the recursive rules of the SAME predicate use (fixpoint size isn't known until
         // it runs; the base case is the sound seed, doubled for growth).
+        //
+        // INTRA-STRATUM PUBLISHING: a stratum can hold a whole producer-consumer CHAIN of
+        // mutually-independent predicates — a storage-level `@materialize` back-edge (a
+        // pack that both writes and reads IMPORTS_FROM, W-STRAT-001) collapses the chain
+        // into one SCC. Planning each sibling with only the LOWER-stratum estimates sent
+        // every same-stratum derived leg to the whole-graph None-fallback, whose product
+        // q-error spuriously trips E-PLAN-003 (observed live 2026-06-10: the stdlib
+        // js_import_bindings chain rule estimated b_named·visible at 905 847 × 952 ≈ 862M
+        // vs an actual ~3k). Non-recursive rules are planned in source order and publish
+        // their estimates into a stratum-local overlay as they go, so a leg over an
+        // ALREADY-PLANNED sibling is sized at that sibling's own magnitude. Lowering an
+        // estimate can only let MORE rules pass the §3 guard and reorder legs — never
+        // change WHICH facts a rule derives (I1, same contract as `derived_estimate`).
+        // Packs keep prelude-before-consumer source order (the established convention),
+        // so the overlay is populated exactly along the dependency chain.
+        let mut local_estimates: HashMap<String, u64> = estimates.clone();
         let mut base_case: HashMap<String, u64> = HashMap::new();
         for &i in &idxs {
             let rule = rules[i];
@@ -209,9 +225,11 @@ pub fn plan_program(
             if is_recursive {
                 continue;
             }
-            let plan = plan_rule_with(rule, strat, stats, &estimates, None)?;
+            let plan = plan_rule_with(rule, strat, stats, &local_estimates, None)?;
             let e = base_case.entry(head.to_string()).or_insert(0);
             *e = (*e).max(plan.estimate);
+            let le = local_estimates.entry(head.to_string()).or_insert(0);
+            *le = le.saturating_add(plan.estimate);
             plans[i] = Some(plan);
         }
         for &i in &idxs {
@@ -223,7 +241,12 @@ pub fn plan_program(
                 .get(rule.head().predicate())
                 .copied()
                 .unwrap_or(0);
-            plans[i] = Some(plan_rule_with(rule, strat, stats, &estimates, Some(bc))?);
+            let plan = plan_rule_with(rule, strat, stats, &local_estimates, Some(bc))?;
+            let le = local_estimates
+                .entry(rule.head().predicate().to_string())
+                .or_insert(0);
+            *le = le.saturating_add(plan.estimate);
+            plans[i] = Some(plan);
         }
         // Publish this stratum's predicate estimates for the strata above it.
         for &i in &idxs {
@@ -902,7 +925,18 @@ fn derived_estimate(
     let first_bound = pattern.first().map(|m| *m == ArgMode::Bound).unwrap_or(false);
     let any_bound = pattern.iter().any(|m| *m == ArgMode::Bound);
     let known = if recursive {
-        self_base.map(|b| b.saturating_mul(2))
+        // A same-stratum leg. A leg whose predicate already has a published estimate —
+        // the intra-stratum overlay [`plan_program`] threads in (an earlier-planned
+        // SIBLING of a storage-level SCC, or the head's own base-case partial sum) —
+        // is sized at that magnitude doubled (the fixpoint growth seed). Only without
+        // one does it fall to the head's base case; both beat the whole-graph
+        // None-fallback whose product q-error spuriously tripped E-PLAN-003 on
+        // producer-consumer chains collapsed into one stratum (W-STRAT-001).
+        estimates
+            .get(name)
+            .copied()
+            .map(|k| k.saturating_mul(2))
+            .or_else(|| self_base.map(|b| b.saturating_mul(2)))
     } else {
         estimates.get(name).copied()
     };

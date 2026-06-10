@@ -68,6 +68,11 @@ const STDLIB_RULE_PACKS: &[&str] = &[
     "@stdlib/js_cross_file_calls",
     "@stdlib/js_property_access_ns",
     "@stdlib/js_property_access_full",
+    // Wave 2b builtins split: the nodes pack MINTS the EXTERNAL_* endpoints the
+    // edges pack joins as committed EDB (strict nodes→edges order); both are
+    // CALLS/IMPORTS_FROM producers — before method_calls/shape_verifier.
+    "@stdlib/js_builtins_nodes",
+    "@stdlib/js_builtins_edges",
     "@stdlib/method_calls",
     "@stdlib/shape_verifier",
     "@stdlib/axum_routes",

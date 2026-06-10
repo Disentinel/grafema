@@ -227,6 +227,22 @@ pub const JS_CLASS_INHERITANCE_DL: &str = include_str!("stdlib/js_class_inherita
 /// under maintain.
 pub const JS_PROPERTY_ACCESS_FULL_DL: &str = include_str!("stdlib/js_property_access_full.dl");
 
+/// Node half of the Builtins.hs replacement (Wave 2b): EXTERNAL_MODULE +
+/// EXTERNAL_FUNCTION minting via `@materialize_node`, byte-identical legacy
+/// semantic ids (`EXTERNAL_MODULE:<m>` / `EXTERNAL_FUNCTION:<m>.<fn>`),
+/// registry as generated ground facts, NOT registry-gated (the Wave-1 verdict
+/// fix), `module` projected into metadata for the edges pack's node_attr
+/// join. node_attr + negation + minting ⇒ scratch-only under maintain.
+pub const JS_BUILTINS_NODES_DL: &str = include_str!("stdlib/js_builtins_nodes.dl");
+
+/// Edge half of the Builtins.hs replacement (Wave 2b): IMPORTS_FROM
+/// IMPORT→EXTERNAL_MODULE + CALLS CALL→EXTERNAL_FUNCTION (method arm
+/// first-dot split + the direct-call arm), endpoints pinned by
+/// (name, node_attr module, file "<builtin>"). MUST run after
+/// `js_builtins_nodes` (committed-EDB endpoint join — the two-pack split for
+/// same-run-minted endpoints). Both heads additive (shared vocabulary).
+pub const JS_BUILTINS_EDGES_DL: &str = include_str!("stdlib/js_builtins_edges.dl");
+
 /// The named stdlib rule packs, addressable on the wire as `"@stdlib/<name>"`
 /// (`MaterializeDatalog` and the other empty-source-defaulting dispatchers), listed
 /// in CANONICAL RUN ORDER. The order is a CONTRACT, not cosmetics — producers run
@@ -261,12 +277,18 @@ pub const JS_PROPERTY_ACCESS_FULL_DL: &str = include_str!("stdlib/js_property_ac
 ///   `EXTENDS` for `shape_verifier`'s inheritance closure;
 ///   `js_property_access_full` produces `READS_FROM`, so it precedes
 ///   `method_calls`/`shape_verifier`.
+/// - the Wave-2b builtins split: `js_builtins_nodes` MINTS the EXTERNAL_MODULE
+///   / EXTERNAL_FUNCTION endpoints that `js_builtins_edges` joins as COMMITTED
+///   EDB (the engine-sanctioned two-pack answer to same-run-minted edge
+///   endpoints), so nodes run strictly before edges; the edges pack produces
+///   CALLS + IMPORTS_FROM, so both precede `method_calls` / `shape_verifier`.
 /// An orchestrator running the packs sequentially must preserve this order:
 /// depends → js_local_refs → js_same_file_calls → js_this_method_calls →
 /// rust_calls → rust_cross_methods_ctor → rust_trait_resolve →
 /// rust_receiver_typing → js_import_bindings → js_class_inheritance →
 /// js_cross_file_calls → js_property_access_ns → js_property_access_full →
-/// method_calls → shape_verifier → axum_routes.
+/// js_builtins_nodes → js_builtins_edges → method_calls → shape_verifier →
+/// axum_routes.
 pub const STDLIB_PACKS: &[(&str, &str)] = &[
     ("depends", DEPENDS_DL),
     ("js_local_refs", JS_LOCAL_REFS_DL),
@@ -288,6 +310,12 @@ pub const STDLIB_PACKS: &[(&str, &str)] = &[
     ("js_cross_file_calls", JS_CROSS_FILE_CALLS_DL),
     ("js_property_access_ns", JS_PROPERTY_ACCESS_NS_DL),
     ("js_property_access_full", JS_PROPERTY_ACCESS_FULL_DL),
+    // Wave 2b: js_builtins_nodes mints the EXTERNAL_* endpoints that
+    // js_builtins_edges joins as committed EDB (strict nodes→edges order);
+    // both are CALLS/IMPORTS_FROM producers, so they precede the fuzzy
+    // fallback (method_calls) and the negator (shape_verifier).
+    ("js_builtins_nodes", JS_BUILTINS_NODES_DL),
+    ("js_builtins_edges", JS_BUILTINS_EDGES_DL),
     ("method_calls", METHOD_CALLS_DL),
     ("shape_verifier", SHAPE_VERIFIER_DL),
     ("axum_routes", AXUM_ROUTES_DL),
@@ -1145,6 +1173,8 @@ mod tests {
                 "js_cross_file_calls",
                 "js_property_access_ns",
                 "js_property_access_full",
+                "js_builtins_nodes",
+                "js_builtins_edges",
                 "method_calls",
                 "shape_verifier",
                 "axum_routes",
@@ -2271,9 +2301,13 @@ mod tests {
              (DELTA 5) derives nothing"
         );
 
-        // Both heads materialize the SHARED type EXTENDS — additive + resolvedVia.
+        // All five heads materialize the SHARED type EXTENDS — additive + resolvedVia.
         let ext_specs: Vec<_> = specs.iter().filter(|s| s.edge_type == "EXTENDS").collect();
-        assert_eq!(ext_specs.len(), 2, "two EXTENDS heads (same-file + cross-file)");
+        assert_eq!(
+            ext_specs.len(),
+            5,
+            "five EXTENDS heads (same-file + cross-file + chain + builtin-import + builtin-global)"
+        );
         assert!(
             ext_specs.iter().all(|s| s.additive),
             "EXTENDS is shared (shape-tracker also emits it) — additive is mandatory"
@@ -2282,8 +2316,13 @@ mod tests {
             ext_specs
                 .iter()
                 .all(|s| s.meta == vec!["resolvedVia".to_string()]),
-            "resolvedVia is projected on both heads"
+            "resolvedVia is projected on all heads"
         );
+        // The Wave-2b arms stay silent on this fixture: no <builtin> classes, no
+        // binding metadata, no CONTAINS/RE_EXPORTS seams.
+        assert!(triples(&eval, "ext_chain").is_empty());
+        assert!(triples(&eval, "ext_builtin_import").is_empty());
+        assert!(triples(&eval, "ext_builtin_global").is_empty());
     }
 
     /// The bundled js_import_bindings pack (Wave 2, node_attr) resolves the
@@ -2809,4 +2848,573 @@ mod tests {
             "resolvedVia + receiverType ride as meta columns"
         );
     }
+
+    /// Wave 2b — the visible() re-export fixpoint in js_import_bindings:
+    /// - a NAMED re-export hop with local-name rebinding
+    ///   (`export { deep as renamed } from './deep'`, Hs:373-386), its target
+    ///   file via the re-exporting file's own IMPORT→MODULE seam;
+    /// - a 2-hop STAR chain through committed RE_EXPORTS edges
+    ///   (top `export * from './mid'`, mid `export * from './deep2'`);
+    /// - the bounded-subset pin: a named re-export whose source has NO IMPORT
+    ///   seam in its file derives NOTHING (js_import_bindings DELTA 1);
+    /// - re-export EXPORT_BINDINGs are FOLLOWED, never endpoints.
+    #[test]
+    fn js_import_bindings_reexport_chains() {
+        let mut v = FixtureStorageView::new(1);
+
+        // deep.ts: the final declaration, directly exported.
+        named_node(&mut v, "m_deep", "deep", "MODULE", "deep.ts");
+        named_node(&mut v, "e_deep", "named", "EXPORT", "deep.ts");
+        named_node(&mut v, "f_deep", "deep", "FUNCTION", "deep.ts");
+        edge(&mut v, "e_deep", "f_deep", "EXPORTS");
+
+        // deep2.ts: the star-chain terminus.
+        named_node(&mut v, "m_deep2", "deep2", "MODULE", "deep2.ts");
+        named_node(&mut v, "e_deep2", "named", "EXPORT", "deep2.ts");
+        named_node(&mut v, "f_star", "starfn", "FUNCTION", "deep2.ts");
+        edge(&mut v, "e_deep2", "f_star", "EXPORTS");
+
+        // mid.ts: a NAMED re-export with rebinding (`export { deep as renamed }
+        // from './deep'`) — the file also imports './deep' (the resolved_at seam) —
+        // plus a star re-export of deep2 (committed RE_EXPORTS edge).
+        named_node(&mut v, "m_mid", "mid", "MODULE", "mid.ts");
+        named_node(&mut v, "eb_mid", "deep", "EXPORT_BINDING", "mid.ts");
+        v.put_node_metadata(
+            id_of("eb_mid"),
+            r#"{"exportedName":"renamed","source":"./deep"}"#,
+        );
+        named_node(&mut v, "i_mid", "./deep", "IMPORT", "mid.ts");
+        edge(&mut v, "i_mid", "m_deep", "IMPORTS_FROM");
+        named_node(&mut v, "e_star_mid", "*:./deep2", "EXPORT", "mid.ts");
+        edge(&mut v, "e_star_mid", "m_deep2", "RE_EXPORTS");
+        // The DELTA-1 pin: a named re-export with NO IMPORT seam for its source.
+        named_node(&mut v, "eb_ghost", "g", "EXPORT_BINDING", "mid.ts");
+        v.put_node_metadata(
+            id_of("eb_ghost"),
+            r#"{"exportedName":"ghost","source":"./nowhere"}"#,
+        );
+
+        // top.ts: a barrel star-re-exporting mid.
+        named_node(&mut v, "m_top", "top", "MODULE", "top.ts");
+        named_node(&mut v, "e_star_top", "*:./mid", "EXPORT", "top.ts");
+        edge(&mut v, "e_star_top", "m_mid", "RE_EXPORTS");
+
+        // app.ts imports from the top barrel.
+        named_node(&mut v, "i_app", "./top", "IMPORT", "app.ts");
+        edge(&mut v, "i_app", "m_top", "IMPORTS_FROM");
+        let bind = |v: &mut FixtureStorageView, sid: &str, local: &str, imported: &str| {
+            named_node(v, sid, local, "IMPORT_BINDING", "app.ts");
+            v.put_node_metadata(id_of(sid), &format!(r#"{{"importedName":"{imported}"}}"#));
+            edge(v, "i_app", sid, "CONTAINS");
+        };
+        bind(&mut v, "b_renamed", "renamed", "renamed"); // star(top→mid) + named hop → f_deep
+        bind(&mut v, "b_star", "starfn", "starfn"); // star(top→mid) + star(mid→deep2) → f_star
+        bind(&mut v, "b_ghost", "ghost", "ghost"); // named hop without seam — DELTA 1 miss
+
+        let (eval, _specs, _node_specs) = evaluate_with_materialize(
+            &v,
+            JS_IMPORT_BINDINGS_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("js_import_bindings.dl evaluates with chains");
+
+        let pairs: BTreeSet<(u128, u128)> = eval
+            .facts("binding_import")
+            .into_iter()
+            .map(|row| {
+                (
+                    row[0].as_id().expect("arg0 id"),
+                    row[1].as_id().expect("arg1 id"),
+                )
+            })
+            .collect();
+        assert_eq!(
+            pairs,
+            BTreeSet::from([
+                (id_of("b_renamed"), id_of("f_deep")),
+                (id_of("b_star"), id_of("f_star")),
+            ]),
+            "chains collapse to the FINAL declaration (named hop with rebinding \
+             through the IMPORT seam; 2-hop star chain through RE_EXPORTS); the \
+             seam-less named hop (DELTA 1) derives nothing and no edge ever \
+             targets a re-export EXPORT_BINDING"
+        );
+    }
+
+    /// Wave 2b — js_cross_file_calls namespace arm through the visible() chain:
+    /// `import * as barrel from './top'; barrel.deepFn()` where top.ts star
+    /// re-exports mid.ts which directly exports deepFn — the member resolves to
+    /// the chain-collapsed declaration. Pins the duplicated prelude compiles in
+    /// THIS pack too (textual-include discipline).
+    #[test]
+    fn js_cross_file_calls_ns_member_through_star_chain() {
+        let mut v = FixtureStorageView::new(1);
+
+        named_node(&mut v, "m_mid", "mid", "MODULE", "mid.ts");
+        named_node(&mut v, "e_mid", "named", "EXPORT", "mid.ts");
+        named_node(&mut v, "f_deepfn", "deepFn", "FUNCTION", "mid.ts");
+        edge(&mut v, "e_mid", "f_deepfn", "EXPORTS");
+
+        named_node(&mut v, "m_top", "top", "MODULE", "top.ts");
+        named_node(&mut v, "e_star_top", "*:./mid", "EXPORT", "top.ts");
+        edge(&mut v, "e_star_top", "m_mid", "RE_EXPORTS");
+
+        // import * as barrel from './top' — namespace binding → MODULE edge.
+        named_node(&mut v, "b_ns", "barrel", "IMPORT_BINDING", "app.ts");
+        edge(&mut v, "b_ns", "m_top", "IMPORTS_FROM");
+        named_node(&mut v, "c_deep", "barrel.deepFn", "CALL", "app.ts");
+        named_node(&mut v, "c_miss", "barrel.nope", "CALL", "app.ts");
+
+        let (eval, _specs, _node_specs) = evaluate_with_materialize(
+            &v,
+            JS_CROSS_FILE_CALLS_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("js_cross_file_calls.dl evaluates with chains");
+
+        assert_eq!(
+            triples(&eval, "xf_ns_call"),
+            BTreeSet::from([(
+                id_of("c_deep"),
+                id_of("f_deepfn"),
+                "cross-file-calls".to_string()
+            )]),
+            "the ns member resolves through the star chain to the collapsed \
+             declaration; an unknown member still derives nothing"
+        );
+    }
+
+    /// Wave 2b — the js_class_inheritance gap arms, pinned to the LIVE-PROBED
+    /// EXTENDS regression (gated run 10 vs legacy 14; see the pack header):
+    /// - A4 builtin global: `class MyErr extends Error` with NO import — the
+    ///   type-inference CLASS:Error@<builtin> node is the target;
+    /// - A3 builtin import: `import { EventEmitter } from 'events'` (incl. the
+    ///   aliased form matching by importedName);
+    /// - the A3 gate: the same shape from an npm package ('eventemitter3') must
+    ///   NOT attach to a same-named builtin class (DELTA 8 narrowness), and the
+    ///   binding's presence suppresses A4;
+    /// - A1-suppression: a same-file class named Error beats the builtin (A4
+    ///   fires only without a local candidate);
+    /// - A2c chain: a superclass imported through a star-re-export barrel whose
+    ///   binding has NO legacy IMPORTS_FROM edge resolves in-pack via visible().
+    #[test]
+    fn js_class_inheritance_builtin_and_chain_arms() {
+        let mut v = FixtureStorageView::new(1);
+
+        // The type-inference builtin classes (plugins/type-inference.mjs Phase 1).
+        named_node(&mut v, "bi_error", "Error", "CLASS", "<builtin>");
+        named_node(&mut v, "bi_ee", "EventEmitter", "CLASS", "<builtin>");
+        named_node(&mut v, "bi_em3", "Emitter3", "CLASS", "<builtin>");
+
+        // A4: class MyErr extends Error — no binding, no local Error.
+        named_node(&mut v, "cls_myerr", "MyErr", "CLASS", "a.ts");
+        v.put_node_metadata(id_of("cls_myerr"), r#"{"superClass":"Error"}"#);
+
+        // A3: import { EventEmitter } from 'events'; class Mgr extends EventEmitter.
+        named_node(&mut v, "cls_mgr", "Mgr", "CLASS", "b.ts");
+        v.put_node_metadata(id_of("cls_mgr"), r#"{"superClass":"EventEmitter"}"#);
+        named_node(&mut v, "b_ee", "EventEmitter", "IMPORT_BINDING", "b.ts");
+        v.put_node_metadata(
+            id_of("b_ee"),
+            r#"{"source":"events","importedName":"EventEmitter"}"#,
+        );
+
+        // A3 aliased: import { EventEmitter as EE } from 'node:events'.
+        named_node(&mut v, "cls_mgr2", "Mgr2", "CLASS", "b2.ts");
+        v.put_node_metadata(id_of("cls_mgr2"), r#"{"superClass":"EE"}"#);
+        named_node(&mut v, "b_ee_alias", "EE", "IMPORT_BINDING", "b2.ts");
+        v.put_node_metadata(
+            id_of("b_ee_alias"),
+            r#"{"source":"node:events","importedName":"EventEmitter"}"#,
+        );
+
+        // A3 gate (npm collision): import { Emitter3 } from 'eventemitter3' —
+        // a builtin CLASS named Emitter3 exists but the source is NOT a builtin
+        // module → A3 silent; the binding's presence suppresses A4 too.
+        named_node(&mut v, "cls_npm", "Npm", "CLASS", "c.ts");
+        v.put_node_metadata(id_of("cls_npm"), r#"{"superClass":"Emitter3"}"#);
+        named_node(&mut v, "b_em3", "Emitter3", "IMPORT_BINDING", "c.ts");
+        v.put_node_metadata(
+            id_of("b_em3"),
+            r#"{"source":"eventemitter3","importedName":"Emitter3"}"#,
+        );
+
+        // A1-suppression: a same-file class named Error wins over the builtin.
+        named_node(&mut v, "cls_localerr", "Error", "CLASS", "d.ts");
+        named_node(&mut v, "cls_shadow", "Shadow", "CLASS", "d.ts");
+        v.put_node_metadata(id_of("cls_shadow"), r#"{"superClass":"Error"}"#);
+
+        // A2c chain: import { Base } from './barrel' where barrel.ts star
+        // re-exports base.ts; the binding has NO legacy IMPORTS_FROM edge.
+        named_node(&mut v, "cls_chained", "Chained", "CLASS", "e.ts");
+        v.put_node_metadata(id_of("cls_chained"), r#"{"superClass":"Base"}"#);
+        named_node(&mut v, "b_base", "Base", "IMPORT_BINDING", "e.ts");
+        v.put_node_metadata(id_of("b_base"), r#"{"importedName":"Base"}"#);
+        named_node(&mut v, "i_e", "./barrel", "IMPORT", "e.ts");
+        edge(&mut v, "i_e", "b_base", "CONTAINS");
+        named_node(&mut v, "m_barrel", "barrel", "MODULE", "barrel.ts");
+        edge(&mut v, "i_e", "m_barrel", "IMPORTS_FROM");
+        named_node(&mut v, "e_star_barrel", "*:./base", "EXPORT", "barrel.ts");
+        named_node(&mut v, "m_base", "base", "MODULE", "base.ts");
+        edge(&mut v, "e_star_barrel", "m_base", "RE_EXPORTS");
+        named_node(&mut v, "e_base", "named", "EXPORT", "base.ts");
+        named_node(&mut v, "cls_basecls", "Base", "CLASS", "base.ts");
+        edge(&mut v, "e_base", "cls_basecls", "EXPORTS");
+
+        let (eval, _specs, _node_specs) = evaluate_with_materialize(
+            &v,
+            JS_CLASS_INHERITANCE_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("js_class_inheritance.dl evaluates with the Wave-2b arms");
+
+        let via = |pairs: &[(&str, &str)]| -> BTreeSet<(u128, u128, String)> {
+            pairs
+                .iter()
+                .map(|(c, t)| (id_of(c), id_of(t), "class-inheritance".to_string()))
+                .collect()
+        };
+        assert_eq!(
+            triples(&eval, "ext_builtin_global"),
+            via(&[("cls_myerr", "bi_error")]),
+            "A4: the unimported global superclass attaches to the type-inference \
+             builtin class; the local-Error file (A1 wins) and every \
+             binding-bearing class stay out"
+        );
+        assert_eq!(
+            triples(&eval, "ext_builtin_import"),
+            via(&[("cls_mgr", "bi_ee"), ("cls_mgr2", "bi_ee")]),
+            "A3: builtin-module superclass bindings (plain + aliased via \
+             importedName); the npm-source binding (DELTA 8 gate) derives nothing"
+        );
+        assert_eq!(
+            triples(&eval, "ext_chain"),
+            via(&[("cls_chained", "cls_basecls")]),
+            "A2c: the superclass resolves through the star-re-export chain even \
+             though the binding has no legacy IMPORTS_FROM edge"
+        );
+        assert_eq!(
+            triples(&eval, "ext_same_file"),
+            via(&[("cls_shadow", "cls_localerr")]),
+            "A1 still wins where a same-file candidate exists"
+        );
+    }
+
+    /// Wave 2b — js_builtins_nodes mints EXTERNAL_MODULE / EXTERNAL_FUNCTION
+    /// with BYTE-IDENTICAL legacy semantic ids (Builtins.hs:364-395), covering
+    /// every verdict fix:
+    /// (a) non-registry methods mint (fs.promises.readFile — the first-dot
+    ///     split: name "promises.readFile", module "fs");
+    /// (b) the direct-call arm mints by importedName (aliased
+    ///     `import {join as j} from 'path'; j()` → EXTERNAL_FUNCTION:path.join);
+    /// registry hits split into the security head ("fs.readFileSync",
+    /// file-io/false) and the pure head ("path.join", pure=true);
+    /// negatives: a non-builtin binding's dotted call, a dotted callee never
+    /// hits the direct arm, the .rs IMPORT gate.
+    #[test]
+    fn js_builtins_nodes_mints_legacy_sids() {
+        let mut v = FixtureStorageView::new(1);
+
+        // import * as fs from 'node:fs' (namespace) + two calls.
+        named_node(&mut v, "i_fs", "node:fs", "IMPORT", "app.ts");
+        named_node(&mut v, "b_fs", "fs", "IMPORT_BINDING", "app.ts");
+        v.put_node_metadata(id_of("b_fs"), r#"{"source":"node:fs","importedName":"*"}"#);
+        named_node(&mut v, "c_rfs", "fs.readFileSync", "CALL", "app.ts");
+        named_node(&mut v, "c_pro", "fs.promises.readFile", "CALL", "app.ts");
+
+        // import { join as j } from 'path'; j() — the aliased direct arm.
+        named_node(&mut v, "i_path", "path", "IMPORT", "app.ts");
+        named_node(&mut v, "b_join", "j", "IMPORT_BINDING", "app.ts");
+        v.put_node_metadata(id_of("b_join"), r#"{"source":"path","importedName":"join"}"#);
+        named_node(&mut v, "c_j", "j", "CALL", "app.ts");
+
+        // Negatives: non-builtin binding, dotted call on it; .rs IMPORT.
+        named_node(&mut v, "b_lodash", "lodash", "IMPORT_BINDING", "app.ts");
+        v.put_node_metadata(
+            id_of("b_lodash"),
+            r#"{"source":"lodash","importedName":"*"}"#,
+        );
+        named_node(&mut v, "c_lodash", "lodash.map", "CALL", "app.ts");
+        named_node(&mut v, "i_rs", "os", "IMPORT", "main.rs");
+
+        let (eval, _specs, node_specs) = evaluate_with_materialize(
+            &v,
+            JS_BUILTINS_NODES_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("js_builtins_nodes.dl evaluates");
+
+        let sids = |pred: &str| -> BTreeSet<String> {
+            eval.facts(pred)
+                .into_iter()
+                .map(|row| row[0].as_str())
+                .collect()
+        };
+        assert_eq!(
+            sids("ext_module_node"),
+            BTreeSet::from([
+                "EXTERNAL_MODULE:fs".to_string(),
+                "EXTERNAL_MODULE:path".to_string(),
+            ]),
+            "node:fs normalizes to fs; the .rs IMPORT 'os' is gated out"
+        );
+        assert_eq!(
+            sids("ext_func_node_sec"),
+            BTreeSet::from(["EXTERNAL_FUNCTION:fs.readFileSync".to_string()]),
+            "the registry security head"
+        );
+        assert_eq!(
+            sids("ext_func_node_pure"),
+            BTreeSet::from(["EXTERNAL_FUNCTION:path.join".to_string()]),
+            "the aliased direct call mints by importedName (verdict fix b)"
+        );
+        assert_eq!(
+            sids("ext_func_node_plain"),
+            BTreeSet::from(["EXTERNAL_FUNCTION:fs.promises.readFile".to_string()]),
+            "non-registry methods mint too (verdict fix a — registry never gates); \
+             the lodash dotted call derives nothing"
+        );
+
+        // The full sec row carries name/file/meta columns exactly.
+        let sec_rows: Vec<Vec<String>> = eval
+            .facts("ext_func_node_sec")
+            .into_iter()
+            .map(|r| r.iter().map(|v| v.as_str()).collect())
+            .collect();
+        assert_eq!(
+            sec_rows,
+            vec![vec![
+                "EXTERNAL_FUNCTION:fs.readFileSync".to_string(),
+                "readFileSync".to_string(),
+                "<builtin>".to_string(),
+                "fs".to_string(),
+                "file-io".to_string(),
+                "false".to_string(),
+            ]],
+            "sid, name, file '<builtin>', module, security, pure"
+        );
+
+        // Node specs: 1 module head + 3 function heads, all exclusive
+        // (provenance-scoped), with the documented meta columns.
+        let by_pred = |p: &str| {
+            node_specs
+                .iter()
+                .find(|s| s.predicate == p)
+                .unwrap_or_else(|| panic!("missing node spec {p}"))
+        };
+        assert_eq!(node_specs.len(), 4, "four @materialize_node heads");
+        assert!(
+            node_specs.iter().all(|s| !s.additive),
+            "exclusive (provenance-scoped) on every node head"
+        );
+        assert_eq!(by_pred("ext_module_node").node_type, "EXTERNAL_MODULE");
+        assert_eq!(by_pred("ext_module_node").meta, vec!["source".to_string()]);
+        assert_eq!(
+            by_pred("ext_func_node_sec").meta,
+            vec![
+                "module".to_string(),
+                "security".to_string(),
+                "pure".to_string()
+            ]
+        );
+        assert_eq!(
+            by_pred("ext_func_node_pure").meta,
+            vec!["module".to_string(), "pure".to_string()]
+        );
+        assert_eq!(
+            by_pred("ext_func_node_plain").meta,
+            vec!["module".to_string()]
+        );
+    }
+
+    /// Wave 2b — js_builtins_edges joins the COMMITTED EXTERNAL_* endpoints
+    /// (as minted by js_builtins_nodes / the legacy resolver) and reproduces
+    /// both Builtins.hs edge emissions:
+    /// - IMPORTS_FROM IMPORT → EXTERNAL_MODULE;
+    /// - CALLS method arm (first-dot split) and direct arm;
+    /// - the bare-name collision pin (verdict fix c): a direct `parse()` from
+    ///   'path' hits EXTERNAL_FUNCTION:path.parse, NOT url.parse — the
+    ///   node_attr("module") disambiguation.
+    #[test]
+    fn js_builtins_edges_joins_minted_endpoints() {
+        let mut v = FixtureStorageView::new(1);
+
+        // The committed EXTERNAL_* state (legacy ids, module in metadata).
+        named_node(&mut v, "EXTERNAL_MODULE:fs", "fs", "EXTERNAL_MODULE", "<builtin>");
+        named_node(
+            &mut v,
+            "EXTERNAL_FUNCTION:fs.readFileSync",
+            "readFileSync",
+            "EXTERNAL_FUNCTION",
+            "<builtin>",
+        );
+        v.put_node_metadata(id_of("EXTERNAL_FUNCTION:fs.readFileSync"), r#"{"module":"fs"}"#);
+        named_node(
+            &mut v,
+            "EXTERNAL_FUNCTION:path.parse",
+            "parse",
+            "EXTERNAL_FUNCTION",
+            "<builtin>",
+        );
+        v.put_node_metadata(id_of("EXTERNAL_FUNCTION:path.parse"), r#"{"module":"path"}"#);
+        named_node(
+            &mut v,
+            "EXTERNAL_FUNCTION:url.parse",
+            "parse",
+            "EXTERNAL_FUNCTION",
+            "<builtin>",
+        );
+        v.put_node_metadata(id_of("EXTERNAL_FUNCTION:url.parse"), r#"{"module":"url"}"#);
+
+        // import * as fs from 'node:fs'; fs.readFileSync().
+        named_node(&mut v, "i_fs", "node:fs", "IMPORT", "app.ts");
+        named_node(&mut v, "b_fs", "fs", "IMPORT_BINDING", "app.ts");
+        v.put_node_metadata(id_of("b_fs"), r#"{"source":"node:fs","importedName":"*"}"#);
+        named_node(&mut v, "c_rfs", "fs.readFileSync", "CALL", "app.ts");
+
+        // import { parse } from 'path'; parse() — must pin path.parse.
+        named_node(&mut v, "b_parse", "parse", "IMPORT_BINDING", "app.ts");
+        v.put_node_metadata(
+            id_of("b_parse"),
+            r#"{"source":"path","importedName":"parse"}"#,
+        );
+        named_node(&mut v, "c_parse", "parse", "CALL", "app.ts");
+
+        let (eval, specs, _node_specs) = evaluate_with_materialize(
+            &v,
+            JS_BUILTINS_EDGES_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("js_builtins_edges.dl evaluates");
+
+        let via = |pairs: &[(&str, &str)]| -> BTreeSet<(u128, u128, String)> {
+            pairs
+                .iter()
+                .map(|(c, t)| (id_of(c), id_of(t), "builtins".to_string()))
+                .collect()
+        };
+        assert_eq!(
+            triples(&eval, "bi_import_edge"),
+            via(&[("i_fs", "EXTERNAL_MODULE:fs")]),
+            "IMPORT → EXTERNAL_MODULE"
+        );
+        assert_eq!(
+            triples(&eval, "bi_method_edge"),
+            via(&[("c_rfs", "EXTERNAL_FUNCTION:fs.readFileSync")]),
+            "the method arm joins the minted endpoint"
+        );
+        assert_eq!(
+            triples(&eval, "bi_direct_edge"),
+            via(&[("c_parse", "EXTERNAL_FUNCTION:path.parse")]),
+            "the direct arm pins path.parse over url.parse via node_attr module \
+             (verdict fix c)"
+        );
+
+        // IMPORTS_FROM + CALLS heads — all additive (shared vocabulary).
+        assert!(
+            specs
+                .iter()
+                .all(|s| s.additive && s.meta == vec!["resolvedVia".to_string()]),
+            "every edge head is additive with resolvedVia"
+        );
+        assert_eq!(
+            specs.iter().filter(|s| s.edge_type == "CALLS").count(),
+            2,
+            "method + direct CALLS heads"
+        );
+        assert_eq!(
+            specs
+                .iter()
+                .filter(|s| s.edge_type == "IMPORTS_FROM")
+                .count(),
+            1,
+            "one IMPORTS_FROM head"
+        );
+    }
+
+    /// Every bundled pack must PLAN under dogfood-scale statistics — the §3
+    /// guards (E-PLAN-003 cross-join + the 10M per-rule output-estimate
+    /// ceiling) are evaluated against the cardinality oracle, so a pack that
+    /// evaluates fine on a 10-node fixture can still be REJECTED at production
+    /// scale (observed live, 2026-06-10 gated run: js_import_bindings'
+    /// chain-join estimated at 858M and js_class_inheritance's A3 hit the
+    /// cross-join check, both skipped by the pack-runner). Stats mirror the
+    /// real dogfood graph (426k nodes / 905k edges, per-type counts from a
+    /// countNodesByType probe of that run's DB).
+    ///
+    /// KNOWN EXCLUSIONS (pre-existing, fail on HEAD before Wave 2b):
+    /// rust_cross_methods_ctor and rust_receiver_typing trip the 10M estimate
+    /// on this oracle (66M; they were already absent from the W6 baseline
+    /// run's 13 completed packs) — tracked as their own follow-up, not gated
+    /// here.
+    #[test]
+    fn stdlib_packs_plan_under_dogfood_scale_stats() {
+        use crate::datalog2::parser_ext::parse_ext_program;
+        use crate::datalog2::plan::plan_program;
+        use crate::datalog2::stratify::stratify;
+
+        let mut nodes_by_type = std::collections::HashMap::new();
+        for (ty, n) in [
+            ("REFERENCE", 140_817u64),
+            ("CALL", 69_871),
+            ("SCOPE", 19_052),
+            ("VARIABLE", 15_500),
+            ("FUNCTION", 10_221),
+            ("CONSTANT", 6_700),
+            ("IMPORT_BINDING", 5_781),
+            ("IMPORT", 4_039),
+            ("EXPORT_BINDING", 1_556),
+            ("METHOD", 718),
+            ("INTERFACE", 704),
+            ("MODULE", 667),
+            ("EXPORT", 303),
+            ("CLASS", 93),
+            ("EXTERNAL_FUNCTION", 53),
+            ("EXTERNAL_MODULE", 10),
+            ("PROPERTY_ACCESS", 8_000),
+            ("LITERAL", 40_000),
+            ("STRUCT", 1_200),
+            ("TRAIT", 300),
+            ("IMPL_BLOCK", 1_500),
+            ("GLOBAL_DEFINITION", 120),
+        ] {
+            nodes_by_type.insert(ty.to_string(), n);
+        }
+        let stats = Stats {
+            total_nodes: 426_665,
+            total_edges: 905_847,
+            nodes_by_type,
+        };
+
+        let known_failures = ["rust_cross_methods_ctor", "rust_receiver_typing"];
+        let mut failed: Vec<String> = Vec::new();
+        for (name, src) in STDLIB_PACKS {
+            if known_failures.contains(name) {
+                continue;
+            }
+            let program = parse_ext_program(src).unwrap_or_else(|e| panic!("{name}: parse: {e}"));
+            let strat = stratify(&program).unwrap_or_else(|e| panic!("{name}: stratify: {e}"));
+            let rules = program.rules();
+            if let Err(e) = plan_program(&rules, &strat, &stats) {
+                failed.push(format!("{name}: {e}"));
+            }
+        }
+        assert!(
+            failed.is_empty(),
+            "packs must plan under dogfood-scale stats (E-PLAN-003 is a \
+             production rejection, not a perf hint):\n{}",
+            failed.join("\n")
+        );
+    }
+
 }
