@@ -25,7 +25,7 @@
 export { ShardDiscovery } from './ShardDiscovery.js';
 export type { ShardRegistration } from './ShardDiscovery.js';
 
-export { FederatedRouter } from './FederatedRouter.js';
+export { FederatedRouter, extractSymbolFromId } from './FederatedRouter.js';
 export type {
   FederatedTraceResult,
   FederatedTraceHop,
