@@ -323,6 +323,57 @@ describe('packageApiEnricher', () => {
     assert.equal(target.name, 'bar');
   });
 
+  // The orchestrator analyzes & indexes eight JS/TS extensions
+  // (analyzer.rs `is_js_ts_file`): js, jsx, ts, tsx, mjs, cjs, mts, cts. An
+  // extensionless re-export specifier must expand to ALL of them — otherwise a
+  // definition living in a `.jsx`/`.mts`/`.cts` file is silently unresolved and
+  // over-counts `exportsWithoutHandler`. This is the same class as the
+  // `.ts`/dir-index cases above, just for the three extensions the candidate
+  // list previously omitted.
+  for (const ext of ['jsx', 'mts', 'cts']) {
+    it(`extensionless re-export source resolves to the .${ext} definition`, async () => {
+      const barrel = 'packages/pkg-a/src/index.ts';
+      const defFile = `packages/pkg-a/src/widget.${ext}`;
+      await seedBarrelModule(backend, barrel);
+      await seedBarrelModule(backend, defFile);
+
+      await backend.addNode({
+        id: 'test::eb-widget',
+        type: 'EXPORT_BINDING',
+        name: 'widget',
+        file: barrel,
+        exported: true,
+        exportedName: 'widget',
+        source: './widget', // extensionless
+      });
+      await backend.addNode({
+        id: 'test::fn-widget',
+        type: 'FUNCTION',
+        name: 'widget',
+        file: defFile,
+      });
+
+      const result = await enrichPackageApis(client);
+
+      assert.equal(result.apiNodesCreated, 1);
+      assert.equal(
+        result.handlesEdgesCreated,
+        1,
+        `extensionless source must resolve to a .${ext} HANDLES target`,
+      );
+      assert.equal(result.exportsWithoutHandler, 0);
+
+      const apiNodes = [];
+      for await (const wn of client.queryNodes({ type: 'package:export' })) apiNodes.push(wn);
+      const has = await getEdges(client, apiNodes[0].id, 'HANDLES');
+      assert.equal(has.length, 1, 'one HANDLES edge expected');
+      const target = await client.getNode(String(has[0].dst));
+      assert.equal(target.nodeType, 'FUNCTION');
+      assert.equal(target.name, 'widget');
+      assert.equal(target.file, defFile);
+    });
+  }
+
   it('extensionless source pointing nowhere still increments exportsWithoutHandler (no false resolve)', async () => {
     // Adversarial: a same-named definition exists in an UNRELATED file. The
     // resolver must NOT resolve to it — candidate expansion stays scoped to the

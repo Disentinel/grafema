@@ -6225,6 +6225,147 @@ mod attr_reverse_nested_metadata_tests {
     }
 }
 
+// ============================================================================
+// attr() reverse lookup — non-primitive flat metadata values (null/object/array)
+//
+// The forward path `attr(id, "k", V)` resolves a flat metadata value via
+// `get_metadata_value` → `value_to_string`, which returns `None` for JSON
+// null/object/array (only String/Number/Bool are exact-matchable primitives),
+// so forward yields no row for these. The reverse path `attr(X, "k", "v")`
+// for a flat key routes through the index-backed `find_by_attr` →
+// `metadata_matches`, whose exact-match arm stringified ANY value (`Null` →
+// `"null"`, objects → order-dependent compact JSON), so it matched rows the
+// forward direction rejects — a silent forward/reverse asymmetry of the same
+// class as the semantic_id/version/id and nested-dotted reverse gaps. The fix
+// makes `metadata_matches` mirror `value_to_string` (null/object/array never
+// match), restoring symmetry on the flat-key fast path. These tests pin it.
+// ============================================================================
+
+mod attr_reverse_nonprimitive_metadata_tests {
+    use super::*;
+    use crate::graph::{GraphEngineV2, GraphStore};
+    use crate::storage::NodeRecord;
+    use crate::datalog::eval::Evaluator;
+    use crate::datalog::eval_explain::EvaluatorExplain;
+
+    // One node carrying a JSON null, object, and array alongside a plain string
+    // metadata value. The string value is the symmetric control.
+    fn setup_nonprimitive_metadata_graph() -> GraphEngineV2 {
+        let mut engine = GraphEngineV2::create_ephemeral();
+        engine.add_nodes(vec![NodeRecord {
+            id: 1,
+            node_type: Some("SERVICE".to_string()),
+            name: Some("svc".to_string()),
+            file: Some("svc.js".to_string()),
+            file_id: 0,
+            name_offset: 0,
+            version: "main".into(),
+            exported: false,
+            replaces: None,
+            deleted: false,
+            metadata: Some(
+                r#"{"flag":null,"obj":{"a":1},"arr":[1,2],"label":"alpha"}"#.to_string(),
+            ),
+            semantic_id: None,
+        }]);
+        engine
+    }
+
+    fn reverse_ids(ev: &Evaluator, key: &str, value: &str) -> Vec<u128> {
+        ev.query_atom(&Atom::new(
+            "attr",
+            vec![Term::var("X"), Term::constant(key), Term::constant(value)],
+        ))
+        .unwrap()
+        .iter()
+        .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+        .collect()
+    }
+
+    fn forward_rows(ev: &Evaluator, key: &str) -> usize {
+        ev.query_atom(&Atom::new(
+            "attr",
+            vec![Term::constant("1"), Term::constant(key), Term::var("V")],
+        ))
+        .unwrap()
+        .len()
+    }
+
+    // Forward direction: null/object/array values are not extractable primitives,
+    // so forward `attr(1, k, V)` binds nothing. This is the semantics the reverse
+    // direction must mirror.
+    #[test]
+    fn test_forward_attr_nonprimitive_metadata_yields_nothing() {
+        let engine = setup_nonprimitive_metadata_graph();
+        let ev = Evaluator::new(&engine);
+        assert_eq!(forward_rows(&ev, "flag"), 0, "forward null value must bind nothing");
+        assert_eq!(forward_rows(&ev, "obj"), 0, "forward object value must bind nothing");
+        assert_eq!(forward_rows(&ev, "arr"), 0, "forward array value must bind nothing");
+    }
+
+    // Reverse direction must agree: querying for the stringified null/object/array
+    // must NOT match, because the forward direction rejects these values. Before
+    // the fix, `metadata_matches` stringified them and returned node 1.
+    #[test]
+    fn test_reverse_attr_null_metadata_no_match() {
+        let engine = setup_nonprimitive_metadata_graph();
+        let ev = Evaluator::new(&engine);
+        assert!(
+            reverse_ids(&ev, "flag", "null").is_empty(),
+            "reverse attr(X, flag, \"null\") must not match a JSON null (forward rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_reverse_attr_object_metadata_no_match() {
+        let engine = setup_nonprimitive_metadata_graph();
+        let ev = Evaluator::new(&engine);
+        // The compact serialization the old code compared against.
+        assert!(
+            reverse_ids(&ev, "obj", r#"{"a":1}"#).is_empty(),
+            "reverse attr on a JSON object value must not match (forward rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_reverse_attr_array_metadata_no_match() {
+        let engine = setup_nonprimitive_metadata_graph();
+        let ev = Evaluator::new(&engine);
+        assert!(
+            reverse_ids(&ev, "arr", "[1,2]").is_empty(),
+            "reverse attr on a JSON array value must not match (forward rejects it)"
+        );
+    }
+
+    // Regression: a primitive (string) flat metadata value still round-trips
+    // forward → reverse. The fast index path must be unchanged for primitives.
+    #[test]
+    fn test_reverse_attr_primitive_metadata_still_matches() {
+        let engine = setup_nonprimitive_metadata_graph();
+        let ev = Evaluator::new(&engine);
+        assert_eq!(forward_rows(&ev, "label"), 1, "forward string value binds");
+        assert_eq!(
+            reverse_ids(&ev, "label", "alpha"),
+            vec![1],
+            "reverse string flat metadata must still match node 1"
+        );
+    }
+
+    // EvaluatorExplain twin must agree: reverse null lookup yields no rows.
+    #[test]
+    fn test_reverse_attr_null_metadata_explain_parity() {
+        let engine = setup_nonprimitive_metadata_graph();
+        let mut ev = EvaluatorExplain::new(&engine, false);
+        let result = ev
+            .eval_query(&parse_query(r#"attr(X, "flag", "null")"#).unwrap())
+            .unwrap();
+        assert!(
+            result.bindings.is_empty(),
+            "explain twin must also reject reverse null match"
+        );
+    }
+}
+
 /// Repeated-variable (self-loop) handling for `edge`/`incoming` enumeration.
 ///
 /// A variable that appears in BOTH the src and dst position of a single edge
