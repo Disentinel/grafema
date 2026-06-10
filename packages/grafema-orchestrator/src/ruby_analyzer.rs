@@ -925,6 +925,69 @@ fn walk_node_inner(node: &ruby_prism::Node<'_>, ctx: &mut Ctx) {
                     }
                     return;
                 }
+                "class_eval" | "module_eval" | "class_exec" | "module_exec" => {
+                    // `Recv.class_eval do def m; end end` reopens Recv and defines
+                    // instance methods on it. Attribute the inner `def`s to Recv —
+                    // mirroring `class Recv; ...; end` — so they are queryable as
+                    // methods (HAS_METHOD) instead of vanishing inside a `<block>`.
+                    //
+                    // Only the statically-resolvable form is special-cased: a constant
+                    // receiver (`Foo`, `A::B`) plus a literal block. Dynamic receivers,
+                    // string-of-code bodies, and `&block` arguments fall through to the
+                    // general CALL handling below, which still walks the block so no
+                    // nested calls/refs are lost. `instance_eval`/`instance_exec` are
+                    // intentionally excluded — they define singleton methods on the
+                    // receiver, with different owner/static semantics (follow-up).
+                    let recv_is_constant = matches!(
+                        cn.receiver(),
+                        Some(ruby_prism::Node::ConstantReadNode { .. })
+                            | Some(ruby_prism::Node::ConstantPathNode { .. })
+                    );
+                    if recv_is_constant {
+                        if let Some(block) = cn.block() {
+                            if let Some(bn) = block.as_block_node() {
+                                let recv = cn.receiver().unwrap();
+                                let recv_name = constant_name_from_node(&recv);
+                                let class_id =
+                                    semantic_id(&ctx.file, "CLASS", &recv_name, None, None);
+
+                                // Emit (upsert) the reopened class so the methods have a
+                                // concrete owner node. For a same-file top-level class the
+                                // id matches the original `class Recv` node.
+                                let gn = GraphNode {
+                                    id: class_id.clone(),
+                                    node_type: "CLASS".to_string(),
+                                    name: recv_name.clone(),
+                                    file: ctx.file.clone(),
+                                    line, column: col, end_line, end_column: end_col,
+                                    exported: true,
+                                    metadata: HashMap::from([Ctx::meta_text("reopened_via", &name)]),
+                                    extra: HashMap::new(),
+                                };
+                                ctx.emit_node(gn);
+
+                                // Walk the block body in the class scope so inner `def`s
+                                // attribute to Recv. No `<block>` wrapper, no enclosing_fn.
+                                let saved_visibility = ctx.visibility;
+                                ctx.visibility = Visibility::Public;
+                                let prev_fn = ctx.enclosing_fn.take();
+                                ctx.enclosing_fn = None;
+                                ctx.push_scope(&class_id, ScopeKind::Class, line, col, end_line, end_col);
+                                if let Some(params) = bn.parameters() {
+                                    walk_node(&params, ctx);
+                                }
+                                if let Some(body) = bn.body() {
+                                    walk_node(&body, ctx);
+                                }
+                                ctx.pop_scope();
+                                ctx.enclosing_fn = prev_fn;
+                                ctx.visibility = saved_visibility;
+                                return;
+                            }
+                        }
+                    }
+                    // Not statically resolvable — fall through to general CALL handling.
+                }
                 _ => {}
             }
 
@@ -3353,6 +3416,126 @@ mod tests {
         let names: Vec<&str> = functions.iter().map(|f| f.name.as_str()).collect();
         assert!(names.contains(&"name"), "expected attr_reader :name to create a FUNCTION node");
         assert!(names.contains(&"age"), "expected attr_reader :age to create a FUNCTION node");
+    }
+
+    // 9b. class_eval reopens a class: inner `def` becomes a method of the receiver.
+    #[test]
+    fn test_class_eval_def_attributes_to_receiver() {
+        let a = analyze("Foo.class_eval do\n  def bar\n  end\nend");
+
+        // `bar` must be a FUNCTION parented to Foo (not a free-floating block fn).
+        let functions = find_nodes_by_type(&a, "FUNCTION");
+        let bar = functions
+            .iter()
+            .find(|f| f.name == "bar")
+            .expect("expected a FUNCTION node named bar");
+        assert!(
+            bar.id.contains("[in:Foo]"),
+            "bar should be parented to Foo, got id {}",
+            bar.id
+        );
+
+        // No spurious `<block>` wrapper around the reopened body.
+        assert!(
+            !functions.iter().any(|f| f.name == "<block>"),
+            "class_eval body should not be wrapped in a <block> FUNCTION"
+        );
+
+        // HAS_METHOD edge from the reopened CLASS Foo to bar.
+        let has_method = find_edges_by_type(&a, "HAS_METHOD");
+        assert!(
+            has_method
+                .iter()
+                .any(|e| e.src == "test.rb->CLASS->Foo" && e.dst == bar.id),
+            "expected HAS_METHOD Foo -> bar, got {:?}",
+            has_method.iter().map(|e| (&e.src, &e.dst)).collect::<Vec<_>>()
+        );
+    }
+
+    // 9c. module_eval behaves the same as class_eval for inner `def`.
+    #[test]
+    fn test_module_eval_def_attributes_to_receiver() {
+        let a = analyze("Helpers.module_eval do\n  def greet\n  end\nend");
+        let functions = find_nodes_by_type(&a, "FUNCTION");
+        let greet = functions
+            .iter()
+            .find(|f| f.name == "greet")
+            .expect("expected a FUNCTION node named greet");
+        assert!(greet.id.contains("[in:Helpers]"), "got id {}", greet.id);
+
+        let has_method = find_edges_by_type(&a, "HAS_METHOD");
+        assert!(
+            has_method
+                .iter()
+                .any(|e| e.src == "test.rb->CLASS->Helpers" && e.dst == greet.id),
+            "expected HAS_METHOD Helpers -> greet"
+        );
+    }
+
+    // 9c2. Namespaced constant receiver (A::B.class_eval) attributes correctly.
+    #[test]
+    fn test_class_eval_namespaced_receiver() {
+        let a = analyze("ActiveRecord::Base.class_eval do\n  def save\n  end\nend");
+        let functions = find_nodes_by_type(&a, "FUNCTION");
+        let save = functions
+            .iter()
+            .find(|f| f.name == "save")
+            .expect("expected a FUNCTION node named save");
+        assert!(
+            save.id.contains("[in:ActiveRecord::Base]"),
+            "got id {}",
+            save.id
+        );
+        let has_method = find_edges_by_type(&a, "HAS_METHOD");
+        assert!(
+            has_method
+                .iter()
+                .any(|e| e.src == "test.rb->CLASS->ActiveRecord::Base" && e.dst == save.id),
+            "expected HAS_METHOD ActiveRecord::Base -> save"
+        );
+    }
+
+    // 9d. Calls inside the reopened method attribute to that method, not a block.
+    #[test]
+    fn test_class_eval_body_calls_attributed() {
+        let a = analyze("Foo.class_eval do\n  def bar\n    helper\n  end\nend");
+        let functions = find_nodes_by_type(&a, "FUNCTION");
+        let bar = functions.iter().find(|f| f.name == "bar").unwrap();
+
+        let calls = find_nodes_by_type(&a, "CALL");
+        let helper = calls
+            .iter()
+            .find(|c| c.name == "helper")
+            .expect("expected a CALL node named helper");
+
+        let calls_edges = find_edges_by_type(&a, "CALLS");
+        assert!(
+            calls_edges
+                .iter()
+                .any(|e| e.src == bar.id && e.dst == helper.id),
+            "expected CALLS bar -> helper"
+        );
+    }
+
+    // 9e. Dynamic (non-constant) receiver falls through to a plain CALL — nothing lost.
+    #[test]
+    fn test_class_eval_dynamic_receiver_falls_back() {
+        let a = analyze("obj.class_eval do\n  def bar\n  end\nend");
+        let calls = find_nodes_by_type(&a, "CALL");
+        assert!(
+            calls.iter().any(|c| c.name.contains("class_eval")),
+            "non-constant receiver should fall through to a CALL node"
+        );
+        // bar is NOT attributed to a CLASS via HAS_METHOD in the fallback path.
+        let functions = find_nodes_by_type(&a, "FUNCTION");
+        let bar = functions.iter().find(|f| f.name == "bar");
+        if let Some(bar) = bar {
+            let has_method = find_edges_by_type(&a, "HAS_METHOD");
+            assert!(
+                !has_method.iter().any(|e| e.dst == bar.id),
+                "dynamic-receiver bar must not get a HAS_METHOD edge"
+            );
+        }
     }
 
     // 10. Scope hierarchy
