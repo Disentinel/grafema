@@ -70,7 +70,12 @@ export function paginateArray<T>(
   after: string | null | undefined,
   getId: (item: T) => string
 ): Connection<T> {
-  const limit = Math.min(first ?? 50, 250);
+  // Clamp to a non-negative count capped at 250. The lower bound matters: a
+  // negative `first` (invalid per the Relay spec) would otherwise reach
+  // `items.slice(startIndex, startIndex + limit)`, where JS treats the negative
+  // end index as an offset from the array end and returns almost the whole
+  // array instead of an empty page.
+  const limit = Math.min(Math.max(first ?? 50, 0), 250);
 
   // Find start index based on cursor
   let startIndex = 0;

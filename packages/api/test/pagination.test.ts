@@ -162,6 +162,41 @@ describe('Pagination Utilities', () => {
       assert.strictEqual(result.edges[0].node.id, 'item-1');
     });
 
+    it('should return empty page for a negative first (no underflow into slice)', () => {
+      // Regression: `Math.min(first, 250)` with no lower bound let a negative
+      // `first` flow into `items.slice(0, 0 + first)`, where JS interprets the
+      // negative end index as an offset from the end — returning almost the
+      // whole array instead of an empty page. Relay requires `first` to be a
+      // non-negative integer; a negative value must never widen the result.
+      const items = createItems(5);
+      const result = paginateArray(items, -1, null, getId);
+
+      assert.strictEqual(result.edges.length, 0);
+      assert.strictEqual(result.totalCount, 5);
+      assert.strictEqual(result.pageInfo.startCursor, null);
+      assert.strictEqual(result.pageInfo.endCursor, null);
+      assert.strictEqual(result.pageInfo.hasPreviousPage, false);
+    });
+
+    it('should clamp a large negative first to an empty page', () => {
+      const items = createItems(5);
+      const result = paginateArray(items, -100, null, getId);
+
+      assert.strictEqual(result.edges.length, 0);
+      assert.strictEqual(result.totalCount, 5);
+    });
+
+    it('should return empty edges for first = 0', () => {
+      const items = createItems(5);
+      const result = paginateArray(items, 0, null, getId);
+
+      assert.strictEqual(result.edges.length, 0);
+      // There are still items available, so the next page is reachable.
+      assert.strictEqual(result.pageInfo.hasNextPage, true);
+      assert.strictEqual(result.pageInfo.startCursor, null);
+      assert.strictEqual(result.pageInfo.endCursor, null);
+    });
+
     it('should detect last page correctly', () => {
       const items = createItems(25);
       const firstPage = paginateArray(items, 20, null, getId);

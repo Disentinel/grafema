@@ -136,8 +136,11 @@ export const queryResolvers = {
     args: { query: string; limit?: number | null; offset?: number | null },
     context: GraphQLContext
   ) {
-    const limit = args.limit ?? 50;
-    const offset = args.offset ?? 0;
+    // Clamp to non-negative. A negative `limit`/`offset` would otherwise reach
+    // `results.slice(offset, offset + limit)`, where JS treats a negative index
+    // as an offset from the end and leaks rows that should be paged out.
+    const limit = Math.max(args.limit ?? 50, 0);
+    const offset = Math.max(args.offset ?? 0, 0);
 
     try {
       const results = await context.backend.checkGuarantee(args.query);
