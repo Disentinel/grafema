@@ -262,8 +262,12 @@ export function formatEdgeMetadata(edge: EdgeRecord): string {
   const meta = edge.metadata || {};
 
   if (edge.type === 'PASSES_ARGUMENT' || edge.type === 'RECEIVES_ARGUMENT') {
-    if ('argIndex' in meta) {
-      parts.push(`arg${meta.argIndex}`);
+    // Analyzers emit the argument position under `index`; tolerate the legacy
+    // `argIndex` alias. (`index` was previously never read here, so the arg
+    // annotation never rendered on real graphs.)
+    const argIdx = 'index' in meta ? meta.index : ('argIndex' in meta ? meta.argIndex : undefined);
+    if (argIdx !== undefined) {
+      parts.push(`arg${argIdx}`);
     }
   }
   if (edge.type === 'FLOWS_INTO') {

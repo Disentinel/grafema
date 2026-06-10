@@ -316,7 +316,7 @@ describe('REG-230: Sink Resolution', () => {
         src: 'test.js->global->CALL->addNode#0',
         dst: 'test.js->global->VARIABLE->config',
         edgeType: 'PASSES_ARGUMENT',
-        argIndex: 0,
+        index: 0,
       });
       await backend.flush();
 
@@ -354,7 +354,7 @@ describe('REG-230: Sink Resolution', () => {
         src: 'test.js->global->CALL->fn#0',
         dst: 'test.js->global->VARIABLE->arg0',
         edgeType: 'PASSES_ARGUMENT',
-        argIndex: 0,
+        index: 0,
       });
       await backend.flush();
 
@@ -417,7 +417,7 @@ describe('REG-230: Sink Resolution', () => {
           src: 'test.js->global->CALL->addNode#0',
           dst: 'test.js->global->VARIABLE->config',
           edgeType: 'PASSES_ARGUMENT',
-          argIndex: 0,
+          index: 0,
         },
         {
           src: 'test.js->global->VARIABLE->config',
@@ -525,7 +525,7 @@ describe('REG-230: Sink Resolution', () => {
           src: 'test.js->global->CALL->addNode#0',
           dst: 'test.js->global->VARIABLE->config1',
           edgeType: 'PASSES_ARGUMENT',
-          argIndex: 0,
+          index: 0,
         },
         {
           src: 'test.js->global->VARIABLE->config1',
@@ -543,7 +543,7 @@ describe('REG-230: Sink Resolution', () => {
           src: 'test.js->global->CALL->addNode#1',
           dst: 'test.js->global->VARIABLE->config2',
           edgeType: 'PASSES_ARGUMENT',
-          argIndex: 0,
+          index: 0,
         },
         {
           src: 'test.js->global->VARIABLE->config2',
@@ -604,7 +604,7 @@ describe('REG-230: Sink Resolution', () => {
         src: 'test.js->global->CALL->addNode#0',
         dst: 'test.js->global->LITERAL->42',
         edgeType: 'PASSES_ARGUMENT',
-        argIndex: 0,
+        index: 0,
       });
       await backend.flush();
 
@@ -658,7 +658,7 @@ describe('REG-230: Sink Resolution', () => {
           src: 'test.js->global->CALL->fn#0',
           dst: 'test.js->global->VARIABLE->x',
           edgeType: 'PASSES_ARGUMENT',
-          argIndex: 0,
+          index: 0,
         },
         {
           src: 'test.js->global->VARIABLE->x',
@@ -728,7 +728,7 @@ describe('REG-230: Sink Resolution', () => {
         src: 'test.js->global->CALL->fn#0',
         dst: 'test.js->global->LITERAL->x',
         edgeType: 'PASSES_ARGUMENT',
-        argIndex: 0,
+        index: 0,
       });
       await backend.flush();
 
@@ -786,7 +786,7 @@ describe('REG-230: Sink Resolution', () => {
           src: 'test.js->global->CALL->fn#0',
           dst: 'test.js->global->VARIABLE->config',
           edgeType: 'PASSES_ARGUMENT',
-          argIndex: 0,
+          index: 0,
         },
         {
           src: 'test.js->global->VARIABLE->config',
@@ -843,7 +843,7 @@ describe('REG-230: Sink Resolution', () => {
         src: 'test.js->global->CALL->graph.addNode#0',
         dst: 'test.js->global->LITERAL->NODE',
         edgeType: 'PASSES_ARGUMENT',
-        argIndex: 0,
+        index: 0,
       });
       await backend.flush();
 
@@ -887,7 +887,7 @@ describe('REG-230: Sink Resolution', () => {
         src: 'test.js->global->CALL->fn#0',
         dst: 'test.js->global->handler->PARAMETER->userInput',
         edgeType: 'PASSES_ARGUMENT',
-        argIndex: 0,
+        index: 0,
       });
       await backend.flush();
 
@@ -934,7 +934,7 @@ describe('REG-230: Sink Resolution', () => {
         src: 'src/app.js->global->CALL->fn#0',
         dst: 'src/app.js->global->LITERAL->test',
         edgeType: 'PASSES_ARGUMENT',
-        argIndex: 0,
+        index: 0,
       });
       await backend.flush();
 
@@ -1001,13 +1001,13 @@ describe('REG-230: Sink Resolution', () => {
           src: 'test.js->global->CALL->fn#0',
           dst: 'test.js->global->LITERAL->same',
           edgeType: 'PASSES_ARGUMENT',
-          argIndex: 0,
+          index: 0,
         },
         {
           src: 'test.js->global->CALL->fn#1',
           dst: 'test.js->global->LITERAL->same',
           edgeType: 'PASSES_ARGUMENT',
-          argIndex: 0,
+          index: 0,
         },
       ]);
       await backend.flush();
@@ -1079,3 +1079,45 @@ function getSinkResolver() {
   }
   return traceModule.resolveSink;
 }
+
+/**
+ * ============================================================================
+ * PART 3: extractArgument metadata-field contract (mock backend, no RFDB)
+ * ============================================================================
+ * Regression: the argument position on a PASSES_ARGUMENT edge is emitted by
+ * every analyzer (js-analyzer Expressions.hs, rust_analyzer.rs — verified via a
+ * live cargo test asserting metadata key `index`) under the key `index`.
+ * extractArgument previously read only `metadata.argIndex`, so on real graphs
+ * it matched nothing and `grafema trace --to "fn#0.prop"` silently resolved no
+ * argument. These tests use a tiny in-memory mock so they run without a server.
+ */
+describe('REG-230: extractArgument metadata-field contract', () => {
+  before(async () => {
+    await loadTraceModule();
+  });
+
+  // Mock with the field name the analyzers actually emit.
+  const mockBackend = (metadata) => ({
+    async getOutgoingEdges(callId, _types) {
+      return [{ src: callId, dst: 'arg-node', type: 'PASSES_ARGUMENT', metadata }];
+    },
+  });
+
+  it('resolves the argument when position is in metadata.index (real analyzer field)', async () => {
+    const extractArgument = getArgumentExtractor();
+    const got = await extractArgument(mockBackend({ index: 0 }), 'CALL#0', 0);
+    assert.strictEqual(got, 'arg-node', 'must match on metadata.index (the field analyzers emit)');
+  });
+
+  it('still resolves via legacy metadata.argIndex alias', async () => {
+    const extractArgument = getArgumentExtractor();
+    const got = await extractArgument(mockBackend({ argIndex: 0 }), 'CALL#0', 0);
+    assert.strictEqual(got, 'arg-node', 'must tolerate the legacy argIndex alias');
+  });
+
+  it('returns null when the requested index does not match metadata.index', async () => {
+    const extractArgument = getArgumentExtractor();
+    const got = await extractArgument(mockBackend({ index: 0 }), 'CALL#0', 5);
+    assert.strictEqual(got, null, 'arg 5 must not match an edge at index 0');
+  });
+});

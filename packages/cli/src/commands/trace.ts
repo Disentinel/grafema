@@ -411,7 +411,11 @@ export async function findCallSites(
 /**
  * Extract the argument node ID at a specific index from a call site
  *
- * Follows PASSES_ARGUMENT edges and matches by argIndex metadata
+ * Follows PASSES_ARGUMENT edges and matches by argument-position metadata.
+ * Analyzers (js-analyzer, rust_analyzer, …) emit that position under the
+ * metadata key `index`; `argIndex` is tolerated as a legacy alias. Reading
+ * only `argIndex` previously matched nothing on real graphs, so sink traces
+ * like `--to "addNode#0.type"` silently resolved no argument.
  *
  * @returns Node ID of the argument, or null if not found
  */
@@ -423,8 +427,9 @@ export async function extractArgument(
   const edges = await backend.getOutgoingEdges(callSiteId, ['PASSES_ARGUMENT' as any]);
 
   for (const edge of edges) {
-    // argIndex is stored in edge metadata
-    const edgeArgIndex = edge.metadata?.argIndex as number | undefined;
+    // Argument position is stored in edge metadata under `index` (legacy: `argIndex`).
+    const meta = edge.metadata as { index?: number; argIndex?: number } | undefined;
+    const edgeArgIndex = meta?.index ?? meta?.argIndex;
     if (edgeArgIndex === argIndex) {
       return edge.dst;
     }

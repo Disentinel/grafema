@@ -2417,6 +2417,35 @@ mod tests {
     }
 
     #[test]
+    fn test_passes_argument_index_metadata_key() {
+        // The argument-position metadata key on PASSES_ARGUMENT edges is `index`
+        // (NOT `argIndex`). Downstream dataflow consumers (cli trace --to,
+        // traceValues, get_context) must read this exact key to resolve a
+        // call's Nth argument. This pins the producer side of that contract.
+        let fa = parse_and_analyze("fn foo(a: i32, b: i32) {} fn main() { foo(1, 2); }");
+        let passes: Vec<_> = fa.edges.iter()
+            .filter(|e| e.edge_type == "PASSES_ARGUMENT")
+            .collect();
+        assert!(!passes.is_empty(), "should have PASSES_ARGUMENT edges");
+        for e in &passes {
+            assert!(
+                e.metadata.contains_key("index"),
+                "PASSES_ARGUMENT metadata must carry `index`, got keys: {:?}",
+                e.metadata.keys().collect::<Vec<_>>()
+            );
+            assert!(
+                !e.metadata.contains_key("argIndex"),
+                "PASSES_ARGUMENT must NOT use `argIndex` (the field is `index`)"
+            );
+        }
+        let indices: std::collections::HashSet<i64> = passes
+            .iter()
+            .filter_map(|e| e.metadata.get("index").and_then(|v| v.as_i64()))
+            .collect();
+        assert!(indices.contains(&0) && indices.contains(&1), "should have arg indices 0 and 1, got {:?}", indices);
+    }
+
+    #[test]
     fn test_literal_nodes() {
         let fa = parse_and_analyze("fn main() { let x = 42; let s = \"hello\"; }");
         assert!(has_node(&fa, "LITERAL", "42"), "integer literal");

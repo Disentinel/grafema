@@ -367,8 +367,11 @@ async function traceRecursive(
           const argEdges = await backend.getOutgoingEdges(edge.src, ['PASSES_ARGUMENT']);
 
           for (const argEdge of argEdges) {
-            // Check if this is the first argument (argIndex 0)
-            const argIndex = (argEdge.metadata as { argIndex?: number } | undefined)?.argIndex;
+            // Check if this is the first argument (index 0). Analyzers emit the
+            // argument position on PASSES_ARGUMENT under `index`; tolerate a
+            // legacy `argIndex` alias for older graphs.
+            const meta = argEdge.metadata as { index?: number; argIndex?: number } | undefined;
+            const argIndex = meta?.index ?? meta?.argIndex;
             if (argIndex === 0) {
               // Recursively trace the argument value
               await traceRecursive(

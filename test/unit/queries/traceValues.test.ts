@@ -77,12 +77,14 @@ interface MockNode {
   object?: string;
   property?: string;
   name?: string;
+  className?: string;
 }
 
 interface MockEdge {
   src: string;
   dst: string;
   type: string;
+  metadata?: Record<string, unknown>;
 }
 
 // =============================================================================
@@ -835,6 +837,41 @@ describe('traceValues', () => {
       if (results.length > 0) {
         assert.notStrictEqual(results[0].reason, 'no_sources', 'OBJECT_LITERAL should not have no_sources reason');
       }
+    });
+  });
+
+  // ===========================================================================
+  // TESTS: Promise resolve() argument (PASSES_ARGUMENT index metadata)
+  // ===========================================================================
+
+  describe('Promise resolve() value tracing', () => {
+    /**
+     * WHY (regression): a `new Promise((resolve) => resolve(VALUE))` is modelled
+     * as CONSTRUCTOR_CALL(Promise) <-[RESOLVES_TO]- CALL(resolve), where the
+     * resolved value is the FIRST argument of the resolve() call, reached via
+     * a PASSES_ARGUMENT edge whose argument position lives in metadata.
+     *
+     * Every analyzer emits that position under the key `index` (js-analyzer
+     * Expressions.hs, rust_analyzer.rs) — NOT `argIndex`. traceValues used to
+     * read `metadata.argIndex`, which is never present, so the "first argument"
+     * check never fired and the resolved literal was silently dropped.
+     */
+    it('should trace the value passed to resolve() via PASSES_ARGUMENT index=0', async () => {
+      // const p = new Promise((resolve) => resolve('done'));
+      await backend.addNode({ id: 'promise-call', type: 'CONSTRUCTOR_CALL', className: 'Promise', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'resolve-call', type: 'CALL', name: 'resolve', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'lit-done', type: 'LITERAL', value: 'done', file: 'file.js', line: 1 });
+
+      // resolve() resolves the promise
+      await backend.addEdge({ src: 'resolve-call', dst: 'promise-call', type: 'RESOLVES_TO' });
+      // resolve('done') passes the literal as argument 0 — key is `index`, as analyzers emit
+      await backend.addEdge({ src: 'resolve-call', dst: 'lit-done', type: 'PASSES_ARGUMENT', metadata: { index: 0 } });
+
+      const results = await traceValues(backend, 'promise-call');
+
+      const values = results.map((r) => r.value);
+      assert.ok(values.includes('done'), `resolved value 'done' must be traced, got ${JSON.stringify(values)}`);
+      assert.ok(results.some((r) => r.value === 'done' && r.isUnknown === false), "resolved literal must be a known value");
     });
   });
 

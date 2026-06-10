@@ -143,7 +143,9 @@ export interface TraceValuesEdge {
   src: string;
   dst: string;
   type: string;
-  metadata?: { argIndex?: number; isReject?: boolean };
+  // Argument position on PASSES_ARGUMENT edges is emitted by analyzers as
+  // `index`; `argIndex` is a tolerated legacy alias.
+  metadata?: { index?: number; argIndex?: number; isReject?: boolean };
 }
 
 /**
