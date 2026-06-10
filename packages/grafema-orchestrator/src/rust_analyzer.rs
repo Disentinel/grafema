@@ -1914,6 +1914,12 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
             let (_, scope_id) = emit_branch("for", line, col, ctx);
             walk_expr(&e.expr, ctx);
             ctx.push_scope_with_span(&scope_id, ScopeKind::Block, Some(e.body.brace_token.span.join()));
+            // The loop variable pattern (`for PAT in ...`) introduces fresh
+            // bindings scoped to the body — like a `let`. Bind them inside the
+            // body scope so body references resolve and values can be traced
+            // into the loop variable. Without this, every loop variable was
+            // invisible (no VARIABLE node, no READS_FROM resolution).
+            walk_pat_bindings(&e.pat, "let", ctx);
             walk_block(&e.body, ctx);
             ctx.pop_scope();
         }
@@ -2208,6 +2214,44 @@ mod tests {
         assert_eq!(count_nodes(&fa, "VARIABLE"), 2);
         assert!(has_node(&fa, "VARIABLE", "x"));
         assert!(has_node(&fa, "VARIABLE", "y"));
+    }
+
+    #[test]
+    fn test_for_loop_pattern_binds_loop_variable() {
+        // `for item in items() { ... }` introduces `item` as a loop-variable
+        // binding scoped to the loop body. The ForLoop arm walked the iterator
+        // expression and the body block but NEVER bound the pattern, so `item`
+        // had no VARIABLE node and any reference to it inside the body could not
+        // resolve to a declaration — a dataflow gap (a value cannot be traced
+        // into the loop variable). This is the same class as the closure-param
+        // and fn-param binding boundaries: a binding-introducing construct whose
+        // pattern was not threaded through walk_pat_bindings.
+        let fa = parse_and_analyze(
+            "fn main() { for item in items() { consume(item); } }  \
+             fn items() -> Vec<i32> { vec![] }  fn consume(_x: i32) {}",
+        );
+        assert!(
+            has_node(&fa, "VARIABLE", "item"),
+            "for-loop variable `item` must be emitted as a VARIABLE binding"
+        );
+        // The body reference to `item` resolves to the loop-variable binding,
+        // proving the binding is registered in the body scope (in-scope).
+        assert!(
+            has_edge(&fa, "READS_FROM", "REFERENCE", "VARIABLE"),
+            "reference to the loop variable in the body resolves to its binding"
+        );
+    }
+
+    #[test]
+    fn test_for_loop_destructuring_pattern_binds_all() {
+        // Destructured loop patterns (`for (k, v) in pairs() { ... }`) bind every
+        // name in the tuple/struct pattern, mirroring let-destructuring.
+        let fa = parse_and_analyze(
+            "fn main() { for (k, v) in pairs() { use_kv(k, v); } }  \
+             fn pairs() -> Vec<(i32, i32)> { vec![] }  fn use_kv(_a: i32, _b: i32) {}",
+        );
+        assert!(has_node(&fa, "VARIABLE", "k"), "destructured loop var `k`");
+        assert!(has_node(&fa, "VARIABLE", "v"), "destructured loop var `v`");
     }
 
     #[test]
@@ -2774,6 +2818,8 @@ mod tests {
             .find(|n| n.node_type == "FUNCTION" && n.name == "puts")
             .expect("FUNCTION puts");
         assert_eq!(f.metadata.get("abi"), Some(&serde_json::json!("C")));
+    }
+
     // Associated items inside `impl` blocks and `trait` definitions used to be
     // silently dropped (ImplItem::Const/Type were empty no-ops; walk_trait only
     // matched TraitItem::Fn), so `Self::MAX` and associated-type queries returned
@@ -2821,6 +2867,8 @@ mod tests {
         assert!(has_edge(&fa, "CONTAINS", "TRAIT", "TYPE_ALIAS"), "TRAIT CONTAINS type");
         // The function signature is still emitted alongside the associated type.
         assert_eq!(count_nodes(&fa, "TYPE_SIGNATURE"), 1);
+    }
+
     // ── Macro invocations ───────────────────────────────────────────────
     // `syn` does not expand macros, so before this fix `Expr::Macro` and
     // `Stmt::Macro` were dropped entirely. That violated KNOWN_LIMITATIONS'
