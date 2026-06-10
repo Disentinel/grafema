@@ -4466,5 +4466,22 @@ mod tests {
         assert!(!e_slow.relations["a_shared"].is_empty());
         assert!(e_slow.relations["a_meta"].is_empty(), "non-first-class key derives nothing");
     }
-}
 
+    /// `strip_prefix/3` through the full pipeline (parse → stratify → plan → execute): the
+    /// builtin places as a function leg AFTER its inputs are bound, EXTRACTS the rest for a
+    /// matching name, and FILTERS OUT (no row — match-and-extract, never an identity
+    /// fallback) a non-matching one. The "*:./foo" star re-export source shape.
+    #[test]
+    fn strip_prefix_rule_extracts_star_reexport_source_and_filters() {
+        let mut v = FixtureStorageView::new(1);
+        node(&mut v, "*:./foo", "IMPORT");
+        node(&mut v, "./bar", "IMPORT");
+        let src = r#"star_source(X, R) :-
+                         node(X, "IMPORT"), attr(X, "name", N), strip_prefix(N, "*:", R)."#;
+        let eval = run(src, &v, Stats::default());
+        let facts = eval.facts("star_source");
+        assert_eq!(facts.len(), 1, "only the star re-export matches; ./bar derives no row");
+        assert_eq!(facts[0][0].as_id(), Some(id_of("*:./foo")));
+        assert_eq!(facts[0][1], Value::Str("./foo".to_string()));
+    }
+}

@@ -200,6 +200,7 @@ const BUILTINS: &[&str] = &[
     "str_lower",
     "basename",
     "strip_quotes",
+    "strip_prefix",
     "edge_attr",
     "node_attr",
     "path",

@@ -1,0 +1,126 @@
+% rust_trait_resolve.dl — in-engine replacement for the RustTraitResolution.hs
+% resolver, WHOLE resolver (packages/rust-resolve/src/RustTraitResolution.hs:
+% 34-50): an IMPLEMENTS edge from the self type of every `impl Trait for Type`
+% block to the TRAIT node. Wave 2 — node_attr unblocked it: the trait name
+% lives ONLY in IMPL_BLOCK metadata (rust_analyzer.rs:790,802-804 writes
+% metadata["trait"] = path_to_string(trait path); live-verified values include
+% bare "Tag" and qualified "std::error::Error").
+%
+% LEGACY SEMANTICS (Hs:34-50): traitIdx = TRAIT nodes by bare name, structIdx =
+% STRUCT nodes by bare name (both Map last-wins, Hs:28-32); per IMPL_BLOCK with
+% metadata["trait"], the self-type name comes from the semantic-id
+% "IMPL_BLOCK->" marker (Hs:47) — ≡ the node's first-class name: the analyzer
+% builds both from the same self_ty string (rust_analyzer.rs:792-797). Exact
+% Map lookups on both sides, emit STRUCT -IMPLEMENTS-> TRAIT with EMPTY
+% metadata (Hs:38-43). Qualified refs never matched the bare-name indexes.
+%
+% IMPLEMENTS is SHARED vocabulary (the legacy resolver emits it and stays ON
+% during the hybrid rollout) ⇒ mode = "additive" is mandatory. No meta columns:
+% legacy metadata was empty (Hs:42).
+%
+% QUALIFIED-REF POLICY (why the strip arms are ALLOWLISTED): the graph holds
+% ONLY project traits, so stripping the path off an EXTERNAL ref and matching
+% the bare segment against local TRAIT nodes would manufacture a FALSE edge
+% whenever a local trait shares its name with the external one
+% (`impl serde::Serialize for Foo` + a local `trait Serialize`). The synthesis
+% honesty rule: subset-by-omission is acceptable, false positives are not. So
+% the strip arms fire only for path roots that PROVE the ref crate-local:
+% "crate::", "self::", "super::".
+%
+% NUMBERED DELTAS vs the resolver (everything not listed is exact):
+%   DELTA 1 (superset): single-hop crate-local qualified refs ("crate::Tag" /
+%     "self::Tag" / "super::Tag") resolve via strip_prefix; the resolver's
+%     exact bare-name lookup missed every qualified ref.
+%   DELTA 2 (subset, counted): MULTI-segment local refs ("crate::tags::Tag")
+%     derive nothing — extracting the last "::" segment of an arbitrary path
+%     needs the string kit's last_segment/3 (capability rank #2), and the
+%     general bare-segment join is a §3 cross-join (no shared variable between
+%     the IMPL_BLOCK leg and the TRAIT leg — unlike rust_receiver_typing,
+%     where the method name connects them). Classifiable: trait refs with two+
+%     "::" after a local root. External-rooted refs ("std::error::Error",
+%     "fmt::Display") derive nothing BY POLICY (above) — observably the same
+%     as legacy, which derived nothing for any qualified ref.
+%   DELTA 3 (removed in review): a CLASS self-type arm was DROPPED as a
+%     false-positive vector, not a benign superset — rust_analyzer.rs emits
+%     no CLASS nodes at all (grep '"CLASS"' = 0 hits), so class_named could
+%     ONLY match foreign classes (a JS `class Widget` against a Rust
+%     `impl Tag for Widget`). Same reason trait_named/struct_named are
+%     .rs-gated below. ENUM self types stay unmatched on both sides
+%     (parity miss).
+%   DELTA 4 (superset): set semantics on duplicate names — same-named STRUCTs
+%     (or TRAITs) across files derive an edge per candidate; the resolver's
+%     Map kept ONE arbitrary last-wins winner (Hs:28-32).
+%   DELTA 5 (subset, rare, legacy-parity): qualified SELF types (IMPL_BLOCK
+%     named "crate::Widget" from `impl Tag for crate::Widget`) match nothing —
+%     the strip arms are not mirrored on the self side (rare style;
+%     classifiable: IMPL_BLOCK names containing "::"). Legacy missed them
+%     identically (bare-name structIdx).
+%   DELTA 6 (metadata): engine provenance (_source/_generation) added.
+%
+% MAINTAIN ENVELOPE: node_attr is an attr-generator — maintain-incremental
+% refuses the pack, the scratch floor applies (expected for Wave-2 packs).
+%
+% ENCODING NOTE (§3 connectivity, learned from the wire test's EMPTY graph):
+% name-keyed lookups (trait_named / struct_named) are
+% SELF-CONTAINED derived relations joined on the name STRING, so every
+% consuming clause is a two-leg join sharing a variable in EITHER planner
+% order. Inlining `node(T,"TRAIT"), attr(T,"name",Ref)` next to rs_trait_impl
+% is plan-order-FRAGILE: on stats where node() leads, rs_trait_impl shares no
+% binding with it and E-PLAN-003 rejects the rule (observed). Same reason the
+% strip arms bind the bare segment in their OWN clause (local_trait_ref)
+% before the name join.
+
+% `impl Trait for SelfTy` blocks in Rust files. The trait ref is metadata-only:
+% node_attr point-probes the IB bound by the node/attr legs.
+rs_trait_impl(IB, SelfTy, TraitRef) :-
+    node(IB, "IMPL_BLOCK"),
+    attr(IB, "file", F), ends_with(F, ".rs"),
+    attr(IB, "name", SelfTy), neq(SelfTy, ""),
+    node_attr(IB, "trait", TraitRef), neq(TraitRef, "").
+
+% Name-keyed declaration indexes (empty names never indexed, the legacy
+% buildIndexBy discipline). BOTH are gated to .rs files: the graph is
+% polyglot and TRAIT/STRUCT are shared vocabulary (cpp-analyzer emits STRUCT,
+% DataTypes.hs:109-115; PHP tooling indexes TRAIT) — the legacy resolver only
+% ever saw orchestrator-streamed Rust nodes, so the gate IS legacy parity.
+trait_named(N, T) :-
+    node(T, "TRAIT"),
+    attr(T, "file", F), ends_with(F, ".rs"),
+    attr(T, "name", N), neq(N, "").
+struct_named(N, S) :-
+    node(S, "STRUCT"),
+    attr(S, "file", F), ends_with(F, ".rs"),
+    attr(S, "name", N), neq(N, "").
+
+% The allowlisted single-hop strip arms (DELTA 1): strip_prefix BINDS the bare
+% segment (no row on a non-match — external roots fall through here).
+% "crate::tags::Tag" strips to "tags::Tag", which names no TRAIT — DELTA 2's
+% no-row, never a false positive.
+local_trait_ref(IB, Bare) :-
+    rs_trait_impl(IB, SelfTy, TraitRef),
+    strip_prefix(TraitRef, "crate::", Bare).
+local_trait_ref(IB, Bare) :-
+    rs_trait_impl(IB, SelfTy, TraitRef),
+    strip_prefix(TraitRef, "self::", Bare).
+local_trait_ref(IB, Bare) :-
+    rs_trait_impl(IB, SelfTy, TraitRef),
+    strip_prefix(TraitRef, "super::", Bare).
+
+% Trait side — exact bare-name match (the legacy arm) + the strip arms.
+trait_target(IB, T) :-
+    rs_trait_impl(IB, SelfTy, TraitRef),
+    trait_named(TraitRef, T).
+trait_target(IB, T) :-
+    local_trait_ref(IB, Bare),
+    trait_named(Bare, T).
+
+% Self side — the IMPL_BLOCK's name IS the self type (rust_analyzer.rs:792-797);
+% STRUCT only (legacy, Hs:37), exact match (DELTA 5).
+self_decl(IB, S) :-
+    rs_trait_impl(IB, SelfTy, TraitRef),
+    struct_named(SelfTy, S).
+
+@materialize(edge_type = "IMPLEMENTS", mode = "additive")
+rust_implements(S, T) :-
+    self_decl(IB, S),
+    trait_target(IB, T).

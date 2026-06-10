@@ -818,7 +818,8 @@ fn eval_ends_with(_v: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> Buil
     Ok(())
 }
 
-// ── Functions: string derivations (concat / str_lower / basename / strip_quotes) ──
+// ── Functions: string derivations (concat / str_lower / basename / strip_quotes /
+//    strip_prefix) ──
 
 /// Shared tail of the [B…,F]/[B…,B] function builtins (the `method_suffix` discipline):
 /// the computed `produced` value either BINDS the output position (free/captured),
@@ -899,6 +900,26 @@ fn eval_strip_quotes(_v: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> B
         r.as_str()
     };
     bind_or_check(out, spec, 1, produced);
+    Ok(())
+}
+
+
+/// `strip_prefix(S, Prefix, Rest)` — `Rest` is `S` minus its leading `Prefix`
+/// (`strip_prefix("*:./foo", "*:", R)` → `"./foo"`; the star re-export source and
+/// `"TName::"` split shapes). NO row when `S` does not START with `Prefix`: a
+/// match-and-extract, not an identity fallback (mirrors `basename`'s no-row stance — a
+/// non-match names nothing). `S == Prefix` still produces its row binding the empty REST
+/// (the empty value is a legitimate extraction result, `strip_quotes`' stance), and an
+/// empty `Prefix` matches everything (identity). Free arg2 binds; bound arg2
+/// equality-filters.
+fn eval_strip_prefix(_v: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> BuiltinResult<()> {
+    let (Some(s), Some(prefix)) = (bound_str(&spec.args[0]), bound_str(&spec.args[1])) else {
+        return Ok(());
+    };
+    let Some(rest) = s.strip_prefix(prefix.as_str()) else {
+        return Ok(());
+    };
+    bind_or_check(out, spec, 2, rest);
     Ok(())
 }
 
@@ -1009,7 +1030,8 @@ const METHOD_SUFFIX_MODES: &[Mode] = &[Mode { args: &[B, F] }, Mode { args: &[B,
 /// the same discipline as [`METHOD_SUFFIX_MODES`].
 const STR_FN2_MODES: &[Mode] = &[Mode { args: &[B, F] }, Mode { args: &[B, B] }];
 
-/// `concat/3` modes: both inputs bound; the output is free (bind) or bound (check).
+/// `concat/3`/`strip_prefix/3` modes: both inputs bound; the output (last position) is
+/// free (bind) or bound (equality check).
 const CONCAT_MODES: &[Mode] = &[Mode { args: &[B, B, F] }, Mode { args: &[B, B, B] }];
 
 /// `edge_attr/5` modes: the edge triple (src, dst, type) and the metadata key are always
@@ -1167,6 +1189,13 @@ pub fn registry() -> Vec<BuiltinDef> {
             eval: eval_strip_quotes,
         },
         BuiltinDef {
+            name: "strip_prefix",
+            arity: 3,
+            modes: CONCAT_MODES,
+            kind: BuiltinKind::Function,
+            eval: eval_strip_prefix,
+        },
+        BuiltinDef {
             name: "edge_attr",
             arity: 5,
             modes: EDGE_ATTR_MODES,
@@ -1294,6 +1323,7 @@ mod tests {
             "str_lower",
             "basename",
             "strip_quotes",
+            "strip_prefix",
             "edge_attr",
             "node_attr",
         ] {
@@ -2086,6 +2116,92 @@ mod tests {
         assert_eq!(run("strip_quotes", hit).rows.len(), 1);
         let miss = ArgSpec::new(vec![ArgValue::Bound(s("'x'")), ArgValue::Bound(s("'x'"))]);
         assert_eq!(run("strip_quotes", miss).rows.len(), 0);
+    }
+
+    // ── strip_prefix ───────────────────────────────────────────────
+
+    #[test]
+    fn strip_prefix_match_and_extract_no_identity_fallback() {
+        // [B, B, F] — bind the rest after the prefix (the "*:./foo" star re-export shape).
+        let bind = ArgSpec::new(vec![
+            ArgValue::Bound(s("*:./foo")),
+            ArgValue::Bound(s("*:")),
+            ArgValue::Free { slot: 0 },
+        ]);
+        let out = run("strip_prefix", bind);
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(out.rows[0][0], s("./foo"));
+
+        // The "TName::" split shape.
+        let split = ArgSpec::new(vec![
+            ArgValue::Bound(s("Widget::render")),
+            ArgValue::Bound(s("Widget::")),
+            ArgValue::Free { slot: 0 },
+        ]);
+        let out = run("strip_prefix", split);
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(out.rows[0][0], s("render"));
+
+        // Non-matching prefix → NO row (match-and-extract, never an identity fallback).
+        let miss = ArgSpec::new(vec![
+            ArgValue::Bound(s("./foo")),
+            ArgValue::Bound(s("*:")),
+            ArgValue::Free { slot: 0 },
+        ]);
+        assert_eq!(run("strip_prefix", miss).rows.len(), 0);
+
+        // S == Prefix strips to the empty REST — still a row (strip_quotes' empty-VALUE
+        // stance, unlike basename's empty-name skip).
+        let empty_rest = ArgSpec::new(vec![
+            ArgValue::Bound(s("*:")),
+            ArgValue::Bound(s("*:")),
+            ArgValue::Free { slot: 0 },
+        ]);
+        let out = run("strip_prefix", empty_rest);
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(out.rows[0][0], s(""));
+
+        // An empty prefix matches everything → identity.
+        let empty_prefix = ArgSpec::new(vec![
+            ArgValue::Bound(s("./foo")),
+            ArgValue::Bound(s("")),
+            ArgValue::Free { slot: 0 },
+        ]);
+        let out = run("strip_prefix", empty_prefix);
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(out.rows[0][0], s("./foo"));
+
+        // [B, B, B] — equality check: pass and non-match.
+        let hit = ArgSpec::new(vec![
+            ArgValue::Bound(s("*:./foo")),
+            ArgValue::Bound(s("*:")),
+            ArgValue::Bound(s("./foo")),
+        ]);
+        assert_eq!(run("strip_prefix", hit).rows.len(), 1);
+        let check_miss = ArgSpec::new(vec![
+            ArgValue::Bound(s("*:./foo")),
+            ArgValue::Bound(s("*:")),
+            ArgValue::Bound(s("*:./foo")),
+        ]);
+        assert_eq!(
+            run("strip_prefix", check_miss).rows.len(),
+            0,
+            "output position is the REST, not the full surface"
+        );
+    }
+
+    #[test]
+    fn strip_prefix_free_input_is_unsupported_mode() {
+        // strip_prefix(Free, B, F) — both inputs must be bound first (E-PLAN-001 names arg 0).
+        let def = lookup("strip_prefix").unwrap();
+        let spec = ArgSpec::new(vec![
+            ArgValue::Free { slot: 0 },
+            ArgValue::Bound(s("*:")),
+            ArgValue::Free { slot: 1 },
+        ]);
+        let err = def.check_mode(&spec).unwrap_err();
+        assert_eq!(err.code.as_str(), "E-PLAN-001");
+        assert!(err.required_bindings.contains(&0), "must name the free input");
     }
 
     // ── edge_attr ──────────────────────────────────────────────────

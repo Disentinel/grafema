@@ -127,6 +127,36 @@ pub const RUST_CALLS_DL: &str = include_str!("stdlib/rust_calls.dl");
 /// additive, `resolvedVia = "rust-cross-method"` + `receiverType` meta.
 pub const RUST_CROSS_METHODS_CTOR_DL: &str = include_str!("stdlib/rust_cross_methods_ctor.dl");
 
+// ── Rust Wave-2 packs (node_attr-unblocked) ────────────────────────────────
+
+/// The bundled Rust trait-implementation pack (Wave 2) — the in-engine
+/// replacement for the WHOLE `RustTraitResolution.hs` resolver: an
+/// `IMPLEMENTS` edge from each `impl Trait for Type` block's self type
+/// (STRUCT, plus CLASS as a superset) to the TRAIT node. `node_attr`
+/// unblocked it: the trait name lives only in IMPL_BLOCK metadata
+/// (`rust_analyzer.rs:802-804`). Qualified refs resolve via allowlisted
+/// `strip_prefix` arms (`crate::`/`self::`/`super::` roots only — external
+/// roots derive nothing BY POLICY, never a false edge onto a same-named local
+/// trait); deltas numbered in the `.dl` header. `IMPLEMENTS` additive (shared
+/// with the legacy resolver during the hybrid rollout), no meta columns
+/// (legacy metadata was empty).
+pub const RUST_TRAIT_RESOLVE_DL: &str = include_str!("stdlib/rust_trait_resolve.dl");
+
+/// The bundled Rust annotation/return-type receiver-typing pack (Wave 2) —
+/// the typeAnnotation + returnType arms of `RustCrossMethodCalls.hs` that
+/// `node_attr` unblocked: `let w: Widget; w.render()` (arm A) and
+/// `let m = make_widget(); m.render()` via the resolved init call's declared
+/// returnType (arm B — DEAD in legacy production: the orchestrator shipped
+/// the resolver only ASSIGNED_FROM edges, so its CALLS-follow never fired).
+/// Arm B reads CALLS from STORAGE while materializing CALLS (positive
+/// self-read) — MUST run AFTER [`RUST_CALLS_DL`], the same EDB seam as
+/// [`RUST_CROSS_METHODS_CTOR_DL`]. Generic surfaces (`Vec<Foo>`) never reach
+/// the pack — the analyzer stores base names ("Vec"); external-rooted
+/// qualified surfaces derive nothing by policy. Deltas numbered in the `.dl`
+/// header. `CALLS` additive, `resolvedVia = "rust-cross-method"` +
+/// `receiverType` (raw surface) meta.
+pub const RUST_RECEIVER_TYPING_DL: &str = include_str!("stdlib/rust_receiver_typing.dl");
+
 /// The bundled JS/TS cross-file call-resolution pack (Wave 1b, HYBRID) — the
 /// in-engine replacement for the DIRECT + NAMESPACE arms of `CrossFileCalls.hs`,
 /// consuming the LEGACY import resolver's committed `IMPORTS_FROM` edges as EDB
@@ -145,9 +175,57 @@ pub const JS_CROSS_FILE_CALLS_DL: &str = include_str!("stdlib/js_cross_file_call
 /// (`import * as utils; utils.config` → `READS_FROM` the export target,
 /// matching what legacy emits: `resolvedVia = "property-access"`). Same EDB
 /// seam and exported_in shape as [`JS_CROSS_FILE_CALLS_DL`]; the resolver's
-/// other arms (this/static via metadata.base) are node_attr-blocked Wave 2.
+/// other arms (this/static via metadata.base) live in
+/// [`JS_PROPERTY_ACCESS_FULL_DL`] (Wave 2).
 /// `READS_FROM` additive.
 pub const JS_PROPERTY_ACCESS_NS_DL: &str = include_str!("stdlib/js_property_access_ns.dl");
+
+// ── JS Wave-2 packs (node_attr-unblocked) ──────────────────────────────────
+
+/// The bundled JS/TS import-binding resolution pack (Wave 2) — the in-engine
+/// replacement for the named/aliased/default IMPORT_BINDING arms of
+/// `ImportResolution.hs` that Wave 1 deliberately HELD BACK (the binding_import
+/// false-positive trap: matching by localName alone emits WRONG edges for
+/// `import {foo as bar}` / `import Foo from './Foo'`).
+/// `node_attr(B, "importedName", IN)` now disambiguates them. Module-path
+/// resolution is HYBRID — no path kernel: the binding's parent IMPORT's legacy
+/// `IMPORTS_FROM → MODULE` edge gives the resolved target file. Namespace
+/// (`IN == "*"`) is excluded (stays the legacy producer's arm, ridden by the
+/// Wave-1b consumers — no duplication); re-export chain following and star
+/// probing are the pinned Wave-2b SUBSET delta (legacy still emits those, so
+/// the hybrid graph loses nothing). PRODUCER of `IMPORTS_FROM` — must precede
+/// the IMPORTS_FROM consumers (`js_class_inheritance`, `js_cross_file_calls`,
+/// `js_property_access_ns`). `IMPORTS_FROM` additive, empty meta (legacy
+/// parity). node_attr ⇒ scratch-only under maintain.
+pub const JS_IMPORT_BINDINGS_DL: &str = include_str!("stdlib/js_import_bindings.dl");
+
+/// The bundled JS/TS class-inheritance pack (Wave 2) — the in-engine
+/// replacement for the ENTIRE `ClassInheritance.hs` resolver: the superclass
+/// name lives ONLY in CLASS metadata (`superClass`, Declarations.hs:320-337),
+/// so the whole resolver was node_attr-blocked until now. Same-file arm first;
+/// the cross-file arm (gated by the resolver's fall-through negation) follows
+/// the import-binding's committed `IMPORTS_FROM` edge — the same HYBRID seam
+/// as [`JS_CROSS_FILE_CALLS_DL`], so aliased/default superclass imports
+/// resolve correctly. `EXTENDS` is SHARED vocabulary (the shape-tracker plugin
+/// also emits it) ⇒ additive on both heads; `resolvedVia = "class-inheritance"`
+/// meta (the legacy importedFrom meta is a recorded loss). PRODUCER of
+/// `EXTENDS` for `shape_verifier`'s inheritance closure — must precede it.
+/// node_attr ⇒ scratch-only under maintain.
+pub const JS_CLASS_INHERITANCE_DL: &str = include_str!("stdlib/js_class_inheritance.dl");
+
+/// The bundled JS/TS same-file property-access pack (Wave 2) — the remaining
+/// arms of `PropertyAccess.hs` that the ns pack held: `this/super/<obj>.prop`
+/// via the Wave-0-verified SCOPE chain (replacing the resolver's line-range
+/// containment) and `ClassName.staticProp` via the 26-clause uppercase test,
+/// both reading the receiver from `node_attr(PA, "base", …)` (metadata-only;
+/// gnName is the BARE member name). Members via `CLASS -HAS_METHOD->` (the
+/// `[in:Class]` sid substitute) plus a PROPERTY_ASSIGNMENT/className clause
+/// kept for spec parity (zero rows on current graphs — the analyzer emits
+/// PROPERTY nodes, which the resolver never indexed either). Together with
+/// [`JS_PROPERTY_ACCESS_NS_DL`] this covers the entire resolver. `READS_FROM`
+/// additive, `resolvedVia = "property-access"` meta. node_attr ⇒ scratch-only
+/// under maintain.
+pub const JS_PROPERTY_ACCESS_FULL_DL: &str = include_str!("stdlib/js_property_access_full.dl");
 
 /// The named stdlib rule packs, addressable on the wire as `"@stdlib/<name>"`
 /// (`MaterializeDatalog` and the other empty-source-defaulting dispatchers), listed
@@ -160,18 +238,35 @@ pub const JS_PROPERTY_ACCESS_NS_DL: &str = include_str!("stdlib/js_property_acce
 ///   committed as storage EDB (the resolved-constructor seam), so it runs
 ///   strictly after `rust_calls`;
 /// - `js_cross_file_calls` and `js_property_access_ns` (Wave 1b, hybrid) consume
-///   the LEGACY import resolver's IMPORTS_FROM edges as EDB — present since
-///   analysis time — and, as CALLS/READS_FROM producers, must precede the fuzzy
-///   fallback and the negators below;
+///   committed IMPORTS_FROM edges as EDB — present since analysis time (legacy)
+///   and topped up by `js_import_bindings` — and, as CALLS/READS_FROM producers,
+///   must precede the fuzzy fallback and the negators below;
 /// - `method_calls` (the fuzzy fallback) reads `READS_FROM` receiver chains as
 ///   EDB, so it runs after every READS_FROM producer above;
 /// - `shape_verifier` NEGATES `CALLS` (skip-resolved) and `READS_FROM` (the
 ///   PA-fallback guard) as EDB, so it MUST run after every CALLS/READS_FROM
 ///   producer above — running earlier would flag calls a later pack resolves.
+/// - the Rust Wave-2 packs follow `rust_cross_methods_ctor`:
+///   `rust_receiver_typing` reads the CALLS edges `rust_calls` committed
+///   (the same storage-EDB seam) and, as a CALLS producer, must precede the
+///   fuzzy fallback and the negators; `rust_trait_resolve` consumes analyzer
+///   EDB only (IMPL_BLOCK metadata + TRAIT/STRUCT/CLASS nodes).
+/// - the JS Wave-2 packs: `js_import_bindings` PRODUCES `IMPORTS_FROM` (the EDB
+///   seam) and runs before every IMPORTS_FROM consumer —
+///   `js_class_inheritance` (cross-file arm), `js_cross_file_calls`,
+///   `js_property_access_ns` (while legacy resolution stays ON its edges are
+///   near-duplicates; once legacy is gated this ordering is load-bearing, and
+///   `depends` — which also consumes IMPORTS_FROM and currently runs first on
+///   the legacy edges — must move after it); `js_class_inheritance` PRODUCES
+///   `EXTENDS` for `shape_verifier`'s inheritance closure;
+///   `js_property_access_full` produces `READS_FROM`, so it precedes
+///   `method_calls`/`shape_verifier`.
 /// An orchestrator running the packs sequentially must preserve this order:
 /// depends → js_local_refs → js_same_file_calls → js_this_method_calls →
-/// rust_calls → rust_cross_methods_ctor → js_cross_file_calls →
-/// js_property_access_ns → method_calls → shape_verifier → axum_routes.
+/// rust_calls → rust_cross_methods_ctor → rust_trait_resolve →
+/// rust_receiver_typing → js_import_bindings → js_class_inheritance →
+/// js_cross_file_calls → js_property_access_ns → js_property_access_full →
+/// method_calls → shape_verifier → axum_routes.
 pub const STDLIB_PACKS: &[(&str, &str)] = &[
     ("depends", DEPENDS_DL),
     ("js_local_refs", JS_LOCAL_REFS_DL),
@@ -179,8 +274,20 @@ pub const STDLIB_PACKS: &[(&str, &str)] = &[
     ("js_this_method_calls", JS_THIS_METHOD_CALLS_DL),
     ("rust_calls", RUST_CALLS_DL),
     ("rust_cross_methods_ctor", RUST_CROSS_METHODS_CTOR_DL),
+    // Rust Wave-2 packs: rust_receiver_typing reads rust_calls' CALLS as EDB
+    // (the same MUST-run-AFTER seam as rust_cross_methods_ctor);
+    // rust_trait_resolve consumes analyzer EDB only.
+    ("rust_trait_resolve", RUST_TRAIT_RESOLVE_DL),
+    ("rust_receiver_typing", RUST_RECEIVER_TYPING_DL),
+    // JS Wave-2 packs: js_import_bindings PRODUCES IMPORTS_FROM — strictly
+    // before its consumers (js_class_inheritance's cross-file arm and the two
+    // Wave-1b hybrid packs); js_class_inheritance PRODUCES EXTENDS for
+    // shape_verifier's closure.
+    ("js_import_bindings", JS_IMPORT_BINDINGS_DL),
+    ("js_class_inheritance", JS_CLASS_INHERITANCE_DL),
     ("js_cross_file_calls", JS_CROSS_FILE_CALLS_DL),
     ("js_property_access_ns", JS_PROPERTY_ACCESS_NS_DL),
+    ("js_property_access_full", JS_PROPERTY_ACCESS_FULL_DL),
     ("method_calls", METHOD_CALLS_DL),
     ("shape_verifier", SHAPE_VERIFIER_DL),
     ("axum_routes", AXUM_ROUTES_DL),
@@ -1031,16 +1138,26 @@ mod tests {
                 "js_this_method_calls",
                 "rust_calls",
                 "rust_cross_methods_ctor",
+                "rust_trait_resolve",
+                "rust_receiver_typing",
+                "js_import_bindings",
+                "js_class_inheritance",
                 "js_cross_file_calls",
                 "js_property_access_ns",
+                "js_property_access_full",
                 "method_calls",
                 "shape_verifier",
                 "axum_routes",
             ],
             "canonical run order: depends → Wave-1 resolver packs → Wave-1b packs \
              (rust_cross_methods_ctor after rust_calls — the CALLS EDB seam; the \
-             js hybrid packs before the fuzzy fallback) → method_calls → \
-             shape_verifier → axum_routes (producers strictly before consumers)"
+             js hybrid packs before the fuzzy fallback) → Rust Wave-2 packs \
+             (rust_receiver_typing shares the rust_calls CALLS seam) → JS Wave-2 \
+             packs (js_import_bindings PRODUCES the IMPORTS_FROM seam, so it \
+             precedes js_class_inheritance and the js hybrid consumers; \
+             js_class_inheritance produces EXTENDS for shape_verifier) → \
+             method_calls → shape_verifier → axum_routes (producers strictly \
+             before consumers)"
         );
         assert_eq!(stdlib_pack("depends"), Some(DEPENDS_DL));
         assert_eq!(stdlib_pack("js_local_refs"), Some(JS_LOCAL_REFS_DL));
@@ -1054,10 +1171,24 @@ mod tests {
             stdlib_pack("rust_cross_methods_ctor"),
             Some(RUST_CROSS_METHODS_CTOR_DL)
         );
+        assert_eq!(stdlib_pack("rust_trait_resolve"), Some(RUST_TRAIT_RESOLVE_DL));
+        assert_eq!(
+            stdlib_pack("rust_receiver_typing"),
+            Some(RUST_RECEIVER_TYPING_DL)
+        );
+        assert_eq!(stdlib_pack("js_import_bindings"), Some(JS_IMPORT_BINDINGS_DL));
+        assert_eq!(
+            stdlib_pack("js_class_inheritance"),
+            Some(JS_CLASS_INHERITANCE_DL)
+        );
         assert_eq!(stdlib_pack("js_cross_file_calls"), Some(JS_CROSS_FILE_CALLS_DL));
         assert_eq!(
             stdlib_pack("js_property_access_ns"),
             Some(JS_PROPERTY_ACCESS_NS_DL)
+        );
+        assert_eq!(
+            stdlib_pack("js_property_access_full"),
+            Some(JS_PROPERTY_ACCESS_FULL_DL)
         );
         assert_eq!(stdlib_pack("method_calls"), Some(METHOD_CALLS_DL));
         assert_eq!(stdlib_pack("shape_verifier"), Some(SHAPE_VERIFIER_DL));
@@ -2029,5 +2160,653 @@ mod tests {
         assert_eq!(rf_specs.len(), 1, "exactly one READS_FROM head");
         assert!(rf_specs[0].additive, "READS_FROM is shared — additive");
         assert_eq!(rf_specs[0].meta, vec!["resolvedVia".to_string()]);
+    }
+
+    /// The bundled js_class_inheritance pack (Wave 2, node_attr) resolves both
+    /// arms of ClassInheritance.hs:
+    /// - A1 same-file: `class Dog extends Animal`, plus the DELTA-1 superset pin
+    ///   (duplicate same-name classes derive an edge each);
+    /// - the fall-through gate: a same-file candidate SUPPRESSES the cross-file
+    ///   arm even when an import binding of that name exists (resolver parity);
+    /// - A2 cross-file: superclass through the binding's committed IMPORTS_FROM
+    ///   edge — plain CLASS endpoint and the default-import endpoint (the EXPORT
+    ///   "default" node);
+    /// - negatives: namespace binding (MODULE target, DELTA 5 guard), a class
+    ///   with no superClass metadata, the self-name class (DELTA 2: neq refuses
+    ///   the self-edge AND has_local suppresses the cross-file arm), the .rs
+    ///   file gate.
+    #[test]
+    fn js_class_inheritance_same_file_and_cross_file_arms() {
+        let mut v = FixtureStorageView::new(1);
+
+        // A1 same-file: Dog extends Animal in a.ts; Plain has no superClass.
+        named_node(&mut v, "cls_animal", "Animal", "CLASS", "a.ts");
+        named_node(&mut v, "cls_dog", "Dog", "CLASS", "a.ts");
+        v.put_node_metadata(id_of("cls_dog"), r#"{"superClass":"Animal"}"#);
+        named_node(&mut v, "cls_plain", "Plain", "CLASS", "a.ts");
+
+        // Fall-through gate: Cat extends Base — Base exists BOTH same-file and
+        // as an import binding; only the same-file edge may derive.
+        named_node(&mut v, "cls_base_local", "Base", "CLASS", "b.ts");
+        named_node(&mut v, "cls_cat", "Cat", "CLASS", "b.ts");
+        v.put_node_metadata(id_of("cls_cat"), r#"{"superClass":"Base"}"#);
+        named_node(&mut v, "b_base", "Base", "IMPORT_BINDING", "b.ts");
+        named_node(&mut v, "cls_base_remote", "Base", "CLASS", "base.ts");
+        edge(&mut v, "b_base", "cls_base_remote", "IMPORTS_FROM");
+
+        // A2 cross-file: Pup extends RemoteAnimal (imported, no local candidate).
+        named_node(&mut v, "cls_pup", "Pup", "CLASS", "c.ts");
+        v.put_node_metadata(id_of("cls_pup"), r#"{"superClass":"RemoteAnimal"}"#);
+        named_node(&mut v, "b_remote", "RemoteAnimal", "IMPORT_BINDING", "c.ts");
+        named_node(&mut v, "cls_remote", "RemoteAnimal", "CLASS", "base.ts");
+        edge(&mut v, "b_remote", "cls_remote", "IMPORTS_FROM");
+
+        // A2 default-import endpoint: Kid extends Foo, `import Foo from './foo'`
+        // — the legacy edge points at the EXPORT "default" node.
+        named_node(&mut v, "cls_kid", "Kid", "CLASS", "d.ts");
+        v.put_node_metadata(id_of("cls_kid"), r#"{"superClass":"Foo"}"#);
+        named_node(&mut v, "b_foo", "Foo", "IMPORT_BINDING", "d.ts");
+        named_node(&mut v, "e_def_foo", "default", "EXPORT", "foo.ts");
+        edge(&mut v, "b_foo", "e_def_foo", "IMPORTS_FROM");
+
+        // DELTA 5 guard: NsKid extends NS where NS is a namespace binding
+        // (MODULE target) — derives nothing.
+        named_node(&mut v, "cls_nskid", "NsKid", "CLASS", "e.ts");
+        v.put_node_metadata(id_of("cls_nskid"), r#"{"superClass":"NS"}"#);
+        named_node(&mut v, "b_ns", "NS", "IMPORT_BINDING", "e.ts");
+        named_node(&mut v, "m_x", "x", "MODULE", "x.ts");
+        edge(&mut v, "b_ns", "m_x", "IMPORTS_FROM");
+
+        // DELTA 2: a class whose only same-file name-match is ITSELF — the neq
+        // refuses the self-edge and has_local still suppresses the cross-file
+        // arm (a binding of the same name exists and must NOT fire).
+        named_node(&mut v, "cls_selfish", "Selfish", "CLASS", "f.ts");
+        v.put_node_metadata(id_of("cls_selfish"), r#"{"superClass":"Selfish"}"#);
+        named_node(&mut v, "b_selfish", "Selfish", "IMPORT_BINDING", "f.ts");
+        edge(&mut v, "b_selfish", "cls_remote", "IMPORTS_FROM");
+
+        // DELTA 1: Twin extends Dup with TWO same-file "Dup" classes — both derive.
+        named_node(&mut v, "cls_twin", "Twin", "CLASS", "g.ts");
+        v.put_node_metadata(id_of("cls_twin"), r#"{"superClass":"Dup"}"#);
+        named_node(&mut v, "cls_dup1", "Dup", "CLASS", "g.ts");
+        named_node(&mut v, "cls_dup2", "Dup", "CLASS", "g.ts");
+
+        // File gate: the same shape in a .rs file derives nothing.
+        named_node(&mut v, "cls_rs_animal", "RsAnimal", "CLASS", "main.rs");
+        named_node(&mut v, "cls_rs_dog", "RsDog", "CLASS", "main.rs");
+        v.put_node_metadata(id_of("cls_rs_dog"), r#"{"superClass":"RsAnimal"}"#);
+
+        let (eval, specs, _node_specs) = evaluate_with_materialize(
+            &v,
+            JS_CLASS_INHERITANCE_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("js_class_inheritance.dl evaluates");
+
+        let via = |pairs: &[(&str, &str)]| -> BTreeSet<(u128, u128, String)> {
+            pairs
+                .iter()
+                .map(|(c, t)| (id_of(c), id_of(t), "class-inheritance".to_string()))
+                .collect()
+        };
+        assert_eq!(
+            triples(&eval, "ext_same_file"),
+            via(&[
+                ("cls_dog", "cls_animal"),
+                ("cls_cat", "cls_base_local"),
+                ("cls_twin", "cls_dup1"),
+                ("cls_twin", "cls_dup2"),
+            ]),
+            "A1: same-file superclass (+ DELTA 1 both duplicates); the self-name \
+             class (neq), the no-superClass class and the .rs file derive nothing"
+        );
+        assert_eq!(
+            triples(&eval, "ext_cross_file"),
+            via(&[("cls_pup", "cls_remote"), ("cls_kid", "e_def_foo")]),
+            "A2: imported superclass via the binding's IMPORTS_FROM edge (CLASS \
+             and EXPORT-default endpoints); the same-file candidate suppresses \
+             the arm (Cat, Selfish) and the namespace binding's MODULE target \
+             (DELTA 5) derives nothing"
+        );
+
+        // Both heads materialize the SHARED type EXTENDS — additive + resolvedVia.
+        let ext_specs: Vec<_> = specs.iter().filter(|s| s.edge_type == "EXTENDS").collect();
+        assert_eq!(ext_specs.len(), 2, "two EXTENDS heads (same-file + cross-file)");
+        assert!(
+            ext_specs.iter().all(|s| s.additive),
+            "EXTENDS is shared (shape-tracker also emits it) — additive is mandatory"
+        );
+        assert!(
+            ext_specs
+                .iter()
+                .all(|s| s.meta == vec!["resolvedVia".to_string()]),
+            "resolvedVia is projected on both heads"
+        );
+    }
+
+    /// The bundled js_import_bindings pack (Wave 2, node_attr) resolves the
+    /// named/aliased/default binding arms that Wave 1 held back, through the
+    /// parent IMPORT's legacy IMPORTS_FROM → MODULE seam:
+    /// - named `import {helper}` and aliased `import {helper as h2}` both match
+    ///   the target's exports by importedName;
+    /// - THE WAVE-1 TRAP PINNED: a binding whose LOCAL name matches an export
+    ///   but whose importedName does not (aliased trap) derives NOTHING — no
+    ///   false positive;
+    /// - default `import Foo` → the EXPORT "default" node (resolver endpoint);
+    /// - EXPORT_BINDING targets by exportedName: `export { foo }` (plain) and
+    ///   `export { orig as renamed }` matched by "renamed" NOT "orig";
+    /// - negatives: namespace binding (IN="*", the legacy producer's arm),
+    ///   re-export EXPORT_BINDING (DELTA 1 subset — Wave 2b), an IMPORT with no
+    ///   resolved MODULE edge, the .rs file gate.
+    #[test]
+    fn js_import_bindings_named_aliased_default_arms() {
+        let mut v = FixtureStorageView::new(1);
+
+        // Target module utils.ts and its exports.
+        named_node(&mut v, "m_utils", "utils", "MODULE", "utils.ts");
+        named_node(&mut v, "e_named", "named", "EXPORT", "utils.ts");
+        named_node(&mut v, "f_helper", "helper", "FUNCTION", "utils.ts");
+        edge(&mut v, "e_named", "f_helper", "EXPORTS");
+        named_node(&mut v, "e_def", "default", "EXPORT", "utils.ts");
+        // Local export binding `export { foo }` (exportedName == name).
+        named_node(&mut v, "eb_local", "foo", "EXPORT_BINDING", "utils.ts");
+        v.put_node_metadata(id_of("eb_local"), r#"{"exportedName":"foo"}"#);
+        edge(&mut v, "e_named", "eb_local", "EXPORTS");
+        // Aliased export binding `export { orig as renamed }`.
+        named_node(&mut v, "eb_alias", "orig", "EXPORT_BINDING", "utils.ts");
+        v.put_node_metadata(id_of("eb_alias"), r#"{"exportedName":"renamed"}"#);
+        edge(&mut v, "e_named", "eb_alias", "EXPORTS");
+        // Re-export binding `export { x } from './other'` — DELTA 1: excluded.
+        named_node(&mut v, "eb_re", "x", "EXPORT_BINDING", "utils.ts");
+        v.put_node_metadata(id_of("eb_re"), r#"{"exportedName":"x","source":"./other"}"#);
+        edge(&mut v, "e_named", "eb_re", "EXPORTS");
+
+        // The importer: IMPORT './utils' resolved by legacy to m_utils.
+        named_node(&mut v, "i_app", "./utils", "IMPORT", "app.ts");
+        edge(&mut v, "i_app", "m_utils", "IMPORTS_FROM");
+        let bind = |v: &mut FixtureStorageView, sid: &str, local: &str, imported: &str| {
+            named_node(v, sid, local, "IMPORT_BINDING", "app.ts");
+            v.put_node_metadata(
+                id_of(sid),
+                &format!(r#"{{"importedName":"{imported}"}}"#),
+            );
+            edge(v, "i_app", sid, "CONTAINS");
+        };
+        bind(&mut v, "b_named", "helper", "helper"); // import { helper }
+        bind(&mut v, "b_aliased", "h2", "helper"); // import { helper as h2 }
+        bind(&mut v, "b_trap", "helper", "nothere"); // localName matches, IN doesn't
+        bind(&mut v, "b_default", "Foo", "default"); // import Foo
+        bind(&mut v, "b_ns", "utils", "*"); // import * as utils — excluded
+        bind(&mut v, "b_eb", "fooLocal", "foo"); // → EXPORT_BINDING by exportedName
+        bind(&mut v, "b_eb_alias", "r", "renamed"); // → aliased EXPORT_BINDING
+        bind(&mut v, "b_orig", "o", "orig"); // exported name is "renamed" — miss
+        bind(&mut v, "b_re", "x", "x"); // re-export binding — DELTA 1, miss
+
+        // An unresolved import (no IMPORTS_FROM → MODULE edge): no rows.
+        named_node(&mut v, "i_miss", "./missing", "IMPORT", "app.ts");
+        named_node(&mut v, "b_unres", "gone", "IMPORT_BINDING", "app.ts");
+        v.put_node_metadata(id_of("b_unres"), r#"{"importedName":"gone"}"#);
+        edge(&mut v, "i_miss", "b_unres", "CONTAINS");
+
+        // File gate: the full shape in a .rs file derives nothing.
+        named_node(&mut v, "i_rs", "crate::u", "IMPORT", "main.rs");
+        edge(&mut v, "i_rs", "m_utils", "IMPORTS_FROM");
+        named_node(&mut v, "b_rs", "helper", "IMPORT_BINDING", "main.rs");
+        v.put_node_metadata(id_of("b_rs"), r#"{"importedName":"helper"}"#);
+        edge(&mut v, "i_rs", "b_rs", "CONTAINS");
+
+        let (eval, specs, _node_specs) = evaluate_with_materialize(
+            &v,
+            JS_IMPORT_BINDINGS_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("js_import_bindings.dl evaluates");
+
+        let pairs: BTreeSet<(u128, u128)> = eval
+            .facts("binding_import")
+            .into_iter()
+            .map(|row| {
+                (
+                    row[0].as_id().expect("arg0 id"),
+                    row[1].as_id().expect("arg1 id"),
+                )
+            })
+            .collect();
+        assert_eq!(
+            pairs,
+            BTreeSet::from([
+                (id_of("b_named"), id_of("f_helper")),
+                (id_of("b_aliased"), id_of("f_helper")),
+                (id_of("b_default"), id_of("e_def")),
+                (id_of("b_eb"), id_of("eb_local")),
+                (id_of("b_eb_alias"), id_of("eb_alias")),
+            ]),
+            "named + aliased by importedName, default → the EXPORT node, \
+             EXPORT_BINDINGs by exportedName; the localName trap, the namespace \
+             binding, importing the pre-alias name, the re-export binding \
+             (DELTA 1), the unresolved import and the .rs file derive NOTHING"
+        );
+
+        // IMPORTS_FROM is shared vocabulary — additive; legacy edges carry
+        // empty metadata, so no meta columns (exact parity).
+        let if_specs: Vec<_> = specs
+            .iter()
+            .filter(|s| s.edge_type == "IMPORTS_FROM")
+            .collect();
+        assert_eq!(if_specs.len(), 1, "exactly one IMPORTS_FROM head");
+        assert!(if_specs[0].additive, "IMPORTS_FROM is shared — additive");
+        assert!(
+            if_specs[0].meta.is_empty(),
+            "legacy binding edges carry empty metadata — no meta columns"
+        );
+    }
+
+    /// The bundled js_property_access_full pack (Wave 2, node_attr) resolves the
+    /// remaining PropertyAccess.hs arms (the ns arm lives in its own pack):
+    /// - C1 this/super/<obj>: enclosing class via the SCOPE chain (direct and
+    ///   nested scopes), member via HAS_METHOD;
+    /// - C1 PROPERTY_ASSIGNMENT members via node_attr className (spec parity);
+    /// - C2 ClassName.staticProp: uppercase receiver, same-file class;
+    /// - negatives: member not on the class, a read outside any method scope
+    ///   (DELTA 2b), lowercase receiver, receiver class in another file, a read
+    ///   with NO base metadata, the .rs file gate.
+    #[test]
+    fn js_property_access_full_this_and_static_arms() {
+        let mut v = FixtureStorageView::new(1);
+
+        // class Widget { render(); helper(); create(); } in app.ts.
+        named_node(&mut v, "cls_w", "Widget", "CLASS", "app.ts");
+        named_node(&mut v, "m_render", "render", "METHOD", "app.ts");
+        named_node(&mut v, "m_helper", "helper", "METHOD", "app.ts");
+        named_node(&mut v, "m_create", "create", "METHOD", "app.ts");
+        edge(&mut v, "cls_w", "m_render", "HAS_METHOD");
+        edge(&mut v, "cls_w", "m_helper", "HAS_METHOD");
+        edge(&mut v, "cls_w", "m_create", "HAS_METHOD");
+        // render's body scope + a nested (block) scope inside it.
+        named_node(&mut v, "s_m", "s_m", "SCOPE", "app.ts");
+        edge(&mut v, "m_render", "s_m", "HAS_SCOPE");
+        named_node(&mut v, "s_inner", "s_inner", "SCOPE", "app.ts");
+        edge(&mut v, "s_m", "s_inner", "HAS_SCOPE");
+        // A PROPERTY_ASSIGNMENT member keyed by className metadata (spec parity).
+        named_node(&mut v, "p_cfg", "config", "PROPERTY_ASSIGNMENT", "app.ts");
+        v.put_node_metadata(id_of("p_cfg"), r#"{"className":"Widget"}"#);
+
+        let pa = |v: &mut FixtureStorageView, sid: &str, name: &str, file: &str, base: &str| {
+            named_node(v, sid, name, "PROPERTY_ACCESS", file);
+            v.put_node_metadata(id_of(sid), &format!(r#"{{"base":"{base}"}}"#));
+        };
+        // C1: this/super/<obj> reads inside render's scope (+ one nested).
+        pa(&mut v, "pa_this", "helper", "app.ts", "this");
+        edge(&mut v, "s_m", "pa_this", "CONTAINS");
+        pa(&mut v, "pa_super", "render", "app.ts", "super");
+        edge(&mut v, "s_m", "pa_super", "CONTAINS");
+        pa(&mut v, "pa_obj", "helper", "app.ts", "<obj>");
+        edge(&mut v, "s_m", "pa_obj", "CONTAINS");
+        pa(&mut v, "pa_nested", "helper", "app.ts", "this");
+        edge(&mut v, "s_inner", "pa_nested", "CONTAINS");
+        pa(&mut v, "pa_this_cfg", "config", "app.ts", "this");
+        edge(&mut v, "s_m", "pa_this_cfg", "CONTAINS");
+        // C1 negatives: unknown member; a read in a scope with no method owner.
+        pa(&mut v, "pa_miss", "nope", "app.ts", "this");
+        edge(&mut v, "s_m", "pa_miss", "CONTAINS");
+        named_node(&mut v, "s_top", "s_top", "SCOPE", "app.ts");
+        pa(&mut v, "pa_orphan", "helper", "app.ts", "this");
+        edge(&mut v, "s_top", "pa_orphan", "CONTAINS");
+
+        // C2: static reads via the uppercase receiver.
+        pa(&mut v, "pa_static", "create", "app.ts", "Widget");
+        pa(&mut v, "pa_cfg", "config", "app.ts", "Widget");
+        // C2 negatives: lowercase receiver; receiver class lives in another file.
+        pa(&mut v, "pa_lower", "create", "app.ts", "widget");
+        pa(&mut v, "pa_otherfile", "create", "b.ts", "Widget");
+        // No base metadata at all → not a receiver read.
+        named_node(&mut v, "pa_nobase", "helper", "PROPERTY_ACCESS", "app.ts");
+
+        // File gate: the full static shape in a .rs file derives nothing.
+        named_node(&mut v, "cls_rs", "Widget", "CLASS", "main.rs");
+        named_node(&mut v, "m_rs", "create", "METHOD", "main.rs");
+        edge(&mut v, "cls_rs", "m_rs", "HAS_METHOD");
+        pa(&mut v, "pa_rs", "create", "main.rs", "Widget");
+
+        let (eval, specs, _node_specs) = evaluate_with_materialize(
+            &v,
+            JS_PROPERTY_ACCESS_FULL_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("js_property_access_full.dl evaluates");
+
+        let via = |pairs: &[(&str, &str)]| -> BTreeSet<(u128, u128, String)> {
+            pairs
+                .iter()
+                .map(|(pa, t)| (id_of(pa), id_of(t), "property-access".to_string()))
+                .collect()
+        };
+        assert_eq!(
+            triples(&eval, "pa_this_read"),
+            via(&[
+                ("pa_this", "m_helper"),
+                ("pa_super", "m_render"),
+                ("pa_obj", "m_helper"),
+                ("pa_nested", "m_helper"),
+                ("pa_this_cfg", "p_cfg"),
+            ]),
+            "C1: this/super/<obj> members via the scope chain (direct + nested) \
+             and the PROPERTY_ASSIGNMENT/className member; the unknown member \
+             and the ownerless scope (DELTA 2b) derive nothing"
+        );
+        assert_eq!(
+            triples(&eval, "pa_static_read"),
+            via(&[("pa_static", "m_create"), ("pa_cfg", "p_cfg")]),
+            "C2: uppercase same-file receiver via HAS_METHOD and via the \
+             className-metadata index; lowercase receiver, cross-file receiver, \
+             baseless read and the .rs file derive nothing"
+        );
+
+        // Both heads materialize the SHARED type READS_FROM — additive + resolvedVia.
+        let rf_specs: Vec<_> = specs
+            .iter()
+            .filter(|s| s.edge_type == "READS_FROM")
+            .collect();
+        assert_eq!(rf_specs.len(), 2, "two READS_FROM heads (this + static)");
+        assert!(
+            rf_specs.iter().all(|s| s.additive),
+            "READS_FROM is shared — additive is mandatory"
+        );
+        assert!(
+            rf_specs
+                .iter()
+                .all(|s| s.meta == vec!["resolvedVia".to_string()]),
+            "resolvedVia is projected on both heads"
+        );
+    }
+
+    // ── Rust Wave-2 pack tests (rust_trait_resolve / rust_receiver_typing) ──
+
+    /// The bundled rust_trait_resolve pack (Wave 2) reproduces the WHOLE
+    /// RustTraitResolution.hs resolver with every gate and policy pinned:
+    /// - happy path: `impl Tag for Widget` — IMPL_BLOCK metadata["trait"]
+    ///   (node_attr) + STRUCT by name → IMPLEMENTS;
+    /// - DELTA 3 REMOVED (review): rust_analyzer.rs emits no CLASS (grep
+    ///   '"CLASS"' = 0) — the CLASS arm could only match foreign classes, so
+    ///   it is gone and the name indexes are .rs-gated: a JS CLASS, a C++
+    ///   STRUCT and a PHP TRAIT shaped exactly like the happy path derive
+    ///   nothing;
+    /// - DELTA 1: single-hop crate-local qualified ref ("crate::Tag") resolves
+    ///   via the strip_prefix arm;
+    /// - DELTA 2 PINNED (subset): multi-segment local ref ("crate::tags::Tag")
+    ///   derives nothing;
+    /// - POLICY PINNED (zero false positives): "std::error::Error" and
+    ///   "fmt::Display" derive nothing even though same-named LOCAL traits
+    ///   exist — external/unproven roots never match bare segments;
+    /// - inherent impl (no trait metadata), unknown trait name, self type with
+    ///   no STRUCT/CLASS node, and the non-.rs file gate derive nothing;
+    /// - DELTA 4 PINNED (superset): duplicate same-named STRUCTs — an edge per
+    ///   candidate.
+    #[test]
+    fn rust_trait_resolve_emits_implements_for_trait_impls() {
+        let mut v = FixtureStorageView::new(1);
+
+        // The trait + the self types.
+        named_node(&mut v, "t_tag", "Tag", "TRAIT", "tags.rs");
+        named_node(&mut v, "s_w", "Widget", "STRUCT", "widget.rs");
+
+        // Happy path: impl Tag for Widget.
+        named_node(&mut v, "ib_w", "Widget", "IMPL_BLOCK", "widget.rs");
+        v.put_node_metadata(id_of("ib_w"), r#"{"trait":"Tag"}"#);
+
+        // Polyglot false-positive pins (review fix): same-named declarations
+        // from OTHER languages must never satisfy a Rust impl. A JS class
+        // Widget (rust_analyzer.rs emits no CLASS — only foreign analyzers
+        // do), a C++ STRUCT Widget (cpp-analyzer DataTypes.hs:109-115) and a
+        // PHP trait Tag all match ib_w by name; the .rs gates reject them.
+        named_node(&mut v, "c_js", "Widget", "CLASS", "widget.js");
+        named_node(&mut v, "s_cpp", "Widget", "STRUCT", "widget.cpp");
+        named_node(&mut v, "t_php", "Tag", "TRAIT", "tag.php");
+
+        // DELTA 1: crate-local single-hop qualified ref.
+        named_node(&mut v, "s_d", "Doohickey", "STRUCT", "d.rs");
+        named_node(&mut v, "ib_d", "Doohickey", "IMPL_BLOCK", "d.rs");
+        v.put_node_metadata(id_of("ib_d"), r#"{"trait":"crate::Tag"}"#);
+
+        // DELTA 2 (subset pin): multi-segment local ref strips to "tags::Tag",
+        // which names no TRAIT — nothing, never a bare-segment match.
+        named_node(&mut v, "s_m", "Multi", "STRUCT", "m.rs");
+        named_node(&mut v, "ib_m", "Multi", "IMPL_BLOCK", "m.rs");
+        v.put_node_metadata(id_of("ib_m"), r#"{"trait":"crate::tags::Tag"}"#);
+
+        // POLICY pins: same-named LOCAL traits exist, but external/unproven
+        // roots must not match them.
+        named_node(&mut v, "t_err", "Error", "TRAIT", "errors.rs");
+        named_node(&mut v, "s_e", "MyErr", "STRUCT", "e.rs");
+        named_node(&mut v, "ib_e", "MyErr", "IMPL_BLOCK", "e.rs");
+        v.put_node_metadata(id_of("ib_e"), r#"{"trait":"std::error::Error"}"#);
+        named_node(&mut v, "t_disp", "Display", "TRAIT", "disp.rs");
+        named_node(&mut v, "s_p", "Pretty", "STRUCT", "p.rs");
+        named_node(&mut v, "ib_p", "Pretty", "IMPL_BLOCK", "p.rs");
+        v.put_node_metadata(id_of("ib_p"), r#"{"trait":"fmt::Display"}"#);
+
+        // Inherent impl: no trait metadata — nothing.
+        named_node(&mut v, "ib_inh", "Widget", "IMPL_BLOCK", "widget.rs");
+
+        // Unknown trait name — nothing.
+        named_node(&mut v, "s_u", "Unmatched", "STRUCT", "u.rs");
+        named_node(&mut v, "ib_u", "Unmatched", "IMPL_BLOCK", "u.rs");
+        v.put_node_metadata(id_of("ib_u"), r#"{"trait":"Nope"}"#);
+
+        // Self type with no STRUCT/CLASS node (impl for an external type).
+        named_node(&mut v, "ib_x", "String", "IMPL_BLOCK", "x.rs");
+        v.put_node_metadata(id_of("ib_x"), r#"{"trait":"Tag"}"#);
+
+        // File gate: identical shape in a .ts file — nothing.
+        named_node(&mut v, "s_ts", "TsThing", "STRUCT", "app.ts");
+        named_node(&mut v, "ib_ts", "TsThing", "IMPL_BLOCK", "app.ts");
+        v.put_node_metadata(id_of("ib_ts"), r#"{"trait":"Tag"}"#);
+
+        // DELTA 4 (superset pin): a second STRUCT named Widget in another file.
+        named_node(&mut v, "s_w2", "Widget", "STRUCT", "widget2.rs");
+
+        let (eval, specs, _node_specs) = evaluate_with_materialize(
+            &v,
+            RUST_TRAIT_RESOLVE_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("rust_trait_resolve.dl evaluates");
+
+        let mut pairs: BTreeSet<(u128, u128)> = BTreeSet::new();
+        for row in eval.facts("rust_implements") {
+            pairs.insert((
+                row[0].as_id().expect("arg0 id"),
+                row[1].as_id().expect("arg1 id"),
+            ));
+        }
+        assert_eq!(
+            pairs,
+            BTreeSet::from([
+                (id_of("s_w"), id_of("t_tag")),
+                (id_of("s_w2"), id_of("t_tag")),
+                (id_of("s_d"), id_of("t_tag")),
+            ]),
+            "STRUCT + dup STRUCT (DELTA 4) + crate-local qualified (DELTA 1) \
+             implement Tag; multi-segment local (DELTA 2), std::/module-relative \
+             refs (policy), inherent impl, unknown trait, external self type, \
+             .ts file, and foreign-language CLASS/STRUCT/TRAIT (.js/.cpp/.php \
+             name twins) derive nothing"
+        );
+
+        // IMPLEMENTS is shared with the legacy resolver — additive, no meta
+        // columns (legacy metadata was empty).
+        let impl_specs: Vec<_> = specs
+            .iter()
+            .filter(|s| s.edge_type == "IMPLEMENTS")
+            .collect();
+        assert_eq!(impl_specs.len(), 1, "exactly one IMPLEMENTS head");
+        assert!(impl_specs[0].additive, "IMPLEMENTS is shared — additive");
+        assert!(
+            impl_specs[0].meta.is_empty(),
+            "no meta columns — legacy metadata was empty"
+        );
+    }
+
+    /// The bundled rust_receiver_typing pack (Wave 2) reproduces the
+    /// typeAnnotation (arm A) + returnType (arm B) receiver-typing arms of
+    /// RustCrossMethodCalls.hs with every gate and delta pinned:
+    /// - arm A exact via REFERENCE deref and via a direct declaration;
+    /// - arm A strip arm: "crate::widget::Widget" (full depth) resolves with
+    ///   the RAW surface as receiverType;
+    /// - POLICY PINNED: "std::widget::Widget" derives nothing (external root);
+    /// - DELTA 6: "dyn Widget" derives nothing (dyn dispatch is not this pack);
+    /// - DELTA 5: a "Vec"-annotated receiver (the analyzer's surface for
+    ///   Vec<Foo>) resolves to the local impl Vec member;
+    /// - arm B: init CALL with a committed CALLS edge (the rust_calls EDB
+    ///   seam) to a FUNCTION carrying returnType — resolves; an UNRESOLVED
+    ///   init derives nothing; returnType "Self" derives nothing (DELTA 6);
+    /// - method name missing on the impl and the non-.rs file gate derive
+    ///   nothing.
+    #[test]
+    fn rust_receiver_typing_resolves_annotation_and_return_types() {
+        let mut v = FixtureStorageView::new(1);
+
+        // impl Widget { fn render() } + impl Vec { fn push() }.
+        named_node(&mut v, "ib_w", "Widget", "IMPL_BLOCK", "widget.rs");
+        named_node(&mut v, "f_render", "render", "FUNCTION", "widget.rs");
+        edge(&mut v, "ib_w", "f_render", "HAS_METHOD");
+        named_node(&mut v, "ib_v", "Vec", "IMPL_BLOCK", "vec.rs");
+        named_node(&mut v, "f_push", "push", "FUNCTION", "vec.rs");
+        edge(&mut v, "ib_v", "f_push", "HAS_METHOD");
+
+        // Arm A exact, REFERENCE deref: let w: Widget; w.render().
+        named_node(&mut v, "p_w", "w", "PARAMETER", "a.rs");
+        v.put_node_metadata(id_of("p_w"), r#"{"typeAnnotation":"Widget"}"#);
+        named_node(&mut v, "ref_w", "w", "REFERENCE", "a.rs");
+        edge(&mut v, "ref_w", "p_w", "READS_FROM");
+        named_node(&mut v, "c_ann", "render", "CALL", "a.rs");
+        edge(&mut v, "c_ann", "ref_w", "READS_FROM");
+
+        // Arm A exact, direct declaration (identity deref clause).
+        named_node(&mut v, "v_d", "d", "VARIABLE", "b.rs");
+        v.put_node_metadata(id_of("v_d"), r#"{"typeAnnotation":"Widget"}"#);
+        named_node(&mut v, "c_direct", "render", "CALL", "b.rs");
+        edge(&mut v, "c_direct", "v_d", "READS_FROM");
+
+        // Arm A strip arm, full depth: crate::widget::Widget.
+        named_node(&mut v, "v_q", "q", "VARIABLE", "c.rs");
+        v.put_node_metadata(id_of("v_q"), r#"{"typeAnnotation":"crate::widget::Widget"}"#);
+        named_node(&mut v, "ref_q", "q", "REFERENCE", "c.rs");
+        edge(&mut v, "ref_q", "v_q", "READS_FROM");
+        named_node(&mut v, "c_qual", "render", "CALL", "c.rs");
+        edge(&mut v, "c_qual", "ref_q", "READS_FROM");
+
+        // POLICY pin: std-rooted surface must NOT match the local impl.
+        named_node(&mut v, "v_s", "s", "VARIABLE", "d.rs");
+        v.put_node_metadata(id_of("v_s"), r#"{"typeAnnotation":"std::widget::Widget"}"#);
+        named_node(&mut v, "c_std", "render", "CALL", "d.rs");
+        edge(&mut v, "c_std", "v_s", "READS_FROM");
+
+        // DELTA 6 pin: dyn surface names no IMPL_BLOCK.
+        named_node(&mut v, "v_dy", "dy", "VARIABLE", "dy.rs");
+        v.put_node_metadata(id_of("v_dy"), r#"{"typeAnnotation":"dyn Widget"}"#);
+        named_node(&mut v, "c_dyn", "render", "CALL", "dy.rs");
+        edge(&mut v, "c_dyn", "v_dy", "READS_FROM");
+
+        // DELTA 5 pin: `let vs: Vec<Foo>` arrives as "Vec" (analyzer-stripped)
+        // and resolves to the local impl Vec member.
+        named_node(&mut v, "v_vec", "vs", "VARIABLE", "g.rs");
+        v.put_node_metadata(id_of("v_vec"), r#"{"typeAnnotation":"Vec"}"#);
+        named_node(&mut v, "c_vec", "push", "CALL", "g.rs");
+        edge(&mut v, "c_vec", "v_vec", "READS_FROM");
+
+        // Arm B: let m = make_widget(); m.render() — the init's CALLS edge is
+        // committed storage EDB (the rust_calls seam), returnType "Widget".
+        named_node(&mut v, "f_make", "make_widget", "FUNCTION", "factory.rs");
+        v.put_node_metadata(id_of("f_make"), r#"{"returnType":"Widget"}"#);
+        named_node(&mut v, "init_b", "make_widget", "CALL", "e.rs");
+        edge(&mut v, "init_b", "f_make", "CALLS");
+        named_node(&mut v, "v_m", "m", "VARIABLE", "e.rs");
+        edge(&mut v, "v_m", "init_b", "ASSIGNED_FROM");
+        named_node(&mut v, "ref_m", "m", "REFERENCE", "e.rs");
+        edge(&mut v, "ref_m", "v_m", "READS_FROM");
+        named_node(&mut v, "c_ret", "render", "CALL", "e.rs");
+        edge(&mut v, "c_ret", "ref_m", "READS_FROM");
+
+        // Arm B negative: UNRESOLVED init (no CALLS edge) — nothing.
+        named_node(&mut v, "init_u", "make_widget", "CALL", "f.rs");
+        named_node(&mut v, "v_u", "u", "VARIABLE", "f.rs");
+        edge(&mut v, "v_u", "init_u", "ASSIGNED_FROM");
+        named_node(&mut v, "c_uret", "render", "CALL", "f.rs");
+        edge(&mut v, "c_uret", "v_u", "READS_FROM");
+
+        // Arm B negative: returnType "Self" names no IMPL_BLOCK (DELTA 6).
+        named_node(&mut v, "f_self", "new_self", "FUNCTION", "widget.rs");
+        v.put_node_metadata(id_of("f_self"), r#"{"returnType":"Self"}"#);
+        named_node(&mut v, "init_s", "new_self", "CALL", "h.rs");
+        edge(&mut v, "init_s", "f_self", "CALLS");
+        named_node(&mut v, "v_h", "h", "VARIABLE", "h.rs");
+        edge(&mut v, "v_h", "init_s", "ASSIGNED_FROM");
+        named_node(&mut v, "c_self", "render", "CALL", "h.rs");
+        edge(&mut v, "c_self", "v_h", "READS_FROM");
+
+        // Method not on the impl — typed receiver, no member "missing".
+        named_node(&mut v, "c_miss", "missing", "CALL", "a.rs");
+        edge(&mut v, "c_miss", "ref_w", "READS_FROM");
+
+        // File gate: identical annotated shape in a .ts file — nothing.
+        named_node(&mut v, "v_ts", "t", "VARIABLE", "app.ts");
+        v.put_node_metadata(id_of("v_ts"), r#"{"typeAnnotation":"Widget"}"#);
+        named_node(&mut v, "c_ts", "render", "CALL", "app.ts");
+        edge(&mut v, "c_ts", "v_ts", "READS_FROM");
+
+        let (eval, specs, _node_specs) = evaluate_with_materialize(
+            &v,
+            RUST_RECEIVER_TYPING_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("rust_receiver_typing.dl evaluates");
+
+        let expected: BTreeSet<(u128, u128, String, String)> = [
+            ("c_ann", "f_render", "Widget"),
+            ("c_direct", "f_render", "Widget"),
+            ("c_qual", "f_render", "crate::widget::Widget"),
+            ("c_vec", "f_push", "Vec"),
+            ("c_ret", "f_render", "Widget"),
+        ]
+        .iter()
+        .map(|(c, m, t)| {
+            (
+                id_of(c),
+                id_of(m),
+                "rust-cross-method".to_string(),
+                t.to_string(),
+            )
+        })
+        .collect();
+        assert_eq!(
+            quads(&eval, "rust_typed_method_call"),
+            expected,
+            "arm A (exact via REFERENCE + direct decl + full-depth crate strip \
+             with the RAW surface as receiverType + analyzer-stripped Vec) and \
+             arm B (resolved init → returnType) resolve; std-rooted surface \
+             (policy), dyn surface, unresolved init, returnType Self, missing \
+             member and the .ts file derive nothing"
+        );
+
+        // CALLS is shared vocabulary — additive, with both meta columns.
+        let calls_specs: Vec<_> = specs.iter().filter(|s| s.edge_type == "CALLS").collect();
+        assert_eq!(calls_specs.len(), 1, "exactly one CALLS head");
+        assert!(calls_specs[0].additive, "CALLS is shared — additive");
+        assert_eq!(
+            calls_specs[0].meta,
+            vec!["resolvedVia".to_string(), "receiverType".to_string()],
+            "resolvedVia + receiverType ride as meta columns"
+        );
     }
 }

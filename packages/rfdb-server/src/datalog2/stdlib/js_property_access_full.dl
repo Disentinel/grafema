@@ -1,0 +1,149 @@
+% js_property_access_full.dl — in-engine replacement for the remaining (same-file
+% class) arms of the PropertyAccess.hs resolver
+% (packages/grafema-resolve/src/PropertyAccess.hs: resolvePropAccess:108-130 →
+% tryResolveClass:133-142): READS_FROM edges for `this.prop` / `super.prop` /
+% `<obj>.prop` and `ClassName.staticProp` reads. Wave 2 — node_attr unblocks the
+% receiver: the analyzer stores it ONLY in PROPERTY_ACCESS metadata (`base`,
+% Expressions.hs:155-173; gnName is the BARE member name, the receiver never
+% rides in the name). The NAMESPACE-import arm lives in js_property_access_ns.dl
+% (Wave 1b) and is NOT duplicated here — together the two packs cover the entire
+% resolver.
+%
+% TWO ARMS, the resolver's same-file cases (resolvePropAccess:113-130):
+%   C1 this/super/<obj> (Hs:117-123): enclosing class via the live SCOPE chain
+%      (the Wave-0-verified shape from js_same_file_calls B1) replaces the
+%      resolver's CLASS line-range containment (findEnclosingClass,
+%      ResolveUtil.hs:82-89 — line/endLine are not on the attr surface);
+%      member lookup in that class.
+%   C2 ClassName.staticProp (Hs:125-128): base starts uppercase; member lookup
+%      in the same-file class of that name.
+%
+% MEMBER INDEX (the resolver's propDefIndex, Hs:51-68), structural substitutes:
+%   - METHOD/FUNCTION members via CLASS -HAS_METHOD-> member (replaces parsing
+%     "[in:ClassName]" out of semantic ids — js_same_file_calls DELTA 3, same
+%     equivalence argument);
+%   - PROPERTY_ASSIGNMENT members via node_attr(P, "className", CN) — kept for
+%     spec parity, but the CURRENT js-analyzer emits NO PROPERTY_ASSIGNMENT
+%     nodes at all (class fields are PROPERTY via HAS_PROPERTY — a node type the
+%     RESOLVER never indexed either): zero rows on today's graphs, exactly like
+%     legacy. (Resolving property reads to PROPERTY nodes would be NEW resolver
+%     knowledge, deliberately out of scope — parity first.)
+%
+% READS_FROM is SHARED vocabulary ⇒ mode = "additive" on both heads;
+% resolvedVia = "property-access" (the legacy stamp, Hs:140) as a meta column.
+%
+% NUMBERED DELTAS vs the resolver (everything not listed is exact):
+%   DELTA 1 (superset — fall-through priority not reproduced): the resolver fell
+%     through to the cross-file/namespace arm only when the class arm MISSED
+%     (Hs:120-128), and the ns pack (running separately) cannot see this pack's
+%     hits; when both arms resolve, both edges are emitted. Additive, rare.
+%   DELTA 2 (scope chain vs line containment — js_same_file_calls DELTA 2,
+%     verbatim): 2a (superset) every enclosing class with the member instead of
+%     the unique line-range winner (ambiguity-skip, ResolveUtil.hs:87-89);
+%     2b (subset) reads inside a class but outside any method/function body have
+%     no scope owner; 2c (precision) the class is bound as a NODE — same-named
+%     classes in one file no longer collide.
+%   DELTA 3 (superset): duplicate (file, className, member) keys — the
+%     resolver's Map kept one last-wins winner; set semantics derives all.
+%   DELTA 4 (metadata): engine provenance (_source/_generation) added.
+%   DELTA 5 (file gate): the resolver had NO extension gate of its own — its
+%     effective gate was the orchestrator's detect_language == JavaScript stream
+%     filter (8 extensions) — the js_pab clause set below.
+%
+% MAINTAIN ENVELOPE: node_attr ⇒ maintain-incremental refuses this pack;
+% scratch floor (accepted).
+%
+% ORDERING (producer): READS_FROM is consumed by method_calls (receiver chains)
+% and negated by shape_verifier — this pack MUST run before both.
+
+% Every named PROPERTY_ACCESS with a receiver, in a JS/TS file — the
+% 8-extension gate (DELTA 5). gnName is the bare member name; the receiver is
+% metadata-only (node_attr).
+js_pab(PA, F, N, BaseN) :- node(PA, "PROPERTY_ACCESS"), attr(PA, "file", F), ends_with(F, ".js"), attr(PA, "name", N), neq(N, ""), node_attr(PA, "base", BaseN), neq(BaseN, "").
+js_pab(PA, F, N, BaseN) :- node(PA, "PROPERTY_ACCESS"), attr(PA, "file", F), ends_with(F, ".jsx"), attr(PA, "name", N), neq(N, ""), node_attr(PA, "base", BaseN), neq(BaseN, "").
+js_pab(PA, F, N, BaseN) :- node(PA, "PROPERTY_ACCESS"), attr(PA, "file", F), ends_with(F, ".ts"), attr(PA, "name", N), neq(N, ""), node_attr(PA, "base", BaseN), neq(BaseN, "").
+js_pab(PA, F, N, BaseN) :- node(PA, "PROPERTY_ACCESS"), attr(PA, "file", F), ends_with(F, ".tsx"), attr(PA, "name", N), neq(N, ""), node_attr(PA, "base", BaseN), neq(BaseN, "").
+js_pab(PA, F, N, BaseN) :- node(PA, "PROPERTY_ACCESS"), attr(PA, "file", F), ends_with(F, ".mjs"), attr(PA, "name", N), neq(N, ""), node_attr(PA, "base", BaseN), neq(BaseN, "").
+js_pab(PA, F, N, BaseN) :- node(PA, "PROPERTY_ACCESS"), attr(PA, "file", F), ends_with(F, ".cjs"), attr(PA, "name", N), neq(N, ""), node_attr(PA, "base", BaseN), neq(BaseN, "").
+js_pab(PA, F, N, BaseN) :- node(PA, "PROPERTY_ACCESS"), attr(PA, "file", F), ends_with(F, ".mts"), attr(PA, "name", N), neq(N, ""), node_attr(PA, "base", BaseN), neq(BaseN, "").
+js_pab(PA, F, N, BaseN) :- node(PA, "PROPERTY_ACCESS"), attr(PA, "file", F), ends_with(F, ".cts"), attr(PA, "name", N), neq(N, ""), node_attr(PA, "base", BaseN), neq(BaseN, "").
+
+% ── C1: this/super/<obj> receivers — one clause per constant (Hs:117) ─────────
+
+pa_this(PA, F, N) :- js_pab(PA, F, N, "this").
+pa_this(PA, F, N) :- js_pab(PA, F, N, "super").
+pa_this(PA, F, N) :- js_pab(PA, F, N, "<obj>").
+
+% Scope chain seeded ONLY from these reads (planner-filter-before-generator),
+% the Wave-0-verified shape: containing SCOPE via CONTAINS (the analyzer
+% auto-emits scope CONTAINS for every node, Analysis/Context.hs:81-90), lexical
+% parents and owners via HAS_SCOPE with the node-type filter.
+encl_scope(PA, S) :- pa_this(PA, F, N), edge(S, PA, "CONTAINS"), node(S, "SCOPE").
+encl_scope(PA, S2) :- encl_scope(PA, S), edge(S2, S, "HAS_SCOPE"), node(S2, "SCOPE").
+encl_member(PA, M) :- encl_scope(PA, S), edge(M, S, "HAS_SCOPE"), node(M, "METHOD").
+encl_member(PA, M) :- encl_scope(PA, S), edge(M, S, "HAS_SCOPE"), node(M, "FUNCTION").
+encl_class(PA, Cls) :- encl_member(PA, M), edge(Cls, M, "HAS_METHOD"), node(Cls, "CLASS").
+
+% Member of the enclosing class: METHOD/FUNCTION via HAS_METHOD; the
+% PROPERTY_ASSIGNMENT arm via node_attr className (zero rows today, see header).
+pdef_meta(F, CN, N, T) :-
+    node(T, "PROPERTY_ASSIGNMENT"), attr(T, "file", F), attr(T, "name", N),
+    neq(N, ""), node_attr(T, "className", CN).
+
+this_member(PA, T) :-
+    pa_this(PA, F, N), encl_class(PA, Cls),
+    edge(Cls, T, "HAS_METHOD"), attr(T, "name", N).
+this_member(PA, T) :-
+    pa_this(PA, F, N), encl_class(PA, Cls),
+    attr(Cls, "name", CN), attr(Cls, "file", F),
+    pdef_meta(F, CN, N, T).
+
+@materialize(edge_type = "READS_FROM", mode = "additive", meta(resolvedVia))
+pa_this_read(PA, T, "property-access") :- this_member(PA, T).
+
+% ── C2: ClassName.staticProp — uppercase-first receiver (Hs:125-128) ──────────
+% One clause per letter (no char-class builtin; a 26-fact relation would be a
+% §3 cross-join — see js_same_file_calls.dl ENCODING NOTES). Seeded from the
+% (small) receiver-bearing read set, not from the class table.
+
+uc_pa(PA, F, N, BaseN) :- js_pab(PA, F, N, BaseN), starts_with(BaseN, "A").
+uc_pa(PA, F, N, BaseN) :- js_pab(PA, F, N, BaseN), starts_with(BaseN, "B").
+uc_pa(PA, F, N, BaseN) :- js_pab(PA, F, N, BaseN), starts_with(BaseN, "C").
+uc_pa(PA, F, N, BaseN) :- js_pab(PA, F, N, BaseN), starts_with(BaseN, "D").
+uc_pa(PA, F, N, BaseN) :- js_pab(PA, F, N, BaseN), starts_with(BaseN, "E").
+uc_pa(PA, F, N, BaseN) :- js_pab(PA, F, N, BaseN), starts_with(BaseN, "F").
+uc_pa(PA, F, N, BaseN) :- js_pab(PA, F, N, BaseN), starts_with(BaseN, "G").
+uc_pa(PA, F, N, BaseN) :- js_pab(PA, F, N, BaseN), starts_with(BaseN, "H").
+uc_pa(PA, F, N, BaseN) :- js_pab(PA, F, N, BaseN), starts_with(BaseN, "I").
+uc_pa(PA, F, N, BaseN) :- js_pab(PA, F, N, BaseN), starts_with(BaseN, "J").
+uc_pa(PA, F, N, BaseN) :- js_pab(PA, F, N, BaseN), starts_with(BaseN, "K").
+uc_pa(PA, F, N, BaseN) :- js_pab(PA, F, N, BaseN), starts_with(BaseN, "L").
+uc_pa(PA, F, N, BaseN) :- js_pab(PA, F, N, BaseN), starts_with(BaseN, "M").
+uc_pa(PA, F, N, BaseN) :- js_pab(PA, F, N, BaseN), starts_with(BaseN, "N").
+uc_pa(PA, F, N, BaseN) :- js_pab(PA, F, N, BaseN), starts_with(BaseN, "O").
+uc_pa(PA, F, N, BaseN) :- js_pab(PA, F, N, BaseN), starts_with(BaseN, "P").
+uc_pa(PA, F, N, BaseN) :- js_pab(PA, F, N, BaseN), starts_with(BaseN, "Q").
+uc_pa(PA, F, N, BaseN) :- js_pab(PA, F, N, BaseN), starts_with(BaseN, "R").
+uc_pa(PA, F, N, BaseN) :- js_pab(PA, F, N, BaseN), starts_with(BaseN, "S").
+uc_pa(PA, F, N, BaseN) :- js_pab(PA, F, N, BaseN), starts_with(BaseN, "T").
+uc_pa(PA, F, N, BaseN) :- js_pab(PA, F, N, BaseN), starts_with(BaseN, "U").
+uc_pa(PA, F, N, BaseN) :- js_pab(PA, F, N, BaseN), starts_with(BaseN, "V").
+uc_pa(PA, F, N, BaseN) :- js_pab(PA, F, N, BaseN), starts_with(BaseN, "W").
+uc_pa(PA, F, N, BaseN) :- js_pab(PA, F, N, BaseN), starts_with(BaseN, "X").
+uc_pa(PA, F, N, BaseN) :- js_pab(PA, F, N, BaseN), starts_with(BaseN, "Y").
+uc_pa(PA, F, N, BaseN) :- js_pab(PA, F, N, BaseN), starts_with(BaseN, "Z").
+
+% Same-file class of the receiver's name; member via HAS_METHOD (DELTA 2c-style
+% node binding: requires the CLASS node itself — equivalent whenever the
+% resolver's [in:Class] marker came from a real class, i.e. always) or via the
+% className-metadata index (no class node required, the resolver's exact key).
+static_member(PA, T) :-
+    uc_pa(PA, F, N, BaseN),
+    node(Cls, "CLASS"), attr(Cls, "file", F), attr(Cls, "name", BaseN),
+    edge(Cls, T, "HAS_METHOD"), attr(T, "name", N).
+static_member(PA, T) :-
+    uc_pa(PA, F, N, BaseN),
+    pdef_meta(F, BaseN, N, T).
+
+@materialize(edge_type = "READS_FROM", mode = "additive", meta(resolvedVia))
+pa_static_read(PA, T, "property-access") :- static_member(PA, T).

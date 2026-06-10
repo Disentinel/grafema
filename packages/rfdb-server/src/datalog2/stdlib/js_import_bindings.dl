@@ -1,0 +1,127 @@
+% js_import_bindings.dl — in-engine replacement for the named/aliased/default
+% import-binding arms of the ImportResolution.hs resolver
+% (packages/grafema-resolve/src/ImportResolution.hs: resolveImport:279-298 →
+% resolveImportWithSource:301-321 → resolveFromFile:324-350 →
+% findMatchingExport:353-357): IMPORTS_FROM edges IMPORT_BINDING → export target.
+% Wave 2 — the arms Wave 1 deliberately HELD BACK (the binding_import
+% false-positive trap: matching by localName alone emits WRONG edges for
+% `import {foo as bar}` and `import Foo from './Foo'`). node_attr(B,
+% "importedName", IN) now distinguishes them: the analyzer stamps every binding
+% (named: the original exported name, Declarations.hs:499-510; default:
+% "default", :545; namespace: "*", :580).
+%
+% MODULE-PATH RESOLUTION IS HYBRID — no path kernel needed: the binding's parent
+% IMPORT (IMPORT -CONTAINS-> IMPORT_BINDING, Declarations.hs:514) carries the
+% LEGACY resolver's committed IMPORT -IMPORTS_FROM-> MODULE edge
+% (resolveModuleImports, ImportResolution.hs:526-552), and the MODULE's `file`
+% attr is the resolved target file. Both legacy paths run the same
+% resolveModulePath, so the file agrees with what the legacy binding arm used.
+%
+% ARMS:
+%   B1 named/aliased  `import {foo}` / `import {foo as bar}` — match the target
+%      file's exports by IN (the ORIGINAL exported name), NOT by localName.
+%   B2 default        `import Foo from './x'` — IN == "default" matches the
+%      EXPORT node named "default" (the resolver's own endpoint,
+%      ImportResolution.hs:125-126) or an `export { X as default }` binding.
+%   NAMESPACE (IN == "*") IS EXCLUDED — the legacy producer keeps emitting
+%      binding → MODULE edges (consumed by the Wave-1b packs); duplicating the
+%      arm here would be pure overlap. neq(IN, "*").
+%
+% EXPORT SIDE — exported_in, THREE clauses:
+%   1. EXPORT -EXPORTS-> declaration (the gnExported substitute, same shape +
+%      multi-declarator caveat as js_cross_file_calls), EXPORT_BINDING excluded;
+%   2. the default export = the EXPORT node itself under "default";
+%   3. NEW (node_attr unblock): EXPORT_BINDING entries by their EXPORTED name —
+%      node_attr(EB, "exportedName", N) is ALWAYS stamped (aliased or not,
+%      Declarations.hs:726-731), so `export { foo }` and `export { foo as bar }`
+%      now resolve with correct aliasing (the Wave-1b DELTA-4 subset closes for
+%      LOCAL export bindings). RE-EXPORT bindings (`export { x } from './y'`,
+%      source metadata present) stay EXCLUDED: the legacy resolver FOLLOWED the
+%      chain to the final declaration (handleExportEntry, Hs:363-386) and
+%      emitting the un-followed EXPORT_BINDING endpoint would be a wrong edge.
+%
+% IMPORTS_FROM is SHARED vocabulary ⇒ mode = "additive". The legacy binding
+% edges carry EMPTY metadata (emitImportsFrom, Hs:414-420) — no meta projected,
+% exact parity.
+%
+% NUMBERED DELTAS vs the resolver (everything not listed is exact):
+%   DELTA 1 (subset — Wave 2b, re-export chains): bindings whose matched export
+%     entry is a re-export EXPORT_BINDING, and bindings resolved through STAR
+%     re-export probing (tryStarReExports, Hs:389-407), derive NOTHING here —
+%     the chain/star recursion is the Wave-2b/3 step (visible() fixpoint over
+%     RE_EXPORTS + strip_prefix). The legacy producer still emits the
+%     chain-collapsed edge, so the graph loses nothing in the hybrid phase.
+%     Bounded by the count of source-stamped EXPORT_BINDINGs + star EXPORTs.
+%   DELTA 2 (superset): duplicate same-name exports in one file — the
+%     resolver's findMatchingExport took the FIRST entry (Hs:353-357); set
+%     semantics derives an edge per candidate.
+%   DELTA 3 (existence-check nuance): the resolver checked ladder candidates
+%     against the export index (export-BEARING files); the hybrid seam requires
+%     the legacy IMPORT → MODULE edge instead — same resolveModulePath winner,
+%     plus a MODULE node (every analyzed file has one). Equal in practice;
+%     recorded for the differential.
+%   DELTA 4 (metadata/diagnostics): the resolver's stderr warnings (unresolvable
+%     module, missing importedName, cycle/depth caps) have no pack analog; the
+%     depth-10 cap and visited set are irrelevant while DELTA 1 holds (no chain
+%     following at all).
+%   DELTA 5 (file gate): the resolver's effective gate was the orchestrator's
+%     detect_language == JavaScript stream filter (8 extensions) — the js_b
+%     clause set below (one clause per extension; a derived gate is
+%     planner-infeasible, see js_same_file_calls.dl ENCODING NOTES).
+%
+% MAINTAIN ENVELOPE: node_attr ⇒ maintain-incremental refuses this pack;
+% scratch floor (accepted).
+%
+% ORDERING (PRODUCER): this pack produces IMPORTS_FROM — the EDB seam consumed
+% by js_class_inheritance (cross-file arm), js_cross_file_calls,
+% js_property_access_ns and depends. It MUST run before those consumers. While
+% the legacy resolver stays ON its edges are near-duplicates (additive dedup);
+% once legacy is gated, this ordering becomes load-bearing (and depends must
+% move after it).
+
+% Every IMPORT_BINDING in a JS/TS file — the 8-extension gate (DELTA 5).
+js_b(B, F) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".js").
+js_b(B, F) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".jsx").
+js_b(B, F) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".ts").
+js_b(B, F) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".tsx").
+js_b(B, F) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".mjs").
+js_b(B, F) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".cjs").
+js_b(B, F) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".mts").
+js_b(B, F) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".cts").
+
+% The binding's resolved target FILE — through the parent IMPORT's legacy
+% IMPORTS_FROM → MODULE edge (the hybrid seam, see header).
+b_mod(B, TF) :-
+    js_b(B, F),
+    edge(I, B, "CONTAINS"), node(I, "IMPORT"),
+    edge(I, M, "IMPORTS_FROM"), node(M, "MODULE"), attr(M, "file", TF).
+
+% The importedName discriminator (the Wave-2 unblock). Namespace ("*") stays
+% the legacy producer's arm — excluded (see header).
+b_named(B, TF, IN) :-
+    b_mod(B, TF), node_attr(B, "importedName", IN), neq(IN, "*"), neq(IN, "").
+
+% ── A file's exports, by EXPORTED name ─────────────────────────────────────────
+
+% 1. Directly exported declarations: EXPORT -EXPORTS-> decl (EXPORT_BINDING
+%    handled separately with correct aliasing below).
+exported_in(TF, N, T) :-
+    node(E, "EXPORT"), attr(E, "file", TF),
+    edge(E, T, "EXPORTS"), \+ node(T, "EXPORT_BINDING"),
+    attr(T, "name", N), neq(N, "").
+% 2. The default export = the EXPORT node itself under the name "default"
+%    (the resolver's export-index entry shape, ImportResolution.hs:125-126).
+exported_in(TF, "default", E) :-
+    node(E, "EXPORT"), attr(E, "name", "default"), attr(E, "file", TF).
+% 3. LOCAL export bindings by exportedName (node_attr; always stamped,
+%    Declarations.hs:726-731). Re-export bindings excluded — DELTA 1.
+eb_reexport(EB) :- node(EB, "EXPORT_BINDING"), node_attr(EB, "source", S).
+exported_in(TF, N, EB) :-
+    node(EB, "EXPORT_BINDING"), attr(EB, "file", TF),
+    \+ eb_reexport(EB),
+    node_attr(EB, "exportedName", N), neq(N, "").
+
+% B1 + B2: the binding resolves to the target file's export matching the
+% ORIGINAL imported name (named/aliased by IN; default via clause 2/3).
+@materialize(edge_type = "IMPORTS_FROM", mode = "additive")
+binding_import(B, T) :- b_named(B, TF, IN), exported_in(TF, IN, T).

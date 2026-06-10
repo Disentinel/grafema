@@ -23,6 +23,18 @@ use std::path::PathBuf;
 ///   IMPORTS_FROM edges as EDB (present since the resolve phase) and, as
 ///   CALLS/READS_FROM producers, must precede the fuzzy fallback and the
 ///   negators below;
+/// - the three JS Wave-2 packs (node_attr-unblocked) interleave by their seams:
+///   `js_import_bindings` PRODUCES IMPORTS_FROM (named/aliased/default binding →
+///   export target through the parent IMPORT's legacy MODULE edge), so it runs
+///   BEFORE every IMPORTS_FROM consumer — `js_class_inheritance` (cross-file
+///   arm), `js_cross_file_calls`, `js_property_access_ns` (while legacy
+///   resolution stays ON its edges are near-duplicates via additive dedup; once
+///   legacy is gated this ordering is load-bearing, and the depends run — which
+///   also consumes IMPORTS_FROM and currently rides the legacy edges — must move
+///   after it); `js_class_inheritance` PRODUCES EXTENDS, consumed by
+///   `shape_verifier`'s inheritance closure; `js_property_access_full`
+///   (this/static arms) produces READS_FROM, so it precedes `method_calls` and
+///   `shape_verifier`;
 /// - `@stdlib/method_calls` (the fuzzy fallback) reads READS_FROM receiver chains
 ///   as EDB, so it runs after `js_local_refs` has committed them;
 /// - `@stdlib/shape_verifier` NEGATES CALLS (`\+ edge(C, _, "CALLS")`, its
@@ -31,8 +43,10 @@ use std::path::PathBuf;
 ///   flag calls a later pack resolves.
 /// Full canonical order is depends → js_local_refs → js_same_file_calls →
 /// js_this_method_calls → rust_calls → rust_cross_methods_ctor →
-/// js_cross_file_calls → js_property_access_ns → method_calls → shape_verifier →
-/// axum_routes; the depends pack runs separately first (the
+/// rust_trait_resolve → rust_receiver_typing →
+/// js_import_bindings → js_class_inheritance → js_cross_file_calls →
+/// js_property_access_ns → js_property_access_full → method_calls →
+/// shape_verifier → axum_routes; the depends pack runs separately first (the
 /// `materialize_datalog("")` call below, which the server resolves to the bundled
 /// `depends.dl`). The server-side registry (`rfdb-server/src/datalog2/stdlib.rs`
 /// STDLIB_PACKS) documents the same order — keep the two in sync.
@@ -42,8 +56,18 @@ const STDLIB_RULE_PACKS: &[&str] = &[
     "@stdlib/js_this_method_calls",
     "@stdlib/rust_calls",
     "@stdlib/rust_cross_methods_ctor",
+    // Rust Wave-2 packs: rust_receiver_typing reads rust_calls' CALLS as EDB
+    // (the same MUST-run-AFTER seam as rust_cross_methods_ctor) and produces
+    // CALLS, so it precedes the fuzzy fallback and the negators below;
+    // rust_trait_resolve consumes analyzer EDB only (IMPL_BLOCK metadata +
+    // TRAIT/STRUCT/CLASS nodes).
+    "@stdlib/rust_trait_resolve",
+    "@stdlib/rust_receiver_typing",
+    "@stdlib/js_import_bindings",
+    "@stdlib/js_class_inheritance",
     "@stdlib/js_cross_file_calls",
     "@stdlib/js_property_access_ns",
+    "@stdlib/js_property_access_full",
     "@stdlib/method_calls",
     "@stdlib/shape_verifier",
     "@stdlib/axum_routes",

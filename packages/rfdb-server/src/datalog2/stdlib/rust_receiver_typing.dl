@@ -1,0 +1,161 @@
+% rust_receiver_typing.dl — the typeAnnotation and returnType receiver-typing
+% arms of the RustCrossMethodCalls.hs resolver (packages/rust-resolve/src/
+% RustCrossMethodCalls.hs: traceVariableType:112-118 → typeAnnotation:114-115,
+% else ASSIGNED_FROM → typeFromExpression:121-130 → CALLS → returnType:126-129;
+% impl-method dispatch :195-211). Wave 2 — node_attr unblocked both arms: the
+% annotation and the return type are metadata-only (rust_analyzer.rs:1204
+% typeAnnotation on VARIABLE/PARAMETER, :718 on RECORD_FIELD; :540/:838
+% returnType on free/impl FUNCTIONs).
+%
+%   `let w: Widget; w.render()`            — arm A (typeAnnotation)
+%   `let m = make_widget(); m.render()`    — arm B (init call → returnType)
+%
+% The CONSTRUCTOR arm of the same resolver (:134-145) is rust_cross_methods_ctor
+% (Wave 1b), NOT here; the dyn/impl-Trait dispatch fallback (:212-228,
+% resolvedVia "rust-dyn-dispatch") and the self-field arm (:186-189) are later
+% Wave-2 steps, NOT here.
+%
+% ORDERING (cross-pack EDB seam, the rust_cross_methods_ctor contract): arm B
+% reads `edge(Init, Fn, "CALLS")` from STORAGE while this pack materializes
+% CALLS — a positive same-type storage self-read (stratifier-accepted; base
+% edge() sees only pre-run state). The init calls' CALLS edges are committed by
+% rust_calls ⇒ this pack MUST run AFTER rust_calls in the declared pack order.
+% Its own newly-derived CALLS are not visible within the run (chained typing
+% lags — same scoping as rust_cross_methods_ctor DELTA 1's note).
+%
+% RECEIVER SHAPE (Wave-0-verified): method calls carry a direct CALL
+% -READS_FROM-> receiver edge (plain calls never do — the discriminator,
+% rust_analyzer.rs:1358-1370); one REFERENCE hop derefs to the declaration —
+% the method_calls.dl receiver_decl idiom.
+%
+% CALLS is SHARED vocabulary ⇒ mode = "additive" is mandatory.
+%
+% NUMBERED DELTAS vs the resolver (everything not listed is exact):
+%   DELTA 1 (superset — arm B was DEAD in production): the orchestrator shipped
+%     the resolver only ASSIGNED_FROM edges (plugin.rs:1306, verified-spec
+%     verdict), so its followEdge "CALLS" (:128) never had adjacency and the
+%     returnType branch never fired. The pack implements the INTENDED semantics
+%     over committed CALLS storage EDB (the rust_calls seam). Every arm-B edge
+%     is pack-only in the differential, bounded by: init CALLs with a CALLS
+%     edge to a FUNCTION carrying returnType.
+%   DELTA 2 (superset): arm independence — the resolver short-circuited
+%     (typeAnnotation suppressed the ASSIGNED_FROM trace :114-117; the ctor
+%     pattern suppressed returnType :124-127); set semantics fires every arm,
+%     and disagreeing arms derive an edge each. Overlap with the ctor pack
+%     (a concrete `-> Widget` constructor satisfies both it and arm B) dedups
+%     at additive write-back.
+%   DELTA 3 (precision, = ctor DELTA 4): the receiver binds STRUCTURALLY
+%     through the scope-resolved READS_FROM chain, not the whole-file
+%     last-wins (file, name) VarIndex (:84-91) — shadowed receivers bind to
+%     the right declaration; declarations beyond VARIABLE/PARAMETER that carry
+%     typeAnnotation (CONSTANT, RECORD_FIELD — rust_analyzer.rs:718) type
+%     their receivers too. Sound: typeAnnotation is purely syntactic
+%     (rust_analyzer.rs:1068-1071).
+%   DELTA 4 (point-wise different — qualified surfaces): the resolver
+%     truncated at the FIRST ':' (T.takeWhile, :199), probing impl "crate" for
+%     "crate::Widget" — a junk key that ~never matched and could FALSELY hit a
+%     module-named impl. The pack: exact bare match + crate-local strip arms
+%     ("crate::"/"self::"/"super::" roots, ANY depth — the "::"-anchored
+%     ends_with enforces the segment boundary; the impl_method leg stays
+%     §3-connected through the bound method name, which is why full-depth
+%     stripping is feasible here but not in rust_trait_resolve). External-
+%     rooted surfaces (std::/other crates) derive nothing BY POLICY — the
+%     graph holds only project impls; bare-segment matching would fabricate
+%     edges onto same-named local types (false positives are unacceptable;
+%     subset-by-omission is fine). Classifiable: type surfaces containing "::"
+%     without a local root.
+%   DELTA 5 (generic surfaces — Vec<Foo> / Option<Foo>): they never reach the
+%     pack. The ANALYZER already stores the base path: type_to_name →
+%     path_to_string keeps segment idents and DROPS PathArguments
+%     (rust_analyzer.rs:1687-1692,1719-1747), strips `&`/`&mut`, unwraps
+%     Box/Rc/Arc (analyzer tests :1872 typeAnnotation == "Vec", :1896
+%     returnType == "Vec"). So `let v: Vec<Foo>` arrives as "Vec" and resolves
+%     iff a project `impl Vec` exists; element-type dispatch never arises.
+%     Legacy's '<'-truncation (:199) is vacuous on the same data.
+%   DELTA 6 (parity corners): "dyn Trait"/"impl Trait" surfaces name no
+%     IMPL_BLOCK → no row here (the dyn-dispatch arm is a later pack);
+%     returnType "Self" names no IMPL_BLOCK → no row, exactly the legacy miss
+%     (lookup ("Self", m) :200 found nothing).
+%   DELTA 7 (discriminator proxy, = ctor DELTA 6): READS_FROM-receiver
+%     presence replaces metadata method=true + receiver≠"<expr>"
+%     (:170-172,230-233).
+%   DELTA 8 (metadata): resolvedVia/receiverType projected as meta columns
+%     (legacy stamped the same two, :206-209 — receiverType is the RAW surface
+%     string, parity); engine provenance (_source/_generation) added.
+%
+% MAINTAIN ENVELOPE: node_attr is an attr-generator — maintain-incremental
+% refuses the pack, the scratch floor applies.
+
+% Every named CALL in a Rust file (the resolver's effective gate was the
+% orchestrator streaming only detect_language == Rust nodes).
+rs_call(C, N) :-
+    node(C, "CALL"), attr(C, "file", F), ends_with(F, ".rs"),
+    attr(C, "name", N), neq(N, "").
+
+% The receiver VALUE node (doubles as the method-call discriminator, DELTA 7).
+receiver_var(C, V) :- rs_call(C, N), edge(C, V, "READS_FROM").
+
+% Deref one REFERENCE hop to the declaration; identity otherwise.
+receiver_decl(C, D) :- receiver_var(C, V), node(V, "REFERENCE"), edge(V, D, "READS_FROM").
+receiver_decl(C, D) :- receiver_var(C, D), \+ node(D, "REFERENCE").
+
+% (typeName, methodName) → method node: IMPL_BLOCK.name = self_ty
+% (rust_analyzer.rs:792-797), HAS_METHOD members (:859-864).
+impl_method(TName, MName, M) :-
+    node(IB, "IMPL_BLOCK"), attr(IB, "name", TName), neq(TName, ""),
+    edge(IB, M, "HAS_METHOD"),
+    node(M, "FUNCTION"), attr(M, "name", MName), neq(MName, "").
+
+% The receiver declaration's RAW surface type string.
+% Arm A — explicit annotation (Hs:114-115).
+recv_type_str(D, TStr) :-
+    receiver_decl(C, D),
+    node_attr(D, "typeAnnotation", TStr).
+% Arm B — the init call's resolved callee's declared return type (Hs:126-129);
+% the CALLS leg is the rust_calls storage-EDB seam (DELTA 1).
+recv_type_str(D, TStr) :-
+    receiver_decl(C, D),
+    edge(D, Init, "ASSIGNED_FROM"),
+    node(Init, "CALL"),
+    edge(Init, Fn, "CALLS"),
+    node_attr(Fn, "returnType", TStr).
+
+% Surface → impl-method dispatch. Exact arm: the surface IS the impl name...
+typed_call(C, M, TStr) :-
+    rs_call(C, MName),
+    receiver_decl(C, D),
+    recv_type_str(D, TStr),
+    impl_method(TStr, MName, M).
+% ...strip arms (DELTA 4): crate-local qualified surfaces at any depth. The
+% impl_method leg joins through MName (bound by rs_call — no §3 cross-join);
+% the "::"-prefixed concat suffix enforces the segment boundary.
+typed_call(C, M, TStr) :-
+    rs_call(C, MName),
+    receiver_decl(C, D),
+    recv_type_str(D, TStr),
+    starts_with(TStr, "crate::"),
+    impl_method(TName, MName, M),
+    concat("::", TName, Sfx),
+    ends_with(TStr, Sfx).
+typed_call(C, M, TStr) :-
+    rs_call(C, MName),
+    receiver_decl(C, D),
+    recv_type_str(D, TStr),
+    starts_with(TStr, "self::"),
+    impl_method(TName, MName, M),
+    concat("::", TName, Sfx),
+    ends_with(TStr, Sfx).
+typed_call(C, M, TStr) :-
+    rs_call(C, MName),
+    receiver_decl(C, D),
+    recv_type_str(D, TStr),
+    starts_with(TStr, "super::"),
+    impl_method(TName, MName, M),
+    concat("::", TName, Sfx),
+    ends_with(TStr, Sfx).
+
+% The dispatch: legacy stamped the SAME resolvedVia for every impl-index hit
+% (:206-209); receiverType is the raw surface (DELTA 8).
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia, receiverType))
+rust_typed_method_call(C, M, "rust-cross-method", TStr) :-
+    typed_call(C, M, TStr).

@@ -1,0 +1,98 @@
+% js_class_inheritance.dl — in-engine replacement for the ENTIRE ClassInheritance.hs
+% resolver (packages/grafema-resolve/src/ClassInheritance.hs:84-159, resolveOne):
+% EXTENDS edges for `class Dog extends Animal`. Wave 2 — the first node_attr pack:
+% the superclass name lives ONLY in CLASS node metadata (`superClass`, recorded by
+% the analyzer at Declarations.hs:320-337 — "EXTENDS edge created by shape-tracker
+% plugin"; the analyzer emits NO superclass edge, which is the whole reason the
+% resolver exists). node_attr(C, "superClass", SC) unblocks it.
+%
+% TWO ARMS, exactly the resolver's fall-through (resolveOne, Hs:96-129):
+%   A1 same-file:  superClass names a CLASS in the same file (Hs:97-105).
+%   A2 cross-file: ONLY when the same-file index missed (Hs:106-108) — the
+%      superclass name is an import binding in the class's file; follow the
+%      binding's IMPORTS_FROM edge to the resolved export target. HYBRID seam
+%      (same as js_cross_file_calls): the legacy import resolver's committed
+%      IMPORTS_FROM edge replaces the resolver's own
+%      resolveModulePath+findMatchingExport re-derivation (Hs:111-118) — and the
+%      legacy producer already disambiguated aliased/default bindings via
+%      importedName when it created the edge, so the Wave-1 localName-aliasing
+%      caveat does not apply.
+%
+% EXTENDS is SHARED vocabulary — the shape-tracker batch plugin (Phase 3a) and
+% this pack's legacy twin both emit it (packages/types/src/edges.ts:45) —
+% ⇒ mode = "additive" on both heads.
+%
+% NUMBERED DELTAS vs the resolver (everything not listed is exact):
+%   DELTA 1 (superset): duplicate same-name CLASS in one file — the resolver's
+%     Map-built class index kept one arbitrary last-wins winner (Hs:53-60); set
+%     semantics derives an EXTENDS edge per candidate. Same for duplicate-named
+%     import bindings.
+%   DELTA 2 (point-wise different, pathological only): a class whose only
+%     same-file name-match is ITSELF (duplicate-named classes in nested scopes) —
+%     the resolver would emit a self-edge and stop; the pack's neq(C, T) refuses
+%     the self-edge. The cross-file arm is suppressed in BOTH (has_local counts C
+%     itself — the resolver's fall-through gate, reproduced exactly).
+%   DELTA 3 (endpoint, re-exports only): a superclass imported through a
+%     re-export chain — the resolver's own lookup stopped at the FIRST-LEVEL
+%     export entry (findMatchingExport, no chain following in resolveOne);
+%     the legacy IMPORTS_FROM edge collapsed the chain to the final declaration
+%     (ImportResolution.hs:363-407). Following the edge inherits the
+%     chain-collapsed endpoint (same class as js_cross_file_calls DELTA 1).
+%   DELTA 4 (superset): superclasses imported from WORKSPACE packages or through
+%     star re-exports — the resolver's binding index was relative-specifier-only
+%     (buildImportBindingIndex, Hs:64-73); the legacy import resolver handled
+%     both, so the binding's edge exists and the pack emits.
+%   DELTA 5 (not reproduced — legacy artifact): a namespace binding
+%     (`import * as Base`) used directly as a superclass name — its legacy edge
+%     points at a MODULE node; the `\+ node(T, "MODULE")` guard emits nothing
+%     (the resolver's findMatchingExport("*") matched only star re-export
+%     entries — practically nothing — so both sides are empty in practice).
+%   DELTA 6 (metadata): resolvedVia="class-inheritance" projected as a meta
+%     column (the resolver's stamp, Hs:103); the cross-file arm's importedFrom
+%     meta (Hs:126) is DROPPED — the binding's source specifier is metadata-only
+%     on the IMPORT_BINDING and not needed by any known consumer; recorded loss.
+%   DELTA 7 (file gate): the resolver's OWN gate was isJsTsFile = 6 extensions
+%     (Hs:76-77) — the jsts_class clause set below, one clause per extension
+%     (a derived gate is planner-infeasible, see js_same_file_calls.dl ENCODING
+%     NOTES).
+%
+% MAINTAIN ENVELOPE: node_attr reads metadata blobs outside the delta algebra —
+% maintain-incremental refuses this pack; it runs at the scratch floor (accepted).
+%
+% ORDERING (producer): EXTENDS is consumed by shape_verifier's EXTENDS-closed
+% member lookup — this pack MUST run before shape_verifier. Its A2 arm consumes
+% IMPORTS_FROM as EDB — run after js_import_bindings (and after the legacy
+% resolve phase, which the pack-runner guarantees).
+
+% Every CLASS in a JS/TS file — the resolver's own 6-extension gate (DELTA 7).
+jsts_class(C, F) :- node(C, "CLASS"), attr(C, "file", F), ends_with(F, ".ts").
+jsts_class(C, F) :- node(C, "CLASS"), attr(C, "file", F), ends_with(F, ".tsx").
+jsts_class(C, F) :- node(C, "CLASS"), attr(C, "file", F), ends_with(F, ".js").
+jsts_class(C, F) :- node(C, "CLASS"), attr(C, "file", F), ends_with(F, ".jsx").
+jsts_class(C, F) :- node(C, "CLASS"), attr(C, "file", F), ends_with(F, ".mjs").
+jsts_class(C, F) :- node(C, "CLASS"), attr(C, "file", F), ends_with(F, ".cjs").
+
+% A class with a recorded superclass name — the node_attr unblock (the analyzer
+% stores superClass only when non-empty; the neq guards other producers).
+super_of(C, F, SC) :- jsts_class(C, F), node_attr(C, "superClass", SC), neq(SC, "").
+
+% Same-file class index (file, name) → node (Hs:53-60).
+class_in(F, N, T) :- node(T, "CLASS"), attr(T, "file", F), attr(T, "name", N), neq(N, "").
+
+% Same-file candidate EXISTS — the resolver's fall-through gate (Hs:97/106).
+% Counts C itself (DELTA 2: gate parity over edge parity).
+has_local(C) :- super_of(C, F, SC), class_in(F, SC, T).
+
+% A1: same-file superclass.
+@materialize(edge_type = "EXTENDS", mode = "additive", meta(resolvedVia))
+ext_same_file(C, T, "class-inheritance") :-
+    super_of(C, F, SC), class_in(F, SC, T), neq(C, T).
+
+% A2: cross-file superclass through the import-binding's legacy IMPORTS_FROM
+% edge (hybrid EDB seam), only when the same-file index missed. MODULE targets
+% are namespace bindings, not classes (DELTA 5).
+@materialize(edge_type = "EXTENDS", mode = "additive", meta(resolvedVia))
+ext_cross_file(C, T, "class-inheritance") :-
+    super_of(C, F, SC), \+ has_local(C),
+    node(B, "IMPORT_BINDING"), attr(B, "file", F), attr(B, "name", SC),
+    edge(B, T, "IMPORTS_FROM"), \+ node(T, "MODULE").
