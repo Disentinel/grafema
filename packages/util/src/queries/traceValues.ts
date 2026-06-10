@@ -143,7 +143,6 @@ async function traceRecursive(
   if (visited.has(nodeId)) {
     return;
   }
-  visited.add(nodeId);
 
   // Get node
   const node = await backend.getNode(nodeId);
@@ -158,7 +157,13 @@ async function traceRecursive(
     line: node.line || 0,
   };
 
-  // Depth protection - check after getting node for source info
+  // Depth protection - check after getting node for source info.
+  // NOTE: this MUST run before `visited.add(nodeId)`. A node reached on a long
+  // path that exceeds maxDepth is a dead end on THIS path, but the same node may
+  // also be reachable via a shorter path that resolves to a concrete value.
+  // Marking it visited here would let cycle protection block that shorter path,
+  // silently dropping a determinable value (a core-thesis "trustworthy graph"
+  // violation). So we record the cutoff and return WITHOUT poisoning `visited`.
   if (depth > maxDepth) {
     results.push({
       value: undefined,
@@ -168,6 +173,12 @@ async function traceRecursive(
     });
     return;
   }
+
+  // Mark visited only once the node passes the depth gate and is actually
+  // processed. Shared sub-graphs reached within depth are still de-duplicated
+  // (processed once), and genuine cycles re-enter at increasing depth and are
+  // caught by the `visited.has` guard above.
+  visited.add(nodeId);
 
   // Terminal: LITERAL - found concrete value
   if (nodeType === 'LITERAL') {

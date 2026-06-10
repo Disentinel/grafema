@@ -713,6 +713,46 @@ describe('traceValues', () => {
       assert.strictEqual(results[0].isUnknown, false);
       assert.strictEqual(results[0].reason, undefined, 'Should not have reason for known value');
     });
+
+    /**
+     * WHY: A node reached on a long path that exceeds maxDepth must NOT be
+     * permanently marked visited — otherwise a SHORTER path to the same node
+     * (well within depth) is blocked by cycle protection and its determinable
+     * value is silently dropped. The shared `visited` set must record a node
+     * only once it actually passes the depth gate, not on a depth-cutoff visit.
+     *
+     * Graph (maxDepth = 2):
+     * ```
+     * sink -[ASSIGNED_FROM]-> mid1 -[ASSIGNED_FROM]-> mid2 -[ASSIGNED_FROM]-> lit  (long: lit at depth 3, CUT OFF)
+     * sink -[ASSIGNED_FROM]-> lit                                                  (short: lit at depth 1, RESOLVABLE)
+     * ```
+     * The long edge is inserted first, so DFS visits `lit` at depth 3 (cutoff)
+     * before the short edge reaches it at depth 1.
+     */
+    it('should not drop a value reachable via a short path when a longer path to the same node is cut off by maxDepth', async () => {
+      await backend.addNode({ id: 'var-sink', type: 'VARIABLE', name: 'sink', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'var-mid1', type: 'VARIABLE', name: 'mid1', file: 'file.js', line: 2 });
+      await backend.addNode({ id: 'var-mid2', type: 'VARIABLE', name: 'mid2', file: 'file.js', line: 3 });
+      await backend.addNode({ id: 'lit-target', type: 'LITERAL', value: 'target-value', file: 'file.js', line: 4 });
+
+      // Long path FIRST (so the cutoff visit to lit-target happens before the short path).
+      await backend.addEdge({ src: 'var-sink', dst: 'var-mid1', type: 'ASSIGNED_FROM' });
+      await backend.addEdge({ src: 'var-mid1', dst: 'var-mid2', type: 'ASSIGNED_FROM' });
+      await backend.addEdge({ src: 'var-mid2', dst: 'lit-target', type: 'ASSIGNED_FROM' });
+      // Short path SECOND: sink -> lit-target directly (depth 1).
+      await backend.addEdge({ src: 'var-sink', dst: 'lit-target', type: 'ASSIGNED_FROM' });
+
+      const results = await traceValues(backend, 'var-sink', { maxDepth: 2 });
+
+      const found = results.find((r) => r.value === 'target-value' && r.isUnknown === false);
+      assert.ok(
+        found,
+        'Literal reachable at depth 1 must be resolved even though a longer path to it was cut off by maxDepth'
+      );
+
+      const { values } = aggregateValues(results);
+      assert.ok(values.includes('target-value'), 'aggregated values must contain the determinable literal');
+    });
   });
 
   // ===========================================================================
