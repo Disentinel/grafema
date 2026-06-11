@@ -496,7 +496,7 @@ describe('Concurrency Protection', () => {
      * NOTE: This is a design documentation test, not a functional test.
      * We don't actually wait 10 minutes in tests.
      */
-    it.skip('should timeout lock acquisition after 10 minutes', async () => {
+    it.skip('should timeout lock acquisition after 10 minutes', async () => { // release-skip: 10-minute timeout — documents expected lock behavior, not runnable in automated test suite
       // This test documents expected timeout behavior.
       // Actual timeout is 10 minutes - too long for tests.
       //
