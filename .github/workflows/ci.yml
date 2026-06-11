@@ -10,6 +10,7 @@
 #   - ESLint passes
 #   - All packages build
 #   - Package versions are in sync
+#   - Rust orchestrator tests pass (cargo test) — guards rust_analyzer.rs
 
 name: CI
 
@@ -276,3 +277,37 @@ jobs:
             exit 1
           fi
           echo "Cargo.toml version is in sync."
+
+  # Job 5: Rust orchestrator tests
+  #
+  # The JS suites above do NOT cover the native Rust analyzer
+  # (packages/grafema-orchestrator/src/rust_analyzer.rs), which is the live
+  # in-process Rust code path. Its `mod tests` has repeatedly been broken by
+  # merge-seam brace drops that make the whole lib-test target fail to compile
+  # — invisible to CI because nothing ran `cargo test` here. This job closes
+  # that gap.
+  rust-orchestrator-tests:
+    name: Rust Orchestrator Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install libclang (runtime dep for the clang-sys C parser test)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libclang-dev
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/grafema-orchestrator -> target
+
+      - name: Run cargo test
+        working-directory: packages/grafema-orchestrator
+        run: cargo test
