@@ -8,11 +8,17 @@ description: |
   bug, (4) planning a refactor and needing impact analysis, (5) grep returned
   0 hits or 20+ hits and you can't narrow it down, (6) about to modify a function
   without knowing its callers.
-version: 0.3.0
+version: 1.0.0
 date: 2026-06-10
 ---
 
 # Grafema: graph when it pays, grep when it doesn't
+
+**What the graph is for (the one-sentence frame):** making the implicit explicit —
+structure, flow, hidden side effects, the relationships no text search can surface —
+plus architectural CI checks (guarantees) that run with no LLM at all. Its value
+grows with the codebase: on a project that fits in one developer's head, grep and
+memory win; past that point the graph holds what no head can.
 
 Grafema builds a semantic graph of the codebase: nodes are functions, classes,
 variables, files, services; edges are calls, imports, data flow, HTTP links.
