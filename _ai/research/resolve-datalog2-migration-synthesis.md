@@ -207,3 +207,37 @@ effects-db YAML → generated facts-pack when the generator exists; until then k
 | haskell/java/kotlin/go/cpp/swift/beam/python/php-resolve, ruby (in-process), apple-cross, jvm-cross | **KEEP NATIVE this round** | not specced — no migration without a verified spec + verdict per the established two-agent procedure. The prelude (1a), the IMPORTS_FROM EDB seam, and the harness (§3) transfer directly; java/kotlin/go are the natural next spec round (same orchestrator streaming shape, `main.rs` 8c+) | | | |
 
 **Honesty notes carried from the verdicts**: (a) no pack ships claiming "the ~90% case" when the missing guard produces wrong edges — subset-by-omission is acceptable, false positives are not; (b) the builtins "plugin resolved nothing" delta was factually backwards — the plugin emits for ANY builtin-receiver dotted call; every recorded delta in §3's prediction lists must cite both-sides evidence; (c) every graph-shape substitution (scope chains, EXPORTS, HAS_METHOD, READS_FROM receivers, IMPORT-CONTAINS) is **provisional until the Wave-0 live-graph checks pass** — analyzer source is not evidence of graph shape.
+---
+
+## Wave M + Wave 3a (2026-06-11, post-merge conveyor, parallel implementers)
+
+**Wave M — macro-CALL filtering (the 330s lever, part 1).** Engine: `node_attr`/`edge_attr`
+surface JSON bools as `"true"/"false"` (was: non-scalar ⇒ no row, bool-invisible — builtin.rs
+eval arms + doc contracts + 2 new bind/check tests each). Packs: `rs_macro(C)` (.rs-gated
+node_attr probe) + `\+ rs_macro(C)` guards in rust_calls (rs_call ⇒ both R1/R2 arms),
+rust_cross_methods_ctor (rs_call + init-CALL leg), rust_receiver_typing (rs_call + arm-B init);
+method_calls verified immune (method_suffix requires '.', macro names are '::'-paths) —
+documented in header, no redundant filter. New DELTAs 5/7/9: macros EXCLUDED from resolution
+per the analyzer's own contract (rust_analyzer.rs:1423-1424 "foo! is not the function foo");
+legacy on a post-merge graph WOULD have matched them — deliberate divergence. 3 stdlib.rs
+fixture tests pin the deltas (macro≡fn name no edge, plain call resolves, R2 suffix blocked).
+**Perf (production wire, release server on a copy of the 491k/1.04M post-merge graph):
+rust_calls 68s → 35.57s (~1.9×); 10,297 macro CALL nodes confirmed filtered. rs_macro itself
+costs ~6s (per-row metadata JSON parse) — recomputed per pack (×3 aggregate), flagged for the
+W9 shared-relation/planner-stats roadmap.**
+
+**Wave 3a — path/string builtin kit (Wave 3b foundation).** 4 pure string builtins (no fs),
+function placement, total (non-match = no row, never error): `path_resolve/3` (lexical
+./ ../ resolution vs importer dir, ImportResolution.hs:189-235 parity incl. silent past-root
+drop), `strip_suffix/3` (twin of strip_prefix; TS-ESM .js→.ts swap + .rs drop),
+`last_segment/3` (separator-parameterized — the '::' blocker method_suffix couldn't cover),
+`replace_all/4` (the '/'→'::' rewrite, specs.json:208). All four registered in
+builtin.rs+stratify+plan; 8 unit tests. Implemented in a parallel worktree off a0f859a3;
+patch landed on the M diff **100% clean, zero manual edits**.
+
+**Verification:** both waves adversarially reviewed — approve, 0 must_fix (M: 2 advisory —
+rs_macro ×3 recompute → W9, pre-existing rs_fn comment misattribution; 3a: 3 advisory —
+unicode probe verified externally 15×15 zero panics, workspace-arm normalization drift noted
+for the future pack, replace_all attribution). Independent test-runner: datalog2 248/0
+(M alone) → combined 256/0 debug+release, plan gate green, **Gate A 51/51 twice**,
+release bin builds. Conveyor wall: ~41 min for both waves (parallel implement).

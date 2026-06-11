@@ -82,15 +82,30 @@
 %   DELTA 8 (metadata): resolvedVia/receiverType projected as meta columns
 %     (legacy stamped the same two, :206-209 — receiverType is the RAW surface
 %     string, parity); engine provenance (_source/_generation) added.
+%   DELTA 9 (macro filter — Wave M): macro invocations (CALL + metadata
+%     macro=true, name = macro path without '!' — rust_analyzer.rs:1433-1457,
+%     walk_macro) are EXCLUDED from both CALL legs: the dispatched method
+%     call (rs_call) and arm B's init CALL. The analyzer contract is explicit
+%     — "foo! is not the function foo" (rust_analyzer.rs:1423-1424); the
+%     legacy resolver on a post-merge graph WOULD have matched a macro name
+%     against a same-file fn of the same name — we deliberately do not.
+%     rs_macro is non-recursive EDB-derived; \+ rs_macro is plain stratified
+%     negation. The maintain envelope already excludes this pack (node_attr +
+%     negation, see below), so the filter adds no NEW envelope loss.
 %
 % MAINTAIN ENVELOPE: node_attr is an attr-generator — maintain-incremental
 % refuses the pack, the scratch floor applies.
 
-% Every named CALL in a Rust file (the resolver's effective gate was the
-% orchestrator streaming only detect_language == Rust nodes).
+% Macro invocations (CALL + metadata macro=true; the name is the macro path
+% without '!') — excluded from resolution, DELTA 9.
+rs_macro(C) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".rs"), node_attr(C, "macro", "true").
+
+% Every named non-macro CALL in a Rust file (the resolver's effective gate was
+% the orchestrator streaming only detect_language == Rust nodes).
 rs_call(C, N) :-
     node(C, "CALL"), attr(C, "file", F), ends_with(F, ".rs"),
-    attr(C, "name", N), neq(N, "").
+    attr(C, "name", N), neq(N, ""),
+    \+ rs_macro(C).
 
 % The receiver VALUE node (doubles as the method-call discriminator, DELTA 7).
 receiver_var(C, V) :- rs_call(C, N), edge(C, V, "READS_FROM").
@@ -117,6 +132,7 @@ recv_type_str(D, TStr) :-
     receiver_decl(C, D),
     edge(D, Init, "ASSIGNED_FROM"),
     node(Init, "CALL"),
+    \+ rs_macro(Init),
     edge(Init, Fn, "CALLS"),
     node_attr(Fn, "returnType", TStr).
 

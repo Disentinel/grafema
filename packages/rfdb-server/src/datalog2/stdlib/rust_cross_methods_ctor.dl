@@ -66,12 +66,28 @@
 %     calls whose deferred receiver lookup failed have no READS_FROM edge and
 %     are skipped on both sides; "<expr>" receivers surface as PROPERTY_ACCESS/
 %     CALL READS_FROM targets, which carry no ASSIGNED_FROM and derive nothing.
+%   DELTA 7 (macro filter — Wave M): macro invocations (CALL + metadata
+%     macro=true, name = macro path without '!' — rust_analyzer.rs:1433-1457,
+%     walk_macro) are EXCLUDED from both CALL legs: the dispatched method call
+%     (rs_call) and the receiver's init CALL (recv_type). The analyzer contract
+%     is explicit — "foo! is not the function foo" (rust_analyzer.rs:1423-1424);
+%     the legacy resolver on a post-merge graph WOULD have matched a macro name
+%     against a same-file fn of the same name — we deliberately do not.
+%     rs_macro is non-recursive EDB-derived; \+ rs_macro is plain stratified
+%     negation (the established \+ node(D, "REFERENCE") pattern). The maintain
+%     envelope already excludes this pack (negation), so node_attr adds no NEW
+%     envelope loss.
 
-% Every named CALL in a Rust file (the resolver's effective gate was the
-% orchestrator streaming only detect_language == Rust nodes).
+% Macro invocations (CALL + metadata macro=true; the name is the macro path
+% without '!') — excluded from resolution, DELTA 7.
+rs_macro(C) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".rs"), node_attr(C, "macro", "true").
+
+% Every named non-macro CALL in a Rust file (the resolver's effective gate was
+% the orchestrator streaming only detect_language == Rust nodes).
 rs_call(C, N) :-
     node(C, "CALL"), attr(C, "file", F), ends_with(F, ".rs"),
-    attr(C, "name", N), neq(N, "").
+    attr(C, "name", N), neq(N, ""),
+    \+ rs_macro(C).
 
 % The receiver VALUE node: direct CALL -READS_FROM-> receiver (the Wave-0 Rust
 % shape; doubles as the method-call discriminator, DELTA 6).
@@ -97,6 +113,7 @@ impl_method(TName, MName, M) :-
 recv_type(D, TName) :-
     edge(D, Init, "ASSIGNED_FROM"),
     node(Init, "CALL"), attr(Init, "name", InitName),
+    \+ rs_macro(Init),
     edge(Init, Ctor, "CALLS"),
     impl_method(TName, CtorName, Ctor),
     concat(TName, "::", Pfx),

@@ -1816,6 +1816,54 @@ mod tests {
         );
     }
 
+    /// Wave M (rust_calls DELTA 5): macro invocations — CALL nodes the analyzer
+    /// stamps with metadata macro=true (rust_analyzer.rs:1433-1457, walk_macro;
+    /// the name is the macro path WITHOUT '!') — are EXCLUDED from name
+    /// resolution: "foo! is not the function foo" (:1423-1424). Pinned:
+    /// (a) a macro CALL named identically to a same-file FUNCTION derives NO
+    ///     CALLS edge;
+    /// (b) a plain CALL with the same name still resolves through R1;
+    /// (c) a macro whose path suffix-matches a FUNCTION via "::" derives
+    ///     nothing through R2 (the arm where macro floods hurt most: every
+    ///     unmatched macro otherwise scans rs_fn).
+    #[test]
+    fn rust_calls_macro_invocations_are_excluded() {
+        let mut v = FixtureStorageView::new(1);
+
+        named_node(&mut v, "f_helper", "helper", "FUNCTION", "lib.rs");
+        // (a) macro invocation `helper!()` — same name, same file.
+        named_node(&mut v, "c_mac", "helper", "CALL", "lib.rs");
+        v.put_node_metadata(id_of("c_mac"), r#"{"macro":true,"method":false}"#);
+        // (b) plain call `helper()`.
+        named_node(&mut v, "c_plain", "helper", "CALL", "lib.rs");
+
+        // (c) macro `paths::mk!()` — would suffix-match fn mk across R2's
+        // "::" boundary if not filtered.
+        named_node(&mut v, "f_mk", "mk", "FUNCTION", "lib.rs");
+        named_node(&mut v, "c_macq", "paths::mk", "CALL", "lib.rs");
+        v.put_node_metadata(id_of("c_macq"), r#"{"macro":true,"method":false}"#);
+
+        let (eval, _specs, _node_specs) = evaluate_with_materialize(
+            &v,
+            RUST_CALLS_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("rust_calls.dl evaluates");
+
+        assert_eq!(
+            triples(&eval, "rust_call"),
+            BTreeSet::from([(id_of("c_plain"), id_of("f_helper"), "rust-calls".to_string())]),
+            "only the plain call resolves; the same-named macro derives nothing"
+        );
+        assert_eq!(
+            triples(&eval, "rust_suffix_call"),
+            BTreeSet::new(),
+            "the macro's '::'-suffix candidate is blocked from R2"
+        );
+    }
+
     /// The (src, dst, meta1, meta2) quads of a 4-ary materialized predicate.
     fn quads(
         eval: &crate::datalog2::exec::Evaluation,
@@ -1974,6 +2022,61 @@ mod tests {
             calls_specs[0].meta,
             vec!["resolvedVia".to_string(), "receiverType".to_string()],
             "resolvedVia + receiverType ride as meta columns"
+        );
+    }
+
+    /// Wave M (rust_cross_methods_ctor DELTA 7): macros are excluded from BOTH
+    /// CALL legs of the ctor arm — a macro DISPATCHED call derives nothing even
+    /// through a properly ctor-typed receiver, and a macro INIT call (even one
+    /// carrying a stale CALLS edge from a pre-Wave-M graph) types no receiver.
+    #[test]
+    fn rust_cross_methods_ctor_excludes_macro_calls() {
+        let mut v = FixtureStorageView::new(1);
+
+        // impl Widget { fn new(); fn render() }.
+        named_node(&mut v, "ib_w", "Widget", "IMPL_BLOCK", "widget.rs");
+        named_node(&mut v, "f_new", "new", "FUNCTION", "widget.rs");
+        named_node(&mut v, "f_render", "render", "FUNCTION", "widget.rs");
+        edge(&mut v, "ib_w", "f_new", "HAS_METHOD");
+        edge(&mut v, "ib_w", "f_render", "HAS_METHOD");
+
+        // Leg 1: real ctor-typed receiver, but the dispatched call is a MACRO
+        // named like the impl method (`render!(w)`).
+        named_node(&mut v, "init1", "Widget::new", "CALL", "a.rs");
+        edge(&mut v, "init1", "f_new", "CALLS");
+        named_node(&mut v, "v_w", "w", "VARIABLE", "a.rs");
+        edge(&mut v, "v_w", "init1", "ASSIGNED_FROM");
+        named_node(&mut v, "ref_w", "w", "REFERENCE", "a.rs");
+        edge(&mut v, "ref_w", "v_w", "READS_FROM");
+        named_node(&mut v, "c_mac", "render", "CALL", "a.rs");
+        v.put_node_metadata(id_of("c_mac"), r#"{"macro":true,"method":false}"#);
+        edge(&mut v, "c_mac", "ref_w", "READS_FROM");
+
+        // Leg 2: the INIT is a macro (stale CALLS edge from an old graph);
+        // the dispatched call is plain — the receiver must stay untyped.
+        named_node(&mut v, "init2", "Widget::new", "CALL", "b.rs");
+        v.put_node_metadata(id_of("init2"), r#"{"macro":true,"method":false}"#);
+        edge(&mut v, "init2", "f_new", "CALLS");
+        named_node(&mut v, "v_d", "d", "VARIABLE", "b.rs");
+        edge(&mut v, "v_d", "init2", "ASSIGNED_FROM");
+        named_node(&mut v, "ref_d", "d", "REFERENCE", "b.rs");
+        edge(&mut v, "ref_d", "v_d", "READS_FROM");
+        named_node(&mut v, "c_plain", "render", "CALL", "b.rs");
+        edge(&mut v, "c_plain", "ref_d", "READS_FROM");
+
+        let (eval, _specs, _node_specs) = evaluate_with_materialize(
+            &v,
+            RUST_CROSS_METHODS_CTOR_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("rust_cross_methods_ctor.dl evaluates");
+
+        assert_eq!(
+            quads(&eval, "rust_ctor_method_call"),
+            BTreeSet::new(),
+            "macro dispatch (a.rs) and macro-typed init (b.rs) both derive nothing"
         );
     }
 
@@ -2846,6 +2949,54 @@ mod tests {
             calls_specs[0].meta,
             vec!["resolvedVia".to_string(), "receiverType".to_string()],
             "resolvedVia + receiverType ride as meta columns"
+        );
+    }
+
+    /// Wave M (rust_receiver_typing DELTA 9): macros are excluded from BOTH
+    /// CALL legs — a macro DISPATCHED call derives nothing through an
+    /// annotation-typed receiver (arm A), and a macro INIT call with a stale
+    /// CALLS edge to a returnType-carrying FUNCTION types no receiver (arm B).
+    #[test]
+    fn rust_receiver_typing_excludes_macro_calls() {
+        let mut v = FixtureStorageView::new(1);
+
+        // impl Widget { fn render() }.
+        named_node(&mut v, "ib_w", "Widget", "IMPL_BLOCK", "widget.rs");
+        named_node(&mut v, "f_render", "render", "FUNCTION", "widget.rs");
+        edge(&mut v, "ib_w", "f_render", "HAS_METHOD");
+
+        // Arm A leg: annotated receiver, MACRO dispatched call (`render!(w)`).
+        named_node(&mut v, "v_w", "w", "VARIABLE", "a.rs");
+        v.put_node_metadata(id_of("v_w"), r#"{"typeAnnotation":"Widget"}"#);
+        named_node(&mut v, "c_mac", "render", "CALL", "a.rs");
+        v.put_node_metadata(id_of("c_mac"), r#"{"macro":true,"method":false}"#);
+        edge(&mut v, "c_mac", "v_w", "READS_FROM");
+
+        // Arm B leg: the INIT is a macro carrying a stale CALLS edge to a
+        // returnType-bearing FUNCTION; the dispatched call is plain.
+        named_node(&mut v, "f_make", "make_widget", "FUNCTION", "factory.rs");
+        v.put_node_metadata(id_of("f_make"), r#"{"returnType":"Widget"}"#);
+        named_node(&mut v, "init_m", "make_widget", "CALL", "b.rs");
+        v.put_node_metadata(id_of("init_m"), r#"{"macro":true,"method":false}"#);
+        edge(&mut v, "init_m", "f_make", "CALLS");
+        named_node(&mut v, "v_m", "m", "VARIABLE", "b.rs");
+        edge(&mut v, "v_m", "init_m", "ASSIGNED_FROM");
+        named_node(&mut v, "c_plain", "render", "CALL", "b.rs");
+        edge(&mut v, "c_plain", "v_m", "READS_FROM");
+
+        let (eval, _specs, _node_specs) = evaluate_with_materialize(
+            &v,
+            RUST_RECEIVER_TYPING_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("rust_receiver_typing.dl evaluates");
+
+        assert_eq!(
+            quads(&eval, "rust_typed_method_call"),
+            BTreeSet::new(),
+            "macro dispatch (arm A) and macro init (arm B) both derive nothing"
         );
     }
 

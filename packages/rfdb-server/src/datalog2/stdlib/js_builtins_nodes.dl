@@ -41,7 +41,8 @@
 %     (datalog values are strings); the legacy node carried a JSON bool
 %     (MetaBool, Hs:393). While legacy mints first its node wins (present
 %     nodes are never rewritten) — the delta is only visible once legacy is
-%     gated. node_attr skips non-scalar values either way.
+%     gated. node_attr surfaces a JSON bool as "true"/"false" (Wave M), so
+%     both representations read identically through it.
 %   DELTA 2 (node surface): pack-minted nodes have no `exported` flag and no
 %     line/column zeros (NodeRecordV2 has no such surface); legacy set
 %     gnExported=True. Recorded loss — no known consumer reads exported on

@@ -923,16 +923,137 @@ fn eval_strip_prefix(_v: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> B
     Ok(())
 }
 
+/// `strip_suffix(S, Suffix, Rest)` — `Rest` is `S` minus its trailing `Suffix`
+/// (`strip_suffix("./foo.js", ".js", R)` → `"./foo"`; the TS-ESM extension-swap shape,
+/// ImportResolution.hs swapExtension, and the `.rs`-drop of the Rust module-path
+/// transform). The suffix twin of [`eval_strip_prefix`], same contract: NO row when `S`
+/// does not END with `Suffix` (match-and-extract, not an identity fallback);
+/// `S == Suffix` still produces its row binding the empty REST; an empty `Suffix`
+/// matches everything (identity). Free arg2 binds; bound arg2 equality-filters.
+fn eval_strip_suffix(_v: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> BuiltinResult<()> {
+    let (Some(s), Some(suffix)) = (bound_str(&spec.args[0]), bound_str(&spec.args[1])) else {
+        return Ok(());
+    };
+    let Some(rest) = s.strip_suffix(suffix.as_str()) else {
+        return Ok(());
+    };
+    bind_or_check(out, spec, 2, rest);
+    Ok(())
+}
+
+/// `last_segment(S, Sep, Seg)` — the substring after the LAST occurrence of the bound
+/// separator `Sep` (`last_segment("crate::foo::Bar", "::", X)` → `"Bar"`); identity when
+/// `S` contains no `Sep` (`basename`'s no-`/` stance — a one-segment path IS its own last
+/// segment; a pack needing the legacy "≥ 2 segments" gate distinguishes via a
+/// `strip_suffix` non-match on the `Sep ++ Seg` tail). NO row when the produced segment
+/// is empty — a trailing separator (`"a::"`), or the degenerate empty `Sep` (which
+/// "matches" at the very end): an empty segment names nothing (`basename` /
+/// `method_suffix`'s empty skip). The separator-parameterized generalization
+/// `method_suffix` (hardwired `.`) and `basename` (hardwired `/`) could not provide for
+/// Rust `::` paths. Free arg2 binds; bound arg2 equality-filters.
+fn eval_last_segment(_v: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> BuiltinResult<()> {
+    let (Some(s), Some(sep)) = (bound_str(&spec.args[0]), bound_str(&spec.args[1])) else {
+        return Ok(());
+    };
+    let produced = match s.rfind(sep.as_str()) {
+        Some(i) => &s[i + sep.len()..],
+        None => s.as_str(),
+    };
+    if produced.is_empty() {
+        return Ok(());
+    }
+    bind_or_check(out, spec, 2, produced);
+    Ok(())
+}
+
+/// `replace_all(S, From, To, Out)` — `Out` is `S` with EVERY occurrence of `From`
+/// replaced by `To`, non-overlapping left-to-right (`replace_all("foo/bar", "/", "::",
+/// X)` → `"foo::bar"`; the file-path → Rust-module-path separator rewrite,
+/// RustImportResolution.hs splitOn "/" / intercalate "::"). Identity when `S` contains
+/// no `From`; `To` may be empty (deletion). NO row when `From` is empty: a degenerate
+/// pattern that "matches" between every character names no rewrite — a tuple non-match,
+/// never an error. Free arg3 binds; bound arg3 equality-filters.
+fn eval_replace_all(_v: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> BuiltinResult<()> {
+    let (Some(s), Some(from), Some(to)) = (
+        bound_str(&spec.args[0]),
+        bound_str(&spec.args[1]),
+        bound_str(&spec.args[2]),
+    ) else {
+        return Ok(());
+    };
+    if from.is_empty() {
+        return Ok(());
+    }
+    let produced = s.replace(from.as_str(), to.as_str());
+    bind_or_check(out, spec, 3, &produced);
+    Ok(())
+}
+
+/// `path_resolve(ImporterFile, RelSpec, Out)` — LEXICAL resolution of a RELATIVE module
+/// specifier against the importing file's directory: `path_resolve("src/a/m.js",
+/// "../lib/x", R)` → `"src/lib/x"`. The shared kernel of import resolution
+/// (ImportResolution.hs resolveModulePath arm 3: textDirname + resolveRelative +
+/// normalizeParts), purely string-level — NO filesystem probe; which candidate file
+/// exists is pack logic joining against MODULE facts. Contract:
+///
+/// * `RelSpec` must start with `./` or `../` (`isRelativeSpecifier`) — a bare or
+///   workspace specifier is NO row; those arms are pack rules over WORKSPACE_PACKAGE
+///   facts, not this builtin's job.
+/// * The directory is `ImporterFile` up to its last `/` (empty for a root-level file).
+/// * Join + normalize: empty segments and `.` drop; `..` pops one segment; `..` past
+///   the root drops silently (the legacy clamp, normalizeParts `go [] ("..":rest)`).
+/// * A leading `/` on the importer's directory is preserved (absolute stays absolute).
+/// * An empty resolved path (e.g. `path_resolve("m.js", "./", R)`) is NO row — an empty
+///   path names nothing (`basename`'s empty skip).
+///
+/// Free arg2 binds; bound arg2 equality-filters.
+fn eval_path_resolve(_v: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> BuiltinResult<()> {
+    let (Some(file), Some(rel)) = (bound_str(&spec.args[0]), bound_str(&spec.args[1])) else {
+        return Ok(());
+    };
+    if !(rel.starts_with("./") || rel.starts_with("../")) {
+        return Ok(());
+    }
+    let dir = match file.rfind('/') {
+        Some(i) => &file[..i],
+        None => "",
+    };
+    let absolute = dir.starts_with('/');
+    let mut parts: Vec<&str> = Vec::new();
+    for segment in dir.split('/').chain(rel.split('/')) {
+        match segment {
+            "" | "." => {}
+            // `..` past the root: `pop` on empty is a no-op — the legacy clamp.
+            ".." => {
+                parts.pop();
+            }
+            p => parts.push(p),
+        }
+    }
+    if parts.is_empty() {
+        return Ok(());
+    }
+    let joined = parts.join("/");
+    let produced = if absolute {
+        format!("/{joined}")
+    } else {
+        joined
+    };
+    bind_or_check(out, spec, 2, &produced);
+    Ok(())
+}
+
 // ── Function: edge_attr (edge-metadata point probe) ────────────────
 
 /// `edge_attr(Src, Dst, Type, Key, Val)` — read a TOP-LEVEL string/number field `Key`
 /// from the metadata JSON of the bound edge `Src -[Type]-> Dst` (the metadata twin of
 /// `attr`, served by the one-edge point probe [`StorageView::edge_metadata`] — all of
 /// src/dst/type are already bound, §8.3). Free arg4 binds the field's string surface
-/// (a JSON string verbatim, a JSON number by its JSON text); bound arg4 equality-filters.
+/// (a JSON string verbatim, a JSON number by its JSON text, a JSON bool as
+/// `"true"`/`"false"`); bound arg4 equality-filters.
 ///
 /// Missing edge, edge without metadata, unparseable metadata, missing key, or a
-/// non-scalar value (bool/null/array/object) ⇒ NO row — a tuple non-match, never an
+/// non-scalar value (null/array/object) ⇒ NO row — a tuple non-match, never an
 /// error (the graph legitimately contains edges without the asked-for field).
 fn eval_edge_attr(view: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> BuiltinResult<()> {
     let (Some(src), Some(dst)) = (bound_id(&spec.args[0]), bound_id(&spec.args[1])) else {
@@ -950,7 +1071,8 @@ fn eval_edge_attr(view: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> Bu
     let produced = match parsed.get(&key) {
         Some(serde_json::Value::String(s)) => s.clone(),
         Some(serde_json::Value::Number(n)) => n.to_string(),
-        // Absent key or a non-scalar (bool/null/array/object) value: no row.
+        Some(serde_json::Value::Bool(b)) => b.to_string(),
+        // Absent key or a non-scalar (null/array/object) value: no row.
         _ => return Ok(()),
     };
     bind_or_check(out, spec, 4, &produced);
@@ -963,10 +1085,10 @@ fn eval_edge_attr(view: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> Bu
 /// metadata JSON of the bound node `NodeId` (the node twin of `edge_attr`, served by the
 /// one-node point probe [`StorageView::node_metadata`] — the id is already bound, §8.3).
 /// Free arg2 binds the field's string surface (a JSON string verbatim, a JSON number by
-/// its JSON text); bound arg2 equality-filters.
+/// its JSON text, a JSON bool as `"true"`/`"false"`); bound arg2 equality-filters.
 ///
 /// Missing node, node without metadata, unparseable metadata, missing key, or a
-/// non-scalar value (bool/null/array/object) ⇒ NO row — a tuple non-match, never an
+/// non-scalar value (null/array/object) ⇒ NO row — a tuple non-match, never an
 /// error (the graph legitimately contains nodes without the asked-for field).
 fn eval_node_attr(view: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> BuiltinResult<()> {
     let Some(id) = bound_id(&spec.args[0]) else {
@@ -984,7 +1106,8 @@ fn eval_node_attr(view: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> Bu
     let produced = match parsed.get(&key) {
         Some(serde_json::Value::String(s)) => s.clone(),
         Some(serde_json::Value::Number(n)) => n.to_string(),
-        // Absent key or a non-scalar (bool/null/array/object) value: no row.
+        Some(serde_json::Value::Bool(b)) => b.to_string(),
+        // Absent key or a non-scalar (null/array/object) value: no row.
         _ => return Ok(()),
     };
     bind_or_check(out, spec, 2, &produced);
@@ -1030,9 +1153,18 @@ const METHOD_SUFFIX_MODES: &[Mode] = &[Mode { args: &[B, F] }, Mode { args: &[B,
 /// the same discipline as [`METHOD_SUFFIX_MODES`].
 const STR_FN2_MODES: &[Mode] = &[Mode { args: &[B, F] }, Mode { args: &[B, B] }];
 
-/// `concat/3`/`strip_prefix/3` modes: both inputs bound; the output (last position) is
-/// free (bind) or bound (equality check).
+/// `concat/3`/`strip_prefix/3`/`strip_suffix/3`/`last_segment/3`/`path_resolve/3`
+/// modes: both inputs bound; the output (last position) is free (bind) or bound
+/// (equality check).
 const CONCAT_MODES: &[Mode] = &[Mode { args: &[B, B, F] }, Mode { args: &[B, B, B] }];
+
+/// `replace_all/4` modes: the three inputs (subject, pattern, replacement) bound; the
+/// output (last position) is free (bind) or bound (equality check) — the [`CONCAT_MODES`]
+/// discipline one position wider.
+const REPLACE_ALL_MODES: &[Mode] = &[
+    Mode { args: &[B, B, B, F] },
+    Mode { args: &[B, B, B, B] },
+];
 
 /// `edge_attr/5` modes: the edge triple (src, dst, type) and the metadata key are always
 /// bound (a point probe on a bound edge); the value is free (bind) or bound (check).
@@ -1196,6 +1328,34 @@ pub fn registry() -> Vec<BuiltinDef> {
             eval: eval_strip_prefix,
         },
         BuiltinDef {
+            name: "strip_suffix",
+            arity: 3,
+            modes: CONCAT_MODES,
+            kind: BuiltinKind::Function,
+            eval: eval_strip_suffix,
+        },
+        BuiltinDef {
+            name: "last_segment",
+            arity: 3,
+            modes: CONCAT_MODES,
+            kind: BuiltinKind::Function,
+            eval: eval_last_segment,
+        },
+        BuiltinDef {
+            name: "replace_all",
+            arity: 4,
+            modes: REPLACE_ALL_MODES,
+            kind: BuiltinKind::Function,
+            eval: eval_replace_all,
+        },
+        BuiltinDef {
+            name: "path_resolve",
+            arity: 3,
+            modes: CONCAT_MODES,
+            kind: BuiltinKind::Function,
+            eval: eval_path_resolve,
+        },
+        BuiltinDef {
             name: "edge_attr",
             arity: 5,
             modes: EDGE_ATTR_MODES,
@@ -1324,6 +1484,10 @@ mod tests {
             "basename",
             "strip_quotes",
             "strip_prefix",
+            "strip_suffix",
+            "last_segment",
+            "replace_all",
+            "path_resolve",
             "edge_attr",
             "node_attr",
         ] {
@@ -2204,6 +2368,318 @@ mod tests {
         assert!(err.required_bindings.contains(&0), "must name the free input");
     }
 
+    // ── strip_suffix ───────────────────────────────────────────────
+
+    #[test]
+    fn strip_suffix_match_and_extract_no_identity_fallback() {
+        // [B, B, F] — bind the stem before the suffix (the TS-ESM './foo.js' → './foo'
+        // extension-swap shape: strip_suffix then concat the alternative extension).
+        let bind = ArgSpec::new(vec![
+            ArgValue::Bound(s("./foo.js")),
+            ArgValue::Bound(s(".js")),
+            ArgValue::Free { slot: 0 },
+        ]);
+        let out = run("strip_suffix", bind);
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(out.rows[0][0], s("./foo"));
+
+        // The Rust module-path '.rs'-drop shape.
+        let rs = ArgSpec::new(vec![
+            ArgValue::Bound(s("foo/bar.rs")),
+            ArgValue::Bound(s(".rs")),
+            ArgValue::Free { slot: 0 },
+        ]);
+        let out = run("strip_suffix", rs);
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(out.rows[0][0], s("foo/bar"));
+
+        // Non-matching suffix → NO row (match-and-extract, never an identity fallback).
+        let miss = ArgSpec::new(vec![
+            ArgValue::Bound(s("./foo.ts")),
+            ArgValue::Bound(s(".js")),
+            ArgValue::Free { slot: 0 },
+        ]);
+        assert_eq!(run("strip_suffix", miss).rows.len(), 0);
+
+        // S == Suffix strips to the empty REST — still a row (strip_prefix's stance).
+        let empty_rest = ArgSpec::new(vec![
+            ArgValue::Bound(s(".js")),
+            ArgValue::Bound(s(".js")),
+            ArgValue::Free { slot: 0 },
+        ]);
+        let out = run("strip_suffix", empty_rest);
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(out.rows[0][0], s(""));
+
+        // An empty suffix matches everything → identity.
+        let empty_suffix = ArgSpec::new(vec![
+            ArgValue::Bound(s("./foo")),
+            ArgValue::Bound(s("")),
+            ArgValue::Free { slot: 0 },
+        ]);
+        let out = run("strip_suffix", empty_suffix);
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(out.rows[0][0], s("./foo"));
+
+        // [B, B, B] — equality check: pass and non-match.
+        let hit = ArgSpec::new(vec![
+            ArgValue::Bound(s("./foo.js")),
+            ArgValue::Bound(s(".js")),
+            ArgValue::Bound(s("./foo")),
+        ]);
+        assert_eq!(run("strip_suffix", hit).rows.len(), 1);
+        let check_miss = ArgSpec::new(vec![
+            ArgValue::Bound(s("./foo.js")),
+            ArgValue::Bound(s(".js")),
+            ArgValue::Bound(s("./foo.js")),
+        ]);
+        assert_eq!(
+            run("strip_suffix", check_miss).rows.len(),
+            0,
+            "output position is the STEM, not the full surface"
+        );
+    }
+
+    #[test]
+    fn strip_suffix_free_input_is_unsupported_mode() {
+        // strip_suffix(Free, B, F) — both inputs must be bound first (E-PLAN-001 names arg 0).
+        let def = lookup("strip_suffix").unwrap();
+        let spec = ArgSpec::new(vec![
+            ArgValue::Free { slot: 0 },
+            ArgValue::Bound(s(".js")),
+            ArgValue::Free { slot: 1 },
+        ]);
+        let err = def.check_mode(&spec).unwrap_err();
+        assert_eq!(err.code.as_str(), "E-PLAN-001");
+        assert!(err.required_bindings.contains(&0), "must name the free input");
+    }
+
+    // ── last_segment ───────────────────────────────────────────────
+
+    #[test]
+    fn last_segment_after_last_separator_identity_and_empty_skip() {
+        // [B, B, F] — the Rust '::' path shape (the separator method_suffix can't carry).
+        let rust = ArgSpec::new(vec![
+            ArgValue::Bound(s("crate::foo::Bar")),
+            ArgValue::Bound(s("::")),
+            ArgValue::Free { slot: 0 },
+        ]);
+        let out = run("last_segment", rust);
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(out.rows[0][0], s("Bar"));
+
+        // '/' separator: the generalized basename.
+        let path = ArgSpec::new(vec![
+            ArgValue::Bound(s("src/a/file.js")),
+            ArgValue::Bound(s("/")),
+            ArgValue::Free { slot: 0 },
+        ]);
+        let out = run("last_segment", path);
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(out.rows[0][0], s("file.js"));
+
+        // No separator occurrence → identity (basename's no-'/' stance; a pack needing
+        // the legacy '≥ 2 segments' gate distinguishes via a strip_suffix non-match).
+        let flat = ArgSpec::new(vec![
+            ArgValue::Bound(s("Bar")),
+            ArgValue::Bound(s("::")),
+            ArgValue::Free { slot: 0 },
+        ]);
+        let out = run("last_segment", flat);
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(out.rows[0][0], s("Bar"));
+
+        // Trailing separator → empty segment → NO row.
+        let trailing = ArgSpec::new(vec![
+            ArgValue::Bound(s("crate::foo::")),
+            ArgValue::Bound(s("::")),
+            ArgValue::Free { slot: 0 },
+        ]);
+        assert_eq!(run("last_segment", trailing).rows.len(), 0);
+
+        // Empty separator "matches" at the very end → empty segment → NO row.
+        let empty_sep = ArgSpec::new(vec![
+            ArgValue::Bound(s("Bar")),
+            ArgValue::Bound(s("")),
+            ArgValue::Free { slot: 0 },
+        ]);
+        assert_eq!(run("last_segment", empty_sep).rows.len(), 0);
+
+        // [B, B, B] — equality check: pass and non-match.
+        let hit = ArgSpec::new(vec![
+            ArgValue::Bound(s("a::b")),
+            ArgValue::Bound(s("::")),
+            ArgValue::Bound(s("b")),
+        ]);
+        assert_eq!(run("last_segment", hit).rows.len(), 1);
+        let miss = ArgSpec::new(vec![
+            ArgValue::Bound(s("a::b")),
+            ArgValue::Bound(s("::")),
+            ArgValue::Bound(s("a")),
+        ]);
+        assert_eq!(run("last_segment", miss).rows.len(), 0);
+    }
+
+    // ── replace_all ────────────────────────────────────────────────
+
+    #[test]
+    fn replace_all_every_occurrence_identity_and_empty_pattern_skip() {
+        // [B, B, B, F] — every occurrence, left-to-right (the '/' → '::' module-path
+        // separator rewrite of the Rust module tree).
+        let seps = ArgSpec::new(vec![
+            ArgValue::Bound(s("foo/bar/baz")),
+            ArgValue::Bound(s("/")),
+            ArgValue::Bound(s("::")),
+            ArgValue::Free { slot: 0 },
+        ]);
+        let out = run("replace_all", seps);
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(out.rows[0][0], s("foo::bar::baz"));
+
+        // No occurrence → identity.
+        let none = ArgSpec::new(vec![
+            ArgValue::Bound(s("lib")),
+            ArgValue::Bound(s("/")),
+            ArgValue::Bound(s("::")),
+            ArgValue::Free { slot: 0 },
+        ]);
+        let out = run("replace_all", none);
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(out.rows[0][0], s("lib"));
+
+        // Empty replacement = deletion (the legacy `T.replace ".rs" ""` shape).
+        let delete = ArgSpec::new(vec![
+            ArgValue::Bound(s("bar.rs")),
+            ArgValue::Bound(s(".rs")),
+            ArgValue::Bound(s("")),
+            ArgValue::Free { slot: 0 },
+        ]);
+        let out = run("replace_all", delete);
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(out.rows[0][0], s("bar"));
+
+        // Empty pattern → NO row (a degenerate pattern names no rewrite).
+        let empty_from = ArgSpec::new(vec![
+            ArgValue::Bound(s("bar")),
+            ArgValue::Bound(s("")),
+            ArgValue::Bound(s("::")),
+            ArgValue::Free { slot: 0 },
+        ]);
+        assert_eq!(run("replace_all", empty_from).rows.len(), 0);
+
+        // [B, B, B, B] — equality check: pass and non-match.
+        let hit = ArgSpec::new(vec![
+            ArgValue::Bound(s("a/b")),
+            ArgValue::Bound(s("/")),
+            ArgValue::Bound(s("::")),
+            ArgValue::Bound(s("a::b")),
+        ]);
+        assert_eq!(run("replace_all", hit).rows.len(), 1);
+        let miss = ArgSpec::new(vec![
+            ArgValue::Bound(s("a/b")),
+            ArgValue::Bound(s("/")),
+            ArgValue::Bound(s("::")),
+            ArgValue::Bound(s("a/b")),
+        ]);
+        assert_eq!(run("replace_all", miss).rows.len(), 0);
+    }
+
+    #[test]
+    fn replace_all_free_input_is_unsupported_mode() {
+        // replace_all(B, B, Free, F) — all three inputs must be bound first
+        // (E-PLAN-001 names arg 2).
+        let def = lookup("replace_all").unwrap();
+        let spec = ArgSpec::new(vec![
+            ArgValue::Bound(s("a/b")),
+            ArgValue::Bound(s("/")),
+            ArgValue::Free { slot: 0 },
+            ArgValue::Free { slot: 1 },
+        ]);
+        let err = def.check_mode(&spec).unwrap_err();
+        assert_eq!(err.code.as_str(), "E-PLAN-001");
+        assert!(err.required_bindings.contains(&2), "must name the free input");
+    }
+
+    // ── path_resolve ───────────────────────────────────────────────
+
+    #[test]
+    fn path_resolve_relative_join_and_normalization() {
+        let case = |file: &str, rel: &str, expect: &str| {
+            let spec = ArgSpec::new(vec![
+                ArgValue::Bound(s(file)),
+                ArgValue::Bound(s(rel)),
+                ArgValue::Free { slot: 0 },
+            ]);
+            let out = run("path_resolve", spec);
+            assert_eq!(out.rows.len(), 1, "path_resolve({file:?}, {rel:?}) must produce one row");
+            assert_eq!(out.rows[0][0], s(expect), "path_resolve({file:?}, {rel:?})");
+        };
+        // Sibling import (the legacy resolveRelative example shapes).
+        case("src/components/m.js", "./utils", "src/components/utils");
+        // Parent hop.
+        case("src/components/m.js", "../lib", "src/lib");
+        // Multi-hop with interior '..' and '.' segments.
+        case("src/a/b/m.ts", ".././../lib/x", "src/lib/x");
+        // Root-level importer (no '/' in the file) — empty directory.
+        case("m.js", "./utils", "utils");
+        // Absolute importer directory stays absolute.
+        case("/abs/path/m.js", "./foo", "/abs/path/foo");
+        // Double slashes in the specifier collapse (empty segments drop).
+        case("src/m.js", ".//utils", "src/utils");
+        // '..' past the root drops silently (the legacy normalizeParts clamp).
+        case("m.js", "../../x", "x");
+    }
+
+    #[test]
+    fn path_resolve_non_relative_or_empty_result_is_no_row() {
+        let no_row = |file: &str, rel: &str, why: &str| {
+            let spec = ArgSpec::new(vec![
+                ArgValue::Bound(s(file)),
+                ArgValue::Bound(s(rel)),
+                ArgValue::Free { slot: 0 },
+            ]);
+            assert_eq!(run("path_resolve", spec).rows.len(), 0, "{why}");
+        };
+        // Bare and workspace specifiers are NOT this builtin's job (pack rules over
+        // WORKSPACE_PACKAGE facts) — mirrors isRelativeSpecifier's './'/'../' gate.
+        no_row("src/m.js", "lodash", "bare specifier must not resolve");
+        no_row("src/m.js", "@grafema/util", "workspace specifier must not resolve");
+        no_row("src/m.js", "/abs/x", "absolute specifier must not resolve");
+        // A '.'-prefixed but non-relative surface (hidden-file shape) must not resolve.
+        no_row("src/m.js", ".env", "'.env' is not a relative specifier");
+        // Empty resolved path names nothing.
+        no_row("m.js", "./", "empty resolution must be a non-match");
+        no_row("src/m.js", "../..", "over-popped empty resolution must be a non-match");
+
+        // [B, B, B] — equality check: pass and non-match.
+        let hit = ArgSpec::new(vec![
+            ArgValue::Bound(s("src/a/m.js")),
+            ArgValue::Bound(s("../lib/x")),
+            ArgValue::Bound(s("src/lib/x")),
+        ]);
+        assert_eq!(run("path_resolve", hit).rows.len(), 1);
+        let miss = ArgSpec::new(vec![
+            ArgValue::Bound(s("src/a/m.js")),
+            ArgValue::Bound(s("../lib/x")),
+            ArgValue::Bound(s("src/a/lib/x")),
+        ]);
+        assert_eq!(run("path_resolve", miss).rows.len(), 0);
+    }
+
+    #[test]
+    fn path_resolve_free_input_is_unsupported_mode() {
+        // path_resolve(B, Free, F) — both inputs must be bound first (E-PLAN-001 names arg 1).
+        let def = lookup("path_resolve").unwrap();
+        let spec = ArgSpec::new(vec![
+            ArgValue::Bound(s("src/m.js")),
+            ArgValue::Free { slot: 0 },
+            ArgValue::Free { slot: 1 },
+        ]);
+        let err = def.check_mode(&spec).unwrap_err();
+        assert_eq!(err.code.as_str(), "E-PLAN-001");
+        assert!(err.required_bindings.contains(&1), "must name the free input");
+    }
+
     // ── edge_attr ──────────────────────────────────────────────────
 
     /// Fixture: c1 -CALLS-> m1 with metadata; c2 -CALLS-> m1 without; plus a node set.
@@ -2232,7 +2708,7 @@ mod tests {
             id_of("c1"),
             id_of("m1"),
             "CALLS",
-            r#"{"via":"instance_of","line":42,"flags":[1,2],"ok":true}"#,
+            r#"{"via":"instance_of","line":42,"flags":[1,2],"ok":true,"off":false}"#,
         );
         v
     }
@@ -2265,14 +2741,40 @@ mod tests {
         assert_eq!(out.rows[0][0], s("42"));
     }
 
+    /// JSON bools surface as the strings "true"/"false" (the same scalar treatment as
+    /// numbers — Wave M; the macro=true filter in the rust packs depends on it).
+    #[test]
+    fn edge_attr_binds_and_checks_bool_fields() {
+        let v = edge_attr_fixture();
+        // Bind mode: true and false both surface by their JSON text.
+        let out = run_edge_attr(&v, "c1", "m1", "CALLS", "ok", ArgValue::Free { slot: 0 });
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(out.rows[0][0], s("true"));
+        let out = run_edge_attr(&v, "c1", "m1", "CALLS", "off", ArgValue::Free { slot: 0 });
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(out.rows[0][0], s("false"));
+        // Check mode: equality against the string surface.
+        assert_eq!(
+            run_edge_attr(&v, "c1", "m1", "CALLS", "ok", ArgValue::Bound(s("true"))).rows.len(),
+            1
+        );
+        assert_eq!(
+            run_edge_attr(&v, "c1", "m1", "CALLS", "ok", ArgValue::Bound(s("false"))).rows.len(),
+            0
+        );
+        assert_eq!(
+            run_edge_attr(&v, "c1", "m1", "CALLS", "off", ArgValue::Bound(s("false"))).rows.len(),
+            1
+        );
+    }
+
     #[test]
     fn edge_attr_missing_or_nonscalar_is_no_row_never_error() {
         let v = edge_attr_fixture();
         // Missing key.
         assert_eq!(run_edge_attr(&v, "c1", "m1", "CALLS", "nope", ArgValue::Free { slot: 0 }).rows.len(), 0);
-        // Non-scalar values: array and bool are NOT string/number fields.
+        // Non-scalar value: an array is NOT a string/number/bool field.
         assert_eq!(run_edge_attr(&v, "c1", "m1", "CALLS", "flags", ArgValue::Free { slot: 0 }).rows.len(), 0);
-        assert_eq!(run_edge_attr(&v, "c1", "m1", "CALLS", "ok", ArgValue::Free { slot: 0 }).rows.len(), 0);
         // Edge exists but carries no metadata.
         assert_eq!(run_edge_attr(&v, "c2", "m1", "CALLS", "via", ArgValue::Free { slot: 0 }).rows.len(), 0);
         // No such edge (wrong type / wrong endpoints).
@@ -2390,7 +2892,7 @@ mod tests {
         }
         v.put_node_metadata(
             id_of("f1"),
-            r#"{"kind":"arrow","line":42,"flags":[1,2],"ok":true}"#,
+            r#"{"kind":"arrow","line":42,"flags":[1,2],"ok":true,"off":false}"#,
         );
         v
     }
@@ -2421,14 +2923,31 @@ mod tests {
         assert_eq!(out.rows[0][0], s("42"));
     }
 
+    /// JSON bools surface as the strings "true"/"false" (the same scalar treatment as
+    /// numbers — Wave M; node_attr(C, "macro", "true") is the rust-pack macro filter).
+    #[test]
+    fn node_attr_binds_and_checks_bool_fields() {
+        let v = node_attr_fixture();
+        // Bind mode: true and false both surface by their JSON text.
+        let out = run_node_attr(&v, "f1", "ok", ArgValue::Free { slot: 0 });
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(out.rows[0][0], s("true"));
+        let out = run_node_attr(&v, "f1", "off", ArgValue::Free { slot: 0 });
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(out.rows[0][0], s("false"));
+        // Check mode: equality against the string surface.
+        assert_eq!(run_node_attr(&v, "f1", "ok", ArgValue::Bound(s("true"))).rows.len(), 1);
+        assert_eq!(run_node_attr(&v, "f1", "ok", ArgValue::Bound(s("false"))).rows.len(), 0);
+        assert_eq!(run_node_attr(&v, "f1", "off", ArgValue::Bound(s("false"))).rows.len(), 1);
+    }
+
     #[test]
     fn node_attr_missing_or_nonscalar_is_no_row_never_error() {
         let v = node_attr_fixture();
         // Missing key.
         assert_eq!(run_node_attr(&v, "f1", "nope", ArgValue::Free { slot: 0 }).rows.len(), 0);
-        // Non-scalar values: array and bool are NOT string/number fields.
+        // Non-scalar value: an array is NOT a string/number/bool field.
         assert_eq!(run_node_attr(&v, "f1", "flags", ArgValue::Free { slot: 0 }).rows.len(), 0);
-        assert_eq!(run_node_attr(&v, "f1", "ok", ArgValue::Free { slot: 0 }).rows.len(), 0);
         // Node exists but carries no metadata.
         assert_eq!(run_node_attr(&v, "f2", "kind", ArgValue::Free { slot: 0 }).rows.len(), 0);
         // No such node.

@@ -36,6 +36,16 @@
 %     engine provenance (_source/_generation) added.
 %   DELTA 4 (file gate): the resolver's effective gate was the orchestrator
 %     streaming only detect_language == Rust nodes; rs/1 encodes the same.
+%   DELTA 5 (macro filter — Wave M): macro invocations are EXCLUDED from
+%     resolution. The analyzer emits every Rust macro invocation as a CALL
+%     node with metadata macro=true whose name is the macro path WITHOUT '!'
+%     (rust_analyzer.rs:1433-1457, walk_macro), and its contract is explicit:
+%     "foo! is not the function foo" (rust_analyzer.rs:1423-1424). The legacy
+%     resolver on a post-merge graph WOULD have matched a macro name against
+%     a same-file fn of the same name — we deliberately do not. rs_macro is
+%     non-recursive EDB-derived; \+ rs_macro(C) is plain stratified negation
+%     (the established \+ has_exact pattern). The maintain envelope already
+%     excludes this pack (negation), so node_attr adds no NEW envelope loss.
 %
 % NOT implemented (Wave 1b, by design): the resolved-constructor receiver-typing
 % arm (ASSIGNED_FROM → resolved init CALL → impl method) — that is
@@ -44,9 +54,15 @@
 % Same-file indexes (empty names never indexed, Hs:43). The .rs gate is the
 % inline ends_with filter (DELTA 4) — File is bound by the attr leg.
 rs_fn(File, N, T) :- node(T, "FUNCTION"), attr(T, "file", File), attr(T, "name", N), neq(N, "").
+
+% Macro invocations (CALL + metadata macro=true; the name is the macro path
+% without '!') — excluded from name resolution, DELTA 5.
+rs_macro(C) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".rs"), node_attr(C, "macro", "true").
+
 rs_call(C, File, N) :-
     node(C, "CALL"), attr(C, "file", File), ends_with(File, ".rs"),
-    attr(C, "name", N), neq(N, "").
+    attr(C, "name", N), neq(N, ""),
+    \+ rs_macro(C).
 
 % R1: exact (file, name) match.
 exact_call(C, T) :- rs_call(C, File, N), rs_fn(File, N, T).

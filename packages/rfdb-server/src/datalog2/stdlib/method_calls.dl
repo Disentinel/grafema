@@ -4,6 +4,15 @@
 % Resolves dotted method calls (obj.method()) to METHOD definitions and materializes
 % the resolution as CALLS edges. The target type is SHARED with the analyzers, hence
 % mode = "additive": the program only adds missing edges, never tombstones.
+%
+% MACRO CALLS (Wave M, no filter needed — verified): the Rust analyzer emits macro
+% invocations as CALL nodes (metadata macro=true, name = the macro path WITHOUT '!',
+% rust_analyzer.rs:1433-1457). They CANNOT enter this program's generators: both
+% materialized heads are gated on call_method, whose method_suffix(FullName, MName)
+% leg requires a '.' in the name (builtin.rs eval_method_suffix — rfind('.') or no
+% row), and macro names are Rust paths ('::'-separated identifiers, never dotted).
+% The rs_macro/\+ guard the rust_* packs carry (their DELTA 5/7/9) would be
+% redundant here.
 
 % A dotted CALL and its method-name suffix ("kb.queryNodes" -> "queryNodes").
 %
