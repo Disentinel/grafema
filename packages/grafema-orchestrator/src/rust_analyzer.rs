@@ -1664,7 +1664,36 @@ fn walk_pat_bindings(pat: &syn::Pat, kind: &str, ctx: &mut Ctx) {
         syn::Pat::Const(_) => {
             // const block pattern — no variable bindings
         }
+        syn::Pat::Path(_) => {
+            // A path pattern in a refutable position (e.g. `if let Foo::Bar = x`,
+            // `match`) names a unit enum variant or a const — it is a reference to
+            // an existing item, not a binding, so it introduces no VARIABLE.
+        }
         _ => ctx.warn_unhandled("Pat", ""),
+    }
+}
+
+/// Register the pattern bindings of any `let` sub-expression in an `if`/`while`
+/// condition into the current (then/loop-body) scope.
+///
+/// Handles both the simple `if let PAT = e` / `while let PAT = e` form (the
+/// condition is an `Expr::Let`) and let-chains such as
+/// `if let Some(a) = x && cond && let Some(b) = y`, which `syn` models as a
+/// left-nested tree of `&&` `Expr::Binary` nodes with `Expr::Let` leaves
+/// (let-chains only ever use `&&`, never `||`). The scrutinee expressions
+/// themselves are walked separately via `walk_expr(&cond)`; this pass registers
+/// only the bindings, so it must run after the enclosing then/body scope is
+/// pushed. Non-`let` parts of the condition contribute no bindings and are
+/// ignored here.
+fn bind_cond_let_patterns(cond: &syn::Expr, ctx: &mut Ctx) {
+    match cond {
+        syn::Expr::Let(e) => walk_pat_bindings(&e.pat, "let", ctx),
+        syn::Expr::Binary(e) if matches!(e.op, syn::BinOp::And(_)) => {
+            bind_cond_let_patterns(&e.left, ctx);
+            bind_cond_let_patterns(&e.right, ctx);
+        }
+        syn::Expr::Paren(e) => bind_cond_let_patterns(&e.expr, ctx),
+        _ => {}
     }
 }
 
@@ -1858,6 +1887,12 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
             });
             walk_expr(&e.cond, ctx);
             ctx.push_scope_with_span(&scope_id, ScopeKind::Block, Some(e.then_branch.brace_token.span.join()));
+            // `if let PAT = scrutinee { ... }` binds PAT into the then-branch scope.
+            // The scrutinee (e.expr) was already walked via walk_expr(&e.cond) above;
+            // here we register only the pattern's bindings so body references resolve.
+            // The else branch is intentionally walked after pop_scope — if-let
+            // bindings are not in scope there.
+            bind_cond_let_patterns(&e.cond, ctx);
             walk_block(&e.then_branch, ctx);
             ctx.pop_scope();
             if let Some((_, else_branch)) = &e.else_branch {
@@ -1906,6 +1941,10 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
             let (_, scope_id) = emit_branch("while", line, col, ctx);
             walk_expr(&e.cond, ctx);
             ctx.push_scope_with_span(&scope_id, ScopeKind::Block, Some(e.body.brace_token.span.join()));
+            // `while let PAT = scrutinee { ... }` binds PAT into the loop-body scope
+            // (mirrors the if-let handling above). The scrutinee was already walked
+            // via walk_expr(&e.cond).
+            bind_cond_let_patterns(&e.cond, ctx);
             walk_block(&e.body, ctx);
             ctx.pop_scope();
         }
@@ -2774,6 +2813,8 @@ mod tests {
             .find(|n| n.node_type == "FUNCTION" && n.name == "puts")
             .expect("FUNCTION puts");
         assert_eq!(f.metadata.get("abi"), Some(&serde_json::json!("C")));
+    }
+
     // Associated items inside `impl` blocks and `trait` definitions used to be
     // silently dropped (ImplItem::Const/Type were empty no-ops; walk_trait only
     // matched TraitItem::Fn), so `Self::MAX` and associated-type queries returned
@@ -2821,6 +2862,8 @@ mod tests {
         assert!(has_edge(&fa, "CONTAINS", "TRAIT", "TYPE_ALIAS"), "TRAIT CONTAINS type");
         // The function signature is still emitted alongside the associated type.
         assert_eq!(count_nodes(&fa, "TYPE_SIGNATURE"), 1);
+    }
+
     // ── Macro invocations ───────────────────────────────────────────────
     // `syn` does not expand macros, so before this fix `Expr::Macro` and
     // `Stmt::Macro` were dropped entirely. That violated KNOWN_LIMITATIONS'
@@ -2881,5 +2924,119 @@ mod tests {
         let fa = parse_and_analyze("fn main() { let _ = matches!(x, Some(_)); }");
         assert!(has_node(&fa, "CALL", "matches"),
             "matches! emits a CALL node even though its body isn't an expr list");
+    }
+
+    // ── if-let / while-let pattern bindings ──────────────────────────────
+    // `if let PAT = scrutinee { body }` and `while let PAT = scrutinee { body }`
+    // bind PAT into the then/loop-body scope. syn models the condition as
+    // `Expr::Let { pat, expr }`; before this fix the walker descended only into
+    // `expr` (the scrutinee) and dropped `pat`, so the bound variables had no
+    // VARIABLE node and body references to them could not resolve READS_FROM —
+    // a value could not be traced into an if-let/while-let binding.
+
+    #[test]
+    fn test_if_let_binds_pattern_variable() {
+        let fa = parse_and_analyze(
+            "fn f(opt: Option<i32>) { if let Some(captured) = opt { let _y = captured; } }",
+        );
+        assert!(has_node(&fa, "VARIABLE", "captured"), "if-let binding -> VARIABLE captured");
+        let reads: Vec<_> = fa.edges.iter()
+            .filter(|e| e.edge_type == "READS_FROM"
+                && e.src.contains("REFERENCE")
+                && e.dst.contains("VARIABLE")
+                && e.dst.contains("captured"))
+            .collect();
+        assert!(!reads.is_empty(),
+            "body REFERENCE captured should READS_FROM the if-let binding VARIABLE captured");
+    }
+
+    #[test]
+    fn test_if_let_destructuring_binds_all_variables() {
+        let fa = parse_and_analyze(
+            "fn f(p: Option<(i32, i32)>) { if let Some((a, b)) = p { let _x = a; let _y = b; } }",
+        );
+        assert!(has_node(&fa, "VARIABLE", "a"), "if-let tuple binding -> VARIABLE a");
+        assert!(has_node(&fa, "VARIABLE", "b"), "if-let tuple binding -> VARIABLE b");
+        for name in ["a", "b"] {
+            let reads: Vec<_> = fa.edges.iter()
+                .filter(|e| e.edge_type == "READS_FROM"
+                    && e.src.contains("REFERENCE")
+                    && e.dst.contains("VARIABLE")
+                    && e.dst.contains(name))
+                .collect();
+            assert!(!reads.is_empty(),
+                "body REFERENCE {name} should READS_FROM the if-let binding VARIABLE {name}");
+        }
+    }
+
+    #[test]
+    fn test_if_let_path_pattern_no_spurious_binding() {
+        // A multi-segment path pattern (`Ordering::Less`) names a unit variant —
+        // a reference to an existing item, not a binding. It must not create a
+        // VARIABLE node (and must not hit warn_unhandled). Bare single-segment
+        // idents (`if let None = x`) are an unavoidable syntactic ambiguity — syn
+        // parses them as Pat::Ident identically to a binding — and are a documented
+        // limitation, not covered here.
+        let fa = parse_and_analyze(
+            "fn f(ord: std::cmp::Ordering) { if let std::cmp::Ordering::Less = ord { let _x = 1; } }",
+        );
+        assert_eq!(
+            fa.nodes.iter().filter(|n| n.node_type == "VARIABLE" && n.name == "Less").count(),
+            0,
+            "path pattern (unit variant) must not bind a variable named after its last segment",
+        );
+    }
+
+    #[test]
+    fn test_if_let_chain_binds_all_bindings() {
+        // Let-chains (`if let A = x && let B = y`) are a left-nested `&&` tree of
+        // Expr::Let leaves; every binding must be registered, not just the first.
+        let fa = parse_and_analyze(
+            "fn f(a: Option<i32>, b: Option<i32>) { \
+             if let Some(first) = a && let Some(second) = b { let _x = first; let _y = second; } }",
+        );
+        assert!(has_node(&fa, "VARIABLE", "first"), "let-chain binding -> VARIABLE first");
+        assert!(has_node(&fa, "VARIABLE", "second"), "let-chain binding -> VARIABLE second");
+        for name in ["first", "second"] {
+            let reads: Vec<_> = fa.edges.iter()
+                .filter(|e| e.edge_type == "READS_FROM"
+                    && e.src.contains("REFERENCE")
+                    && e.dst.contains("VARIABLE")
+                    && e.dst.contains(name))
+                .collect();
+            assert!(!reads.is_empty(),
+                "body REFERENCE {name} should READS_FROM the let-chain binding VARIABLE {name}");
+        }
+    }
+
+    #[test]
+    fn test_plain_if_introduces_no_spurious_binding() {
+        // A plain `if cond { ... }` (cond is not Expr::Let) must not register any
+        // binding — guards against bind_cond_let_patterns over-matching.
+        let fa = parse_and_analyze("fn f(x: i32) { if x > 0 { let _y = x; } }");
+        // Only the parameter `x` is a VARIABLE-class binding here; the body `let _y`
+        // is its own VARIABLE. There must be no VARIABLE named after the condition.
+        assert!(!has_node(&fa, "VARIABLE", "cond"), "no spurious binding from plain if");
+        let var_names: Vec<&str> = fa.nodes.iter()
+            .filter(|n| n.node_type == "VARIABLE")
+            .map(|n| n.name.as_str())
+            .collect();
+        assert!(var_names.contains(&"_y"), "body let still binds _y, got {var_names:?}");
+    }
+
+    #[test]
+    fn test_while_let_binds_pattern_variable() {
+        let fa = parse_and_analyze(
+            "fn f(mut it: std::vec::IntoIter<i32>) { while let Some(item) = it.next() { let _y = item; } }",
+        );
+        assert!(has_node(&fa, "VARIABLE", "item"), "while-let binding -> VARIABLE item");
+        let reads: Vec<_> = fa.edges.iter()
+            .filter(|e| e.edge_type == "READS_FROM"
+                && e.src.contains("REFERENCE")
+                && e.dst.contains("VARIABLE")
+                && e.dst.contains("item"))
+            .collect();
+        assert!(!reads.is_empty(),
+            "while-let body REFERENCE item should READS_FROM the binding VARIABLE item");
     }
 }
