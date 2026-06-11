@@ -490,14 +490,37 @@ fn vis_to_text(vis: &syn::Visibility) -> &'static str {
                 .join("::");
             if path == "crate" { return "pub(crate)"; }
             if path == "super" { return "pub(super)"; }
+            // `pub(self)` / `pub(in self)` is identical to private visibility
+            // per the Rust Reference — keep the author's label but treat it as
+            // not-exported in `is_pub`.
+            if path == "self" { return "pub(self)"; }
             "pub(in ...)"
         }
         syn::Visibility::Inherited => "private",
     }
 }
 
+/// Whether an item escapes its own module — i.e. is part of the exported
+/// surface visible to other modules.
+///
+/// `pub`, `pub(crate)`, `pub(super)` and `pub(in <ancestor>)` all reach code
+/// outside the defining module, so they count as exported. The single
+/// exception is `pub(self)` / `pub(in self)`, which the Rust Reference defines
+/// as identical to private visibility (reachable only within the current
+/// module and its descendants). Treating it as exported would seed the
+/// "what is this crate's public API?" query with false positives.
 fn is_pub(vis: &syn::Visibility) -> bool {
-    matches!(vis, syn::Visibility::Public(_) | syn::Visibility::Restricted(_))
+    match vis {
+        syn::Visibility::Public(_) => true,
+        syn::Visibility::Restricted(r) => !restricted_path_is_self(&r.path),
+        syn::Visibility::Inherited => false,
+    }
+}
+
+/// `true` when a `pub(in <path>)` restriction names exactly `self` — the one
+/// restricted form that does not escape the current module.
+fn restricted_path_is_self(path: &syn::Path) -> bool {
+    path.segments.len() == 1 && path.segments[0].ident == "self"
 }
 
 // ---------------------------------------------------------------------------
@@ -2472,6 +2495,61 @@ mod tests {
         let fa = parse_and_analyze("pub fn exported() {} fn private() {}");
         assert_eq!(fa.exports.len(), 1);
         assert_eq!(fa.exports[0].name, "exported");
+    }
+
+    #[test]
+    fn test_pub_self_is_not_exported() {
+        // `pub(self)` (and the equivalent `pub(in self)`) is, per the Rust
+        // Reference, identical to private visibility: the item is reachable only
+        // within its own module. It must NOT appear in the exported/public-API
+        // surface. `pub`, `pub(crate)` and `pub(super)` DO escape the defining
+        // module, so they stay exported.
+        let fa = parse_and_analyze(
+            "pub fn shown() {} \
+             pub(crate) fn internal() {} \
+             pub(super) fn parent_visible() {} \
+             pub(self) fn hidden() {} \
+             pub(in self) fn hidden_in() {} \
+             fn private() {}",
+        );
+
+        let exported_names: Vec<&str> =
+            fa.exports.iter().map(|e| e.name.as_str()).collect();
+        assert!(exported_names.contains(&"shown"), "pub must be exported");
+        assert!(exported_names.contains(&"internal"), "pub(crate) must be exported");
+        assert!(
+            exported_names.contains(&"parent_visible"),
+            "pub(super) must be exported"
+        );
+        assert!(
+            !exported_names.contains(&"hidden"),
+            "pub(self) must NOT be exported (≡ private)"
+        );
+        assert!(
+            !exported_names.contains(&"hidden_in"),
+            "pub(in self) must NOT be exported (≡ private)"
+        );
+        assert!(!exported_names.contains(&"private"), "private stays private");
+
+        // The node's `exported` flag must agree with the exports list.
+        let hidden = fa
+            .nodes
+            .iter()
+            .find(|n| n.node_type == "FUNCTION" && n.name == "hidden")
+            .expect("hidden function node must exist");
+        assert!(
+            !hidden.exported,
+            "pub(self) FUNCTION node must have exported=false"
+        );
+
+        // `visibility` metadata stays informative: it records the author's
+        // `pub(self)` intent rather than collapsing to the generic `pub(in ...)`.
+        match hidden.metadata.get("visibility") {
+            Some(serde_json::Value::String(s)) => {
+                assert_eq!(s, "pub(self)", "visibility label should be pub(self)")
+            }
+            other => panic!("expected visibility string, got {other:?}"),
+        }
     }
 
     #[test]
