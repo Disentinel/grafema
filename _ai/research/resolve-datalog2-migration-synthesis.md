@@ -276,3 +276,43 @@ differential.rs фильтровать legacy-срез по отсутствию
 коммитит атомарный manifest-flip → следующий пак видит рёбра предыдущего как EDB.
 **Residue до гейтинга legacy import-resolution:** WORKSPACE_PACKAGE-факты от оркестратора
 (+3 workspace-арма в паке) + перенос depends после js_module_imports в runner-порядке.
+
+---
+
+## Wave 3c (2026-06-11, conveyor #3): import-resolution ЗАКРЫТ — facts, arms, gate, measure
+
+**Факты:** orchestrator эмитит WORKSPACE_PACKAGE-узлы (8 на dogfood: @grafema/* + grafema-explore;
+analyzer.rs workspace_packages_to_wire, sid = {entry}->WORKSPACE_PACKAGE->{name}, metadata.package_dir;
+коммит секцией 8n ДО pack-фазы). **Армы:** js_module_imports DELTA 1 CLOSED — ws-exact, ws-sub-path
+(longest-prefix fixpoint, RAW concat = точная legacy-parity, path_resolve сознательно НЕ исполь-
+зован), star ws fallback. **Все 5 advisory 3b закрыты** (exporting_file УЖЕСТОЧЁН до точной
+buildExportIndex-семантики — гейт теперь load-bearing; фикстуры = legacy-parity оракул; rust .rs
+гейты = DELTA 5; provenance-фильтр диффа исправлен на stamp-VALUE дискриминацию — legacy
+ШТАМПУЕТСЯ gc-стампом, «unstamped» из advisory был неверен). **BONUS:** B3 namespace-арм в
+js_import_bindings (import * as X — без него гейт терял арм).
+
+**Гейт:** js `import-resolution` (Main.hs гейтинг существовал); rust-resolve гейтинга НЕ имел —
+добавлен (rust-resolve/src/Main.hs getSkipSteps + daemon dispatch). Runner-order: depends
+перенесён ПОСЛЕ всех IMPORTS_FROM-продьюсеров; unresolved-диагностика — ПОСЛЕ pack-фазы.
+Must-fix ревью: порядок STDLIB_RULE_PACKS не был запинен на стороне оркестратора (продакшен
+итерирует ЕГО список!) — добавлен кросс-реестровый тест (include_str! rfdb stdlib.rs, парс
+STDLIB_PACKS, exact-sequence assert; mutation-проверка: swap depends/method_calls → FAIL).
+
+**Acceptance (fresh gated worktree analyze, 666 файлов, 494,355/1,042,917):** js IMPORT→MODULE
+**679 = 679 EXACT** (армы вернули все 165 bare/workspace); RE_EXPORTS 9; EXTENDS 14;
+WORKSPACE_PACKAGE 8; `_source="js-resolution"` = **0** (legacy доказанно OFF, пак владеет
+срезом); DEPENDS_ON 1,562 (−164 vs baseline = задекларированный js_import_bindings DELTA-1
+subset: named-re-export hop, 1,050 vs 1,313 binding-рёбер). Re-differential на старой копии:
+in-scope 514/7 exact, армы инертны без фактов (asserted) — checked-in harness
+wave3c_js_module_imports_re_differential + wave3c_acceptance_counts.
+
+**HEADLINE: pack-фаза 176.6s (20 паков) vs 330s = 1.87×; полный analyze 634s vs 962s.
+До цели 60s: −116.6s.** Топ-рычаги: rust_calls 28.2s, js_builtins 27.5s (nodes+edges),
+js_property_access_full 24.5s, axum_routes 16.6s, rust_receiver_typing 10.4s → W9.
+
+**Carry-forward:** (1) workspace-имена не дедупятся (legacy Map last-wins) — DELTA 8 или дедуп;
+(2) WORKSPACE_PACKAGE staleness при смене конфига (нет cleanup-пути; связано с clear-плацебо);
+(3) втор-проходные legacy-шаги НЕ гейтились: js-this-method-calls дал 432 ребра при паке=0 —
+аномалия пака РЕАЛЬНА, разобрать; js-call-globals 7,800 (Wave 4 runtime-globals);
+(4) binding-hop subset −263 (re-export hop для биндингов); (5) grafema-resolve .build-hash
+отсутствует — freshness-warning в логе.

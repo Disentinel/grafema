@@ -14,6 +14,20 @@ import qualified RustTraitResolution
 import Grafema.Types (GraphNode, GraphEdge)
 import Grafema.Protocol (PluginCommand(..), readFrame, writeFrame, encodeMsgpack, decodeMsgpack, readNodesFromStdin, writeCommandsToStdout)
 import Grafema.RuntimeGlobals (NameStrategy(..), NodeFilter(..), SymbolDB, loadSymbolDB, resolveAll)
+import qualified Data.Set as Set
+
+-- | Per-step resolver gating (the resolve→datalog2 migration seam, the
+-- grafema-resolve Main.hs precedent): GRAFEMA_SKIP_RESOLVE_STEPS carries a
+-- comma-separated list of step names whose legacy implementation is SKIPPED
+-- because a datalog2 rule pack now produces those edges in-engine.
+-- Unset/empty = no behavior change. Known names here: rust-imports
+-- (replaced by the rust_imports pack, Wave 3b/3c).
+getSkipSteps :: IO (Set.Set String)
+getSkipSteps = do
+  mv <- lookupEnv "GRAFEMA_SKIP_RESOLVE_STEPS"
+  case mv of
+    Nothing -> pure Set.empty
+    Just v  -> pure (Set.fromList (words (map (\c -> if c == ',' then ' ' else c) v)))
 
 -- | Request from orchestrator in daemon mode.
 data DaemonRequest = DaemonRequest
@@ -80,7 +94,11 @@ daemonLoop symbolDb = do
 
 -- | Dispatch a command to the resolver.
 dispatch :: SymbolDB -> Text -> [GraphNode] -> [GraphEdge] -> IO DaemonResponse
-dispatch _        "rust-imports"       nodes _     = ResOk <$> RustImportResolution.resolveAll nodes
+dispatch _        "rust-imports"       nodes _     = do
+  skips <- getSkipSteps
+  if Set.member "rust-imports" skips
+    then return (ResOk [])
+    else ResOk <$> RustImportResolution.resolveAll nodes
 dispatch _        "rust-calls"         nodes _     = ResOk <$> RustCallResolution.resolveAll nodes
 dispatch _        "rust-cross-methods" nodes edges = ResOk <$> RustCrossMethodCalls.resolveAll nodes edges
 dispatch _        "rust-trait-resolve" nodes _     = return $ ResOk (RustTraitResolution.resolveAll nodes)

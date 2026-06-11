@@ -45,15 +45,19 @@ use std::path::PathBuf;
 ///   IMPORT→MODULE IMPORTS_FROM seam + RE_EXPORTS that `js_import_bindings`
 ///   and the hybrid consumers read as committed EDB, so it runs strictly
 ///   before them.
-/// Full canonical order is depends → js_local_refs → js_same_file_calls →
+/// Full canonical order is js_local_refs → js_same_file_calls →
 /// js_this_method_calls → rust_calls → rust_cross_methods_ctor →
 /// rust_trait_resolve → rust_receiver_typing → rust_imports → js_module_imports →
 /// js_import_bindings → js_class_inheritance → js_cross_file_calls →
-/// js_property_access_ns → js_property_access_full → method_calls →
-/// shape_verifier → axum_routes; the depends pack runs separately first (the
-/// `materialize_datalog("")` call below, which the server resolves to the bundled
-/// `depends.dl`). The server-side registry (`rfdb-server/src/datalog2/stdlib.rs`
-/// STDLIB_PACKS) documents the same order — keep the two in sync.
+/// js_property_access_ns → js_property_access_full → js_builtins_nodes →
+/// js_builtins_edges → depends → method_calls → shape_verifier → axum_routes.
+/// Wave 3c moved depends INTO this list, after every IMPORTS_FROM producer:
+/// with legacy import-resolution gated, the IMPORT-level edges depends
+/// consumes are produced by the packs above it (it ran separately FIRST while
+/// the legacy resolver pre-committed them). The server-side registry
+/// (`rfdb-server/src/datalog2/stdlib.rs` STDLIB_PACKS) documents the same
+/// order — the two are pinned against each other by
+/// `tests::stdlib_rule_packs_match_rfdb_registry_order` below.
 const STDLIB_RULE_PACKS: &[&str] = &[
     "@stdlib/js_local_refs",
     "@stdlib/js_same_file_calls",
@@ -86,6 +90,14 @@ const STDLIB_RULE_PACKS: &[&str] = &[
     // CALLS/IMPORTS_FROM producers — before method_calls/shape_verifier.
     "@stdlib/js_builtins_nodes",
     "@stdlib/js_builtins_edges",
+    // Wave 3c: depends CONSUMES IMPORTS_FROM (every edge of the shared
+    // vocabulary, module- and binding-level). Legacy import-resolution /
+    // rust-imports are gated (GRAFEMA_SKIP_RESOLVE_STEPS), so depends must
+    // run after ALL in-engine IMPORTS_FROM producers above (rust_imports,
+    // js_module_imports, js_import_bindings, js_builtins_edges). It ran
+    // FIRST (the separate materialize_datalog("") call) while the legacy
+    // resolver pre-committed those edges at analysis time.
+    "@stdlib/depends",
     "@stdlib/method_calls",
     "@stdlib/shape_verifier",
     "@stdlib/axum_routes",
@@ -1879,7 +1891,137 @@ async fn main() -> Result<()> {
 
             let resolve_ms = resolve_timer.elapsed().as_millis() as u64;
 
-            // 8m. Generate unresolved diagnostics
+
+
+            // 8n. Commit WORKSPACE_PACKAGE facts (Wave 3c): the workspace map the
+            // legacy resolver consumed over the wire becomes graph facts, so the
+            // datalog packs (js_module_imports workspace arms) can join them.
+            // Must land BEFORE the pack phase below. Re-emitted every run: ids are
+            // stable (upsert dedups), and re-analysis of an entry-point file
+            // tombstones its fact until this re-commit restores it.
+            if !ws_packages.is_empty() {
+                let mut ws_nodes = analyzer::workspace_packages_to_wire(&ws_packages, &authority);
+                for node in &mut ws_nodes {
+                    gc::stamp_node_metadata(&mut node.metadata, generation, "workspace-packages");
+                }
+                let n_ws = ws_nodes.len();
+                rfdb.commit_batch(&[], &ws_nodes, &[], true)
+                    .await
+                    .context("Failed to commit WORKSPACE_PACKAGE facts")?;
+                tracing::info!(count = n_ws, "WORKSPACE_PACKAGE facts committed");
+            }
+
+            // 9. Derive MODULE→MODULE DEPENDS_ON edges from IMPORTS_FROM.
+            //
+            // When the RFDB server advertises `datalogV2Materialize` (its RFDB_DATALOG_V2 kill
+            // switch is on), the SERVER derives DEPENDS_ON via the bundled `depends.dl` — a file-
+            // ATTR join, which is correct on the Haskell `MODULE#/…` semantic-ids the legacy
+            // string-parse below silently drops (see _ai/gaps.md 2026-06-07: 127 real module-pairs
+            // lost). Otherwise the legacy in-orchestrator derivation runs. P3: the legacy path is
+            // kept runnable as the fallback until Gate E + one release — do NOT delete it without
+            // the legacy-retirement.lock gate.
+            let depends_on_start = std::time::Instant::now();
+            profile!("depends_on_start", "imports_from_edges" => all_imports_from_edges.len());
+            if rfdb.supports_datalog_v2_materialize() {
+                // Pack-runner v0: run the canonical stdlib rule packs (see
+                // STDLIB_RULE_PACKS for the ordering contract — Wave 3c moved
+                // depends INTO the list, after every IMPORTS_FROM producer). A
+                // broken pack must not kill analyze: log loud and skip to the
+                // next pack. Exceptions: a method_calls failure additionally
+                // warns that shape_verifier may over-report (it reads the CALLS
+                // edges method_calls materializes); a depends failure warns
+                // that DEPENDS_ON is missing for this run.
+                for pack in STDLIB_RULE_PACKS {
+                    let pack_start = std::time::Instant::now();
+                    match rfdb.materialize_datalog(pack).await {
+                        Ok(pack_edges) => {
+                            let pack_ms = pack_start.elapsed().as_millis() as u64;
+                            tracing::info!(
+                                pack = *pack,
+                                ms = pack_ms,
+                                edges = pack_edges,
+                                "Rule pack materialized"
+                            );
+                            profile!("rule_pack_complete",
+                                "pack" => pack,
+                                "ms" => pack_ms,
+                                "edges" => pack_edges as usize);
+                            if *pack == "@stdlib/depends" {
+                                tracing::info!(
+                                    edges = pack_edges,
+                                    from_imports = all_imports_from_edges.len(),
+                                    "DEPENDS_ON derived by RFDB Datalog v2 @materialize"
+                                );
+                                profile!("depends_on_complete_v2", "edges" => pack_edges as usize);
+                            }
+                        }
+                        Err(err) => {
+                            tracing::error!(
+                                pack = *pack,
+                                error = %format!("{err:#}"),
+                                "Rule pack @materialize FAILED — skipping to next pack"
+                            );
+                            if *pack == "@stdlib/method_calls" {
+                                tracing::warn!(
+                                    "@stdlib/method_calls failed: @stdlib/shape_verifier reads \
+                                     its CALLS edges as EDB, so shape-violation results may \
+                                     over-report unresolved calls"
+                                );
+                            }
+                            if *pack == "@stdlib/depends" {
+                                tracing::warn!(
+                                    "@stdlib/depends failed: MODULE→MODULE DEPENDS_ON edges \
+                                     are missing for this run"
+                                );
+                            }
+                        }
+                    }
+                }
+            } else if !all_imports_from_edges.is_empty() {
+                // ── LEGACY fallback (P3): in-orchestrator sid-parse derivation. Lossy on
+                // `MODULE#`-sid (Haskell) endpoints; superseded by the v2 path above. Kept runnable
+                // + execution-counted through Gate E + one release (see legacy-retirement.lock). ──
+                tracing::info!("DEPENDS_ON derived by legacy orchestrator derivation (P3 fallback)");
+                let uri_prefix = format!("grafema://{authority}/");
+                let depends_on_pairs =
+                    derive_depends_on_legacy(&all_imports_from_edges, &file_to_module, &uri_prefix);
+
+                if !depends_on_pairs.is_empty() {
+                    let metadata_json = format!(
+                        r#"{{"_source":"module-dependencies","_generation":{generation}}}"#
+                    );
+
+                    let depends_on_wire_edges: Vec<rfdb::WireEdge> = depends_on_pairs
+                        .iter()
+                        .map(|(src, dst)| rfdb::WireEdge {
+                            src: src.clone(),
+                            dst: dst.clone(),
+                            edge_type: "DEPENDS_ON".to_string(),
+                            metadata: Some(metadata_json.clone()),
+                        })
+                        .collect();
+
+                    rfdb.commit_batch(&[], &[], &depends_on_wire_edges, true)
+                        .await
+                        .context("Failed to commit DEPENDS_ON edges")?;
+
+                    tracing::info!(
+                        edges = depends_on_wire_edges.len(),
+                        from_imports = all_imports_from_edges.len(),
+                        "Module dependency edges derived"
+                    );
+                    profile!("depends_on_complete",
+                        "edges" => depends_on_wire_edges.len(),
+                        "from_imports" => all_imports_from_edges.len());
+                }
+            }
+            let depends_on_ms = depends_on_start.elapsed().as_millis() as u64;
+
+            // 10. Generate unresolved diagnostics — AFTER the pack phase (Wave 3c):
+            // with legacy resolve steps gated (GRAFEMA_SKIP_RESOLVE_STEPS), the
+            // CALLS/IMPORTS_FROM edges the negation queries below check for are
+            // produced by the datalog packs; running diagnostics before them
+            // would report every pack-resolved node as unresolved.
             let diagnostics_start = std::time::Instant::now();
             {
                 // RFD-65: the resolver commits CALLS/IMPORTS_FROM edges with
@@ -1951,109 +2093,6 @@ async fn main() -> Result<()> {
             }
 
             let diagnostics_ms = diagnostics_start.elapsed().as_millis() as u64;
-
-            // 9. Derive MODULE→MODULE DEPENDS_ON edges from IMPORTS_FROM.
-            //
-            // When the RFDB server advertises `datalogV2Materialize` (its RFDB_DATALOG_V2 kill
-            // switch is on), the SERVER derives DEPENDS_ON via the bundled `depends.dl` — a file-
-            // ATTR join, which is correct on the Haskell `MODULE#/…` semantic-ids the legacy
-            // string-parse below silently drops (see _ai/gaps.md 2026-06-07: 127 real module-pairs
-            // lost). Otherwise the legacy in-orchestrator derivation runs. P3: the legacy path is
-            // kept runnable as the fallback until Gate E + one release — do NOT delete it without
-            // the legacy-retirement.lock gate.
-            let depends_on_start = std::time::Instant::now();
-            profile!("depends_on_start", "imports_from_edges" => all_imports_from_edges.len());
-            if rfdb.supports_datalog_v2_materialize() {
-                // v2 path: empty source ⇒ the server runs its canonical bundled depends rule over
-                // the committed snapshot (all IMPORTS_FROM are already committed by now).
-                let written = rfdb
-                    .materialize_datalog("")
-                    .await
-                    .context("RFDB Datalog v2 @materialize DEPENDS_ON failed")?;
-                tracing::info!(
-                    edges = written,
-                    from_imports = all_imports_from_edges.len(),
-                    "DEPENDS_ON derived by RFDB Datalog v2 @materialize"
-                );
-                profile!("depends_on_complete_v2", "edges" => written as usize);
-
-                // Pack-runner v0: after the depends materialize succeeds, run the
-                // remaining canonical stdlib rule packs (see STDLIB_RULE_PACKS for the
-                // ordering contract). A broken pack must not kill analyze: log loud and
-                // skip to the next pack. Exception: a method_calls failure additionally
-                // warns that shape_verifier may over-report, since shape_verifier reads
-                // the CALLS edges method_calls materializes.
-                for pack in STDLIB_RULE_PACKS {
-                    let pack_start = std::time::Instant::now();
-                    match rfdb.materialize_datalog(pack).await {
-                        Ok(pack_edges) => {
-                            let pack_ms = pack_start.elapsed().as_millis() as u64;
-                            tracing::info!(
-                                pack = *pack,
-                                ms = pack_ms,
-                                edges = pack_edges,
-                                "Rule pack materialized"
-                            );
-                            profile!("rule_pack_complete",
-                                "pack" => pack,
-                                "ms" => pack_ms,
-                                "edges" => pack_edges as usize);
-                        }
-                        Err(err) => {
-                            tracing::error!(
-                                pack = *pack,
-                                error = %format!("{err:#}"),
-                                "Rule pack @materialize FAILED — skipping to next pack"
-                            );
-                            if *pack == "@stdlib/method_calls" {
-                                tracing::warn!(
-                                    "@stdlib/method_calls failed: @stdlib/shape_verifier reads \
-                                     its CALLS edges as EDB, so shape-violation results may \
-                                     over-report unresolved calls"
-                                );
-                            }
-                        }
-                    }
-                }
-            } else if !all_imports_from_edges.is_empty() {
-                // ── LEGACY fallback (P3): in-orchestrator sid-parse derivation. Lossy on
-                // `MODULE#`-sid (Haskell) endpoints; superseded by the v2 path above. Kept runnable
-                // + execution-counted through Gate E + one release (see legacy-retirement.lock). ──
-                tracing::info!("DEPENDS_ON derived by legacy orchestrator derivation (P3 fallback)");
-                let uri_prefix = format!("grafema://{authority}/");
-                let depends_on_pairs =
-                    derive_depends_on_legacy(&all_imports_from_edges, &file_to_module, &uri_prefix);
-
-                if !depends_on_pairs.is_empty() {
-                    let metadata_json = format!(
-                        r#"{{"_source":"module-dependencies","_generation":{generation}}}"#
-                    );
-
-                    let depends_on_wire_edges: Vec<rfdb::WireEdge> = depends_on_pairs
-                        .iter()
-                        .map(|(src, dst)| rfdb::WireEdge {
-                            src: src.clone(),
-                            dst: dst.clone(),
-                            edge_type: "DEPENDS_ON".to_string(),
-                            metadata: Some(metadata_json.clone()),
-                        })
-                        .collect();
-
-                    rfdb.commit_batch(&[], &[], &depends_on_wire_edges, true)
-                        .await
-                        .context("Failed to commit DEPENDS_ON edges")?;
-
-                    tracing::info!(
-                        edges = depends_on_wire_edges.len(),
-                        from_imports = all_imports_from_edges.len(),
-                        "Module dependency edges derived"
-                    );
-                    profile!("depends_on_complete",
-                        "edges" => depends_on_wire_edges.len(),
-                        "from_imports" => all_imports_from_edges.len());
-                }
-            }
-            let depends_on_ms = depends_on_start.elapsed().as_millis() as u64;
 
             // Compact to deduplicate segments after all commits.
             // This is needed because:
@@ -3323,6 +3362,62 @@ mod tests {
             lock.contains("status = retained"),
             "legacy DEPENDS_ON path is still live; legacy-retirement.lock must say `status = retained` \
              until Gate E + one release (flip it as part of the retirement ceremony)"
+        );
+    }
+
+    /// Wave 3c: production iterates THIS crate's `STDLIB_RULE_PACKS`, not the
+    /// server-side registry — and with legacy import-resolution gated the order is
+    /// load-bearing (producers before consumers/negators) while pack failures are
+    /// log-and-continue, so a silent reorder (e.g. depends before
+    /// js_import_bindings) under-derives DEPENDS_ON with zero signal. Pin the
+    /// orchestrator list against rfdb's `STDLIB_PACKS` registry order, read at
+    /// compile time from the server source (a moved/renamed registry file fails
+    /// the build; a reorder on either side fails this test).
+    #[test]
+    fn stdlib_rule_packs_match_rfdb_registry_order() {
+        let registry_src = include_str!("../../rfdb-server/src/datalog2/stdlib.rs");
+
+        // Extract pack names, in declaration order, from the const body: entries
+        // are lines of the form `("name", NAME_DL),`; `//` comment lines never
+        // start with `("` and are skipped.
+        let body = registry_src
+            .split_once("pub const STDLIB_PACKS")
+            .expect("rfdb stdlib.rs must declare `pub const STDLIB_PACKS`")
+            .1;
+        let body = body
+            .split_once("];")
+            .expect("STDLIB_PACKS must be terminated with `];`")
+            .0;
+        let registry_order: Vec<&str> = body
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.starts_with("(\""))
+            .map(|line| {
+                line.trim_start_matches("(\"")
+                    .split_once('"')
+                    .expect("pack entry must close its name quote")
+                    .0
+            })
+            .collect();
+        assert!(
+            registry_order.len() >= 10,
+            "parsed only {} pack names — STDLIB_PACKS layout changed; fix this parser, \
+             do not weaken the pin",
+            registry_order.len()
+        );
+
+        let orchestrator_order: Vec<&str> = STDLIB_RULE_PACKS
+            .iter()
+            .map(|pack| {
+                pack.strip_prefix("@stdlib/")
+                    .expect("every orchestrator pack name is @stdlib/-prefixed")
+            })
+            .collect();
+
+        assert_eq!(
+            orchestrator_order, registry_order,
+            "STDLIB_RULE_PACKS (orchestrator) must match rfdb's STDLIB_PACKS registry \
+             order exactly — see the canonical-order doc comment at the const"
         );
     }
 }

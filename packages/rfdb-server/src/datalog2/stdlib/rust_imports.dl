@@ -59,6 +59,13 @@
 %     files with ".rs" inside the stem — 0 on dogfood.
 %   DELTA 4 (diagnostics): the resolver's stderr edge-count line has no pack
 %     analog.
+%   DELTA 5 (file gate): the resolver's effective input gate was the
+%     orchestrator's detect_language == Rust stream filter (the ".rs"
+%     extension, config.rs detect_language) — encoded here as the literal
+%     ends_with(F, ".rs") guards on rs_module / rs_import / rs_binding (the
+%     js packs' DELTA-5 precedent; MODULE/IMPORT/IMPORT_BINDING are shared
+%     vocabulary across analyzers, so the gate is the cross-language leakage
+%     guard, not a semantic narrowing).
 %   NOT HANDLED BY LEGACY, stays out (parity for free): external crates
 %     (std::/third-party — no tree entry, silently skipped, Hs:159), self::/
 %     super:: prefixes (the tree only holds "crate…"-keys, so they never
@@ -70,11 +77,12 @@
 % (accepted, same stance as every import pack).
 %
 % ORDERING (PRODUCER): produces IMPORTS_FROM — must run BEFORE the consumers
-% js_cross_file_calls / js_property_access_ns (their seam joins) and, once
-% legacy rust-imports is gated off, BEFORE depends (which derives MODULE-level
-% DEPENDS_ON from IMPORT-level IMPORTS_FROM; while legacy is ON its edges are
-% committed before the pack phase, so depends-first stays sound — the same
-% note as js_import_bindings).
+% js_cross_file_calls / js_property_access_ns (their seam joins) and BEFORE
+% depends (which derives MODULE-level DEPENDS_ON from IMPORT-level
+% IMPORTS_FROM). Legacy rust-imports is gated (Wave 3c,
+% GRAFEMA_SKIP_RESOLVE_STEPS=rust-imports in rust-resolve Main.hs), so this
+% ordering is load-bearing — depends moved after the IMPORTS_FROM producers
+% in both registries.
 %
 % COST NOTE: rs_decl is gated by target_file (files an import actually lands
 % in), so the per-row node_attr JSON parse runs only for declarations in real

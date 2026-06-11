@@ -301,10 +301,9 @@ pub const JS_MODULE_IMPORTS_DL: &str = include_str!("stdlib/js_module_imports.dl
 /// - the JS Wave-2 packs: `js_import_bindings` PRODUCES `IMPORTS_FROM` (the EDB
 ///   seam) and runs before every IMPORTS_FROM consumer —
 ///   `js_class_inheritance` (cross-file arm), `js_cross_file_calls`,
-///   `js_property_access_ns` (while legacy resolution stays ON its edges are
-///   near-duplicates; once legacy is gated this ordering is load-bearing, and
-///   `depends` — which also consumes IMPORTS_FROM and currently runs first on
-///   the legacy edges — must move after it); `js_class_inheritance` PRODUCES
+///   `js_property_access_ns` (legacy import-resolution is gated since Wave 3c,
+///   so this ordering IS load-bearing; `depends` — which also consumes
+///   IMPORTS_FROM — moved after the producers); `js_class_inheritance` PRODUCES
 ///   `EXTENDS` for `shape_verifier`'s inheritance closure;
 ///   `js_property_access_full` produces `READS_FROM`, so it precedes
 ///   `method_calls`/`shape_verifier`.
@@ -316,20 +315,22 @@ pub const JS_MODULE_IMPORTS_DL: &str = include_str!("stdlib/js_module_imports.dl
 /// - the JS Wave-3b kernel pack: `js_module_imports` PRODUCES the
 ///   IMPORT→MODULE `IMPORTS_FROM` seam and `RE_EXPORTS` (the star seam) that
 ///   `js_import_bindings` (`b_mod`/`resolved_at`/`star_src`) and the Wave-1b
-///   hybrid packs read as committed EDB, so it runs strictly before them
-///   (while legacy import-resolution stays ON its edges are near-duplicates;
-///   once legacy is gated this ordering is load-bearing, and `depends` must
-///   move after it).
+///   hybrid packs read as committed EDB, so it runs strictly before them.
+/// - `depends` (Wave 3c position) CONSUMES IMPORTS_FROM — every edge of the
+///   shared vocabulary, module- and binding-level — so with legacy
+///   import-resolution GATED (GRAFEMA_SKIP_RESOLVE_STEPS) it runs after ALL
+///   in-engine IMPORTS_FROM producers: `rust_imports`, `js_module_imports`,
+///   `js_import_bindings`, `js_builtins_edges`. (It ran first while the
+///   legacy resolver pre-committed those edges at analysis time.)
 /// An orchestrator running the packs sequentially must preserve this order:
-/// depends → js_local_refs → js_same_file_calls → js_this_method_calls →
+/// js_local_refs → js_same_file_calls → js_this_method_calls →
 /// rust_calls → rust_cross_methods_ctor → rust_trait_resolve →
 /// rust_receiver_typing → rust_imports → js_module_imports →
 /// js_import_bindings → js_class_inheritance →
 /// js_cross_file_calls → js_property_access_ns → js_property_access_full →
-/// js_builtins_nodes → js_builtins_edges → method_calls → shape_verifier →
-/// axum_routes.
+/// js_builtins_nodes → js_builtins_edges → depends → method_calls →
+/// shape_verifier → axum_routes.
 pub const STDLIB_PACKS: &[(&str, &str)] = &[
-    ("depends", DEPENDS_DL),
     ("js_local_refs", JS_LOCAL_REFS_DL),
     ("js_same_file_calls", JS_SAME_FILE_CALLS_DL),
     ("js_this_method_calls", JS_THIS_METHOD_CALLS_DL),
@@ -365,6 +366,12 @@ pub const STDLIB_PACKS: &[(&str, &str)] = &[
     // fallback (method_calls) and the negator (shape_verifier).
     ("js_builtins_nodes", JS_BUILTINS_NODES_DL),
     ("js_builtins_edges", JS_BUILTINS_EDGES_DL),
+    // Wave 3c: depends CONSUMES IMPORTS_FROM (every edge, module- and
+    // binding-level) — with legacy import-resolution gated it must run after
+    // ALL in-engine IMPORTS_FROM producers (rust_imports, js_module_imports,
+    // js_import_bindings, js_builtins_edges). It was first while the legacy
+    // resolver pre-committed those edges.
+    ("depends", DEPENDS_DL),
     ("method_calls", METHOD_CALLS_DL),
     ("shape_verifier", SHAPE_VERIFIER_DL),
     ("axum_routes", AXUM_ROUTES_DL),
@@ -1209,7 +1216,6 @@ mod tests {
         assert_eq!(
             names,
             vec![
-                "depends",
                 "js_local_refs",
                 "js_same_file_calls",
                 "js_this_method_calls",
@@ -1226,11 +1232,12 @@ mod tests {
                 "js_property_access_full",
                 "js_builtins_nodes",
                 "js_builtins_edges",
+                "depends",
                 "method_calls",
                 "shape_verifier",
                 "axum_routes",
             ],
-            "canonical run order: depends → Wave-1 resolver packs → Wave-1b packs \
+            "canonical run order: Wave-1 resolver packs → Wave-1b packs \
              (rust_cross_methods_ctor after rust_calls — the CALLS EDB seam; the \
              js hybrid packs before the fuzzy fallback) → Rust Wave-2 packs \
              (rust_receiver_typing shares the rust_calls CALLS seam; rust_imports \
@@ -1241,6 +1248,8 @@ mod tests {
              packs (js_import_bindings PRODUCES the IMPORTS_FROM seam, so it \
              precedes js_class_inheritance and the js hybrid consumers; \
              js_class_inheritance produces EXTENDS for shape_verifier) → \
+             depends (Wave 3c: AFTER every IMPORTS_FROM producer — legacy \
+             import-resolution is gated, so the in-engine producers feed it) → \
              method_calls → shape_verifier → axum_routes (producers strictly \
              before consumers)"
         );
@@ -2496,9 +2505,12 @@ mod tests {
     /// - default `import Foo` → the EXPORT "default" node (resolver endpoint);
     /// - EXPORT_BINDING targets by exportedName: `export { foo }` (plain) and
     ///   `export { orig as renamed }` matched by "renamed" NOT "orig";
-    /// - negatives: namespace binding (IN="*", the legacy producer's arm),
-    ///   re-export EXPORT_BINDING (DELTA 1 subset — Wave 2b), an IMPORT with no
-    ///   resolved MODULE edge, the .rs file gate.
+    /// - B3 namespace (Wave 3c): `import * as utils` (IN="*") resolves to the
+    ///   parent IMPORT's MODULE through the b_mod seam (the legacy arm,
+    ///   ImportResolution.hs:316-319 — owned by the pack now that legacy
+    ///   import-resolution is gated);
+    /// - negatives: re-export EXPORT_BINDING (DELTA 1 subset — Wave 2b), an
+    ///   IMPORT with no resolved MODULE edge, the .rs file gate.
     #[test]
     fn js_import_bindings_named_aliased_default_arms() {
         let mut v = FixtureStorageView::new(1);
@@ -2537,7 +2549,7 @@ mod tests {
         bind(&mut v, "b_aliased", "h2", "helper"); // import { helper as h2 }
         bind(&mut v, "b_trap", "helper", "nothere"); // localName matches, IN doesn't
         bind(&mut v, "b_default", "Foo", "default"); // import Foo
-        bind(&mut v, "b_ns", "utils", "*"); // import * as utils — excluded
+        bind(&mut v, "b_ns", "utils", "*"); // import * as utils — B3 → MODULE
         bind(&mut v, "b_eb", "fooLocal", "foo"); // → EXPORT_BINDING by exportedName
         bind(&mut v, "b_eb_alias", "r", "renamed"); // → aliased EXPORT_BINDING
         bind(&mut v, "b_orig", "o", "orig"); // exported name is "renamed" — miss
@@ -2586,20 +2598,43 @@ mod tests {
             ]),
             "named + aliased by importedName, default → the EXPORT node, \
              EXPORT_BINDINGs by exportedName; the localName trap, the namespace \
-             binding, importing the pre-alias name, the re-export binding \
-             (DELTA 1), the unresolved import and the .rs file derive NOTHING"
+             binding (B3's head, not this one), importing the pre-alias name, \
+             the re-export binding (DELTA 1), the unresolved import and the \
+             .rs file derive NOTHING"
+        );
+
+        // B3 namespace: the `import * as utils` binding → the parent IMPORT's
+        // MODULE (Wave 3c); the .rs namespace shape and unresolved imports stay out.
+        let ns_pairs: BTreeSet<(u128, u128)> = eval
+            .facts("binding_ns")
+            .into_iter()
+            .map(|row| {
+                (
+                    row[0].as_id().expect("arg0 id"),
+                    row[1].as_id().expect("arg1 id"),
+                )
+            })
+            .collect();
+        assert_eq!(
+            ns_pairs,
+            BTreeSet::from([(id_of("b_ns"), id_of("m_utils"))]),
+            "B3: exactly the namespace binding resolves to its parent's MODULE"
         );
 
         // IMPORTS_FROM is shared vocabulary — additive; legacy edges carry
-        // empty metadata, so no meta columns (exact parity).
+        // empty metadata, so no meta columns (exact parity). Two heads since
+        // Wave 3c: binding_import (B1/B2) + binding_ns (B3).
         let if_specs: Vec<_> = specs
             .iter()
             .filter(|s| s.edge_type == "IMPORTS_FROM")
             .collect();
-        assert_eq!(if_specs.len(), 1, "exactly one IMPORTS_FROM head");
-        assert!(if_specs[0].additive, "IMPORTS_FROM is shared — additive");
+        assert_eq!(if_specs.len(), 2, "two IMPORTS_FROM heads (B1/B2 + B3)");
         assert!(
-            if_specs[0].meta.is_empty(),
+            if_specs.iter().all(|s| s.additive),
+            "IMPORTS_FROM is shared — additive"
+        );
+        assert!(
+            if_specs.iter().all(|s| s.meta.is_empty()),
             "legacy binding edges carry empty metadata — no meta columns"
         );
     }
@@ -3768,21 +3803,41 @@ mod tests {
     ///   a MODULE but NO exports and shadow.ts has exports → shadow.ts (a
     ///   MODULE-presence probe would wrongly pick shadow.js); `./side` whose only
     ///   candidate side.ts has a MODULE but no exports → NO edge (unresolvable);
-    /// - DELTA 1: bare specifier `lodash` → NO edge (workspace arms out);
+    /// - non-workspace bare specifier `lodash` → NO edge (not a WORKSPACE_PACKAGE);
     /// - the 8-extension importer gate: the same specifier in a .py file → NOTHING;
     /// - star re-exports: `*:./lib/util.js` → RE_EXPORTS via the export ladder,
     ///   and `*:./typesonly` (MODULE, no exports) → RE_EXPORTS via the
     ///   resolveModulePathDirect ModuleIndex FALLBACK (fails without the m-ladder);
+    /// - WORKSPACE ARMS (Wave 3c, DELTA 1 closed): exact `@scope/util` → the
+    ///   entry-point MODULE (arm 1, no ladder); sub-path `@scope/util/storage/foo`
+    ///   → dirname(entry)+"/"+subPath through the ladder (arm 2); longest-prefix
+    ///   preference — `@scope/util/esm/x` resolves via the LONGER virtual package
+    ///   `@scope/util/esm`, never via `@scope/util` (findWorkspacePrefix :70-81);
+    ///   star `*:@scope/util` → RE_EXPORTS via ws-exact, star `*:@scope/types`
+    ///   (entry has MODULE, no exports) → RE_EXPORTS via the Direct ws arm
+    ///   (:599-600); IMPORT of `@scope/types` (exact key, non-exporting entry)
+    ///   → NO edge (no Direct fallback for imports — the DELTA-7 corner);
+    /// - EXPORTINDEX TIGHTENING (Wave 3c): `./declonly` whose target has ONLY an
+    ///   __exported FUNCTION (no EXPORT node) resolves through the gnExported
+    ///   arm (:137); `./contonly` whose target has ONLY a named EXPORT container
+    ///   (contributes nothing, :133-134) derives NO edge — the pre-3c superset
+    ///   arm would have wrongly resolved it;
     /// - meta resolvedPath projected on both heads, additive (legacy parity).
+    ///
+    /// Exporting markers are EXPORT nodes named "default" — a legacy-parity
+    /// oracle (buildExportIndex counts "default"/"*:…"/EXPORT_BINDING/gnExported,
+    /// NOT named containers; the pre-3c fixture's "named" markers pinned
+    /// pack-only semantics).
     #[test]
     fn js_module_imports_ladder_star_and_probe_arms() {
         let mut v = FixtureStorageView::new(1);
 
-        // Target files: MODULE per file; an EXPORT node marks exporting files.
+        // Target files: MODULE per file; a "default" EXPORT marks exporting files
+        // (a real buildExportIndex entry class, ImportResolution.hs:125-126).
         let target = |v: &mut FixtureStorageView, m: &str, e: Option<&str>, file: &str| {
             named_node(v, m, "mod", "MODULE", file);
             if let Some(e) = e {
-                named_node(v, e, "named", "EXPORT", file);
+                named_node(v, e, "default", "EXPORT", file);
             }
         };
         target(&mut v, "m_util", Some("e_util"), "src/app/lib/util.ts");
@@ -3797,6 +3852,31 @@ mod tests {
         target(&mut v, "m_shts", Some("e_shts"), "src/app/shadow.ts");
         target(&mut v, "m_typ", None, "src/app/typesonly.ts"); // star-fallback target
 
+        // Workspace targets (Wave 3c): the exact-arm entry point, a sub-path
+        // file under dirname(entry), the longest-prefix virtual package's file,
+        // and a non-exporting entry (MODULE only) for the Direct star arm.
+        target(&mut v, "m_wsentry", Some("e_wsentry"), "packages/util/src/index.ts");
+        target(&mut v, "m_wsfoo", Some("e_wsfoo"), "packages/util/src/storage/foo.ts");
+        target(&mut v, "m_wesmx", Some("e_wesmx"), "packages/util/esm-src/x.ts");
+        target(&mut v, "m_types", None, "packages/types/src/index.ts");
+
+        // WORKSPACE_PACKAGE facts (name = npm name, file = entry point) — the
+        // orchestrator-committed shape the ws arms join on. "@scope/util/esm"
+        // models an alias-expanded virtual package whose name extends
+        // "@scope/util" at a '/' boundary (the longest-prefix case).
+        named_node(&mut v, "w_util", "@scope/util", "WORKSPACE_PACKAGE", "packages/util/src/index.ts");
+        named_node(&mut v, "w_esm", "@scope/util/esm", "WORKSPACE_PACKAGE", "packages/util/esm-src/index.ts");
+        named_node(&mut v, "w_types", "@scope/types", "WORKSPACE_PACKAGE", "packages/types/src/index.ts");
+
+        // ExportIndex-tightening targets: declonly.ts exports ONLY via an
+        // __exported declaration (the gnExported arm); contonly.ts carries ONLY
+        // a named EXPORT container (NOT an index entry — must stay unresolvable).
+        target(&mut v, "m_declonly", None, "src/app/declonly.ts");
+        named_node(&mut v, "f_exp", "helper", "FUNCTION", "src/app/declonly.ts");
+        v.put_node_metadata(id_of("f_exp"), r#"{"__exported":true}"#);
+        target(&mut v, "m_contonly", None, "src/app/contonly.ts");
+        named_node(&mut v, "e_cont", "named", "EXPORT", "src/app/contonly.ts");
+
         // The importer's IMPORT nodes (name = specifier, first-class).
         let imp = |v: &mut FixtureStorageView, sid: &str, spec: &str, file: &str| {
             named_node(v, sid, spec, "IMPORT", file);
@@ -3807,13 +3887,21 @@ mod tests {
         imp(&mut v, "i_widg", "./widgets", "src/app/main.ts"); // /index fallback
         imp(&mut v, "i_shadow", "./shadow", "src/app/main.ts"); // ExportIndex probe
         imp(&mut v, "i_side", "./side", "src/app/main.ts"); // exports-less: miss
-        imp(&mut v, "i_bare", "lodash", "src/app/main.ts"); // DELTA 1: miss
+        imp(&mut v, "i_bare", "lodash", "src/app/main.ts"); // non-workspace bare: miss
         imp(&mut v, "i_nope", "./nope", "src/app/main.ts"); // no candidate: miss
         imp(&mut v, "i_py", "./lib/util.js", "tool.py"); // importer gate: miss
+        imp(&mut v, "i_ws", "@scope/util", "src/app/main.ts"); // ws arm 1 (exact)
+        imp(&mut v, "i_wsub", "@scope/util/storage/foo", "src/app/main.ts"); // ws arm 2 (sub-path ladder)
+        imp(&mut v, "i_wesm", "@scope/util/esm/x", "src/app/main.ts"); // longest-prefix wins
+        imp(&mut v, "i_wsx", "@scope/types", "src/app/main.ts"); // exact key, non-exporting entry: miss
+        imp(&mut v, "i_decl", "./declonly", "src/app/main.ts"); // gnExported arm resolves
+        imp(&mut v, "i_cont", "./contonly", "src/app/main.ts"); // named container only: miss
 
         // Star re-exports (EXPORT "*:<src>") in a barrel file.
         named_node(&mut v, "e_star1", "*:./lib/util.js", "EXPORT", "src/app/barrel.ts");
         named_node(&mut v, "e_star2", "*:./typesonly", "EXPORT", "src/app/barrel.ts");
+        named_node(&mut v, "e_star3", "*:@scope/util", "EXPORT", "src/app/barrel.ts");
+        named_node(&mut v, "e_star4", "*:@scope/types", "EXPORT", "src/app/barrel.ts");
 
         let (eval, specs, _node_specs) = evaluate_with_materialize(
             &v,
@@ -3844,10 +3932,17 @@ mod tests {
                 (id_of("i_exact"), id_of("m_ejs"), "src/app/lib/e.js".to_string()),
                 (id_of("i_widg"), id_of("m_widx"), "src/app/widgets/index.ts".to_string()),
                 (id_of("i_shadow"), id_of("m_shts"), "src/app/shadow.ts".to_string()),
+                (id_of("i_ws"), id_of("m_wsentry"), "packages/util/src/index.ts".to_string()),
+                (id_of("i_wsub"), id_of("m_wsfoo"), "packages/util/src/storage/foo.ts".to_string()),
+                (id_of("i_wesm"), id_of("m_wesmx"), "packages/util/esm-src/x.ts".to_string()),
+                (id_of("i_decl"), id_of("m_declonly"), "src/app/declonly.ts".to_string()),
             ]),
             "swap / ../-collapse+ext-order / exact / index-fallback / \
-             ExportIndex-probe resolve; side (no exports), bare (DELTA 1), \
-             nope (no candidate) and the .py importer derive NOTHING"
+             ExportIndex-probe / ws-exact / ws-sub-path-ladder / \
+             ws-longest-prefix / gnExported-arm resolve; side (no exports), \
+             bare (non-workspace), nope (no candidate), the .py importer, \
+             the non-exporting ws entry (i_wsx) and the named-container-only \
+             file (i_cont) derive NOTHING"
         );
 
         // Star RE_EXPORTS rows: export ladder + the ModuleIndex fallback.
@@ -3867,9 +3962,13 @@ mod tests {
             BTreeSet::from([
                 (id_of("e_star1"), id_of("m_util"), "src/app/lib/util.ts".to_string()),
                 (id_of("e_star2"), id_of("m_typ"), "src/app/typesonly.ts".to_string()),
+                (id_of("e_star3"), id_of("m_wsentry"), "packages/util/src/index.ts".to_string()),
+                (id_of("e_star4"), id_of("m_types"), "packages/types/src/index.ts".to_string()),
             ]),
-            "star via the export ladder (swap arm) + the exports-less target \
-             via the resolveModulePathDirect ModuleIndex fallback"
+            "star via the export ladder (swap arm), the exports-less target \
+             via the resolveModulePathDirect ModuleIndex fallback, the \
+             ws-exact arm, and the non-exporting ws entry via the Direct \
+             ws arm (:599-600)"
         );
 
         // Both heads declared additive with meta(resolvedPath) — legacy parity.
@@ -3934,6 +4033,9 @@ mod tests {
             ("TRAIT", 300),
             ("IMPL_BLOCK", 1_500),
             ("GLOBAL_DEFINITION", 120),
+            // Wave 3c: orchestrator-committed workspace facts (one per
+            // discovered package + alias virtual packages; dogfood ~30).
+            ("WORKSPACE_PACKAGE", 30),
         ] {
             nodes_by_type.insert(ty.to_string(), n);
         }

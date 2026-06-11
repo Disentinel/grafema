@@ -23,9 +23,11 @@
 %   B2 default        `import Foo from './x'` — IN == "default" matches the
 %      EXPORT node named "default" (the resolver's own endpoint,
 %      ImportResolution.hs:125-126) or an `export { X as default }` binding.
-%   NAMESPACE (IN == "*") IS EXCLUDED — the legacy producer keeps emitting
-%      binding → MODULE edges (consumed by the Wave-1b packs); duplicating the
-%      arm here would be pure overlap. neq(IN, "*").
+%   B3 namespace  `import * as X` (Wave 3c) — IN == "*" resolves to the parent
+%      IMPORT's MODULE through the b_mod seam (the legacy arm,
+%      ImportResolution.hs:316-319). Was excluded as pure overlap while the
+%      legacy producer stayed ON; legacy import-resolution is now gated.
+%      b_named still excludes "*" (B1/B2 match exports, not modules).
 %
 % EXPORT SIDE — exported_in, THREE clauses:
 %   1. EXPORT -EXPORTS-> declaration (the gnExported substitute, same shape +
@@ -90,10 +92,11 @@
 %
 % ORDERING (PRODUCER): this pack produces IMPORTS_FROM — the EDB seam consumed
 % by js_class_inheritance (cross-file arm), js_cross_file_calls,
-% js_property_access_ns and depends. It MUST run before those consumers. While
-% the legacy resolver stays ON its edges are near-duplicates (additive dedup);
-% once legacy is gated, this ordering becomes load-bearing (and depends must
-% move after it).
+% js_property_access_ns and depends. It MUST run before those consumers, and
+% MUST run after js_module_imports (the b_mod / resolved_at / star_src seams
+% are its committed edges). Legacy import-resolution is gated (Wave 3c), so
+% this ordering IS load-bearing — depends moved after the IMPORTS_FROM
+% producers in both registries.
 
 % Every IMPORT_BINDING in a JS/TS file — the 8-extension gate (DELTA 5).
 js_b(B, F) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".js").
@@ -169,3 +172,18 @@ visible(F, N, T)  :- star_src(F, TF2), visible(TF2, N, T).
 % re-export chains collapsed to the final node by visible() (Wave 2b).
 @materialize(edge_type = "IMPORTS_FROM", mode = "additive")
 binding_import(B, T) :- b_named(B, TF, IN), visible(TF, IN, T).
+
+% B3 namespace (Wave 3c): `import * as X from './m'` — the legacy arm
+% (resolveImportWithSource, ImportResolution.hs:316-319) emitted
+% IMPORT_BINDING → MODULE through the SAME resolveModulePath winner the
+% parent IMPORT used; the b_mod seam (the parent IMPORT's committed
+% IMPORTS_FROM → MODULE edge, now produced in-engine by js_module_imports)
+% IS that winner. Excluded while legacy stayed ON (pure overlap); legacy
+% import-resolution is gated in Wave 3c, so the pack owns the namespace
+% edges.
+@materialize(edge_type = "IMPORTS_FROM", mode = "additive")
+binding_ns(B, M) :-
+    js_b(B, F),
+    edge(I, B, "CONTAINS"), node(I, "IMPORT"),
+    edge(I, M, "IMPORTS_FROM"), node(M, "MODULE"),
+    node_attr(B, "importedName", "*").

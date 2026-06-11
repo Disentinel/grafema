@@ -1607,13 +1607,25 @@ fn wave3b_rust_imports_shadow_differential() {
     };
 
     // ── The LEGACY slice: committed IMPORTS_FROM edges out of rust IMPORT /
-    //    IMPORT_BINDING nodes. No pack writes this slice (the js packs are
-    //    extension-gated to JS files), so it is purely the legacy resolver's. ──
+    //    IMPORT_BINDING nodes. Re-run-safety (Wave 3c): rust_imports ITSELF may
+    //    have run against this copy (a post-3b analyze materializes the pack) —
+    //    engine-written edges carry a rule-hash `_source` stamp, while the
+    //    legacy resolver's edges are stamped `_source = "rust-import-resolution"`
+    //    by the orchestrator's gc stamp at commit time (the resolver itself
+    //    emits empty metadata, Hs:156,193 — the stamp is commit_resolve_output's).
+    //    The legacy slice keeps the legacy stamp plus unstamped edges
+    //    (pre-gc-stamp graphs), which excludes pack-written rows. ──
     let legacy_src = r#"
-        legacy_p2(I, M) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".rs"),
+        rs_imp_edge(I, M) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".rs"),
             edge(I, M, "IMPORTS_FROM").
-        legacy_p3(B, D) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".rs"),
+        stamped_p2(I, M) :- rs_imp_edge(I, M), edge_attr(I, M, "IMPORTS_FROM", "_source", S).
+        legacy_p2(I, M) :- rs_imp_edge(I, M), edge_attr(I, M, "IMPORTS_FROM", "_source", "rust-import-resolution").
+        legacy_p2(I, M) :- rs_imp_edge(I, M), \+ stamped_p2(I, M).
+        rs_bind_edge(B, D) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".rs"),
             edge(B, D, "IMPORTS_FROM").
+        stamped_p3(B, D) :- rs_bind_edge(B, D), edge_attr(B, D, "IMPORTS_FROM", "_source", S).
+        legacy_p3(B, D) :- rs_bind_edge(B, D), edge_attr(B, D, "IMPORTS_FROM", "_source", "rust-import-resolution").
+        legacy_p3(B, D) :- rs_bind_edge(B, D), \+ stamped_p3(B, D).
     "#;
     let legacy_eval = evaluate(&view, legacy_src, stats.clone(), EvalLimits::none(), EventLog::discard())
         .expect("legacy slice eval");
@@ -1690,4 +1702,349 @@ fn wave3b_rust_imports_shadow_differential() {
     assert_eq!(pack_p2, legacy_p2, "phase 2 predicted EXACT (0 ≡ 0 on this graph)");
     assert_eq!(pack_p3, legacy_p3, "phase 3 predicted EXACT (0 ≡ 0 on this graph)");
     eprintln!("=== wave3b shadow differential: PASS (both phases match the legacy slice) ===\n");
+}
+
+// ── Wave 3c: js_module_imports re-differential against the dogfood graph copy ──
+
+/// Re-differential for the `js_module_imports` pack after the Wave 3c changes
+/// (workspace arms + the exporting_file tightening to exact buildExportIndex
+/// semantics) against the LEGACY `ImportResolution.hs` module-level slice
+/// committed in the dogfood graph.
+///
+/// Dataset: `GRAFEMA_WAVE3C_DIFF_DB` (default `/tmp/wave3c-js.rfdb`, a caller-made
+/// copy of `.grafema/graph.rfdb` — NEVER the live store). Copied again into a
+/// tempdir so a concurrently-running server cannot contend.
+///
+/// PREDICTIONS, declared BEFORE the diff (the §3 harness discipline):
+/// - The copy predates WORKSPACE_PACKAGE facts ⇒ the workspace arms derive
+///   NOTHING here (asserted: zero WORKSPACE_PACKAGE nodes ⇒ ws joins empty);
+///   their live proof is the fresh post-3c analyze.
+/// - In-scope (RELATIVE-specifier) rows: the relative arm is unchanged and the
+///   exporting_file tightening is set-identical on this graph (the 3b live
+///   checks: zero EXPORT-container-only files among candidates, zero
+///   gnExported-only files) ⇒ pack rows ≡ legacy relative rows EXACTLY
+///   (Wave 3b measured 514 IMPORT→MODULE / 7 RE_EXPORTS).
+/// - legacy-only rows = 100% NON-relative specifiers (bare/workspace, the
+///   closed DELTA-1 class — unresolvable on this copy without the facts;
+///   Wave 3b measured 165 / 2).
+/// - pack-only rows = 0; resolvedPath meta ≡ legacy edge metadata on every
+///   shared row.
+/// - Legacy slice excludes `_source`-stamped edges (re-run-safety: a post-3b
+///   analyze materialized this very pack into the graph).
+///
+///   GRAFEMA_WAVE3C_DIFF_DB=/tmp/wave3c-js.rfdb \
+///   cargo test --release --lib wave3c_js_module_imports_re_differential -- --ignored --nocapture
+#[test]
+#[ignore = "manual real-data shadow differential; run with --ignored"]
+fn wave3c_js_module_imports_re_differential() {
+    use crate::datalog2::evaluate_with_materialize;
+    use std::collections::HashMap;
+
+    let dataset = std::env::var("GRAFEMA_WAVE3C_DIFF_DB")
+        .unwrap_or_else(|_| "/tmp/wave3c-js.rfdb".to_string());
+    let dataset = PathBuf::from(dataset);
+    if !dataset.join("db_config.json").exists() {
+        panic!(
+            "dataset not found at {} — copy the dogfood graph first: \
+             cp -R .grafema/graph.rfdb /tmp/wave3c-js.rfdb",
+            dataset.display()
+        );
+    }
+
+    let tmp = tempfile::tempdir().expect("temp");
+    let work = tmp.path().join("graph.rfdb");
+    copy_dir_all(&dataset, &work).expect("copy dataset");
+    let _ = std::fs::remove_file(work.join("LOCK"));
+    let manifest = ManifestStore::open(&work).expect("manifest");
+    let store = MultiShardStore::open(&work, &manifest).expect("store");
+    let store = Arc::new(store);
+    let view = LsmStorageView::capture(store.clone(), &manifest);
+
+    let snap = store.snapshot(&manifest);
+    let all_nodes = store.find_nodes_at(&snap, None, None);
+    let mut nbt: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    for n in &all_nodes {
+        *nbt.entry(n.node_type.clone()).or_insert(0) += 1;
+    }
+    let n_ws = *nbt.get("WORKSPACE_PACKAGE").unwrap_or(&0);
+    let stats = Stats {
+        total_nodes: all_nodes.len() as u64,
+        total_edges: store.iter_all_edges_at(&snap).len() as u64,
+        nodes_by_type: nbt,
+    };
+    eprintln!(
+        "\n=== wave3c js_module_imports re-differential (nodes={}, edges={}, WORKSPACE_PACKAGE={}) ===",
+        stats.total_nodes, stats.total_edges, n_ws
+    );
+    assert_eq!(
+        n_ws, 0,
+        "precondition: the OLD copy has no WORKSPACE_PACKAGE facts — the ws arms \
+         cannot be diffed here (their live proof is the fresh analyze)"
+    );
+
+    // id → (name, file) for IMPORT and star-EXPORT sources (the relative /
+    // bare classification of legacy-only rows).
+    let mut src_name: HashMap<u128, String> = HashMap::new();
+    for n in store.find_nodes_at(&snap, Some("IMPORT"), None) {
+        src_name.insert(n.id, n.name.clone());
+    }
+    for n in store.find_nodes_at(&snap, Some("EXPORT"), None) {
+        if n.name.starts_with("*:") {
+            src_name.insert(n.id, n.name["*:".len()..].to_string());
+        }
+    }
+    let is_relative = |spec: &str| spec.starts_with("./") || spec.starts_with("../");
+
+    // ── The LEGACY module-level slice: IMPORT (8 js extensions) → MODULE and
+    //    star EXPORT → MODULE. Provenance discrimination (re-run-safety): a
+    //    post-3b analyze materialized this very pack into the dogfood graph,
+    //    and pack-written edges carry a rule-hash `_source`; the LEGACY
+    //    resolver's edges are stamped `_source = "js-resolution"` by the
+    //    orchestrator's gc stamp at commit time (resolve_per_file's commit
+    //    name — the resolver itself only sets resolvedPath). The legacy slice
+    //    keeps the legacy stamp plus unstamped edges (pre-gc-stamp graphs). ──
+    let legacy_src = r#"
+        js_imp(I) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".js").
+        js_imp(I) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".jsx").
+        js_imp(I) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".ts").
+        js_imp(I) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".tsx").
+        js_imp(I) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".mjs").
+        js_imp(I) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".cjs").
+        js_imp(I) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".mts").
+        js_imp(I) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".cts").
+        im_edge(I, M) :- js_imp(I), edge(I, M, "IMPORTS_FROM"), node(M, "MODULE").
+        im_stamped(I, M) :- im_edge(I, M), edge_attr(I, M, "IMPORTS_FROM", "_source", S).
+        legacy_im(I, M) :- im_edge(I, M), edge_attr(I, M, "IMPORTS_FROM", "_source", "js-resolution").
+        legacy_im(I, M) :- im_edge(I, M), \+ im_stamped(I, M).
+        legacy_im_path(I, M, P) :- legacy_im(I, M), edge_attr(I, M, "IMPORTS_FROM", "resolvedPath", P).
+        star_e(E) :- node(E, "EXPORT"), attr(E, "name", N), starts_with(N, "*:").
+        re_edge(E, M) :- star_e(E), edge(E, M, "RE_EXPORTS"), node(M, "MODULE").
+        re_stamped(E, M) :- re_edge(E, M), edge_attr(E, M, "RE_EXPORTS", "_source", S).
+        legacy_re(E, M) :- re_edge(E, M), edge_attr(E, M, "RE_EXPORTS", "_source", "js-resolution").
+        legacy_re(E, M) :- re_edge(E, M), \+ re_stamped(E, M).
+        legacy_re_path(E, M, P) :- legacy_re(E, M), edge_attr(E, M, "RE_EXPORTS", "resolvedPath", P).
+    "#;
+    let legacy_eval = evaluate(&view, legacy_src, stats.clone(), EvalLimits::none(), EventLog::discard())
+        .expect("legacy slice eval");
+    let pairs = |eval: &crate::datalog2::exec::Evaluation, pred: &str| -> BTreeSet<(u128, u128)> {
+        eval.facts(pred)
+            .iter()
+            .filter_map(|r| Some((r.first()?.as_id()?, r.get(1)?.as_id()?)))
+            .collect()
+    };
+    let triple_paths = |eval: &crate::datalog2::exec::Evaluation, pred: &str| -> std::collections::BTreeMap<(u128, u128), String> {
+        eval.facts(pred)
+            .iter()
+            .filter_map(|r| Some(((r.first()?.as_id()?, r.get(1)?.as_id()?), r.get(2)?.as_str())))
+            .collect()
+    };
+    let legacy_im = pairs(&legacy_eval, "legacy_im");
+    let legacy_re = pairs(&legacy_eval, "legacy_re");
+    let legacy_im_path = triple_paths(&legacy_eval, "legacy_im_path");
+    let legacy_re_path = triple_paths(&legacy_eval, "legacy_re_path");
+
+    // ── The PACK (post-3c source), evaluated read-only over the same view. ──
+    let (pack_eval, _specs, _node_specs) = evaluate_with_materialize(
+        &view,
+        crate::datalog2::stdlib::JS_MODULE_IMPORTS_DL,
+        stats.clone(),
+        EvalLimits::none(),
+        EventLog::discard(),
+    )
+    .expect("js_module_imports.dl evaluates on the real graph");
+    let pack_im = pairs(&pack_eval, "import_module");
+    let pack_re = pairs(&pack_eval, "star_reexport");
+    let pack_im_path = triple_paths(&pack_eval, "import_module");
+    let pack_re_path = triple_paths(&pack_eval, "star_reexport");
+
+    // ── Non-vacuity floors: the pack genuinely saw the graph. ──
+    let count = |pred: &str| pack_eval.facts(pred).len();
+    eprintln!(
+        "intermediates: js_import={} star_export={} rel={} exporting_file={} \
+         exp_decl_file={} cand_path={} module_file={} ws_pkg={} ws_base={}",
+        count("js_import"), count("star_export"), count("rel"), count("exporting_file"),
+        count("exp_decl_file"), count("cand_path"), count("module_file"),
+        count("ws_pkg"), count("ws_base"),
+    );
+    assert!(count("js_import") >= 1000, "js IMPORT floor");
+    assert!(count("exporting_file") >= 100, "exporting-file floor");
+    assert!(count("module_file") >= 300, "module-file floor");
+    assert_eq!(count("ws_pkg"), 0, "no WORKSPACE_PACKAGE facts on the old copy");
+    assert_eq!(count("ws_base"), 0, "ws arms derive nothing without the facts");
+
+    // ── The diff, against the predeclared classes. ──
+    let im_both = legacy_im.intersection(&pack_im).count();
+    let re_both = legacy_re.intersection(&pack_re).count();
+    eprintln!(
+        "IMPORT→MODULE: legacy={} pack={} both={} | RE_EXPORTS: legacy={} pack={} both={}",
+        legacy_im.len(), pack_im.len(), im_both, legacy_re.len(), pack_re.len(), re_both
+    );
+
+    // pack-only must be EMPTY (no superset drift from the tightening).
+    let pack_only_im: Vec<_> = pack_im.difference(&legacy_im).collect();
+    let pack_only_re: Vec<_> = pack_re.difference(&legacy_re).collect();
+    for (src, dst) in &pack_only_im {
+        eprintln!(
+            "IM PACK-ONLY ROW: ({src}, {dst}) spec={:?} — outside every declared class, witness it",
+            src_name.get(src)
+        );
+    }
+    for (src, dst) in &pack_only_re {
+        eprintln!(
+            "RE PACK-ONLY ROW: ({src}, {dst}) spec={:?} — outside every declared class, witness it",
+            src_name.get(src)
+        );
+    }
+    assert!(pack_only_im.is_empty(), "pack-only IMPORT→MODULE rows predicted 0");
+    assert!(pack_only_re.is_empty(), "pack-only RE_EXPORTS rows predicted 0");
+
+    // legacy-only rows: 100% non-relative specifiers (the DELTA-1 class).
+    let mut bad_legacy_only = 0usize;
+    let mut legacy_only_im = 0usize;
+    for (src, dst) in legacy_im.difference(&pack_im) {
+        legacy_only_im += 1;
+        let spec = src_name.get(src).cloned().unwrap_or_default();
+        if is_relative(&spec) {
+            bad_legacy_only += 1;
+            eprintln!("IM LEGACY-ONLY RELATIVE ROW: ({src}, {dst}) spec={spec:?} — in-scope miss, STOP");
+        }
+    }
+    let mut legacy_only_re = 0usize;
+    for (src, dst) in legacy_re.difference(&pack_re) {
+        legacy_only_re += 1;
+        let spec = src_name.get(src).cloned().unwrap_or_default();
+        if is_relative(&spec) {
+            bad_legacy_only += 1;
+            eprintln!("RE LEGACY-ONLY RELATIVE ROW: ({src}, {dst}) spec={spec:?} — in-scope miss, STOP");
+        }
+    }
+    eprintln!(
+        "legacy-only: IMPORT→MODULE={legacy_only_im} RE_EXPORTS={legacy_only_re} \
+         (all non-relative = the closed DELTA-1 bare/workspace class, facts absent on this copy)"
+    );
+    assert_eq!(
+        bad_legacy_only, 0,
+        "every legacy-only row must be a non-relative (bare/workspace) specifier"
+    );
+
+    // resolvedPath meta parity on every shared row.
+    let mut meta_mismatch = 0usize;
+    for (key, pack_p) in &pack_im_path {
+        if let Some(leg_p) = legacy_im_path.get(key) {
+            if leg_p != pack_p {
+                meta_mismatch += 1;
+                eprintln!("IM META MISMATCH at {key:?}: legacy={leg_p:?} pack={pack_p:?}");
+            }
+        }
+    }
+    for (key, pack_p) in &pack_re_path {
+        if let Some(leg_p) = legacy_re_path.get(key) {
+            if leg_p != pack_p {
+                meta_mismatch += 1;
+                eprintln!("RE META MISMATCH at {key:?}: legacy={leg_p:?} pack={pack_p:?}");
+            }
+        }
+    }
+    assert_eq!(meta_mismatch, 0, "resolvedPath meta must match legacy on shared rows");
+
+    eprintln!("=== wave3c js re-differential: PASS (in-scope slice exact; legacy-only = DELTA-1 class) ===\n");
+}
+
+/// Wave 3c acceptance probe: print the acceptance-count slices over a caller-made
+/// copy of a graph store (`GRAFEMA_WAVE3C_COUNTS_DB`). Pure measurement — the
+/// assertions are floors that guard the harness's own integrity, the numbers
+/// are read off the output and judged against the wave's acceptance criteria.
+///
+///   GRAFEMA_WAVE3C_COUNTS_DB=/tmp/3c-fresh.rfdb \
+///   cargo test --release --lib wave3c_acceptance_counts -- --ignored --nocapture
+#[test]
+#[ignore = "manual acceptance probe; run with --ignored"]
+fn wave3c_acceptance_counts() {
+    let dataset = std::env::var("GRAFEMA_WAVE3C_COUNTS_DB")
+        .unwrap_or_else(|_| "/tmp/3c-fresh.rfdb".to_string());
+    let dataset = PathBuf::from(dataset);
+    if !dataset.join("db_config.json").exists() {
+        panic!("dataset not found at {}", dataset.display());
+    }
+
+    let tmp = tempfile::tempdir().expect("temp");
+    let work = tmp.path().join("graph.rfdb");
+    copy_dir_all(&dataset, &work).expect("copy dataset");
+    let _ = std::fs::remove_file(work.join("LOCK"));
+    let manifest = ManifestStore::open(&work).expect("manifest");
+    let store = MultiShardStore::open(&work, &manifest).expect("store");
+    let store = Arc::new(store);
+    let view = LsmStorageView::capture(store.clone(), &manifest);
+
+    let snap = store.snapshot(&manifest);
+    let all_nodes = store.find_nodes_at(&snap, None, None);
+    let mut nbt: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    for n in &all_nodes {
+        *nbt.entry(n.node_type.clone()).or_insert(0) += 1;
+    }
+    let total_edges = store.iter_all_edges_at(&snap).len();
+    eprintln!(
+        "\n=== wave3c acceptance counts ===\ntotal nodes: {} | total edges: {}",
+        all_nodes.len(),
+        total_edges
+    );
+    let mut by_type: Vec<(&String, &u64)> = nbt.iter().collect();
+    by_type.sort();
+    for (ty, n) in by_type {
+        eprintln!("nodes[{ty}] = {n}");
+    }
+
+    let stats = Stats {
+        total_nodes: all_nodes.len() as u64,
+        total_edges: total_edges as u64,
+        nodes_by_type: nbt,
+    };
+    let q = r#"
+        js_imp(I) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".js").
+        js_imp(I) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".jsx").
+        js_imp(I) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".ts").
+        js_imp(I) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".tsx").
+        js_imp(I) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".mjs").
+        js_imp(I) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".cjs").
+        js_imp(I) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".mts").
+        js_imp(I) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".cts").
+        im(I, M) :- js_imp(I), edge(I, M, "IMPORTS_FROM"), node(M, "MODULE").
+        re(E, M) :- node(E, "EXPORT"), attr(E, "name", N), starts_with(N, "*:"),
+                    edge(E, M, "RE_EXPORTS"), node(M, "MODULE").
+        ext(A, B) :- edge(A, B, "EXTENDS").
+        wsp(W) :- node(W, "WORKSPACE_PACKAGE").
+        dep(A, B) :- edge(A, B, "DEPENDS_ON").
+        nsb(B, M) :- node(B, "IMPORT_BINDING"), edge(B, M, "IMPORTS_FROM"), node(M, "MODULE").
+        im_legacy(I, M) :- im(I, M), edge_attr(I, M, "IMPORTS_FROM", "_source", "js-resolution").
+        ws_named(W, N) :- node(W, "WORKSPACE_PACKAGE"), attr(W, "name", N).
+        dep_src(A, B, S) :- edge(A, B, "DEPENDS_ON"), edge_attr(A, B, "DEPENDS_ON", "_source", S).
+        bnd(B, T) :- node(B, "IMPORT_BINDING"), edge(B, T, "IMPORTS_FROM").
+    "#;
+    let eval = evaluate(&view, q, stats, EvalLimits::none(), EventLog::discard())
+        .expect("acceptance probe eval");
+    let c = |p: &str| eval.facts(p).len();
+    eprintln!(
+        "js IMPORT->MODULE IMPORTS_FROM = {}\nstar RE_EXPORTS = {}\nEXTENDS = {}\n\
+         WORKSPACE_PACKAGE = {}\nDEPENDS_ON = {}\nIMPORT_BINDING->MODULE (ns) = {}\n\
+         js IMPORT->MODULE with legacy _source=js-resolution = {} (gate evidence: 0 = legacy OFF)",
+        c("im"), c("re"), c("ext"), c("wsp"), c("dep"), c("nsb"), c("im_legacy")
+    );
+    for row in eval.facts("ws_named") {
+        if let Some(n) = row.get(1) {
+            eprintln!("WORKSPACE_PACKAGE name: {}", n.as_str());
+        }
+    }
+    // DEPENDS_ON provenance distribution (stale-generation forensics).
+    let mut dep_by_src: std::collections::BTreeMap<String, usize> = Default::default();
+    for row in eval.facts("dep_src") {
+        if let Some(s) = row.get(2) {
+            *dep_by_src.entry(s.as_str()).or_insert(0) += 1;
+        }
+    }
+    for (s, n) in &dep_by_src {
+        eprintln!("DEPENDS_ON _source={s}: {n}");
+    }
+    eprintln!("IMPORT_BINDING -IMPORTS_FROM-> (any) = {}", c("bnd"));
+    assert!(c("im") > 0, "harness integrity: the IMPORT->MODULE slice is non-empty");
+    eprintln!("=== wave3c acceptance counts: printed ===\n");
 }
