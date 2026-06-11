@@ -1575,6 +1575,20 @@ fn expr_node_id(expr: &syn::Expr, ctx: &Ctx) -> Option<String> {
 fn walk_pat_bindings(pat: &syn::Pat, kind: &str, ctx: &mut Ctx) {
     match pat {
         syn::Pat::Ident(pi) => {
+            // In a refutable context (match arm), a bare UpperCamelCase ident with
+            // no sub-pattern and no `ref`/`mut` is a unit-variant / unit-struct
+            // reference (Rust naming convention, RFC 430), not a binding. Without
+            // name resolution this convention is the standard static approximation;
+            // a lowercase ident, an `x @ ..` sub-pattern, or `ref`/`mut` is always a
+            // binding. In irrefutable contexts (`let`/`param`) every ident binds.
+            if kind == "match"
+                && pi.subpat.is_none()
+                && pi.by_ref.is_none()
+                && pi.mutability.is_none()
+                && pi.ident.to_string().chars().next().is_some_and(char::is_uppercase)
+            {
+                return;
+            }
             let name = pi.ident.to_string();
             let (line, col) = ctx.span_line_col(pi.ident.span());
             let parent = ctx.enclosing_fn.as_deref();
@@ -1663,6 +1677,10 @@ fn walk_pat_bindings(pat: &syn::Pat, kind: &str, ctx: &mut Ctx) {
         }
         syn::Pat::Const(_) => {
             // const block pattern — no variable bindings
+        }
+        syn::Pat::Path(_) => {
+            // Path patterns (`Ordering::Less`, an associated const, a unit variant
+            // written with a path) are variant/const references, not bindings.
         }
         _ => ctx.warn_unhandled("Pat", ""),
     }
@@ -1886,6 +1904,11 @@ fn walk_expr(expr: &syn::Expr, ctx: &mut Ctx) {
                 let arm_hash = content_hash(&[("match", &line.to_string()), ("arm", &arm_idx.to_string())]);
                 let arm_scope = semantic_id(&ctx.file, "SCOPE", "match_arm", Some(&node_id), Some(&arm_hash));
                 ctx.push_scope(&arm_scope, ScopeKind::Block);
+                // The arm pattern introduces bindings (`Some(v)`, `(a, b)`, `n @ ..`)
+                // visible in the guard and body. Register them in the arm scope so
+                // guard/body references resolve READS_FROM into them. "match" marks a
+                // refutable context (variant-like idents are references, not bindings).
+                walk_pat_bindings(&arm.pat, "match", ctx);
                 if let Some(guard) = &arm.guard {
                     walk_expr(guard.1.as_ref(), ctx);
                 }
@@ -2774,6 +2797,8 @@ mod tests {
             .find(|n| n.node_type == "FUNCTION" && n.name == "puts")
             .expect("FUNCTION puts");
         assert_eq!(f.metadata.get("abi"), Some(&serde_json::json!("C")));
+    }
+
     // Associated items inside `impl` blocks and `trait` definitions used to be
     // silently dropped (ImplItem::Const/Type were empty no-ops; walk_trait only
     // matched TraitItem::Fn), so `Self::MAX` and associated-type queries returned
@@ -2821,6 +2846,8 @@ mod tests {
         assert!(has_edge(&fa, "CONTAINS", "TRAIT", "TYPE_ALIAS"), "TRAIT CONTAINS type");
         // The function signature is still emitted alongside the associated type.
         assert_eq!(count_nodes(&fa, "TYPE_SIGNATURE"), 1);
+    }
+
     // ── Macro invocations ───────────────────────────────────────────────
     // `syn` does not expand macros, so before this fix `Expr::Macro` and
     // `Stmt::Macro` were dropped entirely. That violated KNOWN_LIMITATIONS'
@@ -2881,5 +2908,92 @@ mod tests {
         let fa = parse_and_analyze("fn main() { let _ = matches!(x, Some(_)); }");
         assert!(has_node(&fa, "CALL", "matches"),
             "matches! emits a CALL node even though its body isn't an expr list");
+    }
+
+    // ── Match-arm pattern bindings ───────────────────────────────────────
+    // A match arm's pattern introduces bindings (`Some(v)`, `(a, b)`, `n @ ..`)
+    // that are in scope for the arm guard and body. Before the fix these were
+    // never threaded through walk_pat_bindings, so the bound variables had no
+    // VARIABLE node and references to them in the arm body could not resolve
+    // READS_FROM — breaking backward dataflow through every `match`.
+
+    #[test]
+    fn test_match_arm_binds_tuple_struct_pattern() {
+        let fa = parse_and_analyze(
+            "fn main() { let x = Some(1); match x { Some(v) => { use_it(v); } None => {} } }",
+        );
+        assert!(has_node(&fa, "VARIABLE", "v"), "Some(v) arm binds v -> VARIABLE");
+        // REFERENCE v in the arm body resolves READS_FROM -> VARIABLE v.
+        let reads: Vec<_> = fa.edges.iter()
+            .filter(|e| e.edge_type == "READS_FROM" && e.src.contains("REFERENCE") && e.dst.contains("VARIABLE"))
+            .collect();
+        assert!(!reads.is_empty(), "arm-body reference to v resolves READS_FROM -> VARIABLE v");
+    }
+
+    #[test]
+    fn test_match_arm_binds_tuple_destructuring() {
+        let fa = parse_and_analyze(
+            "fn main() { let p = (1, 2); match p { (a, b) => { f(a); g(b); } } }",
+        );
+        assert!(has_node(&fa, "VARIABLE", "a"), "(a, b) arm binds a");
+        assert!(has_node(&fa, "VARIABLE", "b"), "(a, b) arm binds b");
+    }
+
+    #[test]
+    fn test_match_arm_at_binding() {
+        let fa = parse_and_analyze(
+            "fn main() { let x = 3; match x { n @ 1..=5 => { h(n); } _ => {} } }",
+        );
+        assert!(has_node(&fa, "VARIABLE", "n"), "`n @ 1..=5` arm binds n");
+    }
+
+    #[test]
+    fn test_match_arm_unit_variant_no_spurious_binding() {
+        // Bare uppercase idents (`None`) and path patterns (`Ordering::Less`) are
+        // refutable variant references, not bindings — they must NOT emit a
+        // spurious VARIABLE node.
+        let fa = parse_and_analyze(
+            "fn main() { let x = cmp(); match x { Ordering::Less => {} None => {} _ => {} } }",
+        );
+        assert!(!has_node(&fa, "VARIABLE", "None"),
+            "bare `None` arm is a variant reference, not a binding");
+        assert!(!has_node(&fa, "VARIABLE", "Less"),
+            "`Ordering::Less` arm is a path variant reference, not a binding");
+        assert!(!has_node(&fa, "VARIABLE", "Ordering"),
+            "path segments are not bindings");
+    }
+
+    #[test]
+    fn test_match_arm_lowercase_catch_all_binds() {
+        let fa = parse_and_analyze(
+            "fn main() { let x = 1; match x { other => { sink(other); } } }",
+        );
+        assert!(has_node(&fa, "VARIABLE", "other"),
+            "lowercase catch-all `other` is a binding -> VARIABLE");
+    }
+
+    #[test]
+    fn test_match_arm_binding_visible_in_guard() {
+        // The pattern binding is in scope for the guard, not just the body.
+        let fa = parse_and_analyze(
+            "fn main() { let x = Some(1); match x { Some(v) if check(v) => {} _ => {} } }",
+        );
+        assert!(has_node(&fa, "VARIABLE", "v"), "Some(v) binds v");
+        let reads: Vec<_> = fa.edges.iter()
+            .filter(|e| e.edge_type == "READS_FROM" && e.src.contains("REFERENCE") && e.dst.contains("VARIABLE"))
+            .collect();
+        assert!(!reads.is_empty(), "guard reference to v resolves READS_FROM -> VARIABLE v");
+    }
+
+    #[test]
+    fn test_match_arm_struct_pattern_binds_fields_not_path() {
+        let fa = parse_and_analyze(
+            "struct P { x: i32, y: i32 } \
+             fn main() { let p = P { x: 1, y: 2 }; match p { P { x, y } => { f(x); g(y); } } }",
+        );
+        assert!(has_node(&fa, "VARIABLE", "x"), "struct field shorthand binds x");
+        assert!(has_node(&fa, "VARIABLE", "y"), "struct field shorthand binds y");
+        assert!(!has_node(&fa, "VARIABLE", "P"),
+            "the struct path `P` is a reference, not a binding");
     }
 }
