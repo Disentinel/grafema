@@ -86,10 +86,28 @@ jobs:
 
       - name: Check for .only or .skip in test files
         run: |
-          if grep -rE '\.(only|skip)\s*\(' test/ --include="*.test.js" --include="*.test.ts" 2>/dev/null; then
-            echo "::error::Found .only() or .skip() in test files"
+          # .only() is always forbidden — no exceptions
+          if grep -rE '\.(only)\s*\(' test/ packages/*/test/ --include="*.test.js" --include="*.test.ts" 2>/dev/null; then
+            echo "::error::Found .only() in test files — remove before release"
             exit 1
           fi
+
+          # Static describe/it/test .skip() requires a '// release-skip: <reason>' annotation.
+          # Runtime t.skip() and ctx.skip() are allowed (conditional platform/environment skips).
+          UNANNOTATED=$(grep -rn -E '(describe|it|test)\.skip\s*\(' \
+            test/ packages/*/test/ \
+            --include="*.test.js" --include="*.test.ts" 2>/dev/null \
+            | grep -v '// release-skip:' || true)
+
+          if [ -n "$UNANNOTATED" ]; then
+            echo "::error::Found static .skip() without '// release-skip: <reason>' annotation:"
+            echo "$UNANNOTATED"
+            echo ""
+            echo "Either remove .skip() or add '// release-skip: <reason>' to the line"
+            exit 1
+          fi
+
+          echo "No forbidden .only() or unannotated static .skip() found."
 
   # Validate version numbers match
   version-check:
