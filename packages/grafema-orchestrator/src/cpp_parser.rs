@@ -190,25 +190,43 @@ pub fn parse_cpp_source(source: &str, filename: &str, args: &[String]) -> Result
     unsafe { parse_cpp_source_unsafe(source, filename, args) }
 }
 
-/// Ensure libclang is loaded exactly once (runtime feature requires explicit load).
+/// Ensure libclang is loaded for the **current thread**.
+///
+/// clang-sys's `runtime` feature stores the loaded `libclang` handle in
+/// THREAD-LOCAL storage, so the handle must be present on every thread that
+/// calls a libclang function. The orchestrator parses C/C++ files concurrently
+/// across many `tokio` worker / `spawn_blocking` threads (see
+/// `analyze_cpp_files_parallel` / `analyze_cpp_files_parallel_with_pool` in
+/// `analyzer.rs`), so a process-global one-shot load would leave the handle on
+/// only the first thread; every other thread would panic at its first libclang
+/// call ("a `libclang` shared library is not loaded on this thread") and that
+/// source file would be silently dropped from the graph.
+///
+/// We open the shared object exactly once (caching the resolved
+/// `Arc<SharedLibrary>`) and then cheaply publish that same handle into each
+/// thread's TLS on demand — the cross-thread sharing pattern documented by
+/// clang-sys's `get_library` / `set_library`.
 fn ensure_libclang_loaded() -> Result<()> {
-    use std::sync::Once;
-    static INIT: Once = Once::new();
-    static mut INIT_ERR: Option<String> = None;
+    use std::sync::{Arc, OnceLock};
 
-    INIT.call_once(|| {
-        // clang-sys `load()!` macro is not usable here; use the function form
-        if let Err(e) = clang_sys::load() {
-            unsafe { INIT_ERR = Some(format!("Failed to load libclang: {e}")); }
-        }
+    static LIBRARY: OnceLock<std::result::Result<Arc<clang_sys::SharedLibrary>, String>> =
+        OnceLock::new();
+
+    let loaded = LIBRARY.get_or_init(|| {
+        clang_sys::load_manually()
+            .map(Arc::new)
+            .map_err(|e| format!("Failed to load libclang: {e}"))
     });
 
-    unsafe {
-        if let Some(ref err) = INIT_ERR {
-            anyhow::bail!("{err}");
+    match loaded {
+        Ok(library) => {
+            if !clang_sys::is_loaded() {
+                clang_sys::set_library(Some(Arc::clone(library)));
+            }
+            Ok(())
         }
+        Err(e) => anyhow::bail!("{e}"),
     }
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -501,7 +519,11 @@ unsafe fn add_kind_specific_fields(
         // Constructor
         CXCursor_Constructor => {
             node["access"] = json!(access_specifier_to_string(clang_getCXXAccessSpecifier(cursor)));
-            node["isExplicit"] = json!(clang_CXXConstructor_isConvertingConstructor(cursor) == 0);
+            // `explicit` reflects the explicit-specifier on the constructor, NOT the
+            // negation of "is a converting constructor": default (0-arg) and multi-arg
+            // constructors are non-converting yet are also not explicit. Use the direct
+            // libclang query (available since libclang 17, gated by the `clang_17_0` feature).
+            node["isExplicit"] = json!(clang_CXXMethod_isExplicit(cursor) != 0);
             node["isDefaulted"] = json!(clang_CXXMethod_isDefaulted(cursor) != 0);
             node["isCopy"] = json!(clang_CXXConstructor_isCopyConstructor(cursor) != 0);
             node["isMove"] = json!(clang_CXXConstructor_isMoveConstructor(cursor) != 0);
@@ -519,6 +541,9 @@ unsafe fn add_kind_specific_fields(
             let conv_type = clang_getCursorResultType(cursor);
             node["conversionType"] = json!(cx_string_to_string(clang_getTypeSpelling(conv_type)));
             node["access"] = json!(access_specifier_to_string(clang_getCXXAccessSpecifier(cursor)));
+            // The Haskell ConversionDecl rule reads `isExplicit`; emit it so that
+            // `explicit operator T()` is distinguishable from an implicit conversion.
+            node["isExplicit"] = json!(clang_CXXMethod_isExplicit(cursor) != 0);
         }
 
         // Using directive (using namespace X)
@@ -1275,4 +1300,145 @@ pub fn is_c_file(path: &Path) -> bool {
         .and_then(|e| e.to_str())
         .map(|e| e == "c")
         .unwrap_or(false)
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Recursively collect every node whose `kind` equals `kind_str`, walking
+    /// the `children` array produced by the visitor.
+    fn collect_by_kind<'a>(node: &'a Value, kind_str: &str, out: &mut Vec<&'a Value>) {
+        if node.get("kind").and_then(|k| k.as_str()) == Some(kind_str) {
+            out.push(node);
+        }
+        if let Some(children) = node.get("children").and_then(|c| c.as_array()) {
+            for child in children {
+                collect_by_kind(child, kind_str, out);
+            }
+        }
+    }
+
+    fn is_explicit(node: &Value) -> bool {
+        node.get("isExplicit").and_then(|v| v.as_bool()).unwrap_or(false)
+    }
+
+    fn param_count(node: &Value) -> usize {
+        node.get("params").and_then(|p| p.as_array()).map_or(0, |a| a.len())
+    }
+
+    fn first_param_type(node: &Value) -> Option<String> {
+        node.get("params")
+            .and_then(|p| p.as_array())
+            .and_then(|a| a.first())
+            .and_then(|p| p.get("type"))
+            .and_then(|t| t.as_str())
+            .map(|s| s.to_string())
+    }
+
+    /// `isExplicit` on a ConstructorDecl must reflect the `explicit` specifier,
+    /// NOT the negation of "is a converting constructor". A default constructor
+    /// (0 args) and a multi-argument constructor are non-converting yet are also
+    /// NOT explicit — the old `!isConvertingConstructor` heuristic mislabeled them.
+    #[test]
+    fn test_constructor_is_explicit_reflects_specifier_not_converting() {
+        let source = r#"
+struct S {
+    S() {}                  // default ctor: not explicit
+    explicit S(int x) {}    // explicit single-arg ctor
+    S(double d) {}          // converting single-arg ctor: not explicit
+    S(int a, int b) {}      // multi-arg ctor: not explicit
+};
+"#;
+        let args = vec!["-std=c++17".to_string(), "-x".to_string(), "c++".to_string()];
+        let ast = parse_cpp_source(source, "test.cpp", &args)
+            .expect("libclang must parse the snippet");
+
+        let mut ctors: Vec<&Value> = Vec::new();
+        collect_by_kind(&ast, "ConstructorDecl", &mut ctors);
+        assert_eq!(ctors.len(), 4, "expected 4 constructors, got {}: {ast:#}", ctors.len());
+
+        for ctor in &ctors {
+            let pc = param_count(ctor);
+            let pt = first_param_type(ctor);
+            let explicit = is_explicit(ctor);
+            match (pc, pt.as_deref()) {
+                (0, _) => assert!(!explicit, "default ctor S() must NOT be explicit"),
+                (2, _) => assert!(!explicit, "multi-arg ctor S(int,int) must NOT be explicit"),
+                (1, Some("int")) => assert!(explicit, "explicit S(int) must be explicit"),
+                (1, Some("double")) => assert!(!explicit, "converting S(double) must NOT be explicit"),
+                other => panic!("unexpected constructor shape {other:?}"),
+            }
+        }
+    }
+
+    /// The conversion-operator path must also emit `isExplicit`. The Haskell
+    /// ConversionDecl rule reads `isExplicit`, but the parser previously never
+    /// set it, so `explicit operator bool()` was silently indistinguishable from
+    /// an implicit conversion operator.
+    #[test]
+    fn test_conversion_operator_emits_is_explicit() {
+        let source = r#"
+struct C {
+    explicit operator bool() const { return true; }
+    operator int() const { return 0; }
+};
+"#;
+        let args = vec!["-std=c++17".to_string(), "-x".to_string(), "c++".to_string()];
+        let ast = parse_cpp_source(source, "test.cpp", &args)
+            .expect("libclang must parse the snippet");
+
+        let mut convs: Vec<&Value> = Vec::new();
+        collect_by_kind(&ast, "ConversionDecl", &mut convs);
+        assert_eq!(convs.len(), 2, "expected 2 conversion operators, got {}: {ast:#}", convs.len());
+
+        let mut explicit_flags: Vec<bool> = convs.iter().map(|c| is_explicit(c)).collect();
+        explicit_flags.sort();
+        assert_eq!(
+            explicit_flags,
+            vec![false, true],
+            "exactly one conversion operator (operator bool) must be explicit"
+        );
+    }
+
+    /// Parsing must succeed from any thread, not just the one that first loaded
+    /// libclang. Because clang-sys's `runtime` feature keeps the handle in
+    /// thread-local storage, a process-global one-shot load would make every
+    /// parse on a fresh worker thread panic with "a `libclang` shared library is
+    /// not loaded on this thread" — the exact failure mode that silently dropped
+    /// C/C++ files parsed across `tokio` worker threads. This spawns several OS
+    /// threads that parse concurrently and asserts every one produces an AST.
+    #[test]
+    fn test_parse_is_thread_local_safe_across_threads() {
+        let source = "struct Widget { int compute() const { return 42; } };";
+
+        let handles: Vec<std::thread::JoinHandle<bool>> = (0..8)
+            .map(|_| {
+                let src = source.to_string();
+                std::thread::spawn(move || {
+                    let args = vec!["-std=c++17".to_string(), "-x".to_string(), "c++".to_string()];
+                    match parse_cpp_source(&src, "widget.cpp", &args) {
+                        Ok(ast) => {
+                            let mut found: Vec<&Value> = Vec::new();
+                            collect_by_kind(&ast, "ClassDecl", &mut found);
+                            collect_by_kind(&ast, "StructDecl", &mut found);
+                            !found.is_empty()
+                        }
+                        Err(_) => false,
+                    }
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            assert!(
+                handle.join().expect("worker thread must not panic"),
+                "every worker thread must parse the snippet into an AST"
+            );
+        }
+    }
 }
