@@ -41,9 +41,13 @@ use std::path::PathBuf;
 ///   skip-resolved filter) and READS_FROM (its PA-fallback guard) as EDB, so it
 ///   MUST run after EVERY CALLS/READS_FROM producer above — running earlier would
 ///   flag calls a later pack resolves.
+/// - `js_module_imports` (Wave 3b, the module-path kernel) PRODUCES the
+///   IMPORT→MODULE IMPORTS_FROM seam + RE_EXPORTS that `js_import_bindings`
+///   and the hybrid consumers read as committed EDB, so it runs strictly
+///   before them.
 /// Full canonical order is depends → js_local_refs → js_same_file_calls →
 /// js_this_method_calls → rust_calls → rust_cross_methods_ctor →
-/// rust_trait_resolve → rust_receiver_typing →
+/// rust_trait_resolve → rust_receiver_typing → rust_imports → js_module_imports →
 /// js_import_bindings → js_class_inheritance → js_cross_file_calls →
 /// js_property_access_ns → js_property_access_full → method_calls →
 /// shape_verifier → axum_routes; the depends pack runs separately first (the
@@ -63,6 +67,15 @@ const STDLIB_RULE_PACKS: &[&str] = &[
     // TRAIT/STRUCT/CLASS nodes).
     "@stdlib/rust_trait_resolve",
     "@stdlib/rust_receiver_typing",
+    // Rust Wave-3b pack: rust_imports PRODUCES IMPORTS_FROM (module tree +
+    // both rust-imports phases) — strictly before the IMPORTS_FROM consumers
+    // (js_cross_file_calls / js_property_access_ns; and depends, once legacy
+    // rust-imports is gated off).
+    "@stdlib/rust_imports",
+    // JS Wave-3b module-path kernel: produces the IMPORT→MODULE IMPORTS_FROM
+    // seam + RE_EXPORTS that js_import_bindings (b_mod/resolved_at/star_src)
+    // and the hybrid consumers below read as committed EDB — strictly first.
+    "@stdlib/js_module_imports",
     "@stdlib/js_import_bindings",
     "@stdlib/js_class_inheritance",
     "@stdlib/js_cross_file_calls",

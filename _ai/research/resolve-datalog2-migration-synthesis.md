@@ -241,3 +241,38 @@ unicode probe verified externally 15×15 zero panics, workspace-arm normalizatio
 for the future pack, replace_all attribution). Independent test-runner: datalog2 248/0
 (M alone) → combined 256/0 debug+release, plan gate green, **Gate A 51/51 twice**,
 release bin builds. Conveyor wall: ~41 min for both waves (parallel implement).
+
+---
+
+## Wave 3b (2026-06-11, conveyor #2, parallel implementers): module/import-resolution packs, SHADOW
+
+**3b-js — `js_module_imports.dl`** (NEW): IMPORT→MODULE + star RE_EXPORTS kernel — 15-rank
+first-match candidate ladder (exact-if-known-ext → swap .js/.ts/.tsx/.jsx → +ext ×4 →
+/index ×4 → .d.ts, /index.d.ts; ImportResolution.hs:544-552 parity) over
+path_resolve/strip_suffix/strip_prefix; probe = ExportIndex presence (EXPORT∪EXPORT_BINDING),
+NOT MODULE presence. Placed before js_import_bindings in both registries.
+**Differential (on /tmp copy, predictions first): legacy 679 IMPORT→MODULE / 9 RE_EXPORTS;
+pack 514/7; both 514/7; pack-only 0; meta-mismatch 0 (resolvedPath ≡ MODULE.file проверен
+neq-пробами); legacy-only 165/2 = 100% declared SUBSET DELTA 1 (bare/workspace —
+WORKSPACE_PACKAGE-узлов в графе 0). In-scope match 100% exact.** Pack wall on copy: 3.1s.
+Независимый тест-раннер ПЕРЕВЫВЕЛ все live-числа на собственной копии — всё воспроизвелось.
+
+**3b-rust — `rust_imports.dl`** (NEW): ВЕСЬ RustImportResolution.hs — module tree
+(src/-strip, .rs-drop via strip_suffix, mod.rs→parent, lib.rs/main.rs→crate-root,
+Hs:109-135 step-for-step) + phase 2 (IMPORT→MODULE) + phase 3 (IMPORT_BINDING→pub decl,
+9 decl-типов, pub-гейт = node_attr __exported — Wave M bool-фикс это и разблокировал).
+Worktree-патч лёг с 2 предсказанными конфликтами (оба registry-списка) — слиты вручную,
+порядок producer-before-consumer: … rust_receiver_typing → rust_imports →
+js_module_imports → js_import_bindings → …
+
+**Verification:** оба ревью approve, 0 must_fix. Advisory carry-forward (Wave 3c): (a) js
+exporting_file — недекларированный SUPERSET (EXPORT-marker-only файлы; нужен DELTA 7 или
+ужесточение до гейтинга), (b) fixture-маркеры "named" пинят пак, не legacy-parity —
+переименовать в default/EXPORT_BINDING, (c) числа дифференциалов инлайнить с текстами
+запросов (Evidence Rule), (d) rust .rs-гейты пронумеровать как DELTA, (e) shadow-diff в
+differential.rs фильтровать legacy-срез по отсутствию _source (re-run-safety).
+**Suites:** datalog2 259/0 debug+release, plan gate ok, Gate A 51/51 (10.8s), orchestrator
+466/0. Pack-runner visibility verified in source: последовательные materialize, каждый
+коммитит атомарный manifest-flip → следующий пак видит рёбра предыдущего как EDB.
+**Residue до гейтинга legacy import-resolution:** WORKSPACE_PACKAGE-факты от оркестратора
+(+3 workspace-арма в паке) + перенос depends после js_module_imports в runner-порядке.

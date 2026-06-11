@@ -157,6 +157,20 @@ pub const RUST_TRAIT_RESOLVE_DL: &str = include_str!("stdlib/rust_trait_resolve.
 /// `receiverType` (raw surface) meta.
 pub const RUST_RECEIVER_TYPING_DL: &str = include_str!("stdlib/rust_receiver_typing.dl");
 
+/// The bundled Rust import-resolution pack (Wave 3b) — the in-engine
+/// replacement for the WHOLE `RustImportResolution.hs` resolver: the module
+/// tree (file path → `crate::…` module path, the Wave-3a string kit) plus
+/// both phases — IMPORT → MODULE (`use crate::foo;`) and IMPORT_BINDING →
+/// exported declaration (`use crate::foo::Bar;`, pub gate = the stored
+/// `__exported` metadata key, source via the committed IMPORT -CONTAINS->
+/// IMPORT_BINDING seam). The legacy Map-last-wins crate-root collision is
+/// REFINED to a governed-directory arm (the importer must live under the
+/// root's directory — never a cross-crate false edge); deltas numbered in
+/// the `.dl` header. PRODUCER of `IMPORTS_FROM` (additive, empty meta =
+/// legacy parity); once legacy rust-imports is gated off, `depends` must
+/// move after it. node_attr + negation ⇒ scratch-only under maintain.
+pub const RUST_IMPORTS_DL: &str = include_str!("stdlib/rust_imports.dl");
+
 /// The bundled JS/TS cross-file call-resolution pack (Wave 1b, HYBRID) — the
 /// in-engine replacement for the DIRECT + NAMESPACE arms of `CrossFileCalls.hs`,
 /// consuming the LEGACY import resolver's committed `IMPORTS_FROM` edges as EDB
@@ -243,6 +257,23 @@ pub const JS_BUILTINS_NODES_DL: &str = include_str!("stdlib/js_builtins_nodes.dl
 /// same-run-minted endpoints). Both heads additive (shared vocabulary).
 pub const JS_BUILTINS_EDGES_DL: &str = include_str!("stdlib/js_builtins_edges.dl");
 
+/// The JS module-path kernel pack (Wave 3b, path/string-kit-unblocked): the
+/// in-engine replacement for the module-level arms of `ImportResolution.hs` —
+/// IMPORT → MODULE `IMPORTS_FROM` (`resolveModuleImports`) and star re-export
+/// EXPORT → MODULE `RE_EXPORTS` (`resolveStarReExports`, incl. the ModuleIndex
+/// fallback). Relative specifiers via `path_resolve` + the 15-rank
+/// first-match candidate ladder (exact > extension swap > +ext > /index >
+/// .d.ts) probed against ExportIndex membership (EXPORT/EXPORT_BINDING
+/// presence — live-verified exact), NOT bare MODULE presence (the verdict
+/// fix). Workspace/bare specifiers are a documented SUBSET delta (no
+/// WORKSPACE_PACKAGE facts in the graph yet). SHADOW alongside legacy; both
+/// heads additive, meta `resolvedPath` (legacy parity). PRODUCER of the
+/// IMPORT→MODULE `IMPORTS_FROM` seam and of `RE_EXPORTS` — must precede
+/// `js_import_bindings` (whose `b_mod`/`resolved_at`/`star_src` joins read
+/// them as committed EDB) and the other IMPORTS_FROM consumers. Negation
+/// (the rank ladder) ⇒ scratch-only under maintain.
+pub const JS_MODULE_IMPORTS_DL: &str = include_str!("stdlib/js_module_imports.dl");
+
 /// The named stdlib rule packs, addressable on the wire as `"@stdlib/<name>"`
 /// (`MaterializeDatalog` and the other empty-source-defaulting dispatchers), listed
 /// in CANONICAL RUN ORDER. The order is a CONTRACT, not cosmetics — producers run
@@ -282,10 +313,18 @@ pub const JS_BUILTINS_EDGES_DL: &str = include_str!("stdlib/js_builtins_edges.dl
 ///   EDB (the engine-sanctioned two-pack answer to same-run-minted edge
 ///   endpoints), so nodes run strictly before edges; the edges pack produces
 ///   CALLS + IMPORTS_FROM, so both precede `method_calls` / `shape_verifier`.
+/// - the JS Wave-3b kernel pack: `js_module_imports` PRODUCES the
+///   IMPORT→MODULE `IMPORTS_FROM` seam and `RE_EXPORTS` (the star seam) that
+///   `js_import_bindings` (`b_mod`/`resolved_at`/`star_src`) and the Wave-1b
+///   hybrid packs read as committed EDB, so it runs strictly before them
+///   (while legacy import-resolution stays ON its edges are near-duplicates;
+///   once legacy is gated this ordering is load-bearing, and `depends` must
+///   move after it).
 /// An orchestrator running the packs sequentially must preserve this order:
 /// depends → js_local_refs → js_same_file_calls → js_this_method_calls →
 /// rust_calls → rust_cross_methods_ctor → rust_trait_resolve →
-/// rust_receiver_typing → js_import_bindings → js_class_inheritance →
+/// rust_receiver_typing → rust_imports → js_module_imports →
+/// js_import_bindings → js_class_inheritance →
 /// js_cross_file_calls → js_property_access_ns → js_property_access_full →
 /// js_builtins_nodes → js_builtins_edges → method_calls → shape_verifier →
 /// axum_routes.
@@ -301,6 +340,16 @@ pub const STDLIB_PACKS: &[(&str, &str)] = &[
     // rust_trait_resolve consumes analyzer EDB only.
     ("rust_trait_resolve", RUST_TRAIT_RESOLVE_DL),
     ("rust_receiver_typing", RUST_RECEIVER_TYPING_DL),
+    // Rust Wave-3b pack: rust_imports PRODUCES IMPORTS_FROM (module tree +
+    // both rust-imports phases) — strictly before the IMPORTS_FROM consumers
+    // (js_cross_file_calls / js_property_access_ns; and depends, once legacy
+    // rust-imports is gated off).
+    ("rust_imports", RUST_IMPORTS_DL),
+    // JS Wave-3b: js_module_imports PRODUCES the IMPORT→MODULE IMPORTS_FROM
+    // seam (and RE_EXPORTS) that js_import_bindings' b_mod/resolved_at/
+    // star_src joins and the Wave-1b hybrid packs consume as committed EDB —
+    // strictly before all of them.
+    ("js_module_imports", JS_MODULE_IMPORTS_DL),
     // JS Wave-2 packs: js_import_bindings PRODUCES IMPORTS_FROM — strictly
     // before its consumers (js_class_inheritance's cross-file arm and the two
     // Wave-1b hybrid packs); js_class_inheritance PRODUCES EXTENDS for
@@ -1168,6 +1217,8 @@ mod tests {
                 "rust_cross_methods_ctor",
                 "rust_trait_resolve",
                 "rust_receiver_typing",
+                "rust_imports",
+                "js_module_imports",
                 "js_import_bindings",
                 "js_class_inheritance",
                 "js_cross_file_calls",
@@ -1182,7 +1233,11 @@ mod tests {
             "canonical run order: depends → Wave-1 resolver packs → Wave-1b packs \
              (rust_cross_methods_ctor after rust_calls — the CALLS EDB seam; the \
              js hybrid packs before the fuzzy fallback) → Rust Wave-2 packs \
-             (rust_receiver_typing shares the rust_calls CALLS seam) → JS Wave-2 \
+             (rust_receiver_typing shares the rust_calls CALLS seam; rust_imports \
+             PRODUCES IMPORTS_FROM — before its consumers) → \
+             js_module_imports (Wave 3b, PRODUCES the IMPORT→MODULE \
+             IMPORTS_FROM seam + RE_EXPORTS that js_import_bindings consumes) \
+             → JS Wave-2 \
              packs (js_import_bindings PRODUCES the IMPORTS_FROM seam, so it \
              precedes js_class_inheritance and the js hybrid consumers; \
              js_class_inheritance produces EXTENDS for shape_verifier) → \
@@ -1206,6 +1261,8 @@ mod tests {
             stdlib_pack("rust_receiver_typing"),
             Some(RUST_RECEIVER_TYPING_DL)
         );
+        assert_eq!(stdlib_pack("rust_imports"), Some(RUST_IMPORTS_DL));
+        assert_eq!(stdlib_pack("js_module_imports"), Some(JS_MODULE_IMPORTS_DL));
         assert_eq!(stdlib_pack("js_import_bindings"), Some(JS_IMPORT_BINDINGS_DL));
         assert_eq!(
             stdlib_pack("js_class_inheritance"),
@@ -3000,6 +3057,209 @@ mod tests {
         );
     }
 
+    /// Wave 3b — rust_imports on a single-crate `src/` layout (the convention
+    /// RustImportResolution.hs targets), pinning every module-tree mechanism:
+    /// - `src/`-prefix strip + `.rs`-drop (`src/widgets.rs` → `crate::widgets`);
+    /// - the mod.rs convention (`src/gfx/mod.rs` → `crate::gfx`);
+    /// - a nested `::`-path (`src/gfx/render.rs` → `crate::gfx::render`);
+    /// - phase 2 `use crate;` → the crate-root MODULE (governed-dir arm);
+    /// - phase 3 crate-prefixed binding → the exported declaration via the
+    ///   CONTAINS seam (`use crate::gfx::render::Widget;`), and a crate-root
+    ///   export (`use crate::helper;`);
+    /// - does-not-resolve cases: an external crate (`std::sync::Arc`) derives
+    ///   nothing in either phase; a JS file's IMPORT and MODULE never enter.
+    #[test]
+    fn rust_imports_module_tree_and_both_phases() {
+        let mut v = FixtureStorageView::new(0);
+
+        // The module tree.
+        named_node(&mut v, "m_root", "lib", "MODULE", "src/lib.rs"); // crate
+        named_node(&mut v, "m_widgets", "widgets", "MODULE", "src/widgets.rs"); // crate::widgets
+        named_node(&mut v, "m_gfx", "gfx", "MODULE", "src/gfx/mod.rs"); // crate::gfx
+        named_node(&mut v, "m_render", "render", "MODULE", "src/gfx/render.rs"); // crate::gfx::render
+        named_node(&mut v, "m_app", "app", "MODULE", "src/app.rs"); // crate::app
+        // Cross-language guard: a JS MODULE never enters the tree.
+        named_node(&mut v, "m_js", "index", "MODULE", "web/index.js");
+
+        // Phase 2: module-naming use paths (in src/app.rs).
+        named_node(&mut v, "i_widgets", "crate::widgets", "IMPORT", "src/app.rs");
+        named_node(&mut v, "i_gfx", "crate::gfx", "IMPORT", "src/app.rs");
+        named_node(&mut v, "i_render", "crate::gfx::render", "IMPORT", "src/app.rs");
+        named_node(&mut v, "i_crate", "crate", "IMPORT", "src/app.rs");
+        named_node(&mut v, "i_std", "std::sync::Arc", "IMPORT", "src/app.rs");
+        // A JS file's IMPORT with a tree-shaped name: the .rs gate drops it.
+        named_node(&mut v, "i_js", "crate::widgets", "IMPORT", "web/index.js");
+
+        // Phase 3: `use crate::gfx::render::Widget;` — binding → pub STRUCT.
+        named_node(&mut v, "i_use_w", "crate::gfx::render::Widget", "IMPORT", "src/app.rs");
+        named_node(&mut v, "b_widget", "Widget", "IMPORT_BINDING", "src/app.rs");
+        edge(&mut v, "i_use_w", "b_widget", "CONTAINS");
+        named_node(&mut v, "s_widget", "Widget", "STRUCT", "src/gfx/render.rs");
+        v.put_node_metadata(id_of("s_widget"), r#"{"__exported":true}"#);
+
+        // `use crate::helper;` — a crate-root export (module path "crate").
+        named_node(&mut v, "i_use_h", "crate::helper", "IMPORT", "src/app.rs");
+        named_node(&mut v, "b_helper", "helper", "IMPORT_BINDING", "src/app.rs");
+        edge(&mut v, "i_use_h", "b_helper", "CONTAINS");
+        named_node(&mut v, "f_helper", "helper", "FUNCTION", "src/lib.rs");
+        v.put_node_metadata(id_of("f_helper"), r#"{"__exported":true}"#);
+
+        // `use std::sync::Arc;` — external crate: no module, no export, no edge.
+        named_node(&mut v, "b_arc", "Arc", "IMPORT_BINDING", "src/app.rs");
+        edge(&mut v, "i_std", "b_arc", "CONTAINS");
+
+        let (eval, specs, _node_specs) = evaluate_with_materialize(
+            &v,
+            RUST_IMPORTS_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("rust_imports.dl evaluates");
+
+        let pairs = |pred: &str| -> BTreeSet<(u128, u128)> {
+            eval.facts(pred)
+                .into_iter()
+                .map(|row| {
+                    (
+                        row[0].as_id().expect("arg0 id"),
+                        row[1].as_id().expect("arg1 id"),
+                    )
+                })
+                .collect()
+        };
+
+        assert_eq!(
+            pairs("import_module"),
+            BTreeSet::from([
+                (id_of("i_widgets"), id_of("m_widgets")),
+                (id_of("i_gfx"), id_of("m_gfx")),
+                (id_of("i_render"), id_of("m_render")),
+            ]),
+            "src/-strip + .rs-drop, the mod.rs convention and the nested \
+             ::-path each resolve; std::, the binding-bearing use paths \
+             (not module names) and the JS-file IMPORT derive nothing"
+        );
+        assert_eq!(
+            pairs("import_crate"),
+            BTreeSet::from([(id_of("i_crate"), id_of("m_root"))]),
+            "`use crate;` resolves to the governing crate root"
+        );
+        assert_eq!(
+            pairs("binding_import"),
+            BTreeSet::from([
+                (id_of("b_widget"), id_of("s_widget")),
+                (id_of("b_helper"), id_of("f_helper")),
+            ]),
+            "the nested-path binding and the crate-root binding resolve to \
+             their pub declarations; the std:: binding derives nothing"
+        );
+
+        // IMPORTS_FROM is shared vocabulary — additive; legacy edges carry
+        // EMPTY metadata (Hs:156,193), so no meta columns (exact parity).
+        assert_eq!(specs.len(), 3, "three IMPORTS_FROM heads");
+        assert!(
+            specs
+                .iter()
+                .all(|s| s.edge_type == "IMPORTS_FROM" && s.additive && s.meta.is_empty()),
+            "every head is additive IMPORTS_FROM with empty meta; got {:?}",
+            specs
+        );
+    }
+
+    /// Wave 3b — rust_imports negative gates on a MULTI-crate (monorepo)
+    /// layout, pinning DELTA 1 (the governed crate-root refinement of the
+    /// legacy Map-last-wins collision) and the pub-export gate:
+    /// - `use crate::helper;` in crate A resolves ONLY against A's root —
+    ///   never against crate B's root exporting the same name (the legacy
+    ///   resolver would have picked ONE ARBITRARY winner of the colliding
+    ///   "crate" key; the pack refuses the cross-crate false edge);
+    /// - a bin+lib crate (src/main.rs + src/lib.rs both present) derives one
+    ///   edge per OWN root whose exports match — the declared DELTA 1
+    ///   superset (legacy: one arbitrary winner of the two);
+    /// - a same-named declaration that is NOT pub derives nothing;
+    /// - a single-segment source (`use helper;`) is dropped by the
+    ///   ≥2-segment gate (Hs:176-180).
+    #[test]
+    fn rust_imports_governed_crate_root_and_pub_gate() {
+        let mut v = FixtureStorageView::new(0);
+
+        // Crate A and crate B, both rooted at main.rs, both exporting "helper".
+        named_node(&mut v, "ra_main", "main", "MODULE", "packages/a/src/main.rs");
+        named_node(&mut v, "rb_main", "main", "MODULE", "packages/b/src/main.rs");
+        named_node(&mut v, "fa_helper", "helper", "FUNCTION", "packages/a/src/main.rs");
+        v.put_node_metadata(id_of("fa_helper"), r#"{"__exported":true}"#);
+        named_node(&mut v, "fb_helper", "helper", "FUNCTION", "packages/b/src/main.rs");
+        v.put_node_metadata(id_of("fb_helper"), r#"{"__exported":true}"#);
+
+        // Importer inside crate A.
+        named_node(&mut v, "ia_helper", "crate::helper", "IMPORT", "packages/a/src/run.rs");
+        named_node(&mut v, "ba_helper", "helper", "IMPORT_BINDING", "packages/a/src/run.rs");
+        edge(&mut v, "ia_helper", "ba_helper", "CONTAINS");
+        named_node(&mut v, "ia_crate", "crate", "IMPORT", "packages/a/src/run.rs");
+
+        // Pub gate: "Hidden" exists in A's root file but is NOT exported.
+        named_node(&mut v, "ia_hidden", "crate::Hidden", "IMPORT", "packages/a/src/run.rs");
+        named_node(&mut v, "ba_hidden", "Hidden", "IMPORT_BINDING", "packages/a/src/run.rs");
+        edge(&mut v, "ia_hidden", "ba_hidden", "CONTAINS");
+        named_node(&mut v, "sa_hidden", "Hidden", "STRUCT", "packages/a/src/main.rs");
+
+        // ≥2-segment gate: `use helper;` (single segment) resolves nothing.
+        named_node(&mut v, "ia_one", "helper", "IMPORT", "packages/a/src/run.rs");
+        named_node(&mut v, "ba_one", "helper", "IMPORT_BINDING", "packages/a/src/run.rs");
+        edge(&mut v, "ia_one", "ba_one", "CONTAINS");
+
+        // Crate C is bin+lib: BOTH roots export "dual" — DELTA 1 superset.
+        named_node(&mut v, "rc_lib", "lib", "MODULE", "packages/c/src/lib.rs");
+        named_node(&mut v, "rc_main", "main", "MODULE", "packages/c/src/main.rs");
+        named_node(&mut v, "fc_dual_l", "dual", "FUNCTION", "packages/c/src/lib.rs");
+        v.put_node_metadata(id_of("fc_dual_l"), r#"{"__exported":true}"#);
+        named_node(&mut v, "fc_dual_m", "dual", "FUNCTION", "packages/c/src/main.rs");
+        v.put_node_metadata(id_of("fc_dual_m"), r#"{"__exported":true}"#);
+        named_node(&mut v, "ic_dual", "crate::dual", "IMPORT", "packages/c/src/x.rs");
+        named_node(&mut v, "bc_dual", "dual", "IMPORT_BINDING", "packages/c/src/x.rs");
+        edge(&mut v, "ic_dual", "bc_dual", "CONTAINS");
+
+        let (eval, _specs, _node_specs) = evaluate_with_materialize(
+            &v,
+            RUST_IMPORTS_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("rust_imports.dl evaluates");
+
+        let pairs = |pred: &str| -> BTreeSet<(u128, u128)> {
+            eval.facts(pred)
+                .into_iter()
+                .map(|row| {
+                    (
+                        row[0].as_id().expect("arg0 id"),
+                        row[1].as_id().expect("arg1 id"),
+                    )
+                })
+                .collect()
+        };
+
+        assert_eq!(
+            pairs("import_crate"),
+            BTreeSet::from([(id_of("ia_crate"), id_of("ra_main"))]),
+            "`use crate;` in crate A resolves only to A's governing root"
+        );
+        assert_eq!(
+            pairs("binding_import"),
+            BTreeSet::from([
+                (id_of("ba_helper"), id_of("fa_helper")),
+                (id_of("bc_dual"), id_of("fc_dual_l")),
+                (id_of("bc_dual"), id_of("fc_dual_m")),
+            ]),
+            "crate A's binding never crosses into crate B (DELTA 1 governed \
+             subset); the bin+lib crate derives one edge per own root (DELTA 1 \
+             superset); the non-pub declaration and the single-segment source \
+             derive nothing"
+        );
+    }
+
     /// Wave 2b — the visible() re-export fixpoint in js_import_bindings:
     /// - a NAMED re-export hop with local-name rebinding
     ///   (`export { deep as renamed } from './deep'`, Hs:373-386), its target
@@ -3490,6 +3750,142 @@ mod tests {
                 .count(),
             1,
             "one IMPORTS_FROM head"
+        );
+    }
+
+    /// The bundled js_module_imports pack (Wave 3b) reproduces the module-level
+    /// arms of ImportResolution.hs on a fixture pinning every ladder mechanism
+    /// — each line below FAILS on a naive implementation that drops it:
+    /// - relative resolve + `../` collapse (path_resolve);
+    /// - TS-ESM extension swap `./util.js` → util.ts (strip_suffix, the rank-1..4
+    ///   swap arm — util.js does not exist);
+    /// - exact-beats-swap: `./e.js` with BOTH e.js and e.ts present → e.js only
+    ///   (rank 0 before the swap ranks);
+    /// - candidate ORDER under append: `../shared/x` with x.js, x.ts AND
+    ///   x/index.ts all present → x.js only (rank 5 < 6 < 10);
+    /// - /index fallback: `./widgets` → widgets/index.ts (rank 10 when 5-8 miss);
+    /// - THE EXPORTINDEX PROBE (the verdict fix): `./shadow` where shadow.js has
+    ///   a MODULE but NO exports and shadow.ts has exports → shadow.ts (a
+    ///   MODULE-presence probe would wrongly pick shadow.js); `./side` whose only
+    ///   candidate side.ts has a MODULE but no exports → NO edge (unresolvable);
+    /// - DELTA 1: bare specifier `lodash` → NO edge (workspace arms out);
+    /// - the 8-extension importer gate: the same specifier in a .py file → NOTHING;
+    /// - star re-exports: `*:./lib/util.js` → RE_EXPORTS via the export ladder,
+    ///   and `*:./typesonly` (MODULE, no exports) → RE_EXPORTS via the
+    ///   resolveModulePathDirect ModuleIndex FALLBACK (fails without the m-ladder);
+    /// - meta resolvedPath projected on both heads, additive (legacy parity).
+    #[test]
+    fn js_module_imports_ladder_star_and_probe_arms() {
+        let mut v = FixtureStorageView::new(1);
+
+        // Target files: MODULE per file; an EXPORT node marks exporting files.
+        let target = |v: &mut FixtureStorageView, m: &str, e: Option<&str>, file: &str| {
+            named_node(v, m, "mod", "MODULE", file);
+            if let Some(e) = e {
+                named_node(v, e, "named", "EXPORT", file);
+            }
+        };
+        target(&mut v, "m_util", Some("e_util"), "src/app/lib/util.ts");
+        target(&mut v, "m_xjs", Some("e_xjs"), "src/shared/x.js");
+        target(&mut v, "m_xts", Some("e_xts"), "src/shared/x.ts");
+        target(&mut v, "m_xidx", Some("e_xidx"), "src/shared/x/index.ts");
+        target(&mut v, "m_ejs", Some("e_ejs"), "src/app/lib/e.js");
+        target(&mut v, "m_ets", Some("e_ets"), "src/app/lib/e.ts");
+        target(&mut v, "m_widx", Some("e_widx"), "src/app/widgets/index.ts");
+        target(&mut v, "m_side", None, "src/app/side.ts"); // MODULE, no exports
+        target(&mut v, "m_shjs", None, "src/app/shadow.js"); // MODULE, no exports
+        target(&mut v, "m_shts", Some("e_shts"), "src/app/shadow.ts");
+        target(&mut v, "m_typ", None, "src/app/typesonly.ts"); // star-fallback target
+
+        // The importer's IMPORT nodes (name = specifier, first-class).
+        let imp = |v: &mut FixtureStorageView, sid: &str, spec: &str, file: &str| {
+            named_node(v, sid, spec, "IMPORT", file);
+        };
+        imp(&mut v, "i_rel", "./lib/util.js", "src/app/main.ts"); // TS-ESM swap
+        imp(&mut v, "i_up", "../shared/x", "src/app/main.ts"); // ../ + ext order
+        imp(&mut v, "i_exact", "./lib/e.js", "src/app/main.ts"); // exact beats swap
+        imp(&mut v, "i_widg", "./widgets", "src/app/main.ts"); // /index fallback
+        imp(&mut v, "i_shadow", "./shadow", "src/app/main.ts"); // ExportIndex probe
+        imp(&mut v, "i_side", "./side", "src/app/main.ts"); // exports-less: miss
+        imp(&mut v, "i_bare", "lodash", "src/app/main.ts"); // DELTA 1: miss
+        imp(&mut v, "i_nope", "./nope", "src/app/main.ts"); // no candidate: miss
+        imp(&mut v, "i_py", "./lib/util.js", "tool.py"); // importer gate: miss
+
+        // Star re-exports (EXPORT "*:<src>") in a barrel file.
+        named_node(&mut v, "e_star1", "*:./lib/util.js", "EXPORT", "src/app/barrel.ts");
+        named_node(&mut v, "e_star2", "*:./typesonly", "EXPORT", "src/app/barrel.ts");
+
+        let (eval, specs, _node_specs) = evaluate_with_materialize(
+            &v,
+            JS_MODULE_IMPORTS_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("js_module_imports.dl evaluates");
+
+        // IMPORT → MODULE rows: (import, module, resolvedPath meta column).
+        let im: BTreeSet<(u128, u128, String)> = eval
+            .facts("import_module")
+            .into_iter()
+            .map(|row| {
+                (
+                    row[0].as_id().expect("arg0 id"),
+                    row[1].as_id().expect("arg1 id"),
+                    row[2].as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            im,
+            BTreeSet::from([
+                (id_of("i_rel"), id_of("m_util"), "src/app/lib/util.ts".to_string()),
+                (id_of("i_up"), id_of("m_xjs"), "src/shared/x.js".to_string()),
+                (id_of("i_exact"), id_of("m_ejs"), "src/app/lib/e.js".to_string()),
+                (id_of("i_widg"), id_of("m_widx"), "src/app/widgets/index.ts".to_string()),
+                (id_of("i_shadow"), id_of("m_shts"), "src/app/shadow.ts".to_string()),
+            ]),
+            "swap / ../-collapse+ext-order / exact / index-fallback / \
+             ExportIndex-probe resolve; side (no exports), bare (DELTA 1), \
+             nope (no candidate) and the .py importer derive NOTHING"
+        );
+
+        // Star RE_EXPORTS rows: export ladder + the ModuleIndex fallback.
+        let re: BTreeSet<(u128, u128, String)> = eval
+            .facts("star_reexport")
+            .into_iter()
+            .map(|row| {
+                (
+                    row[0].as_id().expect("arg0 id"),
+                    row[1].as_id().expect("arg1 id"),
+                    row[2].as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            re,
+            BTreeSet::from([
+                (id_of("e_star1"), id_of("m_util"), "src/app/lib/util.ts".to_string()),
+                (id_of("e_star2"), id_of("m_typ"), "src/app/typesonly.ts".to_string()),
+            ]),
+            "star via the export ladder (swap arm) + the exports-less target \
+             via the resolveModulePathDirect ModuleIndex fallback"
+        );
+
+        // Both heads declared additive with meta(resolvedPath) — legacy parity.
+        let ifs: Vec<_> = specs.iter().filter(|s| s.edge_type == "IMPORTS_FROM").collect();
+        assert_eq!(ifs.len(), 1, "one IMPORTS_FROM head");
+        assert!(ifs[0].additive, "IMPORTS_FROM is shared vocabulary — additive");
+        assert_eq!(ifs[0].meta, vec!["resolvedPath".to_string()]);
+        let res: Vec<_> = specs.iter().filter(|s| s.edge_type == "RE_EXPORTS").collect();
+        assert_eq!(
+            res.len(),
+            1,
+            "one RE_EXPORTS spec (the annotation covers both star_reexport clauses)"
+        );
+        assert!(
+            res.iter().all(|s| s.additive && s.meta == vec!["resolvedPath".to_string()]),
+            "RE_EXPORTS head additive with meta resolvedPath"
         );
     }
 

@@ -1529,3 +1529,165 @@ guarantees:
         eprintln!("=== end coverage loop ===\n");
     }
 }
+
+// ── Wave 3b: rust_imports shadow differential against the post-merge dogfood graph ──
+
+/// Shadow differential for the `rust_imports` pack (Wave 3b) against the LEGACY
+/// `RustImportResolution.hs` slice already committed in the post-merge dogfood graph
+/// (491k nodes / 1.04M edges — legacy import-resolution ran when that graph was built).
+///
+/// Dataset: `GRAFEMA_WAVE3B_DIFF_DB` (default `/tmp/wave3b-rust.rfdb`, a caller-made copy
+/// of `.grafema/graph.rfdb` — NEVER the live store). The store is copied again into a
+/// tempdir so a concurrently-running server on the copy cannot contend.
+///
+/// PREDICTIONS, declared BEFORE the diff (the §3 harness discipline):
+/// - Phase 2 (IMPORT → MODULE): EXACT, both sides 0 on this graph. The legacy module
+///   tree keys monorepo files as `crate::packages::…` (the literal `src/`-prefix strip
+///   never fires) while real use paths are crate-relative — measured by replaying the
+///   exact Hs transform over the live copy: 113 unique tree keys, 0 import-name hits.
+/// - Phase 3 (IMPORT_BINDING → declaration): EXACT, both sides 0. The only colliding
+///   tree key is "crate" (3 roots); the 2 bindings with a `crate::X` 2-segment source
+///   match no root export (measured: legacy would-emit 0, all-candidates 0, governed 0).
+/// - DELTA classes that would absorb any non-empty diff (none expected here): governed
+///   crate-root subset (foreign-root winner omitted), bin+lib dual-root superset,
+///   duplicate-export superset — anything else = pack bug, STOP and witness.
+///
+/// Non-vacuity floors (so 0 ≡ 0 cannot pass on a broken pack): the intermediate
+/// relations must see the real graph (rust modules, imports, CONTAINS-joined binding
+/// sources) and the `__exported` metadata key must surface through `node_attr`.
+///
+///   GRAFEMA_WAVE3B_DIFF_DB=/tmp/wave3b-rust.rfdb \
+///   cargo test --release --lib wave3b_rust_imports_shadow_differential -- --ignored --nocapture
+#[test]
+#[ignore = "manual real-data shadow differential; run with --ignored"]
+fn wave3b_rust_imports_shadow_differential() {
+    use crate::datalog2::evaluate_with_materialize;
+
+    let dataset = std::env::var("GRAFEMA_WAVE3B_DIFF_DB")
+        .unwrap_or_else(|_| "/tmp/wave3b-rust.rfdb".to_string());
+    let dataset = PathBuf::from(dataset);
+    if !dataset.join("db_config.json").exists() {
+        panic!(
+            "dataset not found at {} — copy the post-merge graph first: \
+             cp -R .grafema/graph.rfdb /tmp/wave3b-rust.rfdb",
+            dataset.display()
+        );
+    }
+
+    let tmp = tempfile::tempdir().expect("temp");
+    let work = tmp.path().join("graph.rfdb");
+    copy_dir_all(&dataset, &work).expect("copy dataset");
+    let _ = std::fs::remove_file(work.join("LOCK"));
+    let manifest = ManifestStore::open(&work).expect("manifest");
+    let store = MultiShardStore::open(&work, &manifest).expect("store");
+    let store = Arc::new(store);
+    let view = LsmStorageView::capture(store.clone(), &manifest);
+
+    let snap = store.snapshot(&manifest);
+    let all_nodes = store.find_nodes_at(&snap, None, None);
+    let mut nbt: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    for n in &all_nodes {
+        *nbt.entry(n.node_type.clone()).or_insert(0) += 1;
+    }
+    let stats = Stats {
+        total_nodes: all_nodes.len() as u64,
+        total_edges: store.iter_all_edges_at(&snap).len() as u64,
+        nodes_by_type: nbt,
+    };
+    eprintln!(
+        "\n=== wave3b rust_imports shadow differential (nodes={}, edges={}) ===",
+        stats.total_nodes, stats.total_edges
+    );
+
+    let pairs = |eval: &crate::datalog2::exec::Evaluation, pred: &str| -> BTreeSet<(u128, u128)> {
+        eval.facts(pred)
+            .iter()
+            .filter_map(|r| Some((r.first()?.as_id()?, r.get(1)?.as_id()?)))
+            .collect()
+    };
+
+    // ── The LEGACY slice: committed IMPORTS_FROM edges out of rust IMPORT /
+    //    IMPORT_BINDING nodes. No pack writes this slice (the js packs are
+    //    extension-gated to JS files), so it is purely the legacy resolver's. ──
+    let legacy_src = r#"
+        legacy_p2(I, M) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".rs"),
+            edge(I, M, "IMPORTS_FROM").
+        legacy_p3(B, D) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".rs"),
+            edge(B, D, "IMPORTS_FROM").
+    "#;
+    let legacy_eval = evaluate(&view, legacy_src, stats.clone(), EvalLimits::none(), EventLog::discard())
+        .expect("legacy slice eval");
+    let legacy_p2 = pairs(&legacy_eval, "legacy_p2");
+    let legacy_p3 = pairs(&legacy_eval, "legacy_p3");
+
+    // ── The PACK, evaluated read-only over the same pinned view. ──
+    let (pack_eval, _specs, _node_specs) = evaluate_with_materialize(
+        &view,
+        crate::datalog2::stdlib::RUST_IMPORTS_DL,
+        stats.clone(),
+        EvalLimits::none(),
+        EventLog::discard(),
+    )
+    .expect("rust_imports.dl evaluates on the real graph");
+    let mut pack_p2 = pairs(&pack_eval, "import_module");
+    pack_p2.extend(pairs(&pack_eval, "import_crate"));
+    let pack_p3 = pairs(&pack_eval, "binding_import");
+
+    // ── Non-vacuity floors: the pack genuinely saw the graph. ──
+    let count = |pred: &str| pack_eval.facts(pred).len();
+    eprintln!(
+        "intermediates: rs_module={} module_path={} crate_root={} rs_import={} \
+         rs_binding={} bind_mp={} bind_tf={} target_file={} rs_decl={}",
+        count("rs_module"), count("module_path"), count("crate_root"), count("rs_import"),
+        count("rs_binding"), count("bind_mp"), count("bind_tf"), count("target_file"),
+        count("rs_decl"),
+    );
+    assert!(count("rs_module") >= 100, "rust MODULE floor (measured 115)");
+    assert!(count("module_path") >= 100, "module-path floor (113 tree keys − roots)");
+    assert!(count("crate_root") >= 3, "crate-root floor (measured 3 lib/main roots)");
+    assert!(count("rs_import") >= 1300, "rust IMPORT floor (measured 1375)");
+    assert!(
+        count("rs_binding") >= 1300,
+        "binding-source floor via CONTAINS (measured 1377)"
+    );
+    assert!(count("bind_mp") >= 1000, "≥2-segment binding-source floor");
+
+    // The __exported surface works on the REAL stored blob (engine_v2 writes the key;
+    // the wire strips it — measured 252 exported rust STRUCTs via the wire flag).
+    let exported_probe = evaluate(
+        &view,
+        r#"exported_struct(D) :- node(D, "STRUCT"), attr(D, "file", F), ends_with(F, ".rs"),
+            node_attr(D, "__exported", "true")."#,
+        stats,
+        EvalLimits::none(),
+        EventLog::discard(),
+    )
+    .expect("exported probe eval");
+    let n_exported = exported_probe.facts("exported_struct").len();
+    eprintln!("exported rust STRUCTs via node_attr(__exported): {n_exported} (wire-measured 252)");
+    assert!(
+        (200..=400).contains(&n_exported),
+        "__exported must surface through node_attr (wire-measured 252, got {n_exported})"
+    );
+
+    // ── The diff, against the predeclared classes. ──
+    eprintln!(
+        "phase 2: legacy={} pack={} | phase 3: legacy={} pack={}",
+        legacy_p2.len(), pack_p2.len(), legacy_p3.len(), pack_p3.len()
+    );
+    for (src, dst) in pack_p2.symmetric_difference(&legacy_p2) {
+        eprintln!(
+            "P2 DIFF ROW: ({src}, {dst}) pack={} legacy={} — outside the predicted EXACT class, witness it",
+            pack_p2.contains(&(*src, *dst)), legacy_p2.contains(&(*src, *dst))
+        );
+    }
+    for (src, dst) in pack_p3.symmetric_difference(&legacy_p3) {
+        eprintln!(
+            "P3 DIFF ROW: ({src}, {dst}) pack={} legacy={} — classify against the declared delta classes",
+            pack_p3.contains(&(*src, *dst)), legacy_p3.contains(&(*src, *dst))
+        );
+    }
+    assert_eq!(pack_p2, legacy_p2, "phase 2 predicted EXACT (0 ≡ 0 on this graph)");
+    assert_eq!(pack_p3, legacy_p3, "phase 3 predicted EXACT (0 ≡ 0 on this graph)");
+    eprintln!("=== wave3b shadow differential: PASS (both phases match the legacy slice) ===\n");
+}
