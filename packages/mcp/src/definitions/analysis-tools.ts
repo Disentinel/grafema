@@ -10,14 +10,19 @@ export const ANALYSIS_TOOLS: ToolDefinition[] = [
     description: `Discover services in the project without running full analysis.
 
 Use this during onboarding to understand project structure BEFORE running analyze_project.
+For multi-service projects (monorepos, microservices), returns service names and paths.
 
 Returns:
 - Service names and paths (e.g., "backend" at "apps/backend")
 - Entry points (e.g., "src/index.ts")
 - No graph data yet — this is fast discovery only
 
+IMPORTANT: Returns 0 services for single-entry-point projects (web frameworks like
+fastify, express, koa, hapi; libraries; CLI tools). This is EXPECTED — not an error.
+For these projects, skip to analyze_project directly: the entire codebase is one unit.
+
 Workflow:
-1. discover_services — see what's in the project
+1. discover_services — see what's in the project (0 = single-unit project, that's ok)
 2. analyze_project — build graph for specific service or all
 3. Query tools — explore the graph
 

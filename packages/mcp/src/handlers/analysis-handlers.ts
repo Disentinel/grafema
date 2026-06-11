@@ -3,7 +3,7 @@
  */
 
 import { ensureAnalyzed, discoverServices } from '../analysis.js';
-import { getAnalysisStatus, isAnalysisRunning } from '../state.js';
+import { getAnalysisStatus, isAnalysisRunning, getIsAnalyzed } from '../state.js';
 import {
   textResult,
   errorResult,
@@ -19,6 +19,32 @@ import type { ServerStats } from '@grafema/types';
 
 export async function handleDiscoverServices(): Promise<ToolResult> {
   const services = await discoverServices();
+
+  if (services.length === 0) {
+    const graphReady = getIsAnalyzed();
+    if (graphReady) {
+      return textResult(
+        'Service discovery is handled automatically by grafema-orchestrator during analysis.\n\n' +
+        'The graph is already built and ready to query.\n\n' +
+        'Note: For web frameworks and single-entry-point projects (e.g., fastify, express, koa),\n' +
+        'the concept of "services" does not apply — the entire codebase is one unit.\n' +
+        'discover_services returns 0 in these cases; this is expected, not an error.\n\n' +
+        'Use query tools to explore the graph:\n' +
+        '  • get_stats     — breakdown of all node/edge types and counts\n' +
+        '  • find_nodes    — search for functions, classes, modules by name\n' +
+        '  • query_graph   — run Datalog queries against the full graph'
+      );
+    } else {
+      return textResult(
+        'Service discovery is handled automatically by grafema-orchestrator.\n\n' +
+        'The graph has not been built yet. Run analyze_project to analyze the codebase.\n\n' +
+        'Note: For web frameworks and single-entry-point projects (e.g., fastify, express, koa),\n' +
+        '"services" is not a meaningful abstraction. analyze_project will analyze\n' +
+        'the entire project as a single unit and populate the graph for querying.'
+      );
+    }
+  }
+
   return textResult(`Found ${services.length} service(s):\n${JSON.stringify(services, null, 2)}`);
 }
 
@@ -38,14 +64,18 @@ export async function handleAnalyzeProject(args: AnalyzeProjectArgs): Promise<To
   // to prevent race conditions where multiple calls could both clear the database
 
   try {
-    await ensureAnalyzed(service || null, force || false);
+    const db = await ensureAnalyzed(service || null, force || false);
     const status = getAnalysisStatus();
+
+    const nodeCount = await db.nodeCount();
+    const edgeCount = await db.edgeCount();
 
     return textResult(
       `Analysis complete!\n` +
-        `- Services discovered: ${status.servicesDiscovered}\n` +
-        `- Services analyzed: ${status.servicesAnalyzed}\n` +
-        `- Total time: ${status.timings.total || 'N/A'}s`
+        `- Nodes in graph: ${nodeCount.toLocaleString()}\n` +
+        `- Edges in graph: ${edgeCount.toLocaleString()}\n` +
+        `- Total time: ${status.timings.total || 'N/A'}s\n\n` +
+        `Use get_stats for a type breakdown, or find_nodes / query_graph to start querying.`
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
