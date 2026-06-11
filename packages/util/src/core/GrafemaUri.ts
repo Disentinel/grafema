@@ -113,20 +113,28 @@ export function parseGrafemaUri(uri: string): ParsedGrafemaUri | null {
 
   const rest = uri.slice(GRAFEMA_SCHEME.length); // "authority/file#fragment"
 
-  // Find the authority: everything up to the first '/' after the host
-  // Authority format: "host/project" (e.g., "github.com/owner/repo" or "localhost/project")
-  // We need to find where authority ends and file path begins.
-  // Convention: authority is "host/path" where host has no '/', so we split on first '/' after host.
-  // Actually, authority can be multi-segment (github.com/owner/repo = 3 segments).
-  // Strategy: find '#' first (fragment delimiter), then split the path part.
+  // Determine the authority boundary first. The authority is "host/project"
+  // (2 segments, e.g. "localhost/grafema") or "host/owner/repo" (3 segments)
+  // for known forge hosts. Everything after the authority is either the
+  // reserved virtual marker "_/..." or a "file/path#fragment".
+  const segments = rest.split('/');
+  const host = segments[0];
+  const authoritySegments =
+    host === 'github.com' || host === 'gitlab.com' || host === 'bitbucket.org'
+      ? 3 // host/owner/repo
+      : 2; // host/project (localhost/grafema)
 
-  const hashPos = rest.indexOf('#');
-  const slashUnderscoreSlash = rest.indexOf('/_/');
+  if (segments.length < authoritySegments) return null;
 
-  if (slashUnderscoreSlash !== -1 && (hashPos === -1 || slashUnderscoreSlash < hashPos)) {
-    // Virtual node: authority/_/encoded_id
-    const authority = rest.slice(0, slashUnderscoreSlash);
-    const encodedId = rest.slice(slashUnderscoreSlash + 3); // after "/_/"
+  const authority = segments.slice(0, authoritySegments).join('/');
+  const afterAuthority = rest.slice(authority.length + 1); // skip the '/' after authority
+
+  // Virtual node: the segment immediately after the authority is exactly "_".
+  // This MUST be anchored to the authority boundary — a "_" path segment deeper
+  // in a real file path (e.g. src/_/util.ts) is NOT a virtual marker, so we
+  // cannot scan the whole string for the substring "/_/".
+  if (afterAuthority === '_' || afterAuthority.startsWith('_/')) {
+    const encodedId = afterAuthority.slice(2); // after "_/"
     const decodedId = decodeFragment(encodedId);
 
     // Reconstruct compact ID -- it's just the decoded full ID
@@ -139,41 +147,13 @@ export function parseGrafemaUri(uri: string): ParsedGrafemaUri | null {
     };
   }
 
+  // Standard node: afterAuthority = "file/path#fragment"
+  const hashPos = afterAuthority.indexOf('#');
   if (hashPos === -1) return null; // No fragment = invalid
 
-  const pathPart = rest.slice(0, hashPos); // "authority/file/path"
-  const fragment = rest.slice(hashPos + 1); // "TYPE-%3Ename..."
+  const filePath = afterAuthority.slice(0, hashPos);
+  const fragment = afterAuthority.slice(hashPos + 1); // "TYPE-%3Ename..."
   const decodedFragment = decodeFragment(fragment);
-
-  // Split pathPart into authority and filePath.
-  // The authority is the first N segments that represent the host+project.
-  // Problem: we don't know where authority ends and file begins.
-  // Convention from the plan: authority = "host/project" (e.g., "localhost/grafema")
-  //   or "github.com/owner/repo" (3 segments).
-  // The file path typically starts with src/, lib/, etc.
-  //
-  // Better approach: find the file path by working backward from the fragment.
-  // The fragment's decoded form tells us the type. The module_id for MODULE# format
-  // means filePath = pathPart minus authority.
-  //
-  // Simplest reliable approach: the authority is stored separately or we use a heuristic.
-  // For now: authority = first 2 segments for "host/project" format,
-  // first 3 segments for known hosts (github.com, gitlab.com, bitbucket.org).
-
-  const segments = pathPart.split('/');
-  let authoritySegments: number;
-
-  const host = segments[0];
-  if (host === 'github.com' || host === 'gitlab.com' || host === 'bitbucket.org') {
-    authoritySegments = 3; // host/owner/repo
-  } else {
-    authoritySegments = 2; // host/project (localhost/grafema)
-  }
-
-  if (segments.length < authoritySegments) return null;
-
-  const authority = segments.slice(0, authoritySegments).join('/');
-  const filePath = segments.slice(authoritySegments).join('/');
 
   // Reconstruct compact semantic ID
   let semanticId: string;
