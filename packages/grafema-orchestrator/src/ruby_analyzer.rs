@@ -274,6 +274,30 @@ impl Ctx {
         }
         None
     }
+
+    /// Retro-actively set the visibility of an already-emitted method node in the
+    /// current class/module scope. Implements the `private :sym` / `protected :sym`
+    /// / `public :sym` idiom: the visibility modifier is called with symbol (or
+    /// string) arguments naming methods that were *already defined* earlier in the
+    /// same body, so the running `ctx.visibility` default (which only affects
+    /// *subsequent* defs) does not apply to them. The target method node was
+    /// emitted by `DefNode` (or `attr_*`) with a deterministic semantic id derived
+    /// from the enclosing class/module name, so we reconstruct that id and patch the
+    /// node in place. No-op when no matching method exists (typo, or a method
+    /// defined in a different reopening of the class) — safe by design.
+    fn set_method_visibility(&mut self, method_name: &str, vis: Visibility) {
+        let parent_name = self.enclosing_class_or_module();
+        let target_id = semantic_id(&self.file, "FUNCTION", method_name, parent_name.as_deref(), None);
+        if let Some(node) = self
+            .nodes
+            .iter_mut()
+            .find(|n| n.node_type == "FUNCTION" && n.id == target_id)
+        {
+            node.metadata
+                .insert("visibility".to_string(), serde_json::Value::String(vis.as_str().to_string()));
+            node.exported = vis == Visibility::Public;
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -820,18 +844,30 @@ fn walk_node_inner(node: &ruby_prism::Node<'_>, ctx: &mut Ctx) {
                         };
                         return;
                     }
-                    // With arguments: apply to specific methods, walk them
+                    // With arguments, two distinct idioms can appear:
+                    //   `private :a, :b`     — downgrade methods *already defined*
+                    //                          earlier in this body (symbol/string args).
+                    //   `private def foo;end` — an inline def, which must be emitted
+                    //                          with the modifier active.
+                    // The running `ctx.visibility` default only affects *subsequent*
+                    // defs, so symbol args (which name existing methods) must patch
+                    // those nodes retro-actively instead of being walked.
                     if let Some(args) = cn.arguments() {
-                        let saved_vis = ctx.visibility;
-                        ctx.visibility = match name.as_str() {
+                        let target_vis = match name.as_str() {
                             "private" => Visibility::Private,
                             "protected" => Visibility::Protected,
                             _ => Visibility::Public,
                         };
                         for arg in args.arguments().iter() {
-                            walk_node(&arg, ctx);
+                            if let Some(method_name) = extract_symbol_name(&arg) {
+                                ctx.set_method_visibility(&method_name, target_vis);
+                            } else {
+                                let saved_vis = ctx.visibility;
+                                ctx.visibility = target_vis;
+                                walk_node(&arg, ctx);
+                                ctx.visibility = saved_vis;
+                            }
                         }
-                        ctx.visibility = saved_vis;
                     }
                     return;
                 }
@@ -3334,6 +3370,86 @@ mod tests {
         assert_eq!(priv_m.metadata.get("visibility").unwrap(), "private");
         assert!(pub_m.exported);
         assert!(!priv_m.exported);
+    }
+
+    // 7b. `private :sym` / `protected :sym` (symbol args) retro-actively downgrade
+    // the visibility of an already-defined method. This is a distinct idiom from
+    // the bare `private` modifier (test 7) and from `private def ...` (inline def).
+    #[test]
+    fn test_visibility_symbol_args() {
+        let a = analyze(concat!(
+            "class Foo\n",
+            "  def a; end\n",
+            "  def b; end\n",
+            "  def c; end\n",
+            "  private :a\n",
+            "  protected :b, :c\n",
+            "end",
+        ));
+        let functions = find_nodes_by_type(&a, "FUNCTION");
+        let get = |n: &str| functions.iter().find(|f| f.name == n).unwrap();
+
+        let a_m = get("a");
+        assert_eq!(a_m.metadata.get("visibility").unwrap(), "private", "private :a");
+        assert!(!a_m.exported, "private method not exported");
+
+        // A single `protected :b, :c` applies to BOTH listed methods.
+        for n in ["b", "c"] {
+            let m = get(n);
+            assert_eq!(m.metadata.get("visibility").unwrap(), "protected", "protected :{n}");
+            assert!(!m.exported, "protected method {n} not exported");
+        }
+    }
+
+    // 7c. The retro-active visibility change must NOT leak into methods declared
+    // AFTER the `private :sym` call — only the bare modifier sets a running default.
+    #[test]
+    fn test_visibility_symbol_args_no_leak() {
+        let a = analyze(concat!(
+            "class Foo\n",
+            "  def a; end\n",
+            "  private :a\n",
+            "  def b; end\n",
+            "end",
+        ));
+        let functions = find_nodes_by_type(&a, "FUNCTION");
+        let b_m = functions.iter().find(|f| f.name == "b").unwrap();
+        assert_eq!(b_m.metadata.get("visibility").unwrap(), "public", "b declared after `private :a` stays public");
+        assert!(b_m.exported);
+    }
+
+    // 7d. `public :sym` re-publicizes a method that was private under a running
+    // `private` default; a string arg (`private "x"`) is equivalent to a symbol;
+    // and an inline `private def ...` still works via the walk path.
+    #[test]
+    fn test_visibility_symbol_args_republicize_and_inline() {
+        let a = analyze(concat!(
+            "class Foo\n",
+            "  private\n",
+            "  def a; end\n",
+            "  def b; end\n",
+            "  public :a\n",
+            "  private \"b\"\n",
+            "  private def c; end\n",
+            "end",
+        ));
+        let functions = find_nodes_by_type(&a, "FUNCTION");
+        let get = |n: &str| functions.iter().find(|f| f.name == n).unwrap();
+
+        // `a` was private-by-default, then re-published.
+        let a_m = get("a");
+        assert_eq!(a_m.metadata.get("visibility").unwrap(), "public", "public :a re-publicizes");
+        assert!(a_m.exported);
+
+        // `b` was private-by-default and a string arg keeps it private.
+        let b_m = get("b");
+        assert_eq!(b_m.metadata.get("visibility").unwrap(), "private", "private \"b\"");
+        assert!(!b_m.exported);
+
+        // Inline `private def c` is emitted private via the walk path.
+        let c_m = get("c");
+        assert_eq!(c_m.metadata.get("visibility").unwrap(), "private", "private def c");
+        assert!(!c_m.exported);
     }
 
     // 8. Block test
