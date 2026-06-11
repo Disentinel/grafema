@@ -10,6 +10,7 @@
 #   - ESLint passes
 #   - All packages build
 #   - Package versions are in sync
+#   - Rust crates compile (cargo check) — REG-1177
 
 name: CI
 
@@ -276,3 +277,37 @@ jobs:
             exit 1
           fi
           echo "Cargo.toml version is in sync."
+
+  # Job 5: Rust compilation check (REG-1177)
+  # ci.yml previously had no Rust checks; a syntax error in rust_analyzer.rs
+  # passed 16/16 green gates and surfaced only in build-binaries 7 hours later.
+  rust-check:
+    name: Rust Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            packages/rfdb-server/target
+            packages/grafema-orchestrator/target
+          key: ${{ runner.os }}-cargo-check-${{ hashFiles('packages/rfdb-server/Cargo.lock', 'packages/grafema-orchestrator/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-check-
+
+      - name: Cargo check — rfdb-server
+        run: cargo check --manifest-path packages/rfdb-server/Cargo.toml
+
+      - name: Cargo check — grafema-orchestrator
+        run: cargo check --manifest-path packages/grafema-orchestrator/Cargo.toml
