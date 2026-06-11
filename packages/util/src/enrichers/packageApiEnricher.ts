@@ -30,6 +30,7 @@ import type { RFDBClient } from '@grafema/rfdb-client';
 import type { WireEdge, WireNode } from '@grafema/types';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { DEFAULT_INDEX_FILES } from '../utils/moduleResolution.js';
 
 export interface PackageApiEnrichResult {
   /** Number of `package:export` nodes created (or re-upserted). */
@@ -58,12 +59,21 @@ export interface PackageApiEnrichOptions {
   flushBatchSize?: number;
 }
 
-const DEFAULT_BARREL_SUFFIXES: readonly string[] = [
-  '/src/index.ts',
-  '/src/index.js',
-  '/index.ts',
-  '/index.js',
-];
+/**
+ * Monorepo barrel-file path suffixes a package's exports may live behind.
+ *
+ * Derived from the canonical {@link DEFAULT_INDEX_FILES} (single source of
+ * truth) so barrel detection stays aligned with the eight JS/TS extensions the
+ * orchestrator indexes (`js | jsx | ts | tsx | mjs | cjs | mts | cts`). Each
+ * index form is matched both at a package's `/src/` root and at the package
+ * root. Deriving rather than hand-listing prevents the extension drift that
+ * previously dropped `index.mts`/`index.tsx`/`index.jsx`/… barrels — those
+ * files ARE indexed as MODULE nodes, so omitting them silently lost a whole
+ * package's public API surface.
+ */
+const DEFAULT_BARREL_SUFFIXES: readonly string[] = DEFAULT_INDEX_FILES.flatMap(
+  idx => [`/src/${idx}`, `/${idx}`],
+);
 
 const DEFAULT_FLUSH_BATCH_SIZE = 200;
 

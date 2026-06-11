@@ -442,4 +442,65 @@ describe('packageApiEnricher', () => {
     const has = await getEdges(client, apiNodes[0].id, 'HANDLES');
     assert.equal(has.length, 1, 'no duplicate HANDLES edges');
   });
+
+  it('detects barrels in every indexed index.* form (.mts /src/ + .tsx root): extension drift', async () => {
+    // The orchestrator indexes 8 JS/TS extensions (js|jsx|ts|tsx|mjs|cjs|mts|cts).
+    // A package whose barrel is `index.mts` or `index.tsx` is a real MODULE in
+    // the graph, but DEFAULT_BARREL_SUFFIXES historically only matched
+    // index.ts/index.js, so those barrels' exports were silently dropped.
+    // Mirrors the passing direct-export case above; the ONLY variable changed
+    // is the barrel file extension, so a failure isolates barrel detection.
+    const mtsBarrel = 'packages/pkg-mts/src/index.mts'; // /src/ form, .mts
+    const mtsDef = 'packages/pkg-mts/src/foo.ts';
+    const tsxBarrel = 'packages/pkg-tsx/index.tsx'; // root form, .tsx
+    const tsxDef = 'packages/pkg-tsx/bar.ts';
+
+    for (const f of [mtsBarrel, mtsDef, tsxBarrel, tsxDef]) {
+      await seedBarrelModule(backend, f);
+    }
+
+    await backend.addNode({
+      id: 'test::eb-mts',
+      type: 'EXPORT_BINDING',
+      name: 'fromMts',
+      file: mtsBarrel,
+      exported: true,
+      exportedName: 'fromMts',
+      source: './foo.js',
+    });
+    await backend.addNode({
+      id: 'test::fn-mts',
+      type: 'FUNCTION',
+      name: 'fromMts',
+      file: mtsDef,
+      arrowFunction: false,
+    });
+
+    await backend.addNode({
+      id: 'test::eb-tsx',
+      type: 'EXPORT_BINDING',
+      name: 'FromTsx',
+      file: tsxBarrel,
+      exported: true,
+      exportedName: 'FromTsx',
+      source: './bar.js',
+    });
+    await backend.addNode({
+      id: 'test::cls-tsx',
+      type: 'CLASS',
+      name: 'FromTsx',
+      file: tsxDef,
+    });
+
+    const result = await enrichPackageApis(client);
+
+    assert.equal(result.packagesScanned, 2, 'both .mts and .tsx barrels detected');
+    assert.equal(result.apiNodesCreated, 2);
+    assert.equal(result.handlesEdgesCreated, 2);
+    assert.equal(result.exportsWithoutHandler, 0);
+
+    const names = [];
+    for await (const wn of client.queryNodes({ type: 'package:export' })) names.push(wn.name);
+    assert.deepEqual(names.sort(), ['FromTsx', 'fromMts']);
+  });
 });
