@@ -8,7 +8,7 @@ description: |
   bug, (4) planning a refactor and needing impact analysis, (5) grep returned
   0 hits or 20+ hits and you can't narrow it down, (6) about to modify a function
   without knowing its callers.
-version: 0.2.0
+version: 0.3.0
 date: 2026-06-10
 ---
 
@@ -25,15 +25,18 @@ lookups grep is faster and cheaper. The graph wins when the answer lives in
 *relationships* (who calls this? where does this value come from?) rather than
 in *text*. Route by the question, not by habit.
 
-**Scale factor — check this FIRST (it comes free with `get_stats`).** The tier
-table assumes a codebase where textual search degrades: large, multi-service,
-aliased, indirect. On a small repo (roughly <300 files / <50K graph nodes)
-grep+read is competitive at EVERY tier — measured on a 142-file codebase, plain
-grep matched graph answers on caller-enumeration at ~1/7th the cost and on
-dataflow tracing at ~1/2. There, use the graph only after text search has
-actually failed, or when the question crosses 2+ indirection hops (re-exports,
-dynamic dispatch, cross-service calls). The graph's edge grows with size: in
-200K+-node codebases file-hopping costs explode while graph-query cost stays flat.
+**Anchor check — the FIRST routing question.** If the symbol or string you need
+is literally in the question (or trivially derivable — camelCase/snake_case
+variants of the same name), text search finds it at ANY repo size: modern agents
+fan grep out across naming conventions cheaply. Measured on a 372K-node
+multi-language monorepo, grep+read matched graph answers on symbol-anchored
+caller-enumeration and value-tracing at 60-80% of the session cost. **Reach for
+the graph when the anchor is missing or lies:** dynamic dispatch / DI /
+registry-resolved calls; aggregate questions ("everything that writes to X
+through any plugin", "all side effects reachable from Y"); behavior questions
+where no name appears in the question at all; and whenever the answer must be
+*deterministic and citable* (graph edges carry provenance — grep narratives
+don't). Repo size amplifies these cases but does not by itself justify the graph.
 
 ## Tier table — route by question type
 
