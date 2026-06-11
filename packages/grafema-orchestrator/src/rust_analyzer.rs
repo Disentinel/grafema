@@ -521,7 +521,16 @@ fn walk_item(item: &syn::Item, ctx: &mut Ctx) {
         syn::Item::ForeignMod(fm) => walk_foreign_mod(fm, ctx),
         // Transparent items — no graph nodes needed
         syn::Item::ExternCrate(_) => {}
-        syn::Item::Macro(_) => {}
+        // `foo! { ... }` at item position is a macro INVOCATION whose body may
+        // contain calls/references — walk it like Expr::Macro/Stmt::Macro so
+        // they reach the graph (common in `lazy_static!`, `thread_local!`, and
+        // codegen DSLs). `macro_rules! name { ... }` (ident = Some) is a macro
+        // DEFINITION, not an invocation, so it stays transparent.
+        syn::Item::Macro(m) => {
+            if m.ident.is_none() {
+                walk_macro(&m.mac, ctx);
+            }
+        }
         syn::Item::Union(u) => walk_union(u, ctx),
         syn::Item::TraitAlias(_) => {}
         syn::Item::Verbatim(_) => {}
@@ -983,7 +992,10 @@ fn walk_impl_item(item: &syn::ImplItem, ctx: &mut Ctx) {
         syn::ImplItem::Type(t) => {
             emit_assoc_type(&t.ident, Some(&t.vis), ctx);
         }
-        syn::ImplItem::Macro(_) => {}
+        // A macro invocation at impl-item position (e.g. a codegen DSL that
+        // emits methods) may nest calls/references — walk it so they reach the
+        // graph rather than being silently dropped.
+        syn::ImplItem::Macro(m) => walk_macro(&m.mac, ctx),
         syn::ImplItem::Verbatim(_) => {}
         _ => ctx.warn_unhandled("ImplItem", ""),
     }
@@ -1046,6 +1058,9 @@ fn walk_trait(t: &syn::ItemTrait, ctx: &mut Ctx) {
             syn::TraitItem::Type(ty) => {
                 emit_assoc_type(&ty.ident, None, ctx);
             }
+            // A macro invocation at trait-item position may nest
+            // calls/references — walk it like the other item-position macros.
+            syn::TraitItem::Macro(m) => walk_macro(&m.mac, ctx),
             _ => {}
         }
     }
@@ -1251,9 +1266,10 @@ fn walk_foreign_mod(fm: &syn::ItemForeignMod, ctx: &mut Ctx) {
             syn::ForeignItem::Fn(f) => walk_foreign_fn(f, &abi, ctx),
             syn::ForeignItem::Static(s) => walk_foreign_static(s, &abi, ctx),
             syn::ForeignItem::Type(t) => walk_foreign_type(t, ctx),
-            // A foreign macro expands at a different stage and a verbatim item is
-            // unparsed tokens — neither introduces a resolvable symbol here.
-            syn::ForeignItem::Macro(_) => {}
+            // A macro invocation at foreign-item position may nest
+            // calls/references in its body — walk it like the other item-position
+            // macros so they are not dropped. A verbatim item is unparsed tokens.
+            syn::ForeignItem::Macro(m) => walk_macro(&m.mac, ctx),
             syn::ForeignItem::Verbatim(_) => {}
             _ => ctx.warn_unhandled("ForeignItem", ""),
         }
@@ -2774,6 +2790,8 @@ mod tests {
             .find(|n| n.node_type == "FUNCTION" && n.name == "puts")
             .expect("FUNCTION puts");
         assert_eq!(f.metadata.get("abi"), Some(&serde_json::json!("C")));
+    }
+
     // Associated items inside `impl` blocks and `trait` definitions used to be
     // silently dropped (ImplItem::Const/Type were empty no-ops; walk_trait only
     // matched TraitItem::Fn), so `Self::MAX` and associated-type queries returned
@@ -2821,6 +2839,8 @@ mod tests {
         assert!(has_edge(&fa, "CONTAINS", "TRAIT", "TYPE_ALIAS"), "TRAIT CONTAINS type");
         // The function signature is still emitted alongside the associated type.
         assert_eq!(count_nodes(&fa, "TYPE_SIGNATURE"), 1);
+    }
+
     // ── Macro invocations ───────────────────────────────────────────────
     // `syn` does not expand macros, so before this fix `Expr::Macro` and
     // `Stmt::Macro` were dropped entirely. That violated KNOWN_LIMITATIONS'
@@ -2881,5 +2901,93 @@ mod tests {
         let fa = parse_and_analyze("fn main() { let _ = matches!(x, Some(_)); }");
         assert!(has_node(&fa, "CALL", "matches"),
             "matches! emits a CALL node even though its body isn't an expr list");
+    }
+
+    // ── Item-position macro invocations ──────────────────────────────────
+    // `Expr::Macro`/`Stmt::Macro` are walked, but macro invocations at *item*
+    // position (module level, inside `impl` blocks, inside `extern` blocks)
+    // were transparent no-ops, so every call/reference nested in them — common
+    // in `lazy_static!`, `thread_local!`, and codegen DSLs of legacy crates —
+    // was silently dropped from the graph.
+
+    #[test]
+    fn test_item_macro_invocation_walks_nested_calls() {
+        // A bare `foo! { ... }` at module/item position (NOT a macro_rules!
+        // definition) is an invocation; its body calls must reach the graph.
+        let fa = parse_and_analyze(
+            "register! { compute_default() }\nfn compute_default() -> i32 { 0 }",
+        );
+        assert!(
+            has_node(&fa, "CALL", "register"),
+            "item-position macro invocation emits a CALL node"
+        );
+        let call = fa.nodes.iter()
+            .find(|n| n.node_type == "CALL" && n.name == "register")
+            .unwrap();
+        assert_eq!(call.metadata.get("macro"), Some(&serde_json::json!(true)),
+            "item macro CALL is tagged macro=true");
+        assert!(
+            has_node(&fa, "CALL", "compute_default"),
+            "call nested inside an item-position macro must be walked"
+        );
+    }
+
+    #[test]
+    fn test_macro_rules_definition_not_treated_as_call() {
+        // `macro_rules! name { ... }` is a DEFINITION, not an invocation, and
+        // must not produce a spurious `macro_rules` CALL node.
+        let fa = parse_and_analyze("macro_rules! my_macro { () => { 0 }; }");
+        assert!(
+            !has_node(&fa, "CALL", "macro_rules"),
+            "macro_rules! definition must not be treated as a macro invocation"
+        );
+    }
+
+    #[test]
+    fn test_impl_item_macro_walks_nested_calls() {
+        // A macro invocation at impl-item position dropped nested calls.
+        let fa = parse_and_analyze(
+            "struct S; impl S { gen_methods!(helper()); }\nfn helper() {}",
+        );
+        assert!(
+            has_node(&fa, "CALL", "gen_methods"),
+            "impl-item macro invocation emits a CALL node"
+        );
+        assert!(
+            has_node(&fa, "CALL", "helper"),
+            "call nested inside an impl-item macro must be walked"
+        );
+    }
+
+    #[test]
+    fn test_foreign_item_macro_walks_nested_calls() {
+        // A macro invocation at foreign-item position dropped nested calls.
+        let fa = parse_and_analyze(
+            r#"extern "C" { c_decls!(libc_init()); }"#,
+        );
+        assert!(
+            has_node(&fa, "CALL", "c_decls"),
+            "foreign-item macro invocation emits a CALL node"
+        );
+        assert!(
+            has_node(&fa, "CALL", "libc_init"),
+            "call nested inside a foreign-item macro must be walked"
+        );
+    }
+
+    #[test]
+    fn test_trait_item_macro_walks_nested_calls() {
+        // A macro invocation at trait-item position dropped nested calls.
+        let fa = parse_and_analyze(
+            "trait T { decl!(setup()); }\nfn setup() {}",
+        );
+        assert!(
+            has_node(&fa, "CALL", "decl"),
+            "trait-item macro invocation emits a CALL node"
+        );
+        assert!(
+            has_node(&fa, "CALL", "setup"),
+            "call nested inside a trait-item macro must be walked"
+        );
     }
 }
