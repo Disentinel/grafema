@@ -383,6 +383,13 @@ func typeNameString(expr ast.Expr) string {
 		return t.Sel.Name
 	case *ast.StarExpr:
 		return typeNameString(t.X)
+	case *ast.IndexExpr:
+		// Generic instantiation with one type argument, e.g. Stack[int].
+		// The promoted field / embedded type name is the generic base.
+		return typeNameString(t.X)
+	case *ast.IndexListExpr:
+		// Generic instantiation with multiple type arguments, e.g. Pair[K, V].
+		return typeNameString(t.X)
 	default:
 		return ""
 	}

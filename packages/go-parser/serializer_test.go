@@ -1480,3 +1480,90 @@ type (
 		t.Errorf("expected name 'B', got %v", d1["name"])
 	}
 }
+
+// structDeclByName finds the StructTypeDecl with the given name among the
+// flattened top-level declarations, failing the test if it is absent.
+func structDeclByName(t *testing.T, result map[string]interface{}, name string) map[string]interface{} {
+	t.Helper()
+	for _, raw := range result["decls"].([]interface{}) {
+		decl := raw.(map[string]interface{})
+		if decl["type"] == "StructTypeDecl" && decl["name"] == name {
+			return decl
+		}
+	}
+	t.Fatalf("struct decl %q not found", name)
+	return nil
+}
+
+// TestEmbeddedGenericStruct asserts that struct fields embedding a generic
+// type instantiation keep the base type name (the promoted field name in Go),
+// rather than dropping it to the empty string. Covers single type-argument
+// (`Stack[int]`), pointer-to-generic (`*Stack[string]`), and multi type-argument
+// (`Pair[string, int]`) embeds. Regression guard for the generic-instantiation
+// gap in typeNameString.
+func TestEmbeddedGenericStruct(t *testing.T) {
+	src := `package main
+
+type Stack[T any] struct{ items []T }
+type Pair[K any, V any] struct {
+	k K
+	v V
+}
+
+type IntStack struct {
+	Stack[int]
+	name string
+}
+
+type PtrStack struct {
+	*Stack[string]
+}
+
+type KV struct {
+	Pair[string, int]
+}
+`
+	result := parseAndSerialize(t, src)
+
+	// IntStack: embedded Stack[int] -> field name "Stack"
+	intStack := structDeclByName(t, result, "IntStack")
+	isFields := intStack["fields"].([]interface{})
+	if len(isFields) != 2 {
+		t.Fatalf("IntStack: expected 2 fields, got %d", len(isFields))
+	}
+	f0 := isFields[0].(map[string]interface{})
+	if f0["embedded"] != true {
+		t.Errorf("IntStack: expected embedded=true for Stack[int]")
+	}
+	if f0["name"] != "Stack" {
+		t.Errorf("IntStack: expected embedded name 'Stack', got %q", f0["name"])
+	}
+
+	// PtrStack: embedded *Stack[string] -> field name "Stack"
+	ptrStack := structDeclByName(t, result, "PtrStack")
+	psFields := ptrStack["fields"].([]interface{})
+	if len(psFields) != 1 {
+		t.Fatalf("PtrStack: expected 1 field, got %d", len(psFields))
+	}
+	pf0 := psFields[0].(map[string]interface{})
+	if pf0["embedded"] != true {
+		t.Errorf("PtrStack: expected embedded=true for *Stack[string]")
+	}
+	if pf0["name"] != "Stack" {
+		t.Errorf("PtrStack: expected embedded name 'Stack', got %q", pf0["name"])
+	}
+
+	// KV: embedded Pair[string, int] (IndexListExpr) -> field name "Pair"
+	kv := structDeclByName(t, result, "KV")
+	kvFields := kv["fields"].([]interface{})
+	if len(kvFields) != 1 {
+		t.Fatalf("KV: expected 1 field, got %d", len(kvFields))
+	}
+	kf0 := kvFields[0].(map[string]interface{})
+	if kf0["embedded"] != true {
+		t.Errorf("KV: expected embedded=true for Pair[string, int]")
+	}
+	if kf0["name"] != "Pair" {
+		t.Errorf("KV: expected embedded name 'Pair', got %q", kf0["name"])
+	}
+}
