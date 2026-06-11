@@ -320,8 +320,17 @@ async function processTarget(
 
   // ── EXTERNAL_MODULE / GLOBAL_DEFINITION → metadata effects first, then effects-db ──
   if (targetNode.type === 'EXTERNAL_MODULE' || targetNode.type === 'GLOBAL_DEFINITION') {
-    // Try reading effects from node metadata (set by GenericRuntimeGlobals enricher)
-    const metaEffects = (targetNode as Record<string, unknown>).effects;
+    // Try reading effects from node metadata. Two producers, two shapes:
+    // - legacy GenericRuntimeGlobals enricher / Haskell resolver: JSON array (MetaList)
+    // - datalog2 js_runtime_globals_nodes pack (Wave 4, DELTA 1): @materialize_node
+    //   meta() can only project string surfaces, so effects arrive comma-joined
+    //   ("IO,THROW"). Fresh graphs have ONLY pack-minted nodes — accept both.
+    const rawMetaEffects = (targetNode as Record<string, unknown>).effects;
+    const metaEffects = Array.isArray(rawMetaEffects)
+      ? rawMetaEffects
+      : typeof rawMetaEffects === 'string' && rawMetaEffects.length > 0
+        ? rawMetaEffects.split(',').map(s => s.trim()).filter(s => s.length > 0)
+        : null;
     if (Array.isArray(metaEffects) && metaEffects.length > 0) {
       const leafEffects: EffectType[] = [];
       for (const e of metaEffects) {

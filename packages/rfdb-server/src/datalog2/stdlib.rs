@@ -257,6 +257,32 @@ pub const JS_BUILTINS_NODES_DL: &str = include_str!("stdlib/js_builtins_nodes.dl
 /// same-run-minted endpoints). Both heads additive (shared vocabulary).
 pub const JS_BUILTINS_EDGES_DL: &str = include_str!("stdlib/js_builtins_edges.dl");
 
+/// Node half of the `runtime-call-globals` replacement (Wave 4):
+/// GLOBAL_DEFINITION minting (legacy sid `GLOBAL::<seName>`) for JS CALL
+/// nodes matching the effects-db SymbolDB — the generated `rtg_key`/`rtg_eff`
+/// ground facts (js_runtime_globals_facts.dl, prepended at compile time;
+/// regenerate via scripts/generate-runtime-globals-facts.mjs) joined through
+/// the allSuffixes/firstMatch encoding (longest matching dot-suffix wins) with
+/// the isLocallyResolved skip. Negation + minting ⇒ scratch-only under
+/// maintain.
+pub const JS_RUNTIME_GLOBALS_NODES_DL: &str = concat!(
+    include_str!("stdlib/js_runtime_globals_facts.dl"),
+    "\n",
+    include_str!("stdlib/js_runtime_globals_nodes.dl"),
+);
+
+/// Edge half of the `runtime-call-globals` replacement (Wave 4): CALLS
+/// CALL→GLOBAL_DEFINITION, endpoints pinned by (name, file "<runtime/js>"),
+/// meta resolvedVia="runtime-globals" globalCategory="ecmascript" (legacy
+/// mkEdge payload). MUST run after `js_runtime_globals_nodes` (committed-EDB
+/// endpoint join — the js_builtins two-pack split). Additive (CALLS is shared
+/// vocabulary).
+pub const JS_RUNTIME_GLOBALS_EDGES_DL: &str = concat!(
+    include_str!("stdlib/js_runtime_globals_facts.dl"),
+    "\n",
+    include_str!("stdlib/js_runtime_globals_edges.dl"),
+);
+
 /// The JS module-path kernel pack (Wave 3b, path/string-kit-unblocked): the
 /// in-engine replacement for the module-level arms of `ImportResolution.hs` —
 /// IMPORT → MODULE `IMPORTS_FROM` (`resolveModuleImports`) and star re-export
@@ -328,8 +354,9 @@ pub const JS_MODULE_IMPORTS_DL: &str = include_str!("stdlib/js_module_imports.dl
 /// rust_receiver_typing → rust_imports → js_module_imports →
 /// js_import_bindings → js_class_inheritance →
 /// js_cross_file_calls → js_property_access_ns → js_property_access_full →
-/// js_builtins_nodes → js_builtins_edges → depends → method_calls →
-/// shape_verifier → axum_routes.
+/// js_builtins_nodes → js_builtins_edges → js_runtime_globals_nodes →
+/// js_runtime_globals_edges → depends → method_calls → shape_verifier →
+/// axum_routes.
 pub const STDLIB_PACKS: &[(&str, &str)] = &[
     ("js_local_refs", JS_LOCAL_REFS_DL),
     ("js_same_file_calls", JS_SAME_FILE_CALLS_DL),
@@ -366,6 +393,13 @@ pub const STDLIB_PACKS: &[(&str, &str)] = &[
     // fallback (method_calls) and the negator (shape_verifier).
     ("js_builtins_nodes", JS_BUILTINS_NODES_DL),
     ("js_builtins_edges", JS_BUILTINS_EDGES_DL),
+    // Wave 4: js_runtime_globals_nodes mints the GLOBAL_DEFINITION endpoints
+    // that js_runtime_globals_edges joins as committed EDB (strict
+    // nodes→edges order); the edges pack is a CALLS producer, so the pair
+    // precedes the fuzzy fallback (method_calls) and the negator
+    // (shape_verifier).
+    ("js_runtime_globals_nodes", JS_RUNTIME_GLOBALS_NODES_DL),
+    ("js_runtime_globals_edges", JS_RUNTIME_GLOBALS_EDGES_DL),
     // Wave 3c: depends CONSUMES IMPORTS_FROM (every edge, module- and
     // binding-level) — with legacy import-resolution gated it must run after
     // ALL in-engine IMPORTS_FROM producers (rust_imports, js_module_imports,
@@ -1232,6 +1266,8 @@ mod tests {
                 "js_property_access_full",
                 "js_builtins_nodes",
                 "js_builtins_edges",
+                "js_runtime_globals_nodes",
+                "js_runtime_globals_edges",
                 "depends",
                 "method_calls",
                 "shape_verifier",
@@ -3333,12 +3369,39 @@ mod tests {
         edge(&mut v, "i_mid", "m_deep", "IMPORTS_FROM");
         named_node(&mut v, "e_star_mid", "*:./deep2", "EXPORT", "mid.ts");
         edge(&mut v, "e_star_mid", "m_deep2", "RE_EXPORTS");
-        // The DELTA-1 pin: a named re-export with NO IMPORT seam for its source.
+        // The DELTA-1 pin: a named re-export with NO IMPORT seam for its source
+        // (and no committed hop edge — the source is genuinely unresolvable).
         named_node(&mut v, "eb_ghost", "g", "EXPORT_BINDING", "mid.ts");
         v.put_node_metadata(
             id_of("eb_ghost"),
             r#"{"exportedName":"ghost","source":"./nowhere"}"#,
         );
+
+        // Wave 4: a named re-export with NO IMPORT seam but a COMMITTED
+        // RE_EXPORTS hop edge (as js_module_imports' eb_reexport_hop seam
+        // commits it) — the formerly seam-less subset now resolves.
+        named_node(&mut v, "m_side", "side", "MODULE", "side.ts");
+        named_node(&mut v, "e_side", "named", "EXPORT", "side.ts");
+        named_node(&mut v, "f_side", "sidefn", "FUNCTION", "side.ts");
+        edge(&mut v, "e_side", "f_side", "EXPORTS");
+        named_node(&mut v, "eb_side", "sidefn", "EXPORT_BINDING", "mid.ts");
+        v.put_node_metadata(
+            id_of("eb_side"),
+            r#"{"exportedName":"sideRenamed","source":"./side"}"#,
+        );
+        edge(&mut v, "eb_side", "m_side", "RE_EXPORTS");
+
+        // Wave 4 exported_in clause 4: the hop target's export is a BARE
+        // `__exported` declaration (buildExportIndex class 3) — no EXPORT
+        // node, no EXPORT_BINDING in side.ts.
+        named_node(&mut v, "f_decl", "declLocal", "FUNCTION", "side.ts");
+        v.put_node_metadata(id_of("f_decl"), r#"{"__exported":"true"}"#);
+        named_node(&mut v, "eb_decl", "declLocal", "EXPORT_BINDING", "mid.ts");
+        v.put_node_metadata(
+            id_of("eb_decl"),
+            r#"{"exportedName":"sideDecl","source":"./side"}"#,
+        );
+        edge(&mut v, "eb_decl", "m_side", "RE_EXPORTS");
 
         // top.ts: a barrel star-re-exporting mid.
         named_node(&mut v, "m_top", "top", "MODULE", "top.ts");
@@ -3355,7 +3418,9 @@ mod tests {
         };
         bind(&mut v, "b_renamed", "renamed", "renamed"); // star(top→mid) + named hop → f_deep
         bind(&mut v, "b_star", "starfn", "starfn"); // star(top→mid) + star(mid→deep2) → f_star
-        bind(&mut v, "b_ghost", "ghost", "ghost"); // named hop without seam — DELTA 1 miss
+        bind(&mut v, "b_ghost", "ghost", "ghost"); // unresolvable named hop — derives nothing
+        bind(&mut v, "b_side", "sideRenamed", "sideRenamed"); // Wave-4 committed hop edge → f_side
+        bind(&mut v, "b_decl", "sideDecl", "sideDecl"); // Wave-4 hop → __exported declaration (clause 4)
 
         let (eval, _specs, _node_specs) = evaluate_with_materialize(
             &v,
@@ -3381,12 +3446,202 @@ mod tests {
             BTreeSet::from([
                 (id_of("b_renamed"), id_of("f_deep")),
                 (id_of("b_star"), id_of("f_star")),
+                (id_of("b_side"), id_of("f_side")),
+                (id_of("b_decl"), id_of("f_decl")),
             ]),
             "chains collapse to the FINAL declaration (named hop with rebinding \
-             through the IMPORT seam; 2-hop star chain through RE_EXPORTS); the \
-             seam-less named hop (DELTA 1) derives nothing and no edge ever \
-             targets a re-export EXPORT_BINDING"
+             through the IMPORT seam; 2-hop star chain through RE_EXPORTS; \
+             Wave-4 named hop through the binding's own committed RE_EXPORTS \
+             seam edge, incl. an __exported bare declaration — exported_in \
+             clause 4); the unresolvable named hop derives nothing and no \
+             edge ever targets a re-export EXPORT_BINDING"
         );
+    }
+
+    /// Wave 4 — js_module_imports' eb_reexport_hop seam: a named re-export's
+    /// source (`export { x } from './side'`, EXPORT_BINDING + `source`
+    /// metadata, NO IMPORT node) rides the SAME candidate ladder and commits
+    /// EXPORT_BINDING → MODULE RE_EXPORTS (the materialized handleExportEntry
+    /// resolveModulePath winner). An unresolvable source and a source-less
+    /// (local) EXPORT_BINDING derive nothing; the head requires the MODULE at
+    /// the winner (DELTA 8).
+    #[test]
+    fn js_module_imports_eb_reexport_hop_seam() {
+        let mut v = FixtureStorageView::new(1);
+
+        // side.ts: an exporting file with its MODULE node.
+        named_node(&mut v, "m_side", "side", "MODULE", "side.ts");
+        named_node(&mut v, "eb_in_side", "x", "EXPORT_BINDING", "side.ts");
+        v.put_node_metadata(id_of("eb_in_side"), r#"{"exportedName":"x"}"#);
+
+        // mid.ts: `export { x } from './side'` — EXPORT_BINDING with source,
+        // no IMPORT node anywhere.
+        named_node(&mut v, "eb_hop", "x", "EXPORT_BINDING", "mid.ts");
+        v.put_node_metadata(id_of("eb_hop"), r#"{"exportedName":"x","source":"./side"}"#);
+
+        // Negative pins: unresolvable source; local binding without source.
+        named_node(&mut v, "eb_bad", "y", "EXPORT_BINDING", "mid.ts");
+        v.put_node_metadata(id_of("eb_bad"), r#"{"exportedName":"y","source":"./nowhere"}"#);
+        named_node(&mut v, "eb_local", "z", "EXPORT_BINDING", "mid.ts");
+        v.put_node_metadata(id_of("eb_local"), r#"{"exportedName":"z"}"#);
+
+        let (eval, _specs, _node_specs) = evaluate_with_materialize(
+            &v,
+            JS_MODULE_IMPORTS_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("js_module_imports.dl evaluates with the eb hop seam");
+
+        let hops: BTreeSet<(u128, u128, String)> = eval
+            .facts("eb_reexport_hop")
+            .into_iter()
+            .map(|r| {
+                (
+                    r[0].as_id().expect("eb id"),
+                    r[1].as_id().expect("module id"),
+                    r[2].as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            hops,
+            BTreeSet::from([(id_of("eb_hop"), id_of("m_side"), "side.ts".to_string())]),
+            "the resolvable named-hop source commits its RE_EXPORTS seam edge \
+             with resolvedPath; unresolvable / source-less bindings derive nothing"
+        );
+    }
+
+    /// Wave 4 — js_runtime_globals_nodes: the generated effects-db SymbolDB
+    /// facts joined through the allSuffixes/firstMatch encoding mint
+    /// GLOBAL_DEFINITION nodes with byte-identical legacy sids
+    /// (`GLOBAL::<seName>`). Covers, against the REAL generated facts:
+    /// - qualified-key match (`fs.readFile` → seName `readFile`);
+    /// - dotted BARE-key full-name match (`JSON.stringify`);
+    /// - receiver suffix → bare key (`lines.push` → `push`);
+    /// - the seName-conflict pin (`process.exit` → `GLOBAL::process.exit`,
+    ///   the bare entry — the live-oracle policy, NOT `exit`);
+    /// - both isLocallyResolved arms (full name + last dot-segment against a
+    ///   same-file JS FUNCTION);
+    /// - the 8-extension gate (a `.rs` call must not match);
+    /// - a no-match call derives nothing.
+    #[test]
+    fn js_runtime_globals_nodes_mints_legacy_sids() {
+        let mut v = FixtureStorageView::new(1);
+
+        named_node(&mut v, "c_read", "fs.readFile", "CALL", "app.ts");
+        named_node(&mut v, "c_json", "JSON.stringify", "CALL", "app.ts");
+        named_node(&mut v, "c_push", "lines.push", "CALL", "app.ts");
+        named_node(&mut v, "c_exit", "process.exit", "CALL", "app.ts");
+        // local-resolution skips: `join` IS a db key, but a same-file FUNCTION
+        // named `join` suppresses both the bare call and the method call.
+        named_node(&mut v, "c_join", "join", "CALL", "util.ts");
+        named_node(&mut v, "c_mjoin", "arr.join", "CALL", "util.ts");
+        named_node(&mut v, "f_join", "join", "FUNCTION", "util.ts");
+        // cross-language gate + no-match.
+        named_node(&mut v, "c_rust", "fs.readFile", "CALL", "main.rs");
+        named_node(&mut v, "c_none", "totallyLocalHelper", "CALL", "app.ts");
+
+        let (eval, _specs, _node_specs) = evaluate_with_materialize(
+            &v,
+            JS_RUNTIME_GLOBALS_NODES_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("js_runtime_globals_nodes.dl evaluates");
+
+        let wins: BTreeSet<(u128, String)> = eval
+            .facts("win")
+            .into_iter()
+            .map(|r| (r[0].as_id().expect("call id"), r[1].as_str()))
+            .collect();
+        assert_eq!(
+            wins,
+            BTreeSet::from([
+                (id_of("c_read"), "readFile".to_string()),
+                (id_of("c_json"), "JSON.stringify".to_string()),
+                (id_of("c_push"), "push".to_string()),
+                (id_of("c_exit"), "process.exit".to_string()),
+            ]),
+            "qualified/bare/suffix matches win, conflict resolves bare-wins, \
+             locally-resolved + non-JS + unknown calls derive nothing"
+        );
+
+        // The minted node set: sid GLOBAL::<seName>, one row per seName across
+        // the two heads (with/without effects).
+        let mut minted: BTreeSet<(String, String)> = BTreeSet::new();
+        for r in eval.facts("rtg_node_eff") {
+            minted.insert((r[0].as_str(), r[1].as_str()));
+        }
+        for r in eval.facts("rtg_node_plain") {
+            minted.insert((r[0].as_str(), r[1].as_str()));
+        }
+        assert_eq!(
+            minted,
+            BTreeSet::from([
+                ("GLOBAL::readFile".to_string(), "readFile".to_string()),
+                ("GLOBAL::JSON.stringify".to_string(), "JSON.stringify".to_string()),
+                ("GLOBAL::push".to_string(), "push".to_string()),
+                ("GLOBAL::process.exit".to_string(), "process.exit".to_string()),
+            ]),
+            "byte-identical legacy sids, one node per matched seName"
+        );
+    }
+
+    /// Wave 4 — js_runtime_globals_edges joins the COMMITTED GLOBAL_DEFINITION
+    /// endpoints (as minted by js_runtime_globals_nodes / the legacy resolver)
+    /// and reproduces the legacy CALLS slice:
+    /// - firstMatch = LONGEST matching suffix: `process.exit` matches both the
+    ///   `process.exit` and `exit` keys — exactly ONE edge, to
+    ///   GLOBAL::process.exit (the shadowing negation);
+    /// - the endpoint is pinned by (name, "<runtime/js>"): a same-named
+    ///   GLOBAL_DEFINITION in another runtime's virtual file is never a target.
+    #[test]
+    fn js_runtime_globals_edges_first_match_and_endpoint_pin() {
+        let mut v = FixtureStorageView::new(1);
+
+        // Committed endpoints (legacy-sid'd) + a cross-runtime decoy.
+        named_node(&mut v, "GLOBAL::process.exit", "process.exit", "GLOBAL_DEFINITION", "<runtime/js>");
+        named_node(&mut v, "GLOBAL::exit", "exit", "GLOBAL_DEFINITION", "<runtime/js>");
+        named_node(&mut v, "GLOBAL::readFile", "readFile", "GLOBAL_DEFINITION", "<runtime/js>");
+        named_node(&mut v, "RUST_GLOBAL::readFile", "readFile", "GLOBAL_DEFINITION", "<runtime/rust>");
+
+        named_node(&mut v, "c_exit", "process.exit", "CALL", "app.ts");
+        named_node(&mut v, "c_fs", "fs.readFile", "CALL", "app.ts");
+
+        let (eval, specs, _node_specs) = evaluate_with_materialize(
+            &v,
+            JS_RUNTIME_GLOBALS_EDGES_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("js_runtime_globals_edges.dl evaluates");
+
+        let edges: BTreeSet<(u128, u128)> = eval
+            .facts("rtg_call_edge")
+            .into_iter()
+            .map(|r| (r[0].as_id().expect("src id"), r[1].as_id().expect("dst id")))
+            .collect();
+        assert_eq!(
+            edges,
+            BTreeSet::from([
+                (id_of("c_exit"), id_of("GLOBAL::process.exit")),
+                (id_of("c_fs"), id_of("GLOBAL::readFile")),
+            ]),
+            "longest-suffix winner only (no edge to GLOBAL::exit), \
+             cross-runtime decoy never joined"
+        );
+
+        // The @materialize spec carries the legacy mkEdge payload.
+        let spec = specs
+            .iter()
+            .find(|s| s.predicate == "rtg_call_edge")
+            .expect("rtg_call_edge has a materialize spec");
+        assert_eq!(spec.edge_type, "CALLS");
+        assert_eq!(spec.meta, vec!["resolvedVia".to_string(), "globalCategory".to_string()]);
     }
 
     /// Wave 2b — js_cross_file_calls namespace arm through the visible() chain:
@@ -3979,8 +4234,9 @@ mod tests {
         let res: Vec<_> = specs.iter().filter(|s| s.edge_type == "RE_EXPORTS").collect();
         assert_eq!(
             res.len(),
-            1,
-            "one RE_EXPORTS spec (the annotation covers both star_reexport clauses)"
+            2,
+            "two RE_EXPORTS specs: star_reexport (one annotation over its \
+             clauses) + the Wave-4 eb_reexport_hop seam head"
         );
         assert!(
             res.iter().all(|s| s.additive && s.meta == vec!["resolvedPath".to_string()]),

@@ -353,3 +353,106 @@ js_builtins_nodes/edges + (file,prefix)-индекс, −16-18s), №5 (this_mem
 full-key join, −13s), №6 (rs_macro share, частично поглощён 1b). Бонус-находка профайлера:
 D2 maintain МЕДЛЕННЕЕ scratch на неизменном графе (diff_base full-scan) — закрыт short-circuit'ом
 для idle, но для малых дельт вопрос открыт.
+
+---
+
+## Wave 4 (2026-06-11): runtime-globals закрыт + default-гейтинг втор-прохода + binding-hop (js/rust resolve-миграция ЗАКРЫТА)
+
+**Part 1 — default-retired второпроходные шаги:** `RETIRED_SECOND_PASS_STEPS`
+(orchestrator main.rs, у `derive_depends_on_legacy`) — built-in сет, мержится с
+GRAFEMA_SKIP_RESOLVE_STEPS через `effective_second_pass_skips()` (pure, тест
+`retired_second_pass_steps_skip_by_default_and_env_is_additive`); env-var аддитивна и
+НЕ может un-retire. Retired: `js-this-method-calls` (W9 432≡432) +
+`runtime-call-globals` (差 ниже).
+
+**Part 2 — runtime-globals facts + паки (срез 7,800):** legacy producer =
+`runtime-call-globals` (Main.hs dispatch :261 → RuntimeGlobals.resolveAll с
+jsCallStrategy: CALL-ноды, CALLS-рёбра, GLOBAL::<seName>, resolvedVia="runtime-globals",
+globalCategory="ecmascript"; commit-имя js-call-globals). SymbolDB = ВСЕ yaml из
+effects-db/{runtimes,packages} (python/rust/haskell-ключи легально матчат JS-коллы —
+"lines.push"→GLOBAL::push, "GuaranteeNode.validate"→GLOBAL::validate).
+**Генератор** `scripts/generate-runtime-globals-facts.mjs` (js-yaml из pnpm store) →
+`js_runtime_globals_facts.dl` (5,722 rtg_key + 2,6xx rtg_eff; зеркалит flatten
+RuntimeGlobals.hs:80-167). 16 seName-КОНФЛИКТОВ (bare-dotted-fn vs qualified mod.fn,
+legacy = load-order-dependent Map.unions) — policy bare-wins, ПРИШПИЛЕНА live-ораклом:
+прод минтил GLOBAL::process.exit (41 CALLS), не GLOBAL::exit. **Паки**
+`js_runtime_globals_nodes`/`_edges` (двух-паковый сплит js_builtins; facts prepended
+через stdlib.rs concat!): allSuffixes = dot-prefix shrink-идиома (spec_pfx) + suffix
+через strip_prefix; firstMatch = longest-suffix via shadowed-негация (любые два
+матчащихся суффикса одного имени сравнимы); isLocallyResolved оба арма
+(method_suffix = точный last-segment-гейт). DELTAS 1-6 (effects comma-string,
+exported-флаг, effects-winner, consecutive-dots, colonVariant vacuous — 0 "::"-ключей,
+8-ext gate). **差 `wave4_runtime_globals_differential`: 7,800 ≡ 7,800, only-diff 0/0,
+seNames 183 ≡ 183 — С ПЕРВОГО ЗАПУСКА.** runtime-call-globals → retired.
+
+**ENGINE MUST-FIX (wildcard demotes hash-join):** `rtg_key(S, _)` — planner помечает
+Wildcard как Bound → `derived_probe_key` возвращает None на КАЖДОЙ строке →
+join_derived молча падает в defensive per-row FULL SCAN: 22k×5.7k = ~20s на ОДНО
+нерекурсивное правило (нашёл event-sink с wall-clock: stratum msfx seed 20.7s).
+Фикс exec.rs: Wildcard-позиции исключены из probe key (unify_atom всё равно их
+матчит); тест `derived_join_wildcard_positions_stay_indexed_and_correct`.
+Паки 23s → **2.9s/3.4s**.
+
+**Part 3 — binding-hop subset (DELTA 1 js_import_bindings ЗАКРЫТА):** legacy
+handleExportEntry (Hs:368-386) резолвит source named-re-export'а ПОЛНЫМ
+resolveModulePath (ладдер + ws-армы, БЕЗ ModuleIndex-fallback) — материализован как
+seam-ребро `eb_reexport_hop`: EXPORT_BINDING → MODULE RE_EXPORTS (js_module_imports,
+eb_src арм в src/rel; DELTA 8 = MODULE-нода на winner). reexp получил второй арм
+(committed hop edge) в js_import_bindings + оба textual-duplicates
+(js_class_inheritance, js_cross_file_calls). + exported_in clause 4 = gnExported
+declarations (buildExportIndex class 3, Hs:137; `__exported` node_attr) — single-scan
+`exp_decl` ⋈ hash target_file (НЕ target_file-led: малый ведущий генератор = 211×8
+re-scans, ~8.5s; single-scan = ~1s — урок planner-filter-before-generator, exec-twin).
+**差 `wave4_binding_hop_differential`** (двухстадийный: js_module_imports →
+OverlayStorageView с hop-рёбрами → js_import_bindings — un-committed эквивалент
+прод-порядка паков): **legacy-only 263 → 0** (residue witnessed: 1 STALE-DST —
+висячее legacy-ребро на удалённую ноду; 5 WS-FACTS-ABSENT — ws-bare hop source
+'@grafema/rfdb-client' при 0 WORKSPACE_PACKAGE-фактов на старой копии, армы есть,
+live-proof = свежий analyze); pack-only 49 (43 hop-introduced) = задекларированные
+superset-классы (DELTA 1b/2/class-3), все witnessed.
+
+**Per-pack времена (probe `wave4_touched_pack_probe_times`, копия 491k):**
+js_module_imports 3.3s, js_import_bindings **5.0s** (W9-бэнд 3-5s держится),
+js_class_inheritance 4.3s, js_cross_file_calls 3.8s, js_runtime_globals_nodes 2.9s,
+js_runtime_globals_edges 3.4s.
+
+**Suites:** datalog2 267/0 debug+release, полный rfdb lib 1345/0, plan gate ok,
+orchestrator 443+13+14+1 / 0, **Gate A 51/51**. Реестры: оба (stdlib.rs STDLIB_PACKS +
+orchestrator STDLIB_RULE_PACKS) — пара runtime_globals после js_builtins_edges,
+кросс-реестровый пин зелёный.
+
+**Carry-forward Wave 4:** (1) hop seam = НОВАЯ лексика (EXPORT_BINDING→MODULE
+RE_EXPORTS) — потребители star_src гейтятся node(E,"EXPORT"), не задеты; (2) effects
+в pack-минченных нодах = comma-string (DELTA 1) — виден только на fresh gated
+графах; (3) ws-facts-absent класс закрывается сам на любом пост-3c analyze (факты
+эмитятся оркестратором); (4) `exp_decl` материализует ~160k строк на полном графе —
+дешёво сейчас, кандидат на shared-relation при W6 parallel eval.
+
+---
+
+## Wave 4 fix-round + W9-iter2 landing (2026-06-11, conveyor #5 финал): **20 паков = 56.2s — ЦЕЛЬ ≤60s ДОСТИГНУТА**
+
+**Wave 4 must-fixes (оба подтверждены и закрыты с фальсификационными прогонами):**
+(1) YAML bool-key дрифт — js-yaml резолвил ключи `True:/False:` в булевы (legacy Data.Yaml
+держит verbatim) → фантомные rtg_key("true") факты; фикс = FAILSAFE_SCHEMA в генераторе +
+regen (диф = ровно 8 строк), values проверены грепом на schema-чувствительность.
+(2) trace_effects регрессия — пак писал effects строкой "IO,THROW", traceEffects.ts требовал
+Array.isArray; фикс на консьюмере (нормализация обеих форм) + 2 теста (без фикса падают
+ровно они). DELTA 1 хедер обновлён известным консьюмером.
+
+**W9-iter2 (полностью в exec.rs, 152-строчный патч):** derived×derived full-key build-once
+join + empty-leg short-circuit; Wave-4 имплементер независимо нашёл смежный движковый баг
+(Wildcard в derived_probe_key → тихая демоция в per-row scan, 23s→3s у runtime_globals).
+Лендинг: hand-merge двух конфликтов, ревью iter2 approve (3 стилевых нита — merge-scar
+doc-строка, устаревший комментарий derived_probe_key, неверная ссылка на E-PLAN-003 гард
+в тест-комменте).
+
+**ФИНАЛЬНАЯ ПРОБА (объединённое дерево, свежий release-бинарь, копия 491,535/1,037,299):**
+20 паков production-порядка = **56,207 ms**. Хронология одной метрики:
+900s timeout → 330s (post-merge) → 176.6s (Wave M+3a-c) → 81.3s (W9) → **56.2s (W9-iter2+W4)**.
++2 новых runtime_globals пака ≈ +6.3s (замерены отдельно в Wave-4 acceptance).
+
+**Wave 4 = миграция js/rust ЗАВЕРШЕНА содержательно:** runtime-globals 7,800≡7,800 exact,
+binding-hop 263→0 (witnessed residue), js-this-method-calls + runtime-call-globals retired
+BY DEFAULT (RETIRED_SECOND_PASS_STEPS, env остаётся аддитивным). Остался финальный
+сквозной дифференциал + флип RFDB_DATALOG_V2 (#12) и cleanup (#13).

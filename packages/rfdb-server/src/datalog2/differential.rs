@@ -2048,3 +2048,635 @@ fn wave3c_acceptance_counts() {
     assert!(c("im") > 0, "harness integrity: the IMPORT->MODULE slice is non-empty");
     eprintln!("=== wave3c acceptance counts: printed ===\n");
 }
+
+// ── Wave 4: js_runtime_globals shadow differential against the dogfood graph copy ──
+
+/// Shadow differential for the `js_runtime_globals_*` pack pair (Wave 4) against
+/// the LEGACY `runtime-call-globals` slice committed in the dogfood graph (the
+/// jsCallStrategy run of `Grafema.RuntimeGlobals.resolveAll`, committed as
+/// `js-call-globals` by the orchestrator's second pass).
+///
+/// Dataset: `GRAFEMA_WAVE4_DIFF_DB` (default `/tmp/w4-graph.rfdb`, a caller-made
+/// copy of `.grafema/graph.rfdb` — NEVER the live store). Copied again into a
+/// tempdir so a concurrently-running server cannot contend.
+///
+/// PREDICTIONS, declared BEFORE the diff (the §3 harness discipline):
+/// - LEGACY slice = every CALLS edge stamped `_source = "js-call-globals"`
+///   (probed uniform on the copy: 7,800 edges, single metadata histogram bucket)
+///   into a `<runtime/js>` GLOBAL_DEFINITION.
+/// - PACK rows (rtg_call_edge over the same pinned view; the endpoint join hits
+///   the legacy-minted nodes) ≡ legacy EXACTLY — only-diff 0 in BOTH directions.
+///   The declared delta classes (nodes-pack header DELTAS 3-5: conflict-key
+///   effects, consecutive-dot suffixes, colonVariant) are all predicted VACUOUS
+///   on this graph; any diff row is witnessed (call name + suffix analysis) and
+///   the run STOPS.
+/// - PACK matched-seName set ≡ the legacy node-name set with ≥1 CALLS edge
+///   (probed: all 183 of 183 names).
+///
+///   GRAFEMA_WAVE4_DIFF_DB=/tmp/w4-graph.rfdb \
+///   cargo test --release --lib wave4_runtime_globals_differential -- --ignored --nocapture
+#[test]
+#[ignore = "manual real-data shadow differential; run with --ignored"]
+fn wave4_runtime_globals_differential() {
+    use crate::datalog2::evaluate_with_materialize;
+    use std::collections::HashMap;
+
+    let dataset = std::env::var("GRAFEMA_WAVE4_DIFF_DB")
+        .unwrap_or_else(|_| "/tmp/w4-graph.rfdb".to_string());
+    let dataset = PathBuf::from(dataset);
+    if !dataset.join("db_config.json").exists() {
+        panic!(
+            "dataset not found at {} — copy the dogfood graph first: \
+             cp -R .grafema/graph.rfdb /tmp/w4-graph.rfdb",
+            dataset.display()
+        );
+    }
+
+    let tmp = tempfile::tempdir().expect("temp");
+    let work = tmp.path().join("graph.rfdb");
+    copy_dir_all(&dataset, &work).expect("copy dataset");
+    let _ = std::fs::remove_file(work.join("LOCK"));
+    let manifest = ManifestStore::open(&work).expect("manifest");
+    let store = MultiShardStore::open(&work, &manifest).expect("store");
+    let store = Arc::new(store);
+    let view = LsmStorageView::capture(store.clone(), &manifest);
+
+    let snap = store.snapshot(&manifest);
+    let all_nodes = store.find_nodes_at(&snap, None, None);
+    let mut nbt: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    for n in &all_nodes {
+        *nbt.entry(n.node_type.clone()).or_insert(0) += 1;
+    }
+    let stats = Stats {
+        total_nodes: all_nodes.len() as u64,
+        total_edges: store.iter_all_edges_at(&snap).len() as u64,
+        nodes_by_type: nbt,
+    };
+    eprintln!(
+        "\n=== wave4 js_runtime_globals differential (nodes={}, edges={}) ===",
+        stats.total_nodes, stats.total_edges
+    );
+
+    // Witness maps: call id → (name, file); global id → name.
+    let mut call_info: HashMap<u128, (String, String)> = HashMap::new();
+    for n in store.find_nodes_at(&snap, Some("CALL"), None) {
+        call_info.insert(n.id, (n.name.clone(), n.file.clone()));
+    }
+    let mut g_name: HashMap<u128, String> = HashMap::new();
+    for n in store.find_nodes_at(&snap, Some("GLOBAL_DEFINITION"), None) {
+        if n.file == "<runtime/js>" {
+            g_name.insert(n.id, n.name.clone());
+        }
+    }
+
+    // ── The LEGACY slice (stamp-discriminated, probed uniform on this copy). ──
+    let legacy_src = r#"
+        g_node(G) :- node(G, "GLOBAL_DEFINITION"), attr(G, "file", "<runtime/js>").
+        legacy_e(C, G) :- g_node(G), edge(C, G, "CALLS"),
+                          edge_attr(C, G, "CALLS", "_source", "js-call-globals").
+    "#;
+    let legacy_eval = evaluate(&view, legacy_src, stats.clone(), EvalLimits::none(), EventLog::discard())
+        .expect("legacy slice eval");
+    let pairs = |eval: &crate::datalog2::exec::Evaluation, pred: &str| -> BTreeSet<(u128, u128)> {
+        eval.facts(pred)
+            .iter()
+            .filter_map(|r| Some((r.first()?.as_id()?, r.get(1)?.as_id()?)))
+            .collect()
+    };
+    let legacy = pairs(&legacy_eval, "legacy_e");
+
+    // ── The PACK (edges half; the prelude is the full match machinery),
+    //    evaluated read-only over the same view. ──
+    let (pack_eval, _specs, _node_specs) = evaluate_with_materialize(
+        &view,
+        crate::datalog2::stdlib::JS_RUNTIME_GLOBALS_EDGES_DL,
+        stats.clone(),
+        EvalLimits::none(),
+        EventLog::discard(),
+    )
+    .expect("js_runtime_globals_edges.dl evaluates on the real graph");
+    let pack = pairs(&pack_eval, "rtg_call_edge");
+
+    // Non-vacuity floors: the pack genuinely saw the graph.
+    let count = |pred: &str| pack_eval.facts(pred).len();
+    eprintln!(
+        "intermediates: jcall={} js_fn={} loc_res={} cand={} sfx={} msfx={} win={}",
+        count("jcall"), count("js_fn"), count("loc_res"), count("cand"),
+        count("sfx"), count("msfx"), count("win"),
+    );
+    assert!(count("jcall") >= 10_000, "JS CALL floor");
+    assert!(count("js_fn") >= 1_000, "JS FUNCTION floor");
+    assert!(count("win") >= 1_000, "match floor");
+
+    let both = legacy.intersection(&pack).count();
+    eprintln!("CALLS: legacy={} pack={} both={}", legacy.len(), pack.len(), both);
+
+    // Witness every diff row, both directions, then STOP if any.
+    let mut diff_rows = 0usize;
+    for (c, g) in pack.difference(&legacy) {
+        diff_rows += 1;
+        let (cn, cf) = call_info.get(c).cloned().unwrap_or_default();
+        eprintln!(
+            "PACK-ONLY ROW: call={cn:?} file={cf:?} -> GLOBAL::{} — outside every declared class, witness it",
+            g_name.get(g).cloned().unwrap_or_default()
+        );
+    }
+    for (c, g) in legacy.difference(&pack) {
+        diff_rows += 1;
+        let (cn, cf) = call_info.get(c).cloned().unwrap_or_default();
+        eprintln!(
+            "LEGACY-ONLY ROW: call={cn:?} file={cf:?} -> GLOBAL::{} — in-scope miss, witness it",
+            g_name.get(g).cloned().unwrap_or_default()
+        );
+    }
+    assert_eq!(diff_rows, 0, "predicted EXACT: only-diff 0 in both directions");
+
+    // ── Node half: the matched-seName set ≡ the legacy node-name set that
+    //    carries at least one legacy CALLS edge. ──
+    let pack_names: BTreeSet<String> = pack_eval
+        .facts("win")
+        .iter()
+        .filter_map(|r| Some(r.get(1)?.as_str()))
+        .collect();
+    let legacy_names: BTreeSet<String> = legacy
+        .iter()
+        .filter_map(|(_, g)| g_name.get(g).cloned())
+        .collect();
+    if pack_names != legacy_names {
+        for n in pack_names.difference(&legacy_names) {
+            eprintln!("PACK-ONLY seName: {n:?}");
+        }
+        for n in legacy_names.difference(&pack_names) {
+            eprintln!("LEGACY-ONLY seName: {n:?}");
+        }
+        panic!("matched-seName set must equal the legacy CALLS-edge node-name set");
+    }
+    eprintln!(
+        "=== wave4 differential: PASS (CALLS slice exact, {} edges, {} seNames) ===\n",
+        pack.len(),
+        pack_names.len()
+    );
+}
+
+// ── Wave 4: binding-hop differential — js_import_bindings DELTA 1 closes ──
+
+/// Shadow differential for the Wave-4 binding-hop arm: the legacy
+/// IMPORT_BINDING → IMPORTS_FROM slice vs js_import_bindings evaluated over the
+/// copy PLUS the eb_reexport_hop seam edges (js_module_imports' new head),
+/// staged through an OverlayStorageView — the un-committed equivalent of the
+/// production pack order (js_module_imports commits before js_import_bindings
+/// runs).
+///
+/// Dataset: `GRAFEMA_WAVE4_DIFF_DB` (default `/tmp/w4-graph.rfdb`).
+///
+/// PREDICTIONS, declared BEFORE the diff:
+/// - Wave 3c measured legacy = 1,313, pack = 1,050: the 263 legacy-only rows
+///   are the DELTA-1 subset (seam-less named re-export hops).
+/// - WITH the hop seam the legacy-only set closes to 0; any residue is
+///   witnessed row-by-row and STOPS the run unless it falls in a declared
+///   class: (a) STALE-DST — a dangling legacy edge whose dst node no longer
+///   exists on the copy; (b) WS-FACTS-ABSENT — the chain enters a hop whose
+///   source is a bare workspace specifier and the copy has no
+///   WORKSPACE_PACKAGE facts (the Wave-3c precondition; live proof = fresh
+///   gated analyze); (c) DELTA 8 — hop target file without a MODULE node.
+/// - pack-only rows: the declared superset deltas (DELTA 1b star-vs-direct
+///   union, DELTA 2 duplicate same-name exports) — witnessed and counted,
+///   no hard cap (legacy first-match vs set semantics).
+///
+///   GRAFEMA_WAVE4_DIFF_DB=/tmp/w4-graph.rfdb \
+///   cargo test --release --lib wave4_binding_hop_differential -- --ignored --nocapture
+#[test]
+#[ignore = "manual real-data shadow differential; run with --ignored"]
+fn wave4_binding_hop_differential() {
+    use crate::datalog2::evaluate_with_materialize;
+    use crate::datalog2::storage_glue::{EdgeRow, FixtureStorageView, OverlayStorageView};
+    use std::collections::HashMap;
+
+    let dataset = std::env::var("GRAFEMA_WAVE4_DIFF_DB")
+        .unwrap_or_else(|_| "/tmp/w4-graph.rfdb".to_string());
+    let dataset = PathBuf::from(dataset);
+    if !dataset.join("db_config.json").exists() {
+        panic!(
+            "dataset not found at {} — copy the dogfood graph first: \
+             cp -R .grafema/graph.rfdb /tmp/w4-graph.rfdb",
+            dataset.display()
+        );
+    }
+
+    let tmp = tempfile::tempdir().expect("temp");
+    let work = tmp.path().join("graph.rfdb");
+    copy_dir_all(&dataset, &work).expect("copy dataset");
+    let _ = std::fs::remove_file(work.join("LOCK"));
+    let manifest = ManifestStore::open(&work).expect("manifest");
+    let store = MultiShardStore::open(&work, &manifest).expect("store");
+    let store = Arc::new(store);
+    let view = LsmStorageView::capture(store.clone(), &manifest);
+
+    let snap = store.snapshot(&manifest);
+    let all_nodes = store.find_nodes_at(&snap, None, None);
+    let mut nbt: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    for n in &all_nodes {
+        *nbt.entry(n.node_type.clone()).or_insert(0) += 1;
+    }
+    let stats = Stats {
+        total_nodes: all_nodes.len() as u64,
+        total_edges: store.iter_all_edges_at(&snap).len() as u64,
+        nodes_by_type: nbt,
+    };
+    eprintln!(
+        "\n=== wave4 binding-hop differential (nodes={}, edges={}) ===",
+        stats.total_nodes, stats.total_edges
+    );
+
+    // Witness maps.
+    let mut binding_info: HashMap<u128, (String, String)> = HashMap::new();
+    for n in store.find_nodes_at(&snap, Some("IMPORT_BINDING"), None) {
+        binding_info.insert(n.id, (n.name.clone(), n.file.clone()));
+    }
+    let mut target_info: HashMap<u128, (String, String, String)> = HashMap::new();
+    for n in &all_nodes {
+        target_info.insert(n.id, (n.node_type.clone(), n.name.clone(), n.file.clone()));
+    }
+
+    // ── Stage 1: js_module_imports (with the Wave-4 eb hop head) read-only. ──
+    let (mi_eval, _s, _n) = evaluate_with_materialize(
+        &view,
+        crate::datalog2::stdlib::JS_MODULE_IMPORTS_DL,
+        stats.clone(),
+        EvalLimits::none(),
+        EventLog::discard(),
+    )
+    .expect("js_module_imports.dl evaluates on the real graph");
+    let hops: Vec<(u128, u128)> = mi_eval
+        .facts("eb_reexport_hop")
+        .iter()
+        .filter_map(|r| Some((r.first()?.as_id()?, r.get(1)?.as_id()?)))
+        .collect();
+    eprintln!("stage 1: eb_reexport_hop seam edges = {}", hops.len());
+    assert!(!hops.is_empty(), "the hop seam must derive on this graph (263-row gap exists)");
+
+    // ── Stage 2: js_import_bindings over base ∪ hop-edges (the production
+    //    pack order, un-committed). ──
+    let mut delta = FixtureStorageView::new(view.generation());
+    for (src, dst) in &hops {
+        delta.put_edge(EdgeRow { src: *src, dst: *dst, edge_type: "RE_EXPORTS".into() });
+    }
+    let overlay = OverlayStorageView::new(&view, delta);
+    let (ib_eval, _s2, _n2) = evaluate_with_materialize(
+        &overlay,
+        crate::datalog2::stdlib::JS_IMPORT_BINDINGS_DL,
+        stats.clone(),
+        EvalLimits::none(),
+        EventLog::discard(),
+    )
+    .expect("js_import_bindings.dl evaluates over the overlay");
+    let mut pack: BTreeSet<(u128, u128)> = BTreeSet::new();
+    for pred in ["binding_import", "binding_ns"] {
+        for r in ib_eval.facts(pred) {
+            if let (Some(a), Some(b)) = (r.first().and_then(|v| v.as_id()), r.get(1).and_then(|v| v.as_id())) {
+                pack.insert((a, b));
+            }
+        }
+    }
+
+    // ── The LEGACY binding slice (stamp-VALUE discrimination, Wave 3c). ──
+    let legacy_src = r#"
+        b_edge(B, T) :- node(B, "IMPORT_BINDING"), edge(B, T, "IMPORTS_FROM").
+        b_stamped(B, T) :- b_edge(B, T), edge_attr(B, T, "IMPORTS_FROM", "_source", S).
+        legacy_b(B, T) :- b_edge(B, T), edge_attr(B, T, "IMPORTS_FROM", "_source", "js-resolution").
+        legacy_b(B, T) :- b_edge(B, T), \+ b_stamped(B, T).
+        % ws-facts-absent classifier: the binding's chain enters a named
+        % re-export hop whose source is a BARE (workspace) specifier — on a
+        % copy with NO WORKSPACE_PACKAGE facts the ws arms derive nothing (the
+        % Wave-3c DELTA-1 precondition class; live proof = fresh gated analyze).
+        ws_absent_b(B) :-
+            node(B, "IMPORT_BINDING"), edge(I, B, "CONTAINS"), node(I, "IMPORT"),
+            edge(I, M, "IMPORTS_FROM"), node(M, "MODULE"), attr(M, "file", TF),
+            node_attr(B, "importedName", IN),
+            node(EB, "EXPORT_BINDING"), attr(EB, "file", TF),
+            node_attr(EB, "exportedName", IN),
+            node_attr(EB, "source", S),
+            not_starts_with(S, "./"), not_starts_with(S, "../").
+    "#;
+    let legacy_eval = evaluate(&view, legacy_src, stats.clone(), EvalLimits::none(), EventLog::discard())
+        .expect("legacy slice eval");
+    let legacy: BTreeSet<(u128, u128)> = legacy_eval
+        .facts("legacy_b")
+        .iter()
+        .filter_map(|r| Some((r.first()?.as_id()?, r.get(1)?.as_id()?)))
+        .collect();
+
+    let both = legacy.intersection(&pack).count();
+    eprintln!(
+        "IMPORT_BINDING IMPORTS_FROM: legacy={} pack={} both={}",
+        legacy.len(), pack.len(), both
+    );
+
+    // legacy-only must close to 0 (the wave's acceptance) — witness any residue.
+    // ONE declared residue class: a legacy edge whose dst node NO LONGER EXISTS
+    // (a stale edge surviving its endpoint's reanalysis deletion in the hybrid
+    // copy — the clear-placebo class) is unreproducible by ANY resolver and
+    // does not count against the pack; still printed as a witness.
+    let ws_absent: BTreeSet<u128> = legacy_eval
+        .facts("ws_absent_b")
+        .iter()
+        .filter_map(|r| r.first()?.as_id())
+        .collect();
+    let mut legacy_only = 0usize;
+    let mut stale_dst = 0usize;
+    let mut ws_facts_absent = 0usize;
+    for (b, t) in legacy.difference(&pack) {
+        let (bn, bf) = binding_info.get(b).cloned().unwrap_or_default();
+        match target_info.get(t) {
+            None => {
+                stale_dst += 1;
+                eprintln!(
+                    "LEGACY-ONLY (STALE-DST) ROW: binding={bn:?} file={bf:?} -> dst id {t} \
+                     ABSENT from the node set — dangling legacy edge, declared class"
+                );
+            }
+            Some(_) if ws_absent.contains(b) => {
+                ws_facts_absent += 1;
+                let (tt, tn, tf) = target_info.get(t).cloned().unwrap_or_default();
+                eprintln!(
+                    "LEGACY-ONLY (WS-FACTS-ABSENT) ROW: binding={bn:?} file={bf:?} -> \
+                     {tt} {tn:?} ({tf}) — workspace-bare hop source, no WORKSPACE_PACKAGE \
+                     facts on this copy (Wave-3c precondition class; live proof = fresh analyze)"
+                );
+            }
+            Some((tt, tn, tf)) => {
+                legacy_only += 1;
+                eprintln!(
+                    "LEGACY-ONLY ROW: binding={bn:?} file={bf:?} -> {tt} {tn:?} ({tf}) — \
+                     in-scope miss, witness it"
+                );
+            }
+        }
+    }
+    // pack-only rows: declared superset deltas (DELTA 1b star-vs-direct union,
+    // DELTA 2 duplicate same-name exports, the class-3 declaration arm joining
+    // the EXPORT→REFERENCE row) — witnessed, counted; split into pre-existing
+    // (base view, no hop seam) vs hop-introduced.
+    let (ib_base_eval, _s3, _n3) = evaluate_with_materialize(
+        &view,
+        crate::datalog2::stdlib::JS_IMPORT_BINDINGS_DL,
+        stats.clone(),
+        EvalLimits::none(),
+        EventLog::discard(),
+    )
+    .expect("js_import_bindings.dl evaluates over the base view");
+    let mut pack_base: BTreeSet<(u128, u128)> = BTreeSet::new();
+    for pred in ["binding_import", "binding_ns"] {
+        for r in ib_base_eval.facts(pred) {
+            if let (Some(a), Some(b)) = (r.first().and_then(|v| v.as_id()), r.get(1).and_then(|v| v.as_id())) {
+                pack_base.insert((a, b));
+            }
+        }
+    }
+    let mut pack_only = 0usize;
+    let mut pack_only_new = 0usize;
+    for (b, t) in pack.difference(&legacy) {
+        pack_only += 1;
+        let new = !pack_base.contains(&(*b, *t));
+        if new {
+            pack_only_new += 1;
+        }
+        let (bn, bf) = binding_info.get(b).cloned().unwrap_or_default();
+        let (tt, tn, tf) = target_info.get(t).cloned().unwrap_or_default();
+        eprintln!(
+            "PACK-ONLY{} ROW: binding={bn:?} file={bf:?} -> {tt} {tn:?} ({tf}) — \
+             declared superset class (DELTA 1b/2/class-3)",
+            if new { " (HOP-INTRODUCED)" } else { " (pre-existing)" }
+        );
+    }
+    eprintln!(
+        "legacy-only={legacy_only} stale-dst={stale_dst} ws-facts-absent={ws_facts_absent} \
+         pack-only={pack_only} (hop-introduced {pack_only_new})"
+    );
+    assert_eq!(
+        legacy_only, 0,
+        "the 263-row DELTA-1 gap must close to 0 (any residue requires a witnessed delta class)"
+    );
+    eprintln!("=== wave4 binding-hop differential: PASS (legacy-only closed to 0) ===\n");
+}
+
+/// Wave 4 per-pack probe times over the dogfood copy (W9 regression guard for
+/// the touched packs). Pure measurement — numbers are read off the output and
+/// judged against the W9 table (js_import_bindings was ~3-5s); the only hard
+/// assertion guards harness integrity.
+///
+///   GRAFEMA_WAVE4_DIFF_DB=/tmp/w4-graph.rfdb \
+///   cargo test --release --lib wave4_touched_pack_probe_times -- --ignored --nocapture
+#[test]
+#[ignore = "manual real-data perf probe; run with --ignored --release"]
+fn wave4_touched_pack_probe_times() {
+    use crate::datalog2::evaluate_with_materialize;
+    use std::time::Instant;
+
+    let dataset = std::env::var("GRAFEMA_WAVE4_DIFF_DB")
+        .unwrap_or_else(|_| "/tmp/w4-graph.rfdb".to_string());
+    let dataset = PathBuf::from(dataset);
+    if !dataset.join("db_config.json").exists() {
+        panic!("dataset not found at {}", dataset.display());
+    }
+    let tmp = tempfile::tempdir().expect("temp");
+    let work = tmp.path().join("graph.rfdb");
+    copy_dir_all(&dataset, &work).expect("copy dataset");
+    let _ = std::fs::remove_file(work.join("LOCK"));
+    let manifest = ManifestStore::open(&work).expect("manifest");
+    let store = MultiShardStore::open(&work, &manifest).expect("store");
+    let store = Arc::new(store);
+    let view = LsmStorageView::capture(store.clone(), &manifest);
+
+    let snap = store.snapshot(&manifest);
+    let all_nodes = store.find_nodes_at(&snap, None, None);
+    let mut nbt: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    for n in &all_nodes {
+        *nbt.entry(n.node_type.clone()).or_insert(0) += 1;
+    }
+    let stats = Stats {
+        total_nodes: all_nodes.len() as u64,
+        total_edges: store.iter_all_edges_at(&snap).len() as u64,
+        nodes_by_type: nbt,
+    };
+
+    let touched = [
+        "js_module_imports",
+        "js_import_bindings",
+        "js_class_inheritance",
+        "js_cross_file_calls",
+        "js_runtime_globals_nodes",
+        "js_runtime_globals_edges",
+    ];
+    eprintln!("\n=== wave4 touched-pack probe times (nodes={}) ===", stats.total_nodes);
+    let mut evaluated = 0usize;
+    for name in touched {
+        let src = crate::datalog2::stdlib::stdlib_pack(name).expect("registered pack");
+        let t0 = Instant::now();
+        let (eval, _s, _n) = evaluate_with_materialize(
+            &view,
+            src,
+            stats.clone(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .unwrap_or_else(|e| panic!("{name} evaluates: {e}"));
+        let dt = t0.elapsed();
+        evaluated += 1;
+        // print a head-fact count so the probe is visibly non-vacuous
+        let probe_pred = match name {
+            "js_module_imports" => "import_module",
+            "js_import_bindings" => "binding_import",
+            "js_class_inheritance" => "ext_chain",
+            "js_cross_file_calls" => "xf_ns_call",
+            "js_runtime_globals_nodes" => "win",
+            "js_runtime_globals_edges" => "rtg_call_edge",
+            _ => unreachable!(),
+        };
+        eprintln!("{name}: {:.2}s ({} {} rows)", dt.as_secs_f64(), eval.facts(probe_pred).len(), probe_pred);
+    }
+    assert_eq!(evaluated, touched.len(), "every touched pack evaluated");
+    eprintln!("=== wave4 probe times: printed ===\n");
+}
+
+/// Wave 4 cost bisect for the runtime-globals match machinery (throwaway-style
+/// measurement probe, kept ignored). Evaluates cumulative prefixes of the pack
+/// over the dogfood copy and prints per-stage times.
+#[test]
+#[ignore = "manual perf bisect; run with --ignored --release"]
+fn wave4_rtg_cost_bisect() {
+    use std::time::Instant;
+
+    let dataset = std::env::var("GRAFEMA_WAVE4_DIFF_DB")
+        .unwrap_or_else(|_| "/tmp/w4-graph.rfdb".to_string());
+    let dataset = PathBuf::from(dataset);
+    let tmp = tempfile::tempdir().expect("temp");
+    let work = tmp.path().join("graph.rfdb");
+    copy_dir_all(&dataset, &work).expect("copy dataset");
+    let _ = std::fs::remove_file(work.join("LOCK"));
+    let manifest = ManifestStore::open(&work).expect("manifest");
+    let store = MultiShardStore::open(&work, &manifest).expect("store");
+    let store = Arc::new(store);
+    let view = LsmStorageView::capture(store.clone(), &manifest);
+    let snap = store.snapshot(&manifest);
+    let all_nodes = store.find_nodes_at(&snap, None, None);
+    let mut nbt: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    for n in &all_nodes {
+        *nbt.entry(n.node_type.clone()).or_insert(0) += 1;
+    }
+    let stats = Stats {
+        total_nodes: all_nodes.len() as u64,
+        total_edges: store.iter_all_edges_at(&snap).len() as u64,
+        nodes_by_type: nbt,
+    };
+
+    let full = crate::datalog2::stdlib::JS_RUNTIME_GLOBALS_NODES_DL;
+    // facts end where the rules half begins (the concat! boundary comment).
+    let facts_end = full.find("% js_runtime_globals_nodes.dl").expect("rules half marker");
+    let facts = &full[..facts_end];
+    let gates = r#"
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".js"), attr(C, "name", N), neq(N, "").
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".jsx"), attr(C, "name", N), neq(N, "").
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".ts"), attr(C, "name", N), neq(N, "").
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".tsx"), attr(C, "name", N), neq(N, "").
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".mjs"), attr(C, "name", N), neq(N, "").
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".cjs"), attr(C, "name", N), neq(N, "").
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".mts"), attr(C, "name", N), neq(N, "").
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".cts"), attr(C, "name", N), neq(N, "").
+js_fn(F, N) :- node(D, "FUNCTION"), attr(D, "file", F), ends_with(F, ".js"), attr(D, "name", N), neq(N, "").
+js_fn(F, N) :- node(D, "FUNCTION"), attr(D, "file", F), ends_with(F, ".jsx"), attr(D, "name", N), neq(N, "").
+js_fn(F, N) :- node(D, "FUNCTION"), attr(D, "file", F), ends_with(F, ".ts"), attr(D, "name", N), neq(N, "").
+js_fn(F, N) :- node(D, "FUNCTION"), attr(D, "file", F), ends_with(F, ".tsx"), attr(D, "name", N), neq(N, "").
+js_fn(F, N) :- node(D, "FUNCTION"), attr(D, "file", F), ends_with(F, ".mjs"), attr(D, "name", N), neq(N, "").
+js_fn(F, N) :- node(D, "FUNCTION"), attr(D, "file", F), ends_with(F, ".cjs"), attr(D, "name", N), neq(N, "").
+js_fn(F, N) :- node(D, "FUNCTION"), attr(D, "file", F), ends_with(F, ".mts"), attr(D, "name", N), neq(N, "").
+js_fn(F, N) :- node(D, "FUNCTION"), attr(D, "file", F), ends_with(F, ".cts"), attr(D, "name", N), neq(N, "").
+loc_res(C) :- jcall(C, F, N), js_fn(F, N).
+loc_res(C) :- jcall(C, F, N), method_suffix(N, Seg), js_fn(F, Seg).
+cand(C, N) :- jcall(C, _, N), \+ loc_res(C).
+"#;
+    let sfx = r#"
+dpfx(C, D) :- cand(C, N), last_segment(N, ".", L), concat(".", L, T), strip_suffix(N, T, D).
+dpfx(C, D) :- dpfx(C, P), last_segment(P, ".", L), concat(".", L, T), strip_suffix(P, T, D).
+sfx(C, N) :- cand(C, N).
+sfx(C, S) :- cand(C, N), dpfx(C, D), concat(D, ".", DP), strip_prefix(N, DP, S), neq(S, "").
+"#;
+    let win = r#"
+msfx(C, S) :- sfx(C, S), rtg_key(S, _).
+msh(C, S) :- msfx(C, S), msfx(C, S2), concat(".", S, T), ends_with(S2, T).
+win(C, G) :- msfx(C, S), \+ msh(C, S), rtg_key(S, G).
+"#;
+    let msfx_only = r#"
+msfx(C, S) :- sfx(C, S), rtg_key(S, _).
+"#;
+    let msh_only = r#"
+msfx(C, S) :- sfx(C, S), rtg_key(S, _).
+msh(C, S) :- msfx(C, S), msfx(C, S2), concat(".", S, T), ends_with(S2, T).
+"#;
+    let stages: Vec<(&str, String)> = vec![
+        ("gates+sfx+msfx", format!("{facts}\n{gates}\n{sfx}\n{msfx_only}")),
+        ("gates+sfx+msfx+msh", format!("{facts}\n{gates}\n{sfx}\n{msh_only}")),
+        ("gates+sfx+win", format!("{facts}\n{gates}\n{sfx}\n{win}")),
+    ];
+    // Per-event wall-clock sink: (elapsed-at-emit, event).
+    struct TimedSink {
+        t0: Instant,
+        out: std::sync::Arc<std::sync::Mutex<Vec<(f64, crate::datalog2::events::Event)>>>,
+    }
+    impl crate::datalog2::events::EventSink for TimedSink {
+        fn emit(&mut self, event: &crate::datalog2::events::Event) -> std::io::Result<()> {
+            self.out
+                .lock()
+                .unwrap()
+                .push((self.t0.elapsed().as_secs_f64(), event.clone()));
+            Ok(())
+        }
+    }
+    // Dump the msfx rule plan (leg order / pattern / source / join).
+    {
+        use crate::datalog2::parser_ext::parse_ext_program;
+        use crate::datalog2::stratify::stratify;
+        use crate::datalog2::plan::plan_program;
+        let prog = parse_ext_program(&stages.last().unwrap().1).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let plans = plan_program(&rules, &strat, &stats).expect("plan");
+        for pl in &plans {
+            if pl.head == "msfx" || pl.head == "win" || pl.head == "msh" {
+                eprintln!("PLAN {} (estimate {}):", pl.head, pl.estimate);
+                for leg in &pl.legs {
+                    eprintln!("  leg {:?} pattern={:?} source={:?} join={:?} est={}",
+                        leg.literal, leg.pattern, leg.source, leg.join, leg.estimate);
+                }
+            }
+        }
+    }
+    for (name, src) in &stages {
+        let timed: std::sync::Arc<std::sync::Mutex<Vec<(f64, crate::datalog2::events::Event)>>> =
+            Default::default();
+        let log = EventLog::with_sink(Box::new(TimedSink { t0: Instant::now(), out: timed.clone() }));
+        let t0 = Instant::now();
+        let eval = evaluate(&view, src, stats.clone(), EvalLimits::none(), log)
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        eprintln!("{name}: {:.2}s (cand={} sfx={} win={})",
+            t0.elapsed().as_secs_f64(),
+            eval.facts("cand").len(), eval.facts("sfx").len(), eval.facts("win").len());
+        for (at, ev) in timed.lock().unwrap().iter() {
+            use crate::datalog2::events::EventKind as EK;
+            let at = *at;
+            match &ev.kind {
+                EK::StratumBegin { stratum, predicates } => {
+                    eprintln!("  [{at:7.2}s] stratum {stratum} BEGIN: {predicates:?}");
+                }
+                EK::StratumCommitted { stratum, iterations, counts } => {
+                    let c: Vec<String> = counts.iter().map(|x| format!("{x:?}")).collect();
+                    eprintln!("  [{at:7.2}s] stratum {stratum} COMMIT after {iterations} iters: {}", c.join(", "));
+                }
+                EK::Iteration { stratum, iteration, rule_firings, .. } => {
+                    eprintln!("  [{at:7.2}s] stratum {stratum} iter {iteration}: firings={rule_firings}");
+                }
+                _ => {}
+            }
+        }
+    }
+}

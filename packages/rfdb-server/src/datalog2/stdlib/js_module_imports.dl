@@ -127,11 +127,32 @@ star_export(E, F, S) :-
     node(E, "EXPORT"), attr(E, "file", F), attr(E, "name", N),
     strip_prefix(N, "*:", S).
 
+% Named re-export sources (Wave 4, closes js_import_bindings DELTA 1):
+% `export { x } from './y'` is an EXPORT_BINDING with `source` metadata
+% (Declarations.hs:599-644) and NO IMPORT node — the legacy resolver resolved
+% the hop's source INTERNALLY (handleExportEntry, ImportResolution.hs:368-386:
+% resolveModulePath exportFile reExportSource — the FULL kernel incl. the
+% workspace arms, NO ModuleIndex fallback). This pack materializes that
+% internal resolution as a committed seam edge EXPORT_BINDING → MODULE
+% (RE_EXPORTS, the eb_reexport_hop head below) so js_import_bindings'
+% visible() chain can follow seam-less named hops. NEW vocabulary (legacy
+% committed no such edge — it chain-collapsed instead); same seam-fact class
+% as the orchestrator's WORKSPACE_PACKAGE nodes.
+% DELTA 8 (hop seam, subset): the head requires a MODULE node at the winner;
+% legacy recursed into the resolved FILE directly. Every analyzed file has a
+% MODULE node (the js_import_bindings DELTA-3 equivalence) — recorded.
+% No importer-extension gate, the star-arm stance (DELTA 5): EXPORT_BINDINGs
+% with `source` exist only in JS analyzer output.
+eb_src(EB, F, S) :-
+    node(EB, "EXPORT_BINDING"), attr(EB, "file", F),
+    node_attr(EB, "source", S), neq(S, "").
+
 % ── Workspace facts + arms (Wave 3c, closes DELTA 1 — see header) ───────────
 
 % (source X, specifier S) — shared by the workspace arms below.
 src(X, S) :- js_import(X, _, S).
 src(X, S) :- star_export(X, _, S).
+src(X, S) :- eb_src(X, _, S).
 
 % WORKSPACE_PACKAGE facts: name = npm package name, file = entry point.
 ws_pkg(W, N, E) :- node(W, "WORKSPACE_PACKAGE"), attr(W, "name", N), attr(W, "file", E).
@@ -174,6 +195,7 @@ ws_based(X) :- ws_base(X, _).
 % arms are disjoint per source, so the ladder never mixes bases for one X).
 rel(X, P) :- js_import(X, F, S), path_resolve(F, S, P).
 rel(X, P) :- star_export(X, F, S), path_resolve(F, S, P).
+rel(X, P) :- eb_src(X, F, S), path_resolve(F, S, P).
 rel(X, P) :- ws_base(X, P).
 
 % ── The candidate ladder ────────────────────────────────────────────────────
@@ -423,4 +445,18 @@ star_reexport(E, M, R) :-
     node(M, "MODULE"), attr(M, "file", R).
 star_reexport(E, M, R) :-
     mwin_ws(E, R),
+    node(M, "MODULE"), attr(M, "file", R).
+
+% EXPORT_BINDING "from" hop → MODULE (Wave 4 seam; handleExportEntry
+% :368-386): the named re-export's source through the SAME resolveModulePath
+% winner (export-ladder OR workspace-exact; NO ModuleIndex fallback — the
+% Direct arm is star-only, :597-606). meta resolvedPath, the module-edge
+% convention. Consumed by js_import_bindings' reexp (and the duplicated
+% preludes in js_class_inheritance / js_cross_file_calls) as committed EDB.
+@materialize(edge_type = "RE_EXPORTS", mode = "additive", meta(resolvedPath))
+eb_reexport_hop(EB, M, R) :-
+    eb_src(EB, _, _), ewin(EB, R),
+    node(M, "MODULE"), attr(M, "file", R).
+eb_reexport_hop(EB, M, R) :-
+    eb_src(EB, _, _), ws_exact(EB, R),
     node(M, "MODULE"), attr(M, "file", R).

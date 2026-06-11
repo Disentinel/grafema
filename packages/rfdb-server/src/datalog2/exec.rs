@@ -1490,6 +1490,40 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         relations: &HashMap<String, Relation<T>>,
         delta_leg: Option<usize>,
     ) -> ExecResult<Vec<Box<[Value]>>> {
+        // ── Empty-positive-derived-leg short-circuit (W9-iter2) ──
+        //
+        // A POSITIVE derived leg whose fact source is empty can extend no row, so the
+        // clause derives nothing in this variant — whatever every other leg would have
+        // produced. Returning before the leg loop matters because plan order can put the
+        // empty leg LAST: every earlier generator/probe then runs in full only for the
+        // empty join to drop all rows at the end (observed: js_property_access_full's
+        // `pdef_meta` arm — zero PROPERTY_ASSIGNMENT facts on today's graphs by design,
+        // see the pack header — burned ~13.7 s of attr-by-value fan-out per run for a
+        // guaranteed-0-row clause). Source selection mirrors `join_derived` exactly: the
+        // Δ-variant leg reads the delta, every other positive derived leg reads Total,
+        // and a missing relation is the same "no facts" case `join_derived` already maps
+        // to no rows. Negative legs are untouched (an empty negated relation PASSES rows).
+        for (idx, leg) in clause.plan.legs.iter().enumerate() {
+            if leg.literal.is_negative() {
+                continue;
+            }
+            if let LegSource::Derived { name, .. } = &leg.source {
+                let empty = match relations.get(name.as_str()) {
+                    None => true,
+                    Some(rel) => {
+                        if delta_leg == Some(idx) {
+                            rel.delta.is_empty()
+                        } else {
+                            rel.total.is_empty()
+                        }
+                    }
+                };
+                if empty {
+                    return Ok(Vec::new());
+                }
+            }
+        }
+
         // Start with a single empty binding row; each leg extends or filters it.
         let mut rows: Vec<BindRow> = vec![BindRow::new()];
 
@@ -1708,11 +1742,26 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         // filter-before-generator lesson (observed: the method_calls pack spent
         // ~1.2 ms/row scanning a 1000-fact relation at n=20k, and timed out at 900 s on
         // the real graph).
+        // A WILDCARD position is excluded even though the planner's pattern marks it
+        // Bound (a wildcard is "bound" for placement feasibility — it needs nothing):
+        // a probe key can never resolve it, and including it made `derived_probe_key`
+        // return None on EVERY row, silently demoting the whole join to the defensive
+        // per-row full scan (observed: `rtg_key(S, _)` at 22k rows x 5.7k facts = ~20 s
+        // for one non-recursive rule, Wave 4). Excluding it keeps the hash probe on the
+        // resolvable columns; `unify_atom` still applies the wildcard (matches anything).
+        // (Independently hit by W9-iter2 on js_builtins' `bi_binding(F, LN, M, _)` leg
+        // under a leading 69,871-row CALL scan — 69,871 × 484 facts ≈ 34M per-row unify
+        // scans, ~10.8 s per pack, for a join the (F)-keyed build-once index serves in
+        // milliseconds.)
+        let atom_args = atom.args();
         let bound_positions: Vec<usize> = leg
             .pattern
             .iter()
             .enumerate()
-            .filter(|(_, m)| **m == crate::datalog2::builtin::ArgMode::Bound)
+            .filter(|(i, m)| {
+                **m == crate::datalog2::builtin::ArgMode::Bound
+                    && !matches!(atom_args[*i], Term::Wildcard)
+            })
             .map(|(i, _)| i)
             .collect();
 
@@ -3577,6 +3626,48 @@ mod tests {
         let plans = plan_program(&rules, &strat, &stats).expect("plan");
         let exec = Executor::<BoolTag>::with_limits(view, EvalLimits::none(), DEFAULT_ITERATION_CAP);
         exec.evaluate(&plans, &rules, &strat).expect("evaluate")
+    }
+
+    /// Run a program with an event sink installed, returning both the committed evaluation
+    /// Wave 4 regression — a WILDCARD argument in a derived/fact leg must be
+    /// EXCLUDED from the build-once probe key: the planner's pattern marks it
+    /// Bound (placement feasibility), but `derived_probe_key` cannot resolve
+    /// it, and including it silently demoted the whole join to the defensive
+    /// per-row FULL SCAN (observed: `rtg_key(S, _)` at 22k rows × 5.7k facts
+    /// = ~20 s for one non-recursive rule on the dogfood copy). This pins the
+    /// CORRECTNESS of the indexed path on every wildcard arrangement; the
+    /// perf measurement lives in the `wave4_rtg_cost_bisect` probe.
+    #[test]
+    fn derived_join_wildcard_positions_stay_indexed_and_correct() {
+        let mut v = FixtureStorageView::new(1);
+        node(&mut v, "a", "CALL");
+        node(&mut v, "b", "CALL");
+        node(&mut v, "c", "CALL");
+
+        let src = r#"
+            k("a", "x"). k("a", "y"). k("b", "x").
+            name(N) :- node(C, "CALL"), attr(C, "name", N).
+            hit1(N) :- name(N), k(N, _).
+            hit2(N) :- name(N), k(_, N).
+        "#;
+        let eval = run(src, &v, Stats::default());
+        let names = |pred: &str| -> std::collections::BTreeSet<String> {
+            eval.facts(pred).into_iter().map(|r| r[0].as_str()).collect()
+        };
+        use std::collections::BTreeSet;
+        assert_eq!(
+            names("hit1"),
+            BTreeSet::from(["a".to_string(), "b".to_string()]),
+            "wildcard value column: keys with any value match, dedup'd"
+        );
+        assert_eq!(
+            names("hit2"),
+            BTreeSet::<String>::new(),
+            "wildcard key column: no CALL name appears as a k VALUE"
+        );
+        // (An ALL-wildcard leg `k(_, _)` is a pure cross-join and is rejected
+        // by the E-PLAN-003 guard before it could reach the empty-probe-key
+        // cross-extend branch — pinned by the guard's own tests.)
     }
 
     /// Run a program with an event sink installed, returning both the committed evaluation
@@ -5625,5 +5716,80 @@ mod tests {
         run_shared(SHARED_CACHE_PROG, &shared_cache_fixture(1), &shared);
         shared.retain_for_commit(7, 8, &touch(&[], false, false));
         assert_eq!(shared.snapshot_counts(), (None, 0), "stale entries must not be laundered");
+    }
+
+    // ── W9-iter2: wildcard join-key exclusion + empty-derived-leg short-circuit ──
+
+    /// A derived leg carrying a WILDCARD argument must still join through the build-once
+    /// hash index on its non-wildcard bound positions and produce the exact result set.
+    /// (The planner marks a wildcard `Bound`; before the W9-iter2 fix `derived_probe_key`
+    /// returned `None` on it and every row took the defensive full-relation scan — same
+    /// answers, O(rows × facts) cost: js_builtins' `bi_binding(F, LN, M, _)` leg burned
+    /// ~10.8 s/pack on the dogfood graph. The key fix must not change the answers.)
+    #[test]
+    fn derived_leg_with_wildcard_joins_on_remaining_key() {
+        let mut v = FixtureStorageView::new(1);
+        node(&mut v, "a", "CALL");
+        node(&mut v, "b", "CALL");
+        node(&mut v, "c", "OTHER");
+
+        // helper(File, Tag, Extra): two facts share file "f.js" (every fixture node's
+        // file), with distinct extras the wildcard must NOT key or filter on.
+        let src = r#"
+            helper(F, "t1", "x1") :- node(N, "CALL"), attr(N, "file", F), attr(N, "name", "a").
+            helper(F, "t2", "x2") :- node(N, "CALL"), attr(N, "file", F), attr(N, "name", "b").
+            out(N, T) :- node(N, "CALL"), attr(N, "file", F), helper(F, T, _).
+        "#;
+        let eval = run(src, &v, Stats::default());
+        // Both CALL nodes join both helper facts through the (F)-keyed index: 2×2 rows.
+        let mut got: Vec<(u128, String)> = eval
+            .facts("out")
+            .iter()
+            .map(|r| (r[0].as_id().unwrap(), r[1].as_str()))
+            .collect();
+        got.sort();
+        let mut want = vec![
+            (id_of("a"), "t1".to_string()),
+            (id_of("a"), "t2".to_string()),
+            (id_of("b"), "t1".to_string()),
+            (id_of("b"), "t2".to_string()),
+        ];
+        want.sort();
+        assert_eq!(got, want, "wildcard leg must neither over- nor under-join");
+    }
+
+    /// A clause with an EMPTY positive derived leg derives nothing — and must do so
+    /// without evaluating its other legs (the short-circuit). The observable contract:
+    /// (a) the clause's head set is empty exactly as before;
+    /// (b) a clause whose empty derived relation appears only under NEGATION still
+    ///     derives (an empty negated relation passes every row — the short-circuit must
+    ///     skip negative legs or it would wrongly null whole packs: rust_calls'
+    ///     `\+ rs_macro(C)` with zero macro calls).
+    #[test]
+    fn empty_positive_derived_leg_short_circuits_but_negation_still_passes() {
+        let mut v = FixtureStorageView::new(1);
+        node(&mut v, "a", "CALL");
+        node(&mut v, "b", "CALL");
+
+        let src = r#"
+            never(N) :- node(N, "NO_SUCH_TYPE").
+            pos(N) :- node(N, "CALL"), never(N).
+            neg(N) :- node(N, "CALL"), \+ never(N).
+        "#;
+        let eval = run(src, &v, Stats::default());
+        assert!(
+            eval.facts("pos").is_empty(),
+            "a positive leg over an empty derived relation derives nothing"
+        );
+        assert_eq!(
+            ids(&eval, "neg"),
+            {
+                let mut e = vec![id_of("a"), id_of("b")];
+                e.sort_unstable();
+                e
+            },
+            "an empty relation under negation must still PASS rows (short-circuit must \
+             not fire on negative legs)"
+        );
     }
 }

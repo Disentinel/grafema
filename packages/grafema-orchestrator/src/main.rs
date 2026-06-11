@@ -50,7 +50,8 @@ use std::path::PathBuf;
 /// rust_trait_resolve → rust_receiver_typing → rust_imports → js_module_imports →
 /// js_import_bindings → js_class_inheritance → js_cross_file_calls →
 /// js_property_access_ns → js_property_access_full → js_builtins_nodes →
-/// js_builtins_edges → depends → method_calls → shape_verifier → axum_routes.
+/// js_builtins_edges → js_runtime_globals_nodes → js_runtime_globals_edges →
+/// depends → method_calls → shape_verifier → axum_routes.
 /// Wave 3c moved depends INTO this list, after every IMPORTS_FROM producer:
 /// with legacy import-resolution gated, the IMPORT-level edges depends
 /// consumes are produced by the packs above it (it ran separately FIRST while
@@ -90,6 +91,12 @@ const STDLIB_RULE_PACKS: &[&str] = &[
     // CALLS/IMPORTS_FROM producers — before method_calls/shape_verifier.
     "@stdlib/js_builtins_nodes",
     "@stdlib/js_builtins_edges",
+    // Wave 4 runtime-globals split: the nodes pack MINTS the GLOBAL_DEFINITION
+    // endpoints (GLOBAL::<seName>, "<runtime/js>") the edges pack joins as
+    // committed EDB (strict nodes→edges order); the edges pack is a CALLS
+    // producer — before method_calls/shape_verifier.
+    "@stdlib/js_runtime_globals_nodes",
+    "@stdlib/js_runtime_globals_edges",
     // Wave 3c: depends CONSUMES IMPORTS_FROM (every edge of the shared
     // vocabulary, module- and binding-level). Legacy import-resolution /
     // rust-imports are gated (GRAFEMA_SKIP_RESOLVE_STEPS), so depends must
@@ -450,6 +457,37 @@ async fn build_file_to_module_map(rfdb: &mut rfdb::RfdbClient) -> HashMap<String
             Some((file, sid))
         })
         .collect()
+}
+
+/// Second-pass legacy resolve steps retired BY DEFAULT (the resolve→datalog2 migration):
+/// their datalog2 rule pack was proven set-identical to the legacy slice on the live
+/// dogfood graph, so the legacy step only re-derives edges the pack already owns (and,
+/// un-gated, masks the pack's write-path behind additive dedup — the Wave-3c "0 edges"
+/// anomaly). Retired here, NOT via GRAFEMA_SKIP_RESOLVE_STEPS, so production gets the
+/// gating without env configuration; the env var stays additive on top (it cannot
+/// un-retire a step).
+///
+/// - `js-this-method-calls`: W9 differential 432 ≡ 432, only-diff 0 both directions,
+///   pack write-path proven (js_this_method_calls.dl re-derived all 432 after legacy
+///   edge deletion). See `_ai/research/resolve-datalog2-migration-synthesis.md` (W9).
+/// - `runtime-call-globals`: Wave 4 differential 7,800 ≡ 7,800 CALLS, only-diff 0
+///   both directions, matched-seName set 183 ≡ 183 (rfdb
+///   `wave4_runtime_globals_differential` on the dogfood copy; packs
+///   `js_runtime_globals_nodes`/`_edges`). Same ledger, Wave 4.
+const RETIRED_SECOND_PASS_STEPS: &[&str] = &["js-this-method-calls", "runtime-call-globals"];
+
+/// The effective second-pass skip set: the built-in retired steps merged with the
+/// GRAFEMA_SKIP_RESOLVE_STEPS value (comma-separated, whitespace-tolerant). Pure for
+/// testability — the caller passes the env var's value.
+fn effective_second_pass_skips(env_value: Option<&str>) -> HashSet<String> {
+    let mut skips: HashSet<String> = env_value
+        .unwrap_or_default()
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    skips.extend(RETIRED_SECOND_PASS_STEPS.iter().map(|s| s.to_string()));
+    skips
 }
 
 /// P3 (RFDB Datalog v2 spec, invariant P3 `:63`): the legacy in-orchestrator DEPENDS_ON
@@ -1288,23 +1326,21 @@ async fn main() -> Result<()> {
 
                         // Second pass: graph-traversal resolvers (this.method() + CALL-based globals)
                         // Per-step gating (the resolve→datalog2 migration seam): steps whose
-                        // datalog2 pack is load-bearing are listed in GRAFEMA_SKIP_RESOLVE_STEPS
-                        // (comma-separated; the per-file steps are gated inside the resolver
-                        // daemon by the same variable).
-                        let skip_steps: std::collections::HashSet<String> =
-                            std::env::var("GRAFEMA_SKIP_RESOLVE_STEPS")
-                                .unwrap_or_default()
-                                .split(',')
-                                .map(|s| s.trim().to_string())
-                                .filter(|s| !s.is_empty())
-                                .collect();
+                        // datalog2 pack is load-bearing are skipped BY DEFAULT once retired
+                        // (RETIRED_SECOND_PASS_STEPS); GRAFEMA_SKIP_RESOLVE_STEPS (comma-
+                        // separated) gates additional steps — it still controls the per-file
+                        // steps inside the resolver daemon and any not-yet-retired second-pass
+                        // step. The env var is additive; it cannot un-retire a step.
+                        let skip_steps = effective_second_pass_skips(
+                            std::env::var("GRAFEMA_SKIP_RESOLVE_STEPS").ok().as_deref(),
+                        );
                         let second_pass_cmds: Vec<(&str, &[plugin::WorkspacePackageWire])> =
                             [("js-this-method-calls", &[] as &[plugin::WorkspacePackageWire]), ("runtime-call-globals", &[])]
                                 .into_iter()
                                 .filter(|(name, _)| {
                                     let keep = !skip_steps.contains(*name);
                                     if !keep {
-                                        tracing::warn!(step = name, "Legacy resolve step skipped (GRAFEMA_SKIP_RESOLVE_STEPS) — datalog2 pack is load-bearing");
+                                        tracing::warn!(step = name, "Legacy resolve step skipped (retired or GRAFEMA_SKIP_RESOLVE_STEPS) — datalog2 pack is load-bearing");
                                     }
                                     keep
                                 })
@@ -3363,6 +3399,39 @@ mod tests {
             "legacy DEPENDS_ON path is still live; legacy-retirement.lock must say `status = retained` \
              until Gate E + one release (flip it as part of the retirement ceremony)"
         );
+    }
+
+    /// Wave 4: retired second-pass legacy steps are skipped BY DEFAULT (no env
+    /// configuration), the env var stays additive, and it cannot un-retire a step.
+    /// `js-this-method-calls` is pinned retired (W9 differential 432 ≡ 432, write-path
+    /// proven); deleting it from `RETIRED_SECOND_PASS_STEPS` fails this test.
+    #[test]
+    fn retired_second_pass_steps_skip_by_default_and_env_is_additive() {
+        // Default: no env var — the retired step is still skipped.
+        let default_skips = effective_second_pass_skips(None);
+        assert!(
+            default_skips.contains("js-this-method-calls"),
+            "js-this-method-calls is retired (W9: pack set-identical to legacy 432≡432) \
+             and must be skipped with NO env configuration"
+        );
+        assert!(
+            default_skips.contains("runtime-call-globals"),
+            "runtime-call-globals is retired (Wave 4: differential 7,800≡7,800, \
+             only-diff 0 both directions) and must be skipped with NO env configuration"
+        );
+
+        // Additive: the env var gates more steps on top of the retired set.
+        let merged =
+            effective_second_pass_skips(Some("runtime-call-globals, import-resolution"));
+        assert!(merged.contains("js-this-method-calls"), "retired set survives env merge");
+        assert!(merged.contains("runtime-call-globals"), "env-listed step is gated");
+        assert!(merged.contains("import-resolution"), "whitespace-tolerant split");
+
+        // The env var cannot un-retire: listing other steps (or garbage) never
+        // removes a retired entry, and empty segments are ignored.
+        let noisy = effective_second_pass_skips(Some(",, something-else ,"));
+        assert!(noisy.contains("js-this-method-calls"));
+        assert!(!noisy.contains(""), "empty segments are filtered");
     }
 
     /// Wave 3c: production iterates THIS crate's `STDLIB_RULE_PACKS`, not the
