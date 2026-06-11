@@ -691,8 +691,20 @@ const UNARY_OPS: &[&str] = &["++", "--", "!", "~", "*", "&", "-", "+"];
 /// Extract the operator token from a BinaryOperator/UnaryOperator cursor using
 /// libclang's token API.
 ///
-/// For binary operators, we look for the punctuation token between the two children.
-/// For unary operators, we look for the punctuation token that is the operator.
+/// For binary operators, the operator is the punctuation token sitting between
+/// the two operands. The left operand may itself contain operator-like
+/// punctuation — the `->` in `this->count = 0`, or a higher-precedence `+` in
+/// `a + b << c` — so simply taking the first matching punctuation across the
+/// whole cursor extent mis-fires (it would report `->` / `+` instead of `=` /
+/// `<<`). That mistake is graph-visible: the C++ analyzer only emits
+/// `ASSIGNED_FROM` / `WRITES_TO` dataflow edges when the operator is an
+/// assignment, so a misread of `this->x = v` as `->` silently drops the write.
+/// We therefore restrict the binary search to punctuation that starts after the
+/// left operand ends.
+///
+/// For unary operators, we look for the first punctuation token that is the
+/// operator (this field is not consumed for dataflow, so the whole-extent scan
+/// is retained).
 unsafe fn extract_operator_token(
     cursor: CXCursor,
     tu: CXTranslationUnit,
@@ -708,43 +720,95 @@ unsafe fn extract_operator_token(
     }
 
     let ops = if is_binary { BINARY_OPS } else { UNARY_OPS };
-    let mut result = None;
 
-    // For binary: find the operator token that matches a known operator.
-    // For multi-token operators like <<=, we need to check longer matches first,
-    // which our ops list already handles (sorted by length descending).
-    // Strategy: collect all punctuation tokens, try to match from longest to shortest.
-    let mut punctuation_tokens = Vec::new();
+    // For a binary operator, only punctuation that begins at or after the end of
+    // the left operand can be the operator. `None` (no children) falls back to
+    // scanning the whole extent.
+    let lhs_end = if is_binary {
+        first_child_end_offset(cursor)
+    } else {
+        None
+    };
+
+    // Collect punctuation tokens with their start offsets, in source order.
+    let mut punctuation_tokens: Vec<(String, u32)> = Vec::new();
     for i in 0..num_tokens {
         let token = *tokens.add(i as usize);
-        let kind = clang_getTokenKind(token);
-        if kind == CXToken_Punctuation {
+        if clang_getTokenKind(token) == CXToken_Punctuation {
             let spelling = cx_string_to_string(clang_getTokenSpelling(tu, token));
-            punctuation_tokens.push(spelling);
+            let offset = token_start_offset(tu, token);
+            punctuation_tokens.push((spelling, offset));
         }
     }
 
-    if is_binary {
-        // For binary operators, find the operator among punctuation tokens.
-        // Skip parentheses and brackets, find the first matching operator.
-        for tok in &punctuation_tokens {
-            if ops.contains(&tok.as_str()) && tok != "(" && tok != ")" && tok != "[" && tok != "]" {
-                result = Some(tok.clone());
-                break;
-            }
-        }
+    let result = if is_binary {
+        // Skip parentheses and brackets; the first remaining operator token that
+        // starts after the left operand is the binary operator.
+        punctuation_tokens
+            .iter()
+            .filter(|(_, off)| lhs_end.map_or(true, |end| *off >= end))
+            .map(|(spelling, _)| spelling)
+            .find(|tok| {
+                ops.contains(&tok.as_str())
+                    && *tok != "(" && *tok != ")" && *tok != "[" && *tok != "]"
+            })
+            .cloned()
     } else {
-        // For unary operators, the operator is typically the first or last punctuation token
-        for tok in &punctuation_tokens {
-            if ops.contains(&tok.as_str()) {
-                result = Some(tok.clone());
-                break;
-            }
-        }
-    }
+        // For unary operators, the operator is typically the first or last
+        // punctuation token.
+        punctuation_tokens
+            .iter()
+            .map(|(spelling, _)| spelling)
+            .find(|tok| ops.contains(&tok.as_str()))
+            .cloned()
+    };
 
     clang_disposeTokens(tu, tokens, num_tokens);
     result
+}
+
+/// Byte offset of a token's start within the translation unit's main file.
+unsafe fn token_start_offset(tu: CXTranslationUnit, token: CXToken) -> u32 {
+    let loc = clang_getTokenLocation(tu, token);
+    let mut file: CXFile = ptr::null_mut();
+    let mut line: u32 = 0;
+    let mut column: u32 = 0;
+    let mut offset: u32 = 0;
+    clang_getExpansionLocation(loc, &mut file, &mut line, &mut column, &mut offset);
+    offset
+}
+
+/// Byte offset of the end of a cursor's first child — i.e. where the left
+/// operand of a binary expression ends. Returns `None` when the cursor has no
+/// children (so callers fall back to scanning the whole extent).
+unsafe fn first_child_end_offset(cursor: CXCursor) -> Option<u32> {
+    extern "C" fn visitor(
+        child: CXCursor,
+        _parent: CXCursor,
+        client_data: CXClientData,
+    ) -> CXChildVisitResult {
+        unsafe {
+            let slot = &mut *(client_data as *mut Option<CXCursor>);
+            *slot = Some(child);
+        }
+        CXChildVisit_Break
+    }
+
+    let mut first: Option<CXCursor> = None;
+    clang_visitChildren(
+        cursor,
+        visitor,
+        &mut first as *mut Option<CXCursor> as CXClientData,
+    );
+
+    let lhs = first?;
+    let end_loc = clang_getRangeEnd(clang_getCursorExtent(lhs));
+    let mut file: CXFile = ptr::null_mut();
+    let mut line: u32 = 0;
+    let mut column: u32 = 0;
+    let mut offset: u32 = 0;
+    clang_getExpansionLocation(end_loc, &mut file, &mut line, &mut column, &mut offset);
+    Some(offset)
 }
 
 // ---------------------------------------------------------------------------
@@ -1275,4 +1339,189 @@ pub fn is_c_file(path: &Path) -> bool {
         .and_then(|e| e.to_str())
         .map(|e| e == "c")
         .unwrap_or(false)
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::Value;
+
+    /// Default clang args for parsing a C++ snippet in tests.
+    fn cpp_args() -> Vec<String> {
+        vec!["-std=c++17".to_string(), "-xc++".to_string()]
+    }
+
+    /// Recursively collect every node of `kind` from a parsed AST.
+    fn collect_by_kind<'a>(node: &'a Value, kind: &str, out: &mut Vec<&'a Value>) {
+        if node.get("kind").and_then(|k| k.as_str()) == Some(kind) {
+            out.push(node);
+        }
+        if let Some(children) = node.get("children").and_then(|c| c.as_array()) {
+            for child in children {
+                collect_by_kind(child, kind, out);
+            }
+        }
+    }
+
+    /// Parse `source` and return the `operator` field of every node whose `kind`
+    /// equals `kind` (e.g. "BinaryOperator" or "CompoundAssignOperator").
+    fn operators_of_kind(source: &str, kind: &str) -> Vec<String> {
+        // clang-sys's `runtime` feature keeps the libclang handle in thread-local
+        // storage, so each test thread must load it before parsing. (Production's
+        // `ensure_libclang_loaded` loads once globally; making it thread-safe is a
+        // separate, out-of-scope concern.) Loading on the current thread here keeps
+        // these tests reliable under the default multi-threaded test runner.
+        if !clang_sys::is_loaded() {
+            let _ = clang_sys::load();
+        }
+        let ast = parse_cpp_source(source, "test.cpp", &cpp_args())
+            .expect("parse should succeed");
+        let mut nodes = Vec::new();
+        collect_by_kind(&ast, kind, &mut nodes);
+        nodes
+            .iter()
+            .filter_map(|n| n.get("operator").and_then(|o| o.as_str()).map(String::from))
+            .collect()
+    }
+
+    /// Operators of every `BinaryOperator` node in `source`.
+    fn binary_operators(source: &str) -> Vec<String> {
+        operators_of_kind(source, "BinaryOperator")
+    }
+
+    // `this->count = 0` must report `=`, not the `->` from the left-hand member
+    // access. The C++ analyzer (Rules/Expressions.hs) only emits ASSIGNED_FROM /
+    // WRITES_TO dataflow edges when the operator is an assignment, so misreading
+    // the operator as `->` silently drops the write edge — a direct dataflow gap
+    // for the ubiquitous `this->field = value` pattern.
+    #[test]
+    fn test_pointer_member_assignment_operator_is_assignment_not_arrow() {
+        let src = r#"
+struct S {
+    int count;
+    void reset() { this->count = 0; }
+};
+"#;
+        let ops = binary_operators(src);
+        assert!(
+            ops.iter().any(|o| o == "="),
+            "expected `=` for `this->count = 0`, got operators: {:?}",
+            ops
+        );
+        assert!(
+            !ops.iter().any(|o| o == "->"),
+            "binary operator must not be misread as `->`, got: {:?}",
+            ops
+        );
+    }
+
+    // Compound assignment through a pointer member: `p->x += 1` is a
+    // CompoundAssignOperator node and must report `+=`, not the `->` from the
+    // left member access. (The C++ analyzer does not yet consume this operator,
+    // but the extraction routes through the same code path as plain assignment,
+    // so this guards the parser contract for the whole class.)
+    #[test]
+    fn test_pointer_member_compound_assignment() {
+        let src = r#"
+struct S { int x; };
+void bump(S* p) { p->x += 1; }
+"#;
+        let ops = operators_of_kind(src, "CompoundAssignOperator");
+        assert!(
+            ops.iter().any(|o| o == "+="),
+            "expected `+=` for `p->x += 1`, got: {:?}",
+            ops
+        );
+        assert!(
+            !ops.iter().any(|o| o == "->"),
+            "operator must not be misread as `->`, got: {:?}",
+            ops
+        );
+    }
+
+    // `a + b << c` parses as `(a + b) << c`; the outer operator is `<<`, not the
+    // higher-precedence `+` from the left operand.
+    #[test]
+    fn test_nested_binary_precedence_reports_outer_operator() {
+        let src = r#"
+int f(int a, int b, int c) { return a + b << c; }
+"#;
+        let ops = binary_operators(src);
+        assert!(
+            ops.iter().any(|o| o == "<<"),
+            "expected `<<` as the outer operator of `a + b << c`, got: {:?}",
+            ops
+        );
+    }
+
+    // Regression guard: a plain `a = b` assignment (simple left operand) still
+    // reports `=`.
+    #[test]
+    fn test_simple_assignment_still_reports_equals() {
+        let src = r#"
+void f(int a, int b) { a = b; }
+"#;
+        let ops = binary_operators(src);
+        assert!(
+            ops.iter().any(|o| o == "="),
+            "expected `=` for `a = b`, got: {:?}",
+            ops
+        );
+    }
+
+    // Edge: no whitespace around the operator (`this->count=0`). The lhs/operator
+    // offset boundary must still resolve to `=`.
+    #[test]
+    fn test_pointer_member_assignment_no_whitespace() {
+        let src = r#"
+struct S { int count; void reset() { this->count=0; } };
+"#;
+        let ops = binary_operators(src);
+        assert!(
+            ops.iter().any(|o| o == "=") && !ops.iter().any(|o| o == "->"),
+            "expected `=` (not `->`) for `this->count=0`, got: {:?}",
+            ops
+        );
+    }
+
+    // Edge: member access on BOTH operands (`a->x = b->x`). Exactly one `=` and
+    // no `->` must be reported for the assignment.
+    #[test]
+    fn test_member_to_member_assignment() {
+        let src = r#"
+struct S { int x; };
+void f(S* a, S* b) { a->x = b->x; }
+"#;
+        let ops = binary_operators(src);
+        assert_eq!(
+            ops.iter().filter(|o| *o == "=").count(),
+            1,
+            "expected exactly one `=`, got: {:?}",
+            ops
+        );
+        assert!(
+            !ops.iter().any(|o| o == "->"),
+            "operator must not be misread as `->`, got: {:?}",
+            ops
+        );
+    }
+
+    // Edge: parenthesized left operand containing its own operator —
+    // `(a + b) == c` must report `==`, not the inner `+`.
+    #[test]
+    fn test_parenthesized_left_operand() {
+        let src = r#"
+bool f(int a, int b, int c) { return (a + b) == c; }
+"#;
+        let ops = binary_operators(src);
+        assert!(
+            ops.iter().any(|o| o == "=="),
+            "expected `==` as the outer operator of `(a + b) == c`, got: {:?}",
+            ops
+        );
+    }
 }
