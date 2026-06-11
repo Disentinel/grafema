@@ -214,7 +214,52 @@ jobs:
           test -d packages/mcp/dist || (echo "::error::packages/mcp/dist not found" && exit 1)
           echo "All build artifacts verified."
 
-  # Job 4: Version sync check
+  # Job 4: Rust crates compile + unit tests
+  #
+  # Before this job, CI ran ZERO cargo commands (the only prior cargo
+  # reference was the Cargo.toml version-string check in version-sync). Rust
+  # breakage therefore merged undetected: e.g. a dropped closing brace in a
+  # #[cfg(test)] module of rust_analyzer.rs left every JS gate green and only
+  # surfaced later in the release-only build-binaries workflow (see commit
+  # 59bf215). This job gates both Rust crates on every PR.
+  #
+  # Both suites are hermetic — no native binaries are fetched and no external
+  # rfdb-server is required: the orchestrator's single server-dependent
+  # integration test is #[ignore]d, and rfdb-server's library tests run fully
+  # in-process. Mirrors the toolchain + cache conventions of build-binaries.yml.
+  rust-test:
+    name: Rust Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            packages/rfdb-server -> target
+            packages/grafema-orchestrator -> target
+
+      # lib + bins + integration tests (the one rfdb-server-dependent
+      # integration test, layout_loader, is #[ignore]d and stays skipped).
+      - name: Test grafema-orchestrator
+        working-directory: packages/grafema-orchestrator
+        run: cargo test
+
+      # Library unit tests only. The integration tests under tests/ spawn the
+      # server binary and bind OS ports; gating those is tracked as a
+      # follow-up once their CI stability is confirmed.
+      - name: Test rfdb-server (library)
+        working-directory: packages/rfdb-server
+        run: cargo test --lib
+
+  # Job 5: Version sync check
   version-sync:
     name: Version Sync
     runs-on: ubuntu-latest
