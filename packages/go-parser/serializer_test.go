@@ -151,6 +151,119 @@ type Foo struct {
 	}
 }
 
+func TestMultiNameStructFields(t *testing.T) {
+	// A grouped field declaration `X, Y, Z int` is a single ast.Field with
+	// three Names. Every name must become its own field entry (mirroring how
+	// `serializeParamList` expands multi-name parameters), otherwise the graph
+	// silently loses VARIABLE(kind=field) nodes for every name after the first.
+	src := `package main
+
+type Point struct {
+	X, Y, Z int
+	Name    string
+}
+`
+	result := parseAndSerialize(t, src)
+	decl := firstDecl(t, result)
+
+	fields := decl["fields"].([]interface{})
+	if len(fields) != 4 {
+		t.Fatalf("expected 4 fields (X, Y, Z, Name), got %d", len(fields))
+	}
+
+	names := make([]string, 0, len(fields))
+	for _, f := range fields {
+		fm := f.(map[string]interface{})
+		names = append(names, fm["name"].(string))
+		if fm["embedded"] != false {
+			t.Errorf("field %v: expected embedded=false, got %v", fm["name"], fm["embedded"])
+		}
+		// Each expanded name must keep the shared field type.
+		ft := fm["fieldType"].(map[string]interface{})
+		if ft["type"] != "Ident" {
+			t.Errorf("field %v: expected Ident fieldType, got %v", fm["name"], ft["type"])
+		}
+	}
+
+	want := []string{"X", "Y", "Z", "Name"}
+	for i, w := range want {
+		if names[i] != w {
+			t.Errorf("field[%d]: expected %q, got %q (all: %v)", i, w, names[i], names)
+		}
+	}
+
+	// X, Y, Z share `int`; Name is `string`.
+	for i, w := range []string{"int", "int", "int", "string"} {
+		fm := fields[i].(map[string]interface{})
+		ft := fm["fieldType"].(map[string]interface{})
+		if ft["name"] != w {
+			t.Errorf("field[%d] (%v): expected type %q, got %v", i, fm["name"], w, ft["name"])
+		}
+	}
+}
+
+func TestMultiNameAnonymousStructFields(t *testing.T) {
+	// Anonymous struct types reach serializeExpr's StructType arm rather than
+	// serializeStructType, so the multi-name expansion must hold there too.
+	src := `package main
+
+var pt struct {
+	A, B int
+}
+`
+	result := parseAndSerialize(t, src)
+	decl := firstDecl(t, result)
+
+	specs := decl["specs"].([]interface{})
+	spec := specs[0].(map[string]interface{})
+	varType := spec["varType"].(map[string]interface{})
+	if varType["type"] != "StructType" {
+		t.Fatalf("expected anonymous StructType, got %v", varType["type"])
+	}
+
+	fields := varType["fields"].([]interface{})
+	if len(fields) != 2 {
+		t.Fatalf("expected 2 anonymous struct fields (A, B), got %d", len(fields))
+	}
+	f0 := fields[0].(map[string]interface{})
+	f1 := fields[1].(map[string]interface{})
+	if f0["name"] != "A" || f1["name"] != "B" {
+		t.Errorf("expected fields A, B; got %v, %v", f0["name"], f1["name"])
+	}
+}
+
+func TestGroupedFieldsWithEmbeddedAndTag(t *testing.T) {
+	// Mixed case: an embedded field (no names) plus a grouped tagged field.
+	// Embedded fields stay a single entry; grouped names each get the tag.
+	src := "package main\n" +
+		"type Mixed struct {\n" +
+		"\tEmbedded\n" +
+		"\tX, Y int `json:\"v\"`\n" +
+		"}\n"
+	result := parseAndSerialize(t, src)
+	decl := firstDecl(t, result)
+
+	fields := decl["fields"].([]interface{})
+	if len(fields) != 3 {
+		t.Fatalf("expected 3 fields (Embedded, X, Y), got %d", len(fields))
+	}
+
+	emb := fields[0].(map[string]interface{})
+	if emb["name"] != "Embedded" || emb["embedded"] != true {
+		t.Errorf("expected embedded field 'Embedded', got name=%v embedded=%v", emb["name"], emb["embedded"])
+	}
+
+	for _, idx := range []int{1, 2} {
+		fm := fields[idx].(map[string]interface{})
+		if fm["embedded"] != false {
+			t.Errorf("field[%d]: expected embedded=false, got %v", idx, fm["embedded"])
+		}
+		if fm["tag"] != `json:"v"` {
+			t.Errorf("field[%d] (%v): expected shared tag, got %v", idx, fm["name"], fm["tag"])
+		}
+	}
+}
+
 func TestInterfaceWithMethods(t *testing.T) {
 	src := `package main
 

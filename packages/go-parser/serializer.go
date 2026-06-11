@@ -321,12 +321,7 @@ func serializeTypeSpec(fset *token.FileSet, ts *ast.TypeSpec) map[string]interfa
 }
 
 func serializeStructType(fset *token.FileSet, name string, st *ast.StructType, ts *ast.TypeSpec) map[string]interface{} {
-	fields := make([]interface{}, 0)
-	if st.Fields != nil {
-		for _, field := range st.Fields.List {
-			fields = append(fields, serializeStructField(fset, field))
-		}
-	}
+	fields := serializeStructFields(fset, st.Fields)
 
 	result := map[string]interface{}{
 		"type":   "StructTypeDecl",
@@ -344,20 +339,42 @@ func serializeStructType(fset *token.FileSet, name string, st *ast.StructType, t
 	return result
 }
 
-func serializeStructField(fset *token.FileSet, field *ast.Field) map[string]interface{} {
-	result := map[string]interface{}{
-		"span": nodeSpan(fset, field),
+// serializeStructFields expands a field list into one entry per declared name.
+//
+// A grouped declaration `X, Y int` is a single *ast.Field with multiple Names;
+// each name must become its own field entry (mirroring how serializeParamList
+// expands multi-name parameters). Without this expansion every name after the
+// first is silently dropped, so the graph loses VARIABLE(kind=field) nodes and
+// their CONTAINS/HAS_PROPERTY edges. Embedded fields (no names) stay a single
+// entry. A nil field list yields an empty slice.
+func serializeStructFields(fset *token.FileSet, fl *ast.FieldList) []interface{} {
+	result := make([]interface{}, 0)
+	if fl == nil {
+		return result
 	}
+	for _, field := range fl.List {
+		if len(field.Names) == 0 {
+			// Embedded field: name is derived from the embedded type.
+			result = append(result, serializeStructField(fset, field, typeNameString(field.Type), true))
+		} else {
+			// Expand each declared name into its own entry. All names in a
+			// grouped declaration share the same type, tag, and span.
+			for _, name := range field.Names {
+				result = append(result, serializeStructField(fset, field, name.Name, false))
+			}
+		}
+	}
+	return result
+}
 
-	embedded := len(field.Names) == 0
-
-	if embedded {
-		// For embedded fields, extract the type name
-		result["name"] = typeNameString(field.Type)
-		result["embedded"] = true
-	} else {
-		result["name"] = field.Names[0].Name
-		result["embedded"] = false
+// serializeStructField serializes a single struct field entry with an explicit
+// name and embedded flag (supplied by serializeStructFields, which handles the
+// multi-name expansion).
+func serializeStructField(fset *token.FileSet, field *ast.Field, name string, embedded bool) map[string]interface{} {
+	result := map[string]interface{}{
+		"span":     nodeSpan(fset, field),
+		"name":     name,
+		"embedded": embedded,
 	}
 
 	result["fieldType"] = serializeExpr(fset, field.Type)
@@ -859,15 +876,9 @@ func serializeExpr(fset *token.FileSet, expr ast.Expr) interface{} {
 		}
 
 	case *ast.StructType:
-		fields := make([]interface{}, 0)
-		if e.Fields != nil {
-			for _, field := range e.Fields.List {
-				fields = append(fields, serializeStructField(fset, field))
-			}
-		}
 		return map[string]interface{}{
 			"type":   "StructType",
-			"fields": fields,
+			"fields": serializeStructFields(fset, e.Fields),
 			"span":   nodeSpan(fset, e),
 		}
 
