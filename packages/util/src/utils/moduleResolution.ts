@@ -59,6 +59,35 @@ export const DEFAULT_INDEX_FILES = [
 ];
 
 /**
+ * Candidate extensions for resolving a re-export / barrel `from '...'` specifier
+ * to its definition file. Unlike {@link DEFAULT_EXTENSIONS} (JS-first, kept in
+ * legacy order for module resolution) this list is ordered TypeScript-family
+ * first so a `.ts` definition wins over a compiled `.js` sibling when both are
+ * in the graph — keeping first-match resolution deterministic for source TS.
+ *
+ * Shared by {@link ManifestGenerator}'s `findDefinition` fallback and the
+ * package-API enricher's `candidateFiles` so the two cannot drift apart: a
+ * `.js`-only list silently demotes a pure-TS re-export to a bare `TYPE` entry
+ * (wrong kind, the binding id as semanticId, no params/effects).
+ *
+ * Covers the same JS/TS extension set the orchestrator indexes — `is_js_ts_file`
+ * in packages/grafema-orchestrator/src/analyzer.rs (`js|jsx|ts|tsx|mjs|cjs|mts|cts`).
+ */
+export const REEXPORT_SOURCE_EXTENSIONS: readonly string[] = [
+  '.ts',
+  '.tsx',
+  '.mts',
+  '.cts',
+  '.js',
+  '.jsx',
+  '.mjs',
+  '.cjs',
+];
+
+/** Directory index file names, same TS-first order as {@link REEXPORT_SOURCE_EXTENSIONS}. */
+export const REEXPORT_INDEX_FILES: readonly string[] = REEXPORT_SOURCE_EXTENSIONS.map(e => `index${e}`);
+
+/**
  * Options for module path resolution.
  *
  * @example Filesystem mode (default)

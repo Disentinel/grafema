@@ -30,6 +30,10 @@ import type { RFDBClient } from '@grafema/rfdb-client';
 import type { WireEdge, WireNode } from '@grafema/types';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import {
+  REEXPORT_SOURCE_EXTENSIONS as REEXPORT_EXTENSIONS,
+  REEXPORT_INDEX_FILES,
+} from '../utils/moduleResolution.js';
 
 export interface PackageApiEnrichResult {
   /** Number of `package:export` nodes created (or re-upserted). */
@@ -315,24 +319,13 @@ function resolveRelative(fromFile: string, source: string): string {
  * Ordered TS-family first (`.ts/.tsx/.mts/.cts`) then JS-family
  * (`.js/.jsx/.mjs/.cjs`) so a re-export resolves to the TypeScript definition
  * before a compiled JS sibling when both happen to be in the graph — keeping
- * `resolveReExportTarget`'s first-match deterministic.
- */
-const REEXPORT_EXTENSIONS: readonly string[] = [
-  '.ts',
-  '.tsx',
-  '.mts',
-  '.cts',
-  '.js',
-  '.jsx',
-  '.mjs',
-  '.cjs',
-];
-/** Directory index file names, same TS-first order as {@link REEXPORT_EXTENSIONS}. */
-const REEXPORT_INDEX_FILES: readonly string[] = REEXPORT_EXTENSIONS.map(e => `index${e}`);
-/**
- * Matches a trailing known JS/TS extension. Derived from {@link
- * REEXPORT_EXTENSIONS} so the two can never drift apart — a specifier whose
- * extension is in the candidate set is treated as carrying a known extension.
+ * `resolveReExportTarget`'s first-match deterministic. Sourced from the shared
+ * {@link REEXPORT_SOURCE_EXTENSIONS} constant (imported above) so this enricher
+ * and ManifestGenerator's re-export fallback can never drift apart.
+ *
+ * Matches a trailing known JS/TS extension. Derived from `REEXPORT_EXTENSIONS`
+ * so the two can never drift apart — a specifier whose extension is in the
+ * candidate set is treated as carrying a known extension.
  */
 const KNOWN_EXT_RE = new RegExp(
   `\\.(?:${REEXPORT_EXTENSIONS.map(e => e.slice(1)).join('|')})$`,

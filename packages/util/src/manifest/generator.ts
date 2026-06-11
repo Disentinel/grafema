@@ -23,6 +23,7 @@ import type {
 } from './types.js';
 import { isValidEffect } from './types.js';
 import { EffectsLookup, parseCallTarget } from './effects-lookup.js';
+import { REEXPORT_SOURCE_EXTENSIONS, REEXPORT_INDEX_FILES } from '../utils/moduleResolution.js';
 
 const SCHEMA_VERSION = 2;
 
@@ -227,8 +228,17 @@ export class ManifestGenerator {
     const def = await this.findDefinitionInFile(name, resolved);
     if (def) return def;
 
-    // Try common extensions if no match found (compiled_js often omits extensions in source fields)
-    for (const ext of ['.js', '.mjs', '.cjs', '/index.js', '/index.mjs']) {
+    // No extension on the resolved path (extensionless `from './foo'` or
+    // directory `from './sub'` re-export, or a compiled_js source field that
+    // omits the extension). Try the full TS-first JS/TS extension set and the
+    // directory `index.*` forms — a `.js`-only list silently demotes pure-TS
+    // re-exports to bare TYPE entries. Shared with the package-API enricher via
+    // REEXPORT_SOURCE_EXTENSIONS so the two candidate lists cannot drift apart.
+    const fallbacks = [
+      ...REEXPORT_SOURCE_EXTENSIONS,
+      ...REEXPORT_INDEX_FILES.map(idx => `/${idx}`),
+    ];
+    for (const ext of fallbacks) {
       const withExt = resolved.endsWith(ext) ? null : resolved + ext;
       if (!withExt) continue;
       const defWithExt = await this.findDefinitionInFile(name, withExt);
