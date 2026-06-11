@@ -26,6 +26,30 @@ import { EffectsLookup, parseCallTarget } from './effects-lookup.js';
 
 const SCHEMA_VERSION = 2;
 
+/**
+ * Source-file extensions a re-export specifier may resolve to, TS-family first
+ * so a re-export binds to the TypeScript definition before a compiled-JS
+ * sibling when both happen to be in the graph.
+ *
+ * This MUST mirror the JS/TS extension set the orchestrator actually indexes —
+ * `is_js_ts_file` in `packages/grafema-orchestrator/src/analyzer.rs`
+ * (`js | jsx | ts | tsx | mjs | cjs | mts | cts`). Any indexed extension
+ * omitted here is a definition file that an extensionless or directory
+ * re-export can never resolve to, silently demoting the export to a bare `TYPE`
+ * entry. Kept in sync with `REEXPORT_EXTENSIONS` in
+ * `packages/util/src/enrichers/packageApiEnricher.ts` (same rationale, PR #370).
+ */
+const REEXPORT_SOURCE_EXTENSIONS: readonly string[] = [
+  '.ts',
+  '.tsx',
+  '.mts',
+  '.cts',
+  '.js',
+  '.jsx',
+  '.mjs',
+  '.cjs',
+];
+
 interface GeneratorOptions {
   /** Package purl (e.g., "pkg:npm/@grafema/util@0.2.0") */
   purl: string;
@@ -227,10 +251,17 @@ export class ManifestGenerator {
     const def = await this.findDefinitionInFile(name, resolved);
     if (def) return def;
 
-    // Try common extensions if no match found (compiled_js often omits extensions in source fields)
-    for (const ext of ['.js', '.mjs', '.cjs', '/index.js', '/index.mjs']) {
-      const withExt = resolved.endsWith(ext) ? null : resolved + ext;
-      if (!withExt) continue;
+    // Try the indexed JS/TS extensions and directory `index.*` forms when no
+    // direct match was found. Source fields routinely omit the extension
+    // (`./foo`) or carry a directory (`./sub`), and the analyzer indexes source
+    // TypeScript as `.ts`/`.tsx` even when the specifier is `.js` or
+    // extensionless — so a fixed `.js`-only list misses TS re-exports entirely.
+    const candidates = [
+      ...REEXPORT_SOURCE_EXTENSIONS.map(ext => `${resolved}${ext}`),
+      ...REEXPORT_SOURCE_EXTENSIONS.map(ext => `${resolved}/index${ext}`),
+    ];
+    for (const withExt of candidates) {
+      if (withExt === resolved) continue;
       const defWithExt = await this.findDefinitionInFile(name, withExt);
       if (defWithExt) return defWithExt;
     }
