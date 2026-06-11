@@ -321,12 +321,7 @@ func serializeTypeSpec(fset *token.FileSet, ts *ast.TypeSpec) map[string]interfa
 }
 
 func serializeStructType(fset *token.FileSet, name string, st *ast.StructType, ts *ast.TypeSpec) map[string]interface{} {
-	fields := make([]interface{}, 0)
-	if st.Fields != nil {
-		for _, field := range st.Fields.List {
-			fields = append(fields, serializeStructField(fset, field))
-		}
-	}
+	fields := serializeStructFields(fset, st.Fields)
 
 	result := map[string]interface{}{
 		"type":   "StructTypeDecl",
@@ -344,7 +339,37 @@ func serializeStructType(fset *token.FileSet, name string, st *ast.StructType, t
 	return result
 }
 
-func serializeStructField(fset *token.FileSet, field *ast.Field) map[string]interface{} {
+// serializeStructFields expands a struct field list into one serialized entry
+// per declared field name. A single Go field declaration may bind several names
+// to the same type (`x, y, z int`); each name is a distinct field and must be
+// emitted separately, mirroring how serializeParamList expands multi-name
+// parameters. Embedded fields (no names) and single-name fields produce exactly
+// one entry. Returns an empty (non-nil) slice when fl is nil.
+func serializeStructFields(fset *token.FileSet, fl *ast.FieldList) []interface{} {
+	fields := make([]interface{}, 0)
+	if fl == nil {
+		return fields
+	}
+	for _, field := range fl.List {
+		if len(field.Names) <= 1 {
+			// Embedded field (0 names) or a single named field: the
+			// empty name lets serializeStructField fall back to its own
+			// name derivation.
+			fields = append(fields, serializeStructField(fset, field, ""))
+		} else {
+			for _, name := range field.Names {
+				fields = append(fields, serializeStructField(fset, field, name.Name))
+			}
+		}
+	}
+	return fields
+}
+
+// serializeStructField serializes a single struct field. When name is non-empty
+// it is used as the field name (the caller having already split a multi-name
+// declaration); otherwise the name is derived from the field itself — the
+// embedded type name for anonymous fields, or the sole declared name.
+func serializeStructField(fset *token.FileSet, field *ast.Field, name string) map[string]interface{} {
 	result := map[string]interface{}{
 		"span": nodeSpan(fset, field),
 	}
@@ -356,7 +381,10 @@ func serializeStructField(fset *token.FileSet, field *ast.Field) map[string]inte
 		result["name"] = typeNameString(field.Type)
 		result["embedded"] = true
 	} else {
-		result["name"] = field.Names[0].Name
+		if name == "" {
+			name = field.Names[0].Name
+		}
+		result["name"] = name
 		result["embedded"] = false
 	}
 
@@ -859,12 +887,7 @@ func serializeExpr(fset *token.FileSet, expr ast.Expr) interface{} {
 		}
 
 	case *ast.StructType:
-		fields := make([]interface{}, 0)
-		if e.Fields != nil {
-			for _, field := range e.Fields.List {
-				fields = append(fields, serializeStructField(fset, field))
-			}
-		}
+		fields := serializeStructFields(fset, e.Fields)
 		return map[string]interface{}{
 			"type":   "StructType",
 			"fields": fields,

@@ -151,6 +151,92 @@ type Foo struct {
 	}
 }
 
+func TestMultiNameStructFields(t *testing.T) {
+	// A single field declaration may name multiple identifiers
+	// (`x, y, z int`). Each name is a distinct struct field and must be
+	// emitted separately — mirroring how multi-name params are expanded.
+	src := `package main
+
+type Point struct {
+	x, y, z int
+	label   string
+}
+`
+	result := parseAndSerialize(t, src)
+	decl := firstDecl(t, result)
+
+	if decl["type"] != "StructTypeDecl" {
+		t.Fatalf("expected StructTypeDecl, got %v", decl["type"])
+	}
+
+	fields := decl["fields"].([]interface{})
+	if len(fields) != 4 {
+		t.Fatalf("expected 4 fields (x, y, z, label), got %d", len(fields))
+	}
+
+	names := make([]string, 0, len(fields))
+	for _, f := range fields {
+		fm := f.(map[string]interface{})
+		names = append(names, fm["name"].(string))
+		if fm["embedded"] != false {
+			t.Errorf("field %v: expected embedded=false, got %v", fm["name"], fm["embedded"])
+		}
+		ft := fm["fieldType"].(map[string]interface{})
+		if ft["type"] != "Ident" {
+			t.Errorf("field %v: expected Ident fieldType, got %v", fm["name"], ft["type"])
+		}
+	}
+
+	expected := []string{"x", "y", "z", "label"}
+	for i, want := range expected {
+		if names[i] != want {
+			t.Errorf("field %d: expected name %q, got %q", i, want, names[i])
+		}
+	}
+
+	// Each of x, y, z must carry the shared `int` field type.
+	for i := 0; i < 3; i++ {
+		fm := fields[i].(map[string]interface{})
+		ft := fm["fieldType"].(map[string]interface{})
+		if ft["name"] != "int" {
+			t.Errorf("field %v: expected fieldType int, got %v", fm["name"], ft["name"])
+		}
+	}
+}
+
+func TestMultiNameAnonymousStructFields(t *testing.T) {
+	// Multi-name expansion must also apply to anonymous struct types
+	// appearing in expression position (var declarations, etc.).
+	src := `package main
+
+var p = struct {
+	a, b int
+}{}
+`
+	result := parseAndSerialize(t, src)
+	decl := firstDecl(t, result)
+
+	specs := decl["specs"].([]interface{})
+	spec := specs[0].(map[string]interface{})
+	values := spec["values"].([]interface{})
+	composite := values[0].(map[string]interface{})
+	litType := composite["litType"].(map[string]interface{})
+
+	if litType["type"] != "StructType" {
+		t.Fatalf("expected StructType litType, got %v", litType["type"])
+	}
+	fields := litType["fields"].([]interface{})
+	if len(fields) != 2 {
+		t.Fatalf("expected 2 fields (a, b), got %d", len(fields))
+	}
+	if fields[0].(map[string]interface{})["name"] != "a" {
+		t.Errorf("expected field 0 name 'a', got %v", fields[0].(map[string]interface{})["name"])
+	}
+	if fields[1].(map[string]interface{})["name"] != "b" {
+		t.Errorf("expected field 1 name 'b', got %v", fields[1].(map[string]interface{})["name"])
+	}
+}
+
 func TestInterfaceWithMethods(t *testing.T) {
 	src := `package main
 
