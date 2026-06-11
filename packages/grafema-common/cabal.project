@@ -2,4 +2,4 @@ packages:
   .
 
 constraints:
-  libyaml +system-libyaml
+  libyaml -system-libyaml

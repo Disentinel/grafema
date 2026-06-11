@@ -136,7 +136,7 @@ const EXT_TO_BINARIES: Record<string, string[]> = {
  * Reads the config file as text, extracts file extensions from include globs,
  * and pre-downloads missing binaries before the orchestrator needs them.
  */
-async function ensureLanguageBinaries(configPath: string, log: (...args: unknown[]) => void): Promise<void> {
+async function ensureLanguageBinaries(configPath: string, log: (...args: unknown[]) => void): Promise<string[]> {
   const configText = readFileSync(configPath, 'utf-8');
 
   // Extract extensions from include patterns like "**/*.py", '**/*.ts', etc.
@@ -152,6 +152,7 @@ async function ensureLanguageBinaries(configPath: string, log: (...args: unknown
     neededBinaries.add(b);
   }
 
+  const missing: string[] = [];
   for (const binName of neededBinaries) {
     // findAnalyzerBinary checks platform npm package + PATH (always current)
     if (findAnalyzerBinary(binName)) continue;
@@ -159,8 +160,11 @@ async function ensureLanguageBinaries(configPath: string, log: (...args: unknown
     const downloaded = await ensureBinary(binName, null, log);
     if (downloaded) {
       log(`Downloaded ${binName} → ${downloaded}`);
+    } else {
+      missing.push(binName);
     }
   }
+  return missing;
 }
 
 export async function analyzeAction(path: string, options: { service?: string; entrypoint?: string; clear?: boolean; quiet?: boolean; verbose?: boolean; debug?: boolean; logLevel?: string; logFile?: string; strict?: boolean; resolveJobs?: string; autoStart?: boolean; quickstart?: boolean }): Promise<void> {
@@ -309,7 +313,23 @@ export async function analyzeAction(path: string, options: { service?: string; e
   debug(`Using config: ${configPath}`);
 
   // Ensure analyzer binaries exist for detected languages (lazy download if missing)
-  await ensureLanguageBinaries(configPath, debug);
+  const missingBinaries = await ensureLanguageBinaries(configPath, debug);
+  if (missingBinaries.length > 0) {
+    console.error('');
+    console.error(`Warning: analyzer binaries not found after download attempt: ${missingBinaries.join(', ')}`);
+    console.error('');
+    console.error('Grafema downloads these binaries from GitHub Releases on first use.');
+    console.error('Without them, analysis runs in structural-only mode:');
+    console.error('  - No cross-file resolution (imports/references not resolved)');
+    console.error('  - No dataflow or semantic enrichment');
+    console.error('');
+    console.error('Possible causes:');
+    console.error('  - Network restricted (egress allowlist blocking api.github.com or github.com)');
+    console.error('  - Binary not yet released for this platform/version');
+    console.error('');
+    console.error('Run with --verbose to see download details.');
+    console.error('');
+  }
 
   // Connect to RFDB server — auto-start by default (zero-config UX)
   const backend = new RFDBServerBackend({
