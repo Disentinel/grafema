@@ -968,12 +968,20 @@ fn serialize_expr_context(ctx: &ast::ExprContext) -> Value {
     }
 }
 
+/// Serialize an f-string conversion flag as a CPython-style ordinal.
+///
+/// CPython's `ast.FormattedValue.conversion` is an `int`: -1 for no
+/// conversion, otherwise the ASCII code of the conversion char (`!s`=115,
+/// `!r`=114, `!a`=97). The downstream Haskell python-analyzer decodes this
+/// field as an `Int` (`peFvConversion :: !Int`), so it MUST be numeric —
+/// emitting a string here makes the analyzer's JSON decode fail for the whole
+/// file, dropping every node it would have produced.
 fn serialize_conversion_flag(flag: &ast::ConversionFlag) -> Value {
     match flag {
         ast::ConversionFlag::None => json!(-1),
-        ast::ConversionFlag::Str => json!("s"),
-        ast::ConversionFlag::Ascii => json!("a"),
-        ast::ConversionFlag::Repr => json!("r"),
+        ast::ConversionFlag::Str => json!(115),  // ord('s')
+        ast::ConversionFlag::Ascii => json!(97), // ord('a')
+        ast::ConversionFlag::Repr => json!(114), // ord('r')
     }
 }
 
@@ -1074,5 +1082,56 @@ mod tests {
         let source = "def (broken";
         let result = parse_python_source(source, "<test>");
         assert!(result.is_err());
+    }
+
+    /// Recursively find the first object node whose `"type"` equals `ty`.
+    fn find_node<'a>(v: &'a Value, ty: &str) -> Option<&'a Value> {
+        match v {
+            Value::Object(map) => {
+                if map.get("type").and_then(|t| t.as_str()) == Some(ty) {
+                    return Some(v);
+                }
+                map.values().find_map(|child| find_node(child, ty))
+            }
+            Value::Array(items) => items.iter().find_map(|child| find_node(child, ty)),
+            _ => None,
+        }
+    }
+
+    /// f-string conversion flags (`!s`, `!r`, `!a`) must serialize as numeric
+    /// CPython ordinals, NOT letter strings. The downstream Haskell
+    /// python-analyzer decodes `FormattedValue.conversion` as an `Int`
+    /// (`peFvConversion :: !Int`, decoded via `.:? "conversion" .!= (-1)`).
+    /// A JSON string there makes aeson's `.:?` fail on the whole module
+    /// (a present key of the wrong type is a parse error, not a default),
+    /// so the entire file is dropped from the graph.
+    #[test]
+    fn test_fstring_conversion_flag_is_numeric_ordinal() {
+        for (src, expected) in [
+            ("a = f\"{x!s}\"\n", 115), // ord('s')
+            ("a = f\"{x!r}\"\n", 114), // ord('r')
+            ("a = f\"{x!a}\"\n", 97),  // ord('a')
+        ] {
+            let json = parse_python_source(src, "<test>").unwrap();
+            let val: Value = serde_json::from_str(&json).unwrap();
+            let fv = find_node(&val, "FormattedValue")
+                .unwrap_or_else(|| panic!("no FormattedValue node for {src:?}"));
+            let conv = &fv["conversion"];
+            assert!(
+                conv.is_number(),
+                "conversion must be numeric for {src:?}, got {conv:?}"
+            );
+            assert_eq!(conv.as_i64(), Some(expected), "wrong ordinal for {src:?}");
+        }
+    }
+
+    /// A plain interpolation with no conversion must serialize as -1 (matching
+    /// the Haskell decoder's default and CPython's `ast`).
+    #[test]
+    fn test_fstring_no_conversion_is_minus_one() {
+        let json = parse_python_source("a = f\"{x}\"\n", "<test>").unwrap();
+        let val: Value = serde_json::from_str(&json).unwrap();
+        let fv = find_node(&val, "FormattedValue").expect("no FormattedValue node");
+        assert_eq!(fv["conversion"].as_i64(), Some(-1));
     }
 }
