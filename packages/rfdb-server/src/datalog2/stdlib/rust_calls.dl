@@ -70,9 +70,14 @@ has_exact(C) :- exact_call(C, T).
 
 % R2: last-'::'-segment fallback, only when R1 missed (the ordered-lookup
 % preference as negation). The "::"-prefixed concat suffix enforces the
-% segment boundary.
+% segment boundary. The string_contains(N, "::") gate is IMPLIED by
+% ends_with(N, "::" ++ FN) — only a path call can ever carry the suffix — and
+% exists purely so the planner prunes non-path calls BEFORE pairing them with
+% every same-file FUNCTION (W9 fix: the unfiltered calls×fns pairing was 15.4s
+% of rust_calls' 21.7s on the 491k-node graph). Result set: UNCHANGED.
 suffix_call(C, T) :-
     rs_call(C, File, N),
+    string_contains(N, "::"),
     \+ has_exact(C),
     rs_fn(File, FN, T),
     concat("::", FN, Suf),

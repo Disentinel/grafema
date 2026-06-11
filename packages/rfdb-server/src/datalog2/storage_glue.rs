@@ -377,6 +377,18 @@ pub(crate) trait StorageView: Sync {
     /// the id is bound). Note `OverlayStorageView`: hypothetical delta nodes carry no
     /// metadata today, so a delta-only node yields `None`.
     fn node_metadata(&self, id: u128) -> Option<String>;
+
+    /// BULK metadata scan: every live edge of `edge_type` at this generation that carries
+    /// non-empty metadata, as `(src, dst, blob)` — exactly the triples for which
+    /// [`StorageView::edge_metadata`] would return `Some(blob)`, one entry per edge key.
+    ///
+    /// This is the build side of the executor's build-once `edge_attr` join index (W9
+    /// fix #2): ONE typed scan replaces an O(rows) sequence of per-edge keyed point
+    /// probes (each of which walks the source index AND parses the blob). The contract
+    /// ties it to `edge_metadata` so the fast path and the per-row probe can never
+    /// disagree: for every `(s, d, b)` yielded, `edge_metadata(s, d, edge_type) ==
+    /// Some(b)`; edges absent here have `None` (no metadata) at this generation.
+    fn scan_edge_metadata_by_type(&self, edge_type: &str) -> Vec<(u128, u128, String)>;
 }
 
 // ── Real impl over a version-pinned ReadSnapshot ───────────────────
@@ -573,6 +585,23 @@ fn snapshot_node_metadata(
         .filter(|m| !m.is_empty())
 }
 
+/// Bulk `(src, dst, blob)` metadata triples of one edge type — the typed-scan twin of
+/// [`snapshot_edge_metadata`]: both read the same snapshot-pinned edge records, so an
+/// edge appears here with blob `b` iff the point probe yields `Some(b)` (empty stored
+/// metadata, storage's "none" marker, is filtered the same way).
+fn snapshot_scan_edge_metadata(
+    store: &MultiShardStore,
+    snapshot: &ReadSnapshot,
+    edge_type: &str,
+) -> Vec<(u128, u128, String)> {
+    store
+        .get_edges_by_type_at(snapshot, edge_type)
+        .into_iter()
+        .filter(|r| !r.metadata.is_empty())
+        .map(|r| (r.src, r.dst, r.metadata))
+        .collect()
+}
+
 fn snapshot_get_node(store: &MultiShardStore, snapshot: &ReadSnapshot, id: u128) -> Option<NodeRow> {
     store.get_node_at(snapshot, id).map(|r| NodeRow {
         id: r.id,
@@ -674,6 +703,10 @@ impl StorageView for LsmStorageView {
     fn node_metadata(&self, id: u128) -> Option<String> {
         snapshot_node_metadata(&self.store, &self.snapshot, id)
     }
+
+    fn scan_edge_metadata_by_type(&self, edge_type: &str) -> Vec<(u128, u128, String)> {
+        snapshot_scan_edge_metadata(&self.store, &self.snapshot, edge_type)
+    }
 }
 
 // ── Borrowing impl over a version-pinned ReadSnapshot (router path) ─
@@ -745,6 +778,10 @@ impl<'a> StorageView for BorrowedLsmStorageView<'a> {
 
     fn node_metadata(&self, id: u128) -> Option<String> {
         snapshot_node_metadata(self.store, &self.snapshot, id)
+    }
+
+    fn scan_edge_metadata_by_type(&self, edge_type: &str) -> Vec<(u128, u128, String)> {
+        snapshot_scan_edge_metadata(self.store, &self.snapshot, edge_type)
     }
 }
 
@@ -930,6 +967,17 @@ impl StorageView for FixtureStorageView {
         // (including every plain `put_node`) is `None` — the real impl's "" normalization.
         self.node_meta.get(&id).cloned()
     }
+
+    fn scan_edge_metadata_by_type(&self, edge_type: &str) -> Vec<(u128, u128, String)> {
+        // The side map only holds non-empty blobs (put_edge_metadata removes on ""), so
+        // every entry of the requested type satisfies the `edge_metadata == Some(blob)`
+        // contract directly.
+        self.edge_meta
+            .iter()
+            .filter(|((_, ty, _), _)| ty == edge_type)
+            .map(|((src, _, dst), blob)| (*src, *dst, blob.clone()))
+            .collect()
+    }
 }
 
 // ── Read-only hypothetical overlay (sim / what-if) ─────────────────
@@ -1044,6 +1092,20 @@ impl<'a> StorageView for OverlayStorageView<'a> {
         self.base
             .node_metadata(id)
             .or_else(|| self.delta.node_metadata(id))
+    }
+
+    fn scan_edge_metadata_by_type(&self, edge_type: &str) -> Vec<(u128, u128, String)> {
+        // Mirror `edge_metadata`'s precedence (base first, delta only for keys the base
+        // lacks) so the bulk contract stays exactly the point probe's union view.
+        let mut out = self.base.scan_edge_metadata_by_type(edge_type);
+        let base_keys: std::collections::HashSet<(u128, u128)> =
+            out.iter().map(|(s, d, _)| (*s, *d)).collect();
+        for (s, d, b) in self.delta.scan_edge_metadata_by_type(edge_type) {
+            if !base_keys.contains(&(s, d)) {
+                out.push((s, d, b));
+            }
+        }
+        out
     }
 }
 

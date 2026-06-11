@@ -316,3 +316,40 @@ js_property_access_full 24.5s, axum_routes 16.6s, rust_receiver_typing 10.4s →
 аномалия пака РЕАЛЬНА, разобрать; js-call-globals 7,800 (Wave 4 runtime-globals);
 (4) binding-hop subset −263 (re-export hop для биндингов); (5) grafema-resolve .build-hash
 отсутствует — freshness-warning в логе.
+
+---
+
+## W9 (2026-06-11, conveyor #4): profile-first перф — pack-фаза 186.8s → 81.3s на копии (~76-82s продакшен-оценка)
+
+**Профиль (инструментированный, 20 паков):** exec 138.8s (внутри — пересборка build-once
+индексов 31.3s/call), stats full-scan 491k узлов на КАЖДЫЙ вызов 26.9s, derive 6.5s, write-back
+2.0s, plan ~0. Фикс-оверхед на пак ≈1.5s floor. Подозреваемые (a)-(f) все получили вердикты
+с числами (rs_macro ×3 = 11.3s подтверждён; BindRow ~10µs/pair косвенно; q-error на derived
+legs структурно подтверждён — Stats без edges_by_type/селективности).
+
+**4 фикса + бонус:** (1a) version-keyed planner-stats кэш + колоночный count_nodes_by_type_at;
+(1b) SharedIndexCaches — межвызовные build-once индексы c edge-type-aware retain_for_commit
+(@materialize декларирует touched types); (2) edge_attr build-once metadata-индекс (240µs/probe
+→ O(1); axum_routes 16.9s→1.3s); (3) `string_contains("::")` гейт suffix_call (rust_calls
+29.9→6.6s, result set unchanged); (бонус) short-circuit на неизменной (version, tombstone-Arc)
+— idle-повтор 20 паков 188.9s→2.3s.
+
+**Must-fix ревью (ПОДТВЕРЖДЁН и закрыт):** «same version ⇒ same data» ЛОЖЕН на delete→re-add
+(remove_tombstone_* мутирует текущую версию без бампа; SharedIndexCaches/stats/short-circuit
+могли отдать stale через публичный API на долгоживущем сервере). Фикс: Arc-идентичность
+tombstone-сета как часть ключа/гарда + engine-side инвалидация на un-tombstone; 2 regression-
+теста с neutered-guard доказательством. Полный lib **1341/0**, Gate A 51/51, ре-проба фикса
+≤ verify-прогона на каждом паке (ноль перф-цены).
+
+**this-calls «аномалия» ОПРОВЕРГНУТА (carry-forward (3) Wave 3c):** пак set-идентичен legacy
+(432≡432, only-diff 0 в обе стороны), write-path доказан (после удаления legacy-рёбер пак
+пере-вывел все 432 с метаданными). «0 рёбер» = additive-дедуп против негейтнутого
+второпроходного шага. Фикс = гейт-строка `js-this-method-calls` (orchestrator second_pass
+фильтр, main.rs:1294-1312). Для call-globals гейт-строка `runtime-call-globals` — НЕ гейтить
+до Wave-4 пака.
+
+**Остаток до 60s (продакшен-оценка ~76-82s):** оси №3 (bi_method_call дедуп между
+js_builtins_nodes/edges + (file,prefix)-индекс, −16-18s), №5 (this_member derived×derived
+full-key join, −13s), №6 (rs_macro share, частично поглощён 1b). Бонус-находка профайлера:
+D2 maintain МЕДЛЕННЕЕ scratch на неизменном графе (diff_base full-scan) — закрыт short-circuit'ом
+для idle, но для малых дельт вопрос открыт.

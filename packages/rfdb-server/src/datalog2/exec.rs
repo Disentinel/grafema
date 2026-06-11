@@ -405,6 +405,15 @@ struct IndexCaches {
     /// Node ids of one typed node scan in scan order, keyed by type — the free `node`/
     /// `type` generator twin of `edge_pairs`.
     node_ids: RefCell<HashMap<String, Arc<Vec<u128>>>>,
+    /// `(src, dst) → extracted scalar` edge-metadata index, keyed by `(edge type,
+    /// metadata key)` — the build-once side of the `edge_attr` point probe (W9 fix #2).
+    /// One typed metadata scan + ONE JSON parse per edge replaces a keyed source-index
+    /// walk + parse PER ROW (~240µs/probe measured on the LSM store). The stored value
+    /// is the scalar's string surface under `eval_edge_attr`'s exact extraction rules
+    /// (String verbatim / Number by JSON text / Bool as `"true"`/`"false"`); an edge with
+    /// no metadata, an unparseable blob, a missing key, or a non-scalar value is ABSENT
+    /// (the per-row path's tuple non-match).
+    edge_attr: RefCell<HashMap<(String, String), Arc<HashMap<(u128, u128), String>>>>,
     /// Measure-first counters: how many index BUILDS actually ran vs how many calls were
     /// served from cache. Observational only (never affect the committed result).
     builds: Cell<u64>,
@@ -421,6 +430,7 @@ impl IndexCaches {
             anti_join: RefCell::new(HashMap::new()),
             edge_pairs: RefCell::new(HashMap::new()),
             node_ids: RefCell::new(HashMap::new()),
+            edge_attr: RefCell::new(HashMap::new()),
             builds: Cell::new(0),
             hits: Cell::new(0),
         }
@@ -448,6 +458,220 @@ impl IndexCaches {
         map.borrow_mut().insert(key, Arc::clone(&built));
         self.builds.set(self.builds.get() + 1);
         built
+    }
+}
+
+// ── W9 fix #1: cross-evaluation shared index caches ────────────────
+
+/// What ONE `@materialize` write-back commit touched — the carry-forward contract of
+/// [`SharedIndexCaches::retain_for_commit`]. The caller (the engine's write-back path)
+/// constructs the commit itself, so it states EXACTLY what changed between the two
+/// manifest versions; every cached index whose inputs are disjoint from the touched data
+/// is bit-identical at the new version and may survive.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct CommitTouch {
+    /// Edge types the commit added edges of OR tombstoned edges of (the union of the
+    /// run's `@materialize` spec `edge_type`s is a sound over-approximation).
+    pub(crate) edge_types: std::collections::HashSet<String>,
+    /// Whether any NODE was added or tombstoned (drops every node-derived index:
+    /// memberships, attr generators, the full row map, node id lists, node anti-joins).
+    pub(crate) nodes: bool,
+    /// Whether the commit may have touched edges of types OUTSIDE `edge_types` — set
+    /// when any node was TOMBSTONED, because `delete_node` cascades tombstones to ALL
+    /// of the node's connected edges regardless of type. Drops every edge-derived index.
+    pub(crate) edges_unbounded: bool,
+}
+
+/// Cross-evaluation, VERSION-KEYED home for the Part-A build-once indexes (W9 fix #1):
+/// the per-[`Executor`] [`IndexCaches`] die with their executor, so a production
+/// `@materialize` run of 20 stdlib packs rebuilt every node/edge/attr index 20× from
+/// scratch (~31s of the measured 176.6s pack phase) — yet most consecutive packs read
+/// the SAME manifest version.
+///
+/// # Soundness invariant
+///
+/// Every cached index is a pure function of `(its key, the committed data at one
+/// manifest version)` — the same purity [`IndexCaches`] relies on within one executor,
+/// extended across executors by MVCC: two snapshots at the same published version
+/// observe identical committed data (visibility flips only at a manifest publish).
+/// Therefore:
+///
+/// * [`SharedIndexCaches::seed`] hands entries out ONLY when the stored version equals
+///   the borrowing executor's `view.generation()` — a version mismatch yields nothing
+///   (never a stale index), so arbitrary foreign commits (analyzer batches, compaction,
+///   deletes) are safe by construction: they bump the version and simply miss.
+/// * [`SharedIndexCaches::absorb`] stores an executor's built indexes back under its
+///   view's generation, merging when the version matches and replacing wholesale when
+///   it does not.
+/// * [`SharedIndexCaches::retain_for_commit`] is the ONE deliberate cross-version
+///   carry: the `@materialize` write-back knows exactly which edge types / nodes its
+///   commit touched ([`CommitTouch`]), so indexes over untouched relations are
+///   bit-identical at the new version and are re-stamped instead of dropped. Scan-order
+///   determinism holds for the carried entries: edge scans are sorted by endpoint pair
+///   (`storage_glue`), and an edges-only commit appends no node segment, so node scan
+///   order is unchanged.
+/// * The ONE same-version data mutation in the engine — the delete→re-add
+///   un-tombstone (`ManifestStore::remove_tombstone_edges`/`_nodes`, which resurrects
+///   committed records IN the current version) — is covered by the engine calling
+///   [`SharedIndexCaches::invalidate_all`] whenever it actually removes entries.
+///
+/// Interior `Mutex` so the engine can hold one instance per database and lend it to
+/// `&self` evaluation paths; lock scope is the seed/absorb copy (Arc clones of a few
+/// map entries), never an index build.
+pub(crate) struct SharedIndexCaches {
+    inner: std::sync::Mutex<SharedIndexInner>,
+}
+
+#[derive(Default)]
+struct SharedIndexInner {
+    /// Manifest version every stored entry is valid at; `None` = empty.
+    version: Option<u64>,
+    edge: HashMap<EdgeIndexKey, Arc<EdgeIndex>>,
+    node_members: HashMap<String, Arc<HashSet<u128>>>,
+    attr_gen: HashMap<String, Arc<HashMap<String, Vec<u128>>>>,
+    node_rows_full: Option<Arc<HashMap<u128, super::storage_glue::NodeRow>>>,
+    anti_join: HashMap<AntiJoinKey, Arc<HashSet<Vec<Value>>>>,
+    edge_pairs: HashMap<(String, super::storage_glue::EdgeOrder), Arc<Vec<(u128, u128)>>>,
+    node_ids: HashMap<String, Arc<Vec<u128>>>,
+    edge_attr: HashMap<(String, String), Arc<HashMap<(u128, u128), String>>>,
+}
+
+impl SharedIndexCaches {
+    /// An empty shared cache (nothing to seed until the first absorb).
+    pub(crate) fn new() -> Self {
+        Self {
+            inner: std::sync::Mutex::new(SharedIndexInner::default()),
+        }
+    }
+
+    /// Copy the stored entries into `caches` iff they were built at exactly `version`
+    /// (Arc clones — the indexes themselves are shared, not duplicated). A version
+    /// mismatch seeds nothing: correctness never depends on this method.
+    fn seed(&self, version: u64, caches: &IndexCaches) {
+        let inner = self.inner.lock().unwrap();
+        if inner.version != Some(version) {
+            return;
+        }
+        *caches.edge.borrow_mut() = inner.edge.clone();
+        *caches.node_members.borrow_mut() = inner.node_members.clone();
+        *caches.attr_gen.borrow_mut() = inner.attr_gen.clone();
+        *caches.node_rows_full.borrow_mut() = inner.node_rows_full.clone();
+        *caches.anti_join.borrow_mut() = inner.anti_join.clone();
+        *caches.edge_pairs.borrow_mut() = inner.edge_pairs.clone();
+        *caches.node_ids.borrow_mut() = inner.node_ids.clone();
+        *caches.edge_attr.borrow_mut() = inner.edge_attr.clone();
+    }
+
+    /// Store an executor's built indexes under `version` after a successful evaluation.
+    /// Same stored version ⇒ merge (purity makes a key collision content-identical);
+    /// different ⇒ replace wholesale (the old version's entries are unreachable anyway —
+    /// `seed` requires an exact version match).
+    fn absorb(&self, version: u64, caches: &IndexCaches) {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.version != Some(version) {
+            *inner = SharedIndexInner::default();
+            inner.version = Some(version);
+        }
+        inner.edge.extend(caches.edge.borrow().iter().map(|(k, v)| (k.clone(), Arc::clone(v))));
+        inner
+            .node_members
+            .extend(caches.node_members.borrow().iter().map(|(k, v)| (k.clone(), Arc::clone(v))));
+        inner
+            .attr_gen
+            .extend(caches.attr_gen.borrow().iter().map(|(k, v)| (k.clone(), Arc::clone(v))));
+        if let Some(full) = caches.node_rows_full.borrow().as_ref() {
+            inner.node_rows_full = Some(Arc::clone(full));
+        }
+        inner
+            .anti_join
+            .extend(caches.anti_join.borrow().iter().map(|(k, v)| (k.clone(), Arc::clone(v))));
+        inner
+            .edge_pairs
+            .extend(caches.edge_pairs.borrow().iter().map(|(k, v)| (k.clone(), Arc::clone(v))));
+        inner
+            .node_ids
+            .extend(caches.node_ids.borrow().iter().map(|(k, v)| (k.clone(), Arc::clone(v))));
+        inner
+            .edge_attr
+            .extend(caches.edge_attr.borrow().iter().map(|(k, v)| (k.clone(), Arc::clone(v))));
+    }
+
+    /// Cross-version carry-forward after ONE `@materialize` write-back commit advanced
+    /// the manifest FROM `prev_version` (the pinned read version the commit was built
+    /// against) TO `new_version`: evict exactly the entries whose inputs the commit
+    /// touched (see [`CommitTouch`]) and re-stamp the survivors. Sound because the
+    /// caller built the commit and states the touched set; everything else is
+    /// bit-identical at `new_version` (struct-level invariant above).
+    ///
+    /// The `prev_version` guard is load-bearing: if the stored entries were built at
+    /// some OTHER version (e.g. a foreign analyzer commit landed since the last
+    /// absorb), this carry's touched-set covers only the materialize commit — NOT the
+    /// foreign delta — so the stale entries are dropped wholesale instead of being
+    /// laundered onto `new_version`.
+    pub(crate) fn retain_for_commit(
+        &self,
+        prev_version: u64,
+        new_version: u64,
+        touch: &CommitTouch,
+    ) {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.version.is_none() {
+            return;
+        }
+        if inner.version != Some(prev_version) {
+            *inner = SharedIndexInner::default();
+            return;
+        }
+        if touch.edges_unbounded {
+            // A node tombstone cascades edge tombstones of EVERY type — no edge index
+            // can be proven untouched.
+            inner.edge.clear();
+            inner.edge_pairs.clear();
+            inner.edge_attr.clear();
+            inner.anti_join.retain(|(family, _, _), _| *family == "node");
+        } else {
+            inner.edge.retain(|(ty, _, _), _| !touch.edge_types.contains(ty));
+            inner.edge_pairs.retain(|(ty, _), _| !touch.edge_types.contains(ty));
+            inner.edge_attr.retain(|(ty, _), _| !touch.edge_types.contains(ty));
+            inner.anti_join.retain(|(family, ty, _), _| {
+                *family == "node" || !touch.edge_types.contains(ty)
+            });
+        }
+        if touch.nodes {
+            inner.node_members.clear();
+            inner.attr_gen.clear();
+            inner.node_rows_full = None;
+            inner.node_ids.clear();
+            inner.anti_join.retain(|(family, _, _), _| *family != "node");
+        }
+        inner.version = Some(new_version);
+    }
+
+    /// Drop EVERYTHING (W9 must-fix). The delete→re-add path (`add_edges`/`add_nodes`
+    /// after a FLUSHED delete of the same key) un-tombstones in the CURRENT manifest
+    /// version IN PLACE (`ManifestStore::remove_tombstone_edges`/`_nodes`) — same
+    /// version, MORE visible data — so the version key alone can no longer prove the
+    /// stored indexes current and the soundness invariant above would be violated by
+    /// the next `seed` at that version. The engine calls this whenever an
+    /// un-tombstone actually removed entries; the next evaluation rebuilds and
+    /// re-absorbs against the resurrected data.
+    pub(crate) fn invalidate_all(&self) {
+        *self.inner.lock().unwrap() = SharedIndexInner::default();
+    }
+
+    /// Test-only inspection: `(stored version, total entry count)`.
+    #[cfg(test)]
+    pub(crate) fn snapshot_counts(&self) -> (Option<u64>, usize) {
+        let inner = self.inner.lock().unwrap();
+        let n = inner.edge.len()
+            + inner.node_members.len()
+            + inner.attr_gen.len()
+            + usize::from(inner.node_rows_full.is_some())
+            + inner.anti_join.len()
+            + inner.edge_pairs.len()
+            + inner.node_ids.len()
+            + inner.edge_attr.len();
+        (inner.version, n)
     }
 }
 
@@ -487,6 +711,12 @@ pub(crate) struct Executor<'v, T: IdempotentTag> {
     /// iterations. See [`IndexCaches`] for the per-index keying and the derived-relation
     /// exclusion rationale.
     caches: IndexCaches,
+    /// Optional cross-evaluation shared home for the Part-A indexes (W9 fix #1):
+    /// installed via [`Executor::with_shared_caches`], it pre-seeds `caches` with the
+    /// entries built by PREVIOUS executors at the SAME `view.generation()` and absorbs
+    /// this executor's builds back after a successful [`Executor::evaluate`]. `None`
+    /// (the default) keeps every other entry path byte-identical to before.
+    shared: Option<&'v SharedIndexCaches>,
     /// Carries the tag type without storing a value.
     _tag: PhantomData<T>,
 }
@@ -503,6 +733,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
             build_once_min_rows: BUILD_ONCE_MIN_ROWS,
             events: RefCell::new(EventLog::discard()),
             caches: IndexCaches::new(),
+            shared: None,
             _tag: PhantomData,
         }
     }
@@ -522,8 +753,22 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
             build_once_min_rows: BUILD_ONCE_MIN_ROWS,
             events: RefCell::new(EventLog::discard()),
             caches: IndexCaches::new(),
+            shared: None,
             _tag: PhantomData,
         }
+    }
+
+    /// Install a cross-evaluation shared index cache (builder-style, W9 fix #1): seed
+    /// this executor's Part-A caches with every entry the shared home holds at exactly
+    /// `view.generation()` (a version mismatch seeds nothing), and absorb this
+    /// executor's builds back after a successful [`Executor::evaluate`]. Purely an
+    /// index-reuse mechanism: a seeded index is the same pure function of (key, view)
+    /// the executor would have built itself, so the committed result is unchanged (the
+    /// differential test anchors this).
+    pub(crate) fn with_shared_caches(mut self, shared: &'v SharedIndexCaches) -> Self {
+        shared.seed(self.view.generation(), &self.caches);
+        self.shared = Some(shared);
+        self
     }
 
     /// Override the build-once row threshold (test-only): `0` forces the build-once fast
@@ -647,6 +892,12 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
             .collect();
         fact_counts.sort_by(|a, b| a.predicate.cmp(&b.predicate));
         self.events.borrow_mut().run_committed(fact_counts);
+
+        // ── W9 fix #1: hand the built Part-A indexes back to the shared home (success
+        // path only — a rejected run absorbed nothing, which is merely a missed reuse).
+        if let Some(shared) = self.shared {
+            shared.absorb(self.view.generation(), &self.caches);
+        }
 
         Ok(out)
     }
@@ -1640,6 +1891,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
                 }
                 "node" => self.join_node_membership_built_once(def.eval, atom, leg, &rows),
                 "attr" => self.join_attr_bound_id_built_once(def.eval, atom, leg, &rows),
+                "edge_attr" => self.join_edge_attr_built_once(def.eval, atom, leg, &rows),
                 _ => None,
             };
             if let Some(joined) = fast {
@@ -2223,6 +2475,122 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
                     None => {
                         let mut next = row.clone();
                         next.insert(v.clone(), Value::Str(column));
+                        out.push(next);
+                    }
+                },
+            }
+        });
+        Some(out)
+    }
+
+    /// Build-once hash-join for the positive `edge_attr(Src, Dst, "TYPE", "key", Val)`
+    /// point probe (W9 fix #2), or `None` if the leg is not the build-once shape (the
+    /// caller then keeps the exact per-row eval).
+    ///
+    /// The per-row `eval_edge_attr` walks the keyed source index AND `serde_json`-parses
+    /// the blob ON EVERY ROW (~240µs/probe measured on the LSM store — 68k probes made
+    /// one axum_routes clause 17.8s). This builds, once per `(edge type, metadata key)`,
+    /// a `(src, dst) → scalar surface` map from ONE bulk typed metadata scan
+    /// ([`StorageView::scan_edge_metadata_by_type`]) with ONE parse per edge, then
+    /// probes it O(1) per row.
+    ///
+    /// Shape requirements (else `None`): type and key are constants; src and dst are
+    /// planner-Bound VARIABLES (the pack shape — a constant endpoint stays per-row).
+    /// Per-row semantics are reproduced exactly: missing binding ⇒ exact per-row eval
+    /// for that row; a non-id binding, an absent edge/blob/key/non-scalar ⇒ tuple
+    /// non-match (drop); free value var binds `Value::Str`; bound value (var/const/lit)
+    /// equality-filters on the §5 string surface — `bind_or_check`'s exact rule.
+    fn join_edge_attr_built_once(
+        &self,
+        eval: BuiltinEval,
+        atom: &Atom,
+        leg: &crate::datalog2::plan::PlanLeg,
+        rows: &[BindRow],
+    ) -> Option<Vec<BindRow>> {
+        use super::builtin::ArgMode;
+
+        let args = atom.args();
+        if args.len() != 5 {
+            return None;
+        }
+        let const_str = |t: &Term| -> Option<String> {
+            match t {
+                Term::Const(s) => Some(s.clone()),
+                Term::Lit(v) => Some(v.as_str()),
+                _ => None,
+            }
+        };
+        let ty = const_str(&args[2])?;
+        let key = const_str(&args[3])?;
+        let src_var = match (&args[0], leg.pattern.first()) {
+            (Term::Var(v), Some(&ArgMode::Bound)) => v,
+            _ => return None,
+        };
+        let dst_var = match (&args[1], leg.pattern.get(1)) {
+            (Term::Var(v), Some(&ArgMode::Bound)) => v,
+            _ => return None,
+        };
+
+        // ── The index: one bulk metadata scan + one parse per edge, cached per
+        //    (type, key) for the executor's lifetime (Part A purity). ──
+        let view = self.view;
+        let index: Arc<HashMap<(u128, u128), String>> =
+            self.caches
+                .get_or_build(&self.caches.edge_attr, (ty.clone(), key.clone()), || {
+                    let mut m: HashMap<(u128, u128), String> = HashMap::new();
+                    for (src, dst, blob) in view.scan_edge_metadata_by_type(&ty) {
+                        let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&blob)
+                        else {
+                            continue; // unparseable blob ⇒ per-row non-match ⇒ absent
+                        };
+                        let val = match parsed.get(&key) {
+                            Some(serde_json::Value::String(s)) => s.clone(),
+                            Some(serde_json::Value::Number(n)) => n.to_string(),
+                            Some(serde_json::Value::Bool(b)) => b.to_string(),
+                            // Absent key / non-scalar ⇒ per-row non-match ⇒ absent.
+                            _ => continue,
+                        };
+                        m.insert((src, dst), val);
+                    }
+                    m
+                });
+
+        let out = par_join_rows(rows, |row, out| {
+            let (Some(sv), Some(dv)) = (row.get(src_var), row.get(dst_var)) else {
+                // Planner said Bound but the row lacks a binding — exact per-row eval.
+                positive_row_via_eval_on(view, eval, atom, row, out);
+                return;
+            };
+            let (Some(src), Some(dst)) = (sv.as_id(), dv.as_id()) else {
+                // Per-row parity: `bound_id` → None ⇒ empty batch ⇒ drop.
+                return;
+            };
+            let Some(val) = index.get(&(src, dst)) else {
+                return; // absent edge / metadata / key ⇒ tuple non-match
+            };
+            match &args[4] {
+                // `bind_or_check`: a wildcard output is pure existence.
+                Term::Wildcard => out.push(row.clone()),
+                // Bound value: equality on the §5 string surface.
+                Term::Const(s) => {
+                    if Value::from_term_const(s).as_str() == *val {
+                        out.push(row.clone());
+                    }
+                }
+                Term::Lit(v) => {
+                    if v.as_str() == *val {
+                        out.push(row.clone());
+                    }
+                }
+                Term::Var(v) => match row.get(v) {
+                    Some(expected) => {
+                        if expected.as_str() == *val {
+                            out.push(row.clone());
+                        }
+                    }
+                    None => {
+                        let mut next = row.clone();
+                        next.insert(v.clone(), Value::Str(val.clone()));
                         out.push(next);
                     }
                 },
@@ -4333,6 +4701,9 @@ mod tests {
         fn node_metadata(&self, id: u128) -> Option<String> {
             self.inner.node_metadata(id)
         }
+        fn scan_edge_metadata_by_type(&self, edge_type: &str) -> Vec<(u128, u128, String)> {
+            self.inner.scan_edge_metadata_by_type(edge_type)
+        }
     }
 
     /// Wraps a fixture view and counts the TOTAL number of base rows the run touches across
@@ -4408,6 +4779,11 @@ mod tests {
             let r = self.inner.node_metadata(id);
             self.bump(r.is_some() as usize);
             r
+        }
+        fn scan_edge_metadata_by_type(&self, edge_type: &str) -> Vec<(u128, u128, String)> {
+            let rows = self.inner.scan_edge_metadata_by_type(edge_type);
+            self.bump(rows.len());
+            rows
         }
     }
 
@@ -5054,5 +5430,200 @@ mod tests {
         assert_eq!(facts.len(), 1, "only the star re-export matches; ./bar derives no row");
         assert_eq!(facts[0][0].as_id(), Some(id_of("*:./foo")));
         assert_eq!(facts[0][1], Value::Str("./foo".to_string()));
+    }
+
+    // ── W9 fix #2: edge_attr build-once index ─────────────────────────
+
+    /// The `edge_attr` fixture: CALLS edges covering every metadata shape the per-row
+    /// eval distinguishes — present string key, a different value, NO metadata,
+    /// unparseable JSON, a null (non-scalar) value, plus number and bool surfaces.
+    fn edge_attr_fixture() -> FixtureStorageView {
+        let mut v = FixtureStorageView::new(1);
+        for sid in ["a", "b", "c", "d", "e"] {
+            node(&mut v, sid, "CALL");
+        }
+        for (s, d) in [("a", "b"), ("a", "c"), ("b", "c"), ("c", "a"), ("d", "e")] {
+            edge(&mut v, s, d, "CALLS");
+        }
+        v.put_edge_metadata(
+            id_of("a"),
+            id_of("b"),
+            "CALLS",
+            r#"{"via":"import","weight":3,"flag":true}"#,
+        );
+        v.put_edge_metadata(id_of("a"), id_of("c"), "CALLS", r#"{"via":"direct"}"#);
+        // ("b","c"): no metadata at all.
+        v.put_edge_metadata(id_of("c"), id_of("a"), "CALLS", "{not json");
+        v.put_edge_metadata(id_of("d"), id_of("e"), "CALLS", r#"{"via":null}"#);
+        v
+    }
+
+    /// Differential anchor for the build-once `edge_attr` path: forcing the fast path
+    /// (`min_rows = 0`) and forcing the per-row reference path (`min_rows = MAX`) must
+    /// commit identical fact sets across BIND, CHECK, number- and bool-surface modes —
+    /// including the non-match shapes (missing blob / unparseable / null / absent key).
+    #[test]
+    fn edge_attr_built_once_matches_per_row_all_modes() {
+        let v = edge_attr_fixture();
+        let src = r#"
+            via(C, T, V) :- edge(C, T, "CALLS"), edge_attr(C, T, "CALLS", "via", V).
+            imp(C, T) :- edge(C, T, "CALLS"), edge_attr(C, T, "CALLS", "via", "import").
+            w(C, T, V) :- edge(C, T, "CALLS"), edge_attr(C, T, "CALLS", "weight", V).
+            b(C, T, V) :- edge(C, T, "CALLS"), edge_attr(C, T, "CALLS", "flag", V).
+        "#;
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let plans = plan_program(&rules, &strat, &Stats::default()).expect("plan");
+        let fast = Executor::<BoolTag>::new(&v).with_build_once_min_rows(0);
+        let slow = Executor::<BoolTag>::new(&v).with_build_once_min_rows(usize::MAX);
+        let e_fast = fast.evaluate(&plans, &rules, &strat).expect("fast");
+        let e_slow = slow.evaluate(&plans, &rules, &strat).expect("slow");
+        for pred in ["via", "imp", "w", "b"] {
+            let f: HashSet<&[Value]> =
+                e_fast.relations[pred].iter().map(|x| x.as_ref()).collect();
+            let s: HashSet<&[Value]> =
+                e_slow.relations[pred].iter().map(|x| x.as_ref()).collect();
+            assert_eq!(f, s, "fact sets diverge for {pred}");
+        }
+        // Ground truth (not just fast≡slow): exactly the two parseable string values…
+        assert_eq!(e_fast.relations["via"].len(), 2, "import + direct only");
+        // …the equality check keeps only the import edge…
+        assert_eq!(e_fast.relations["imp"].len(), 1);
+        assert_eq!(e_fast.relations["imp"][0][0].as_id(), Some(id_of("a")));
+        // …and number/bool surfaces match the per-row JSON-text rendering.
+        assert_eq!(e_fast.relations["w"][0][2], Value::Str("3".to_string()));
+        assert_eq!(e_fast.relations["b"][0][2], Value::Str("true".to_string()));
+        // The fast executor actually built the (type, key)-keyed indexes (one per
+        // distinct key: via, weight, flag — plus the edge generator's pair list).
+        let (builds, _hits) = fast.index_cache_counts();
+        assert!(builds >= 3, "expected ≥3 edge_attr index builds, got {builds}");
+    }
+
+    // ── W9 fix #1: cross-evaluation shared index caches ───────────────
+
+    /// A program touching every shared index family: a typed node generator
+    /// (`node_ids`), two typed edge generators (`edge_pairs`), and a negated base leg
+    /// (`anti_join`).
+    const SHARED_CACHE_PROG: &str = r#"
+        f(X) :- node(X, "FUNCTION").
+        c(X, Y) :- edge(X, Y, "CONTAINS").
+        k(X, Y) :- edge(X, Y, "CALLS").
+        orphan(X) :- node(X, "FUNCTION"), \+ incoming(X, _, "CALLS").
+    "#;
+
+    fn shared_cache_fixture(generation: u64) -> FixtureStorageView {
+        let mut v = FixtureStorageView::new(generation);
+        for i in 0..5 {
+            node(&mut v, &format!("fn{i}"), "FUNCTION");
+        }
+        edge(&mut v, "fn0", "fn1", "CALLS");
+        edge(&mut v, "fn1", "fn2", "CALLS");
+        edge(&mut v, "fn0", "fn3", "CONTAINS");
+        v
+    }
+
+    /// Evaluate `src` on `v` with `shared` installed; return (committed evaluation,
+    /// builds, hits).
+    fn run_shared(
+        src: &str,
+        v: &FixtureStorageView,
+        shared: &SharedIndexCaches,
+    ) -> (Evaluation, u64, u64) {
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let plans = plan_program(&rules, &strat, &Stats::default()).expect("plan");
+        let exec = Executor::<BoolTag>::with_limits(v, EvalLimits::none(), DEFAULT_ITERATION_CAP)
+            .with_shared_caches(shared);
+        let eval = exec.evaluate(&plans, &rules, &strat).expect("evaluate");
+        let (b, h) = exec.index_cache_counts();
+        (eval, b, h)
+    }
+
+    /// The reuse proof: a SECOND executor over the same generation builds ZERO indexes
+    /// (everything served from the shared home) and commits the identical result — and
+    /// the result equals an unshared run (index reuse is observationally invisible).
+    #[test]
+    fn shared_caches_reuse_across_executors_at_same_generation() {
+        let v = shared_cache_fixture(1);
+        let shared = SharedIndexCaches::new();
+
+        let baseline = run(SHARED_CACHE_PROG, &v, Stats::default());
+        let (e1, b1, _) = run_shared(SHARED_CACHE_PROG, &v, &shared);
+        assert!(b1 >= 4, "first run builds node_ids + 2×edge_pairs + anti_join (got {b1})");
+        assert_eq!(e1.relations, baseline.relations, "sharing must not change the result");
+
+        let (e2, b2, h2) = run_shared(SHARED_CACHE_PROG, &v, &shared);
+        assert_eq!(b2, 0, "second run at the same generation must build NOTHING");
+        assert!(h2 > 0, "…and must actually be served from the shared cache");
+        assert_eq!(e2.relations, baseline.relations);
+    }
+
+    /// The version guard: a view at a DIFFERENT generation seeds nothing (a stale index
+    /// is never handed out), and the absorb re-keys the store to the new generation.
+    #[test]
+    fn shared_caches_seed_nothing_on_generation_mismatch() {
+        let shared = SharedIndexCaches::new();
+        let v1 = shared_cache_fixture(1);
+        let (_, b1, _) = run_shared(SHARED_CACHE_PROG, &v1, &shared);
+        assert!(b1 > 0);
+        assert_eq!(shared.snapshot_counts().0, Some(1));
+
+        let v2 = shared_cache_fixture(2);
+        let (_, b2, _) = run_shared(SHARED_CACHE_PROG, &v2, &shared);
+        assert_eq!(b2, b1, "generation mismatch ⇒ cold caches ⇒ same builds as run 1");
+        assert_eq!(shared.snapshot_counts().0, Some(2), "absorb re-keys to the new generation");
+    }
+
+    /// The carry-forward matrix (`retain_for_commit`): after a commit that touched ONLY
+    /// the CALLS edge type, the CALLS indexes are evicted while the CONTAINS and node
+    /// indexes carry to the new version; a node-touching commit drops the node side; a
+    /// node-REMOVING commit (`edges_unbounded`) drops every edge index; a commit whose
+    /// `prev_version` does not match the stored entries drops everything.
+    #[test]
+    fn shared_caches_retain_for_commit_evicts_exactly_the_touched_axes() {
+        let calls_only = r#"k(X, Y) :- edge(X, Y, "CALLS")."#;
+        let contains_only = r#"c(X, Y) :- edge(X, Y, "CONTAINS")."#;
+        let fns_only = r#"f(X) :- node(X, "FUNCTION")."#;
+        let touch = |tys: &[&str], nodes: bool, unbounded: bool| CommitTouch {
+            edge_types: tys.iter().map(|s| s.to_string()).collect(),
+            nodes,
+            edges_unbounded: unbounded,
+        };
+
+        // CALLS-only commit: CALLS evicted, CONTAINS + node carried.
+        let shared = SharedIndexCaches::new();
+        run_shared(SHARED_CACHE_PROG, &shared_cache_fixture(1), &shared);
+        shared.retain_for_commit(1, 2, &touch(&["CALLS"], false, false));
+        let v2 = shared_cache_fixture(2);
+        let (_, b, _) = run_shared(contains_only, &v2, &shared);
+        assert_eq!(b, 0, "CONTAINS edge_pairs must carry across the CALLS-only commit");
+        let (_, b, _) = run_shared(fns_only, &v2, &shared);
+        assert_eq!(b, 0, "node_ids must carry across an edges-only commit");
+        let (_, b, _) = run_shared(calls_only, &v2, &shared);
+        assert_eq!(b, 1, "the touched CALLS index must be rebuilt");
+
+        // Node-adding commit: node side dropped, untouched edge side carried.
+        let shared = SharedIndexCaches::new();
+        run_shared(SHARED_CACHE_PROG, &shared_cache_fixture(1), &shared);
+        shared.retain_for_commit(1, 2, &touch(&[], true, false));
+        let (_, b, _) = run_shared(fns_only, &v2, &shared);
+        assert_eq!(b, 1, "node_ids must be dropped by a node-touching commit");
+        let (_, b, _) = run_shared(contains_only, &v2, &shared);
+        assert_eq!(b, 0, "edge indexes survive a node-ADD commit");
+
+        // Node-removing commit (tombstones cascade to edges of every type).
+        let shared = SharedIndexCaches::new();
+        run_shared(SHARED_CACHE_PROG, &shared_cache_fixture(1), &shared);
+        shared.retain_for_commit(1, 2, &touch(&[], true, true));
+        let (_, b, _) = run_shared(contains_only, &v2, &shared);
+        assert_eq!(b, 1, "edges_unbounded must drop EVERY edge index");
+
+        // prev_version mismatch: a foreign commit landed since the absorb — drop all.
+        let shared = SharedIndexCaches::new();
+        run_shared(SHARED_CACHE_PROG, &shared_cache_fixture(1), &shared);
+        shared.retain_for_commit(7, 8, &touch(&[], false, false));
+        assert_eq!(shared.snapshot_counts(), (None, 0), "stale entries must not be laundered");
     }
 }

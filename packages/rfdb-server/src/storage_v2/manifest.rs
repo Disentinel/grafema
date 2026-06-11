@@ -1398,15 +1398,23 @@ impl ManifestStore {
     /// un-tombstone must reach the version authority, or the next flush would
     /// re-persist the stale tombstone and the re-added node would stay hidden
     /// (and disappear after reopen). Refreshes the derived `Arc`. Idempotent.
-    pub fn remove_tombstone_nodes(&mut self, ids: &HashSet<u128>) {
+    ///
+    /// Returns `true` iff entries were actually removed — i.e. the data visible
+    /// at the CURRENT version changed IN PLACE without a version bump. "Same
+    /// manifest version ⇒ identical committed data" is FALSE across that
+    /// mutation, so the caller must invalidate every version-keyed cache
+    /// (the engine's datalog2 stats/shared-index caches).
+    pub fn remove_tombstone_nodes(&mut self, ids: &HashSet<u128>) -> bool {
         if ids.is_empty() || self.current.tombstoned_node_ids.is_empty() {
-            return;
+            return false;
         }
         let before = self.current.tombstoned_node_ids.len();
         self.current.tombstoned_node_ids.retain(|id| !ids.contains(id));
-        if self.current.tombstoned_node_ids.len() != before {
+        let changed = self.current.tombstoned_node_ids.len() != before;
+        if changed {
             self.rebuild_current_tombstones();
         }
+        changed
     }
 
     /// Remove edge keys from the current version's cumulative tombstone set in
@@ -1418,9 +1426,14 @@ impl ManifestStore {
     ///
     /// Refreshes the derived `Arc` so any snapshot taken before the next commit
     /// already sees the edge as live. Idempotent — missing keys are no-ops.
-    pub fn remove_tombstone_edges(&mut self, keys: &[(u128, u128, Arc<str>)]) {
+    ///
+    /// Returns `true` iff entries were actually removed — i.e. the data visible
+    /// at the CURRENT version changed IN PLACE without a version bump (same
+    /// contract as [`Self::remove_tombstone_nodes`]; the caller must invalidate
+    /// version-keyed caches).
+    pub fn remove_tombstone_edges(&mut self, keys: &[(u128, u128, Arc<str>)]) -> bool {
         if keys.is_empty() || self.current.tombstoned_edge_keys.is_empty() {
-            return;
+            return false;
         }
         let rm: HashSet<(u128, u128, String)> = keys
             .iter()
@@ -1430,9 +1443,11 @@ impl ManifestStore {
         self.current
             .tombstoned_edge_keys
             .retain(|k| !rm.contains(k));
-        if self.current.tombstoned_edge_keys.len() != before {
+        let changed = self.current.tombstoned_edge_keys.len() != before;
+        if changed {
             self.rebuild_current_tombstones();
         }
+        changed
     }
 
     /// Create new manifest (not yet committed).

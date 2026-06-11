@@ -204,6 +204,23 @@ pub(crate) fn evaluate_with_materialize(
     limits: EvalLimits,
     events: EventLog,
 ) -> Result<(Evaluation, Vec<MaterializeSpec>, Vec<NodeMaterializeSpec>), EvalError> {
+    evaluate_with_materialize_shared(view, source, stats, limits, events, None)
+}
+
+/// [`evaluate_with_materialize`] with an optional cross-evaluation shared index cache
+/// (W9 fix #1): when `shared` is `Some`, the executor seeds its Part-A build-once
+/// indexes from entries previous evaluations built at the SAME `view.generation()` and
+/// absorbs its own builds back on success. Pass `None` for the byte-identical unshared
+/// behavior — index reuse never changes the committed result (the seeded index is the
+/// same pure function of (key, view) the executor would have built itself).
+pub(crate) fn evaluate_with_materialize_shared(
+    view: &dyn StorageView,
+    source: &str,
+    stats: Stats,
+    limits: EvalLimits,
+    events: EventLog,
+    shared: Option<&crate::datalog2::exec::SharedIndexCaches>,
+) -> Result<(Evaluation, Vec<MaterializeSpec>, Vec<NodeMaterializeSpec>), EvalError> {
     let program = parse_ext_program(source)?;
     // §9.3 binding gate: pin one (semiring_id, arity) per predicate before any derivation,
     // so a malformed program aborts before the fixpoint and before any commit. Uniform
@@ -215,8 +232,11 @@ pub(crate) fn evaluate_with_materialize(
     let strat = stratify(&program)?;
     let rules = program.rules();
     let plans = plan_program(&rules, &strat, &stats)?;
-    let executor = Executor::<BoolTag>::with_limits(view, limits, DEFAULT_ITERATION_CAP)
+    let mut executor = Executor::<BoolTag>::with_limits(view, limits, DEFAULT_ITERATION_CAP)
         .with_events(events);
+    if let Some(shared) = shared {
+        executor = executor.with_shared_caches(shared);
+    }
     let evaluation = executor.evaluate(&plans, &rules, &strat)?;
     let specs = collect_materialize_specs(&program)?;
     let node_specs = collect_materialize_node_specs(&program)?;

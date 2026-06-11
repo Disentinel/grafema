@@ -1751,6 +1751,9 @@ mod tests {
         fn node_metadata(&self, id: u128) -> Option<String> {
             self.inner.node_metadata(id)
         }
+        fn scan_edge_metadata_by_type(&self, edge_type: &str) -> Vec<(u128, u128, String)> {
+            self.inner.scan_edge_metadata_by_type(edge_type)
+        }
     }
 
     fn counting_view() -> CountingView {

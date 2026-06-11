@@ -205,6 +205,29 @@ pub struct GraphEngineV2 {
             crate::datalog2::exec::Evaluation,
         ),
     >,
+    /// W9 fix #1a: version-keyed cache of the planner [`crate::datalog2::builtin::Stats`]
+    /// (total nodes/edges + per-type node counts). Stats are a pure function of the
+    /// committed data visible to one snapshot. The key is `(version, tombstone Arc)`:
+    /// version alone is NOT enough, because the delete→re-add path
+    /// (`ManifestStore::remove_tombstone_nodes`/`_edges` from [`GraphStore::add_nodes`]/
+    /// [`GraphStore::add_edges`]) resurrects committed records IN the current version
+    /// without a version bump. That mutation always rebuilds the manifest's tombstone
+    /// `Arc`, so `Arc::ptr_eq` on the snapshot's `tombstones` completes the identity:
+    /// same version + same tombstone Arc ⇒ identical visible data (segments are
+    /// immutable per version; the tombstone set is the only in-place-mutable input).
+    /// Holding the `Arc` (not a raw pointer) rules out ABA reuse.
+    /// Before this cache EVERY datalog-v2 entry re-scanned all ~500k node records per
+    /// call (~27s aggregate over a 20-pack `@materialize` run) just to count types.
+    /// `Mutex` because the eval entries take `&self`.
+    datalog2_stats_cache: std::sync::Mutex<
+        Option<(u64, Arc<crate::storage_v2::shard::TombstoneSet>, crate::datalog2::builtin::Stats)>,
+    >,
+    /// W9 fix #1b: cross-evaluation shared home for the executor's Part-A build-once
+    /// indexes, version-keyed with edge-type-aware carry-forward across `@materialize`
+    /// write-back commits. See [`crate::datalog2::exec::SharedIndexCaches`] for the
+    /// soundness invariant (seed only on exact version match; the write-back path calls
+    /// `retain_for_commit` with exactly what its commit touched).
+    datalog2_shared_indexes: crate::datalog2::exec::SharedIndexCaches,
     /// Test-only: counts how many times [`Self::derive_for_materialize`] took the work-
     /// proportional MAINTAIN path (vs a from-scratch recompute). Lets the cached-materialize
     /// proof assert the incremental path actually fired — a correctness-only check can't, since
@@ -212,6 +235,11 @@ pub struct GraphEngineV2 {
     /// race); atomic so it can be bumped through `&self`.
     #[cfg(test)]
     datalog2_maintain_hits: std::sync::atomic::AtomicU64,
+    /// Test-only: counts how many times [`Self::derive_for_materialize`] took the
+    /// UNCHANGED-graph short-circuit (same manifest version ⇒ the cached evaluation is
+    /// returned verbatim, no diff/maintain/scratch work at all).
+    #[cfg(test)]
+    datalog2_unchanged_hits: std::sync::atomic::AtomicU64,
 }
 
 // ── Constructors ────────────────────────────────────────────────────
@@ -242,8 +270,12 @@ impl GraphEngineV2 {
             auto_compact_threshold: 8,
             auto_compactions: 0,
             datalog2_materialize_cache: std::collections::HashMap::new(),
+            datalog2_stats_cache: std::sync::Mutex::new(None),
+            datalog2_shared_indexes: crate::datalog2::exec::SharedIndexCaches::new(),
             #[cfg(test)]
             datalog2_maintain_hits: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(test)]
+            datalog2_unchanged_hits: std::sync::atomic::AtomicU64::new(0),
             #[cfg(feature = "embedding")]
             embedding_engine: Self::init_embedding_engine(Some(path)),
         })
@@ -265,8 +297,12 @@ impl GraphEngineV2 {
             auto_compact_threshold: 8,
             auto_compactions: 0,
             datalog2_materialize_cache: std::collections::HashMap::new(),
+            datalog2_stats_cache: std::sync::Mutex::new(None),
+            datalog2_shared_indexes: crate::datalog2::exec::SharedIndexCaches::new(),
             #[cfg(test)]
             datalog2_maintain_hits: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(test)]
+            datalog2_unchanged_hits: std::sync::atomic::AtomicU64::new(0),
             #[cfg(feature = "embedding")]
             embedding_engine: None,
         }
@@ -311,8 +347,12 @@ impl GraphEngineV2 {
             auto_compact_threshold: 8,
             auto_compactions: 0,
             datalog2_materialize_cache: std::collections::HashMap::new(),
+            datalog2_stats_cache: std::sync::Mutex::new(None),
+            datalog2_shared_indexes: crate::datalog2::exec::SharedIndexCaches::new(),
             #[cfg(test)]
             datalog2_maintain_hits: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(test)]
+            datalog2_unchanged_hits: std::sync::atomic::AtomicU64::new(0),
             #[cfg(feature = "embedding")]
             embedding_engine: Self::init_embedding_engine(Some(path)),
         })
@@ -360,6 +400,59 @@ impl GraphEngineV2 {
         self.store.snapshot(&m)
     }
 
+    /// The planner's [`crate::datalog2::builtin::Stats`] at `snapshot`'s version, served
+    /// from the per-engine version-keyed cache (W9 fix #1a). On a miss the per-type
+    /// counts come from `MultiShardStore::count_nodes_by_type_at` — a columnar id+type
+    /// walk, NOT the full record materialization the old inline scan paid per call
+    /// (~500k `NodeRecordV2` copies, ~27s aggregate over a 20-pack `@materialize` run).
+    /// Stale entries are impossible: a commit publishes a new manifest version, and the
+    /// one same-version data mutation (the delete→re-add un-tombstone) publishes a fresh
+    /// tombstone `Arc` — the cache compares BOTH (see the field doc for why version
+    /// alone is insufficient).
+    fn datalog2_stats(
+        &self,
+        snapshot: &crate::storage_v2::read_snapshot::ReadSnapshot,
+    ) -> crate::datalog2::builtin::Stats {
+        if let Some((v, t, stats)) = self.datalog2_stats_cache.lock().unwrap().as_ref() {
+            if *v == snapshot.version && Arc::ptr_eq(t, &snapshot.tombstones) {
+                return stats.clone();
+            }
+        }
+        let nodes_by_type = self.store.count_nodes_by_type_at(snapshot);
+        let stats = crate::datalog2::builtin::Stats {
+            total_nodes: nodes_by_type.values().sum(),
+            total_edges: self.store.edge_count_at(snapshot) as u64,
+            nodes_by_type,
+        };
+        *self.datalog2_stats_cache.lock().unwrap() =
+            Some((snapshot.version, Arc::clone(&snapshot.tombstones), stats.clone()));
+        stats
+    }
+
+    /// W9 must-fix: invalidate every datalog2 cache that keys on the manifest version
+    /// after a SAME-VERSION data mutation. The delete→re-add path
+    /// ([`GraphStore::add_nodes`]/[`GraphStore::add_edges`] after a flushed delete of
+    /// the same key) calls `ManifestStore::remove_tombstone_nodes`/`_edges`, which
+    /// resurrects committed records IN the current version — same version, more
+    /// visible data — falsifying "same version ⇒ identical committed data" until the
+    /// next flush bumps the version. Three mechanisms rely on that identity:
+    ///
+    /// * the shared Part-A index cache ([`crate::datalog2::exec::SharedIndexCaches`]):
+    ///   seeds on exact version match and never sees the snapshot's tombstone `Arc`,
+    ///   so it must be dropped wholesale here;
+    /// * the planner stats cache: self-validating via tombstone-`Arc` identity
+    ///   (cleared here as well — the entry can never be served again anyway);
+    /// * the unchanged-version short-circuit in [`Self::derive_for_materialize`]:
+    ///   self-validating via the same `Arc::ptr_eq` guard (the un-tombstone always
+    ///   rebuilds the manifest's tombstone `Arc`), falling through to the maintain
+    ///   path, which diffs actual snapshot data and is immune by construction. The
+    ///   `datalog2_materialize_cache` entries therefore stay valid — their pinned
+    ///   prior snapshots describe real prior data.
+    fn datalog2_invalidate_same_version_caches(&mut self) {
+        *self.datalog2_stats_cache.lock().unwrap() = None;
+        self.datalog2_shared_indexes.invalidate_all();
+    }
+
     /// Evaluate a Datalog **v2** program over a version-pinned view of this engine and
     /// return the ground tuples derived for `target_predicate`, each as a positional
     /// list of stringified column values (RFD `RFDB_DATALOG_V2` router path, spec P3/I8).
@@ -388,16 +481,7 @@ impl GraphEngineV2 {
         // estimated at ~0 and placed first (not over-estimated at total_nodes, which trips
         // E-PLAN-003 on rules like beam-* whose node type is absent in this graph). One scan
         // of the pinned snapshot; the eval itself reads more.
-        let all_nodes = self.store.find_nodes_at(&snapshot, None, None);
-        let mut nodes_by_type: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
-        for n in &all_nodes {
-            *nodes_by_type.entry(n.node_type.clone()).or_insert(0) += 1;
-        }
-        let stats = crate::datalog2::builtin::Stats {
-            total_nodes: all_nodes.len() as u64,
-            total_edges: self.store.edge_count_at(&snapshot) as u64,
-            nodes_by_type,
-        };
+        let stats = self.datalog2_stats(&snapshot);
         let view = crate::datalog2::storage_glue::BorrowedLsmStorageView::new(&self.store, snapshot);
         let evaluation = crate::datalog2::evaluate(
             &view,
@@ -446,16 +530,7 @@ impl GraphEngineV2 {
         limits: crate::datalog::EvalLimits,
     ) -> std::result::Result<Vec<Vec<String>>, crate::datalog2::EvalError> {
         let snapshot = self.snapshot();
-        let all_nodes = self.store.find_nodes_at(&snapshot, None, None);
-        let mut nodes_by_type: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
-        for n in &all_nodes {
-            *nodes_by_type.entry(n.node_type.clone()).or_insert(0) += 1;
-        }
-        let stats = crate::datalog2::builtin::Stats {
-            total_nodes: all_nodes.len() as u64,
-            total_edges: self.store.edge_count_at(&snapshot) as u64,
-            nodes_by_type,
-        };
+        let stats = self.datalog2_stats(&snapshot);
         let base = crate::datalog2::storage_glue::BorrowedLsmStorageView::new(&self.store, snapshot);
 
         // Base world.
@@ -552,29 +627,20 @@ impl GraphEngineV2 {
         // version (the version commit_batch_ext will publish for this run).
         let generation = snapshot.version + 1;
 
-        let all_nodes = self.store.find_nodes_at(&snapshot, None, None);
-        let mut nodes_by_type: std::collections::HashMap<String, u64> =
-            std::collections::HashMap::new();
-        for n in &all_nodes {
-            *nodes_by_type.entry(n.node_type.clone()).or_insert(0) += 1;
-        }
-        let stats = crate::datalog2::builtin::Stats {
-            total_nodes: all_nodes.len() as u64,
-            total_edges: self.store.edge_count_at(&snapshot) as u64,
-            nodes_by_type,
-        };
+        let stats = self.datalog2_stats(&snapshot);
 
         let (evaluation, specs, node_specs) = {
             let view = crate::datalog2::storage_glue::BorrowedLsmStorageView::new(
                 &self.store,
                 snapshot.clone(),
             );
-            crate::datalog2::evaluate_with_materialize(
+            crate::datalog2::evaluate_with_materialize_shared(
                 &view,
                 source,
                 stats,
                 limits,
                 crate::datalog2::events::EventLog::discard(),
+                Some(&self.datalog2_shared_indexes),
             )?
         };
 
@@ -594,6 +660,16 @@ impl GraphEngineV2 {
         }
         let written = edges.len() + nodes.len();
 
+        // W9 fix #1: this commit is ADDITIVE (edges of the spec types + brand-new nodes,
+        // never a tombstone on this path), so the shared index entries over untouched
+        // relations stay valid across the version flip — state the touched set so they
+        // carry forward instead of being dropped by the version-key miss.
+        let touch = crate::datalog2::exec::CommitTouch {
+            edge_types: specs.iter().map(|s| s.edge_type.clone()).collect(),
+            nodes: !nodes.is_empty(),
+            edges_unbounded: false,
+        };
+
         // ── Step 3: single atomic commit (one manifest flip). ──
         // Empty `changed_files` ⇒ additive (no tombstoning of existing nodes/edges); the
         // whole run's nodes AND edges land under `generation` with a single `commit_edit`.
@@ -604,6 +680,8 @@ impl GraphEngineV2 {
                     detail: format!("@materialize write-back commit failed: {e}"),
                 })
             })?;
+        self.datalog2_shared_indexes
+            .retain_for_commit(snapshot.version, self.snapshot().version, &touch);
 
         Ok(written)
     }
@@ -644,17 +722,7 @@ impl GraphEngineV2 {
         let rules = program.rules();
 
         let cur_snapshot = self.snapshot();
-        let all_nodes = self.store.find_nodes_at(&cur_snapshot, None, None);
-        let mut nodes_by_type: std::collections::HashMap<String, u64> =
-            std::collections::HashMap::new();
-        for n in &all_nodes {
-            *nodes_by_type.entry(n.node_type.clone()).or_insert(0) += 1;
-        }
-        let stats = crate::datalog2::builtin::Stats {
-            total_nodes: all_nodes.len() as u64,
-            total_edges: self.store.edge_count_at(&cur_snapshot) as u64,
-            nodes_by_type,
-        };
+        let stats = self.datalog2_stats(&cur_snapshot);
         let plans = crate::datalog2::plan::plan_program(&rules, &strat, &stats)?;
 
         let prev_view =
@@ -695,17 +763,7 @@ impl GraphEngineV2 {
         let strat = crate::datalog2::stratify::stratify(&program)?;
         let rules = program.rules();
         let snapshot = self.snapshot();
-        let all_nodes = self.store.find_nodes_at(&snapshot, None, None);
-        let mut nodes_by_type: std::collections::HashMap<String, u64> =
-            std::collections::HashMap::new();
-        for n in &all_nodes {
-            *nodes_by_type.entry(n.node_type.clone()).or_insert(0) += 1;
-        }
-        let stats = crate::datalog2::builtin::Stats {
-            total_nodes: all_nodes.len() as u64,
-            total_edges: self.store.edge_count_at(&snapshot) as u64,
-            nodes_by_type,
-        };
+        let stats = self.datalog2_stats(&snapshot);
         let plans = crate::datalog2::plan::plan_program(&rules, &strat, &stats)?;
         let view =
             crate::datalog2::storage_glue::BorrowedLsmStorageView::new(&self.store, snapshot);
@@ -736,17 +794,7 @@ impl GraphEngineV2 {
         let strat = crate::datalog2::stratify::stratify(&program)?;
         let rules = program.rules();
         let snapshot = self.snapshot();
-        let all_nodes = self.store.find_nodes_at(&snapshot, None, None);
-        let mut nodes_by_type: std::collections::HashMap<String, u64> =
-            std::collections::HashMap::new();
-        for n in &all_nodes {
-            *nodes_by_type.entry(n.node_type.clone()).or_insert(0) += 1;
-        }
-        let stats = crate::datalog2::builtin::Stats {
-            total_nodes: all_nodes.len() as u64,
-            total_edges: self.store.edge_count_at(&snapshot) as u64,
-            nodes_by_type,
-        };
+        let stats = self.datalog2_stats(&snapshot);
         let plans = crate::datalog2::plan::plan_program(&rules, &strat, &stats)?;
         let view =
             crate::datalog2::storage_glue::BorrowedLsmStorageView::new(&self.store, snapshot);
@@ -778,27 +826,19 @@ impl GraphEngineV2 {
         // ── Phase 1: derive (full eval) then commit only the edge delta. ──
         let snapshot = self.snapshot();
         let generation = snapshot.version + 1;
-        let all_nodes = self.store.find_nodes_at(&snapshot, None, None);
-        let mut nodes_by_type: HashMap<String, u64> = HashMap::new();
-        for n in &all_nodes {
-            *nodes_by_type.entry(n.node_type.clone()).or_insert(0) += 1;
-        }
-        let stats = crate::datalog2::builtin::Stats {
-            total_nodes: all_nodes.len() as u64,
-            total_edges: self.store.edge_count_at(&snapshot) as u64,
-            nodes_by_type,
-        };
+        let stats = self.datalog2_stats(&snapshot);
         let (evaluation, specs, node_specs) = {
             let view = crate::datalog2::storage_glue::BorrowedLsmStorageView::new(
                 &self.store,
                 snapshot.clone(),
             );
-            crate::datalog2::evaluate_with_materialize(
+            crate::datalog2::evaluate_with_materialize_shared(
                 &view,
                 source,
                 stats,
                 limits,
                 crate::datalog2::events::EventLog::discard(),
+                Some(&self.datalog2_shared_indexes),
             )?
         };
         self.materialize_writeback_delta(&evaluation, &specs, &node_specs, &snapshot, generation)
@@ -891,6 +931,29 @@ impl GraphEngineV2 {
         limits: crate::datalog::EvalLimits,
     ) -> std::result::Result<crate::datalog2::exec::Evaluation, crate::datalog2::EvalError> {
         if let Some((prev_snapshot, prev)) = prior {
+            // W9: UNCHANGED-graph short-circuit. Same manifest version + same tombstone
+            // `Arc` ⇒ identical committed data ⇒ a fresh evaluation would be
+            // byte-identical to the cached one — return it verbatim. Without this, every
+            // repeat call against an idle graph paid `diff_base`'s full two-snapshot scan
+            // (plus plan/index setup) only to discover an empty delta: measured 188.9s
+            // for a second 20-pack sweep vs 80.7s for the first (the maintain legs were
+            // SLOWER than warm scratch). Programs outside the maintain envelope
+            // (negation, node specs) are equally covered — the equality argument needs
+            // no envelope. The version alone is NOT the identity: the delete→re-add
+            // path (`add_edges`/`add_nodes` after a flushed delete of the same key)
+            // resurrects committed records IN the current version via
+            // `remove_tombstone_edges`/`_nodes` — same version, MORE visible data.
+            // That mutation always publishes a fresh tombstone `Arc`, so the `ptr_eq`
+            // guard sends it down the maintain path below, which diffs the ACTUAL
+            // snapshot data (`diff_base`) and derives from the resurrected facts.
+            if prev_snapshot.version == cur_snapshot.version
+                && Arc::ptr_eq(&prev_snapshot.tombstones, &cur_snapshot.tombstones)
+            {
+                #[cfg(test)]
+                self.datalog2_unchanged_hits
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                return Ok(prev.clone());
+            }
             if let Some(e) = self.maintain_datalog_v2(source, prev, prev_snapshot, limits.clone())? {
                 #[cfg(test)]
                 self.datalog2_maintain_hits
@@ -909,26 +972,18 @@ impl GraphEngineV2 {
         snapshot: &crate::storage_v2::read_snapshot::ReadSnapshot,
         limits: crate::datalog::EvalLimits,
     ) -> std::result::Result<crate::datalog2::exec::Evaluation, crate::datalog2::EvalError> {
-        let all_nodes = self.store.find_nodes_at(snapshot, None, None);
-        let mut nodes_by_type: HashMap<String, u64> = HashMap::new();
-        for n in &all_nodes {
-            *nodes_by_type.entry(n.node_type.clone()).or_insert(0) += 1;
-        }
-        let stats = crate::datalog2::builtin::Stats {
-            total_nodes: all_nodes.len() as u64,
-            total_edges: self.store.edge_count_at(snapshot) as u64,
-            nodes_by_type,
-        };
+        let stats = self.datalog2_stats(snapshot);
         let view = crate::datalog2::storage_glue::BorrowedLsmStorageView::new(
             &self.store,
             snapshot.clone(),
         );
-        Ok(crate::datalog2::evaluate_with_materialize(
+        Ok(crate::datalog2::evaluate_with_materialize_shared(
             &view,
             source,
             stats,
             limits,
             crate::datalog2::events::EventLog::discard(),
+            Some(&self.datalog2_shared_indexes),
         )?
         .0)
     }
@@ -1035,6 +1090,14 @@ impl GraphEngineV2 {
         if n_added == 0 && n_removed == 0 {
             return Ok((0, 0));
         }
+        // W9 fix #1: state EXACTLY what this commit touches so the shared index cache can
+        // carry untouched entries across the version flip. A node TOMBSTONE cascades edge
+        // tombstones of arbitrary types (`delete_node`), so it voids every edge index.
+        let touch = crate::datalog2::exec::CommitTouch {
+            edge_types: specs.iter().map(|s| s.edge_type.clone()).collect(),
+            nodes: !added_nodes.is_empty() || !removed_node_ids.is_empty(),
+            edges_unbounded: !removed_node_ids.is_empty(),
+        };
         for id in &removed_node_ids {
             self.delete_node(*id);
         }
@@ -1055,6 +1118,8 @@ impl GraphEngineV2 {
                 detail: format!("incremental @materialize write-back flush failed: {e}"),
             })
         })?;
+        self.datalog2_shared_indexes
+            .retain_for_commit(snapshot.version, self.snapshot().version, &touch);
         Ok((n_added, n_removed))
     }
 }
@@ -1087,7 +1152,12 @@ impl GraphStore for GraphEngineV2 {
         // MVCC B3: a re-added node must un-tombstone in the version authority
         // (the manifest), or a previously-COMMITTED delete would re-shadow it on
         // the next flush and after reopen. Mirrors add_edges → remove_tombstone_edges.
-        self.manifest.get_mut().unwrap().remove_tombstone_nodes(&readded_ids);
+        // W9 must-fix: when entries WERE removed, the current version's visible
+        // data just changed without a version bump — drop the version-keyed
+        // datalog2 caches (same contract as add_edges below).
+        if self.manifest.get_mut().unwrap().remove_tombstone_nodes(&readded_ids) {
+            self.datalog2_invalidate_same_version_caches();
+        }
         self.store.add_nodes(v2_nodes);
 
         // Auto-flush: check if any shard's write buffer exceeds adaptive limits
@@ -1320,7 +1390,14 @@ impl GraphStore for GraphEngineV2 {
         // (so snapshots immediately see the edge live and the next flush does
         // not re-broadcast the stale tombstone) AND in the per-shard mirror
         // (for the legacy live-read paths).
-        self.manifest.get_mut().unwrap().remove_tombstone_edges(&keys);
+        // W9 must-fix: when entries WERE removed, snapshots at the SAME manifest
+        // version now see MORE data (the old segment record is resurrected), so
+        // every version-keyed datalog2 cache must be dropped — otherwise the
+        // shared index seed / stats cache / unchanged-version short-circuit
+        // would serve pre-resurrection state for this version.
+        if self.manifest.get_mut().unwrap().remove_tombstone_edges(&keys) {
+            self.datalog2_invalidate_same_version_caches();
+        }
         self.store.untombstone_edges(&keys);
         let result = self.store.upsert_edges(v2_edges);
         if !skip_validation {
@@ -2130,6 +2207,50 @@ mod tests {
         let expected: serde_json::Value =
             serde_json::from_str(expected).expect("expected must be valid JSON");
         assert_eq!(actual, expected);
+    }
+
+    // ── W9 fix #1a: version-keyed planner stats ──────────────────────
+
+    /// The cheap columnar `count_nodes_by_type_at` must agree exactly with the
+    /// record-materializing scan the old inline stats code used (dedup + tombstone
+    /// semantics included), and the version-keyed cache must MISS after a commit
+    /// publishes a new version — staleness is structurally impossible.
+    #[test]
+    fn datalog2_stats_cheap_count_matches_full_scan_and_is_never_stale() {
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let n1 = make_v2_node("a.js->FUNCTION->f1", "FUNCTION", "f1", "a.js");
+        let n2 = make_v2_node("a.js->FUNCTION->f2", "FUNCTION", "f2", "a.js");
+        let n3 = make_v2_node("b.js->CLASS->c1", "CLASS", "c1", "b.js");
+        let id2 = n2.id;
+        engine
+            .commit_batch_ext(vec![n1, n2, n3], vec![], &[], HashMap::new(), &[])
+            .expect("commit");
+
+        let snap = engine.snapshot();
+        let stats = engine.datalog2_stats(&snap);
+        // Oracle: the full-record scan the old inline stats computation performed.
+        let mut oracle: HashMap<String, u64> = HashMap::new();
+        for n in engine.store.find_nodes_at(&snap, None, None) {
+            *oracle.entry(n.node_type).or_insert(0) += 1;
+        }
+        assert_eq!(stats.nodes_by_type, oracle);
+        assert_eq!(stats.total_nodes, 3);
+        // Same version ⇒ served from cache, same value.
+        assert_eq!(engine.datalog2_stats(&snap).nodes_by_type, stats.nodes_by_type);
+
+        // A delete + flush publishes a NEW version: the cache must miss and recount.
+        engine.delete_node(id2);
+        engine.flush().expect("flush");
+        let snap2 = engine.snapshot();
+        assert_ne!(snap2.version, snap.version, "the commit must advance the version");
+        let stats2 = engine.datalog2_stats(&snap2);
+        let mut oracle2: HashMap<String, u64> = HashMap::new();
+        for n in engine.store.find_nodes_at(&snap2, None, None) {
+            *oracle2.entry(n.node_type).or_insert(0) += 1;
+        }
+        assert_eq!(stats2.nodes_by_type, oracle2);
+        assert_eq!(stats2.total_nodes, 2, "the tombstoned FUNCTION must not be counted");
+        assert_eq!(stats2.nodes_by_type.get("FUNCTION"), Some(&1));
     }
 
     // ── Conversion Tests ─────────────────────────────────────────────
@@ -4455,6 +4576,225 @@ mod tests {
             prev_eval = eval_at(&engine);
             prev_snap = engine.snapshot();
         }
+    }
+
+    /// W9: the UNCHANGED-graph short-circuit in `derive_for_materialize` — when the
+    /// manifest version did not move since the cached run, the cached evaluation is
+    /// returned verbatim (no diff_base scan, no maintain, no scratch), the write-back
+    /// derives the exact no-op, and the result stays ≡ scratch. Call sequence: #1 miss
+    /// (scratch, writes, version advances past the pinned read snapshot), #2 maintain
+    /// (prev pinned BEFORE #1's commit ⇒ versions differ), #3 short-circuit (#2 wrote
+    /// nothing ⇒ version unchanged).
+    #[test]
+    fn cached_materialize_short_circuits_on_unchanged_version() {
+        use crate::datalog::EvalLimits;
+        use std::sync::atomic::Ordering;
+        let src = r#"@materialize(edge_type = "DEPENDS_ON")
+                     dep(X, Y) :- edge(X, Y, "IMPORTS_FROM")."#;
+
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let a = make_v2_node("a.js->MODULE->a", "MODULE", "a", "a.js");
+        let b = make_v2_node("b.js->MODULE->b", "MODULE", "b", "b.js");
+        let imp = EdgeRecordV2 {
+            src: a.id,
+            dst: b.id,
+            edge_type: "IMPORTS_FROM".to_string(),
+            metadata: String::new(),
+        };
+        engine
+            .commit_batch_ext(vec![a, b], vec![imp], &[], HashMap::new(), &[])
+            .expect("base commit");
+
+        // #1: miss → scratch, writes the derived edge (advances the version).
+        let (a1, _) = engine
+            .eval_datalog_v2_materialize_cached(src, EvalLimits::none())
+            .expect("call 1");
+        assert_eq!(a1, 1);
+        assert_eq!(engine.datalog2_unchanged_hits.load(Ordering::Relaxed), 0);
+
+        // #2: the cached snapshot predates #1's own commit → versions differ → maintain.
+        let (a2, r2) = engine
+            .eval_datalog_v2_materialize_cached(src, EvalLimits::none())
+            .expect("call 2");
+        assert_eq!((a2, r2), (0, 0));
+        assert_eq!(engine.datalog2_maintain_hits.load(Ordering::Relaxed), 1);
+        assert_eq!(engine.datalog2_unchanged_hits.load(Ordering::Relaxed), 0);
+
+        // #3: nothing committed since #2 → same version → the cached evaluation is the
+        // answer, with neither maintain nor scratch work.
+        let (a3, r3) = engine
+            .eval_datalog_v2_materialize_cached(src, EvalLimits::none())
+            .expect("call 3");
+        assert_eq!((a3, r3), (0, 0));
+        assert_eq!(engine.datalog2_maintain_hits.load(Ordering::Relaxed), 1, "no second maintain");
+        assert_eq!(
+            engine.datalog2_unchanged_hits.load(Ordering::Relaxed),
+            1,
+            "short-circuit fired"
+        );
+
+        // And the materialized state is still exactly the derived edge.
+        let snap = engine.snapshot();
+        assert_eq!(engine.store.get_edges_by_type_at(&snap, "DEPENDS_ON").len(), 1);
+    }
+
+    /// W9 must-fix regression (delete→re-add at the SAME manifest version): a flushed
+    /// delete publishes the tombstone at version V; a later `add_edges` of the same
+    /// `(src, dst, type)` un-tombstones IN PLACE (`ManifestStore::remove_tombstone_edges`)
+    /// — same version, the old segment record resurrected — so "same version ⇒
+    /// identical committed data" is FALSE across that window (the production pattern is
+    /// the compaction enricher's delete-by-source + re-emit). Every version-keyed
+    /// datalog2 mechanism must treat it as a data change:
+    ///  (a) the unchanged-version short-circuit must NOT serve the stale cached
+    ///      evaluation (tombstone-`Arc` `ptr_eq` guard) — the maintain path re-derives
+    ///      from the resurrected base edge;
+    ///  (b) the planner stats cache must miss and recount (`Arc`-keyed entry);
+    ///  (c) the shared Part-A index cache must be dropped wholesale (engine-side
+    ///      `invalidate_all`), so a later eval at this version cannot seed
+    ///      pre-resurrection indexes.
+    #[test]
+    fn delete_then_readd_same_version_invalidates_datalog2_caches() {
+        use crate::datalog::EvalLimits;
+        use std::sync::atomic::Ordering;
+        let src = r#"@materialize(edge_type = "DEPENDS_ON")
+                     dep(X, Y) :- edge(X, Y, "IMPORTS_FROM")."#;
+
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let a = make_v2_node("a.js->MODULE->a", "MODULE", "a", "a.js");
+        let b = make_v2_node("b.js->MODULE->b", "MODULE", "b", "b.js");
+        let (aid, bid) = (a.id, b.id);
+        let imp = || EdgeRecordV2 {
+            src: aid,
+            dst: bid,
+            edge_type: "IMPORTS_FROM".to_string(),
+            metadata: String::new(),
+        };
+        engine
+            .commit_batch_ext(vec![a, b], vec![imp()], &[], HashMap::new(), &[])
+            .expect("base commit");
+
+        // Materialize (miss → scratch, writes DEPENDS_ON), then DELETE the base edge.
+        engine
+            .eval_datalog_v2_materialize_cached(src, EvalLimits::none())
+            .expect("call 1");
+        engine.delete_edge(aid, bid, "IMPORTS_FROM");
+        engine.flush().expect("base delete flush");
+        // Maintain sees the deletion and removes the derived edge.
+        let (_, r2) = engine
+            .eval_datalog_v2_materialize_cached(src, EvalLimits::none())
+            .expect("call 2");
+        assert_eq!(r2, 1, "derived DEPENDS_ON removed after the base delete");
+        // One more call so the cached prior snapshot is pinned AT the current version
+        // (call 2's own write-back advanced past its pinned read snapshot).
+        engine
+            .eval_datalog_v2_materialize_cached(src, EvalLimits::none())
+            .expect("call 3");
+        let unchanged_before = engine.datalog2_unchanged_hits.load(Ordering::Relaxed);
+
+        // Populate the stats cache at the current version, pre-resurrection.
+        let v_before = engine.snapshot().version;
+        let snap_pre = engine.snapshot();
+        assert_eq!(
+            engine.datalog2_stats(&snap_pre).total_edges,
+            0,
+            "base edge tombstoned + derived edge removed ⇒ no visible edges"
+        );
+
+        // ── THE WINDOW: re-add the SAME (src, dst, type); NO flush. ──
+        engine.add_edges(vec![edge_v2_to_v1(&imp())], true);
+        let snap = engine.snapshot();
+        assert_eq!(snap.version, v_before, "no flush ⇒ the version must NOT move");
+        assert_eq!(
+            engine.store.get_edges_by_type_at(&snap, "IMPORTS_FROM").len(),
+            1,
+            "the old segment record is resurrected at the SAME version"
+        );
+
+        // (b) stats: same version, fresh tombstone Arc ⇒ the cache must miss + recount.
+        assert_eq!(
+            engine.datalog2_stats(&snap).total_edges,
+            1,
+            "stats must see the resurrected edge at the unchanged version"
+        );
+
+        // (c) shared indexes: dropped wholesale by the un-tombstone.
+        assert_eq!(
+            engine.datalog2_shared_indexes.snapshot_counts(),
+            (None, 0),
+            "shared Part-A indexes must be invalidated on un-tombstone"
+        );
+
+        // (a) the short-circuit must NOT fire (same version, different tombstone Arc);
+        // the maintain path re-derives from the resurrected base edge.
+        let (added, removed) = engine
+            .eval_datalog_v2_materialize_cached(src, EvalLimits::none())
+            .expect("call 4 (post-resurrection)");
+        assert_eq!(
+            engine.datalog2_unchanged_hits.load(Ordering::Relaxed),
+            unchanged_before,
+            "the unchanged-version short-circuit must NOT serve the stale evaluation"
+        );
+        assert_eq!(
+            (added, removed),
+            (1, 0),
+            "DEPENDS_ON re-derived from the resurrected base edge"
+        );
+        let snap_after = engine.snapshot();
+        assert_eq!(engine.store.get_edges_by_type_at(&snap_after, "DEPENDS_ON").len(), 1);
+        assert_eq!(engine.store.get_edges_by_type_at(&snap_after, "IMPORTS_FROM").len(), 1);
+    }
+
+    /// Node companion of the test above: `add_nodes` after a flushed node delete
+    /// un-tombstones via `ManifestStore::remove_tombstone_nodes` — the same in-place
+    /// same-version mutation — and must equally drop the version-keyed datalog2 caches
+    /// (stats recount + shared index invalidation).
+    #[test]
+    fn node_delete_then_readd_same_version_invalidates_datalog2_caches() {
+        use crate::datalog::EvalLimits;
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let a = make_v2_node("a.js->FUNCTION->f", "FUNCTION", "f", "a.js");
+        let aid = a.id;
+        engine
+            .commit_batch_ext(vec![a], vec![], &[], HashMap::new(), &[])
+            .expect("base commit");
+
+        engine.delete_node(aid);
+        engine.flush().expect("delete flush");
+        // Stamp the shared index cache at the current version: a `@materialize` run
+        // routes through `evaluate_with_materialize_shared` (the shared-cache entry;
+        // plain `eval_datalog_v2` does not), and deriving nothing commits nothing,
+        // so the version stays put.
+        engine
+            .eval_datalog_v2_materialize_cached(
+                "@materialize(edge_type = \"NEVER\")\nx(A, B) :- edge(A, B, \"NO_SUCH\").",
+                EvalLimits::none(),
+            )
+            .expect("stamp eval");
+        let v_before = engine.snapshot().version;
+        let snap_pre = engine.snapshot();
+        assert_eq!(engine.datalog2_stats(&snap_pre).total_nodes, 0, "node tombstoned");
+        let (stamp, _) = engine.datalog2_shared_indexes.snapshot_counts();
+        assert_eq!(stamp, Some(v_before), "shared cache stamped at the current version");
+
+        // Re-add the SAME node id; NO flush — un-tombstone in place.
+        engine.add_nodes(vec![make_v1_node(aid, "FUNCTION", "f", "a.js")]);
+        let snap = engine.snapshot();
+        assert_eq!(snap.version, v_before, "no flush ⇒ the version must NOT move");
+        assert_eq!(
+            engine.datalog2_stats(&snap).total_nodes,
+            1,
+            "stats must see the resurrected node at the unchanged version"
+        );
+        assert_eq!(
+            engine.datalog2_shared_indexes.snapshot_counts(),
+            (None, 0),
+            "shared Part-A indexes must be invalidated on node un-tombstone"
+        );
+        // And the eval at the unchanged version sees the resurrected node.
+        let rows = engine
+            .eval_datalog_v2("f(X) :- node(X, \"FUNCTION\").", "f", EvalLimits::none())
+            .expect("eval post-resurrection");
+        assert_eq!(rows.len(), 1, "resurrected node derivable at the same version");
     }
 
     /// Gate D2: the cached `@materialize` entry keeps the materialized edge set ≡ a full scratch

@@ -1025,6 +1025,38 @@ impl MultiShardStore {
         results
     }
 
+    /// Per-type LIVE node counts resolved through `snap` — the planner's §7
+    /// cardinality oracle (`Stats::nodes_by_type`) WITHOUT materializing records.
+    /// Same L0-newest-wins dedup + tombstone walk as [`Self::find_nodes_at`] with
+    /// no filters, but it reads only the id and node-type columns (`get_record`
+    /// copies name/file/metadata blobs per node — at ~500k nodes that copy alone
+    /// dominated the per-`@materialize`-call fixed overhead, W9 fix #1a).
+    pub fn count_nodes_by_type_at(
+        &self,
+        snap: &ReadSnapshot,
+    ) -> std::collections::HashMap<String, u64> {
+        let mut seen: HashSet<u128> = HashSet::new();
+        let mut counts: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+
+        // L0 newest→oldest, then L1 (oldest) — the find_nodes_at visit order, so
+        // the newest occurrence of a duplicated id is the one counted.
+        for desc in snap.node_segments.iter().rev().chain(snap.l1_node_segments.iter()) {
+            self.with_node_segment(desc, |seg| {
+                for j in 0..seg.record_count() {
+                    let id = seg.get_id(j);
+                    if !seen.insert(id) {
+                        continue;
+                    }
+                    if snap.tombstones.contains_node(id) {
+                        continue;
+                    }
+                    *counts.entry(seg.get_node_type(j).to_string()).or_insert(0) += 1;
+                }
+            });
+        }
+        counts
+    }
+
     /// Count of LIVE nodes resolved through `snap`. Reproduces
     /// `Shard::node_count` dedup + tombstone semantics across all shards, minus
     /// the write buffer (full O(records) scan).
