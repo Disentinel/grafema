@@ -58,12 +58,36 @@ export interface PackageApiEnrichOptions {
   flushBatchSize?: number;
 }
 
-const DEFAULT_BARREL_SUFFIXES: readonly string[] = [
-  '/src/index.ts',
-  '/src/index.js',
-  '/index.ts',
-  '/index.js',
-];
+/**
+ * JS/TS source extensions the orchestrator analyzes and indexes — `is_js_ts_file`
+ * in `packages/grafema-orchestrator/src/analyzer.rs` (`js | jsx | ts | tsx | mjs
+ * | cjs | mts | cts`). This is the single source of truth for both barrel-file
+ * detection ({@link DEFAULT_BARREL_SUFFIXES}) and re-export-source resolution
+ * ({@link REEXPORT_EXTENSIONS}), so the two can never drift apart.
+ *
+ * Ordered TS-family first (`ts/tsx/mts/cts`) then JS-family (`js/jsx/mjs/cjs`)
+ * so a barrel or re-export resolves to the TypeScript source before a compiled
+ * JS sibling when both happen to be in the graph. Any extension the orchestrator
+ * indexes but this list omits is a file the enricher silently cannot see — as a
+ * barrel its whole package API surface is dropped; as a re-export target it
+ * inflates `exportsWithoutHandler`.
+ */
+const JS_TS_EXTENSIONS: readonly string[] = ['ts', 'tsx', 'mts', 'cts', 'js', 'jsx', 'mjs', 'cjs'];
+
+/**
+ * Literal file-path suffixes recognised as a package public-API barrel.
+ *
+ * Covers both the TypeScript (`packages/<pkg>/src/index.<ext>`) and pre-built
+ * (`packages/<pkg>/index.<ext>`) layouts, for every JS/TS extension the
+ * orchestrator indexes (see {@link JS_TS_EXTENSIONS}) — not just `.ts`/`.js`.
+ * A React component library barrel at `src/index.tsx`, or an ESM-/CJS-explicit
+ * TypeScript barrel at `src/index.mts`/`.cts`, must be detected too; otherwise
+ * that package's entire public API surface is dropped from the graph.
+ */
+const DEFAULT_BARREL_SUFFIXES: readonly string[] = JS_TS_EXTENSIONS.flatMap(ext => [
+  `/src/index.${ext}`,
+  `/index.${ext}`,
+]);
 
 const DEFAULT_FLUSH_BATCH_SIZE = 200;
 
@@ -303,30 +327,13 @@ function resolveRelative(fromFile: string, source: string): string {
 }
 
 /**
- * Source-file extensions a re-export specifier may resolve to.
- *
- * This MUST mirror the JS/TS extension set the orchestrator actually analyzes
- * and indexes — `is_js_ts_file` in
- * `packages/grafema-orchestrator/src/analyzer.rs` (`js | jsx | ts | tsx | mjs |
- * cjs | mts | cts`). Any extension the orchestrator indexes but this list omits
- * is a definition file that an extensionless/directory re-export can never
- * resolve to, silently inflating `exportsWithoutHandler`.
- *
- * Ordered TS-family first (`.ts/.tsx/.mts/.cts`) then JS-family
- * (`.js/.jsx/.mjs/.cjs`) so a re-export resolves to the TypeScript definition
- * before a compiled JS sibling when both happen to be in the graph — keeping
- * `resolveReExportTarget`'s first-match deterministic.
+ * Source-file extensions a re-export specifier may resolve to — the dotted form
+ * of {@link JS_TS_EXTENSIONS}, derived from it so the candidate set used for
+ * re-export resolution and the suffixes used for barrel detection can never
+ * drift apart. TS-family first keeps `resolveReExportTarget`'s first-match
+ * deterministic (TypeScript source before a compiled JS sibling).
  */
-const REEXPORT_EXTENSIONS: readonly string[] = [
-  '.ts',
-  '.tsx',
-  '.mts',
-  '.cts',
-  '.js',
-  '.jsx',
-  '.mjs',
-  '.cjs',
-];
+const REEXPORT_EXTENSIONS: readonly string[] = JS_TS_EXTENSIONS.map(e => `.${e}`);
 /** Directory index file names, same TS-first order as {@link REEXPORT_EXTENSIONS}. */
 const REEXPORT_INDEX_FILES: readonly string[] = REEXPORT_EXTENSIONS.map(e => `index${e}`);
 /**

@@ -442,4 +442,82 @@ describe('packageApiEnricher', () => {
     const has = await getEdges(client, apiNodes[0].id, 'HANDLES');
     assert.equal(has.length, 1, 'no duplicate HANDLES edges');
   });
+
+  // A package's barrel is not always `index.ts`/`index.js`. The orchestrator
+  // analyzes & indexes eight JS/TS extensions (analyzer.rs `is_js_ts_file`):
+  // js, jsx, ts, tsx, mjs, cjs, mts, cts. A package whose public-API barrel is
+  // `src/index.tsx` (React component lib), `src/index.mts`/`.cts` (explicit
+  // ESM/CJS TypeScript), or a `.jsx/.mjs/.cjs` JS variant must still be detected
+  // as a barrel — otherwise its ENTIRE public API surface is silently dropped
+  // (zero `package:export` nodes). This is the barrel-FILE-detection sibling of
+  // the re-export-source extension cases above. Only `.ts`/`.js` were previously
+  // recognized.
+  for (const ext of ['tsx', 'mts', 'cts', 'jsx', 'mjs', 'cjs']) {
+    it(`detects a src/index.${ext} barrel and surfaces its exports`, async () => {
+      const barrel = `packages/pkg-x/src/index.${ext}`;
+      const defFile = 'packages/pkg-x/src/foo.ts';
+      await seedBarrelModule(backend, barrel);
+      await seedBarrelModule(backend, defFile);
+
+      await backend.addNode({
+        id: 'test::eb-foo',
+        type: 'EXPORT_BINDING',
+        name: 'foo',
+        file: barrel,
+        exported: true,
+        exportedName: 'foo',
+        source: './foo.js',
+      });
+      await backend.addNode({
+        id: 'test::fn-foo',
+        type: 'FUNCTION',
+        name: 'foo',
+        file: defFile,
+      });
+
+      const result = await enrichPackageApis(client);
+
+      assert.equal(result.packagesScanned, 1, `index.${ext} barrel must be scanned`);
+      assert.equal(result.apiNodesCreated, 1);
+      assert.equal(result.handlesEdgesCreated, 1);
+
+      const apiNodes = [];
+      for await (const wn of client.queryNodes({ type: 'package:export' })) apiNodes.push(wn);
+      assert.equal(apiNodes.length, 1);
+      assert.equal(apiNodes[0].name, 'foo');
+      const meta = JSON.parse(apiNodes[0].metadata);
+      assert.equal(meta.barrel, barrel, 'api node records the non-.ts barrel file');
+    });
+  }
+
+  it('detects a root-level (non-src) index.mts barrel', async () => {
+    // The pre-built JS layout (`packages/<pkg>/index.*`) must also accept the
+    // full extension set, not only `index.ts`/`index.js`.
+    const barrel = 'packages/pkg-y/index.mts';
+    const defFile = 'packages/pkg-y/lib.ts';
+    await seedBarrelModule(backend, barrel);
+    await seedBarrelModule(backend, defFile);
+
+    await backend.addNode({
+      id: 'test::eb-bar',
+      type: 'EXPORT_BINDING',
+      name: 'bar',
+      file: barrel,
+      exported: true,
+      exportedName: 'bar',
+      source: './lib.js',
+    });
+    await backend.addNode({
+      id: 'test::fn-bar',
+      type: 'FUNCTION',
+      name: 'bar',
+      file: defFile,
+    });
+
+    const result = await enrichPackageApis(client);
+
+    assert.equal(result.packagesScanned, 1, 'root index.mts barrel must be scanned');
+    assert.equal(result.apiNodesCreated, 1);
+    assert.equal(result.handlesEdgesCreated, 1);
+  });
 });
