@@ -214,7 +214,36 @@ jobs:
           test -d packages/mcp/dist || (echo "::error::packages/mcp/dist not found" && exit 1)
           echo "All build artifacts verified."
 
-  # Job 4: Version sync check
+  # Job 4: Rust orchestrator tests
+  #
+  # Gates `cargo test` for the native Rust orchestrator. Without this, broken
+  # test code (e.g. a dropped closing brace in `mod tests`) merges to main
+  # undetected because no other CI job compiles the Rust test harness — the
+  # JS suites never touch it. These are pure unit/integration tests that run
+  # the analyzer in-process (`analyze_rust_file`); the one test needing a live
+  # rfdb-server is `#[ignore]`d, so `--tests` is fully hermetic.
+  cargo-test:
+    name: Rust Orchestrator Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/grafema-orchestrator -> target
+
+      - name: Run orchestrator tests
+        working-directory: packages/grafema-orchestrator
+        run: cargo test --tests
+
+  # Job 5: Version sync check
   version-sync:
     name: Version Sync
     runs-on: ubuntu-latest
