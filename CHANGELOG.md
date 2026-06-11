@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.31] - 2026-06-11
+
 ### Features
 
 - feat(cli): `grafema upgrade` command — clean stale artifacts from `~/.grafema/bin/` and upgrade binaries to current version. Supports `--all`, `--lang`, `--project`, `--dry-run` flags.
@@ -12,6 +14,18 @@ All notable changes to this project will be documented in this file.
 - perf(plugins): Datalog-based reimplementations of `shape-tracker`, `type-inference`, `method-call-resolver`, and `shape-verifier`, opt-in behind the `GRAFEMA_DATALOG_PLUGINS` env flag (comma-separated plugin names); the default path is byte-for-byte the existing legacy logic, relocated into `*Legacy` functions (REG-1128 Phase 3b+3c, #265)
 
 ### Bug Fixes
+- fix(cli): emit a clear warning when analyzer binaries fail to download (restricted network / missing release asset) instead of silently producing a structural-only graph (REG-1167, #385)
+- fix(build): statically link libyaml in all Haskell resolver binaries — no runtime dependency on `libyaml-0.so.2`, fixes hard `analyze` crash on slim Docker images (REG-1174, #385)
+- docs: one canonical install/quickstart path across landing, README and getting-started (`npm install -g grafema` + `grafema analyze --quickstart`); slim-image troubleshooting section (MKT-56, #385)
+- fix(rfdb): align attr() reverse metadata match with forward for null/object/array (#371)
+- fix(util): resolve .jsx/.mts/.cts re-export sources in packageApiEnricher (#372)
+- fix(cli/doctor): don't delete a live server's socket on ping timeout (#373)
+- fix(util): resolve extensionless & directory imports to .mts/.cts files (#374)
+- feat(rust-analyzer): emit associated consts and types from impl/trait blocks (#375)
+- fix(rust-analyzer): emit CALL nodes for macro invocations and walk their args (#376)
+- fix(rust-analyzer): walk inline `const { }` block bodies (#381)
+- fix(rust-analyzer): walk `&raw const`/`&raw mut` and `try {}` expr bodies (#382)
+- ci: run CI on ai-dev pushes/PRs; fix release-creation race in binaries workflow (REG-1175)
 - fix(cli): `grafema init` / `analyze --quickstart` discovery and `grafema query "X in foo.mts"` file-scope routing now recognize `.mts`/`.cts` TypeScript files — both CLI extension lists had drifted from the orchestrator's authoritative `is_js_ts_file` set, so ESM/CJS TypeScript files were silently excluded from the generated analysis glob and misrouted as symbol scopes (#378)
 - fix(rfdb): edge-lifting attributes hidden nodes to their actual containing function/class by walking `CONTAINS` ancestry, instead of collapsing them onto whichever visible node happens to be first in the file (REG-1132, #265)
 - fix(doctor): `checkServerStatus` removes a stale RFDB socket file so a leftover socket from a crashed server no longer blocks a clean restart (REG-1129, #265)
