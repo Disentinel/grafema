@@ -15,6 +15,20 @@ date: 2026-02-20
 
 # RFDB V2 Clear Makes Engine Ephemeral
 
+## STATUS UPDATE (2026-06-11, branch feat/datalog — W8 Part 2)
+
+**Both flavors of this trap are FIXED on feat/datalog.** `GraphEngineV2::clear()` /
+`clear_durable()` now performs a REAL durable clear: it truncates the on-disk database
+(deletes `segments/` + `gc/` + manifest authority, recreates a fresh empty manifest and
+shard skeleton) and resets all engine caches (D2 materialize pins, planner-stats, W9
+shared indexes, datalog2 pin sidecars). The engine stays DISK-BACKED after clear — no
+ephemeral swap, so post-clear analysis persists (the 2026-02 data-loss flavor) and a
+clear+restart does NOT resurrect the old graph (the 2026-06 placebo flavor, gaps.md).
+Wire `Clear` surfaces truncation errors to the client. Tests:
+`w8_durable_clear_truncates_disk_and_survives_reopen`, `w8_durable_clear_drops_pin_sidecars`
+(engine_v2.rs). Manual fallback remains `rm -rf <db>.rfdb` (e.g. after a crash inside the
+tiny manifest-reset window). On binaries WITHOUT this fix, everything below still applies.
+
 ## Problem
 
 After running `grafema analyze --clear`, the analysis completes successfully and reports

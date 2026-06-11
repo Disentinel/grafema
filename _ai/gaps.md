@@ -263,9 +263,21 @@ the dual: clear+restart = no-op.
 segment truncation + empty-manifest flip at a new version, honoring MVCC pins), not swap to
 ephemeral. Until then: the only real clear is `rm -rf .grafema/graph.rfdb` before the server starts.
 
-**Also:** why do exactly ~15.5k edges survive `--force` per-file deletion while the rest are
-superseded? Worth understanding the per-file delete path (suspect: edges whose src node id is
-identical across generations are not tombstoned by changed-file deletion).
+**RESOLVED (W8 Part 2, 2026-06-11, feat/datalog):** `GraphEngineV2::clear_durable()`
+(engine_v2.rs) truncates the on-disk database — deletes `segments/` + `gc/` + the manifest
+authority, recreates a fresh empty manifest (durable) and shard skeleton, drops ALL engine caches
+(D2 materialize pins, planner stats, W9 shared indexes, pin sidecars). The trait `clear()` and the
+wire `Clear` command (rfdb_server.rs `Request::Clear`, error-surfacing) both route through it, so
+the existing `analyzeAction.ts` clear → shutdown → reconnect sequence now reloads a genuinely
+empty graph. Semantics: runs under the exclusive engine write lock (no reader spans it); a crash
+in the tiny manifest-reset window leaves an explicitly-failing DB — `rm -rf <db>.rfdb` remains
+the documented manual fallback. Proven by `w8_durable_clear_truncates_disk_and_survives_reopen`
+(add → flush → clear → REOPEN ⇒ 0 nodes; no pre-clear segment file survives) +
+`w8_durable_clear_drops_pin_sidecars`.
+
+**Also (still open):** why do exactly ~15.5k edges survive `--force` per-file deletion while the
+rest are superseded? Worth understanding the per-file delete path (suspect: edges whose src node
+id is identical across generations are not tombstoned by changed-file deletion).
 
 ## @materialize_node advisory follow-ups (W4 review wf_4abcf48c-1d8, 2026-06-10 — none blocking)
 

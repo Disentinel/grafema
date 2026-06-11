@@ -456,3 +456,35 @@ doc-строка, устаревший комментарий derived_probe_key,
 binding-hop 263→0 (witnessed residue), js-this-method-calls + runtime-call-globals retired
 BY DEFAULT (RETIRED_SECOND_PASS_STEPS, env остаётся аддитивным). Остался финальный
 сквозной дифференциал + флип RFDB_DATALOG_V2 (#12) и cleanup (#13).
+
+---
+
+## W8 (2026-06-11/12, conveyor #6): живучесть долгоживущего сервера — все 3 блокера закрыты
+
+**Сон ноута прервал двух агентов; ретрай №3 ВЕРИФИЦИРОВАЛ работу предшественника и нашёл
+CRITICAL data-loss**: отменённый @materialize убегал «пустым результатом» (cancel в финальном
+леге → empty delta → fixpoint счёл конвергенцией → write-back занадгробил все 1,726 DEPENDS_ON;
+живой repro 2/2). Фикс: post-fixpoint FINAL GUARD (re-check raise-only флага до Ok) в evaluate
++ maintain_incremental; фальсифицированный тест; live re-proof: CPU гаснет ≤1s, no commit.
+
+**Part 1 — disconnect-cancel**: per-connection watcher (poll+MSG_PEEK, 200ms), wired через
+EvalLimits.cancelled в v2 exec (per-row/per-iteration), v1 и cypher. До: v1 жёг +17 CPU-s на
+мертвеца, v2 коммитил write-back мёртвого клиента. После: стоп ≤1s, no commit. 3-pack
+re-probe: оверхед в шуме (±0.5s).
+
+**Part 2 — persistent clear**: clear_durable() = manifest authority delete + segments/gc/pins
+truncate + reset_datalog2_caches. До: рестарт воскрешал 491k узлов (плацебо как в gaps.md).
+После: **618M → 16K, рестарт грузит 0 узлов**. gaps.md RESOLVED, скилл clear-trap обновлён.
+
+**Part 3 — durable D2-pin**: sidecar (BLAKE3, ключ = manifest version + tombstone-CONTENT-hash
+— W9-урок), read/write-disjoint gate. Live: scratch 6.62s → рестарт → **0.04s pin HIT (165×)**;
+мутация → чистый scratch. Ревью нашло riders-unsoundness (буферизованные чужие записи едут на
+write-back флаше → пин узаконил бы их невидимость) — закрыто гейтом has_buffered_writes +
+falsified тест.
+
+**Ревью также вскрыло PRE-EXISTING потерянную скобку в engine_v2.rs tests**: 4 новых W8-теста
++ старый zero_seed были МЁРТВЫМ КОДОМ (вложены в незакрытый fn; 62 из 67 #[test] регистрировались).
+Скобка восстановлена, zero_seed сгнил по MVCC-flush паттерну — починен.
+
+**Сьюты**: полный lib **1359/0**, datalog2 275/0, Gate A 51/51, bin 61/18 — фейлы байт-идентичны
+известному pre-existing набору. Idle-exit (опционал) НЕ реализован — бюджет ушёл на data-loss.

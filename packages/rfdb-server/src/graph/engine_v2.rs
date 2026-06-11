@@ -902,17 +902,161 @@ impl GraphEngineV2 {
 
         // Clone the prior entry out so the `&self` maintain borrow doesn't collide with the
         // `&mut self` write-back; cloning the ReadSnapshot bumps its pin (released on drop).
-        let prior_owned = self.datalog2_materialize_cache.get(&key).cloned();
+        // W8 Part 3: a cold-start miss (fresh process, empty in-process cache) consults the
+        // durable pin sidecar — an EXACT (version, tombstone-content) match rehydrates the
+        // prior evaluation and the derive below takes the unchanged-graph short-circuit
+        // instead of a full scratch eval. Any mismatch is a clean miss (scratch, I5).
+        let prior_owned = self
+            .datalog2_materialize_cache
+            .get(&key)
+            .cloned()
+            .or_else(|| self.try_rehydrate_durable_pin(key, &snapshot));
         let evaluation = {
             let prior = prior_owned.as_ref().map(|(s, e)| (s.clone(), e));
             self.derive_for_materialize(source, prior, &snapshot, limits)?
         };
 
+        // W8 Part 3 soundness probe, captured BEFORE the write-back mutates anything:
+        // the write-back commits via the engine `flush()`, which publishes ALL pending
+        // engine state (MVCC B2 visibility=publish) — buffered `add_nodes`/`add_edges`
+        // from any connection plus pending tombstones RIDE the commit. Riders can be of
+        // any type (including types the program reads, and node facts the disjointness
+        // gate never inspects), so a non-empty-delta pin keyed to the post-commit
+        // snapshot would silently serve results that never saw them. Riders present ⇒
+        // the non-empty-delta persist is refused (see `persist_durable_pin`).
+        let riders_pending = self.store.has_buffered_writes()
+            || !self.pending_tombstone_nodes.is_empty()
+            || !self.pending_tombstone_edges.is_empty();
         let counts =
             self.materialize_writeback_delta(&evaluation, &specs, &node_specs, &snapshot, generation)?;
+        // W8 Part 3: persist the durable pin when sound (see `persist_durable_pin`); a
+        // non-persistable run REMOVES any stale sidecar instead.
+        self.persist_durable_pin(
+            key,
+            &snapshot,
+            &evaluation,
+            counts,
+            riders_pending,
+            &program,
+            &specs,
+            &node_specs,
+        );
         // Refresh the cache to this generation (drops & unpins the previous one).
         self.datalog2_materialize_cache.insert(key, (snapshot, evaluation));
         Ok(counts)
+    }
+
+    /// W8 Part 3: try to rehydrate a durable D2 pin for `key` against the CURRENT snapshot.
+    /// Returns a `(prev_snapshot, prev_evaluation)` pair usable by
+    /// [`Self::derive_for_materialize`] — the prev snapshot IS a clone of the current one
+    /// (same version, same tombstone `Arc`), so the derive takes its unchanged-graph
+    /// short-circuit and the rehydrated evaluation is returned verbatim. `None` on any
+    /// mismatch (different version, different tombstone content, missing/corrupt file,
+    /// ephemeral engine) — the caller then pays scratch, exactly the pre-W8 behavior.
+    fn try_rehydrate_durable_pin(
+        &self,
+        key: u64,
+        snapshot: &crate::storage_v2::read_snapshot::ReadSnapshot,
+    ) -> Option<(
+        crate::storage_v2::read_snapshot::ReadSnapshot,
+        crate::datalog2::exec::Evaluation,
+    )> {
+        use crate::datalog2::pin_sidecar;
+        let path = self.path.as_ref()?;
+        let pin = pin_sidecar::load(path, key)?;
+        if pin.version != snapshot.version {
+            tracing::info!(
+                "datalog2 durable pin MISS for program {key:016x}: stored version {} != current {} — scratch",
+                pin.version,
+                snapshot.version
+            );
+            return None;
+        }
+        if pin.tombstone_hash != pin_sidecar::tombstone_hash(&snapshot.tombstones) {
+            // Same version but the tombstone CONTENT differs (the same-version
+            // un-tombstone path, W9 lesson) — the visible data is NOT what the pin was
+            // computed over. Scratch.
+            tracing::info!(
+                "datalog2 durable pin MISS for program {key:016x}: tombstone state changed at version {} — scratch",
+                snapshot.version
+            );
+            return None;
+        }
+        eprintln!(
+            "[engine_v2] datalog2 durable pin HIT for program {key:016x} at version {} — \
+             rehydrated prior evaluation, skipping scratch",
+            snapshot.version
+        );
+        Some((snapshot.clone(), pin.evaluation))
+    }
+
+    /// W8 Part 3: persist the durable D2 pin after a successful cached write-back, when
+    /// sound (the full argument lives in the [`crate::datalog2::pin_sidecar`] module docs):
+    ///
+    /// * empty write-back delta ⇒ no version flip ⇒ `evaluation == scratch(current)` —
+    ///   persist at the pre-eval snapshot's version unconditionally;
+    /// * non-empty delta ⇒ persist at the POST-commit version, but only when the
+    ///   write-back commit provably published NOTHING beyond the program's own delta
+    ///   (`riders_pending == false`: empty store write buffers + empty pending
+    ///   tombstones at write-back entry — the engine flush publishes everything
+    ///   pending, MVCC B2 visibility=publish) AND the program is edge-only with a
+    ///   body that provably never reads the edge types it writes (read/write-disjoint
+    ///   ⇒ the fixpoint at the post-commit snapshot is identical);
+    /// * otherwise remove any stale sidecar — restart pays scratch (no laundering).
+    ///
+    /// Persistence failures are logged, never propagated: the sidecar is an optimization,
+    /// the in-process cache and the result are already correct.
+    #[allow(clippy::too_many_arguments)]
+    fn persist_durable_pin(
+        &mut self,
+        key: u64,
+        pre_snapshot: &crate::storage_v2::read_snapshot::ReadSnapshot,
+        evaluation: &crate::datalog2::exec::Evaluation,
+        counts: (usize, usize),
+        riders_pending: bool,
+        program: &crate::datalog2::parser_ext::ExtProgram,
+        specs: &[crate::datalog2::materialize::MaterializeSpec],
+        node_specs: &[crate::datalog2::materialize::NodeMaterializeSpec],
+    ) {
+        use crate::datalog2::pin_sidecar;
+        let Some(path) = self.path.clone() else {
+            return; // ephemeral engine: nothing durable to pin
+        };
+        let state = if counts == (0, 0) {
+            // No write-back mutation: the pre-eval snapshot IS the current state.
+            // (Sound even with riders pending — nothing was flushed, so the pin is
+            // keyed to exactly the data the evaluation read; a later rider flush
+            // flips the version and the pin cleanly misses.)
+            Some((
+                pre_snapshot.version,
+                pin_sidecar::tombstone_hash(&pre_snapshot.tombstones),
+            ))
+        } else if !riders_pending
+            && node_specs.is_empty()
+            && !pin_sidecar::program_reads_written_edge_types(&program.rules(), specs)
+        {
+            // Rider-free, read/write-disjoint, edge-only program: the commit published
+            // EXACTLY the program's own delta, and that delta touches only base facts
+            // no rule body observes — the evaluation is also the fixpoint of the
+            // post-commit snapshot. Key the pin to THAT state (what a restart sees).
+            // With riders the post-commit snapshot would contain data (of arbitrary
+            // edge AND node types) the evaluation never saw — refuse, drop the sidecar.
+            let cur = self.snapshot();
+            Some((cur.version, pin_sidecar::tombstone_hash(&cur.tombstones)))
+        } else {
+            None
+        };
+        match state {
+            Some((version, hash)) => {
+                if let Err(e) = pin_sidecar::save(&path, key, version, &hash, evaluation) {
+                    eprintln!(
+                        "[engine_v2] datalog2 durable pin save failed for program {key:016x}: {e} \
+                         (restart will pay scratch)"
+                    );
+                }
+            }
+            None => pin_sidecar::remove(&path, key),
+        }
     }
 
     /// Produce the derived `Evaluation` for a `@materialize` run: MAINTAIN against a prior pinned
@@ -1121,6 +1265,85 @@ impl GraphEngineV2 {
         self.datalog2_shared_indexes
             .retain_for_commit(snapshot.version, self.snapshot().version, &touch);
         Ok((n_added, n_removed))
+    }
+
+    /// Drop every engine-level datalog2 cache: the D2 materialize cache (each entry pins a
+    /// prior manifest version — dropping releases the pins), the planner-stats cache, and
+    /// the W9 shared build-once indexes. Called by clear (the caches are keyed by manifest
+    /// version / tombstone-Arc identity, but a clear RESETS the version counter to 1 — a
+    /// stale entry could otherwise collide with a future version-1-after-clear snapshot).
+    fn reset_datalog2_caches(&mut self) {
+        self.datalog2_materialize_cache.clear();
+        *self.datalog2_stats_cache.lock().unwrap() = None;
+        self.datalog2_shared_indexes = crate::datalog2::exec::SharedIndexCaches::new();
+    }
+
+    /// W8 Part 2: REAL durable clear — atomically truncate the on-disk database so a
+    /// subsequent reload (or a cold restart) sees an EMPTY graph. This is what the wire
+    /// `Clear` command runs; `analyze --clear`'s clear → shutdown → reload sequence is no
+    /// longer a placebo.
+    ///
+    /// Procedure (disk-backed engine):
+    /// 1. Swap the live store + manifest to ephemeral placeholders — drops every open
+    ///    segment handle and manifest Arc the engine holds.
+    /// 2. Delete the manifest authority (`current.json`, `manifests/`,
+    ///    `manifest_index.json`) and immediately recreate a fresh empty manifest
+    ///    (`ManifestStore::create`, durable). After this point a crash leaves a VALID
+    ///    empty database: orphaned segment files are unreferenced by the empty manifest
+    ///    and invisible to any reader.
+    /// 3. Delete the data trees (`segments/`, `gc/`, the datalog2 pin sidecar dir) and
+    ///    recreate the shard skeleton (`MultiShardStore::create`).
+    /// 4. Reset all in-memory engine state: pending tombstones, declared fields, and the
+    ///    datalog2 caches ([`Self::reset_datalog2_caches`] — the D2 entries pin pre-clear
+    ///    manifest versions and MUST be dropped).
+    ///
+    /// The `LOCK` sentinel is intentionally preserved: it carries the DatabaseManager's
+    /// advisory flock for the server process lifetime.
+    ///
+    /// MVCC semantics (decided, tested): clear runs under the engine's exclusive write
+    /// access (`&mut self` — the server wire handler holds the engine write lock), so no
+    /// request-scoped reader can span it. The only cross-request pinned snapshots are the
+    /// engine-owned D2 materialize cache entries, which are dropped here. Post-clear
+    /// readers see an empty graph; nothing observes a torn state. A crash in the tiny
+    /// window inside step 2 (authority deleted, fresh manifest not yet written) leaves a
+    /// database that fails to open with an explicit error — the documented manual
+    /// fallback (`rm -rf <db>.rfdb`) recovers; clear never silently resurrects data.
+    pub fn clear_durable(&mut self) -> Result<()> {
+        let Some(path) = self.path.clone() else {
+            // Ephemeral engine: the in-memory swap IS the durable clear.
+            self.store = MultiShardStore::ephemeral(DEFAULT_SHARD_COUNT);
+            self.manifest = std::sync::Mutex::new(ManifestStore::ephemeral());
+            self.pending_tombstone_nodes.clear();
+            self.pending_tombstone_edges.clear();
+            self.declared_fields.clear();
+            self.reset_datalog2_caches();
+            return Ok(());
+        };
+
+        // ── 1. Release the live store/manifest (open handles, descriptor Arcs). ──
+        self.store = MultiShardStore::ephemeral(DEFAULT_SHARD_COUNT);
+        self.manifest = std::sync::Mutex::new(ManifestStore::ephemeral());
+        self.pending_tombstone_nodes.clear();
+        self.pending_tombstone_edges.clear();
+        self.declared_fields.clear();
+        self.reset_datalog2_caches();
+
+        // ── 2. Reset the manifest authority FIRST (small, fast), then recreate it. ──
+        let _ = std::fs::remove_file(path.join("current.json"));
+        let _ = std::fs::remove_file(path.join("manifest_index.json"));
+        let _ = std::fs::remove_dir_all(path.join("manifests"));
+        let fresh_manifest = ManifestStore::create(&path)?;
+
+        // ── 3. Drop the data trees (now orphaned) and recreate the shard skeleton. ──
+        let _ = std::fs::remove_dir_all(path.join("segments"));
+        let _ = std::fs::remove_dir_all(path.join("gc"));
+        let _ = std::fs::remove_dir_all(path.join(crate::datalog2::pin_sidecar::SIDECAR_DIR));
+        let shard_count = self.cached_profile.shard_count;
+        let fresh_store = MultiShardStore::create(&path, shard_count)?;
+
+        self.store = fresh_store;
+        self.manifest = std::sync::Mutex::new(fresh_manifest);
+        Ok(())
     }
 }
 
@@ -1716,11 +1939,25 @@ impl GraphStore for GraphEngineV2 {
     }
 
     fn clear(&mut self) {
-        self.store = MultiShardStore::ephemeral(DEFAULT_SHARD_COUNT);
-        self.manifest = std::sync::Mutex::new(ManifestStore::ephemeral());
-        self.pending_tombstone_nodes.clear();
-        self.pending_tombstone_edges.clear();
-        self.declared_fields.clear();
+        // W8 Part 2: clear is DURABLE for a disk-backed engine. The previous behavior
+        // (swap to ephemeral, disk untouched) made `analyze --clear` a documented placebo:
+        // clear → shutdown → reload resurrected the old on-disk graph (gaps.md 2026-06-09,
+        // skill `rfdb-v2-clear-ephemeral-trap`). The trait method cannot return an error;
+        // a failed disk truncation falls back to the old ephemeral swap (the session still
+        // sees an empty graph) and LOGS loudly — the wire `Clear` handler calls
+        // [`Self::clear_durable`] directly and surfaces the error to the client.
+        if let Err(e) = self.clear_durable() {
+            eprintln!(
+                "[engine_v2] DURABLE CLEAR FAILED ({e}); falling back to ephemeral clear — \
+                 the on-disk database was NOT fully truncated (manual `rm -rf` required)"
+            );
+            self.store = MultiShardStore::ephemeral(DEFAULT_SHARD_COUNT);
+            self.manifest = std::sync::Mutex::new(ManifestStore::ephemeral());
+            self.pending_tombstone_nodes.clear();
+            self.pending_tombstone_edges.clear();
+            self.declared_fields.clear();
+            self.reset_datalog2_caches();
+        }
     }
 
     fn declare_fields(&mut self, fields: Vec<FieldDecl>) {
@@ -5271,6 +5508,7 @@ mod tests {
                 "method_calls pack on the real LSM store took {dt:?} (bound: 60 s)"
             );
         }
+    }
 
     #[test]
     fn test_count_edges_by_type_zero_seed() {
@@ -5290,6 +5528,9 @@ mod tests {
             }],
             false,
         );
+        // MVCC B2: buffered writes are invisible until publish — count_edges_by_type
+        // reads the published snapshot (get_all_edges), so flush first.
+        engine.flush().expect("flush");
 
         // Requesting a type that has edges — should return the count
         let result = engine.count_edges_by_type(Some(&["CALLS".to_string()]));
@@ -5311,6 +5552,355 @@ mod tests {
         let result = engine.count_edges_by_type(None);
         assert_eq!(result.get("CALLS"), Some(&1));
     }
-}
 
+    // ── W8 Part 2: durable clear ─────────────────────────────────────
+
+    /// The clear-placebo regression (gaps.md 2026-06-09): clear → drop → REOPEN the same
+    /// path must see an EMPTY graph (the old behavior swapped to ephemeral and the old
+    /// disk resurrected). Also pins: post-clear writes persist and reopen cleanly, and no
+    /// stale pre-clear segment file survives on disk.
+    #[test]
+    fn w8_durable_clear_truncates_disk_and_survives_reopen() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("clear.rfdb");
+
+        let count_segment_files = |p: &std::path::Path| -> usize {
+            fn walk(p: &std::path::Path, n: &mut usize) {
+                if let Ok(rd) = std::fs::read_dir(p) {
+                    for e in rd.flatten() {
+                        let path = e.path();
+                        if path.is_dir() {
+                            walk(&path, n);
+                        } else {
+                            *n += 1;
+                        }
+                    }
+                }
+            }
+            let mut n = 0;
+            walk(&p.join("segments"), &mut n);
+            n
+        };
+
+        {
+            let mut engine = GraphEngineV2::create(&db_path).unwrap();
+            let a = make_v2_node("a.js->FUNCTION->f1", "FUNCTION", "f1", "a.js");
+            let b = make_v2_node("a.js->FUNCTION->f2", "FUNCTION", "f2", "a.js");
+            let (ida, idb) = (a.id, b.id);
+            engine.store.add_nodes(vec![a, b]);
+            engine.add_edges(
+                vec![EdgeRecord {
+                    src: ida,
+                    dst: idb,
+                    edge_type: Some("CALLS".to_string()),
+                    version: "main".to_string(),
+                    metadata: None,
+                    deleted: false,
+                }],
+                false,
+            );
+            engine.flush().unwrap();
+            assert_eq!(engine.node_count(), 2);
+            assert!(count_segment_files(&db_path) > 0, "data segments exist pre-clear");
+
+            engine.clear_durable().unwrap();
+            assert_eq!(engine.node_count(), 0, "live engine sees empty graph");
+            assert_eq!(engine.edge_count(), 0);
+            assert_eq!(
+                count_segment_files(&db_path),
+                0,
+                "no pre-clear segment file survives on disk"
+            );
+        }
+
+        // THE regression: reopen the same path — the old graph must NOT resurrect.
+        {
+            let engine = GraphEngineV2::open(&db_path).unwrap();
+            assert_eq!(engine.node_count(), 0, "reopen after clear sees an EMPTY graph");
+            assert_eq!(engine.edge_count(), 0);
+        }
+
+        // The cleared database is fully usable: write, flush, reopen — only new data.
+        {
+            let mut engine = GraphEngineV2::open(&db_path).unwrap();
+            let c = make_v2_node("c.js->FUNCTION->g", "FUNCTION", "g", "c.js");
+            engine.store.add_nodes(vec![c]);
+            engine.flush().unwrap();
+            assert_eq!(engine.node_count(), 1);
+        }
+        {
+            let engine = GraphEngineV2::open(&db_path).unwrap();
+            assert_eq!(engine.node_count(), 1, "post-clear data persists across reopen");
+        }
+    }
+
+    // ── W8 Part 3: durable D2 pin (maintain cache across restart) ────
+
+    /// Program-key derivation — must mirror `eval_datalog_v2_materialize_cached` exactly.
+    fn w8_program_key(source: &str) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        source.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    /// materialize → (drop = server restart) → reopen → materialize again must take the
+    /// rehydrated short-circuit (NO scratch eval: the test counter proves the path), and a
+    /// mutation between restarts must fall back to scratch (version mismatch — no
+    /// laundering).
+    #[test]
+    fn w8_durable_pin_rehydrates_across_restart_and_mutation_falls_back_to_scratch() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("pin.rfdb");
+        // Reads CALLS, writes W8_DEP: read/write-disjoint ⇒ persistable after a
+        // non-empty write-back delta.
+        const SRC: &str =
+            "@materialize(edge_type=\"W8_DEP\")\ndep(A, B) :- edge(A, B, \"CALLS\").";
+
+        let mk_edge = |src: u128, dst: u128, ty: &str| EdgeRecord {
+            src,
+            dst,
+            edge_type: Some(ty.to_string()),
+            version: "main".to_string(),
+            metadata: None,
+            deleted: false,
+        };
+
+        let (ida, idb, idc);
+        {
+            let mut engine = GraphEngineV2::create(&db_path).unwrap();
+            let a = make_v2_node("a.js->FUNCTION->f1", "FUNCTION", "f1", "a.js");
+            let b = make_v2_node("a.js->FUNCTION->f2", "FUNCTION", "f2", "a.js");
+            let c = make_v2_node("a.js->FUNCTION->f3", "FUNCTION", "f3", "a.js");
+            (ida, idb, idc) = (a.id, b.id, c.id);
+            engine.store.add_nodes(vec![a, b, c]);
+            engine.add_edges(vec![mk_edge(ida, idb, "CALLS")], false);
+            engine.flush().unwrap();
+
+            // Run 1: cold cache, scratch + write-back (1 derived edge added).
+            let counts = engine
+                .eval_datalog_v2_materialize_cached(SRC, crate::datalog::EvalLimits::none())
+                .unwrap();
+            assert_eq!(counts, (1, 0), "first run writes the derived edge");
+            assert!(
+                db_path
+                    .join(crate::datalog2::pin_sidecar::SIDECAR_DIR)
+                    .join(format!("{:016x}.pin", w8_program_key(SRC)))
+                    .exists(),
+                "a read/write-disjoint program persists its durable pin"
+            );
+        } // drop = restart
+
+        {
+            let mut engine = GraphEngineV2::open(&db_path).unwrap();
+            // Run 2 (cold process): the in-process cache is empty — the durable pin must
+            // rehydrate and the derive must take the unchanged-graph short-circuit.
+            let counts = engine
+                .eval_datalog_v2_materialize_cached(SRC, crate::datalog::EvalLimits::none())
+                .unwrap();
+            assert_eq!(counts, (0, 0), "rehydrated run has nothing to re-write");
+            assert_eq!(
+                engine
+                    .datalog2_unchanged_hits
+                    .load(std::sync::atomic::Ordering::Relaxed),
+                1,
+                "the rehydrated pin must take the unchanged short-circuit, not scratch"
+            );
+            // The derived edge is still there (nothing was tombstoned).
+            assert_eq!(engine.get_outgoing_edges(ida, Some(&["W8_DEP"])).len(), 1);
+        } // drop = restart
+
+        {
+            // Mutation BETWEEN restarts: a new CALLS edge advances the version.
+            let mut engine = GraphEngineV2::open(&db_path).unwrap();
+            engine.add_edges(vec![mk_edge(idb, idc, "CALLS")], false);
+            engine.flush().unwrap();
+
+            // Run 3 (cold process, version moved): pin version mismatch ⇒ SCRATCH (no
+            // laundering), and the result reflects the new base fact.
+            let counts = engine
+                .eval_datalog_v2_materialize_cached(SRC, crate::datalog::EvalLimits::none())
+                .unwrap();
+            assert_eq!(counts, (1, 0), "scratch run derives + writes the new edge");
+            assert_eq!(
+                engine
+                    .datalog2_unchanged_hits
+                    .load(std::sync::atomic::Ordering::Relaxed),
+                0,
+                "a stale pin must NOT short-circuit"
+            );
+            assert_eq!(
+                engine
+                    .datalog2_maintain_hits
+                    .load(std::sync::atomic::Ordering::Relaxed),
+                0,
+                "a stale pin must NOT seed maintain either — scratch is the floor"
+            );
+        }
+    }
+
+    /// A program that READS an edge type it WRITES (self-feeding) must NOT persist a pin
+    /// after a non-empty write-back delta — its evaluation is not provably the fixpoint
+    /// of the post-commit state. (The empty-delta case is exact-state and always sound.)
+    #[test]
+    fn w8_durable_pin_refused_for_self_reading_program() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("selfpin.rfdb");
+        // Writes CALLS (additive) while another rule READS CALLS.
+        const SRC: &str = "@materialize(edge_type=\"CALLS\", mode=\"additive\")\n\
+                           c(A, B) :- edge(A, B, \"W8_SRC\").\n\
+                           helper(A, B) :- edge(A, B, \"CALLS\").";
+
+        let mut engine = GraphEngineV2::create(&db_path).unwrap();
+        let a = make_v2_node("a.js->FUNCTION->f1", "FUNCTION", "f1", "a.js");
+        let b = make_v2_node("a.js->FUNCTION->f2", "FUNCTION", "f2", "a.js");
+        let (ida, idb) = (a.id, b.id);
+        engine.store.add_nodes(vec![a, b]);
+        engine.add_edges(
+            vec![EdgeRecord {
+                src: ida,
+                dst: idb,
+                edge_type: Some("W8_SRC".to_string()),
+                version: "main".to_string(),
+                metadata: None,
+                deleted: false,
+            }],
+            false,
+        );
+        engine.flush().unwrap();
+
+        let counts = engine
+            .eval_datalog_v2_materialize_cached(SRC, crate::datalog::EvalLimits::none())
+            .unwrap();
+        assert_eq!(counts.0, 1, "the additive CALLS edge is written");
+        assert!(
+            crate::datalog2::pin_sidecar::load(&db_path, w8_program_key(SRC)).is_none(),
+            "self-reading program must not persist a durable pin after a non-empty delta"
+        );
+    }
+
+    /// W8 Part 3 rider gate: buffered writes pending at write-back entry RIDE the
+    /// write-back commit (the engine flush publishes ALL pending state, MVCC B2
+    /// visibility=publish). A non-empty-delta pin keyed to the post-commit snapshot
+    /// would then claim an evaluation that never saw the riders — even for a
+    /// read/write-disjoint program, because riders can be of types the program READS.
+    /// Such a run must persist NO pin (and drop a stale one); the restart pays scratch
+    /// and sees the riders.
+    #[test]
+    fn w8_durable_pin_refused_when_pending_writes_ride_the_writeback() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("riderpin.rfdb");
+        // Reads CALLS, writes W8_DEP — read/write-disjoint, so WITHOUT riders the
+        // non-empty-delta persist is allowed (proven by the rehydrate test above).
+        const SRC: &str =
+            "@materialize(edge_type=\"W8_DEP\")\ndep(A, B) :- edge(A, B, \"CALLS\").";
+
+        let mk_edge = |src: u128, dst: u128, ty: &str| EdgeRecord {
+            src,
+            dst,
+            edge_type: Some(ty.to_string()),
+            version: "main".to_string(),
+            metadata: None,
+            deleted: false,
+        };
+
+        let (ida, idb, idc, idd);
+        {
+            let mut engine = GraphEngineV2::create(&db_path).unwrap();
+            let a = make_v2_node("a.js->FUNCTION->f1", "FUNCTION", "f1", "a.js");
+            let b = make_v2_node("a.js->FUNCTION->f2", "FUNCTION", "f2", "a.js");
+            let c = make_v2_node("a.js->FUNCTION->f3", "FUNCTION", "f3", "a.js");
+            let d = make_v2_node("a.js->FUNCTION->f4", "FUNCTION", "f4", "a.js");
+            (ida, idb, idc, idd) = (a.id, b.id, c.id, d.id);
+            engine.store.add_nodes(vec![a, b, c, d]);
+            engine.add_edges(vec![mk_edge(ida, idb, "CALLS")], false);
+            engine.flush().unwrap();
+
+            // Run 1: clean (no riders) — the disjoint program persists its pin.
+            let counts = engine
+                .eval_datalog_v2_materialize_cached(SRC, crate::datalog::EvalLimits::none())
+                .unwrap();
+            assert_eq!(counts, (1, 0));
+            assert!(
+                crate::datalog2::pin_sidecar::load(&db_path, w8_program_key(SRC)).is_some(),
+                "rider-free run persists the pin (baseline)"
+            );
+
+            // A COMMITTED base change (so run 2 has a non-empty write-back delta)…
+            engine.add_edges(vec![mk_edge(idb, idc, "CALLS")], false);
+            engine.flush().unwrap();
+            // …plus an UNFLUSHED rider of a type the program READS. It will ride
+            // run 2's write-back flush into the post-commit snapshot, which the
+            // evaluation (computed at the pre-commit snapshot) never saw.
+            engine.add_edges(vec![mk_edge(idc, idd, "CALLS")], false);
+            assert!(engine.store.has_buffered_writes(), "rider really is pending");
+
+            // Run 2: non-empty delta (dep(b,c) is new) + riders pending ⇒ the pin
+            // must be REFUSED and the stale run-1 sidecar dropped.
+            let counts = engine
+                .eval_datalog_v2_materialize_cached(SRC, crate::datalog::EvalLimits::none())
+                .unwrap();
+            assert_eq!(counts, (1, 0), "run 2 writes the dep(b,c) delta");
+            assert!(
+                crate::datalog2::pin_sidecar::load(&db_path, w8_program_key(SRC)).is_none(),
+                "a write-back that publishes riders must not persist a durable pin"
+            );
+        } // drop = restart
+
+        {
+            // Restart: no pin ⇒ scratch (no laundering), and the scratch run SEES the
+            // rider — dep(c,d) is derived and written. A wrongly-persisted pin would
+            // have rehydrated here and silently never derived it.
+            let mut engine = GraphEngineV2::open(&db_path).unwrap();
+            let counts = engine
+                .eval_datalog_v2_materialize_cached(SRC, crate::datalog::EvalLimits::none())
+                .unwrap();
+            assert_eq!(
+                engine
+                    .datalog2_unchanged_hits
+                    .load(std::sync::atomic::Ordering::Relaxed),
+                0,
+                "no pin may rehydrate after a rider-contaminated write-back"
+            );
+            assert_eq!(counts, (1, 0), "scratch derives the rider's consequence dep(c,d)");
+            assert_eq!(engine.get_outgoing_edges(idc, Some(&["W8_DEP"])).len(), 1);
+        }
+    }
+
+    /// Durable clear removes the pin sidecar directory: a post-clear restart must not
+    /// rehydrate pre-clear evaluations (the version counter resets — a stale pin keyed
+    /// to an old version 2 could collide with a fresh version 2 after clear).
+    #[test]
+    fn w8_durable_clear_drops_pin_sidecars() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("clearpin.rfdb");
+        const SRC: &str =
+            "@materialize(edge_type=\"W8_DEP\")\ndep(A, B) :- edge(A, B, \"CALLS\").";
+
+        let mut engine = GraphEngineV2::create(&db_path).unwrap();
+        let a = make_v2_node("a.js->FUNCTION->f1", "FUNCTION", "f1", "a.js");
+        let b = make_v2_node("a.js->FUNCTION->f2", "FUNCTION", "f2", "a.js");
+        let (ida, idb) = (a.id, b.id);
+        engine.store.add_nodes(vec![a, b]);
+        engine.add_edges(
+            vec![EdgeRecord {
+                src: ida,
+                dst: idb,
+                edge_type: Some("CALLS".to_string()),
+                version: "main".to_string(),
+                metadata: None,
+                deleted: false,
+            }],
+            false,
+        );
+        engine.flush().unwrap();
+        engine
+            .eval_datalog_v2_materialize_cached(SRC, crate::datalog::EvalLimits::none())
+            .unwrap();
+        let sidecar_dir = db_path.join(crate::datalog2::pin_sidecar::SIDECAR_DIR);
+        assert!(sidecar_dir.exists(), "pin persisted pre-clear");
+
+        engine.clear_durable().unwrap();
+        assert!(!sidecar_dir.exists(), "durable clear removes the pin sidecar dir");
+    }
 }

@@ -52,6 +52,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::marker::PhantomData;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -120,6 +121,12 @@ pub enum ExecCode {
     /// A per-stratum `EvalLimits` ceiling was exceeded (intermediate-result cap or
     /// wall-clock deadline). The run aborts without committing (`E-EXEC-001`).
     LimitExceeded,
+    /// The external cancellation flag (`EvalLimits::cancelled`) was raised — the client
+    /// disconnected mid-flight or sent an explicit cancel. The run aborts without
+    /// committing, exactly like a limit overflow (`E-EXEC-003`). W8 Part 1: before this,
+    /// a datalog2 fixpoint ignored the flag entirely and ground CPU to completion (or
+    /// the wall-clock deadline) long after the client died.
+    Cancelled,
 }
 
 impl ExecCode {
@@ -128,6 +135,7 @@ impl ExecCode {
         match self {
             ExecCode::IterationCap => "E-EXEC-002",
             ExecCode::LimitExceeded => "E-EXEC-001",
+            ExecCode::Cancelled => "E-EXEC-003",
         }
     }
 }
@@ -298,13 +306,25 @@ type BuiltinEval = fn(&dyn StorageView, &mut Batch, &ArgSpec) -> builtin::Builti
 // `RefCell`s for the event log and the Part-A index caches), so callers fetch/build any
 // cached index BEFORE calling this and capture the index + the `&dyn StorageView` (whose
 // trait carries a `Sync` supertrait) — never `&self`.
-fn par_join_rows<F>(rows: &[BindRow], per_row: F) -> Vec<BindRow>
+// W8 Part 1 (disconnect-cancel): `cancelled` is the external cancellation flag from
+// `EvalLimits` (`None` when the caller installed none). It is polled once per ROW — a
+// relaxed atomic load, unmeasurable against any real per-row join work — and a raised
+// flag makes the remaining rows fall through as no-ops (sequential: break; parallel:
+// each chunk drains without work). The partial output this returns is DISCARDED by the
+// caller: the executor's authoritative `check_cancelled` (in `apply_leg` / the fixpoint
+// loops) turns the raised flag into `E-EXEC-003` before any result is committed, so a
+// cancelled run can never observe — let alone commit — the truncated row set.
+fn par_join_rows<F>(rows: &[BindRow], cancelled: Option<&AtomicBool>, per_row: F) -> Vec<BindRow>
 where
     F: Fn(&BindRow, &mut Vec<BindRow>) + Sync,
 {
+    let is_cancelled = || cancelled.is_some_and(|f| f.load(Ordering::Relaxed));
     if rows.len() < PAR_MIN_ROWS {
         let mut out = Vec::new();
         for row in rows {
+            if is_cancelled() {
+                break;
+            }
             per_row(row, &mut out);
         }
         return out;
@@ -314,6 +334,9 @@ where
         .map(|chunk| {
             let mut out = Vec::new();
             for row in chunk {
+                if is_cancelled() {
+                    break;
+                }
                 per_row(row, &mut out);
             }
             out
@@ -717,6 +740,10 @@ pub(crate) struct Executor<'v, T: IdempotentTag> {
     /// this executor's builds back after a successful [`Executor::evaluate`]. `None`
     /// (the default) keeps every other entry path byte-identical to before.
     shared: Option<&'v SharedIndexCaches>,
+    /// The stratum currently being evaluated — diagnostics only (it stamps the `stratum`
+    /// field of an `E-EXEC-003` cancellation error raised from `apply_leg`, which has no
+    /// stratum parameter). `Cell` so the `&self` eval paths can update it (W8 Part 1).
+    cur_stratum: Cell<usize>,
     /// Carries the tag type without storing a value.
     _tag: PhantomData<T>,
 }
@@ -734,6 +761,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
             events: RefCell::new(EventLog::discard()),
             caches: IndexCaches::new(),
             shared: None,
+            cur_stratum: Cell::new(0),
             _tag: PhantomData,
         }
     }
@@ -754,6 +782,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
             events: RefCell::new(EventLog::discard()),
             caches: IndexCaches::new(),
             shared: None,
+            cur_stratum: Cell::new(0),
             _tag: PhantomData,
         }
     }
@@ -870,6 +899,31 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
                     .run_aborted(e.code.as_str(), &e.detail);
                 return Err(e);
             }
+        }
+
+        // ── W8 Part 1 FINAL GUARD (post-fixpoint cancellation re-check) ──
+        // A cancellation raised DURING the last join of an iteration truncates that
+        // join's rows without ever re-entering a checkpoint: the truncated (possibly
+        // empty) delta then looks like CONVERGENCE, the stratum loop ends, and the run
+        // would return `Ok` with a PARTIAL evaluation. Observed live before this guard:
+        // a client killed 2.5s into the bundled-depends `@materialize` made the eval
+        // "converge" on the truncated rows, and the write-back diffed `derived = ∅`
+        // against the graph — tombstoning all 1726 DEPENDS_ON edges. The flag is
+        // raise-only (disconnect / explicit cancel), so one re-check here is
+        // authoritative for the whole run: raised at ANY point ⇒ the committed
+        // relations are untrusted ⇒ `E-EXEC-003` (abort-no-commit), never a partial
+        // result.
+        if self.is_cancelled() {
+            let e = ExecError {
+                code: ExecCode::Cancelled,
+                stratum: self.cur_stratum.get(),
+                detail: "query cancelled by client (disconnect or explicit cancel)"
+                    .to_string(),
+            };
+            self.events
+                .borrow_mut()
+                .run_aborted(e.code.as_str(), &e.detail);
+            return Err(e);
         }
 
         // Project the committed relations into the public, deterministically-sorted form.
@@ -1239,6 +1293,8 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         relations: &mut HashMap<String, Relation<T>>,
         incremental: bool,
     ) -> ExecResult<()> {
+        // Diagnostics for a mid-join `E-EXEC-003` raised in `apply_leg` (W8 Part 1).
+        self.cur_stratum.set(stratum_idx);
         // Fresh relations for this stratum's predicates: from-scratch starts Total/Δ empty;
         // an incremental run keeps the pre-loaded prior Total and only clears Δ.
         for p in predicates {
@@ -1599,6 +1655,17 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         relations: &HashMap<String, Relation<T>>,
         use_delta: bool,
     ) -> ExecResult<Vec<BindRow>> {
+        // W8 Part 1: the authoritative cancellation checkpoint of the join pipeline. The
+        // join bodies below only SKIP remaining work when the flag is raised (they return
+        // a truncated row set); this error is what discards that partial state, so a
+        // cancelled run aborts (`E-EXEC-003`) instead of deriving from truncated rows.
+        if self.is_cancelled() {
+            return Err(ExecError {
+                code: ExecCode::Cancelled,
+                stratum: self.cur_stratum.get(),
+                detail: "query cancelled by client (disconnect or explicit cancel)".to_string(),
+            });
+        }
         match &leg.source {
             // A derived predicate leg: join against this predicate's facts. A recursive leg
             // reading Δ (semi-naive) probes the delta; otherwise it probes Total. Negative
@@ -1647,6 +1714,11 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         };
         let mut out: Vec<BindRow> = Vec::new();
         for row in rows {
+            // W8 Part 1: skip remaining rows once cancelled (the truncated output is
+            // discarded by `apply_leg`'s authoritative `E-EXEC-003`).
+            if self.is_cancelled() {
+                break;
+            }
             let (spec, slot_vars) = resolve_arg_spec(atom, &row);
             let mut batch = Batch::new();
             if (def.eval)(view, &mut batch, &spec).is_err() {
@@ -1722,7 +1794,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
             // the set borrows its keys from the relation store.
             let keys: std::collections::HashSet<&[Value]> =
                 source.values().map(|f| f.key.as_ref()).collect();
-            return par_join_rows(&rows, |row, out| {
+            return par_join_rows(&rows, self.cancel_ref(), |row, out| {
                 let present = match bind_atom_args(atom, row) {
                     Some(key) => keys.contains(key.as_slice()),
                     // A key that cannot be fully bound is treated as "no match" — the row
@@ -1768,6 +1840,10 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         if bound_positions.is_empty() {
             // No bound position: a genuine cross-extend — the scan IS the join.
             for row in rows {
+                // W8 Part 1: cancellation skip (see `apply_leg`).
+                if self.is_cancelled() {
+                    break;
+                }
                 for fact in source.values() {
                     if let Some(extended) = unify_atom(atom, &fact.key, &row) {
                         out.push(extended);
@@ -1791,7 +1867,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
             let k: Vec<Value> = bound_positions.iter().map(|&i| fact.key[i].clone()).collect();
             index.entry(k).or_default().push(fact);
         }
-        par_join_rows(&rows, |row, out| {
+        par_join_rows(&rows, self.cancel_ref(), |row, out| {
             match derived_probe_key(atom, &bound_positions, row) {
                 Some(probe) => {
                     if let Some(bucket) = index.get(&probe) {
@@ -1859,7 +1935,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
             if let Some(membership) = self.build_anti_join_set(name, atom) {
                 let view = self.view;
                 let eval = def.eval;
-                return par_join_rows(&rows, |row, out| {
+                return par_join_rows(&rows, self.cancel_ref(), |row, out| {
                     match project_anti_join_key(atom, row) {
                         // Row's projected key tuple present in the membership set ⇒ a match
                         // exists ⇒ the anti-join drops the row. Absent ⇒ the row survives.
@@ -1954,7 +2030,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         // negated existence probes.
         let view = self.view;
         let eval = def.eval;
-        par_join_rows(&rows, |row, out| {
+        par_join_rows(&rows, self.cancel_ref(), |row, out| {
             if negated {
                 // Negative base/builtin leg = anti-join. The planner placed it bound-first,
                 // so every captured Var is already bound; any free arg is a wildcard
@@ -2056,7 +2132,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
                     .collect()
             });
 
-        let out = par_join_rows(rows, |row, out| {
+        let out = par_join_rows(rows, self.cancel_ref(), |row, out| {
             // Defensive: a row-bound endpoint variable means the per-row eval would
             // resolve it Bound and take the keyed path — run it exactly for this row.
             for i in [0usize, 1] {
@@ -2149,7 +2225,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
                 view.scan_nodes_by_type(&ty).map(|n| n.id).collect()
             });
 
-        let out = par_join_rows(rows, |row, out| {
+        let out = par_join_rows(rows, self.cancel_ref(), |row, out| {
             match &args[0] {
                 Term::Var(v) if row.contains_key(v) => {
                     // Row-bound id variable: the per-row eval would run the point check —
@@ -2292,7 +2368,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
                 });
 
         // ── Probe per row (row-parallel at scale; index + view shared immutable). ──
-        let out = par_join_rows(rows, |row, out| {
+        let out = par_join_rows(rows, self.cancel_ref(), |row, out| {
             // Resolve a probe endpoint the way `resolve_arg_spec` + `bound_id` would:
             // the row's value, id-parsed. `Err` ⇒ the per-row eval would take a different
             // mode/access path ⇒ exact per-row fallback for this row.
@@ -2369,7 +2445,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
                 view.scan_nodes_by_type(&ty).map(|n| n.id).collect()
             });
 
-        let out = par_join_rows(rows, |row, out| {
+        let out = par_join_rows(rows, self.cancel_ref(), |row, out| {
             match row.get(id_var) {
                 // Planner said Bound but the row lacks the binding — exact per-row eval.
                 None => positive_row_via_eval_on(view, eval, atom, row, out),
@@ -2479,7 +2555,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
 
         // ── Serve each row from the map with `eval_attr`'s exact bound-id semantics
         //    (row-parallel at scale). ──
-        let out = par_join_rows(rows, |row, out| {
+        let out = par_join_rows(rows, self.cancel_ref(), |row, out| {
             let Some(val) = row.get(id_var) else {
                 // Planner said Bound but the row lacks the binding — exact per-row eval.
                 positive_row_via_eval_on(view, eval, atom, row, out);
@@ -2604,7 +2680,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
                     m
                 });
 
-        let out = par_join_rows(rows, |row, out| {
+        let out = par_join_rows(rows, self.cancel_ref(), |row, out| {
             let (Some(sv), Some(dv)) = (row.get(src_var), row.get(dst_var)) else {
                 // Planner said Bound but the row lacks a binding — exact per-row eval.
                 positive_row_via_eval_on(view, eval, atom, row, out);
@@ -2835,7 +2911,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
 
         // ── Probe per row by the value's string surface (§5), binding the free id
         //    (row-parallel at scale). ──
-        let out = par_join_rows(rows, |row, out| {
+        let out = par_join_rows(rows, self.cancel_ref(), |row, out| {
             let value = match value_term {
                 Term::Const(s) => Value::from_term_const(s),
                 // A typed literal is already a ground `Value`; use it directly.
@@ -2889,8 +2965,17 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         Ok(())
     }
 
-    /// Per-stratum wall-clock deadline (`EvalLimits::deadline`).
+    /// Per-stratum wall-clock deadline (`EvalLimits::deadline`) + the external
+    /// cancellation flag (W8 Part 1): every existing deadline checkpoint in the fixpoint
+    /// loops doubles as a cancellation checkpoint.
     fn check_deadline(&self, stratum: usize) -> ExecResult<()> {
+        if self.is_cancelled() {
+            return Err(ExecError {
+                code: ExecCode::Cancelled,
+                stratum,
+                detail: "query cancelled by client (disconnect or explicit cancel)".to_string(),
+            });
+        }
         if let Some(deadline) = self.limits.deadline {
             if Instant::now() >= deadline {
                 return Err(ExecError {
@@ -2901,6 +2986,20 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
             }
         }
         Ok(())
+    }
+
+    /// The external cancellation flag from `EvalLimits`, if the caller installed one
+    /// (the server's per-connection disconnect watcher / an explicit `CancelQuery`).
+    #[inline]
+    fn cancel_ref(&self) -> Option<&AtomicBool> {
+        self.limits.cancelled.as_deref()
+    }
+
+    /// One relaxed atomic poll of the cancellation flag (W8 Part 1). `false` when no
+    /// flag is installed.
+    #[inline]
+    fn is_cancelled(&self) -> bool {
+        self.cancel_ref().is_some_and(|f| f.load(Ordering::Relaxed))
     }
 }
 
@@ -2990,6 +3089,10 @@ pub(crate) fn maintain_incremental<T: IdempotentTag>(
         return Ok(None);
     }
 
+    // W8 Part 1: keep a handle on the cancellation flag — `limits` is moved into the
+    // executors below, and the FINAL GUARD at the end of this function needs it.
+    let cancel_flag = limits.cancelled.clone();
+
     let pred_ids = assign_pred_ids(strat);
     let Some(mut relations) = preload_relations::<T>(prev, &pred_ids) else {
         return Ok(None);
@@ -3033,6 +3136,17 @@ pub(crate) fn maintain_incremental<T: IdempotentTag>(
                 true,
             )?;
         }
+    }
+
+    // ── W8 Part 1 FINAL GUARD — same reasoning as [`Executor::evaluate`]: a flag
+    // raised during the last join truncates rows without re-entering a checkpoint, and
+    // the maintained relations would be committed as if complete. Raised ⇒ E-EXEC-003.
+    if cancel_flag.is_some_and(|f| f.load(Ordering::Relaxed)) {
+        return Err(ExecError {
+            code: ExecCode::Cancelled,
+            stratum: 0,
+            detail: "query cancelled by client (disconnect or explicit cancel)".to_string(),
+        });
     }
 
     // Project into the deterministic public form (so a byte comparison against scratch holds).
@@ -3668,6 +3782,156 @@ mod tests {
         // (An ALL-wildcard leg `k(_, _)` is a pure cross-join and is rejected
         // by the E-PLAN-003 guard before it could reach the empty-probe-key
         // cross-extend branch — pinned by the guard's own tests.)
+    }
+
+    // ── W8 Part 1: external cancellation (`EvalLimits::cancelled`) ──
+
+    /// A pre-raised cancellation flag aborts the evaluation with `E-EXEC-003` before any
+    /// result is produced — the executor half of disconnect-cancel. (The server half — the
+    /// per-connection watcher that raises this flag on peer EOF — lives in
+    /// `bin/rfdb_server.rs`.)
+    #[test]
+    fn cancelled_flag_aborts_evaluation_with_e_exec_003() {
+        use std::sync::atomic::AtomicBool;
+        let mut v = FixtureStorageView::new(1);
+        node(&mut v, "a", "FUNCTION");
+        node(&mut v, "b", "FUNCTION");
+        edge(&mut v, "a", "b", "CALLS");
+
+        let src = r#"hit(X, Y) :- node(X, "FUNCTION"), edge(X, Y, "CALLS")."#;
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let plans = plan_program(&rules, &strat, &Stats::default()).expect("plan");
+
+        let mut limits = EvalLimits::none();
+        let flag = Arc::new(AtomicBool::new(true));
+        limits.cancelled = Some(Arc::clone(&flag));
+        let exec = Executor::<BoolTag>::with_limits(&v, limits, DEFAULT_ITERATION_CAP);
+        let err = exec
+            .evaluate(&plans, &rules, &strat)
+            .expect_err("a raised cancellation flag must abort the run");
+        assert_eq!(err.code, ExecCode::Cancelled);
+        assert_eq!(err.code.as_str(), "E-EXEC-003");
+
+        // The SAME program with the flag installed but UNRAISED evaluates normally and
+        // commits the full result — no false cancels.
+        flag.store(false, Ordering::Relaxed);
+        let mut limits2 = EvalLimits::none();
+        limits2.cancelled = Some(flag);
+        let exec2 = Executor::<BoolTag>::with_limits(&v, limits2, DEFAULT_ITERATION_CAP);
+        let eval = exec2.evaluate(&plans, &rules, &strat).expect("unraised flag evaluates");
+        assert_eq!(eval.facts("hit").len(), 1, "full result with an unraised flag");
+    }
+
+    /// THE partial-result escape (the live incident this guards): a cancellation that
+    /// lands DURING the final join leg — after every earlier checkpoint has passed —
+    /// truncates that leg's rows, the stratum "converges" on the truncated delta, and
+    /// without the final guard `evaluate` returned `Ok` with a PARTIAL evaluation (the
+    /// `@materialize` write-back then diffed `derived = ∅` against the live graph and
+    /// tombstoned all 1,726 DEPENDS_ON edges on the dogfood copy). The wrapper view
+    /// raises the flag deterministically the moment the eval touches the LAST leg's
+    /// relation ("FOLLOWS") — no timing, no threads.
+    #[test]
+    fn cancel_during_final_leg_is_an_error_never_a_partial_result() {
+        use crate::datalog2::storage_glue::{EdgeOrder, Relation as SgRelation, Row, SortOrder};
+
+        struct CancelOnFollowsView<'a> {
+            inner: &'a FixtureStorageView,
+            flag: Arc<AtomicBool>,
+        }
+        impl CancelOnFollowsView<'_> {
+            fn raise_if_follows(&self, ty: &str) {
+                if ty == "FOLLOWS" {
+                    self.flag.store(true, Ordering::Relaxed);
+                }
+            }
+        }
+        impl StorageView for CancelOnFollowsView<'_> {
+            fn generation(&self) -> u64 {
+                self.inner.generation()
+            }
+            fn sorted_run(
+                &self,
+                rel: SgRelation,
+                order: SortOrder,
+            ) -> Box<dyn Iterator<Item = Row> + '_> {
+                self.inner.sorted_run(rel, order)
+            }
+            fn scan_nodes_by_type(&self, ty: &str) -> Box<dyn Iterator<Item = NodeRow> + '_> {
+                self.inner.scan_nodes_by_type(ty)
+            }
+            fn scan_edges_by_type(
+                &self,
+                ty: &str,
+                order: EdgeOrder,
+            ) -> Box<dyn Iterator<Item = EdgeRow> + '_> {
+                self.raise_if_follows(ty);
+                self.inner.scan_edges_by_type(ty, order)
+            }
+            fn edges_from(&self, src: u128, edge_type: &str) -> Vec<EdgeRow> {
+                self.raise_if_follows(edge_type);
+                self.inner.edges_from(src, edge_type)
+            }
+            fn edges_to(&self, dst: u128, edge_type: &str) -> Vec<EdgeRow> {
+                self.raise_if_follows(edge_type);
+                self.inner.edges_to(dst, edge_type)
+            }
+            fn get_node(&self, id: u128) -> Option<NodeRow> {
+                self.inner.get_node(id)
+            }
+            fn nodes_by_attr(&self, key: &str, value: &str) -> Vec<NodeRow> {
+                self.inner.nodes_by_attr(key, value)
+            }
+            fn edge_metadata(&self, src: u128, dst: u128, edge_type: &str) -> Option<String> {
+                self.inner.edge_metadata(src, dst, edge_type)
+            }
+            fn node_metadata(&self, id: u128) -> Option<String> {
+                self.inner.node_metadata(id)
+            }
+            fn scan_edge_metadata_by_type(&self, edge_type: &str) -> Vec<(u128, u128, String)> {
+                self.inner.scan_edge_metadata_by_type(edge_type)
+            }
+        }
+
+        // ≥ BUILD_ONCE_MIN_ROWS rows must reach the final leg so it takes the
+        // build-once path: the index build (one typed scan of "FOLLOWS") raises the
+        // flag BEFORE the row loop, `par_join_rows` then drains every row as a no-op,
+        // and the truncated output is EMPTY — the empty seed looks like instant
+        // convergence and skips the Δ-loop's per-iteration checkpoint entirely. (With
+        // a NONEMPTY truncation the next iteration's `check_deadline` already catches
+        // the flag; the empty case is the one only the final guard can catch.)
+        let mut v = FixtureStorageView::new(1);
+        node(&mut v, "b", "FUNCTION");
+        node(&mut v, "c", "FUNCTION");
+        edge(&mut v, "b", "c", "FOLLOWS");
+        for i in 0..(BUILD_ONCE_MIN_ROWS + 8) {
+            let sid = format!("a{i}");
+            node(&mut v, &sid, "FUNCTION");
+            edge(&mut v, &sid, "b", "CALLS");
+        }
+
+        let flag = Arc::new(AtomicBool::new(false));
+        let view = CancelOnFollowsView { inner: &v, flag: Arc::clone(&flag) };
+
+        let src = r#"hit(X, Z) :- edge(X, Y, "CALLS"), edge(Y, Z, "FOLLOWS")."#;
+        let prog = parse_ext_program(src).expect("parse");
+        let strat = stratify(&prog).expect("stratify");
+        let rules = prog.rules();
+        let plans = plan_program(&rules, &strat, &Stats::default()).expect("plan");
+
+        let mut limits = EvalLimits::none();
+        limits.cancelled = Some(Arc::clone(&flag));
+        let exec = Executor::<BoolTag>::with_limits(&view, limits, DEFAULT_ITERATION_CAP);
+        let err = exec
+            .evaluate(&plans, &rules, &strat)
+            .expect_err("a mid-final-leg cancellation must abort, never commit a partial result");
+        assert_eq!(err.code, ExecCode::Cancelled);
+        assert_eq!(err.code.as_str(), "E-EXEC-003");
+        assert!(
+            flag.load(Ordering::Relaxed),
+            "harness integrity: the view must actually have raised the flag mid-eval"
+        );
     }
 
     /// Run a program with an event sink installed, returning both the committed evaluation

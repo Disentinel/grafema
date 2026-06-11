@@ -1639,9 +1639,26 @@ fn handle_request_with_cancel(
         }
 
         Request::Clear => {
+            // W8 Part 2: clear is DURABLE on the v2 engine — it truncates the on-disk
+            // database (segments + manifest + tombstones + engine caches incl. the D2
+            // pins), so a subsequent reload sees an EMPTY graph. The old behavior
+            // (ephemeral swap, disk untouched) made `analyze --clear` a placebo: the old
+            // disk resurrected on reload. Calling `clear_durable` directly (instead of
+            // the infallible trait `clear()`) surfaces a truncation failure to the
+            // client as an error instead of an eprintln-only fallback.
             with_engine_write(session, |engine| {
-                engine.clear();
-                Response::Ok { ok: true }
+                match engine.as_any_mut().downcast_mut::<GraphEngineV2>() {
+                    Some(v2) => match v2.clear_durable() {
+                        Ok(()) => Response::Ok { ok: true },
+                        Err(e) => Response::Error {
+                            error: format!("durable clear failed: {e} (manual fallback: delete the .rfdb directory before starting the server)"),
+                        },
+                    },
+                    None => {
+                        engine.clear();
+                        Response::Ok { ok: true }
+                    }
+                }
             })
         }
 
@@ -3586,6 +3603,100 @@ fn write_message(stream: &mut UnixStream, data: &[u8]) -> std::io::Result<()> {
     Ok(())
 }
 
+/// W8 Part 1 (disconnect-cancel): watch a Unix-socket connection for peer closure WHILE a
+/// request is being handled synchronously on the connection thread, and raise the shared
+/// cancellation flag the instant the client dies.
+///
+/// Why this exists: the Unix path dispatches each request synchronously in the connection
+/// thread, so the thread only re-reads the socket BETWEEN requests — a client killed
+/// mid-request (Ctrl-C'd CLI, dead MCP session) was never noticed and the in-flight
+/// datalog/cypher eval ground CPU to completion (observed: 15+ min burns, ~5 incidents).
+/// The WebSocket path already cancels on disconnect (its async select loop); this brings
+/// the production Unix path to parity.
+///
+/// Mechanism: one watcher thread per connection, owning a `try_clone`d (dup'd) fd so the
+/// main thread's stream lifetime is untouched. Every poll round (200 ms timeout) it
+/// `poll(2)`s for readability/hangup and distinguishes EOF from pipelined request bytes
+/// with a non-blocking 1-byte `MSG_PEEK` (never consumes protocol bytes). EOF ⇒ set the
+/// per-connection cancel flag (polled by datalog v1/v2 + cypher evals via
+/// `EvalLimits::cancelled`) and exit. The `done` flag stops the watcher when the
+/// connection handler exits first. Idle cost: one parked thread + one `poll` wakeup per
+/// 200 ms per connection — unmeasurable.
+fn spawn_unix_disconnect_watcher(
+    stream: &UnixStream,
+    cancel: Arc<AtomicBool>,
+    done: Arc<AtomicBool>,
+    client_id: usize,
+) {
+    use std::os::unix::io::AsRawFd;
+    let Ok(watch) = stream.try_clone() else {
+        // No watcher ⇒ behavior degrades to the pre-W8 state (no disconnect-cancel),
+        // never to a wrong answer.
+        eprintln!(
+            "[rfdb-server] Client {}: disconnect watcher unavailable (try_clone failed)",
+            client_id
+        );
+        return;
+    };
+    thread::spawn(move || {
+        let fd = watch.as_raw_fd();
+        loop {
+            if done.load(Ordering::Relaxed) {
+                return;
+            }
+            let mut pfd = libc::pollfd { fd, events: libc::POLLIN, revents: 0 };
+            let n = unsafe { libc::poll(&mut pfd, 1, 200) };
+            if n < 0 {
+                // poll error (EBADF after an unexpected close, EINTR storms…): stop
+                // watching rather than risk a false cancel.
+                return;
+            }
+            if n > 0 {
+                // Readable or hung up — peek one byte without consuming it.
+                let mut byte = 0u8;
+                let r = unsafe {
+                    libc::recv(
+                        fd,
+                        &mut byte as *mut u8 as *mut libc::c_void,
+                        1,
+                        libc::MSG_PEEK | libc::MSG_DONTWAIT,
+                    )
+                };
+                if r == 0 {
+                    // Orderly EOF: the peer closed (or died — the kernel closes its fds).
+                    cancel.store(true, Ordering::Relaxed);
+                    eprintln!(
+                        "[rfdb-server] Client {} disconnected mid-request — cancelling in-flight work",
+                        client_id
+                    );
+                    return;
+                }
+                if r > 0 {
+                    // Pipelined request bytes are waiting for the main thread — don't
+                    // spin on POLLIN while it is busy handling the current request.
+                    thread::sleep(Duration::from_millis(200));
+                }
+                if r < 0 {
+                    let errno = std::io::Error::last_os_error();
+                    match errno.raw_os_error() {
+                        // Spurious wakeup / not actually readable yet.
+                        Some(libc::EWOULDBLOCK) | Some(libc::EINTR) => {}
+                        // ECONNRESET and anything else fatal: the peer is gone.
+                        _ => {
+                            cancel.store(true, Ordering::Relaxed);
+                            eprintln!(
+                                "[rfdb-server] Client {} connection error ({}) — cancelling in-flight work",
+                                client_id, errno
+                            );
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
 fn handle_client_unix(
     mut stream: UnixStream,
     manager: Arc<DatabaseManager>,
@@ -3596,6 +3707,15 @@ fn handle_client_unix(
     eprintln!("[rfdb-server] Client {} connected", client_id);
 
     let mut session = ClientSession::new(client_id);
+
+    // W8 Part 1: per-connection cancellation, raised by the disconnect watcher the moment
+    // the peer closes. Threaded into every request handler below (`EvalLimits::cancelled`
+    // polls it inside the datalog v1/v2 and cypher eval loops). One flag for the whole
+    // connection is sound: it is only ever raised on disconnect, after which the read
+    // loop terminates anyway.
+    let cancel_flag = Arc::new(AtomicBool::new(false));
+    let watcher_done = Arc::new(AtomicBool::new(false));
+    spawn_unix_disconnect_watcher(&stream, Arc::clone(&cancel_flag), Arc::clone(&watcher_done), client_id);
 
     // In legacy mode (protocol v1), auto-open "default" database.
     // wait_for_database blocks until background load finishes (up to 60s).
@@ -3645,7 +3765,15 @@ fn handle_client_unix(
                 handle_query_nodes_streaming(&session, query, &request_id, &mut stream)
             }
             other => {
-                HandleResult::Single(handle_request(&manager, &mut session, other, &metrics))
+                // W8 Part 1: the per-connection cancel flag (raised by the disconnect
+                // watcher) reaches the eval loops via `EvalLimits::cancelled`.
+                HandleResult::Single(handle_request_with_cancel(
+                    &manager,
+                    &mut session,
+                    other,
+                    &metrics,
+                    Arc::clone(&cancel_flag),
+                ))
             }
         };
 
@@ -3717,6 +3845,9 @@ fn handle_client_unix(
             std::process::exit(0);
         }
     }
+
+    // Stop the disconnect watcher (it also exits by itself on peer EOF).
+    watcher_done.store(true, Ordering::Relaxed);
 
     // Cleanup: close database and release connections
     handle_close_database(&manager, &mut session);
@@ -4419,6 +4550,65 @@ mod protocol_tests {
         manager.create_default_from_path(&db_path).unwrap();
 
         (dir, manager)
+    }
+
+    // ============================================================================
+    // W8 Part 1: Unix disconnect watcher
+    // ============================================================================
+
+    /// Peer closes the socket ⇒ the watcher raises the cancel flag within ~1s.
+    #[test]
+    fn test_disconnect_watcher_raises_cancel_on_peer_close() {
+        let (server_side, client_side) = UnixStream::pair().expect("socketpair");
+        let cancel = Arc::new(AtomicBool::new(false));
+        let done = Arc::new(AtomicBool::new(false));
+        spawn_unix_disconnect_watcher(&server_side, Arc::clone(&cancel), Arc::clone(&done), 999);
+
+        // While the peer is alive (idle), no false cancel within two poll rounds.
+        thread::sleep(Duration::from_millis(450));
+        assert!(!cancel.load(Ordering::Relaxed), "no cancel while the peer is alive");
+
+        drop(client_side); // the client dies
+        let t0 = Instant::now();
+        while !cancel.load(Ordering::Relaxed) && t0.elapsed() < Duration::from_secs(2) {
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            cancel.load(Ordering::Relaxed),
+            "watcher must raise cancel after peer close"
+        );
+        assert!(
+            t0.elapsed() < Duration::from_secs(1),
+            "cancel must land within ~1s of disconnect (took {:?})",
+            t0.elapsed()
+        );
+        done.store(true, Ordering::Relaxed);
+    }
+
+    /// Pipelined bytes sitting unread in the socket buffer (the next request, sent while
+    /// the current one is still being handled) must NOT be consumed by the watcher and
+    /// must NOT trigger a false cancel.
+    #[test]
+    fn test_disconnect_watcher_ignores_pipelined_bytes() {
+        use std::io::{Read as _, Write as _};
+        let (server_side, mut client_side) = UnixStream::pair().expect("socketpair");
+        let cancel = Arc::new(AtomicBool::new(false));
+        let done = Arc::new(AtomicBool::new(false));
+        spawn_unix_disconnect_watcher(&server_side, Arc::clone(&cancel), Arc::clone(&done), 998);
+
+        client_side.write_all(b"NEXT").expect("write pipelined bytes");
+        thread::sleep(Duration::from_millis(600)); // several poll rounds over readable data
+        assert!(
+            !cancel.load(Ordering::Relaxed),
+            "pipelined request bytes are not a disconnect"
+        );
+
+        // The bytes are still there for the main loop (MSG_PEEK never consumed them).
+        let mut buf = [0u8; 4];
+        let mut s = server_side.try_clone().unwrap();
+        s.read_exact(&mut buf).expect("read pipelined bytes");
+        assert_eq!(&buf, b"NEXT");
+        done.store(true, Ordering::Relaxed);
     }
 
     // ============================================================================

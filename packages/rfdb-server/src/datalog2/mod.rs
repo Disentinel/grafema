@@ -43,6 +43,7 @@ pub mod plan;
 pub mod exec;
 pub mod events;
 pub mod materialize;
+pub mod pin_sidecar;
 pub mod binding;
 pub mod increment;
 pub mod stdlib;

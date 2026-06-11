@@ -2680,3 +2680,64 @@ msh(C, S) :- msfx(C, S), msfx(C, S2), concat(".", S, T), ends_with(S2, T).
         }
     }
 }
+
+/// W8 Part 1 pack-time regression probe: three representative packs (rust_calls,
+/// js_property_access_full, depends) over the dogfood copy with a LIVE (never-raised)
+/// cancellation flag installed exactly as the production server does — proves the
+/// per-row cancellation poll added by disconnect-cancel costs nothing measurable.
+/// Run the identical probe at the pre-W8 baseline for the before/after table.
+///
+///   GRAFEMA_W8_PROBE_DB=/tmp/w8-graph.rfdb \
+///   cargo test --release --lib w8_cancel_overhead_pack_probe_times -- --ignored --nocapture
+#[test]
+#[ignore = "manual real-data perf probe; run with --ignored --release"]
+fn w8_cancel_overhead_pack_probe_times() {
+    use crate::datalog2::evaluate_with_materialize;
+    use std::time::Instant;
+
+    let dataset = std::env::var("GRAFEMA_W8_PROBE_DB")
+        .unwrap_or_else(|_| "/tmp/w8-graph.rfdb".to_string());
+    let dataset = PathBuf::from(dataset);
+    if !dataset.join("db_config.json").exists() {
+        panic!("dataset not found at {}", dataset.display());
+    }
+    let tmp = tempfile::tempdir().expect("temp");
+    let work = tmp.path().join("graph.rfdb");
+    copy_dir_all(&dataset, &work).expect("copy dataset");
+    let _ = std::fs::remove_file(work.join("LOCK"));
+    let manifest = ManifestStore::open(&work).expect("manifest");
+    let store = MultiShardStore::open(&work, &manifest).expect("store");
+    let store = Arc::new(store);
+    let view = LsmStorageView::capture(store.clone(), &manifest);
+
+    let snap = store.snapshot(&manifest);
+    let all_nodes = store.find_nodes_at(&snap, None, None);
+    let mut nbt: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    for n in &all_nodes {
+        *nbt.entry(n.node_type.clone()).or_insert(0) += 1;
+    }
+    let stats = Stats {
+        total_nodes: all_nodes.len() as u64,
+        total_edges: store.iter_all_edges_at(&snap).len() as u64,
+        nodes_by_type: nbt,
+    };
+
+    let packs = ["rust_calls", "js_property_access_full", "depends"];
+    eprintln!("\n=== W8 cancel-overhead pack probe (nodes={}) ===", stats.total_nodes);
+    for name in packs {
+        let src = crate::datalog2::stdlib::stdlib_pack(name).expect("registered pack");
+        // A live, never-raised flag: the exact production shape (Some(flag), polled
+        // per row). `None` would short-circuit the poll and hide the cost.
+        let mut limits = EvalLimits::none();
+        limits.cancelled =
+            Some(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)));
+        let t0 = Instant::now();
+        let (eval, _s, _n) =
+            evaluate_with_materialize(&view, src, stats.clone(), limits, EventLog::discard())
+                .unwrap_or_else(|e| panic!("{name} evaluates: {e}"));
+        let dt = t0.elapsed();
+        let rows: usize = eval.relations.values().map(|v| v.len()).sum();
+        eprintln!("{name}: {:.2}s ({rows} derived rows total)", dt.as_secs_f64());
+    }
+    eprintln!("=== W8 probe times: printed ===\n");
+}

@@ -3647,6 +3647,18 @@ impl MultiShardStore {
         self.shards.iter().map(|s| s.write_buffer_size().0).sum()
     }
 
+    /// True when ANY shard's write buffer holds unflushed node OR edge records.
+    ///
+    /// W8 Part 3 soundness probe: the durable-pin persist must know whether a flush
+    /// would publish data beyond the caller's own delta (buffered writes from other
+    /// connections "ride" the commit under MVCC visibility=publish).
+    pub fn has_buffered_writes(&self) -> bool {
+        self.shards.iter().any(|s| {
+            let (nodes, edges) = s.write_buffer_size();
+            nodes > 0 || edges > 0
+        })
+    }
+
     /// Per-shard statistics for monitoring.
     /// Per-shard diagnostics for lifecycle visibility.
     pub fn shard_diagnostics(&self) -> Vec<ShardDiagnostics> {
