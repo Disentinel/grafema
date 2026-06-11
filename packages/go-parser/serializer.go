@@ -388,21 +388,33 @@ func typeNameString(expr ast.Expr) string {
 	}
 }
 
-func serializeInterfaceType(fset *token.FileSet, name string, it *ast.InterfaceType, ts *ast.TypeSpec) map[string]interface{} {
-	methods := make([]interface{}, 0)
-	embeds := make([]interface{}, 0)
-
+// serializeInterfaceMembers splits an interface's element list into named
+// methods and embedded type elements. Embedded elements cover embedded
+// interfaces (`io.Reader`) and Go 1.18+ type-set constraints
+// (`~int | ~string`, `comparable`); each is the fully serialized type
+// expression. Shared by both the declaration-position
+// (serializeInterfaceType) and expression-position (serializeExpr's
+// *ast.InterfaceType case) paths so the two cannot diverge — divergence
+// here previously dropped constraint elements from inline interfaces.
+func serializeInterfaceMembers(fset *token.FileSet, it *ast.InterfaceType) (methods, embeds []interface{}) {
+	methods = make([]interface{}, 0)
+	embeds = make([]interface{}, 0)
 	if it.Methods != nil {
 		for _, field := range it.Methods.List {
 			if len(field.Names) > 0 {
 				// Named method
 				methods = append(methods, serializeInterfaceMethod(fset, field))
 			} else {
-				// Embedded interface — serialize as GoType
+				// Embedded interface or type-set constraint element
 				embeds = append(embeds, serializeExpr(fset, field.Type))
 			}
 		}
 	}
+	return methods, embeds
+}
+
+func serializeInterfaceType(fset *token.FileSet, name string, it *ast.InterfaceType, ts *ast.TypeSpec) map[string]interface{} {
+	methods, embeds := serializeInterfaceMembers(fset, it)
 
 	result := map[string]interface{}{
 		"type":    "InterfaceTypeDecl",
@@ -839,22 +851,11 @@ func serializeExpr(fset *token.FileSet, expr ast.Expr) interface{} {
 		return result
 
 	case *ast.InterfaceType:
-		methods := make([]interface{}, 0)
-		if e.Methods != nil {
-			for _, field := range e.Methods.List {
-				if len(field.Names) > 0 {
-					methods = append(methods, serializeInterfaceMethod(fset, field))
-				} else {
-					methods = append(methods, map[string]interface{}{
-						"name": typeNameString(field.Type),
-						"span": nodeSpan(fset, field),
-					})
-				}
-			}
-		}
+		methods, embeds := serializeInterfaceMembers(fset, e)
 		return map[string]interface{}{
 			"type":    "InterfaceType",
 			"methods": methods,
+			"embeds":  embeds,
 			"span":    nodeSpan(fset, e),
 		}
 

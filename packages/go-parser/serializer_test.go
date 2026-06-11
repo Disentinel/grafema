@@ -1480,3 +1480,97 @@ type (
 		t.Errorf("expected name 'B', got %v", d1["name"])
 	}
 }
+
+// TestInlineInterfaceConstraintEmbeds guards the expression-position interface
+// serialization path: a type-parameter constraint such as
+// `interface{ ~int | ~float64 }` must surface its type-set element (the
+// `~int | ~float64` union) in `embeds`, mirroring the declaration-position
+// path (TestInterfaceWithEmbeds). Regression: the expression path previously
+// shoved unnamed elements into `methods` with an empty name and dropped the
+// element's type expression entirely.
+func TestInlineInterfaceConstraintEmbeds(t *testing.T) {
+	src := `package main
+
+func Sum[T interface{ ~int | ~float64 }](items []T) T {
+	var s T
+	return s
+}
+`
+	result := parseAndSerialize(t, src)
+	decl := firstDecl(t, result)
+
+	typeParams := decl["typeParams"].([]interface{})
+	if len(typeParams) != 1 {
+		t.Fatalf("expected 1 type param, got %d", len(typeParams))
+	}
+	tp := typeParams[0].(map[string]interface{})
+	constraint := tp["constraint"].(map[string]interface{})
+	if constraint["type"] != "InterfaceType" {
+		t.Fatalf("expected constraint type 'InterfaceType', got %v", constraint["type"])
+	}
+
+	// The union `~int | ~float64` is an unnamed element -> must be an embed,
+	// not a (mis-classified) empty-named method.
+	methods, ok := constraint["methods"].([]interface{})
+	if !ok {
+		t.Fatalf("constraint missing 'methods'")
+	}
+	if len(methods) != 0 {
+		t.Errorf("expected 0 methods on the constraint, got %d", len(methods))
+	}
+
+	embedsRaw, ok := constraint["embeds"]
+	if !ok {
+		t.Fatalf("expression-position InterfaceType is missing 'embeds' key (constraint element dropped)")
+	}
+	embeds := embedsRaw.([]interface{})
+	if len(embeds) != 1 {
+		t.Fatalf("expected 1 embed (the type-set union), got %d", len(embeds))
+	}
+	embed := embeds[0].(map[string]interface{})
+	if embed["type"] != "BinaryExpr" {
+		t.Errorf("expected embed type 'BinaryExpr' for `~int | ~float64`, got %v", embed["type"])
+	}
+}
+
+// TestExpressionInterfaceNamedEmbed checks that a named embedded interface used
+// in expression position (an interface-typed struct field) also reaches
+// `embeds` as a serialized Ident, matching the declaration-position contract.
+func TestExpressionInterfaceNamedEmbed(t *testing.T) {
+	src := `package main
+
+type Wrapper struct {
+	val interface {
+		fmt.Stringer
+		Len() int
+	}
+}
+`
+	result := parseAndSerialize(t, src)
+	decl := firstDecl(t, result)
+
+	fields := decl["fields"].([]interface{})
+	f0 := fields[0].(map[string]interface{})
+	ft := f0["fieldType"].(map[string]interface{})
+	if ft["type"] != "InterfaceType" {
+		t.Fatalf("expected fieldType 'InterfaceType', got %v", ft["type"])
+	}
+
+	methods := ft["methods"].([]interface{})
+	if len(methods) != 1 {
+		t.Errorf("expected 1 method (Len), got %d", len(methods))
+	}
+
+	embedsRaw, ok := ft["embeds"]
+	if !ok {
+		t.Fatalf("expression-position InterfaceType is missing 'embeds' key (embedded interface dropped)")
+	}
+	embeds := embedsRaw.([]interface{})
+	if len(embeds) != 1 {
+		t.Fatalf("expected 1 embed (fmt.Stringer), got %d", len(embeds))
+	}
+	embed := embeds[0].(map[string]interface{})
+	if embed["type"] != "SelectorExpr" {
+		t.Errorf("expected embed type 'SelectorExpr' for fmt.Stringer, got %v", embed["type"])
+	}
+}
