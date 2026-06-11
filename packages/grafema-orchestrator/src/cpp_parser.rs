@@ -521,18 +521,25 @@ unsafe fn add_kind_specific_fields(
             node["access"] = json!(access_specifier_to_string(clang_getCXXAccessSpecifier(cursor)));
         }
 
-        // Using directive (using namespace X)
+        // Using directive (`using namespace A;` / `using namespace A::B;`).
+        //
+        // libclang's `clang_getCursorReferenced` on a UsingDirective returns the
+        // directive cursor itself (empty spelling), *not* the referenced
+        // namespace, so reading its spelling always yields "". The namespace name
+        // is instead reconstructed from the directive's `NamespaceRef` children,
+        // which carry one qualifier segment each (`A`, then `B` for `A::B`).
         CXCursor_UsingDirective => {
-            let referenced = clang_getCursorReferenced(cursor);
-            if !clang_Cursor_isNull(referenced) != 0 {
-                node["namespace"] = json!(cx_string_to_string(clang_getCursorSpelling(referenced)));
+            if let Some(ns) = qualified_namespace_from_children(node) {
+                node["namespace"] = json!(ns);
             }
         }
 
-        // Using declaration
+        // Using declaration (`using A::x;`). Here `clang_getCursorReferenced`
+        // correctly resolves to the introduced declaration (e.g. `x`); guard
+        // against an unresolved (null) reference before reading its spelling.
         CXCursor_UsingDeclaration => {
             let referenced = clang_getCursorReferenced(cursor);
-            if !clang_Cursor_isNull(referenced) != 0 {
+            if clang_Cursor_isNull(referenced) == 0 {
                 node["target"] = json!(cx_string_to_string(clang_getCursorSpelling(referenced)));
             }
         }
@@ -754,6 +761,34 @@ unsafe fn extract_operator_token(
 /// Helper to get a child's "kind" field as &str.
 fn child_kind<'a>(child: &'a Value) -> Option<&'a str> {
     child.get("kind").and_then(|k| k.as_str())
+}
+
+/// Reconstruct the qualified namespace path of a `using namespace …;` directive
+/// from its already-built JSON `NamespaceRef` children.
+///
+/// libclang does not expose the target namespace via `clang_getCursorReferenced`
+/// on a `UsingDirective` (it yields the directive cursor itself, with an empty
+/// spelling). The qualifier instead appears as one `NamespaceRef` child per
+/// segment, in source order, so `using namespace A::B;` becomes `["A", "B"]`.
+/// These are joined with `::` to preserve the path as written
+/// (`A::B`; a single segment yields `A`).
+///
+/// Returns `None` when the directive has no `NamespaceRef` child (e.g. an
+/// unresolved namespace), so the caller omits the `namespace` field entirely
+/// rather than emitting an empty string.
+fn qualified_namespace_from_children(node: &Value) -> Option<String> {
+    let children = node.get("children")?.as_array()?;
+    let segments: Vec<&str> = children
+        .iter()
+        .filter(|c| child_kind(c) == Some("NamespaceRef"))
+        .filter_map(|c| c.get("name").and_then(|n| n.as_str()))
+        .filter(|s| !s.is_empty())
+        .collect();
+    if segments.is_empty() {
+        None
+    } else {
+        Some(segments.join("::"))
+    }
 }
 
 /// Extract named fields from the `children` array based on the node's kind.
@@ -1275,4 +1310,75 @@ pub fn is_c_file(path: &Path) -> bool {
         .and_then(|e| e.to_str())
         .map(|e| e == "c")
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod using_directive_tests {
+    use super::*;
+
+    /// Ensure libclang is loaded on the current test thread.
+    ///
+    /// The production loader (`ensure_libclang_loaded`) uses `Once` + the
+    /// `clang-sys` runtime feature, which stores the handle in thread-local
+    /// storage. Under the multi-threaded test runner the handle may have been
+    /// loaded on a different thread, so each test loads it on its own thread.
+    fn ensure_loaded_on_test_thread() {
+        if !clang_sys::is_loaded() {
+            let _ = clang_sys::load();
+        }
+    }
+
+    /// Depth-first search for the first node whose `kind` equals `kind`.
+    fn find_kind<'a>(node: &'a Value, kind: &str) -> Option<&'a Value> {
+        if node.get("kind").and_then(|k| k.as_str()) == Some(kind) {
+            return Some(node);
+        }
+        node.get("children")
+            .and_then(|c| c.as_array())
+            .and_then(|kids| kids.iter().find_map(|c| find_kind(c, kind)))
+    }
+
+    fn parse(src: &str) -> Value {
+        parse_cpp_source(src, "t.cpp", &["-std=c++17".to_string(), "-xc++".to_string()])
+            .expect("parse should succeed")
+    }
+
+    #[test]
+    fn using_directive_captures_namespace_name() {
+        ensure_loaded_on_test_thread();
+        let ast = parse("namespace A { int x; }\nusing namespace A;\n");
+        let directive = find_kind(&ast, "UsingDirective")
+            .expect("a UsingDirective node should be present");
+        assert_eq!(
+            directive.get("namespace").and_then(|n| n.as_str()),
+            Some("A"),
+            "`using namespace A;` must record the namespace name, not an empty string"
+        );
+    }
+
+    #[test]
+    fn using_directive_captures_qualified_namespace_path() {
+        ensure_loaded_on_test_thread();
+        let ast = parse("namespace A { namespace B { int x; } }\nusing namespace A::B;\n");
+        let directive = find_kind(&ast, "UsingDirective")
+            .expect("a UsingDirective node should be present");
+        assert_eq!(
+            directive.get("namespace").and_then(|n| n.as_str()),
+            Some("A::B"),
+            "`using namespace A::B;` must record the qualified path joined with `::`"
+        );
+    }
+
+    #[test]
+    fn using_declaration_captures_target_name() {
+        ensure_loaded_on_test_thread();
+        let ast = parse("namespace A { int x; }\nusing A::x;\n");
+        let decl = find_kind(&ast, "UsingDeclaration")
+            .expect("a UsingDeclaration node should be present");
+        assert_eq!(
+            decl.get("target").and_then(|n| n.as_str()),
+            Some("x"),
+            "`using A::x;` must record the introduced declaration name"
+        );
+    }
 }
