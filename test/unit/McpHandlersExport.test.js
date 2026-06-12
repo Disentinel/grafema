@@ -72,10 +72,14 @@ const EXPECTED_HANDLERS = [
   'handleGetShape',
   'handleTraceEffects',
   'handleFindSharedBehaviors',
+  // Derive-engine tools (0.4.0): what-if simulation, derivation witnesses, gap explanations.
+  'handleSimDatalog',
+  'handleExplainFact',
+  'handleExplainGap',
 ];
 
 describe('MCP handlers export surface', () => {
-  it('should export exactly 53 handler functions', () => {
+  it('should export exactly 52 handler functions', () => {
     const exportedKeys = Object.keys(handlers).filter(
       k => typeof handlers[k] === 'function'
     );
