@@ -182,14 +182,14 @@ Interactive graph navigation directly in your editor. Install from the [VS Code 
 
 ### AI Agent Accuracy (Autoresearch)
 
-Methodology: 30 questions sourced from real VS Code GitHub issues, scored by LLM judge. Questions span Sillito taxonomy levels L1 (finding focus) through L4 (full architecture understanding). Each question run as independent `claude -p` session with no prior context.
+Methodology: 30 questions sourced from real VS Code GitHub issues, scored by LLM judge. Questions span Sillito taxonomy levels L1 (finding focus) through L4 (full architecture understanding). Each question run as independent `claude -p` session with no prior context. **n=30 is a small sample — point estimates are directional, not statistically definitive.**
 
 | Condition | Accuracy | MCP Adoption | Tokens | Detail |
 |-----------|----------|-------------|--------|--------|
 | Baseline (grep + read only) | 20/30 (67%) | 0% | 88K | Agent uses Grep, Read, Glob |
-| Grafema (graph tools) | 23/30 (77%) | 96% | 139K | +10% accuracy, graph-guided navigation |
+| Grafema (graph tools) | 23/30 (77%) | 96% | 139K | graph-guided navigation |
 
-Grafema provides the biggest advantage on **L4 architecture questions** and **debugging/tracing** (up to +4 points per question) where structural graph queries outperform text search. On simple L1 lookups ("where is X?"), grep is often sufficient.
+Grafema provides the biggest advantage on **L4 architecture questions** and **debugging/tracing** (up to +4 points per question) where structural graph queries outperform text search. On simple L1 lookups ("where is X?"), grep is often sufficient. Grafema uses more tokens per session (139K vs 88K, ~1.6×); the per-category advantage on L4/debugging is the defensible claim.
 
 The evaluation harness captures full tool interaction traces including MCP tool results, reasoning chains, and fallback patterns. See [`autoresearch/`](./autoresearch/) for methodology and raw data.
 
