@@ -229,9 +229,9 @@ try {
     classified++;
 
     // Pick the representative field VARIABLE to link to. Existing batch
-    // plugins enrich purely via edges (see method-call-resolver,
-    // ipc-bridge-detector) — `client.updateNode` is not part of the public
-    // RFDBClient API, so all enrichment data lives on the edge.
+    // plugins enrich purely via edges (see ipc-bridge-detector) —
+    // `client.updateNode` is not part of the public RFDBClient API, so all
+    // enrichment data lives on the edge.
     const fieldVars = fieldsByFile.get(call.file)?.get(recv) || [];
     if (fieldVars.length === 0) continue;
 

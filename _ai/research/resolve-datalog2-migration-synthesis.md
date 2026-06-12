@@ -522,3 +522,85 @@ rust-import-resolution=0, js-call-globals=0, instance-of*/builtin-class=0; EXTEN
 **Advisory carry-forward**: (a) second-pass retirement → capability-conditional;
 (b) pack-failure coupling (log-and-continue прячет потерю retired-среза); (c) 18 bin
 pre-existing; (d) property-access evidence-class. → RESUME.md «ОСТАВШИЕСЯ ЗАДАЧИ».
+
+---
+
+## Wave 5 (2026-06-12): cleanup of FULLY replaced code + честный LOC-учёт
+
+**Удалено сейчас** (live-consumer-проверка: grep по configs/docs/tests/package.json/CI —
+ноль импортов и регистраций; у всех четырёх НЕ существовало тестов; из `.grafema/config.yaml`
+они были убраны ещё в W3/W5-волнах, остались только поясняющие комментарии):
+
+| Файл | LOC |
+|---|---:|
+| `plugins/method-call-resolver.mjs` | 517 |
+| `plugins/shape-verifier.mjs` | 348 |
+| `plugins/axum-route-detector.mjs` | 127 |
+| `plugins/semantic-bridge-detector.mjs` | 818 |
+| **Итого удалено** | **1,810** |
+
+Сопутствующая правка висячих ссылок (3 файла, ~6 строк): комментарии в
+`plugins/field-instance-resolver.mjs` и `plugins/type-inference.mjs` теперь ссылаются на
+`method_calls.dl`/живые плагины, `docs/ROADMAP.md` — на `shape_verifier.dl`.
+Упоминания в `CHANGELOG.md`, `_ai/research/*`, `_archive/` — исторические записи, оставлены.
+Ссылки внутри `packages/rfdb-server/src/datalog2/` (заголовки паков «replacement for
+plugins/X.mjs») — provenance-комментарии, оставлены намеренно.
+
+**НЕ удалено — SCOPE CONSTRAINT (решено, не пересматривать):** Haskell resolve-шаги
+(`packages/grafema-resolve`, `packages/rust-resolve`) ОСТАЮТСЯ — это живой non-v2 fallback
+(final-#12 сделал retirement capability-conditional именно для того, чтобы не-v2 серверы
+продолжали работать). Их выпил = отдельное продуктовое решение об отказе от fallback — НЕ
+эта волна. Также остаётся legacy DEPENDS_ON-деривация в оркестраторе: это явный P3-fallback
+(`main.rs::derive_depends_on_legacy`, охраняется `legacy-retirement.lock` со status=retained
++ тестом `legacy_retirement_lock_guards_deletion`).
+
+### LOC-учёт, два честных фрейма (числа — `wc -l` на HEAD fd855311)
+
+**Frame A — предметный код** (что ушло/уйдёт vs декларативная замена):
+
+| Удалённая/отложенная сторона | LOC | | Добавленная сторона | LOC |
+|---|---:|---|---|---:|
+| 4 .mjs-плагина (удалены СЕЙЧАС) | 1,810 | | stdlib/*.dl паки, рукописные (22 шт.) | 3,514 |
+| их тесты (не существовало) | 0 | | js_runtime_globals_facts.dl (сгенерированный) | 8,362 |
+| wiring (config-записи убраны в W3/W5) | 0 | | scripts/generate-runtime-globals-facts.mjs | 196 |
+| **deferred deletion** — Haskell-модули retired-by-default шагов (умрут с fallback'ом): JsLocalRefs 127 + SameFileCalls 172 + PropertyAccess 213 + ClassInheritance 268 + ImportResolution 618 + JsThisMethodCalls 82 + RustImportResolution 236 | **1,716** | | stdlib.rs wiring (src) | 422 |
+| потенциал при полном выпиле обоих resolve-пакетов (вкл. ещё-живые шаги 951 + Main/ResolveUtil 563) | 3,230 | | stdlib.rs fixture-тесты паков | 3,903 |
+
+Сейчас: −1,810 удалено, +3,514 рукописных правил (+8,362 генерата + 196 генератор).
+С отложенным выпилом fallback'а: −1,810 −1,716…−3,230 Haskell vs та же добавленная сторона.
+(`Grafema.RuntimeGlobals` 304 LOC в grafema-common НЕ в deferred-счёте — shared с
+beam-/haskell-/rust-resolve.)
+
+**Frame B — всё, включая движок** (та же удалённая сторона vs полный datalog2):
+
+| Компонент | src LOC | test LOC | total |
+|---|---:|---:|---:|
+| `datalog2/` движок, 16 .rs-файлов (без stdlib.rs) | 12,305 | 9,200 | 21,505 |
+| stdlib.rs (wiring + fixture-тесты паков) | 422 | 3,903 | 4,325 |
+| stdlib/*.dl рукописные | 3,514 | — | 3,514 |
+| js_runtime_globals_facts.dl (генерат) + генератор | 8,558 | — | 8,558 |
+| **Добавлено всего** | **24,799** | **13,103** | **37,902** |
+| Удалено сейчас / deferred | 1,810 / 1,716–3,230 | 0 | |
+
+(split src/test — по позиции `#[cfg(test)]` в каждом файле; точные пофайловые числа:
+exec 3,698/2,361, builtin 1,381/1,659, differential 1,069/1,846, storage_glue 1,113/494,
+plan 1,052/376, parser_ext 927/358, stratify 673/260, materialize 554/319, events 440/91,
+pin_sidecar 331/99, binding 322/165, tag 299/197, increment 293/164, value 103/65, mod 50/746.)
+
+**Амортизация**: по голым LOC Frame B «в минус» — но движок одноразовая инфраструктура:
+один и тот же evaluator/инкрементальный maintain обслуживает ВСЕ языки (js_*, rust_*,
+depends, axum, shape) и любые будущие user rule-packs; предельная цена нового резолвера
+упала с «сотни строк императивного Haskell/JS + N+1 IPC» до «десятки строк .dl»
+(rust_trait_resolve = 126 строк, js_this_method_calls = 60). Прямой продуктовый выигрыш
+уже зафиксирован выше по леджеру: datalog-фаза 38.6s→…→pack-фаза ~74s на 22 паках vs
+60s-таймауты отдельных плагинов и 900s-таймаут legacy-пути.
+
+**Сьюты после удаления (acceptance)**: полный rfdb-server lib **1359/0** (66.0s),
+datalog2 debug 278/0 + release 278/0, plan-модуль 10/0, **Gate A 51/51** (TALLY match=51
+mismatch=0, 65.9s), orchestrator build OK + **472/0** (443+14+14+1). JS: pnpm build OK
+(кроме `@grafema/gui` — pre-existing ENOENT на локальном untracked-симлинке
+`public/assets→dist/assets`, к волне отношения не имеет); unit-сьют 622 pass / 95 fail —
+**фейл-сет байт-идентичен чистому HEAD fd855311** (git stash → прогон → diff фейл-имён =
+IDENTICAL): все 95 pre-existing (enricher/MCP-кластер), Wave 5 не добавила ни одного.
+Зелёная сборка без единого импорта удалённых плагинов = доказательство отсутствия живых
+потребителей.
