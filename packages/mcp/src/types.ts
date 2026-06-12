@@ -56,7 +56,7 @@ export interface ExplainFactArgs {
   predicate: string;
   /** The fact's ground key tuple as wire-string terms (node ids as decimal, else string). */
   key: string[];
-  /** Optional Datalog v2 program; empty/omitted ⇒ the bundled depends.dl. */
+  /** Optional Datalog program (derive engine); empty/omitted ⇒ the bundled depends.dl. */
   source?: string;
 }
 
@@ -67,7 +67,7 @@ export interface SimDatalogArgs {
   nodes?: Array<{ id: string; nodeType: string; name?: string; file?: string }>;
   /** Hypothetical edges: { src, dst, edgeType }; endpoints existing OR hypothetical ids. */
   edges?: Array<{ src: string; dst: string; edgeType: string }>;
-  /** Optional Datalog v2 program; empty/omitted ⇒ the bundled depends.dl. */
+  /** Optional Datalog program (derive engine); empty/omitted ⇒ the bundled depends.dl. */
   source?: string;
 }
 
@@ -76,7 +76,7 @@ export interface ExplainGapArgs {
   predicate: string;
   /** The missing fact's ground key tuple as wire-string terms (node ids as decimal). */
   key: string[];
-  /** Optional Datalog v2 program; empty/omitted ⇒ the bundled depends.dl. */
+  /** Optional Datalog program (derive engine); empty/omitted ⇒ the bundled depends.dl. */
   source?: string;
 }
 

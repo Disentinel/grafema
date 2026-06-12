@@ -649,7 +649,7 @@ export async function handleExplainFact(args: ExplainFactArgs): Promise<ToolResu
 
   const db = await ensureAnalyzed();
   if (!('explainDatalogFact' in db)) {
-    return errorResult('Backend does not support explain_fact (needs the RFDB v2 server with RFDB_DATALOG_V2 enabled).');
+    return errorResult('Backend does not support explain_fact (needs an rfdb-server with the derive engine enabled, i.e. RFDB_DERIVE_ENGINE not set to off).');
   }
   const fn = (db as unknown as {
     explainDatalogFact: (s: string, p: string, k: string[]) => Promise<FactWitness | null>;
@@ -709,7 +709,7 @@ export async function handleSimDatalog(args: SimDatalogArgs): Promise<ToolResult
 
   const db = await ensureAnalyzed();
   if (!('simDatalog' in db)) {
-    return errorResult('Backend does not support sim_datalog (needs the RFDB v2 server with RFDB_DATALOG_V2 enabled).');
+    return errorResult('Backend does not support sim_datalog (needs an rfdb-server with the derive engine enabled, i.e. RFDB_DERIVE_ENGINE not set to off).');
   }
   const fn = (db as unknown as {
     simDatalog: (s: string, p: string, n: SimNode[], e: SimEdge[]) => Promise<string[][]>;
@@ -747,7 +747,7 @@ export async function handleExplainGap(args: ExplainGapArgs): Promise<ToolResult
 
   const db = await ensureAnalyzed();
   if (!('explainDatalogGap' in db)) {
-    return errorResult('Backend does not support explain_gap (needs the RFDB v2 server with RFDB_DATALOG_V2 enabled).');
+    return errorResult('Backend does not support explain_gap (needs an rfdb-server with the derive engine enabled, i.e. RFDB_DERIVE_ENGINE not set to off).');
   }
   const fn = (db as unknown as {
     explainDatalogGap: (s: string, p: string, k: string[]) => Promise<GapWitness | null>;

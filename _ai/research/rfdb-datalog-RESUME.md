@@ -2,6 +2,8 @@
 
 **Branch:** `feat/datalog`. **As of:** 2026-06-07. Single source of "where we are / what's next".
 
+> **Naming (query/derive, since 0.4.0 — Wave 7):** the v1/v2 split was renamed. `rfdb-server/src/datalog/` = the Datalog **query** engine (interactive datalogQuery/checkGuarantee + Gate A reference oracle); `rfdb-server/src/datalog2/` → `src/derive/` = the **derive** engine. Hello capability `datalogV2Materialize` → `datalogDerive`; env `RFDB_DATALOG_V2` → `RFDB_DERIVE_ENGINE` (same semantics). No compat aliases. Older notes below use the v1/v2 names.
+
 ## 2026-06-07 session — committed progress (newest first)
 
 - `76659214` Gate C **binding table (§9.3)**: new `datalog2/binding.rs` — `BindingTable`

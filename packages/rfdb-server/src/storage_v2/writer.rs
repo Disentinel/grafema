@@ -12,7 +12,7 @@ use crate::storage_v2::string_table::StringTableV2;
 use crate::storage_v2::types::*;
 use crate::storage_v2::zone_map::ZoneMap;
 
-// ── Derived (Datalog v2 §8.1) Column Writer ───────────────────────
+// ── Derived (derive engine §8.1) Column Writer ───────────────────────
 
 /// Per-record byte width of the provenance column: rule_ast_hash(u32) + generation(u64).
 pub(crate) const PROVENANCE_RECORD_SIZE: usize = 4 + 8; // 12
@@ -79,7 +79,7 @@ pub struct NodeSegmentWriter {
     records: Vec<NodeRecordV2>,
     /// Per-record derived fields, parallel to `records`. Empty unless any
     /// `add_derived` was called; when empty the writer emits the BASE v2 format
-    /// (byte-identical to the pre-Datalog-v2 writer).
+    /// (byte-identical to the pre-derive-engine writer).
     derived: Vec<DerivedFields>,
 }
 

@@ -35,7 +35,7 @@
 
 % The resolver's compiled-in runtime-global skip list — the EXACT 97 names of
 % JsLocalRefs.hs:57-84 (runtimeGlobalNames), as ground facts (Wave-0 proved facts
-% survive the full v2 pipeline).
+% survive the full derive pipeline).
 rt_global("console").
 rt_global("process").
 rt_global("Buffer").

@@ -1,4 +1,7 @@
-//! Gate A differential harness — v1 top-down vs v2 semi-naive over the REAL dataset.
+//! Gate A differential harness — the query engine (top-down, `crate::datalog`) as the
+//! REFERENCE ORACLE for the derive engine (semi-naive, `crate::derive`), over the REAL
+//! dataset. The Gate A name is historical and stays; in the harness shorthand below,
+//! "v1" = the query engine and "v2" = the derive engine.
 //!
 //! This is the Gate A acceptance signal (plan §"Gate A conformance manifest" → Pilot):
 //! the ~51 datalog guarantee rules are evaluated by BOTH engines over the SAME committed
@@ -6,19 +9,19 @@
 //! rule-by-rule.
 //!
 //! It lives as a `#[cfg(test)]` module INSIDE the crate (not in `tests/`) on purpose: the
-//! v2 eval entry [`crate::datalog2::evaluate`] and the real [`LsmStorageView`] are
+//! v2 eval entry [`crate::derive::evaluate`] and the real [`LsmStorageView`] are
 //! `pub(crate)` (invariant I10 — storage is reachable only through the module-private
 //! `StorageView`). An external integration-test crate cannot reach them without widening
 //! the v2 production surface, which Gate A forbids. The Gate A plan explicitly sanctions a
 //! `#[cfg(test)]` module "if integration deps are awkward".
 //!
 //! Both engines read the SAME store:
-//! - **v1**: [`crate::graph::GraphEngineV2`] opened on the temp copy → `&dyn GraphStore`
-//!   driven through the production `violation(X)` query path (mirrors
+//! - **v1 (query engine)**: [`crate::graph::GraphEngineV2`] opened on the temp copy →
+//!   `&dyn GraphStore` driven through the production `violation(X)` query path (mirrors
 //!   `rfdb_server::execute_check_guarantee`).
-//! - **v2**: a second read-only open of the SAME temp dir as `MultiShardStore` +
+//! - **v2 (derive engine)**: a second read-only open of the SAME temp dir as `MultiShardStore` +
 //!   `ManifestStore`, captured into an [`LsmStorageView`] pinned at the published manifest
-//!   version, run through [`crate::datalog2::evaluate`].
+//!   version, run through [`crate::derive::evaluate`].
 //!
 //! The run is a MEASUREMENT harness: it prints a per-rule table and a tally and does NOT
 //! hard-assert all-match (the run/triage stage interprets mismatches). The one hard
@@ -32,10 +35,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::datalog::{parse_atom, parse_program, EvalLimits, Evaluator, Value};
-use crate::datalog2::builtin::Stats;
-use crate::datalog2::events::EventLog;
-use crate::datalog2::evaluate;
-use crate::datalog2::storage_glue::{LsmStorageView, StorageView};
+use crate::derive::builtin::Stats;
+use crate::derive::events::EventLog;
+use crate::derive::evaluate;
+use crate::derive::storage_glue::{LsmStorageView, StorageView};
 use crate::graph::{GraphEngineV2, GraphStore};
 use crate::storage_v2::manifest::ManifestStore;
 use crate::storage_v2::multi_shard::MultiShardStore;
@@ -273,10 +276,10 @@ fn v2_violations(
 /// harness's own integrity: the dataset opened and at least one datalog rule was compared.
 // Heavy manual harness: copies the real .grafema/grafema.rfdb (100k+ nodes) and runs BOTH
 // engines over every guarantee rule. Not a CI unit test. Run explicitly with:
-//   cargo test --lib datalog2_differential_against_real_dataset -- --ignored --nocapture
+//   cargo test --lib derive_differential_against_real_dataset -- --ignored --nocapture
 #[test]
 #[ignore = "manual real-data differential; run with --ignored"]
-fn datalog2_differential_against_real_dataset() {
+fn derive_differential_against_real_dataset() {
     let dataset = repo_path(".grafema/grafema.rfdb");
     if !dataset.join("db_config.json").exists() {
         // The real dogfood store is required for this harness. Its absence is an
@@ -336,7 +339,7 @@ fn datalog2_differential_against_real_dataset() {
     );
 
     eprintln!(
-        "\n=== datalog2 differential — real dataset ===\n\
+        "\n=== derive differential — real dataset ===\n\
          dataset (temp copy): {}\n\
          snapshot version: {} | live nodes: {} | live edges: {}\n\
          datalog rules: {}\n",
@@ -480,7 +483,7 @@ fn datalog2_differential_against_real_dataset() {
 /// printed coverage is a LOWER BOUND, not the true call-resolution rate. The point is the MECHANISM
 /// (coverage-as-negation runs over the live store in ~4s), not the exact %; graph is also stale.
 /// First run 2026-06-09: 13634 CALL sites, 2215 direct-resolved, 11419 dark → 16.2% (lower bound).
-///   cargo test --release --lib datalog2::differential::probe_call_resolution_coverage -- --ignored --nocapture
+///   cargo test --release --lib derive::differential::probe_call_resolution_coverage -- --ignored --nocapture
 #[test]
 #[ignore = "manual real-data coverage probe; run with --ignored"]
 fn probe_call_resolution_coverage() {
@@ -546,7 +549,7 @@ fn probe_call_resolution_coverage() {
 /// split (full vs floor) so we can see whether the join (skipped → big win) or the base scan
 /// (still paid → motivates a version-delta-scoped diff_base) dominates.
 ///
-///   cargo test --release --lib datalog2::differential::depends_dl_maintain_vs_full_on_real_corpus -- --ignored --nocapture
+///   cargo test --release --lib derive::differential::depends_dl_maintain_vs_full_on_real_corpus -- --ignored --nocapture
 #[test]
 #[ignore = "manual real-data perf bench; run with --ignored --release"]
 fn depends_dl_maintain_vs_full_on_real_corpus() {
@@ -566,12 +569,12 @@ fn depends_dl_maintain_vs_full_on_real_corpus() {
     let _ = std::fs::remove_file(work.join("LOCK"));
 
     let mut engine = GraphEngineV2::open(&work).expect("open real dataset");
-    let src = crate::datalog2::stdlib::DEPENDS_DL;
+    let src = crate::derive::stdlib::DEPENDS_DL;
 
     // Full from-scratch materialize (cache miss).
     let t0 = Instant::now();
     let (added, _removed) = engine
-        .eval_datalog_v2_materialize_cached(src, EvalLimits::none())
+        .eval_derive_materialize_cached(src, EvalLimits::none())
         .expect("full materialize");
     let t_full = t0.elapsed();
 
@@ -579,7 +582,7 @@ fn depends_dl_maintain_vs_full_on_real_corpus() {
     // over an empty delta + write-back diff). A real small edit adds only O(delta) on top.
     let t1 = Instant::now();
     let (added2, removed2) = engine
-        .eval_datalog_v2_materialize_cached(src, EvalLimits::none())
+        .eval_derive_materialize_cached(src, EvalLimits::none())
         .expect("maintain re-materialize");
     let t_maintain = t1.elapsed();
 
@@ -605,7 +608,7 @@ fn depends_dl_maintain_vs_full_on_real_corpus() {
 /// equals the file segment of the orchestrator's id-string parse (`build_file_to_module_map`)?
 ///
 /// Run with:
-///   cargo test --lib datalog2::differential::probe_imports_from_shape -- --ignored --nocapture
+///   cargo test --lib derive::differential::probe_imports_from_shape -- --ignored --nocapture
 #[test]
 #[ignore = "manual real-data shape probe; run with --ignored"]
 fn probe_imports_from_shape() {
@@ -735,10 +738,10 @@ fn probe_imports_from_shape() {
     };
     // Dump the planned per-leg estimates so an E-PLAN-003 estimate rejection is diagnosable.
     {
-        use crate::datalog2::parser_ext::parse_ext_program;
-        use crate::datalog2::plan::plan_program;
-        use crate::datalog2::stratify::stratify;
-        if let Ok(prog) = parse_ext_program(crate::datalog2::stdlib::DEPENDS_DL) {
+        use crate::derive::parser_ext::parse_ext_program;
+        use crate::derive::plan::plan_program;
+        use crate::derive::stratify::stratify;
+        if let Ok(prog) = parse_ext_program(crate::derive::stdlib::DEPENDS_DL) {
             if let Ok(strat) = stratify(&prog) {
                 let rules = prog.rules();
                 match plan_program(&rules, &strat, &stats) {
@@ -760,7 +763,7 @@ fn probe_imports_from_shape() {
             }
         }
     }
-    let rule = crate::datalog2::stdlib::DEPENDS_DL;
+    let rule = crate::derive::stdlib::DEPENDS_DL;
     match evaluate(&view, rule, stats, EvalLimits::none(), EventLog::discard()) {
         Ok(eval) => {
             let pairs = eval.facts("depends");
@@ -790,7 +793,7 @@ fn probe_imports_from_shape() {
 /// `DEPENDS_ON` derivation**. Both sides are reduced to a set of `(Msrc, Mdst)` MODULE
 /// id-pairs over one version-pinned snapshot of a temp copy of the real dogfood store.
 ///
-/// - **v2 side**: run the bundled [`crate::datalog2::stdlib::DEPENDS_DL`] rule through the
+/// - **v2 side**: run the bundled [`crate::derive::stdlib::DEPENDS_DL`] rule through the
 ///   single eval entry and collect every derived `depends(Msrc, Mdst)` id-pair.
 /// - **ground truth**, in priority order:
 ///   1. If the store already CONTAINS `DEPENDS_ON` edges (the orchestrator wrote them during
@@ -808,7 +811,7 @@ fn probe_imports_from_shape() {
 /// modeling gap between the rule's `file`-attr join and the orchestrator's id-string parse).
 ///
 /// Run with:
-///   cargo test --lib datalog2::differential::depends2_matches_orchestrator_ground_truth -- --ignored --nocapture
+///   cargo test --lib derive::differential::depends2_matches_orchestrator_ground_truth -- --ignored --nocapture
 #[test]
 #[ignore = "manual real-data depends/2 differential (Gate B exit); run with --ignored"]
 fn depends2_matches_orchestrator_ground_truth() {
@@ -988,7 +991,7 @@ fn depends2_matches_orchestrator_ground_truth() {
     let view = LsmStorageView::capture(Arc::new(store), &manifest);
     let v2: BTreeSet<(u128, u128)> = match evaluate(
         &view,
-        crate::datalog2::stdlib::DEPENDS_DL,
+        crate::derive::stdlib::DEPENDS_DL,
         stats,
         EvalLimits::none(),
         EventLog::discard(),
@@ -1109,7 +1112,7 @@ guarantees:
     /// Real-graph vocabulary probe (ignored): dump the node-type and edge-type histograms of the
     /// repo's own `.grafema/grafema.rfdb`. Grounds the stdlib/archetypes design in the ACTUAL
     /// relation vocabulary (not depends_on alone).
-    /// `cargo test --release --lib datalog2::differential::probe_real_graph_vocabulary -- --ignored --nocapture`
+    /// `cargo test --release --lib derive::differential::probe_real_graph_vocabulary -- --ignored --nocapture`
     #[test]
     #[ignore = "manual real-data vocabulary probe; run with --ignored"]
     fn probe_real_graph_vocabulary() {
@@ -1162,13 +1165,13 @@ guarantees:
     /// modules² (a few hundred², well under the guard). This is a **recursive-closure planner
     /// q-error** (the roadmap's "planner q-error (Gate D)", task #4): the recursive rule's
     /// cardinality estimate compounds instead of saturating. The cycle LOGIC is proven correct on
-    /// a fixture (`datalog2::smoke::module_dependency_cycles_via_transitive_closure_over_depends`);
+    /// a fixture (`derive::smoke::module_dependency_cycles_via_transitive_closure_over_depends`);
     /// surfacing the real cycle SET needs either a tighter recursive-closure estimator or a bounded
     /// formulation — NOT weakening the global guard. The probe leaves the E-PLAN-003 visible on
     /// purpose; it is the finding. (No autonomous fix: the estimator change touches a prod guard.)
     ///
     /// Run: cargo test --manifest-path packages/rfdb-server/Cargo.toml --lib \
-    ///        datalog2::differential::yaml_extract_tests::probe_real_module_dependency_cycles -- --ignored --nocapture
+    ///        derive::differential::yaml_extract_tests::probe_real_module_dependency_cycles -- --ignored --nocapture
     #[test]
     #[ignore = "manual real-data cycle probe; documents the recursive-closure E-PLAN-003 q-error"]
     fn probe_real_module_dependency_cycles() {
@@ -1197,7 +1200,7 @@ guarantees:
         let stats = Stats { total_nodes, total_edges, nodes_by_type };
 
         // The shipped depends body (strip @materialize) + transitive closure + self-reach.
-        let depends_body: String = crate::datalog2::stdlib::DEPENDS_DL
+        let depends_body: String = crate::derive::stdlib::DEPENDS_DL
             .lines()
             .filter(|l| !l.trim_start().starts_with("@materialize"))
             .collect::<Vec<_>>()
@@ -1260,7 +1263,7 @@ guarantees:
     /// E-PLAN-003. Mutual imports are a real architectural smell; this surfaces Grafema's own.
     ///
     /// Run: cargo test --manifest-path packages/rfdb-server/Cargo.toml --lib \
-    ///        datalog2::differential::yaml_extract_tests::probe_real_mutual_module_imports -- --ignored --nocapture
+    ///        derive::differential::yaml_extract_tests::probe_real_mutual_module_imports -- --ignored --nocapture
     #[test]
     #[ignore = "manual real-data mutual-import probe; run with --ignored"]
     fn probe_real_mutual_module_imports() {
@@ -1287,7 +1290,7 @@ guarantees:
         let view = LsmStorageView::capture(Arc::new(store), &manifest);
         let stats = Stats { total_nodes, total_edges, nodes_by_type };
 
-        let depends_body: String = crate::datalog2::stdlib::DEPENDS_DL
+        let depends_body: String = crate::derive::stdlib::DEPENDS_DL
             .lines()
             .filter(|l| !l.trim_start().starts_with("@materialize"))
             .collect::<Vec<_>>()
@@ -1343,17 +1346,17 @@ guarantees:
     /// the planner q-error E-PLAN-003 on the real graph, see `_ai/gaps.md`.)
     ///
     /// Run: cargo test --manifest-path packages/rfdb-server/Cargo.toml --lib --release \
-    ///        datalog2::differential::yaml_extract_tests::sim_on_real_store_predicts_new_depends_without_commit -- --ignored --nocapture
+    ///        derive::differential::yaml_extract_tests::sim_on_real_store_predicts_new_depends_without_commit -- --ignored --nocapture
     #[test]
     #[ignore = "manual real-data sim/overlay proof; run with --ignored (heavy: full depends.dl ×2)"]
     fn sim_on_real_store_predicts_new_depends_without_commit() {
-        use crate::datalog2::exec::maintain_incremental;
-        use crate::datalog2::increment::diff_base;
-        use crate::datalog2::parser_ext::parse_ext_program;
-        use crate::datalog2::plan::plan_program;
-        use crate::datalog2::storage_glue::{EdgeRow, FixtureStorageView, NodeRow, OverlayStorageView};
-        use crate::datalog2::stratify::stratify;
-        use crate::datalog2::tag::BoolTag;
+        use crate::derive::exec::maintain_incremental;
+        use crate::derive::increment::diff_base;
+        use crate::derive::parser_ext::parse_ext_program;
+        use crate::derive::plan::plan_program;
+        use crate::derive::storage_glue::{EdgeRow, FixtureStorageView, NodeRow, OverlayStorageView};
+        use crate::derive::stratify::stratify;
+        use crate::derive::tag::BoolTag;
 
         let dataset = repo_path(".grafema/grafema.rfdb");
         assert!(dataset.join("db_config.json").exists(), "no dataset at {}", dataset.display());
@@ -1399,13 +1402,13 @@ guarantees:
         let overlay = OverlayStorageView::new(&base, delta);
 
         // Program plumbing (non-recursive depends).
-        let prog = parse_ext_program(crate::datalog2::stdlib::DEPENDS_DL).expect("parse");
+        let prog = parse_ext_program(crate::derive::stdlib::DEPENDS_DL).expect("parse");
         let strat = stratify(&prog).expect("stratify");
         let rules = prog.rules();
         let plans = plan_program(&rules, &strat, &stats).expect("plan");
 
         // base eval (the committed world), the hypothetical base delta, and sim = maintain.
-        let base_eval = evaluate(&base, crate::datalog2::stdlib::DEPENDS_DL, stats.clone(), EvalLimits::none(), EventLog::discard())
+        let base_eval = evaluate(&base, crate::derive::stdlib::DEPENDS_DL, stats.clone(), EvalLimits::none(), EventLog::discard())
             .expect("base depends eval");
         let base_delta = diff_base(&base, &overlay);
         let sim = maintain_incremental::<BoolTag>(
@@ -1415,11 +1418,11 @@ guarantees:
         .expect("depends is single-stratum monotone → Some, not a recompute fallback");
 
         // scratch eval of the hypothetical world.
-        let scratch = evaluate(&overlay, crate::datalog2::stdlib::DEPENDS_DL, stats, EvalLimits::none(), EventLog::discard())
+        let scratch = evaluate(&overlay, crate::derive::stdlib::DEPENDS_DL, stats, EvalLimits::none(), EventLog::discard())
             .expect("overlay scratch eval");
 
         // (1) SOUND.
-        let pair = |e: &crate::datalog2::Evaluation| -> std::collections::BTreeSet<(u128, u128)> {
+        let pair = |e: &crate::derive::Evaluation| -> std::collections::BTreeSet<(u128, u128)> {
             e.facts("depends").iter().filter_map(|r| Some((r.first()?.as_id()?, r.get(1)?.as_id()?))).collect()
         };
         let (sim_set, scratch_set, base_set) = (pair(&sim), pair(&scratch), pair(&base_eval));
@@ -1433,7 +1436,7 @@ guarantees:
         );
 
         // (2) NON-DESTRUCTIVE: the committed base re-evaluates identically.
-        let base_after = pair(&evaluate(&base, crate::datalog2::stdlib::DEPENDS_DL, Stats::default(), EvalLimits::none(), EventLog::discard()).expect("re-eval base"));
+        let base_after = pair(&evaluate(&base, crate::derive::stdlib::DEPENDS_DL, Stats::default(), EvalLimits::none(), EventLog::discard()).expect("re-eval base"));
         assert_eq!(base_set, base_after, "the what-if must not mutate the committed base");
         eprintln!("=== sim on real store: SOUND + NON-DESTRUCTIVE ===\n");
     }
@@ -1448,16 +1451,16 @@ guarantees:
     ///   sim(add that import) → depends(m1, m2) now holds  ⇒ the gap is closed
     ///
     /// Run: cargo test --manifest-path packages/rfdb-server/Cargo.toml --lib --release \
-    ///        datalog2::differential::yaml_extract_tests::coverage_loop_why_not_then_sim_closes_a_real_depends_gap -- --ignored --nocapture
+    ///        derive::differential::yaml_extract_tests::coverage_loop_why_not_then_sim_closes_a_real_depends_gap -- --ignored --nocapture
     #[test]
     #[ignore = "manual real-data coverage-loop proof; run with --ignored (heavy: full depends.dl ×3)"]
     fn coverage_loop_why_not_then_sim_closes_a_real_depends_gap() {
-        use crate::datalog2::exec::explain_gap;
-        use crate::datalog2::parser_ext::parse_ext_program;
-        use crate::datalog2::plan::plan_program;
-        use crate::datalog2::storage_glue::{EdgeRow, FixtureStorageView, NodeRow, OverlayStorageView};
-        use crate::datalog2::stratify::stratify;
-        use crate::datalog2::tag::BoolTag;
+        use crate::derive::exec::explain_gap;
+        use crate::derive::parser_ext::parse_ext_program;
+        use crate::derive::plan::plan_program;
+        use crate::derive::storage_glue::{EdgeRow, FixtureStorageView, NodeRow, OverlayStorageView};
+        use crate::derive::stratify::stratify;
+        use crate::derive::tag::BoolTag;
         use std::collections::BTreeSet;
 
         let dataset = repo_path(".grafema/grafema.rfdb");
@@ -1481,13 +1484,13 @@ guarantees:
         let stats = Stats { total_nodes, total_edges, nodes_by_type };
         let base = LsmStorageView::capture(Arc::new(store), &manifest);
 
-        let prog = parse_ext_program(crate::datalog2::stdlib::DEPENDS_DL).expect("parse");
+        let prog = parse_ext_program(crate::derive::stdlib::DEPENDS_DL).expect("parse");
         let strat = stratify(&prog).expect("stratify");
         let rules = prog.rules();
         let plans = plan_program(&rules, &strat, &stats).expect("plan");
 
         // Base depends, to pick a pair the graph does NOT relate.
-        let base_eval = evaluate(&base, crate::datalog2::stdlib::DEPENDS_DL, stats.clone(), EvalLimits::none(), EventLog::discard())
+        let base_eval = evaluate(&base, crate::derive::stdlib::DEPENDS_DL, stats.clone(), EvalLimits::none(), EventLog::discard())
             .expect("base depends eval");
         let base_depends: BTreeSet<(u128, u128)> = base_eval
             .facts("depends").iter().filter_map(|r| Some((r.first()?.as_id()?, r.get(1)?.as_id()?))).collect();
@@ -1517,7 +1520,7 @@ guarantees:
         delta.put_node(NodeRow { id: nid, node_type: "IMPORT_BINDING".into(), name: "hypo".into(), file: m1.file.clone() });
         delta.put_edge(EdgeRow { src: nid, dst: m2.id, edge_type: "IMPORTS_FROM".into() });
         let overlay = OverlayStorageView::new(&base, delta);
-        let sim_eval = evaluate(&overlay, crate::datalog2::stdlib::DEPENDS_DL, stats, EvalLimits::none(), EventLog::discard())
+        let sim_eval = evaluate(&overlay, crate::derive::stdlib::DEPENDS_DL, stats, EvalLimits::none(), EventLog::discard())
             .expect("sim eval");
         let sim_depends: BTreeSet<(u128, u128)> = sim_eval
             .facts("depends").iter().filter_map(|r| Some((r.first()?.as_id()?, r.get(1)?.as_id()?))).collect();
@@ -1561,7 +1564,7 @@ guarantees:
 #[test]
 #[ignore = "manual real-data shadow differential; run with --ignored"]
 fn wave3b_rust_imports_shadow_differential() {
-    use crate::datalog2::evaluate_with_materialize;
+    use crate::derive::evaluate_with_materialize;
 
     let dataset = std::env::var("GRAFEMA_WAVE3B_DIFF_DB")
         .unwrap_or_else(|_| "/tmp/wave3b-rust.rfdb".to_string());
@@ -1599,7 +1602,7 @@ fn wave3b_rust_imports_shadow_differential() {
         stats.total_nodes, stats.total_edges
     );
 
-    let pairs = |eval: &crate::datalog2::exec::Evaluation, pred: &str| -> BTreeSet<(u128, u128)> {
+    let pairs = |eval: &crate::derive::exec::Evaluation, pred: &str| -> BTreeSet<(u128, u128)> {
         eval.facts(pred)
             .iter()
             .filter_map(|r| Some((r.first()?.as_id()?, r.get(1)?.as_id()?)))
@@ -1635,7 +1638,7 @@ fn wave3b_rust_imports_shadow_differential() {
     // ── The PACK, evaluated read-only over the same pinned view. ──
     let (pack_eval, _specs, _node_specs) = evaluate_with_materialize(
         &view,
-        crate::datalog2::stdlib::RUST_IMPORTS_DL,
+        crate::derive::stdlib::RUST_IMPORTS_DL,
         stats.clone(),
         EvalLimits::none(),
         EventLog::discard(),
@@ -1737,7 +1740,7 @@ fn wave3b_rust_imports_shadow_differential() {
 #[test]
 #[ignore = "manual real-data shadow differential; run with --ignored"]
 fn wave3c_js_module_imports_re_differential() {
-    use crate::datalog2::evaluate_with_materialize;
+    use crate::derive::evaluate_with_materialize;
     use std::collections::HashMap;
 
     let dataset = std::env::var("GRAFEMA_WAVE3C_DIFF_DB")
@@ -1826,13 +1829,13 @@ fn wave3c_js_module_imports_re_differential() {
     "#;
     let legacy_eval = evaluate(&view, legacy_src, stats.clone(), EvalLimits::none(), EventLog::discard())
         .expect("legacy slice eval");
-    let pairs = |eval: &crate::datalog2::exec::Evaluation, pred: &str| -> BTreeSet<(u128, u128)> {
+    let pairs = |eval: &crate::derive::exec::Evaluation, pred: &str| -> BTreeSet<(u128, u128)> {
         eval.facts(pred)
             .iter()
             .filter_map(|r| Some((r.first()?.as_id()?, r.get(1)?.as_id()?)))
             .collect()
     };
-    let triple_paths = |eval: &crate::datalog2::exec::Evaluation, pred: &str| -> std::collections::BTreeMap<(u128, u128), String> {
+    let triple_paths = |eval: &crate::derive::exec::Evaluation, pred: &str| -> std::collections::BTreeMap<(u128, u128), String> {
         eval.facts(pred)
             .iter()
             .filter_map(|r| Some(((r.first()?.as_id()?, r.get(1)?.as_id()?), r.get(2)?.as_str())))
@@ -1846,7 +1849,7 @@ fn wave3c_js_module_imports_re_differential() {
     // ── The PACK (post-3c source), evaluated read-only over the same view. ──
     let (pack_eval, _specs, _node_specs) = evaluate_with_materialize(
         &view,
-        crate::datalog2::stdlib::JS_MODULE_IMPORTS_DL,
+        crate::derive::stdlib::JS_MODULE_IMPORTS_DL,
         stats.clone(),
         EvalLimits::none(),
         EventLog::discard(),
@@ -2050,7 +2053,7 @@ fn wave3c_acceptance_counts() {
 }
 
 /// Final #12 acceptance probe: the PURE-DEFAULTS end-to-end run (no
-/// GRAFEMA_SKIP_RESOLVE_STEPS, no RFDB_DATALOG_V2 in the analyze env). Extends
+/// GRAFEMA_SKIP_RESOLVE_STEPS, no RFDB_DERIVE_ENGINE in the analyze env). Extends
 /// `wave3c_acceptance_counts` with the retired-step zero-stamp gates and the two
 /// second-pass slices (runtime-globals CALLS, this-method-calls). Pure measurement
 /// over a caller-made copy (`GRAFEMA_FINAL12_COUNTS_DB`); the numbers are judged
@@ -2373,7 +2376,7 @@ fn wave6_native_step_slice_counts() {
 #[test]
 #[ignore = "manual real-data shadow differential; run with --ignored"]
 fn wave4_runtime_globals_differential() {
-    use crate::datalog2::evaluate_with_materialize;
+    use crate::derive::evaluate_with_materialize;
     use std::collections::HashMap;
 
     let dataset = std::env::var("GRAFEMA_WAVE4_DIFF_DB")
@@ -2432,7 +2435,7 @@ fn wave4_runtime_globals_differential() {
     "#;
     let legacy_eval = evaluate(&view, legacy_src, stats.clone(), EvalLimits::none(), EventLog::discard())
         .expect("legacy slice eval");
-    let pairs = |eval: &crate::datalog2::exec::Evaluation, pred: &str| -> BTreeSet<(u128, u128)> {
+    let pairs = |eval: &crate::derive::exec::Evaluation, pred: &str| -> BTreeSet<(u128, u128)> {
         eval.facts(pred)
             .iter()
             .filter_map(|r| Some((r.first()?.as_id()?, r.get(1)?.as_id()?)))
@@ -2444,7 +2447,7 @@ fn wave4_runtime_globals_differential() {
     //    evaluated read-only over the same view. ──
     let (pack_eval, _specs, _node_specs) = evaluate_with_materialize(
         &view,
-        crate::datalog2::stdlib::JS_RUNTIME_GLOBALS_EDGES_DL,
+        crate::derive::stdlib::JS_RUNTIME_GLOBALS_EDGES_DL,
         stats.clone(),
         EvalLimits::none(),
         EventLog::discard(),
@@ -2543,8 +2546,8 @@ fn wave4_runtime_globals_differential() {
 #[test]
 #[ignore = "manual real-data shadow differential; run with --ignored"]
 fn wave4_binding_hop_differential() {
-    use crate::datalog2::evaluate_with_materialize;
-    use crate::datalog2::storage_glue::{EdgeRow, FixtureStorageView, OverlayStorageView};
+    use crate::derive::evaluate_with_materialize;
+    use crate::derive::storage_glue::{EdgeRow, FixtureStorageView, OverlayStorageView};
     use std::collections::HashMap;
 
     let dataset = std::env::var("GRAFEMA_WAVE4_DIFF_DB")
@@ -2596,7 +2599,7 @@ fn wave4_binding_hop_differential() {
     // ── Stage 1: js_module_imports (with the Wave-4 eb hop head) read-only. ──
     let (mi_eval, _s, _n) = evaluate_with_materialize(
         &view,
-        crate::datalog2::stdlib::JS_MODULE_IMPORTS_DL,
+        crate::derive::stdlib::JS_MODULE_IMPORTS_DL,
         stats.clone(),
         EvalLimits::none(),
         EventLog::discard(),
@@ -2619,7 +2622,7 @@ fn wave4_binding_hop_differential() {
     let overlay = OverlayStorageView::new(&view, delta);
     let (ib_eval, _s2, _n2) = evaluate_with_materialize(
         &overlay,
-        crate::datalog2::stdlib::JS_IMPORT_BINDINGS_DL,
+        crate::derive::stdlib::JS_IMPORT_BINDINGS_DL,
         stats.clone(),
         EvalLimits::none(),
         EventLog::discard(),
@@ -2714,7 +2717,7 @@ fn wave4_binding_hop_differential() {
     // (base view, no hop seam) vs hop-introduced.
     let (ib_base_eval, _s3, _n3) = evaluate_with_materialize(
         &view,
-        crate::datalog2::stdlib::JS_IMPORT_BINDINGS_DL,
+        crate::derive::stdlib::JS_IMPORT_BINDINGS_DL,
         stats.clone(),
         EvalLimits::none(),
         EventLog::discard(),
@@ -2765,7 +2768,7 @@ fn wave4_binding_hop_differential() {
 #[test]
 #[ignore = "manual real-data perf probe; run with --ignored --release"]
 fn wave4_touched_pack_probe_times() {
-    use crate::datalog2::evaluate_with_materialize;
+    use crate::derive::evaluate_with_materialize;
     use std::time::Instant;
 
     let dataset = std::env::var("GRAFEMA_WAVE4_DIFF_DB")
@@ -2806,7 +2809,7 @@ fn wave4_touched_pack_probe_times() {
     eprintln!("\n=== wave4 touched-pack probe times (nodes={}) ===", stats.total_nodes);
     let mut evaluated = 0usize;
     for name in touched {
-        let src = crate::datalog2::stdlib::stdlib_pack(name).expect("registered pack");
+        let src = crate::derive::stdlib::stdlib_pack(name).expect("registered pack");
         let t0 = Instant::now();
         let (eval, _s, _n) = evaluate_with_materialize(
             &view,
@@ -2865,7 +2868,7 @@ fn wave4_rtg_cost_bisect() {
         nodes_by_type: nbt,
     };
 
-    let full = crate::datalog2::stdlib::JS_RUNTIME_GLOBALS_NODES_DL;
+    let full = crate::derive::stdlib::JS_RUNTIME_GLOBALS_NODES_DL;
     // facts end where the rules half begins (the concat! boundary comment).
     let facts_end = full.find("% js_runtime_globals_nodes.dl").expect("rules half marker");
     let facts = &full[..facts_end];
@@ -2916,10 +2919,10 @@ msh(C, S) :- msfx(C, S), msfx(C, S2), concat(".", S, T), ends_with(S2, T).
     // Per-event wall-clock sink: (elapsed-at-emit, event).
     struct TimedSink {
         t0: Instant,
-        out: std::sync::Arc<std::sync::Mutex<Vec<(f64, crate::datalog2::events::Event)>>>,
+        out: std::sync::Arc<std::sync::Mutex<Vec<(f64, crate::derive::events::Event)>>>,
     }
-    impl crate::datalog2::events::EventSink for TimedSink {
-        fn emit(&mut self, event: &crate::datalog2::events::Event) -> std::io::Result<()> {
+    impl crate::derive::events::EventSink for TimedSink {
+        fn emit(&mut self, event: &crate::derive::events::Event) -> std::io::Result<()> {
             self.out
                 .lock()
                 .unwrap()
@@ -2929,9 +2932,9 @@ msh(C, S) :- msfx(C, S), msfx(C, S2), concat(".", S, T), ends_with(S2, T).
     }
     // Dump the msfx rule plan (leg order / pattern / source / join).
     {
-        use crate::datalog2::parser_ext::parse_ext_program;
-        use crate::datalog2::stratify::stratify;
-        use crate::datalog2::plan::plan_program;
+        use crate::derive::parser_ext::parse_ext_program;
+        use crate::derive::stratify::stratify;
+        use crate::derive::plan::plan_program;
         let prog = parse_ext_program(&stages.last().unwrap().1).expect("parse");
         let strat = stratify(&prog).expect("stratify");
         let rules = prog.rules();
@@ -2947,7 +2950,7 @@ msh(C, S) :- msfx(C, S), msfx(C, S2), concat(".", S, T), ends_with(S2, T).
         }
     }
     for (name, src) in &stages {
-        let timed: std::sync::Arc<std::sync::Mutex<Vec<(f64, crate::datalog2::events::Event)>>> =
+        let timed: std::sync::Arc<std::sync::Mutex<Vec<(f64, crate::derive::events::Event)>>> =
             Default::default();
         let log = EventLog::with_sink(Box::new(TimedSink { t0: Instant::now(), out: timed.clone() }));
         let t0 = Instant::now();
@@ -2957,7 +2960,7 @@ msh(C, S) :- msfx(C, S), msfx(C, S2), concat(".", S, T), ends_with(S2, T).
             t0.elapsed().as_secs_f64(),
             eval.facts("cand").len(), eval.facts("sfx").len(), eval.facts("win").len());
         for (at, ev) in timed.lock().unwrap().iter() {
-            use crate::datalog2::events::EventKind as EK;
+            use crate::derive::events::EventKind as EK;
             let at = *at;
             match &ev.kind {
                 EK::StratumBegin { stratum, predicates } => {
@@ -2987,7 +2990,7 @@ msh(C, S) :- msfx(C, S), msfx(C, S2), concat(".", S, T), ends_with(S2, T).
 #[test]
 #[ignore = "manual real-data perf probe; run with --ignored --release"]
 fn w8_cancel_overhead_pack_probe_times() {
-    use crate::datalog2::evaluate_with_materialize;
+    use crate::derive::evaluate_with_materialize;
     use std::time::Instant;
 
     let dataset = std::env::var("GRAFEMA_W8_PROBE_DB")
@@ -3020,7 +3023,7 @@ fn w8_cancel_overhead_pack_probe_times() {
     let packs = ["rust_calls", "js_property_access_full", "depends"];
     eprintln!("\n=== W8 cancel-overhead pack probe (nodes={}) ===", stats.total_nodes);
     for name in packs {
-        let src = crate::datalog2::stdlib::stdlib_pack(name).expect("registered pack");
+        let src = crate::derive::stdlib::stdlib_pack(name).expect("registered pack");
         // A live, never-raised flag: the exact production shape (Some(flag), polled
         // per row). `None` would short-circuit the poll and hide the cost.
         let mut limits = EvalLimits::none();

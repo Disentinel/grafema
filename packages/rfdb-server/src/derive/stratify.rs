@@ -15,7 +15,7 @@
 //!   never strata; they are the EDB seed for the lowest stratum.
 //! - **builtins** (`neq`, `gt`, `lt`, `gte`, `lte`, `starts_with`, `not_starts_with`,
 //!   `string_contains`, `path`, `parent_function`, `resolved_import`, …) — filters /
-//!   functions / generators shared with the v1 engine. Not strata either.
+//!   functions / generators shared with the query engine. Not strata either.
 //! - **derived predicates** — head predicates of the program. These are the nodes.
 //!
 //! # Storage-level `@materialize` dependencies (§4, W-STRAT-001)
@@ -61,7 +61,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::datalog::{Literal, Rule, Term};
-use crate::datalog2::parser_ext::{Annotation, ExtProgram, Item};
+use crate::derive::parser_ext::{Annotation, ExtProgram, Item};
 
 /// Stable, machine-readable stratification error/warning codes (invariant I5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -183,7 +183,7 @@ impl Stratification {
 /// Base relations served directly from storage column families (§3). Never strata.
 const BASE_RELATIONS: &[&str] = &["node", "type", "edge", "incoming", "attr"];
 
-/// Builtins shared with the v1 engine (filters / functions / generators). Never strata.
+/// Builtins shared with the query engine (filters / functions / generators). Never strata.
 /// Mirrors `crate::datalog::utils` placement table and `eval.rs` dispatch.
 const BUILTINS: &[&str] = &[
     "neq",
@@ -550,7 +550,7 @@ fn tarjan_sccs(
     st.out
 }
 
-/// Stratify a parsed v2 program (§4).
+/// Stratify a parsed derive program (§4).
 ///
 /// Builds the predicate dependency graph (direct derived deps + storage-level
 /// `@materialize` deps + negation signs), condenses strongly-connected components, and
@@ -674,7 +674,7 @@ fn compute_level(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::datalog2::parser_ext::parse_ext_program;
+    use crate::derive::parser_ext::parse_ext_program;
 
     /// The stratum index that a derived predicate lands in.
     fn stratum_of(strat: &Stratification, pred: &str) -> usize {

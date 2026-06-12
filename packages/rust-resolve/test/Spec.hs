@@ -1,9 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
 -- | Tests for the remaining Rust resolve step.
 --
--- Wave 6 (resolve→datalog2 migration): the RustImportResolution,
+-- Wave 6 (resolve→derive migration): the RustImportResolution,
 -- RustCallResolution and RustTraitResolution modules were replaced by the
--- rust_imports / rust_calls / rust_trait_resolve datalog2 stdlib packs and
+-- rust_imports / rust_calls / rust_trait_resolve derive stdlib packs and
 -- DELETED — their tests went with them. What remains native (and tested here)
 -- is RustCrossMethodCalls: its dyn-dispatch and receiver-typing arms that no
 -- pack owns yet (the ctor and annotation/return-type arms are pack-owned by

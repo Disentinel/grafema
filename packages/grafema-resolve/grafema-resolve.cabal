@@ -3,10 +3,10 @@ name:          grafema-resolve
 version:       0.1.0
 synopsis:      Cross-file resolution plugins for Grafema
 
--- Wave 6 (resolve→datalog2 migration): the eight legacy resolve modules
+-- Wave 6 (resolve→derive migration): the eight legacy resolve modules
 -- (ImportResolution, Builtins, CrossFileCalls, SameFileCalls, PropertyAccess,
 -- JsLocalRefs, JsThisMethodCalls, ClassInheritance + the shared ResolveUtil)
--- were replaced by datalog2 stdlib rule packs and DELETED. The remaining
+-- were replaced by derive stdlib rule packs and DELETED. The remaining
 -- daemon serves only the runtime-globals step (Grafema.RuntimeGlobals from
 -- grafema-common). The test suite went with the deleted modules — it covered
 -- nothing else.

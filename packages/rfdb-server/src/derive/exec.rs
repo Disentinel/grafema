@@ -1,6 +1,6 @@
 //! Layer 7 — semi-naive fixpoint executor.
 //!
-//! Runs the seed → Δ-loop: hash-joins on the Δ leg, the v2 builtin/base eval bodies for
+//! Runs the seed → Δ-loop: hash-joins on the Δ leg, the derive builtin/base eval bodies for
 //! the Total/EDB legs (which read the [`StorageView`] sorted runs and typed scans), a
 //! `GROUP BY` fact key with the tag `⊕` fold, and `tag_changed` termination. Applies
 //! `EvalLimits` per stratum with an iteration cap of 10k (`E-EXEC-002` on overflow).
@@ -124,7 +124,7 @@ pub enum ExecCode {
     /// The external cancellation flag (`EvalLimits::cancelled`) was raised — the client
     /// disconnected mid-flight or sent an explicit cancel. The run aborts without
     /// committing, exactly like a limit overflow (`E-EXEC-003`). W8 Part 1: before this,
-    /// a datalog2 fixpoint ignored the flag entirely and ground CPU to completion (or
+    /// a derive fixpoint ignored the flag entirely and ground CPU to completion (or
     /// the wall-clock deadline) long after the client died.
     Cancelled,
 }
@@ -288,7 +288,7 @@ pub struct GapWitness {
 /// use.
 type BindRow = BTreeMap<String, Value>;
 
-/// A v2 registry builtin eval body — the per-row evaluation function the build-once fast
+/// A derive-registry builtin eval body — the per-row evaluation function the build-once fast
 /// paths replicate (and defensively fall back to, row by row).
 type BuiltinEval = fn(&dyn StorageView, &mut Batch, &ArgSpec) -> builtin::BuiltinResult<()>;
 
@@ -1650,7 +1650,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
     /// Apply one planned body leg to the current set of partial binding rows.
     fn apply_leg(
         &self,
-        leg: &crate::datalog2::plan::PlanLeg,
+        leg: &crate::derive::plan::PlanLeg,
         rows: Vec<BindRow>,
         relations: &HashMap<String, Relation<T>>,
         use_delta: bool,
@@ -1686,7 +1686,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
                     None => Ok(Vec::new()),
                 }
             }
-            // Base relations and builtins are served by the v2 registry eval body, which
+            // Base relations and builtins are served by the derive registry eval body, which
             // reads sorted runs / typed scans through the StorageView. Driving it per
             // partial row is the nested-loop join over the EDB/Total leg.
             LegSource::Base(_) | LegSource::Builtin(_) => Ok(self.join_extensional(leg, rows)),
@@ -1701,7 +1701,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
     /// already-bound shared variable.
     fn join_base_against(
         &self,
-        leg: &crate::datalog2::plan::PlanLeg,
+        leg: &crate::derive::plan::PlanLeg,
         rows: Vec<BindRow>,
         view: &dyn StorageView,
     ) -> Vec<BindRow> {
@@ -1762,7 +1762,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
     /// anti-join.
     fn join_derived(
         &self,
-        leg: &crate::datalog2::plan::PlanLeg,
+        leg: &crate::derive::plan::PlanLeg,
         name: &str,
         rows: Vec<BindRow>,
         relations: &HashMap<String, Relation<T>>,
@@ -1831,7 +1831,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
             .iter()
             .enumerate()
             .filter(|(i, m)| {
-                **m == crate::datalog2::builtin::ArgMode::Bound
+                **m == crate::derive::builtin::ArgMode::Bound
                     && !matches!(atom_args[*i], Term::Wildcard)
             })
             .map(|(i, _)| i)
@@ -1892,7 +1892,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         })
     }
 
-    /// Join a base/builtin leg into the partial rows via the v2 registry eval body.
+    /// Join a base/builtin leg into the partial rows via the derive registry eval body.
     ///
     /// For each partial row, resolve the literal's arguments to an [`ArgSpec`] (bound
     /// values from the row, free output slots for unbound variables), run the builtin
@@ -1902,7 +1902,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
     /// dropped). Coercion misses are tuple non-matches, never errors.
     fn join_extensional(
         &self,
-        leg: &crate::datalog2::plan::PlanLeg,
+        leg: &crate::derive::plan::PlanLeg,
         rows: Vec<BindRow>,
     ) -> Vec<BindRow> {
         let atom = leg.literal.atom();
@@ -1911,7 +1911,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         let lookup_name = if name == "type" { "node" } else { name };
         let negated = leg.literal.is_negative();
         let Some(def) = builtin::lookup(lookup_name) else {
-            // Not a v2-registered builtin (e.g. a v1-shared function like `path`). Gate A
+            // Not a derive-registered builtin (e.g. a query-engine-shared function like `path`). Gate A
             // ports the registry set; anything else yields no rows for a positive leg
             // rather than a silent pass, so an unported predicate surfaces as an empty
             // relation (never a crash). A NEGATED unported predicate is a vacuous anti-join
@@ -2068,7 +2068,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         name: &str,
         eval: BuiltinEval,
         atom: &Atom,
-        leg: &crate::datalog2::plan::PlanLeg,
+        leg: &crate::derive::plan::PlanLeg,
         rows: &[BindRow],
     ) -> Option<Vec<BindRow>> {
         use super::builtin::ArgMode;
@@ -2181,7 +2181,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         &self,
         eval: BuiltinEval,
         atom: &Atom,
-        leg: &crate::datalog2::plan::PlanLeg,
+        leg: &crate::derive::plan::PlanLeg,
         rows: &[BindRow],
     ) -> Option<Vec<BindRow>> {
         use super::builtin::ArgMode;
@@ -2282,7 +2282,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         name: &str,
         eval: BuiltinEval,
         atom: &Atom,
-        leg: &crate::datalog2::plan::PlanLeg,
+        leg: &crate::derive::plan::PlanLeg,
         rows: &[BindRow],
     ) -> Option<Vec<BindRow>> {
         use super::builtin::ArgMode;
@@ -2415,7 +2415,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         &self,
         eval: BuiltinEval,
         atom: &Atom,
-        leg: &crate::datalog2::plan::PlanLeg,
+        leg: &crate::derive::plan::PlanLeg,
         rows: &[BindRow],
     ) -> Option<Vec<BindRow>> {
         use super::builtin::ArgMode;
@@ -2482,7 +2482,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         &self,
         eval: BuiltinEval,
         atom: &Atom,
-        leg: &crate::datalog2::plan::PlanLeg,
+        leg: &crate::derive::plan::PlanLeg,
         rows: &[BindRow],
     ) -> Option<Vec<BindRow>> {
         use super::builtin::{coerce_eq, first_class_attr, ArgMode, CoerceEq};
@@ -2629,7 +2629,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
         &self,
         eval: BuiltinEval,
         atom: &Atom,
-        leg: &crate::datalog2::plan::PlanLeg,
+        leg: &crate::derive::plan::PlanLeg,
         rows: &[BindRow],
     ) -> Option<Vec<BindRow>> {
         use super::builtin::ArgMode;
@@ -2853,7 +2853,7 @@ impl<'v, T: IdempotentTag> Executor<'v, T> {
     ///   that is an existence probe, not a value join).
     fn join_attr_generator_built_once(
         &self,
-        leg: &crate::datalog2::plan::PlanLeg,
+        leg: &crate::derive::plan::PlanLeg,
         atom: &Atom,
         rows: &[BindRow],
     ) -> Option<Vec<BindRow>> {
@@ -3618,7 +3618,7 @@ fn resolve_arg_spec(atom: &Atom, row: &BindRow) -> (ArgSpec, Vec<(usize, String)
     (ArgSpec::new(args), slot_vars)
 }
 
-/// Total order over [`Value`] for a deterministic committed result (I1). The v1 `Value`
+/// Total order over [`Value`] for a deterministic committed result (I1). The query engine's `Value`
 /// is `Eq`/`Hash` but not `Ord` (and must not be modified, it is shared with the top-down
 /// engine), so the order is defined here: ids before strings, then by the natural order of
 /// each variant's payload.
@@ -3699,12 +3699,12 @@ fn assign_pred_ids(strat: &Stratification) -> HashMap<String, u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::datalog2::parser_ext::parse_ext_program;
-    use crate::datalog2::plan::plan_program;
-    use crate::datalog2::storage_glue::{EdgeRow, FixtureStorageView, NodeRow};
-    use crate::datalog2::stratify::stratify;
-    use crate::datalog2::tag::BoolTag;
-    use crate::datalog2::builtin::Stats;
+    use crate::derive::parser_ext::parse_ext_program;
+    use crate::derive::plan::plan_program;
+    use crate::derive::storage_glue::{EdgeRow, FixtureStorageView, NodeRow};
+    use crate::derive::stratify::stratify;
+    use crate::derive::tag::BoolTag;
+    use crate::derive::builtin::Stats;
 
     /// Derive the canonical u128 id the same way the writer / fixture does.
     fn id_of(semantic_id: &str) -> u128 {
@@ -3834,7 +3834,7 @@ mod tests {
     /// relation ("FOLLOWS") — no timing, no threads.
     #[test]
     fn cancel_during_final_leg_is_an_error_never_a_partial_result() {
-        use crate::datalog2::storage_glue::{EdgeOrder, Relation as SgRelation, Row, SortOrder};
+        use crate::derive::storage_glue::{EdgeOrder, Relation as SgRelation, Row, SortOrder};
 
         struct CancelOnFollowsView<'a> {
             inner: &'a FixtureStorageView,
@@ -3940,8 +3940,8 @@ mod tests {
         src: &str,
         view: &FixtureStorageView,
         stats: Stats,
-    ) -> (Evaluation, Vec<crate::datalog2::events::Event>) {
-        use crate::datalog2::events::{EventLog, SharedMemSink};
+    ) -> (Evaluation, Vec<crate::derive::events::Event>) {
+        use crate::derive::events::{EventLog, SharedMemSink};
         let prog = parse_ext_program(src).expect("parse");
         let strat = stratify(&prog).expect("stratify");
         let rules = prog.rules();
@@ -3976,7 +3976,7 @@ mod tests {
     /// base. The two must agree on every cycle.
     #[test]
     fn incremental_insertion_equals_scratch_over_seeded_cycles() {
-        use crate::datalog2::increment::diff_base;
+        use crate::derive::increment::diff_base;
 
         // Transitive closure: negation-free, single recursive stratum, the monotone envelope.
         let src = "path(A, B) :- edge(A, B, \"E\").\n\
@@ -4081,7 +4081,7 @@ mod tests {
     ///       before and after the what-if; the hypothetical never leaks into committed state.
     #[test]
     fn sim_hypothetical_edit_predicts_derived_facts_without_mutating_base() {
-        use crate::datalog2::increment::diff_base;
+        use crate::derive::increment::diff_base;
 
         // Reachability via transitive closure — the monotone envelope sim relies on.
         let src = "reach(A, B) :- edge(A, B, \"E\").\n\
@@ -4189,7 +4189,7 @@ mod tests {
         let mut v = FixtureStorageView::new(1);
         edge(&mut v, "a", "b", "E");
         let empty = Evaluation::default();
-        let base_delta = crate::datalog2::increment::diff_base(&v, &v);
+        let base_delta = crate::derive::increment::diff_base(&v, &v);
         let out = maintain_incremental::<BoolTag>(
             &empty, &v, &v, &base_delta, &plans, &rules, &strat, EvalLimits::none(),
         )
@@ -4222,7 +4222,7 @@ mod tests {
         let cur_view = mk("{\"via\":\"dynamic\"}", 2);
 
         // The hazard, demonstrated: the base diff is EMPTY, yet scratch results differ.
-        let base_delta = crate::datalog2::increment::diff_base(&prev_view, &cur_view);
+        let base_delta = crate::derive::increment::diff_base(&prev_view, &cur_view);
         assert_eq!(base_delta.len(), 0, "metadata-only change is invisible to diff_base");
         let prev = run(src, &prev_view, stats.clone());
         let cur_scratch = run(src, &cur_view, stats);
@@ -4266,7 +4266,7 @@ mod tests {
         let cur_view = mk("{\"kind\":\"declaration\"}", 2);
 
         // The hazard, demonstrated: the base diff is EMPTY, yet scratch results differ.
-        let base_delta = crate::datalog2::increment::diff_base(&prev_view, &cur_view);
+        let base_delta = crate::derive::increment::diff_base(&prev_view, &cur_view);
         assert_eq!(base_delta.len(), 0, "node-metadata-only change is invisible to diff_base");
         let prev = run(src, &prev_view, stats.clone());
         let cur_scratch = run(src, &cur_view, stats);
@@ -4303,7 +4303,7 @@ mod tests {
         };
         let prev_view = mk(1);
         let cur_view = mk(2);
-        let base_delta = crate::datalog2::increment::diff_base(&prev_view, &cur_view);
+        let base_delta = crate::derive::increment::diff_base(&prev_view, &cur_view);
         assert_eq!(base_delta.len(), 0, "tuple-identical generations diff empty");
 
         for src in [
@@ -4345,7 +4345,7 @@ mod tests {
         node(&mut prev_view, "a", "FUNCTION");
         let mut cur_view = FixtureStorageView::new(2);
         node(&mut cur_view, "a", "FUNCTION");
-        let base_delta = crate::datalog2::increment::diff_base(&prev_view, &cur_view);
+        let base_delta = crate::derive::increment::diff_base(&prev_view, &cur_view);
 
         let prev = run(src, &prev_view, stats);
         let out = maintain_incremental::<BoolTag>(
@@ -4376,7 +4376,7 @@ mod tests {
         node(&mut cur_view, "a", "FUNCTION");
         node(&mut cur_view, "b", "FUNCTION");
 
-        let base_delta = crate::datalog2::increment::diff_base(&prev_view, &cur_view);
+        let base_delta = crate::derive::increment::diff_base(&prev_view, &cur_view);
         assert_eq!(base_delta.len(), 1, "one asserted node");
 
         let prev = run(src, &prev_view, stats.clone());
@@ -4395,7 +4395,7 @@ mod tests {
     /// a→b, a→c, b→d, c→d; delete b→d; `(a,d)` survives via a→c→d.
     #[test]
     fn deletion_rederives_fact_with_surviving_alternate_path() {
-        use crate::datalog2::increment::diff_base;
+        use crate::derive::increment::diff_base;
         let (src,) = closure_program();
         let prog = parse_ext_program(&src).expect("parse");
         let strat = stratify(&prog).expect("stratify");
@@ -4443,7 +4443,7 @@ mod tests {
     /// deletions, the maintained relation (DRed + insertion) is byte-identical to scratch.
     #[test]
     fn incremental_mixed_insert_delete_equals_scratch_over_seeded_cycles() {
-        use crate::datalog2::increment::diff_base;
+        use crate::derive::increment::diff_base;
         let (src,) = closure_program();
         let prog = parse_ext_program(&src).expect("parse");
         let strat = stratify(&prog).expect("stratify");
@@ -4525,7 +4525,7 @@ mod tests {
     /// ~flat (it only touches the delta and the empty neighbourhood it propagates into).
     #[test]
     fn incremental_insertion_work_proportional_to_delta_not_base_size() {
-        use crate::datalog2::increment::diff_base;
+        use crate::derive::increment::diff_base;
         let (src,) = closure_program();
         let prog = parse_ext_program(&src).expect("parse");
         let strat = stratify(&prog).expect("stratify");
@@ -4607,7 +4607,7 @@ mod tests {
 
     #[test]
     fn why_explains_a_transitive_path_and_a_direct_one() {
-        use crate::datalog2::exec::explain_fact;
+        use crate::derive::exec::explain_fact;
         let (src,) = closure_program();
         let prog = parse_ext_program(&src).expect("parse");
         let strat = stratify(&prog).expect("stratify");
@@ -4623,9 +4623,9 @@ mod tests {
         edge(&mut v, "b", "c", "E");
 
         let recursive_hash =
-            crate::datalog2::materialize::rule_ast_hash(&prog.items[1].rule); // clause 2
+            crate::derive::materialize::rule_ast_hash(&prog.items[1].rule); // clause 2
         let base_hash =
-            crate::datalog2::materialize::rule_ast_hash(&prog.items[0].rule); // clause 1
+            crate::derive::materialize::rule_ast_hash(&prog.items[0].rule); // clause 1
 
         // path(a,c) is transitive: derived by `path :- edge(a,C), path(C,c)` with C=b.
         let w = explain_fact::<BoolTag>(
@@ -4669,7 +4669,7 @@ mod tests {
     /// edge, so `p(f2)` fails exactly at the `edge` premise — the missing premise sim would add.
     #[test]
     fn why_not_names_the_unbound_premise_of_a_missing_fact() {
-        use crate::datalog2::exec::explain_gap;
+        use crate::derive::exec::explain_gap;
         let src = "p(X) :- node(X, \"FUNCTION\"), edge(X, Y, \"CALLS\").";
         let prog = parse_ext_program(src).expect("parse");
         let strat = stratify(&prog).expect("stratify");
@@ -4709,7 +4709,7 @@ mod tests {
     /// (`R2` holds) before failing at `R3`. The reported gap must be rule 2's (deeper prefix).
     #[test]
     fn why_not_reports_the_closest_to_firing_clause() {
-        use crate::datalog2::exec::explain_gap;
+        use crate::derive::exec::explain_gap;
         let src = "q(X) :- node(X, \"A\"), edge(X, Y, \"R1\").\n\
                    q(X) :- node(X, \"A\"), edge(X, Y, \"R2\"), edge(Y, Z, \"R3\").";
         let prog = parse_ext_program(src).expect("parse");
@@ -4745,7 +4745,7 @@ mod tests {
     /// \+ edge(X,Y,"DANGER")`. f2 has a DANGER edge, so `safe(f2)` is blocked at the anti-join.
     #[test]
     fn why_not_flags_a_present_blocker_for_a_negated_premise() {
-        use crate::datalog2::exec::explain_gap;
+        use crate::derive::exec::explain_gap;
         let src = "safe(X) :- node(X, \"FUNCTION\"), \\+ edge(X, _, \"DANGER\").";
         let prog = parse_ext_program(src).expect("parse");
         let strat = stratify(&prog).expect("stratify");
@@ -4981,7 +4981,7 @@ mod tests {
 
     // ── anti-join over a negated BASE leg is set-at-once (bounded scans) ──
 
-    use crate::datalog2::storage_glue::{EdgeOrder, NodeRow as GlueNodeRow};
+    use crate::derive::storage_glue::{EdgeOrder, NodeRow as GlueNodeRow};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// Wraps a fixture view and counts how many full typed relation scans the run issues,
@@ -5017,10 +5017,10 @@ mod tests {
         }
         fn sorted_run(
             &self,
-            rel: crate::datalog2::storage_glue::Relation,
-            order: crate::datalog2::storage_glue::SortOrder,
-        ) -> Box<dyn Iterator<Item = crate::datalog2::storage_glue::Row> + '_> {
-            if rel == crate::datalog2::storage_glue::Relation::Nodes {
+            rel: crate::derive::storage_glue::Relation,
+            order: crate::derive::storage_glue::SortOrder,
+        ) -> Box<dyn Iterator<Item = crate::derive::storage_glue::Row> + '_> {
+            if rel == crate::derive::storage_glue::Relation::Nodes {
                 self.node_sorted_runs.fetch_add(1, Ordering::Relaxed);
             }
             self.inner.sorted_run(rel, order)
@@ -5084,9 +5084,9 @@ mod tests {
         }
         fn sorted_run(
             &self,
-            rel: crate::datalog2::storage_glue::Relation,
-            order: crate::datalog2::storage_glue::SortOrder,
-        ) -> Box<dyn Iterator<Item = crate::datalog2::storage_glue::Row> + '_> {
+            rel: crate::derive::storage_glue::Relation,
+            order: crate::derive::storage_glue::SortOrder,
+        ) -> Box<dyn Iterator<Item = crate::derive::storage_glue::Row> + '_> {
             let rows: Vec<_> = self.inner.sorted_run(rel, order).collect();
             self.bump(rows.len());
             Box::new(rows.into_iter())
@@ -5518,7 +5518,7 @@ mod tests {
 
     #[test]
     fn fixpoint_run_emits_schema_valid_events_with_matching_counts() {
-        use crate::datalog2::events::{EventKind, EVENT_SCHEMA_VERSION};
+        use crate::derive::events::{EventKind, EVENT_SCHEMA_VERSION};
 
         // A recursive program so the log contains a seed, ≥1 Δ-iteration, and a commit.
         let mut v = FixtureStorageView::new(1);
@@ -5602,7 +5602,7 @@ mod tests {
 
     #[test]
     fn aborted_run_logs_abort_code() {
-        use crate::datalog2::events::{EventKind, EventLog, SharedMemSink};
+        use crate::derive::events::{EventKind, EventLog, SharedMemSink};
 
         // Cap of 0 forces E-EXEC-002; the log must record the abort, never truncate silently.
         let mut v = FixtureStorageView::new(1);

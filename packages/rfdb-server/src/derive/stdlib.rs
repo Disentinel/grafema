@@ -1,4 +1,4 @@
-//! Datalog v2 standard library — bundled, annotation-light `.dl` rule programs that ship
+//! derive engine standard library — bundled, annotation-light `.dl` rule programs that ship
 //! with the engine (spec I12: defaults live in stdlib; a typical author rule carries zero
 //! annotations). Each rule is embedded at compile time via `include_str!` so the engine
 //! has no runtime filesystem dependency on its own rule sources.
@@ -424,10 +424,10 @@ pub fn stdlib_pack(name: &str) -> Option<&'static str> {
 mod tests {
     use super::*;
     use crate::datalog::EvalLimits;
-    use crate::datalog2::builtin::Stats;
-    use crate::datalog2::events::EventLog;
-    use crate::datalog2::storage_glue::{EdgeRow, FixtureStorageView, NodeRow};
-    use crate::datalog2::{evaluate, evaluate_with_materialize};
+    use crate::derive::builtin::Stats;
+    use crate::derive::events::EventLog;
+    use crate::derive::storage_glue::{EdgeRow, FixtureStorageView, NodeRow};
+    use crate::derive::{evaluate, evaluate_with_materialize};
     use std::collections::BTreeSet;
 
     /// Canonical u128 id derivation (identical to the writer / fixture, mirrors the smoke test).
@@ -739,7 +739,7 @@ mod tests {
 
     /// The (src, dst, meta-columns) triples of a 3-ary materialized predicate.
     fn triples(
-        eval: &crate::datalog2::exec::Evaluation,
+        eval: &crate::derive::exec::Evaluation,
         pred: &str,
     ) -> BTreeSet<(u128, u128, String)> {
         eval.facts(pred)
@@ -1114,10 +1114,10 @@ mod tests {
         assert_eq!(ns.meta, vec!["method".to_string(), "path".to_string()]);
     }
 
-    /// PROBE (resolve→datalog2 migration, Wave 0) — ground-facts e2e smoke.
+    /// PROBE (resolve→derive migration, Wave 0) — ground-facts e2e smoke.
     ///
     /// Proves `Rule::fact` heads (parser-level evidence: `datalog/parser.rs:269`)
-    /// survive the FULL v2 pipeline — parse → binding gate → stratify → plan → exec →
+    /// survive the FULL derive pipeline — parse → binding gate → stratify → plan → exec →
     /// `@materialize` spec collection — not just the parser. Load-bearing for every
     /// generated-facts pack (`upper/26`, `rt_global` skip-lists, `builtin_spec`,
     /// effects-db facts). Covers, in ONE program:
@@ -1328,7 +1328,7 @@ mod tests {
         assert_eq!(stdlib_pack("nope"), None, "unknown pack name resolves to None");
     }
 
-    /// PROBE 3 (resolve→datalog2 migration, Wave 0) — stratifier acceptance of a
+    /// PROBE 3 (resolve→derive migration, Wave 0) — stratifier acceptance of a
     /// POSITIVE same-type storage self-read: the rust_calls resolved-constructor shape,
     /// where one rule reads `edge(Init, Ctor, "CALLS")` positively (NOT negated) while
     /// another rule in the same program (and itself) materializes edge_type = "CALLS".
@@ -1350,8 +1350,8 @@ mod tests {
     ///    re-reading storage.
     #[test]
     fn positive_same_type_storage_self_read_stratifies_and_reads_pre_run_state() {
-        use crate::datalog2::parser_ext::parse_ext_program;
-        use crate::datalog2::stratify::stratify;
+        use crate::derive::parser_ext::parse_ext_program;
+        use crate::derive::stratify::stratify;
 
         const PROGRAM: &str = r#"
             @materialize(edge_type = "CALLS", mode = "additive")
@@ -1968,7 +1968,7 @@ mod tests {
 
     /// The (src, dst, meta1, meta2) quads of a 4-ary materialized predicate.
     fn quads(
-        eval: &crate::datalog2::exec::Evaluation,
+        eval: &crate::derive::exec::Evaluation,
         pred: &str,
     ) -> BTreeSet<(u128, u128, String, String)> {
         eval.facts(pred)
@@ -4261,9 +4261,9 @@ mod tests {
     /// here.
     #[test]
     fn stdlib_packs_plan_under_dogfood_scale_stats() {
-        use crate::datalog2::parser_ext::parse_ext_program;
-        use crate::datalog2::plan::plan_program;
-        use crate::datalog2::stratify::stratify;
+        use crate::derive::parser_ext::parse_ext_program;
+        use crate::derive::plan::plan_program;
+        use crate::derive::stratify::stratify;
 
         let mut nodes_by_type = std::collections::HashMap::new();
         for (ty, n) in [

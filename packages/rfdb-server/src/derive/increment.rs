@@ -1,7 +1,7 @@
 //! Incremental maintenance — Layer 9, the Gate C EXIT (spec §9.1/§9.2).
 //!
 //! NOT to be confused with [`super::differential`], which is the Gate A/B *test harness*
-//! (the v1≡v2 and v2≡orchestrator differentials). This module is the spec's **EDB Differ +
+//! (the query≡derive and derive≡orchestrator differentials). This module is the spec's **EDB Differ +
 //! increment machinery**: given two version-pinned snapshots of the base relations, compute
 //! the fact-level delta and maintain each derived relation so that the maintained result is
 //! byte-identical to a from-scratch evaluation of the new snapshot.
@@ -228,7 +228,7 @@ pub(crate) fn diff_base(prev: &dyn StorageView, cur: &dyn StorageView) -> BaseDe
 /// Build a [`StorageView`] exposing ONLY the ASSERTED base delta `ΔB⁺` — the view the
 /// incremental insertion seed installs via `with_delta_view`, so a base leg flagged as the
 /// semi-naive delta leg reads only the new base facts.
-pub(crate) fn delta_view(base: &BaseDelta) -> crate::datalog2::storage_glue::FixtureStorageView {
+pub(crate) fn delta_view(base: &BaseDelta) -> crate::derive::storage_glue::FixtureStorageView {
     view_from(&base.nodes.asserted, &base.edges.asserted)
 }
 
@@ -236,7 +236,7 @@ pub(crate) fn delta_view(base: &BaseDelta) -> crate::datalog2::storage_glue::Fix
 /// over-delete installs, so a base leg reads only the deleted base facts.
 pub(crate) fn delta_view_retracted(
     base: &BaseDelta,
-) -> crate::datalog2::storage_glue::FixtureStorageView {
+) -> crate::derive::storage_glue::FixtureStorageView {
     view_from(&base.nodes.retracted, &base.edges.retracted)
 }
 
@@ -246,8 +246,8 @@ pub(crate) fn delta_view_retracted(
 fn view_from(
     nodes: &BTreeMap<u64, (Box<[Value]>, BoolTag)>,
     edges: &BTreeMap<u64, (Box<[Value]>, BoolTag)>,
-) -> crate::datalog2::storage_glue::FixtureStorageView {
-    use crate::datalog2::storage_glue::{EdgeRow, FixtureStorageView, NodeRow};
+) -> crate::derive::storage_glue::FixtureStorageView {
+    use crate::derive::storage_glue::{EdgeRow, FixtureStorageView, NodeRow};
     let mut v = FixtureStorageView::new(0);
     for (_, (vals, _)) in nodes {
         if let [Value::Id(id), Value::Str(ty), Value::Str(name), Value::Str(file)] = &vals[..] {
@@ -294,8 +294,8 @@ fn scan_weighted(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::datalog2::storage_glue::{EdgeRow, FixtureStorageView, NodeRow};
-    use crate::datalog2::tag::{BoolTag, CountTag};
+    use crate::derive::storage_glue::{EdgeRow, FixtureStorageView, NodeRow};
+    use crate::derive::tag::{BoolTag, CountTag};
 
     fn key(n: i64) -> Box<[Value]> {
         vec![Value::Id(n as u128)].into_boxed_slice()

@@ -6,7 +6,7 @@
 //! `BoolTag` (set semantics). For `CountTag` two derivations of one fact must SUM;
 //! for `ConfTag` the most-confident wins (`min`). This module is the single point
 //! where the byte-level segment tag (`TagV2`) is bridged to the typed semiring
-//! algebra in [`crate::datalog2::tag`], folded, and re-encoded.
+//! algebra in [`crate::derive::tag`], folded, and re-encoded.
 //!
 //! Invariants:
 //! * **I10** (compaction output equals an explicit fold on fixtures): the fold here
@@ -22,7 +22,7 @@
 //! unchanged; the Count/Conf arms are exercised by the unit tests below and become
 //! load-bearing the moment a non-Bool semiring is materialized.
 
-use crate::datalog2::tag::{ConfTag, CountTag, Tag};
+use crate::derive::tag::{ConfTag, CountTag, Tag};
 use crate::error::{GraphError, Result};
 use crate::storage_v2::types::{
     TagV2, BOOLTAG_SEMIRING_ID, CONFTAG_SEMIRING_ID, COUNTTAG_SEMIRING_ID,

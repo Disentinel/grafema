@@ -322,7 +322,7 @@ async function processTarget(
   if (targetNode.type === 'EXTERNAL_MODULE' || targetNode.type === 'GLOBAL_DEFINITION') {
     // Try reading effects from node metadata. Two producers, two shapes:
     // - legacy GenericRuntimeGlobals enricher / Haskell resolver: JSON array (MetaList)
-    // - datalog2 js_runtime_globals_nodes pack (Wave 4, DELTA 1): @materialize_node
+    // - derive js_runtime_globals_nodes pack (Wave 4, DELTA 1): @materialize_node
     //   meta() can only project string surfaces, so effects arrive comma-joined
     //   ("IO,THROW"). Fresh graphs have ONLY pack-minted nodes — accept both.
     const rawMetaEffects = (targetNode as Record<string, unknown>).effects;

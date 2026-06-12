@@ -1403,7 +1403,7 @@ impl ManifestStore {
     /// at the CURRENT version changed IN PLACE without a version bump. "Same
     /// manifest version ⇒ identical committed data" is FALSE across that
     /// mutation, so the caller must invalidate every version-keyed cache
-    /// (the engine's datalog2 stats/shared-index caches).
+    /// (the engine's derive stats/shared-index caches).
     pub fn remove_tombstone_nodes(&mut self, ids: &HashSet<u128>) -> bool {
         if ids.is_empty() || self.current.tombstoned_node_ids.is_empty() {
             return false;

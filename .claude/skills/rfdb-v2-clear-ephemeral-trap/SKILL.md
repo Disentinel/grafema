@@ -21,7 +21,7 @@ date: 2026-02-20
 `clear_durable()` now performs a REAL durable clear: it truncates the on-disk database
 (deletes `segments/` + `gc/` + manifest authority, recreates a fresh empty manifest and
 shard skeleton) and resets all engine caches (D2 materialize pins, planner-stats, W9
-shared indexes, datalog2 pin sidecars). The engine stays DISK-BACKED after clear — no
+shared indexes, derive pin sidecars). The engine stays DISK-BACKED after clear — no
 ephemeral swap, so post-clear analysis persists (the 2026-02 data-loss flavor) and a
 clear+restart does NOT resurrect the old graph (the 2026-06 placebo flavor, gaps.md).
 Wire `Clear` surfaces truncation errors to the client. Tests:

@@ -1,6 +1,6 @@
 //! W8 Part 3: durable D2-pin sidecar — the maintain cache across server restarts.
 //!
-//! The engine's in-process D2 cache (`GraphEngineV2::datalog2_materialize_cache`) makes
+//! The engine's in-process D2 cache (`GraphEngineV2::derive_materialize_cache`) makes
 //! the 2nd+ `@materialize` of a program work-proportional, but it dies with the process:
 //! a cold server (CI, restart) pays a full scratch eval per program. This module persists
 //! the pair the cache holds — *(manifest version the evaluation is valid at, the derived
@@ -62,12 +62,12 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 use crate::datalog::{Term, Value};
-use crate::datalog2::exec::Evaluation;
-use crate::datalog2::materialize::MaterializeSpec;
+use crate::derive::exec::Evaluation;
+use crate::derive::materialize::MaterializeSpec;
 use crate::storage_v2::shard::TombstoneSet;
 
 /// Sidecar directory name inside the database directory.
-pub const SIDECAR_DIR: &str = "datalog2_pins";
+pub const SIDECAR_DIR: &str = "derive_pins";
 
 /// Format magic + version. Bump on any layout change: an unknown magic loads as `None`
 /// (⇒ scratch), never as a misparse.
@@ -402,7 +402,7 @@ mod tests {
     /// a VARIABLE type position, and a WILDCARD type position all refuse.
     #[test]
     fn read_write_disjointness_gate() {
-        use crate::datalog2::parser_ext::parse_ext_program;
+        use crate::derive::parser_ext::parse_ext_program;
         let spec = |t: &str| MaterializeSpec {
             predicate: "p".into(),
             edge_type: t.into(),

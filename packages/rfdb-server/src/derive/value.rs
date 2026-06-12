@@ -1,6 +1,6 @@
 //! Layer 1 — values and facts.
 //!
-//! Reuses the v1 `Value` type from `crate::datalog`. Defines `Fact` (a boxed slice of
+//! Reuses the query engine's `Value` type from `crate::datalog`. Defines `Fact` (a boxed slice of
 //! `Value`), `Row`, and the deterministic `fact_id = u64 hash(pred_id, key)` used to
 //! re-shuffle and dedup tuples in the fixpoint. Invariant I1: `fact_id` is fully
 //! deterministic (independent of worker count and rule order).

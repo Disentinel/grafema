@@ -1,8 +1,8 @@
-//! Datalog v2 engine — Gate A core (semi-naive, on real `storage_v2`).
+//! The derive engine — Gate A core (semi-naive, on real `storage_v2`).
 //!
-//! This engine sits BESIDE the v1 top-down engine in `crate::datalog` and does not
+//! This engine sits BESIDE the query (top-down) engine in `crate::datalog` and does not
 //! alter its behavior. It is a bottom-up, semi-naive fixpoint evaluator pinned to a
-//! version-stable `storage_v2::ReadSnapshot`, sharing v1's `Value`, parser, builtin
+//! version-stable `storage_v2::ReadSnapshot`, sharing the query engine's `Value`, parser, builtin
 //! bodies, `GraphStore` access, and `EvalLimits`.
 //!
 //! # Gate A scope
@@ -20,17 +20,17 @@
 //! Lower layers compile and pass their invariant checks before higher layers fan out:
 //!
 //! - [`tag`] (0) — `Sealed`/`Tag`/`InvertibleTag`/`IdempotentTag` traits; `BoolTag`.
-//! - [`value`] (1) — reuse v1 `Value`; `Fact`, `Row`, deterministic `fact_id`.
+//! - [`value`] (1) — reuse the query engine's `Value`; `Fact`, `Row`, deterministic `fact_id`.
 //! - [`storage_glue`] (2) — `StorageView` trait + real-LSM impl over `ReadSnapshot`
 //!   plus an in-memory fixture impl.
-//! - [`parser_ext`] (3) — extend the v1 parser for Appendix-A annotations and rules.
+//! - [`parser_ext`] (3) — extend the query-engine parser for Appendix-A annotations and rules.
 //! - [`stratify`] (4) — predicate dependency graph, SCC condensation, negation gating.
-//! - [`builtin`] (5) — `BuiltinDef` registry; ported v1 eval bodies with modes + cost.
+//! - [`builtin`] (5) — `BuiltinDef` registry; ported query-engine eval bodies with modes + cost.
 //! - [`plan`] (6) — literal reorder, greedy cost from stats, join-kind selection, guards.
 //! - [`exec`] (7) — semi-naive fixpoint executor with `EvalLimits` per stratum.
 //! - [`events`] (8) — always-on `events.jsonl` decision and counter log.
 //!
-//! The crate-level entry point (single eval entry, router behind `RFDB_DATALOG_V2`)
+//! The crate-level entry point (single eval entry, router behind `RFDB_DERIVE_ENGINE`)
 //! is wired in this module once the layers above are in place.
 
 pub mod tag;
@@ -157,7 +157,7 @@ impl From<BindingConflict> for EvalError {
     }
 }
 
-/// Evaluate a Datalog v2 program against a [`StorageView`] — THE single eval entry (I8).
+/// Evaluate a derive program against a [`StorageView`] — THE single eval entry (I8).
 ///
 /// One linear pipeline, no fork for explain: parse the Appendix-A subset
 /// ([`parse_ext_program`]) → stratify ([`stratify`]) → plan every rule
@@ -186,7 +186,7 @@ pub(crate) fn evaluate(
 }
 
 /// Evaluate a program AND surface its `@materialize` / `@materialize_node` write-back
-/// plans — the entry the v2 write-back path uses.
+/// plans — the entry the derive write-back path uses.
 ///
 /// Runs the identical single pipeline as [`evaluate`] (parse → stratify → plan → fixpoint;
 /// I8 — there is no second eval path) and, after the fixpoint commits, collects the
@@ -220,7 +220,7 @@ pub(crate) fn evaluate_with_materialize_shared(
     stats: Stats,
     limits: EvalLimits,
     events: EventLog,
-    shared: Option<&crate::datalog2::exec::SharedIndexCaches>,
+    shared: Option<&crate::derive::exec::SharedIndexCaches>,
 ) -> Result<(Evaluation, Vec<MaterializeSpec>, Vec<NodeMaterializeSpec>), EvalError> {
     let program = parse_ext_program(source)?;
     // §9.3 binding gate: pin one (semiring_id, arity) per predicate before any derivation,
@@ -244,29 +244,29 @@ pub(crate) fn evaluate_with_materialize_shared(
     Ok((evaluation, specs, node_specs))
 }
 
-// ── Router note: the `RFDB_DATALOG_V2` kill switch (P3) ─────────────
+// ── Router note: the `RFDB_DERIVE_ENGINE` kill switch (P3) ─────────────
 //
-// Since Final #12 the v2 engine IS the default. The server-side dispatch branches in
+// Since Final #12 the derive engine IS the default. The server-side dispatch branches in
 // `src/bin/rfdb_server.rs` at the datalog request handlers (`dispatch_datalog_query` /
 // `dispatch_execute_datalog` / `dispatch_check_guarantee`). The branch reads the
-// `RFDB_DATALOG_V2` environment variable: unset (or any value other than `off`) routes
+// `RFDB_DERIVE_ENGINE` environment variable: unset (or any value other than `off`) routes
 // through this [`evaluate`] entry over a version-pinned view captured via
 // `storage_glue::LsmStorageView::capture(store, manifest)`; the explicit off-switch
-// `RFDB_DATALOG_V2=off` selects the v1 top-down engine (kept as the rollback path and
-// as the explain provider — explain requests are v1-served under every switch state
-// until the v2 explain recording→wire mapping lands). The switch is read at dispatch
+// `RFDB_DERIVE_ENGINE=off` selects the query (top-down) engine (kept as the rollback path and
+// as the explain provider — explain requests are query-engine-served under every switch state
+// until the derive explain recording→wire mapping lands). The switch is read at dispatch
 // (not cached at startup) so it can flip per request during validation. This module
 // intentionally does not perform the env read itself: the entry stays a pure function
 // of its arguments (deterministic, I1), and the routing decision lives at the dispatch
-// boundary alongside the v1 call it guards.
+// boundary alongside the query-engine call it guards.
 
 // ── Smoke test: end-to-end entry over the in-memory fixture ─────────
 
 #[cfg(test)]
 mod smoke {
     use super::*;
-    use crate::datalog2::events::{EventLog, SharedMemSink};
-    use crate::datalog2::storage_glue::{EdgeRow, FixtureStorageView, NodeRow};
+    use crate::derive::events::{EventLog, SharedMemSink};
+    use crate::derive::storage_glue::{EdgeRow, FixtureStorageView, NodeRow};
     use crate::datalog::Value;
 
     /// Canonical u128 id derivation (identical to the writer / fixture).
@@ -347,7 +347,7 @@ mod smoke {
     /// Cross-artifact value-join PoC (`semantic-graph-as-abstract-interpretation.md` §9, iter 1).
     /// A frontend `HTTP_REQUEST` and a backend `http:route` carrying the SAME path (here in the
     /// `name` column — the exact-match value-domain) `link` ACROSS artifacts, derived by one rule
-    /// joining on the shared path value. This is the smallest proof that the v2 engine derives a
+    /// joining on the shared path value. This is the smallest proof that the derive engine derives a
     /// cross-artifact `link(client, backend)` join — without any rewrite/string builtins (the nginx
     /// prefix-rewrite congruence is iter 2). A path with a client but no backend route (`/orders`)
     /// or a route with no client (`/health`) does NOT link — that asymmetry is the coverage signal.
@@ -675,7 +675,7 @@ mod smoke {
     ///
     /// This is the clean "second migration" the plugin-pipeline note argues for: a derivation
     /// whose join keys are already first-class facts (the `file` attr), so it lowers to pure
-    /// Datalog with no fuzzy resolver atom. It also demonstrates v2 recursion stacked on a
+    /// Datalog with no fuzzy resolver atom. It also demonstrates derive recursion stacked on a
     /// derived relation — `depends/2` (the bundled rule) → transitive closure `dep_reach/2`
     /// → `cycle/1 :- dep_reach(M, M)` — a real, actionable architectural finding (import cycles)
     /// expressed in three lines on top of an existing materialized edge.

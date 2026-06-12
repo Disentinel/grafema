@@ -1,6 +1,6 @@
 //! Layer 5 — builtin predicate registry.
 //!
-//! Holds the `BuiltinDef` registry and ports the v1 eval bodies (`node`/`type`,
+//! Holds the `BuiltinDef` registry and ports the query-engine eval bodies (`node`/`type`,
 //! `edge`, `incoming`, `attr`, `neq`, `gt`/`lt`/`gte`/`lte`, `starts_with`,
 //! `not_starts_with`, `string_contains`), each annotated with its supported binding
 //! modes and a cost estimate, served through [`StorageView`]. Invariant I5: an
@@ -344,7 +344,7 @@ fn bound_str(arg: &ArgValue) -> Option<String> {
 
 /// The string surface of a bound literal used as an attr equality target (spec §5): a
 /// `Value::Str` is its own string, a `Value::Id` is its decimal surface — exactly the
-/// surface v1's `attr_to_query` writes into the `AttrQuery`. The index reverse-lookup then
+/// surface the query engine's `attr_to_query` writes into the `AttrQuery`. The index reverse-lookup then
 /// matches against the column's stored string, so this is the same coercion the bound-id
 /// filter path applies through [`coerce_eq`], just driven through the index instead of a
 /// per-node read.
@@ -573,7 +573,7 @@ fn eval_attr(view: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> Builtin
 
     // Generator mode `attr(FreeId, "key", "val")` (ATTR_MODES [F, B, B]): the id is a free
     // output and the value is a bound literal — produce every node whose attr key == value
-    // via the snapshot-pinned attr index (parity with v1's `find_by_attr`). This is the
+    // via the snapshot-pinned attr index (parity with the query engine's `find_by_attr`). This is the
     // capability Gate A had scoped out (E-PLAN-001 on an unbound id).
     if id_arg.mode() == ArgMode::Free {
         let Some(slot) = free_slot(id_arg) else {
@@ -732,7 +732,7 @@ fn eval_method_suffix(_v: &dyn StorageView, out: &mut Batch, spec: &ArgSpec) -> 
 }
 
 /// Numeric comparison filter shared by `gt`/`lt`/`gte`/`lte`. Both args parse as `f64`; a
-/// non-numeric surface is a coercion miss (tuple non-match, counted — §5), matching v1's
+/// non-numeric surface is a coercion miss (tuple non-match, counted — §5), matching the query engine's
 /// graceful failure but surfacing it instead of swallowing it.
 fn eval_numeric_cmp(
     out: &mut Batch,
@@ -1508,8 +1508,8 @@ mod tests {
                 .join(", ");
             let src = format!("p(V0) :- {}({args}).", def.name);
             let prog =
-                crate::datalog2::parser_ext::parse_ext_program(&src).expect("probe rule parses");
-            let strat = crate::datalog2::stratify::stratify(&prog).expect("stratifies");
+                crate::derive::parser_ext::parse_ext_program(&src).expect("probe rule parses");
+            let strat = crate::derive::stratify::stratify(&prog).expect("stratifies");
             assert_eq!(
                 strat.strata.len(),
                 1,
@@ -1970,7 +1970,7 @@ mod tests {
         assert_eq!(out.coercion_misses, 0, "absence is not a coercion miss");
     }
 
-    // ── attr value-generator (parity with v1 find_by_attr) ─────────
+    // ── attr value-generator (parity with the query engine's find_by_attr) ─────────
 
     #[test]
     fn attr_generator_mode_is_supported() {
@@ -2047,7 +2047,7 @@ mod tests {
     fn attr_generator_real_and_fixture_parity() {
         // Real LSM view (build_view): two FUNCTIONs named fn1/fn2, one CLASS named Widget.
         // attr(X, "name", "fn1") must bind exactly a/fn1 on both the real index and the
-        // fixture — parity of the value-generator path with v1's find_by_attr.
+        // fixture — parity of the value-generator path with the query engine's find_by_attr.
         let real = build_view();
         let mut fixture = FixtureStorageView::new(1);
         for (sid, ty, name, file) in [
@@ -2851,8 +2851,8 @@ mod tests {
     #[test]
     fn rule_level_concat_and_edge_attr_via_evaluate() {
         use crate::datalog::EvalLimits;
-        use crate::datalog2::events::EventLog;
-        use crate::datalog2::evaluate;
+        use crate::derive::events::EventLog;
+        use crate::derive::evaluate;
 
         let v = edge_attr_fixture();
         let src = r#"linked(C, M, S) :-
@@ -3020,8 +3020,8 @@ mod tests {
     #[test]
     fn rule_level_node_attr_via_evaluate() {
         use crate::datalog::EvalLimits;
-        use crate::datalog2::events::EventLog;
-        use crate::datalog2::evaluate;
+        use crate::derive::events::EventLog;
+        use crate::derive::evaluate;
 
         let v = node_attr_fixture();
         let src = r#"arrow_fn(F, L) :-

@@ -665,7 +665,7 @@ export interface IRFDBClient {
   /**
    * why()/explain_fact: explain ONE derivation of `predicate(key)` under a v2 program (empty
    * source ⇒ the bundled depends.dl). `key` is the ground tuple as wire strings. Resolves to
-   * `null` when the fact is not derivable. v2-only (rejects when RFDB_DATALOG_V2 is off).
+   * `null` when the fact is not derivable. derive-engine-only (rejects when RFDB_DERIVE_ENGINE is off).
    */
   explainDatalogFact(source: string, predicate: string, key: string[]): Promise<FactWitness | null>;
   /**

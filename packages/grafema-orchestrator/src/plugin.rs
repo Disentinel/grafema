@@ -1669,7 +1669,7 @@ mod tests {
     // (The REG-1139 INDEX_NODE_TYPES coverage test was deleted in Wave 6 with the
     // build-index step itself: the export index and every step that read it —
     // import-resolution / cross-file-calls / property-access / class-inheritance —
-    // were replaced by datalog2 packs and removed from the resolver daemon.)
+    // were replaced by derive packs and removed from the resolver daemon.)
 
     // -- CheckpointAccumulator tests (REG-1138 mid-resolve durability) --
 

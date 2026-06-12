@@ -1,4 +1,8 @@
-# RESUME — сессии 2026-06-09 → 2026-06-12 (branch `feat/datalog`, ~45 коммитов, НЕ пушено)
+# RESUME — сессии 2026-06-09 → 2026-06-12 (branch `feat/datalog`, ~47 коммитов, НЕ пушено)
+
+**НЕЙМИНГ (с 0.4.0):** query engine (`datalog/`, wire datalogQuery, Gate A оракул) /
+derive engine (`derive/`, бывш. datalog2: паки, @materialize, maintain). Capability
+`datalogDerive`, env `RFDB_DERIVE_ENGINE` (=off — серверный debug-свитч, БЕЗ деривации вообще).
 
 Канонический леджер: `resolve-datalog2-migration-synthesis.md` (ВСЕ верифицированные числа
 по волнам) + `rfdb-datalog-RESUME.md` (история гейтов A-D, устарел после Wave 3+).
@@ -71,8 +75,8 @@ D2-pin (BLAKE3 sidecar, version+tombstone-hash ключ, riders-gate; реста
 - Диета: полнографовый analyze = ОДИН раз на acceptance в git-worktree (dbPath жёстко
   <project>/.grafema — worktree изолирует); пробы/диффы на /tmp-копии
   (cp -R + rm LOCK + свой сервер на /tmp-сокете, убрать за собой).
-- **Чужой сервер**: `.grafema/rfdb.sock` держит сессия Atlas (GUI demo) — lsof перед
-  любым pkill/rm; главную базу НЕ трогать.
+- **Чужой сервер**: Atlas-сессия УМЕРЛА при ребуте 2026-06-12 (сокет стейловый) — констрейнт
+  снят; правило остаётся: lsof перед любым pkill/rm на разделяемых ресурсах.
 - Коммит после верифицированной волны; НИКОГДА не пушить без явной команды.
 - MVCC: фикстуры обязаны flush(); v1-парсер на wire executeDatalog не принимает
   правила — у старых бинарей v2-роутинг через RFDB_DATALOG_V2=1 работает не для всех

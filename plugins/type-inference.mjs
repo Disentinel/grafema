@@ -6,7 +6,7 @@
  * 1. Virtual CLASS + METHOD nodes for JS builtins (Array, String, Map, etc.)
  * 2. INSTANCE_OF edges from VARIABLE/CONSTANT to their inferred CLASS
  *
- * Runs BEFORE the in-engine method_calls.dl stdlib pack (datalog2), which reads
+ * Runs BEFORE the in-engine method_calls.dl stdlib pack (derive), which reads
  * INSTANCE_OF for disambiguation.
  *
  * Environment:

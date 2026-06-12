@@ -47,7 +47,7 @@ services:
     entryPoint: "src/main.rs"
 
 # method-call-resolver / shape-verifier / axum-route-detector are REPLACED by in-engine
-# datalog2 rule packs (@stdlib/method_calls, @stdlib/shape_verifier, @stdlib/axum_routes —
+# derive rule packs (@stdlib/method_calls, @stdlib/shape_verifier, @stdlib/axum_routes —
 # run by the orchestrator pack-runner after DEPENDS_ON). The old .mjs plugins timed out at
 # 60s producing nothing on this graph. semantic-bridge-detector is disabled pending its
 # own migration (it also timed out, and its depends_on chain hung off the removed

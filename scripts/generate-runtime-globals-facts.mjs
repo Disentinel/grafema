@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Generate the ground-facts half of the js_runtime_globals_* datalog2 packs
-// from the effects-db YAML registry (Wave 4, resolve→datalog2 migration).
+// Generate the ground-facts half of the js_runtime_globals_* derive packs
+// from the effects-db YAML registry (Wave 4, resolve→derive migration).
 //
 // Mirrors packages/grafema-common/src/Grafema/RuntimeGlobals.hs EXACTLY:
 //   loadSymbolDB      (:80-84)  runtimes/ ∪ packages/, runtimes win (Map.union left bias)

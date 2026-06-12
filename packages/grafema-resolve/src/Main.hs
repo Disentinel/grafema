@@ -16,16 +16,16 @@ import qualified Data.Binary as Binary
 import qualified Data.MessagePack as MP
 import qualified Data.Vector as V
 
--- NOTE (Wave 6, resolve→datalog2 migration): this daemon used to run EIGHT
+-- NOTE (Wave 6, resolve→derive migration): this daemon used to run EIGHT
 -- per-file steps (same-file-calls, js-local-refs, runtime-globals, builtins,
 -- import-resolution, cross-file-calls, property-access, class-inheritance)
 -- plus the js-this-method-calls / runtime-call-globals second-pass commands.
--- All of them except `runtime-globals` were replaced by datalog2 stdlib rule
+-- All of them except `runtime-globals` were replaced by derive stdlib rule
 -- packs (js_local_refs, js_same_file_calls, js_this_method_calls,
 -- js_module_imports, js_import_bindings, js_cross_file_calls,
 -- js_property_access_ns/full, js_class_inheritance, js_builtins_nodes/edges,
 -- js_runtime_globals_nodes/edges) and DELETED — see
--- _ai/research/resolve-datalog2-migration-synthesis.md for the per-step
+-- the resolve-migration synthesis doc in _ai/research/ for the per-step
 -- differential evidence. The ONLY remaining step is `runtime-globals`: the
 -- REFERENCE→GLOBAL_DEFINITION RESOLVES_TO arm (jsStrategy below), which no
 -- pack emits (the packs cover only the CALL→CALLS arm).

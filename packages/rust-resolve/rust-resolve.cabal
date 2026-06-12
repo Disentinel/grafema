@@ -3,9 +3,9 @@ name:          rust-resolve
 version:       0.1.0
 synopsis:      Rust cross-file import resolution for Grafema
 
--- Wave 6 (resolve→datalog2 migration): RustImportResolution,
+-- Wave 6 (resolve→derive migration): RustImportResolution,
 -- RustCallResolution and RustTraitResolution were replaced by the
--- rust_imports / rust_calls / rust_trait_resolve datalog2 stdlib packs and
+-- rust_imports / rust_calls / rust_trait_resolve derive stdlib packs and
 -- DELETED. RustCrossMethodCalls stays native (dyn-dispatch + self-field arms
 -- have no pack), as does the rust-globals step (Grafema.RuntimeGlobals).
 

@@ -506,7 +506,7 @@ export abstract class BaseRFDBClient extends EventEmitter implements IRFDBClient
   /**
    * why()/explain_fact (spec §11): explain ONE supporting derivation of `predicate(key)` under a
    * v2 program (empty `source` ⇒ the bundled depends.dl). Resolves to `null` when the fact is not
-   * derivable by the program (a true negative). v2-only — rejects when RFDB_DATALOG_V2 is off.
+   * derivable by the program (a true negative). derive-engine-only — rejects when RFDB_DERIVE_ENGINE is off.
    */
   async explainDatalogFact(
     source: string,
@@ -521,7 +521,7 @@ export abstract class BaseRFDBClient extends EventEmitter implements IRFDBClient
    * what-if/sim (spec §6): predict the NEW `predicate` facts a hypothetical overlay of
    * nodes+edges would create under a v2 program (empty `source` ⇒ the bundled depends.dl),
    * WITHOUT committing anything. Resolves to the predicted-new ground tuples (sim ∖ base) as
-   * wire strings. v2-only — rejects when RFDB_DATALOG_V2 is off.
+   * wire strings. derive-engine-only — rejects when RFDB_DERIVE_ENGINE is off.
    */
   async simDatalog(
     source: string,

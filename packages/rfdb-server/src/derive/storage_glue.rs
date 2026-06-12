@@ -344,12 +344,12 @@ pub(crate) trait StorageView: Sync {
 
     /// Attribute value-generator: all nodes whose attribute `key` equals `value`.
     ///
-    /// The parity twin of v1's `find_by_attr` reverse lookup — it backs the `attr(FreeId,
-    /// "key", "val")` generator mode. The key→filter mapping matches v1's `attr_to_query`
+    /// The parity twin of the query engine's `find_by_attr` reverse lookup — it backs the `attr(FreeId,
+    /// "key", "val")` generator mode. The key→filter mapping matches the query engine's `attr_to_query`
     /// exactly: `name`/`file`/`type` are first-class column filters, `exported` is the
     /// boolean export filter, and any other key is a metadata-key filter. The real impl
     /// drives this through storage_v2's snapshot-pinned attr index
-    /// (`find_node_ids_by_attr_at`), so it is the same index path v1 uses — not a full scan
+    /// (`find_node_ids_by_attr_at`), so it is the same index path the query engine uses — not a full scan
     /// the engine post-filters. A key/value that matches no node yields an empty vec.
     fn nodes_by_attr(&self, key: &str, value: &str) -> Vec<NodeRow>;
 
@@ -398,7 +398,7 @@ pub(crate) trait StorageView: Sync {
 /// Holds an `Arc<MultiShardStore>` and a captured [`ReadSnapshot`] (which pins the
 /// manifest version for the view's lifetime, MVCC B5). All reads go through the store's
 /// public `*_at` snapshot methods, which apply the version's tombstones and L0-newest-wins
-/// dedup. Storage stays module-private to `datalog2` (I10): this type is `pub(crate)` and
+/// dedup. Storage stays module-private to `derive` (I10): this type is `pub(crate)` and
 /// only the trait surface is consumed by higher layers.
 pub(crate) struct LsmStorageView {
     store: Arc<MultiShardStore>,
@@ -612,9 +612,9 @@ fn snapshot_get_node(store: &MultiShardStore, snapshot: &ReadSnapshot, id: u128)
 }
 
 /// Attribute value-generator over the snapshot-pinned attr index. The key→filter mapping is
-/// identical to v1's `attr_to_query` (`name`/`file`/`type` → first-class column filters,
-/// `exported` → boolean export filter, anything else → a metadata-key filter), so the v2
-/// generator hits the same `find_node_ids_by_attr_at` index path v1 uses. Rows are resolved
+/// identical to the query engine's `attr_to_query` (`name`/`file`/`type` → first-class column filters,
+/// `exported` → boolean export filter, anything else → a metadata-key filter), so the derive
+/// generator hits the same `find_node_ids_by_attr_at` index path the query engine uses. Rows are resolved
 /// from the matched ids through the same snapshot point lookup (`get_node_at`) and ordered by
 /// id for a deterministic run.
 fn snapshot_nodes_by_attr(
@@ -623,7 +623,7 @@ fn snapshot_nodes_by_attr(
     key: &str,
     value: &str,
 ) -> Vec<NodeRow> {
-    // Map the attr key onto the storage filter slots exactly as v1's `attr_to_query` does.
+    // Map the attr key onto the storage filter slots exactly as the query engine's `attr_to_query` does.
     let mut node_type: Option<&str> = None;
     let mut file: Option<&str> = None;
     let mut name: Option<&str> = None;
@@ -714,10 +714,10 @@ impl StorageView for LsmStorageView {
 /// `StorageView` over the real `storage_v2` MVCC read path that BORROWS the store
 /// instead of holding an `Arc`.
 ///
-/// The server-side dispatch (the `RFDB_DATALOG_V2` router) already holds a read lock on
-/// the engine for the duration of one [`crate::datalog2::evaluate`] call, so it can lend
+/// The server-side dispatch (the `RFDB_DERIVE_ENGINE` router) already holds a read lock on
+/// the engine for the duration of one [`crate::derive::evaluate`] call, so it can lend
 /// `&MultiShardStore` directly — no `Arc` clone is needed and the storage type stays
-/// module-private to `datalog2` (I10). The captured [`ReadSnapshot`] pins the manifest
+/// module-private to `derive` (I10). The captured [`ReadSnapshot`] pins the manifest
 /// version for the view's lifetime exactly like [`LsmStorageView`]; both delegate to the
 /// same `snapshot_*` helpers so they can never disagree on what the snapshot surfaces.
 pub(crate) struct BorrowedLsmStorageView<'a> {

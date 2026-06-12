@@ -181,7 +181,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::datalog2::tag::CountTag;
+    use crate::derive::tag::CountTag;
     use crate::storage_v2::segment::{EdgeSegmentV2, NodeSegmentV2};
     use crate::storage_v2::types::{
         EdgeRecordV2, NodeRecordV2, ProvenanceV2, TagV2, COUNTTAG_SEMIRING_ID, TX_OPEN,

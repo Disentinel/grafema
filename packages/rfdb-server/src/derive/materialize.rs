@@ -555,7 +555,7 @@ fn encode_atom(atom: &Atom, var_map: &HashMap<String, u32>, buf: &mut Vec<u8>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::datalog2::parser_ext::parse_ext_program;
+    use crate::derive::parser_ext::parse_ext_program;
     use crate::datalog::parse_program as parse_v1;
 
     fn rule_of(src: &str) -> Rule {
@@ -589,7 +589,7 @@ mod tests {
     /// programs without `meta()` (and the AST they parse to) hash IDENTICALLY after it.
     #[test]
     fn depends_dl_rule_ast_hash_is_pinned() {
-        let prog = parse_ext_program(crate::datalog2::stdlib::DEPENDS_DL).expect("parse depends.dl");
+        let prog = parse_ext_program(crate::derive::stdlib::DEPENDS_DL).expect("parse depends.dl");
         assert_eq!(prog.items.len(), 1);
         assert_eq!(
             rule_ast_hash(&prog.items[0].rule),

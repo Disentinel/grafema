@@ -12,11 +12,11 @@ import Grafema.Types (GraphNode, GraphEdge)
 import Grafema.Protocol (PluginCommand(..), readFrame, writeFrame, encodeMsgpack, decodeMsgpack, readNodesFromStdin, writeCommandsToStdout)
 import Grafema.RuntimeGlobals (NameStrategy(..), NodeFilter(..), SymbolDB, loadSymbolDB, resolveAll)
 
--- NOTE (Wave 6, resolve→datalog2 migration): the rust-imports, rust-calls and
+-- NOTE (Wave 6, resolve→derive migration): the rust-imports, rust-calls and
 -- rust-trait-resolve commands (RustImportResolution / RustCallResolution /
 -- RustTraitResolution) were replaced by the rust_imports / rust_calls /
--- rust_trait_resolve datalog2 stdlib packs and DELETED — see
--- _ai/research/resolve-datalog2-migration-synthesis.md for the per-step
+-- rust_trait_resolve derive stdlib packs and DELETED — see
+-- the resolve-migration synthesis doc in _ai/research/ for the per-step
 -- evidence. The remaining native steps are rust-cross-methods (its
 -- dyn-dispatch and self-field arms have no pack) and rust-globals
 -- (effects-db driven; no facts pack exists for Rust).

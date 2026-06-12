@@ -256,17 +256,17 @@ pub enum Request {
         explain: bool,
     },
 
-    /// Run a Datalog v2 program that carries `@materialize`, committing the materialized
+    /// Run a derive engine program that carries `@materialize`, committing the materialized
     /// edges (e.g. stdlib `depends.dl` → DEPENDS_ON) in ONE atomic generation. WRITE path,
-    /// v2-ONLY: refused with an explicit coded error when `RFDB_DATALOG_V2` is off (the
+    /// derive-engine-ONLY: refused with an explicit coded error when `RFDB_DERIVE_ENGINE` is off (the
     /// legacy derivation runs in the orchestrator under P3). Returns the edges-written count.
     MaterializeDatalog {
         source: String,
     },
 
     /// why() / explain_fact (spec §11, Gate E): explain ONE supporting derivation of a derived
-    /// fact `predicate(key)` under a v2 program (empty `source` ⇒ the bundled `depends.dl`).
-    /// v2-only, kill-switch gated. READ path; provenance computed on demand (nothing stored per
+    /// fact `predicate(key)` under a derive program (empty `source` ⇒ the bundled `depends.dl`).
+    /// derive-engine-only, kill-switch gated. READ path; provenance computed on demand (nothing stored per
     /// fact). Returns the deriving rule's hash + the positive body facts that satisfied it, or a
     /// null witness when the fact is not derivable by the program.
     ExplainDatalogFact {
@@ -277,9 +277,9 @@ pub enum Request {
     },
 
     /// what-if / sim (spec §6, decision #2): predict the NEW `predicate` facts a hypothetical
-    /// overlay of nodes+edges would create under a v2 program (empty `source` ⇒ the bundled
+    /// overlay of nodes+edges would create under a derive program (empty `source` ⇒ the bundled
     /// `depends.dl`), WITHOUT committing anything — a pure read over a version-pinned snapshot
-    /// plus an in-memory overlay (`OverlayStorageView`). Answer = sim ∖ base. v2-only,
+    /// plus an in-memory overlay (`OverlayStorageView`). Answer = sim ∖ base. derive-engine-only,
     /// kill-switch gated. Edge endpoints may reference existing OR hypothetical node ids.
     SimDatalog {
         source: String,
@@ -292,7 +292,7 @@ pub enum Request {
 
     /// why-not / explain_gap (spec §6, Gate E): explain why `predicate(key)` is NOT derived —
     /// the satisfied body-premise prefix + the first premise no binding satisfies (the gap; for
-    /// a negated premise the gap closes by REMOVING the blocking fact). v2-only, kill-switch
+    /// a negated premise the gap closes by REMOVING the blocking fact). derive-engine-only, kill-switch
     /// gated, READ path. A null witness ⇒ the fact IS derivable (no gap) or no clause head
     /// matches the key. The companion to `SimDatalog`: gap names the missing premise, sim
     /// verifies that adding it produces the fact.
@@ -731,7 +731,7 @@ pub struct WireViolation {
     pub bindings: HashMap<String, String>,
 }
 
-/// A hypothetical node for `SimDatalog` (what-if): decimal-u128 id + the attrs the v2 builtin
+/// A hypothetical node for `SimDatalog` (what-if): decimal-u128 id + the attrs the derive-engine builtin
 /// predicates resolve (`node/2` type; `attr/3` name/file). The id may be NEW (not in the base).
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1289,14 +1289,14 @@ fn handle_request_with_cancel(
                 "semanticIds".to_string(),
                 "streaming".to_string(),
             ];
-            // Advertise the v2 @materialize write-back capability ONLY when the v2 engine is
-            // enabled (the DEFAULT since Final #12; RFDB_DATALOG_V2=off suppresses it), so the
+            // Advertise the derive @materialize write-back capability ONLY when the derive engine is
+            // enabled (the DEFAULT since Final #12; RFDB_DERIVE_ENGINE=off suppresses it), so the
             // orchestrator learns from the SERVER (single source of truth) whether to skip its
             // own legacy DEPENDS_ON derivation. A duplicated env read in the orchestrator
-            // process could disagree with the server's actual backend. Older servers that never
-            // advertise the feature keep getting the legacy P3 fallback — the compat contract.
-            if datalog_v2_enabled() {
-                features.push("datalogV2Materialize".to_string());
+            // process could disagree with the server's actual backend. Servers that do not
+            // advertise the feature are refused by the orchestrator's fail-fast capability gate.
+            if derive_engine_enabled() {
+                features.push("datalogDerive".to_string());
             }
             Response::HelloOk {
                 ok: true,
@@ -1762,7 +1762,7 @@ fn handle_request_with_cancel(
 
         Request::MaterializeDatalog { source } => {
             // WRITE path: @materialize ends in commit_batch_ext (&mut self), so it takes the
-            // exclusive write lock (mirrors CommitBatch's serial fallback). v2-only and
+            // exclusive write lock (mirrors CommitBatch's serial fallback). derive-engine-only and
             // kill-switch-gated inside the dispatcher; refusal is an explicit coded error (I5).
             let cf = cancel_flag.clone();
             with_engine_write(session, |engine| {
@@ -2807,32 +2807,36 @@ enum DatalogResponse {
 }
 
 // ============================================================================
-// Datalog engine router — RFDB_DATALOG_V2 kill switch (spec P3, I8)
+// Datalog engine router — RFDB_DERIVE_ENGINE kill switch (spec P3, I8)
 // ============================================================================
 
-/// Whether the request should be served by the Datalog **v2** engine.
+/// Whether the request should be served by the Datalog **derive** engine
+/// (`crate::derive`) rather than the query engine (`crate::datalog`).
 ///
-/// The switch is read **per request at dispatch** (not cached at startup) so it can be
-/// flipped during validation. **v2 is the DEFAULT** (Final #12, after Gates A–D + the
-/// resolve→datalog2 migration proved the v2 engine on the live graph): the v1 engine is
-/// selected ONLY when `RFDB_DATALOG_V2` is explicitly set to `"off"` (case-insensitive) —
-/// the defined off-switch. Unset → v2. `"off"`/`"OFF"` → v1. Any other value (e.g. `"on"`,
-/// `"1"` — the pre-flip opt-ins, now redundant no-ops) → v2. The read is a pure boolean
-/// over the environment with no side effects.
+/// `RFDB_DERIVE_ENGINE` is a **SERVER-side** debug switch: it is read in the server
+/// process, **per request at dispatch** (not cached at startup), and never consulted by
+/// clients. **The derive engine is the DEFAULT** (Final #12, after Gates A–D + the
+/// resolve→derive migration proved it on the live graph): setting `RFDB_DERIVE_ENGINE=off`
+/// (case-insensitive) — the defined off-switch — routes wire datalog evaluation
+/// (`DatalogQuery`/`ExecuteDatalog`/`CheckGuarantee`) to the query engine for debugging,
+/// and disables the derive-only paths (`@materialize`, explain_fact, sim, explain_gap)
+/// with explicit coded errors. Unset → derive. `"off"`/`"OFF"` → query engine. Any other
+/// value (e.g. `"on"`, `"1"` — the pre-flip opt-ins, now redundant no-ops) → derive. The
+/// read is a pure boolean over the environment with no side effects.
 ///
-/// One deliberate exception: `explain` requests are always served by the v1 engine
-/// regardless of this switch (the v2 explain recording→wire mapping is a deferred gate;
-/// see the dispatchers below) — that routing is explicit and documented, not a silent
-/// fall-through.
-fn datalog_v2_enabled() -> bool {
-    match std::env::var("RFDB_DATALOG_V2") {
+/// One deliberate exception: `explain` requests are always served by the query engine
+/// regardless of this switch (the derive-engine explain recording→wire mapping is a
+/// deferred gate; see the dispatchers below) — that routing is explicit and documented,
+/// not a silent fall-through.
+fn derive_engine_enabled() -> bool {
+    match std::env::var("RFDB_DERIVE_ENGINE") {
         Ok(v) => !v.eq_ignore_ascii_case("off"),
         Err(_) => true,
     }
 }
 
-/// Map a v2 evaluation's positional rows onto the `target` atom's head variable names,
-/// producing the same `WireViolation` shape the v1 handlers emit.
+/// Map a derive-engine evaluation's positional rows onto the `target` atom's head variable names,
+/// producing the same `WireViolation` shape the query-engine handlers emit.
 ///
 /// `Term::Var` columns become `name -> value` entries; `Term::Const` / `Term::Wildcard`
 /// columns carry no binding (mirroring v1, which only surfaces variable bindings). Extra
@@ -2857,11 +2861,11 @@ fn v2_rows_to_violations(rows: Vec<Vec<String>>, target: &rfdb::datalog::Atom) -
 /// Route a Datalog evaluation through the **v2** engine for the given `target` head atom.
 ///
 /// Captures a version-pinned view of the engine's `MultiShardStore` snapshot (via
-/// `GraphEngineV2::eval_datalog_v2`, the single v2 eval entry — no explain fork, I8) and
+/// `GraphEngineV2::eval_derive`, the single v2 eval entry — no explain fork, I8) and
 /// returns the derived `target` facts as `WireViolation`s. Returns `Err` (an explicit
-/// coded message, never a silent fall-through to v1) when the engine is not a
+/// coded message, never a silent fall-through to the query engine) when the engine is not a
 /// `GraphEngineV2` or the v2 pipeline rejects the program.
-fn route_datalog_v2(
+fn route_datalog_engine(
     engine: &dyn GraphStore,
     source: &str,
     target: &rfdb::datalog::Atom,
@@ -2871,7 +2875,7 @@ fn route_datalog_v2(
         .as_any()
         .downcast_ref::<GraphEngineV2>()
         .ok_or_else(|| {
-            "RFDB_DATALOG_V2: the v2 engine requires a storage_v2 GraphEngineV2 backend"
+            "RFDB_DERIVE_ENGINE: the derive engine requires a storage_v2 GraphEngineV2 backend"
                 .to_string()
         })?;
 
@@ -2879,66 +2883,69 @@ fn route_datalog_v2(
     limits.cancelled = Some(cancel_flag);
 
     let rows = v2_engine
-        .eval_datalog_v2(source, target.predicate(), limits)
-        .map_err(|e| format!("Datalog v2 error [{}]: {}", e.code(), e))?;
+        .eval_derive(source, target.predicate(), limits)
+        .map_err(|e| format!("derive engine error [{}]: {}", e.code(), e))?;
 
     Ok(DatalogResponse::Violations(v2_rows_to_violations(rows, target)))
 }
 
-/// `CheckGuarantee` dispatch: route to v2 (the default) or v1 per the `RFDB_DATALOG_V2`
+/// `CheckGuarantee` dispatch: route to the derive engine (the default) or the query engine
+/// per the `RFDB_DERIVE_ENGINE`
 /// kill switch. The guarantee head is always `violation(X)`. `explain` requests are
-/// DELIBERATELY routed to the v1 engine regardless of the switch: the v2 explain
-/// *recording*→wire mapping is a deferred gate (I8 keeps the single eval entry, no v2
-/// explain fork), and with v2 now the default an explain refusal would break the product
-/// explain surface (MCP `explain` → `checkGuarantee(…, explain: true)`). v1 remains in
-/// the binary as the explain provider — an explicit, documented routing (v1 ≡ v2 on
-/// Gate A 51/51), not a silent fall-through.
+/// DELIBERATELY routed to the query engine regardless of the switch: the derive-engine
+/// explain *recording*→wire mapping is a deferred gate (I8 keeps the single eval entry,
+/// no derive-side explain fork), and with the derive engine now the default an explain
+/// refusal would break the product explain surface (MCP `explain` → `checkGuarantee(…,
+/// explain: true)`). The query engine remains in the binary as the explain provider — an
+/// explicit, documented routing (query ≡ derive on Gate A 51/51), not a silent fall-through.
 fn dispatch_check_guarantee(
     engine: &dyn GraphStore,
     rule_source: &str,
     explain: bool,
     cancel_flag: Arc<AtomicBool>,
 ) -> std::result::Result<DatalogResponse, String> {
-    if datalog_v2_enabled() && !explain {
+    if derive_engine_enabled() && !explain {
         let target = parse_atom("violation(X)")
             .map_err(|e| format!("Internal error parsing violation query: {}", e))?;
-        return route_datalog_v2(engine, rule_source, &target, cancel_flag);
+        return route_datalog_engine(engine, rule_source, &target, cancel_flag);
     }
     execute_check_guarantee(engine, rule_source, explain, cancel_flag)
 }
 
-/// `DatalogQuery` dispatch: route to v2 (the default) or v1 per the kill switch. The v2
-/// target is the first query literal's atom (its variables name the result columns).
-/// `explain` → v1 engine (same deliberate routing as `dispatch_check_guarantee`).
+/// `DatalogQuery` dispatch: route to the derive engine (the default) or the query engine
+/// per the kill switch. The derive-engine target is the first query literal's atom (its
+/// variables name the result columns).
+/// `explain` → query engine (same deliberate routing as `dispatch_check_guarantee`).
 fn dispatch_datalog_query(
     engine: &dyn GraphStore,
     query_source: &str,
     explain: bool,
     cancel_flag: Arc<AtomicBool>,
 ) -> std::result::Result<DatalogResponse, String> {
-    if datalog_v2_enabled() && !explain {
+    if derive_engine_enabled() && !explain {
         let literals = parse_query(query_source)
             .map_err(|e| format!("Datalog query parse error: {}", e))?;
         let target = literals
             .first()
             .map(|lit| lit.atom().clone())
-            .ok_or_else(|| "Datalog v2: empty query (no literals)".to_string())?;
-        return route_datalog_v2(engine, query_source, &target, cancel_flag);
+            .ok_or_else(|| "derive engine: empty query (no literals)".to_string())?;
+        return route_datalog_engine(engine, query_source, &target, cancel_flag);
     }
     execute_datalog_query(engine, query_source, explain, cancel_flag)
 }
 
-/// `ExecuteDatalog` dispatch: route to v2 (the default) or v1 per the kill switch. The v2
-/// target mirrors the v1 auto-detect — first rule head when the source is a program with
-/// rules, otherwise the first query literal's atom.
-/// `explain` → v1 engine (same deliberate routing as `dispatch_check_guarantee`).
+/// `ExecuteDatalog` dispatch: route to the derive engine (the default) or the query engine
+/// per the kill switch. The derive-engine target mirrors the query engine's auto-detect —
+/// first rule head when the source is a program with rules, otherwise the first query
+/// literal's atom.
+/// `explain` → query engine (same deliberate routing as `dispatch_check_guarantee`).
 fn dispatch_execute_datalog(
     engine: &dyn GraphStore,
     source: &str,
     explain: bool,
     cancel_flag: Arc<AtomicBool>,
 ) -> std::result::Result<DatalogResponse, String> {
-    if datalog_v2_enabled() && !explain {
+    if derive_engine_enabled() && !explain {
         let target = if let Ok(program) = parse_program(source) {
             if !program.rules().is_empty() {
                 Some(program.rules()[0].head().clone())
@@ -2956,19 +2963,19 @@ fn dispatch_execute_datalog(
                 literals
                     .first()
                     .map(|lit| lit.atom().clone())
-                    .ok_or_else(|| "Datalog v2: empty program (no rules or query)".to_string())?
+                    .ok_or_else(|| "derive engine: empty program (no rules or query)".to_string())?
             }
         };
-        return route_datalog_v2(engine, source, &target, cancel_flag);
+        return route_datalog_engine(engine, source, &target, cancel_flag);
     }
     execute_datalog(engine, source, explain, cancel_flag)
 }
 
-/// Resolve a wire `source` to the Datalog v2 program text — THE pack-resolution contract,
+/// Resolve a wire `source` to the derive engine program text — THE pack-resolution contract,
 /// shared by every dispatcher that defaults an empty source to the bundled `depends.dl`
 /// (`MaterializeDatalog`, `ExplainDatalogFact`, `ExplainDatalogGap`, `SimDatalog`):
 /// - `""` (or whitespace) ⇒ the bundled `depends.dl` (the EXISTING orchestrator contract);
-/// - `"@stdlib/<name>"` ⇒ the named bundled pack from [`rfdb::datalog2::stdlib::STDLIB_PACKS`]
+/// - `"@stdlib/<name>"` ⇒ the named bundled pack from [`rfdb::derive::stdlib::STDLIB_PACKS`]
 ///   (`@stdlib/depends` is the named alias of the empty-source default);
 /// - an unknown `"@stdlib/<name>"` ⇒ the coded `E-MAT-007` error naming the pack and
 ///   listing the known packs — never a silent fallback to running `"@stdlib/…"` as
@@ -2976,21 +2983,21 @@ fn dispatch_execute_datalog(
 /// - anything else ⇒ explicit program text, passed through untouched.
 ///
 /// Pack ORDER is a contract for sequential callers (`shape_verifier` reads CALLS as EDB,
-/// so it must run after `method_calls`) — see the registry docs in `datalog2/stdlib.rs`.
+/// so it must run after `method_calls`) — see the registry docs in `derive/stdlib.rs`.
 fn resolve_pack_source(source: &str) -> std::result::Result<&str, String> {
     let trimmed = source.trim();
     if trimmed.is_empty() {
-        return Ok(rfdb::datalog2::stdlib::DEPENDS_DL);
+        return Ok(rfdb::derive::stdlib::DEPENDS_DL);
     }
     if let Some(name) = trimmed.strip_prefix("@stdlib/") {
-        return rfdb::datalog2::stdlib::stdlib_pack(name).ok_or_else(|| {
-            let known = rfdb::datalog2::stdlib::STDLIB_PACKS
+        return rfdb::derive::stdlib::stdlib_pack(name).ok_or_else(|| {
+            let known = rfdb::derive::stdlib::STDLIB_PACKS
                 .iter()
                 .map(|(n, _)| format!("@stdlib/{n}"))
                 .collect::<Vec<_>>()
                 .join(", ");
             format!(
-                "Datalog v2 pack resolution error [E-MAT-007]: unknown stdlib pack \
+                "derive engine pack resolution error [E-MAT-007]: unknown stdlib pack \
                  \"@stdlib/{name}\"; known packs: {known}"
             )
         });
@@ -2998,30 +3005,30 @@ fn resolve_pack_source(source: &str) -> std::result::Result<&str, String> {
     Ok(source)
 }
 
-/// `MaterializeDatalog` dispatch (WRITE path): run a v2 `@materialize` program and commit the
+/// `MaterializeDatalog` dispatch (WRITE path): run a derive-engine `@materialize` program and commit the
 /// materialized edges in ONE atomic generation, returning the edges-written count.
 ///
-/// v2-ONLY and kill-switch-gated: when `RFDB_DATALOG_V2` is off this refuses with an explicit
-/// coded error (the legacy DEPENDS_ON derivation runs in the orchestrator under P3) rather than
+/// derive-engine-ONLY and kill-switch-gated: when `RFDB_DERIVE_ENGINE` is off this refuses with an explicit
+/// coded error (with the derive engine off there is NO derivation path at all) rather than
 /// silently doing nothing (I5). The backend must be a `GraphEngineV2` (storage_v2) — anything
 /// else is an explicit error, never a silent no-op. There is no v1 materialize path: `@materialize`
-/// write-back is a v2 capability. The whole run commits via the single atomic flip in
-/// [`GraphEngineV2::eval_datalog_v2_materialize`] (run isolation, abort-no-commit).
+/// write-back is a derive-engine capability. The whole run commits via the single atomic flip in
+/// [`GraphEngineV2::eval_derive_materialize`] (run isolation, abort-no-commit).
 fn dispatch_materialize_datalog(
     engine: &mut dyn GraphStore,
     source: &str,
     cancel_flag: Arc<AtomicBool>,
 ) -> std::result::Result<usize, String> {
-    if !datalog_v2_enabled() {
-        return Err("RFDB_DATALOG_V2: @materialize write-back is a v2-only path; with the kill \
-                    switch off the legacy DEPENDS_ON derivation runs in the orchestrator (P3)"
+    if !derive_engine_enabled() {
+        return Err("RFDB_DERIVE_ENGINE: @materialize write-back is a derive-engine-only path; with the kill \
+                    switch disables ALL derivation — there is no legacy fallback since 0.4.0"
             .to_string());
     }
     let v2 = engine
         .as_any_mut()
         .downcast_mut::<GraphEngineV2>()
         .ok_or_else(|| {
-            "RFDB_DATALOG_V2: @materialize requires a storage_v2 GraphEngineV2 backend".to_string()
+            "RFDB_DERIVE_ENGINE: @materialize requires a storage_v2 GraphEngineV2 backend".to_string()
         })?;
 
     let mut limits = EvalLimits::default();
@@ -3049,14 +3056,14 @@ fn dispatch_materialize_datalog(
     // DEPENDS_ON instead of only accreting (the additive full-rewrite path never removed stale
     // edges). First run / restart / a program outside the monotone envelope falls back to a full
     // scratch eval (correctness floor, I5). Reports the edges ADDED this run as the written count.
-    v2.eval_datalog_v2_materialize_cached(program, limits)
+    v2.eval_derive_materialize_cached(program, limits)
         .map(|(added, _removed)| added)
-        .map_err(|e| format!("Datalog v2 materialize error [{}]: {}", e.code(), e))
+        .map_err(|e| format!("derive engine materialize error [{}]: {}", e.code(), e))
 }
 
 /// `ExplainDatalogFact` dispatch (READ path): explain ONE supporting derivation of
-/// `predicate(key)` under a v2 program via [`GraphEngineV2::explain_datalog_fact`] (why(), spec
-/// §11). v2-ONLY and kill-switch-gated (refused with a coded error when `RFDB_DATALOG_V2` is off,
+/// `predicate(key)` under a derive program via [`GraphEngineV2::explain_datalog_fact`] (why(), spec
+/// §11). derive-engine-ONLY and kill-switch-gated (refused with a coded error when `RFDB_DERIVE_ENGINE` is off,
 /// I5 — never a silent empty answer). Empty `source` ⇒ the bundled `depends.dl`. `Ok(None)` ⇒ the
 /// fact is not derivable by the program (a true negative, distinct from an error).
 fn dispatch_explain_datalog_fact(
@@ -3066,8 +3073,8 @@ fn dispatch_explain_datalog_fact(
     key: &[String],
     cancel_flag: Arc<AtomicBool>,
 ) -> std::result::Result<Option<WireFactWitness>, String> {
-    if !datalog_v2_enabled() {
-        return Err("RFDB_DATALOG_V2: explain_fact is a v2-only path; with the kill switch off \
+    if !derive_engine_enabled() {
+        return Err("RFDB_DERIVE_ENGINE: explain_fact is a derive-engine-only path; with the kill switch off \
                     there is no v2 why() provenance"
             .to_string());
     }
@@ -3075,7 +3082,7 @@ fn dispatch_explain_datalog_fact(
         .as_any()
         .downcast_ref::<GraphEngineV2>()
         .ok_or_else(|| {
-            "RFDB_DATALOG_V2: explain_fact requires a storage_v2 GraphEngineV2 backend".to_string()
+            "RFDB_DERIVE_ENGINE: explain_fact requires a storage_v2 GraphEngineV2 backend".to_string()
         })?;
 
     let program = resolve_pack_source(source)?;
@@ -3086,7 +3093,7 @@ fn dispatch_explain_datalog_fact(
 
     let witness = v2
         .explain_datalog_fact(program, predicate, &key_vals, limits)
-        .map_err(|e| format!("Datalog v2 explain_fact error [{}]: {}", e.code(), e))?;
+        .map_err(|e| format!("derive engine explain_fact error [{}]: {}", e.code(), e))?;
 
     Ok(witness.map(|w| WireFactWitness {
         rule_ast_hash: w.rule_ast_hash,
@@ -3102,8 +3109,8 @@ fn dispatch_explain_datalog_fact(
 }
 
 /// `SimDatalog` dispatch (READ path, what-if): predict the NEW `predicate` facts a hypothetical
-/// node/edge overlay would create under a v2 program via [`GraphEngineV2::sim_datalog_v2`]
-/// (spec §6). v2-ONLY and kill-switch-gated (refused with a coded error when `RFDB_DATALOG_V2`
+/// node/edge overlay would create under a derive program via [`GraphEngineV2::sim_derive`]
+/// (spec §6). derive-engine-ONLY and kill-switch-gated (refused with a coded error when `RFDB_DERIVE_ENGINE`
 /// is off, I5 — never a silent empty answer). Empty `source` ⇒ the bundled `depends.dl`. The
 /// committed store is never touched: pinned snapshot + `OverlayStorageView`, answer = sim ∖ base.
 fn dispatch_sim_datalog(
@@ -3114,13 +3121,13 @@ fn dispatch_sim_datalog(
     edges: &[WireSimEdge],
     cancel_flag: Arc<AtomicBool>,
 ) -> std::result::Result<Vec<Vec<String>>, String> {
-    if !datalog_v2_enabled() {
-        return Err("RFDB_DATALOG_V2: sim is a v2-only path; with the kill switch off there is \
+    if !derive_engine_enabled() {
+        return Err("RFDB_DERIVE_ENGINE: sim is a derive-engine-only path; with the kill switch off there is \
                     no v2 what-if overlay"
             .to_string());
     }
     let v2 = engine.as_any().downcast_ref::<GraphEngineV2>().ok_or_else(|| {
-        "RFDB_DATALOG_V2: sim requires a storage_v2 GraphEngineV2 backend".to_string()
+        "RFDB_DERIVE_ENGINE: sim requires a storage_v2 GraphEngineV2 backend".to_string()
     })?;
 
     let program = resolve_pack_source(source)?;
@@ -3143,12 +3150,12 @@ fn dispatch_sim_datalog(
     let mut limits = EvalLimits::default();
     limits.cancelled = Some(cancel_flag);
 
-    v2.sim_datalog_v2(program, predicate, &hyp_nodes, &hyp_edges, limits)
-        .map_err(|e| format!("Datalog v2 sim error [{}]: {}", e.code(), e))
+    v2.sim_derive(program, predicate, &hyp_nodes, &hyp_edges, limits)
+        .map_err(|e| format!("derive engine sim error [{}]: {}", e.code(), e))
 }
 
 /// `ExplainDatalogGap` dispatch (READ path, why-not): explain why `predicate(key)` is NOT
-/// derived via [`GraphEngineV2::explain_datalog_gap`] (spec §6, Gate E). v2-ONLY and
+/// derived via [`GraphEngineV2::explain_datalog_gap`] (spec §6, Gate E). derive-engine-ONLY and
 /// kill-switch-gated (coded refusal when off, I5). Empty `source` ⇒ the bundled `depends.dl`.
 /// `Ok(None)` ⇒ no gap: the fact is derivable, or no clause head matches the key.
 fn dispatch_explain_datalog_gap(
@@ -3158,13 +3165,13 @@ fn dispatch_explain_datalog_gap(
     key: &[String],
     cancel_flag: Arc<AtomicBool>,
 ) -> std::result::Result<Option<WireGapWitness>, String> {
-    if !datalog_v2_enabled() {
-        return Err("RFDB_DATALOG_V2: explain_gap is a v2-only path; with the kill switch off \
+    if !derive_engine_enabled() {
+        return Err("RFDB_DERIVE_ENGINE: explain_gap is a derive-engine-only path; with the kill switch off \
                     there is no v2 why-not"
             .to_string());
     }
     let v2 = engine.as_any().downcast_ref::<GraphEngineV2>().ok_or_else(|| {
-        "RFDB_DATALOG_V2: explain_gap requires a storage_v2 GraphEngineV2 backend".to_string()
+        "RFDB_DERIVE_ENGINE: explain_gap requires a storage_v2 GraphEngineV2 backend".to_string()
     })?;
 
     let program = resolve_pack_source(source)?;
@@ -3175,7 +3182,7 @@ fn dispatch_explain_datalog_gap(
 
     let gap = v2
         .explain_datalog_gap(program, predicate, &key_vals, limits)
-        .map_err(|e| format!("Datalog v2 explain_gap error [{}]: {}", e.code(), e))?;
+        .map_err(|e| format!("derive engine explain_gap error [{}]: {}", e.code(), e))?;
 
     Ok(gap.map(|g| WireGapWitness {
         rule_ast_hash: g.rule_ast_hash,
@@ -7595,56 +7602,57 @@ mod protocol_tests {
     }
 
     // ============================================================================
-    // RFDB_DATALOG_V2 router — kill switch path selection (spec P3, I8)
+    // RFDB_DERIVE_ENGINE router — kill switch path selection (spec P3, I8)
     //
     // These assertions check the CHOSEN ENGINE PATH, not result equality between the
-    // two engines. Since Final #12, v2 is the DEFAULT (unset → v2); v1 is selected
-    // only with the explicit off-switch RFDB_DATALOG_V2=off. Explain requests are
-    // the one documented exception: always served by the v1 engine.
+    // two engines. Since Final #12, the derive engine is the DEFAULT (unset → derive);
+    // the query engine is selected only with the explicit off-switch
+    // RFDB_DERIVE_ENGINE=off. Explain requests are the one documented exception:
+    // always served by the query engine.
     // ============================================================================
 
-    /// Serialize the env-var mutations: `datalog_v2_enabled()` reads a process-global,
+    /// Serialize the env-var mutations: `derive_engine_enabled()` reads a process-global,
     /// and Rust runs tests in parallel, so the two router tests must not race on it.
-    static DATALOG_V2_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    static DERIVE_ENGINE_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-    /// The kill-switch predicate (Final #12 default flip): v2 by default, v1 only with
-    /// the explicit off-switch `RFDB_DATALOG_V2=off`.
+    /// The kill-switch predicate (Final #12 default flip): the derive engine by default,
+    /// the query engine only with the explicit off-switch `RFDB_DERIVE_ENGINE=off`.
     #[test]
-    fn datalog_v2_router_defaults_to_v2() {
-        let _guard = DATALOG_V2_ENV_LOCK.lock().unwrap();
-        let prev = std::env::var("RFDB_DATALOG_V2").ok();
+    fn derive_router_on_by_default() {
+        let _guard = DERIVE_ENGINE_ENV_LOCK.lock().unwrap();
+        let prev = std::env::var("RFDB_DERIVE_ENGINE").ok();
 
-        // Unset → v2 (THE default since Final #12).
-        std::env::remove_var("RFDB_DATALOG_V2");
-        assert!(datalog_v2_enabled(), "unset RFDB_DATALOG_V2 must select v2 (the default)");
+        // Unset → derive (THE default since Final #12).
+        std::env::remove_var("RFDB_DERIVE_ENGINE");
+        assert!(derive_engine_enabled(), "unset RFDB_DERIVE_ENGINE must select the derive engine (the default)");
 
-        // "off" → v1 (the defined off-switch, case-insensitive).
-        std::env::set_var("RFDB_DATALOG_V2", "off");
-        assert!(!datalog_v2_enabled(), "RFDB_DATALOG_V2=off must select v1");
-        std::env::set_var("RFDB_DATALOG_V2", "OFF");
-        assert!(!datalog_v2_enabled(), "RFDB_DATALOG_V2=OFF (case-insensitive) must select v1");
+        // "off" → query engine (the defined off-switch, case-insensitive).
+        std::env::set_var("RFDB_DERIVE_ENGINE", "off");
+        assert!(!derive_engine_enabled(), "RFDB_DERIVE_ENGINE=off must select the query engine");
+        std::env::set_var("RFDB_DERIVE_ENGINE", "OFF");
+        assert!(!derive_engine_enabled(), "RFDB_DERIVE_ENGINE=OFF (case-insensitive) must select the query engine");
 
-        // Anything else (the pre-flip opt-ins, now redundant no-ops) → v2.
-        std::env::set_var("RFDB_DATALOG_V2", "on");
-        assert!(datalog_v2_enabled(), "RFDB_DATALOG_V2=on must select v2");
-        std::env::set_var("RFDB_DATALOG_V2", "1");
-        assert!(datalog_v2_enabled(), "RFDB_DATALOG_V2=1 must select v2 (pre-flip opt-in stays v2)");
+        // Anything else (the pre-flip opt-ins, now redundant no-ops) → derive.
+        std::env::set_var("RFDB_DERIVE_ENGINE", "on");
+        assert!(derive_engine_enabled(), "RFDB_DERIVE_ENGINE=on must select the derive engine");
+        std::env::set_var("RFDB_DERIVE_ENGINE", "1");
+        assert!(derive_engine_enabled(), "RFDB_DERIVE_ENGINE=1 must select the derive engine (pre-flip opt-in stays on)");
 
         match prev {
-            Some(v) => std::env::set_var("RFDB_DATALOG_V2", v),
-            None => std::env::remove_var("RFDB_DATALOG_V2"),
+            Some(v) => std::env::set_var("RFDB_DERIVE_ENGINE", v),
+            None => std::env::remove_var("RFDB_DERIVE_ENGINE"),
         }
     }
 
-    /// Final #12 capability/compat contract: the server advertises `datalogV2Materialize`
-    /// in Hello BY DEFAULT (v2 is the default engine), and STOPS advertising it under the
-    /// explicit off-switch — which is exactly how the orchestrator decides between the
-    /// server-side pack phase and its legacy P3 DEPENDS_ON fallback. Older/non-v2 servers
-    /// simply never advertise the feature, so the orchestrator's fallback keeps working.
+    /// Final #12 capability contract: the server advertises `datalogDerive` in Hello
+    /// BY DEFAULT (the derive engine is the default), and STOPS advertising it under the
+    /// explicit off-switch — which is exactly what the orchestrator's fail-fast capability
+    /// gate checks (Wave 6 removed the legacy fallback: a server without the capability
+    /// is refused, not worked around).
     #[test]
-    fn hello_advertises_datalog_v2_materialize_by_default_and_not_when_off() {
-        let _guard = DATALOG_V2_ENV_LOCK.lock().unwrap();
-        let prev = std::env::var("RFDB_DATALOG_V2").ok();
+    fn hello_advertises_derive_materialize_by_default_and_not_when_off() {
+        let _guard = DERIVE_ENGINE_ENV_LOCK.lock().unwrap();
+        let prev = std::env::var("RFDB_DERIVE_ENGINE").ok();
         let (_dir, manager) = setup_test_manager();
 
         let hello = |manager: &DatabaseManager| {
@@ -7661,36 +7669,36 @@ mod protocol_tests {
         };
 
         // Default (unset) → the capability is advertised.
-        std::env::remove_var("RFDB_DATALOG_V2");
+        std::env::remove_var("RFDB_DERIVE_ENGINE");
         assert!(
-            hello(&manager).contains(&"datalogV2Materialize".to_string()),
-            "default Hello must advertise datalogV2Materialize (v2 is the default engine)"
+            hello(&manager).contains(&"datalogDerive".to_string()),
+            "default Hello must advertise datalogDerive (v2 is the default engine)"
         );
 
         // Explicit off-switch → NOT advertised; the orchestrator then runs the legacy
         // P3 DEPENDS_ON derivation and retires no first-pass resolve step.
-        std::env::set_var("RFDB_DATALOG_V2", "off");
+        std::env::set_var("RFDB_DERIVE_ENGINE", "off");
         assert!(
-            !hello(&manager).contains(&"datalogV2Materialize".to_string()),
-            "RFDB_DATALOG_V2=off must suppress the capability (legacy P3 fallback path)"
+            !hello(&manager).contains(&"datalogDerive".to_string()),
+            "RFDB_DERIVE_ENGINE=off must suppress the capability (legacy P3 fallback path)"
         );
 
         match prev {
-            Some(v) => std::env::set_var("RFDB_DATALOG_V2", v),
-            None => std::env::remove_var("RFDB_DATALOG_V2"),
+            Some(v) => std::env::set_var("RFDB_DERIVE_ENGINE", v),
+            None => std::env::remove_var("RFDB_DERIVE_ENGINE"),
         }
     }
 
     /// `MaterializeDatalog` dispatch (the release-blocker write path): kill-switch-gated and
-    /// v2-only. With the switch OFF it refuses with an explicit coded error (legacy DEPENDS_ON
+    /// derive-engine-only. With the switch OFF it refuses with an explicit coded error (legacy DEPENDS_ON
     /// runs in the orchestrator, P3) and writes nothing; with it ON, a `@materialize` program
     /// over a committed IMPORTS_FROM graph writes the DEPENDS_ON edge in one generation and a
     /// follow-up v2 read sees it. This is the path the orchestrator will call instead of its
     /// in-process derivation.
     #[test]
     fn dispatch_materialize_datalog_gated_and_writes_edges() {
-        let _guard = DATALOG_V2_ENV_LOCK.lock().unwrap();
-        let prev = std::env::var("RFDB_DATALOG_V2").ok();
+        let _guard = DERIVE_ENGINE_ENV_LOCK.lock().unwrap();
+        let prev = std::env::var("RFDB_DERIVE_ENGINE").ok();
 
         // Real ephemeral v2 engine: module `a` IMPORTS_FROM module `b`.
         let mut engine = GraphEngineV2::create_ephemeral();
@@ -7728,18 +7736,18 @@ mod protocol_tests {
                      dep(X, Y) :- edge(X, Y, "IMPORTS_FROM")."#;
 
         // ── Switch OFF → refused (coded), nothing written (P3 legacy path owns it). ──
-        std::env::set_var("RFDB_DATALOG_V2", "off");
+        std::env::set_var("RFDB_DERIVE_ENGINE", "off");
         let off = dispatch_materialize_datalog(&mut engine, src, cf());
         assert!(off.is_err(), "materialize must be refused when the kill switch is off");
         assert!(
-            off.unwrap_err().contains("v2-only"),
-            "the refusal must be the explicit v2-only coded error (P3), not a silent no-op"
+            off.unwrap_err().contains("derive-engine-only"),
+            "the refusal must be the explicit derive-engine-only coded error (P3), not a silent no-op"
         );
 
         // ── Switch ON → one DEPENDS_ON edge written in one generation. ──
-        std::env::set_var("RFDB_DATALOG_V2", "on");
+        std::env::set_var("RFDB_DERIVE_ENGINE", "on");
         let written = dispatch_materialize_datalog(&mut engine, src, cf())
-            .expect("materialize must succeed under the v2 engine");
+            .expect("materialize must succeed under the derive engine");
         assert_eq!(written, 1, "exactly one IMPORTS_FROM → one DEPENDS_ON");
 
         // A follow-up v2 read sees the materialized edge (committed + visible).
@@ -7755,8 +7763,8 @@ mod protocol_tests {
         }
 
         match prev {
-            Some(v) => std::env::set_var("RFDB_DATALOG_V2", v),
-            None => std::env::remove_var("RFDB_DATALOG_V2"),
+            Some(v) => std::env::set_var("RFDB_DERIVE_ENGINE", v),
+            None => std::env::remove_var("RFDB_DERIVE_ENGINE"),
         }
     }
 
@@ -7768,9 +7776,9 @@ mod protocol_tests {
     /// READ dispatchers share the same resolver.
     #[test]
     fn dispatch_materialize_datalog_resolves_stdlib_packs() {
-        let _guard = DATALOG_V2_ENV_LOCK.lock().unwrap();
-        let prev = std::env::var("RFDB_DATALOG_V2").ok();
-        std::env::set_var("RFDB_DATALOG_V2", "on");
+        let _guard = DERIVE_ENGINE_ENV_LOCK.lock().unwrap();
+        let prev = std::env::var("RFDB_DERIVE_ENGINE").ok();
+        std::env::set_var("RFDB_DERIVE_ENGINE", "on");
 
         // Module `a` IMPORTS_FROM module `b` — the depends.dl input shape.
         let mut engine = GraphEngineV2::create_ephemeral();
@@ -7868,18 +7876,18 @@ mod protocol_tests {
         assert!(read_err.contains("E-MAT-007"), "shared E-MAT-007 path: {read_err}");
 
         match prev {
-            Some(v) => std::env::set_var("RFDB_DATALOG_V2", v),
-            None => std::env::remove_var("RFDB_DATALOG_V2"),
+            Some(v) => std::env::set_var("RFDB_DERIVE_ENGINE", v),
+            None => std::env::remove_var("RFDB_DERIVE_ENGINE"),
         }
     }
 
     /// Gate E: `ExplainDatalogFact` (why()) returns ONE supporting derivation of a derived fact,
-    /// is v2-only (refused with the kill switch off, I5), and yields a NULL witness for a fact the
+    /// is derive-engine-only (refused with the kill switch off, I5), and yields a NULL witness for a fact the
     /// program cannot derive — a true negative, distinct from an error.
     #[test]
     fn dispatch_explain_datalog_fact_returns_witness_and_gates_off() {
-        let _guard = DATALOG_V2_ENV_LOCK.lock().unwrap();
-        let prev = std::env::var("RFDB_DATALOG_V2").ok();
+        let _guard = DERIVE_ENGINE_ENV_LOCK.lock().unwrap();
+        let prev = std::env::var("RFDB_DERIVE_ENGINE").ok();
 
         // Module `a` (file a.js) imports module `b` (file b.js) → depends(a,b) via depends.dl.
         let mut engine = GraphEngineV2::create_ephemeral();
@@ -7916,13 +7924,13 @@ mod protocol_tests {
         let b = string_to_id("b").to_string();
 
         // ── Kill switch OFF → refused (coded), no v2 why(). ──
-        std::env::set_var("RFDB_DATALOG_V2", "off");
+        std::env::set_var("RFDB_DERIVE_ENGINE", "off");
         let off = dispatch_explain_datalog_fact(&engine, "", "depends", &[a.clone(), b.clone()], cf());
         assert!(off.is_err(), "explain_fact must be refused when the kill switch is off");
-        assert!(off.unwrap_err().contains("v2-only"), "explicit v2-only coded refusal (P3/I5)");
+        assert!(off.unwrap_err().contains("derive-engine-only"), "explicit derive-engine-only coded refusal (P3/I5)");
 
         // ── Kill switch ON → a derivable fact yields a witness (deriving rule + body facts). ──
-        std::env::set_var("RFDB_DATALOG_V2", "on");
+        std::env::set_var("RFDB_DERIVE_ENGINE", "on");
         let witness = dispatch_explain_datalog_fact(&engine, "", "depends", &[a.clone(), b.clone()], cf())
             .expect("explain succeeds under v2")
             .expect("depends(a,b) is derivable → Some witness");
@@ -7940,20 +7948,20 @@ mod protocol_tests {
         assert!(none.is_none(), "depends(b,a) is not derivable (only a→b imports) → null witness");
 
         match prev {
-            Some(v) => std::env::set_var("RFDB_DATALOG_V2", v),
-            None => std::env::remove_var("RFDB_DATALOG_V2"),
+            Some(v) => std::env::set_var("RFDB_DERIVE_ENGINE", v),
+            None => std::env::remove_var("RFDB_DERIVE_ENGINE"),
         }
     }
 
     /// Decision #2 wire: `SimDatalog` (what-if) predicts the NEW facts a hypothetical overlay
-    /// would create — WITHOUT committing — and is v2-only (coded refusal with the switch off).
+    /// would create — WITHOUT committing — and is derive-engine-only (coded refusal with the switch off).
     /// Overlay: a hypothetical MODULE `c` + a hypothetical IMPORTS_FROM b→c over a committed
     /// a→b graph ⇒ predicts depends(b,c) (and ONLY the new fact: depends(a,b) is base, excluded
     /// by sim ∖ base). A follow-up read proves nothing was written.
     #[test]
     fn dispatch_sim_datalog_predicts_new_facts_without_commit_and_gates_off() {
-        let _guard = DATALOG_V2_ENV_LOCK.lock().unwrap();
-        let prev = std::env::var("RFDB_DATALOG_V2").ok();
+        let _guard = DERIVE_ENGINE_ENV_LOCK.lock().unwrap();
+        let prev = std::env::var("RFDB_DERIVE_ENGINE").ok();
 
         let mut engine = GraphEngineV2::create_ephemeral();
         let mk_node = |sid: &str, ty: &str| NodeRecord {
@@ -8000,13 +8008,13 @@ mod protocol_tests {
         }];
 
         // ── Kill switch OFF → refused (coded), no v2 sim. ──
-        std::env::set_var("RFDB_DATALOG_V2", "off");
+        std::env::set_var("RFDB_DERIVE_ENGINE", "off");
         let off = dispatch_sim_datalog(&engine, "", "depends", &hyp_nodes, &hyp_edges, cf());
         assert!(off.is_err(), "sim must be refused when the kill switch is off");
-        assert!(off.unwrap_err().contains("v2-only"), "explicit v2-only coded refusal (I5)");
+        assert!(off.unwrap_err().contains("derive-engine-only"), "explicit derive-engine-only coded refusal (I5)");
 
         // ── Kill switch ON → exactly the NEW fact depends(b,c); base depends(a,b) excluded. ──
-        std::env::set_var("RFDB_DATALOG_V2", "on");
+        std::env::set_var("RFDB_DERIVE_ENGINE", "on");
         let rows = dispatch_sim_datalog(&engine, "", "depends", &hyp_nodes, &hyp_edges, cf())
             .expect("sim succeeds under v2");
         assert_eq!(
@@ -8035,18 +8043,18 @@ mod protocol_tests {
         assert!(err.is_err(), "non-numeric wire id must be a coded input error");
 
         match prev {
-            Some(v) => std::env::set_var("RFDB_DATALOG_V2", v),
-            None => std::env::remove_var("RFDB_DATALOG_V2"),
+            Some(v) => std::env::set_var("RFDB_DERIVE_ENGINE", v),
+            None => std::env::remove_var("RFDB_DERIVE_ENGINE"),
         }
     }
 
     /// Decision #2 wire: `ExplainDatalogGap` (why-not) names the first unsatisfiable premise of
     /// a missing fact, returns NULL for a derivable fact (no gap — the dual of explain_fact),
-    /// and is v2-only (coded refusal with the switch off, I5).
+    /// and is derive-engine-only (coded refusal with the switch off, I5).
     #[test]
     fn dispatch_explain_datalog_gap_names_missing_premise_and_gates_off() {
-        let _guard = DATALOG_V2_ENV_LOCK.lock().unwrap();
-        let prev = std::env::var("RFDB_DATALOG_V2").ok();
+        let _guard = DERIVE_ENGINE_ENV_LOCK.lock().unwrap();
+        let prev = std::env::var("RFDB_DERIVE_ENGINE").ok();
 
         let mut engine = GraphEngineV2::create_ephemeral();
         let mk_node = |sid: &str, ty: &str| NodeRecord {
@@ -8082,14 +8090,14 @@ mod protocol_tests {
         let b = string_to_id("b").to_string();
 
         // ── Kill switch OFF → refused (coded), no v2 why-not. ──
-        std::env::set_var("RFDB_DATALOG_V2", "off");
+        std::env::set_var("RFDB_DERIVE_ENGINE", "off");
         let off = dispatch_explain_datalog_gap(&engine, "", "depends", &[b.clone(), a.clone()], cf());
         assert!(off.is_err(), "explain_gap must be refused when the kill switch is off");
-        assert!(off.unwrap_err().contains("v2-only"), "explicit v2-only coded refusal (I5)");
+        assert!(off.unwrap_err().contains("derive-engine-only"), "explicit derive-engine-only coded refusal (I5)");
 
         // ── Kill switch ON → the missing fact depends(b,a) gets a gap witness naming the
         //    unsatisfiable premise (no IMPORTS_FROM b→a). ──
-        std::env::set_var("RFDB_DATALOG_V2", "on");
+        std::env::set_var("RFDB_DERIVE_ENGINE", "on");
         let gap = dispatch_explain_datalog_gap(&engine, "", "depends", &[b.clone(), a.clone()], cf())
             .expect("explain_gap succeeds under v2")
             .expect("depends(b,a) is not derivable → Some gap witness");
@@ -8103,8 +8111,8 @@ mod protocol_tests {
         assert!(none.is_none(), "depends(a,b) IS derivable → no gap");
 
         match prev {
-            Some(v) => std::env::set_var("RFDB_DATALOG_V2", v),
-            None => std::env::remove_var("RFDB_DATALOG_V2"),
+            Some(v) => std::env::set_var("RFDB_DERIVE_ENGINE", v),
+            None => std::env::remove_var("RFDB_DERIVE_ENGINE"),
         }
     }
 
@@ -8115,8 +8123,8 @@ mod protocol_tests {
     /// derivation that is correct on the `MODULE#` sids the legacy parser drops.
     #[test]
     fn dispatch_materialize_empty_source_runs_bundled_depends() {
-        let _guard = DATALOG_V2_ENV_LOCK.lock().unwrap();
-        let prev = std::env::var("RFDB_DATALOG_V2").ok();
+        let _guard = DERIVE_ENGINE_ENV_LOCK.lock().unwrap();
+        let prev = std::env::var("RFDB_DERIVE_ENGINE").ok();
 
         let mut engine = GraphEngineV2::create_ephemeral();
         let mk_node = |sid: &str, file: &str| NodeRecord {
@@ -8152,7 +8160,7 @@ mod protocol_tests {
         );
         engine.flush().unwrap();
 
-        std::env::set_var("RFDB_DATALOG_V2", "on");
+        std::env::set_var("RFDB_DERIVE_ENGINE", "on");
         let cf = Arc::new(AtomicBool::new(false));
         // Empty source ⇒ bundled stdlib depends.dl.
         let written = dispatch_materialize_datalog(&mut engine, "", cf)
@@ -8163,22 +8171,22 @@ mod protocol_tests {
         );
 
         match prev {
-            Some(v) => std::env::set_var("RFDB_DATALOG_V2", v),
-            None => std::env::remove_var("RFDB_DATALOG_V2"),
+            Some(v) => std::env::set_var("RFDB_DERIVE_ENGINE", v),
+            None => std::env::remove_var("RFDB_DERIVE_ENGINE"),
         }
     }
 
     /// End-to-end: the dispatch helper routes non-explain requests through v2 storage by
     /// DEFAULT (Final #12) and through v1 under the off-switch — and `explain` is served
-    /// (by the v1 engine, the deliberate documented routing) under EVERY switch state,
+    /// (by the query engine, the deliberate documented routing) under EVERY switch state,
     /// because with v2 the default an explain refusal would break the product explain
     /// surface. A real orphan-FUNCTION program is run against a flushed ephemeral
-    /// GraphEngineV2 so the v2 path genuinely evaluates over real storage_v2, not the
+    /// GraphEngineV2 so the derive path genuinely evaluates over real storage_v2, not the
     /// in-memory fixture.
     #[test]
-    fn datalog_v2_router_selects_engine_path() {
-        let _guard = DATALOG_V2_ENV_LOCK.lock().unwrap();
-        let prev = std::env::var("RFDB_DATALOG_V2").ok();
+    fn derive_router_selects_engine_path() {
+        let _guard = DERIVE_ENGINE_ENV_LOCK.lock().unwrap();
+        let prev = std::env::var("RFDB_DERIVE_ENGINE").ok();
 
         // Build a real ephemeral v2 engine: one CLASS contains fnA; fnB is orphaned.
         let mut engine = GraphEngineV2::create_ephemeral();
@@ -8218,8 +8226,8 @@ mod protocol_tests {
         let cf = || Arc::new(AtomicBool::new(false));
         let src = r#"violation(X) :- node(X, "FUNCTION"), \+ edge(_, X, "CONTAINS")."#;
 
-        // ── DEFAULT (unset) → the v2 engine serves non-explain requests. ──
-        std::env::remove_var("RFDB_DATALOG_V2");
+        // ── DEFAULT (unset) → the derive engine serves non-explain requests. ──
+        std::env::remove_var("RFDB_DERIVE_ENGINE");
 
         // The v2 fixpoint runs over real storage and flags exactly the orphan
         // FUNCTION (fnB) over the PUBLISHED snapshot.
@@ -8238,19 +8246,19 @@ mod protocol_tests {
             other => panic!("expected v2 Violations, got error/explain: {:?}", other.err()),
         }
 
-        // Explain under the default is ACCEPTED and served by the v1 engine — the
+        // Explain under the default is ACCEPTED and served by the query engine — the
         // deliberate documented routing (the v2 explain recording→wire mapping is a
         // deferred gate; refusing would break MCP explain on a default server).
         match dispatch_check_guarantee(&engine, src, true, cf()) {
             Ok(DatalogResponse::Explain(_)) => {}
             other => panic!(
-                "explain must be served (v1 engine) under the v2 default, got {:?}",
+                "explain must be served (query engine) under the derive default, got {:?}",
                 other.err()
             ),
         }
 
         // ── Off-switch → everything routes through v1, explain included. ──
-        std::env::set_var("RFDB_DATALOG_V2", "off");
+        std::env::set_var("RFDB_DERIVE_ENGINE", "off");
         match dispatch_check_guarantee(&engine, src, false, cf()) {
             Ok(DatalogResponse::Violations(violations)) => {
                 let ids: Vec<String> = violations
@@ -8274,8 +8282,8 @@ mod protocol_tests {
         }
 
         match prev {
-            Some(v) => std::env::set_var("RFDB_DATALOG_V2", v),
-            None => std::env::remove_var("RFDB_DATALOG_V2"),
+            Some(v) => std::env::set_var("RFDB_DERIVE_ENGINE", v),
+            None => std::env::remove_var("RFDB_DERIVE_ENGINE"),
         }
     }
 }

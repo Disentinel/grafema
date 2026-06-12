@@ -745,22 +745,22 @@ impl RfdbClient {
         Ok(resp.results.unwrap_or_default())
     }
 
-    /// Whether the connected server advertised the v2 `@materialize` write-back capability
-    /// (the `datalogV2Materialize` feature, set when the server's `RFDB_DATALOG_V2` kill
+    /// Whether the connected server advertised the derive `@materialize` write-back capability
+    /// (the `datalogDerive` feature, set when the server's `RFDB_DERIVE_ENGINE` kill
     /// switch is on). Since Wave 6 this capability is a hard REQUIREMENT for analyze
-    /// (`require_datalog_v2_capability` fails fast without it): the datalog2 rule packs
+    /// (`require_derive_capability` fails fast without it): the derive rule packs
     /// are the only producer of the resolved slices — the legacy resolve steps and the
     /// in-orchestrator P3 DEPENDS_ON fallback were deleted. The server is the single
     /// source of truth (a duplicated env read here could disagree with the server's
     /// actual backend).
-    pub fn supports_datalog_v2_materialize(&self) -> bool {
-        self.features.iter().any(|f| f == "datalogV2Materialize")
+    pub fn supports_derive_materialize(&self) -> bool {
+        self.features.iter().any(|f| f == "datalogDerive")
     }
 
-    /// Run a Datalog v2 program carrying `@materialize` on the server, committing the
+    /// Run a derive engine program carrying `@materialize` on the server, committing the
     /// materialized edges (e.g. stdlib `depends.dl` → DEPENDS_ON) in one atomic generation.
     /// Returns the number of edges written. The server refuses (coded error) when its kill
-    /// switch is off, so only call this after [`Self::supports_datalog_v2_materialize`].
+    /// switch is off, so only call this after [`Self::supports_derive_materialize`].
     pub async fn materialize_datalog(&mut self, source: &str) -> Result<u32> {
         let params = serde_json::json!({ "source": source });
         let resp = self.send_command("materializeDatalog", params).await?;

@@ -242,7 +242,7 @@ describe('traceEffects', () => {
       assert.deepEqual(result.leaf_sources[0].effects, ['PURE']);
     });
 
-    // Pins the datalog2 js_runtime_globals_nodes pack contract (Wave 4 DELTA 1):
+    // Pins the derive js_runtime_globals_nodes pack contract (Wave 4 DELTA 1):
     // @materialize_node meta() projects string surfaces, so pack-minted
     // GLOBAL_DEFINITION nodes carry effects as a comma-joined STRING, not the
     // legacy JSON array. trace_effects must read leaf effects from that shape.

@@ -20,7 +20,7 @@ pub const MAGIC_V1: [u8; 4] = *b"SGRF";
 
 /// Format version — v2 base columnar format, NO derived (Datalog) columns.
 ///
-/// Segments written before the Datalog v2 Gate B work carry this version.
+/// Segments written before the derive engine Gate B work carry this version.
 /// They MUST remain readable forever; readers detect this version and return
 /// DEFAULT derived fields (see `ProvenanceV2::none`, `TagV2::bool_one`, and the
 /// `tx_created=0` / `tx_invalidated=u64::MAX` defaults).
@@ -420,7 +420,7 @@ pub struct EdgeRecordV2 {
     pub metadata: String,
 }
 
-// ── Derived (Datalog v2 §8.1) Per-Record Fields ───────────────────
+// ── Derived (derive engine §8.1) Per-Record Fields ───────────────────
 
 /// Per-record provenance — spec §8.1 `provenance { rule_ast_hash | plugin_id, generation }`.
 ///

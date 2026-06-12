@@ -70,7 +70,7 @@ fn read_u16_at(data: &[u8], offset: usize) -> u16 {
     u16::from_le_bytes(data[offset..offset + 2].try_into().unwrap())
 }
 
-// ── Derived (Datalog v2 §8.1) Column Reader ───────────────────────
+// ── Derived (derive engine §8.1) Column Reader ───────────────────────
 
 use crate::storage_v2::writer::{PROVENANCE_RECORD_SIZE, TAG_DIR_RECORD_SIZE, TX_RECORD_SIZE};
 
@@ -1288,7 +1288,7 @@ mod tests {
         assert_eq!(seg.get_record(0), node);
     }
 
-    // ── Derived Columns (Datalog v2 §8.1) ─────────────────────────────
+    // ── Derived Columns (derive engine §8.1) ─────────────────────────────
 
     #[test]
     fn test_base_segment_returns_derived_defaults() {

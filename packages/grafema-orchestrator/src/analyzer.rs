@@ -804,7 +804,7 @@ pub fn phase_metrics_to_wire(
 /// the graph facts the datalog packs join on (`js_module_imports` workspace
 /// arms: `attr(W, "name", <npm name>)` × `attr(W, "file", <entry point>)`).
 ///
-/// Conventions (resolve-datalog2-migration-synthesis §4 item 3):
+/// Conventions (resolve-migration synthesis doc §4 item 3):
 /// - `name` = the npm package name (e.g. `"@grafema/util"`);
 /// - `file` = the entry point relative to the project root (the field the
 ///   workspace arms join — and what ties the fact's lifecycle to the entry

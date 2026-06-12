@@ -37,9 +37,9 @@ use crate::error::GraphError;
 /// Reserved [`crate::storage_v2::manifest::Manifest::tags`] key under which a materialization
 /// run persists its binding table as a neutral JSON blob. The manifest `tags` map is an
 /// opaque `String → String` channel (storage_v2 stores it without interpreting it — I10), so
-/// the binding table crosses runs without storage_v2 ever depending on datalog2 types. The
+/// the binding table crosses runs without storage_v2 ever depending on derive types. The
 /// next run loads the blob to diff its predicate set against this one (Gate C increments).
-pub const MANIFEST_TAG_KEY: &str = "datalog2.binding_table";
+pub const MANIFEST_TAG_KEY: &str = "derive.binding_table";
 
 /// What one predicate is bound to: its semiring, its head arity, and the set of normalized
 /// rule-AST hashes (see [`super::materialize::rule_ast_hash`]) of the clauses that derive it.
@@ -323,7 +323,7 @@ impl BindingChange {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::datalog2::parser_ext::parse_ext_program;
+    use crate::derive::parser_ext::parse_ext_program;
     use crate::storage_v2::types::{
         BOOLTAG_SEMIRING_ID, CONFTAG_SEMIRING_ID, COUNTTAG_SEMIRING_ID,
     };

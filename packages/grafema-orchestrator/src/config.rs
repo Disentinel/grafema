@@ -568,7 +568,7 @@ impl AnalyzerConfig {
     /// → `grafema-resolve imports`, `runtime-globals`) when none were
     /// configured. The `imports` CLI command was deleted with the
     /// import-resolution step (the js_module_imports / js_import_bindings
-    /// datalog2 packs own the slice), and the built-in resolve phase runs
+    /// derive packs own the slice), and the built-in resolve phase runs
     /// runtime-globals itself — so an empty plugin list now stays empty.
     /// (The user-plugin runners still filter out these two names, protecting
     /// configs that list them explicitly.)

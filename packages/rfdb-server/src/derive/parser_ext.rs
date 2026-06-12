@@ -1,6 +1,6 @@
 //! Layer 3 — parser extensions for Appendix-A syntax.
 //!
-//! Extends the v1 parser (`crate::datalog::parser`) with the Appendix-A annotation set
+//! Extends the query-engine parser (`crate::datalog::parser`) with the Appendix-A annotation set
 //! (`@tag`, `@materialize`, `@tag_from`, `@lattice`), the `#requires` pragma, the `=>`
 //! lattice head form, and aggregates. Gate A requires at minimum `@materialize` plus
 //! plain (annotation-free) rules, `#requires(engine >= 2)` pragma handling (parse +
@@ -10,13 +10,13 @@
 //!
 //! ## Reuse strategy
 //!
-//! The v1 parser (`crate::datalog::parser`) owns the rule/body/literal/term grammar and
+//! the query-engine parser (`crate::datalog::parser`) owns the rule/body/literal/term grammar and
 //! is shared verbatim — this layer never re-implements it. parser_ext is a *preprocessor
 //! + framing* layer: it splits a `.dl` file into pragmas, per-item annotation blocks, and
-//! rule clauses (clause boundaries are the `.` terminators that v1 already understands),
+//! rule clauses (clause boundaries are the `.` terminators that the query-engine grammar already understands),
 //! delegates each rule clause to `crate::datalog::parser::parse_rule`, and attaches the
 //! parsed annotations + pragmas to an [`Item`]/[`ExtProgram`]. Multi-clause rules fall out
-//! naturally: each clause is a separate [`Rule`] (v1 already groups by head predicate via
+//! naturally: each clause is a separate [`Rule`] (the query engine already groups by head predicate via
 //! `Program::rules_for`), and the engine's executor unions the bodies.
 //!
 //! ## Gate A coverage vs. deferral
@@ -35,7 +35,7 @@
 //!   fully functional while not silently dropping forward-looking annotations.
 //! - `=>` lattice head (`head(Terms => Var)`) — **parsed**: the lattice payload variable
 //!   is split off the head and recorded on the [`Item`]; the residual head (without the
-//!   `=> Var`) is handed to the v1 rule parser. Lattice *evaluation* is Gate C.
+//!   `=> Var`) is handed to the query-engine rule parser. Lattice *evaluation* is Gate C.
 //! - Aggregates (`Var = agg { ... }`) — **detected and rejected** at Gate A with
 //!   `E-AGG-001` (aggregation is a Gate C executor feature). They are recognized so the
 //!   rejection is explicit (I5), never a confusing downstream parse error.
@@ -53,7 +53,7 @@ pub const ENGINE_VERSION: u64 = 2;
 /// Codes never change meaning once shipped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ErrorCode {
-    /// Malformed item/rule syntax that the v1 grammar could not parse.
+    /// Malformed item/rule syntax that the query-engine grammar could not parse.
     Parse,
     /// `#requires` pragma is syntactically malformed (bad key/comparator/value).
     PragmaSyntax,
@@ -109,7 +109,7 @@ impl ExtParseError {
         }
     }
 
-    /// Adapt a v1 parse error into a coded v2 error (`E-PARSE-001`), preserving its
+    /// Adapt a query-engine parse error into a coded derive error (`E-PARSE-001`), preserving its
     /// position (offset-shifted by the clause's start in the source) and message.
     fn from_v1(err: &V1ParseError, base: usize) -> Self {
         ExtParseError {
@@ -216,23 +216,23 @@ pub enum Annotation {
 ///
 /// One [`Item`] is one rule *clause*. Multi-clause rules (same head predicate, multiple
 /// bodies) yield multiple `Item`s — there is no merging at parse time; the engine groups
-/// by head predicate downstream (as v1 `Program::rules_for` already does).
+/// by head predicate downstream (as the query engine's `Program::rules_for` already does).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Item {
     /// Annotations preceding this rule (in source order). Empty for plain rules.
     pub annotations: Vec<Annotation>,
-    /// The rule itself, parsed by the shared v1 grammar.
+    /// The rule itself, parsed by the shared query-engine grammar.
     pub rule: Rule,
-    /// The `=> Var` lattice payload variable, if the head used the `=>` form. The v1
+    /// The `=> Var` lattice payload variable, if the head used the `=>` form. The query-engine
     /// `rule` carries the head *without* the payload column; lattice evaluation (Gate C)
     /// reads this field. `None` for ordinary heads.
     pub lattice_payload: Option<String>,
 }
 
-/// A parsed v2 program: pragmas + annotated rule items.
+/// A parsed derive program: pragmas + annotated rule items.
 ///
 /// This is the parser_ext output that the stratifier (Layer 4) consumes. The `rules`
-/// accessor projects the bare v1 [`Rule`]s for code paths that only need the logic
+/// accessor projects the bare query-engine [`Rule`]s for code paths that only need the logic
 /// program (executor, safety checks) without the annotation metadata.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExtProgram {
@@ -243,7 +243,7 @@ pub struct ExtProgram {
 }
 
 impl ExtProgram {
-    /// Borrow the bare v1 rules (drops annotations/pragmas). The executor and safety
+    /// Borrow the bare query-engine rules (drops annotations/pragmas). The executor and safety
     /// checks consume this; stratification consumes the full `items`/`requires`.
     pub fn rules(&self) -> Vec<&Rule> {
         self.items.iter().map(|it| &it.rule).collect()
@@ -252,7 +252,7 @@ impl ExtProgram {
 
 // ============================================================================
 // Lexical helpers — a thin tokenizer over the source that frames items but
-// defers the rule grammar itself to the v1 parser.
+// defers the rule grammar itself to the query-engine parser.
 // ============================================================================
 
 /// Cursor over the source used to frame pragmas, annotations, and rule clauses.
@@ -275,7 +275,7 @@ impl<'a> Framer<'a> {
         &self.input[self.pos..]
     }
 
-    /// Skip whitespace and `%`-to-end-of-line comments (matching v1 comment syntax).
+    /// Skip whitespace and `%`-to-end-of-line comments (matching the query-engine comment syntax).
     fn skip_trivia(&mut self) {
         loop {
             // Whitespace.
@@ -723,11 +723,11 @@ fn parse_materialize_payload(
 /// Detect an aggregate body literal (`Var = agg { ... }`) in a clause's body text.
 ///
 /// Aggregation is a Gate C executor feature. Gate A *recognizes* it so the rejection is
-/// explicit (I5) with `E-AGG-001` rather than surfacing as a confusing v1 parse error on
-/// the `{`/`}` tokens (which the v1 grammar does not understand).
+/// explicit (I5) with `E-AGG-001` rather than surfacing as a confusing query-engine parse error on
+/// the `{`/`}` tokens (which the query-engine grammar does not understand).
 fn clause_has_aggregate(clause: &str) -> bool {
     // An aggregate appears as `<var> = (count|sum|min|max) {`. The `{` is the reliable
-    // marker: the v1 grammar has no other use for braces.
+    // marker: the query-engine grammar has no other use for braces.
     let bytes = clause.as_bytes();
     let mut in_string = false;
     let mut i = 0;
@@ -745,7 +745,7 @@ fn clause_has_aggregate(clause: &str) -> bool {
 /// Split a `=>` lattice head off a clause.
 ///
 /// Given a clause whose head uses `head(Terms => Var)`, returns the residual clause with
-/// the `=> Var` removed (so v1 can parse the ordinary head) and the payload variable.
+/// the `=> Var` removed (so the query-engine grammar can parse the ordinary head) and the payload variable.
 /// Returns `None` if there is no top-level `=>` in the head. `=>` may only appear in the
 /// head, before `:-`; a `=>` after `:-` (in the body) is malformed → `E-ANNOT-002`.
 fn split_lattice_head(clause: &str, base: usize) -> Result<(String, Option<String>), ExtParseError> {
@@ -831,7 +831,7 @@ fn find_top_level_arrow(s: &str) -> Option<usize> {
 }
 
 /// A token is a Datalog variable iff it starts with an uppercase letter or `_` followed
-/// by an alphanumeric (matching v1 term lexing), and is otherwise alphanumeric/`_`.
+/// by an alphanumeric (matching query-engine term lexing), and is otherwise alphanumeric/`_`.
 fn is_variable(tok: &str) -> bool {
     let mut chars = tok.chars();
     match chars.next() {
@@ -848,7 +848,7 @@ fn is_variable(tok: &str) -> bool {
 /// Parse a complete Appendix-A `.dl` program: pragmas, then annotated rule items.
 ///
 /// Steps over the source framing pragmas (`#requires`), annotation blocks (`@...`), and
-/// rule clauses (terminated by `.`). Each rule clause is parsed by the shared v1 grammar.
+/// rule clauses (terminated by `.`). Each rule clause is parsed by the shared query-engine grammar.
 /// Returns an [`ExtProgram`]; any rejection carries a stable [`ErrorCode`] (I5).
 pub fn parse_ext_program(input: &str) -> Result<ExtProgram, ExtParseError> {
     let mut framer = Framer::new(input);
@@ -999,9 +999,9 @@ mod tests {
     #[test]
     fn attr_rule_with_gt_builtin_parses() {
         // call-with-args-has-passes-argument: attr + gt builtin + negation.
-        // The shared v1 term grammar lexes constants as quoted strings; the comparison
+        // The shared query-engine term grammar lexes constants as quoted strings; the comparison
         // threshold round-trips as a `Const`. (Bare numeric literals like `gt(A, 0)` are
-        // a v1-grammar gap — see `bare_numeric_term_is_a_v1_grammar_gap` below.)
+        // a query-grammar gap — see `bare_numeric_term_is_a_query_grammar_gap` below.)
         let src = r#"violation(X) :- node(X, "CALL"),
             edge(X, _, "CALLS"),
             attr(X, "argCount", A),
@@ -1219,7 +1219,7 @@ mod tests {
         let prog = parse_ext_program(src).expect("parse");
         let item = &prog.items[0];
         assert_eq!(item.lattice_payload.as_deref(), Some("T"));
-        // The residual head handed to v1 has arity 1 (X), payload split off.
+        // The residual head handed to the query-engine grammar has arity 1 (X), payload split off.
         assert_eq!(item.rule.head().predicate(), "var_type");
         assert_eq!(item.rule.head().arity(), 1);
         assert!(matches!(&item.annotations[0], Annotation::Lattice(_)));

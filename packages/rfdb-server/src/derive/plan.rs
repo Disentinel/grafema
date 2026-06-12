@@ -1,10 +1,10 @@
 //! Layer 6 — query planner.
 //!
-//! Reorders rule literals for bound-first feasibility (ported from v1
+//! Reorders rule literals for bound-first feasibility (ported from the query engine's
 //! `crate::datalog::utils::reorder_literals`), applies a greedy cost ordering from
-//! `StorageView` [`Stats`](crate::datalog2::builtin::Stats), and picks the join kind per
+//! `StorageView` [`Stats`](crate::derive::builtin::Stats), and picks the join kind per
 //! leg (hash join on Δ for recursive/derived legs, merge join on Total/EDB legs over the
-//! sorted runs the [`StorageView`](crate::datalog2::storage_glue::StorageView) exposes).
+//! sorted runs the [`StorageView`](crate::derive::storage_glue::StorageView) exposes).
 //! Enforces the §3 planning guards (`E-PLAN-003`) including the cross-join-body and
 //! per-rule materialization-estimate rejections, and surfaces the builtin mode check
 //! (`E-PLAN-001`) that the registry raises for an unsatisfiable binding pattern.
@@ -21,7 +21,7 @@
 //!
 //! Cost is a coarse, monotone estimate (spec §7). A base/EDB leg with a bound key column is
 //! a narrowed scan (cheap); an unbound generator is a full relation scan (its per-type/per-
-//! endpoint magnitude from the [`Stats`](crate::datalog2::builtin::Stats) cardinality oracle).
+//! endpoint magnitude from the [`Stats`](crate::derive::builtin::Stats) cardinality oracle).
 //! Both literal ordering (`ordering_estimate`) and the per-rule size guard (`leg_estimate`)
 //! score legs through the shared `base_estimate`/`derived_estimate` helpers, so the order the
 //! executor runs and the guard's product are computed from identical cardinality math. The
@@ -51,7 +51,7 @@ pub const MAX_MATERIALIZED_FACTS: u64 = 10_000_000;
 pub enum PlanCode {
     /// A builtin literal's actual binding pattern is supported by no registered mode; the
     /// named argument positions must be bound first. Mirrors
-    /// [`BuiltinCode::UnsupportedMode`](crate::datalog2::builtin::BuiltinCode). Spec §7.
+    /// [`BuiltinCode::UnsupportedMode`](crate::derive::builtin::BuiltinCode). Spec §7.
     UnsupportedMode,
     /// A §3 guard rejection: either the body contains a cross-join (a positive literal that
     /// shares no variable with the bindings accumulated so far), or the per-rule output
@@ -112,7 +112,7 @@ pub enum LegSource {
     /// `incoming`/`attr`). Extensional: served over a sorted run (merge-join leg) or a
     /// typed scan (generator).
     Base(String),
-    /// A builtin filter/function shared with v1 (`neq`/`gt`/`starts_with`/…). Consumes the
+    /// A builtin filter/function shared with the query engine (`neq`/`gt`/`starts_with`/…). Consumes the
     /// current row; never a join leg.
     Builtin(String),
     /// A derived predicate (a rule head). `recursive` is `true` when it sits in the SAME
@@ -126,7 +126,7 @@ pub enum LegSource {
 pub enum JoinKind {
     /// Hash join with the build side on Δ (recursive/derived legs in the same stratum).
     HashOnDelta,
-    /// Merge join over a [`StorageView`](crate::datalog2::storage_glue::StorageView) sorted
+    /// Merge join over a [`StorageView`](crate::derive::storage_glue::StorageView) sorted
     /// run (Total / EDB legs: base relations and frozen lower strata).
     MergeOnTotal,
     /// No join: a filter/function builtin that prunes or binds within the current row.
@@ -381,7 +381,7 @@ fn plan_rule_with(
 
 // ── Literal ordering: bound-first feasibility + greedy cost ────────
 
-/// Order body literals bound-first (ported from v1 `reorder_literals`) and break ties by a
+/// Order body literals bound-first (ported from the query engine's `reorder_literals`) and break ties by a
 /// cardinality-aware estimate. At each step the candidates are the literals whose binding
 /// requirements are already satisfied (bound-first feasibility gates candidacy); among them
 /// the leg with the lowest estimated cardinality under the current bindings is placed first,
@@ -390,7 +390,7 @@ fn plan_rule_with(
 /// longer cardinality-blind. Reordering is order-independent (I1): it changes only the join
 /// ORDER, never WHICH facts the rule derives.
 ///
-/// Returns `E-PLAN-002` if no candidate can be placed (circular feasibility) — the v1
+/// Returns `E-PLAN-002` if no candidate can be placed (circular feasibility) — the query
 /// engine's "circular dependency" rejection, surfaced with a stable code (I5).
 fn order_literals(body: &[Literal], head: &str, stats: &Stats) -> PlanResult<Vec<Literal>> {
     let mut bound: HashSet<String> = HashSet::new();
@@ -536,11 +536,11 @@ fn ordering_estimate(lit: &Literal, bound: &HashSet<String>, stats: &Stats) -> u
     }
 }
 
-// ── Feasibility (ported from v1 utils.rs) ──────────────────────────
+// ── Feasibility (ported from the query engine's utils.rs) ──────────────────────────
 
 /// Whether a literal can be placed given the current bound set, and which new variables it
 /// provides if placed. Ported from `crate::datalog::utils::literal_can_place_and_provides`
-/// and specialized to the v2 builtin set; unknown predicates are derived heads (always
+/// and specialized to the derive builtin set; unknown predicates are derived heads (always
 /// placeable, provide their free args via the rule's projection).
 fn can_place_and_provides(lit: &Literal, bound: &HashSet<String>) -> (bool, HashSet<String>) {
     match lit {
@@ -573,13 +573,13 @@ fn positive_can_place_and_provides(
             let name_ok = is_bound_or_const(&args[1], bound);
             let value_ok = is_bound_or_const(&args[2], bound);
             // `attr` has two placeable shapes, both backed by storage_v2's snapshot-pinned
-            // attr index (parity with v1's `attr_to_query` + `find_by_attr`):
+            // attr index (parity with the query engine's `attr_to_query` + `find_by_attr`):
             //   • column reader/filter  — id bound, key bound: matches ATTR_MODES
             //     [B,B,F]/[B,B,B] and reads the bound node's column (eval_attr point lookup).
             //   • value generator       — id FREE, key AND value bound: matches
             //     ATTR_MODES [F,B,B] and produces the ids whose attr key == value via
             //     `nodes_by_attr` (the index reverse-lookup). This is what lets a rule write
-            //     `attr(X, "name", "switch")` with X unbound (v1 ran it; Gate A had scoped it
+            //     `attr(X, "name", "switch")` with X unbound (the query engine ran it; Gate A had scoped it
             //     out, an E-PLAN-001 capability gap now closed).
             if id_ok && name_ok {
                 // Reader/filter: binds the value position if it is free.
@@ -678,7 +678,7 @@ fn provided_vars(atom: &Atom, bound: &HashSet<String>) -> HashSet<String> {
 /// Base relations served directly from storage (extensional). Mirrors the stratifier.
 const BASE_RELATIONS: &[&str] = &["node", "type", "edge", "incoming", "attr"];
 
-/// Builtin filters/functions shared with v1 that consume the current row (never join legs,
+/// Builtin filters/functions shared with the query engine that consume the current row (never join legs,
 /// never introduce new tuples). `path`/`parent_function`/`resolved_import` bind from
 /// already-bound inputs and so are functions, not tuple-introducing generators.
 fn is_filter_or_function(pred: &str) -> bool {
@@ -728,7 +728,7 @@ fn classify(pred: &str, strat: &Stratification, head_stratum: Option<usize>) -> 
     if BASE_RELATIONS.contains(&pred) {
         return LegSource::Base(pred.to_string());
     }
-    // Anything else that reaches the planner is a builtin (the v1-shared filter/function
+    // Anything else that reaches the planner is a builtin (the query-engine-shared filter/function
     // set). `node`/`edge` are base; comparisons and string ops are builtins.
     LegSource::Builtin(pred.to_string())
 }
@@ -752,11 +752,11 @@ fn pick_join(source: &LegSource, _pattern: &[ArgMode]) -> JoinKind {
 
 /// Run the registry mode check for a builtin leg, mapping its `E-PLAN-001` to a
 /// [`PlanError`] (the registry already names the required argument positions). Predicates
-/// not present in the v2 registry (v1-shared functions like `path`) are accepted: their
-/// modes live in the v1 engine and are not gate-A planner-checked.
+/// not present in the derive registry (query-engine-shared functions like `path`) are accepted: their
+/// modes live in the query engine and are not gate-A planner-checked.
 fn check_builtin_mode(name: &str, pattern: &[ArgMode], head: &str) -> PlanResult<()> {
     let Some(def) = builtin::lookup(name) else {
-        // Not a v2-registered builtin; nothing to mode-check here.
+        // Not a derive-registered builtin; nothing to mode-check here.
         return Ok(());
     };
     // Build an ArgSpec pattern from the bind modes. `check_mode` only inspects the modes,
@@ -775,8 +775,8 @@ fn check_builtin_mode(name: &str, pattern: &[ArgMode], head: &str) -> PlanResult
     }
 }
 
-/// Synthesize an [`ArgSpec`](crate::datalog2::builtin::ArgSpec) carrying only the bind
-/// pattern, for [`BuiltinDef::check_mode`](crate::datalog2::builtin::BuiltinDef::check_mode).
+/// Synthesize an [`ArgSpec`](crate::derive::builtin::ArgSpec) carrying only the bind
+/// pattern, for [`BuiltinDef::check_mode`](crate::derive::builtin::BuiltinDef::check_mode).
 fn synth_arg_spec(pattern: &[ArgMode]) -> builtin::ArgSpec {
     use builtin::ArgValue;
     use crate::datalog::Value;
@@ -1054,8 +1054,8 @@ fn free_vars(args: &[Term], bound: &HashSet<String>) -> HashSet<String> {
 mod tests {
     use super::*;
     use crate::datalog::{Atom, Literal, Rule, Term};
-    use crate::datalog2::stratify::stratify;
-    use crate::datalog2::parser_ext::parse_ext_program;
+    use crate::derive::stratify::stratify;
+    use crate::derive::parser_ext::parse_ext_program;
 
     fn stats(nodes: u64, edges: u64) -> Stats {
         Stats {
@@ -1211,8 +1211,8 @@ mod tests {
 
     #[test]
     fn rejects_unsatisfiable_builtin_mode() {
-        // h(X, T) :- node(X, T).  The v1 feasibility rule places `node` freely (it can
-        // generate both columns), but the v2 registry's NODE_MODES support only
+        // h(X, T) :- node(X, T).  The query-engine feasibility rule places `node` freely (it can
+        // generate both columns), but the derive registry's NODE_MODES support only
         // (Free,Bound)/(Bound,Bound)/(Bound,Free) — never (Free,Free): there is no sorted
         // run that enumerates every (id, type) pair without a bound key. The ordering
         // succeeds; the builtin mode check is the gate that rejects it → E-PLAN-001.
@@ -1369,7 +1369,7 @@ mod tests {
     ///
     /// Here: only 50 edges, but 50M nodes → the recursive `reach` leg is mis-sized at ~50M and
     /// the rule trips the 10M guard. The cycle/closure LOGIC is correct (proven in
-    /// `datalog2::smoke`); this is purely the estimate.
+    /// `derive::smoke`); this is purely the estimate.
     ///
     /// **When task #4 is fixed** (thread per-predicate cardinality, stratum-bottom-up, into
     /// `derived_estimate`; for the recursive self-leg use the base-case estimate), this rule will

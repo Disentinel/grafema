@@ -875,7 +875,7 @@ export class RFDBServerBackend {
   /**
    * why()/explain_fact: explain ONE supporting derivation of `predicate(key)` under a v2 program
    * (empty `source` ⇒ the bundled depends.dl). Resolves to `null` when the fact is not derivable.
-   * v2-only — rejects when RFDB_DATALOG_V2 is off.
+   * derive-engine-only — rejects when RFDB_DERIVE_ENGINE is off.
    */
   async explainDatalogFact(source: string, predicate: string, key: string[]): Promise<FactWitness | null> {
     if (!this.client) throw new Error('Not connected');

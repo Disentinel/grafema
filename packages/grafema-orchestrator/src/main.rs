@@ -53,7 +53,7 @@ use std::path::PathBuf;
 /// with legacy import-resolution gated, the IMPORT-level edges depends
 /// consumes are produced by the packs above it (it ran separately FIRST while
 /// the legacy resolver pre-committed them). The server-side registry
-/// (`rfdb-server/src/datalog2/stdlib.rs` STDLIB_PACKS) documents the same
+/// (`rfdb-server/src/derive/stdlib.rs` STDLIB_PACKS) documents the same
 /// order — the two are pinned against each other by
 /// `tests::stdlib_rule_packs_match_rfdb_registry_order` below.
 const STDLIB_RULE_PACKS: &[&str] = &[
@@ -296,8 +296,8 @@ fn resolve_jobs_notice(flag: &str, requested: Option<usize>) -> Option<String> {
 }
 
 /// Language keys accepted by `GRAFEMA_SKIP_RESOLVERS` (per-language native
-/// resolve skip-flags for the resolve→datalog2 differential harness,
-/// `_ai/research/resolve-datalog2-migration-synthesis.md` Wave 0).
+/// resolve skip-flags for the resolve→derive differential harness,
+/// the resolve-migration synthesis doc in `_ai/research/`, Wave 0).
 const SKIP_RESOLVER_KEYS: [&str; 11] = [
     "js", "rust", "haskell", "beam", "java", "kotlin", "python", "go", "cpp", "swift", "objc",
 ];
@@ -326,7 +326,7 @@ fn parse_skip_resolvers(raw: &str) -> std::collections::HashSet<String> {
 
 /// Whether the native resolve phase for `lang_key` is disabled via the
 /// `GRAFEMA_SKIP_RESOLVERS` env var (comma-separated keys, see
-/// [`SKIP_RESOLVER_KEYS`]). Used by the datalog2 differential harness to run
+/// [`SKIP_RESOLVER_KEYS`]). Used by the derive differential harness to run
 /// analyze WITHOUT a native resolver so a Datalog pack produces the edges
 /// instead. Unset / empty = never skip (no behavior change).
 ///
@@ -462,7 +462,7 @@ async fn build_file_to_module_map(rfdb: &mut rfdb::RfdbClient) -> HashMap<String
 ///
 /// Wave 6 dissolved the retired-step merging that used to live here
 /// (`RETIRED_FIRST_PASS_STEPS` / `RETIRED_SECOND_PASS_STEPS`): the
-/// datalog2-replaced legacy steps were DELETED from the resolver daemons, not
+/// derive-replaced legacy steps were DELETED from the resolver daemons, not
 /// gated, so there is nothing left to retire. Every step the daemons still
 /// serve is live native code with no pack replacement (js: `runtime-globals`,
 /// the REFERENCE→RESOLVES_TO arm; rust: `rust-cross-methods` — dyn-dispatch +
@@ -488,23 +488,23 @@ fn skip_steps_env_value(skips: &HashSet<String>) -> String {
 }
 
 /// Wave 6 fail-fast gate: `analyze` requires the connected server to run the
-/// datalog2 pack phase (`datalogV2Materialize` in the Hello features). The
+/// derive pack phase (`datalogDerive` in the Hello features). The
 /// legacy js/rust resolve steps and the in-orchestrator P3 DEPENDS_ON fallback
-/// were DELETED — on a non-v2 server nothing is left to produce the resolved
+/// were DELETED — on a server without the derive engine nothing is left to produce the resolved
 /// slices, so the only correct behavior is a clear, actionable refusal.
-fn require_datalog_v2_capability(
+fn require_derive_capability(
     rfdb: &rfdb::RfdbClient,
     socket_path: &std::path::Path,
 ) -> Result<()> {
-    if rfdb.supports_datalog_v2_materialize() {
+    if rfdb.supports_derive_materialize() {
         return Ok(());
     }
     anyhow::bail!(
-        "rfdb-server at {} does not support datalog v2 materialize \
-         (no `datalogV2Materialize` capability in Hello; server version: {}); \
+        "rfdb-server at {} does not support derive engine materialize \
+         (no `datalogDerive` capability in Hello; server version: {}); \
          analyze requires it — the legacy resolve fallback was removed. \
          Upgrade the rfdb-server binary, and make sure its environment \
-         does not set RFDB_DATALOG_V2=off",
+         does not set RFDB_DERIVE_ENGINE=off",
         socket_path.display(),
         if rfdb.server_version.is_empty() { "unknown" } else { &rfdb.server_version },
     )
@@ -547,7 +547,7 @@ fn pack_owned_slice(pack: &str) -> &'static str {
 /// slice it owns (now missing), and the error. Pure for testability.
 fn pack_failure_summary(failures: &[(String, String)]) -> String {
     let mut out = String::from(
-        "rule-pack phase FAILED — the datalog2 packs are the ONLY producer of their \
+        "rule-pack phase FAILED — the derive packs are the ONLY producer of their \
          slices (the legacy resolve pipeline was removed); the graph is missing:\n",
     );
     for (pack, err) in failures {
@@ -593,7 +593,7 @@ async fn run_stdlib_rule_packs(
                     tracing::info!(
                         edges = pack_edges,
                         from_imports = imports_from_hint,
-                        "DEPENDS_ON derived by RFDB Datalog v2 @materialize"
+                        "DEPENDS_ON derived by RFDB derive engine @materialize"
                     );
                     if let Some(p) = prof {
                         p.event("depends_on_complete_v2", &[("edges", &pack_edges.to_string())]);
@@ -755,12 +755,12 @@ async fn main() -> Result<()> {
                 .await
                 .with_context(|| format!("Failed to connect to RFDB at {}", socket_path.display()))?;
 
-            // Wave 6: analyze REQUIRES the server-side datalog2 pack phase. The
+            // Wave 6: analyze REQUIRES the server-side derive pack phase. The
             // legacy resolve steps and the in-orchestrator P3 DEPENDS_ON fallback
             // were deleted — on a server without the capability there is nothing
             // left that could produce the resolved slices, so fail fast and loud
             // instead of silently shipping an unresolved graph.
-            require_datalog_v2_capability(&rfdb, &socket_path)?;
+            require_derive_capability(&rfdb, &socket_path)?;
 
             let db_name = "default";
             rfdb.create_database(db_name, false).await?;
@@ -1371,7 +1371,7 @@ async fn main() -> Result<()> {
             let file_to_module = build_file_to_module_map(&mut rfdb).await;
 
             // Resolve-step gating: GRAFEMA_SKIP_RESOLVE_STEPS gates the REMAINING
-            // native steps (the datalog2-replaced ones were deleted in Wave 6) — js
+            // native steps (the derive-replaced ones were deleted in Wave 6) — js
             // daemon steps via the pinned child env below, rust steps by never
             // sending the command (8b). See `resolve_step_skips`.
             let resolve_skips = resolve_step_skips(
@@ -2305,9 +2305,9 @@ async fn main() -> Result<()> {
                 .await
                 .with_context(|| format!("Failed to connect to RFDB at {}", socket_path.display()))?;
 
-            // Wave 6: resolve-only passes need the datalog2 pack phase too —
+            // Wave 6: resolve-only passes need the derive pack phase too —
             // the packs are the only producer of the resolved slices.
-            require_datalog_v2_capability(&rfdb, &socket_path)?;
+            require_derive_capability(&rfdb, &socket_path)?;
 
             let db_name = "default";
             let open_resp = rfdb.open_database(db_name, "rw").await?;
@@ -3254,7 +3254,7 @@ mod tests {
         assert!(resolve_jobs_notice("--jobs", Some(4)).unwrap().contains("--jobs"));
     }
 
-    /// Wave-0 skip-flags (resolve→datalog2 synthesis): unset/empty env value must
+    /// Wave-0 skip-flags (resolve→derive synthesis): unset/empty env value must
     /// change nothing — no language is skipped.
     #[test]
     fn skip_resolvers_empty_means_no_skip() {
@@ -3293,7 +3293,7 @@ mod tests {
     /// Wave 6: GRAFEMA_SKIP_RESOLVE_STEPS gates exactly what it names among the
     /// REMAINING native steps (whitespace-tolerant, empty segments dropped); with
     /// no env value nothing is skipped — there is no retired-set merging anymore
-    /// (the datalog2-replaced steps were deleted, not gated).
+    /// (the derive-replaced steps were deleted, not gated).
     #[test]
     fn resolve_step_skips_gates_only_what_env_names() {
         assert!(resolve_step_skips(None).is_empty(), "no env → nothing skipped");
@@ -3423,29 +3423,29 @@ mod tests {
     }
 
     /// Wave 6 fail-fast: against a server whose Hello does NOT advertise
-    /// `datalogV2Materialize`, analyze must refuse with an actionable error
-    /// (upgrade the binary / un-set RFDB_DATALOG_V2=off) — there is no legacy
+    /// `datalogDerive`, analyze must refuse with an actionable error
+    /// (upgrade the binary / un-set RFDB_DERIVE_ENGINE=off) — there is no legacy
     /// fallback left to run. With the capability, the gate passes.
     #[tokio::test]
-    async fn analyze_fails_fast_without_datalog_v2_capability() {
+    async fn analyze_fails_fast_without_derive_capability() {
         // No capability → clear, actionable refusal.
         let sock = spawn_fake_rfdb_server(vec!["somethingElse".to_string()], vec![]);
         let client = rfdb::RfdbClient::connect(&sock).await.expect("connect fake server");
-        assert!(!client.supports_datalog_v2_materialize());
-        let err = require_datalog_v2_capability(&client, &sock)
-            .expect_err("gate must refuse a non-v2 server");
+        assert!(!client.supports_derive_materialize());
+        let err = require_derive_capability(&client, &sock)
+            .expect_err("gate must refuse a server without the derive capability");
         let msg = format!("{err:#}");
-        assert!(msg.contains("datalogV2Materialize"), "names the missing capability: {msg}");
+        assert!(msg.contains("datalogDerive"), "names the missing capability: {msg}");
         assert!(msg.contains("Upgrade the rfdb-server binary"), "actionable: {msg}");
-        assert!(msg.contains("RFDB_DATALOG_V2=off"), "names the kill switch: {msg}");
+        assert!(msg.contains("RFDB_DERIVE_ENGINE=off"), "names the kill switch: {msg}");
         assert!(msg.contains("fake-rfdb-test"), "names the server version: {msg}");
         let _ = std::fs::remove_file(&sock);
 
         // With the capability → the gate passes.
-        let sock2 = spawn_fake_rfdb_server(vec!["datalogV2Materialize".to_string()], vec![]);
+        let sock2 = spawn_fake_rfdb_server(vec!["datalogDerive".to_string()], vec![]);
         let client2 = rfdb::RfdbClient::connect(&sock2).await.expect("connect fake server");
-        assert!(client2.supports_datalog_v2_materialize());
-        require_datalog_v2_capability(&client2, &sock2).expect("v2 server passes the gate");
+        assert!(client2.supports_derive_materialize());
+        require_derive_capability(&client2, &sock2).expect("derive-capable server passes the gate");
         let _ = std::fs::remove_file(&sock2);
     }
 
@@ -3457,7 +3457,7 @@ mod tests {
     /// summary too). A fully-green run returns Ok.
     #[tokio::test]
     async fn pack_failure_fails_the_run_with_a_loud_summary() {
-        let features = vec!["datalogV2Materialize".to_string()];
+        let features = vec!["datalogDerive".to_string()];
 
         // Force an EARLY pack and a LATE pack to fail: both must appear in the
         // summary, proving the loop continued past the first failure.
@@ -3495,7 +3495,7 @@ mod tests {
     /// the build; a reorder on either side fails this test).
     #[test]
     fn stdlib_rule_packs_match_rfdb_registry_order() {
-        let registry_src = include_str!("../../rfdb-server/src/datalog2/stdlib.rs");
+        let registry_src = include_str!("../../rfdb-server/src/derive/stdlib.rs");
 
         // Extract pack names, in declaration order, from the const body: entries
         // are lines of the form `("name", NAME_DL),`; `//` comment lines never

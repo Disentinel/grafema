@@ -22,7 +22,7 @@
 /// Sealing trait (I6): only types defined in this crate may implement [`Tag`].
 ///
 /// `Tag` requires `Sealed` as a supertrait, and `Sealed` is itself only
-/// implementable from within `datalog2`, so the set of tags is closed. Adding a
+/// implementable from within `derive`, so the set of tags is closed. Adding a
 /// new tag is a deliberate in-crate extension (spec I16 extension slot), never an
 /// out-of-crate `impl`.
 pub(crate) trait Sealed {}
