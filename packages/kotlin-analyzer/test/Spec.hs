@@ -101,7 +101,7 @@ emptyBlock = BlockStmt [] (mkSpan 3 0 3 2)
 
 mkClassDecl :: Text -> Text -> [Text] -> [KotlinType] -> [KotlinMember] -> KotlinDecl
 mkClassDecl name kind mods supers members = ClassDecl
-  name kind mods [] Nothing supers members [] (mkSpan 1 0 10 1)
+  name kind mods [] Nothing supers [] [] members [] (mkSpan 1 0 10 1)
 
 mkFunDecl :: Text -> [Text] -> [KotlinParam] -> Maybe KotlinType -> Maybe KotlinStmt -> KotlinDecl
 mkFunDecl name mods params retType body = FunDecl
@@ -209,11 +209,88 @@ main = hspec $ do
           containsEdges = findEdgesByType "CONTAINS" fa
       length containsEdges `shouldSatisfy` (> 0)
 
+  -- Declarations: Inheritance metadata stamps (the kotlin_inheritance.dl EDB).
+  -- JSON fixtures use the LIVE kotlin-parser vocabulary (KotlinAstSerializer.kt):
+  -- ClassDecl carries "extends" (wrapped constructor-call entries) and
+  -- "implements" (bare/delegated typerefs); ObjectDecl one mixed "supertypes"
+  -- array; typerefs are tagged "ClassType" with optional "scope"/"typeArgs".
+
+  describe "Declarations.InheritanceMeta" $ do
+    let sp = "{\"start\": {\"line\": 1, \"col\": 0}, \"end\": {\"line\": 1, \"col\": 10}}"
+        ref name = "{\"type\": \"ClassType\", \"name\": \"" ++ name ++ "\", \"span\": " ++ sp ++ "}"
+        callEntry name = "{\"type\": " ++ ref name ++ ", \"args\": [], \"span\": " ++ sp ++ "}"
+        delegEntry name = "{\"type\": " ++ ref name ++ ", \"delegate\": {\"type\": \"NameExpr\", \"name\": \"g\", \"span\": " ++ sp ++ "}, \"span\": " ++ sp ++ "}"
+        classJson name extra =
+          "{\"declarations\": [{\"type\": \"ClassDecl\", \"name\": \"" ++ name
+            ++ "\", \"kind\": \"class\"" ++ extra ++ ", \"span\": " ++ sp ++ "}]}"
+        analyzed json = case parseKotlinFile json of
+          Left err -> error ("Parse failed: " ++ err)
+          Right file -> analyzeText file
+        classNode name fa = case find (\n -> gnType n == "CLASS" && gnName n == name) (faNodes fa) of
+          Nothing -> error ("No CLASS node " ++ show name)
+          Just node -> node
+
+    it "stamps extends for a constructor-call supertype" $ do
+      let fa = analyzed (classJson "Simple" (", \"extends\": [" ++ callEntry "Base" ++ "]"))
+          node = classNode "Simple" fa
+      getMetaText "extends" node `shouldBe` Just "Base"
+      getMetaText "implements_0" node `shouldBe` Nothing
+
+    it "stamps indexed implements for interface supertypes" $ do
+      let fa = analyzed (classJson "Impl" (", \"implements\": [" ++ ref "Greeter" ++ ", " ++ ref "Closer" ++ "]"))
+          node = classNode "Impl" fa
+      getMetaText "extends" node `shouldBe` Nothing
+      getMetaText "implements_0" node `shouldBe` Just "Greeter"
+      getMetaText "implements_1" node `shouldBe` Just "Closer"
+      getMetaText "implements_2" node `shouldBe` Nothing
+
+    it "stamps combined extends + implements" $ do
+      let fa = analyzed (classJson "Multi"
+                 (", \"extends\": [" ++ callEntry "Base" ++ "], \"implements\": ["
+                   ++ ref "Greeter" ++ ", " ++ ref "Closer" ++ "]"))
+          node = classNode "Multi" fa
+      getMetaText "extends" node `shouldBe` Just "Base"
+      getMetaText "implements_0" node `shouldBe` Just "Greeter"
+      getMetaText "implements_1" node `shouldBe` Just "Closer"
+
+    it "strips generic type args and keeps the scope qualifier" $ do
+      -- class GenericSuper : java.util.AbstractList<String>(), Comparable<Simple>
+      let absList = "{\"type\": \"ClassType\", \"name\": \"AbstractList\", \"scope\": \"java.util\", \"typeArgs\": [{\"type\": " ++ ref "String" ++ ", \"span\": " ++ sp ++ "}], \"span\": " ++ sp ++ "}"
+          cmp = "{\"type\": \"ClassType\", \"name\": \"Comparable\", \"typeArgs\": [{\"type\": " ++ ref "Simple" ++ ", \"span\": " ++ sp ++ "}], \"span\": " ++ sp ++ "}"
+          fa = analyzed (classJson "GenericSuper"
+                 (", \"extends\": [{\"type\": " ++ absList ++ ", \"args\": [], \"span\": " ++ sp ++ "}], \"implements\": [" ++ cmp ++ "]"))
+          node = classNode "GenericSuper" fa
+      getMetaText "extends" node `shouldBe` Just "java.util.AbstractList"
+      getMetaText "implements_0" node `shouldBe` Just "Comparable"
+
+    it "stamps nothing for a class without supertypes" $ do
+      let fa = analyzed (classJson "NoSupers" "")
+          node = classNode "NoSupers" fa
+      getMetaText "extends" node `shouldBe` Nothing
+      getMetaText "implements_0" node `shouldBe` Nothing
+
+    it "classifies a delegated supertype entry as implements" $ do
+      -- class Delegated(g: Greeter) : Greeter by g
+      let fa = analyzed (classJson "Delegated" (", \"implements\": [" ++ delegEntry "Greeter" ++ "]"))
+          node = classNode "Delegated" fa
+      getMetaText "extends" node `shouldBe` Nothing
+      getMetaText "implements_0" node `shouldBe` Just "Greeter"
+
+    it "partitions an object's mixed supertypes array by the constructor-call marker" $ do
+      -- object Singleton : Base(9), Greeter
+      let json = "{\"declarations\": [{\"type\": \"ObjectDecl\", \"name\": \"Singleton\", \"supertypes\": ["
+                   ++ callEntry "Base" ++ ", " ++ ref "Greeter" ++ "], \"span\": " ++ sp ++ "}]}"
+          fa = analyzed json
+          node = classNode "Singleton" fa
+      getMetaText "kind" node `shouldBe` Just "object"
+      getMetaText "extends" node `shouldBe` Just "Base"
+      getMetaText "implements_0" node `shouldBe` Just "Greeter"
+
   -- Declarations: Object
 
   describe "Declarations.Object" $ do
     it "emits CLASS node with kind=object and singleton=true" $ do
-      let obj = ObjectDecl "AppConfig" [] [] [] [] (mkSpan 1 0 5 1)
+      let obj = ObjectDecl "AppConfig" [] [] [] [] [] [] (mkSpan 1 0 5 1)
           fa = analyzeText (KotlinFile Nothing [] [obj])
       case findNodeByType "CLASS" fa of
         Nothing -> expectationFailure "No CLASS node"
@@ -343,7 +420,7 @@ main = hspec $ do
 
     it "emits TYPE_PARAMETER nodes with variance" $ do
       let tp = KotlinTypeParam "T" (Just "out") [] False (mkSpan 1 10 1 15)
-          cls = ClassDecl "Box" "class" [] [tp] Nothing [] [] [] (mkSpan 1 0 5 1)
+          cls = ClassDecl "Box" "class" [] [tp] Nothing [] [] [] [] [] (mkSpan 1 0 5 1)
           fa = analyzeText (KotlinFile Nothing [] [cls])
           tpNodes = findNodesByType "TYPE_PARAMETER" fa
       length tpNodes `shouldBe` 1
@@ -357,7 +434,7 @@ main = hspec $ do
   describe "Annotations" $ do
     it "emits ATTRIBUTE node for marker annotation" $ do
       let ann = MarkerAnnotation "Deprecated" Nothing (mkSpan 2 2 2 13)
-          cls = ClassDecl "Old" "class" [] [] Nothing [] [] [ann] (mkSpan 3 0 5 1)
+          cls = ClassDecl "Old" "class" [] [] Nothing [] [] [] [] [ann] (mkSpan 3 0 5 1)
           fa = analyzeText (KotlinFile Nothing [] [cls])
           attrs = findNodesByType "ATTRIBUTE" fa
       case find (\n -> gnName n == "Deprecated") attrs of
@@ -366,7 +443,7 @@ main = hspec $ do
 
     it "emits HAS_ATTRIBUTE edge" $ do
       let ann = MarkerAnnotation "Deprecated" Nothing (mkSpan 2 2 2 13)
-          cls = ClassDecl "Old" "class" [] [] Nothing [] [] [ann] (mkSpan 3 0 5 1)
+          cls = ClassDecl "Old" "class" [] [] Nothing [] [] [] [] [ann] (mkSpan 3 0 5 1)
           fa = analyzeText (KotlinFile Nothing [] [cls])
           hasAttrEdges = findEdgesByType "HAS_ATTRIBUTE" fa
       length hasAttrEdges `shouldBe` 1

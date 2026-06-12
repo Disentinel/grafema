@@ -33,7 +33,7 @@ isPrivate mods = "private" `elem` mods
 walkDeclExports :: KotlinDecl -> Analyzer ()
 
 -- Public class (default) -> NamedExport + walk members
-walkDeclExports (ClassDecl name _kind mods _tps _ctor _supers members _annots _sp)
+walkDeclExports (ClassDecl name _kind mods _tps _ctor _supers _exts _impls members _annots _sp)
   | not (isPrivate mods) = do
     file   <- askFile
     _parent <- askNamedParent
@@ -46,7 +46,7 @@ walkDeclExports (ClassDecl name _kind mods _tps _ctor _supers members _annots _s
       }
     mapM_ (walkMemberExports file name) members
 
-walkDeclExports (ObjectDecl name mods _supers members _annots _sp)
+walkDeclExports (ObjectDecl name mods _supers _exts _impls members _annots _sp)
   | not (isPrivate mods) = do
     file   <- askFile
     _parent <- askNamedParent

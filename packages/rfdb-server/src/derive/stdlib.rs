@@ -283,6 +283,25 @@ pub const JS_RUNTIME_GLOBALS_EDGES_DL: &str = concat!(
     include_str!("stdlib/js_runtime_globals_edges.dl"),
 );
 
+/// The Kotlin inheritance pack — EXTENDS (class supertype) + IMPLEMENTS
+/// (interface supertypes) from the kotlin-analyzer's CLASS metadata stamps
+/// (`extends` single key + `implements_0..n` indexed keys — the list-valued
+/// metadata convention). Closes the lang-spec-kotlin step-5 gap: kotlin
+/// classes had ZERO inheritance edges in production (the analyzer's deferred
+/// InheritanceResolve refs are dropped by the orchestrator, and the legacy
+/// kotlin-resolve metadata arms read keys the analyzer never stamped) — every
+/// edge is a declared superset vs legacy-zero. Resolution scope: same-file +
+/// same-package-by-directory arms only (cross-file via imports = next wave,
+/// SUBSET delta). Bare class supertypes of no-primary-constructor classes
+/// (the Kotlin syntactic ambiguity) are re-classified by the resolved
+/// declaration's `kind` (interface → IMPLEMENTS, else EXTENDS recovery arms).
+/// Both edge types are pre-registered SHARED vocabulary
+/// (`packages/types/src/edges.ts`) ⇒ `mode = "additive"` on all heads,
+/// `resolvedVia = "kotlin-inheritance"` meta. PRODUCER of EXTENDS — must run
+/// before shape_verifier (its EXTENDS-closed member lookup); consumes
+/// analyzer EDB only. node_attr ⇒ scratch floor under maintain.
+pub const KOTLIN_INHERITANCE_DL: &str = include_str!("stdlib/kotlin_inheritance.dl");
+
 /// The JS module-path kernel pack (Wave 3b, path/string-kit-unblocked): the
 /// in-engine replacement for the module-level arms of `ImportResolution.hs` —
 /// IMPORT → MODULE `IMPORTS_FROM` (`resolveModuleImports`) and star re-export
@@ -400,6 +419,10 @@ pub const STDLIB_PACKS: &[(&str, &str)] = &[
     // (shape_verifier).
     ("js_runtime_globals_nodes", JS_RUNTIME_GLOBALS_NODES_DL),
     ("js_runtime_globals_edges", JS_RUNTIME_GLOBALS_EDGES_DL),
+    // Kotlin wave: kotlin_inheritance PRODUCES EXTENDS for shape_verifier's
+    // EXTENDS-closed member lookup — strictly before the negators; consumes
+    // analyzer EDB only (CLASS metadata stamps), so no run-after seam.
+    ("kotlin_inheritance", KOTLIN_INHERITANCE_DL),
     // Wave 3c: depends CONSUMES IMPORTS_FROM (every edge, module- and
     // binding-level) — with legacy import-resolution gated it must run after
     // ALL in-engine IMPORTS_FROM producers (rust_imports, js_module_imports,
@@ -1268,6 +1291,7 @@ mod tests {
                 "js_builtins_edges",
                 "js_runtime_globals_nodes",
                 "js_runtime_globals_edges",
+                "kotlin_inheritance",
                 "depends",
                 "method_calls",
                 "shape_verifier",
@@ -2528,6 +2552,207 @@ mod tests {
         assert!(triples(&eval, "ext_chain").is_empty());
         assert!(triples(&eval, "ext_builtin_import").is_empty());
         assert!(triples(&eval, "ext_builtin_global").is_empty());
+    }
+
+    /// The bundled kotlin_inheritance pack derives EXTENDS/IMPLEMENTS from the
+    /// kotlin-analyzer's CLASS metadata stamps (`extends` + `implements_0..n`,
+    /// the EXACT shapes the analyzer emits — verified e2e against the live
+    /// kotlin-parser → analyzer pipeline, see the `.dl` header):
+    /// - same-file extends / implements (`kt_ext_file` / `kt_impl_file`);
+    /// - same-directory fall-through arms (`kt_ext_dir` / `kt_impl_dir`) —
+    ///   fire only with NO same-file candidate;
+    /// - the DELTA-2 recovery arms (`kt_ext_rec_*`): an implements_N stamp
+    ///   resolving to a NON-interface (the bare no-primary-ctor class
+    ///   supertype) derives EXTENDS;
+    /// - the DELTA-8 sealed refusal: `sealed interface` serializes
+    ///   kind="sealed" (parser cascade checks isSealed before isInterface),
+    ///   so a bare entry naming a sealed declaration derives NOTHING from the
+    ///   recovery arms (was: silent wrong EXTENDS toward an interface), while
+    ///   a ctor-call `: SealedClass()` (the `extends` stamp) still derives
+    ///   EXTENDS — kt_ext_file/dir carry no kind guard;
+    /// - the \+ ambig discipline (same-file and same-dir duplicate names skip);
+    /// - negatives: self-edge refusal, out-of-directory scope (SUBSET DELTA 1),
+    ///   the .kt/.kts file gate.
+    #[test]
+    fn kotlin_inheritance_arms_on_analyzer_stamp_shapes() {
+        let mut v = FixtureStorageView::new(1);
+        let dir_a = "src/main/kotlin/com/ex"; // shared directory ("package")
+
+        // a.kt: Greeter (interface), Base, Simple : Base(),
+        //       Multi : Base(), Greeter, Closer (Closer lives in b.kt),
+        //       object Singleton : Base(), Greeter
+        let a = format!("{dir_a}/a.kt");
+        named_node(&mut v, "kt_greeter", "Greeter", "CLASS", &a);
+        v.put_node_metadata(id_of("kt_greeter"), r#"{"kind":"interface"}"#);
+        named_node(&mut v, "kt_base", "Base", "CLASS", &a);
+        v.put_node_metadata(id_of("kt_base"), r#"{"kind":"class"}"#);
+        named_node(&mut v, "kt_simple", "Simple", "CLASS", &a);
+        v.put_node_metadata(id_of("kt_simple"), r#"{"kind":"class","extends":"Base"}"#);
+        named_node(&mut v, "kt_multi", "Multi", "CLASS", &a);
+        v.put_node_metadata(
+            id_of("kt_multi"),
+            r#"{"kind":"class","extends":"Base","implements_0":"Greeter","implements_1":"Closer"}"#,
+        );
+        named_node(&mut v, "kt_singleton", "Singleton", "CLASS", &a);
+        v.put_node_metadata(
+            id_of("kt_singleton"),
+            r#"{"kind":"object","singleton":true,"extends":"Base","implements_0":"Greeter"}"#,
+        );
+
+        // b.kt (same directory): Closer (interface), Helper,
+        //       NoCtorDerived : Base   (bare entry → implements_0, Base is a
+        //                               CLASS in a.kt → EXTENDS recovery, dir arm)
+        //       NoCtor2 : Helper       (bare entry, same-file non-interface →
+        //                               EXTENDS recovery, file arm)
+        //       DirExt : Simple()      (extends, candidate only in a.kt → dir arm)
+        let b = format!("{dir_a}/b.kt");
+        named_node(&mut v, "kt_closer", "Closer", "CLASS", &b);
+        v.put_node_metadata(id_of("kt_closer"), r#"{"kind":"interface"}"#);
+        named_node(&mut v, "kt_helper", "Helper", "CLASS", &b);
+        v.put_node_metadata(id_of("kt_helper"), r#"{"kind":"class"}"#);
+        named_node(&mut v, "kt_noctor", "NoCtorDerived", "CLASS", &b);
+        v.put_node_metadata(id_of("kt_noctor"), r#"{"kind":"class","implements_0":"Base"}"#);
+        named_node(&mut v, "kt_noctor2", "NoCtor2", "CLASS", &b);
+        v.put_node_metadata(id_of("kt_noctor2"), r#"{"kind":"class","implements_0":"Helper"}"#);
+        named_node(&mut v, "kt_dirext", "DirExt", "CLASS", &b);
+        v.put_node_metadata(id_of("kt_dirext"), r#"{"kind":"class","extends":"Simple"}"#);
+
+        // Ambiguity (DELTA 3): c.kt has TWO classes "Dup" — Twin : Dup() skips
+        // (same-file ambig; the dir arm is suppressed by the same-file
+        // candidates). "DD" exists once in a.kt and once in b.kt — DDX : DD()
+        // in c.kt has no same-file candidate and the DIR index is ambiguous.
+        let c = format!("{dir_a}/c.kt");
+        named_node(&mut v, "kt_dup1", "Dup", "CLASS", &c);
+        named_node(&mut v, "kt_dup2", "Dup", "CLASS", &c);
+        named_node(&mut v, "kt_twin", "Twin", "CLASS", &c);
+        v.put_node_metadata(id_of("kt_twin"), r#"{"kind":"class","extends":"Dup"}"#);
+        named_node(&mut v, "kt_dd_a", "DD", "CLASS", &a);
+        named_node(&mut v, "kt_dd_b", "DD", "CLASS", &b);
+        named_node(&mut v, "kt_ddx", "DDX", "CLASS", &c);
+        v.put_node_metadata(id_of("kt_ddx"), r#"{"kind":"class","extends":"DD"}"#);
+
+        // Self-edge refusal: Selfy : Selfy — the only candidate is itself.
+        named_node(&mut v, "kt_selfy", "Selfy", "CLASS", &c);
+        v.put_node_metadata(id_of("kt_selfy"), r#"{"kind":"class","extends":"Selfy"}"#);
+
+        // DELTA 8 — sealed targets. `sealed interface Event` and
+        // `sealed class State` BOTH serialize kind="sealed" (the parser's
+        // isSealed-before-isInterface cascade): bare entries naming them are
+        // unclassifiable and the recovery arms refuse them.
+        // a.kt: Event (sealed interface), State (sealed class),
+        //       Click : Event   (bare → implements_0, sealed target, SAME
+        //                        file → kt_ext_rec_file must NOT fire)
+        named_node(&mut v, "kt_event", "Event", "CLASS", &a);
+        v.put_node_metadata(id_of("kt_event"), r#"{"kind":"sealed","sealed":true}"#);
+        named_node(&mut v, "kt_state", "State", "CLASS", &a);
+        v.put_node_metadata(id_of("kt_state"), r#"{"kind":"sealed","sealed":true}"#);
+        named_node(&mut v, "kt_click", "Click", "CLASS", &a);
+        v.put_node_metadata(id_of("kt_click"), r#"{"kind":"class","implements_0":"Event"}"#);
+        // b.kt: Render : Event   (bare, sealed target in a.kt → the DIR
+        //                         recovery arm must NOT fire either)
+        //       Loading : State() (ctor-call → `extends` stamp; sealed CLASS
+        //                          target still derives EXTENDS via the dir
+        //                          arm — DELTA 8 does not touch kt_ext_*)
+        named_node(&mut v, "kt_render", "Render", "CLASS", &b);
+        v.put_node_metadata(id_of("kt_render"), r#"{"kind":"class","implements_0":"Event"}"#);
+        named_node(&mut v, "kt_loading", "Loading", "CLASS", &b);
+        v.put_node_metadata(id_of("kt_loading"), r#"{"kind":"class","extends":"State"}"#);
+
+        // Scope bound (SUBSET DELTA 1): Far : Base() in another directory —
+        // Base is out of scope, no edge.
+        named_node(&mut v, "kt_far", "Far", "CLASS", "other/pkg/far.kt");
+        v.put_node_metadata(id_of("kt_far"), r#"{"kind":"class","extends":"Base"}"#);
+
+        // File gate: the same stamp shape in a .rs file derives nothing.
+        named_node(&mut v, "rs_base", "RsBase", "CLASS", "src/x.rs");
+        named_node(&mut v, "rs_child", "RsChild", "CLASS", "src/x.rs");
+        v.put_node_metadata(id_of("rs_child"), r#"{"kind":"class","extends":"RsBase"}"#);
+
+        let (eval, specs, _node_specs) = evaluate_with_materialize(
+            &v,
+            KOTLIN_INHERITANCE_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("kotlin_inheritance.dl evaluates");
+
+        let via = |pairs: &[(&str, &str)]| -> BTreeSet<(u128, u128, String)> {
+            pairs
+                .iter()
+                .map(|(s, t)| (id_of(s), id_of(t), "kotlin-inheritance".to_string()))
+                .collect()
+        };
+        assert_eq!(
+            triples(&eval, "kt_ext_file"),
+            via(&[
+                ("kt_simple", "kt_base"),
+                ("kt_multi", "kt_base"),
+                ("kt_singleton", "kt_base"),
+            ]),
+            "same-file extends; Twin (ambig Dup), Selfy (self-edge), Far \
+             (out of scope) and the .rs shape derive nothing"
+        );
+        assert_eq!(
+            triples(&eval, "kt_ext_dir"),
+            via(&[("kt_dirext", "kt_simple"), ("kt_loading", "kt_state")]),
+            "directory fall-through extends; the ctor-call `extends` stamp \
+             reaches a SEALED CLASS target (DELTA 8 guards only the recovery \
+             arms); DDX skips (dir-ambiguous DD), same-file candidates \
+             suppress the arm everywhere else"
+        );
+        assert_eq!(
+            triples(&eval, "kt_impl_file"),
+            via(&[("kt_multi", "kt_greeter"), ("kt_singleton", "kt_greeter")]),
+            "same-file implements_N resolving to kind=interface"
+        );
+        assert_eq!(
+            triples(&eval, "kt_impl_dir"),
+            via(&[("kt_multi", "kt_closer")]),
+            "directory fall-through implements (Closer lives in b.kt)"
+        );
+        assert_eq!(
+            triples(&eval, "kt_ext_rec_file"),
+            via(&[("kt_noctor2", "kt_helper")]),
+            "DELTA 2 recovery, same file: bare class supertype stamped as \
+             implements_0 re-classified to EXTENDS by the target's kind; \
+             Click : Event (sealed target, same file) derives NOTHING — \
+             DELTA 8 refuses kind=sealed in the recovery arms"
+        );
+        assert_eq!(
+            triples(&eval, "kt_ext_rec_dir"),
+            via(&[("kt_noctor", "kt_base")]),
+            "DELTA 2 recovery, directory fall-through; Render : Event \
+             (sealed target in a.kt) derives NOTHING — DELTA 8 dir arm"
+        );
+        // DELTA 8 cross-check: the sealed-interface bare entries derive no
+        // IMPLEMENTS either (kind=sealed ≠ kind=interface), so Click/Render
+        // carry ZERO inheritance edges — a documented gap, not a wrong edge.
+        for rel in ["kt_impl_file", "kt_impl_dir", "kt_ext_file"] {
+            assert!(
+                !triples(&eval, rel)
+                    .iter()
+                    .any(|(s, _, _)| *s == id_of("kt_click") || *s == id_of("kt_render")),
+                "{rel} must not derive for the sealed-interface implementors"
+            );
+        }
+
+        // Heads: 4 EXTENDS + 2 IMPLEMENTS, all additive (shared vocabulary),
+        // resolvedVia projected on all.
+        let ext: Vec<_> = specs.iter().filter(|s| s.edge_type == "EXTENDS").collect();
+        assert_eq!(ext.len(), 4, "EXTENDS heads: file + dir + 2 recovery arms");
+        let imp: Vec<_> = specs.iter().filter(|s| s.edge_type == "IMPLEMENTS").collect();
+        assert_eq!(imp.len(), 2, "IMPLEMENTS heads: file + dir arms");
+        assert!(
+            specs.iter().all(|s| s.additive),
+            "EXTENDS/IMPLEMENTS are shared vocabulary — additive is mandatory"
+        );
+        assert!(
+            specs
+                .iter()
+                .all(|s| s.meta == vec!["resolvedVia".to_string()]),
+            "resolvedVia is projected on all heads"
+        );
     }
 
     /// The bundled js_import_bindings pack (Wave 2, node_attr) resolves the

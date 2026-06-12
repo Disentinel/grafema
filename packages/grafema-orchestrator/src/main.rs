@@ -48,7 +48,7 @@ use std::path::PathBuf;
 /// js_import_bindings → js_class_inheritance → js_cross_file_calls →
 /// js_property_access_ns → js_property_access_full → js_builtins_nodes →
 /// js_builtins_edges → js_runtime_globals_nodes → js_runtime_globals_edges →
-/// depends → method_calls → shape_verifier → axum_routes.
+/// kotlin_inheritance → depends → method_calls → shape_verifier → axum_routes.
 /// Wave 3c moved depends INTO this list, after every IMPORTS_FROM producer:
 /// with legacy import-resolution gated, the IMPORT-level edges depends
 /// consumes are produced by the packs above it (it ran separately FIRST while
@@ -94,6 +94,11 @@ const STDLIB_RULE_PACKS: &[&str] = &[
     // producer — before method_calls/shape_verifier.
     "@stdlib/js_runtime_globals_nodes",
     "@stdlib/js_runtime_globals_edges",
+    // Kotlin wave: kotlin_inheritance PRODUCES EXTENDS (for shape_verifier's
+    // EXTENDS-closed member lookup) + IMPLEMENTS from the kotlin-analyzer's
+    // CLASS metadata stamps — consumes analyzer EDB only, precedes the
+    // negators below.
+    "@stdlib/kotlin_inheritance",
     // Wave 3c: depends CONSUMES IMPORTS_FROM (every edge of the shared
     // vocabulary, module- and binding-level). Legacy import-resolution /
     // rust-imports are gated (GRAFEMA_SKIP_RESOLVE_STEPS), so depends must
@@ -535,6 +540,7 @@ fn pack_owned_slice(pack: &str) -> &'static str {
         "@stdlib/js_builtins_edges" => "node-builtin IMPORTS_FROM + CALLS",
         "@stdlib/js_runtime_globals_nodes" => "js runtime-global GLOBAL_DEFINITION nodes",
         "@stdlib/js_runtime_globals_edges" => "js runtime-global CALLS",
+        "@stdlib/kotlin_inheritance" => "kotlin EXTENDS + IMPLEMENTS",
         "@stdlib/depends" => "MODULE→MODULE DEPENDS_ON",
         "@stdlib/method_calls" => "fuzzy method-call CALLS fallback",
         "@stdlib/shape_verifier" => "shape-violation ISSUE diagnostics",
@@ -3354,10 +3360,17 @@ mod tests {
     ) -> std::path::PathBuf {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+        // Process-wide sequence number: two tests starting concurrently can
+        // draw the SAME SystemTime nanos, and the remove_file→bind pair below
+        // is then a TOCTOU race (observed: `bind fake socket: AlreadyExists`
+        // flakes). The counter makes the name unique within the process.
+        static FAKE_SOCK_SEQ: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
         let dir = std::env::temp_dir();
         let sock = dir.join(format!(
-            "grafema-fake-rfdb-{}-{}.sock",
+            "grafema-fake-rfdb-{}-{}-{}.sock",
             std::process::id(),
+            FAKE_SOCK_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
