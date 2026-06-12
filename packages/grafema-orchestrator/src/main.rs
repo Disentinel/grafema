@@ -48,7 +48,8 @@ use std::path::PathBuf;
 /// js_import_bindings → js_class_inheritance → js_cross_file_calls →
 /// js_property_access_ns → js_property_access_full → js_builtins_nodes →
 /// js_builtins_edges → js_runtime_globals_nodes → js_runtime_globals_edges →
-/// depends → method_calls → shape_verifier → axum_routes.
+/// depends → method_calls → shape_verifier → axum_routes →
+/// js_http_routes_nodes → js_http_routes_edges.
 /// Wave 3c moved depends INTO this list, after every IMPORTS_FROM producer:
 /// with legacy import-resolution gated, the IMPORT-level edges depends
 /// consumes are produced by the packs above it (it ran separately FIRST while
@@ -105,6 +106,12 @@ const STDLIB_RULE_PACKS: &[&str] = &[
     "@stdlib/method_calls",
     "@stdlib/shape_verifier",
     "@stdlib/axum_routes",
+    // Wave 14 feature-detection vertical: the nodes pack MINTS the
+    // anchorCall-pinned http:route endpoints the edges pack joins as
+    // committed EDB (strict nodes→edges order — the js_builtins two-pack
+    // split); both consume analyzer EDB only.
+    "@stdlib/js_http_routes_nodes",
+    "@stdlib/js_http_routes_edges",
 ];
 
 
@@ -539,6 +546,8 @@ fn pack_owned_slice(pack: &str) -> &'static str {
         "@stdlib/method_calls" => "fuzzy method-call CALLS fallback",
         "@stdlib/shape_verifier" => "shape-violation ISSUE diagnostics",
         "@stdlib/axum_routes" => "axum ROUTES_TO",
+        "@stdlib/js_http_routes_nodes" => "js http:route nodes + ROUTES_TO (express/fastify/koa/hono)",
+        "@stdlib/js_http_routes_edges" => "js http:route EXPOSES + HANDLES",
         _ => "(unregistered pack)",
     }
 }

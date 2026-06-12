@@ -37,14 +37,14 @@ const LIBRARY_NODE_TYPE: Record<string, string> = {
   commander: 'cli:command',
   '@modelcontextprotocol/sdk': 'mcp:tool',
   vscode: 'vscode:command',
-  // HTTP frameworks (REG-1115). Each route registration call becomes one
-  // `http:route` FEATURE; httpRouteExtractor builds the SpecedContract.
-  express: 'http:route',
-  fastify: 'http:route',
-  koa: 'http:route',
-  'koa-router': 'http:route',
-  '@koa/router': 'http:route',
-  hono: 'http:route',
+  // HTTP frameworks (REG-1115) — express/fastify/koa/koa-router/@koa/router/
+  // hono — were retired from this map in Wave 14: their `http:route` FEATURE
+  // nodes are now minted by the default-on derive packs
+  // (rfdb-server/src/derive/stdlib/js_http_routes_nodes.dl + _edges.dl).
+  // Keeping them here would make this enricher a second default producer of
+  // the same feature with byte-different node ids (wire-sid anchor vs the
+  // pack's decimal anchorCall), duplicating EXPOSES/HANDLES and the
+  // SpecedContracts httpRouteExtractor derives from them.
 };
 
 interface Rule {

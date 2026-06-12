@@ -430,6 +430,16 @@ impl<'a> Framer<'a> {
         while self.pos < self.bytes.len() {
             let c = self.bytes[self.pos];
             if in_string {
+                // Lenient escapes (Wave 14, mirrors datalog::parser::parse_string):
+                // a backslash followed by `"` or `\` is consumed as one unit so an
+                // escaped quote never terminates the string scan.
+                if c == b'\\'
+                    && self.pos + 1 < self.bytes.len()
+                    && matches!(self.bytes[self.pos + 1], b'"' | b'\\')
+                {
+                    self.pos += 2;
+                    continue;
+                }
                 if c == b'"' {
                     in_string = false;
                 }
@@ -946,6 +956,19 @@ mod tests {
         assert!(item.lattice_payload.is_none());
         assert_eq!(item.rule.body().len(), 2);
         assert!(item.rule.body()[1].is_negative());
+    }
+
+    /// Wave 14 — the clause scanner honors `\"` escapes inside string literals
+    /// (mirrors `datalog::parser::parse_string`): a rule carrying a literal
+    /// double-quote (the quote-strip idiom over raw JS source literals) is ONE
+    /// clause, and its terminating `.` is found.
+    #[test]
+    fn clause_scan_skips_escaped_quotes_in_strings() {
+        let src = r#"q(X, P) :- raw(X, R), strip_prefix(R, "\"", T), strip_suffix(T, "\"", P)."#;
+        let prog = parse_ext_program(src).expect("escaped-quote clause parses");
+        assert_eq!(prog.items.len(), 1);
+        assert_eq!(head_pred(&prog.items[0]), "q");
+        assert_eq!(prog.items[0].rule.body().len(), 3);
     }
 
     #[test]
