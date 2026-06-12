@@ -16,6 +16,11 @@ gotchas:
   - Cross-package traces depend on `grafema analyze` having seen both
     sides. Re-run `grafema analyze` if a recently-added dependency
     isn't traced.
+  - "`wtf` traces variables, parameters, and property accesses — not
+    function or class names. `grafema wtf validateSession` returns
+    'Symbol not found' even if the function is in the graph. For
+    callers of a function, use `who`; for downstream impact, use
+    `impact`."
 ---
 
 ## Backward trace from a variable

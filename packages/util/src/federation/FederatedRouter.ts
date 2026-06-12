@@ -430,20 +430,32 @@ export function extractSymbolFromId(semanticId: string): string | null {
 }
 
 /**
- * Extract absolute file path from a semantic ID or grafema URI.
- * Handles both formats:
- * - Arrow format: "path/to/file.ts->FUNCTION->name"
- * - URI format: "grafema://path/to/file.ts#FUNCTION%3Aname"
+ * Extract the file path from a semantic ID, in either wire format.
+ *
+ * - Arrow format: "path/to/file.ts->FUNCTION->name" → "path/to/file.ts"
+ * - URI format:   "grafema://localhost/proj/path/to/file.ts#FUNCTION-%3Ename" → "path/to/file.ts"
+ *
+ * The grafema:// URI form (produced by the analysis pipeline's to_uri_format())
+ * is grafema://{authority}/{file}#{fragment} where {authority} is the host+project
+ * — "localhost/proj" (2 segments) or "github.com/owner/repo" (3 segments). Slicing
+ * off only the "grafema://" scheme left the authority prepended to the path
+ * ("localhost/proj/path/to/file.ts"), so groupByShard's ShardDiscovery.resolve()
+ * — which longest-prefix-matches against ABSOLUTE shard roots — never matched and
+ * mis-routed every URI-format edge to the "__unresolved__" group. URI ids are
+ * delegated to the canonical parseSemanticIdV2 (which strips the authority); the
+ * arrow fast-path is preserved verbatim. Mirrors the sibling extractSymbolFromId.
+ *
+ * Exported for unit testing.
+ * @internal
  */
-function extractFilePath(semanticId: string): string | null {
+export function extractFilePath(semanticId: string): string | null {
   if (!semanticId) return null;
 
-  // URI format: grafema://path/to/file.ts#fragment
+  // URI-format ids embed the authority before the file path; delegate to the
+  // canonical parser, which strips it. parsed.file is '' for virtual nodes.
   if (semanticId.startsWith('grafema://')) {
-    const hashIdx = semanticId.indexOf('#');
-    return hashIdx > 0
-      ? semanticId.slice('grafema://'.length, hashIdx)
-      : semanticId.slice('grafema://'.length);
+    const parsed = parseSemanticIdV2(semanticId);
+    return parsed && parsed.file ? parsed.file : null;
   }
 
   // Arrow format: path/to/file.ts->FUNCTION->name
