@@ -98,6 +98,14 @@ describe('setup-skill command', () => {
     assert.ok(existsSync(join(geminiDir, 'SKILL.md')), 'SKILL.md should exist in .gemini/skills/');
   });
 
+  it('should support --platform cursor (installs into .cursor/rules/)', async () => {
+    const cursorDir = join(testDir, '.cursor', 'rules', 'grafema-codebase-analysis');
+
+    const { stdout, code } = await runCli(['setup-skill', testDir, '--platform', 'cursor']);
+    assert.strictEqual(code, 0);
+    assert.ok(existsSync(join(cursorDir, 'SKILL.md')), 'SKILL.md should exist in .cursor/rules/');
+  });
+
   it('should support custom --output-dir', async () => {
     const customDir = join(testDir, 'custom-skills');
     const targetDir = join(customDir, 'grafema-codebase-analysis');
