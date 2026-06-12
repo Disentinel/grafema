@@ -976,14 +976,8 @@ pub async fn clear_context_on_workers(
 }
 
 // ---------------------------------------------------------------------------
-// Per-file resolution (build-index + resolve-file)
+// Per-file resolution (resolve-file)
 // ---------------------------------------------------------------------------
-
-/// Index-worthy node types: these form the export index for cross-file resolution.
-const INDEX_NODE_TYPES: &[&str] = &[
-    "EXPORT_BINDING", "EXPORT", "MODULE",
-    "FUNCTION", "VARIABLE", "CONSTANT", "CLASS", "INTERFACE", "TYPE_ALIAS", "ENUM", "NAMESPACE",
-];
 
 /// How many files to process between durability checkpoints in the per-file
 /// resolve loop. Resolve over a large monorepo can take hours; without a
@@ -1122,19 +1116,22 @@ fn resolve_progress_fields(
     ]
 }
 
-/// Per-file resolve: builds an export index on the worker, then resolves each
-/// file individually by querying RFDB for that file's nodes.
+/// Per-file resolve: resolves each file individually by querying RFDB for that
+/// file's nodes.
 ///
 /// This avoids loading the entire graph into worker memory — only one file's
-/// nodes are in flight at a time. The index (build-index) is compact: only
-/// exported symbols and module metadata.
+/// nodes are in flight at a time.
 ///
 /// Protocol:
 /// 1. Query MODULE nodes → discover files for the given language
-/// 2. Query index-worthy nodes (exports, modules) → send `build-index` to worker
-/// 3. For each file: `query_nodes_by_file` → send `resolve-file` → accumulate edges,
+/// 2. For each file: `query_nodes_by_file` → send `resolve-file` → accumulate edges,
 ///    committing a durability checkpoint every [`RESOLVE_CHECKPOINT_INTERVAL`] files
-/// 4. Commit the final delta and return the accumulated PluginOutput
+/// 3. Commit the final delta and return the accumulated PluginOutput
+///
+/// (Wave 6: the former `build-index` step — the export/module index for the
+/// import-resolution / cross-file / property-access / class-inheritance steps —
+/// was deleted with those steps; the remaining daemon step, runtime-globals,
+/// needs no cross-file index.)
 ///
 /// Because this function now commits its own output incrementally (under
 /// `name`/`generation`), the caller must NOT commit the returned output again —
@@ -1162,52 +1159,7 @@ pub async fn resolve_per_file(
 
     tracing::info!(files = files.len(), "Per-file resolve: discovered files");
 
-    // Step 2: Collect index-worthy nodes and send build-index
-    let mut index_json_nodes: Vec<serde_json::Value> = Vec::new();
-    for node_type in INDEX_NODE_TYPES {
-        let nodes = rfdb.query_nodes_by_type(node_type).await?;
-        for node in nodes {
-            // Filter by language
-            if let Some(ref file) = node.file {
-                if crate::config::detect_language(std::path::Path::new(file)) != Some(lang) {
-                    continue;
-                }
-            } else {
-                continue;
-            }
-            // For declarations, only include exported ones in the index.
-            // Note: JS analyzer's `exported` flag may be false for `export function foo()`
-            // due to OXC AST walking order. We also check the file's exports list below.
-            if matches!(*node_type, "FUNCTION" | "VARIABLE" | "CONSTANT" | "CLASS" | "INTERFACE" | "TYPE_ALIAS" | "ENUM" | "NAMESPACE") {
-                if !node.exported {
-                    continue;
-                }
-            }
-            index_json_nodes.push(crate::analyzer::wire_node_to_resolve_json(&node));
-        }
-    }
-
-    tracing::info!(nodes = index_json_nodes.len(), "Per-file resolve: sending build-index");
-
-    let build_index_request = ResolveRequest {
-        cmd: "build-index".to_string(),
-        nodes: index_json_nodes,
-        workspace_packages: workspace_packages.to_vec(),
-        edges: vec![],
-    };
-    let payload = rmp_serde::to_vec_named(&build_index_request)
-        .context("Failed to encode build-index request")?;
-    let response_bytes = handle.request(&payload).await
-        .context("build-index request failed")?;
-    let response: ResolveResponse = rmp_serde::from_slice(&response_bytes)
-        .context("Failed to decode build-index response")?;
-    if response.status != "ok" {
-        let msg = response.error.unwrap_or_else(|| "unknown error".to_string());
-        bail!("build-index failed: {msg}");
-    }
-    drop(build_index_request); // Free memory
-
-    // Step 3: For each file, query nodes and send resolve-file. Output is
+    // Step 2: For each file, query nodes and send resolve-file. Output is
     // committed incrementally (every RESOLVE_CHECKPOINT_INTERVAL files) so a
     // crash or SIGTERM mid-resolve does not discard all work, and also kept in
     // `all_output` so the caller can read derived edges/counts.
@@ -1714,27 +1666,10 @@ mod tests {
         assert_eq!(meta["_generation"], 1);
     }
 
-    /// Regression for REG-1139: every exported-declaration node type that the
-    /// grafema-resolve export index recognizes (see `nodeToExportEntries` /
-    /// `gnExported` arm in `packages/grafema-resolve/src/ImportResolution.hs`)
-    /// MUST also be queried by the orchestrator and sent to `build-index` — else
-    /// those exports are dark in the index and imports of them fail with
-    /// "no matching export" (e.g. `export namespace X {}`).
-    #[test]
-    fn index_node_types_cover_exported_declarations() {
-        // Mirrors grafema-resolve ImportResolution.hs `gnExported` export arm.
-        let resolver_exported_decl_types = [
-            "FUNCTION", "VARIABLE", "CONSTANT", "CLASS", "INTERFACE", "TYPE_ALIAS", "ENUM",
-            "NAMESPACE",
-        ];
-        for t in resolver_exported_decl_types {
-            assert!(
-                INDEX_NODE_TYPES.contains(&t),
-                "INDEX_NODE_TYPES is missing exported-declaration type {t:?} that the \
-                 resolver indexes — its exports become unresolvable (REG-1139)"
-            );
-        }
-    }
+    // (The REG-1139 INDEX_NODE_TYPES coverage test was deleted in Wave 6 with the
+    // build-index step itself: the export index and every step that read it —
+    // import-resolution / cross-file-calls / property-access / class-inheritance —
+    // were replaced by datalog2 packs and removed from the resolver daemon.)
 
     // -- CheckpointAccumulator tests (REG-1138 mid-resolve durability) --
 

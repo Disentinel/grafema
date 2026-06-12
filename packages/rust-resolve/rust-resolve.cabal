@@ -3,6 +3,12 @@ name:          rust-resolve
 version:       0.1.0
 synopsis:      Rust cross-file import resolution for Grafema
 
+-- Wave 6 (resolve→datalog2 migration): RustImportResolution,
+-- RustCallResolution and RustTraitResolution were replaced by the
+-- rust_imports / rust_calls / rust_trait_resolve datalog2 stdlib packs and
+-- DELETED. RustCrossMethodCalls stays native (dyn-dispatch + self-field arms
+-- have no pack), as does the rust-globals step (Grafema.RuntimeGlobals).
+
 executable grafema-rust-resolve
   default-language: Haskell2010
   main-is: Main.hs
@@ -10,10 +16,7 @@ executable grafema-rust-resolve
   ghc-options: -Wall -Wno-name-shadowing
 
   other-modules:
-    RustImportResolution
-    RustCallResolution
     RustCrossMethodCalls
-    RustTraitResolution
 
   build-depends:
     base                 >= 4.17 && < 5,
@@ -33,10 +36,7 @@ test-suite spec
   ghc-options:      -Wall
 
   other-modules:
-    RustImportResolution
-    RustCallResolution
     RustCrossMethodCalls
-    RustTraitResolution
 
   build-depends:
     base                 >= 4.17 && < 5,

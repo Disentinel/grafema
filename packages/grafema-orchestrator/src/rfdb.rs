@@ -747,10 +747,12 @@ impl RfdbClient {
 
     /// Whether the connected server advertised the v2 `@materialize` write-back capability
     /// (the `datalogV2Materialize` feature, set when the server's `RFDB_DATALOG_V2` kill
-    /// switch is on). When true, the orchestrator must SKIP its own legacy DEPENDS_ON
-    /// derivation and call [`Self::materialize_datalog`] instead — the server owns the
-    /// derivation. The server is the single source of truth (a duplicated env read here could
-    /// disagree with the server's actual backend).
+    /// switch is on). Since Wave 6 this capability is a hard REQUIREMENT for analyze
+    /// (`require_datalog_v2_capability` fails fast without it): the datalog2 rule packs
+    /// are the only producer of the resolved slices — the legacy resolve steps and the
+    /// in-orchestrator P3 DEPENDS_ON fallback were deleted. The server is the single
+    /// source of truth (a duplicated env read here could disagree with the server's
+    /// actual backend).
     pub fn supports_datalog_v2_materialize(&self) -> bool {
         self.features.iter().any(|f| f == "datalogV2Materialize")
     }

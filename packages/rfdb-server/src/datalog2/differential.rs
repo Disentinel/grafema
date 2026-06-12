@@ -2221,6 +2221,129 @@ fn final12_acceptance_counts() {
     eprintln!("=== final12 acceptance counts: printed ===\n");
 }
 
+/// Wave 6 audit probe: per-slice counts for every native resolve step that still
+/// runs on a defaults analyze, BOTH structurally (endpoint shape — survives a
+/// change of producer) and by legacy stamp (who wrote the rows in THIS db).
+///
+/// Run it twice: on the pre-deletion baseline (`/tmp/final12-measure.rfdb`, the
+/// Final-#12 pure-defaults run) and on the post-deletion fresh worktree analyze.
+/// The STRUCTURAL counts must reproduce across the two runs (within the declared
+/// pack delta classes — e.g. rust_calls' deliberate macro exclusion, Wave M
+/// DELTAs 5/7/9); the legacy-stamp counts must go to ZERO on the post-deletion
+/// run for every deleted step. Slices probed:
+/// - cross-file-calls   → CALLS resolvedVia=cross-file-calls (CrossFileCalls.hs:81)
+/// - builtins           → IMPORT→EXTERNAL_MODULE IMPORTS_FROM + CALL→EXTERNAL_FUNCTION
+///                        CALLS, resolvedVia=builtins (Builtins.hs:312/:337); node mints
+/// - rust-calls         → CALLS resolvedVia=rust-calls (RustCallResolution.hs:78)
+/// - rust-cross-methods → CALLS resolvedVia=rust-cross-method / rust-dyn-dispatch
+///                        (RustCrossMethodCalls.hs:207/:222) — the step KEEPS (dyn
+///                        dispatch + self-field arms have no pack)
+/// - rust-trait-resolve → IMPLEMENTS total (legacy metadata is EMPTY, Hs:42 — no
+///                        stamp exists; the structural total is the whole slice)
+/// - runtime-globals    → REFERENCE→GLOBAL_DEFINITION RESOLVES_TO into <runtime/js>
+///                        (jsStrategy) — the step KEEPS (no pack emits RESOLVES_TO)
+/// - rust-globals       → CALLS into <runtime/rust> GLOBAL_DEFINITION — KEEPS (no pack)
+///
+///   GRAFEMA_WAVE6_COUNTS_DB=/tmp/final12-measure.rfdb \
+///   cargo test --release --lib wave6_native_step_slice_counts -- --ignored --nocapture
+#[test]
+#[ignore = "manual acceptance probe; run with --ignored"]
+fn wave6_native_step_slice_counts() {
+    let dataset = std::env::var("GRAFEMA_WAVE6_COUNTS_DB")
+        .unwrap_or_else(|_| "/tmp/final12-measure.rfdb".to_string());
+    let dataset = PathBuf::from(dataset);
+    if !dataset.join("db_config.json").exists() {
+        panic!("dataset not found at {}", dataset.display());
+    }
+
+    let tmp = tempfile::tempdir().expect("temp");
+    let work = tmp.path().join("graph.rfdb");
+    copy_dir_all(&dataset, &work).expect("copy dataset");
+    let _ = std::fs::remove_file(work.join("LOCK"));
+    let manifest = ManifestStore::open(&work).expect("manifest");
+    let store = MultiShardStore::open(&work, &manifest).expect("store");
+    let store = Arc::new(store);
+    let view = LsmStorageView::capture(store.clone(), &manifest);
+
+    let snap = store.snapshot(&manifest);
+    let all_nodes = store.find_nodes_at(&snap, None, None);
+    let mut nbt: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    for n in &all_nodes {
+        *nbt.entry(n.node_type.clone()).or_insert(0) += 1;
+    }
+    let all_edges = store.iter_all_edges_at(&snap);
+    let mut ebt: std::collections::BTreeMap<String, u64> = Default::default();
+    for e in &all_edges {
+        *ebt.entry(e.edge_type.clone()).or_insert(0) += 1;
+    }
+    eprintln!(
+        "\n=== wave6 native-step slice counts ===\ntotal nodes: {} | total edges: {}",
+        all_nodes.len(),
+        all_edges.len()
+    );
+    for (ty, n) in &ebt {
+        eprintln!("edges[{ty}] = {n}");
+    }
+
+    let stats = Stats {
+        total_nodes: all_nodes.len() as u64,
+        total_edges: all_edges.len() as u64,
+        nodes_by_type: nbt,
+    };
+    let q = r#"
+        cfc(A, B) :- edge(A, B, "CALLS"),
+                     edge_attr(A, B, "CALLS", "resolvedVia", "cross-file-calls").
+        xm(M) :- node(M, "EXTERNAL_MODULE").
+        xf(F) :- node(F, "EXTERNAL_FUNCTION").
+        bi_imp(A, B) :- edge(A, B, "IMPORTS_FROM"), node(B, "EXTERNAL_MODULE").
+        bi_call(A, B) :- edge(A, B, "CALLS"), node(B, "EXTERNAL_FUNCTION").
+        bi_imp_rv(A, B) :- bi_imp(A, B),
+                           edge_attr(A, B, "IMPORTS_FROM", "resolvedVia", "builtins").
+        bi_call_rv(A, B) :- bi_call(A, B),
+                            edge_attr(A, B, "CALLS", "resolvedVia", "builtins").
+        rc(A, B) :- edge(A, B, "CALLS"),
+                    edge_attr(A, B, "CALLS", "resolvedVia", "rust-calls").
+        rcm(A, B) :- edge(A, B, "CALLS"),
+                     edge_attr(A, B, "CALLS", "resolvedVia", "rust-cross-method").
+        rdd(A, B) :- edge(A, B, "CALLS"),
+                     edge_attr(A, B, "CALLS", "resolvedVia", "rust-dyn-dispatch").
+        impls(A, B) :- edge(A, B, "IMPLEMENTS").
+        rt_js(G) :- node(G, "GLOBAL_DEFINITION"), attr(G, "file", "<runtime/js>").
+        rg_ref(R, G) :- rt_js(G), edge(R, G, "RESOLVES_TO").
+        rg_call(C, G) :- rt_js(G), edge(C, G, "CALLS").
+        rt_rs(G) :- node(G, "GLOBAL_DEFINITION"), attr(G, "file", "<runtime/rust>").
+        rsg_call(C, G) :- rt_rs(G), edge(C, G, "CALLS").
+    "#;
+    let eval = evaluate(&view, q, stats, EvalLimits::none(), EventLog::discard())
+        .expect("wave6 probe eval");
+    let c = |p: &str| eval.facts(p).len();
+    eprintln!(
+        "[cross-file-calls] CALLS resolvedVia=cross-file-calls = {}\n\
+         [builtins] EXTERNAL_MODULE nodes = {} | EXTERNAL_FUNCTION nodes = {}\n\
+         [builtins] IMPORTS_FROM ->EXTERNAL_MODULE = {} (legacy-stamped {})\n\
+         [builtins] CALLS ->EXTERNAL_FUNCTION = {} (legacy-stamped {})\n\
+         [rust-calls] CALLS resolvedVia=rust-calls = {}\n\
+         [rust-cross-methods KEEP] CALLS resolvedVia=rust-cross-method = {}\n\
+         [rust-cross-methods KEEP] CALLS resolvedVia=rust-dyn-dispatch = {}\n\
+         [rust-trait-resolve] IMPLEMENTS total = {}\n\
+         [runtime-globals KEEP] RESOLVES_TO -> <runtime/js> = {}\n\
+         [runtime-globals pack-owned] CALLS -> <runtime/js> = {}\n\
+         [rust-globals KEEP] CALLS -> <runtime/rust> = {}",
+        c("cfc"),
+        c("xm"), c("xf"),
+        c("bi_imp"), c("bi_imp_rv"),
+        c("bi_call"), c("bi_call_rv"),
+        c("rc"),
+        c("rcm"),
+        c("rdd"),
+        c("impls"),
+        c("rg_ref"),
+        c("rg_call"),
+        c("rsg_call")
+    );
+    eprintln!("=== wave6 native-step slice counts: printed ===\n");
+}
+
 // ── Wave 4: js_runtime_globals shadow differential against the dogfood graph copy ──
 
 /// Shadow differential for the `js_runtime_globals_*` pack pair (Wave 4) against

@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.0] — datalog2 becomes a requirement
+
+### Breaking Changes
+
+- **`analyze`/`resolve` require an rfdb-server with the `datalogV2Materialize` capability.** A server that does not advertise it in the Hello handshake (an old binary, or one started with `RFDB_DATALOG_V2=off`) is refused with an actionable error — the legacy resolve fallback was removed wholesale, so there is nothing left to run on such a server. Upgrade the `rfdb-server` binary. The `RFDB_DATALOG_V2=off` kill switch still exists **on the server** (it disables `@materialize` for query/debug use), but an orchestrator pointed at such a server fails fast instead of falling back.
+- **Legacy js/rust resolve steps removed** (each slice is owned by a datalog2 `@stdlib` rule pack with recorded differential evidence — see `_ai/research/resolve-datalog2-migration-synthesis.md`):
+  - js (grafema-resolve): `import-resolution` (→ js_module_imports + js_import_bindings, 679≡679), `js-local-refs` (→ js_local_refs), `same-file-calls` (→ js_same_file_calls), `property-access` (→ js_property_access_ns/full), `class-inheritance` (→ js_class_inheritance, EXTENDS 14/14), `js-this-method-calls` (→ js_this_method_calls, 432≡432), `runtime-call-globals` (→ js_runtime_globals_nodes/edges, 7,800≡7,800), `cross-file-calls` (→ js_cross_file_calls), `builtins` (→ js_builtins_nodes/edges). The `grafema-resolve` daemon now serves only `runtime-globals` (the REFERENCE→RESOLVES_TO arm — no pack owns it).
+  - rust (grafema-rust-resolve): `rust-imports` (→ rust_imports), `rust-calls` (→ rust_calls), `rust-trait-resolve` (→ rust_trait_resolve). `rust-cross-methods` (dyn-dispatch + self-field arms) and `rust-globals` stay native — no pack owns those slices yet.
+  - Behavioral consequence of `rust-calls` removal: macro invocations (`foo!`) are no longer resolved to same-named functions — the rust_calls pack deliberately excludes them per the analyzer's own contract ("foo! is not the function foo"); the legacy step used to match them.
+- **Legacy in-orchestrator DEPENDS_ON derivation (P3 fallback) removed**, together with `legacy-retirement.lock` and its guard test. `@stdlib/depends` is the only producer of MODULE→MODULE DEPENDS_ON (and is more complete: the legacy sid-parse dropped `MODULE#`-sid Haskell endpoints).
+- **A failed rule pack now FAILS the analyze run** (non-zero exit) with a summary naming each failed pack and the graph slice it owns. With no fallback behind the packs, the previous log-and-continue behavior would silently ship a graph missing a whole slice. All packs still run before the run fails (maximal diagnostics).
+- **The 4 datalog-replaced `.mjs` plugins were removed** (Wave 5): `method-call-resolver`, `shape-verifier`, `axum-route-detector`, `semantic-bridge-detector` — replaced by the `method_calls`, `shape_verifier`, `axum_routes` packs and graph-native bridges.
+- **`with_defaults()` no longer injects the default `js-import-resolution`/`runtime-globals` plugin entries** (the `grafema-resolve imports` CLI command they referenced was deleted); an empty `plugins:` list stays empty.
+- `GRAFEMA_SKIP_RESOLVE_STEPS` still works, but only for the REMAINING native steps (`runtime-globals`, `rust-cross-methods`, `rust-globals`); the deleted step names are no-ops.
+
 ### Features
 
 - feat(cli): `grafema upgrade` command — clean stale artifacts from `~/.grafema/bin/` and upgrade binaries to current version. Supports `--all`, `--lang`, `--project`, `--dry-run` flags.

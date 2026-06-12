@@ -38,15 +38,21 @@ D2-pin (BLAKE3 sidecar, version+tombstone-hash ключ, riders-gate; реста
 
 ## ОСТАВШИЕСЯ ЗАДАЧИ (порядок)
 
-1. **#13 cleanup**: выпилить замещённый legacy-код (js-resolve паковые модули ~2k LOC,
-   rust-resolve ~0.8k, 4 .mjs-плагина 1.8k + тесты/обвязка) + LOC-бухгалтерия в леджер.
-   ОСТОРОЖНО: daemon-каркасы остаются (нужны для не-v2 fallback! retired-шаги вызываются
-   только если capability отсутствует — решить: выпиливать ли вообще, пока fallback жив).
-2. Advisory из ревью #12 (НЕ закрыты): (a) second-pass retirement сделать
-   capability-conditional как first-pass (на не-v2 сервере 432+7,800 CALLS теряются);
-   (b) pack-failure coupling — упавший пак на retired-срезе должен ронять run или громкую
-   сводку (сейчас log-and-continue); (c) 18 bin protocol_tests pre-existing (MVCC no-flush
-   фикстуры) — триаж; (d) property-access evidence-class в доке (W6 aggregate, не set-diff).
+1. ✅ **#13 cleanup = Wave 6 DONE 2026-06-12** (uncommitted): fallback удалён ЦЕЛИКОМ по
+   решению юзера (no users → minor 0.4.0 + Breaking Changes). Orchestrator fail-fast без
+   datalogV2Materialize (analyze И resolve); retired-сеты растворены; P3 legacy DEPENDS_ON
+   + lock удалены; pack-failure теперь РОНЯЕТ run (collect-then-fail, тест с fake-сервером);
+   удалены 12 Haskell-модулей + оба Spec-хвоста (41 файл, +677/−5,014); js-daemon = только
+   runtime-globals (RESOLVES_TO-арм, пака нет), rust-daemon = rust-cross-methods (dyn/self-field
+   армы без пака) + rust-globals. Acceptance: свежий PURE-defaults analyze exit 0,
+   496,522/1,051,686, 679≡679/star 9/EXTENDS 14/rg 7,805/все zero-stamp гейты = 0; дрейф
+   объяснён (удалённый .hs-корпус; rust_calls без макросов — задекларированная Wave-M
+   дивергенция). Леджер: Wave 6 секция в synthesis. Версии 0.3.29→0.4.0 (вкл. бинарные
+   пины grafema/mcp/cli), НЕ опубликовано, НЕ закоммичено.
+2. Advisory из ревью #12: (a) ~~second-pass capability-conditional~~ MOOT (Wave 6 удалила
+   second pass); (b) ~~pack-failure coupling~~ ЗАКРЫТО Wave 6 (run fails);
+   (c) 18 bin protocol_tests pre-existing (MVCC no-flush фикстуры) — триаж;
+   (d) property-access evidence-class в доке (W6 aggregate, не set-diff).
 3. **#7** tiered compaction; **#14** feature-detection енричеры → паки (пост-релиз);
    java/kotlin/go спек-раунд; numeric-literals Value-решение.
 4. Релиз/push/мерж в main — ТОЛЬКО по явной команде. Апстрим в main: фикс 2 скобок

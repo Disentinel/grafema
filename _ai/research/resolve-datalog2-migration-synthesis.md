@@ -604,3 +604,113 @@ mismatch=0, 65.9s), orchestrator build OK + **472/0** (443+14+14+1). JS: pnpm bu
 IDENTICAL): все 95 pre-existing (enricher/MCP-кластер), Wave 5 не добавила ни одного.
 Зелёная сборка без единого импорта удалённых плагинов = доказательство отсутствия живых
 потребителей.
+
+---
+
+## Wave 6 (2026-06-12): datalog2 REQUIRED — fallback deleted wholesale; v0.4.0
+
+USER DECISION: no users exist → new MINOR (0.4.0) + Breaking-Changes CHANGELOG; delete
+everything that does not fit the datalog2 concept. SCOPE GUARD held: datalog V1 QUERY
+engine (`rfdb-server/src/datalog/`) STAYS (wire datalogQuery/check_guarantee + Gate-A
+oracle); what died is the legacy RESOLVE pipeline + its fallback machinery.
+
+### Part A — v2 is a requirement (orchestrator)
+- `require_datalog_v2_capability()` (main.rs): `analyze` AND the standalone `resolve`
+  fail fast with an actionable error when Hello lacks `datalogV2Materialize` (upgrade
+  binary / un-set RFDB_DATALOG_V2=off). Tested over the wire: fake Unix-socket server
+  answering Hello without the capability (`analyze_fails_fast_without_datalog_v2_capability`).
+- Retired-step sets DISSOLVED: `RETIRED_FIRST_PASS_STEPS` / `RETIRED_SECOND_PASS_STEPS` /
+  `effective_*_skips` deleted; `resolve_step_skips()` parses GRAFEMA_SKIP_RESOLVE_STEPS
+  env-only — it still gates the REMAINING native steps (runtime-globals,
+  rust-cross-methods, rust-globals), tested (`resolve_step_skips_gates_only_what_env_names`).
+- Legacy P3 `derive_depends_on_legacy` + `LEGACY_DEPENDS_ON_EXECUTIONS` +
+  `legacy-retirement.lock` + guard test deleted (the lock protected the fallback that no
+  longer exists). The standalone `resolve` command's INLINE duplicate of the same
+  derivation also deleted; `resolve` now runs the pack phase (before diagnostics).
+- Dead plumbing removed: JS second pass (js-this-method-calls / runtime-call-globals),
+  `build-index` step + `INDEX_NODE_TYPES` (plugin.rs — its only consumers were the
+  deleted daemon steps), `with_defaults()` default-plugin injection (referenced the
+  deleted `grafema-resolve imports` CLI).
+
+### Part D — loud pack failures
+Phase 9 extracted to `run_stdlib_rule_packs()`: failures are COLLECTED (all packs still
+run — maximal diagnostics; later packs depend on earlier only via committed edges), then
+the run FAILS (non-zero) with `pack_failure_summary()` naming each failed pack + its
+owned slice (`pack_owned_slice()` registry covers all 22; pinned by test). Justification:
+with no fallback, log-and-continue = silently shipping a graph missing a whole slice.
+Tested end-to-end through the production loop against a fake server forcing an EARLY
+(js_local_refs) and a LATE (axum_routes) pack to fail — both named in the summary,
+proving continue-then-fail (`pack_failure_fails_the_run_with_a_loud_summary`).
+
+### Parts B+C — deletions with the audit (step → pack → evidence → verdict)
+
+| native step | pack(s) | evidence | verdict |
+|---|---|---|---|
+| js import-resolution (ImportResolution.hs 618) | js_module_imports + js_import_bindings | 3c: 679≡679 EXACT, binding-hop 263→0 | DELETED |
+| js-local-refs (127) | js_local_refs | W1 diff (37,751 reproduced) | DELETED |
+| same-file-calls (172) | js_same_file_calls | W1 diff (715≡715) | DELETED |
+| property-access (213) | js_property_access_ns/full | W1b/2 (559 reproduced) | DELETED |
+| class-inheritance (268) | js_class_inheritance | 2b EXTENDS 14/14; INSTANCE_OF arms = 0 | DELETED |
+| js-this-method-calls (82) | js_this_method_calls | W9 432≡432 | DELETED |
+| runtime-call-globals (jsCallStrategy arm) | js_runtime_globals_nodes/edges | W4 7,800≡7,800; fresh run 7,805≡class | DELETED (shared Grafema.RuntimeGlobals STAYS — beam/haskell/rust use it) |
+| cross-file-calls (145) | js_cross_file_calls | pack header = WHOLE resolver (2 arms), numbered DELTAs; fresh run: pack owns 939 vs dogfood legacy 955 (endpoint-collapse DELTA 1) | DELETED |
+| builtins (414) | js_builtins_nodes/edges | 2b byte-identical EXTERNAL sids; fresh run: pack wrote 1,320 = 247 IMPORTS_FROM ≡ legacy 247 + 1,073 CALLS ≡ legacy 1,073 EXACT | DELETED |
+| runtime-globals (jsStrategy REFERENCE→RESOLVES_TO) | **NONE** (no pack emits RESOLVES_TO — grep-verified) | — | **KEEP** (still native, the daemon's only remaining step) |
+| rust-imports (RustImportResolution.hs 236) | rust_imports | 3b/3c module tree + pub-gate | DELETED |
+| rust-calls (RustCallResolution.hs 103) | rust_calls | W1 diff + Wave-M macro DELTAs (deliberate divergence, analyzer contract) | DELETED |
+| rust-trait-resolve (RustTraitResolution.hs 50) | rust_trait_resolve | W2 WHOLE resolver; fresh run 35 written, IMPLEMENTS total 39 (was 38) | DELETED |
+| rust-cross-methods | rust_cross_methods_ctor + rust_receiver_typing = PARTIAL; dyn-dispatch + self-field arms have NO pack (rust_receiver_typing.dl header: "NOT here") | dogfood: rv=rust-cross-method 3,832 + rv=rust-dyn-dispatch 793 | **KEEP** |
+| rust-globals | **NONE** (no Rust facts pack) | dogfood: 38k CALLS → <runtime/rust> | **KEEP** |
+| haskell/beam/java/kotlin/python/go/... resolvers | out of scope | — | KEEP whole |
+
+Also deleted: ResolveUtil.hs (89 — consumers were all deleted modules),
+grafema-resolve test/Spec.hs (894 — covered ONLY deleted modules), rust-resolve
+Spec.hs trimmed to the RustCrossMethodCalls section (−660). Both daemons now serve:
+js = runtime-globals only (load/clear-context kept as protocol acks); rust =
+rust-cross-methods + rust-globals. .cabal files updated; both packages rebuilt via
+scripts/build-native.sh, ~/.grafema/bin synced (binaries 11:20/11:21), rust-resolve
+spec 3/3 PASS.
+
+### LOC (git diff --stat vs HEAD b34ad45a): **41 files, +677 / −5,014**
+The Wave-5 "deferred deletion" rows are REALIZED and exceeded: the deferred 1,716
+(JsLocalRefs 127 + SameFileCalls 172 + PropertyAccess 213 + ClassInheritance 268 +
+ImportResolution 618 + JsThisMethodCalls 82 + RustImportResolution 236) + the Part-C
+additions (Builtins 414 + CrossFileCalls 145 + ResolveUtil 89 + RustCallResolution 103 +
+RustTraitResolution 50 = 801) + tests 894 + 660 + Main.hs shrink (both) + orchestrator
+fallback machinery (retired sets, P3 ×2, second pass, build-index, lock 26). The
+"0–1,691 deferred test LOC" row closes at 1,554 deleted test lines.
+
+### Part E — version 0.3.29 → 0.4.0 (NO publish)
+Bumped: root package.json; packages/{api,cli,grafema,grafema-darwin-arm64,
+grafema-darwin-x64,grafema-linux-arm64,grafema-linux-x64,mcp,rfdb-server(npm),
+rfdb,types,util,vscode}/package.json; rfdb-server/Cargo.toml (+Cargo.lock via build);
+BINARY PINS = optionalDependencies in grafema/mcp/cli (4 lines each) — all 0.4.0.
+CHANGELOG.md: Breaking Changes section (capability requirement; removed steps list;
+macro-resolution divergence; P3 removal; pack-failure policy; Wave-5 .mjs plugins;
+with_defaults; RFDB_DATALOG_V2=off semantics: still a SERVER switch, but analyze
+against such a server now fails fast — no orchestrator legacy path).
+
+### Part F — acceptance (fresh PURE-defaults analyze, /tmp/grafema-w6 copy of the
+working tree, release server+orchestrator, caffeinate; exit 0)
+**496,522 nodes / 1,051,686 edges**; all 22 packs materialized, pack phase ~75s.
+final12_acceptance_counts on the fresh DB: IMPORT→MODULE **679 ≡ 679**, star RE_EXPORTS
+9, EXTENDS 14, WORKSPACE_PACKAGE 8, runtime-globals CALLS slice **7,805 ≡ class**, ALL
+zero-stamp gates = 0 (js-resolution, rust-import-resolution, js-call-globals,
+instance-of, instance-of-builtin, builtin-class). Explained drift vs final-12
+(502,509/1,062,679): (1) the 13 deleted .hs sources left the analyzed corpus
+(−5,987 nodes; DEPENDS_ON 1,728→1,686; INSTANCE_OF 97→94); (2) rust_calls owns the
+same-file slice WITHOUT macro matches (pack 8,283 vs legacy-stamped 14,212 on dogfood —
+the declared Wave-M divergence; displaced macro-named calls now resolve to
+<runtime/rust> globals, 38,251→40,055, and rust-cross-method stamps absorb former
+rust-calls dedup wins 3,832→4,229); (3) cross-file-calls 939 (declared DELTA classes).
+New probe `wave6_native_step_slice_counts` (differential.rs, --ignored) prints the
+per-step slice counts both structurally and by stamp — run on the dogfood copy
+(pre-deletion baseline) and the fresh DB.
+
+**Сьюты**: rfdb-server lib **1359/0** (82.6s), datalog2 **275/0 debug + 275/0 release**,
+plan 10/0, **Gate A 51/51** (TALLY match=51, 10.0s), orchestrator **471/0**
+(442+14+14+1; −4 deleted legacy tests, +4 new Wave-6 tests, −1 INDEX_NODE_TYPES test);
+both Haskell packages build + daemons served the fresh analyze live (js runtime-globals
+3,178 edges in 26.6s — was 53.5s with the legacy steps; rust steps committed);
+rust-resolve spec 3/3. pnpm build OK (gui = pre-existing ENOENT), JS unit 622/95 —
+the known pre-existing fail-set size, zero JS sources touched.

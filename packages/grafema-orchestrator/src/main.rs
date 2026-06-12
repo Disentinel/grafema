@@ -19,19 +19,16 @@ use std::path::PathBuf;
 /// - the three Wave-1b packs run after them: `rust_cross_methods_ctor` reads the
 ///   CALLS edges `rust_calls` committed as storage EDB (the resolved-constructor
 ///   seam — MUST follow `rust_calls`); `js_cross_file_calls` and
-///   `js_property_access_ns` (hybrid) consume the LEGACY import resolver's
-///   IMPORTS_FROM edges as EDB (present since the resolve phase) and, as
-///   CALLS/READS_FROM producers, must precede the fuzzy fallback and the
+///   `js_property_access_ns` consume IMPORTS_FROM edges as EDB (produced by
+///   `js_module_imports`/`js_import_bindings` above them since Wave 3b/3c) and,
+///   as CALLS/READS_FROM producers, must precede the fuzzy fallback and the
 ///   negators below;
 /// - the three JS Wave-2 packs (node_attr-unblocked) interleave by their seams:
 ///   `js_import_bindings` PRODUCES IMPORTS_FROM (named/aliased/default binding →
-///   export target through the parent IMPORT's legacy MODULE edge), so it runs
+///   export target through the parent IMPORT's MODULE edge), so it runs
 ///   BEFORE every IMPORTS_FROM consumer — `js_class_inheritance` (cross-file
-///   arm), `js_cross_file_calls`, `js_property_access_ns` (while legacy
-///   resolution stays ON its edges are near-duplicates via additive dedup; once
-///   legacy is gated this ordering is load-bearing, and the depends run — which
-///   also consumes IMPORTS_FROM and currently rides the legacy edges — must move
-///   after it); `js_class_inheritance` PRODUCES EXTENDS, consumed by
+///   arm), `js_cross_file_calls`, `js_property_access_ns`, and depends;
+///   `js_class_inheritance` PRODUCES EXTENDS, consumed by
 ///   `shape_verifier`'s inheritance closure; `js_property_access_full`
 ///   (this/static arms) produces READS_FROM, so it precedes `method_calls` and
 ///   `shape_verifier`;
@@ -459,101 +456,27 @@ async fn build_file_to_module_map(rfdb: &mut rfdb::RfdbClient) -> HashMap<String
         .collect()
 }
 
-/// Second-pass legacy resolve steps retired BY DEFAULT (the resolve→datalog2 migration):
-/// their datalog2 rule pack was proven set-identical to the legacy slice on the live
-/// dogfood graph, so the legacy step only re-derives edges the pack already owns (and,
-/// un-gated, masks the pack's write-path behind additive dedup — the Wave-3c "0 edges"
-/// anomaly). Retired here, NOT via GRAFEMA_SKIP_RESOLVE_STEPS, so production gets the
-/// gating without env configuration; the env var stays additive on top (it cannot
-/// un-retire a step).
+/// Parse the user's GRAFEMA_SKIP_RESOLVE_STEPS value (comma-separated,
+/// whitespace-tolerant) into the resolve-step skip set. Pure for testability —
+/// the caller passes the env var's value.
 ///
-/// - `js-this-method-calls`: W9 differential 432 ≡ 432, only-diff 0 both directions,
-///   pack write-path proven (js_this_method_calls.dl re-derived all 432 after legacy
-///   edge deletion). See `_ai/research/resolve-datalog2-migration-synthesis.md` (W9).
-/// - `runtime-call-globals`: Wave 4 differential 7,800 ≡ 7,800 CALLS, only-diff 0
-///   both directions, matched-seName set 183 ≡ 183 (rfdb
-///   `wave4_runtime_globals_differential` on the dogfood copy; packs
-///   `js_runtime_globals_nodes`/`_edges`). Same ledger, Wave 4.
-const RETIRED_SECOND_PASS_STEPS: &[&str] = &["js-this-method-calls", "runtime-call-globals"];
-
-/// The effective second-pass skip set: the built-in retired steps merged with the
-/// GRAFEMA_SKIP_RESOLVE_STEPS value (comma-separated, whitespace-tolerant). Pure for
-/// testability — the caller passes the env var's value.
-fn effective_second_pass_skips(env_value: Option<&str>) -> HashSet<String> {
-    let mut skips: HashSet<String> = env_value
+/// Wave 6 dissolved the retired-step merging that used to live here
+/// (`RETIRED_FIRST_PASS_STEPS` / `RETIRED_SECOND_PASS_STEPS`): the
+/// datalog2-replaced legacy steps were DELETED from the resolver daemons, not
+/// gated, so there is nothing left to retire. Every step the daemons still
+/// serve is live native code with no pack replacement (js: `runtime-globals`,
+/// the REFERENCE→RESOLVES_TO arm; rust: `rust-cross-methods` — dyn-dispatch +
+/// self-field arms — and `rust-globals`), and the env var gates exactly what
+/// it names among them: js-daemon steps via the pinned child env
+/// (PoolConfig::skip_resolve_steps → the daemon's own `getSkipSteps` gate),
+/// rust steps by never sending the command.
+fn resolve_step_skips(env_value: Option<&str>) -> HashSet<String> {
+    env_value
         .unwrap_or_default()
         .split(',')
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
-        .collect();
-    skips.extend(RETIRED_SECOND_PASS_STEPS.iter().map(|s| s.to_string()));
-    skips
-}
-
-/// First-pass legacy resolve steps retired BY DEFAULT (Final #12, completing the Wave-4
-/// pattern for the per-file/streaming first pass): each step's datalog2 rule pack was
-/// proven equivalent (or a fully classified, documented delta) against the legacy slice
-/// on the live dogfood graph — see `_ai/research/resolve-datalog2-migration-synthesis.md`
-/// (Waves 1, 2b, 3b, 3c).
-///
-/// Retirement is CONDITIONAL on the connected server advertising `datalogV2Materialize`
-/// (the pack-runner gate): the packs are what replace these steps, so on a non-v2 server
-/// (legacy P3 fallback) every step keeps running — retiring there would silently drop
-/// IMPORTS_FROM/READS_FROM/CALLS slices with nothing to re-derive them. This differs from
-/// `RETIRED_SECOND_PASS_STEPS` (unconditional) because the first pass contains
-/// `import-resolution`, whose IMPORTS_FROM edges also feed the legacy DEPENDS_ON
-/// derivation (P3) — unconditional retirement would break the non-v2 fallback outright.
-///
-/// Mechanism per step (the steps live in two different drive shapes):
-/// - js daemon steps (`js-local-refs`, `same-file-calls`, `property-access`,
-///   `class-inheritance`, `import-resolution`): run INSIDE grafema-resolve's single
-///   `resolve-file`/`resolve-all` daemon command, so the orchestrator cannot "not send"
-///   them individually. They are retired by pinning the merged skip set on the daemon
-///   child's GRAFEMA_SKIP_RESOLVE_STEPS env (PoolConfig::skip_resolve_steps) — the
-///   daemon's own `getSkipSteps` gate does the per-step skipping; no daemon change.
-/// - `rust-imports`: an orchestrator-sent daemon command — retired Wave-4 style by
-///   never sending it (and the merged env is pinned on the rust daemon too, so its
-///   own dispatch gate agrees).
-///
-/// Packs owning the slices: js_local_refs (Wave 1, READS_FROM 98.5%→exact set semantics),
-/// js_same_file_calls (Wave 1), js_property_access_ns/full (Waves 1b/2),
-/// js_class_inheritance (Wave 2b, EXTENDS 14/14 incl. builtin superclasses; the legacy
-/// step's OTHER arms measured zero on dogfood 2026-06-12: INSTANCE_OF = 97 edges, ALL
-/// resolvedVia="type-inference" — the plugin owns the slice; legacy instance-of /
-/// instance-of-builtin stamps = 0, BUILTIN_CLASS nodes minted = 0. Evidence is
-/// dogfood-bound, not a set differential — codebases running WITHOUT the type-inference
-/// plugin would lose the instanceof slice; revisit if that configuration ships),
-/// js_module_imports + js_import_bindings (Waves 3b/3c, IMPORT→MODULE 679≡679 EXACT,
-/// binding-hop 263→0), rust_imports (Wave 3b/3c). The env var stays additive for
-/// non-retired steps and cannot un-retire one.
-const RETIRED_FIRST_PASS_STEPS: &[&str] = &[
-    "js-local-refs",
-    "same-file-calls",
-    "property-access",
-    "class-inheritance",
-    "import-resolution",
-    "rust-imports",
-];
-
-/// The effective first-pass skip set: the user's GRAFEMA_SKIP_RESOLVE_STEPS value
-/// (comma-separated, whitespace-tolerant), merged with [`RETIRED_FIRST_PASS_STEPS`]
-/// ONLY when the connected server runs the datalog2 pack phase
-/// (`supports_datalog_v2_materialize`). Pure for testability — the caller passes the
-/// env var's value and the capability bit.
-fn effective_first_pass_skips(
-    env_value: Option<&str>,
-    server_runs_packs: bool,
-) -> HashSet<String> {
-    let mut skips: HashSet<String> = env_value
-        .unwrap_or_default()
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
-    if server_runs_packs {
-        skips.extend(RETIRED_FIRST_PASS_STEPS.iter().map(|s| s.to_string()));
-    }
-    skips
+        .collect()
 }
 
 /// Render a skip set as the comma-separated GRAFEMA_SKIP_RESOLVE_STEPS value pinned on a
@@ -564,49 +487,134 @@ fn skip_steps_env_value(skips: &HashSet<String>) -> String {
     steps.join(",")
 }
 
-/// P3 (RFDB Datalog v2 spec, invariant P3 `:63`): the legacy in-orchestrator DEPENDS_ON
-/// derivation is the `RFDB_DATALOG_V2=off` fallback (the server then does NOT advertise the
-/// `datalogV2Materialize` capability, so phase-9 routes here). It MUST live through Gate E + one
-/// release after the v2 `@materialize` path shipped. This counter records every execution of the
-/// legacy derivation so a test can assert the fallback is exercised — **execution, not result
-/// equality** with v2 (the two intentionally differ: v2's file-attr join is more complete on
-/// `MODULE#`-sid Haskell endpoints, see `_ai/gaps.md`). Do NOT delete the legacy path without
-/// flipping `legacy-retirement.lock` (enforced by `legacy_retirement_lock_guards_deletion`).
-static LEGACY_DEPENDS_ON_EXECUTIONS: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
+/// Wave 6 fail-fast gate: `analyze` requires the connected server to run the
+/// datalog2 pack phase (`datalogV2Materialize` in the Hello features). The
+/// legacy js/rust resolve steps and the in-orchestrator P3 DEPENDS_ON fallback
+/// were DELETED — on a non-v2 server nothing is left to produce the resolved
+/// slices, so the only correct behavior is a clear, actionable refusal.
+fn require_datalog_v2_capability(
+    rfdb: &rfdb::RfdbClient,
+    socket_path: &std::path::Path,
+) -> Result<()> {
+    if rfdb.supports_datalog_v2_materialize() {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "rfdb-server at {} does not support datalog v2 materialize \
+         (no `datalogV2Materialize` capability in Hello; server version: {}); \
+         analyze requires it — the legacy resolve fallback was removed. \
+         Upgrade the rfdb-server binary, and make sure its environment \
+         does not set RFDB_DATALOG_V2=off",
+        socket_path.display(),
+        if rfdb.server_version.is_empty() { "unknown" } else { &rfdb.server_version },
+    )
+}
 
-/// Legacy (P3) module→module DEPENDS_ON derivation: map each `IMPORTS_FROM` endpoint id to its
-/// file (URI form `grafema://auth/path#frag` → `path`, or legacy sid `path->TYPE->name` → `path`),
-/// then to its MODULE via `file_to_module`, emitting one pair per cross-module import. Lossy on
-/// endpoints whose file segment the sid-parse cannot recover (`MODULE#`-sid) — superseded by the
-/// v2 file-attr join. Increments [`LEGACY_DEPENDS_ON_EXECUTIONS`] on every call.
-fn derive_depends_on_legacy(
-    all_imports_from_edges: &[(String, String)],
-    file_to_module: &HashMap<String, String>,
-    uri_prefix: &str,
-) -> HashSet<(String, String)> {
-    LEGACY_DEPENDS_ON_EXECUTIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let mut depends_on_pairs: HashSet<(String, String)> = HashSet::new();
-    for (src_id, dst_id) in all_imports_from_edges {
-        let src_file = if let Some(rest) = src_id.strip_prefix(uri_prefix) {
-            rest.split('#').next().unwrap_or("")
-        } else {
-            src_id.split("->").next().unwrap_or("")
-        };
-        let dst_file = if let Some(rest) = dst_id.strip_prefix(uri_prefix) {
-            rest.split('#').next().unwrap_or("")
-        } else {
-            dst_id.split("->").next().unwrap_or("")
-        };
-        if let (Some(src_mod), Some(dst_mod)) =
-            (file_to_module.get(src_file), file_to_module.get(dst_file))
-        {
-            if src_mod != dst_mod {
-                depends_on_pairs.insert((src_mod.clone(), dst_mod.clone()));
+/// Per-pack slice ownership, for the phase-9 failure report: with the legacy
+/// resolve pipeline deleted (Wave 6) there is NO fallback producer behind any
+/// of these packs — a failed pack means its slice is simply MISSING from the
+/// graph for this run. The summary names what was lost so the error is
+/// actionable instead of "a pack failed".
+fn pack_owned_slice(pack: &str) -> &'static str {
+    match pack {
+        "@stdlib/js_local_refs" => "js same-file READS_FROM (REFERENCE→declaration)",
+        "@stdlib/js_same_file_calls" => "js same-file CALLS",
+        "@stdlib/js_this_method_calls" => "js this.method() CALLS",
+        "@stdlib/rust_calls" => "rust same-file CALLS",
+        "@stdlib/rust_cross_methods_ctor" => "rust constructor-typed receiver CALLS",
+        "@stdlib/rust_trait_resolve" => "rust IMPLEMENTS (impl Trait for Type)",
+        "@stdlib/rust_receiver_typing" => "rust annotation/return-typed receiver CALLS",
+        "@stdlib/rust_imports" => "rust IMPORTS_FROM (module tree + bindings)",
+        "@stdlib/js_module_imports" => "js IMPORT→MODULE IMPORTS_FROM + star RE_EXPORTS",
+        "@stdlib/js_import_bindings" => "js IMPORT_BINDING→export IMPORTS_FROM",
+        "@stdlib/js_class_inheritance" => "js EXTENDS",
+        "@stdlib/js_cross_file_calls" => "js cross-file CALLS",
+        "@stdlib/js_property_access_ns" => "js namespace-import READS_FROM",
+        "@stdlib/js_property_access_full" => "js property-access READS_FROM",
+        "@stdlib/js_builtins_nodes" => "node-builtin EXTERNAL_MODULE/EXTERNAL_FUNCTION nodes",
+        "@stdlib/js_builtins_edges" => "node-builtin IMPORTS_FROM + CALLS",
+        "@stdlib/js_runtime_globals_nodes" => "js runtime-global GLOBAL_DEFINITION nodes",
+        "@stdlib/js_runtime_globals_edges" => "js runtime-global CALLS",
+        "@stdlib/depends" => "MODULE→MODULE DEPENDS_ON",
+        "@stdlib/method_calls" => "fuzzy method-call CALLS fallback",
+        "@stdlib/shape_verifier" => "shape-violation ISSUE diagnostics",
+        "@stdlib/axum_routes" => "axum ROUTES_TO",
+        _ => "(unregistered pack)",
+    }
+}
+
+/// Render the phase-9 pack-failure summary. One line per failed pack: name, the
+/// slice it owns (now missing), and the error. Pure for testability.
+fn pack_failure_summary(failures: &[(String, String)]) -> String {
+    let mut out = String::from(
+        "rule-pack phase FAILED — the datalog2 packs are the ONLY producer of their \
+         slices (the legacy resolve pipeline was removed); the graph is missing:\n",
+    );
+    for (pack, err) in failures {
+        out.push_str(&format!(
+            "  {pack} — owns: {} — error: {err}\n",
+            pack_owned_slice(pack)
+        ));
+    }
+    out.push_str("fix the failing pack(s) and re-run analyze; the run is incomplete");
+    out
+}
+
+/// Phase 9 — the rule-pack phase: run the canonical stdlib rule packs in
+/// [`STDLIB_RULE_PACKS`] order (the ordering contract documented at the const).
+/// This is the ONLY producer of the resolved slices (DEPENDS_ON included; the
+/// legacy P3 in-orchestrator derivation was deleted in Wave 6).
+///
+/// FAILURE POLICY (Wave 6): a failed pack = its slice is MISSING with no
+/// fallback to re-derive it. All packs still run (maximal diagnostics per run —
+/// later packs depend on earlier ones only through committed edges, so a failed
+/// producer degrades but does not invalidate them), then the phase FAILS with
+/// [`pack_failure_summary`] naming every failed pack and its owned slice.
+async fn run_stdlib_rule_packs(
+    rfdb: &mut rfdb::RfdbClient,
+    prof: Option<&profiler::Profiler>,
+    imports_from_hint: usize,
+) -> Result<()> {
+    let mut failed_packs: Vec<(String, String)> = Vec::new();
+    for pack in STDLIB_RULE_PACKS {
+        let pack_start = std::time::Instant::now();
+        match rfdb.materialize_datalog(pack).await {
+            Ok(pack_edges) => {
+                let pack_ms = pack_start.elapsed().as_millis() as u64;
+                tracing::info!(pack = *pack, ms = pack_ms, edges = pack_edges, "Rule pack materialized");
+                if let Some(p) = prof {
+                    p.event("rule_pack_complete", &[
+                        ("pack", pack),
+                        ("ms", &pack_ms.to_string()),
+                        ("edges", &pack_edges.to_string()),
+                    ]);
+                }
+                if *pack == "@stdlib/depends" {
+                    tracing::info!(
+                        edges = pack_edges,
+                        from_imports = imports_from_hint,
+                        "DEPENDS_ON derived by RFDB Datalog v2 @materialize"
+                    );
+                    if let Some(p) = prof {
+                        p.event("depends_on_complete_v2", &[("edges", &pack_edges.to_string())]);
+                    }
+                }
+            }
+            Err(err) => {
+                tracing::error!(
+                    pack = *pack,
+                    error = %format!("{err:#}"),
+                    "Rule pack @materialize FAILED — its slice is missing (no fallback); \
+                     remaining packs still run, the run fails at end of phase"
+                );
+                failed_packs.push((pack.to_string(), format!("{err:#}")));
             }
         }
     }
-    depends_on_pairs
+    if !failed_packs.is_empty() {
+        anyhow::bail!("{}", pack_failure_summary(&failed_packs));
+    }
+    Ok(())
 }
 
 /// Validate, stamp, tag virtual nodes, and commit a resolution output to RFDB.
@@ -746,6 +754,13 @@ async fn main() -> Result<()> {
             let mut rfdb = rfdb::RfdbClient::connect(&socket_path)
                 .await
                 .with_context(|| format!("Failed to connect to RFDB at {}", socket_path.display()))?;
+
+            // Wave 6: analyze REQUIRES the server-side datalog2 pack phase. The
+            // legacy resolve steps and the in-orchestrator P3 DEPENDS_ON fallback
+            // were deleted — on a server without the capability there is nothing
+            // left that could produce the resolved slices, so fail fast and loud
+            // instead of silently shipping an unresolved graph.
+            require_datalog_v2_capability(&rfdb, &socket_path)?;
 
             let db_name = "default";
             rfdb.create_database(db_name, false).await?;
@@ -1355,21 +1370,20 @@ async fn main() -> Result<()> {
             // Build file → MODULE semantic ID map from RFDB (full graph)
             let file_to_module = build_file_to_module_map(&mut rfdb).await;
 
-            // First-pass retirement (Final #12): when the server runs the datalog2 pack
-            // phase, the proven-migrated first-pass legacy steps are skipped BY DEFAULT —
-            // js daemon steps via the pinned child env below, rust-imports by never
-            // sending the command (8b). See RETIRED_FIRST_PASS_STEPS.
-            let first_pass_skips = effective_first_pass_skips(
+            // Resolve-step gating: GRAFEMA_SKIP_RESOLVE_STEPS gates the REMAINING
+            // native steps (the datalog2-replaced ones were deleted in Wave 6) — js
+            // daemon steps via the pinned child env below, rust steps by never
+            // sending the command (8b). See `resolve_step_skips`.
+            let resolve_skips = resolve_step_skips(
                 std::env::var("GRAFEMA_SKIP_RESOLVE_STEPS").ok().as_deref(),
-                rfdb.supports_datalog_v2_materialize(),
             );
-            let first_pass_skips_env = if first_pass_skips.is_empty() {
+            let resolve_skips_env = if resolve_skips.is_empty() {
                 None
             } else {
-                let value = skip_steps_env_value(&first_pass_skips);
+                let value = skip_steps_env_value(&resolve_skips);
                 tracing::info!(
                     steps = %value,
-                    "Legacy first-pass resolve steps gated (retired or GRAFEMA_SKIP_RESOLVE_STEPS) — datalog2 packs are load-bearing"
+                    "Native resolve steps gated via GRAFEMA_SKIP_RESOLVE_STEPS"
                 );
                 Some(value)
             };
@@ -1386,7 +1400,7 @@ async fn main() -> Result<()> {
                     max_message_size: 200 * 1024 * 1024,
                     request_timeout: std::time::Duration::from_secs(300),
                     effects_db_path: effects_db_path.clone(),
-                    skip_resolve_steps: first_pass_skips_env.clone(),
+                    skip_resolve_steps: resolve_skips_env.clone(),
                 };
 
                 match process_pool::ProcessPool::new(resolve_pool_config, 1) {
@@ -1412,50 +1426,12 @@ async fn main() -> Result<()> {
 
                         // resolve_per_file commits its own output incrementally
                         // (per-checkpoint), so no end-of-phase commit here.
-
-                        // Release the first-pass worker handle before the second pass acquires it.
-                        // acquire_all() holds all pool slots; stream_and_resolve_single_worker needs
-                        // to acquire one — both would deadlock if handles is still live.
+                        //
+                        // (The former SECOND pass — js-this-method-calls + runtime-
+                        // call-globals — was deleted in Wave 6: the js_this_method_calls
+                        // and js_runtime_globals_nodes/_edges packs own those slices,
+                        // proven set-identical — W9 432≡432, Wave 4 7,800≡7,800.)
                         drop(handles);
-
-                        // Second pass: graph-traversal resolvers (this.method() + CALL-based globals)
-                        // Per-step gating (the resolve→datalog2 migration seam): steps whose
-                        // datalog2 pack is load-bearing are skipped BY DEFAULT once retired
-                        // (RETIRED_SECOND_PASS_STEPS); GRAFEMA_SKIP_RESOLVE_STEPS (comma-
-                        // separated) gates additional steps — it still controls the per-file
-                        // steps inside the resolver daemon and any not-yet-retired second-pass
-                        // step. The env var is additive; it cannot un-retire a step.
-                        let skip_steps = effective_second_pass_skips(
-                            std::env::var("GRAFEMA_SKIP_RESOLVE_STEPS").ok().as_deref(),
-                        );
-                        let second_pass_cmds: Vec<(&str, &[plugin::WorkspacePackageWire])> =
-                            [("js-this-method-calls", &[] as &[plugin::WorkspacePackageWire]), ("runtime-call-globals", &[])]
-                                .into_iter()
-                                .filter(|(name, _)| {
-                                    let keep = !skip_steps.contains(*name);
-                                    if !keep {
-                                        tracing::warn!(step = name, "Legacy resolve step skipped (retired or GRAFEMA_SKIP_RESOLVE_STEPS) — datalog2 pack is load-bearing");
-                                    }
-                                    keep
-                                })
-                                .collect();
-                        let second_pass = plugin::stream_and_resolve_single_worker(
-                            &mut rfdb,
-                            &[config::Language::JavaScript],
-                            &second_pass_cmds,
-                            &resolve_pool,
-                        ).await.unwrap_or_default();
-                        for (cmd, mut o) in second_pass {
-                            let commit_name = match cmd.as_str() {
-                                "js-this-method-calls" => "js-this-method-calls",
-                                "runtime-call-globals" => "js-call-globals",
-                                _ => &cmd,
-                            };
-                            commit_resolve_output(&mut o, commit_name, generation, &mut rfdb).await?;
-                            profile!("resolve_cmd_complete", "language" => "js", "cmd" => commit_name,
-                                "nodes" => o.nodes.len(), "edges" => o.edges.len(),
-                                "duration_ms" => 0);
-                        }
 
                         let lang_ms = lang_start.elapsed().as_millis();
                         profile!("js_resolve_complete",
@@ -1530,21 +1506,24 @@ async fn main() -> Result<()> {
                     command: cfg.analyzers.rust_resolve_path(),
                     args: vec!["--daemon".to_string()],
                     effects_db_path: effects_db_path.clone(),
-                    skip_resolve_steps: first_pass_skips_env.clone(),
+                    skip_resolve_steps: resolve_skips_env.clone(),
                     ..process_pool::PoolConfig::default()
                 };
                 match process_pool::ProcessPool::new(rs_pool_config, 1) {
                     Ok(rs_pool) => {
-                        // rust-imports is retired Wave-4 style: the command is never sent
-                        // when the skip set (retired ∪ env) names it — the rust_imports
-                        // pack owns the slice. The other rust cmds stay env-skippable too.
+                        // The remaining NATIVE rust steps (no pack replacement):
+                        // rust-cross-methods (dyn-dispatch + self-field arms) and
+                        // rust-globals (effects-db). rust-imports / rust-calls /
+                        // rust-trait-resolve were deleted in Wave 6 — the
+                        // rust_imports / rust_calls / rust_trait_resolve packs own
+                        // those slices. Both remaining cmds stay env-skippable.
                         let rust_cmds: Vec<(&str, &[plugin::WorkspacePackageWire])> =
-                            [("rust-imports", &[] as &[plugin::WorkspacePackageWire]), ("rust-calls", &[]), ("rust-cross-methods", &[]), ("rust-trait-resolve", &[]), ("rust-globals", &[])]
+                            [("rust-cross-methods", &[] as &[plugin::WorkspacePackageWire]), ("rust-globals", &[])]
                                 .into_iter()
                                 .filter(|(name, _)| {
-                                    let keep = !first_pass_skips.contains(*name);
+                                    let keep = !resolve_skips.contains(*name);
                                     if !keep {
-                                        tracing::warn!(step = name, "Legacy resolve step skipped (retired or GRAFEMA_SKIP_RESOLVE_STEPS) — datalog2 pack is load-bearing");
+                                        tracing::warn!(step = name, "Native resolve step skipped (GRAFEMA_SKIP_RESOLVE_STEPS)");
                                     }
                                     keep
                                 })
@@ -1558,10 +1537,7 @@ async fn main() -> Result<()> {
                         for (cmd, mut output) in results {
                             let cmd_start = std::time::Instant::now();
                             let commit_name = match cmd.as_str() {
-                                "rust-imports" => "rust-import-resolution",
-                                "rust-calls"   => "rust-call-resolution",
                                 "rust-cross-methods" => "rust-cross-method-calls",
-                                "rust-trait-resolve" => "rust-trait-resolution",
                                 "rust-globals" => "rust-runtime-globals",
                                 _ => &cmd,
                             };
@@ -2056,110 +2032,13 @@ async fn main() -> Result<()> {
                 tracing::info!(count = n_ws, "WORKSPACE_PACKAGE facts committed");
             }
 
-            // 9. Derive MODULE→MODULE DEPENDS_ON edges from IMPORTS_FROM.
-            //
-            // When the RFDB server advertises `datalogV2Materialize` (its RFDB_DATALOG_V2 kill
-            // switch is on), the SERVER derives DEPENDS_ON via the bundled `depends.dl` — a file-
-            // ATTR join, which is correct on the Haskell `MODULE#/…` semantic-ids the legacy
-            // string-parse below silently drops (see _ai/gaps.md 2026-06-07: 127 real module-pairs
-            // lost). Otherwise the legacy in-orchestrator derivation runs. P3: the legacy path is
-            // kept runnable as the fallback until Gate E + one release — do NOT delete it without
-            // the legacy-retirement.lock gate.
+            // 9. Rule-pack phase. The server's capability was asserted at
+            // connect time (fail-fast above), so this phase ALWAYS runs — see
+            // `run_stdlib_rule_packs` for the ordering contract and the Wave-6
+            // failure policy (any failed pack fails the run at end of phase).
             let depends_on_start = std::time::Instant::now();
             profile!("depends_on_start", "imports_from_edges" => all_imports_from_edges.len());
-            if rfdb.supports_datalog_v2_materialize() {
-                // Pack-runner v0: run the canonical stdlib rule packs (see
-                // STDLIB_RULE_PACKS for the ordering contract — Wave 3c moved
-                // depends INTO the list, after every IMPORTS_FROM producer). A
-                // broken pack must not kill analyze: log loud and skip to the
-                // next pack. Exceptions: a method_calls failure additionally
-                // warns that shape_verifier may over-report (it reads the CALLS
-                // edges method_calls materializes); a depends failure warns
-                // that DEPENDS_ON is missing for this run.
-                for pack in STDLIB_RULE_PACKS {
-                    let pack_start = std::time::Instant::now();
-                    match rfdb.materialize_datalog(pack).await {
-                        Ok(pack_edges) => {
-                            let pack_ms = pack_start.elapsed().as_millis() as u64;
-                            tracing::info!(
-                                pack = *pack,
-                                ms = pack_ms,
-                                edges = pack_edges,
-                                "Rule pack materialized"
-                            );
-                            profile!("rule_pack_complete",
-                                "pack" => pack,
-                                "ms" => pack_ms,
-                                "edges" => pack_edges as usize);
-                            if *pack == "@stdlib/depends" {
-                                tracing::info!(
-                                    edges = pack_edges,
-                                    from_imports = all_imports_from_edges.len(),
-                                    "DEPENDS_ON derived by RFDB Datalog v2 @materialize"
-                                );
-                                profile!("depends_on_complete_v2", "edges" => pack_edges as usize);
-                            }
-                        }
-                        Err(err) => {
-                            tracing::error!(
-                                pack = *pack,
-                                error = %format!("{err:#}"),
-                                "Rule pack @materialize FAILED — skipping to next pack"
-                            );
-                            if *pack == "@stdlib/method_calls" {
-                                tracing::warn!(
-                                    "@stdlib/method_calls failed: @stdlib/shape_verifier reads \
-                                     its CALLS edges as EDB, so shape-violation results may \
-                                     over-report unresolved calls"
-                                );
-                            }
-                            if *pack == "@stdlib/depends" {
-                                tracing::warn!(
-                                    "@stdlib/depends failed: MODULE→MODULE DEPENDS_ON edges \
-                                     are missing for this run"
-                                );
-                            }
-                        }
-                    }
-                }
-            } else if !all_imports_from_edges.is_empty() {
-                // ── LEGACY fallback (P3): in-orchestrator sid-parse derivation. Lossy on
-                // `MODULE#`-sid (Haskell) endpoints; superseded by the v2 path above. Kept runnable
-                // + execution-counted through Gate E + one release (see legacy-retirement.lock). ──
-                tracing::info!("DEPENDS_ON derived by legacy orchestrator derivation (P3 fallback)");
-                let uri_prefix = format!("grafema://{authority}/");
-                let depends_on_pairs =
-                    derive_depends_on_legacy(&all_imports_from_edges, &file_to_module, &uri_prefix);
-
-                if !depends_on_pairs.is_empty() {
-                    let metadata_json = format!(
-                        r#"{{"_source":"module-dependencies","_generation":{generation}}}"#
-                    );
-
-                    let depends_on_wire_edges: Vec<rfdb::WireEdge> = depends_on_pairs
-                        .iter()
-                        .map(|(src, dst)| rfdb::WireEdge {
-                            src: src.clone(),
-                            dst: dst.clone(),
-                            edge_type: "DEPENDS_ON".to_string(),
-                            metadata: Some(metadata_json.clone()),
-                        })
-                        .collect();
-
-                    rfdb.commit_batch(&[], &[], &depends_on_wire_edges, true)
-                        .await
-                        .context("Failed to commit DEPENDS_ON edges")?;
-
-                    tracing::info!(
-                        edges = depends_on_wire_edges.len(),
-                        from_imports = all_imports_from_edges.len(),
-                        "Module dependency edges derived"
-                    );
-                    profile!("depends_on_complete",
-                        "edges" => depends_on_wire_edges.len(),
-                        "from_imports" => all_imports_from_edges.len());
-                }
-            }
+            run_stdlib_rule_packs(&mut rfdb, prof.as_ref(), all_imports_from_edges.len()).await?;
             let depends_on_ms = depends_on_start.elapsed().as_millis() as u64;
 
             // 10. Generate unresolved diagnostics — AFTER the pack phase (Wave 3c):
@@ -2426,6 +2305,10 @@ async fn main() -> Result<()> {
                 .await
                 .with_context(|| format!("Failed to connect to RFDB at {}", socket_path.display()))?;
 
+            // Wave 6: resolve-only passes need the datalog2 pack phase too —
+            // the packs are the only producer of the resolved slices.
+            require_datalog_v2_capability(&rfdb, &socket_path)?;
+
             let db_name = "default";
             let open_resp = rfdb.open_database(db_name, "rw").await?;
             if open_resp.node_count == 0 {
@@ -2468,10 +2351,9 @@ async fn main() -> Result<()> {
                     max_message_size: 200 * 1024 * 1024,
                     request_timeout: std::time::Duration::from_secs(300),
                     effects_db_path: effects_db_path.clone(),
-                    // The standalone `resolve` command has NO datalog2 pack phase
-                    // (legacy DEPENDS_ON derivation only), so first-pass retirement
-                    // does NOT apply here: every legacy step runs (inheriting any
-                    // user-set GRAFEMA_SKIP_RESOLVE_STEPS from the parent env).
+                    // No pinned skip set: the daemon child inherits any user-set
+                    // GRAFEMA_SKIP_RESOLVE_STEPS from the parent env, which gates
+                    // the remaining native step (runtime-globals).
                     skip_resolve_steps: None,
                 };
 
@@ -2565,18 +2447,18 @@ async fn main() -> Result<()> {
                 };
                 match process_pool::ProcessPool::new(pool_cfg, 1) {
                     Ok(pool) => {
+                        // Wave 6: only the remaining native rust steps — the
+                        // rust_imports / rust_calls / rust_trait_resolve packs own
+                        // the deleted steps' slices.
                         let results = plugin::stream_and_resolve_single_worker(
                             &mut rfdb,
                             &[config::Language::Rust],
-                            &[("rust-imports", &[]), ("rust-calls", &[]), ("rust-cross-methods", &[]), ("rust-trait-resolve", &[]), ("rust-globals", &[])],
+                            &[("rust-cross-methods", &[]), ("rust-globals", &[])],
                             &pool,
                         ).await?;
                         for (cmd, mut output) in results {
                             let commit_name = match cmd.as_str() {
-                                "rust-imports" => "rust-import-resolution",
-                                "rust-calls"   => "rust-call-resolution",
                                 "rust-cross-methods" => "rust-cross-method-calls",
-                                "rust-trait-resolve" => "rust-trait-resolution",
                                 "rust-globals" => "rust-runtime-globals",
                                 _ => &cmd,
                             };
@@ -2962,6 +2844,15 @@ async fn main() -> Result<()> {
                 }
             }
 
+            // Rule-pack phase (Wave 6): the packs are the only producer of the
+            // resolved CALLS/READS_FROM/IMPORTS_FROM/DEPENDS_ON slices (the
+            // legacy steps were deleted), so a resolve-only pass must run them
+            // too — and BEFORE the unresolved diagnostics below, whose negation
+            // queries would otherwise flag every pack-resolved node.
+            let depends_on_start = std::time::Instant::now();
+            run_stdlib_rule_packs(&mut rfdb, None, all_imports_from_edges.len()).await?;
+            let depends_on_ms = depends_on_start.elapsed().as_millis() as u64;
+
             // Unresolved diagnostics
             let diagnostics_start = std::time::Instant::now();
             {
@@ -3029,60 +2920,9 @@ async fn main() -> Result<()> {
             }
             let diagnostics_ms = diagnostics_start.elapsed().as_millis() as u64;
 
-            // Derive MODULE→MODULE DEPENDS_ON edges from IMPORTS_FROM
-            let depends_on_start = std::time::Instant::now();
-            if !all_imports_from_edges.is_empty() {
-                let mut depends_on_pairs: HashSet<(String, String)> = HashSet::new();
-                let uri_prefix = format!("grafema://{authority}/");
-
-                for (src_id, dst_id) in &all_imports_from_edges {
-                    let src_file = if let Some(rest) = src_id.strip_prefix(&uri_prefix) {
-                        rest.split('#').next().unwrap_or("")
-                    } else {
-                        src_id.split("->").next().unwrap_or("")
-                    };
-                    let dst_file = if let Some(rest) = dst_id.strip_prefix(&uri_prefix) {
-                        rest.split('#').next().unwrap_or("")
-                    } else {
-                        dst_id.split("->").next().unwrap_or("")
-                    };
-
-                    if let (Some(src_mod), Some(dst_mod)) =
-                        (file_to_module.get(src_file), file_to_module.get(dst_file))
-                    {
-                        if src_mod != dst_mod {
-                            depends_on_pairs.insert((src_mod.clone(), dst_mod.clone()));
-                        }
-                    }
-                }
-
-                if !depends_on_pairs.is_empty() {
-                    let metadata_json = format!(
-                        r#"{{"_source":"module-dependencies","_generation":{generation}}}"#
-                    );
-
-                    let depends_on_wire_edges: Vec<rfdb::WireEdge> = depends_on_pairs
-                        .iter()
-                        .map(|(src, dst)| rfdb::WireEdge {
-                            src: src.clone(),
-                            dst: dst.clone(),
-                            edge_type: "DEPENDS_ON".to_string(),
-                            metadata: Some(metadata_json.clone()),
-                        })
-                        .collect();
-
-                    rfdb.commit_batch(&[], &[], &depends_on_wire_edges, true)
-                        .await
-                        .context("Failed to commit DEPENDS_ON edges")?;
-
-                    tracing::info!(
-                        edges = depends_on_wire_edges.len(),
-                        from_imports = all_imports_from_edges.len(),
-                        "Module dependency edges derived"
-                    );
-                }
-            }
-            let depends_on_ms = depends_on_start.elapsed().as_millis() as u64;
+            // (DEPENDS_ON is derived by the @stdlib/depends pack in the rule-pack
+            // phase above — the inline legacy sid-parse derivation was deleted in
+            // Wave 6 together with the analyze-side P3 fallback.)
 
             // Skip compact during resolve to avoid OOM on memory-constrained VMs.
             // Resolution adds edges via virtual files — no segment dedup strictly
@@ -3450,156 +3290,199 @@ mod tests {
         assert_eq!(set.len(), 2);
     }
 
-    /// P3 (spec `:63` b): assert the legacy DEPENDS_ON fallback EXECUTES (its execution counter
-    /// advances), NOT that its result equals v2 — the two intentionally differ (v2's file-attr
-    /// join recovers `MODULE#`-sid Haskell deps the legacy sid-parse drops, `_ai/gaps.md`). Also
-    /// pins the legacy derivation's behavior: URI- and legacy-form endpoint ids both resolve to
-    /// files, cross-module imports emit one pair, same-module imports are excluded.
+    /// Wave 6: GRAFEMA_SKIP_RESOLVE_STEPS gates exactly what it names among the
+    /// REMAINING native steps (whitespace-tolerant, empty segments dropped); with
+    /// no env value nothing is skipped — there is no retired-set merging anymore
+    /// (the datalog2-replaced steps were deleted, not gated).
     #[test]
-    fn legacy_depends_on_executes_and_counts() {
-        use std::sync::atomic::Ordering;
+    fn resolve_step_skips_gates_only_what_env_names() {
+        assert!(resolve_step_skips(None).is_empty(), "no env → nothing skipped");
 
-        let before = LEGACY_DEPENDS_ON_EXECUTIONS.load(Ordering::Relaxed);
+        let skips = resolve_step_skips(Some("rust-globals, runtime-globals"));
+        assert!(skips.contains("rust-globals"), "env-listed step is gated");
+        assert!(skips.contains("runtime-globals"), "whitespace-tolerant split");
+        assert_eq!(skips.len(), 2, "exactly what the env names, nothing merged in");
 
-        let mut file_to_module = HashMap::new();
-        file_to_module.insert("a.ts".to_string(), "a.ts->MODULE->a".to_string());
-        file_to_module.insert("b.ts".to_string(), "b.ts->MODULE->b".to_string());
-
-        let uri_prefix = "grafema://gh.com/owner/repo/".to_string();
-        let imports = vec![
-            // URI-form src + legacy-form dst → cross-module a→b.
-            (
-                "grafema://gh.com/owner/repo/a.ts#IMPORT->fs".to_string(),
-                "b.ts->TYPE->Thing".to_string(),
-            ),
-            // Both endpoints in the same module (a.ts) → excluded by the `src_mod != dst_mod` gate.
-            ("a.ts->TYPE->X".to_string(), "a.ts->TYPE->Y".to_string()),
-            // Endpoint file with no MODULE → silently skipped (no panic).
-            ("ghost.ts->TYPE->Z".to_string(), "b.ts->TYPE->W".to_string()),
-        ];
-
-        let pairs = derive_depends_on_legacy(&imports, &file_to_module, &uri_prefix);
-
-        // (b) execution counter advanced — the fallback ran.
+        let noisy = resolve_step_skips(Some(",, rust-cross-methods ,"));
         assert_eq!(
-            LEGACY_DEPENDS_ON_EXECUTIONS.load(Ordering::Relaxed),
-            before + 1,
-            "the legacy derivation must record its execution (P3 counter)"
-        );
-        // behavior: exactly the one cross-module pair, URI+legacy id forms both resolved.
-        let expected: HashSet<(String, String)> =
-            [("a.ts->MODULE->a".to_string(), "b.ts->MODULE->b".to_string())]
-                .into_iter()
-                .collect();
-        assert_eq!(pairs, expected, "one cross-module DEPENDS_ON; same-module + orphan excluded");
-    }
-
-    /// P3 (spec `:63` c): the legacy fallback may not be deleted before its retirement ceremony.
-    /// This test (a) binds `derive_depends_on_legacy` to a typed fn pointer, so deleting or
-    /// re-signing it FAILS COMPILATION (CI red), and (b) requires `legacy-retirement.lock` to
-    /// declare `status = retained`. To retire: remove the legacy path AND flip the lock in the
-    /// same change (which also removes/updates this test) — see the lock file's ceremony.
-    #[test]
-    fn legacy_retirement_lock_guards_deletion() {
-        // (a) compile-time anchor: the guarded symbol must exist with this exact signature.
-        let _anchor: fn(&[(String, String)], &HashMap<String, String>, &str) -> HashSet<(String, String)> =
-            derive_depends_on_legacy;
-
-        // (b) the lock must still declare the legacy path retained (read at compile time so the
-        // test cannot pass against a missing/renamed lock).
-        let lock = include_str!("../legacy-retirement.lock");
-        assert!(
-            lock.contains("status = retained"),
-            "legacy DEPENDS_ON path is still live; legacy-retirement.lock must say `status = retained` \
-             until Gate E + one release (flip it as part of the retirement ceremony)"
-        );
-    }
-
-    /// Wave 4: retired second-pass legacy steps are skipped BY DEFAULT (no env
-    /// configuration), the env var stays additive, and it cannot un-retire a step.
-    /// `js-this-method-calls` is pinned retired (W9 differential 432 ≡ 432, write-path
-    /// proven); deleting it from `RETIRED_SECOND_PASS_STEPS` fails this test.
-    #[test]
-    fn retired_second_pass_steps_skip_by_default_and_env_is_additive() {
-        // Default: no env var — the retired step is still skipped.
-        let default_skips = effective_second_pass_skips(None);
-        assert!(
-            default_skips.contains("js-this-method-calls"),
-            "js-this-method-calls is retired (W9: pack set-identical to legacy 432≡432) \
-             and must be skipped with NO env configuration"
-        );
-        assert!(
-            default_skips.contains("runtime-call-globals"),
-            "runtime-call-globals is retired (Wave 4: differential 7,800≡7,800, \
-             only-diff 0 both directions) and must be skipped with NO env configuration"
-        );
-
-        // Additive: the env var gates more steps on top of the retired set.
-        let merged =
-            effective_second_pass_skips(Some("runtime-call-globals, import-resolution"));
-        assert!(merged.contains("js-this-method-calls"), "retired set survives env merge");
-        assert!(merged.contains("runtime-call-globals"), "env-listed step is gated");
-        assert!(merged.contains("import-resolution"), "whitespace-tolerant split");
-
-        // The env var cannot un-retire: listing other steps (or garbage) never
-        // removes a retired entry, and empty segments are ignored.
-        let noisy = effective_second_pass_skips(Some(",, something-else ,"));
-        assert!(noisy.contains("js-this-method-calls"));
-        assert!(!noisy.contains(""), "empty segments are filtered");
-    }
-
-    /// Final #12: retired FIRST-pass legacy steps are skipped by default — but ONLY when
-    /// the connected server runs the datalog2 pack phase (`datalogV2Materialize`). On a
-    /// non-v2 server the legacy steps must all run (the P3 fallback depends on legacy
-    /// import-resolution's IMPORTS_FROM). The env var stays additive and cannot un-retire.
-    #[test]
-    fn retired_first_pass_steps_skip_by_default_only_with_v2_server() {
-        // v2 server → the full proven-migrated set is retired with NO env configuration.
-        let v2_skips = effective_first_pass_skips(None, true);
-        for step in [
-            "js-local-refs",      // js_local_refs pack (Wave 1)
-            "same-file-calls",    // js_same_file_calls pack (Wave 1)
-            "property-access",    // js_property_access_ns/full packs (Waves 1b/2)
-            "class-inheritance",  // js_class_inheritance pack (Wave 2b, EXTENDS 14/14)
-            "import-resolution",  // js_module_imports + js_import_bindings (Waves 3b/3c)
-            "rust-imports",       // rust_imports pack (Waves 3b/3c)
-        ] {
-            assert!(
-                v2_skips.contains(step),
-                "{step} is retired (pack proven on the dogfood graph) and must be \
-                 skipped with NO env configuration on a v2 server"
-            );
-        }
-
-        // Non-v2 server (P3 legacy fallback) → NOTHING is retired by default: the packs
-        // that replace these steps never run there, and legacy import-resolution feeds
-        // the legacy DEPENDS_ON derivation.
-        let legacy_skips = effective_first_pass_skips(None, false);
-        assert!(
-            legacy_skips.is_empty(),
-            "no first-pass step may be retired on a non-v2 server (P3 fallback compat); \
-             got {legacy_skips:?}"
-        );
-
-        // Env additive in both modes; whitespace-tolerant; cannot un-retire.
-        let merged = effective_first_pass_skips(Some("cross-file-calls, builtins"), true);
-        assert!(merged.contains("import-resolution"), "retired set survives env merge");
-        assert!(merged.contains("cross-file-calls"), "env-listed step is gated");
-        assert!(merged.contains("builtins"), "whitespace-tolerant split");
-        let env_only = effective_first_pass_skips(Some("rust-imports"), false);
-        assert_eq!(
-            env_only,
-            ["rust-imports".to_string()].into_iter().collect::<HashSet<_>>(),
-            "on a non-v2 server the env var still gates exactly what it names"
+            noisy,
+            ["rust-cross-methods".to_string()].into_iter().collect::<HashSet<_>>(),
+            "empty segments are filtered"
         );
 
         // The rendered child-env value is deterministic (sorted, comma-joined).
-        let rendered = skip_steps_env_value(&effective_first_pass_skips(None, true));
-        assert_eq!(
-            rendered,
-            "class-inheritance,import-resolution,js-local-refs,property-access,rust-imports,same-file-calls",
-            "daemon child env value must be stable for logs and reproducibility"
+        let rendered =
+            skip_steps_env_value(&resolve_step_skips(Some("runtime-globals,rust-globals")));
+        assert_eq!(rendered, "runtime-globals,rust-globals");
+    }
+
+    /// Wave 6 failure policy: the pack-failure summary names every failed pack,
+    /// the slice it owns (so the operator knows what is MISSING from the graph),
+    /// and the underlying error — and every pack in the production list has a
+    /// registered slice description (a new pack without one fails here).
+    #[test]
+    fn pack_failure_summary_names_packs_and_owned_slices() {
+        let failures = vec![
+            ("@stdlib/depends".to_string(), "boom".to_string()),
+            ("@stdlib/js_local_refs".to_string(), "parse error".to_string()),
+        ];
+        let summary = pack_failure_summary(&failures);
+        assert!(summary.contains("@stdlib/depends"), "failed pack named");
+        assert!(summary.contains("MODULE→MODULE DEPENDS_ON"), "owned slice named");
+        assert!(summary.contains("boom"), "underlying error included");
+        assert!(summary.contains("@stdlib/js_local_refs"));
+        assert!(summary.contains("READS_FROM"), "js_local_refs slice named");
+        assert!(summary.contains("no fallback") || summary.contains("ONLY producer"),
+            "summary states there is no fallback");
+
+        for pack in STDLIB_RULE_PACKS {
+            assert_ne!(
+                pack_owned_slice(pack),
+                "(unregistered pack)",
+                "{pack} must have a slice description in pack_owned_slice"
+            );
+        }
+    }
+
+    /// Spawn a fake RFDB server on a temp Unix socket that answers the Hello
+    /// handshake with the given feature list and then serves `materializeDatalog`
+    /// requests: every pack succeeds (count=1) except those named in
+    /// `failing_packs`, which get a coded error response. Returns the socket path.
+    fn spawn_fake_rfdb_server(
+        features: Vec<String>,
+        failing_packs: Vec<String>,
+    ) -> std::path::PathBuf {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let dir = std::env::temp_dir();
+        let sock = dir.join(format!(
+            "grafema-fake-rfdb-{}-{}.sock",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_file(&sock);
+        let listener = std::os::unix::net::UnixListener::bind(&sock).expect("bind fake socket");
+        listener.set_nonblocking(true).expect("nonblocking");
+        let listener = tokio::net::UnixListener::from_std(listener).expect("tokio listener");
+
+        tokio::spawn(async move {
+            let (mut stream, _) = match listener.accept().await {
+                Ok(x) => x,
+                Err(_) => return,
+            };
+            loop {
+                let mut len_buf = [0u8; 4];
+                if stream.read_exact(&mut len_buf).await.is_err() {
+                    return;
+                }
+                let len = u32::from_be_bytes(len_buf) as usize;
+                let mut buf = vec![0u8; len];
+                if stream.read_exact(&mut buf).await.is_err() {
+                    return;
+                }
+                let req: serde_json::Value = rmp_serde::from_slice(&buf).expect("decode request");
+                let request_id = req["requestId"].as_str().unwrap_or("r?").to_string();
+                let cmd = req["cmd"].as_str().unwrap_or("");
+                let resp = match cmd {
+                    "hello" => serde_json::json!({
+                        "requestId": request_id,
+                        "protocolVersion": 3u32,
+                        "serverVersion": "fake-rfdb-test",
+                        "features": features,
+                    }),
+                    "materializeDatalog" => {
+                        let source = req["source"].as_str().unwrap_or("");
+                        if failing_packs.iter().any(|p| p == source) {
+                            serde_json::json!({
+                                "requestId": request_id,
+                                "error": format!("forced test failure for {source}"),
+                                "code": "E-TEST-PACK",
+                            })
+                        } else {
+                            serde_json::json!({ "requestId": request_id, "count": 1u32 })
+                        }
+                    }
+                    other => serde_json::json!({
+                        "requestId": request_id,
+                        "error": format!("fake server does not implement {other}"),
+                        "code": "E-TEST-UNIMPLEMENTED",
+                    }),
+                };
+                let payload = rmp_serde::to_vec_named(&resp).expect("encode response");
+                let len = (payload.len() as u32).to_be_bytes();
+                if stream.write_all(&len).await.is_err() || stream.write_all(&payload).await.is_err() {
+                    return;
+                }
+                let _ = stream.flush().await;
+            }
+        });
+        sock
+    }
+
+    /// Wave 6 fail-fast: against a server whose Hello does NOT advertise
+    /// `datalogV2Materialize`, analyze must refuse with an actionable error
+    /// (upgrade the binary / un-set RFDB_DATALOG_V2=off) — there is no legacy
+    /// fallback left to run. With the capability, the gate passes.
+    #[tokio::test]
+    async fn analyze_fails_fast_without_datalog_v2_capability() {
+        // No capability → clear, actionable refusal.
+        let sock = spawn_fake_rfdb_server(vec!["somethingElse".to_string()], vec![]);
+        let client = rfdb::RfdbClient::connect(&sock).await.expect("connect fake server");
+        assert!(!client.supports_datalog_v2_materialize());
+        let err = require_datalog_v2_capability(&client, &sock)
+            .expect_err("gate must refuse a non-v2 server");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("datalogV2Materialize"), "names the missing capability: {msg}");
+        assert!(msg.contains("Upgrade the rfdb-server binary"), "actionable: {msg}");
+        assert!(msg.contains("RFDB_DATALOG_V2=off"), "names the kill switch: {msg}");
+        assert!(msg.contains("fake-rfdb-test"), "names the server version: {msg}");
+        let _ = std::fs::remove_file(&sock);
+
+        // With the capability → the gate passes.
+        let sock2 = spawn_fake_rfdb_server(vec!["datalogV2Materialize".to_string()], vec![]);
+        let client2 = rfdb::RfdbClient::connect(&sock2).await.expect("connect fake server");
+        assert!(client2.supports_datalog_v2_materialize());
+        require_datalog_v2_capability(&client2, &sock2).expect("v2 server passes the gate");
+        let _ = std::fs::remove_file(&sock2);
+    }
+
+    /// Wave 6 failure policy, end-to-end through the production pack loop: a pack
+    /// forced to fail (fake server errors on it) makes `run_stdlib_rule_packs`
+    /// return Err naming the pack and its owned slice — while the remaining packs
+    /// still ran (the fake server saw materialize requests after the failing one;
+    /// proven by a LATER pack also being forced to fail and appearing in the
+    /// summary too). A fully-green run returns Ok.
+    #[tokio::test]
+    async fn pack_failure_fails_the_run_with_a_loud_summary() {
+        let features = vec!["datalogV2Materialize".to_string()];
+
+        // Force an EARLY pack and a LATE pack to fail: both must appear in the
+        // summary, proving the loop continued past the first failure.
+        let sock = spawn_fake_rfdb_server(
+            features.clone(),
+            vec!["@stdlib/js_local_refs".to_string(), "@stdlib/axum_routes".to_string()],
         );
+        let mut client = rfdb::RfdbClient::connect(&sock).await.expect("connect fake server");
+        let err = run_stdlib_rule_packs(&mut client, None, 0)
+            .await
+            .expect_err("a failed pack must fail the phase");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("@stdlib/js_local_refs"), "early failed pack named: {msg}");
+        assert!(msg.contains("@stdlib/axum_routes"), "late failed pack named — loop continued: {msg}");
+        assert!(msg.contains("axum ROUTES_TO"), "owned slice named: {msg}");
+        assert!(msg.contains("forced test failure"), "server error surfaced: {msg}");
+        let _ = std::fs::remove_file(&sock);
+
+        // All packs green → Ok.
+        let sock2 = spawn_fake_rfdb_server(features, vec![]);
+        let mut client2 = rfdb::RfdbClient::connect(&sock2).await.expect("connect fake server");
+        run_stdlib_rule_packs(&mut client2, None, 0)
+            .await
+            .expect("green pack phase passes");
+        let _ = std::fs::remove_file(&sock2);
     }
 
     /// Wave 3c: production iterates THIS crate's `STDLIB_RULE_PACKS`, not the
