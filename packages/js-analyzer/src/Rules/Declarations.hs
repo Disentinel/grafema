@@ -630,7 +630,12 @@ ruleExportNamedDeclaration :: ASTNode -> Analyzer (Maybe Text)
 ruleExportNamedDeclaration node = do
   file <- askFile
   let sp     = astNodeSpan node
-      nodeId = semanticId file "EXPORT" "named" Nothing Nothing
+      -- Disambiguate by source position: a file can hold many `export …`
+      -- statements, each a distinct ExportNamedDeclaration. Without the hash
+      -- they all collapse onto the constant sid `file->EXPORT->named` and merge
+      -- into one node (losing every statement's identity but the last).
+      hash   = contentHash [("k", "named"), ("start", T.pack (show (spanStart sp)))]
+      nodeId = semanticId file "EXPORT" "named" Nothing (Just hash)
 
   emitNode GraphNode
     { gnId = nodeId, gnType = "EXPORT", gnName = "named"
@@ -724,7 +729,10 @@ ruleExportAllDeclaration node = do
       source = case getChildrenMaybe "source" node of
                  Just srcNode -> getTextFieldOr "value" "" srcNode
                  Nothing      -> ""
-      nodeId = semanticId file "EXPORT" ("*:" <> source) Nothing Nothing
+      -- Same positional disambiguation as the named arm: the source alone does
+      -- not separate two `export * from './same'` statements in one file.
+      hash   = contentHash [("k", "*:" <> source), ("start", T.pack (show (spanStart sp)))]
+      nodeId = semanticId file "EXPORT" ("*:" <> source) Nothing (Just hash)
 
   emitNode GraphNode
     { gnId = nodeId, gnType = "EXPORT", gnName = "*:" <> source
