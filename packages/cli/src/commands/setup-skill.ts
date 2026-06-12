@@ -13,7 +13,8 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const PLATFORM_PATHS: Record<string, string> = {
   claude: '.claude/skills',
   gemini: '.gemini/skills',
-  cursor: '.cursor/skills',
+  // Cursor auto-loads rules from .cursor/rules/, not .cursor/skills/
+  cursor: '.cursor/rules',
 };
 
 const SKILL_DIR_NAME = 'grafema-codebase-analysis';
@@ -113,6 +114,7 @@ export const setupSkillCommand = new Command('setup-skill')
   .addHelpText('after', `
 Examples:
   grafema setup-skill                     Install for Claude Code (.claude/skills/)
+  grafema setup-skill --platform cursor   Install for Cursor (.cursor/rules/)
   grafema setup-skill --platform gemini   Install for Gemini CLI (.gemini/skills/)
   grafema setup-skill --force             Update existing skill
   grafema setup-skill --output-dir ./my-skills/
