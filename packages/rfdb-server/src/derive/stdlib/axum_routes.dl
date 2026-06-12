@@ -1,0 +1,146 @@
+% axum_routes.dl — in-engine port of plugins/axum-route-detector.mjs (edges + the
+% http:route node; the 60s-timeout batch plugin did N+1 IPC per `.route(...)` call →
+% one bottom-up program over the PASSES_ARGUMENT `index` edge metadata via edge_attr).
+%
+% The synthetic `http:route` NODE is ported via @materialize_node (the http_route_node
+% rule at the bottom): one node per recognized route, semantic id
+% "http:route::<METHOD>::<PATH>", name = the path, file = the registration call's
+% file, meta(method, path). NOT ported (deliberately LIMITED IN SCOPE): the plugin's
+% EXPOSES (route CALL → http:route) and HANDLES (http:route → handler) edges — a
+% @materialize edge endpoint must be a node-ID column of the head, and the freshly
+% minted route node's id only exists as the BLAKE3 of a STRING the rule builds;
+% wiring same-run node→edge endpoints through value_to_id would be endpoint-resolution
+% hackery, so those edges stay out until edge endpoints can name a semantic id
+% first-class. The direct edges between PRE-EXISTING nodes carry the same information
+% meanwhile:
+%   ROUTES_TO  : route-registration CALL → handler, meta(method, path)
+%   HANDLED_BY : path LITERAL → handler,            meta(method)
+% (the LITERAL's own `name` IS the path, so HANDLED_BY gives the path-keyed handler
+% lookup the http:route node would have provided; both directions match the
+% registered flow_out archetypes "routes to"/"handled by").
+%
+% ROUTES_TO and HANDLED_BY are PRE-REGISTERED SHARED product vocabulary
+% (packages/types/src/edges.ts:80-81, RouteEdge with method?/path?) — mode =
+% "additive" is MANDATORY for both: exclusive write-back would tombstone any other
+% producer's edges of these types (e.g. a future express/library enricher).
+%
+% No negation on a materialized type anywhere; the only negation below is on the
+% EDB-derived `recognized_wrapper`, which stratifies trivially.
+%
+% Documented parity deltas vs the plugin (all deliberate):
+%   1. Argument positions are read EXACTLY from PASSES_ARGUMENT edge metadata
+%      (`index`, an integer the analyzers emit 0-based and contiguous —
+%      grafema-orchestrator/src/rust_analyzer.rs:1325, js-analyzer Expressions.hs:95).
+%      The plugin sorted edges by `index` and took positions [0]/[1]: identical when
+%      the index-0/1 edges exist; the plugin would shift down to indexes {1,2} when
+%      an argument expression produced no edge — this pack does not (negligible: the
+%      analyzers emit contiguous indexes for representable arguments).
+%   2. `args.length < 2` skip (axum-route-detector.mjs:47) is reproduced as
+%      "an index-1 argument edge exists" (`arg1`), which is equivalent under
+%      contiguous indexes.
+%   3. The handler comes from ANY CALL second argument, recognized HTTP wrapper or
+%      not — plugin parity: in axum-route-detector.mjs:60-72 the handler lookup only
+%      requires args[1] to be a CALL; the HTTP_METHODS check selects the method
+%      STRING (default "GET"), it never gates the handler. `.route("/raw",
+%      my_service(state))` therefore yields ROUTES_TO → state with method GET, in
+%      both the plugin and this pack.
+%   4. When args[1] is NOT a CALL, or is a CALL with no argument edges, the plugin
+%      still minted a GET http:route node with no handler; this pack derives NO edges
+%      for that call (there is no handler endpoint to point at) — but the
+%      http_route_node rule DOES mint the handler-less route node, matching the
+%      plugin (the node never required a resolved handler).
+%   5. The method string is matched case-insensitively via str_lower (the plugin's
+%      .toLowerCase()) and emitted UPPERCASE ("GET"/"POST"/…) like the plugin, one
+%      clause per method.
+
+% A `.route(...)` call in a Rust file (the plugin's file.endsWith('.rs') gate).
+route_call(C) :-
+    node(C, "CALL"),
+    attr(C, "name", "route"),
+    attr(C, "file", File),
+    ends_with(File, ".rs").
+
+% The second argument (plugin's args[1]); its existence IS the `args.length < 2`
+% skip (delta 2). The analyzers emit at most one index-1 edge per call.
+arg1(C, W) :-
+    route_call(C),
+    edge(C, W, "PASSES_ARGUMENT"),
+    edge_attr(C, W, "PASSES_ARGUMENT", "index", "1").
+
+% The route-path argument: args[0] must be a LITERAL whose value starts with "/"
+% (plugin: `if (!routePath.startsWith('/')) continue`). Gated on arg1 so a 1-arg
+% call derives nothing at all, like the plugin's early skip.
+route_path_arg(C, P, Path) :-
+    route_call(C),
+    edge(C, P, "PASSES_ARGUMENT"),
+    edge_attr(C, P, "PASSES_ARGUMENT", "index", "0"),
+    node(P, "LITERAL"),
+    attr(P, "name", Path),
+    starts_with(Path, "/"),
+    arg1(C, _).
+
+% Route → handler: args[1] is a CALL; the handler is ITS first argument (plugin:
+% lowest-index PASSES_ARGUMENT of the wrapper, = index 0 under contiguous indexes).
+% Recognized wrapper NOT required — see delta 3.
+handler(C, H) :-
+    arg1(C, W),
+    node(W, "CALL"),
+    edge(W, H, "PASSES_ARGUMENT"),
+    edge_attr(W, H, "PASSES_ARGUMENT", "index", "0").
+
+% Recognized HTTP-method wrappers → UPPERCASE method string (deltas 5); anything
+% else (or a non-CALL args[1]) defaults to GET like the plugin.
+wrapper_method(W, "GET")     :- node(W, "CALL"), attr(W, "name", N), str_lower(N, "get").
+wrapper_method(W, "POST")    :- node(W, "CALL"), attr(W, "name", N), str_lower(N, "post").
+wrapper_method(W, "PUT")     :- node(W, "CALL"), attr(W, "name", N), str_lower(N, "put").
+wrapper_method(W, "DELETE")  :- node(W, "CALL"), attr(W, "name", N), str_lower(N, "delete").
+wrapper_method(W, "PATCH")   :- node(W, "CALL"), attr(W, "name", N), str_lower(N, "patch").
+wrapper_method(W, "HEAD")    :- node(W, "CALL"), attr(W, "name", N), str_lower(N, "head").
+wrapper_method(W, "OPTIONS") :- node(W, "CALL"), attr(W, "name", N), str_lower(N, "options").
+recognized_wrapper(W) :- wrapper_method(W, _).
+
+route_method(C, M)     :- arg1(C, W), wrapper_method(W, M).
+route_method(C, "GET") :- arg1(C, W), \+ recognized_wrapper(W).
+
+% ── The materialized edges (both ADDITIVE — shared vocabulary, see header) ──
+% Meta-identity caveat is safe: route_method/route_path_arg are functional in C
+% (one index-0/index-1 edge per call), so endpoint pairs never carry two competing
+% meta payloads.
+@materialize(edge_type = "ROUTES_TO", mode = "additive", meta(method, path))
+routes_to(C, H, M, Path) :-
+    route_path_arg(C, _, Path),
+    handler(C, H),
+    route_method(C, M).
+
+@materialize(edge_type = "HANDLED_BY", mode = "additive", meta(method))
+handled_by(P, H, M) :-
+    route_path_arg(C, P, _),
+    handler(C, H),
+    route_method(C, M).
+
+% ── The materialized http:route NODE (the plugin's node half) ──
+% Semantic id "http:route::<METHOD>::<PATH>" — one node per (method, path) route.
+% RECORDED DELTAS vs the plugin's node (deliberate):
+%   - id: the plugin minted `http:route:METHOD:PATH@file` (one node PER FILE
+%     registering the same route); this id drops the @file suffix so the same logical
+%     route registered from two files is ONE node (which file column lands is
+%     set-order-defined — the meta-identity caveat).
+%   - name: the path (the plugin used "METHOD PATH"); the method rides in meta and in
+%     the semantic id.
+%   - metadata: provenance _source = <rule hash> + _generation (the engine convention,
+%     not 'axum-route-detector') + meta(method, path); `framework: axum` is not stored
+%     (this pack IS the axum detector — derivable from provenance).
+% mode = "exclusive" (PROVENANCE-SCOPED for nodes, the engine contract): only nodes
+% stamped with THIS rule's _source are owned, so http:route nodes minted by other
+% producers (the legacy plugin, libraryCallbackEnricher's express/mcp routes) are
+% never touched, while a route removed from the code retracts its node on the next
+% run. A handler is NOT required (plugin parity, delta 4): a route whose second
+% argument resolves to no handler still gets its node.
+@materialize_node(node_type = "http:route", mode = "exclusive", meta(method, path))
+http_route_node(Sid, Path, File, M, Path) :-
+    route_path_arg(C, _, Path),
+    route_method(C, M),
+    attr(C, "file", File),
+    concat("http:route::", M, S1),
+    concat(S1, "::", S2),
+    concat(S2, Path, Sid).

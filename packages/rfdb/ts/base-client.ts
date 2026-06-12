@@ -17,6 +17,10 @@ import type {
   FieldDeclaration,
   DatalogResult,
   DatalogExplainResult,
+  FactWitness,
+  GapWitness,
+  SimEdge,
+  SimNode,
   CypherResult,
   NodeType,
   EdgeType,
@@ -497,6 +501,51 @@ export abstract class BaseRFDBClient extends EventEmitter implements IRFDBClient
       return this._parseExplainResponse(response);
     }
     return (response as { results?: DatalogResult[] }).results || [];
+  }
+
+  /**
+   * why()/explain_fact (spec §11): explain ONE supporting derivation of `predicate(key)` under a
+   * v2 program (empty `source` ⇒ the bundled depends.dl). Resolves to `null` when the fact is not
+   * derivable by the program (a true negative). derive-engine-only — rejects when RFDB_DERIVE_ENGINE is off.
+   */
+  async explainDatalogFact(
+    source: string,
+    predicate: string,
+    key: string[],
+  ): Promise<FactWitness | null> {
+    const response = await this._send('explainDatalogFact', { source, predicate, key });
+    return (response as { witness?: FactWitness | null }).witness ?? null;
+  }
+
+  /**
+   * what-if/sim (spec §6): predict the NEW `predicate` facts a hypothetical overlay of
+   * nodes+edges would create under a v2 program (empty `source` ⇒ the bundled depends.dl),
+   * WITHOUT committing anything. Resolves to the predicted-new ground tuples (sim ∖ base) as
+   * wire strings. derive-engine-only — rejects when RFDB_DERIVE_ENGINE is off.
+   */
+  async simDatalog(
+    source: string,
+    predicate: string,
+    nodes: SimNode[],
+    edges: SimEdge[],
+  ): Promise<string[][]> {
+    const response = await this._send('simDatalog', { source, predicate, nodes, edges });
+    return (response as { rows?: string[][] }).rows ?? [];
+  }
+
+  /**
+   * why-not/explain_gap (spec §6): explain why `predicate(key)` is NOT derived — the satisfied
+   * premise prefix + the first unsatisfiable premise. Resolves to `null` when there is no gap
+   * (the fact is derivable, or no clause head matches the key). The companion to simDatalog:
+   * gap names the missing premise, sim verifies that adding it produces the fact. v2-only.
+   */
+  async explainDatalogGap(
+    source: string,
+    predicate: string,
+    key: string[],
+  ): Promise<GapWitness | null> {
+    const response = await this._send('explainDatalogGap', { source, predicate, key });
+    return (response as { witness?: GapWitness | null }).witness ?? null;
   }
 
   async cypherQuery(query: string): Promise<CypherResult> {

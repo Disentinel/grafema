@@ -232,6 +232,10 @@ struct RawResponse {
     #[serde(default)]
     results: Option<Vec<DatalogResult>>,
 
+    // Count reply (e.g. materializeDatalog → edges written)
+    #[serde(default)]
+    count: Option<u32>,
+
     // QueryNodes results
     #[serde(default)]
     nodes: Option<Vec<WireNode>>,
@@ -626,6 +630,25 @@ impl RfdbClient {
         Ok(())
     }
 
+    /// Enter bulk-load mode (RFDB MVCC C2/C3). Per-commit fsync is deferred and
+    /// the server routes `CommitBatch` through the serial auto-compacting path
+    /// that bounds the live segment count. Call once before a large ingest;
+    /// always pair with [`end_bulk_load`](Self::end_bulk_load), which runs the
+    /// single durable barrier + reclaim and restores per-commit durability.
+    pub async fn begin_bulk_load(&mut self) -> Result<()> {
+        self.send_command("beginBulkLoad", serde_json::json!({}))
+            .await?;
+        Ok(())
+    }
+
+    /// Leave bulk-load mode: durable barrier (fsync the whole current version
+    /// once) + bounded reclaim, then per-commit durability is restored.
+    pub async fn end_bulk_load(&mut self) -> Result<()> {
+        self.send_command("endBulkLoad", serde_json::json!({}))
+            .await?;
+        Ok(())
+    }
+
     /// Delete all edges of `edge_type` whose metadata carries
     /// `"_source": "<source_tag>"`. Fails loudly on a `_source` collision
     /// (another value for the same edge type). Edges without a `_source`
@@ -720,6 +743,28 @@ impl RfdbClient {
         let resp = self.send_command("executeDatalog", params).await?;
 
         Ok(resp.results.unwrap_or_default())
+    }
+
+    /// Whether the connected server advertised the derive `@materialize` write-back capability
+    /// (the `datalogDerive` feature, set when the server's `RFDB_DERIVE_ENGINE` kill
+    /// switch is on). Since Wave 6 this capability is a hard REQUIREMENT for analyze
+    /// (`require_derive_capability` fails fast without it): the derive rule packs
+    /// are the only producer of the resolved slices — the legacy resolve steps and the
+    /// in-orchestrator P3 DEPENDS_ON fallback were deleted. The server is the single
+    /// source of truth (a duplicated env read here could disagree with the server's
+    /// actual backend).
+    pub fn supports_derive_materialize(&self) -> bool {
+        self.features.iter().any(|f| f == "datalogDerive")
+    }
+
+    /// Run a derive engine program carrying `@materialize` on the server, committing the
+    /// materialized edges (e.g. stdlib `depends.dl` → DEPENDS_ON) in one atomic generation.
+    /// Returns the number of edges written. The server refuses (coded error) when its kill
+    /// switch is off, so only call this after [`Self::supports_derive_materialize`].
+    pub async fn materialize_datalog(&mut self, source: &str) -> Result<u32> {
+        let params = serde_json::json!({ "source": source });
+        let resp = self.send_command("materializeDatalog", params).await?;
+        Ok(resp.count.unwrap_or(0))
     }
 
     /// Start a streaming queryNodes request. Returns (first_chunk, is_streaming).
@@ -1012,6 +1057,7 @@ mod tests {
             edge_count: None,
             delta: None,
             results: None,
+            count: None,
             nodes: None,
             done: None,
             chunk_index: None,
@@ -1039,6 +1085,7 @@ mod tests {
             edge_count: None,
             delta: None,
             results: None,
+            count: None,
             nodes: None,
             done: None,
             chunk_index: None,

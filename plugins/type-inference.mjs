@@ -6,7 +6,8 @@
  * 1. Virtual CLASS + METHOD nodes for JS builtins (Array, String, Map, etc.)
  * 2. INSTANCE_OF edges from VARIABLE/CONSTANT to their inferred CLASS
  *
- * Runs BEFORE method-call-resolver so it can use INSTANCE_OF for disambiguation.
+ * Runs BEFORE the in-engine method_calls.dl stdlib pack (derive), which reads
+ * INSTANCE_OF for disambiguation.
  *
  * Environment:
  *   RFDB_SOCKET  — path to RFDB unix socket

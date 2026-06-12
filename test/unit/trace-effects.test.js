@@ -242,6 +242,52 @@ describe('traceEffects', () => {
       assert.deepEqual(result.leaf_sources[0].effects, ['PURE']);
     });
 
+    // Pins the derive js_runtime_globals_nodes pack contract (Wave 4 DELTA 1):
+    // @materialize_node meta() projects string surfaces, so pack-minted
+    // GLOBAL_DEFINITION nodes carry effects as a comma-joined STRING, not the
+    // legacy JSON array. trace_effects must read leaf effects from that shape.
+    it('pack-minted node (comma-joined effects string): reads leaf effects', async () => {
+      const effectsLookup = EffectsLookup.empty();
+      const nodes = [
+        { id: 'fn1', type: 'FUNCTION', name: 'myFunc', file: 'src/a.ts', line: 1 },
+        // bare dotless seName ("readFile") — the parseCallTarget fallback would
+        // return null for it, so the metadata path MUST carry the effects
+        { id: 'glob1', type: 'GLOBAL_DEFINITION', name: 'readFile', file: undefined, effects: 'IO,THROW' },
+      ];
+      const edges = [
+        { src: 'fn1', dst: 'glob1', type: 'CALLS' },
+      ];
+      const backend = createMockBackend(nodes, edges);
+
+      const result = await traceEffects(backend, 'fn1', effectsLookup);
+      assert.ok(result, 'Expected non-null result');
+      assert.ok(
+        result.transitive.includes('IO') && result.transitive.includes('THROW'),
+        `Expected IO and THROW from comma-joined metadata string, got: ${result.transitive}`,
+      );
+      assert.ok(result.leaf_sources.length > 0, 'Expected leaf sources');
+      assert.equal(result.leaf_sources[0].node, 'readFile');
+      assert.deepEqual(result.leaf_sources[0].effects.sort(), ['IO', 'THROW']);
+    });
+
+    it('pack-minted node with single PURE effect string resolves to PURE', async () => {
+      const effectsLookup = EffectsLookup.empty();
+      const nodes = [
+        { id: 'fn1', type: 'FUNCTION', name: 'myFunc', file: 'src/a.hs', line: 1 },
+        { id: 'glob1', type: 'GLOBAL_DEFINITION', name: 'True', file: undefined, effects: 'PURE' },
+      ];
+      const edges = [
+        { src: 'fn1', dst: 'glob1', type: 'CALLS' },
+      ];
+      const backend = createMockBackend(nodes, edges);
+
+      const result = await traceEffects(backend, 'fn1', effectsLookup);
+      assert.ok(result, 'Expected non-null result');
+      assert.deepEqual(result.transitive, ['PURE']);
+      assert.ok(result.leaf_sources.length > 0, 'Expected leaf sources');
+      assert.deepEqual(result.leaf_sources[0].effects, ['PURE']);
+    });
+
     it('falls back to effects-db when metadata effects not present', async () => {
       const effectsLookup = EffectsLookup.load(EFFECTS_DB_PATH);
       const nodes = [

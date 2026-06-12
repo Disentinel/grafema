@@ -34,6 +34,14 @@ pub struct PoolConfig {
     pub request_timeout: Duration,
     /// Optional path to the effects-db directory, passed as GRAFEMA_EFFECTS_DB env var.
     pub effects_db_path: Option<String>,
+    /// Optional comma-separated resolve-step skip list, passed as the
+    /// GRAFEMA_SKIP_RESOLVE_STEPS env var to the worker. This is how the
+    /// orchestrator retires daemon-INTERNAL first-pass steps (the js daemon runs
+    /// its 8 resolvers inside one `resolve-file`/`resolve-all` command, so they
+    /// cannot be retired by not sending a command): the orchestrator computes the
+    /// effective set (built-in retired steps ∪ user env) and pins it on the child,
+    /// overriding plain env inheritance. `None` = inherit the parent env untouched.
+    pub skip_resolve_steps: Option<String>,
 }
 
 impl Default for PoolConfig {
@@ -44,6 +52,7 @@ impl Default for PoolConfig {
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
             effects_db_path: None,
+            skip_resolve_steps: None,
         }
     }
 }
@@ -109,6 +118,10 @@ fn spawn_worker(config: &PoolConfig) -> Result<Worker> {
 
     if let Some(ref path) = config.effects_db_path {
         cmd.env("GRAFEMA_EFFECTS_DB", path);
+    }
+
+    if let Some(ref steps) = config.skip_resolve_steps {
+        cmd.env("GRAFEMA_SKIP_RESOLVE_STEPS", steps);
     }
 
     let mut child = cmd
@@ -457,6 +470,7 @@ mod tests {
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
             effects_db_path: None,
+            skip_resolve_steps: None,
         };
         let result = ProcessPool::new(config, 0);
         match result {
@@ -495,6 +509,7 @@ while True:
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
             effects_db_path: None,
+            skip_resolve_steps: None,
         };
 
         let pool = match ProcessPool::new(config, 2) {
@@ -543,6 +558,7 @@ while True:
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
             effects_db_path: None,
+            skip_resolve_steps: None,
         };
 
         let pool = match ProcessPool::new(config, 3) {
@@ -593,6 +609,7 @@ if len(hdr) == 4:
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
             effects_db_path: None,
+            skip_resolve_steps: None,
         };
 
         let pool = match ProcessPool::new(config, 1) {
@@ -639,6 +656,7 @@ while True:
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
             effects_db_path: None,
+            skip_resolve_steps: None,
         };
 
         let pool = match ProcessPool::new(config, 1) {

@@ -1,0 +1,119 @@
+% js_builtins_edges.dl — edge half of the in-engine Builtins.hs replacement:
+%   IMPORTS_FROM  IMPORT → EXTERNAL_MODULE   (resolveImportNode, Hs:294-314)
+%   CALLS         CALL   → EXTERNAL_FUNCTION (resolveCallNode,  Hs:317-357)
+% MUST be declared AFTER js_builtins_nodes.dl in the pack runner: the minted
+% EXTERNAL_* endpoints are joined here as COMMITTED storage EDB (the
+% engine-sanctioned two-pack split for same-run-minted endpoints — see the
+% js_builtins_nodes.dl and axum_routes.dl headers). While the legacy resolver
+% stays ON its identically-sid'd nodes already exist either way.
+%
+% The (module, name) endpoint join is the verdict-fix (c) unblock: an
+% EXTERNAL_FUNCTION's gnName is the BARE function name with the module ONLY in
+% metadata (Hs:380-394) — bare-name collisions are real (http.get/https.get,
+% path.parse/url.parse, path.format/url.format/util.format, path.resolve/
+% url.resolve) — so the target is pinned by attr(name) + node_attr("module") +
+% attr(file, "<builtin>"). Both producers stamp `module`: the legacy node as
+% MetaText, the pack node via meta(module).
+%
+% The bi_binding / bi_method_call / bi_direct_call prelude and the
+% builtin_spec facts are textual duplicates of js_builtins_nodes.dl (derived
+% relations are per-program; the established per-pack include pattern).
+%
+% Both heads are SHARED vocabulary ⇒ mode = "additive" is mandatory
+% (exclusive write-back would tombstone the analyzers'/legacy resolver's
+% IMPORTS_FROM and CALLS edges). resolvedVia="builtins" projected — the
+% legacy stamp (Hs:312, Hs:337).
+%
+% DELTAS: inherits js_builtins_nodes.dl DELTAS 3-5 (set semantics, file gate,
+% importedName-verbatim direct arm). No additional edge-only deltas: edge
+% endpoints and metadata match the legacy emitEdge payloads.
+%
+% MAINTAIN ENVELOPE: node_attr + negation ⇒ scratch floor.
+
+% ── Generated ground facts (duplicate of js_builtins_nodes.dl) ──
+builtin_spec("fs", "fs").
+builtin_spec("node:fs", "fs").
+builtin_spec("fs/promises", "fs/promises").
+builtin_spec("node:fs/promises", "fs/promises").
+builtin_spec("path", "path").
+builtin_spec("node:path", "path").
+builtin_spec("http", "http").
+builtin_spec("node:http", "http").
+builtin_spec("https", "https").
+builtin_spec("node:https", "https").
+builtin_spec("crypto", "crypto").
+builtin_spec("node:crypto", "crypto").
+builtin_spec("child_process", "child_process").
+builtin_spec("node:child_process", "child_process").
+builtin_spec("url", "url").
+builtin_spec("node:url", "url").
+builtin_spec("util", "util").
+builtin_spec("node:util", "util").
+builtin_spec("os", "os").
+builtin_spec("node:os", "os").
+builtin_spec("events", "events").
+builtin_spec("node:events", "events").
+builtin_spec("stream", "stream").
+builtin_spec("node:stream", "stream").
+builtin_spec("buffer", "buffer").
+builtin_spec("node:buffer", "buffer").
+builtin_spec("worker_threads", "worker_threads").
+builtin_spec("node:worker_threads", "worker_threads").
+
+% ── 8-extension JS gates (cross-language leakage guard) ──
+js_imp(I, F, Spec) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".js"), attr(I, "name", Spec), neq(Spec, "").
+js_imp(I, F, Spec) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".jsx"), attr(I, "name", Spec), neq(Spec, "").
+js_imp(I, F, Spec) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".ts"), attr(I, "name", Spec), neq(Spec, "").
+js_imp(I, F, Spec) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".tsx"), attr(I, "name", Spec), neq(Spec, "").
+js_imp(I, F, Spec) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".mjs"), attr(I, "name", Spec), neq(Spec, "").
+js_imp(I, F, Spec) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".cjs"), attr(I, "name", Spec), neq(Spec, "").
+js_imp(I, F, Spec) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".mts"), attr(I, "name", Spec), neq(Spec, "").
+js_imp(I, F, Spec) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".cts"), attr(I, "name", Spec), neq(Spec, "").
+
+js_b(B, F) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".js").
+js_b(B, F) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".jsx").
+js_b(B, F) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".ts").
+js_b(B, F) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".tsx").
+js_b(B, F) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".mjs").
+js_b(B, F) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".cjs").
+js_b(B, F) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".mts").
+js_b(B, F) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".cts").
+
+% ── The builtin import-binding index (duplicate prelude) ──
+bi_binding(F, LN, M, IN) :-
+    js_b(B, F), attr(B, "name", LN), neq(LN, ""),
+    node_attr(B, "source", Spec), builtin_spec(Spec, M),
+    node_attr(B, "importedName", IN).
+
+bi_method_call(C, M, FnN) :-
+    bi_binding(F, LN, M, _),
+    node(C, "CALL"), attr(C, "file", F), attr(C, "name", Full),
+    concat(LN, ".", P), strip_prefix(Full, P, FnN), neq(FnN, "").
+
+dotted(C) :- node(C, "CALL"), attr(C, "name", N), string_contains(N, ".").
+bi_direct_call(C, M, IN) :-
+    bi_binding(F, LN, M, IN),
+    node(C, "CALL"), attr(C, "file", F), attr(C, "name", LN),
+    \+ dotted(C).
+
+% ── IMPORTS_FROM: builtin-specifier IMPORT → its EXTERNAL_MODULE node ──
+@materialize(edge_type = "IMPORTS_FROM", mode = "additive", meta(resolvedVia))
+bi_import_edge(I, X, "builtins") :-
+    js_imp(I, _, Spec), builtin_spec(Spec, M),
+    node(X, "EXTERNAL_MODULE"), attr(X, "name", M), attr(X, "file", "<builtin>").
+
+% ── CALLS, method arm: CALL "<localName>.<rest>" → EXTERNAL_FUNCTION pinned
+%    by (name, module, "<builtin>") — the bare-name disambiguation (header).
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+bi_method_edge(C, X, "builtins") :-
+    bi_method_call(C, M, FnN),
+    node(X, "EXTERNAL_FUNCTION"), attr(X, "name", FnN), attr(X, "file", "<builtin>"),
+    node_attr(X, "module", M).
+
+% ── CALLS, direct arm: dotless callee → EXTERNAL_FUNCTION of the binding's
+%    importedName (verdict fix b).
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+bi_direct_edge(C, X, "builtins") :-
+    bi_direct_call(C, M, FnN),
+    node(X, "EXTERNAL_FUNCTION"), attr(X, "name", FnN), attr(X, "file", "<builtin>"),
+    node_attr(X, "module", M).

@@ -556,6 +556,9 @@ mod database_tests {
             metadata: None,
             semantic_id: None,
         }]);
+        // B2 (RFD-71): counts read the published manifest version — flush the
+        // staged add before constructing the Database for counting.
+        engine.flush().unwrap();
 
         let db = Database::new("test".to_string(), Box::new(engine), false);
 

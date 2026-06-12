@@ -240,7 +240,7 @@ async function resolveReceiverLibrary(
   // 2. Determine the receiver name from the origin call's `name`.
   //    - "<obj>.method"    → JS analyzer placeholder for chained receivers like
   //                          `vscode.commands.registerCommand`. Follow the
-  //                          DERIVED_FROM[kind=callee] → PROPERTY_ACCESS chain
+  //                          DERIVES_FROM[kind=callee] → PROPERTY_ACCESS chain
   //                          via READS_FROM[kind=receiver] back to the root
   //                          identifier (whose `base` metadata is the import
   //                          binding name).
@@ -278,7 +278,7 @@ async function resolveReceiverLibrary(
  * `vscode.commands.registerCommand`.
  *
  * Graph shape produced by the JS analyzer:
- *   CALL --DERIVED_FROM[kind=callee]-->  PROPERTY_ACCESS(name=method, base=<obj>)
+ *   CALL --DERIVES_FROM[kind=callee]-->  PROPERTY_ACCESS(name=method, base=<obj>)
  *                                              |
  *                                              READS_FROM[kind=receiver]
  *                                              v
@@ -296,8 +296,8 @@ async function resolveChainedReceiver(
   client: RFDBClient,
   callId: string,
 ): Promise<string | null> {
-  // Step 1: CALL → PROPERTY_ACCESS via DERIVED_FROM[kind=callee].
-  const derived = await client.getOutgoingEdges(callId, ['DERIVED_FROM'] as never);
+  // Step 1: CALL → PROPERTY_ACCESS via DERIVES_FROM[kind=callee].
+  const derived = await client.getOutgoingEdges(callId, ['DERIVES_FROM'] as never);
   let current: WireNode | null = null;
   for (const e of derived) {
     const kind = (e as Record<string, unknown>).kind;

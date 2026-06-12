@@ -1,0 +1,324 @@
+% js_builtins_nodes.dl — node half of the in-engine replacement for the
+% Builtins.hs resolver (packages/grafema-resolve/src/Builtins.hs:282-357):
+% EXTERNAL_MODULE + EXTERNAL_FUNCTION node minting for Node.js builtin modules.
+% The EDGE half (IMPORTS_FROM / CALLS) lives in js_builtins_edges.dl — the
+% engine-sanctioned two-pack split: a @materialize edge endpoint must be a
+% node-ID column, and a node minted in the SAME run only has its id as the
+% BLAKE3 of a rule-built string (the axum_routes.dl header limitation). The
+% edges pack runs strictly AFTER this one (cross-pack EDB ordering contract).
+%
+% THE WAVE-1 VERDICT CORRECTIONS ARE LOAD-BEARING HERE (all three reproduced):
+%   (a) the registry does NOT gate emission — resolveCallNode (Hs:317-339)
+%       emits for ANY dotted call whose object is a builtin-imported local
+%       name; lookupBuiltinFunc (Hs:326) only enriches security/pure metadata.
+%       The three node heads below split on registry membership for the META
+%       payload only; the non-registry head (ext_func_node_plain) keeps every
+%       fs.openSync / fs.promises.readFile-class function that a
+%       registry-gated rule would silently drop.
+%   (b) the direct-call arm (Hs:353-357) is present: `import {join} from
+%       'path'; join()` mints EXTERNAL_FUNCTION:path.join via the binding's
+%       importedName (NOT its local name — aliased `import {join as j}` works).
+%   (c) bare-name (module, name) disambiguation in the edges pack is
+%       node_attr-dependent — therefore meta(module, …) is projected on EVERY
+%       function head below, so the minted node carries `module` as a
+%       top-level metadata field exactly where node_attr reads it
+%       (http.get/https.get, path.parse/url.parse stay distinct).
+%
+% SEMANTIC IDS ARE BYTE-IDENTICAL to the legacy convention — REQUIRED for
+% dedup against the still-ON legacy resolver (a present node is never
+% rewritten; same sid ⇒ same BLAKE3 id ⇒ one node):
+%   EXTERNAL_MODULE:<m>        (mkExternalModuleNode, Hs:364-376)
+%   EXTERNAL_FUNCTION:<m>.<fn> (mkExternalFuncNode,  Hs:379-395)
+% where <m> is the NORMALIZED module name ("node:fs" → "fs", Hs:57-61) and
+% <fn> is the substring after the FIRST dot of the callee for method calls
+% (T.breakOn ".", Hs:345 — e.g. "fs.promises.readFile" → m="fs",
+% fn="promises.readFile") or the binding's importedName for direct calls.
+% The first-dot split is reproduced by concat(LN, ".", P) + strip_prefix:
+% binding local names never contain dots, so LN"." IS the first-dot prefix.
+%
+% NUMBERED DELTAS vs the resolver (everything not listed is exact):
+%   DELTA 1 (metadata repr): `pure` is projected as the STRING "true"/"false"
+%     (datalog values are strings); the legacy node carried a JSON bool
+%     (MetaBool, Hs:393). While legacy mints first its node wins (present
+%     nodes are never rewritten) — the delta is only visible once legacy is
+%     gated. node_attr surfaces a JSON bool as "true"/"false" (Wave M), so
+%     both representations read identically through it.
+%   DELTA 2 (node surface): pack-minted nodes have no `exported` flag and no
+%     line/column zeros (NodeRecordV2 has no such surface); legacy set
+%     gnExported=True. Recorded loss — no known consumer reads exported on
+%     EXTERNAL_* nodes.
+%   DELTA 3 (superset, set semantics): the legacy import index was a Map with
+%     last-wins on duplicate (file, localName) bindings (Hs:262-272); set
+%     semantics derives per candidate. Duplicate bindings of one local name in
+%     one file are near-nonexistent.
+%   DELTA 4 (file gate): the resolver's effective gate was the orchestrator's
+%     detect_language == JavaScript stream filter (8 extensions) — reproduced
+%     as the 8-clause gates below on IMPORT and IMPORT_BINDING (cross-language
+%     leakage guard: a Rust `use url::Url` binding or a non-JS IMPORT named
+%     "os"/"crypto" must NOT mint Node-builtin externals). CALL nodes need no
+%     own gate: every arm joins the call's file against a gated binding.
+%   DELTA 5 (parity, deliberate): the legacy direct arm emits importedName
+%     verbatim — `import fs from 'fs'; fs()` yields EXTERNAL_FUNCTION:fs.default
+%     and a namespace `fs()` call yields EXTERNAL_FUNCTION:fs.* — both
+%     reproduced (no guard), byte-parity over cosmetics.
+%
+% MAINTAIN ENVELOPE: node_attr + negation + node minting ⇒ scratch floor.
+%
+% ORDERING (PRODUCER): MUST run before js_builtins_edges (which joins these
+% nodes as committed EDB) and therefore before method_calls / shape_verifier.
+% mode = "exclusive" on the node heads is PROVENANCE-SCOPED (engine contract):
+% only nodes stamped with THIS rule's _source are owned/retracted; the legacy
+% resolver's identically-sid'd nodes are foreign and never touched.
+
+% ── Generated ground facts: builtin module specifiers → normalized name ──
+% (Builtins.hs:79-246 module set; "node:" twins per normalizeModuleName :57-61)
+builtin_spec("fs", "fs").
+builtin_spec("node:fs", "fs").
+builtin_spec("fs/promises", "fs/promises").
+builtin_spec("node:fs/promises", "fs/promises").
+builtin_spec("path", "path").
+builtin_spec("node:path", "path").
+builtin_spec("http", "http").
+builtin_spec("node:http", "http").
+builtin_spec("https", "https").
+builtin_spec("node:https", "https").
+builtin_spec("crypto", "crypto").
+builtin_spec("node:crypto", "crypto").
+builtin_spec("child_process", "child_process").
+builtin_spec("node:child_process", "child_process").
+builtin_spec("url", "url").
+builtin_spec("node:url", "url").
+builtin_spec("util", "util").
+builtin_spec("node:util", "util").
+builtin_spec("os", "os").
+builtin_spec("node:os", "os").
+builtin_spec("events", "events").
+builtin_spec("node:events", "events").
+builtin_spec("stream", "stream").
+builtin_spec("node:stream", "stream").
+builtin_spec("buffer", "buffer").
+builtin_spec("node:buffer", "buffer").
+builtin_spec("worker_threads", "worker_threads").
+builtin_spec("node:worker_threads", "worker_threads").
+
+% ── Generated ground facts: the registry rows WITH a security tag ──
+% (every security-tagged row in Builtins.hs:79-246 is pure=False)
+builtin_func_sec("fs", "readFile", "file-io").
+builtin_func_sec("fs", "readFileSync", "file-io").
+builtin_func_sec("fs", "writeFile", "file-io").
+builtin_func_sec("fs", "writeFileSync", "file-io").
+builtin_func_sec("fs", "appendFile", "file-io").
+builtin_func_sec("fs", "appendFileSync", "file-io").
+builtin_func_sec("fs", "readdir", "file-io").
+builtin_func_sec("fs", "readdirSync", "file-io").
+builtin_func_sec("fs", "mkdir", "file-io").
+builtin_func_sec("fs", "mkdirSync", "file-io").
+builtin_func_sec("fs", "rmdir", "file-io").
+builtin_func_sec("fs", "rmdirSync", "file-io").
+builtin_func_sec("fs", "rm", "file-io").
+builtin_func_sec("fs", "rmSync", "file-io").
+builtin_func_sec("fs", "unlink", "file-io").
+builtin_func_sec("fs", "unlinkSync", "file-io").
+builtin_func_sec("fs", "stat", "file-io").
+builtin_func_sec("fs", "statSync", "file-io").
+builtin_func_sec("fs", "lstat", "file-io").
+builtin_func_sec("fs", "lstatSync", "file-io").
+builtin_func_sec("fs", "access", "file-io").
+builtin_func_sec("fs", "accessSync", "file-io").
+builtin_func_sec("fs", "chmod", "file-io").
+builtin_func_sec("fs", "chmodSync", "file-io").
+builtin_func_sec("fs", "chown", "file-io").
+builtin_func_sec("fs", "chownSync", "file-io").
+builtin_func_sec("fs", "rename", "file-io").
+builtin_func_sec("fs", "renameSync", "file-io").
+builtin_func_sec("fs", "copyFile", "file-io").
+builtin_func_sec("fs", "copyFileSync", "file-io").
+builtin_func_sec("fs", "createReadStream", "file-io").
+builtin_func_sec("fs", "createWriteStream", "file-io").
+builtin_func_sec("fs", "watch", "file-io").
+builtin_func_sec("fs", "watchFile", "file-io").
+builtin_func_sec("fs", "existsSync", "file-io").
+builtin_func_sec("fs", "truncate", "file-io").
+builtin_func_sec("fs", "truncateSync", "file-io").
+builtin_func_sec("fs/promises", "readFile", "file-io").
+builtin_func_sec("fs/promises", "writeFile", "file-io").
+builtin_func_sec("fs/promises", "appendFile", "file-io").
+builtin_func_sec("fs/promises", "readdir", "file-io").
+builtin_func_sec("fs/promises", "mkdir", "file-io").
+builtin_func_sec("fs/promises", "rmdir", "file-io").
+builtin_func_sec("fs/promises", "rm", "file-io").
+builtin_func_sec("fs/promises", "unlink", "file-io").
+builtin_func_sec("fs/promises", "stat", "file-io").
+builtin_func_sec("fs/promises", "lstat", "file-io").
+builtin_func_sec("fs/promises", "access", "file-io").
+builtin_func_sec("fs/promises", "chmod", "file-io").
+builtin_func_sec("fs/promises", "chown", "file-io").
+builtin_func_sec("fs/promises", "rename", "file-io").
+builtin_func_sec("fs/promises", "copyFile", "file-io").
+builtin_func_sec("fs/promises", "truncate", "file-io").
+builtin_func_sec("http", "createServer", "net").
+builtin_func_sec("http", "request", "net").
+builtin_func_sec("http", "get", "net").
+builtin_func_sec("https", "createServer", "net").
+builtin_func_sec("https", "request", "net").
+builtin_func_sec("https", "get", "net").
+builtin_func_sec("crypto", "createHash", "crypto").
+builtin_func_sec("crypto", "createHmac", "crypto").
+builtin_func_sec("crypto", "createCipher", "crypto").
+builtin_func_sec("crypto", "createDecipher", "crypto").
+builtin_func_sec("crypto", "createCipheriv", "crypto").
+builtin_func_sec("crypto", "createDecipheriv", "crypto").
+builtin_func_sec("crypto", "randomBytes", "crypto").
+builtin_func_sec("crypto", "randomFill", "crypto").
+builtin_func_sec("crypto", "randomFillSync", "crypto").
+builtin_func_sec("crypto", "randomUUID", "crypto").
+builtin_func_sec("crypto", "pbkdf2", "crypto").
+builtin_func_sec("crypto", "pbkdf2Sync", "crypto").
+builtin_func_sec("crypto", "scrypt", "crypto").
+builtin_func_sec("crypto", "scryptSync", "crypto").
+builtin_func_sec("crypto", "generateKey", "crypto").
+builtin_func_sec("crypto", "generateKeyPair", "crypto").
+builtin_func_sec("crypto", "generateKeyPairSync", "crypto").
+builtin_func_sec("child_process", "exec", "exec").
+builtin_func_sec("child_process", "execSync", "exec").
+builtin_func_sec("child_process", "execFile", "exec").
+builtin_func_sec("child_process", "execFileSync", "exec").
+builtin_func_sec("child_process", "spawn", "exec").
+builtin_func_sec("child_process", "spawnSync", "exec").
+builtin_func_sec("child_process", "fork", "exec").
+
+% ── Generated ground facts: the registry rows WITHOUT a security tag ──
+% (third column = the row's pure flag as a string)
+builtin_func_pure("path", "join", "true").
+builtin_func_pure("path", "resolve", "true").
+builtin_func_pure("path", "normalize", "true").
+builtin_func_pure("path", "basename", "true").
+builtin_func_pure("path", "dirname", "true").
+builtin_func_pure("path", "extname", "true").
+builtin_func_pure("path", "parse", "true").
+builtin_func_pure("path", "format", "true").
+builtin_func_pure("path", "relative", "true").
+builtin_func_pure("path", "isAbsolute", "true").
+builtin_func_pure("path", "sep", "true").
+builtin_func_pure("path", "delimiter", "true").
+builtin_func_pure("url", "parse", "true").
+builtin_func_pure("url", "format", "true").
+builtin_func_pure("url", "resolve", "true").
+builtin_func_pure("url", "fileURLToPath", "true").
+builtin_func_pure("url", "pathToFileURL", "true").
+builtin_func_pure("util", "promisify", "true").
+builtin_func_pure("util", "callbackify", "true").
+builtin_func_pure("util", "inspect", "true").
+builtin_func_pure("util", "format", "true").
+builtin_func_pure("util", "deprecate", "false").
+builtin_func_pure("util", "inherits", "false").
+builtin_func_pure("os", "platform", "true").
+builtin_func_pure("os", "arch", "true").
+builtin_func_pure("os", "cpus", "false").
+builtin_func_pure("os", "hostname", "false").
+builtin_func_pure("os", "homedir", "false").
+builtin_func_pure("os", "tmpdir", "false").
+builtin_func_pure("os", "type", "true").
+builtin_func_pure("os", "release", "true").
+builtin_func_pure("os", "totalmem", "false").
+builtin_func_pure("os", "freemem", "false").
+builtin_func_pure("events", "EventEmitter", "false").
+builtin_func_pure("events", "once", "false").
+builtin_func_pure("events", "on", "false").
+builtin_func_pure("stream", "Readable", "false").
+builtin_func_pure("stream", "Writable", "false").
+builtin_func_pure("stream", "Duplex", "false").
+builtin_func_pure("stream", "Transform", "false").
+builtin_func_pure("stream", "pipeline", "false").
+builtin_func_pure("stream", "finished", "false").
+builtin_func_pure("buffer", "Buffer", "false").
+builtin_func_pure("buffer", "alloc", "true").
+builtin_func_pure("buffer", "allocUnsafe", "true").
+builtin_func_pure("buffer", "from", "true").
+builtin_func_pure("buffer", "concat", "true").
+builtin_func_pure("buffer", "isBuffer", "true").
+builtin_func_pure("worker_threads", "Worker", "false").
+builtin_func_pure("worker_threads", "isMainThread", "true").
+builtin_func_pure("worker_threads", "parentPort", "false").
+builtin_func_pure("worker_threads", "workerData", "false").
+
+% ── 8-extension JS gates (DELTA 4) ─────────────────────────────────────────
+js_imp(I, F, Spec) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".js"), attr(I, "name", Spec), neq(Spec, "").
+js_imp(I, F, Spec) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".jsx"), attr(I, "name", Spec), neq(Spec, "").
+js_imp(I, F, Spec) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".ts"), attr(I, "name", Spec), neq(Spec, "").
+js_imp(I, F, Spec) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".tsx"), attr(I, "name", Spec), neq(Spec, "").
+js_imp(I, F, Spec) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".mjs"), attr(I, "name", Spec), neq(Spec, "").
+js_imp(I, F, Spec) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".cjs"), attr(I, "name", Spec), neq(Spec, "").
+js_imp(I, F, Spec) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".mts"), attr(I, "name", Spec), neq(Spec, "").
+js_imp(I, F, Spec) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".cts"), attr(I, "name", Spec), neq(Spec, "").
+
+js_b(B, F) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".js").
+js_b(B, F) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".jsx").
+js_b(B, F) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".ts").
+js_b(B, F) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".tsx").
+js_b(B, F) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".mjs").
+js_b(B, F) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".cjs").
+js_b(B, F) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".mts").
+js_b(B, F) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".cts").
+
+% ── Phase 1 (Hs:294-314): EXTERNAL_MODULE per builtin-specifier IMPORT ──
+imported_builtin(M) :- js_imp(_, _, Spec), builtin_spec(Spec, M).
+
+@materialize_node(node_type = "EXTERNAL_MODULE", mode = "exclusive", meta(source))
+ext_module_node(Sid, M, "<builtin>", "nodejs-builtin") :-
+    imported_builtin(M),
+    concat("EXTERNAL_MODULE:", M, Sid).
+
+% ── The builtin import-binding index (Hs:262-272): (file, localName) →
+%    (module, importedName). source + importedName are metadata-only ⇒ node_attr.
+bi_binding(F, LN, M, IN) :-
+    js_b(B, F), attr(B, "name", LN), neq(LN, ""),
+    node_attr(B, "source", Spec), builtin_spec(Spec, M),
+    node_attr(B, "importedName", IN).
+
+% ── Phase 2, method-call arm (Hs:345-351): "<localName>.<rest>" — FIRST-dot
+%    split (binding local names are dotless, see header). NOT registry-gated
+%    (verdict fix a).
+bi_method_call(C, M, FnN) :-
+    bi_binding(F, LN, M, _),
+    node(C, "CALL"), attr(C, "file", F), attr(C, "name", Full),
+    concat(LN, ".", P), strip_prefix(Full, P, FnN), neq(FnN, "").
+
+% ── Phase 2, direct-call arm (Hs:353-357; verdict fix b): a dotless callee
+%    that IS a builtin binding's local name → the binding's importedName.
+dotted(C) :- node(C, "CALL"), attr(C, "name", N), string_contains(N, ".").
+bi_direct_call(C, M, IN) :-
+    bi_binding(F, LN, M, IN),
+    node(C, "CALL"), attr(C, "file", F), attr(C, "name", LN),
+    \+ dotted(C).
+
+% ── The minted function set + the legacy semantic-id construction ──
+ext_func(M, FnN) :- bi_method_call(_, M, FnN).
+ext_func(M, FnN) :- bi_direct_call(_, M, FnN).
+
+ext_func_sid(M, FnN, Sid) :-
+    ext_func(M, FnN), neq(FnN, ""),
+    concat("EXTERNAL_FUNCTION:", M, S1),
+    concat(S1, ".", S2),
+    concat(S2, FnN, Sid).
+
+in_registry(M, FnN) :- builtin_func_sec(M, FnN, _).
+in_registry(M, FnN) :- builtin_func_pure(M, FnN, _).
+
+% Registry hit WITH security: meta(module, security, pure) — every such row
+% is pure=False in the table (Hs:79-246), hence the "false" constant.
+@materialize_node(node_type = "EXTERNAL_FUNCTION", mode = "exclusive", meta(module, security, pure))
+ext_func_node_sec(Sid, FnN, "<builtin>", M, Sec, "false") :-
+    ext_func_sid(M, FnN, Sid), builtin_func_sec(M, FnN, Sec).
+
+% Registry hit WITHOUT security: meta(module, pure).
+@materialize_node(node_type = "EXTERNAL_FUNCTION", mode = "exclusive", meta(module, pure))
+ext_func_node_pure(Sid, FnN, "<builtin>", M, P) :-
+    ext_func_sid(M, FnN, Sid), builtin_func_pure(M, FnN, P).
+
+% NON-registry function (verdict fix a — the head a registry-gated draft
+% silently dropped): meta(module) only, like the legacy node (Hs:390-394
+% emits security/pure only on a registry hit).
+@materialize_node(node_type = "EXTERNAL_FUNCTION", mode = "exclusive", meta(module))
+ext_func_node_plain(Sid, FnN, "<builtin>", M) :-
+    ext_func_sid(M, FnN, Sid), \+ in_registry(M, FnN).

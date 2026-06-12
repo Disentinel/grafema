@@ -1,0 +1,73 @@
+% js_runtime_globals_edges.dl — edge half of the in-engine replacement for the
+% legacy `runtime-call-globals` second-pass resolve step:
+%   CALLS  CALL → GLOBAL_DEFINITION  (mkEdge, RuntimeGlobals.hs:258-267)
+% MUST be declared AFTER js_runtime_globals_nodes.dl in the pack runner: the
+% minted GLOBAL_DEFINITION endpoints are joined here as COMMITTED storage EDB
+% (the js_builtins two-pack split). While the legacy resolver stays ON its
+% identically-sid'd nodes already exist either way.
+%
+% The match prelude (jcall/js_fn/loc_res/sfx/win) is a textual duplicate of
+% js_runtime_globals_nodes.dl (derived relations are per-program; the
+% established per-pack include pattern), and the rtg_key/rtg_eff ground facts
+% are PREPENDED at compile time from js_runtime_globals_facts.dl (stdlib.rs
+% concat!). See the nodes pack header for the full legacy provenance and the
+% NUMBERED DELTAS (1-6) — no additional edge-only deltas: the edge endpoints
+% and metadata match the legacy mkEdge payload exactly (resolvedVia =
+% "runtime-globals" :264, globalCategory = "ecmascript" :265; the legacy
+% commit then stamps _source="js-call-globals" orchestrator-side, which is
+% commit machinery, not resolver output).
+%
+% The target is pinned by (name, file="<runtime/js>") — GLOBAL_DEFINITION
+% sids are "GLOBAL::"<seName> with names unique per virtual runtime file
+% (each language strategy mints into its own nsVirtualFile, Main.hs:109).
+%
+% CALLS is SHARED vocabulary ⇒ mode = "additive" is mandatory (exclusive
+% write-back would tombstone the analyzers'/legacy resolver's CALLS edges).
+%
+% MAINTAIN ENVELOPE: negation ⇒ scratch floor (accepted).
+%
+% ORDERING (CONSUMER): after js_runtime_globals_nodes (committed-EDB endpoint
+% join — strict nodes→edges order, enforced by both pack registries).
+
+% ── 8-extension JS gates (DELTA 6; duplicate prelude) ───────────────────────
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".js"), attr(C, "name", N), neq(N, "").
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".jsx"), attr(C, "name", N), neq(N, "").
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".ts"), attr(C, "name", N), neq(N, "").
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".tsx"), attr(C, "name", N), neq(N, "").
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".mjs"), attr(C, "name", N), neq(N, "").
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".cjs"), attr(C, "name", N), neq(N, "").
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".mts"), attr(C, "name", N), neq(N, "").
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".cts"), attr(C, "name", N), neq(N, "").
+
+js_fn(F, N) :- node(D, "FUNCTION"), attr(D, "file", F), ends_with(F, ".js"), attr(D, "name", N), neq(N, "").
+js_fn(F, N) :- node(D, "FUNCTION"), attr(D, "file", F), ends_with(F, ".jsx"), attr(D, "name", N), neq(N, "").
+js_fn(F, N) :- node(D, "FUNCTION"), attr(D, "file", F), ends_with(F, ".ts"), attr(D, "name", N), neq(N, "").
+js_fn(F, N) :- node(D, "FUNCTION"), attr(D, "file", F), ends_with(F, ".tsx"), attr(D, "name", N), neq(N, "").
+js_fn(F, N) :- node(D, "FUNCTION"), attr(D, "file", F), ends_with(F, ".mjs"), attr(D, "name", N), neq(N, "").
+js_fn(F, N) :- node(D, "FUNCTION"), attr(D, "file", F), ends_with(F, ".cjs"), attr(D, "name", N), neq(N, "").
+js_fn(F, N) :- node(D, "FUNCTION"), attr(D, "file", F), ends_with(F, ".mts"), attr(D, "name", N), neq(N, "").
+js_fn(F, N) :- node(D, "FUNCTION"), attr(D, "file", F), ends_with(F, ".cts"), attr(D, "name", N), neq(N, "").
+
+% ── Local-resolution skip (duplicate prelude) ───────────────────────────────
+loc_res(C) :- jcall(C, F, N), js_fn(F, N).
+loc_res(C) :- jcall(C, F, N), method_suffix(N, Seg), js_fn(F, Seg).
+
+cand(C, N) :- jcall(C, _, N), \+ loc_res(C).
+
+% ── Suffix chain + first-match winner (duplicate prelude) ───────────────────
+dpfx(C, D) :- cand(C, N), last_segment(N, ".", L), concat(".", L, T), strip_suffix(N, T, D).
+dpfx(C, D) :- dpfx(C, P), last_segment(P, ".", L), concat(".", L, T), strip_suffix(P, T, D).
+
+sfx(C, N) :- cand(C, N).
+sfx(C, S) :- cand(C, N), dpfx(C, D), concat(D, ".", DP), strip_prefix(N, DP, S), neq(S, "").
+
+msfx(C, S) :- sfx(C, S), rtg_key(S, _).
+msh(C, S) :- msfx(C, S), msfx(C, S2), concat(".", S, T), ends_with(S2, T).
+win(C, G) :- msfx(C, S), \+ msh(C, S), rtg_key(S, G).
+
+% ── CALLS: matched CALL → its GLOBAL_DEFINITION, pinned by (name, virtual
+%    file). Metadata = the legacy mkEdge payload (:258-267), exact. ─────────
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia, globalCategory))
+rtg_call_edge(C, G, "runtime-globals", "ecmascript") :-
+    win(C, GN),
+    node(G, "GLOBAL_DEFINITION"), attr(G, "name", GN), attr(G, "file", "<runtime/js>").

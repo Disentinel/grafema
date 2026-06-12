@@ -1,0 +1,191 @@
+% rust_imports.dl — in-engine replacement for the RustImportResolution.hs resolver
+% (packages/rust-resolve/src/RustImportResolution.hs): the Rust module tree +
+% both rust-imports phases, IMPORTS_FROM edges.
+%
+%   Phase 2 (Hs:143-159): IMPORT → MODULE — the IMPORT's name IS the full use
+%     path ("crate::foo::Bar", rust_analyzer.rs emit_import: IMPORT.name =
+%     source); it resolves only when the path itself names a module in the
+%     tree (`use crate::foo;`).
+%   Phase 3 (Hs:168-199): IMPORT_BINDING → exported declaration — the source
+%     path's "all but last ::-segment" names the module, the binding's name is
+%     matched against that file's pub exports (the 9 decl types, Hs:75-78).
+%     The source rides on the containing IMPORT's name via the committed
+%     IMPORT -CONTAINS-> IMPORT_BINDING edge (verified live: 1375/1375 rust
+%     IMPORTs carry it on the post-merge dogfood graph) — no metadata read.
+%
+% MODULE TREE (Hs nodeToModulePaths:109-135), replicated step-for-step:
+%   * strip a LITERAL leading "src/" (T.stripPrefix — nothing else strips);
+%   * drop the ".rs" extension;
+%   * last segment "mod"  → the parent module path (top-level mod.rs → crate);
+%   * last segment "lib" / "main" → crate root, REGARDLESS of depth (the Hs
+%     guard checks only the last segment: "src/foo/lib.rs" → "crate");
+%   * remaining segments joined with "::" under the "crate::" prefix.
+%
+% PUB-EXPORT GATE: gnExported (Hs:85) = the storage blob's `__exported` key
+% (engine_v2.rs:81-86 writes it; the wire strips it back to `exported`) —
+% node_attr(D, "__exported", "true"), bools surface as "true" since Wave M.
+%
+% IMPORTS_FROM is SHARED vocabulary (the legacy resolver + js packs also emit
+% it) ⇒ mode = "additive". Legacy edges carry EMPTY metadata (Hs:156,193) — no
+% meta projected, exact parity (engine provenance _source/_generation only).
+%
+% NUMBERED DELTAS vs the resolver (everything not listed is exact):
+%   DELTA 1 (crate-root arm REFINED — subset AND superset, both bounded): the
+%     legacy ModuleTree is Map.fromList = LAST-wins; on a multi-crate monorepo
+%     every lib.rs/main.rs collides on the "crate" key (dogfood: 3 roots, the
+%     ONLY duplicate key of 113) and the resolver resolves `crate::X` against
+%     ONE ARBITRARY crate's root — a false-positive generator the pack refuses
+%     to reproduce (set semantics would emit it per root, multiplying wrong
+%     cross-crate edges). The pack's crate-root arm instead requires the root
+%     to GOVERN the importer: the root file's directory ("packages/a/src/"
+%     for "packages/a/src/lib.rs") must be an ancestor directory of the
+%     importing file (an equality join over the f_anc ancestor chain — the
+%     E-PLAN-003 guard forbids the filter-connected spelling). Subset where
+%     the legacy winner was a foreign crate (omitting exactly the wrong
+%     edges); superset where a bin+lib crate has both src/main.rs and
+%     src/lib.rs exporting the binding's name (legacy picked one winner, the
+%     pack derives ≤2 same-crate candidates). Measured on dogfood: legacy 0,
+%     all-candidates 0, governed 0 — the delta is empty on the current graph.
+%   DELTA 2 (superset, set semantics): duplicate non-root module paths (two
+%     files mapping to one path — needs e.g. "src/foo.rs" + "src/foo/mod.rs",
+%     which is rustc error E0761, or a repo literally rooted at "src/")
+%     derive an edge per candidate where Map last-wins picked one. Dogfood
+%     measured: 0 duplicate non-root keys. Same class for duplicate same-name
+%     exports in one file (Hs:187-188 first-match-wins; requires two pub decls
+%     of one name in one file across the 9 types).
+%   DELTA 3 (subset, ~0): the Hs extension drop is T.replace ".rs" "" on the
+%     last segment (removes EVERY interior ".rs" occurrence: "ba.rs.rs" →
+%     "ba"); the pack strips only the FINAL ".rs" suffix. Diverges only for
+%     files with ".rs" inside the stem — 0 on dogfood.
+%   DELTA 4 (diagnostics): the resolver's stderr edge-count line has no pack
+%     analog.
+%   DELTA 5 (file gate): the resolver's effective input gate was the
+%     orchestrator's detect_language == Rust stream filter (the ".rs"
+%     extension, config.rs detect_language) — encoded here as the literal
+%     ends_with(F, ".rs") guards on rs_module / rs_import / rs_binding (the
+%     js packs' DELTA-5 precedent; MODULE/IMPORT/IMPORT_BINDING are shared
+%     vocabulary across analyzers, so the gate is the cross-language leakage
+%     guard, not a semantic narrowing).
+%   NOT HANDLED BY LEGACY, stays out (parity for free): external crates
+%     (std::/third-party — no tree entry, silently skipped, Hs:159), self::/
+%     super:: prefixes (the tree only holds "crate…"-keys, so they never
+%     matched), glob imports (IMPORT name "crate::foo::*" is no tree key;
+%     binding name "*" matches no export), single-segment sources (the Hs
+%     ≥2-segment gate = the strip_suffix non-match on the "::"++last tail).
+%
+% MAINTAIN ENVELOPE: negation (\+ m_has_src) + node_attr ⇒ scratch floor
+% (accepted, same stance as every import pack).
+%
+% ORDERING (PRODUCER): produces IMPORTS_FROM — must run BEFORE the consumers
+% js_cross_file_calls / js_property_access_ns (their seam joins) and BEFORE
+% depends (which derives MODULE-level DEPENDS_ON from IMPORT-level
+% IMPORTS_FROM). Legacy rust-imports is gated (Wave 3c,
+% GRAFEMA_SKIP_RESOLVE_STEPS=rust-imports in rust-resolve Main.hs), so this
+% ordering is load-bearing — depends moved after the IMPORTS_FROM producers
+% in both registries.
+%
+% COST NOTE: rs_decl is gated by target_file (files an import actually lands
+% in), so the per-row node_attr JSON parse runs only for declarations in real
+% target files — not for every rust decl node (the rs_macro ×3 lesson).
+
+% ── Module tree ──────────────────────────────────────────────────────────────
+
+% Rust MODULE nodes (one per .rs file; the .rs gate is the cross-language
+% leakage guard — MODULE is a shared vocabulary across analyzers).
+rs_module(M, F) :- node(M, "MODULE"), attr(M, "file", F), ends_with(F, ".rs").
+
+% Literal leading "src/" strip (Hs:113-115): strip_prefix is match-and-extract
+% (no identity fallback), so the non-matching files pass through by negation.
+m_src(M, S)  :- rs_module(M, F), strip_prefix(F, "src/", S).
+m_has_src(M) :- m_src(M, S).
+m_rel(M, R)  :- m_src(M, S), strip_suffix(S, ".rs", R).
+m_rel(M, R)  :- rs_module(M, F), \+ m_has_src(M), strip_suffix(F, ".rs", R).
+
+% The path's last segment decides the special forms (Hs:126-130).
+m_last(M, R, L) :- m_rel(M, R), last_segment(R, "/", L).
+
+% Plain module file: crate::<segments> with "/" rewritten to "::" (Hs:131-134).
+m_plain(M, R) :- m_last(M, R, L), neq(L, "lib"), neq(L, "main"), neq(L, "mod").
+module_path(M, P) :- m_plain(M, R), replace_all(R, "/", "::", Q), concat("crate::", Q, P).
+
+% Nested mod.rs → the parent module (Hs:127). The "/mod" strip enforces the
+% segment boundary ("x/amod" has last segment "amod", never reaches here).
+module_path(M, P) :-
+    m_last(M, R, "mod"), strip_suffix(R, "/mod", Par),
+    replace_all(Par, "/", "::", Q), concat("crate::", Q, P).
+
+% Crate roots (Hs:128-129 + the top-level-mod.rs corner of Hs:127 where init
+% [] = []): lib.rs / main.rs at ANY depth, mod.rs only at segment depth 1.
+% Dir is the root file's directory WITH the trailing slash — the governed-
+% importer gate of DELTA 1. (strip_suffix on the full file is safe: these
+% clauses are reachable only when the last segment IS lib/main/mod.)
+crate_root(M, Dir) :- m_last(M, R, "lib"),    rs_module(M, F), strip_suffix(F, "lib.rs", Dir).
+crate_root(M, Dir) :- m_last(M, R, "main"),   rs_module(M, F), strip_suffix(F, "main.rs", Dir).
+crate_root(M, Dir) :- m_last(M, "mod", "mod"), rs_module(M, F), strip_suffix(F, "mod.rs", Dir).
+
+% ── Phase 2: IMPORT → MODULE ─────────────────────────────────────────────────
+
+% The IMPORT's name is the full use path (rust_analyzer.rs emit_import).
+rs_import(I, F, P) :-
+    node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".rs"),
+    attr(I, "name", P), neq(P, "").
+
+% ── The governed-importer join key (DELTA 1) ────────────────────────────────
+%
+% "Importer file F lives under root directory Dir" must be an EQUALITY join
+% (the planner's E-PLAN-003 cross-join guard rejects a filter-connected leg),
+% so we derive every ancestor directory of each importing file — trailing
+% slash kept, "" for the repo root — and join crate_root on it. The chain
+% strictly shrinks per step, so the fixpoint terminates at path depth.
+rs_file(F) :- rs_import(I, F, P).
+rs_file(F) :- rs_binding(B, F, N, Src).
+f_anc(F, D) :- rs_file(F), basename(F, B), strip_suffix(F, B, D).
+f_anc(F, D2) :-
+    f_anc(F, D1), strip_suffix(D1, "/", D0),
+    basename(D0, L), strip_suffix(D0, L, D2).
+
+@materialize(edge_type = "IMPORTS_FROM", mode = "additive")
+import_module(I, M) :- rs_import(I, F, P), module_path(M, P).
+@materialize(edge_type = "IMPORTS_FROM", mode = "additive")
+import_crate(I, M) :- rs_import(I, F, "crate"), f_anc(F, Dir), crate_root(M, Dir).
+
+% ── Phase 3: IMPORT_BINDING → exported declaration ──────────────────────────
+
+% The binding's source path rides on its containing IMPORT's name (the
+% committed CONTAINS seam — no metadata read needed).
+rs_binding(B, F, N, Src) :-
+    node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".rs"),
+    attr(B, "name", N), neq(N, ""),
+    edge(I, B, "CONTAINS"), node(I, "IMPORT"), attr(I, "name", Src).
+
+% "All but the last ::-segment" (Hs:176-180): rebuilding the "::"++last tail
+% and stripping it ALSO encodes the ≥2-segment gate — a single-segment source
+% has Tail == "::" ++ Src itself, which never suffixes Src.
+bind_mp(B, F, N, MP) :-
+    rs_binding(B, F, N, Src),
+    last_segment(Src, "::", L), concat("::", L, Tail), strip_suffix(Src, Tail, MP).
+
+% The target module file: the tree lookup (Hs:183), crate-root arm governed
+% (DELTA 1).
+bind_tf(B, N, TF) :- bind_mp(B, F, N, MP), module_path(M, MP), attr(M, "file", TF).
+bind_tf(B, N, TF) :-
+    bind_mp(B, F, N, "crate"), f_anc(F, Dir), crate_root(M, Dir),
+    attr(M, "file", TF).
+
+% Files that imports actually land in — the rs_decl cost gate (header note).
+target_file(TF) :- bind_tf(B, N, TF).
+
+% Pub exports of a target file, by name — the 9 legacy decl types (Hs:75-78),
+% gnExported = the stored __exported metadata key.
+rs_decl(TF, N, D) :- target_file(TF), node(D, "FUNCTION"),   attr(D, "file", TF), attr(D, "name", N), node_attr(D, "__exported", "true").
+rs_decl(TF, N, D) :- target_file(TF), node(D, "VARIABLE"),   attr(D, "file", TF), attr(D, "name", N), node_attr(D, "__exported", "true").
+rs_decl(TF, N, D) :- target_file(TF), node(D, "STRUCT"),     attr(D, "file", TF), attr(D, "name", N), node_attr(D, "__exported", "true").
+rs_decl(TF, N, D) :- target_file(TF), node(D, "ENUM"),       attr(D, "file", TF), attr(D, "name", N), node_attr(D, "__exported", "true").
+rs_decl(TF, N, D) :- target_file(TF), node(D, "VARIANT"),    attr(D, "file", TF), attr(D, "name", N), node_attr(D, "__exported", "true").
+rs_decl(TF, N, D) :- target_file(TF), node(D, "TRAIT"),      attr(D, "file", TF), attr(D, "name", N), node_attr(D, "__exported", "true").
+rs_decl(TF, N, D) :- target_file(TF), node(D, "IMPL_BLOCK"), attr(D, "file", TF), attr(D, "name", N), node_attr(D, "__exported", "true").
+rs_decl(TF, N, D) :- target_file(TF), node(D, "TYPE_ALIAS"), attr(D, "file", TF), attr(D, "name", N), node_attr(D, "__exported", "true").
+rs_decl(TF, N, D) :- target_file(TF), node(D, "DATA_TYPE"),  attr(D, "file", TF), attr(D, "name", N), node_attr(D, "__exported", "true").
+
+@materialize(edge_type = "IMPORTS_FROM", mode = "additive")
+binding_import(B, D) :- bind_tf(B, N, TF), rs_decl(TF, N, D).

@@ -46,6 +46,12 @@ services:
     path: "packages/grafema-orchestrator"
     entryPoint: "src/main.rs"
 
+# method-call-resolver / shape-verifier / axum-route-detector are REPLACED by in-engine
+# derive rule packs (@stdlib/method_calls, @stdlib/shape_verifier, @stdlib/axum_routes —
+# run by the orchestrator pack-runner after DEPENDS_ON). The old .mjs plugins timed out at
+# 60s producing nothing on this graph. semantic-bridge-detector is disabled pending its
+# own migration (it also timed out, and its depends_on chain hung off the removed
+# axum-route-detector).
 plugins:
   - name: "type-inference"
     command: "node plugins/type-inference.mjs"
@@ -56,28 +62,6 @@ plugins:
     mode: batch
     depends_on:
       - "type-inference"
-  - name: "method-call-resolver"
-    command: "node plugins/method-call-resolver.mjs"
-    mode: batch
-    depends_on:
-      - "type-inference"
-      - "shape-tracker"
-  - name: "axum-route-detector"
-    command: "node plugins/axum-route-detector.mjs"
-    mode: batch
-    depends_on:
-      - "method-call-resolver"
-  - name: "semantic-bridge-detector"
-    command: "node plugins/semantic-bridge-detector.mjs"
-    mode: batch
-    depends_on:
-      - "axum-route-detector"
-  - name: "shape-verifier"
-    command: "node plugins/shape-verifier.mjs"
-    mode: batch
-    depends_on:
-      - "method-call-resolver"
-      - "shape-tracker"
 
 exclude:
   - "**/*.test.ts"

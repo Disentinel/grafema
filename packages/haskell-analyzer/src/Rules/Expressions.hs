@@ -5,22 +5,22 @@
 -- graph nodes: REFERENCE, CALL, LAMBDA, BRANCH, DO_BLOCK, LET_BLOCK.
 --
 -- Phase 5 adds Data Flow Graph (DFG) edges:
---   * 'DERIVED_FROM' — value derivation (argument → operator result, etc.)
+--   * 'DERIVES_FROM' — value derivation (argument → operator result, etc.)
 --
 -- Called from 'Analysis.Walker' when walking into function bodies,
 -- match RHSes, and other expression contexts.
 --
 -- Priority constructors handled:
 --   * 'HsVar'       -> REFERENCE node
---   * 'HsApp'       -> CALL node (function application) + DERIVED_FROM edges
---   * 'OpApp'       -> CALL node (operator application) + DERIVED_FROM edges
---   * 'HsLam'       -> LAMBDA node + DERIVED_FROM from body
+--   * 'HsApp'       -> CALL node (function application) + DERIVES_FROM edges
+--   * 'OpApp'       -> CALL node (operator application) + DERIVES_FROM edges
+--   * 'HsLam'       -> LAMBDA node + DERIVES_FROM from body
 --   * 'HsLamCase'   -> LAMBDA node
---   * 'HsCase'      -> BRANCH node + DERIVED_FROM from alternatives
---   * 'HsIf'        -> BRANCH node + DERIVED_FROM from branches
+--   * 'HsCase'      -> BRANCH node + DERIVES_FROM from alternatives
+--   * 'HsIf'        -> BRANCH node + DERIVES_FROM from branches
 --   * 'HsMultiIf'   -> BRANCH node
---   * 'HsDo'        -> DO_BLOCK node + DERIVED_FROM from last statement
---   * 'HsLet'       -> LET_BLOCK node + DERIVED_FROM from body
+--   * 'HsDo'        -> DO_BLOCK node + DERIVES_FROM from last statement
+--   * 'HsLet'       -> LET_BLOCK node + DERIVES_FROM from body
 --   * 'HsPar'       -> transparent (recurse through, pass node ID)
 --   * 'ExplicitList' -> recurse into elements
 --   * 'ExplicitTuple' -> recurse into present elements
@@ -77,7 +77,7 @@ import Loc (getLoc)
 import Rules.Patterns (walkPat)
 import Rules.Declarations (walkFunBind, walkPatBind)
 
--- | Emit a DERIVED_FROM edge from a child node to a parent node.
+-- | Emit a DERIVES_FROM edge from a child node to a parent node.
 -- No-op if the child ID is Nothing.
 emitDerivedFrom :: Maybe T.Text -> T.Text -> Analyzer ()
 emitDerivedFrom Nothing _ = pure ()
@@ -85,7 +85,7 @@ emitDerivedFrom (Just childId) parentId =
   emitEdge GraphEdge
     { geSource   = childId
     , geTarget   = parentId
-    , geType     = "DERIVED_FROM"
+    , geType     = "DERIVES_FROM"
     , geMetadata = Map.empty
     }
 
@@ -98,7 +98,7 @@ emitDerivedFrom (Just childId) parentId =
 --
 -- Returns 'Just nodeId' if a graph node was emitted for this expression,
 -- 'Nothing' for transparent or skipped expressions (literals, parentheses).
--- Parent expressions use the returned ID to emit DERIVED_FROM edges.
+-- Parent expressions use the returned ID to emit DERIVES_FROM edges.
 --
 -- The function is recursive: composite expressions (application,
 -- case, if, do, let) walk into their children.
@@ -503,7 +503,7 @@ walkMatchGroup mg =
   in  mapM_ walkMatch alts
 
 -- | Walk a 'MatchGroup', returning the body result IDs from each
--- alternative. Used by LAMBDA, CASE, etc. to emit DERIVED_FROM edges.
+-- alternative. Used by LAMBDA, CASE, etc. to emit DERIVES_FROM edges.
 walkMatchGroupResults :: MatchGroup GhcPs (LHsExpr GhcPs) -> Analyzer [Maybe T.Text]
 walkMatchGroupResults mg =
   let alts = unLoc (mg_alts mg)

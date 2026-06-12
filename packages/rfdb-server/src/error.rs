@@ -27,6 +27,34 @@ pub enum GraphError {
     #[error("Invalid file format: {0}")]
     InvalidFormat(String),
 
+    /// E-FMT-001 (derive engine, spec §6/§8.1/§I11): a derived segment carries a
+    /// tag/payload whose `semiring_id` (or `lattice_id`) is not recognized by
+    /// this build. Per I11 the reader MUST surface this as a typed error rather
+    /// than silently defaulting — unknown id = error, never garbage.
+    #[error("E-FMT-001: unknown semiring_id {0} in segment tag block")]
+    UnknownSemiringId(u16),
+
+    /// E-FMT-002 (derive engine, spec §9.3): an attempt to ⊕-fold two tags of the SAME
+    /// fact key carrying DIFFERENT `semiring_id`s — a predicate binding change that
+    /// makes the segments unmergeable by construction. The correct response is a full
+    /// predicate rebuild, never a silent cross-semiring fold (which would corrupt the
+    /// weight). Surfaced as a typed error so compaction can never mis-fold.
+    #[error("E-FMT-002: cannot ⊕-fold mixed semiring_ids {a} and {b} for one fact key")]
+    MixedSemiringId { a: u16, b: u16 },
+
+    /// E-FMT-003 (derive engine): a derived segment's tag payload bytes do not decode to
+    /// the carrier its `semiring_id` declares (wrong length / corrupt). Typed, never a
+    /// silent default.
+    #[error("E-FMT-003: malformed tag payload for semiring_id {semiring_id}: {detail}")]
+    MalformedTag { semiring_id: u16, detail: String },
+
+    /// E-FMT-004 (derive engine, spec §9.3/§I11): the binding-table blob persisted in a
+    /// manifest tag does not parse (corrupt / written by an incompatible build). Per I11 a
+    /// reader surfaces this typed rather than silently treating the predicate set as empty
+    /// (which would force a spurious full recompute or, worse, a wrong incremental delta).
+    #[error("E-FMT-004: malformed derive binding-table blob: {0}")]
+    MalformedBindingBlob(String),
+
     #[error("Compaction error: {0}")]
     Compaction(String),
 
@@ -66,6 +94,18 @@ pub enum GraphError {
 
     #[error("Embedding error: {0}")]
     Embedding(String),
+
+    /// MVCC B4: write-write conflict detected at the commit point — another
+    /// commit published a newer version touching one of this commit's
+    /// `changed_files` after this commit's read-snapshot. The caller must
+    /// re-snapshot/recompute/retry; on bounded-retry exhaustion this surfaces
+    /// as a hard error (pathological same-file contention).
+    #[error("Commit conflict on file(s) {files:?}: snapshot v{snapshot_version} < last-committed v{conflicting_version}")]
+    ConflictedCommit {
+        files: Vec<String>,
+        snapshot_version: u64,
+        conflicting_version: u64,
+    },
 }
 
 impl GraphError {
@@ -82,6 +122,11 @@ impl GraphError {
             GraphError::QueryTimeout(_) => "QUERY_TIMEOUT",
             GraphError::QueryCancelled => "QUERY_CANCELLED",
             GraphError::QueryLimitExceeded(_) => "QUERY_LIMIT_EXCEEDED",
+            GraphError::ConflictedCommit { .. } => "COMMIT_CONFLICT",
+            GraphError::UnknownSemiringId(_) => "E-FMT-001",
+            GraphError::MixedSemiringId { .. } => "E-FMT-002",
+            GraphError::MalformedTag { .. } => "E-FMT-003",
+            GraphError::MalformedBindingBlob(_) => "E-FMT-004",
             _ => "INTERNAL_ERROR",
         }
     }

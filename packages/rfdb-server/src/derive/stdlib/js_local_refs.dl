@@ -1,0 +1,175 @@
+% js_local_refs.dl — in-engine replacement for the JsLocalRefs.hs resolver
+% (packages/grafema-resolve/src/JsLocalRefs.hs:91-118 — the #1 edge producer:
+% REFERENCE → same-file declaration READS_FROM, previously paid for over per-file
+% IPC round-trips in the orchestrator's JS resolve wall).
+%
+% Resolver semantics reproduced EXACTLY (file-flat, deliberately NOT scope-aware —
+% the resolver matches by (file, name) only, JsLocalRefs.hs:111; parity over
+% ambition):
+%   - a REFERENCE resolves to a declaration with the same (file, name) across the
+%     8 declaration types (JsLocalRefs.hs:38-42);
+%   - SKIP names that are import bindings in the same file (handled by
+%     ImportResolution; the IMPORT -CONTAINS-> IMPORT_BINDING shape is 100%
+%     universal per the Wave-0 live-graph check, so the (file, name) skip-set is
+%     solid), JsLocalRefs.hs:104-105;
+%   - SKIP the compiled-in runtime-global names (handled by RuntimeGlobals),
+%     JsLocalRefs.hs:54-84 — reproduced below as 97 ground facts, the EXACT list;
+%   - empty-name declarations and references never match (the resolver's index
+%     excludes them, JsLocalRefs.hs:51 — the neq(N, "") guard).
+%
+% READS_FROM is SHARED vocabulary (analyzers and other resolvers also emit it)
+% ⇒ mode = "additive" is mandatory: only add missing edges, never tombstone.
+%
+% NUMBERED DELTAS vs the resolver (everything not listed is exact):
+%   DELTA 1 (superset): duplicate (file, name) declarations — the resolver's
+%     Map.fromList keeps ONE arbitrary winner (last in node-stream order,
+%     JsLocalRefs.hs:46-52); set semantics derives an edge to EVERY candidate.
+%     Order-independent; strict superset; mechanically classifiable.
+%   DELTA 2 (metadata): resolvedVia="js-local-refs" is projected as a meta column
+%     (parity for downstream consumers); the engine additionally stamps its own
+%     _source = <rule hash> + _generation provenance instead of nothing.
+%   DELTA 3 (file gate): the resolver never gated by extension itself — its
+%     effective gate was the orchestrator streaming only detect_language ==
+%     JavaScript nodes (8 extensions: js/jsx/ts/tsx/mjs/cjs/mts/cts, config.rs
+%     detect_language). The jsts/1 gate below encodes the same 8 extensions.
+
+% The resolver's compiled-in runtime-global skip list — the EXACT 97 names of
+% JsLocalRefs.hs:57-84 (runtimeGlobalNames), as ground facts (Wave-0 proved facts
+% survive the full derive pipeline).
+rt_global("console").
+rt_global("process").
+rt_global("Buffer").
+rt_global("__dirname").
+rt_global("__filename").
+rt_global("module").
+rt_global("exports").
+rt_global("require").
+rt_global("global").
+rt_global("setTimeout").
+rt_global("setInterval").
+rt_global("setImmediate").
+rt_global("clearTimeout").
+rt_global("clearInterval").
+rt_global("clearImmediate").
+rt_global("queueMicrotask").
+rt_global("window").
+rt_global("document").
+rt_global("navigator").
+rt_global("location").
+rt_global("history").
+rt_global("localStorage").
+rt_global("sessionStorage").
+rt_global("fetch").
+rt_global("XMLHttpRequest").
+rt_global("WebSocket").
+rt_global("requestAnimationFrame").
+rt_global("cancelAnimationFrame").
+rt_global("alert").
+rt_global("confirm").
+rt_global("prompt").
+rt_global("JSON").
+rt_global("Math").
+rt_global("Date").
+rt_global("Promise").
+rt_global("Array").
+rt_global("Object").
+rt_global("String").
+rt_global("Number").
+rt_global("Boolean").
+rt_global("Symbol").
+rt_global("Map").
+rt_global("Set").
+rt_global("WeakMap").
+rt_global("WeakSet").
+rt_global("Proxy").
+rt_global("Reflect").
+rt_global("Error").
+rt_global("TypeError").
+rt_global("RangeError").
+rt_global("ReferenceError").
+rt_global("SyntaxError").
+rt_global("RegExp").
+rt_global("parseInt").
+rt_global("parseFloat").
+rt_global("isNaN").
+rt_global("isFinite").
+rt_global("encodeURIComponent").
+rt_global("decodeURIComponent").
+rt_global("encodeURI").
+rt_global("decodeURI").
+rt_global("undefined").
+rt_global("NaN").
+rt_global("Infinity").
+rt_global("this").
+rt_global("super").
+rt_global("globalThis").
+rt_global("arguments").
+rt_global("Uint8Array").
+rt_global("Int8Array").
+rt_global("Uint16Array").
+rt_global("Int16Array").
+rt_global("Uint32Array").
+rt_global("Int32Array").
+rt_global("Float32Array").
+rt_global("Float64Array").
+rt_global("BigInt64Array").
+rt_global("BigUint64Array").
+rt_global("ArrayBuffer").
+rt_global("SharedArrayBuffer").
+rt_global("DataView").
+rt_global("TextEncoder").
+rt_global("TextDecoder").
+rt_global("URL").
+rt_global("URLSearchParams").
+rt_global("AbortController").
+rt_global("AbortSignal").
+rt_global("Intl").
+rt_global("BigInt").
+rt_global("AggregateError").
+rt_global("EvalError").
+rt_global("URIError").
+rt_global("FinalizationRegistry").
+rt_global("WeakRef").
+rt_global("structuredClone").
+rt_global("atob").
+rt_global("btoa").
+
+% The JS/TS language gate — the orchestrator's detect_language JavaScript set
+% (8 extensions; see DELTA 3), expanded as one clause per extension with a
+% CONSTANT ends_with filter. (A derived jsts(F) gate is planner-infeasible — a
+% filter cannot BIND a head variable — and an extension-facts relation joined
+% via ends_with(F, E) is a §3 cross-join: the fact leg shares no bound variable
+% with the body. Constant-pattern clause expansion is the feasible encoding.)
+js_ref(R, F, N) :- node(R, "REFERENCE"), attr(R, "file", F), ends_with(F, ".js"), attr(R, "name", N), neq(N, "").
+js_ref(R, F, N) :- node(R, "REFERENCE"), attr(R, "file", F), ends_with(F, ".jsx"), attr(R, "name", N), neq(N, "").
+js_ref(R, F, N) :- node(R, "REFERENCE"), attr(R, "file", F), ends_with(F, ".ts"), attr(R, "name", N), neq(N, "").
+js_ref(R, F, N) :- node(R, "REFERENCE"), attr(R, "file", F), ends_with(F, ".tsx"), attr(R, "name", N), neq(N, "").
+js_ref(R, F, N) :- node(R, "REFERENCE"), attr(R, "file", F), ends_with(F, ".mjs"), attr(R, "name", N), neq(N, "").
+js_ref(R, F, N) :- node(R, "REFERENCE"), attr(R, "file", F), ends_with(F, ".cjs"), attr(R, "name", N), neq(N, "").
+js_ref(R, F, N) :- node(R, "REFERENCE"), attr(R, "file", F), ends_with(F, ".mts"), attr(R, "name", N), neq(N, "").
+js_ref(R, F, N) :- node(R, "REFERENCE"), attr(R, "file", F), ends_with(F, ".cts"), attr(R, "name", N), neq(N, "").
+
+% Imported names per file (the resolver's ImportIndex, ResolveUtil.hs:59-65):
+% any IMPORT_BINDING's (file, name) shadows local resolution.
+imported(F, N) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), attr(B, "name", N).
+
+% The 8 referenceable declaration types (JsLocalRefs.hs:38-42), keyed (file, name).
+decl(F, N, D) :- node(D, "FUNCTION"), attr(D, "file", F), attr(D, "name", N).
+decl(F, N, D) :- node(D, "VARIABLE"), attr(D, "file", F), attr(D, "name", N).
+decl(F, N, D) :- node(D, "CONSTANT"), attr(D, "file", F), attr(D, "name", N).
+decl(F, N, D) :- node(D, "CLASS"), attr(D, "file", F), attr(D, "name", N).
+decl(F, N, D) :- node(D, "PARAMETER"), attr(D, "file", F), attr(D, "name", N).
+decl(F, N, D) :- node(D, "INTERFACE"), attr(D, "file", F), attr(D, "name", N).
+decl(F, N, D) :- node(D, "ENUM"), attr(D, "file", F), attr(D, "name", N).
+decl(F, N, D) :- node(D, "TYPE_SYNONYM"), attr(D, "file", F), attr(D, "name", N).
+
+% The resolution: REFERENCE → same-file declaration, minus the two skip-sets.
+% Both negations are over analyzer-owned state (IMPORT_BINDING nodes) or ground
+% facts — never over a type this (or any) pack materializes: stratifier-clean,
+% no cross-run lag.
+@materialize(edge_type = "READS_FROM", mode = "additive", meta(resolvedVia))
+js_local_ref(R, D, "js-local-refs") :-
+    js_ref(R, F, N),
+    \+ imported(F, N),
+    \+ rt_global(N),
+    decl(F, N, D).

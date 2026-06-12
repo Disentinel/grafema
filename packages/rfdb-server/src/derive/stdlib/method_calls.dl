@@ -1,0 +1,62 @@
+% method_calls.dl — in-engine replacement for plugins/method-call-resolver.mjs
+% (the 60s-timeout batch plugin: N+1 IPC round-trips → one bottom-up join program).
+%
+% Resolves dotted method calls (obj.method()) to METHOD definitions and materializes
+% the resolution as CALLS edges. The target type is SHARED with the analyzers, hence
+% mode = "additive": the program only adds missing edges, never tombstones.
+%
+% MACRO CALLS (Wave M, no filter needed — verified): the Rust analyzer emits macro
+% invocations as CALL nodes (metadata macro=true, name = the macro path WITHOUT '!',
+% rust_analyzer.rs:1433-1457). They CANNOT enter this program's generators: both
+% materialized heads are gated on call_method, whose method_suffix(FullName, MName)
+% leg requires a '.' in the name (builtin.rs eval_method_suffix — rfind('.') or no
+% row), and macro names are Rust paths ('::'-separated identifiers, never dotted).
+% The rs_macro/\+ guard the rust_* packs carry (their DELTA 5/7/9) would be
+% redundant here.
+
+% A dotted CALL and its method-name suffix ("kb.queryNodes" -> "queryNodes").
+%
+% NOTE (parity with the plugin): the plugin SKIPPED calls that already carry a CALLS
+% edge. In-program that filter would be `\+ edge(C, _, "CALLS")` — a negation on the
+% very type this program materializes, which the stratifier correctly rejects
+% (E-STRAT-001: the result would differ between a maintained run and a from-scratch
+% run). Deriving for ALL dotted calls is deterministic; the additive write-back dedups
+% facts whose edge already exists, so already-resolved calls are a no-op at commit.
+call_method(C, MName) :-
+    node(C, "CALL"),
+    attr(C, "name", FullName),
+    method_suffix(FullName, MName).
+
+% The receiver value node the call reads from: direct READS_FROM, or via the callee
+% PROPERTY_ACCESS chain (CALL -DERIVES_FROM-> PA -READS_FROM-> V).
+receiver_var(C, V) :- node(C, "CALL"), edge(C, V, "READS_FROM").
+receiver_var(C, V) :-
+    node(C, "CALL"),
+    edge(C, PA, "DERIVES_FROM"),
+    node(PA, "PROPERTY_ACCESS"),
+    edge(PA, V, "READS_FROM").
+
+% Deref one REFERENCE hop to the declaration; identity otherwise.
+receiver_decl(C, D) :- receiver_var(C, V), node(V, "REFERENCE"), edge(V, D, "READS_FROM").
+receiver_decl(C, D) :- receiver_var(C, D), \+ node(D, "REFERENCE").
+
+% Strategy instance_of (the plugin's highest-priority precision strategy):
+% the receiver's declared class HAS_METHOD a method bearing the call's method name.
+@materialize(edge_type = "CALLS", mode = "additive")
+resolved_method_call(C, M) :-
+    call_method(C, MName),
+    receiver_decl(C, D),
+    edge(D, Cls, "INSTANCE_OF"),
+    edge(Cls, M, "HAS_METHOD"),
+    node(M, "METHOD"),
+    attr(M, "name", MName).
+
+% Strategy unique_name: exactly one METHOD in the whole graph bears the name.
+method_named(M, MName) :- node(M, "METHOD"), attr(M, "name", MName).
+ambiguous_name(MName) :- method_named(M1, MName), method_named(M2, MName), neq(M1, M2).
+
+@materialize(edge_type = "CALLS", mode = "additive")
+resolved_unique_call(C, M) :-
+    call_method(C, MName),
+    method_named(M, MName),
+    \+ ambiguous_name(MName).

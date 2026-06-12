@@ -25,7 +25,7 @@ Graph-Driven Development: from code graph to system guarantees.
 - **Java** — analysis (in progress)
 
 ### Data Analysis
-- **Data Shape Inference** — object shapes through assignment chains, shape-verifier (5 phases)
+- **Data Shape Inference** — object shapes through assignment chains, in-engine `shape_verifier.dl` stdlib pack
 - **Cross-service tracing** — frontend ↔ backend value flow, CALLS_REMOTE edges
 - **Library Callback Enricher** — auto-detects MCP tools, CLI commands from YAML effects-db
 - **Effects-DB** — curated side-effect annotations for npm packages + Node.js builtins

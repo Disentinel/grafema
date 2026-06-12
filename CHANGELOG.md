@@ -83,6 +83,87 @@ All notable changes to this project will be documented in this file.
 
 - test(cli): gate the backend-free CLI unit suite in CI and fix a rotted `analyzeAction` import so the suite runs green (REG-1153, #325)
 
+## [0.4.0] — the derive engine becomes a requirement
+
+### Breaking Changes
+
+- **Datalog engine naming: `query` / `derive` (formerly v1 / v2).** The interactive engine behind `datalogQuery`/`checkGuarantee` is the **query engine**; the materializing engine behind `@materialize` is the **derive engine** (module `derive`, formerly the v2 module). Renamed with no compatibility aliases: the Hello capability is now `datalogDerive` (formerly the v2-materialize capability name), and the server env switch is now `RFDB_DERIVE_ENGINE` (formerly the datalog-v2 kill switch). Semantics unchanged: a server-side switch; `=off` routes wire datalog evaluation to the query engine for debugging and disables `@materialize`.
+- **`analyze`/`resolve` require an rfdb-server with the `datalogDerive` capability.** A server that does not advertise it in the Hello handshake (an old binary, or one started with `RFDB_DERIVE_ENGINE=off`) is refused with an actionable error — the legacy resolve fallback was removed wholesale, so there is nothing left to run on such a server. Upgrade the `rfdb-server` binary. The `RFDB_DERIVE_ENGINE=off` kill switch still exists **on the server** (it disables `@materialize` for query/debug use), but an orchestrator pointed at such a server fails fast instead of falling back.
+- **Legacy js/rust resolve steps removed** (each slice is owned by a derive `@stdlib` rule pack with recorded differential evidence — see the resolve-migration synthesis doc in `_ai/research/`):
+  - js (grafema-resolve): `import-resolution` (→ js_module_imports + js_import_bindings, 679≡679), `js-local-refs` (→ js_local_refs), `same-file-calls` (→ js_same_file_calls), `property-access` (→ js_property_access_ns/full), `class-inheritance` (→ js_class_inheritance, EXTENDS 14/14), `js-this-method-calls` (→ js_this_method_calls, 432≡432), `runtime-call-globals` (→ js_runtime_globals_nodes/edges, 7,800≡7,800), `cross-file-calls` (→ js_cross_file_calls), `builtins` (→ js_builtins_nodes/edges). The `grafema-resolve` daemon now serves only `runtime-globals` (the REFERENCE→RESOLVES_TO arm — no pack owns it).
+  - rust (grafema-rust-resolve): `rust-imports` (→ rust_imports), `rust-calls` (→ rust_calls), `rust-trait-resolve` (→ rust_trait_resolve). `rust-cross-methods` (dyn-dispatch + self-field arms) and `rust-globals` stay native — no pack owns those slices yet.
+  - Behavioral consequence of `rust-calls` removal: macro invocations (`foo!`) are no longer resolved to same-named functions — the rust_calls pack deliberately excludes them per the analyzer's own contract ("foo! is not the function foo"); the legacy step used to match them.
+- **Legacy in-orchestrator DEPENDS_ON derivation (P3 fallback) removed**, together with `legacy-retirement.lock` and its guard test. `@stdlib/depends` is the only producer of MODULE→MODULE DEPENDS_ON (and is more complete: the legacy sid-parse dropped `MODULE#`-sid Haskell endpoints).
+- **A failed rule pack now FAILS the analyze run** (non-zero exit) with a summary naming each failed pack and the graph slice it owns. With no fallback behind the packs, the previous log-and-continue behavior would silently ship a graph missing a whole slice. All packs still run before the run fails (maximal diagnostics).
+- **The 4 datalog-replaced `.mjs` plugins were removed** (Wave 5): `method-call-resolver`, `shape-verifier`, `axum-route-detector`, `semantic-bridge-detector` — replaced by the `method_calls`, `shape_verifier`, `axum_routes` packs and graph-native bridges.
+- **`with_defaults()` no longer injects the default `js-import-resolution`/`runtime-globals` plugin entries** (the `grafema-resolve imports` CLI command they referenced was deleted); an empty `plugins:` list stays empty.
+- `GRAFEMA_SKIP_RESOLVE_STEPS` still works, but only for the REMAINING native steps (`runtime-globals`, `rust-cross-methods`, `rust-globals`); the deleted step names are no-ops.
+
+### Features
+
+- feat(cli): `grafema upgrade` command — clean stale artifacts from `~/.grafema/bin/` and upgrade binaries to current version. Supports `--all`, `--lang`, `--project`, `--dry-run` flags.
+- feat(cypher): SUM/AVG/MIN/MAX aggregates in Cypher queries (RFD-70) — real typed accumulators with Cypher NULL semantics and Int→Float promotion; unsupported aggregate functions now error instead of silently returning a row count (#274)
+- feat(orchestrator): emit `resolve_progress` profiler events during per-file JS/TS resolve (files_done / total_files / edges_so_far, every 500 files + at completion) — closes the silent profiler gap between `js_resolve_start` and `js_resolve_complete` (#296)
+- perf(plugins): Datalog-based reimplementations of `shape-tracker`, `type-inference`, `method-call-resolver`, and `shape-verifier`, opt-in behind the `GRAFEMA_DATALOG_PLUGINS` env flag (comma-separated plugin names); the default path is byte-for-byte the existing legacy logic, relocated into `*Legacy` functions (REG-1128 Phase 3b+3c, #265)
+
+### Bug Fixes
+- fix(cli): `grafema init` / `analyze --quickstart` discovery and `grafema query "X in foo.mts"` file-scope routing now recognize `.mts`/`.cts` TypeScript files — both CLI extension lists had drifted from the orchestrator's authoritative `is_js_ts_file` set, so ESM/CJS TypeScript files were silently excluded from the generated analysis glob and misrouted as symbol scopes (#378)
+- fix(rfdb): edge-lifting attributes hidden nodes to their actual containing function/class by walking `CONTAINS` ancestry, instead of collapsing them onto whichever visible node happens to be first in the file (REG-1132, #265)
+- fix(doctor): `checkServerStatus` removes a stale RFDB socket file so a leftover socket from a crashed server no longer blocks a clean restart (REG-1129, #265)
+
+- fix(coverage): exclude skipped/failed files from the analyzed count — oversized files that the orchestrator silently skips are reclassified from "analyzed" into a new "Failed" bucket, so `grafema coverage` reports an accurate (no longer inflated) percentage (REG-1140, #276)
+- fix(rfdb): correct token fuzzy-search Jaccard scores by unifying the tokenizer — removes the phantom whole-string token that inflated the union denominator and distorted `find_nodes` fuzzy-fallback ranking (#275)
+- fix(rust-analyzer): unwrap `Box`/`Rc`/`Arc` receiver types so `Box<dyn Trait>` resolves to the inner trait, restoring dyn-dispatch CALLS edges that were previously dropped (#273)
+- fix(orchestrator): index exported `namespace` declarations so `export namespace X {}` resolves cross-file and gets an IMPORTS_FROM edge — keeps `INDEX_NODE_TYPES` in sync with the resolver's exported-declaration list (REG-1139, #277)
+- fix(cypher): route only real aggregates (COUNT/SUM/AVG/MIN/MAX) through HashAggregate — a scalar function in `RETURN` (e.g. `toUpper(n.name)`) now fails loudly at plan time instead of being mislabeled as an aggregate and erroring at execution (RFD-70 follow-up, #282)
+- fix(orchestrator): checkpoint JS/TS resolve every 500 files instead of a single end-of-phase commit, so a crash or SIGTERM mid-resolve loses at most ~500 files of work rather than the entire (multi-hour on large monorepos) resolution phase (REG-1138, #286)
+- fix(cli): `grafema analyze --resolve-jobs N` / `grafema resolve --jobs N` no longer silently ignore the requested worker count — resolution currently runs single-worker, so any value other than 1 now prints a clear notice that the flag has no effect and proceeds with 1 worker; help text updated to match (REG-563, #287)
+- fix(cli): `grafema who` attributes each call to its enclosing named function (via the v2 `[in:…]` semantic-id annotation) instead of `<anonymous>`; import statements are no longer mislabelled as bare callers (#292)
+- fix(cli): `file`/`explain` resolve files correctly when the project root is a symlink (e.g. `--project` at a symlinked checkout, or a root under macOS `/tmp`→`/private/tmp`) — previously reported `NOT_ANALYZED` for analyzed files because the project-relative path was computed against a non-realpath'd root (#293)
+- fix(cli): `grafema impact <method>` resolves a bare method name to its METHOD node and finds its callers (previously reported "No node found") — recovers `receiver.method()` call sites whose `method` attribute is unpopulated via a name-based CALL scan, consistent with `grafema who` (#297)
+- fix(util): `findContainingFunction` attributes a call inside a class method to that METHOD instead of the enclosing CLASS — fixes caller labelling and impact's internal-call exclusion for method-to-method calls (REG-254, #300)
+- fix(cli): `grafema impact <Class>` aggregates callers of all the class's methods (enumerated via `HAS_METHOD`) and excludes the class's own method-to-method internal calls from the external-impact count (REG-543, #303)
+- fix(cli): `grafema impact <symbol> --json` emits valid JSON (zero-impact object with `target: null`) instead of empty stdout when the target is not found; the human-readable note stays on stderr (#304)
+- fix(cli): `grafema wtf <symbol> --json` emits valid JSON (`{ symbol, node: null, results: [] }`) instead of empty stdout when the symbol is not found; human note moves to stderr (#307)
+- fix(cli): `--json` always emits parseable JSON on not-found for `get`/`context`/`describe`/`ls` via a shared `emitJsonNotFound` helper (each shape mirrors its success output); previously these printed empty stdout, breaking `JSON.parse` for scripts/agents (#308)
+- fix(cli): `file`/`explain --json` emit parseable JSON on a missing file (object mirroring each command's success shape with `status: "NOT_FOUND"` and empty collections) instead of empty stdout; human note moves to stderr, exit stays 0 (#311)
+- fix(cli): `grafema context <missing> --json` not-found payload mirrors the success `NodeContext` shape (`{ node: null, source: null, outgoing: [], incoming: [] }`) instead of a degenerate `{ node: null }` (#313)
+- fix(mcp): `semantic_search` honors its advertised `top_k` parameter — the handler read `args.limit` (default 20) while the tool schema advertises `top_k` (default 10), so callers passing `top_k` were silently ignored; now respected with the schema default (#314)
+- fix(mcp): `semantic_search` no longer prints a fabricated similarity score — results were rendered with a purely positional `[0.95]`-style score (embeddings not yet wired; matching is substring-based) that an agent reads as a real confidence metric; results are now listed by rank + name without the fake score (#319)
+- fix(mcp): `semantic_search` tool schema is honest — drops the advertised-but-ignored `include_edges` parameter and rewrites the description to state case-insensitive substring matching on node names (embedding ranking not yet wired) instead of claiming embedding-based similarity (REG-1152, #323)
+- fix(cli): `check --json` and `trace --from-route --json` emit parseable JSON on not-found via the shared `emitJsonNotFound` helper (each payload mirrors its command's success shape — `check` returns the full `{total,passed,failed,errors,results}` with zero counts); previously `check` exited with empty stdout and `trace --from-route` printed plain text, breaking `JSON.parse` for scripts/agents (REG-1149, #321)
+- fix(cli): `grafema ls` without `--type` now prints a helpful error guiding to `grafema types` and exits 1 before any DB access, instead of a bare "required option" message (REG-278, #326)
+- fix(cli): `grafema ls` disambiguates duplicate node names by appending the semantic id to colliding entries only — unique lines are unchanged (REG-279, #328)
+- fix(config): empty the vestigial JS-pipeline plugin defaults in `DEFAULT_CONFIG.plugins` so `grafema doctor` no longer reports plugins that were deleted with the dead JS analysis pipeline as "configured" (REG-519/501/572, #330)
+- fix(resolve): emit an `EXTENDS` edge to a virtual `BUILTIN_CLASS` node for classes extending JS/TS builtins (`Error`, `EventEmitter`, etc.) instead of silently dropping it; user-defined classes that shadow a builtin still win (REG-585 part 1, #331)
+- fix(orchestrator): rebuild the RFDB index before the unresolved-diagnostics negation queries (the resolver commits CALLS/IMPORTS_FROM with `defer_index=true`), so the ISSUE count is deterministic across runs instead of varying with L0/L1 compaction timing (RFD-65, #332)
+- fix(resolve): emit `VARIABLE→INSTANCE_OF→CLASS` edges for `new X()` declarator initializers, resolving `X` to same-file, imported, or builtin classes (graceful no-edge when unresolved) — feeds `getShape` type/hover (REG-585 part 2, #335)
+- fix(rfdb): Datalog `--explain` supports the `attr_edge()` builtin identically to the plain evaluator, instead of silently returning zero rows for queries/guarantees that use it (REG-315, #337)
+- fix(rfdb): Datalog `--explain` honors already-bound variables in edge/incoming hash-joins, fixing inflated spurious rows on self-join patterns and restoring explain↔plain parity (REG-503, #338)
+- fix(rfdb): enforce the repeated-variable equality constraint in Cypher `Expand`/`VarLengthExpand` so reused node variables (`(a)-[:R]->(a)`, `(m)-[:R1]->(c)-[:R2]->(m)`) filter instead of rebinding, eliminating fabricated self-loop/cycle rows (REG-1140, #340)
+- fix(rfdb): Cypher `WHERE` comparisons with a NULL operand evaluate to NULL under three-valued logic and exclude the row, instead of wrongly admitting it via NULL-orders-less or `<>` (REG-1147, #341)
+- fix(rfdb): type-discriminate Cypher `GROUP BY` keys so distinct-typed values that render to the same text (`Int(5)` vs `Str("5")`, `Bool` vs `Str`, `Null` vs `Str("__null__")`) no longer merge into one aggregate bucket (#342)
+- fix(rfdb): decode escape sequences (`\' \" \\ \n \t \r \b \f \uXXXX`) in Cypher string literals so comparisons against quoted values no longer carry stray backslashes and silently match nothing (#343)
+- fix(rfdb): accept the full Cypher variable-length grammar (`*`, `*N`, `*N..`) in `parse_var_length`, treating an omitted upper bound as unbounded instead of silently capping traversal at depth 10 (#344)
+- fix(rfdb): aggregate-query `ORDER BY` sorts by the produced columns so `ORDER BY <agg>` / `ORDER BY <group-key expr>` actually sorts instead of returning group-insertion order (#345)
+- fix(rfdb): resolve RETURN aliases in non-aggregate `ORDER BY` so `RETURN x AS a ORDER BY a` sorts by the aliased value instead of no-opping to scan order (#346)
+- fix(rfdb): reject a negative Cypher `LIMIT` at parse time instead of wrapping to `u64::MAX` and silently returning the full result set (#347)
+- fix(rfdb): Cypher `WHERE NOT n.prop CONTAINS/STARTS WITH/ENDS WITH 'x'` no longer admits nodes whose property is NULL/absent — string predicates propagate NULL and `NOT NULL` stays NULL per three-valued logic (#348)
+- fix(rfdb): Cypher keyword probe is UTF-8-boundary-safe (`str::get` instead of a byte slice), so malformed-UTF-8 queries return a clean `ParseError` instead of panicking the engine thread (#349)
+- fix(rfdb): Cypher `ORDER BY` places NULLs last (ASC) / first (DESC) per the openCypher spec (#351)
+- fix(rfdb): evaluate Cypher `AND`/`OR` under Kleene three-valued logic so a NULL operand propagates as NULL instead of collapsing to `false` (`null AND true = null`); FALSE still dominates `AND`, TRUE still dominates `OR`, and top-level non-negated filtering is unchanged (#352)
+- fix(rfdb): include the start node in zero-length Cypher variable-length paths (`*0` / `*0..N` / `*0..`) so the self-or-descendants idiom binds the destination to the start node (#356)
+- fix(rfdb): Datalog `path(X, dst)` / `path(_, dst)` reverse-reachability queries enumerate the nodes that reach `dst` instead of returning empty (#360)
+- fix(rfdb): Datalog `gt/lt/gte/lte` compare integer operands (including u128 node IDs) exactly via an i128/u128 cascade before falling back to f64, instead of a lossy f64 parse that dropped or falsely admitted rows for values above 2^53 (#365)
+
+### Documentation
+
+- docs(mcp): `get_documentation("queries")` now documents all Datalog builtin predicates (`incoming`/`path`/`attr_edge`/`parent_function`/`neq`/`starts_with`/`not_starts_with`/`string_contains`), with a CI-gated drift test against the engine source (REG-658, #327)
+
+### Tests
+
+- test(cli): gate the backend-free CLI unit suite in CI and fix a rotted `analyzeAction` import so the suite runs green (REG-1153, #325)
+
 ## [0.3.23] - 2026-04-01
 
 ### Highlights

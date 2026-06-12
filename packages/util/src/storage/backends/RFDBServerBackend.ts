@@ -25,7 +25,7 @@ import { setTimeout as sleep } from 'timers/promises';
 import { join, dirname } from 'path';
 import { createHash } from 'crypto';
 
-import type { WireNode, WireEdge, FieldDeclaration, CommitDelta, AttrQuery as RFDBAttrQuery, DatalogExplainResult, ServerStats, CypherResult } from '@grafema/types';
+import type { WireNode, WireEdge, FieldDeclaration, CommitDelta, AttrQuery as RFDBAttrQuery, DatalogExplainResult, FactWitness, GapWitness, SimEdge, SimNode, ServerStats, CypherResult } from '@grafema/types';
 import type { NodeType, EdgeType } from '@grafema/types';
 import { startRfdbServer } from '../../utils/startRfdbServer.js';
 import { GRAFEMA_VERSION, getSchemaVersion } from '../../version.js';
@@ -870,6 +870,35 @@ export class RFDBServerBackend {
     return results.map(r => ({
       bindings: Object.entries(r.bindings).map(([name, value]) => ({ name, value }))
     }));
+  }
+
+  /**
+   * why()/explain_fact: explain ONE supporting derivation of `predicate(key)` under a v2 program
+   * (empty `source` ⇒ the bundled depends.dl). Resolves to `null` when the fact is not derivable.
+   * derive-engine-only — rejects when RFDB_DERIVE_ENGINE is off.
+   */
+  async explainDatalogFact(source: string, predicate: string, key: string[]): Promise<FactWitness | null> {
+    if (!this.client) throw new Error('Not connected');
+    return await this.client.explainDatalogFact(source, predicate, key);
+  }
+
+  /**
+   * what-if/sim: predict the NEW `predicate` facts a hypothetical overlay of nodes+edges would
+   * create under a v2 program (empty `source` ⇒ the bundled depends.dl), WITHOUT committing.
+   * Resolves to the predicted-new ground tuples (sim ∖ base). v2-only.
+   */
+  async simDatalog(source: string, predicate: string, nodes: SimNode[], edges: SimEdge[]): Promise<string[][]> {
+    if (!this.client) throw new Error('Not connected');
+    return await this.client.simDatalog(source, predicate, nodes, edges);
+  }
+
+  /**
+   * why-not/explain_gap: explain why `predicate(key)` is NOT derived — the satisfied premise
+   * prefix + the first unsatisfiable premise. Resolves to `null` when there is no gap. v2-only.
+   */
+  async explainDatalogGap(source: string, predicate: string, key: string[]): Promise<GapWitness | null> {
+    if (!this.client) throw new Error('Not connected');
+    return await this.client.explainDatalogGap(source, predicate, key);
   }
 
   /**

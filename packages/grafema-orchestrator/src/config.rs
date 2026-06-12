@@ -562,21 +562,17 @@ impl PluginConfig {
 }
 
 impl AnalyzerConfig {
-    /// Apply default plugins if none are configured.
+    /// Apply config defaults.
     ///
-    /// Default plugins:
-    /// 1. `js-import-resolution`: resolves import bindings to their targets
-    /// 2. `runtime-globals`: detects global variable usage (depends on import resolution)
-    pub fn with_defaults(mut self) -> Self {
-        if self.plugins.is_empty() {
-            self.plugins = vec![
-                PluginConfig::new("js-import-resolution", "grafema-resolve imports"),
-                PluginConfig {
-                    depends_on: vec!["js-import-resolution".to_string()],
-                    ..PluginConfig::new("runtime-globals", "grafema-resolve runtime-globals")
-                },
-            ];
-        }
+    /// Wave 6: this used to inject two default plugins (`js-import-resolution`
+    /// → `grafema-resolve imports`, `runtime-globals`) when none were
+    /// configured. The `imports` CLI command was deleted with the
+    /// import-resolution step (the js_module_imports / js_import_bindings
+    /// derive packs own the slice), and the built-in resolve phase runs
+    /// runtime-globals itself — so an empty plugin list now stays empty.
+    /// (The user-plugin runners still filter out these two names, protecting
+    /// configs that list them explicitly.)
+    pub fn with_defaults(self) -> Self {
         self
     }
 }
@@ -1124,7 +1120,10 @@ plugins:
     }
 
     #[test]
-    fn with_defaults_adds_plugins_when_empty() {
+    fn with_defaults_injects_no_plugins_when_empty() {
+        // Wave 6: the former default plugins (js-import-resolution via the
+        // deleted `grafema-resolve imports` CLI + runtime-globals) are gone —
+        // an empty plugin list stays empty.
         let dir = test_dir();
         let config_path = write_config(
             &dir,
@@ -1135,13 +1134,7 @@ plugins:
         );
 
         let cfg = load(&config_path).unwrap().with_defaults();
-        assert_eq!(cfg.plugins.len(), 2);
-        assert_eq!(cfg.plugins[0].name, "js-import-resolution");
-        assert_eq!(cfg.plugins[0].command, "grafema-resolve imports");
-        assert!(cfg.plugins[0].depends_on.is_empty());
-        assert_eq!(cfg.plugins[1].name, "runtime-globals");
-        assert_eq!(cfg.plugins[1].command, "grafema-resolve runtime-globals");
-        assert_eq!(cfg.plugins[1].depends_on, vec!["js-import-resolution"]);
+        assert!(cfg.plugins.is_empty());
         cleanup(&dir);
     }
 
