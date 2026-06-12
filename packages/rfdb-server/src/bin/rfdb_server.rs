@@ -1289,10 +1289,12 @@ fn handle_request_with_cancel(
                 "semanticIds".to_string(),
                 "streaming".to_string(),
             ];
-            // Advertise the v2 @materialize write-back capability ONLY when the kill switch is
-            // on, so the orchestrator learns from the SERVER (single source of truth) whether to
-            // skip its own legacy DEPENDS_ON derivation. A duplicated env read in the
-            // orchestrator process could disagree with the server's actual backend.
+            // Advertise the v2 @materialize write-back capability ONLY when the v2 engine is
+            // enabled (the DEFAULT since Final #12; RFDB_DATALOG_V2=off suppresses it), so the
+            // orchestrator learns from the SERVER (single source of truth) whether to skip its
+            // own legacy DEPENDS_ON derivation. A duplicated env read in the orchestrator
+            // process could disagree with the server's actual backend. Older servers that never
+            // advertise the feature keep getting the legacy P3 fallback — the compat contract.
             if datalog_v2_enabled() {
                 features.push("datalogV2Materialize".to_string());
             }
@@ -2811,14 +2813,21 @@ enum DatalogResponse {
 /// Whether the request should be served by the Datalog **v2** engine.
 ///
 /// The switch is read **per request at dispatch** (not cached at startup) so it can be
-/// flipped during validation. v1 is the DEFAULT: the v2 engine is selected ONLY when
-/// `RFDB_DATALOG_V2` is set to a value other than `"off"`. Unset → v1. `"off"` → v1.
-/// Any other value (e.g. `"on"`, `"1"`) → v2. The v1 path is never disturbed by this
-/// read — it is a pure boolean over the environment with no side effects.
+/// flipped during validation. **v2 is the DEFAULT** (Final #12, after Gates A–D + the
+/// resolve→datalog2 migration proved the v2 engine on the live graph): the v1 engine is
+/// selected ONLY when `RFDB_DATALOG_V2` is explicitly set to `"off"` (case-insensitive) —
+/// the defined off-switch. Unset → v2. `"off"`/`"OFF"` → v1. Any other value (e.g. `"on"`,
+/// `"1"` — the pre-flip opt-ins, now redundant no-ops) → v2. The read is a pure boolean
+/// over the environment with no side effects.
+///
+/// One deliberate exception: `explain` requests are always served by the v1 engine
+/// regardless of this switch (the v2 explain recording→wire mapping is a deferred gate;
+/// see the dispatchers below) — that routing is explicit and documented, not a silent
+/// fall-through.
 fn datalog_v2_enabled() -> bool {
     match std::env::var("RFDB_DATALOG_V2") {
         Ok(v) => !v.eq_ignore_ascii_case("off"),
-        Err(_) => false,
+        Err(_) => true,
     }
 }
 
@@ -2876,23 +2885,21 @@ fn route_datalog_v2(
     Ok(DatalogResponse::Violations(v2_rows_to_violations(rows, target)))
 }
 
-/// `CheckGuarantee` dispatch: route to v1 (default) or v2 per the `RFDB_DATALOG_V2`
-/// kill switch. The guarantee head is always `violation(X)`. Explain under v2 is rejected
-/// with an explicit coded error (the v2 explain *recording*→wire mapping is a deferred
-/// gate, I8 keeps the single eval entry; there is no v2 explain fork and no silent
-/// fall-through to v1).
+/// `CheckGuarantee` dispatch: route to v2 (the default) or v1 per the `RFDB_DATALOG_V2`
+/// kill switch. The guarantee head is always `violation(X)`. `explain` requests are
+/// DELIBERATELY routed to the v1 engine regardless of the switch: the v2 explain
+/// *recording*→wire mapping is a deferred gate (I8 keeps the single eval entry, no v2
+/// explain fork), and with v2 now the default an explain refusal would break the product
+/// explain surface (MCP `explain` → `checkGuarantee(…, explain: true)`). v1 remains in
+/// the binary as the explain provider — an explicit, documented routing (v1 ≡ v2 on
+/// Gate A 51/51), not a silent fall-through.
 fn dispatch_check_guarantee(
     engine: &dyn GraphStore,
     rule_source: &str,
     explain: bool,
     cancel_flag: Arc<AtomicBool>,
 ) -> std::result::Result<DatalogResponse, String> {
-    if datalog_v2_enabled() {
-        if explain {
-            return Err("RFDB_DATALOG_V2: explain is not wired for the v2 engine yet \
-                        (the v2 explain recording→wire mapping is a deferred gate)"
-                .to_string());
-        }
+    if datalog_v2_enabled() && !explain {
         let target = parse_atom("violation(X)")
             .map_err(|e| format!("Internal error parsing violation query: {}", e))?;
         return route_datalog_v2(engine, rule_source, &target, cancel_flag);
@@ -2900,20 +2907,16 @@ fn dispatch_check_guarantee(
     execute_check_guarantee(engine, rule_source, explain, cancel_flag)
 }
 
-/// `DatalogQuery` dispatch: route to v1 (default) or v2 per the kill switch. The v2 target
-/// is the first query literal's atom (its variables name the result columns).
+/// `DatalogQuery` dispatch: route to v2 (the default) or v1 per the kill switch. The v2
+/// target is the first query literal's atom (its variables name the result columns).
+/// `explain` → v1 engine (same deliberate routing as `dispatch_check_guarantee`).
 fn dispatch_datalog_query(
     engine: &dyn GraphStore,
     query_source: &str,
     explain: bool,
     cancel_flag: Arc<AtomicBool>,
 ) -> std::result::Result<DatalogResponse, String> {
-    if datalog_v2_enabled() {
-        if explain {
-            return Err("RFDB_DATALOG_V2: explain is not wired for the v2 engine yet \
-                        (the v2 explain recording→wire mapping is a deferred gate)"
-                .to_string());
-        }
+    if datalog_v2_enabled() && !explain {
         let literals = parse_query(query_source)
             .map_err(|e| format!("Datalog query parse error: {}", e))?;
         let target = literals
@@ -2925,21 +2928,17 @@ fn dispatch_datalog_query(
     execute_datalog_query(engine, query_source, explain, cancel_flag)
 }
 
-/// `ExecuteDatalog` dispatch: route to v1 (default) or v2 per the kill switch. The v2
+/// `ExecuteDatalog` dispatch: route to v2 (the default) or v1 per the kill switch. The v2
 /// target mirrors the v1 auto-detect — first rule head when the source is a program with
 /// rules, otherwise the first query literal's atom.
+/// `explain` → v1 engine (same deliberate routing as `dispatch_check_guarantee`).
 fn dispatch_execute_datalog(
     engine: &dyn GraphStore,
     source: &str,
     explain: bool,
     cancel_flag: Arc<AtomicBool>,
 ) -> std::result::Result<DatalogResponse, String> {
-    if datalog_v2_enabled() {
-        if explain {
-            return Err("RFDB_DATALOG_V2: explain is not wired for the v2 engine yet \
-                        (the v2 explain recording→wire mapping is a deferred gate)"
-                .to_string());
-        }
+    if datalog_v2_enabled() && !explain {
         let target = if let Ok(program) = parse_program(source) {
             if !program.rules().is_empty() {
                 Some(program.rules()[0].head().clone())
@@ -7599,35 +7598,82 @@ mod protocol_tests {
     // RFDB_DATALOG_V2 router — kill switch path selection (spec P3, I8)
     //
     // These assertions check the CHOSEN ENGINE PATH, not result equality between the
-    // two engines. v1 must be the default (unset → v1); v2 is selected only when the
-    // env var is set to something other than "off".
+    // two engines. Since Final #12, v2 is the DEFAULT (unset → v2); v1 is selected
+    // only with the explicit off-switch RFDB_DATALOG_V2=off. Explain requests are
+    // the one documented exception: always served by the v1 engine.
     // ============================================================================
 
     /// Serialize the env-var mutations: `datalog_v2_enabled()` reads a process-global,
     /// and Rust runs tests in parallel, so the two router tests must not race on it.
     static DATALOG_V2_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-    /// The kill-switch predicate: v1 by default, v2 only when set and != "off".
+    /// The kill-switch predicate (Final #12 default flip): v2 by default, v1 only with
+    /// the explicit off-switch `RFDB_DATALOG_V2=off`.
     #[test]
-    fn datalog_v2_router_defaults_to_v1() {
+    fn datalog_v2_router_defaults_to_v2() {
         let _guard = DATALOG_V2_ENV_LOCK.lock().unwrap();
         let prev = std::env::var("RFDB_DATALOG_V2").ok();
 
-        // Unset → v1 (the default; v1 behavior is never disturbed).
+        // Unset → v2 (THE default since Final #12).
         std::env::remove_var("RFDB_DATALOG_V2");
-        assert!(!datalog_v2_enabled(), "unset RFDB_DATALOG_V2 must select v1");
+        assert!(datalog_v2_enabled(), "unset RFDB_DATALOG_V2 must select v2 (the default)");
 
-        // "off" → v1.
+        // "off" → v1 (the defined off-switch, case-insensitive).
         std::env::set_var("RFDB_DATALOG_V2", "off");
         assert!(!datalog_v2_enabled(), "RFDB_DATALOG_V2=off must select v1");
         std::env::set_var("RFDB_DATALOG_V2", "OFF");
         assert!(!datalog_v2_enabled(), "RFDB_DATALOG_V2=OFF (case-insensitive) must select v1");
 
-        // Anything else → v2.
+        // Anything else (the pre-flip opt-ins, now redundant no-ops) → v2.
         std::env::set_var("RFDB_DATALOG_V2", "on");
         assert!(datalog_v2_enabled(), "RFDB_DATALOG_V2=on must select v2");
         std::env::set_var("RFDB_DATALOG_V2", "1");
-        assert!(datalog_v2_enabled(), "RFDB_DATALOG_V2=1 must select v2");
+        assert!(datalog_v2_enabled(), "RFDB_DATALOG_V2=1 must select v2 (pre-flip opt-in stays v2)");
+
+        match prev {
+            Some(v) => std::env::set_var("RFDB_DATALOG_V2", v),
+            None => std::env::remove_var("RFDB_DATALOG_V2"),
+        }
+    }
+
+    /// Final #12 capability/compat contract: the server advertises `datalogV2Materialize`
+    /// in Hello BY DEFAULT (v2 is the default engine), and STOPS advertising it under the
+    /// explicit off-switch — which is exactly how the orchestrator decides between the
+    /// server-side pack phase and its legacy P3 DEPENDS_ON fallback. Older/non-v2 servers
+    /// simply never advertise the feature, so the orchestrator's fallback keeps working.
+    #[test]
+    fn hello_advertises_datalog_v2_materialize_by_default_and_not_when_off() {
+        let _guard = DATALOG_V2_ENV_LOCK.lock().unwrap();
+        let prev = std::env::var("RFDB_DATALOG_V2").ok();
+        let (_dir, manager) = setup_test_manager();
+
+        let hello = |manager: &DatabaseManager| {
+            let mut session = ClientSession::new(1);
+            match handle_request(
+                manager,
+                &mut session,
+                Request::Hello { protocol_version: Some(2), client_id: None },
+                &None,
+            ) {
+                Response::HelloOk { features, .. } => features,
+                other => panic!("expected HelloOk, got {other:?}"),
+            }
+        };
+
+        // Default (unset) → the capability is advertised.
+        std::env::remove_var("RFDB_DATALOG_V2");
+        assert!(
+            hello(&manager).contains(&"datalogV2Materialize".to_string()),
+            "default Hello must advertise datalogV2Materialize (v2 is the default engine)"
+        );
+
+        // Explicit off-switch → NOT advertised; the orchestrator then runs the legacy
+        // P3 DEPENDS_ON derivation and retires no first-pass resolve step.
+        std::env::set_var("RFDB_DATALOG_V2", "off");
+        assert!(
+            !hello(&manager).contains(&"datalogV2Materialize".to_string()),
+            "RFDB_DATALOG_V2=off must suppress the capability (legacy P3 fallback path)"
+        );
 
         match prev {
             Some(v) => std::env::set_var("RFDB_DATALOG_V2", v),
@@ -8122,11 +8168,13 @@ mod protocol_tests {
         }
     }
 
-    /// End-to-end: the dispatch helper routes through v2 storage when the flag is on and
-    /// through v1 when unset — asserted by the engine-specific behavior each path exhibits
-    /// (the v2 path rejects explain with its unique coded error; v1 accepts explain). A
-    /// real orphan-FUNCTION program is run against a flushed ephemeral GraphEngineV2 so the
-    /// v2 path genuinely evaluates over real storage_v2, not the in-memory fixture.
+    /// End-to-end: the dispatch helper routes non-explain requests through v2 storage by
+    /// DEFAULT (Final #12) and through v1 under the off-switch — and `explain` is served
+    /// (by the v1 engine, the deliberate documented routing) under EVERY switch state,
+    /// because with v2 the default an explain refusal would break the product explain
+    /// surface. A real orphan-FUNCTION program is run against a flushed ephemeral
+    /// GraphEngineV2 so the v2 path genuinely evaluates over real storage_v2, not the
+    /// in-memory fixture.
     #[test]
     fn datalog_v2_router_selects_engine_path() {
         let _guard = DATALOG_V2_ENV_LOCK.lock().unwrap();
@@ -8170,11 +8218,11 @@ mod protocol_tests {
         let cf = || Arc::new(AtomicBool::new(false));
         let src = r#"violation(X) :- node(X, "FUNCTION"), \+ edge(_, X, "CONTAINS")."#;
 
-        // ── v2 path: flag set → routed through the v2 engine. ──
-        std::env::set_var("RFDB_DATALOG_V2", "on");
+        // ── DEFAULT (unset) → the v2 engine serves non-explain requests. ──
+        std::env::remove_var("RFDB_DATALOG_V2");
 
-        // Non-explain: the v2 fixpoint runs over real storage and flags exactly the
-        // orphan FUNCTION (fnB) — proving the v2 engine, not v1, served the request.
+        // The v2 fixpoint runs over real storage and flags exactly the orphan
+        // FUNCTION (fnB) over the PUBLISHED snapshot.
         match dispatch_check_guarantee(&engine, src, false, cf()) {
             Ok(DatalogResponse::Violations(violations)) => {
                 let ids: Vec<String> = violations
@@ -8184,34 +8232,43 @@ mod protocol_tests {
                 assert_eq!(
                     ids,
                     vec![string_to_id("fnB").to_string()],
-                    "v2 path must flag exactly the orphan FUNCTION"
+                    "default (v2) path must flag exactly the orphan FUNCTION"
                 );
             }
             other => panic!("expected v2 Violations, got error/explain: {:?}", other.err()),
         }
 
-        // Explain under v2 is the v2-only signal: it is rejected with the v2 coded error.
-        let v2_explain = dispatch_check_guarantee(&engine, src, true, cf());
-        assert!(
-            v2_explain
-                .as_ref()
-                .err()
-                .map(|e| e.contains("RFDB_DATALOG_V2"))
-                .unwrap_or(false),
-            "v2 path must reject explain with its coded error; got {:?}",
-            v2_explain.err()
-        );
-
-        // ── v1 path: flag unset → routed through v1. ──
-        std::env::remove_var("RFDB_DATALOG_V2");
-
-        // Explain on v1 is ACCEPTED (no RFDB_DATALOG_V2 error) — the v1 engine served it,
-        // which is the discriminator: v1 has an explain path, v2 (this stage) does not.
-        let v1_explain = dispatch_check_guarantee(&engine, src, true, cf());
-        match v1_explain {
+        // Explain under the default is ACCEPTED and served by the v1 engine — the
+        // deliberate documented routing (the v2 explain recording→wire mapping is a
+        // deferred gate; refusing would break MCP explain on a default server).
+        match dispatch_check_guarantee(&engine, src, true, cf()) {
             Ok(DatalogResponse::Explain(_)) => {}
             other => panic!(
-                "v1 path must accept explain (proves v1 served it), got {:?}",
+                "explain must be served (v1 engine) under the v2 default, got {:?}",
+                other.err()
+            ),
+        }
+
+        // ── Off-switch → everything routes through v1, explain included. ──
+        std::env::set_var("RFDB_DATALOG_V2", "off");
+        match dispatch_check_guarantee(&engine, src, false, cf()) {
+            Ok(DatalogResponse::Violations(violations)) => {
+                let ids: Vec<String> = violations
+                    .iter()
+                    .filter_map(|v| v.bindings.get("X").cloned())
+                    .collect();
+                assert_eq!(
+                    ids,
+                    vec![string_to_id("fnB").to_string()],
+                    "v1 (off-switch) path must flag the same orphan FUNCTION"
+                );
+            }
+            other => panic!("expected v1 Violations, got error/explain: {:?}", other.err()),
+        }
+        match dispatch_check_guarantee(&engine, src, true, cf()) {
+            Ok(DatalogResponse::Explain(_)) => {}
+            other => panic!(
+                "v1 path must accept explain, got {:?}",
                 other.err()
             ),
         }

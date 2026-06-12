@@ -490,6 +490,80 @@ fn effective_second_pass_skips(env_value: Option<&str>) -> HashSet<String> {
     skips
 }
 
+/// First-pass legacy resolve steps retired BY DEFAULT (Final #12, completing the Wave-4
+/// pattern for the per-file/streaming first pass): each step's datalog2 rule pack was
+/// proven equivalent (or a fully classified, documented delta) against the legacy slice
+/// on the live dogfood graph — see `_ai/research/resolve-datalog2-migration-synthesis.md`
+/// (Waves 1, 2b, 3b, 3c).
+///
+/// Retirement is CONDITIONAL on the connected server advertising `datalogV2Materialize`
+/// (the pack-runner gate): the packs are what replace these steps, so on a non-v2 server
+/// (legacy P3 fallback) every step keeps running — retiring there would silently drop
+/// IMPORTS_FROM/READS_FROM/CALLS slices with nothing to re-derive them. This differs from
+/// `RETIRED_SECOND_PASS_STEPS` (unconditional) because the first pass contains
+/// `import-resolution`, whose IMPORTS_FROM edges also feed the legacy DEPENDS_ON
+/// derivation (P3) — unconditional retirement would break the non-v2 fallback outright.
+///
+/// Mechanism per step (the steps live in two different drive shapes):
+/// - js daemon steps (`js-local-refs`, `same-file-calls`, `property-access`,
+///   `class-inheritance`, `import-resolution`): run INSIDE grafema-resolve's single
+///   `resolve-file`/`resolve-all` daemon command, so the orchestrator cannot "not send"
+///   them individually. They are retired by pinning the merged skip set on the daemon
+///   child's GRAFEMA_SKIP_RESOLVE_STEPS env (PoolConfig::skip_resolve_steps) — the
+///   daemon's own `getSkipSteps` gate does the per-step skipping; no daemon change.
+/// - `rust-imports`: an orchestrator-sent daemon command — retired Wave-4 style by
+///   never sending it (and the merged env is pinned on the rust daemon too, so its
+///   own dispatch gate agrees).
+///
+/// Packs owning the slices: js_local_refs (Wave 1, READS_FROM 98.5%→exact set semantics),
+/// js_same_file_calls (Wave 1), js_property_access_ns/full (Waves 1b/2),
+/// js_class_inheritance (Wave 2b, EXTENDS 14/14 incl. builtin superclasses; the legacy
+/// step's OTHER arms measured zero on dogfood 2026-06-12: INSTANCE_OF = 97 edges, ALL
+/// resolvedVia="type-inference" — the plugin owns the slice; legacy instance-of /
+/// instance-of-builtin stamps = 0, BUILTIN_CLASS nodes minted = 0. Evidence is
+/// dogfood-bound, not a set differential — codebases running WITHOUT the type-inference
+/// plugin would lose the instanceof slice; revisit if that configuration ships),
+/// js_module_imports + js_import_bindings (Waves 3b/3c, IMPORT→MODULE 679≡679 EXACT,
+/// binding-hop 263→0), rust_imports (Wave 3b/3c). The env var stays additive for
+/// non-retired steps and cannot un-retire one.
+const RETIRED_FIRST_PASS_STEPS: &[&str] = &[
+    "js-local-refs",
+    "same-file-calls",
+    "property-access",
+    "class-inheritance",
+    "import-resolution",
+    "rust-imports",
+];
+
+/// The effective first-pass skip set: the user's GRAFEMA_SKIP_RESOLVE_STEPS value
+/// (comma-separated, whitespace-tolerant), merged with [`RETIRED_FIRST_PASS_STEPS`]
+/// ONLY when the connected server runs the datalog2 pack phase
+/// (`supports_datalog_v2_materialize`). Pure for testability — the caller passes the
+/// env var's value and the capability bit.
+fn effective_first_pass_skips(
+    env_value: Option<&str>,
+    server_runs_packs: bool,
+) -> HashSet<String> {
+    let mut skips: HashSet<String> = env_value
+        .unwrap_or_default()
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if server_runs_packs {
+        skips.extend(RETIRED_FIRST_PASS_STEPS.iter().map(|s| s.to_string()));
+    }
+    skips
+}
+
+/// Render a skip set as the comma-separated GRAFEMA_SKIP_RESOLVE_STEPS value pinned on a
+/// resolver daemon child (sorted for deterministic logs/tests).
+fn skip_steps_env_value(skips: &HashSet<String>) -> String {
+    let mut steps: Vec<&str> = skips.iter().map(String::as_str).collect();
+    steps.sort_unstable();
+    steps.join(",")
+}
+
 /// P3 (RFDB Datalog v2 spec, invariant P3 `:63`): the legacy in-orchestrator DEPENDS_ON
 /// derivation is the `RFDB_DATALOG_V2=off` fallback (the server then does NOT advertise the
 /// `datalogV2Materialize` capability, so phase-9 routes here). It MUST live through Gate E + one
@@ -1281,6 +1355,25 @@ async fn main() -> Result<()> {
             // Build file → MODULE semantic ID map from RFDB (full graph)
             let file_to_module = build_file_to_module_map(&mut rfdb).await;
 
+            // First-pass retirement (Final #12): when the server runs the datalog2 pack
+            // phase, the proven-migrated first-pass legacy steps are skipped BY DEFAULT —
+            // js daemon steps via the pinned child env below, rust-imports by never
+            // sending the command (8b). See RETIRED_FIRST_PASS_STEPS.
+            let first_pass_skips = effective_first_pass_skips(
+                std::env::var("GRAFEMA_SKIP_RESOLVE_STEPS").ok().as_deref(),
+                rfdb.supports_datalog_v2_materialize(),
+            );
+            let first_pass_skips_env = if first_pass_skips.is_empty() {
+                None
+            } else {
+                let value = skip_steps_env_value(&first_pass_skips);
+                tracing::info!(
+                    steps = %value,
+                    "Legacy first-pass resolve steps gated (retired or GRAFEMA_SKIP_RESOLVE_STEPS) — datalog2 packs are load-bearing"
+                );
+                Some(value)
+            };
+
             // 8. Run JS resolution with per-file streaming (build-index + resolve-file)
             if js_file_count > 0 && !skip_resolver("js") {
                 let lang_start = std::time::Instant::now();
@@ -1293,6 +1386,7 @@ async fn main() -> Result<()> {
                     max_message_size: 200 * 1024 * 1024,
                     request_timeout: std::time::Duration::from_secs(300),
                     effects_db_path: effects_db_path.clone(),
+                    skip_resolve_steps: first_pass_skips_env.clone(),
                 };
 
                 match process_pool::ProcessPool::new(resolve_pool_config, 1) {
@@ -1436,14 +1530,29 @@ async fn main() -> Result<()> {
                     command: cfg.analyzers.rust_resolve_path(),
                     args: vec!["--daemon".to_string()],
                     effects_db_path: effects_db_path.clone(),
+                    skip_resolve_steps: first_pass_skips_env.clone(),
                     ..process_pool::PoolConfig::default()
                 };
                 match process_pool::ProcessPool::new(rs_pool_config, 1) {
                     Ok(rs_pool) => {
+                        // rust-imports is retired Wave-4 style: the command is never sent
+                        // when the skip set (retired ∪ env) names it — the rust_imports
+                        // pack owns the slice. The other rust cmds stay env-skippable too.
+                        let rust_cmds: Vec<(&str, &[plugin::WorkspacePackageWire])> =
+                            [("rust-imports", &[] as &[plugin::WorkspacePackageWire]), ("rust-calls", &[]), ("rust-cross-methods", &[]), ("rust-trait-resolve", &[]), ("rust-globals", &[])]
+                                .into_iter()
+                                .filter(|(name, _)| {
+                                    let keep = !first_pass_skips.contains(*name);
+                                    if !keep {
+                                        tracing::warn!(step = name, "Legacy resolve step skipped (retired or GRAFEMA_SKIP_RESOLVE_STEPS) — datalog2 pack is load-bearing");
+                                    }
+                                    keep
+                                })
+                                .collect();
                         let results = plugin::stream_and_resolve_single_worker(
                             &mut rfdb,
                             &[config::Language::Rust],
-                            &[("rust-imports", &[]), ("rust-calls", &[]), ("rust-cross-methods", &[]), ("rust-trait-resolve", &[]), ("rust-globals", &[])],
+                            &rust_cmds,
                             &rs_pool,
                         ).await?;
                         for (cmd, mut output) in results {
@@ -2359,6 +2468,11 @@ async fn main() -> Result<()> {
                     max_message_size: 200 * 1024 * 1024,
                     request_timeout: std::time::Duration::from_secs(300),
                     effects_db_path: effects_db_path.clone(),
+                    // The standalone `resolve` command has NO datalog2 pack phase
+                    // (legacy DEPENDS_ON derivation only), so first-pass retirement
+                    // does NOT apply here: every legacy step runs (inheriting any
+                    // user-set GRAFEMA_SKIP_RESOLVE_STEPS from the parent env).
+                    skip_resolve_steps: None,
                 };
 
                 match process_pool::ProcessPool::new(resolve_pool_config, 1) {
@@ -3432,6 +3546,60 @@ mod tests {
         let noisy = effective_second_pass_skips(Some(",, something-else ,"));
         assert!(noisy.contains("js-this-method-calls"));
         assert!(!noisy.contains(""), "empty segments are filtered");
+    }
+
+    /// Final #12: retired FIRST-pass legacy steps are skipped by default — but ONLY when
+    /// the connected server runs the datalog2 pack phase (`datalogV2Materialize`). On a
+    /// non-v2 server the legacy steps must all run (the P3 fallback depends on legacy
+    /// import-resolution's IMPORTS_FROM). The env var stays additive and cannot un-retire.
+    #[test]
+    fn retired_first_pass_steps_skip_by_default_only_with_v2_server() {
+        // v2 server → the full proven-migrated set is retired with NO env configuration.
+        let v2_skips = effective_first_pass_skips(None, true);
+        for step in [
+            "js-local-refs",      // js_local_refs pack (Wave 1)
+            "same-file-calls",    // js_same_file_calls pack (Wave 1)
+            "property-access",    // js_property_access_ns/full packs (Waves 1b/2)
+            "class-inheritance",  // js_class_inheritance pack (Wave 2b, EXTENDS 14/14)
+            "import-resolution",  // js_module_imports + js_import_bindings (Waves 3b/3c)
+            "rust-imports",       // rust_imports pack (Waves 3b/3c)
+        ] {
+            assert!(
+                v2_skips.contains(step),
+                "{step} is retired (pack proven on the dogfood graph) and must be \
+                 skipped with NO env configuration on a v2 server"
+            );
+        }
+
+        // Non-v2 server (P3 legacy fallback) → NOTHING is retired by default: the packs
+        // that replace these steps never run there, and legacy import-resolution feeds
+        // the legacy DEPENDS_ON derivation.
+        let legacy_skips = effective_first_pass_skips(None, false);
+        assert!(
+            legacy_skips.is_empty(),
+            "no first-pass step may be retired on a non-v2 server (P3 fallback compat); \
+             got {legacy_skips:?}"
+        );
+
+        // Env additive in both modes; whitespace-tolerant; cannot un-retire.
+        let merged = effective_first_pass_skips(Some("cross-file-calls, builtins"), true);
+        assert!(merged.contains("import-resolution"), "retired set survives env merge");
+        assert!(merged.contains("cross-file-calls"), "env-listed step is gated");
+        assert!(merged.contains("builtins"), "whitespace-tolerant split");
+        let env_only = effective_first_pass_skips(Some("rust-imports"), false);
+        assert_eq!(
+            env_only,
+            ["rust-imports".to_string()].into_iter().collect::<HashSet<_>>(),
+            "on a non-v2 server the env var still gates exactly what it names"
+        );
+
+        // The rendered child-env value is deterministic (sorted, comma-joined).
+        let rendered = skip_steps_env_value(&effective_first_pass_skips(None, true));
+        assert_eq!(
+            rendered,
+            "class-inheritance,import-resolution,js-local-refs,property-access,rust-imports,same-file-calls",
+            "daemon child env value must be stable for logs and reproducibility"
+        );
     }
 
     /// Wave 3c: production iterates THIS crate's `STDLIB_RULE_PACKS`, not the

@@ -246,19 +246,19 @@ pub(crate) fn evaluate_with_materialize_shared(
 
 // ── Router note: the `RFDB_DATALOG_V2` kill switch (P3) ─────────────
 //
-// The v2 engine ships behind a kill switch and does NOT yet replace the v1 top-down
-// engine. When the server-side dispatch is wired, it branches in `src/bin/rfdb_server.rs`
-// at the two datalog request handlers — `Request::DatalogQuery` (calls
-// `execute_datalog_query`) and `Request::ExecuteDatalog` (calls `execute_datalog`),
-// `src/bin/rfdb_server.rs:1601` / `:1612`. The branch reads the `RFDB_DATALOG_V2`
-// environment variable: when set to `off` (or unset, during rollout) the request flows to
-// the existing v1 path UNCHANGED (the default, so the v1 behavior is never disturbed);
-// when set to `on` the handler captures a version-pinned view via
-// `storage_glue::LsmStorageView::capture(store, manifest)` and routes the query through
-// this [`evaluate`] entry. The switch is read at dispatch (not cached at startup) so it can
-// flip per request during validation. This module intentionally does not perform the env
-// read itself: the entry stays a pure function of its arguments (deterministic, I1), and
-// the routing decision lives at the dispatch boundary alongside the v1 call it guards.
+// Since Final #12 the v2 engine IS the default. The server-side dispatch branches in
+// `src/bin/rfdb_server.rs` at the datalog request handlers (`dispatch_datalog_query` /
+// `dispatch_execute_datalog` / `dispatch_check_guarantee`). The branch reads the
+// `RFDB_DATALOG_V2` environment variable: unset (or any value other than `off`) routes
+// through this [`evaluate`] entry over a version-pinned view captured via
+// `storage_glue::LsmStorageView::capture(store, manifest)`; the explicit off-switch
+// `RFDB_DATALOG_V2=off` selects the v1 top-down engine (kept as the rollback path and
+// as the explain provider — explain requests are v1-served under every switch state
+// until the v2 explain recording→wire mapping lands). The switch is read at dispatch
+// (not cached at startup) so it can flip per request during validation. This module
+// intentionally does not perform the env read itself: the entry stays a pure function
+// of its arguments (deterministic, I1), and the routing decision lives at the dispatch
+// boundary alongside the v1 call it guards.
 
 // ── Smoke test: end-to-end entry over the in-memory fixture ─────────
 

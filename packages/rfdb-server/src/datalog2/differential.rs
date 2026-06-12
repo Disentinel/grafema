@@ -2049,6 +2049,178 @@ fn wave3c_acceptance_counts() {
     eprintln!("=== wave3c acceptance counts: printed ===\n");
 }
 
+/// Final #12 acceptance probe: the PURE-DEFAULTS end-to-end run (no
+/// GRAFEMA_SKIP_RESOLVE_STEPS, no RFDB_DATALOG_V2 in the analyze env). Extends
+/// `wave3c_acceptance_counts` with the retired-step zero-stamp gates and the two
+/// second-pass slices (runtime-globals CALLS, this-method-calls). Pure measurement
+/// over a caller-made copy (`GRAFEMA_FINAL12_COUNTS_DB`); the numbers are judged
+/// against the Wave-3c/Wave-4 acceptance classes by the caller.
+///
+///   GRAFEMA_FINAL12_COUNTS_DB=/tmp/final12.rfdb \
+///   cargo test --release --lib final12_acceptance_counts -- --ignored --nocapture
+#[test]
+#[ignore = "manual acceptance probe; run with --ignored"]
+fn final12_acceptance_counts() {
+    let dataset = std::env::var("GRAFEMA_FINAL12_COUNTS_DB")
+        .unwrap_or_else(|_| "/tmp/final12.rfdb".to_string());
+    let dataset = PathBuf::from(dataset);
+    if !dataset.join("db_config.json").exists() {
+        panic!("dataset not found at {}", dataset.display());
+    }
+
+    let tmp = tempfile::tempdir().expect("temp");
+    let work = tmp.path().join("graph.rfdb");
+    copy_dir_all(&dataset, &work).expect("copy dataset");
+    let _ = std::fs::remove_file(work.join("LOCK"));
+    let manifest = ManifestStore::open(&work).expect("manifest");
+    let store = MultiShardStore::open(&work, &manifest).expect("store");
+    let store = Arc::new(store);
+    let view = LsmStorageView::capture(store.clone(), &manifest);
+
+    let snap = store.snapshot(&manifest);
+    let all_nodes = store.find_nodes_at(&snap, None, None);
+    let mut nbt: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    for n in &all_nodes {
+        *nbt.entry(n.node_type.clone()).or_insert(0) += 1;
+    }
+    let all_edges = store.iter_all_edges_at(&snap);
+    let mut ebt: std::collections::BTreeMap<String, u64> = Default::default();
+    for e in &all_edges {
+        *ebt.entry(e.edge_type.clone()).or_insert(0) += 1;
+    }
+    eprintln!(
+        "\n=== final12 acceptance counts ===\ntotal nodes: {} | total edges: {}",
+        all_nodes.len(),
+        all_edges.len()
+    );
+    for (ty, n) in &ebt {
+        eprintln!("edges[{ty}] = {n}");
+    }
+
+    let stats = Stats {
+        total_nodes: all_nodes.len() as u64,
+        total_edges: all_edges.len() as u64,
+        nodes_by_type: nbt,
+    };
+    // The wave3c slices + the Final-#12 retired-step zero-stamp gates:
+    // - im/re/ext/wsp/dep: the Wave-3c acceptance slices (679/9/>=14/8/1562+ classes).
+    // - im_legacy: IMPORT->MODULE IMPORTS_FROM stamped _source="js-resolution" — 0 means
+    //   the retired import-resolution legacy step did not write the slice. (The whole-pass
+    //   _source value is shared with NON-retired first-pass steps — builtins,
+    //   cross-file-calls, REFERENCE-strategy runtime-globals — so the gate is the
+    //   SHAPE-scoped count, exactly the Wave-3c gate.)
+    // - rs_imp_legacy: IMPORTS_FROM stamped _source="rust-import-resolution" (the
+    //   rust-imports commit name) — 0 means the retired rust-imports cmd was never sent.
+    // - rv_*: edges stamped resolvedVia=<retired step> — 0 each. The enumeration is
+    //   derived from the resolver SOURCES, one gate per (edge_type, stamp) the step
+    //   writes: js-local-refs → READS_FROM (JsLocalRefs.hs), same-file-calls → CALLS
+    //   (SameFileCalls.hs), property-access → READS_FROM only (PropertyAccess.hs:139/153
+    //   — it never writes RESOLVES_TO), js-this-method-calls → CALLS. class-inheritance
+    //   writes FOUR stamps across THREE edge slices (ClassInheritance.hs): EXTENDS
+    //   resolvedVia=class-inheritance (:163/:185), EXTENDS resolvedVia=builtin-class
+    //   (:131 builtinFallback), INSTANCE_OF resolvedVia=instance-of (:211 via
+    //   resolveInstanceOf), INSTANCE_OF resolvedVia=instance-of-builtin (:226) — all
+    //   four are gated (rv_ci / rv_ci_b / rv_io / rv_iob), and INSTANCE_OF totals are
+    //   printed by resolvedVia (iof/iof_via) so the per-type drift section covers the
+    //   REG-585-pt2 slice, not just EXTENDS.
+    // - rg_calls: the runtime-globals CALLS slice (CALL -> GLOBAL_DEFINITION in
+    //   <runtime/js>), 7,800-class; rg_legacy: its legacy stamp _source="js-call-globals"
+    //   — 0 (the pack owns the slice).
+    // - tmc: structural this.<m>() CALLS slice (432-class superset bound: other CALLS
+    //   producers may also resolve this.* rows; the pack-written count is read from the
+    //   analyze log's `Rule pack materialized` line for js_this_method_calls).
+    let q = r#"
+        js_imp(I) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".js").
+        js_imp(I) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".jsx").
+        js_imp(I) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".ts").
+        js_imp(I) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".tsx").
+        js_imp(I) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".mjs").
+        js_imp(I) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".cjs").
+        js_imp(I) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".mts").
+        js_imp(I) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".cts").
+        im(I, M) :- js_imp(I), edge(I, M, "IMPORTS_FROM"), node(M, "MODULE").
+        re(E, M) :- node(E, "EXPORT"), attr(E, "name", N), starts_with(N, "*:"),
+                    edge(E, M, "RE_EXPORTS"), node(M, "MODULE").
+        ext(A, B) :- edge(A, B, "EXTENDS").
+        wsp(W) :- node(W, "WORKSPACE_PACKAGE").
+        dep(A, B) :- edge(A, B, "DEPENDS_ON").
+        im_legacy(I, M) :- im(I, M), edge_attr(I, M, "IMPORTS_FROM", "_source", "js-resolution").
+        rs_imp_legacy(A, B) :- edge(A, B, "IMPORTS_FROM"),
+                               edge_attr(A, B, "IMPORTS_FROM", "_source", "rust-import-resolution").
+        rv_jlr(A, B) :- edge(A, B, "READS_FROM"),
+                        edge_attr(A, B, "READS_FROM", "resolvedVia", "js-local-refs").
+        rv_sfc(A, B) :- edge(A, B, "CALLS"),
+                        edge_attr(A, B, "CALLS", "resolvedVia", "same-file-calls").
+        rv_pa(A, B) :- edge(A, B, "READS_FROM"),
+                       edge_attr(A, B, "READS_FROM", "resolvedVia", "property-access").
+        rv_ci(A, B) :- edge(A, B, "EXTENDS"),
+                       edge_attr(A, B, "EXTENDS", "resolvedVia", "class-inheritance").
+        rv_ci_b(A, B) :- edge(A, B, "EXTENDS"),
+                         edge_attr(A, B, "EXTENDS", "resolvedVia", "builtin-class").
+        rv_io(A, B) :- edge(A, B, "INSTANCE_OF"),
+                       edge_attr(A, B, "INSTANCE_OF", "resolvedVia", "instance-of").
+        rv_iob(A, B) :- edge(A, B, "INSTANCE_OF"),
+                        edge_attr(A, B, "INSTANCE_OF", "resolvedVia", "instance-of-builtin").
+        iof(A, B) :- edge(A, B, "INSTANCE_OF").
+        iof_via(A, B, V) :- edge(A, B, "INSTANCE_OF"),
+                            edge_attr(A, B, "INSTANCE_OF", "resolvedVia", V).
+        rv_tmc(A, B) :- edge(A, B, "CALLS"),
+                        edge_attr(A, B, "CALLS", "resolvedVia", "js-this-method-calls").
+        rt_def(G) :- node(G, "GLOBAL_DEFINITION"), attr(G, "file", "<runtime/js>").
+        rg_calls(C, G) :- rt_def(G), edge(C, G, "CALLS").
+        rg_legacy(C, G) :- rg_calls(C, G), edge_attr(C, G, "CALLS", "_source", "js-call-globals").
+        tmc(C, M) :- node(C, "CALL"), attr(C, "name", N), starts_with(N, "this."),
+                     edge(C, M, "CALLS").
+        dep_src(A, B, S) :- edge(A, B, "DEPENDS_ON"), edge_attr(A, B, "DEPENDS_ON", "_source", S).
+    "#;
+    let eval = evaluate(&view, q, stats, EvalLimits::none(), EventLog::discard())
+        .expect("final12 acceptance probe eval");
+    let c = |p: &str| eval.facts(p).len();
+    eprintln!(
+        "js IMPORT->MODULE IMPORTS_FROM = {}\nstar RE_EXPORTS = {}\nEXTENDS = {}\n\
+         WORKSPACE_PACKAGE = {}\nDEPENDS_ON = {}\n\
+         [gate] IMPORT->MODULE _source=js-resolution = {}\n\
+         [gate] IMPORTS_FROM _source=rust-import-resolution = {}\n\
+         [gate] resolvedVia=js-local-refs (READS_FROM) = {}\n\
+         [gate] resolvedVia=same-file-calls (CALLS) = {}\n\
+         [gate] resolvedVia=property-access (READS_FROM) = {}\n\
+         [gate] resolvedVia=class-inheritance (EXTENDS) = {}\n\
+         [gate] resolvedVia=builtin-class (EXTENDS) = {}\n\
+         INSTANCE_OF total = {}\n\
+         [gate] resolvedVia=instance-of (INSTANCE_OF) = {}\n\
+         [gate] resolvedVia=instance-of-builtin (INSTANCE_OF) = {}\n\
+         [gate] resolvedVia=js-this-method-calls (CALLS) = {}\n\
+         runtime-globals CALLS slice (-> <runtime/js> GLOBAL_DEFINITION) = {}\n\
+         [gate] runtime-globals slice _source=js-call-globals = {}\n\
+         structural this.* CALLS (432-class superset bound) = {}",
+        c("im"), c("re"), c("ext"), c("wsp"), c("dep"),
+        c("im_legacy"), c("rs_imp_legacy"),
+        c("rv_jlr"), c("rv_sfc"), c("rv_pa"),
+        c("rv_ci"), c("rv_ci_b"), c("iof"), c("rv_io"), c("rv_iob"), c("rv_tmc"),
+        c("rg_calls"), c("rg_legacy"), c("tmc")
+    );
+    let mut dep_by_src: std::collections::BTreeMap<String, usize> = Default::default();
+    for row in eval.facts("dep_src") {
+        if let Some(s) = row.get(2) {
+            *dep_by_src.entry(s.as_str()).or_insert(0) += 1;
+        }
+    }
+    for (s, n) in &dep_by_src {
+        eprintln!("DEPENDS_ON _source={s}: {n}");
+    }
+    let mut iof_by_via: std::collections::BTreeMap<String, usize> = Default::default();
+    for row in eval.facts("iof_via") {
+        if let Some(v) = row.get(2) {
+            *iof_by_via.entry(v.as_str()).or_insert(0) += 1;
+        }
+    }
+    for (v, n) in &iof_by_via {
+        eprintln!("INSTANCE_OF resolvedVia={v}: {n}");
+    }
+    assert!(c("im") > 0, "harness integrity: the IMPORT->MODULE slice is non-empty");
+    eprintln!("=== final12 acceptance counts: printed ===\n");
+}
+
 // ── Wave 4: js_runtime_globals shadow differential against the dogfood graph copy ──
 
 /// Shadow differential for the `js_runtime_globals_*` pack pair (Wave 4) against

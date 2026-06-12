@@ -488,3 +488,37 @@ falsified тест.
 
 **Сьюты**: полный lib **1359/0**, datalog2 275/0, Gate A 51/51, bin 61/18 — фейлы байт-идентичны
 известному pre-existing набору. Idle-exit (опционал) НЕ реализован — бюджет ушёл на data-loss.
+
+---
+
+## Final #12 (2026-06-12, conveyer #7 + ручная доводка): МИГРАЦИЯ = ДЕФОЛТ
+
+**Имплементация**: RETIRED_FIRST_PASS_STEPS (js-local-refs, same-file-calls, property-access,
+class-inheritance, import-resolution, rust-imports) — capability-conditional (не-v2 сервер =
+legacy fallback жив); RFDB_DATALOG_V2 default ON (off-switch =off; роутер-тесты incl.
+off→v1 на реальном storage_v2 + Hello capability). Env остаётся аддитивным.
+
+**Ревью/тест-раннер поймали 3 must_fix до флипа**: компайл-ошибка probe; неполная
+zero-stamp enumeration (builtin-class/instance-of/instance-of-builtin добавлены);
+**class-inheritance INSTANCE_OF-гэп** — legacy-шаг производит ещё INSTANCE_OF +
+BUILTIN_CLASS-минтинг без пака и без дифференциала, а method_calls/shape_verifier их
+ЧИТАЮТ. Решено ИЗМЕРЕНИЕМ (probe на dogfood): INSTANCE_OF = 97, ВСЕ resolvedVia=
+"type-inference" (плагин владеет срезом), legacy-армы = 0, BUILTIN_CLASS = 0 → retired
+с задокументированным dogfood-bound основанием в doc-комменте.
+
+**Ночная ловушка процессов**: имплементер и fix-агент дважды завершали ход на ожидании
+fat-LTO линка (13+ мин) — их «результат» = промежуточный статус. Доводка выполнена
+детерминированной цепочкой (bash под caffeinate): сборки → полный lib 1359/0 + datalog2
+275/0 + Gate A 51/51 ×2 + orchestrator 472/0 → worktree analyze на ЧИСТЫХ дефолтах →
+acceptance probe PASS.
+
+**Чистый прогон (PURE defaults, без единого env-гейта): 502,509 / 1,062,679; полный
+analyze 505.3s (962→634→505); pack-фаза ~74s на 22 паках с реальными записями** (warm-probe
+56.2s остаётся честным числом для повторных прогонов). Гейты: js-resolution=0,
+rust-import-resolution=0, js-call-globals=0, instance-of*/builtin-class=0; EXTENDS
+10(analyzer)+4(pack)=14; runtime_globals 7,805; depends 1,728; js_this_method_calls=1 —
+срез поглощён same_file_calls B1 (additive union, владелец сменился — рёбра на месте).
+
+**Advisory carry-forward**: (a) second-pass retirement → capability-conditional;
+(b) pack-failure coupling (log-and-continue прячет потерю retired-среза); (c) 18 bin
+pre-existing; (d) property-access evidence-class. → RESUME.md «ОСТАВШИЕСЯ ЗАДАЧИ».
