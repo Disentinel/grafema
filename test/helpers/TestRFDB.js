@@ -188,6 +188,89 @@ export function _findServerBinary() {
 // Test Database (New Pattern)
 // ===========================================================================
 
+// Client methods that WRITE (leave data unpublished until the next flush).
+const CLIENT_WRITE_METHODS = new Set([
+  'addNodes', 'addEdges', 'deleteNode', 'deleteEdge',
+  'updateNodeVersion', 'commitBatch', '_sendCommitBatch',
+]);
+
+// Client methods that READ published state (must see prior writes).
+const CLIENT_READ_METHODS = new Set([
+  'getNode', 'nodeExists', 'findByType', 'findByAttr',
+  'neighbors', 'bfs', 'dfs', 'reachability',
+  'getOutgoingEdges', 'getIncomingEdges', 'getEdgesByType',
+  'nodeCount', 'edgeCount', 'countNodesByType', 'countEdgesByType', 'getStats',
+  'getAllNodes', 'getAllEdges', 'isEndpoint', 'getNodeIdentifier',
+  'datalogQuery', 'checkGuarantee', 'explainDatalogFact', 'simDatalog',
+  'explainDatalogGap', 'cypherQuery', 'diffSnapshots', 'subgraph',
+  'findDependentFiles',
+]);
+
+// Async-generator read methods (cannot be awaited like the ones above).
+const CLIENT_READ_GENERATORS = new Set(['queryNodes', 'queryNodesStream']);
+
+// Datalog execute can both read and materialize (write).
+const CLIENT_READWRITE_METHODS = new Set(['executeDatalog']);
+
+/**
+ * Wrap an RFDBClient so unflushed writes auto-publish before any read.
+ *
+ * MVCC (visibility=publish) means reads only see flushed segments. Production
+ * code flushes at phase boundaries, but unit-test fixtures seed nodes/edges
+ * and immediately read them back without calling flush(). Instead of patching
+ * hundreds of call sites, the shared test client tracks dirty writes and
+ * flushes lazily before the next read.
+ */
+function wrapClientAutoPublish(client) {
+  const state = { dirty: false };
+  const publish = async () => {
+    if (state.dirty && client.connected !== false) {
+      state.dirty = false;
+      await client.flush();
+    }
+  };
+
+  return new Proxy(client, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
+      if (typeof value !== 'function') return value;
+
+      if (CLIENT_WRITE_METHODS.has(prop)) {
+        return async (...args) => {
+          state.dirty = true;
+          return value.apply(target, args);
+        };
+      }
+      if (CLIENT_READ_METHODS.has(prop)) {
+        return async (...args) => {
+          await publish();
+          return value.apply(target, args);
+        };
+      }
+      if (CLIENT_READ_GENERATORS.has(prop)) {
+        return async function* (...args) {
+          await publish();
+          yield* value.apply(target, args);
+        };
+      }
+      if (CLIENT_READWRITE_METHODS.has(prop)) {
+        return async (...args) => {
+          await publish();
+          state.dirty = true;
+          return value.apply(target, args);
+        };
+      }
+      if (prop === 'flush' || prop === 'clear') {
+        return async (...args) => {
+          state.dirty = false;
+          return value.apply(target, args);
+        };
+      }
+      return value.bind(target);
+    },
+  });
+}
+
 /**
  * Create a test database on the shared server
  *
@@ -206,10 +289,11 @@ export async function createTestDatabase() {
   await server.client.createDatabase(dbName, true);
 
   // Create a dedicated client for this test
-  const testClient = new RFDBClient(server.socketPath);
-  await testClient.connect();
-  await testClient.hello(2);
-  await testClient.openDatabase(dbName);
+  const rawClient = new RFDBClient(server.socketPath);
+  await rawClient.connect();
+  await rawClient.hello(2);
+  await rawClient.openDatabase(dbName);
+  const testClient = wrapClientAutoPublish(rawClient);
 
   // Keep socket ref'd during tests (removed unref to fix early exit)
 
@@ -267,6 +351,23 @@ class TestDatabaseBackend {
     this._client = client;
     this.dbName = dbName;
     this.connected = true;
+    this._dirty = false;
+  }
+
+  /**
+   * MVCC visibility=publish: reads only see flushed data.
+   * Tests seed via addNode/addEdge without calling flush(), so the wrapper
+   * tracks dirty writes and publishes them before any read.
+   */
+  _markDirty() {
+    this._dirty = true;
+  }
+
+  async _publish() {
+    if (this._dirty && this._client?.connected) {
+      this._dirty = false;
+      await this._client.flush();
+    }
   }
 
   get client() {
@@ -343,10 +444,12 @@ class TestDatabaseBackend {
   }
 
   async addNode(node) {
+    this._markDirty();
     return this._client.addNodes(this._prepareNodes([node]));
   }
 
   async addNodes(nodes) {
+    this._markDirty();
     return this._client.addNodes(this._prepareNodes(nodes));
   }
 
@@ -373,54 +476,66 @@ class TestDatabaseBackend {
   }
 
   async addEdge(edge) {
+    this._markDirty();
     return this._client.addEdges(this._prepareEdges([edge]));
   }
 
   async addEdges(edges, skipValidation = false) {
+    this._markDirty();
     return this._client.addEdges(this._prepareEdges(edges), skipValidation);
   }
 
   async deleteNode(id) {
+    this._markDirty();
     return this._client.deleteNode(id);
   }
 
   async deleteEdge(src, dst, edgeType) {
+    this._markDirty();
     return this._client.deleteEdge(src, dst, edgeType);
   }
 
   async clear() {
+    this._dirty = false;
     return this._client.clear();
   }
 
   async updateNodeVersion(id, version) {
+    this._markDirty();
     return this._client.updateNodeVersion(id, version);
   }
 
   // === Read Operations ===
   async getNode(id) {
+    await this._publish();
     const wireNode = await this._client.getNode(id);
     return this._parseNode(wireNode);
   }
 
   async nodeExists(id) {
+    await this._publish();
     return this._client.nodeExists(id);
   }
 
   async findByType(nodeType) {
+    await this._publish();
     return this._client.findByType(nodeType);
   }
 
   async findByAttr(query) {
+    await this._publish();
     return this._client.findByAttr(query);
   }
 
   async *queryNodes(query) {
+    await this._publish();
     for await (const wireNode of this._client.queryNodes(query)) {
       yield this._parseNode(wireNode);
     }
   }
 
   async getAllNodes(query = {}) {
+    await this._publish();
     const wireNodes = await this._client.getAllNodes(query);
     return wireNodes.map(n => this._parseNode(n));
   }
@@ -446,32 +561,39 @@ class TestDatabaseBackend {
   }
 
   async getAllEdges() {
+    await this._publish();
     const wireEdges = await this._client.getAllEdges();
     return wireEdges.map(e => this._parseEdge(e));
   }
 
   async isEndpoint(id) {
+    await this._publish();
     return this._client.isEndpoint(id);
   }
 
   async getNodeIdentifier(id) {
+    await this._publish();
     return this._client.getNodeIdentifier(id);
   }
 
   // === Traversal ===
   async neighbors(id, edgeTypes = []) {
+    await this._publish();
     return this._client.neighbors(id, edgeTypes);
   }
 
   async bfs(startIds, maxDepth, edgeTypes = []) {
+    await this._publish();
     return this._client.bfs(startIds, maxDepth, edgeTypes);
   }
 
   async dfs(startIds, maxDepth, edgeTypes = []) {
+    await this._publish();
     return this._client.dfs(startIds, maxDepth, edgeTypes);
   }
 
   async reachability(startIds, maxDepth, edgeTypes = [], backward = false) {
+    await this._publish();
     return this._client.reachability(startIds, maxDepth, edgeTypes, backward);
   }
 
@@ -479,6 +601,7 @@ class TestDatabaseBackend {
    * Translate numeric ID to semantic ID using metadata.originalId
    */
   async _translateId(numericId) {
+    await this._publish();
     const wireNode = await this._client.getNode(numericId);
     if (!wireNode) return numericId;
 
@@ -490,12 +613,14 @@ class TestDatabaseBackend {
   }
 
   async getOutgoingEdges(id, edgeTypes = null) {
+    await this._publish();
     const edges = await this._client.getOutgoingEdges(id, edgeTypes);
     // Parse edges to use semantic IDs from _origSrc/_origDst metadata
     return edges.map(edge => this._parseEdge(edge));
   }
 
   async getIncomingEdges(id, edgeTypes = null) {
+    await this._publish();
     const edges = await this._client.getIncomingEdges(id, edgeTypes);
     // Parse edges to use semantic IDs from _origSrc/_origDst metadata
     return edges.map(edge => this._parseEdge(edge));
@@ -503,23 +628,28 @@ class TestDatabaseBackend {
 
   // === Stats ===
   async nodeCount() {
+    await this._publish();
     return this._client.nodeCount();
   }
 
   async edgeCount() {
+    await this._publish();
     return this._client.edgeCount();
   }
 
   async countNodesByType(types = null) {
+    await this._publish();
     return this._client.countNodesByType(types);
   }
 
   async countEdgesByType(edgeTypes = null) {
+    await this._publish();
     return this._client.countEdgesByType(edgeTypes);
   }
 
   // === Control ===
   async flush() {
+    this._dirty = false;
     return this._client.flush();
   }
 
@@ -541,6 +671,7 @@ class TestDatabaseBackend {
   }
 
   async datalogQuery(query) {
+    await this._publish();
     const results = await this._client.datalogQuery(query);
     // Convert bindings from {X: "value"} to [{name: "X", value: "value"}]
     // to match the format expected by tests (same as RFDBServerBackend.datalogQuery)
@@ -550,6 +681,7 @@ class TestDatabaseBackend {
   }
 
   async checkGuarantee(ruleSource) {
+    await this._publish();
     const violations = await this._client.checkGuarantee(ruleSource);
     // Convert bindings from {X: "value"} to [{name: "X", value: "value"}]
     // to match the format expected by tests (same as RFDBServerBackend.checkGuarantee)
