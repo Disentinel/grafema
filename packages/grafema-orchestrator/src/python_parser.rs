@@ -968,12 +968,19 @@ fn serialize_expr_context(ctx: &ast::ExprContext) -> Value {
     }
 }
 
+/// Serialize an f-string `!s`/`!r`/`!a` conversion flag.
+///
+/// Emits the CPython conversion code as a JSON **number** (the `ord` of the
+/// flag char, `-1` for no conversion), matching the CPython `ast` convention.
+/// The downstream Haskell `python-analyzer` decodes this as `Int`
+/// (`PythonAST.hs`: `peFvConversion :: !Int`); emitting a string here makes the
+/// whole module's JSON decode fail, dropping every node in the file.
 fn serialize_conversion_flag(flag: &ast::ConversionFlag) -> Value {
     match flag {
         ast::ConversionFlag::None => json!(-1),
-        ast::ConversionFlag::Str => json!("s"),
-        ast::ConversionFlag::Ascii => json!("a"),
-        ast::ConversionFlag::Repr => json!("r"),
+        ast::ConversionFlag::Str => json!(115), // ord('s')
+        ast::ConversionFlag::Ascii => json!(97), // ord('a')
+        ast::ConversionFlag::Repr => json!(114), // ord('r')
     }
 }
 
@@ -1074,5 +1081,44 @@ mod tests {
         let source = "def (broken";
         let result = parse_python_source(source, "<test>");
         assert!(result.is_err());
+    }
+
+    // Regression: the f-string `conversion` field must be a JSON *number*, not a
+    // string. The Haskell python-analyzer decodes `conversion` as `Int`
+    // (PythonAST.hs: `peFvConversion :: !Int`, `v .:? "conversion" .!= (-1)`).
+    // Aeson's `.:?` fails (does not swallow) on a present-but-wrong-type value,
+    // so emitting "r"/"s"/"a" strings makes the whole `PythonModule` decode fail
+    // and the entire file produces zero graph nodes. Emit the CPython conversion
+    // codes (ord of the flag char; -1 for none) so the contract holds.
+    #[test]
+    fn test_fstring_conversion_flag_is_numeric() {
+        // a!r -> 114, b!s -> 115, c!a -> 97, d (none) -> -1
+        let source = "x = f\"{a!r} {b!s} {c!a} {d}\"\n";
+        let result = parse_python_source(source, "<test>");
+        assert!(result.is_ok(), "Parse failed: {:?}", result.err());
+        let val: Value = serde_json::from_str(&result.unwrap()).unwrap();
+        let joined = &val["body"][0]["value"];
+        assert_eq!(joined["type"], "JoinedStr", "expected JoinedStr, got {joined}");
+
+        // Collect the conversion field of every FormattedValue, in source order.
+        let mut conversions: Vec<&Value> = Vec::new();
+        for v in joined["values"].as_array().expect("values array") {
+            if v["type"] == "FormattedValue" {
+                conversions.push(&v["conversion"]);
+            }
+        }
+        assert_eq!(conversions.len(), 4, "expected 4 FormattedValue nodes");
+
+        // Every conversion must be a JSON number to satisfy the Int decoder.
+        for (i, c) in conversions.iter().enumerate() {
+            assert!(
+                c.is_i64(),
+                "conversion[{i}] must be a JSON number, got {c}"
+            );
+        }
+        assert_eq!(conversions[0], &json!(114), "!r => ord('r')");
+        assert_eq!(conversions[1], &json!(115), "!s => ord('s')");
+        assert_eq!(conversions[2], &json!(97), "!a => ord('a')");
+        assert_eq!(conversions[3], &json!(-1), "no conversion => -1");
     }
 }
