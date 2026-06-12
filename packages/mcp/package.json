@@ -51,10 +51,10 @@
     "yaml": "^2.8.2"
   },
   "optionalDependencies": {
-    "@grafema/grafema-darwin-arm64": "0.4.0",
-    "@grafema/grafema-darwin-x64": "0.4.0",
-    "@grafema/grafema-linux-arm64": "0.4.0",
-    "@grafema/grafema-linux-x64": "0.4.0"
+    "@grafema/grafema-darwin-arm64": "0.3.29",
+    "@grafema/grafema-darwin-x64": "0.3.29",
+    "@grafema/grafema-linux-arm64": "0.3.29",
+    "@grafema/grafema-linux-x64": "0.3.29"
   },
   "devDependencies": {
     "@types/node": "^25.0.8",

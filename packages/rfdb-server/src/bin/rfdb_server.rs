@@ -5109,6 +5109,9 @@ mod protocol_tests {
             }],
         }, &metrics);
 
+        // MVCC: stats reflect published state only — flush to make the node visible
+        handle_request(&manager, &mut session, Request::Flush, &metrics);
+
         let response = handle_request(&manager, &mut session, Request::GetStats, &metrics);
 
         match response {
@@ -5226,6 +5229,9 @@ mod protocol_tests {
             ],
         }, &None);
 
+        // MVCC: reads see published state only — flush to make the nodes visible
+        handle_request(&manager, &mut session, Request::Flush, &None);
+
         // findByAttr with extra field "object"="express" via WireAttrQuery
         let mut extra = std::collections::HashMap::new();
         extra.insert("object".to_string(), serde_json::Value::String("express".to_string()));
@@ -5328,6 +5334,9 @@ mod protocol_tests {
             ],
         }, &None);
 
+        // MVCC: reads see published state only — flush to make the node visible
+        handle_request(&manager, &mut session, Request::Flush, &None);
+
         // Query with substring_match: true, partial name "Foo"
         let response = handle_request(&manager, &mut session, Request::FindByAttr {
             query: WireAttrQuery {
@@ -5378,6 +5387,9 @@ mod protocol_tests {
             ],
         }, &None);
 
+        // MVCC: reads see published state only — flush to make the node visible
+        handle_request(&manager, &mut session, Request::Flush, &None);
+
         // Query with substring_match: true, partial file path
         let response = handle_request(&manager, &mut session, Request::FindByAttr {
             query: WireAttrQuery {
@@ -5426,6 +5438,9 @@ mod protocol_tests {
                 },
             ],
         }, &None);
+
+        // MVCC: reads see published state only — flush to make the node visible
+        handle_request(&manager, &mut session, Request::Flush, &None);
 
         // substring_match defaults to false — partial name must NOT match
         // fuzzy_name_fallback explicitly disabled so fuzzy doesn't kick in
@@ -5584,6 +5599,9 @@ mod protocol_tests {
             ],
         }, &None);
 
+        // MVCC: reads see published state only — flush to make the nodes visible
+        handle_request(&manager, &mut session, Request::Flush, &None);
+
         // Empty name with substring_match: true — empty string = no filter
         // Should return all FUNCTION nodes (name filter is skipped)
         let response = handle_request(&manager, &mut session, Request::FindByAttr {
@@ -5643,6 +5661,9 @@ mod protocol_tests {
                 },
             ],
         }, &None);
+
+        // MVCC: reads see published state only — flush to make the nodes visible
+        handle_request(&manager, &mut session, Request::Flush, &None);
 
         // Substring "foo" should match only "fooBar", not "bazQux"
         let response = handle_request(&manager, &mut session, Request::FindByAttr {
@@ -6445,6 +6466,9 @@ mod protocol_tests {
             skip_validation: true,
         }, &None);
 
+        // MVCC: reads see published state only — flush to make nodes/edges visible
+        handle_request(&manager, &mut session, Request::Flush, &None);
+
         // Query outgoing edges from "a"
         let response = handle_request(&manager, &mut session, Request::QueryEdges {
             id: "a".to_string(),
@@ -6479,6 +6503,9 @@ mod protocol_tests {
             ],
             skip_validation: true,
         }, &None);
+
+        // MVCC: reads see published state only — flush to make nodes/edges visible
+        handle_request(&manager, &mut session, Request::Flush, &None);
 
         let response = handle_request(&manager, &mut session, Request::QueryEdges {
             id: "a".to_string(),
@@ -6516,6 +6543,9 @@ mod protocol_tests {
             skip_validation: true,
         }, &None);
 
+        // MVCC: reads see published state only — flush to make nodes/edges visible
+        handle_request(&manager, &mut session, Request::Flush, &None);
+
         // Query both directions with limit=1
         let response = handle_request(&manager, &mut session, Request::QueryEdges {
             id: "a".to_string(),
@@ -6551,6 +6581,9 @@ mod protocol_tests {
             ],
             skip_validation: true,
         }, &None);
+
+        // MVCC: reads see published state only — flush to make nodes/edges visible
+        handle_request(&manager, &mut session, Request::Flush, &None);
 
         // Filter by CALLS only
         let response = handle_request(&manager, &mut session, Request::QueryEdges {
@@ -6596,6 +6629,9 @@ mod protocol_tests {
             skip_validation: true,
         }, &None);
 
+        // MVCC: reads see published state only — flush to make nodes/edges visible
+        handle_request(&manager, &mut session, Request::Flush, &None);
+
         let response = handle_request(&manager, &mut session, Request::FindDependentFiles {
             id: "target".to_string(),
             edge_types: None,
@@ -6633,6 +6669,9 @@ mod protocol_tests {
             ],
             skip_validation: true,
         }, &None);
+
+        // MVCC: reads see published state only — flush to make nodes/edges visible
+        handle_request(&manager, &mut session, Request::Flush, &None);
 
         // Only find IMPORTS dependents
         let response = handle_request(&manager, &mut session, Request::FindDependentFiles {
@@ -6734,6 +6773,8 @@ mod protocol_tests {
                 .collect();
             handle_request(manager, session, Request::AddNodes { nodes }, &None);
         }
+        // MVCC: reads see published state only — flush to make the nodes visible
+        handle_request(manager, session, Request::Flush, &None);
     }
 
     #[test]
