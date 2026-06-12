@@ -159,8 +159,6 @@ JS/TS is the primary language with full dataflow support. Each language uses its
 
 ## VS Code Extension
 
-[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/GrafemaLabs.grafema-explore)](https://marketplace.visualstudio.com/items?itemName=GrafemaLabs.grafema-explore)
-
 Interactive graph navigation directly in your editor. Install from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=GrafemaLabs.grafema-explore) or search "Grafema Explore" in Extensions.
 
 - **Cmd+Shift+G** — Find graph node at cursor
