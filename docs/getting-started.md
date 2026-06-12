@@ -71,6 +71,8 @@ grafema wtf req.user
 
 Traces backward through assignments, function parameters, and imports to show where the value originates.
 
+> **Note:** `wtf` works on variables, parameters, and property accesses — not function or class names. `grafema wtf handleRequest` returns "Symbol not found". To find callers of a function, use `grafema who`; to analyze downstream impact, use `grafema impact`.
+
 ### Project overview
 
 ```bash
