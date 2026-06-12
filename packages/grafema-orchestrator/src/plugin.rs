@@ -1305,6 +1305,19 @@ pub async fn stream_and_resolve_single_worker(
 // Full DAG execution
 // ---------------------------------------------------------------------------
 
+/// Convert a finished plugin result into a hard error if the plugin failed.
+///
+/// Wave 6 made derive-pack failures fail the analyze run, but plugin failures
+/// were still log-and-continue — a plugin exiting non-zero (or timing out)
+/// silently shipped a graph missing whole edge families (e.g. type-inference
+/// is the sole INSTANCE_OF producer). A failed plugin now aborts the run.
+pub fn check_plugin_result(result: &PluginRunResult) -> Result<()> {
+    if let Some(ref err) = result.error {
+        bail!("Plugin '{}' failed: {}", result.plugin_name, err);
+    }
+    Ok(())
+}
+
 /// Execute the full plugin DAG: build levels, run each level sequentially.
 ///
 /// Within each level, plugins are run sequentially because `RfdbClient` requires
@@ -1316,6 +1329,11 @@ pub async fn stream_and_resolve_single_worker(
 ///
 /// For streaming plugins: output is validated, metadata-stamped, and committed.
 /// Results for all plugins are collected and returned.
+///
+/// A plugin failure (non-zero exit, timeout, invalid output, commit failure)
+/// aborts the DAG with an error via [`check_plugin_result`] — dependents of a
+/// failed plugin never run against a half-populated graph, and the analyze
+/// run fails loudly instead of logging and continuing.
 pub async fn run_plugins_dag(
     plugins: &[PluginConfig],
     rfdb: &mut RfdbClient,
@@ -1350,6 +1368,7 @@ pub async fn run_plugins_dag(
                 );
             }
 
+            check_plugin_result(&result)?;
             results.push(result);
         }
     }
@@ -1774,6 +1793,52 @@ mod tests {
         acc.record(&[ck_node("a")], &[]);
         acc.record(&[ck_node("b")], &[]);
         assert!(acc.take_if_due().is_some(), "counter reset after empty checkpoint");
+    }
+
+    // -- loud-failure policy: plugin failures abort the analyze run --
+
+    /// Helper: build a PluginRunResult with an optional error.
+    fn make_result(name: &str, error: Option<&str>) -> PluginRunResult {
+        PluginRunResult {
+            plugin_name: name.to_string(),
+            nodes_emitted: 0,
+            edges_emitted: 0,
+            duration: Duration::from_millis(1),
+            error: error.map(|s| s.to_string()),
+        }
+    }
+
+    /// A successful plugin result passes the gate.
+    #[test]
+    fn check_plugin_result_ok_passes() {
+        let result = make_result("type-inference", None);
+        assert!(check_plugin_result(&result).is_ok());
+    }
+
+    /// A plugin that exited non-zero fails the run, naming the plugin and
+    /// carrying the underlying error (run_plugins_dag calls this per result,
+    /// so the `?` aborts the DAG → the analyze run fails loudly).
+    #[test]
+    fn check_plugin_result_exit_failure_aborts() {
+        let result = make_result(
+            "type-inference",
+            Some("Batch plugin 'type-inference' exited with status: exit status: 1"),
+        );
+        let err = check_plugin_result(&result).unwrap_err().to_string();
+        assert!(err.contains("Plugin 'type-inference' failed"), "{err}");
+        assert!(err.contains("exit status: 1"), "{err}");
+    }
+
+    /// A timed-out plugin is a failure too — same gate, same abort.
+    #[test]
+    fn check_plugin_result_timeout_aborts() {
+        let result = make_result(
+            "shape-tracker",
+            Some("Plugin 'shape-tracker' timed out after 600s"),
+        );
+        let err = check_plugin_result(&result).unwrap_err().to_string();
+        assert!(err.contains("Plugin 'shape-tracker' failed"), "{err}");
+        assert!(err.contains("timed out"), "{err}");
     }
 
     // -- resolve_progress telemetry (REG-1138 defect 2) --

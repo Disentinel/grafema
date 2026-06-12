@@ -98,6 +98,11 @@ const client = new RFDBClient(socketPath, 'type-inference');
 
 try {
   await client.connect();
+  // Negotiate protocol v3 so queryNodes streams in chunks. Without hello() the
+  // client stays on the non-streaming path, and a single QueryNodes over a large
+  // node type (e.g. ~93k CALL nodes on the Grafema dogfood graph) exceeds the
+  // client's fixed 60s request timeout — the plugin then exits 1 every run.
+  await client.hello();
   if (dbName) await client.openDatabase(dbName);
 
   // Phase 1: Create builtin CLASS + METHOD nodes (same in both paths)
@@ -111,6 +116,10 @@ try {
     await typeInferenceLegacy(client);
   }
 
+  // Publish staged writes: under MVCC (visibility=publish) addNodes/addEdges are
+  // not visible to other connections — or durable — until a flush. Without this,
+  // every INSTANCE_OF edge created above is silently dropped when the process exits.
+  await client.flush();
   await client.close();
 } catch (err) {
   console.error(`[type-inference] Error: ${err.message}`);

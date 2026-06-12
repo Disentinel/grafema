@@ -1989,7 +1989,9 @@ async fn main() -> Result<()> {
                     }
                 };
 
-                let plugin_results = plugin::run_plugins_dag(
+                // A plugin failure aborts the analyze run (loud-failure policy,
+                // same as derive-pack failures) — but shut the pool down first.
+                let dag_result = plugin::run_plugins_dag(
                     &user_plugins,
                     &mut rfdb,
                     &socket_path,
@@ -1997,17 +1999,13 @@ async fn main() -> Result<()> {
                     generation,
                     resolve_pool.as_ref(),
                 )
-                .await?;
+                .await;
 
                 if let Some(pool) = resolve_pool {
                     pool.shutdown().await;
                 }
 
-                for pr in &plugin_results {
-                    if let Some(ref err) = pr.error {
-                        tracing::error!(plugin = %pr.plugin_name, "{err}");
-                    }
-                }
+                dag_result?;
             }
 
             let resolve_ms = resolve_timer.elapsed().as_millis() as u64;
@@ -2823,7 +2821,9 @@ async fn main() -> Result<()> {
                     }
                 };
 
-                let plugin_results = plugin::run_plugins_dag(
+                // A plugin failure aborts the analyze run (loud-failure policy,
+                // same as derive-pack failures) — but shut the pool down first.
+                let dag_result = plugin::run_plugins_dag(
                     &user_plugins,
                     &mut rfdb,
                     &socket_path,
@@ -2831,17 +2831,13 @@ async fn main() -> Result<()> {
                     generation,
                     resolve_pool.as_ref(),
                 )
-                .await?;
+                .await;
 
                 if let Some(pool) = resolve_pool {
                     pool.shutdown().await;
                 }
 
-                for pr in &plugin_results {
-                    if let Some(ref err) = pr.error {
-                        tracing::error!(plugin = %pr.plugin_name, "{err}");
-                    }
-                }
+                dag_result?;
             }
 
             // Rule-pack phase (Wave 6): the packs are the only producer of the
