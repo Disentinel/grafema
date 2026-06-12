@@ -1399,6 +1399,13 @@ fn walk_let(local: &syn::Local, ctx: &mut Ctx) {
     if let Some(init) = &local.init {
         walk_expr(&init.expr, ctx);
 
+        // `let PAT = INIT else { DIVERGE };` — the diverge block is a separate
+        // sub-expression (`LocalInit::diverge`). Walk it so calls/references
+        // nested in the `else { ... }` are not dropped from the graph.
+        if let Some((_else, diverge)) = &init.diverge {
+            walk_expr(diverge, ctx);
+        }
+
         // ASSIGNED_FROM edges: each binding ← init expression
         // For simple expressions (path, lit), emit direct edge
         if let Some(init_node_id) = expr_node_id(&init.expr, ctx) {
@@ -2506,6 +2513,27 @@ mod tests {
     fn test_reference_pattern_let() {
         let fa = parse_and_analyze("fn main() { let &x = &42; }");
         assert!(has_node(&fa, "VARIABLE", "x"), "VARIABLE x from ref pattern");
+    }
+
+    #[test]
+    fn test_let_else_diverge_block_walks_calls() {
+        // `let PAT = INIT else { DIVERGE };` (Rust 1.65+). The init expression
+        // is walked, but the `else` diverge block is a separate sub-expression
+        // (`syn::LocalInit::diverge`). Calls nested in it must not be dropped —
+        // same class as Expr::Macro args (#376) and Expr::TryBlock (#382).
+        let fa = parse_and_analyze(
+            "fn main() { let Some(x) = get() else { log_error(reason()); return; }; use_it(x); }",
+        );
+        assert!(has_node(&fa, "CALL", "get"), "CALL get from init expr");
+        assert!(
+            has_node(&fa, "CALL", "log_error"),
+            "CALL log_error nested in let-else diverge block"
+        );
+        assert!(
+            has_node(&fa, "CALL", "reason"),
+            "CALL reason nested in let-else diverge block args"
+        );
+        assert!(has_node(&fa, "CALL", "use_it"), "CALL use_it after let-else");
     }
 
     #[test]
