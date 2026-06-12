@@ -1,0 +1,107 @@
+% java_types.dl — in-engine replacement for TypeResolution.hs of the
+% java-resolve binary (packages/java-resolve/src/TypeResolution.hs):
+% RETURNS (resolveReturns, Hs:115-126), TYPE_OF (resolveTypeOf, Hs:129-140),
+% EXTENDS (resolveExtends, Hs:143-156), IMPLEMENTS (resolveImplements,
+% Hs:159-171) and THROWS_TYPE (resolveThrows, Hs:174-186).
+% Lang-spec: _ai/research/lang-spec-java.md §4.2 + VERDICT C1 (the right-peel
+% comma split CLOSES delta class 6 — S8/S9 multi-element values are full
+% parity, not a subset) + C2 (negated builtins are legal per-row anti-joins,
+% pinned by stdlib.rs::negated_builtin_literal_is_a_per_row_anti_join) +
+% C4 (the "<unknown>" skip is dead-letter on both sides).
+%
+% LEGACY SEMANTICS: buildClassIndex by SIMPLE name (Hs:41-50, Map last-wins);
+% normalizeType (Hs:81-94) strips ALL "[]", rejects the 10 primitives,
+% '?'-wildcards and the resolver-internal "<unknown>"; splitTypes (Hs:97-98)
+% comma-splits implements/throws (the analyzer comma-joins with NO spaces —
+% T.intercalate ",", Declarations.hs:118/169/219/272/391/467 — so legacy's
+% T.strip is a no-op and is not replicated). All edges carry EMPTY metadata
+% (Hs:188-195) ⇒ no meta(...) columns; every head additive (shared vocab).
+%
+% NUMBERED DELTAS vs the legacy resolver (everything not listed is exact):
+%   DELTA 1 (superset, spec §5 class 1): set semantics on duplicate SIMPLE
+%     names across the project — an edge per same-named candidate vs the
+%     Map's arbitrary last-wins winner. Bound = simple names with >1 decl.
+%   DELTA 2 (subset, pathological): EXTENDS carries neq(C, T) — the pack
+%     never derives a self-loop; legacy COULD (a dup-named class whose Map
+%     winner is the extending node itself). Self-EXTENDS is junk by
+%     construction; deliberately excluded.
+%   DELTA 3 (metadata): engine provenance _source/_generation (rust DELTA 6).
+% PARITY PINS (no delta):
+%   - S7 interface multi-extends ("extends A,B" comma-joined,
+%     Declarations.hs:169): legacy does NOT split extends — it looks up the
+%     literal "A,B" and fails (Hs:146-156). The comma-bearing string matches
+%     no class name here either: 0 edges on BOTH sides, exactly. (The split
+%     fix is available — C1 — but would be a deliberate superset; not taken.)
+%   - S8/S9 multi-element implements/throws: SPLIT on both sides (C1 closed
+%     the draft's subset) — one edge per resolved element, exact parity
+%     modulo DELTA 1.
+%   - the "<unknown>" reject never fires (C4): the analyzer's typeToName
+%     emits "<type>" for unhandled types (Expressions.hs:1114), never
+%     "<unknown>" — kept only as resolver-vocabulary parity.
+%
+% MAINTAIN ENVELOPE: node_attr generators + negation ⇒ maintain-incremental
+% refuses; the scratch floor applies (the standing Wave-2 expectation).
+
+prim("boolean"). prim("byte"). prim("char"). prim("short"). prim("int").
+prim("long"). prim("float"). prim("double"). prim("void"). prim("var").
+
+% Java-gated declaration kernel (S4) — simple-name keyed, self-contained
+% (§3 connectivity discipline).
+jdecl(T, F, N) :- node(T, "CLASS"),     attr(T, "file", F), ends_with(F, ".java"), attr(T, "name", N), neq(N, "").
+jdecl(T, F, N) :- node(T, "INTERFACE"), attr(T, "file", F), ends_with(F, ".java"), attr(T, "name", N), neq(N, "").
+jdecl(T, F, N) :- node(T, "ENUM"),      attr(T, "file", F), ends_with(F, ".java"), attr(T, "name", N), neq(N, "").
+jdecl(T, F, N) :- node(T, "RECORD"),    attr(T, "file", F), ends_with(F, ".java"), attr(T, "name", N), neq(N, "").
+jclass_named(N, T) :- jdecl(T, F, N).
+
+% S5 — RETURNS from FUNCTION metadata return_type (methods stamp it,
+% Declarations.hs:376-391). normalizeType = strip-all-[] + the reject set,
+% spelled as direct negated-builtin filters (C2: lighter than aux relations,
+% and stratification-free — stratify.rs adds no edge for builtin literals).
+ret_strip(Fn, N) :- node(Fn, "FUNCTION"), attr(Fn, "file", F), ends_with(F, ".java"),
+    node_attr(Fn, "return_type", Raw), neq(Raw, ""), replace_all(Raw, "[]", "", N), neq(N, "").
+@materialize(edge_type = "RETURNS", mode = "additive")
+returns(Fn, T) :- ret_strip(Fn, N), \+ prim(N), \+ string_contains(N, "?"),
+    neq(N, "<unknown>"), jclass_named(N, T).
+
+% S6 — TYPE_OF from VARIABLE metadata type (fields/locals/params).
+vty_strip(V, N) :- node(V, "VARIABLE"), attr(V, "file", F), ends_with(F, ".java"),
+    node_attr(V, "type", Raw), neq(Raw, ""), replace_all(Raw, "[]", "", N), neq(N, "").
+@materialize(edge_type = "TYPE_OF", mode = "additive")
+type_of(V, T) :- vty_strip(V, N), \+ prim(N), \+ string_contains(N, "?"),
+    neq(N, "<unknown>"), jclass_named(N, T).
+
+% S7 — EXTENDS: all 4 decl types carry the metadata (Hs:146); NO split
+% (parity pin above); neq(C, T) is DELTA 2.
+ext_strip(C, N) :- jdecl(C, F, CN), node_attr(C, "extends", Raw), neq(Raw, ""),
+    replace_all(Raw, "[]", "", N), neq(N, "").
+@materialize(edge_type = "EXTENDS", mode = "additive")
+extends(C, T) :- ext_strip(C, N), \+ prim(N), \+ string_contains(N, "?"),
+    neq(N, "<unknown>"), jclass_named(N, T), neq(C, T).
+
+% S8 — IMPLEMENTS (CLASS + ENUM only, Hs:163 — the analyzer also stamps
+% RECORD `implements`, which legacy never read: parity keeps the omission).
+% The comma split is the right-peel recursion (C1; the js_module_imports
+% spec_pfx idiom): peel the last ","-segment off a strictly-shrinking list —
+% the fixpoint terminates at element depth; last_segment is identity on
+% separator-free strings, so single elements surface unchanged.
+impl_raw(C, L) :- node(C, "CLASS"), attr(C, "file", F), ends_with(F, ".java"),
+    node_attr(C, "implements", L), neq(L, "").
+impl_raw(C, L) :- node(C, "ENUM"),  attr(C, "file", F), ends_with(F, ".java"),
+    node_attr(C, "implements", L), neq(L, "").
+impl_list(C, L) :- impl_raw(C, L).
+impl_list(C, R) :- impl_list(C, L), last_segment(L, ",", E),
+    concat(",", E, Tail), strip_suffix(L, Tail, R).
+impl_elem(C, E) :- impl_list(C, L), last_segment(L, ",", E).
+@materialize(edge_type = "IMPLEMENTS", mode = "additive")
+implements(C, T) :- impl_elem(C, N), jclass_named(N, T).
+
+% S9 — THROWS_TYPE from FUNCTION metadata throws (comma-joined,
+% Declarations.hs:391/467), same right-peel split.
+throws_raw(Fn, L) :- node(Fn, "FUNCTION"), attr(Fn, "file", F), ends_with(F, ".java"),
+    node_attr(Fn, "throws", L), neq(L, "").
+throws_list(Fn, L) :- throws_raw(Fn, L).
+throws_list(Fn, R) :- throws_list(Fn, L), last_segment(L, ",", E),
+    concat(",", E, Tail), strip_suffix(L, Tail, R).
+throws_elem(Fn, E) :- throws_list(Fn, L), last_segment(L, ",", E).
+@materialize(edge_type = "THROWS_TYPE", mode = "additive")
+throws_type(Fn, T) :- throws_elem(Fn, N), jclass_named(N, T).

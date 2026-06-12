@@ -1,0 +1,80 @@
+% java_imports.dl — in-engine replacement for ImportResolution.hs of the
+% java-resolve binary (packages/java-resolve/src/ImportResolution.hs), the
+% IMPORTS_FROM producer of the `java-all` daemon command: IMPORT → class
+% declaration (resolveImport, Hs:75-92) and IMPORT_BINDING → class declaration
+% (resolveBinding, Hs:99-131). Lang-spec: _ai/research/lang-spec-java.md §4.1
+% + VERDICT C3 (this pack feeds @stdlib/depends and MUST precede it).
+%
+% LEGACY SEMANTICS: buildModuleIndex (Hs:41-50) maps file → MODULE metadata
+% `package`; buildClassIndex (Hs:53-68) keys CLASS/INTERFACE/ENUM/RECORD by
+% "<package>.<name>" — or the bare name for default-package files (the
+% pkg-or-empty discipline, Hs:63-66). resolveImport looks the IMPORT's name
+% (the full dotted path, first-class — Imports.hs:65-81) up in that index and
+% emits IMPORT -IMPORTS_FROM-> decl with EMPTY metadata (Hs:85-91).
+%
+% PRODUCTION-DEAD LEGACY ARMS (spec §2, differential predictions P1/P3):
+% - resolveBinding (Hs:99-131) reads node metadata `source`, which the
+%   analyzer NEVER stamps (Imports.hs:107-111: imported_name/local_name/
+%   static only); the intended source travels in DeferredRef.drSource, which
+%   the orchestrator's FileAnalysis struct DROPS (analyzer.rs:41-49 has no
+%   unresolvedRefs field). Legacy phase 3 emits ZERO edges in production.
+% - the `asterisk` glob skip reads a key the analyzer spells `glob`
+%   (Hs:78 vs Imports.hs:78) — benign: a glob IMPORT is *named*
+%   "com.example.*", which can never equal a qualified class name, so the
+%   no-edge outcome is identical and the pack inherits it for free.
+%
+% IMPORTS_FROM is SHARED vocabulary ⇒ mode = "additive". Legacy metadata is
+% empty ⇒ no meta(...) columns.
+%
+% NUMBERED DELTAS vs the legacy resolver (everything not listed is exact):
+%   DELTA 1 (superset, spec §5 class 1): set semantics on duplicate qualified
+%     names — legacy's Map.fromList kept ONE arbitrary last-wins winner per
+%     qualified name (Hs:57); the pack derives an edge per candidate.
+%     Bound = qualified names with >1 declaration node.
+%   DELTA 2 (DECLARED SUPERSET, spec §5 class 3 — the feature): IMPORT_BINDING
+%     edges are derived from the graph-native IMPORT -CONTAINS-> IMPORT_BINDING
+%     edge (Imports.hs:114-120 emits exactly it) + the parent IMPORT's resolved
+%     target, instead of the never-present metadata `source` — restoring the
+%     resolver's documented intent (Hs header :20, test/Spec.hs:79-91, which
+%     fabricates `source`). Legacy production derives 0 (P1); bound = java
+%     IMPORT_BINDINGs whose parent IMPORT name ∈ qual_class.
+%   DELTA 3 (metadata): engine provenance _source/_generation on every pack
+%     edge (the standing rust DELTA 6).
+% PARITY PINS (no delta): glob imports resolve nothing (P3, above); static
+% member imports ("com.example.Foo.bar") resolve nothing on BOTH sides — the
+% full-path lookup fails (a deliberate non-superset, spec §3 S2 honesty note).
+%
+% MAINTAIN ENVELOPE: node_attr (package probe) + stratified negation (the
+% default-package arm) ⇒ maintain-incremental refuses; scratch floor applies.
+%
+% ENCODING NOTE (§3 connectivity, the rust_trait_resolve discipline):
+% name-keyed lookups are SELF-CONTAINED derived relations joined on strings;
+% node/attr legs are never inlined next to a foreign leg.
+
+% Java-gated EDB surfaces. The daemon streamed ONLY Language::Java nodes
+% (main.rs:1578), so the .java gate on every leg IS legacy parity — the
+% vocabulary is shared polyglot-wide (kotlin emits the same node types).
+jmodule(M, F) :- node(M, "MODULE"), attr(M, "file", F), ends_with(F, ".java").
+jdecl(T, F, N) :- node(T, "CLASS"),     attr(T, "file", F), ends_with(F, ".java"), attr(T, "name", N), neq(N, "").
+jdecl(T, F, N) :- node(T, "INTERFACE"), attr(T, "file", F), ends_with(F, ".java"), attr(T, "name", N), neq(N, "").
+jdecl(T, F, N) :- node(T, "ENUM"),      attr(T, "file", F), ends_with(F, ".java"), attr(T, "name", N), neq(N, "").
+jdecl(T, F, N) :- node(T, "RECORD"),    attr(T, "file", F), ends_with(F, ".java"), attr(T, "name", N), neq(N, "").
+
+% S1 — the qualified-class kernel. MODULE metadata `package` exists only when
+% the file has a package declaration (Walker.hs:37-51 — no key otherwise);
+% default-package files contribute the bare class name (Hs:63-66).
+pkg_of(F, P) :- jmodule(M, F), node_attr(M, "package", P), neq(P, "").
+has_pkg(F)  :- pkg_of(F, P).
+qual_class(Q, T) :- jdecl(T, F, N), pkg_of(F, P), concat(P, ".", P1), concat(P1, N, Q).
+qual_class(N, T) :- jdecl(T, F, N), \+ has_pkg(F).
+
+% S2 — IMPORT → declaration. The IMPORT's first-class name IS the full dotted
+% path (Imports.hs:65-81); glob imports ("com.example.*") fall out naturally.
+jimport(I, Q, F) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".java"), attr(I, "name", Q).
+@materialize(edge_type = "IMPORTS_FROM", mode = "additive")
+import_target(I, T) :- jimport(I, Q, F), qual_class(Q, T).
+
+% S3 — IMPORT_BINDING → declaration via the parent IMPORT (DELTA 2).
+jbinding(B, F) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".java").
+@materialize(edge_type = "IMPORTS_FROM", mode = "additive")
+binding_target(B, T) :- jbinding(B, F), edge(I, B, "CONTAINS"), jimport(I, Q, F), qual_class(Q, T).

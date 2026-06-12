@@ -48,7 +48,13 @@ use std::path::PathBuf;
 /// js_import_bindings → js_class_inheritance → js_cross_file_calls →
 /// js_property_access_ns → js_property_access_full → js_builtins_nodes →
 /// js_builtins_edges → js_runtime_globals_nodes → js_runtime_globals_edges →
+/// java_imports → java_types → java_calls → java_annotations →
 /// depends → method_calls → shape_verifier → axum_routes.
+/// The Java packs (java-resolve migration): `java_imports` PRODUCES java
+/// IMPORTS_FROM, so it runs strictly before `depends` (which consumes EVERY
+/// IMPORTS_FROM edge node-type-agnostically via the file join);
+/// `java_calls` PRODUCES CALLS, so it runs strictly before the CALLS
+/// negators `method_calls` / `shape_verifier`.
 /// Wave 3c moved depends INTO this list, after every IMPORTS_FROM producer:
 /// with legacy import-resolution gated, the IMPORT-level edges depends
 /// consumes are produced by the packs above it (it ran separately FIRST while
@@ -94,6 +100,13 @@ const STDLIB_RULE_PACKS: &[&str] = &[
     // producer — before method_calls/shape_verifier.
     "@stdlib/js_runtime_globals_nodes",
     "@stdlib/js_runtime_globals_edges",
+    // Java packs (java-resolve migration): java_imports PRODUCES java
+    // IMPORTS_FROM — strictly before depends; java_calls PRODUCES CALLS —
+    // strictly before the negators method_calls / shape_verifier.
+    "@stdlib/java_imports",
+    "@stdlib/java_types",
+    "@stdlib/java_calls",
+    "@stdlib/java_annotations",
     // Wave 3c: depends CONSUMES IMPORTS_FROM (every edge of the shared
     // vocabulary, module- and binding-level). Legacy import-resolution /
     // rust-imports are gated (GRAFEMA_SKIP_RESOLVE_STEPS), so depends must
@@ -535,6 +548,10 @@ fn pack_owned_slice(pack: &str) -> &'static str {
         "@stdlib/js_builtins_edges" => "node-builtin IMPORTS_FROM + CALLS",
         "@stdlib/js_runtime_globals_nodes" => "js runtime-global GLOBAL_DEFINITION nodes",
         "@stdlib/js_runtime_globals_edges" => "js runtime-global CALLS",
+        "@stdlib/java_imports" => "java IMPORTS_FROM (IMPORT + IMPORT_BINDING → declaration)",
+        "@stdlib/java_types" => "java RETURNS/TYPE_OF/EXTENDS/IMPLEMENTS/THROWS_TYPE",
+        "@stdlib/java_calls" => "java INSTANTIATES + CALLS (ctor/same-class/static/super-this)",
+        "@stdlib/java_annotations" => "java ANNOTATION_RESOLVES_TO",
         "@stdlib/depends" => "MODULE→MODULE DEPENDS_ON",
         "@stdlib/method_calls" => "fuzzy method-call CALLS fallback",
         "@stdlib/shape_verifier" => "shape-violation ISSUE diagnostics",

@@ -300,6 +300,40 @@ pub const JS_RUNTIME_GLOBALS_EDGES_DL: &str = concat!(
 /// (the rank ladder) ⇒ scratch-only under maintain.
 pub const JS_MODULE_IMPORTS_DL: &str = include_str!("stdlib/js_module_imports.dl");
 
+// ── Java packs (the java-resolve migration, lang-spec-java.md) ─────────────
+
+/// Java import resolution — replaces `ImportResolution.hs` of `java-resolve`:
+/// IMPORT → declaration `IMPORTS_FROM` (qualified-name kernel) plus the
+/// IMPORT_BINDING arm via the graph-native IMPORT-CONTAINS-binding edge (a
+/// DECLARED SUPERSET: the legacy metadata-`source` path was production-dead,
+/// spec §2 D1). PRODUCER of java `IMPORTS_FROM` — must precede `depends`
+/// (verdict C3: depends consumes EVERY IMPORTS_FROM edge node-type-
+/// agnostically). node_attr + negation ⇒ scratch-only under maintain.
+pub const JAVA_IMPORTS_DL: &str = include_str!("stdlib/java_imports.dl");
+
+/// Java type-position resolution — replaces `TypeResolution.hs`: RETURNS /
+/// TYPE_OF / EXTENDS / IMPLEMENTS / THROWS_TYPE against the simple-name class
+/// kernel. Multi-element `implements`/`throws` are comma-split via the
+/// right-peel recursion (verdict C1 — full parity, delta class 6 closed);
+/// EXTENDS keeps the legacy no-split miss exactly. node_attr + negation ⇒
+/// scratch-only under maintain.
+pub const JAVA_TYPES_DL: &str = include_str!("stdlib/java_types.dl");
+
+/// Java call resolution — replaces `CallResolution.hs`: INSTANTIATES + ctor
+/// CALLS, same-class no-receiver CALLS (a DECLARED SUPERSET — the legacy sid
+/// probe fired only inside constructors, spec §2 D3), static-style CALLS and
+/// super()/this() delegation, all on graph-native HAS_METHOD/CONTAINS
+/// membership instead of sid parses. PRODUCER of `CALLS` — must precede the
+/// CALLS negators `method_calls`/`shape_verifier` (verdict C3). node_attr +
+/// negation ⇒ scratch-only under maintain.
+pub const JAVA_CALLS_DL: &str = include_str!("stdlib/java_calls.dl");
+
+/// Java annotation resolution — replaces `AnnotationResolution.hs`:
+/// ANNOTATION_RESOLVES_TO from ATTRIBUTE usages to same-named
+/// ANNOTATION_TYPE declarations, .java-gated on BOTH legs (kotlin emits both
+/// node types). No node_attr, no negation — maintain-eligible.
+pub const JAVA_ANNOTATIONS_DL: &str = include_str!("stdlib/java_annotations.dl");
+
 /// The named stdlib rule packs, addressable on the wire as `"@stdlib/<name>"`
 /// (`MaterializeDatalog` and the other empty-source-defaulting dispatchers), listed
 /// in CANONICAL RUN ORDER. The order is a CONTRACT, not cosmetics — producers run
@@ -342,12 +376,21 @@ pub const JS_MODULE_IMPORTS_DL: &str = include_str!("stdlib/js_module_imports.dl
 ///   IMPORT→MODULE `IMPORTS_FROM` seam and `RE_EXPORTS` (the star seam) that
 ///   `js_import_bindings` (`b_mod`/`resolved_at`/`star_src`) and the Wave-1b
 ///   hybrid packs read as committed EDB, so it runs strictly before them.
+/// - the Java packs (the java-resolve migration, canonical intra-family
+///   order java_imports → java_types → java_calls → java_annotations):
+///   `java_imports` PRODUCES java `IMPORTS_FROM`, so it precedes `depends`
+///   (verdict C3 — depends consumes EVERY IMPORTS_FROM edge node-type-
+///   agnostically via the file join); `java_calls` PRODUCES `CALLS`, so it
+///   precedes the CALLS negators `method_calls`/`shape_verifier`
+///   (shape_verifier negates `edge(C,_,"CALLS")` with NO file gate). The
+///   packs have no inter-pack EDB seams among themselves.
 /// - `depends` (Wave 3c position) CONSUMES IMPORTS_FROM — every edge of the
 ///   shared vocabulary, module- and binding-level — so with legacy
 ///   import-resolution GATED (GRAFEMA_SKIP_RESOLVE_STEPS) it runs after ALL
 ///   in-engine IMPORTS_FROM producers: `rust_imports`, `js_module_imports`,
-///   `js_import_bindings`, `js_builtins_edges`. (It ran first while the
-///   legacy resolver pre-committed those edges at analysis time.)
+///   `js_import_bindings`, `js_builtins_edges`, `java_imports`. (It ran
+///   first while the legacy resolver pre-committed those edges at analysis
+///   time.)
 /// An orchestrator running the packs sequentially must preserve this order:
 /// js_local_refs → js_same_file_calls → js_this_method_calls →
 /// rust_calls → rust_cross_methods_ctor → rust_trait_resolve →
@@ -355,7 +398,8 @@ pub const JS_MODULE_IMPORTS_DL: &str = include_str!("stdlib/js_module_imports.dl
 /// js_import_bindings → js_class_inheritance →
 /// js_cross_file_calls → js_property_access_ns → js_property_access_full →
 /// js_builtins_nodes → js_builtins_edges → js_runtime_globals_nodes →
-/// js_runtime_globals_edges → depends → method_calls → shape_verifier →
+/// js_runtime_globals_edges → java_imports → java_types → java_calls →
+/// java_annotations → depends → method_calls → shape_verifier →
 /// axum_routes.
 pub const STDLIB_PACKS: &[(&str, &str)] = &[
     ("js_local_refs", JS_LOCAL_REFS_DL),
@@ -400,6 +444,14 @@ pub const STDLIB_PACKS: &[(&str, &str)] = &[
     // (shape_verifier).
     ("js_runtime_globals_nodes", JS_RUNTIME_GLOBALS_NODES_DL),
     ("js_runtime_globals_edges", JS_RUNTIME_GLOBALS_EDGES_DL),
+    // Java packs (java-resolve migration): java_imports PRODUCES java
+    // IMPORTS_FROM — strictly before depends (verdict C3); java_calls
+    // PRODUCES CALLS — strictly before the negators method_calls /
+    // shape_verifier. No inter-pack seams among the four.
+    ("java_imports", JAVA_IMPORTS_DL),
+    ("java_types", JAVA_TYPES_DL),
+    ("java_calls", JAVA_CALLS_DL),
+    ("java_annotations", JAVA_ANNOTATIONS_DL),
     // Wave 3c: depends CONSUMES IMPORTS_FROM (every edge, module- and
     // binding-level) — with legacy import-resolution gated it must run after
     // ALL in-engine IMPORTS_FROM producers (rust_imports, js_module_imports,
@@ -1268,6 +1320,10 @@ mod tests {
                 "js_builtins_edges",
                 "js_runtime_globals_nodes",
                 "js_runtime_globals_edges",
+                "java_imports",
+                "java_types",
+                "java_calls",
+                "java_annotations",
                 "depends",
                 "method_calls",
                 "shape_verifier",
@@ -1284,6 +1340,8 @@ mod tests {
              packs (js_import_bindings PRODUCES the IMPORTS_FROM seam, so it \
              precedes js_class_inheritance and the js hybrid consumers; \
              js_class_inheritance produces EXTENDS for shape_verifier) → \
+             java packs (java_imports PRODUCES java IMPORTS_FROM — before \
+             depends; java_calls PRODUCES CALLS — before the negators) → \
              depends (Wave 3c: AFTER every IMPORTS_FROM producer — legacy \
              import-resolution is gated, so the in-engine producers feed it) → \
              method_calls → shape_verifier → axum_routes (producers strictly \
@@ -4292,6 +4350,16 @@ mod tests {
             // Wave 3c: orchestrator-committed workspace facts (one per
             // discovered package + alias virtual packages; dogfood ~30).
             ("WORKSPACE_PACKAGE", 30),
+            // Java packs: the dogfood graph has ZERO java nodes (config gap,
+            // lang-spec-java.md §7), so an unknown type would estimate 0 and
+            // make the gate VACUOUS for the java-only vocabulary. Model a
+            // mid-size java corpus folded into this graph (the shared types —
+            // CALL/FUNCTION/VARIABLE/CLASS/IMPORT/… — already carry
+            // dogfood-scale counts above, which is the harsher test).
+            ("ENUM", 200),
+            ("RECORD", 100),
+            ("ANNOTATION_TYPE", 80),
+            ("ATTRIBUTE", 15_000),
         ] {
             nodes_by_type.insert(ty.to_string(), n);
         }
@@ -4319,6 +4387,530 @@ mod tests {
             "packs must plan under dogfood-scale stats (E-PLAN-003 is a \
              production rejection, not a perf hint):\n{}",
             failed.join("\n")
+        );
+    }
+
+    // ── Java packs (java-resolve migration, lang-spec-java.md) ─────────────
+
+    /// VERDICT C2 pin (lang-spec-java.md): a NEGATED BUILTIN literal is a
+    /// legal per-row anti-join — the executor's negated path keeps the exact
+    /// per-row fallback for non-special-cased shapes (exec.rs), and the
+    /// stratifier creates NO dependency edge for base/builtin literals
+    /// (stratify.rs "base relation or builtin — no dependency edge"), so
+    /// `\+ string_contains(...)` is stratification-free. No stdlib pack used
+    /// the form before the java packs; this fixture pins the semantics
+    /// java_types.dl's normalizeType filters rely on, BEFORE relying on it
+    /// (the verdict's explicit precondition).
+    #[test]
+    fn negated_builtin_literal_is_a_per_row_anti_join() {
+        let mut v = FixtureStorageView::new(1);
+        named_node(&mut v, "c_plain", "Alpha", "CLASS", "a.java");
+        named_node(&mut v, "c_comma", "Alpha,Beta", "CLASS", "b.java");
+
+        let eval = evaluate(
+            &v,
+            r#"cand(X, N) :- node(X, "CLASS"), attr(X, "name", N).
+               kept(X) :- cand(X, N), \+ string_contains(N, ",")."#,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("negated-builtin program evaluates");
+
+        let kept: BTreeSet<u128> = eval
+            .facts("kept")
+            .iter()
+            .filter_map(|r| r[0].as_id())
+            .collect();
+        assert_eq!(
+            kept,
+            BTreeSet::from([id_of("c_plain")]),
+            "\\+ string_contains must drop exactly the comma-bearing row"
+        );
+    }
+
+    /// Shared collector: the (src, dst) id pairs of one derived predicate.
+    fn id_pairs(eval: &crate::derive::exec::Evaluation, pred: &str) -> BTreeSet<(u128, u128)> {
+        eval.facts(pred)
+            .iter()
+            .filter_map(|r| Some((r.first()?.as_id()?, r.get(1)?.as_id()?)))
+            .collect()
+    }
+
+    /// java_imports.dl — every arm of the S1/S2/S3 surface on one fixture:
+    /// - S2 happy path: IMPORT "com.lib.Foo" → the packaged CLASS Foo;
+    /// - DELTA 1 pin (spec §5 class 1): a SECOND "com.lib.Foo" declaration —
+    ///   set semantics derives an edge per candidate (legacy Map kept one);
+    /// - DELTA 2 pin (spec §5 class 3, the D1 fix): the IMPORT_BINDING — with
+    ///   NO `source` metadata, exactly as the analyzer stamps it — resolves
+    ///   via the parent-IMPORT CONTAINS edge; legacy production derived ZERO
+    ///   here (resolveBinding read a key that never exists);
+    /// - default-package arm: a declaration in a package-less file is keyed
+    ///   by its BARE name;
+    /// - P3 parity pin: a glob IMPORT ("com.lib.*") derives nothing;
+    /// - static-member parity pin: "com.lib.Foo.bar" derives nothing;
+    /// - dead-arm zero: a binding whose parent IMPORT resolves nothing
+    ///   derives nothing;
+    /// - .java gate: a same-qualified kotlin declaration never matches.
+    #[test]
+    fn java_imports_pack_resolves_imports_and_bindings() {
+        let mut v = FixtureStorageView::new(1);
+        // Declaration side: com.lib.Foo (packaged), twice (DELTA 1).
+        named_node(&mut v, "m_lib", "lib", "MODULE", "com/lib/Foo.java");
+        v.put_node_metadata(id_of("m_lib"), r#"{"package":"com.lib"}"#);
+        named_node(&mut v, "c_foo", "Foo", "CLASS", "com/lib/Foo.java");
+        named_node(&mut v, "m_lib2", "lib2", "MODULE", "com/lib2/Foo.java");
+        v.put_node_metadata(id_of("m_lib2"), r#"{"package":"com.lib"}"#);
+        named_node(&mut v, "c_foo2", "Foo", "CLASS", "com/lib2/Foo.java");
+        // .java gate: kotlin twin of the same qualified name.
+        named_node(&mut v, "m_kt", "ktlib", "MODULE", "com/lib/Foo.kt");
+        v.put_node_metadata(id_of("m_kt"), r#"{"package":"com.lib"}"#);
+        named_node(&mut v, "c_kt", "Foo", "CLASS", "com/lib/Foo.kt");
+        // Default-package declaration (MODULE has NO package key —
+        // Walker.hs:37-51 omits it entirely).
+        named_node(&mut v, "m_def", "def", "MODULE", "Def.java");
+        named_node(&mut v, "c_bare", "Bare", "CLASS", "Def.java");
+
+        // Importing side.
+        named_node(&mut v, "i1", "com.lib.Foo", "IMPORT", "app/App.java");
+        named_node(&mut v, "b1", "Foo", "IMPORT_BINDING", "app/App.java");
+        v.put_node_metadata(
+            id_of("b1"),
+            r#"{"imported_name":"Foo","local_name":"Foo","static":false}"#,
+        );
+        edge(&mut v, "i1", "b1", "CONTAINS");
+        named_node(&mut v, "i2", "com.lib.*", "IMPORT", "app/App.java");
+        named_node(&mut v, "i3", "com.lib.Foo.bar", "IMPORT", "app/App.java");
+        named_node(&mut v, "i4", "Bare", "IMPORT", "app/App.java");
+        named_node(&mut v, "i5", "com.none.Nope", "IMPORT", "app/App.java");
+        named_node(&mut v, "b5", "Nope", "IMPORT_BINDING", "app/App.java");
+        edge(&mut v, "i5", "b5", "CONTAINS");
+
+        let (eval, specs, _node_specs) = evaluate_with_materialize(
+            &v,
+            JAVA_IMPORTS_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("java_imports.dl evaluates");
+
+        assert_eq!(
+            id_pairs(&eval, "import_target"),
+            BTreeSet::from([
+                (id_of("i1"), id_of("c_foo")),
+                (id_of("i1"), id_of("c_foo2")),
+                (id_of("i4"), id_of("c_bare")),
+            ]),
+            "S2: qualified + default-package imports resolve; glob/static/unknown derive nothing"
+        );
+        assert_eq!(
+            id_pairs(&eval, "binding_target"),
+            BTreeSet::from([
+                (id_of("b1"), id_of("c_foo")),
+                (id_of("b1"), id_of("c_foo2")),
+            ]),
+            "S3 (DELTA 2): bindings resolve via the parent IMPORT, source-metadata-free; \
+             the unresolvable-parent binding derives nothing"
+        );
+        assert!(
+            specs
+                .iter()
+                .all(|s| s.edge_type == "IMPORTS_FROM" && s.additive && s.meta.is_empty()),
+            "both heads are additive empty-meta IMPORTS_FROM; got {:?}",
+            specs.iter().map(|s| (&s.predicate, &s.edge_type)).collect::<Vec<_>>()
+        );
+        assert_eq!(specs.len(), 2, "exactly the S2 + S3 heads materialize");
+    }
+
+    /// java_types.dl — every arm of S5-S9 on one fixture:
+    /// - RETURNS: plain name resolves; "Alpha[]" strips; "int" (primitive),
+    ///   "?" (wildcard) and "<unknown>" (C4 dead-letter vocabulary) derive
+    ///   nothing; the .kt twin is gated out;
+    /// - TYPE_OF: interface type resolves; "boolean[]" strips to a primitive
+    ///   and derives nothing;
+    /// - EXTENDS: single name resolves; the interface multi-extends
+    ///   "Alpha,Beta" derives NOTHING (the legacy no-split miss, reproduced
+    ///   exactly — spec §3 S7); the dup-named self-extend derives only the
+    ///   OTHER candidate (DELTA 2's neq(C,T));
+    /// - IMPLEMENTS (VERDICT C1, delta class 6 CLOSED): single element,
+    ///   3-element right-peel split (recursion depth 2), ENUM arm; the
+    ///   RECORD's implements is NOT read (legacy reads CLASS+ENUM only,
+    ///   TypeResolution.hs:163 — parity dead-arm zero);
+    /// - THROWS_TYPE (C1): single + 2-element split.
+    #[test]
+    fn java_types_pack_resolves_type_positions_with_split() {
+        let mut v = FixtureStorageView::new(1);
+        named_node(&mut v, "c_a", "Alpha", "CLASS", "a.java");
+        named_node(&mut v, "i_b", "Beta", "INTERFACE", "b.java");
+        named_node(&mut v, "i_g", "Gamma", "INTERFACE", "g.java");
+        named_node(&mut v, "i_z", "Zeta", "INTERFACE", "z.java");
+        named_node(&mut v, "c_io", "IOExc", "CLASS", "io.java");
+        named_node(&mut v, "c_sql", "SqlExc", "CLASS", "sql.java");
+
+        // S5 RETURNS.
+        named_node(&mut v, "f1", "mk", "FUNCTION", "m.java");
+        v.put_node_metadata(id_of("f1"), r#"{"kind":"method","return_type":"Alpha"}"#);
+        named_node(&mut v, "f2", "count", "FUNCTION", "m.java");
+        v.put_node_metadata(id_of("f2"), r#"{"kind":"method","return_type":"int"}"#);
+        named_node(&mut v, "f3", "arr", "FUNCTION", "m.java");
+        v.put_node_metadata(id_of("f3"), r#"{"kind":"method","return_type":"Alpha[]"}"#);
+        named_node(&mut v, "f4", "wild", "FUNCTION", "m.java");
+        v.put_node_metadata(id_of("f4"), r#"{"kind":"method","return_type":"?"}"#);
+        named_node(&mut v, "f5", "unk", "FUNCTION", "m.java");
+        v.put_node_metadata(id_of("f5"), r#"{"kind":"method","return_type":"<unknown>"}"#);
+        named_node(&mut v, "f_kt", "mk", "FUNCTION", "m.kt");
+        v.put_node_metadata(id_of("f_kt"), r#"{"kind":"method","return_type":"Alpha"}"#);
+
+        // S6 TYPE_OF.
+        named_node(&mut v, "v1", "b", "VARIABLE", "m.java");
+        v.put_node_metadata(id_of("v1"), r#"{"kind":"field","type":"Beta"}"#);
+        named_node(&mut v, "v2", "flags", "VARIABLE", "m.java");
+        v.put_node_metadata(id_of("v2"), r#"{"kind":"field","type":"boolean[]"}"#);
+
+        // S7 EXTENDS.
+        named_node(&mut v, "c_sub", "Sub", "CLASS", "sub.java");
+        v.put_node_metadata(id_of("c_sub"), r#"{"extends":"Alpha"}"#);
+        named_node(&mut v, "i_multi", "Both", "INTERFACE", "im.java");
+        v.put_node_metadata(id_of("i_multi"), r#"{"extends":"Alpha,Beta"}"#);
+        named_node(&mut v, "c_x", "X", "CLASS", "x.java");
+        v.put_node_metadata(id_of("c_x"), r#"{"extends":"X"}"#);
+        named_node(&mut v, "c_x2", "X", "CLASS", "x2.java");
+
+        // S8 IMPLEMENTS.
+        named_node(&mut v, "c_one", "One", "CLASS", "one.java");
+        v.put_node_metadata(id_of("c_one"), r#"{"implements":"Beta"}"#);
+        named_node(&mut v, "c_multi", "Multi", "CLASS", "multi.java");
+        v.put_node_metadata(id_of("c_multi"), r#"{"implements":"Beta,Gamma,Zeta"}"#);
+        named_node(&mut v, "e_en", "En", "ENUM", "en.java");
+        v.put_node_metadata(id_of("e_en"), r#"{"implements":"Beta"}"#);
+        named_node(&mut v, "r_rec", "Rec", "RECORD", "rec.java");
+        v.put_node_metadata(id_of("r_rec"), r#"{"implements":"Beta"}"#);
+
+        // S9 THROWS_TYPE.
+        named_node(&mut v, "f7", "one", "FUNCTION", "t.java");
+        v.put_node_metadata(id_of("f7"), r#"{"kind":"method","throws":"IOExc"}"#);
+        named_node(&mut v, "f8", "two", "FUNCTION", "t.java");
+        v.put_node_metadata(id_of("f8"), r#"{"kind":"method","throws":"IOExc,SqlExc"}"#);
+
+        let (eval, specs, _node_specs) = evaluate_with_materialize(
+            &v,
+            JAVA_TYPES_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("java_types.dl evaluates");
+
+        assert_eq!(
+            id_pairs(&eval, "returns"),
+            BTreeSet::from([(id_of("f1"), id_of("c_a")), (id_of("f3"), id_of("c_a"))]),
+            "RETURNS: plain + []-stripped resolve; primitive/wildcard/<unknown>/.kt derive nothing"
+        );
+        assert_eq!(
+            id_pairs(&eval, "type_of"),
+            BTreeSet::from([(id_of("v1"), id_of("i_b"))]),
+            "TYPE_OF: interface type resolves; boolean[] strips to a primitive and is rejected"
+        );
+        assert_eq!(
+            id_pairs(&eval, "extends"),
+            BTreeSet::from([(id_of("c_sub"), id_of("c_a")), (id_of("c_x"), id_of("c_x2"))]),
+            "EXTENDS: single name resolves; comma-joined multi-extends misses (legacy parity); \
+             neq(C,T) keeps the dup-name self-loop out (DELTA 2)"
+        );
+        assert_eq!(
+            id_pairs(&eval, "implements"),
+            BTreeSet::from([
+                (id_of("c_one"), id_of("i_b")),
+                (id_of("c_multi"), id_of("i_b")),
+                (id_of("c_multi"), id_of("i_g")),
+                (id_of("c_multi"), id_of("i_z")),
+                (id_of("e_en"), id_of("i_b")),
+            ]),
+            "IMPLEMENTS: C1 right-peel splits all 3 elements; ENUM arm works; \
+             RECORD implements is not read (legacy parity dead-arm)"
+        );
+        assert_eq!(
+            id_pairs(&eval, "throws_type"),
+            BTreeSet::from([
+                (id_of("f7"), id_of("c_io")),
+                (id_of("f8"), id_of("c_io")),
+                (id_of("f8"), id_of("c_sql")),
+            ]),
+            "THROWS_TYPE: C1 right-peel splits the 2-element throws clause"
+        );
+        let expect: std::collections::BTreeMap<&str, &str> = [
+            ("returns", "RETURNS"),
+            ("type_of", "TYPE_OF"),
+            ("extends", "EXTENDS"),
+            ("implements", "IMPLEMENTS"),
+            ("throws_type", "THROWS_TYPE"),
+        ]
+        .into_iter()
+        .collect();
+        let got: std::collections::BTreeMap<&str, &str> = specs
+            .iter()
+            .map(|s| (s.predicate.as_str(), s.edge_type.as_str()))
+            .collect();
+        assert_eq!(got, expect, "all 5 type heads materialize");
+        assert!(
+            specs.iter().all(|s| s.additive && s.meta.is_empty()),
+            "every head additive with empty meta (legacy metadata was empty)"
+        );
+    }
+
+    /// java_calls.dl — every arm of S10-S13 on one fixture:
+    /// - S10: "new Service" → INSTANTIATES + CALLS to BOTH ctors (DELTA 2,
+    ///   all-ctors vs legacy head-pick); a RECORD's compact constructor is
+    ///   reached through the CONTAINS arm (it has NO HAS_METHOD —
+    ///   Declarations.hs:534-539); "new Missing" derives nothing;
+    /// - S11 (DELTA 3, the D3 fix): a receiverless call inside an ORDINARY
+    ///   method body resolves to the same-class method — the declared
+    ///   superset (legacy fired only where [in:] == class name); receiver
+    ///   "this" counts as plain; lambdas are CLOSURE nodes (Expressions.hs:
+    ///   352-355, :399-404 — NOT FUNCTION), and the jbody/fn_owner recursion
+    ///   lifts a CLOSURE-nested call, a CLOSURE-in-CLOSURE-nested call, and
+    ///   the ctor-expression-lambda LEGACY-PARITY arm (LambdaExpr pushes no
+    ///   withEnclosingFn, Expressions.hs:343-386, so legacy resolves via the
+    ///   leaked [in:ctorName] — the pack must not lose that row); a
+    ///   foreign-receiver call, a field-initializer call, and a call in a
+    ///   field-initializer LAMBDA (the CLOSURE's CONTAINS parent is the
+    ///   CLASS — fn_owner chain stops) derive nothing;
+    /// - S12: a class-named receiver resolves to that class's method; the
+    ///   non-class receiver derives nothing (Hs test :243-249 parity);
+    /// - S13: this() → all same-class ctors; super() → the superclass ctor
+    ///   via the extends metadata;
+    /// - .java gate: a kotlin "new Service" call derives nothing.
+    #[test]
+    fn java_calls_pack_resolves_call_families() {
+        let mut v = FixtureStorageView::new(1);
+        // class Service extends Base, with 2 ctors + 2 methods.
+        named_node(&mut v, "c_svc", "Service", "CLASS", "svc.java");
+        v.put_node_metadata(id_of("c_svc"), r#"{"extends":"Base"}"#);
+        named_node(&mut v, "m_ctor", "Service", "FUNCTION", "svc.java");
+        v.put_node_metadata(id_of("m_ctor"), r#"{"kind":"constructor"}"#);
+        edge(&mut v, "c_svc", "m_ctor", "HAS_METHOD");
+        named_node(&mut v, "m_ctor2", "Service", "FUNCTION", "svc.java");
+        v.put_node_metadata(id_of("m_ctor2"), r#"{"kind":"constructor"}"#);
+        edge(&mut v, "c_svc", "m_ctor2", "HAS_METHOD");
+        named_node(&mut v, "m_helper", "helper", "FUNCTION", "svc.java");
+        v.put_node_metadata(id_of("m_helper"), r#"{"kind":"method"}"#);
+        edge(&mut v, "c_svc", "m_helper", "HAS_METHOD");
+        named_node(&mut v, "m_run", "run", "FUNCTION", "svc.java");
+        v.put_node_metadata(id_of("m_run"), r#"{"kind":"method"}"#);
+        edge(&mut v, "c_svc", "m_run", "HAS_METHOD");
+        // class Base (the super() target).
+        named_node(&mut v, "c_base", "Base", "CLASS", "base.java");
+        named_node(&mut v, "m_bctor", "Base", "FUNCTION", "base.java");
+        v.put_node_metadata(id_of("m_bctor"), r#"{"kind":"constructor"}"#);
+        edge(&mut v, "c_base", "m_bctor", "HAS_METHOD");
+        // class Util (the static-receiver target).
+        named_node(&mut v, "c_util", "Util", "CLASS", "util.java");
+        named_node(&mut v, "m_stat", "format", "FUNCTION", "util.java");
+        v.put_node_metadata(id_of("m_stat"), r#"{"kind":"method"}"#);
+        edge(&mut v, "c_util", "m_stat", "HAS_METHOD");
+        // record Pt with a compact constructor (CONTAINS-only, NO HAS_METHOD).
+        named_node(&mut v, "r_pt", "Pt", "RECORD", "pt.java");
+        named_node(&mut v, "m_cc", "Pt", "FUNCTION", "pt.java");
+        v.put_node_metadata(id_of("m_cc"), r#"{"kind":"compact_constructor"}"#);
+        edge(&mut v, "r_pt", "m_cc", "CONTAINS");
+
+        // S10: constructor calls.
+        named_node(&mut v, "c_new", "new Service", "CALL", "app.java");
+        edge(&mut v, "m_run", "c_new", "CONTAINS");
+        named_node(&mut v, "c_newpt", "new Pt", "CALL", "app.java");
+        edge(&mut v, "m_run", "c_newpt", "CONTAINS");
+        named_node(&mut v, "c_newmiss", "new Missing", "CALL", "app.java");
+        edge(&mut v, "m_run", "c_newmiss", "CONTAINS");
+        named_node(&mut v, "c_kt", "new Service", "CALL", "app.kt");
+
+        // S11: same-class plain calls.
+        named_node(&mut v, "c_plain", "helper", "CALL", "svc.java");
+        v.put_node_metadata(id_of("c_plain"), r#"{"method":true,"argCount":0}"#);
+        edge(&mut v, "m_run", "c_plain", "CONTAINS");
+        named_node(&mut v, "c_this_recv", "helper", "CALL", "svc.java");
+        v.put_node_metadata(id_of("c_this_recv"), r#"{"method":true,"argCount":0,"receiver":"this"}"#);
+        edge(&mut v, "m_run", "c_this_recv", "CONTAINS");
+        named_node(&mut v, "c_recv", "helper", "CALL", "svc.java");
+        v.put_node_metadata(id_of("c_recv"), r#"{"method":true,"argCount":0,"receiver":"other"}"#);
+        edge(&mut v, "m_run", "c_recv", "CONTAINS");
+        // Field-initializer call: CONTAINS parent is the CLASS node.
+        named_node(&mut v, "c_field", "helper", "CALL", "svc.java");
+        v.put_node_metadata(id_of("c_field"), r#"{"method":true,"argCount":0}"#);
+        edge(&mut v, "c_svc", "c_field", "CONTAINS");
+        // Lambda-nested call: lambdas are CLOSURE nodes (no HAS_METHOD);
+        // fn_owner lifts through the CLOSURE to the method's class.
+        named_node(&mut v, "f_lambda", "<lambda>", "CLOSURE", "svc.java");
+        edge(&mut v, "m_run", "f_lambda", "CONTAINS");
+        named_node(&mut v, "c_inlam", "helper", "CALL", "svc.java");
+        v.put_node_metadata(id_of("c_inlam"), r#"{"method":true,"argCount":0}"#);
+        edge(&mut v, "f_lambda", "c_inlam", "CONTAINS");
+        // Nested lambda (CLOSURE inside CLOSURE): pins the CLOSURE→CLOSURE
+        // hop of the fn_owner recursion.
+        named_node(&mut v, "f_nested", "<lambda>", "CLOSURE", "svc.java");
+        edge(&mut v, "f_lambda", "f_nested", "CONTAINS");
+        named_node(&mut v, "c_innested", "helper", "CALL", "svc.java");
+        v.put_node_metadata(id_of("c_innested"), r#"{"method":true,"argCount":0}"#);
+        edge(&mut v, "f_nested", "c_innested", "CONTAINS");
+        // Expression-body lambda inside a CONSTRUCTOR — the LEGACY-PARITY
+        // arm: LambdaExpr pushes no withEnclosingFn, so legacy emits this
+        // edge via the leaked [in:Service] sid; the pack must too.
+        named_node(&mut v, "f_lamctor", "<lambda>", "CLOSURE", "svc.java");
+        edge(&mut v, "m_ctor", "f_lamctor", "CONTAINS");
+        named_node(&mut v, "c_inlamctor", "helper", "CALL", "svc.java");
+        v.put_node_metadata(id_of("c_inlamctor"), r#"{"method":true,"argCount":0}"#);
+        edge(&mut v, "f_lamctor", "c_inlamctor", "CONTAINS");
+        // Lambda in a FIELD INITIALIZER: the CLOSURE's CONTAINS parent is
+        // the CLASS — the fn_owner chain stops, nothing derives (legacy:
+        // nothing on both lambda kinds).
+        named_node(&mut v, "f_lamfield", "<lambda>", "CLOSURE", "svc.java");
+        edge(&mut v, "c_svc", "f_lamfield", "CONTAINS");
+        named_node(&mut v, "c_inlamfield", "helper", "CALL", "svc.java");
+        v.put_node_metadata(id_of("c_inlamfield"), r#"{"method":true,"argCount":0}"#);
+        edge(&mut v, "f_lamfield", "c_inlamfield", "CONTAINS");
+
+        // S12: static-style call.
+        named_node(&mut v, "c_static", "format", "CALL", "svc.java");
+        v.put_node_metadata(id_of("c_static"), r#"{"method":true,"argCount":1,"receiver":"Util"}"#);
+        edge(&mut v, "m_run", "c_static", "CONTAINS");
+
+        // S13: this() / super() inside the first ctor.
+        named_node(&mut v, "c_thisc", "this", "CALL", "svc.java");
+        v.put_node_metadata(
+            id_of("c_thisc"),
+            r#"{"kind":"constructor_call","method":false,"argCount":0,"isThis":true}"#,
+        );
+        edge(&mut v, "m_ctor", "c_thisc", "CONTAINS");
+        named_node(&mut v, "c_superc", "super", "CALL", "svc.java");
+        v.put_node_metadata(
+            id_of("c_superc"),
+            r#"{"kind":"constructor_call","method":false,"argCount":0,"isThis":false}"#,
+        );
+        edge(&mut v, "m_ctor", "c_superc", "CONTAINS");
+
+        let (eval, specs, _node_specs) = evaluate_with_materialize(
+            &v,
+            JAVA_CALLS_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("java_calls.dl evaluates");
+
+        assert_eq!(
+            id_pairs(&eval, "instantiates"),
+            BTreeSet::from([(id_of("c_new"), id_of("c_svc")), (id_of("c_newpt"), id_of("r_pt"))]),
+            "INSTANTIATES: class + record; unknown class and the .kt call derive nothing"
+        );
+        assert_eq!(
+            id_pairs(&eval, "ctor_calls"),
+            BTreeSet::from([
+                (id_of("c_new"), id_of("m_ctor")),
+                (id_of("c_new"), id_of("m_ctor2")),
+                (id_of("c_newpt"), id_of("m_cc")),
+            ]),
+            "ctor CALLS: ALL ctors (DELTA 2) + the compact ctor via the CONTAINS arm"
+        );
+        assert_eq!(
+            id_pairs(&eval, "same_class_calls"),
+            BTreeSet::from([
+                (id_of("c_plain"), id_of("m_helper")),
+                (id_of("c_this_recv"), id_of("m_helper")),
+                (id_of("c_inlam"), id_of("m_helper")),
+                (id_of("c_innested"), id_of("m_helper")),
+                (id_of("c_inlamctor"), id_of("m_helper")),
+            ]),
+            "same-class CALLS (DELTA 3): ordinary-method-body + this-receiver + CLOSURE-lifted \
+             (single, nested, and the ctor-expression-lambda LEGACY-PARITY arm) resolve; \
+             foreign receiver, field-initializer, and field-initializer-lambda derive nothing"
+        );
+        assert_eq!(
+            id_pairs(&eval, "static_calls"),
+            BTreeSet::from([(id_of("c_static"), id_of("m_stat"))]),
+            "static-style CALLS: class-named receiver only"
+        );
+        assert_eq!(
+            id_pairs(&eval, "this_ctor_calls"),
+            BTreeSet::from([
+                (id_of("c_thisc"), id_of("m_ctor")),
+                (id_of("c_thisc"), id_of("m_ctor2")),
+            ]),
+            "this() delegation: all same-class ctors (DELTA 2)"
+        );
+        assert_eq!(
+            id_pairs(&eval, "super_ctor_calls"),
+            BTreeSet::from([(id_of("c_superc"), id_of("m_bctor"))]),
+            "super() delegation: the superclass ctor via extends metadata"
+        );
+        let calls_heads: BTreeSet<&str> = specs
+            .iter()
+            .filter(|s| s.edge_type == "CALLS")
+            .map(|s| s.predicate.as_str())
+            .collect();
+        assert_eq!(
+            calls_heads,
+            BTreeSet::from([
+                "ctor_calls",
+                "same_class_calls",
+                "static_calls",
+                "this_ctor_calls",
+                "super_ctor_calls"
+            ]),
+            "the 5 CALLS producers materialize"
+        );
+        assert!(
+            specs.iter().any(|s| s.edge_type == "INSTANTIATES" && s.predicate == "instantiates"),
+            "INSTANTIATES materializes"
+        );
+        assert!(
+            specs.iter().all(|s| s.additive && s.meta.is_empty()),
+            "every head additive with empty meta"
+        );
+    }
+
+    /// java_annotations.dl — the S14 surface:
+    /// - happy path: ATTRIBUTE "Marker" → ANNOTATION_TYPE Marker;
+    /// - DELTA 1 pin: a duplicate same-named ANNOTATION_TYPE — an edge per
+    ///   candidate (legacy Map kept one);
+    /// - .java gates BOTH ways (load-bearing — kotlin emits both node
+    ///   types): a .kt ATTRIBUTE never resolves, and a .kt ANNOTATION_TYPE
+    ///   is never a target;
+    /// - unknown annotation name derives nothing.
+    #[test]
+    fn java_annotations_pack_resolves_attributes() {
+        let mut v = FixtureStorageView::new(1);
+        named_node(&mut v, "an_1", "Marker", "ANNOTATION_TYPE", "marker.java");
+        named_node(&mut v, "an_2", "Marker", "ANNOTATION_TYPE", "marker2.java");
+        named_node(&mut v, "an_kt", "KMark", "ANNOTATION_TYPE", "mark.kt");
+        named_node(&mut v, "at_1", "Marker", "ATTRIBUTE", "app.java");
+        named_node(&mut v, "at_kt", "Marker", "ATTRIBUTE", "app.kt");
+        named_node(&mut v, "at_k2", "KMark", "ATTRIBUTE", "app.java");
+        named_node(&mut v, "at_none", "NoSuch", "ATTRIBUTE", "app.java");
+
+        let (eval, specs, _node_specs) = evaluate_with_materialize(
+            &v,
+            JAVA_ANNOTATIONS_DL,
+            Stats::default(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("java_annotations.dl evaluates");
+
+        assert_eq!(
+            id_pairs(&eval, "ann_resolves"),
+            BTreeSet::from([
+                (id_of("at_1"), id_of("an_1")),
+                (id_of("at_1"), id_of("an_2")),
+            ]),
+            "ANNOTATION_RESOLVES_TO: both same-named candidates (DELTA 1); the .kt \
+             attribute, the .kt-declared target and the unknown name derive nothing"
+        );
+        assert_eq!(specs.len(), 1, "one head");
+        assert!(
+            specs[0].edge_type == "ANNOTATION_RESOLVES_TO"
+                && specs[0].additive
+                && specs[0].meta.is_empty(),
+            "additive empty-meta ANNOTATION_RESOLVES_TO"
         );
     }
 
