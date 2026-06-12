@@ -575,12 +575,12 @@ beam-/haskell-/rust-resolve.)
 
 | Компонент | src LOC | test LOC | total |
 |---|---:|---:|---:|
-| `datalog2/` движок, 16 .rs-файлов (без stdlib.rs) | 12,305 | 9,200 | 21,505 |
+| `datalog2/` движок, 15 .rs-файлов (без stdlib.rs) | 12,305 | 9,200 | 21,505 |
 | stdlib.rs (wiring + fixture-тесты паков) | 422 | 3,903 | 4,325 |
 | stdlib/*.dl рукописные | 3,514 | — | 3,514 |
 | js_runtime_globals_facts.dl (генерат) + генератор | 8,558 | — | 8,558 |
 | **Добавлено всего** | **24,799** | **13,103** | **37,902** |
-| Удалено сейчас / deferred | 1,810 / 1,716–3,230 | 0 | |
+| Удалено сейчас / deferred | 1,810 / 1,716–3,230 | 0 / 0–1,691 (Spec.hs grafema-resolve 894 + rust-resolve 797) | |
 
 (split src/test — по позиции `#[cfg(test)]` в каждом файле; точные пофайловые числа:
 exec 3,698/2,361, builtin 1,381/1,659, differential 1,069/1,846, storage_glue 1,113/494,
