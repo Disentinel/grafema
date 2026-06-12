@@ -28,6 +28,21 @@ Gaps discovered during dogfooding. Each gap = graph couldn't answer a question i
   join) is the correct reference.
 - **Severity**: real product gap (silent under-derivation on a first-class edge), not a v2-engine gap. The v2
   Datalog engine is the thing that SURFACED it (Gate B exit differential).
+- **✅ RESOLVED 2026-06-12 (architecture migration, verified at HEAD)**: the lossy in-orchestrator sid-parse
+  derivation this gap blamed no longer exists. DEPENDS_ON is now derived by the `@stdlib/depends` rule pack
+  inside the derive engine (`packages/rfdb-server/src/derive/stdlib/depends.dl:2-6`), which joins IMPORTS_FROM
+  endpoints to MODULE nodes purely by the shared `file` attribute — never parsing the semantic_id:
+  `depends(Msrc,Mdst) :- edge(Isrc,Idst,"IMPORTS_FROM"), attr(Isrc,"file",Fsrc), attr(Idst,"file",Fdst),
+  node(Msrc,"MODULE"), attr(Msrc,"file",Fsrc), node(Mdst,"MODULE"), attr(Mdst,"file",Fdst), neq(Msrc,Mdst).`
+  This is exactly the "robust fix (no format coupling)" recommended above. Haskell `MODULE#`-sid nodes carry
+  the same `file` attr as every other MODULE node (the gap's own evidence: `file_attr=".../AST/Types.hs"`), so
+  they join correctly regardless of sid spelling — language-agnostic by construction. Evidence at HEAD:
+  `grafema-orchestrator/src/main.rs` no longer contains any `split("->")`/`grafema://` sid-parse mapping for
+  DEPENDS_ON (the in-orchestrator P3 derivation was deleted in Wave 6, main.rs:492-494; `build_file_to_module_map`
+  is now used only to build a `file_set`, main.rs:2083/2886); the join is locked by the passing fixture test
+  `depends_rule_shape_on_fixture` (`derive/stdlib.rs:468`) and documented at `derive/stdlib.rs:14-20`. Remaining
+  gold-standard confirmation if desired: a live query on a freshly-analyzed Haskell graph showing the previously-
+  missing 127 module-pairs now present.
 
 ## 2026-04-28: Datalog same-function deadlock rule misses cross-file dispatch
 
@@ -63,6 +78,12 @@ on `.grafema/grafema.rfdb`). The differential surfaced these gaps, mapped to spe
   terms; small, sits naturally with → **Gate C** (where numeric tags/aggregators land). Until then the
   differential honestly reports it as a both-engines rejection (the headline is **50/51 computed-
   identical + 1 awaiting numeric literals**, not a clean 51).
+  [✅ RESOLVED 2026-06-12, verified at HEAD: the shared term grammar now has a numeric-literal production —
+  `parse_term`→`parse_number` lexes a bare/negative integer or decimal into a typed `Term::Lit(Value::Int/Float)`
+  (`packages/rfdb-server/src/datalog/parser.rs:146-193`), distinct from the quoted-string const. So `gt(A, 0)`
+  parses (was E-PARSE-001). Locked by `bare_numeric_term_parses_to_a_typed_literal` (`derive/parser_ext.rs:1015`),
+  whose docstring cites the exact `.grafema/guarantees.yaml` `gt(A, 0)` scenario. The fix landed independently of
+  the "Gate C" sequencing note.]
 - **Aggregators `count/sum/min/max`** — spec'd (Appendix A grammar §363, semantics §4), scoped to
   → **Gate C** (need CountTag). Gate A parses-and-defers them. Recursive aggregates explicitly
   deferred (§13 Open). Arithmetic numeric FUNCTIONS (`A+B`, `A*2`) are NOT in the spec at all.
