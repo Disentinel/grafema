@@ -2728,6 +2728,8 @@ mod tests {
             .find(|n| n.node_type == "FUNCTION" && n.name == "puts")
             .expect("FUNCTION puts");
         assert_eq!(f.metadata.get("abi"), Some(&serde_json::json!("C")));
+    }
+
     // Associated items inside `impl` blocks and `trait` definitions used to be
     // silently dropped (ImplItem::Const/Type were empty no-ops; walk_trait only
     // matched TraitItem::Fn), so `Self::MAX` and associated-type queries returned
@@ -2775,6 +2777,8 @@ mod tests {
         assert!(has_edge(&fa, "CONTAINS", "TRAIT", "TYPE_ALIAS"), "TRAIT CONTAINS type");
         // The function signature is still emitted alongside the associated type.
         assert_eq!(count_nodes(&fa, "TYPE_SIGNATURE"), 1);
+    }
+
     // ── Macro invocations ───────────────────────────────────────────────
     // `syn` does not expand macros, so before this fix `Expr::Macro` and
     // `Stmt::Macro` were dropped entirely. That violated KNOWN_LIMITATIONS'
