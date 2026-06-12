@@ -33,10 +33,18 @@ import Data.Maybe (fromMaybe)
 
 -- ── Variable Declaration ────────────────────────────────────────────────
 
--- | VariableDeclaration: walk each declarator, passing down the kind (var/let/const).
--- Uses a fold so each declarator is declared in scope for subsequent declarators.
-ruleVariableDeclaration :: ASTNode -> Analyzer (Maybe Text)
-ruleVariableDeclaration node = do
+-- | Walk a VariableDeclaration, returning @(bindingName, nodeId)@ for every
+-- top-level simple-identifier declarator, in source order. Each binding is
+-- declared in scope for the declarators that follow it (so later initializers
+-- resolve earlier bindings). Destructuring declarators are still emitted as
+-- nodes but reported with an empty @bindingName@ — they have no single binding id.
+--
+-- This is the single source of truth for "which bindings does this var-decl
+-- introduce". Both 'ruleVariableDeclaration' (plain-walk path) and
+-- 'ruleExportNamedDeclaration' (export path) consume it, so a multi-declarator
+-- declaration (@const a = 1, b = 2@) yields every binding exactly once.
+ruleVariableDeclarationBindings :: ASTNode -> Analyzer [(Text, Text)]
+ruleVariableDeclarationBindings node = do
   let decls = getChildren "declarations" node
       kind  = getTextFieldOr "kind" "let" node
       dk = case kind of
@@ -44,24 +52,32 @@ ruleVariableDeclaration node = do
         "let"   -> DeclLet
         "const" -> DeclConst
         _       -> DeclLet
-  goDeclarators dk Nothing decls
+  goDeclarators dk decls
   where
-    goDeclarators :: DeclKind -> Maybe Text -> [ASTNode] -> Analyzer (Maybe Text)
-    goDeclarators _ firstId [] = return firstId
-    goDeclarators dk firstId (d:ds) = do
+    goDeclarators :: DeclKind -> [ASTNode] -> Analyzer [(Text, Text)]
+    goDeclarators _ [] = return []
+    goDeclarators dk (d:ds) = do
       mNodeId <- withAncestor node (ruleVariableDeclarator d node)
       case mNodeId of
         Just nodeId -> do
           let name = case getChildrenMaybe "id" d of
                        Just idNode -> getTextFieldOr "name" "" idNode
                        Nothing     -> ""
-              firstId' = case firstId of
-                Nothing -> Just nodeId
-                _       -> firstId
-          if T.null name
-            then goDeclarators dk firstId' ds
-            else declareInScope (Declaration nodeId dk name) (goDeclarators dk firstId' ds)
-        Nothing -> goDeclarators dk firstId ds
+          rest <- if T.null name
+                    then goDeclarators dk ds
+                    else declareInScope (Declaration nodeId dk name) (goDeclarators dk ds)
+          return ((name, nodeId) : rest)
+        Nothing -> goDeclarators dk ds
+
+-- | VariableDeclaration: walk every declarator (emitting nodes + scope edges)
+-- and return the first declarator's node id, preserving 'walkNode's
+-- @Maybe Text@ contract (a declaration as a whole resolves to its first binding).
+ruleVariableDeclaration :: ASTNode -> Analyzer (Maybe Text)
+ruleVariableDeclaration node = do
+  binds <- ruleVariableDeclarationBindings node
+  return $ case binds of
+    ((_, firstId) : _) -> Just firstId
+    []                 -> Nothing
 
 -- | VariableDeclarator: emit VARIABLE or CONSTANT node + DECLARES edge + ASSIGNED_FROM
 ruleVariableDeclarator :: ASTNode -> ASTNode -> Analyzer (Maybe Text)
@@ -623,8 +639,24 @@ ruleExportNamedDeclaration node = do
     , gnExported = True, gnMetadata = Map.empty
     }
 
-  -- Walk the declaration if present (withExported so child nodes get exported=True)
+  -- Walk the declaration if present (withExported so child nodes get exported=True).
+  -- A VariableDeclaration may bind several names (export const a = 1, b = 2); every
+  -- binding must get its own EXPORTS edge + export-index entry, not just the first.
   case getChildrenMaybe "declaration" node of
+    Just decl@(VariableDeclarationNode _ _) -> do
+      binds <- withExported $ withAncestor node (ruleVariableDeclarationBindings decl)
+      forM_ binds $ \(bindName, childId) -> do
+        emitEdge GraphEdge
+          { geSource = nodeId, geTarget = childId
+          , geType = "EXPORTS", geMetadata = Map.empty
+          }
+        -- Destructuring declarators (export const { a, b } = x) have no single
+        -- binding name today; that is a pre-existing gap, left unchanged here.
+        if T.null bindName
+          then return ()
+          else emitExport ExportInfo
+                 { eiName = bindName, eiNodeId = childId
+                 , eiKind = NamedExport, eiSource = Nothing }
     Just decl -> do
       mChildId <- withExported $ withAncestor node (walkNode decl)
       forM_ mChildId $ \childId -> do

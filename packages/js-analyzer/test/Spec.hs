@@ -219,6 +219,29 @@ exportTests = do
           ]
     hasExport "*" ReExport fa `shouldBe` True
 
+  -- Test 8b: export const a = 1, b = 2 -- every declarator must be exported
+  it "exports every declarator of a multi-declarator export" $ do
+    let fa = analyzeAST $ BL.concat
+          [ "{\"type\":\"Program\",\"start\":0,\"end\":26,\"body\":["
+          , "{\"type\":\"ExportNamedDeclaration\",\"start\":0,\"end\":26,"
+          , "\"declaration\":{\"type\":\"VariableDeclaration\",\"start\":7,\"end\":25,\"kind\":\"const\",\"declarations\":["
+          , "{\"type\":\"VariableDeclarator\",\"start\":13,\"end\":18,"
+          , "\"id\":{\"type\":\"Identifier\",\"start\":13,\"end\":14,\"name\":\"a\"},"
+          , "\"init\":{\"type\":\"Literal\",\"start\":17,\"end\":18,\"value\":1,\"raw\":\"1\"}},"
+          , "{\"type\":\"VariableDeclarator\",\"start\":20,\"end\":25,"
+          , "\"id\":{\"type\":\"Identifier\",\"start\":20,\"end\":21,\"name\":\"b\"},"
+          , "\"init\":{\"type\":\"Literal\",\"start\":24,\"end\":25,\"value\":2,\"raw\":\"2\"}}"
+          , "]},\"specifiers\":[]}"
+          , "]}"
+          ]
+    hasExport "a" NamedExport fa `shouldBe` True
+    hasExport "b" NamedExport fa `shouldBe` True
+    exportNode <- requireNode "EXPORT" "named" fa
+    aNode <- requireNode "CONSTANT" "a" fa
+    bNode <- requireNode "CONSTANT" "b" fa
+    hasEdge "EXPORTS" (gnId exportNode) (gnId aNode) fa `shouldBe` True
+    hasEdge "EXPORTS" (gnId exportNode) (gnId bNode) fa `shouldBe` True
+
 
 edgeCaseTests :: Spec
 edgeCaseTests = do
