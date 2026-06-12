@@ -677,7 +677,24 @@ fn walk_node_inner(node: &ruby_prism::Node<'_>, ctx: &mut Ctx) {
 
             let is_static = dn.receiver().is_some();
             let parent_name = ctx.enclosing_class_or_module();
-            let node_id = semantic_id(&ctx.file, "FUNCTION", &name, parent_name.as_deref(), None);
+            // Singleton/class methods (`def self.foo`, `def Klass.foo`) live directly
+            // in the class body, so they share the same enclosing class as instance
+            // methods. Without the receiver in the identity, `def foo` and
+            // `def self.foo` collapse onto one semantic ID and one silently
+            // overwrites the other. Encode the receiver text into the ID (kept out
+            // of the `name` field so name-based call resolution still matches the
+            // bare method name).
+            let id_name = if is_static {
+                let recv_text = dn
+                    .receiver()
+                    .map(|r| String::from_utf8_lossy(r.location().as_slice()).to_string())
+                    .unwrap_or_else(|| "self".to_string());
+                format!("{recv_text}.{name}")
+            } else {
+                name.clone()
+            };
+            let node_id =
+                semantic_id(&ctx.file, "FUNCTION", &id_name, parent_name.as_deref(), None);
 
             let mut metadata = HashMap::from([
                 Ctx::meta_text("kind", "method"),
@@ -3302,6 +3319,45 @@ mod tests {
         let names: Vec<&str> = params.iter().map(|p| p.name.as_str()).collect();
         assert!(names.contains(&"x"));
         assert!(names.contains(&"y"));
+    }
+
+    // 4b. An instance method and a same-named class method must get DISTINCT
+    // semantic IDs. `def foo` and `def self.foo` are two different Ruby methods
+    // and must not collapse onto one graph node.
+    #[test]
+    fn test_instance_and_class_method_distinct_ids() {
+        let a = analyze("class Bar\n  def foo\n  end\n  def self.foo\n  end\nend");
+        let functions = find_nodes_by_type(&a, "FUNCTION");
+        assert_eq!(
+            functions.len(),
+            2,
+            "expected 2 FUNCTION nodes (instance foo + class self.foo)"
+        );
+
+        let ids: std::collections::HashSet<&str> =
+            functions.iter().map(|f| f.id.as_str()).collect();
+        assert_eq!(
+            ids.len(),
+            2,
+            "instance and class method must have DISTINCT semantic IDs, got: {:?}",
+            functions.iter().map(|f| &f.id).collect::<Vec<_>>()
+        );
+
+        let static_fn = functions
+            .iter()
+            .find(|f| f.metadata.get("static") == Some(&serde_json::Value::Bool(true)));
+        assert!(
+            static_fn.is_some(),
+            "the `def self.foo` node must carry static:true"
+        );
+        // The instance method has no static flag.
+        let instance_fn = functions
+            .iter()
+            .find(|f| f.metadata.get("static").is_none());
+        assert!(
+            instance_fn.is_some(),
+            "the instance `def foo` node must not carry static:true"
+        );
     }
 
     // 5. require 'json' -> IMPORT
