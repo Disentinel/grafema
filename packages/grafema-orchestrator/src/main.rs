@@ -3350,14 +3350,16 @@ mod tests {
     ) -> std::path::PathBuf {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+        // Unique per call: pid + a process-wide counter. A timestamp alone is
+        // NOT unique — concurrent tests can land in the same SystemTime tick,
+        // collide on the socket name, and the second bind panics (flaky
+        // EADDRINUSE in pack_failure_fails_the_run_with_a_loud_summary).
+        static SOCK_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let dir = std::env::temp_dir();
         let sock = dir.join(format!(
             "grafema-fake-rfdb-{}-{}.sock",
             std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            SOCK_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         let _ = std::fs::remove_file(&sock);
         let listener = std::os::unix::net::UnixListener::bind(&sock).expect("bind fake socket");

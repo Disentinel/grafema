@@ -525,8 +525,8 @@ async function typeInferenceLegacy(client) {
 
 async function createBuiltinNodes(client) {
   const classIds = new Map();
-  const nodes = [];
   const edgesBatch = [];
+  let nodesCreated = 0;
 
   for (const [className, methods] of Object.entries(BUILTINS)) {
     let classNodeId = null;
@@ -538,74 +538,82 @@ async function createBuiltinNodes(client) {
     }
 
     if (!classNodeId) {
+      // The server derives the numeric node id deterministically by hashing the
+      // string id we supply (string_id_to_u128), so the id is known at write
+      // time. Do NOT re-query for it: under MVCC an unflushed node is invisible
+      // to same-session reads, so a read-after-add returns null and the
+      // HAS_METHOD edge would be silently dropped (and skipped forever on
+      // later runs, because the node then exists).
+      classNodeId = `builtin::${className}`;
       await client.addNodes([{
-        id: `builtin::${className}`,
+        id: classNodeId,
         type: 'CLASS',
         name: className,
         file: '<builtin>',
         exported: true,
         metadata: JSON.stringify({ _source: 'type-inference', builtin: true }),
       }]);
-      for await (const n of client.queryNodes({ type: 'CLASS', name: className })) {
-        if (n.file === '<builtin>') {
-          classNodeId = String(n.id);
-          break;
-        }
-      }
+      nodesCreated++;
     }
-
-    if (!classNodeId) continue;
     classIds.set(className, classNodeId);
 
     for (const methodName of methods) {
-      let exists = false;
+      let methodId = null;
       for await (const n of client.queryNodes({ type: 'METHOD', name: methodName })) {
         if (n.file === '<builtin>') {
           const meta = typeof n.metadata === 'string' ? JSON.parse(n.metadata || '{}') : {};
-          if (meta.parentClass === className) { exists = true; break; }
+          if (meta.parentClass === className) { methodId = String(n.id); break; }
         }
       }
-      if (exists) continue;
 
-      await client.addNodes([{
-        id: `builtin::${className}::${methodName}`,
-        type: 'METHOD',
-        name: methodName,
-        file: '<builtin>',
-        exported: true,
-        metadata: JSON.stringify({
-          _source: 'type-inference', builtin: true, kind: 'method',
-          parentClass: className,
-        }),
-      }]);
+      if (!methodId) {
+        methodId = `builtin::${className}::${methodName}`;
+        await client.addNodes([{
+          id: methodId,
+          type: 'METHOD',
+          name: methodName,
+          file: '<builtin>',
+          exported: true,
+          metadata: JSON.stringify({
+            _source: 'type-inference', builtin: true, kind: 'method',
+            parentClass: className,
+          }),
+        }]);
+        nodesCreated++;
+      }
 
-      let methodNumId = null;
-      for await (const n of client.queryNodes({ type: 'METHOD', name: methodName })) {
-        if (n.file === '<builtin>') {
-          const meta = typeof n.metadata === 'string' ? JSON.parse(n.metadata || '{}') : {};
-          if (meta.parentClass === className) { methodNumId = String(n.id); break; }
-        }
-      }
-      if (methodNumId) {
-        edgesBatch.push({
-          src: classNodeId,
-          dst: methodNumId,
-          type: 'HAS_METHOD',
-          metadata: JSON.stringify({ _source: 'type-inference' }),
-        });
-      }
+      // Always (re-)assert the edge — addEdges is an upsert, so this is
+      // idempotent AND heals graphs where a previous run created the METHOD
+      // node but lost the edge to the read-after-add bug.
+      edgesBatch.push({
+        src: classNodeId,
+        dst: methodId,
+        type: 'HAS_METHOD',
+        metadata: JSON.stringify({ _source: 'type-inference' }),
+      });
     }
   }
 
-  if (nodes.length > 0) {
-    await client.addNodes(nodes);
-    console.error(`[type-inference] Created ${nodes.length} builtin nodes`);
+  if (nodesCreated > 0) {
+    console.error(`[type-inference] Created ${nodesCreated} builtin nodes`);
+    // Publish the new nodes before adding edges that reference them by string
+    // id: the server resolves a string src/dst via get_node(hash) only for
+    // published nodes — an unpublished endpoint falls into a full-graph
+    // semantic-id scan per edge. Flushing also makes the builtin CLASS nodes
+    // visible to the classIndex queries later in this same session.
+    await client.flush();
   }
+
   if (edgesBatch.length > 0) {
     const BATCH = 500;
     for (let i = 0; i < edgesBatch.length; i += BATCH) {
       await client.addEdges(edgesBatch.slice(i, i + BATCH));
     }
+    // Publish HAS_METHOD edges now rather than relying on the end-of-process
+    // flush: if a later phase crashes the plugin, every staged write is lost
+    // and the builtin METHOD nodes (already published above) become permanent
+    // orphans — the exact failure mode this function used to have.
+    await client.flush();
   }
 
   return classIds;
