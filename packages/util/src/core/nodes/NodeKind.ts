@@ -176,6 +176,53 @@ export function matchesTypePattern(nodeType: string, pattern: string): boolean {
 }
 
 /**
+ * Endpoint-type aliases — single source of truth.
+ *
+ * The analyzers emit *namespaced* endpoint types (`db:query`, `http:request`,
+ * `fs:operation`, `net:request`, `net:stdio`), but legacy code and older
+ * graphs use the un-namespaced names (`DATABASE_QUERY`, `HTTP_REQUEST`,
+ * `FILESYSTEM`, `NETWORK`). Any code that keys node identity or diff semantics
+ * off these types MUST treat the two spellings as equivalent — otherwise a
+ * namespaced node silently falls through to a generic path (e.g. a name-based
+ * stable ID that collides two distinct `db:query` nodes sharing a name).
+ *
+ * This map collapses every known spelling to one canonical legacy name. It is
+ * deliberately the only place this taxonomy lives; consumers call
+ * {@link canonicalEndpointType} rather than re-listing the pairs locally.
+ *
+ * Mapping (any spelling → canonical):
+ * - `db:query`      → `DATABASE_QUERY`
+ * - `http:request`  → `HTTP_REQUEST`
+ * - `fs:operation`  → `FILESYSTEM`
+ * - `net:request`, `net:stdio`, `EXTERNAL_NETWORK`, `EXTERNAL_STDIO` → `NETWORK`
+ */
+export const ENDPOINT_TYPE_ALIASES: Readonly<Record<string, string>> = Object.freeze({
+  'db:query': 'DATABASE_QUERY',
+  'http:request': 'HTTP_REQUEST',
+  'fs:operation': 'FILESYSTEM',
+  'net:request': 'NETWORK',
+  'net:stdio': 'NETWORK',
+  EXTERNAL_NETWORK: 'NETWORK',
+  EXTERNAL_STDIO: 'NETWORK',
+});
+
+/**
+ * Canonicalize an endpoint type to its legacy name.
+ *
+ * Returns the canonical legacy spelling for any aliased endpoint type
+ * (see {@link ENDPOINT_TYPE_ALIASES}); for every other type the input is
+ * returned unchanged. Use this anywhere endpoint identity or diff semantics
+ * must be spelling-agnostic, so `db:query` ≡ `DATABASE_QUERY` etc.
+ *
+ * @param nodeType - node.type to canonicalize
+ * @returns canonical legacy endpoint type, or the input unchanged
+ */
+export function canonicalEndpointType(nodeType: string): string {
+  if (!nodeType) return nodeType;
+  return ENDPOINT_TYPE_ALIASES[nodeType] ?? nodeType;
+}
+
+/**
  * Check if type is a guarantee type (guarantee:queue, guarantee:api, etc.)
  */
 export function isGuaranteeType(nodeType: string): boolean {
