@@ -622,6 +622,61 @@ fn pack_failure_summary(failures: &[(String, String)]) -> String {
     out
 }
 
+/// Phase 8n-go — commit (or tombstone) the GO module-path fact (go pack
+/// precondition P1).
+///
+/// The `go.mod` module path the legacy daemon consumed over the wire becomes a
+/// `WORKSPACE_PACKAGE` node with metadata `language="go"` that `go_imports.dl` /
+/// `go_calls.dl` join. Must land BEFORE the pack phase. The P3 variant selection
+/// (no-go.mod suffix fallback) keys off the same discovery — see
+/// [`run_stdlib_rule_packs`].
+///
+/// SELF-HEALING LIFECYCLE (the reason this is a function, not a bare commit):
+/// the fact rides the synthetic changed-file `go.mod`, so the server's deletion
+/// phase tombstones ANY prior-generation `WORKSPACE_PACKAGE` node on that file
+/// before re-adding the current one. The js workspace facts (8n) get away with
+/// an empty changed-file because they ride a REAL analyzed entry-point file the
+/// analysis phase already tombstones; `go.mod` is never analyzed, so without its
+/// own changed-file a stale fact survives forever. The commit ALWAYS fires —
+/// even when `go_module_path` is `None` (go.mod removed or unparsable) and no
+/// node is produced — so a removed or RENAMED module path cannot leave a stale
+/// `language="go"` fact behind. A stale fact would let `go_imports` (which joins
+/// the fact) AND `go_imports_nomod` (which runs when no fact resolved) BOTH
+/// fire, breaking the "never both fire" guarantee.
+///
+/// Mirrors the `__grafema_virtual/unresolved-diagnostics` precedent: the
+/// declaring file IS the GC unit.
+async fn commit_go_module_fact(
+    rfdb: &mut rfdb::RfdbClient,
+    go_module_path: Option<&str>,
+    root: &str,
+    authority: &str,
+    generation: u64,
+) -> Result<()> {
+    let go_changed_file = vec!["go.mod".to_string()];
+    let go_fact_nodes: Vec<rfdb::WireNode> = match go_module_path {
+        Some(go_mp) => {
+            let mut go_fact = analyzer::go_module_workspace_fact(go_mp, root, authority);
+            gc::stamp_node_metadata(&mut go_fact.metadata, generation, "workspace-packages");
+            vec![go_fact]
+        }
+        None => Vec::new(),
+    };
+    rfdb.commit_batch(&go_changed_file, &go_fact_nodes, &[], true)
+        .await
+        .context("Failed to commit GO module-path fact")?;
+    match go_module_path {
+        Some(go_mp) => tracing::info!(
+            module_path = %go_mp,
+            "GO module-path WORKSPACE_PACKAGE fact committed"
+        ),
+        None => tracing::info!(
+            "No GO module-path fact — go.mod tombstoned (removed or unparsable)"
+        ),
+    }
+    Ok(())
+}
+
 /// Phase 9 — the rule-pack phase: run the canonical stdlib rule packs in
 /// [`STDLIB_RULE_PACKS`] order (the ordering contract documented at the const).
 /// This is the ONLY producer of the resolved slices (DEPENDS_ON included; the
@@ -2121,18 +2176,14 @@ async fn main() -> Result<()> {
                 config::discover_go_module_path(&cfg.root)
             };
             let go_nomod_fallback = !go_files.is_empty() && go_module_path_for_packs.is_none();
-            if let Some(ref go_mp) = go_module_path_for_packs {
-                let mut go_fact = analyzer::go_module_workspace_fact(
-                    go_mp,
-                    &cfg.root.display().to_string(),
-                    &authority,
-                );
-                gc::stamp_node_metadata(&mut go_fact.metadata, generation, "workspace-packages");
-                rfdb.commit_batch(&[], &[go_fact], &[], true)
-                    .await
-                    .context("Failed to commit GO module-path fact")?;
-                tracing::info!(module_path = %go_mp, "GO module-path WORKSPACE_PACKAGE fact committed");
-            }
+            commit_go_module_fact(
+                &mut rfdb,
+                go_module_path_for_packs.as_deref(),
+                &cfg.root.display().to_string(),
+                &authority,
+                generation,
+            )
+            .await?;
 
             // 9. Rule-pack phase. The server's capability was asserted at
             // connect time (fail-fast above), so this phase ALWAYS runs — see
@@ -3540,6 +3591,186 @@ mod tests {
             }
         });
         sock
+    }
+
+    /// A commit recorded by [`spawn_recording_rfdb_server`]: the `changedFiles`
+    /// and the committed nodes (decoded as JSON) from one `commitBatch` request.
+    #[derive(Clone, Debug)]
+    struct RecordedCommit {
+        changed_files: Vec<String>,
+        nodes: Vec<serde_json::Value>,
+    }
+
+    /// Fake RFDB server that RECORDS every `commitBatch` request (its
+    /// `changedFiles` + node payloads) into a shared buffer, so a test can assert
+    /// the orchestrator's wire contract directly. `hello` advertises
+    /// `datalogDerive`; `commitBatch` is acked with a delta echoing node counts.
+    fn spawn_recording_rfdb_server() -> (std::path::PathBuf, std::sync::Arc<std::sync::Mutex<Vec<RecordedCommit>>>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        static SOCK_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let dir = std::env::temp_dir();
+        let sock = dir.join(format!(
+            "grafema-rec-rfdb-{}-{}.sock",
+            std::process::id(),
+            SOCK_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_file(&sock);
+        let listener = std::os::unix::net::UnixListener::bind(&sock).expect("bind fake socket");
+        listener.set_nonblocking(true).expect("nonblocking");
+        let listener = tokio::net::UnixListener::from_std(listener).expect("tokio listener");
+
+        let recorded = std::sync::Arc::new(std::sync::Mutex::new(Vec::<RecordedCommit>::new()));
+        let recorded_srv = recorded.clone();
+
+        tokio::spawn(async move {
+            let (mut stream, _) = match listener.accept().await {
+                Ok(x) => x,
+                Err(_) => return,
+            };
+            loop {
+                let mut len_buf = [0u8; 4];
+                if stream.read_exact(&mut len_buf).await.is_err() {
+                    return;
+                }
+                let len = u32::from_be_bytes(len_buf) as usize;
+                let mut buf = vec![0u8; len];
+                if stream.read_exact(&mut buf).await.is_err() {
+                    return;
+                }
+                let req: serde_json::Value = rmp_serde::from_slice(&buf).expect("decode request");
+                let request_id = req["requestId"].as_str().unwrap_or("r?").to_string();
+                let cmd = req["cmd"].as_str().unwrap_or("");
+                let resp = match cmd {
+                    "hello" => serde_json::json!({
+                        "requestId": request_id,
+                        "protocolVersion": 3u32,
+                        "serverVersion": "fake-rfdb-rec",
+                        "features": ["datalogDerive"],
+                    }),
+                    "commitBatch" => {
+                        let changed_files: Vec<String> = req["changedFiles"]
+                            .as_array()
+                            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                            .unwrap_or_default();
+                        let nodes: Vec<serde_json::Value> = req["nodes"]
+                            .as_array()
+                            .cloned()
+                            .unwrap_or_default();
+                        let n_nodes = nodes.len() as u32;
+                        recorded_srv
+                            .lock()
+                            .unwrap()
+                            .push(RecordedCommit { changed_files, nodes });
+                        serde_json::json!({
+                            "requestId": request_id,
+                            "delta": { "nodesAdded": n_nodes, "nodesRemoved": 0u32,
+                                       "edgesAdded": 0u32, "edgesRemoved": 0u32 },
+                        })
+                    }
+                    other => serde_json::json!({
+                        "requestId": request_id,
+                        "error": format!("recording server does not implement {other}"),
+                        "code": "E-TEST-UNIMPLEMENTED",
+                    }),
+                };
+                let payload = rmp_serde::to_vec_named(&resp).expect("encode response");
+                let len = (payload.len() as u32).to_be_bytes();
+                if stream.write_all(&len).await.is_err() || stream.write_all(&payload).await.is_err() {
+                    return;
+                }
+                let _ = stream.flush().await;
+            }
+        });
+        (sock, recorded)
+    }
+
+    /// Loop-1 — the GO module-path fact's self-healing lifecycle
+    /// ([`commit_go_module_fact`]). The fact's staleness was the bug: it rode an
+    /// EMPTY changed-file, and the removal case skipped the commit entirely, so a
+    /// removed or renamed go.mod left a stale `language="go"` WORKSPACE_PACKAGE
+    /// node — letting `go_imports` AND `go_imports_nomod` both fire.
+    ///
+    /// The fix: ALWAYS commit on the synthetic changed-file `go.mod`, so the
+    /// server's per-file deletion phase tombstones the prior fact every run.
+    /// This asserts the orchestrator's WIRE CONTRACT (the deletion itself is the
+    /// server's job, exercised by its own tests): every call carries
+    /// `changedFiles == ["go.mod"]`, the happy path carries exactly one
+    /// `language="go"` WORKSPACE_PACKAGE node, a rename carries the NEW path (the
+    /// old node is left to the file-deletion phase, never re-added), and removal
+    /// carries ZERO nodes (pure tombstone) — the latter two are what a bare
+    /// `if let Some` commit could never express.
+    #[tokio::test]
+    async fn go_module_fact_self_heals_on_rename_and_removal() {
+        let (sock, recorded) = spawn_recording_rfdb_server();
+        let mut rfdb = rfdb::RfdbClient::connect(&sock).await.expect("connect recording server");
+
+        // Run 1 — happy path: go.mod present, module path A.
+        commit_go_module_fact(&mut rfdb, Some("github.com/acme/old"), "/proj", "github.com/acme/old", 1)
+            .await
+            .expect("happy-path commit");
+        // Run 2 — RENAME: same go.mod, new module path B.
+        commit_go_module_fact(&mut rfdb, Some("github.com/acme/new"), "/proj", "github.com/acme/old", 2)
+            .await
+            .expect("rename commit");
+        // Run 3 — REMOVAL: go.mod gone / unparsable → None.
+        commit_go_module_fact(&mut rfdb, None, "/proj", "github.com/acme/old", 3)
+            .await
+            .expect("removal commit");
+
+        let commits = recorded.lock().unwrap().clone();
+        assert_eq!(commits.len(), 3, "one commit fired per run — removal is NOT skipped");
+
+        // EVERY run rides the synthetic changed-file `go.mod` so the server's
+        // deletion phase tombstones the prior generation's fact before re-add.
+        for (i, c) in commits.iter().enumerate() {
+            assert_eq!(
+                c.changed_files,
+                vec!["go.mod".to_string()],
+                "run {} must declare go.mod as the changed-file (else stale fact survives)",
+                i + 1
+            );
+        }
+
+        // Helper: assert a commit carries exactly one language="go"
+        // WORKSPACE_PACKAGE node with the given module path as its name.
+        let assert_single_go_fact = |c: &RecordedCommit, expected_name: &str, run: &str| {
+            assert_eq!(c.nodes.len(), 1, "{run}: exactly one fact node");
+            let n = &c.nodes[0];
+            assert_eq!(n["nodeType"], "WORKSPACE_PACKAGE", "{run}: node type");
+            assert_eq!(n["name"], expected_name, "{run}: module path is the first-class name");
+            assert_eq!(n["file"], "go.mod", "{run}: declaring file");
+            let meta: serde_json::Value =
+                serde_json::from_str(n["metadata"].as_str().expect("metadata string"))
+                    .expect("metadata json");
+            assert_eq!(meta["language"], "go", "{run}: go discriminator on metadata");
+        };
+
+        // Happy path: exactly one fact, the OLD module path.
+        assert_single_go_fact(&commits[0], "github.com/acme/old", "happy-path");
+
+        // Rename: exactly one fact, the NEW module path. The old fact's
+        // semantic id differs (id embeds the module path), so without the
+        // go.mod changed-file the old node would linger; the deletion phase on
+        // `go.mod` is what reaps it. Here we assert the new fact is the only one
+        // committed (the orchestrator never re-emits the old name).
+        assert_single_go_fact(&commits[1], "github.com/acme/new", "rename");
+        let old_id = analyzer::go_module_workspace_fact(
+            "github.com/acme/old", "/proj", "github.com/acme/old",
+        ).id;
+        let new_id = commits[1].nodes[0]["id"].as_str().unwrap();
+        assert_ne!(old_id, new_id, "rename changes the node id — old must be tombstoned, not upserted");
+
+        // Removal: ZERO nodes — a pure tombstone commit. With no fact present,
+        // the changed-file `go.mod` still fires the deletion phase, so the
+        // stale fact from a prior run is removed and the `nomod` variant can
+        // run cleanly without `go_imports` also matching a ghost fact.
+        assert!(
+            commits[2].nodes.is_empty(),
+            "removal commits no node (pure tombstone via the go.mod changed-file)"
+        );
+
+        let _ = std::fs::remove_file(&sock);
     }
 
     /// Wave 6 fail-fast: against a server whose Hello does NOT advertise
