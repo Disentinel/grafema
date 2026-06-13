@@ -1,0 +1,85 @@
+% go_types.dl — in-engine replacement for the GoTypeResolution.hs resolver
+% (packages/go-resolve/src/GoTypeResolution.hs): VARIABLE → CLASS/INTERFACE
+% TYPE_OF edges (:73-88) and FUNCTION → CLASS/INTERFACE RETURNS edges per
+% comma-separated return type (:95-111). Shared pipeline: recursive `*` /
+% `[]` prefix strip (:47-51), the 21-primitive skip (:27-34), and the global
+% name → node TypeIndex over CLASS + INTERFACE (:60-66).
+%
+% IDIOMS:
+%   * prefix strip = a recursive derived predicate over strictly-shrinking
+%     strings (terminates), one rule per prefix; the clean row is the
+%     fixpoint member with neither prefix (not_starts_with twice — spelled
+%     "[]" per verdict C6; the residual "map[…" / sized-array strings never
+%     match a type_node key, parity for free);
+%   * comma SPLIT = right-peel with `last_segment` (identity-when-no-
+%     separator, builtin.rs) + concat + strip_suffix — no split/3 builtin
+%     needed; return_type is comma-joined with NO spaces (Declarations.hs
+%     :126-128, goTypeToName emits no commas) so the legacy `T.strip` is a
+%     no-op — EXACT;
+%   * the 21 primitives are ground facts (the js_local_refs rt_global
+%     precedent), matching the legacy `primitives` set verbatim (:28-34).
+%
+% NUMBERED DELTAS vs the resolver (everything not listed is exact):
+%   DELTA G7-1 (SUPERSET, bounded by duplicate type names): the TypeIndex is
+%     global last-wins (Map.insert, :60-66 — and a CLASS/INTERFACE name
+%     collision resolves to whichever node folded last); set semantics
+%     derives one edge per same-named type node. Same class as the
+%     go_calls G5-1 / go_interfaces G6-2 tie-breaks.
+%   Qualified types ("pkg.User" — goTypeToName of a selector is the BARE
+%     `sel`, Declarations.hs:641, so these surface as "User" and resolve by
+%     bare name in legacy and pack alike), map/chan/func types (never a
+%     type_node key) — parity for free.
+%   Legacy emits one edge PER comma part including duplicates ("(*User,
+%     *User)") — duplicates collapse under the graph's edge-set semantics for
+%     legacy too, so set semantics is EXACT (spec step 8).
+%   File gate: ends_with .go on every base relation (orchestrator stream
+%     filter; VARIABLE/FUNCTION/CLASS/INTERFACE are shared vocabulary).
+%   Metadata: legacy edges carry EMPTY metadata (:75-79, :97-101) — none
+%     projected.
+%
+% MAINTAIN ENVELOPE: negation (\+ go_primitive) + node_attr ⇒ scratch floor.
+%
+% ORDERING: consumes analyzer EDB only; produces TYPE_OF / RETURNS (no
+% in-engine consumer today) — position not load-bearing.
+
+% ── The 21 Go primitives (verbatim from primitives :28-34) ──────────────────
+go_primitive("int"). go_primitive("int8"). go_primitive("int16").
+go_primitive("int32"). go_primitive("int64"). go_primitive("uint").
+go_primitive("uint8"). go_primitive("uint16"). go_primitive("uint32").
+go_primitive("uint64"). go_primitive("uintptr"). go_primitive("float32").
+go_primitive("float64"). go_primitive("complex64"). go_primitive("complex128").
+go_primitive("string"). go_primitive("bool"). go_primitive("byte").
+go_primitive("rune"). go_primitive("error"). go_primitive("any").
+
+% ── The type index (CLASS + INTERFACE by name, :60-66) ──────────────────────
+type_node(N, Ty) :- node(Ty, "CLASS"), attr(Ty, "file", TF),
+                    ends_with(TF, ".go"), attr(Ty, "name", N).
+type_node(N, Ty) :- node(Ty, "INTERFACE"), attr(Ty, "file", TF),
+                    ends_with(TF, ".go"), attr(Ty, "name", N).
+
+% ── TYPE_OF: VARIABLE `type` metadata → type node (:73-88) ──────────────────
+vt(V, T)  :- node(V, "VARIABLE"), attr(V, "file", F), ends_with(F, ".go"),
+             node_attr(V, "type", T).
+vt(V, T2) :- vt(V, T), strip_prefix(T, "*", T2).
+vt(V, T2) :- vt(V, T), strip_prefix(T, "[]", T2).
+vt_clean(V, T) :- vt(V, T), not_starts_with(T, "*"), not_starts_with(T, "[]"),
+                  neq(T, "").
+
+@materialize(edge_type = "TYPE_OF", mode = "additive")
+go_type_of(V, Ty) :- vt_clean(V, T), \+ go_primitive(T), type_node(T, Ty).
+
+% ── RETURNS: FUNCTION `return_type` comma parts → type node (:95-111) ───────
+% Right-peel: rt holds the comma-joined string and every "drop the last
+% part" prefix; ret0 takes the last part of each — together, every part.
+rt(Fn, R)  :- node(Fn, "FUNCTION"), attr(Fn, "file", F), ends_with(F, ".go"),
+              node_attr(Fn, "return_type", R).
+rt(Fn, R2) :- rt(Fn, R), last_segment(R, ",", L), concat(",", L, CL),
+              strip_suffix(R, CL, R2).
+ret0(Fn, T)  :- rt(Fn, R), last_segment(R, ",", T).
+ret0(Fn, T2) :- ret0(Fn, T), strip_prefix(T, "*", T2).
+ret0(Fn, T2) :- ret0(Fn, T), strip_prefix(T, "[]", T2).
+ret_clean(Fn, T) :- ret0(Fn, T), not_starts_with(T, "*"),
+                    not_starts_with(T, "[]"), neq(T, "").
+
+@materialize(edge_type = "RETURNS", mode = "additive")
+go_returns(Fn, Ty) :- ret_clean(Fn, T), \+ go_primitive(T), type_node(T, Ty).

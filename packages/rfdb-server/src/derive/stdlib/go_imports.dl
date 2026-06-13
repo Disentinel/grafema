@@ -1,0 +1,100 @@
+% go_imports.dl — in-engine replacement for the GoImportResolution.hs resolver
+% (packages/go-resolve/src/GoImportResolution.hs): same-module IMPORT → MODULE
+% IMPORTS_FROM edges, driven by the GO module-path fact (precondition P1: the
+% orchestrator commits the go.mod module path as a WORKSPACE_PACKAGE node with
+% node_attr language="go" — main.rs P1 commit; before that fact the module
+% path was wire-only and invisible to packs).
+%
+% LEGACY ALGORITHM (resolveOneImport, Hs:116-145):
+%   * skip stdlib imports — "first path segment has no dot" (isStdLib :86-89);
+%   * strip the module-path prefix (PLAIN T.stripPrefix + dropWhile '/', :123-126)
+%     to a relative package directory;
+%   * look up the dir in the PackageIndex (dir → MODULE ids, buildPackageIndex
+%     :57-64) and emit IMPORTS_FROM to the FIRST module id (:129);
+%   * import path == module path resolves to the ROOT directory ("" key).
+%   The empty-module-path suffix fallback (findBySuffix :152-163) is NOT here —
+%   it is the separate `go_imports_nomod` VARIANT pack the orchestrator selects
+%   when go.mod is absent (precondition P3: an in-pack "fact is absent" test is
+%   the §3 cross-join the planner refuses).
+%
+% PLANNER-LEGAL SPELLING (verdict C1): `go_mod(MP)` may not appear as a leg
+% disconnected from the import path. The established respelling is the
+% js_module_imports `spec_pfx` idiom — derive every '/'-boundary PREFIX of the
+% import path by right-peel (strictly shrinking ⇒ terminates), EQUALITY-join
+% `go_mod` on the peeled prefix, then strip the "/"-boundary and join
+% `module_in_dir` on the BOUND relative dir. The root case (P == module path)
+% is its own clause with `go_mod(P)` as a bound filter-join. Requiring the
+% "/" boundary removes the legacy plain-stripPrefix boundary bug ("…/p"
+% string-prefix-matches "…/project2", then the dir lookup misses anyway) — no
+% edge-set effect (the legacy miss is reproduced as a non-match).
+%
+% NUMBERED DELTAS vs the resolver (everything not listed is exact):
+%   DELTA G2-1 (CLOSED, was REFINED in the spec): the spec's draft dropped the
+%     isStdLib guard from the same-module arm and accepted a divergence for
+%     dot-less module paths (`module myapp` — legacy's isStdLib skips
+%     "myapp/util" BEFORE prefix-stripping). With the `first_segment` builtin
+%     (the spec's missing capability M1, now shipped) the guard is spelled
+%     EXACTLY: first '/'-segment contains a dot. No residue.
+%   DELTA G2-2 (SUPERSET, bounded by files-per-package): legacy emits ONE edge
+%     to the FIRST module id in the target directory (`tid : _`, Hs:129 —
+%     insertion order, nondeterministic across runs); set semantics derives one
+%     edge per MODULE node (= per .go file) in the package directory. Arguably
+%     truer — a Go package IS the directory. Bound: #files in the imported
+%     package.
+%   DELTA G2-3 moved to the `go_imports_nomod` variant pack (the fallback arm
+%     lives there).
+%   File gate (the rust_imports DELTA-5 class): the legacy input gate was the
+%     orchestrator's Language::Go stream filter (config.rs:751/796) — encoded
+%     here as ends_with(F, ".go") on every base relation; MODULE/IMPORT are
+%     shared vocabulary across analyzers.
+%   Diagnostics: none in legacy either (no stderr edge-count for imports).
+%   Metadata: legacy edges carry EMPTY metadata (Hs:142) — no meta projected,
+%     exact parity (engine provenance _source/_generation only).
+%
+% MAINTAIN ENVELOPE: negation (\+ mod_subdir) + node_attr ⇒ scratch floor
+% (accepted, same stance as every import pack).
+%
+% ORDERING (PRODUCER): produces IMPORTS_FROM — must run BEFORE depends (which
+% derives MODULE-level DEPENDS_ON from every IMPORTS_FROM edge,
+% node-type-agnostically — verdict C4; the legacy go branch fed the
+% orchestrator's all_imports_from_edges the same way, main.rs:1699-1703).
+
+% ── The GO module-path fact (P1) ─────────────────────────────────────────────
+go_mod(MP) :- node(W, "WORKSPACE_PACKAGE"), node_attr(W, "language", "go"),
+              attr(W, "name", MP).
+
+% ── Package-directory kernel (buildPackageIndex :57-64) ─────────────────────
+% dirname via basename + concat + strip_suffix (no dirname builtin); root-level
+% files ("main.go") yield NO strip_suffix row → the complement clause derives
+% the "" directory via derived-negation (\+ mod_subdir).
+go_module(M, F)      :- node(M, "MODULE"), attr(M, "file", F), ends_with(F, ".go").
+mod_dir(M, D)        :- go_module(M, F), basename(F, B), concat("/", B, SB),
+                        strip_suffix(F, SB, D).
+mod_subdir(M)        :- mod_dir(M, _).
+module_in_dir(D, M)  :- mod_dir(M, D).
+module_in_dir("", M) :- go_module(M, _), \+ mod_subdir(M).
+
+% ── Importer side ────────────────────────────────────────────────────────────
+go_import(I, P) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".go"),
+                   node_attr(I, "path", P).
+% Exact isStdLib gate (Hs:86-89): the FIRST '/'-segment contains a dot.
+go_import_nonstd(I, P) :- go_import(I, P), first_segment(P, "/", S1),
+                          string_contains(S1, ".").
+
+% '/'-boundary prefixes of each import path (the spec_pfx right-peel idiom).
+imp_pfx(P, P)  :- go_import(_, P).
+imp_pfx(P, D)  :- imp_pfx(P, X), last_segment(X, "/", L),
+                  concat("/", L, Tail), strip_suffix(X, Tail, D).
+
+% Resolved relative package directory per import. The root case binds Rel=""
+% as a BUILTIN OUTPUT (strip_prefix(P, P, Rel) — self-strip of a bound value),
+% NOT as a constant leg: `module_in_dir("", M)` standing alone is the exact
+% E-PLAN-003 shape verdict C1 rejected; a bound Rel makes the final join an
+% equality join (the verdict's prescription).
+imp_rel(I, Rel) :- go_import_nonstd(I, P), imp_pfx(P, MP), go_mod(MP),
+                   concat(MP, "/", MPS), strip_prefix(P, MPS, Rel).
+imp_rel(I, Rel) :- go_import_nonstd(I, P), go_mod(P), strip_prefix(P, P, Rel).
+
+% ── The materialized edge ────────────────────────────────────────────────────
+@materialize(edge_type = "IMPORTS_FROM", mode = "additive")
+go_import_from(I, M) :- imp_rel(I, Rel), module_in_dir(Rel, M).

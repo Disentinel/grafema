@@ -1,0 +1,103 @@
+% go_context.dl — in-engine replacement for the GoContextPropagation.hs
+% resolver (packages/go-resolve/src/GoContextPropagation.hs): context.Context
+% flow over resolved CALLS edges.
+%
+%   PROPAGATES_CONTEXT (enclosing FUNCTION → target FUNCTION, :167-176):
+%     target accepts context (certainly or possibly) AND the call's enclosing
+%     function accepts context (certainly or possibly).
+%   SPAWNS_WITH_CONTEXT / DEFERS_WITH_CONTEXT (CALL → target FUNCTION,
+%     :177-194): target accepts (certainly or possibly) and the CALL carries
+%     the goroutine / deferred flag — INDEPENDENT of the caller's own context
+%     status.
+%   Edge metadata (:148-152): `unresolved = true` iff the TARGET is only
+%     "possible" — on ALL three edge types; the caller's certainty never
+%     affects metadata (fixture Spec.hs:288-301). accepts_context /
+%     possible_context are mutually exclusive per function (the analyzer's
+%     contextMeta picks one, Declarations.hs:97-103) — no `\+ ctx_fn(T)`
+%     guard is needed on the possible arms.
+%
+% INPUT SEAM (precondition P2): consumes COMMITTED CALLS edges on .go files —
+% produced by go_calls, which MUST run first (legacy fed go-calls output
+% in-process, Main.hs:78-79 extractCallEdges). Graph CALLS on .go files come
+% exclusively from the go packs / go-resolve (the analyzer's own CALLS
+% DeferredRefs are dropped at the serde boundary — verdict C5), so the seam
+% sees exactly the go_calls slice (plus, during legacy coexistence, the
+% legacy edges — the same set modulo the go_calls deltas).
+%
+% NUMBERED DELTAS vs the resolver (everything not listed is exact):
+%   DELTA G9-1 (structural substitute, REFINED): the enclosing function is
+%     the CALL's literal CONTAINS parent (only function/method/closure bodies
+%     push a scope — ControlFlow.hs has ZERO withScope sites — so the parent
+%     IS the enclosing function) instead of the legacy (dir, parsed-name)
+%     lookup, whose map is also last-wins (:104-112). Calls inside closures:
+%     EXACT on both sides — legacy finds no index entry (closures excluded
+%     :107-108), the pack's parent is the closure node, excluded by
+%     \+ closure_fn.
+%   DELTA G9-2 (metadata representation): `unresolved` rides the meta()
+%     projection as the string "true" vs legacy MetaBool true — consumers
+%     reading the node_attr/edge_attr string surface see the identical
+%     "true" (the js packs' resolvedVia-projection class).
+%   DELTA G9-3 (NEW — legacy caller-lookup defect, pack REFINES; found
+%     implementing, missed by both the spec and its verdict — TWO independent
+%     failure layers):
+%     (a) the node ids the daemon receives are the orchestrator's
+%         PERCENT-ENCODED URIs (`…#CALL-%3Echeck%5Bin:Validate,h:e1be%5D`,
+%         live-probed) — `T.breakOn "[in:"` (:53) never matches `%5Bin:`;
+%     (b) even unencoded, analyzer CALL ids ALWAYS carry a position hash
+%         (Calls.hs:106), and extractEnclosingName (:57-59) takes everything
+%         up to "]" — "Validate,h:e1be" can never equal a function name in
+%         the (dir, name) lookup.
+%     On real analyzer output legacy emits ZERO PROPAGATES_CONTEXT edges
+%     (its Spec.hs fixtures pass only because the handcrafted ids are
+%     unencoded and hash-free). The pack's CONTAINS parent restores the
+%     intended semantics; the differential asserts legacy = 0 and classifies
+%     every pack row here (proven on the multi-package corpus: legacy=0,
+%     pack=5 — exactly the intended caller→callee context edges).
+%     SPAWNS/DEFERS are unaffected (no caller lookup) — corpus-proven exact.
+%   File gate: ends_with .go on the CALL side (orchestrator stream filter).
+%
+% MAINTAIN ENVELOPE: negation + node_attr ⇒ scratch floor (accepted).
+%
+% ORDERING (CONSUMER): MUST run after go_calls (P2 — reads its CALLS as
+% committed EDB; this program does not materialize CALLS, so the read is
+% legal EDB consumption, the shape_verifier precedent).
+
+% ── Context-accepting functions (:79-94; bools surface as "true") ───────────
+ctx_fn(T)  :- node(T, "FUNCTION"), node_attr(T, "accepts_context", "true").
+poss_fn(T) :- node(T, "FUNCTION"), node_attr(T, "possible_context", "true").
+
+% ── Resolved go CALLS edges (the P2 seam) ───────────────────────────────────
+go_calls_e(C, T) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".go"),
+                    edge(C, T, "CALLS"), node(T, "FUNCTION").
+
+% ── Enclosing function (DELTA G9-1/G9-3): the CONTAINS parent ────────────────
+closure_fn(EF) :- node(EF, "FUNCTION"), node_attr(EF, "kind", "closure").
+iface_fn(EF)   :- node(EF, "FUNCTION"), node_attr(EF, "kind", "interface_method").
+enc_fn(C, EF)  :- go_calls_e(C, _), edge(EF, C, "CONTAINS"),
+                  node(EF, "FUNCTION"), \+ closure_fn(EF), \+ iface_fn(EF).
+caller_ok(C)   :- enc_fn(C, EF), ctx_fn(EF).
+caller_ok(C)   :- enc_fn(C, EF), poss_fn(EF).
+
+% ── PROPAGATES_CONTEXT: enclosing fn → target (:167-176) ────────────────────
+@materialize(edge_type = "PROPAGATES_CONTEXT", mode = "additive")
+go_prop(EF, T) :- go_calls_e(C, T), ctx_fn(T), caller_ok(C), enc_fn(C, EF).
+
+@materialize(edge_type = "PROPAGATES_CONTEXT", mode = "additive", meta(unresolved))
+go_prop_u(EF, T, "true") :- go_calls_e(C, T), poss_fn(T), caller_ok(C),
+                            enc_fn(C, EF).
+
+% ── SPAWNS_WITH_CONTEXT / DEFERS_WITH_CONTEXT: call → target (:177-194) ─────
+% goroutine/deferred are MetaBool, stamped only when true (Calls.hs:127-128).
+@materialize(edge_type = "SPAWNS_WITH_CONTEXT", mode = "additive")
+go_spawn(C, T) :- go_calls_e(C, T), ctx_fn(T), node_attr(C, "goroutine", "true").
+
+@materialize(edge_type = "SPAWNS_WITH_CONTEXT", mode = "additive", meta(unresolved))
+go_spawn_u(C, T, "true") :- go_calls_e(C, T), poss_fn(T),
+                            node_attr(C, "goroutine", "true").
+
+@materialize(edge_type = "DEFERS_WITH_CONTEXT", mode = "additive")
+go_defer(C, T) :- go_calls_e(C, T), ctx_fn(T), node_attr(C, "deferred", "true").
+
+@materialize(edge_type = "DEFERS_WITH_CONTEXT", mode = "additive", meta(unresolved))
+go_defer_u(C, T, "true") :- go_calls_e(C, T), poss_fn(T),
+                            node_attr(C, "deferred", "true").

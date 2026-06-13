@@ -841,6 +841,43 @@ pub fn workspace_packages_to_wire(
     nodes
 }
 
+/// The GO module-path fact (precondition P1 of the go pack migration): the
+/// go.mod module path the legacy `go-resolve` daemon consumed over the wire
+/// (`workspace_packages` — main.rs wraps `discover_go_module_path` as a single
+/// WorkspacePackageWire) becomes a graph fact the go packs can join:
+/// `go_mod(MP) :- node(W, "WORKSPACE_PACKAGE"), node_attr(W, "language", "go"),
+/// attr(W, "name", MP)` (go_imports.dl / go_calls.dl).
+///
+/// Shape (the [`workspace_packages_to_wire`] conventions, plus the language
+/// discriminator):
+/// - `name` = the Go module path (e.g. `"github.com/user/project"`);
+/// - `file` = `"go.mod"` (the declaring file — js workspace facts never carry
+///   it, so the js packs' `ws_pkg` arms cannot confuse the fact with an npm
+///   package, and vice versa the go packs key on `language`);
+/// - `metadata.language` = `"go"` — the discriminator the packs join;
+/// - `metadata.package_dir` = the project root.
+///
+/// Semantic id `go.mod->WORKSPACE_PACKAGE-><module path>` (stable across runs;
+/// re-emitted every analyze like the js facts — upsert dedups).
+pub fn go_module_workspace_fact(module_path: &str, root: &str, authority: &str) -> WireNode {
+    let compact_id = format!("go.mod->WORKSPACE_PACKAGE->{module_path}");
+    let node_id = compact_to_uri(&compact_id, authority);
+
+    let mut meta = HashMap::new();
+    meta.insert("language".to_string(), serde_json::json!("go"));
+    meta.insert("package_dir".to_string(), serde_json::json!(root));
+
+    WireNode {
+        id: node_id.clone(),
+        semantic_id: Some(node_id),
+        node_type: Some("WORKSPACE_PACKAGE".to_string()),
+        name: Some(module_path.to_string()),
+        file: Some("go.mod".to_string()),
+        exported: false,
+        metadata: Some(serde_json::to_string(&meta).unwrap()),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Single-file analysis
 // ---------------------------------------------------------------------------
@@ -7513,5 +7550,26 @@ mod tests {
     #[test]
     fn workspace_packages_to_wire_empty_is_empty() {
         assert!(workspace_packages_to_wire(&[], "github.com/o/r").is_empty());
+    }
+
+    /// The GO module-path fact (P1): the go packs join
+    /// `node_attr(W, "language", "go")` × `attr(W, "name", MP)` — the language
+    /// discriminator MUST ride metadata and the module path MUST be the
+    /// first-class name; ids stable across runs (upsert dedups).
+    #[test]
+    fn go_module_workspace_fact_shape_and_stability() {
+        let a = go_module_workspace_fact("github.com/user/project", ".", "github.com/o/r");
+        assert_eq!(a.node_type.as_deref(), Some("WORKSPACE_PACKAGE"));
+        assert_eq!(a.name.as_deref(), Some("github.com/user/project"));
+        assert_eq!(a.file.as_deref(), Some("go.mod"));
+        assert!(!a.exported);
+        let meta: serde_json::Value =
+            serde_json::from_str(a.metadata.as_deref().unwrap()).unwrap();
+        assert_eq!(meta["language"], "go", "the go packs' discriminator key");
+        assert_eq!(meta["package_dir"], ".");
+        let b = go_module_workspace_fact("github.com/user/project", ".", "github.com/o/r");
+        assert_eq!(a.id, b.id, "stable id across runs");
+        assert_eq!(a.semantic_id.as_deref(), Some(a.id.as_str()));
+        assert!(a.id.contains("WORKSPACE_PACKAGE"), "typed id: {}", a.id);
     }
 }

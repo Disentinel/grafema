@@ -72,6 +72,61 @@ pub const SHAPE_VERIFIER_DL: &str = include_str!("stdlib/shape_verifier.dl");
 /// head is exclusive (provenance-scoped, safe on the shared `http:route` type).
 pub const AXUM_ROUTES_DL: &str = include_str!("stdlib/axum_routes.dl");
 
+/// The bundled Go same-module import-resolution pack — the in-engine
+/// replacement for the import slice of the `go-resolve` daemon
+/// (`GoImportResolution.hs`): IMPORT → MODULE `IMPORTS_FROM`, driven by the
+/// GO module-path WORKSPACE_PACKAGE fact (orchestrator precondition P1).
+/// The exact `isStdLib` gate rides the `first_segment` builtin; the
+/// module-prefix arm is the C1-legal prefix-peel equality join. `IMPORTS_FROM`
+/// is SHARED vocabulary ⇒ additive. Deltas numbered in the `.dl` header
+/// (G2-2 first-MODULE multiplicity is the only live one).
+pub const GO_IMPORTS_DL: &str = include_str!("stdlib/go_imports.dl");
+
+/// The NO-go.mod VARIANT of [`GO_IMPORTS_DL`] — the legacy empty-module-path
+/// suffix fallback (`findBySuffix`), '/'-boundary suffixes by `first_segment`
+/// left-peel. A pack cannot test "the go.mod fact is absent" (the §3
+/// cross-join), so the ORCHESTRATOR selects the variant: this pack runs ONLY
+/// when go.mod did not resolve (run_stdlib_rule_packs' selection condition);
+/// both variants stay registered so the cross-registry order pin holds.
+pub const GO_IMPORTS_NOMOD_DL: &str = include_str!("stdlib/go_imports_nomod.dl");
+
+/// The bundled Go call-resolution pack — the in-engine replacement for the
+/// `GoCallResolution.hs` slice of `go-resolve`: the three legacy strategies
+/// (package-qualified via same-file import alias + the C1-legal peel-join
+/// package index; same-package receiverless; same-package method by global
+/// (receiver, name) index), exclusive dispatch on the CALL's `receiver`
+/// metadata. `CALLS` additive, NO meta (legacy stamps none). Bounded
+/// last-wins SUPERSET deltas numbered in the `.dl` header.
+pub const GO_CALLS_DL: &str = include_str!("stdlib/go_calls.dl");
+
+/// The bundled Go interface-satisfaction pack — the in-engine replacement for
+/// the `GoInterfaceSatisfaction.hs` slice of `go-resolve`: structural
+/// duck-typing CLASS → INTERFACE `IMPLEMENTS` by method-name subset, the
+/// ∀-subset spelled as two strata of negation seeded through a shared method
+/// name (the planner-legal substitute for the CLASS×INTERFACE product).
+/// Structural INTERFACE-CONTAINS-FUNCTION membership replaces the legacy
+/// `[in:Iface]` semantic-id parse — which is DEAD on real (percent-encoded)
+/// wire ids, so the pack RESTORES interface satisfaction (`.dl` DELTA G6-1).
+/// Additive; G6-2/G6-3 (struct- and interface-side name merges) numbered in
+/// the `.dl` header.
+pub const GO_INTERFACES_DL: &str = include_str!("stdlib/go_interfaces.dl");
+
+/// The bundled Go type-resolution pack — the in-engine replacement for the
+/// `GoTypeResolution.hs` slice of `go-resolve`: VARIABLE → type `TYPE_OF` and
+/// FUNCTION → type `RETURNS` (comma-peeled `return_type`, recursive `*`/`[]`
+/// strip, 21 primitive ground facts). Both heads additive, no meta.
+pub const GO_TYPES_DL: &str = include_str!("stdlib/go_types.dl");
+
+/// The bundled Go context-propagation pack — the in-engine replacement for
+/// the `GoContextPropagation.hs` slice of `go-resolve`:
+/// `PROPAGATES_CONTEXT` (enclosing fn → target) plus `SPAWNS_WITH_CONTEXT` /
+/// `DEFERS_WITH_CONTEXT` (call → target), `unresolved="true"` meta iff the
+/// TARGET is only possibly-context. CONSUMES committed CALLS on .go files —
+/// MUST run after [`GO_CALLS_DL`] (precondition P2). The CONTAINS-parent
+/// enclosing-fn join REFINES a legacy defect (the `[in:parent,h:xxxx]` parse
+/// never matched a real function name — `.dl` DELTA G9-3).
+pub const GO_CONTEXT_DL: &str = include_str!("stdlib/go_context.dl");
+
 /// The bundled JS/TS local-reference resolution pack — the in-engine replacement
 /// for the `JsLocalRefs.hs` resolver (the #1 edge producer per the perf memory:
 /// REFERENCE → same-file declaration `READS_FROM` over 8 declaration types,
@@ -348,6 +403,12 @@ pub const JS_MODULE_IMPORTS_DL: &str = include_str!("stdlib/js_module_imports.dl
 ///   in-engine IMPORTS_FROM producers: `rust_imports`, `js_module_imports`,
 ///   `js_import_bindings`, `js_builtins_edges`. (It ran first while the
 ///   legacy resolver pre-committed those edges at analysis time.)
+/// - the Go wave packs: `go_imports` / `go_imports_nomod` PRODUCE
+///   IMPORTS_FROM (before `depends`, verdict C4); `go_calls` PRODUCES CALLS
+///   for `go_context` (the P2 producer-before-consumer seam) and precedes the
+///   CALLS negators (`method_calls` / `shape_verifier`); the nomod VARIANT is
+///   selected by the orchestrator at runtime (P3 — only when go.mod is
+///   absent), but stays in BOTH registries so the order pin holds.
 /// An orchestrator running the packs sequentially must preserve this order:
 /// js_local_refs → js_same_file_calls → js_this_method_calls →
 /// rust_calls → rust_cross_methods_ctor → rust_trait_resolve →
@@ -355,8 +416,9 @@ pub const JS_MODULE_IMPORTS_DL: &str = include_str!("stdlib/js_module_imports.dl
 /// js_import_bindings → js_class_inheritance →
 /// js_cross_file_calls → js_property_access_ns → js_property_access_full →
 /// js_builtins_nodes → js_builtins_edges → js_runtime_globals_nodes →
-/// js_runtime_globals_edges → depends → method_calls → shape_verifier →
-/// axum_routes.
+/// js_runtime_globals_edges → go_imports → go_imports_nomod → go_calls →
+/// go_interfaces → go_types → go_context → depends → method_calls →
+/// shape_verifier → axum_routes.
 pub const STDLIB_PACKS: &[(&str, &str)] = &[
     ("js_local_refs", JS_LOCAL_REFS_DL),
     ("js_same_file_calls", JS_SAME_FILE_CALLS_DL),
@@ -400,6 +462,18 @@ pub const STDLIB_PACKS: &[(&str, &str)] = &[
     // (shape_verifier).
     ("js_runtime_globals_nodes", JS_RUNTIME_GLOBALS_NODES_DL),
     ("js_runtime_globals_edges", JS_RUNTIME_GLOBALS_EDGES_DL),
+    // Go wave: go_imports / go_imports_nomod PRODUCE IMPORTS_FROM — strictly
+    // before depends (verdict C4); the nomod VARIANT is orchestrator-selected
+    // (P3: runs only when go.mod is absent — both registered, runtime skip).
+    // go_calls PRODUCES CALLS — strictly before its consumer go_context (P2)
+    // and before the CALLS negators method_calls / shape_verifier (C4).
+    // go_interfaces / go_types consume analyzer EDB only.
+    ("go_imports", GO_IMPORTS_DL),
+    ("go_imports_nomod", GO_IMPORTS_NOMOD_DL),
+    ("go_calls", GO_CALLS_DL),
+    ("go_interfaces", GO_INTERFACES_DL),
+    ("go_types", GO_TYPES_DL),
+    ("go_context", GO_CONTEXT_DL),
     // Wave 3c: depends CONSUMES IMPORTS_FROM (every edge, module- and
     // binding-level) — with legacy import-resolution gated it must run after
     // ALL in-engine IMPORTS_FROM producers (rust_imports, js_module_imports,
@@ -1268,6 +1342,12 @@ mod tests {
                 "js_builtins_edges",
                 "js_runtime_globals_nodes",
                 "js_runtime_globals_edges",
+                "go_imports",
+                "go_imports_nomod",
+                "go_calls",
+                "go_interfaces",
+                "go_types",
+                "go_context",
                 "depends",
                 "method_calls",
                 "shape_verifier",
@@ -4322,4 +4402,533 @@ mod tests {
         );
     }
 
+    // ── Go wave: fixture tests per arm (ports of go-resolve/test/Spec.hs:50-301
+    //    plus the numbered-delta predictions — predictions FIRST, in the assert
+    //    messages). The dogfood graph has ZERO Go nodes (spec probe + the
+    //    Datalog re-probe), so these fixtures + the GRAFEMA_GO_DIFF_DB repo
+    //    harness in differential.rs ARE the differential ground truth. ──────
+
+    /// The GO module-path WORKSPACE_PACKAGE fact (orchestrator P1 shape).
+    fn go_mod_fact(v: &mut FixtureStorageView, module_path: &str) {
+        let sid = format!("go.mod->WORKSPACE_PACKAGE->{module_path}");
+        named_node(v, &sid, module_path, "WORKSPACE_PACKAGE", "go.mod");
+        v.put_node_metadata(id_of(&sid), r#"{"language":"go"}"#);
+    }
+
+    fn derived_pairs(v: &FixtureStorageView, src: &str, pred: &str) -> BTreeSet<(u128, u128)> {
+        let eval = evaluate(v, src, Stats::default(), EvalLimits::none(), EventLog::discard())
+            .unwrap_or_else(|e| panic!("pack evaluates: {e}"));
+        eval.facts(pred)
+            .into_iter()
+            .map(|r| {
+                (
+                    r[0].as_id().expect("src id"),
+                    r[1].as_id().expect("dst id"),
+                )
+            })
+            .collect()
+    }
+
+    /// go_imports — Spec.hs:52-92 ported: same-module hit, stdlib skip,
+    /// third-party skip, the root-package arm, the per-MODULE multiplicity
+    /// (DELTA G2-2), the exact-isStdLib dot-less-module-path skip (DELTA G2-1
+    /// CLOSED), the plain-stripPrefix boundary bug removal, and pack inertness
+    /// without the P1 fact.
+    #[test]
+    fn go_imports_same_module_arms_on_fixture() {
+        let mut v = FixtureStorageView::new(1);
+        go_mod_fact(&mut v, "github.com/user/project");
+        // Target package with TWO files (DELTA G2-2) + a root-level module.
+        node(&mut v, "mod_auth1", "MODULE", "pkg/auth/auth.go");
+        node(&mut v, "mod_auth2", "MODULE", "pkg/auth/token.go");
+        node(&mut v, "mod_root", "MODULE", "main.go");
+        // Importers (all metadata `path`, the analyzer contract Imports.hs:73-79).
+        named_node(&mut v, "imp_auth", "github.com/user/project/pkg/auth", "IMPORT", "cmd/main.go");
+        v.put_node_metadata(id_of("imp_auth"), r#"{"path":"github.com/user/project/pkg/auth"}"#);
+        named_node(&mut v, "imp_fmt", "fmt", "IMPORT", "cmd/main.go");
+        v.put_node_metadata(id_of("imp_fmt"), r#"{"path":"fmt"}"#);
+        named_node(&mut v, "imp_3p", "github.com/sirupsen/logrus", "IMPORT", "cmd/main.go");
+        v.put_node_metadata(id_of("imp_3p"), r#"{"path":"github.com/sirupsen/logrus"}"#);
+        named_node(&mut v, "imp_root", "github.com/user/project", "IMPORT", "cmd/main.go");
+        v.put_node_metadata(id_of("imp_root"), r#"{"path":"github.com/user/project"}"#);
+        // The legacy plain-stripPrefix boundary bug shape: module path is a
+        // non-'/'-boundary string prefix — must NOT resolve (legacy missed too).
+        node(&mut v, "mod_p2", "MODULE", "roject2/x/x.go");
+        named_node(&mut v, "imp_p2", "github.com/user/project2/x", "IMPORT", "cmd/main.go");
+        v.put_node_metadata(id_of("imp_p2"), r#"{"path":"github.com/user/project2/x"}"#);
+        // A non-go IMPORT with a go-looking path must be gated out (DELTA-5 file gate).
+        named_node(&mut v, "imp_js", "github.com/user/project/pkg/auth", "IMPORT", "app.ts");
+        v.put_node_metadata(id_of("imp_js"), r#"{"path":"github.com/user/project/pkg/auth"}"#);
+
+        let pairs = derived_pairs(&v, GO_IMPORTS_DL, "go_import_from");
+        assert_eq!(
+            pairs,
+            BTreeSet::from([
+                // PREDICTION DELTA G2-2: one edge per MODULE in the package dir
+                // (legacy: first module only).
+                (id_of("imp_auth"), id_of("mod_auth1")),
+                (id_of("imp_auth"), id_of("mod_auth2")),
+                // Root-package arm: P == module path → the "" directory.
+                (id_of("imp_root"), id_of("mod_root")),
+            ]),
+            "stdlib/third-party/boundary-bug/non-go importers derive nothing; \
+             same-module derives per-MODULE (G2-2); root import hits main.go"
+        );
+
+        // Dot-less module path (G2-1 CLOSED): legacy isStdLib skips
+        // "myapp/util" BEFORE prefix-stripping — the exact first_segment gate
+        // reproduces the skip.
+        let mut v2 = FixtureStorageView::new(1);
+        go_mod_fact(&mut v2, "myapp");
+        node(&mut v2, "mod_util", "MODULE", "util/u.go");
+        named_node(&mut v2, "imp_util", "myapp/util", "IMPORT", "main.go");
+        v2.put_node_metadata(id_of("imp_util"), r#"{"path":"myapp/util"}"#);
+        assert!(
+            derived_pairs(&v2, GO_IMPORTS_DL, "go_import_from").is_empty(),
+            "dot-less module path: legacy isStdLib skips it — exact gate, no edge (G2-1 closed)"
+        );
+
+        // No P1 fact ⇒ the module-prefix arms are inert (the nomod VARIANT
+        // owns that world — orchestrator-selected, P3).
+        let mut v3 = FixtureStorageView::new(1);
+        node(&mut v3, "mod_a", "MODULE", "pkg/auth/auth.go");
+        named_node(&mut v3, "imp_a", "example.com/pkg/auth", "IMPORT", "main.go");
+        v3.put_node_metadata(id_of("imp_a"), r#"{"path":"example.com/pkg/auth"}"#);
+        assert!(
+            derived_pairs(&v3, GO_IMPORTS_DL, "go_import_from").is_empty(),
+            "without the go.mod fact the main pack derives nothing"
+        );
+    }
+
+    /// go_imports_nomod — Spec.hs:80-85 ported (empty-modPath suffix fallback)
+    /// plus the G2-3a all-matches SUPERSET and the G2-3b '/'-boundary
+    /// refinement predictions.
+    #[test]
+    fn go_imports_nomod_suffix_fallback_on_fixture() {
+        let mut v = FixtureStorageView::new(1);
+        node(&mut v, "mod_auth", "MODULE", "pkg/auth/auth.go");
+        named_node(&mut v, "imp_auth", "example.com/pkg/auth", "IMPORT", "main.go");
+        v.put_node_metadata(id_of("imp_auth"), r#"{"path":"example.com/pkg/auth"}"#);
+        // G2-3b: dir "auth" is a RAW suffix of ".../oauth" (legacy false
+        // positive) but NOT a '/'-boundary suffix — pack must NOT match.
+        named_node(&mut v, "imp_oauth", "example.com/pkg/oauth", "IMPORT", "main.go");
+        v.put_node_metadata(id_of("imp_oauth"), r#"{"path":"example.com/pkg/oauth"}"#);
+        node(&mut v, "mod_rawauth", "MODULE", "auth/a.go");
+        // stdlib skip applies in the fallback too ("fmt" — even with a local
+        // dir literally named fmt).
+        named_node(&mut v, "imp_fmt", "fmt", "IMPORT", "main.go");
+        v.put_node_metadata(id_of("imp_fmt"), r#"{"path":"fmt"}"#);
+        node(&mut v, "mod_fmt", "MODULE", "fmt/f.go");
+        // G2-3a: two dirs share the boundary suffix → ALL matches derived.
+        node(&mut v, "mod_u1", "MODULE", "a/util/u.go");
+        node(&mut v, "mod_u2", "MODULE", "util/u.go");
+        named_node(&mut v, "imp_util", "example.com/a/util", "IMPORT", "main.go");
+        v.put_node_metadata(id_of("imp_util"), r#"{"path":"example.com/a/util"}"#);
+
+        let pairs = derived_pairs(&v, GO_IMPORTS_NOMOD_DL, "go_import_suffix");
+        assert_eq!(
+            pairs,
+            BTreeSet::from([
+                // "pkg/auth" and "auth" are both '/'-boundary suffixes of the
+                // auth import — but only pkg/auth/... has modules at "pkg/auth";
+                // "auth/a.go"'s dir IS "auth", also a boundary suffix → both.
+                (id_of("imp_auth"), id_of("mod_auth")),
+                (id_of("imp_auth"), id_of("mod_rawauth")),
+                // PREDICTION G2-3a: all suffix matches (legacy: alphabetical first).
+                (id_of("imp_util"), id_of("mod_u1")),
+                (id_of("imp_util"), id_of("mod_u2")),
+            ]),
+            "boundary-suffix matches only (G2-3b drops the …/oauth raw-suffix \
+             false positive); stdlib skipped; all matches derived (G2-3a)"
+        );
+    }
+
+    /// go_calls — Spec.hs:98-146 ported: the three strategies, the EXCLUSIVE
+    /// dispatch, the stdlib skip on S1, closure/interface_method exclusion,
+    /// the cross-package S2 miss, and the G3-1 duplicate-(dir,name) SUPERSET.
+    #[test]
+    fn go_calls_three_strategies_and_dispatch_on_fixture() {
+        let mut v = FixtureStorageView::new(1);
+        go_mod_fact(&mut v, "github.com/user/project");
+
+        // S1: package-qualified via same-file import alias.
+        node(&mut v, "mod_utils", "MODULE", "pkg/utils/utils.go");
+        named_node(&mut v, "fn_do", "DoStuff", "FUNCTION", "pkg/utils/utils.go");
+        v.put_node_metadata(id_of("fn_do"), r#"{"kind":"function"}"#);
+        named_node(&mut v, "imp_utils", "github.com/user/project/pkg/utils", "IMPORT", "cmd/main.go");
+        v.put_node_metadata(
+            id_of("imp_utils"),
+            r#"{"path":"github.com/user/project/pkg/utils","local_name":"utils"}"#,
+        );
+        named_node(&mut v, "call_do", "utils.DoStuff", "CALL", "cmd/main.go");
+        v.put_node_metadata(id_of("call_do"), r#"{"receiver":"utils"}"#);
+
+        // S1 stdlib skip: alias to "fmt" — even with a same-name local function.
+        named_node(&mut v, "imp_fmt", "fmt", "IMPORT", "cmd/main.go");
+        v.put_node_metadata(id_of("imp_fmt"), r#"{"path":"fmt","local_name":"fmt"}"#);
+        named_node(&mut v, "call_println", "fmt.Println", "CALL", "cmd/main.go");
+        v.put_node_metadata(id_of("call_println"), r#"{"receiver":"fmt"}"#);
+        named_node(&mut v, "fn_println", "Println", "FUNCTION", "fmt/print.go");
+        v.put_node_metadata(id_of("fn_println"), r#"{"kind":"function"}"#);
+
+        // Dispatch exclusivity: receiver matches an alias whose path is
+        // stdlib AND a method index entry exists for (receiver, name) —
+        // legacy dispatches S1 ONLY (alias match), which skips; S3 must NOT
+        // fire (Hs:163-174).
+        named_node(&mut v, "m_trap", "Println", "FUNCTION", "pkg/trap.go");
+        v.put_node_metadata(id_of("m_trap"), r#"{"kind":"method","receiver":"fmt"}"#);
+
+        // S2: same-package receiverless call (sub-dir AND root-dir shapes).
+        named_node(&mut v, "fn_helper", "helper", "FUNCTION", "pkg/util.go");
+        v.put_node_metadata(id_of("fn_helper"), r#"{"kind":"function"}"#);
+        named_node(&mut v, "call_helper", "helper", "CALL", "pkg/main.go");
+        named_node(&mut v, "fn_rootfn", "rootFn", "FUNCTION", "tool.go");
+        v.put_node_metadata(id_of("fn_rootfn"), r#"{"kind":"function"}"#);
+        named_node(&mut v, "call_rootfn", "rootFn", "CALL", "main.go");
+        // Cross-package S2 miss (Spec.hs:134-139).
+        named_node(&mut v, "call_cross", "helper", "CALL", "cmd/main.go");
+        // Closure exclusion (Spec.hs:141-146): kind=closure never indexed.
+        named_node(&mut v, "fn_clo", "<closure>", "FUNCTION", "pkg/main.go");
+        v.put_node_metadata(id_of("fn_clo"), r#"{"kind":"closure"}"#);
+        named_node(&mut v, "call_clo", "<closure>", "CALL", "pkg/main.go");
+        // G3-1: duplicate (dir, name) — a _test.go sibling defines helper too.
+        named_node(&mut v, "fn_helper2", "helper", "FUNCTION", "pkg/util_test.go");
+        v.put_node_metadata(id_of("fn_helper2"), r#"{"kind":"function"}"#);
+
+        // S3: method call where a variable shares the type's name (Spec.hs:120-127).
+        named_node(&mut v, "m_start", "Start", "FUNCTION", "pkg/server.go");
+        v.put_node_metadata(id_of("m_start"), r#"{"kind":"method","receiver":"Server"}"#);
+        named_node(&mut v, "call_start", "s.Start", "CALL", "pkg/main.go");
+        v.put_node_metadata(id_of("call_start"), r#"{"receiver":"Server"}"#);
+        // Unknown receiver (Spec.hs:128-132): no edge.
+        named_node(&mut v, "call_unk", "x.Unknown", "CALL", "pkg/main.go");
+        v.put_node_metadata(id_of("call_unk"), r#"{"receiver":"x"}"#);
+
+        let eval = evaluate(&v, GO_CALLS_DL, Stats::default(), EvalLimits::none(), EventLog::discard())
+            .expect("go_calls.dl evaluates");
+        let mut pairs: BTreeSet<(u128, u128)> = BTreeSet::new();
+        for pred in ["go_call_s1", "go_call_s2", "go_call_s3"] {
+            for r in eval.facts(pred) {
+                pairs.insert((r[0].as_id().unwrap(), r[1].as_id().unwrap()));
+            }
+        }
+        assert_eq!(
+            pairs,
+            BTreeSet::from([
+                (id_of("call_do"), id_of("fn_do")),
+                // PREDICTION G3-1: both same-(dir,name) functions derived
+                // (legacy last-wins picked one).
+                (id_of("call_helper"), id_of("fn_helper")),
+                (id_of("call_helper"), id_of("fn_helper2")),
+                (id_of("call_rootfn"), id_of("fn_rootfn")),
+                (id_of("call_start"), id_of("m_start")),
+            ]),
+            "S1 alias hit; S1 stdlib skip; S1-only dispatch (no S3 fallback for \
+             alias receivers); S2 same-dir + root-dir; S2 cross-package miss; \
+             closure excluded; S3 type-named receiver; unknown receiver miss"
+        );
+    }
+
+    /// go_interfaces — Spec.hs:152-210 ported: subset hit, missing-method
+    /// miss, empty-interface miss, multi-struct fan-out, pointer receiver;
+    /// plus the G6-2 (struct-side) and G6-3 (interface-side, verdict C3)
+    /// name-merge predictions.
+    #[test]
+    fn go_interfaces_subset_satisfaction_on_fixture() {
+        let mut v = FixtureStorageView::new(1);
+        // Reader{Read} ⊆ MyReader{Read} → IMPLEMENTS.
+        node(&mut v, "iface_reader", "INTERFACE", "io.go");
+        named_node(&mut v, "im_read", "Read", "FUNCTION", "io.go");
+        v.put_node_metadata(id_of("im_read"), r#"{"kind":"interface_method"}"#);
+        edge(&mut v, "iface_reader", "im_read", "CONTAINS");
+        named_node(&mut v, "cls_myreader", "MyReader", "CLASS", "reader.go");
+        named_node(&mut v, "sm_read", "Read", "FUNCTION", "reader.go");
+        v.put_node_metadata(id_of("sm_read"), r#"{"kind":"method","receiver":"MyReader","pointer_receiver":true}"#);
+        // ReadWriter{Read,Write} ⊄ MyReader{Read} → no edge (missing Write).
+        node(&mut v, "iface_rw", "INTERFACE", "io.go");
+        named_node(&mut v, "im_read2", "Read", "FUNCTION", "io.go");
+        v.put_node_metadata(id_of("im_read2"), r#"{"kind":"interface_method"}"#);
+        named_node(&mut v, "im_write", "Write", "FUNCTION", "io.go");
+        v.put_node_metadata(id_of("im_write"), r#"{"kind":"interface_method"}"#);
+        edge(&mut v, "iface_rw", "im_read2", "CONTAINS");
+        edge(&mut v, "iface_rw", "im_write", "CONTAINS");
+        // Empty interface → never satisfied (the non-empty gate via cand seeding).
+        node(&mut v, "iface_empty", "INTERFACE", "types.go");
+        named_node(&mut v, "cls_any", "Anything", "CLASS", "impl.go");
+        // Second struct also implementing Reader (multi-struct fan-out).
+        named_node(&mut v, "cls_fr", "FileReader", "CLASS", "file.go");
+        named_node(&mut v, "sm_fread", "Read", "FUNCTION", "file.go");
+        v.put_node_metadata(id_of("sm_fread"), r#"{"kind":"method","receiver":"FileReader"}"#);
+
+        let pairs = derived_pairs(&v, GO_INTERFACES_DL, "go_implements");
+        assert_eq!(
+            pairs,
+            BTreeSet::from([
+                (id_of("cls_myreader"), id_of("iface_reader")),
+                (id_of("cls_fr"), id_of("iface_reader")),
+            ]),
+            "subset hit (pointer receiver matches by bare name); missing-method \
+             and empty-interface miss; one edge per implementing struct"
+        );
+
+        // PREDICTION G6-3 (verdict C3): duplicate interface NAMES — legacy
+        // unions their method sets ({Read} ∪ {Close} = {Read,Close}, rejecting
+        // a Read-only struct) and the per-NODE pack accepts the {Read} node.
+        let mut v2 = FixtureStorageView::new(1);
+        named_node(&mut v2, "if_a", "Reader", "INTERFACE", "a.go");
+        named_node(&mut v2, "ifm_a", "Read", "FUNCTION", "a.go");
+        v2.put_node_metadata(id_of("ifm_a"), r#"{"kind":"interface_method"}"#);
+        edge(&mut v2, "if_a", "ifm_a", "CONTAINS");
+        named_node(&mut v2, "if_b", "Reader", "INTERFACE", "b.go");
+        named_node(&mut v2, "ifm_b", "Close", "FUNCTION", "b.go");
+        v2.put_node_metadata(id_of("ifm_b"), r#"{"kind":"interface_method"}"#);
+        edge(&mut v2, "if_b", "ifm_b", "CONTAINS");
+        named_node(&mut v2, "cls_r", "R", "CLASS", "r.go");
+        named_node(&mut v2, "rm", "Read", "FUNCTION", "r.go");
+        v2.put_node_metadata(id_of("rm"), r#"{"kind":"method","receiver":"R"}"#);
+        // PREDICTION G6-2: a same-named CLASS twin also receives the edge.
+        named_node(&mut v2, "cls_r2", "R", "CLASS", "r2.go");
+        let pairs2 = derived_pairs(&v2, GO_INTERFACES_DL, "go_implements");
+        assert_eq!(
+            pairs2,
+            BTreeSet::from([
+                (id_of("cls_r"), id_of("if_a")),
+                (id_of("cls_r2"), id_of("if_a")),
+            ]),
+            "G6-3: per-NODE requirement sets (legacy's name-union rejected this); \
+             G6-2: every same-named CLASS gets the edge (legacy last-wins one)"
+        );
+    }
+
+    /// go_types — TYPE_OF + RETURNS: recursive prefix strip, primitive skip,
+    /// comma-peel of return_type, map/chan non-resolution, INTERFACE targets,
+    /// and the G7-1 duplicate-type-name SUPERSET.
+    #[test]
+    fn go_types_type_of_and_returns_on_fixture() {
+        let mut v = FixtureStorageView::new(1);
+        named_node(&mut v, "cls_user", "User", "CLASS", "user.go");
+        named_node(&mut v, "if_store", "Store", "INTERFACE", "store.go");
+        // *User → User; []byte → primitive skip; []*User → User;
+        // map[string]User → no type_node key; int → primitive skip.
+        named_node(&mut v, "var_ptr", "u", "VARIABLE", "main.go");
+        v.put_node_metadata(id_of("var_ptr"), r#"{"type":"*User"}"#);
+        named_node(&mut v, "var_bytes", "b", "VARIABLE", "main.go");
+        v.put_node_metadata(id_of("var_bytes"), r#"{"type":"[]byte"}"#);
+        named_node(&mut v, "var_slice", "us", "VARIABLE", "main.go");
+        v.put_node_metadata(id_of("var_slice"), r#"{"type":"[]*User"}"#);
+        named_node(&mut v, "var_map", "m", "VARIABLE", "main.go");
+        v.put_node_metadata(id_of("var_map"), r#"{"type":"map[string]User"}"#);
+        named_node(&mut v, "var_int", "n", "VARIABLE", "main.go");
+        v.put_node_metadata(id_of("var_int"), r#"{"type":"int"}"#);
+        named_node(&mut v, "var_iface", "s", "VARIABLE", "main.go");
+        v.put_node_metadata(id_of("var_iface"), r#"{"type":"Store"}"#);
+
+        let pairs = derived_pairs(&v, GO_TYPES_DL, "go_type_of");
+        assert_eq!(
+            pairs,
+            BTreeSet::from([
+                (id_of("var_ptr"), id_of("cls_user")),
+                (id_of("var_slice"), id_of("cls_user")),
+                (id_of("var_iface"), id_of("if_store")),
+            ]),
+            "*/[] strip recursion; primitives and map types never resolve; \
+             INTERFACE is a type target"
+        );
+
+        // RETURNS: "*User,error" → User only (error is a primitive);
+        // "User,Store" → both; single "Config" → identity (no comma).
+        named_node(&mut v, "fn_a", "loadUser", "FUNCTION", "main.go");
+        v.put_node_metadata(id_of("fn_a"), r#"{"kind":"function","return_type":"*User,error"}"#);
+        named_node(&mut v, "fn_b", "both", "FUNCTION", "main.go");
+        v.put_node_metadata(id_of("fn_b"), r#"{"kind":"function","return_type":"User,Store"}"#);
+        named_node(&mut v, "cls_cfg", "Config", "CLASS", "cfg.go");
+        named_node(&mut v, "fn_c", "cfg", "FUNCTION", "main.go");
+        v.put_node_metadata(id_of("fn_c"), r#"{"kind":"function","return_type":"Config"}"#);
+        // G7-1: a duplicate type name — both nodes derived (legacy last-wins).
+        named_node(&mut v, "cls_cfg2", "Config", "CLASS", "cfg2.go");
+
+        let pairs = derived_pairs(&v, GO_TYPES_DL, "go_returns");
+        assert_eq!(
+            pairs,
+            BTreeSet::from([
+                (id_of("fn_a"), id_of("cls_user")),
+                (id_of("fn_b"), id_of("cls_user")),
+                (id_of("fn_b"), id_of("if_store")),
+                (id_of("fn_c"), id_of("cls_cfg")),
+                // PREDICTION G7-1: duplicate type names fan out.
+                (id_of("fn_c"), id_of("cls_cfg2")),
+            ]),
+            "comma-peel splits return_type exactly; error primitive skipped; \
+             duplicate type names fan out (G7-1)"
+        );
+    }
+
+    /// go_context — Spec.hs:216-302 ported onto the structural CONTAINS seam:
+    /// the certain/possible target × caller matrix, goroutine/deferred arms,
+    /// the unresolved meta column, closure- and module-contained calls
+    /// (G9-1/G9-3 — the pack derives what legacy INTENDED; on real analyzer
+    /// ids legacy's caller lookup never matched, see the .dl header).
+    #[test]
+    fn go_context_propagation_matrix_on_fixture() {
+        let mut v = FixtureStorageView::new(1);
+        // fnA (accepts) contains callB → fnB (accepts): PROPAGATES, no meta.
+        named_node(&mut v, "fn_a", "A", "FUNCTION", "pkg/handler.go");
+        v.put_node_metadata(id_of("fn_a"), r#"{"kind":"function","accepts_context":true}"#);
+        named_node(&mut v, "fn_b", "B", "FUNCTION", "pkg/service.go");
+        v.put_node_metadata(id_of("fn_b"), r#"{"kind":"function","accepts_context":true}"#);
+        named_node(&mut v, "call_b", "B", "CALL", "pkg/handler.go");
+        edge(&mut v, "fn_a", "call_b", "CONTAINS");
+        edge(&mut v, "call_b", "fn_b", "CALLS");
+        // goroutine: SPAWNS + PROPAGATES (Spec.hs:231-243).
+        named_node(&mut v, "fn_worker", "worker", "FUNCTION", "pkg/main.go");
+        v.put_node_metadata(id_of("fn_worker"), r#"{"kind":"function","accepts_context":true}"#);
+        named_node(&mut v, "call_w", "worker", "CALL", "pkg/main.go");
+        v.put_node_metadata(id_of("call_w"), r#"{"goroutine":true}"#);
+        edge(&mut v, "fn_a2", "call_w", "CONTAINS");
+        named_node(&mut v, "fn_a2", "main", "FUNCTION", "pkg/main.go");
+        v.put_node_metadata(id_of("fn_a2"), r#"{"kind":"function","accepts_context":true}"#);
+        edge(&mut v, "call_w", "fn_worker", "CALLS");
+        // deferred: DEFERS + PROPAGATES (Spec.hs:257-269).
+        named_node(&mut v, "fn_cleanup", "cleanup", "FUNCTION", "pkg/api.go");
+        v.put_node_metadata(id_of("fn_cleanup"), r#"{"kind":"function","accepts_context":true}"#);
+        named_node(&mut v, "call_d", "cleanup", "CALL", "pkg/api.go");
+        v.put_node_metadata(id_of("call_d"), r#"{"deferred":true}"#);
+        edge(&mut v, "fn_a", "call_d", "CONTAINS");
+        edge(&mut v, "call_d", "fn_cleanup", "CALLS");
+        // No-context target: nothing (Spec.hs:245-255).
+        named_node(&mut v, "fn_c", "C", "FUNCTION", "pkg/util.go");
+        v.put_node_metadata(id_of("fn_c"), r#"{"kind":"function"}"#);
+        named_node(&mut v, "call_c", "C", "CALL", "pkg/handler.go");
+        edge(&mut v, "fn_a", "call_c", "CONTAINS");
+        edge(&mut v, "call_c", "fn_c", "CALLS");
+        // possible → possible: meta unresolved="true" (Spec.hs:271-286).
+        named_node(&mut v, "fn_pa", "PA", "FUNCTION", "pkg/p.go");
+        v.put_node_metadata(id_of("fn_pa"), r#"{"kind":"function","possible_context":true}"#);
+        named_node(&mut v, "fn_pb", "PB", "FUNCTION", "pkg/p.go");
+        v.put_node_metadata(id_of("fn_pb"), r#"{"kind":"function","possible_context":true}"#);
+        named_node(&mut v, "call_pb", "PB", "CALL", "pkg/p.go");
+        edge(&mut v, "fn_pa", "call_pb", "CONTAINS");
+        edge(&mut v, "call_pb", "fn_pb", "CALLS");
+        // possible caller → CERTAIN target: plain edge, NO meta (Spec.hs:288-301).
+        named_node(&mut v, "call_b2", "B", "CALL", "pkg/p.go");
+        edge(&mut v, "fn_pa", "call_b2", "CONTAINS");
+        edge(&mut v, "call_b2", "fn_b", "CALLS");
+        // Call inside a CLOSURE: no PROPAGATES (caller excluded) but SPAWNS
+        // still fires (caller-independent).
+        named_node(&mut v, "fn_clo", "<closure>", "FUNCTION", "pkg/z.go");
+        v.put_node_metadata(id_of("fn_clo"), r#"{"kind":"closure"}"#);
+        named_node(&mut v, "call_z", "B", "CALL", "pkg/z.go");
+        v.put_node_metadata(id_of("call_z"), r#"{"goroutine":true}"#);
+        edge(&mut v, "fn_clo", "call_z", "CONTAINS");
+        edge(&mut v, "call_z", "fn_b", "CALLS");
+        // Top-level call (CONTAINS from MODULE): no PROPAGATES.
+        node(&mut v, "mod_top", "MODULE", "pkg/t.go");
+        named_node(&mut v, "call_t", "B", "CALL", "pkg/t.go");
+        edge(&mut v, "mod_top", "call_t", "CONTAINS");
+        edge(&mut v, "call_t", "fn_b", "CALLS");
+
+        let eval = evaluate(&v, GO_CONTEXT_DL, Stats::default(), EvalLimits::none(), EventLog::discard())
+            .expect("go_context.dl evaluates");
+        let prop: BTreeSet<(u128, u128)> = eval
+            .facts("go_prop")
+            .into_iter()
+            .map(|r| (r[0].as_id().unwrap(), r[1].as_id().unwrap()))
+            .collect();
+        assert_eq!(
+            prop,
+            BTreeSet::from([
+                (id_of("fn_a"), id_of("fn_b")),
+                (id_of("fn_a2"), id_of("fn_worker")),
+                (id_of("fn_a"), id_of("fn_cleanup")),
+                // Possible caller + certain target rides the PLAIN head.
+                (id_of("fn_pa"), id_of("fn_b")),
+            ]),
+            "certain-target PROPAGATES: enclosing fn via CONTAINS; closure- and \
+             module-contained calls excluded; no-context target inert"
+        );
+        let prop_u: BTreeSet<(u128, u128, String)> = eval
+            .facts("go_prop_u")
+            .into_iter()
+            .map(|r| (r[0].as_id().unwrap(), r[1].as_id().unwrap(), r[2].as_str()))
+            .collect();
+        assert_eq!(
+            prop_u,
+            BTreeSet::from([(id_of("fn_pa"), id_of("fn_pb"), "true".to_string())]),
+            "possible-target edges carry unresolved=\"true\" (G9-2 projection); \
+             the certain-target row must NOT appear here (Spec.hs:288-301)"
+        );
+        let spawns: BTreeSet<(u128, u128)> = eval
+            .facts("go_spawn")
+            .into_iter()
+            .map(|r| (r[0].as_id().unwrap(), r[1].as_id().unwrap()))
+            .collect();
+        assert_eq!(
+            spawns,
+            BTreeSet::from([
+                (id_of("call_w"), id_of("fn_worker")),
+                // Caller-independent: the closure-contained goroutine still spawns.
+                (id_of("call_z"), id_of("fn_b")),
+            ]),
+            "SPAWNS is caller-independent (legacy :177-185)"
+        );
+        let defers: BTreeSet<(u128, u128)> = eval
+            .facts("go_defer")
+            .into_iter()
+            .map(|r| (r[0].as_id().unwrap(), r[1].as_id().unwrap()))
+            .collect();
+        assert_eq!(
+            defers,
+            BTreeSet::from([(id_of("call_d"), id_of("fn_cleanup"))]),
+            "DEFERS for deferred calls with certain-context targets"
+        );
+    }
+
+    /// Every go pack declares its @materialize heads with the expected edge
+    /// types and ADDITIVE mode (shared vocabulary — never tombstone), and the
+    /// unresolved meta column rides only the *_u context heads.
+    #[test]
+    fn go_packs_declare_additive_materialization() {
+        let mut v = FixtureStorageView::new(1);
+        node(&mut v, "m", "MODULE", "a.go");
+        for (src, expected) in [
+            (GO_IMPORTS_DL, vec!["IMPORTS_FROM"]),
+            (GO_IMPORTS_NOMOD_DL, vec!["IMPORTS_FROM"]),
+            (GO_CALLS_DL, vec!["CALLS", "CALLS", "CALLS"]),
+            (GO_INTERFACES_DL, vec!["IMPLEMENTS"]),
+            (GO_TYPES_DL, vec!["TYPE_OF", "RETURNS"]),
+            (
+                GO_CONTEXT_DL,
+                vec![
+                    "PROPAGATES_CONTEXT",
+                    "PROPAGATES_CONTEXT",
+                    "SPAWNS_WITH_CONTEXT",
+                    "SPAWNS_WITH_CONTEXT",
+                    "DEFERS_WITH_CONTEXT",
+                    "DEFERS_WITH_CONTEXT",
+                ],
+            ),
+        ] {
+            let (_eval, specs, node_specs) = evaluate_with_materialize(
+                &v,
+                src,
+                Stats::default(),
+                EvalLimits::none(),
+                EventLog::discard(),
+            )
+            .expect("go pack evaluates with materialize");
+            let mut types: Vec<&str> = specs.iter().map(|s| s.edge_type.as_str()).collect();
+            let mut want = expected.clone();
+            types.sort_unstable();
+            want.sort_unstable();
+            assert_eq!(types, want, "edge-type heads of a go pack");
+            assert!(
+                specs.iter().all(|s| s.additive),
+                "every go head is additive (shared vocabulary)"
+            );
+            assert!(
+                node_specs.is_empty(),
+                "go packs materialize edges only, no nodes"
+            );
+        }
+    }
 }
