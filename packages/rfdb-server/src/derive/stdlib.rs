@@ -406,6 +406,47 @@ pub const JS_HTTP_ROUTES_EDGES_DL: &str = concat!(
     include_str!("stdlib/js_http_routes_edges.dl"),
 );
 
+/// Node half of the JS ENTRY-POINT-FEATURE vertical (Loop-2, continues the
+/// Wave-14 js_http_routes prototype): the three remaining domain slices the
+/// libraryCallbackEnricher still mints — commander → `cli:command`,
+/// `@modelcontextprotocol/sdk` → `mcp:tool`, vscode → `vscode:command` — minted
+/// as @materialize_node FEATURE nodes (sid
+/// `<file>::<nodeType>::<name>::<callIdDecimal>`). The derive-pack REPLACEMENT
+/// for those three LIBRARY_NODE_TYPE entries (retired this wave, like the 6 HTTP
+/// frameworks in Wave 14); running both would mint duplicate FEATURE nodes with
+/// byte-different ids. ONE combined pack: the three slices share the entire
+/// receiver-resolution prelude, differing only in the registry lib set, the
+/// per-lib node_type (three @materialize_node heads, node_type is a string
+/// literal), and the name-source role (COMMAND_NAME vs TOOL_SCHEMA). Receiver
+/// resolution covers BOTH the RECEIVER_CALL chain (the js_http_routes prelude)
+/// AND the DERIVES_FROM[callee]/READS_FROM[receiver] PROPERTY_ACCESS walk for
+/// `<obj>.`-rooted chained receivers (NEW — js_http_routes delta 3 omitted it;
+/// REQUIRED for vscode and commander). Driven by the effects-db callable
+/// registry as generated ground facts (effects_callable_facts.dl, prepended at
+/// compile time). The MCP ~30-tool detail is the SEPARATE mcpToolDefinitionEnricher
+/// (this pack matches the enricher's ~4 setRequestHandler calls — documented
+/// SUBSET delta). Negation + minting ⇒ scratch-only under maintain.
+pub const JS_ENTRYPOINT_FEATURES_NODES_DL: &str = concat!(
+    include_str!("stdlib/effects_callable_facts.dl"),
+    "\n",
+    include_str!("stdlib/js_entrypoint_features_nodes.dl"),
+);
+
+/// Edge half of the JS ENTRY-POINT-FEATURE vertical (Loop-2): EXPOSES
+/// (CALL → FEATURE) + HANDLES (FEATURE → callback) over the cli:command /
+/// mcp:tool / vscode:command nodes minted by `js_entrypoint_features_nodes`,
+/// endpoints pinned by the exact `node_attr(R,"anchorCall") ⋈ attr(C,"id")` join
+/// (per-node-type, so each head binds only its FEATURE type) — the
+/// mcpToolDefinitionEnricher's def-anchored mcp:tool nodes and any legacy
+/// enricher nodes are never joined. MUST run after `js_entrypoint_features_nodes`
+/// (committed-EDB endpoint join — the js_builtins two-pack split). Both heads
+/// additive (EXPOSES / HANDLES are shared enricher vocabulary).
+pub const JS_ENTRYPOINT_FEATURES_EDGES_DL: &str = concat!(
+    include_str!("stdlib/effects_callable_facts.dl"),
+    "\n",
+    include_str!("stdlib/js_entrypoint_features_edges.dl"),
+);
+
 // ── Java packs (the java-resolve migration, lang-spec-java.md) ─────────────
 
 /// Java import resolution — replaces `ImportResolution.hs` of `java-resolve`:
@@ -513,11 +554,17 @@ pub const JAVA_ANNOTATIONS_DL: &str = include_str!("stdlib/java_annotations.dl")
 /// js_runtime_globals_edges → java_imports → java_types → java_calls →
 /// java_annotations → kotlin_inheritance → go_imports → go_imports_nomod →
 /// go_calls → go_interfaces → go_types → go_context → depends → method_calls →
-/// shape_verifier → axum_routes → js_http_routes_nodes → js_http_routes_edges.
+/// shape_verifier → axum_routes → js_http_routes_nodes → js_http_routes_edges →
+/// js_entrypoint_features_nodes → js_entrypoint_features_edges.
 /// - the Wave-14 feature-detection pair: `js_http_routes_nodes` MINTS the
 ///   anchorCall-pinned http:route endpoints that `js_http_routes_edges` joins
 ///   as committed EDB (strict nodes→edges order, the js_builtins split);
 ///   both consume analyzer EDB only.
+/// - the Loop-2 feature-detection pair: `js_entrypoint_features_nodes` MINTS
+///   the anchorCall-pinned cli:command / mcp:tool / vscode:command FEATURE
+///   endpoints that `js_entrypoint_features_edges` joins as committed EDB
+///   (strict nodes→edges order, the js_builtins split); both consume analyzer
+///   EDB only and replace the libraryCallbackEnricher's three remaining slices.
 /// - the Kotlin wave: `kotlin_inheritance` PRODUCES EXTENDS/IMPLEMENTS for
 ///   shape_verifier's inheritance closure (analyzer EDB only), so it precedes
 ///   the negators.
@@ -604,6 +651,14 @@ pub const STDLIB_PACKS: &[(&str, &str)] = &[
     // earlier pack reads, so they sit at the registry tail with axum_routes.
     ("js_http_routes_nodes", JS_HTTP_ROUTES_NODES_DL),
     ("js_http_routes_edges", JS_HTTP_ROUTES_EDGES_DL),
+    // Loop-2 feature-detection vertical (the cli:command / mcp:tool /
+    // vscode:command slices the libraryCallbackEnricher minted): the nodes pack
+    // MINTS the anchorCall-pinned FEATURE endpoints that the edges pack joins as
+    // committed EDB (strict nodes→edges order — the js_builtins two-pack split).
+    // Both consume analyzer EDB only and produce nothing any earlier pack reads,
+    // so they sit at the registry tail with js_http_routes.
+    ("js_entrypoint_features_nodes", JS_ENTRYPOINT_FEATURES_NODES_DL),
+    ("js_entrypoint_features_edges", JS_ENTRYPOINT_FEATURES_EDGES_DL),
 ];
 
 /// Look up a bundled pack by its wire name (the `<name>` in `"@stdlib/<name>"`).
@@ -1480,6 +1535,8 @@ mod tests {
                 "axum_routes",
                 "js_http_routes_nodes",
                 "js_http_routes_edges",
+                "js_entrypoint_features_nodes",
+                "js_entrypoint_features_edges",
             ],
             "canonical run order: Wave-1 resolver packs → Wave-1b packs \
              (rust_cross_methods_ctor after rust_calls — the CALLS EDB seam; the \
@@ -1544,6 +1601,14 @@ mod tests {
         assert_eq!(
             stdlib_pack("js_http_routes_edges"),
             Some(JS_HTTP_ROUTES_EDGES_DL)
+        );
+        assert_eq!(
+            stdlib_pack("js_entrypoint_features_nodes"),
+            Some(JS_ENTRYPOINT_FEATURES_NODES_DL)
+        );
+        assert_eq!(
+            stdlib_pack("js_entrypoint_features_edges"),
+            Some(JS_ENTRYPOINT_FEATURES_EDGES_DL)
         );
         assert_eq!(stdlib_pack("nope"), None, "unknown pack name resolves to None");
     }
@@ -4092,6 +4157,35 @@ mod tests {
         }
     }
 
+    /// Loop-2 small-corpus stats for the js_entrypoint_features fixture tests —
+    /// same store-derived scale as `w14_stats` (so the deep ecb-fact + PA-walk
+    /// join chain plans past the E-PLAN-003 guard on estimates) plus the three
+    /// FEATURE node types and PROPERTY_ACCESS (the `<obj>.` chain walk leg).
+    fn ef_stats() -> Stats {
+        let mut nodes_by_type = std::collections::HashMap::new();
+        for (ty, n) in [
+            ("CALL", 70_000u64),
+            ("LITERAL", 40_000),
+            ("PROPERTY_ACCESS", 30_000),
+            ("REFERENCE", 140_000),
+            ("VARIABLE", 15_500),
+            ("FUNCTION", 10_221),
+            ("CONSTANT", 6_700),
+            ("IMPORT_BINDING", 5_781),
+            ("cli:command", 30),
+            ("mcp:tool", 40),
+            ("vscode:command", 50),
+            ("http:route", 50),
+        ] {
+            nodes_by_type.insert(ty.to_string(), n);
+        }
+        Stats {
+            total_nodes: 500_000,
+            total_edges: 1_000_000,
+            nodes_by_type,
+        }
+    }
+
     /// Wave 14 — js_http_routes_nodes framework arms, each pinned on the
     /// live-verified analyzer shapes (IMPORT_BINDING metadata.source, CALL
     /// metadata.kind="new", RECEIVER_CALL chains, PASSES_ARGUMENT
@@ -4353,6 +4447,285 @@ mod tests {
             BTreeSet::from([(id_of(&route_sid), id_of("h_users"))]),
             "HANDLES: pinned node → the callback-index argument target"
         );
+
+        for ty in ["EXPOSES", "HANDLES"] {
+            let s = specs
+                .iter()
+                .find(|s| s.edge_type == ty)
+                .unwrap_or_else(|| panic!("{ty} spec present"));
+            assert!(s.additive, "{ty} is shared enricher vocabulary — additive");
+            assert!(s.meta.is_empty(), "{ty} carries no meta columns");
+        }
+    }
+
+    /// Loop-2 — js_entrypoint_features_nodes mints the three FEATURE node types
+    /// (cli:command / mcp:tool / vscode:command) on the LIVE-VERIFIED analyzer
+    /// shapes (.grafema/graph.rfdb, 491k nodes, 2026-06-13), exercising BOTH
+    /// receiver-resolution styles plus name extraction:
+    /// - vscode (`<obj>.` PA-walk, delta 3): the DERIVES_FROM[callee] callee PA
+    ///   (base "<obj>") → READS_FROM[receiver] → PA(base="vscode") chain, with
+    ///   `import * as vscode from 'vscode'`. COMMAND_NAME literal at idx 0
+    ///   (single-quote strip), callback at idx 1;
+    /// - commander (RECEIVER_CALL chain): `new Command('analyze').action(fn)` —
+    ///   the chain origin's constructor name resolves the `commander` import, and
+    ///   the FEATURE name comes from the chain ORIGIN's arg-0 LITERAL ('analyze'),
+    ///   since the ENTRY_POINT_CALLBACK method `.action` carries no name role
+    ///   (the enricher's origin-arg-0 fallback, extractDomainName :453);
+    /// - mcp (direct named receiver): `server.setRequestHandler(Schema, h)` where
+    ///   `server` is an IMPORT_BINDING from a SUBPATH source — arg 0 (TOOL_SCHEMA)
+    ///   is a REFERENCE not a LITERAL ⇒ "<unnamed-mcp-tool>" (the ~4-call subset);
+    /// - negatives: a `.action` whose receiver is a non-registry import (lodash),
+    ///   and a `.registerCommand` missing its callback arg (delta 8) mint nothing.
+    #[test]
+    fn js_entrypoint_features_nodes_three_slices() {
+        let idx0 = r#"{"index":0}"#;
+        let idx1 = r#"{"index":1}"#;
+        let callee = r#"{"kind":"callee"}"#;
+        let receiver = r#"{"kind":"receiver"}"#;
+        let mut v = FixtureStorageView::new(1);
+
+        // a. vscode `<obj>.` PA-walk: import * as vscode from 'vscode';
+        //    vscode.commands.registerCommand('grafema.go', handler).
+        named_node(&mut v, "b_vscode", "vscode", "IMPORT_BINDING", "ext.ts");
+        v.put_node_metadata(id_of("b_vscode"), r#"{"source":"vscode"}"#);
+        named_node(&mut v, "c_reg", "<obj>.registerCommand", "CALL", "ext.ts");
+        // callee PA of the registerCommand call (base "<obj>").
+        named_node(&mut v, "pa_reg", "registerCommand", "PROPERTY_ACCESS", "ext.ts");
+        v.put_node_metadata(id_of("pa_reg"), r#"{"base":"<obj>"}"#);
+        edge_meta(&mut v, "c_reg", "pa_reg", "DERIVES_FROM", callee);
+        // receiver hop → PA(name=commands, base="vscode") — the terminal base.
+        named_node(&mut v, "pa_commands", "commands", "PROPERTY_ACCESS", "ext.ts");
+        v.put_node_metadata(id_of("pa_commands"), r#"{"base":"vscode"}"#);
+        edge_meta(&mut v, "pa_reg", "pa_commands", "READS_FROM", receiver);
+        named_node(&mut v, "p_cmd", "'grafema.go'", "LITERAL", "ext.ts");
+        named_node(&mut v, "h_cmd", "<arrow>", "FUNCTION", "ext.ts");
+        edge_meta(&mut v, "c_reg", "p_cmd", "PASSES_ARGUMENT", idx0);
+        edge_meta(&mut v, "c_reg", "h_cmd", "PASSES_ARGUMENT", idx1);
+
+        // b. commander RECEIVER_CALL chain: new Command('analyze').action(fn).
+        named_node(&mut v, "b_Command", "Command", "IMPORT_BINDING", "cli.ts");
+        v.put_node_metadata(id_of("b_Command"), r#"{"source":"commander"}"#);
+        named_node(&mut v, "c_new", "Command", "CALL", "cli.ts");
+        v.put_node_metadata(id_of("c_new"), r#"{"kind":"new"}"#);
+        named_node(&mut v, "p_name", "'analyze'", "LITERAL", "cli.ts");
+        edge_meta(&mut v, "c_new", "p_name", "PASSES_ARGUMENT", idx0);
+        named_node(&mut v, "c_action", "<obj>.action", "CALL", "cli.ts");
+        edge(&mut v, "c_action", "c_new", "RECEIVER_CALL");
+        named_node(&mut v, "h_action", "analyzeAction", "FUNCTION", "cli.ts");
+        edge_meta(&mut v, "c_action", "h_action", "PASSES_ARGUMENT", idx0);
+
+        // c. commander factory + named-receiver arm (delta 2): const program =
+        //    createCommand(); program.action(startHandler). The receiver
+        //    `program` is a CONSTANT whose ASSIGNED_FROM initializer is the
+        //    `createCommand()` factory CALL (NOT a `new`) — delta 2 resolves it.
+        //    `.action` has no name arg AND no chain origin with an arg-0 literal
+        //    (the factory call takes none) ⇒ "<unnamed-cli-command>".
+        named_node(&mut v, "b_cc", "createCommand", "IMPORT_BINDING", "cli2.ts");
+        v.put_node_metadata(id_of("b_cc"), r#"{"source":"commander"}"#);
+        named_node(&mut v, "k_prog", "program", "CONSTANT", "cli2.ts");
+        named_node(&mut v, "c_ccall", "createCommand", "CALL", "cli2.ts");
+        edge(&mut v, "k_prog", "c_ccall", "ASSIGNED_FROM");
+        named_node(&mut v, "c_pact", "program.action", "CALL", "cli2.ts");
+        named_node(&mut v, "h_start", "startHandler", "FUNCTION", "cli2.ts");
+        edge_meta(&mut v, "c_pact", "h_start", "PASSES_ARGUMENT", idx0);
+
+        // d. mcp direct named receiver: import { Server } from
+        //    '@modelcontextprotocol/sdk/server/index.js'; server is the binding;
+        //    server.setRequestHandler(CallToolRequestSchema, handler) — TOOL_SCHEMA
+        //    arg 0 is a REFERENCE (not LITERAL) ⇒ unnamed.
+        named_node(&mut v, "b_server", "server", "IMPORT_BINDING", "mcp.ts");
+        v.put_node_metadata(id_of("b_server"), r#"{"source":"@modelcontextprotocol/sdk/server/index.js"}"#);
+        named_node(&mut v, "c_srh", "server.setRequestHandler", "CALL", "mcp.ts");
+        named_node(&mut v, "ref_schema", "CallToolRequestSchema", "REFERENCE", "mcp.ts");
+        named_node(&mut v, "h_tool", "callTool", "FUNCTION", "mcp.ts");
+        edge_meta(&mut v, "c_srh", "ref_schema", "PASSES_ARGUMENT", idx0);
+        edge_meta(&mut v, "c_srh", "h_tool", "PASSES_ARGUMENT", idx1);
+
+        // e. negatives.
+        // non-registry import: import _ from 'lodash'; _.action(...) — never matches.
+        named_node(&mut v, "b_lodash", "_", "IMPORT_BINDING", "n.ts");
+        v.put_node_metadata(id_of("b_lodash"), r#"{"source":"lodash"}"#);
+        named_node(&mut v, "c_lo", "_.action", "CALL", "n.ts");
+        named_node(&mut v, "h_lo", "x", "FUNCTION", "n.ts");
+        edge_meta(&mut v, "c_lo", "h_lo", "PASSES_ARGUMENT", idx0);
+        // vscode registerCommand with NO callback arg (delta 8): mints nothing.
+        named_node(&mut v, "c_nocb", "<obj>.registerCommand", "CALL", "n.ts");
+        named_node(&mut v, "pa_nocb", "registerCommand", "PROPERTY_ACCESS", "n.ts");
+        v.put_node_metadata(id_of("pa_nocb"), r#"{"base":"<obj>"}"#);
+        edge_meta(&mut v, "c_nocb", "pa_nocb", "DERIVES_FROM", callee);
+        named_node(&mut v, "pa_nocb_c", "commands", "PROPERTY_ACCESS", "n.ts");
+        v.put_node_metadata(id_of("pa_nocb_c"), r#"{"base":"vscode"}"#);
+        edge_meta(&mut v, "pa_nocb", "pa_nocb_c", "READS_FROM", receiver);
+        named_node(&mut v, "b_vscode2", "vscode", "IMPORT_BINDING", "n.ts");
+        v.put_node_metadata(id_of("b_vscode2"), r#"{"source":"vscode"}"#);
+        named_node(&mut v, "p_nocb", "'grafema.x'", "LITERAL", "n.ts");
+        edge_meta(&mut v, "c_nocb", "p_nocb", "PASSES_ARGUMENT", idx0);
+
+        let (eval, _specs, node_specs) = evaluate_with_materialize(
+            &v,
+            JS_ENTRYPOINT_FEATURES_NODES_DL,
+            ef_stats(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("js_entrypoint_features_nodes.dl evaluates");
+
+        let rn = |file: &str, nt: &str, name: &str, lib: &str, m: &str, call: &str| {
+            (
+                format!("{file}::{nt}::{name}::{}", id_of(call)),
+                name.to_string(),
+                file.to_string(),
+                lib.to_string(),
+                m.to_string(),
+            )
+        };
+        let collect = |pred: &str| -> BTreeSet<(String, String, String, String, String)> {
+            eval.facts(pred)
+                .into_iter()
+                .map(|r| (r[0].as_str(), r[1].as_str(), r[2].as_str(), r[3].as_str(), r[4].as_str()))
+                .collect()
+        };
+        assert_eq!(
+            collect("cli_command"),
+            BTreeSet::from([
+                rn("cli.ts", "cli:command", "analyze", "commander", "action", "c_action"),
+                rn("cli2.ts", "cli:command", "<unnamed-cli-command>", "commander", "action", "c_pact"),
+            ]),
+            "RECEIVER_CALL chain `.action` named from the chain-origin arg-0 \
+             literal ('analyze'); the factory-init `.action` (delta 2, no \
+             origin-arg-0 literal) is unnamed"
+        );
+        assert_eq!(
+            collect("mcp_tool"),
+            BTreeSet::from([
+                rn("mcp.ts", "mcp:tool", "<unnamed-mcp-tool>", "@modelcontextprotocol/sdk", "setRequestHandler", "c_srh"),
+            ]),
+            "subpath-imported server.setRequestHandler mints one mcp:tool; \
+             TOOL_SCHEMA arg is a REFERENCE ⇒ unnamed (the ~4-call subset)"
+        );
+        assert_eq!(
+            collect("vscode_command"),
+            BTreeSet::from([
+                rn("ext.ts", "vscode:command", "grafema.go", "vscode", "registerCommand", "c_reg"),
+            ]),
+            "the `<obj>.` PA-walk resolves vscode.commands.registerCommand to the \
+             `vscode` import; COMMAND_NAME literal names it; the callback-less \
+             negative (delta 8) and the lodash negative mint nothing"
+        );
+
+        // Specs: three exclusive (provenance-scoped) node heads, NO ROUTES_TO.
+        assert_eq!(node_specs.len(), 3, "three @materialize_node heads");
+        assert!(
+            node_specs.iter().all(|s| !s.additive),
+            "exclusive (provenance-scoped) node ownership on every head"
+        );
+        for (pred, nt) in [
+            ("cli_command", "cli:command"),
+            ("mcp_tool", "mcp:tool"),
+            ("vscode_command", "vscode:command"),
+        ] {
+            let ns = node_specs
+                .iter()
+                .find(|s| s.predicate == pred)
+                .unwrap_or_else(|| panic!("node spec {pred}"));
+            assert_eq!(ns.node_type, nt);
+            assert_eq!(
+                ns.meta,
+                vec!["library".to_string(), "method".to_string(), "anchorCall".to_string()]
+            );
+        }
+    }
+
+    /// Loop-2 — js_entrypoint_features_edges joins the COMMITTED FEATURE
+    /// endpoints by the exact per-node-type anchorCall pin and reproduces the
+    /// enricher's edge vocabulary: EXPOSES (CALL → FEATURE) + HANDLES
+    /// (FEATURE → callback). Decoys — a mcpToolDefinitionEnricher-style mcp:tool
+    /// (anchorCall = a def-file string, never a decimal id) and a node whose
+    /// anchorCall points at an UNRELATED call — are never joined; cross-type
+    /// nodes (an http:route with the same anchorCall) are excluded by the
+    /// per-head node_type gate.
+    #[test]
+    fn js_entrypoint_features_edges_joins_minted_endpoints() {
+        let idx0 = r#"{"index":0}"#;
+        let idx1 = r#"{"index":1}"#;
+        let callee = r#"{"kind":"callee"}"#;
+        let receiver = r#"{"kind":"receiver"}"#;
+        let mut v = FixtureStorageView::new(1);
+
+        // The resolvable vscode registration (the `<obj>.` PA-walk arm).
+        named_node(&mut v, "b_vscode", "vscode", "IMPORT_BINDING", "ext.ts");
+        v.put_node_metadata(id_of("b_vscode"), r#"{"source":"vscode"}"#);
+        named_node(&mut v, "c_reg", "<obj>.registerCommand", "CALL", "ext.ts");
+        named_node(&mut v, "pa_reg", "registerCommand", "PROPERTY_ACCESS", "ext.ts");
+        v.put_node_metadata(id_of("pa_reg"), r#"{"base":"<obj>"}"#);
+        edge_meta(&mut v, "c_reg", "pa_reg", "DERIVES_FROM", callee);
+        named_node(&mut v, "pa_commands", "commands", "PROPERTY_ACCESS", "ext.ts");
+        v.put_node_metadata(id_of("pa_commands"), r#"{"base":"vscode"}"#);
+        edge_meta(&mut v, "pa_reg", "pa_commands", "READS_FROM", receiver);
+        named_node(&mut v, "p_cmd", "'grafema.go'", "LITERAL", "ext.ts");
+        named_node(&mut v, "h_cmd", "<arrow>", "FUNCTION", "ext.ts");
+        edge_meta(&mut v, "c_reg", "p_cmd", "PASSES_ARGUMENT", idx0);
+        edge_meta(&mut v, "c_reg", "h_cmd", "PASSES_ARGUMENT", idx1);
+
+        // The COMMITTED vscode:command node the nodes pack would mint.
+        let feat_sid = format!("ext.ts::vscode:command::grafema.go::{}", id_of("c_reg"));
+        named_node(&mut v, &feat_sid, "grafema.go", "vscode:command", "ext.ts");
+        v.put_node_metadata(
+            id_of(&feat_sid),
+            &format!(r#"{{"anchorCall":"{}","library":"vscode","method":"registerCommand"}}"#, id_of("c_reg")),
+        );
+
+        // Decoys.
+        // (1) mcpToolDefinitionEnricher-style mcp:tool: anchorCall is a def-file
+        //     string AND wrong node_type for the vscode head — never joined.
+        named_node(&mut v, "def_tool", "search", "mcp:tool", "packages/mcp/src/definitions/query-tools.ts");
+        v.put_node_metadata(
+            id_of("def_tool"),
+            r#"{"anchorCall":"packages/mcp/src/definitions/query-tools.ts->TOOL->search"}"#,
+        );
+        // (2) an http:route with the SAME anchorCall — wrong node_type, excluded
+        //     by the per-head gate (only node(R,"vscode:command") is probed).
+        named_node(&mut v, "decoy_route", "grafema.go", "http:route", "ext.ts");
+        v.put_node_metadata(
+            id_of("decoy_route"),
+            &format!(r#"{{"anchorCall":"{}"}}"#, id_of("c_reg")),
+        );
+        // (3) a vscode:command whose anchorCall points at an UNRELATED call.
+        named_node(&mut v, "decoy_anchor", "grafema.go", "vscode:command", "ext.ts");
+        v.put_node_metadata(
+            id_of("decoy_anchor"),
+            &format!(r#"{{"anchorCall":"{}"}}"#, id_of("pa_commands")),
+        );
+
+        let (eval, specs, _node_specs) = evaluate_with_materialize(
+            &v,
+            JS_ENTRYPOINT_FEATURES_EDGES_DL,
+            ef_stats(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("js_entrypoint_features_edges.dl evaluates");
+
+        let pairs = |pred: &str| -> BTreeSet<(u128, u128)> {
+            eval.facts(pred)
+                .into_iter()
+                .map(|r| (r[0].as_id().expect("src id"), r[1].as_id().expect("dst id")))
+                .collect()
+        };
+        assert_eq!(
+            pairs("ef_exposes_vsc"),
+            BTreeSet::from([(id_of("c_reg"), id_of(&feat_sid))]),
+            "EXPOSES joins exactly the anchorCall-pinned vscode:command — no \
+             decoy joins (def-anchored tool, cross-type route, wrong anchor)"
+        );
+        assert_eq!(
+            pairs("ef_handles_vsc"),
+            BTreeSet::from([(id_of(&feat_sid), id_of("h_cmd"))]),
+            "HANDLES: pinned node → the callback-index argument target"
+        );
+        // The cross-type / def-anchored decoys leave the cli + mcp heads empty.
+        assert!(pairs("ef_exposes_cli").is_empty() && pairs("ef_exposes_mcp").is_empty(),
+            "no cli/mcp endpoints in this fixture");
 
         for ty in ["EXPOSES", "HANDLES"] {
             let s = specs
@@ -5014,6 +5387,13 @@ mod tests {
             ("WORKSPACE_PACKAGE", 30),
             // Wave 14: axum_routes + js_http_routes minted routes (dogfood 8).
             ("http:route", 8),
+            // Loop-2: js_entrypoint_features minted FEATURE nodes (dogfood
+            // ~29 vscode:command + ~5 cli:command + ~4 mcp:tool; model
+            // generously so the edges pack's node_attr(R,"anchorCall") join leg
+            // is planned against a non-vacuous endpoint relation).
+            ("cli:command", 30),
+            ("mcp:tool", 40),
+            ("vscode:command", 50),
             // Java packs: the dogfood graph has ZERO java nodes (config gap,
             // lang-spec-java.md §7), so an unknown type would estimate 0 and
             // make the gate VACUOUS for the java-only vocabulary. Model a

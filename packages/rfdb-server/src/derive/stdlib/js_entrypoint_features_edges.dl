@@ -1,0 +1,153 @@
+% js_entrypoint_features_edges.dl — edge half of the JS ENTRY-POINT-FEATURE
+% vertical (Loop-2): the libraryCallbackEnricher edge vocabulary over the
+% cli:command / mcp:tool / vscode:command FEATURE nodes minted by
+% js_entrypoint_features_nodes.dl:
+%   EXPOSES : registration CALL -> FEATURE node   (enricher :146-151)
+%   HANDLES : FEATURE node -> callback target      (enricher :152-157)
+% MUST be declared AFTER js_entrypoint_features_nodes in the pack runner: the
+% minted FEATURE endpoints are joined here as COMMITTED storage EDB (the
+% js_builtins two-pack split — a @materialize edge endpoint must be a node-ID
+% column, and a same-run-minted node's id exists only as the BLAKE3 of the sid
+% string the nodes pack builds).
+%
+% The match prelude (cand/corig/try/pchain/pbase/want/bnd/dnext/src_of/routed)
+% is a textual duplicate of js_entrypoint_features_nodes.dl (derived relations
+% are per-program; the established per-pack include pattern), and the ecb_*
+% ground facts are PREPENDED at compile time from effects_callable_facts.dl
+% (stdlib.rs concat!). See the nodes pack header for the full enricher
+% provenance, the two receiver-chain styles, and NUMBERED DELTAS 1-8 — no
+% additional edge-only deltas.
+%
+% ENDPOINT PIN: our FEATURE nodes carry meta `anchorCall` = the decimal u128 id
+% of the registration call (nodes pack delta 4/5) — the join
+% `node_attr(R, "anchorCall", Cid) ⋈ attr(C, "id", Cid)` is exact and 1:1.
+% Other producers' nodes are NEVER joined: the mcpToolDefinitionEnricher's
+% mcp:tool nodes have a def-file-anchored sid (no decimal-call anchorCall), and
+% any legacy enricher node's anchorCall holds a WIRE semantic-id string (never
+% equal to a decimal id rendering). The endpoint node_type is read per head so
+% EXPOSES/HANDLES bind only the matching FEATURE type.
+%
+% EXPOSES / HANDLES are SHARED vocabulary (the enricher emits them for HTTP and
+% these three slices alike) ⇒ mode = "additive" is MANDATORY. Additive edges do
+% not retract: an EXPOSES/HANDLES edge whose FEATURE node was retracted by the
+% (exclusive) nodes pack dangles until the next writer cleanup — the known
+% additive-vocabulary class, same as js_http_routes_edges.
+%
+% MAINTAIN ENVELOPE: negation ⇒ scratch-only under maintain (accepted).
+%
+% ORDERING (CONSUMER): strictly after js_entrypoint_features_nodes
+% (committed-EDB endpoint join), enforced by both pack registries.
+
+% ── Registry slice + rules (duplicate prelude; see the nodes pack) ──────────
+ef_lib("commander", "cli:command").
+ef_lib("@modelcontextprotocol/sdk", "mcp:tool").
+ef_lib("vscode", "vscode:command").
+
+ef_rule(Lib, M, CbIdx) :-
+    ef_lib(Lib, _),
+    ecb_method(Lib, Full, M),
+    ecb_arg(Lib, Full, CbIdx, "ENTRY_POINT_CALLBACK").
+ef_m(M) :- ef_rule(_, M, _).
+
+% ── Candidate calls (8-ext gate; duplicate prelude) ─────────────────────────
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".js"),  attr(C, "name", N).
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".jsx"), attr(C, "name", N).
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".ts"),  attr(C, "name", N).
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".tsx"), attr(C, "name", N).
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".mjs"), attr(C, "name", N).
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".cjs"), attr(C, "name", N).
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".mts"), attr(C, "name", N).
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".cts"), attr(C, "name", N).
+
+msfx(C, F, M) :- jcall(C, F, N), method_suffix(N, M).
+cand(C, F, M) :- msfx(C, F, M), ef_m(M).
+
+% ── Receiver-chain style 1: RECEIVER_CALL closure (duplicate prelude) ───────
+rsrc(X)     :- edge(X, _, "RECEIVER_CALL").
+rpath(A, B) :- edge(A, B, "RECEIVER_CALL").
+rpath(A, B) :- rpath(A, X), edge(X, B, "RECEIVER_CALL").
+rorig(A, B) :- rpath(A, B), \+ rsrc(B).
+
+corig(C, O) :- cand(C, _, _), rorig(C, O).
+corig(C, C) :- cand(C, _, _), \+ rsrc(C).
+
+try(C, F, N) :- corig(C, O), attr(O, "name", N), attr(O, "file", F).
+try(C, F, R) :- try(C, F, N), method_suffix(N, S), concat(".", S, DS), strip_suffix(N, DS, R).
+
+% ── Receiver-chain style 2: DERIVES_FROM[callee]/READS_FROM[receiver] PA-walk ─
+pcallee(C, D) :-
+    cand(C, _, _),
+    edge(C, D, "DERIVES_FROM"),
+    edge_attr(C, D, "DERIVES_FROM", "kind", "callee").
+pchain(C, D) :- pcallee(C, D).
+pchain(C, R) :- pchain(C, D), node(D, "PROPERTY_ACCESS"),
+    edge(D, R, "READS_FROM"), edge_attr(D, R, "READS_FROM", "kind", "receiver"),
+    node(R, "PROPERTY_ACCESS").
+pchain(C, R2) :- pchain(C, D), node(D, "PROPERTY_ACCESS"),
+    edge(D, X, "READS_FROM"), edge_attr(D, X, "READS_FROM", "kind", "receiver"),
+    node(X, "CALL"),
+    edge(X, R2, "DERIVES_FROM"), edge_attr(X, R2, "DERIVES_FROM", "kind", "callee"),
+    node(R2, "PROPERTY_ACCESS").
+pbase(C, F, B) :- pchain(C, D), node_attr(D, "base", B), attr(C, "file", F),
+    neq(B, "<obj>"), neq(B, "<call>").
+
+% ── Unified want-set + initializer hop (duplicate prelude) ──────────────────
+want(F, N) :- try(_, F, N).
+want(F, N) :- pbase(_, F, N).
+want(F, N) :- dnext(F, _, N).
+
+bnd(F, N, Src) :-
+    want(F, N),
+    node(B, "IMPORT_BINDING"), attr(B, "file", F), attr(B, "name", N),
+    node_attr(B, "source", Src).
+
+dinit(F, N, I) :- want(F, N), node(D, "CONSTANT"), attr(D, "file", F), attr(D, "name", N), edge(D, I, "ASSIGNED_FROM"), node(I, "CALL").
+dinit(F, N, I) :- want(F, N), node(D, "VARIABLE"), attr(D, "file", F), attr(D, "name", N), edge(D, I, "ASSIGNED_FROM"), node(I, "CALL").
+dorig(F, N, O) :- dinit(F, N, I), rorig(I, O).
+dorig(F, N, I) :- dinit(F, N, I), \+ rsrc(I).
+dnext(F, N, ON) :- dorig(F, N, O), attr(O, "name", ON).
+dnext(F, N, R)  :- dnext(F, N, ON), method_suffix(ON, S), concat(".", S, DS), strip_suffix(ON, DS, R).
+
+src_of(F, N, Src) :- bnd(F, N, Src).
+src_of(F, N, Src) :- dnext(F, N, N2), src_of(F, N2, Src).
+
+res(C, Src) :- try(C, F, N), src_of(F, N, Src).
+res(C, Src) :- pbase(C, F, N), src_of(F, N, Src).
+
+spfx(C, S) :- res(C, S).
+spfx(C, P) :- spfx(C, S), last_segment(S, "/", L), concat("/", L, T), strip_suffix(S, T, P).
+mlib(C, Lib) :- spfx(C, Lib), ef_lib(Lib, _).
+
+routed(C, Lib, M, H) :-
+    cand(C, _, M),
+    mlib(C, Lib),
+    ef_rule(Lib, M, CbIdx),
+    edge(C, H, "PASSES_ARGUMENT"),
+    edge_attr(C, H, "PASSES_ARGUMENT", "index", CbIdx).
+
+% ── The materialized edges over the COMMITTED FEATURE endpoints ─────────────
+% The endpoint node_type is a string LITERAL in `node(R, "T")` (the builtin's
+% only generator mode is node(Free, Bound-literal); a runtime-bound type column
+% leaves the planner with node(Free,Free) which has no mode). So the join is
+% split per FEATURE type — one routed-call relation per node_type. The decimal
+% call id is read in its OWN rule (hcid* below) so the attr leg always runs in
+% reader mode [B,B,F] off the bound call (the js_http_routes hcid discipline;
+% fused, the planner might bind Cid from node_attr first and flip attr into the
+% unindexed [F,B,B] reverse-lookup of the "id" pseudo-attr).
+hcid_cli(C, Cid, H) :- routed(C, "commander", _, H), attr(C, "id", Cid).
+hcid_mcp(C, Cid, H) :- routed(C, "@modelcontextprotocol/sdk", _, H), attr(C, "id", Cid).
+hcid_vsc(C, Cid, H) :- routed(C, "vscode", _, H), attr(C, "id", Cid).
+
+@materialize(edge_type = "EXPOSES", mode = "additive")
+ef_exposes_cli(C, R) :- hcid_cli(C, Cid, _), node(R, "cli:command"),    node_attr(R, "anchorCall", Cid).
+@materialize(edge_type = "EXPOSES", mode = "additive")
+ef_exposes_mcp(C, R) :- hcid_mcp(C, Cid, _), node(R, "mcp:tool"),       node_attr(R, "anchorCall", Cid).
+@materialize(edge_type = "EXPOSES", mode = "additive")
+ef_exposes_vsc(C, R) :- hcid_vsc(C, Cid, _), node(R, "vscode:command"), node_attr(R, "anchorCall", Cid).
+
+@materialize(edge_type = "HANDLES", mode = "additive")
+ef_handles_cli(R, H) :- hcid_cli(C, Cid, H), node(R, "cli:command"),    node_attr(R, "anchorCall", Cid).
+@materialize(edge_type = "HANDLES", mode = "additive")
+ef_handles_mcp(R, H) :- hcid_mcp(C, Cid, H), node(R, "mcp:tool"),       node_attr(R, "anchorCall", Cid).
+@materialize(edge_type = "HANDLES", mode = "additive")
+ef_handles_vsc(R, H) :- hcid_vsc(C, Cid, H), node(R, "vscode:command"), node_attr(R, "anchorCall", Cid).

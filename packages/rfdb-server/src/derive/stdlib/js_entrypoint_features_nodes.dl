@@ -1,0 +1,325 @@
+% js_entrypoint_features_nodes.dl — node half of the JS ENTRY-POINT-FEATURE
+% vertical (Loop-2, continues the Wave-14 js_http_routes prototype): the three
+% remaining domain slices the libraryCallbackEnricher still mints —
+%   commander          -> cli:command
+%   @modelcontextprotocol/sdk -> mcp:tool
+%   vscode             -> vscode:command
+% are minted here as @materialize_node FEATURE nodes (+ EXPOSES/HANDLES in the
+% edges half). This is the derive-pack REPLACEMENT for those three entries of
+% libraryCallbackEnricher.ts's LIBRARY_NODE_TYPE map (lines 36-39); they were
+% RETIRED there in this wave — exactly as the 6 HTTP frameworks were in Wave 14
+% — making this pack the SOLE default producer of js cli:command / mcp:tool /
+% vscode:command. (The enricher writes via addNodes/addEdges; leaving both on
+% would mint duplicate FEATURE nodes with byte-different ids — the wire-sid
+% anchor vs the pack's decimal anchorCall — plus duplicate EXPOSES/HANDLES and
+% duplicate SpecedContracts downstream in commanderExtractor /
+% mcpInputSchemaExtractor / vscodeContributesExtractor.)
+%
+% WHY ONE COMBINED PACK PAIR (not three): the three slices share the ENTIRE
+% receiver-resolution prelude (candidate calls -> receiver chain origin ->
+% import source -> library match -> callback-arg gate); they differ ONLY in
+% (a) the registry library set, (b) the per-library FEATURE node_type, and
+% (c) the name-source argument role (COMMAND_NAME for commander/vscode,
+% TOOL_SCHEMA for mcp). (a)+(c) are data (facts/rules); (b) forces THREE
+% @materialize_node heads because node_type is a string LITERAL in the
+% annotation grammar (parser_ext.rs MaterializeNode), not a column — but all
+% three heads run off ONE shared `routed` relation. This is the same
+% single-pack/many-libs structure as js_http_routes_nodes (6 libs, 1 pack).
+%
+% RECEIVER RESOLUTION — TWO CHAIN STYLES (live-verified on the repo's own
+% .grafema/graph.rfdb, 491k nodes, 2026-06-13):
+%   1. RECEIVER_CALL chain (the HTTP-pack prelude): `new Command('x').action(fn)`
+%      with explicit RECEIVER_CALL edges to the chain origin.
+%   2. DERIVES_FROM[callee] / READS_FROM[receiver] PROPERTY_ACCESS walk (NEW —
+%      js_http_routes deliberately OMITTED this, its delta 3, because no HTTP
+%      lib needed it). The modern JS analyzer represents `<obj>.method` chained
+%      receivers as:
+%        CALL(name="<obj>.M") --DERIVES_FROM[kind=callee]--> PA(name=M, base="<obj>")
+%                                   |  READS_FROM[kind=receiver]
+%                                   v
+%        PA(name=mid, base=root)  ── root is the import-binding name, OR
+%        CALL(name="<obj>.mid")   ── another chained method-call receiver
+%      vscode is ENTIRELY this style (`vscode.commands.registerCommand`,
+%      base "<obj>" -> READS_FROM -> PA(base="vscode")); commander's `.action`
+%      in this snapshot is this style too (the chain bottoms out in a CALL whose
+%      own callee-PA walk reaches `new Command(...)`). This pack implements BOTH
+%      styles; resolution is the UNION (a call resolves if EITHER reaches a
+%      registry import source).
+%   Live shapes pinned: DERIVES_FROM kind="callee", READS_FROM kind="receiver",
+%   PA node_attr "base", IMPORT_BINDING node_attr "source", PASSES_ARGUMENT
+%   metadata "index", LITERAL `name` = RAW source text incl. quotes
+%   ("'grafema.bookmarkNode'").
+%
+% NUMBERED DELTAS vs libraryCallbackEnricher (all deliberate):
+%   1. Name decomposition is the FULL dot-suffix-strip chain (try/dnext probe
+%      the origin name plus every "strip one trailing .segment" variant) — the
+%      js_http_routes delta 1 superset. The enricher picks one split.
+%   2. Factory initializers resolve (`const c = program(); c.command(...)`):
+%      ANY CALL origin's callee name is resolved, not only kind="new" (the
+%      enricher's initializer arm requires a NewExpression origin,
+%      libraryCallbackEnricher.ts:404). Superset, deliberate.
+%   3. The `<obj>`-rooted chained-namespace PA-walk (DERIVES_FROM[callee] /
+%      READS_FROM[receiver] base walk) IS implemented here (unlike
+%      js_http_routes delta 3) — REQUIRED for vscode and commander.
+%   4. Node identity: sid = "<file>::<nodeType>::<name>::<callIdDecimal>" — the
+%      enricher anchors on the call's WIRE semantic id (makeDomainNodeId, :504-
+%      508: `${file}::${nodeType}::${name}::${callId}`); the pack reproduces the
+%      EXACT shape with the engine's decimal u128 callId in the final segment.
+%      Same per-registration-call granularity, different anchor encoding (the
+%      shared duplicate-externals lesson).
+%   5. Node metadata: meta(library, method, anchorCall) where method = the BARE
+%      method name and library = the matched REGISTRY lib (the enricher stored
+%      matchingRule.library + methodFullName; the bare method makes the row set
+%      order-free, the js_http_routes delta 5).
+%   6. The FEATURE name comes from the COMMAND_NAME (commander/vscode) or
+%      TOOL_SCHEMA (mcp) role argument's LITERAL only, quotes stripped. The
+%      enricher probed those roles THEN arg 0 regardless of role and accepted
+%      ANY node's `name` (extractDomainName/readLiteralName, :439-475) — those
+%      junk name sources are dropped here -> "<unnamed-<nodeType>>". Like
+%      js_http_routes delta 6, with the MCP-subset caveat below: setRequestHandler
+%      arg 0 (TOOL_SCHEMA) is a REFERENCE/identifier (CallToolRequestSchema), not
+%      a string LITERAL, so mcp:tool nodes are virtually always unnamed — exactly
+%      as the enricher emitted them (the per-tool names come from the SEPARATE
+%      mcpToolDefinitionEnricher, see the SUBSET delta below).
+%   7. NO ROUTES_TO. These three slices are EXPOSES + HANDLES only (the enricher
+%      emitted exactly those two for them; ROUTES_TO is the HTTP/axum vocabulary).
+%   8. Handler-required gate: a node is minted only when the ENTRY_POINT_CALLBACK-
+%      index PASSES_ARGUMENT edge exists — enricher parity (it skipped calls
+%      without callbackArgId).
+%
+% MCP ~30-vs-~4 SUBSET DELTA (known limit, MEMORY.md; OUT OF SCOPE here):
+% Grafema's MCP server registers ~30 tools through ONE switch inside ~4
+% high-level server.setRequestHandler calls. This pack matches the enricher's
+% ~4 setRequestHandler CALLs (live count = 4 on the repo graph), NOT the ~30
+% per-tool definitions. The ~30 are minted by a DIFFERENT mechanism — the
+% mcpToolDefinitionEnricher reading packages/mcp/src/definitions/*-tools.ts —
+% which is unchanged by this wave and remains a separate additive producer of
+% mcp:tool nodes (its node ids are def-file-anchored, never colliding with this
+% pack's anchorCall-anchored ids). Fixing the ~4→~30 gap needs that
+% per-definition-file reader, not a derive pack.
+%
+% PROVENANCE / MODES: the three FEATURE node heads are mode="exclusive" =
+% PROVENANCE-SCOPED (engine contract): each head owns only the nodes of ITS
+% node_type stamped with THIS rule's _source — the mcpToolDefinitionEnricher's
+% mcp:tool nodes and any legacy enricher nodes are never touched, while a
+% command removed from the code retracts its node on the next run.
+%
+% MAINTAIN ENVELOPE: negation + node minting => scratch-only under maintain
+% (accepted, same class as every resolver/feature pack).
+%
+% ORDERING: consumes analyzer EDB only (CALL/IMPORT_BINDING/CONSTANT/VARIABLE/
+% PROPERTY_ACCESS nodes; RECEIVER_CALL/ASSIGNED_FROM/PASSES_ARGUMENT/
+% DERIVES_FROM/READS_FROM edges + metadata) — no pack-produced inputs.
+% Registered at the registry tail with js_http_routes (these are
+% feature-detection consumers, producers-before-consumers preserved);
+% js_entrypoint_features_edges joins the nodes minted HERE as committed EDB, so
+% this pack MUST run strictly before it (the js_builtins two-pack split).
+
+% ── Registry slice: lib -> FEATURE node_type (LIBRARY_NODE_TYPE :36-39) ──────
+ef_lib("commander", "cli:command").
+ef_lib("@modelcontextprotocol/sdk", "mcp:tool").
+ef_lib("vscode", "vscode:command").
+
+% ── Rules from the generated ecb_* facts: callback + name-source arg idxs ────
+% Callback (ENTRY_POINT_CALLBACK) — the registration method per registry lib.
+ef_rule(Lib, M, CbIdx) :-
+    ef_lib(Lib, _),
+    ecb_method(Lib, Full, M),
+    ecb_arg(Lib, Full, CbIdx, "ENTRY_POINT_CALLBACK").
+% Name-source argument: COMMAND_NAME (commander/vscode) or TOOL_SCHEMA (mcp).
+ef_nameidx(Lib, M, NIdx) :-
+    ef_lib(Lib, _),
+    ecb_method(Lib, Full, M),
+    ecb_arg(Lib, Full, NIdx, "COMMAND_NAME").
+ef_nameidx(Lib, M, NIdx) :-
+    ef_lib(Lib, _),
+    ecb_method(Lib, Full, M),
+    ecb_arg(Lib, Full, NIdx, "TOOL_SCHEMA").
+ef_m(M) :- ef_rule(_, M, _).
+
+% ── Candidate calls: ".<method>" suffix in a JS-family file (8-ext gate) ────
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".js"),  attr(C, "name", N).
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".jsx"), attr(C, "name", N).
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".ts"),  attr(C, "name", N).
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".tsx"), attr(C, "name", N).
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".mjs"), attr(C, "name", N).
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".cjs"), attr(C, "name", N).
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".mts"), attr(C, "name", N).
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".cts"), attr(C, "name", N).
+
+% Two-step suffix gate (the js_http_routes planner discipline: method_suffix
+% needs N bound, so it is planned off jcall alone, then the registry gate joins
+% the tiny ef_m relation).
+msfx(C, F, M) :- jcall(C, F, N), method_suffix(N, M).
+cand(C, F, M) :- msfx(C, F, M), ef_m(M).
+
+% ── Receiver-chain style 1: RECEIVER_CALL closure (EDB-negation only) ───────
+rsrc(X)     :- edge(X, _, "RECEIVER_CALL").
+rpath(A, B) :- edge(A, B, "RECEIVER_CALL").
+rpath(A, B) :- rpath(A, X), edge(X, B, "RECEIVER_CALL").
+rorig(A, B) :- rpath(A, B), \+ rsrc(B).
+
+corig(C, O) :- cand(C, _, _), rorig(C, O).
+corig(C, C) :- cand(C, _, _), \+ rsrc(C).
+
+% Name variants probed at the RECEIVER_CALL chain origin (delta 1).
+try(C, F, N) :- corig(C, O), attr(O, "name", N), attr(O, "file", F).
+try(C, F, R) :- try(C, F, N), method_suffix(N, S), concat(".", S, DS), strip_suffix(N, DS, R).
+
+% ── Receiver-chain style 2: DERIVES_FROM[callee] / READS_FROM[receiver]
+%    PROPERTY_ACCESS walk for "<obj>."-rooted chained receivers (delta 3) ─────
+% The callee PA of a candidate call.
+pcallee(C, D) :-
+    cand(C, _, _),
+    edge(C, D, "DERIVES_FROM"),
+    edge_attr(C, D, "DERIVES_FROM", "kind", "callee").
+% Reachable receiver-chain PROPERTY_ACCESS nodes from a candidate call: the
+% callee PA, then every READS_FROM[receiver] hop. (A receiver target that is a
+% CALL re-enters via ITS callee PA — that CALL is a candidate-independent join,
+% so we hop through the call's own DERIVES_FROM[callee].)
+pchain(C, D) :- pcallee(C, D).
+% receiver hop PA -> PA
+pchain(C, R) :- pchain(C, D), node(D, "PROPERTY_ACCESS"),
+    edge(D, R, "READS_FROM"), edge_attr(D, R, "READS_FROM", "kind", "receiver"),
+    node(R, "PROPERTY_ACCESS").
+% receiver hop PA -> CALL -> that CALL's callee PA (commander `.action` style)
+pchain(C, R2) :- pchain(C, D), node(D, "PROPERTY_ACCESS"),
+    edge(D, X, "READS_FROM"), edge_attr(D, X, "READS_FROM", "kind", "receiver"),
+    node(X, "CALL"),
+    edge(X, R2, "DERIVES_FROM"), edge_attr(X, R2, "DERIVES_FROM", "kind", "callee"),
+    node(R2, "PROPERTY_ACCESS").
+% A real (non-placeholder) base identifier reached on the chain is the import
+% binding name to resolve, in the candidate call's file.
+pbase(C, F, B) :- pchain(C, D), node_attr(D, "base", B), attr(C, "file", F),
+    neq(B, "<obj>"), neq(B, "<call>").
+
+% ── Unified want-set across both styles + the initializer hop ───────────────
+want(F, N) :- try(_, F, N).
+want(F, N) :- pbase(_, F, N).
+want(F, N) :- dnext(F, _, N).
+
+% IMPORT_BINDING source (exact-name; analyzer stores bare-name source).
+bnd(F, N, Src) :-
+    want(F, N),
+    node(B, "IMPORT_BINDING"), attr(B, "file", F), attr(B, "name", N),
+    node_attr(B, "source", Src).
+
+% const/var initializer hop: `const c = program()` / `= new Command()` —
+% chain origin's callee name (+ variants) is the next name to resolve.
+dinit(F, N, I) :- want(F, N), node(D, "CONSTANT"), attr(D, "file", F), attr(D, "name", N), edge(D, I, "ASSIGNED_FROM"), node(I, "CALL").
+dinit(F, N, I) :- want(F, N), node(D, "VARIABLE"), attr(D, "file", F), attr(D, "name", N), edge(D, I, "ASSIGNED_FROM"), node(I, "CALL").
+dorig(F, N, O) :- dinit(F, N, I), rorig(I, O).
+dorig(F, N, I) :- dinit(F, N, I), \+ rsrc(I).
+dnext(F, N, ON) :- dorig(F, N, O), attr(O, "name", ON).
+dnext(F, N, R)  :- dnext(F, N, ON), method_suffix(ON, S), concat(".", S, DS), strip_suffix(ON, DS, R).
+
+src_of(F, N, Src) :- bnd(F, N, Src).
+src_of(F, N, Src) :- dnext(F, N, N2), src_of(F, N2, Src).
+
+% Resolution UNION: a call resolves via the RECEIVER_CALL name variants OR via
+% the PA-walk terminal base.
+res(C, Src) :- try(C, F, N), src_of(F, N, Src).
+res(C, Src) :- pbase(C, F, N), src_of(F, N, Src).
+
+% Library match: exact, or subpath import "<lib>/..." (enricher :114-117) — the
+% segment-shrink idiom (js_http_routes spfx): every whole-"/"-segment prefix of
+% the source is derived, then membership-joined against the registry libs.
+spfx(C, S) :- res(C, S).
+spfx(C, P) :- spfx(C, S), last_segment(S, "/", L), concat("/", L, T), strip_suffix(S, T, P).
+mlib(C, Lib) :- spfx(C, Lib), ef_lib(Lib, _).
+
+% ── Resolved registrations: lib-matched + the callback argument EXISTS (8) ──
+routed(C, Lib, M, H) :-
+    cand(C, _, M),
+    mlib(C, Lib),
+    ef_rule(Lib, M, CbIdx),
+    edge(C, H, "PASSES_ARGUMENT"),
+    edge_attr(C, H, "PASSES_ARGUMENT", "index", CbIdx).
+rnode(C) :- routed(C, _, _, _).
+
+% ── FEATURE name (delta 6). Two sources, mirroring the enricher's
+%    extractDomainName (:439-465):
+%    (a) the COMMAND_NAME/TOOL_SCHEMA-role argument's LITERAL on the
+%        REGISTRATION call itself — vscode (registerCommand arg 0 COMMAND_NAME).
+%        For mcp the arg 0 (TOOL_SCHEMA) is a REFERENCE not a LITERAL, so the
+%        join misses and mcp:tool falls through to "<unnamed-mcp-tool>".
+%    (b) the RECEIVER_CALL chain ORIGIN's arg-0 LITERAL — commander, whose
+%        ENTRY_POINT_CALLBACK method `.action` carries NO name role; the command
+%        name lives on the chain origin `new Command('x')` / `.command('x')`
+%        (the enricher's `candidates.push(0)` fallback against resolved.originCall).
+%    Quotes stripped (single/double/backtick matching pairs).
+nraw(C, Raw) :-
+    routed(C, Lib, M, _),
+    ef_nameidx(Lib, M, NIdx),
+    edge(C, P, "PASSES_ARGUMENT"),
+    edge_attr(C, P, "PASSES_ARGUMENT", "index", NIdx),
+    node(P, "LITERAL"),
+    attr(P, "name", Raw).
+% (b) origin arg-0 literal for the RECEIVER_CALL chain origin (commander).
+nraw(C, Raw) :-
+    routed(C, _, _, _),
+    corig(C, O),
+    edge(O, P, "PASSES_ARGUMENT"),
+    edge_attr(O, P, "PASSES_ARGUMENT", "index", "0"),
+    node(P, "LITERAL"),
+    attr(P, "name", Raw).
+
+nsq(C, Raw) :- nraw(C, Raw), starts_with(Raw, "'").
+ndq(C, Raw) :- nraw(C, Raw), starts_with(Raw, "\"").
+nbq(C, Raw) :- nraw(C, Raw), starts_with(Raw, "`").
+nm(C, P)   :- nsq(C, Raw), strip_prefix(Raw, "'", T),  strip_suffix(T, "'", P).
+nm(C, P)   :- ndq(C, Raw), strip_prefix(Raw, "\"", T), strip_suffix(T, "\"", P).
+nm(C, P)   :- nbq(C, Raw), strip_prefix(Raw, "`", T),  strip_suffix(T, "`", P).
+nm(C, Raw) :- nraw(C, Raw), \+ nsqx(C), \+ ndqx(C), \+ nbqx(C).
+nsqx(C) :- nsq(C, _).
+ndqx(C) :- ndq(C, _).
+nbqx(C) :- nbq(C, _).
+
+named(C) :- nm(C, _).
+
+% Per-node-type unnamed fallbacks (the literal default the enricher's
+% `<unnamed-${nodeType.replace(':','-')}>` produced).
+cli_name(C, P)   :- routed(C, "commander", _, _), nm(C, P).
+cli_name(C, "<unnamed-cli-command>") :- routed(C, "commander", _, _), \+ named(C).
+mcp_name(C, P)   :- routed(C, "@modelcontextprotocol/sdk", _, _), nm(C, P).
+mcp_name(C, "<unnamed-mcp-tool>") :- routed(C, "@modelcontextprotocol/sdk", _, _), \+ named(C).
+vsc_name(C, P)   :- routed(C, "vscode", _, _), nm(C, P).
+vsc_name(C, "<unnamed-vscode-command>") :- routed(C, "vscode", _, _), \+ named(C).
+
+% ── The three materialized FEATURE NODES (deltas 4, 5, 6, 8) ────────────────
+% The `library` meta column is the matched registry lib. We bind it by joining
+% `routed`'s Lib column against the registry-lib fact (ef_lib) so the head's Lib
+% variable carries the literal — `routed(C, "commander", ...)` alone would leave
+% the head's Lib unbound.
+@materialize_node(node_type = "cli:command", mode = "exclusive", meta(library, method, anchorCall))
+cli_command(Sid, Name, F, Lib, M, Cid) :-
+    routed(C, Lib, M, _), ef_lib(Lib, "cli:command"),
+    cli_name(C, Name),
+    attr(C, "file", F),
+    attr(C, "id", Cid),
+    concat(F, "::cli:command::", S1),
+    concat(S1, Name, S2),
+    concat(S2, "::", S3),
+    concat(S3, Cid, Sid).
+
+@materialize_node(node_type = "mcp:tool", mode = "exclusive", meta(library, method, anchorCall))
+mcp_tool(Sid, Name, F, Lib, M, Cid) :-
+    routed(C, Lib, M, _), ef_lib(Lib, "mcp:tool"),
+    mcp_name(C, Name),
+    attr(C, "file", F),
+    attr(C, "id", Cid),
+    concat(F, "::mcp:tool::", S1),
+    concat(S1, Name, S2),
+    concat(S2, "::", S3),
+    concat(S3, Cid, Sid).
+
+@materialize_node(node_type = "vscode:command", mode = "exclusive", meta(library, method, anchorCall))
+vscode_command(Sid, Name, F, Lib, M, Cid) :-
+    routed(C, Lib, M, _), ef_lib(Lib, "vscode:command"),
+    vsc_name(C, Name),
+    attr(C, "file", F),
+    attr(C, "id", Cid),
+    concat(F, "::vscode:command::", S1),
+    concat(S1, Name, S2),
+    concat(S2, "::", S3),
+    concat(S3, Cid, Sid).

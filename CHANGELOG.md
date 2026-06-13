@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Features
+
+- feat(derive): `cli:command` / `mcp:tool` / `vscode:command` FEATURE detection moved to default-on derive packs (`@stdlib/js_entrypoint_features_nodes` + `@stdlib/js_entrypoint_features_edges`), continuing the Wave-14 HTTP-route precedent. These mint the commander / `@modelcontextprotocol/sdk` / vscode entry-point FEATURE nodes (+ `EXPOSES`/`HANDLES` edges) the `libraryCallbackEnricher` used to produce, resolving receivers via both the `RECEIVER_CALL` chain and the `DERIVES_FROM[callee]`/`READS_FROM[receiver]` PROPERTY_ACCESS walk for `<obj>.`-rooted namespace receivers (e.g. `vscode.commands.registerCommand`). The three slices were RETIRED from `libraryCallbackEnricher`'s `LIBRARY_NODE_TYPE` map — the pack is the single producer (no duplicate byte-different-id nodes). The MCP `setRequestHandler` ~4-call subset is unchanged; the ~30 per-tool `mcp:tool` nodes remain the separate `mcpToolDefinitionEnricher`'s job.
+
 ## [0.3.31] - 2026-06-11
 
 ### Features
