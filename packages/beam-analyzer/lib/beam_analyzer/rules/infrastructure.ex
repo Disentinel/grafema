@@ -149,7 +149,8 @@ defmodule BeamAnalyzer.Rules.Infrastructure do
       # REG-1098 W3: extract normalized shape of the message argument.
       # For GenServer.call/cast/Process.send/Process.send_after/send: msg is
       # the 2nd arg; target is the 1st.
-      message_shape_meta = extract_message_shape(args)
+      message_shape_term = extract_message_shape_term(args)
+      message_shape_meta = message_shape_term && BeamAnalyzer.Rules.Patterns.shape_to_meta(message_shape_term)
       target_is_self = self_target?(args, ctx)
       target_hint = explicit_target_hint(args, ctx)
       sender_via = sender_handler_type(base_call)
@@ -168,6 +169,23 @@ defmodule BeamAnalyzer.Rules.Infrastructure do
         |> maybe_put(:target_hint, target_hint)
 
       ctx = Context.merge_node_metadata(ctx, call_id, call_extras)
+
+      # REG-1098 W-shape: materialize the sent-message shape as a SHAPE
+      # subgraph on the send-site CALL, so derive rules can join it against
+      # a handler's HAS_PATTERN_SHAPE tree (structural unification as an
+      # edge-walk). Additive — message_shape metadata is still set above.
+      ctx =
+        if message_shape_term do
+          BeamAnalyzer.Rules.Patterns.emit_shape_tree(
+            ctx,
+            message_shape_term,
+            call_id,
+            ctx.file,
+            "HAS_SENT_SHAPE"
+          )
+        else
+          ctx
+        end
 
       target = resolve_message_target(ctx)
 
@@ -250,17 +268,16 @@ defmodule BeamAnalyzer.Rules.Infrastructure do
 
   defp explicit_target_hint(_, _), do: nil
 
-  defp extract_message_shape(args) when is_list(args) do
+  # The normalized shape() TERM of the message arg (2nd arg), or nil. Used
+  # both for the legacy meta serialization and the SHAPE-subgraph emission.
+  defp extract_message_shape_term(args) when is_list(args) do
     case Enum.at(args, 1) do
       nil -> nil
-      msg_ast ->
-        msg_ast
-        |> BeamAnalyzer.Rules.Patterns.normalize()
-        |> BeamAnalyzer.Rules.Patterns.shape_to_meta()
+      msg_ast -> BeamAnalyzer.Rules.Patterns.normalize(msg_ast)
     end
   end
 
-  defp extract_message_shape(_), do: nil
+  defp extract_message_shape_term(_), do: nil
 
   defp detect_handler(ctx, func_name, func_id, first_arg, meta, body) do
     # Detect handle_call, handle_cast, handle_info callbacks
@@ -368,6 +385,11 @@ defmodule BeamAnalyzer.Rules.Infrastructure do
         }
 
         ctx = Context.add_node(ctx, msg_node)
+
+        # REG-1098 W-shape: also materialize the pattern shape as a SHAPE
+        # subgraph so the derive engine can unify it structurally (the
+        # pattern_shape metadata above stays for the native resolvers).
+        ctx = BeamAnalyzer.Rules.Patterns.emit_shape_tree(ctx, shape, msg_id, ctx.file, "HAS_PATTERN_SHAPE")
 
         # RECEIVES edge from process to message type
         ctx = Context.add_edge(ctx, %{

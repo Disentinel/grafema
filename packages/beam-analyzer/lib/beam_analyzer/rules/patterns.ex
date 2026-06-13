@@ -199,6 +199,142 @@ defmodule BeamAnalyzer.Rules.Patterns do
   end
 
   # ====================================================================
+  # SHAPE-TREE GRAPH EMISSION (REG-1098 W-shape)
+  # ====================================================================
+  #
+  # Lowers a `shape()` term into a first-class subgraph: one `SHAPE` node
+  # per shape constructor + structural edges (HAS_ELEMENT / HAS_HEAD /
+  # HAS_TAIL / HAS_FIELD), rooted at an owner node (a MESSAGE_TYPE's
+  # pattern or a send-site CALL's message) via `root_edge_type`.
+  #
+  # WHY: the `pattern_shape` / `message_shape` metadata is a non-scalar
+  # nested list that the derive engine's `node_attr` builtin CANNOT read
+  # (it returns no row on non-scalar values). Materializing the shape as
+  # nodes+edges turns structural unification (send-shape vs handler-pattern)
+  # from data-structure recursion — impossible in Datalog — into a
+  # recursive edge-walk, which the derive engine does natively. This is
+  # purely ADDITIVE: the metadata is still emitted for the native Haskell
+  # resolvers (BeamShape / BeamMessageFindings) that consume it today.
+  #
+  # Node `metadata.kind` is the discriminator (wildcard|unknown|number|
+  # atom|str|tuple|list|cons|map|struct), all top-level scalars so
+  # `node_attr(S,"kind",K)` / `node_attr(S,"value",V)` work. Map/struct
+  # field keys and tuple/list element indices live on the EDGE metadata
+  # (`key` / `index`), readable via `edge_attr`.
+
+  @doc """
+  Emit the `shape()` tree rooted at `owner_id` as SHAPE nodes + structural
+  edges, plus an `owner -root_edge_type-> root` edge. Returns the updated
+  context. Additive: callers keep emitting the `*_shape` metadata too.
+  """
+  @spec emit_shape_tree(Context.t(), shape() | any(), String.t(), String.t(), String.t()) ::
+          Context.t()
+  def emit_shape_tree(ctx, shape, owner_id, file, root_edge_type)
+      when is_binary(owner_id) and is_binary(file) and is_binary(root_edge_type) do
+    root_id = shape_node_id(owner_id, "root")
+    ctx = emit_shape_node(ctx, shape, root_id, file)
+    Context.add_edge(ctx, shape_edge(owner_id, root_id, root_edge_type, %{}))
+  end
+
+  defp shape_node_id(owner_id, path), do: "#{owner_id}->SHAPE->#{path}"
+
+  defp shape_edge(src, dst, type, meta), do: %{src: src, dst: dst, type: type, metadata: meta}
+
+  defp shape_node(id, file, kind, name, extra) do
+    %{
+      id: id,
+      type: "SHAPE",
+      name: name,
+      file: file,
+      line: 0,
+      column: 0,
+      endLine: 0,
+      endColumn: 0,
+      exported: false,
+      metadata: Map.merge(%{kind: kind}, extra)
+    }
+  end
+
+  # Leaves.
+  defp emit_shape_node(ctx, :_, id, file),
+    do: Context.add_node(ctx, shape_node(id, file, "wildcard", "_", %{}))
+
+  defp emit_shape_node(ctx, :unknown, id, file),
+    do: Context.add_node(ctx, shape_node(id, file, "unknown", "?", %{}))
+
+  defp emit_shape_node(ctx, :number, id, file),
+    do: Context.add_node(ctx, shape_node(id, file, "number", "num", %{}))
+
+  defp emit_shape_node(ctx, {:atom, a}, id, file) do
+    v = Atom.to_string(a)
+    Context.add_node(ctx, shape_node(id, file, "atom", v, %{value: v}))
+  end
+
+  defp emit_shape_node(ctx, {:str, s}, id, file) when is_binary(s),
+    do: Context.add_node(ctx, shape_node(id, file, "str", "str", %{value: s}))
+
+  # Ordered composites: tuple / list — children via HAS_ELEMENT[index].
+  defp emit_shape_node(ctx, {:tuple, elems}, id, file) do
+    ctx = Context.add_node(ctx, shape_node(id, file, "tuple", "tuple", %{arity: length(elems)}))
+    emit_elements(ctx, elems, id, file)
+  end
+
+  defp emit_shape_node(ctx, {:list, elems}, id, file) do
+    ctx = Context.add_node(ctx, shape_node(id, file, "list", "list", %{arity: length(elems)}))
+    emit_elements(ctx, elems, id, file)
+  end
+
+  # cons — HAS_HEAD / HAS_TAIL.
+  defp emit_shape_node(ctx, {:cons, h, t}, id, file) do
+    ctx = Context.add_node(ctx, shape_node(id, file, "cons", "cons", %{}))
+    hid = shape_child_id(id, "h")
+    tid = shape_child_id(id, "t")
+    ctx = emit_shape_node(ctx, h, hid, file)
+    ctx = Context.add_edge(ctx, shape_edge(id, hid, "HAS_HEAD", %{}))
+    ctx = emit_shape_node(ctx, t, tid, file)
+    Context.add_edge(ctx, shape_edge(id, tid, "HAS_TAIL", %{}))
+  end
+
+  # Keyed composites: map / struct — children via HAS_FIELD[key].
+  defp emit_shape_node(ctx, {:map, pairs}, id, file) do
+    ctx = Context.add_node(ctx, shape_node(id, file, "map", "map", %{}))
+    emit_fields(ctx, pairs, id, file)
+  end
+
+  defp emit_shape_node(ctx, {:struct, mod, pairs}, id, file) do
+    modname = Atom.to_string(mod)
+    ctx = Context.add_node(ctx, shape_node(id, file, "struct", "%#{modname}{}", %{struct_module: modname}))
+    emit_fields(ctx, pairs, id, file)
+  end
+
+  defp emit_shape_node(ctx, _other, id, file),
+    do: Context.add_node(ctx, shape_node(id, file, "unknown", "?", %{}))
+
+  defp emit_elements(ctx, elems, parent_id, file) do
+    elems
+    |> Enum.with_index()
+    |> Enum.reduce(ctx, fn {el, i}, acc ->
+      cid = shape_child_id(parent_id, Integer.to_string(i))
+      acc = emit_shape_node(acc, el, cid, file)
+      Context.add_edge(acc, shape_edge(parent_id, cid, "HAS_ELEMENT", %{index: i}))
+    end)
+  end
+
+  defp emit_fields(ctx, pairs, parent_id, file) do
+    pairs
+    |> Enum.with_index()
+    # child id keyed by INDEX (not key text) to avoid id collisions on
+    # duplicate/non-scalar keys; the field key lives on the edge metadata.
+    |> Enum.reduce(ctx, fn {{k, v}, i}, acc ->
+      cid = shape_child_id(parent_id, "k#{i}")
+      acc = emit_shape_node(acc, v, cid, file)
+      Context.add_edge(acc, shape_edge(parent_id, cid, "HAS_FIELD", %{key: key_to_string(k)}))
+    end)
+  end
+
+  defp shape_child_id(parent_id, seg), do: "#{parent_id}/#{seg}"
+
+  # ====================================================================
   # LEGACY: PATTERN node emission (used by Rules.Functions walker)
   # ====================================================================
 
