@@ -1,0 +1,116 @@
+% haskell_imports.dl — in-engine replacement for HaskellImportResolution.hs
+% (packages/haskell-resolve/src/HaskellImportResolution.hs): the two import
+% phases, IMPORTS_FROM edges.
+%
+%   Arm A — IMPORT → MODULE (resolveImport, Hs:119-130): Haskell resolves an
+%     import by MODULE NAME, not path. `import Data.Map.Strict` resolves to the
+%     MODULE node whose name == "Data.Map.Strict" — a plain attr-equality join.
+%     NO path_resolve, NO extension ladder, NO workspace facts (the js/rust
+%     blockers do not exist here). geMetadata = Map.empty (Hs:127) — no meta.
+%   Arm B — IMPORT_BINDING → exported declaration (resolveBinding, Hs:138-169):
+%     the binding's source module rides on the containing IMPORT's name via the
+%     committed IMPORT -CONTAINS-> IMPORT_BINDING edge (LIVE: 2498/2498 .hs
+%     bindings carry it — the graph-native seam, NO sid `[in:..]` parsing, NO
+%     node_attr). module name → MODULE → target file → exported decl in that file.
+%
+% C-R1 (the load-bearing verdict correction — TARGET IDENTITY): the resolver's
+% buildExportIndex (Hs:60-93) sets `geTarget = exNodeId entry`. For a file WITH
+% explicit exports, exNodeId is the EXPORT_BINDING's OWN id (explicitExports =
+% ExportEntry (gnName n) (gnId n) over EXPORT_BINDING nodes, Hs:68-72). ONLY the
+% implicit-export-all branch (a file with NO EXPORT_BINDING, Hs:82-88) targets a
+% real declaration. So `exported_in` MUST SPLIT:
+%   * file WITH explicit exports → target the EXPORT_BINDING node itself;
+%   * file with NO EXPORT_BINDING → target the same-file decl (8 declTypes).
+% LIVE (the structurally-identical cross-module CALLS arm): CALLS→EXPORT_BINDING
+% = 1618 vs CALLS→FUNCTION = 0 — EXPORT_BINDING is the *entirety* of resolved
+% cross-module targets on the dogfood graph. Targeting the decl would mismatch
+% every explicit-export edge.
+%
+% The implicit-export decl set is the resolver's EXACT 8 declTypes (Hs:76-79):
+% FUNCTION, VARIABLE, DATA_TYPE, TYPE_CLASS, TYPE_SYNONYM, TYPE_FAMILY,
+% CONSTRUCTOR, TYPE_SIGNATURE. (This is the implicit-export branch — it targets
+% the DECL, so it keeps the resolver's full list verbatim; the verdict's
+% "drop TYPE_SIGNATURE/VARIABLE/DATA_TYPE" applies to the call/ref decl sets in
+% the other packs, NOT to this implicit-export branch which mirrors the resolver
+% literally. The implicit branch fires only for no-export-list files, a minority.)
+%
+% IMPORTS_FROM is SHARED vocabulary (rust/js/java/go packs + legacy emit it) ⇒
+% mode = "additive". Legacy edges carry EMPTY metadata (Hs:127,162) — no meta
+% projected, exact parity (engine provenance _source/_generation only).
+%
+% NUMBERED DELTAS vs the resolver (everything not listed is exact):
+%   DELTA 1 (Arm A, SUPERSET by set semantics — MEASURED): IMPORT.name ==
+%     MODULE.name both-sides name lookup. resolver Map.lookup keeps ONE MODULE
+%     per name (arbitrary winner); set semantics derives an edge to EVERY MODULE
+%     of that name. The dogfood is a multi-package Haskell monorepo with 25
+%     distinct MODULE names shared by >1 MODULE node (e.g. `Analysis.Types`,
+%     `ImportResolution` recur across packages), so this is REAL collision, not
+%     the spec's predicted ~0. MEASURED: legacy Arm A = 814, pack = 3090
+%     (superset 2276), ZERO legacy-only rows. The pack covers every legacy edge
+%     and additionally resolves the candidates the resolver's arbitrary winner
+%     dropped. Bounded by duplicate MODULE.name count.
+%   DELTA 2 (Arm B explicit, EXACT modulo set): every (file,name) EXPORT_BINDING
+%     of an explicitly-exported imported name. resolver filter (entry:_) takes
+%     the FIRST matching EXPORT_BINDING; set semantics derives ALL same-(file,name)
+%     EXPORT_BINDINGs — superset bounded by per-(file,name) EXPORT_BINDING
+%     multiplicity (expected ~1, EXPORT_BINDING.name is first-class). LIVE: legacy
+%     Arm B = 0 edges in the dogfood snapshot (the binding arm produced nothing —
+%     a separate orchestrator gap, verdict COULD-NOT-VERIFY), so this arm is
+%     SOURCE-grounded; the C-R1 target identity is LIVE-confirmed via the
+%     structurally-identical cross-module CALLS arm (1618 → EXPORT_BINDING).
+%   DELTA 3 (Arm B implicit, superset by set semantics): a no-export-list file
+%     with two same-name decls of different types (the Haskell norm: a
+%     TYPE_SIGNATURE node AND a FUNCTION node both named foo) derives an edge to
+%     EVERY candidate; resolver Map.fromListWith (++) + filter (entry:_) took the
+%     first. Bounded by per-(file,name) decl-type multiplicity in no-export files.
+%
+% MAINTAIN ENVELOPE: negation (\+ file_has_explicit_exports) ⇒ scratch floor
+% (accepted, the import-pack stance).
+%
+% ORDERING (PRODUCER): produces IMPORTS_FROM — must run BEFORE depends (which
+% consumes EVERY IMPORTS_FROM edge node-type-agnostically). No inter-pack EDB
+% seam with the call packs (they re-derive their own export/binding seams).
+
+% ── Arm A: IMPORT → MODULE (by module NAME) ─────────────────────────────────
+% The .hs gate is the cross-language leakage guard — IMPORT/MODULE are shared
+% vocabulary across analyzers.
+@materialize(edge_type = "IMPORTS_FROM", mode = "additive")
+hs_import_module(I, M) :-
+    node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".hs"), attr(I, "name", Mod),
+    node(M, "MODULE"), attr(M, "name", Mod).
+
+% ── Export side (buildExportIndex, Hs:60-93) ────────────────────────────────
+% Files WITH explicit exports: any .hs file that owns an EXPORT_BINDING node.
+file_has_explicit_exports(TF) :-
+    node(EB, "EXPORT_BINDING"), attr(EB, "file", TF), ends_with(TF, ".hs").
+
+% The 8 implicit-export declTypes (Hs:76-79) — used ONLY for the implicit branch
+% (no-export-list files), where the resolver targets the DECL. Verbatim list.
+hs_decl(TF, N, D) :- node(D, "FUNCTION"),       attr(D, "file", TF), ends_with(TF, ".hs"), attr(D, "name", N), neq(N, "").
+hs_decl(TF, N, D) :- node(D, "VARIABLE"),       attr(D, "file", TF), ends_with(TF, ".hs"), attr(D, "name", N), neq(N, "").
+hs_decl(TF, N, D) :- node(D, "DATA_TYPE"),      attr(D, "file", TF), ends_with(TF, ".hs"), attr(D, "name", N), neq(N, "").
+hs_decl(TF, N, D) :- node(D, "TYPE_CLASS"),     attr(D, "file", TF), ends_with(TF, ".hs"), attr(D, "name", N), neq(N, "").
+hs_decl(TF, N, D) :- node(D, "TYPE_SYNONYM"),   attr(D, "file", TF), ends_with(TF, ".hs"), attr(D, "name", N), neq(N, "").
+hs_decl(TF, N, D) :- node(D, "TYPE_FAMILY"),    attr(D, "file", TF), ends_with(TF, ".hs"), attr(D, "name", N), neq(N, "").
+hs_decl(TF, N, D) :- node(D, "CONSTRUCTOR"),    attr(D, "file", TF), ends_with(TF, ".hs"), attr(D, "name", N), neq(N, "").
+hs_decl(TF, N, D) :- node(D, "TYPE_SIGNATURE"), attr(D, "file", TF), ends_with(TF, ".hs"), attr(D, "name", N), neq(N, "").
+
+% C-R1 SPLIT — exported target identity:
+%   * explicit-export file → the EXPORT_BINDING node itself (geTarget = its id);
+exported_in(TF, N, EB) :-
+    node(EB, "EXPORT_BINDING"), attr(EB, "file", TF), ends_with(TF, ".hs"),
+    attr(EB, "name", N), neq(N, "").
+%   * no-export-list file → the same-file declaration.
+exported_in(TF, N, D) :-
+    hs_decl(TF, N, D), \+ file_has_explicit_exports(TF).
+
+% ── Arm B: IMPORT_BINDING → exported decl (graph-native CONTAINS seam) ───────
+binding_src(B, LocalN, Mod) :-
+    node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".hs"), attr(B, "name", LocalN),
+    edge(I, B, "CONTAINS"), node(I, "IMPORT"), attr(I, "name", Mod).
+
+@materialize(edge_type = "IMPORTS_FROM", mode = "additive")
+hs_binding_import(B, D) :-
+    binding_src(B, N, Mod),
+    node(M, "MODULE"), attr(M, "name", Mod), attr(M, "file", TF),
+    exported_in(TF, N, D).

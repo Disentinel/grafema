@@ -1,0 +1,83 @@
+% haskell_cross_module_calls.dl — in-engine replacement for
+% HaskellCrossModuleCalls.hs (packages/haskell-resolve/src/HaskellCrossModuleCalls.hs):
+% a CALL whose bare name has an IMPORT_BINDING in the same file resolves to the
+% exported target in that binding's source module → CALLS (resolveOne, Hs:131-152).
+%
+% CALLS is SHARED vocabulary ⇒ mode = "additive". Legacy stamps
+% resolvedVia = "haskell-cross-module" (Hs:150); projected via meta(resolvedVia).
+%
+% C-R1 (the load-bearing verdict correction — TARGET IDENTITY): lookupExportTarget
+% returns `exNodeId entry` (Hs:128), and buildExportIndex (Hs:56-83) is identical
+% to the import resolver's: for a file WITH explicit exports, exNodeId is the
+% EXPORT_BINDING's OWN id; only the implicit-export-all branch targets a decl.
+% LIVE: every resolved cross-module CALLS target on the dogfood graph is an
+% EXPORT_BINDING — CALLS→EXPORT_BINDING = 1618, CALLS→FUNCTION = 0,
+% CALLS→CONSTRUCTOR = 0. Targeting the decl would mismatch ALL 1618 edges.
+% So `exported_in` SPLITS (re-declared intra-pack, the js convention):
+%   * file WITH explicit exports → the EXPORT_BINDING node itself;
+%   * file with NO EXPORT_BINDING → the same-file decl (8 implicit declTypes).
+%
+% QUALIFIER-STRIP OMITTED (verdict, same reasoning as haskell_local_calls): the
+% analyzer emits bare occurrence names; the resolver's breakOnEnd "." strip is a
+% no-op on real calls and would mangle the surviving dotted OPERATORS. Join on
+% the bare CALL.name → the same-file IMPORT_BINDING directly.
+%
+% BINDING SEAM (graph-native): the binding's source module rides on the
+% containing IMPORT's name via the committed IMPORT -CONTAINS-> IMPORT_BINDING
+% edge (LIVE: 2498/2498 .hs bindings carry it) — NO sid `[in:..]` parse.
+%
+% NUMBERED DELTAS vs the resolver (everything not listed is exact):
+%   DELTA 1 (SUPERSET by set semantics, explicit-export arm — MEASURED): the
+%     resolver's buildBindingIndex (Hs:85-92) is Map.fromList = ONE binding per
+%     (file,name); the export filter (entry:_) takes the FIRST EXPORT_BINDING.
+%     Set semantics derives an edge via EVERY same-(file,name) binding to EVERY
+%     same-(file,name) EXPORT_BINDING in the source module. MEASURED on the
+%     dogfood copy: legacy = 1618 (ALL EXPORT_BINDING targets — C-R1 confirmed),
+%     pack = 6782 (superset 5164), ZERO legacy-only rows (legacy ⊆ pack exactly).
+%     The superset is the binding × EXPORT_BINDING per-(file,name) multiplicity
+%     where the resolver's two nested first-wins Maps collapsed to one.
+%   DELTA 2 (implicit-export arm, superset): a no-export-list source module with
+%     two same-name decls of different types derives an edge per candidate; the
+%     resolver took the first. Bounded by per-(file,name) decl multiplicity in
+%     no-export files.
+%   DELTA 3 (operator dotted-name calls, ~0): breakOnEnd-strip omitted; same
+%     bound as haskell_local_calls DELTA 2.
+%   DELTA 4 (file gate): ends_with(F,".hs") on the CALL leg and the binding leg —
+%     the orchestrator's detect_language == Haskell stream filter.
+%
+% MAINTAIN ENVELOPE: negation (\+ xb_file_has_explicit_exports) ⇒ scratch floor.
+%
+% ORDERING: produces CALLS, so before the CALLS negators
+% (method_calls / shape_verifier). Re-derives its own export/binding seams
+% intra-pack (the js convention) — no inter-pack EDB seam.
+
+% Binding's source module (graph-native CONTAINS seam, as the import pack).
+xb(F, N, Mod) :-
+    node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".hs"), attr(B, "name", N),
+    edge(I, B, "CONTAINS"), node(I, "IMPORT"), attr(I, "name", Mod).
+
+% Export side (re-declared intra-pack) — C-R1 split.
+xb_file_has_explicit_exports(TF) :-
+    node(EB, "EXPORT_BINDING"), attr(EB, "file", TF), ends_with(TF, ".hs").
+
+xb_decl(TF, N, D) :- node(D, "FUNCTION"),       attr(D, "file", TF), ends_with(TF, ".hs"), attr(D, "name", N), neq(N, "").
+xb_decl(TF, N, D) :- node(D, "VARIABLE"),       attr(D, "file", TF), ends_with(TF, ".hs"), attr(D, "name", N), neq(N, "").
+xb_decl(TF, N, D) :- node(D, "DATA_TYPE"),      attr(D, "file", TF), ends_with(TF, ".hs"), attr(D, "name", N), neq(N, "").
+xb_decl(TF, N, D) :- node(D, "TYPE_CLASS"),     attr(D, "file", TF), ends_with(TF, ".hs"), attr(D, "name", N), neq(N, "").
+xb_decl(TF, N, D) :- node(D, "TYPE_SYNONYM"),   attr(D, "file", TF), ends_with(TF, ".hs"), attr(D, "name", N), neq(N, "").
+xb_decl(TF, N, D) :- node(D, "TYPE_FAMILY"),    attr(D, "file", TF), ends_with(TF, ".hs"), attr(D, "name", N), neq(N, "").
+xb_decl(TF, N, D) :- node(D, "CONSTRUCTOR"),    attr(D, "file", TF), ends_with(TF, ".hs"), attr(D, "name", N), neq(N, "").
+xb_decl(TF, N, D) :- node(D, "TYPE_SIGNATURE"), attr(D, "file", TF), ends_with(TF, ".hs"), attr(D, "name", N), neq(N, "").
+
+xb_exported_in(TF, N, EB) :-
+    node(EB, "EXPORT_BINDING"), attr(EB, "file", TF), ends_with(TF, ".hs"),
+    attr(EB, "name", N), neq(N, "").
+xb_exported_in(TF, N, D) :-
+    xb_decl(TF, N, D), \+ xb_file_has_explicit_exports(TF).
+
+@materialize(edge_type = "CALLS", mode = "additive", meta(resolvedVia))
+hs_xmod_call(C, D, "haskell-cross-module") :-
+    node(C, "CALL"), attr(C, "file", F), ends_with(F, ".hs"), attr(C, "name", N),
+    xb(F, N, Mod),
+    node(M, "MODULE"), attr(M, "name", Mod), attr(M, "file", TF),
+    xb_exported_in(TF, N, D).

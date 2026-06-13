@@ -1,0 +1,80 @@
+% haskell_local_refs.dl — in-engine replacement for HaskellLocalRefs.hs
+% (packages/haskell-resolve/src/HaskellLocalRefs.hs), the SAME-FILE decl arm:
+% a REFERENCE that is not an imported name resolves to a same-file declaration
+% of that name → READS_FROM (resolveRef, Hs:117-134).
+%
+% READS_FROM is SHARED vocabulary ⇒ mode = "additive". Legacy stamps
+% resolvedVia = "haskell-local-refs" (Hs:132); projected via meta(resolvedVia).
+%
+% DECL SET (verdict SECOND-MISS correction). The resolver's declTypes (Hs:40-45)
+% are 8: FUNCTION, VARIABLE, CONSTANT, DATA_TYPE, TYPE_SYNONYM, CONSTRUCTOR,
+% RECORD_FIELD, PARAMETER. But buildDeclIndex is Map.fromList = LAST-WINS, ONE id
+% per (file,name), and the LIVE legacy READS_FROM target breakdown is:
+%   FUNCTION = 5103, PARAMETER = 11324, CONSTRUCTOR = 258, RECORD_FIELD = 249,
+%   CONSTANT = 0, VARIABLE = 0, DATA_TYPE = 0, TYPE_SYNONYM = 0
+%   (+ EXTERNAL_FUNCTION = 4986 — the prelude arm, see RESIDUE below).
+% VARIABLE / DATA_TYPE / TYPE_SYNONYM contribute ZERO legacy edges; including
+% them would emit pack-only superset edges the legacy never produced. We keep
+% only the empirically-targeted types: FUNCTION, PARAMETER, CONSTRUCTOR,
+% RECORD_FIELD, CONSTANT. (CONSTANT is 0 on this graph but is a legitimate
+% callable in the resolver and a real Haskell pattern — kept, with a 0 bound.)
+%
+% PRELUDE RESIDUE — DEFERRED to wave-2 (the haskell-globals pack), with EVIDENCE.
+% The resolver's prelude arm (Hs:135-168) mints a virtual EXTERNAL_FUNCTION node
+% `HASKELL_GLOBAL::<name>` with gnFile = "" and emits READS_FROM to it for ~140
+% compiled-in Prelude names. The dogfood graph DISAGREES with that source: its
+% prelude EXTERNAL_FUNCTION nodes live at file = "<runtime/haskell>" (NOT ""),
+% are minted by the haskell-globals / RuntimeGlobals step (which also emits 5788
+% _source="haskell-runtime-globals" CALLS edges), and carry node category
+% "haskell-prelude" / "haskell-stdlib". The verdict's `attr(X,"file","")`
+% disambiguator matches 0/99 EXTERNAL_FUNCTION nodes (LIVE: ext_file_empty=0).
+% So the prelude EDGE arm depends on nodes that the DEFERRED haskell-globals node
+% minter owns — minting a parallel `HASKELL_GLOBAL::` file="" namespace here
+% would (a) not match the live nodes and (b) couple wave-1 to the deferred wave.
+% DECISION: ship the decl arm now; defer the prelude node+edge arm to wave-2
+% alongside haskell-globals (the external-YAML SymbolDB → facts pack). The 4986
+% local-refs READS_FROM→EXTERNAL_FUNCTION edges are documented as the prelude
+% RESIDUE of the local-refs slice, closed by the same wave-2 pack.
+%
+% NUMBERED DELTAS vs the resolver (everything not listed is exact):
+%   DELTA 1 (decl arm, SUPERSET by set semantics — the LARGEST delta, measured):
+%     resolver buildDeclIndex = Map.fromList last-wins keeps ONE decl per
+%     (file,name); set semantics derives an edge to EVERY same-(file,name) decl
+%     of the kept types. The dominant driver is PARAMETER: a REFERENCE name (e.g.
+%     `x`, `acc`) resolves to EVERY same-(file,name) PARAMETER scope, where the
+%     resolver kept one arbitrary winner. MEASURED on the dogfood copy: legacy
+%     decl-slice = 16934, pack = 117400 (PARAMETER-target multiplicity = 109940).
+%     pack ⊇ legacy with ZERO legacy-only rows (every legacy edge reproduced).
+%     This is a name-match resolver's known imprecision (neither legacy's
+%     arbitrary winner nor the pack's all-candidates is scope-correct — scope
+%     resolution needs SCOPE edges, out of this resolver's contract); the pack
+%     reproduces the legacy COVERAGE as a superset. Bounded by per-(file,name)
+%     decl multiplicity (PARAMETER-dominated).
+%   DELTA 2 (prelude RESIDUE, subset): the 4986 READS_FROM→EXTERNAL_FUNCTION
+%     prelude edges are NOT emitted here (deferred, see PRELUDE RESIDUE).
+%   DELTA 3 (file gate): the legacy gate was the orchestrator's
+%     detect_language == Haskell stream filter — reproduced as ends_with(F,".hs")
+%     on the REFERENCE and on each decl leg (the cross-language leakage guard;
+%     REFERENCE/decl node types are shared vocabulary).
+%
+% MAINTAIN ENVELOPE: negation (\+ imported) ⇒ scratch floor (accepted).
+%
+% ORDERING: produces READS_FROM, so before the READS_FROM consumers/negators
+% (method_calls / shape_verifier). Consumes analyzer EDB only — no producer seam.
+
+% Same-file declarations (verdict-narrowed to the empirically-targeted types).
+ld(F, N, D) :- node(D, "FUNCTION"),     attr(D, "file", F), ends_with(F, ".hs"), attr(D, "name", N), neq(N, "").
+ld(F, N, D) :- node(D, "CONSTANT"),     attr(D, "file", F), ends_with(F, ".hs"), attr(D, "name", N), neq(N, "").
+ld(F, N, D) :- node(D, "CONSTRUCTOR"),  attr(D, "file", F), ends_with(F, ".hs"), attr(D, "name", N), neq(N, "").
+ld(F, N, D) :- node(D, "RECORD_FIELD"), attr(D, "file", F), ends_with(F, ".hs"), attr(D, "name", N), neq(N, "").
+ld(F, N, D) :- node(D, "PARAMETER"),    attr(D, "file", F), ends_with(F, ".hs"), attr(D, "name", N), neq(N, "").
+
+% Imported-name skip set (buildImportIndex, Hs:58-64): imported names are handled
+% by the import pack, not here.
+imported(F, N) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".hs"), attr(B, "name", N).
+
+@materialize(edge_type = "READS_FROM", mode = "additive", meta(resolvedVia))
+hs_local_ref(R, D, "haskell-local-refs") :-
+    node(R, "REFERENCE"), attr(R, "file", F), ends_with(F, ".hs"), attr(R, "name", N),
+    \+ imported(F, N),
+    ld(F, N, D).
