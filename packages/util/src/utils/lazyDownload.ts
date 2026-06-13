@@ -107,9 +107,14 @@ function httpsGetFollowRedirects(url: string): Promise<IncomingMessage> {
 }
 
 /**
- * Find the latest binaries-v* release tag from GitHub API.
+ * Find the binaries release tag matching the given CLI version.
+ *
+ * Tries exact match (`binaries-v{targetVersion}`) first. Falls back to the
+ * latest `binaries-v*` release with a warning when the exact tag is absent
+ * (e.g. during development before a matching release is published).
  */
-async function findLatestReleaseTag(): Promise<string> {
+async function findMatchingReleaseTag(targetVersion: string): Promise<string> {
+  const exactTag = `binaries-v${targetVersion}`;
   const url = `https://api.github.com/repos/${GITHUB_REPO}/releases?per_page=30`;
   const res = await httpsGetFollowRedirects(url);
 
@@ -124,11 +129,22 @@ async function findLatestReleaseTag(): Promise<string> {
   }
 
   const releases = JSON.parse(body) as Array<{ tag_name: string }>;
-  const binRelease = releases.find(r => r.tag_name.startsWith('binaries-v'));
-  if (!binRelease) {
-    throw new Error('No binaries-v* release found on GitHub');
+
+  // Prefer exact version match to avoid CLI↔binary protocol skew.
+  const exactMatch = releases.find(r => r.tag_name === exactTag);
+  if (exactMatch) return exactMatch.tag_name;
+
+  // Fallback: latest binaries-v* release (emits a warning so mismatches are visible).
+  const latestBinRelease = releases.find(r => r.tag_name.startsWith('binaries-v'));
+  if (!latestBinRelease) {
+    throw new Error(`No binaries release found for grafema v${targetVersion} on GitHub`);
   }
-  return binRelease.tag_name;
+
+  console.warn(
+    `[grafema] Warning: no binaries release for v${targetVersion}, ` +
+    `falling back to ${latestBinRelease.tag_name}. Protocol mismatch may occur.`,
+  );
+  return latestBinRelease.tag_name;
 }
 
 /**
@@ -156,8 +172,8 @@ export async function downloadBinary(
   const targetPath = join(binDir, binaryName);
   const tmpPath = `${targetPath}.downloading`;
 
-  // Resolve tag
-  const releaseTag = tag || await findLatestReleaseTag();
+  // Resolve tag: caller-supplied > version-matching > latest (with warning).
+  const releaseTag = tag ?? await findMatchingReleaseTag(GRAFEMA_VERSION);
   const downloadUrl = `https://github.com/${GITHUB_REPO}/releases/download/${releaseTag}/${assetName}`;
 
   const log = onProgress || (() => {});
@@ -204,22 +220,12 @@ function versionFromTag(tag: string): string {
 }
 
 /**
- * Compare two semver strings. Returns true if a >= b.
- * Simple numeric comparison of major.minor.patch.
- */
-function semverGte(a: string, b: string): boolean {
-  const pa = a.split('-')[0].split('.').map(Number);
-  const pb = b.split('-')[0].split('.').map(Number);
-  for (let i = 0; i < 3; i++) {
-    if ((pa[i] || 0) > (pb[i] || 0)) return true;
-    if ((pa[i] || 0) < (pb[i] || 0)) return false;
-  }
-  return true; // equal
-}
-
-/**
- * Check if a cached binary in ~/.grafema/bin/ is from a release >= current version.
+ * Check if a cached binary in ~/.grafema/bin/ matches the current CLI version exactly.
  * The .version file stores the release tag used for download (e.g. "binaries-v0.3.14").
+ *
+ * Exact equality is required because protocol commands can change between minor versions.
+ * A binary that is newer than the CLI (e.g. binaries-v0.4.0 with CLI 0.3.31) is
+ * treated as stale just like one that is older.
  */
 export function isBinaryCurrentVersion(binaryPath: string): boolean {
   const versionFile = `${binaryPath}.version`;
@@ -227,7 +233,7 @@ export function isBinaryCurrentVersion(binaryPath: string): boolean {
   try {
     const storedTag = readFileSync(versionFile, 'utf-8').trim();
     const storedVersion = versionFromTag(storedTag);
-    return semverGte(storedVersion, GRAFEMA_VERSION);
+    return storedVersion === GRAFEMA_VERSION;
   } catch {
     return false;
   }
