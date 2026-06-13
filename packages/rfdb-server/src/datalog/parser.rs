@@ -106,18 +106,37 @@ impl<'a> Parser<'a> {
         Ok(self.input[start..self.pos].to_string())
     }
 
+    /// Parse a double-quoted string literal.
+    ///
+    /// Escape handling is LENIENT (Wave 14): a backslash followed by `"` or
+    /// `\` is an escape sequence producing that character (so a literal
+    /// double-quote CAN appear inside a string — required by quote-stripping
+    /// rules over JS string literals, whose graph `name` keeps the raw source
+    /// quoting). A backslash followed by anything else stays a literal
+    /// backslash — pre-escape strings like `"C:\Users"` keep their meaning
+    /// (only `\"` / `\\` sequences, previously impossible to express in the
+    /// first case and degenerate in the second, change interpretation).
     fn parse_string(&mut self) -> Result<String, ParseError> {
         self.skip_whitespace();
         self.expect("\"")?;
 
         let start = self.pos;
+        let mut value = String::new();
         while self.pos < self.input.len() {
             let c = self.input[self.pos..].chars().next().unwrap();
             if c == '"' {
-                let value = self.input[start..self.pos].to_string();
                 self.pos += 1; // consume closing quote
                 return Ok(value);
             }
+            if c == '\\' {
+                let next = self.input[self.pos + 1..].chars().next();
+                if matches!(next, Some('"') | Some('\\')) {
+                    value.push(next.unwrap());
+                    self.pos += 1 + next.unwrap().len_utf8();
+                    continue;
+                }
+            }
+            value.push(c);
             self.pos += c.len_utf8();
         }
 
@@ -359,4 +378,39 @@ pub fn parse_query(input: &str) -> Result<Vec<Literal>, ParseError> {
         ));
     }
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn const_of(t: &Term) -> &str {
+        match t {
+            Term::Const(s) => s,
+            other => panic!("expected Const, got {other:?}"),
+        }
+    }
+
+    /// Wave 14 — lenient escape sequences in string literals: `\"` and `\\`
+    /// decode to the bare character; any other backslash stays literal
+    /// (pre-escape behavior for strings like "C:\Users" is preserved).
+    #[test]
+    fn string_literal_escapes_are_lenient() {
+        let a = parse_atom(r#"p("a\"b")"#).expect("escaped quote parses");
+        assert_eq!(const_of(&a.args()[0]), "a\"b");
+
+        let a = parse_atom(r#"p("a\\b")"#).expect("escaped backslash parses");
+        assert_eq!(const_of(&a.args()[0]), "a\\b");
+
+        // Lone backslash before a non-escapable char stays literal.
+        let a = parse_atom(r#"p("C:\Users")"#).expect("non-escape backslash parses");
+        assert_eq!(const_of(&a.args()[0]), "C:\\Users");
+
+        // A bare double-quote literal — the quote-strip use case.
+        let a = parse_atom(r#"sw(X, "\"")"#).expect("single dquote literal parses");
+        assert_eq!(const_of(&a.args()[1]), "\"");
+
+        // Unterminated string (escape eats the closer) still errors.
+        assert!(parse_atom(r#"p("abc\")"#).is_err());
+    }
 }

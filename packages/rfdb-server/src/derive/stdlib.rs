@@ -300,6 +300,38 @@ pub const JS_RUNTIME_GLOBALS_EDGES_DL: &str = concat!(
 /// (the rank ladder) ⇒ scratch-only under maintain.
 pub const JS_MODULE_IMPORTS_DL: &str = include_str!("stdlib/js_module_imports.dl");
 
+/// Node half of the JS HTTP-route feature vertical (Wave 14, REG-1115 slice):
+/// `http:route` minting (sid `<file>::http:route::<name>::<callIdDecimal>`)
+/// + ROUTES_TO for Express/Fastify/Koa(+routers)/Hono registrations — the
+/// derive-pack REPLACEMENT for libraryCallbackEnricher.ts's HTTP slice (the
+/// 6 framework entries were retired from its LIBRARY_NODE_TYPE map in this
+/// wave; the enricher keeps only cli:command/mcp:tool/vscode:command —
+/// running both would mint duplicate http:route nodes with byte-different
+/// ids), driven by the effects-db callable registry as generated
+/// ground facts (effects_callable_facts.dl, prepended at compile time;
+/// regenerate via scripts/generate-effects-callable-facts.mjs). Receiver
+/// resolution = RECEIVER_CALL chain origin + IMPORT_BINDING `source` +
+/// CONSTANT/VARIABLE initializer hops (incl. factory calls — delta 2).
+/// Negation + minting ⇒ scratch-only under maintain.
+pub const JS_HTTP_ROUTES_NODES_DL: &str = concat!(
+    include_str!("stdlib/effects_callable_facts.dl"),
+    "\n",
+    include_str!("stdlib/js_http_routes_nodes.dl"),
+);
+
+/// Edge half of the JS HTTP-route vertical (Wave 14): EXPOSES
+/// (CALL → http:route) + HANDLES (http:route → callback), endpoints pinned by
+/// the exact `node_attr(R,"anchorCall") ⋈ attr(C,"id")` join — other
+/// producers' http:route nodes (axum_routes, the legacy enricher) are never
+/// joined. MUST run after `js_http_routes_nodes` (committed-EDB endpoint
+/// join — the js_builtins two-pack split). Both heads additive (EXPOSES /
+/// HANDLES are shared enricher vocabulary).
+pub const JS_HTTP_ROUTES_EDGES_DL: &str = concat!(
+    include_str!("stdlib/effects_callable_facts.dl"),
+    "\n",
+    include_str!("stdlib/js_http_routes_edges.dl"),
+);
+
 /// The named stdlib rule packs, addressable on the wire as `"@stdlib/<name>"`
 /// (`MaterializeDatalog` and the other empty-source-defaulting dispatchers), listed
 /// in CANONICAL RUN ORDER. The order is a CONTRACT, not cosmetics — producers run
@@ -356,7 +388,11 @@ pub const JS_MODULE_IMPORTS_DL: &str = include_str!("stdlib/js_module_imports.dl
 /// js_cross_file_calls → js_property_access_ns → js_property_access_full →
 /// js_builtins_nodes → js_builtins_edges → js_runtime_globals_nodes →
 /// js_runtime_globals_edges → depends → method_calls → shape_verifier →
-/// axum_routes.
+/// axum_routes → js_http_routes_nodes → js_http_routes_edges.
+/// - the Wave-14 feature-detection pair: `js_http_routes_nodes` MINTS the
+///   anchorCall-pinned http:route endpoints that `js_http_routes_edges` joins
+///   as committed EDB (strict nodes→edges order, the js_builtins split);
+///   both consume analyzer EDB only.
 pub const STDLIB_PACKS: &[(&str, &str)] = &[
     ("js_local_refs", JS_LOCAL_REFS_DL),
     ("js_same_file_calls", JS_SAME_FILE_CALLS_DL),
@@ -409,6 +445,13 @@ pub const STDLIB_PACKS: &[(&str, &str)] = &[
     ("method_calls", METHOD_CALLS_DL),
     ("shape_verifier", SHAPE_VERIFIER_DL),
     ("axum_routes", AXUM_ROUTES_DL),
+    // Wave 14 feature-detection vertical: js_http_routes_nodes MINTS the
+    // http:route endpoints (anchorCall-pinned) that js_http_routes_edges
+    // joins as committed EDB (strict nodes→edges order — the js_builtins
+    // two-pack split). Both consume analyzer EDB only and produce nothing any
+    // earlier pack reads, so they sit at the registry tail with axum_routes.
+    ("js_http_routes_nodes", JS_HTTP_ROUTES_NODES_DL),
+    ("js_http_routes_edges", JS_HTTP_ROUTES_EDGES_DL),
 ];
 
 /// Look up a bundled pack by its wire name (the `<name>` in `"@stdlib/<name>"`).
@@ -1272,6 +1315,8 @@ mod tests {
                 "method_calls",
                 "shape_verifier",
                 "axum_routes",
+                "js_http_routes_nodes",
+                "js_http_routes_edges",
             ],
             "canonical run order: Wave-1 resolver packs → Wave-1b packs \
              (rust_cross_methods_ctor after rust_calls — the CALLS EDB seam; the \
@@ -1286,8 +1331,10 @@ mod tests {
              js_class_inheritance produces EXTENDS for shape_verifier) → \
              depends (Wave 3c: AFTER every IMPORTS_FROM producer — legacy \
              import-resolution is gated, so the in-engine producers feed it) → \
-             method_calls → shape_verifier → axum_routes (producers strictly \
-             before consumers)"
+             method_calls → shape_verifier → axum_routes → \
+             js_http_routes_nodes → js_http_routes_edges (Wave 14: the nodes \
+             pack mints the anchorCall-pinned http:route endpoints the edges \
+             pack joins as committed EDB) (producers strictly before consumers)"
         );
         assert_eq!(stdlib_pack("depends"), Some(DEPENDS_DL));
         assert_eq!(stdlib_pack("js_local_refs"), Some(JS_LOCAL_REFS_DL));
@@ -1325,6 +1372,14 @@ mod tests {
         assert_eq!(stdlib_pack("method_calls"), Some(METHOD_CALLS_DL));
         assert_eq!(stdlib_pack("shape_verifier"), Some(SHAPE_VERIFIER_DL));
         assert_eq!(stdlib_pack("axum_routes"), Some(AXUM_ROUTES_DL));
+        assert_eq!(
+            stdlib_pack("js_http_routes_nodes"),
+            Some(JS_HTTP_ROUTES_NODES_DL)
+        );
+        assert_eq!(
+            stdlib_pack("js_http_routes_edges"),
+            Some(JS_HTTP_ROUTES_EDGES_DL)
+        );
         assert_eq!(stdlib_pack("nope"), None, "unknown pack name resolves to None");
     }
 
@@ -3644,6 +3699,305 @@ mod tests {
         assert_eq!(spec.meta, vec!["resolvedVia".to_string(), "globalCategory".to_string()]);
     }
 
+    /// Realistic small-corpus stats for the Wave-14 fixture tests: the
+    /// empty-graph `Stats::default()` (total_nodes = 0) degenerates every
+    /// keyed probe into a DERIVED relation to its FULL cardinality
+    /// (`k / total_nodes.max(1)` = k), so the deep ecb-fact join chain
+    /// multiplies past the E-PLAN-003 guard on estimates alone. Production
+    /// always plans with store-derived stats; the dogfood-scale plan gate
+    /// below covers these packs at full scale.
+    fn w14_stats() -> Stats {
+        let mut nodes_by_type = std::collections::HashMap::new();
+        for (ty, n) in [
+            ("CALL", 70_000u64),
+            ("LITERAL", 40_000),
+            ("VARIABLE", 15_500),
+            ("FUNCTION", 10_221),
+            ("CONSTANT", 6_700),
+            ("IMPORT_BINDING", 5_781),
+            ("http:route", 50),
+        ] {
+            nodes_by_type.insert(ty.to_string(), n);
+        }
+        Stats {
+            total_nodes: 500_000,
+            total_edges: 1_000_000,
+            nodes_by_type,
+        }
+    }
+
+    /// Wave 14 — js_http_routes_nodes framework arms, each pinned on the
+    /// live-verified analyzer shapes (IMPORT_BINDING metadata.source, CALL
+    /// metadata.kind="new", RECEIVER_CALL chains, PASSES_ARGUMENT
+    /// metadata.index, LITERAL name = raw quoted source text):
+    /// - express FACTORY initializer (delta 2): `const app = express();
+    ///   app.get('/users', handler)` — single-quote strip;
+    /// - hono NEW initializer + chained second registration (deltas 1, 9):
+    ///   `const app2 = new Hono(); app2.post("/items", h).put('/things', h2)`
+    ///   — double-quote strip (the Wave-14 parser escape) and the chained
+    ///   call's OWN path;
+    /// - @koa/router SUBPATH import + `del` verb: `import Router from
+    ///   '@koa/router/lib/router.js'; const router = new Router();
+    ///   router.del('/old', h3)` → DELETE;
+    /// - fastify `register` (callback at index 0, NO route path): minted as
+    ///   "<unnamed-http-route>", no ROUTES_TO (non-verb method);
+    /// - negatives: `.get` with an unresolvable receiver (map.get), a
+    ///   receiver imported from a NON-registry lib (lodash), and a verb call
+    ///   missing its callback argument (delta 8) all derive nothing.
+    #[test]
+    fn js_http_routes_nodes_framework_arms() {
+        let idx0 = r#"{"index":0}"#;
+        let idx1 = r#"{"index":1}"#;
+        let mut v = FixtureStorageView::new(1);
+
+        // a. express factory: import + const app = express() + app.get('/users', h).
+        named_node(&mut v, "b_express", "express", "IMPORT_BINDING", "app.ts");
+        v.put_node_metadata(id_of("b_express"), r#"{"source":"express"}"#);
+        named_node(&mut v, "k_app", "app", "CONSTANT", "app.ts");
+        named_node(&mut v, "c_factory", "express", "CALL", "app.ts");
+        edge(&mut v, "k_app", "c_factory", "ASSIGNED_FROM");
+        named_node(&mut v, "c_get", "app.get", "CALL", "app.ts");
+        named_node(&mut v, "p_users", "'/users'", "LITERAL", "app.ts");
+        named_node(&mut v, "h_users", "<arrow>", "FUNCTION", "app.ts");
+        edge_meta(&mut v, "c_get", "p_users", "PASSES_ARGUMENT", idx0);
+        edge_meta(&mut v, "c_get", "h_users", "PASSES_ARGUMENT", idx1);
+
+        // b. hono new + chain: const app2 = new Hono();
+        //    app2.post("/items", h).put('/things', h2).
+        named_node(&mut v, "b_hono", "Hono", "IMPORT_BINDING", "hono.ts");
+        v.put_node_metadata(id_of("b_hono"), r#"{"source":"hono"}"#);
+        named_node(&mut v, "k_app2", "app2", "CONSTANT", "hono.ts");
+        named_node(&mut v, "c_hono_new", "Hono", "CALL", "hono.ts");
+        v.put_node_metadata(id_of("c_hono_new"), r#"{"kind":"new"}"#);
+        edge(&mut v, "k_app2", "c_hono_new", "ASSIGNED_FROM");
+        named_node(&mut v, "c_post", "app2.post", "CALL", "hono.ts");
+        named_node(&mut v, "p_items", "\"/items\"", "LITERAL", "hono.ts");
+        named_node(&mut v, "h_items", "h", "FUNCTION", "hono.ts");
+        edge_meta(&mut v, "c_post", "p_items", "PASSES_ARGUMENT", idx0);
+        edge_meta(&mut v, "c_post", "h_items", "PASSES_ARGUMENT", idx1);
+        named_node(&mut v, "c_put", "<obj>.put", "CALL", "hono.ts");
+        edge(&mut v, "c_put", "c_post", "RECEIVER_CALL");
+        named_node(&mut v, "p_things", "'/things'", "LITERAL", "hono.ts");
+        named_node(&mut v, "h_things", "h2", "FUNCTION", "hono.ts");
+        edge_meta(&mut v, "c_put", "p_things", "PASSES_ARGUMENT", idx0);
+        edge_meta(&mut v, "c_put", "h_things", "PASSES_ARGUMENT", idx1);
+
+        // b2. hono `on` — data-driven NON-(0,1) indexes: app2.on(['GET'], '/x', h4)
+        //     (ROUTE_PATH at index 1, ENTRY_POINT_CALLBACK at index 2; "on" is
+        //     not a verb so the node minted carries no ROUTES_TO).
+        let idx2 = r#"{"index":2}"#;
+        named_node(&mut v, "c_on", "app2.on", "CALL", "hono.ts");
+        named_node(&mut v, "p_methods", "<array>", "LITERAL", "hono.ts");
+        named_node(&mut v, "p_x", "'/x'", "LITERAL", "hono.ts");
+        named_node(&mut v, "h_x", "h4", "FUNCTION", "hono.ts");
+        edge_meta(&mut v, "c_on", "p_methods", "PASSES_ARGUMENT", idx0);
+        edge_meta(&mut v, "c_on", "p_x", "PASSES_ARGUMENT", idx1);
+        edge_meta(&mut v, "c_on", "h_x", "PASSES_ARGUMENT", idx2);
+
+        // c. @koa/router subpath import + new Router() + router.del('/old', h3).
+        named_node(&mut v, "b_router", "Router", "IMPORT_BINDING", "koa.ts");
+        v.put_node_metadata(id_of("b_router"), r#"{"source":"@koa/router/lib/router.js"}"#);
+        named_node(&mut v, "k_router", "router", "CONSTANT", "koa.ts");
+        named_node(&mut v, "c_router_new", "Router", "CALL", "koa.ts");
+        v.put_node_metadata(id_of("c_router_new"), r#"{"kind":"new"}"#);
+        edge(&mut v, "k_router", "c_router_new", "ASSIGNED_FROM");
+        named_node(&mut v, "c_del", "router.del", "CALL", "koa.ts");
+        named_node(&mut v, "p_old", "'/old'", "LITERAL", "koa.ts");
+        named_node(&mut v, "h_old", "h3", "FUNCTION", "koa.ts");
+        edge_meta(&mut v, "c_del", "p_old", "PASSES_ARGUMENT", idx0);
+        edge_meta(&mut v, "c_del", "h_old", "PASSES_ARGUMENT", idx1);
+
+        // d. fastify register: const srv = fastify(); srv.register(plugin) —
+        //    callback at index 0, no ROUTE_PATH role.
+        named_node(&mut v, "b_fastify", "fastify", "IMPORT_BINDING", "f.ts");
+        v.put_node_metadata(id_of("b_fastify"), r#"{"source":"fastify"}"#);
+        named_node(&mut v, "k_srv", "srv", "CONSTANT", "f.ts");
+        named_node(&mut v, "c_ffactory", "fastify", "CALL", "f.ts");
+        edge(&mut v, "k_srv", "c_ffactory", "ASSIGNED_FROM");
+        named_node(&mut v, "c_register", "srv.register", "CALL", "f.ts");
+        named_node(&mut v, "h_plugin", "plugin", "FUNCTION", "f.ts");
+        edge_meta(&mut v, "c_register", "h_plugin", "PASSES_ARGUMENT", idx0);
+
+        // e. negatives.
+        named_node(&mut v, "c_map", "map.get", "CALL", "app.ts"); // no binding
+        edge_meta(&mut v, "c_map", "p_users", "PASSES_ARGUMENT", idx0);
+        edge_meta(&mut v, "c_map", "h_users", "PASSES_ARGUMENT", idx1);
+        named_node(&mut v, "b_other", "other", "IMPORT_BINDING", "app.ts");
+        v.put_node_metadata(id_of("b_other"), r#"{"source":"lodash"}"#);
+        named_node(&mut v, "c_other", "other.get", "CALL", "app.ts"); // non-registry lib
+        edge_meta(&mut v, "c_other", "p_users", "PASSES_ARGUMENT", idx0);
+        edge_meta(&mut v, "c_other", "h_users", "PASSES_ARGUMENT", idx1);
+        named_node(&mut v, "c_nocb", "app.options", "CALL", "app.ts"); // delta 8: no idx-1 arg
+        edge_meta(&mut v, "c_nocb", "p_users", "PASSES_ARGUMENT", idx0);
+
+        let (eval, specs, node_specs) = evaluate_with_materialize(
+            &v,
+            JS_HTTP_ROUTES_NODES_DL,
+            w14_stats(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("js_http_routes_nodes.dl evaluates");
+
+        // ROUTES_TO: verb methods with a path; register is non-verb ⇒ absent.
+        let routes: BTreeSet<(u128, u128, String, String)> = eval
+            .facts("http_routes_to")
+            .into_iter()
+            .map(|r| {
+                (
+                    r[0].as_id().expect("src id"),
+                    r[1].as_id().expect("dst id"),
+                    r[2].as_str(),
+                    r[3].as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            routes,
+            BTreeSet::from([
+                (id_of("c_get"), id_of("h_users"), "GET".to_string(), "/users".to_string()),
+                (id_of("c_post"), id_of("h_items"), "POST".to_string(), "/items".to_string()),
+                (id_of("c_put"), id_of("h_things"), "PUT".to_string(), "/things".to_string()),
+                (id_of("c_del"), id_of("h_old"), "DELETE".to_string(), "/old".to_string()),
+            ]),
+            "factory/new/chained/subpath arms route with stripped paths and \
+             mapped verbs; register (non-verb) and all negatives derive none"
+        );
+
+        // The minted nodes: sid <file>::http:route::<name>::<callIdDecimal>.
+        let minted: BTreeSet<(String, String, String, String, String)> = eval
+            .facts("http_route_js")
+            .into_iter()
+            .map(|r| (r[0].as_str(), r[1].as_str(), r[2].as_str(), r[3].as_str(), r[4].as_str()))
+            .collect();
+        let rn = |file: &str, name: &str, lib: &str, m: &str, call: &str| {
+            (
+                format!("{file}::http:route::{name}::{}", id_of(call)),
+                name.to_string(),
+                file.to_string(),
+                lib.to_string(),
+                m.to_string(),
+            )
+        };
+        assert_eq!(
+            minted,
+            BTreeSet::from([
+                rn("app.ts", "/users", "express", "get", "c_get"),
+                rn("hono.ts", "/items", "hono", "post", "c_post"),
+                rn("hono.ts", "/things", "hono", "put", "c_put"),
+                rn("koa.ts", "/old", "@koa/router", "del", "c_del"),
+                rn("f.ts", "<unnamed-http-route>", "fastify", "register", "c_register"),
+                rn("hono.ts", "/x", "hono", "on", "c_on"),
+            ]),
+            "one node per resolved registration call (chained .put names its \
+             OWN path — delta 9; pathless register is unnamed); negatives mint \
+             nothing"
+        );
+
+        // Specs: additive ROUTES_TO; provenance-scoped exclusive http:route node.
+        let rt = specs
+            .iter()
+            .find(|s| s.edge_type == "ROUTES_TO")
+            .expect("ROUTES_TO spec");
+        assert!(rt.additive, "ROUTES_TO is shared vocabulary — additive");
+        assert_eq!(rt.meta, vec!["method".to_string(), "path".to_string()]);
+        assert_eq!(node_specs.len(), 1, "exactly one node-materialized head");
+        let ns = &node_specs[0];
+        assert_eq!(ns.predicate, "http_route_js");
+        assert_eq!(ns.node_type, "http:route");
+        assert!(!ns.additive, "exclusive (provenance-scoped) node ownership");
+        assert_eq!(
+            ns.meta,
+            vec!["library".to_string(), "method".to_string(), "anchorCall".to_string()]
+        );
+    }
+
+    /// Wave 14 — js_http_routes_edges joins the COMMITTED http:route
+    /// endpoints by the exact anchorCall pin and reproduces the enricher's
+    /// edge vocabulary: EXPOSES (CALL → http:route) + HANDLES
+    /// (http:route → callback). Decoy http:route nodes — axum-style (no
+    /// anchorCall), enricher-style (anchorCall = wire semantic-id string),
+    /// and an anchorCall pointing at an UNRELATED call — are never joined.
+    #[test]
+    fn js_http_routes_edges_joins_minted_endpoints() {
+        let idx0 = r#"{"index":0}"#;
+        let idx1 = r#"{"index":1}"#;
+        let mut v = FixtureStorageView::new(1);
+
+        // The resolvable registration: const app = express(); app.get('/users', h).
+        named_node(&mut v, "b_express", "express", "IMPORT_BINDING", "app.ts");
+        v.put_node_metadata(id_of("b_express"), r#"{"source":"express"}"#);
+        named_node(&mut v, "k_app", "app", "CONSTANT", "app.ts");
+        named_node(&mut v, "c_factory", "express", "CALL", "app.ts");
+        edge(&mut v, "k_app", "c_factory", "ASSIGNED_FROM");
+        named_node(&mut v, "c_get", "app.get", "CALL", "app.ts");
+        named_node(&mut v, "p_users", "'/users'", "LITERAL", "app.ts");
+        named_node(&mut v, "h_users", "<arrow>", "FUNCTION", "app.ts");
+        edge_meta(&mut v, "c_get", "p_users", "PASSES_ARGUMENT", idx0);
+        edge_meta(&mut v, "c_get", "h_users", "PASSES_ARGUMENT", idx1);
+
+        // The COMMITTED node minted by js_http_routes_nodes (anchorCall pin).
+        let route_sid = format!("app.ts::http:route::/users::{}", id_of("c_get"));
+        named_node(&mut v, &route_sid, "/users", "http:route", "app.ts");
+        v.put_node_metadata(
+            id_of(&route_sid),
+            &format!(r#"{{"anchorCall":"{}","library":"express","method":"get"}}"#, id_of("c_get")),
+        );
+
+        // Decoys: axum-style (no anchorCall), enricher-style (wire-sid
+        // anchorCall), and an anchorCall anchored on a DIFFERENT call.
+        named_node(&mut v, "http:route::GET::/users", "/users", "http:route", "src/main.rs");
+        v.put_node_metadata(
+            id_of("http:route::GET::/users"),
+            r#"{"method":"GET","path":"/users"}"#,
+        );
+        named_node(&mut v, "app.ts::http:route::/users::wire", "/users", "http:route", "app.ts");
+        v.put_node_metadata(
+            id_of("app.ts::http:route::/users::wire"),
+            r#"{"anchorCall":"app.ts->CALL->app.get[0]","library":"express"}"#,
+        );
+        named_node(&mut v, "decoy_other_anchor", "/users", "http:route", "app.ts");
+        v.put_node_metadata(
+            id_of("decoy_other_anchor"),
+            &format!(r#"{{"anchorCall":"{}"}}"#, id_of("c_factory")),
+        );
+
+        let (eval, specs, _node_specs) = evaluate_with_materialize(
+            &v,
+            JS_HTTP_ROUTES_EDGES_DL,
+            w14_stats(),
+            EvalLimits::none(),
+            EventLog::discard(),
+        )
+        .expect("js_http_routes_edges.dl evaluates");
+
+        let pairs = |pred: &str| -> BTreeSet<(u128, u128)> {
+            eval.facts(pred)
+                .into_iter()
+                .map(|r| (r[0].as_id().expect("src id"), r[1].as_id().expect("dst id")))
+                .collect()
+        };
+        assert_eq!(
+            pairs("http_exposes"),
+            BTreeSet::from([(id_of("c_get"), id_of(&route_sid))]),
+            "EXPOSES joins exactly the anchorCall-pinned node — no decoy joins"
+        );
+        assert_eq!(
+            pairs("http_handles"),
+            BTreeSet::from([(id_of(&route_sid), id_of("h_users"))]),
+            "HANDLES: pinned node → the callback-index argument target"
+        );
+
+        for ty in ["EXPOSES", "HANDLES"] {
+            let s = specs
+                .iter()
+                .find(|s| s.edge_type == ty)
+                .unwrap_or_else(|| panic!("{ty} spec present"));
+            assert!(s.additive, "{ty} is shared enricher vocabulary — additive");
+            assert!(s.meta.is_empty(), "{ty} carries no meta columns");
+        }
+    }
+
     /// Wave 2b — js_cross_file_calls namespace arm through the visible() chain:
     /// `import * as barrel from './top'; barrel.deepFn()` where top.ts star
     /// re-exports mid.ts which directly exports deepFn — the member resolves to
@@ -4292,6 +4646,8 @@ mod tests {
             // Wave 3c: orchestrator-committed workspace facts (one per
             // discovered package + alias virtual packages; dogfood ~30).
             ("WORKSPACE_PACKAGE", 30),
+            // Wave 14: axum_routes + js_http_routes minted routes (dogfood 8).
+            ("http:route", 8),
         ] {
             nodes_by_type.insert(ty.to_string(), n);
         }

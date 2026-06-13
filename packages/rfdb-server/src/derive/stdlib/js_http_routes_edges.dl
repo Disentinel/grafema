@@ -1,0 +1,135 @@
+% js_http_routes_edges.dl — edge half of the JS HTTP-route feature vertical
+% (Wave 14): the libraryCallbackEnricher edge vocabulary over the http:route
+% nodes minted by js_http_routes_nodes.dl:
+%   EXPOSES : registration CALL -> http:route   (enricher :146-151)
+%   HANDLES : http:route -> callback target     (enricher :152-157)
+% MUST be declared AFTER js_http_routes_nodes in the pack runner: the minted
+% http:route endpoints are joined here as COMMITTED storage EDB (the
+% js_builtins two-pack split — a @materialize edge endpoint must be a node-ID
+% column, and a same-run-minted node's id exists only as the BLAKE3 of the
+% sid string the nodes pack builds).
+%
+% The match prelude (cand/corig/try/want/bnd/dnext/src_of/routed) is a
+% textual duplicate of js_http_routes_nodes.dl (derived relations are
+% per-program; the established per-pack include pattern), and the ecb_*
+% ground facts are PREPENDED at compile time from effects_callable_facts.dl
+% (stdlib.rs concat!). See the nodes pack header for the full enricher
+% provenance and NUMBERED DELTAS 1-9 — no additional edge-only deltas.
+%
+% ENDPOINT PIN: our http:route nodes carry meta `anchorCall` = the decimal
+% u128 id of the registration call (nodes pack delta 4/5) — the join
+% `node_attr(R, "anchorCall", Cid) ⋈ attr(C, "id", Cid)` is exact and 1:1.
+% Other producers' http:route nodes are NEVER joined: axum_routes' nodes
+% have no anchorCall key, and the legacy enricher's anchorCall holds a WIRE
+% semantic-id string (never equal to a decimal id rendering).
+%
+% EXPOSES / HANDLES are SHARED vocabulary (the enricher emits them for
+% cli:command / mcp:tool / vscode:command) ⇒ mode = "additive" is MANDATORY.
+% Additive edges do not retract: an EXPOSES/HANDLES edge whose http:route
+% node was retracted by the (exclusive) nodes pack dangles until the next
+% writer cleanup — the known additive-vocabulary class, same as the enricher.
+%
+% MAINTAIN ENVELOPE: negation ⇒ scratch-only under maintain (accepted).
+%
+% ORDERING (CONSUMER): strictly after js_http_routes_nodes (committed-EDB
+% endpoint join), enforced by both pack registries.
+
+% ── Registry slice + rules (duplicate prelude; see the nodes pack) ──────────
+hr_lib("express").
+hr_lib("fastify").
+hr_lib("koa").
+hr_lib("koa-router").
+hr_lib("@koa/router").
+hr_lib("hono").
+
+hr_rule(Lib, M, CbIdx) :-
+    hr_lib(Lib),
+    ecb_method(Lib, Full, M),
+    ecb_arg(Lib, Full, CbIdx, "ENTRY_POINT_CALLBACK").
+hr_m(M) :- hr_rule(_, M, _).
+
+% ── Candidate calls (8-ext gate; duplicate prelude) ─────────────────────────
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".js"),  attr(C, "name", N).
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".jsx"), attr(C, "name", N).
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".ts"),  attr(C, "name", N).
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".tsx"), attr(C, "name", N).
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".mjs"), attr(C, "name", N).
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".cjs"), attr(C, "name", N).
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".mts"), attr(C, "name", N).
+jcall(C, F, N) :- node(C, "CALL"), attr(C, "file", F), ends_with(F, ".cts"), attr(C, "name", N).
+
+% Two-step suffix gate: the builtin needs N bound, so the suffix rule is
+% planned off jcall alone; the registry gate joins the derived output
+% (the greedy planner would otherwise lead with the tiny hr_m relation
+% and strand method_suffix with both arguments free).
+msfx(C, F, M) :- jcall(C, F, N), method_suffix(N, M).
+cand(C, F, M) :- msfx(C, F, M), hr_m(M).
+
+% ── Receiver-chain machinery (duplicate prelude) ────────────────────────────
+rsrc(X)     :- edge(X, _, "RECEIVER_CALL").
+rpath(A, B) :- edge(A, B, "RECEIVER_CALL").
+rpath(A, B) :- rpath(A, X), edge(X, B, "RECEIVER_CALL").
+rorig(A, B) :- rpath(A, B), \+ rsrc(B).
+
+corig(C, O) :- cand(C, _, _), rorig(C, O).
+corig(C, C) :- cand(C, _, _), \+ rsrc(C).
+
+try(C, F, N) :- corig(C, O), attr(O, "name", N), attr(O, "file", F).
+try(C, F, R) :- try(C, F, N), method_suffix(N, S), concat(".", S, DS), strip_suffix(N, DS, R).
+
+want(F, N) :- try(_, F, N).
+want(F, N) :- dnext(F, _, N).
+
+bnd(F, N, Src) :-
+    want(F, N),
+    node(B, "IMPORT_BINDING"), attr(B, "file", F), attr(B, "name", N),
+    node_attr(B, "source", Src).
+
+dinit(F, N, I) :- want(F, N), node(D, "CONSTANT"), attr(D, "file", F), attr(D, "name", N), edge(D, I, "ASSIGNED_FROM"), node(I, "CALL").
+dinit(F, N, I) :- want(F, N), node(D, "VARIABLE"), attr(D, "file", F), attr(D, "name", N), edge(D, I, "ASSIGNED_FROM"), node(I, "CALL").
+dorig(F, N, O) :- dinit(F, N, I), rorig(I, O).
+dorig(F, N, I) :- dinit(F, N, I), \+ rsrc(I).
+dnext(F, N, ON) :- dorig(F, N, O), attr(O, "name", ON).
+dnext(F, N, R)  :- dnext(F, N, ON), method_suffix(ON, S), concat(".", S, DS), strip_suffix(ON, DS, R).
+
+src_of(F, N, Src) :- bnd(F, N, Src).
+src_of(F, N, Src) :- dnext(F, N, N2), src_of(F, N2, Src).
+
+res(C, Src) :- try(C, F, N), src_of(F, N, Src).
+
+% Library match: exact, or subpath import "<lib>/..." (enricher :114-117).
+% Subpath matching is the segment-shrink idiom (cf. js_runtime_globals dpfx):
+% every whole-"/"-segment prefix of the source is derived, then membership-
+% joined against hr_lib — the trailing-"/" boundary the enricher's
+% startsWith(lib + "/") enforces falls out of shrinking BY segments
+% ("@foo/barzooka" never shrinks to "@foo/bar").
+spfx(C, S) :- res(C, S).
+spfx(C, P) :- spfx(C, S), last_segment(S, "/", L), concat("/", L, T), strip_suffix(S, T, P).
+mlib(C, Lib) :- spfx(C, Lib), hr_lib(Lib).
+
+routed(C, Lib, M, H) :-
+    cand(C, _, M),
+    mlib(C, Lib),
+    hr_rule(Lib, M, CbIdx),
+    edge(C, H, "PASSES_ARGUMENT"),
+    edge_attr(C, H, "PASSES_ARGUMENT", "index", CbIdx).
+rnode(C) :- routed(C, _, _, _).
+
+% ── The materialized edges over the COMMITTED http:route endpoints ──────────
+% The decimal call id is read in its OWN rule so the attr leg always runs in
+% reader mode [B,B,F] off the bound call — fused into the join rule the
+% planner may bind Cid from the node_attr side first and flip attr into the
+% [F,B,B] reverse-lookup, which has no index for the "id" pseudo-attr.
+hcid(C, Cid, H) :- routed(C, _, _, H), attr(C, "id", Cid).
+
+@materialize(edge_type = "EXPOSES", mode = "additive")
+http_exposes(C, R) :-
+    hcid(C, Cid, _),
+    node(R, "http:route"),
+    node_attr(R, "anchorCall", Cid).
+
+@materialize(edge_type = "HANDLES", mode = "additive")
+http_handles(R, H) :-
+    hcid(C, Cid, H),
+    node(R, "http:route"),
+    node_attr(R, "anchorCall", Cid).
