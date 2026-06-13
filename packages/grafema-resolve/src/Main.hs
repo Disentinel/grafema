@@ -198,34 +198,28 @@ daemonLoop symbolDb stateRef indexRef = do
               writeFrame stdout (encodeMsgpack (ResOk []))
             "resolve-file" -> do
               mIndexes <- readIORef indexRef
-              -- Graceful fallback: if build-index was never sent (e.g. a Wave-6+
-              -- orchestrator that removed the build-index step in favour of
-              -- derive packs), proceed with empty indexes rather than hard-failing.
-              -- r1-r4 (same-file steps) are index-independent and still produce edges;
-              -- r5-r8 produce nothing with empty maps, matching the Wave-6 behaviour
-              -- where those cross-file steps were replaced by datalog packs entirely.
-              let indexes = case mIndexes of
-                    Nothing  -> ResolveIndexes Map.empty Map.empty Map.empty
-                    Just idx -> idx
-              let fileNodes = drNodes req
-              -- Run all 7 resolvers on just this file's nodes
-              let r1 = SameFileCalls.resolveAll fileNodes
-              let r2 = JsLocalRefs.resolveAll fileNodes
-              let r3 = resolveAll jsStrategy symbolDb fileNodes
-              let r4 = Builtins.resolveAll fileNodes
-              -- For import resolution: use pre-built export index + workspace map + module index
-              r5 <- ImportResolution.resolveFileWithIndex (riExportIndex indexes) (riWorkspaceMap indexes) (riModuleIndex indexes) fileNodes
-              -- For cross-file calls: use pre-built export index
-              let r6 = CrossFileCalls.resolveFileWithIndex (riExportIndex indexes) fileNodes
-              let r7 = PropertyAccess.resolveFileWithIndex (riExportIndex indexes) fileNodes
-              let r8 = ClassInheritance.resolveFileWithIndex (riExportIndex indexes) fileNodes
-              let result = r1 ++ r2 ++ r3 ++ r4 ++ r5 ++ r6 ++ r7 ++ r8
-              -- Encode directly to msgpack, bypassing aeson intermediate
-              let msgpackResult = MP.ObjectMap $ V.fromList
-                    [ (MP.ObjectStr "status", MP.ObjectStr "ok")
-                    , (MP.ObjectStr "commands", MP.ObjectArray (V.fromList (map pluginCommandToMsgpack result)))
-                    ]
-              writeFrame stdout (Binary.encode msgpackResult)
+              case mIndexes of
+                Nothing -> writeFrame stdout (encodeMsgpack (ResError "No index built. Send build-index first."))
+                Just indexes -> do
+                  let fileNodes = drNodes req
+                  -- Run all 7 resolvers on just this file's nodes
+                  let r1 = SameFileCalls.resolveAll fileNodes
+                  let r2 = JsLocalRefs.resolveAll fileNodes
+                  let r3 = resolveAll jsStrategy symbolDb fileNodes
+                  let r4 = Builtins.resolveAll fileNodes
+                  -- For import resolution: use pre-built export index + workspace map + module index
+                  r5 <- ImportResolution.resolveFileWithIndex (riExportIndex indexes) (riWorkspaceMap indexes) (riModuleIndex indexes) fileNodes
+                  -- For cross-file calls: use pre-built export index
+                  let r6 = CrossFileCalls.resolveFileWithIndex (riExportIndex indexes) fileNodes
+                  let r7 = PropertyAccess.resolveFileWithIndex (riExportIndex indexes) fileNodes
+                  let r8 = ClassInheritance.resolveFileWithIndex (riExportIndex indexes) fileNodes
+                  let result = r1 ++ r2 ++ r3 ++ r4 ++ r5 ++ r6 ++ r7 ++ r8
+                  -- Encode directly to msgpack, bypassing aeson intermediate
+                  let msgpackResult = MP.ObjectMap $ V.fromList
+                        [ (MP.ObjectStr "status", MP.ObjectStr "ok")
+                        , (MP.ObjectStr "commands", MP.ObjectArray (V.fromList (map pluginCommandToMsgpack result)))
+                        ]
+                  writeFrame stdout (Binary.encode msgpackResult)
             _ -> do
               -- Legacy per-command path (backward compat)
               allNodes <- finalizeContext stateRef
