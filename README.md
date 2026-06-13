@@ -74,7 +74,7 @@ Add to `.mcp.json` in your project root:
 }
 ```
 
-30+ MCP tools available: `find_nodes`, `find_calls`, `trace_dataflow`, `get_file_overview`, `describe`, `query_graph`, and more. The AI agent queries the graph instead of reading files — faster, cheaper, more complete.
+40+ MCP tools available: `find_nodes`, `find_calls`, `trace_dataflow`, `get_file_overview`, `describe`, `query_graph`, and more. The AI agent queries the graph instead of reading files — faster, cheaper, more complete.
 
 `find_nodes` returns rich context in a single call: callers, members, parent, import/call counts. Fuzzy name matching via local embeddings means approximate queries like `find_nodes(name="PtyHostHeartbeatService")` find `HeartbeatService` even without exact match.
 
@@ -208,7 +208,7 @@ grafema analyze → Rust orchestrator → per-language analyzers → RFDB (graph
 - **RFDB** — columnar graph database optimized for code analysis workloads. Deferred indexing, L1 compaction, edge-type and by-name indexes. Includes **local embedding index** for fuzzy name search — approximate queries find structurally similar names without exact match (e.g., `PtyHostHeartbeatService` matches `HeartbeatService`). Automatic segment GC after compaction.
 - **Orchestrator** — Rust binary that coordinates discovery, parsing, RFDB ingestion, and resolution across languages. Streaming pipeline frees AST memory after ingestion.
 - **Analyzers** — per-language binaries (Haskell + native parsers where needed: libclang for ObjC, tree-sitter for C/C++, SwiftSyntax for Swift). Run as daemon pools with JSON-over-stdio protocol.
-- **MCP Server** — 30+ tools for AI agent integration (find_nodes, find_calls, trace_dataflow, describe, query_graph, etc.)
+- **MCP Server** — 40+ tools for AI agent integration (find_nodes, find_calls, trace_dataflow, describe, query_graph, etc.)
 
 ## Environment Variables
 
