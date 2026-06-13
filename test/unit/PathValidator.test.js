@@ -177,8 +177,11 @@ describe('PathValidator', () => {
       assert.strictEqual(result.missing.length, 1);
       // DATABASE_QUERY is now mapped to 'db:query'
       assert.strictEqual(result.missing[0].type, 'db:query');
-      // The reason message is "Endpoint no longer reachable: <name>"
-      assert.match(result.missing[0].reason, /no longer reachable/i);
+      // The namespaced db:query endpoint must report the database-specific
+      // reason carrying the actual SQL text (regression: db:query previously
+      // fell through to the generic "no longer reachable" message).
+      assert.match(result.missing[0].reason, /database query no longer executed/i);
+      assert.match(result.missing[0].reason, /SELECT \* FROM orders WHERE id = \?/);
     });
   });
 
@@ -242,8 +245,10 @@ describe('PathValidator', () => {
       assert.match(result.message, /new behavior/i);
       assert.ok(result.added);
       assert.strictEqual(result.added.length, 1);
-      // The reason message is "New <type> added: <name>"
-      assert.match(result.added[0].reason, /new.*(query|endpoint)/i);
+      // The namespaced db:query endpoint must report the database-specific
+      // "New database query added" reason carrying the actual SQL text.
+      assert.match(result.added[0].reason, /new database query added/i);
+      assert.match(result.added[0].reason, /INSERT INTO audit_log \(action\) VALUES \(\?\)/);
     });
   });
 

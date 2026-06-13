@@ -269,13 +269,30 @@ export class PathValidator {
   }
 
   /**
+   * Является ли endpoint запросом к БД.
+   *
+   * Single source of truth for the database-query type aliases: the
+   * namespaced `db:query` (current emitter output) and the legacy
+   * `DATABASE_QUERY` (kept for backward compatibility). Key generation and
+   * both reason generators MUST agree on this set — otherwise a db:query
+   * endpoint is keyed as a database query but reported with the generic
+   * "no longer reachable" message, silently dropping the SQL text.
+   *
+   * @param type - node.type of the endpoint
+   * @returns true if the type denotes a database query
+   */
+  private _isDatabaseQuery(type: string): boolean {
+    return type === 'db:query' || type === 'DATABASE_QUERY';
+  }
+
+  /**
    * Получить уникальный ключ для endpoint
    *
    * @param endpoint - Endpoint нода
    * @returns Уникальный ключ
    */
   private _getEndpointKey(endpoint: EndpointNode): string {
-    if (endpoint.type === 'DATABASE_QUERY' || endpoint.type === 'db:query') {
+    if (this._isDatabaseQuery(endpoint.type)) {
       // Для DB query используем query text
       return `db:query:${endpoint.query || endpoint.name}`;
     }
@@ -298,8 +315,8 @@ export class PathValidator {
    * Получить reason для missing endpoint
    */
   private _getMissingReason(endpoint: EndpointNode): string {
-    if (endpoint.type === 'DATABASE_QUERY') {
-      return `Database query no longer executed: ${endpoint.query}`;
+    if (this._isDatabaseQuery(endpoint.type)) {
+      return `Database query no longer executed: ${endpoint.query || endpoint.name}`;
     }
 
     if (endpoint.type === 'FUNCTION' && endpoint.exported) {
@@ -317,8 +334,8 @@ export class PathValidator {
    * Получить reason для added endpoint
    */
   private _getAddedReason(endpoint: EndpointNode): string {
-    if (endpoint.type === 'DATABASE_QUERY') {
-      return `New database query added: ${endpoint.query}`;
+    if (this._isDatabaseQuery(endpoint.type)) {
+      return `New database query added: ${endpoint.query || endpoint.name}`;
     }
 
     if (endpoint.type === 'FUNCTION' && endpoint.exported) {
