@@ -288,6 +288,73 @@ exportTests = do
     let exportIds = nub (map gnId (findNodes "EXPORT" "*:./utils" fa))
     length exportIds `shouldBe` 2
 
+  -- Test 8d: `export const { a, b } = obj` must put EVERY destructured binding in
+  -- the file export index, so a consumer `import { a } from './x'` resolves. On
+  -- HEAD the binding NODES are created (gnExported=True) by handleDestructuringDecl,
+  -- but no emitExport runs for them — ruleExportNamedDeclaration emits a single
+  -- entry whose name is getDeclName(pattern) = "" — so neither `a` nor `b` reaches
+  -- the export surface. (Recorded in _ai/gaps.md as the destructuring-export gap,
+  -- sibling of #394.)
+  it "exports every binding of an object destructuring export" $ do
+    let fa = analyzeAST $ BL.concat
+          [ "{\"type\":\"Program\",\"start\":0,\"end\":40,\"body\":["
+          , "{\"type\":\"ExportNamedDeclaration\",\"start\":0,\"end\":40,"
+          , "\"declaration\":{\"type\":\"VariableDeclaration\",\"start\":7,\"end\":39,\"kind\":\"const\",\"declarations\":["
+          , "{\"type\":\"VariableDeclarator\",\"start\":13,\"end\":38,"
+          , "\"id\":{\"type\":\"ObjectPattern\",\"start\":13,\"end\":19,\"properties\":["
+          , "{\"type\":\"Property\",\"start\":15,\"end\":16,\"shorthand\":true,"
+          , "\"key\":{\"type\":\"Identifier\",\"start\":15,\"end\":16,\"name\":\"a\"},"
+          , "\"value\":{\"type\":\"Identifier\",\"start\":15,\"end\":16,\"name\":\"a\"}},"
+          , "{\"type\":\"Property\",\"start\":18,\"end\":19,\"shorthand\":true,"
+          , "\"key\":{\"type\":\"Identifier\",\"start\":18,\"end\":19,\"name\":\"b\"},"
+          , "\"value\":{\"type\":\"Identifier\",\"start\":18,\"end\":19,\"name\":\"b\"}}"
+          , "]},"
+          , "\"init\":{\"type\":\"Identifier\",\"start\":22,\"end\":25,\"name\":\"obj\"}}"
+          , "]},\"specifiers\":[]}"
+          , "]}"
+          ]
+    -- both destructured bindings must reach the export index
+    hasExport "a" NamedExport fa `shouldBe` True
+    hasExport "b" NamedExport fa `shouldBe` True
+    -- sanity: the binding nodes themselves exist (true on HEAD)
+    aNode <- requireNode "CONSTANT" "a" fa
+    bNode <- requireNode "CONSTANT" "b" fa
+    gnExported aNode `shouldBe` True
+    gnExported bNode `shouldBe` True
+
+  -- Test 8e: the same invariant for array patterns and renamed object props.
+  -- `export const [c, d] = arr` exports c,d; `export const { e: f } = obj` exports
+  -- the LOCAL binding name `f` (what `import { f }` would reference), not the key `e`.
+  it "exports array and renamed destructuring export bindings" $ do
+    let fa = analyzeAST $ BL.concat
+          [ "{\"type\":\"Program\",\"start\":0,\"end\":80,\"body\":["
+          , "{\"type\":\"ExportNamedDeclaration\",\"start\":0,\"end\":40,"
+          , "\"declaration\":{\"type\":\"VariableDeclaration\",\"start\":7,\"end\":39,\"kind\":\"const\",\"declarations\":["
+          , "{\"type\":\"VariableDeclarator\",\"start\":13,\"end\":38,"
+          , "\"id\":{\"type\":\"ArrayPattern\",\"start\":13,\"end\":19,\"elements\":["
+          , "{\"type\":\"Identifier\",\"start\":14,\"end\":15,\"name\":\"c\"},"
+          , "{\"type\":\"Identifier\",\"start\":17,\"end\":18,\"name\":\"d\"}"
+          , "]},"
+          , "\"init\":{\"type\":\"Identifier\",\"start\":22,\"end\":25,\"name\":\"arr\"}}"
+          , "]},\"specifiers\":[]},"
+          , "{\"type\":\"ExportNamedDeclaration\",\"start\":41,\"end\":79,"
+          , "\"declaration\":{\"type\":\"VariableDeclaration\",\"start\":48,\"end\":78,\"kind\":\"const\",\"declarations\":["
+          , "{\"type\":\"VariableDeclarator\",\"start\":54,\"end\":77,"
+          , "\"id\":{\"type\":\"ObjectPattern\",\"start\":54,\"end\":62,\"properties\":["
+          , "{\"type\":\"Property\",\"start\":56,\"end\":60,\"shorthand\":false,"
+          , "\"key\":{\"type\":\"Identifier\",\"start\":56,\"end\":57,\"name\":\"e\"},"
+          , "\"value\":{\"type\":\"Identifier\",\"start\":59,\"end\":60,\"name\":\"f\"}}"
+          , "]},"
+          , "\"init\":{\"type\":\"Identifier\",\"start\":65,\"end\":68,\"name\":\"obj\"}}"
+          , "]},\"specifiers\":[]}"
+          , "]}"
+          ]
+    hasExport "c" NamedExport fa `shouldBe` True
+    hasExport "d" NamedExport fa `shouldBe` True
+    hasExport "f" NamedExport fa `shouldBe` True
+    -- the object KEY `e` is not a local binding and must NOT be exported
+    hasExport "e" NamedExport fa `shouldBe` False
+
 
 edgeCaseTests :: Spec
 edgeCaseTests = do

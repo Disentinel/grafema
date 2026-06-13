@@ -264,6 +264,20 @@ handleDestructuringDecl patternNode declaratorNode _parentDecl nodeType kind dk 
               , geMetadata = Map.singleton "source" (MetaText "default")
               }
         Nothing -> return ()
+      -- Destructuring under `export const { a, b } = …` / `export const [a, b] = …`:
+      -- each binding must enter the file export index so a consumer's
+      -- `import { a } from './x'` resolves. The simple-identifier export path emits
+      -- this in ruleExportNamedDeclaration via getDeclName, which returns "" for a
+      -- pattern, so destructured bindings would otherwise be absent from the export
+      -- surface despite gnExported=True. `exported'` is True only under withExported
+      -- (a top-level `export`), so non-exported destructuring is unaffected. `name`
+      -- is the LOCAL binding (non-empty — extractBindingInfo drops empties), i.e. the
+      -- importable name (`{ e: f }` exports `f`, not the key `e`).
+      if exported'
+        then emitExport ExportInfo
+               { eiName = name, eiNodeId = nodeId
+               , eiKind = NamedExport, eiSource = Nothing }
+        else return ()
       let firstId' = case firstId of
             Nothing -> Just nodeId
             _       -> firstId
