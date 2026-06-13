@@ -139,19 +139,22 @@ on `.grafema/grafema.rfdb`). The differential surfaced these gaps, mapped to spe
 
 Verified at HEAD (base `8167a47`):
 - `grep DERIVED_FROM` across all non-markdown source = **0 matches** — `DERIVED_FROM` is no longer
-  emitted by any analyzer/enricher/query (`.hs`/`.ts`/`.rs`). The `haskell-analyzer` emitter sites this
-  entry named now emit `geType="DERIVES_FROM"` (`haskell-analyzer/src/Rules/Expressions.hs:8`; asserted
-  by `haskell-analyzer/test/Spec.hs:632+`), and the global zero-match grep covers `js-analyzer` too.
-- `DERIVES_FROM` is the single declared dataflow-derivation type (`types/src/edges.ts:63`) and is
-  correctly mapped in the archetype table (`util/src/notation/archetypes.ts:104`, `flow_in '<'`).
+  emitted by any analyzer/enricher/query (`.hs`/`.ts`/`.rs`). The emission sites this entry named now
+  emit `geType="DERIVES_FROM"` (`packages/haskell-analyzer/src/Rules/Expressions.hs:88`,
+  `packages/js-analyzer/src/Rules/Expressions.hs:109`; asserted by
+  `packages/haskell-analyzer/test/Spec.hs:632+`), and the global zero-match grep covers `js-analyzer` too.
+- `DERIVES_FROM` is the single declared dataflow-derivation type (`packages/types/src/edges.ts:63`) and is
+  correctly mapped in the archetype table (`packages/util/src/notation/archetypes.ts:104`, `flow_in '<'`).
 - So the cross-layer synonym split is closed; no archetype-map alias needed. (Recorded in Enox:
   "DERIVED_FROM vs DERIVES_FROM edge-vocabulary fork (Grafema)".) Future triage runs should not re-open.
 
 **Still open (separate, low-harm, governance):** the inline "Also unclaimed: `AWAITS` 1016,
-`HAS_EFFECT` 27" note above. Both are emitted (`AWAITS` from the orchestrator,
-`grafema-orchestrator/src/layout/loader.rs:102`; `HAS_EFFECT` from `haskell-analyzer/src/Rules/Effects.hs:64`)
-but not declared in `EDGE_TYPE`, so they render via `lookupEdge`'s fallback rather than an explicit
-archetype. `AWAITS`'s fallback (`flow_out '>'`, FUNCTION→CALL) is benign; `HAS_EFFECT` (27 edges) would
+`HAS_EFFECT` 27" note above. Both are emitted (`AWAITS` from the JS analyzer,
+`packages/js-analyzer/src/Rules/Expressions.hs:565`; `HAS_EFFECT` from
+`packages/haskell-analyzer/src/Rules/Effects.hs:64`) but not declared in `EDGE_TYPE`, so they render via
+`lookupEdge`'s fallback rather than an explicit archetype. (`AWAITS` also appears in the orchestrator's
+`packages/grafema-orchestrator/src/layout/loader.rs:102` liftable-edge registry — a consumer list, not
+an emitter.) `AWAITS`'s fallback (`flow_out '>'`, FUNCTION→CALL) is benign; `HAS_EFFECT` (27 edges) would
 want a deliberate archetype. Making them first-class is a vocabulary-governance call (I13), not a
 mechanical fix.
 
