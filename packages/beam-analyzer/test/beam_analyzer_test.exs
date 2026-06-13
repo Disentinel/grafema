@@ -2305,4 +2305,219 @@ defmodule BeamAnalyzerTest do
       assert {:ok, _} = Jason.encode(result)
     end
   end
+
+  # ==================================================================
+  # REG-1098 W-shape — SHAPE-tree graph emission
+  # ==================================================================
+  #
+  # The shape() term that today lives only as non-scalar
+  # pattern_shape / message_shape metadata (which node_attr cannot read)
+  # is ALSO materialized as a first-class SHAPE subgraph: one SHAPE node
+  # per constructor + structural edges (HAS_ELEMENT / HAS_HEAD / HAS_TAIL
+  # / HAS_FIELD), rooted on the owner node via HAS_PATTERN_SHAPE (handler)
+  # or HAS_SENT_SHAPE (send-site CALL). Purely additive — the legacy
+  # metadata stays for the native Haskell resolvers.
+
+  describe "SHAPE-tree emission (REG-1098 W-shape)" do
+    # Self-registering GenServer fixture (PROCESS node exists so MESSAGE_TYPE
+    # and SENDS_TO emission fire) carrying BOTH a handler and a send-site that
+    # share a compound shape.
+    defp shape_analyze(body_source) do
+      source = """
+      defmodule WShape.Server do
+        use GenServer
+
+        def start_link(arg) do
+          GenServer.start_link(__MODULE__, arg, name: __MODULE__)
+        end
+
+      #{body_source}
+      end
+      """
+
+      BeamAnalyzer.analyze("lib/wshape_server.ex", source)
+    end
+
+    defp shape_nodes(result),
+      do: Enum.filter(result.nodes, &(&1.type == "SHAPE"))
+
+    defp node_by_id(result, id),
+      do: Enum.find(result.nodes, &(&1.id == id))
+
+    # The single edge of `type` whose src is `src_id`; raises if not exactly one.
+    defp one_edge(result, src_id, type) do
+      edges = Enum.filter(result.edges, &(&1.type == type and &1.src == src_id))
+      assert [edge] = edges, "expected exactly one #{type} edge from #{src_id}, got #{inspect(edges)}"
+      edge
+    end
+
+    defp shared_fixture do
+      shape_analyze("""
+        def handle_info({:tick, n}, state) do
+          {:noreply, Map.put(state, :n, n)}
+        end
+
+        def emit do
+          GenServer.cast(__MODULE__, {:tick, 5})
+        end
+      """)
+    end
+
+    test "handler tuple pattern lowers to a SHAPE tree with HAS_PATTERN_SHAPE root" do
+      result = shared_fixture()
+
+      msg =
+        result.nodes
+        |> Enum.filter(&(&1.type == "MESSAGE_TYPE"))
+        |> Enum.find(&(&1.metadata.handler_type == "info"))
+
+      assert msg != nil
+
+      # owner -HAS_PATTERN_SHAPE-> root SHAPE node, kind tuple, arity 2.
+      pat_edge = one_edge(result, msg.id, "HAS_PATTERN_SHAPE")
+      assert pat_edge.dst == "#{msg.id}->SHAPE->root"
+
+      root = node_by_id(result, pat_edge.dst)
+      assert root != nil
+      assert root.type == "SHAPE"
+      assert root.metadata.kind == "tuple"
+      assert root.metadata.arity == 2
+
+      # HAS_ELEMENT[index:0] -> SHAPE{kind:atom, value:"tick"}
+      elems = Enum.filter(result.edges, &(&1.type == "HAS_ELEMENT" and &1.src == root.id))
+      assert length(elems) == 2
+
+      e0 = Enum.find(elems, &(&1.metadata.index == 0))
+      e1 = Enum.find(elems, &(&1.metadata.index == 1))
+      assert e0 != nil
+      assert e1 != nil
+
+      atom_node = node_by_id(result, e0.dst)
+      assert atom_node.metadata.kind == "atom"
+      assert atom_node.metadata.value == "tick"
+
+      # HAS_ELEMENT[index:1] -> SHAPE{kind:wildcard}. The pattern element is
+      # the bare variable `n`, which normalize/1 collapses to `:_` (a pattern
+      # binds, it is not a literal number) — so the lowered SHAPE is a
+      # wildcard leaf, NOT a number. The literal-number case is exercised by
+      # the send-site test below (`{:tick, 5}`).
+      wild_node = node_by_id(result, e1.dst)
+      assert wild_node.metadata.kind == "wildcard"
+
+      # Child ids are parent-id derived: root/0 and root/1.
+      assert e0.dst == "#{root.id}/0"
+      assert e1.dst == "#{root.id}/1"
+    end
+
+    test "send-site CALL lowers to an equivalent tuple SHAPE tree via HAS_SENT_SHAPE" do
+      result = shared_fixture()
+
+      call =
+        Enum.find(result.nodes, &(&1.type == "CALL" and &1.name == "GenServer.cast"))
+
+      assert call != nil
+
+      sent_edge = one_edge(result, call.id, "HAS_SENT_SHAPE")
+      assert sent_edge.dst == "#{call.id}->SHAPE->root"
+
+      root = node_by_id(result, sent_edge.dst)
+      assert root.metadata.kind == "tuple"
+      assert root.metadata.arity == 2
+
+      elems = Enum.filter(result.edges, &(&1.type == "HAS_ELEMENT" and &1.src == root.id))
+
+      e0 = Enum.find(elems, &(&1.metadata.index == 0))
+      e1 = Enum.find(elems, &(&1.metadata.index == 1))
+
+      assert node_by_id(result, e0.dst).metadata.kind == "atom"
+      assert node_by_id(result, e0.dst).metadata.value == "tick"
+      assert node_by_id(result, e1.dst).metadata.kind == "number"
+    end
+
+    test "legacy non-scalar metadata (pattern_shape / message_shape) is still present (additive)" do
+      result = shared_fixture()
+
+      msg =
+        result.nodes
+        |> Enum.filter(&(&1.type == "MESSAGE_TYPE"))
+        |> Enum.find(&(&1.metadata.handler_type == "info"))
+
+      # Handler still carries the lowered-list pattern_shape metadata.
+      assert msg.metadata.pattern_shape ==
+               ["tuple", [["atom", "tick"], ["wildcard"]]]
+
+      # Send CALL still carries message_shape metadata.
+      call =
+        Enum.find(result.nodes, &(&1.type == "CALL" and &1.name == "GenServer.cast"))
+
+      # Send-site message is `{:tick, 5}` — the literal 5 normalizes to :number.
+      assert call.metadata.message_shape ==
+               ["tuple", [["atom", "tick"], ["number"]]]
+    end
+
+    test "all SHAPE node ids are unique (no collisions)" do
+      result = shared_fixture()
+
+      ids = shape_nodes(result) |> Enum.map(& &1.id)
+      assert ids == Enum.uniq(ids),
+             "duplicate SHAPE ids: #{inspect(ids -- Enum.uniq(ids))}"
+
+      # Sanity: the fixture produced both a handler tree and a send tree,
+      # so there is more than one root SHAPE node overall.
+      roots = Enum.filter(shape_nodes(result), &String.ends_with?(&1.id, "->SHAPE->root"))
+      assert length(roots) >= 2
+    end
+
+    test "map pattern emits SHAPE{kind:map} with HAS_FIELD edge keyed by field name" do
+      result =
+        shape_analyze("""
+          def handle_call(%{type: t}, _from, state) do
+            {:reply, t, state}
+          end
+        """)
+
+      msg =
+        result.nodes
+        |> Enum.filter(&(&1.type == "MESSAGE_TYPE"))
+        |> Enum.find(&(&1.metadata.handler_type == "call"))
+
+      assert msg != nil
+
+      pat_edge = one_edge(result, msg.id, "HAS_PATTERN_SHAPE")
+      root = node_by_id(result, pat_edge.dst)
+      assert root.metadata.kind == "map"
+
+      field_edges = Enum.filter(result.edges, &(&1.type == "HAS_FIELD" and &1.src == root.id))
+      assert [field_edge] = field_edges
+      assert field_edge.metadata.key == "type"
+
+      # The field value is a bare variable -> wildcard SHAPE leaf.
+      field_node = node_by_id(result, field_edge.dst)
+      assert field_node.type == "SHAPE"
+      assert field_node.metadata.kind == "wildcard"
+    end
+
+    test "SHAPE nodes are not auto-CONTAINed by the active handler clause" do
+      # add_node only auto-adds a CONTAINS edge for CALL/BRANCH/LOOP — SHAPE
+      # is exempt. A leaking CONTAINS from the handler clause to a SHAPE node
+      # would pollute the clause-body subgraph.
+      result = shared_fixture()
+
+      shape_ids = shape_nodes(result) |> Enum.map(& &1.id) |> MapSet.new()
+
+      leaking =
+        Enum.filter(result.edges, fn e ->
+          e.type == "CONTAINS" and MapSet.member?(shape_ids, e.dst)
+        end)
+
+      assert leaking == [], "SHAPE nodes must not be CONTAINed: #{inspect(leaking)}"
+    end
+
+    test "full analysis result with SHAPE subgraphs is Jason-encodable" do
+      result = shared_fixture()
+
+      assert {:ok, _} = Jason.encode(result)
+      assert shape_nodes(result) != []
+    end
+  end
 end
