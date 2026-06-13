@@ -40,6 +40,20 @@ disconnect-cancel (watcher poll+MSG_PEEK; CRITICAL: cancel в финальном
 тест); durable clear (618M→16K, рестарт=0 узлов, плацебо мёртв, gaps.md RESOLVED); durable
 D2-pin (BLAKE3 sidecar, version+tombstone-hash ключ, riders-gate; рестарт 6.62s→0.04s).
 
+## ЯЗЫКОВОЙ РАУНД DONE 2026-06-13 (6 PR ждут мержа юзера)
+
+#393 type-inference · #395 спеки j/k/g · #397 feature-detection (js_http_routes) ·
+#400 java 4 пака · #401 kotlin наследование впервые · #402 go 6 паков + first_segment.
+Паттерн (доказан ×3): analyzer↔resolver vocabulary drift, юнит-тесты маскируют ручными
+метаданными; спека+вердикт каждый раз пропускали одну analyzer-реальность
+(CLOSURE-лямбды / sealed-каскад / percent-encoded wire-ids) — ловит пак-слой с live-пробами.
+
+**Следующие волны**: haskell/beam/python+ языки (та же спек-дисциплина); W7 tiered
+compaction; продолжение #14 — cli:command/mcp:tool/vscode:command паки; go-staleness
+follow-up (P1 WORKSPACE_PACKAGE language=go факт без tombstone-пути — minor ревью #402);
+kotlin imports-волна (cross-file наследование, DELTA 1 пака); java/go корпус-прогоны
+checked-in дифференциалов (GRAFEMA_JAVA/GO_DIFF_DB) перед гейтингом legacy.
+
 ## ОСТАВШИЕСЯ ЗАДАЧИ (порядок)
 
 1. ✅ **#13 cleanup = Wave 6 DONE 2026-06-12** (uncommitted): fallback удалён ЦЕЛИКОМ по
