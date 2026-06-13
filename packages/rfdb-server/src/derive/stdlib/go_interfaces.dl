@@ -1,0 +1,87 @@
+% go_interfaces.dl — in-engine replacement for the GoInterfaceSatisfaction.hs
+% resolver (packages/go-resolve/src/GoInterfaceSatisfaction.hs): structural
+% duck-typing CLASS → INTERFACE IMPLEMENTS edges by method-set subset
+% (:132-148 — non-empty interface method set ⊆ struct method set; NAME-only
+% matching, pointer/value receivers both match because the method's `receiver`
+% metadata is the bare type name).
+%
+% STRUCTURAL SUBSTITUTE (DELTA G6-1 — REFINED, legacy DEAD on real wire ids;
+% found implementing, missed by both the spec and its verdict): the legacy
+% parent interface comes from parsing the literal `[in:Iface]` semantic-id
+% suffix (extractParent :64-73, `T.breakOn "[in:"`), but the node ids the
+% daemon actually receives are the orchestrator's PERCENT-ENCODED URIs —
+% `…#FUNCTION-%3EGet%5Bin:Store%5D` (live-probed on a real analyze; `[`
+% encodes as `%5B`), so `[in:` never literally occurs and legacy emitted
+% ZERO IMPLEMENTS edges on any real analyzer output (its Spec.hs fixtures
+% pass only because the handcrafted ids are unencoded). The pack joins the
+% structural INTERFACE -CONTAINS-> FUNCTION(kind=interface_method) edge
+% (Declarations.hs:466-472) — the same construct, id-format-independent —
+% restoring the intended semantics (the js_same_file_calls DELTA-3
+% "membership is structural truth" precedent). Differential: expect
+% pack ⊋ legacy with legacy ≈ 0 (proven on the multi-package corpus:
+% legacy=0, pack=1 — the correct MemStore→Store edge; a half-implementing
+% struct correctly excluded).
+%
+% ∀-SUBSET ENCODING: two strata of negation. The CLASS×INTERFACE candidate
+% cross-product is planner-illegal (§3), so candidates are SEEDED through a
+% shared method NAME (`cand`) — sound because implementing a NON-EMPTY
+% interface requires sharing at least one method name (filter-before-
+% generator); the legacy non-empty gate (:144) is implied by the same seed.
+%
+% NUMBERED DELTAS vs the resolver (everything not listed is exact):
+%   DELTA G6-2 (SUPERSET, bounded): legacy StructMethodSet is GLOBAL,
+%     name-keyed (:108-116) — two same-named structs in different packages
+%     MERGE method sets (a legacy false-positive generator), and the
+%     name-keyed StructIndex (:121-126, Map.insert last-wins) gives the edge
+%     to ONE arbitrary same-named CLASS. The pack reproduces the name-keyed
+%     merge (struct_m joins methods by receiver NAME — parity) but emits the
+%     edge for EVERY same-named CLASS node. Bound: #duplicate struct names.
+%     The dir-scoped refinement (methods live in the type's package — a Go
+%     language guarantee) is deferred to the differential.
+%   DELTA G6-3 (verdict C3 — the interface-side name merge, SUPERSET both
+%     ways, bounded): legacy collectIfaceMethods UNIONS method sets across
+%     SAME-NAMED interfaces project-wide (:96-102, insertWith Set.union keyed
+%     by interface NAME) and pairs that union with ONE last-wins interface
+%     node id (:87-93 via Map.intersectionWith). The pack's iface_m is
+%     per-NODE: for duplicate interface names the pack's requirement set is
+%     SMALLER (per-node, not the union) ⇒ structs can satisfy an interface
+%     the legacy merged-set rejected, AND the pack emits an edge per actual
+%     interface node vs legacy's single arbitrary winner. Bound: #duplicate
+%     interface simple names (countable in the differential).
+%   Interface EXTENDS embedding stays un-expanded (legacy Phase-2 limitation
+%     :25-30) — parity. (The analyzer's EXTENDS-by-NAME defect,
+%     Declarations.hs:476-485, is outside this migration.)
+%   File gate: ends_with .go on every base relation (orchestrator stream
+%     filter; CLASS/INTERFACE/FUNCTION are shared vocabulary).
+%   Metadata: legacy edges carry EMPTY metadata (:137-142) — none projected.
+%
+% MAINTAIN ENVELOPE: negation (the subset complement) + node_attr ⇒ scratch
+% floor (accepted).
+%
+% ORDERING: consumes analyzer EDB only; produces IMPLEMENTS (no in-engine
+% consumer today) — position before the negators is conventional, not
+% load-bearing.
+
+% Interface requirement rows: per INTERFACE NODE (DELTA G6-3 — deliberately
+% NOT the legacy name-union).
+iface_m(I, MN) :- node(I, "INTERFACE"), attr(I, "file", IF),
+                  ends_with(IF, ".go"), edge(I, MF, "CONTAINS"),
+                  node(MF, "FUNCTION"),
+                  node_attr(MF, "kind", "interface_method"),
+                  attr(MF, "name", MN).
+
+% Struct method rows: methods join their type by receiver NAME (the legacy
+% global name-keyed merge — DELTA G6-2).
+recv_m(SN, MN)  :- node(MF, "FUNCTION"), attr(MF, "file", MFF),
+                   ends_with(MFF, ".go"), node_attr(MF, "kind", "method"),
+                   node_attr(MF, "receiver", SN), attr(MF, "name", MN).
+struct_m(S, MN) :- node(S, "CLASS"), attr(S, "file", SF),
+                   ends_with(SF, ".go"), attr(S, "name", SN), recv_m(SN, MN).
+
+% Seed candidates through a shared method name; a candidate LACKS the
+% interface iff some required method name is missing from its set.
+cand(S, I)  :- struct_m(S, MN), iface_m(I, MN).
+lacks(S, I) :- cand(S, I), iface_m(I, MN2), \+ struct_m(S, MN2).
+
+@materialize(edge_type = "IMPLEMENTS", mode = "additive")
+go_implements(S, I) :- cand(S, I), \+ lacks(S, I).

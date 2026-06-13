@@ -1,0 +1,501 @@
+% ── GENERATED ground facts — DO NOT EDIT BY HAND ──────────────────────────
+% Source: effects-db/{runtimes,packages}/*.yaml — the structured-entry
+% callable registry (args[N].role / returns.type / channel) that
+% libraryCallbackEnricher consumes via EffectsLookup.getEntry.
+% Generator: scripts/generate-effects-callable-facts.mjs (Wave 14); re-run
+% it and replace this file when the registry changes.
+% 180 entries (152 arg roles, 65 returns, 91 channel rows).
+%
+% ecb_method(Lib, Full, Bare): one per role-or-channel-carrying entry;
+%   Lib = top-level YAML key VERBATIM, Bare = fn key after the last dot.
+% ecb_arg(Lib, Full, Idx, Role): role-annotated argument positions.
+% ecb_returns(Lib, Full, Type): declared returns.type of those entries.
+% ecb_channel(Lib, Full, Key, Spec): channel metadata rows (e.g. url -> arg[0]).
+ecb_method("@koa/router", "Router.all", "all").
+ecb_method("@koa/router", "Router.del", "del").
+ecb_method("@koa/router", "Router.delete", "delete").
+ecb_method("@koa/router", "Router.get", "get").
+ecb_method("@koa/router", "Router.head", "head").
+ecb_method("@koa/router", "Router.options", "options").
+ecb_method("@koa/router", "Router.param", "param").
+ecb_method("@koa/router", "Router.patch", "patch").
+ecb_method("@koa/router", "Router.post", "post").
+ecb_method("@koa/router", "Router.put", "put").
+ecb_method("@koa/router", "Router.use", "use").
+ecb_method("@modelcontextprotocol/sdk", "Server.setRequestHandler", "setRequestHandler").
+ecb_method("commander", "Command.action", "action").
+ecb_method("commander", "Command.addCommand", "addCommand").
+ecb_method("commander", "Command.command", "command").
+ecb_method("ecma:web", "fetch", "fetch").
+ecb_method("express", "Application.all", "all").
+ecb_method("express", "Application.delete", "delete").
+ecb_method("express", "Application.get", "get").
+ecb_method("express", "Application.head", "head").
+ecb_method("express", "Application.options", "options").
+ecb_method("express", "Application.patch", "patch").
+ecb_method("express", "Application.post", "post").
+ecb_method("express", "Application.put", "put").
+ecb_method("express", "Application.use", "use").
+ecb_method("express", "Router.all", "all").
+ecb_method("express", "Router.delete", "delete").
+ecb_method("express", "Router.get", "get").
+ecb_method("express", "Router.head", "head").
+ecb_method("express", "Router.options", "options").
+ecb_method("express", "Router.patch", "patch").
+ecb_method("express", "Router.post", "post").
+ecb_method("express", "Router.put", "put").
+ecb_method("express", "Router.use", "use").
+ecb_method("fastify", "FastifyInstance.addHook", "addHook").
+ecb_method("fastify", "FastifyInstance.all", "all").
+ecb_method("fastify", "FastifyInstance.delete", "delete").
+ecb_method("fastify", "FastifyInstance.get", "get").
+ecb_method("fastify", "FastifyInstance.head", "head").
+ecb_method("fastify", "FastifyInstance.options", "options").
+ecb_method("fastify", "FastifyInstance.patch", "patch").
+ecb_method("fastify", "FastifyInstance.post", "post").
+ecb_method("fastify", "FastifyInstance.put", "put").
+ecb_method("fastify", "FastifyInstance.register", "register").
+ecb_method("fastify", "FastifyInstance.setErrorHandler", "setErrorHandler").
+ecb_method("fastify", "FastifyInstance.setNotFoundHandler", "setNotFoundHandler").
+ecb_method("hono", "Hono.all", "all").
+ecb_method("hono", "Hono.delete", "delete").
+ecb_method("hono", "Hono.get", "get").
+ecb_method("hono", "Hono.notFound", "notFound").
+ecb_method("hono", "Hono.on", "on").
+ecb_method("hono", "Hono.onError", "onError").
+ecb_method("hono", "Hono.options", "options").
+ecb_method("hono", "Hono.patch", "patch").
+ecb_method("hono", "Hono.post", "post").
+ecb_method("hono", "Hono.put", "put").
+ecb_method("hono", "Hono.route", "route").
+ecb_method("hono", "Hono.use", "use").
+ecb_method("koa", "Koa.on", "on").
+ecb_method("koa", "Koa.use", "use").
+ecb_method("koa-router", "Router.all", "all").
+ecb_method("koa-router", "Router.del", "del").
+ecb_method("koa-router", "Router.delete", "delete").
+ecb_method("koa-router", "Router.get", "get").
+ecb_method("koa-router", "Router.head", "head").
+ecb_method("koa-router", "Router.options", "options").
+ecb_method("koa-router", "Router.param", "param").
+ecb_method("koa-router", "Router.patch", "patch").
+ecb_method("koa-router", "Router.post", "post").
+ecb_method("koa-router", "Router.put", "put").
+ecb_method("koa-router", "Router.use", "use").
+ecb_method("node:child_process", "exec", "exec").
+ecb_method("node:child_process", "execFile", "execFile").
+ecb_method("node:child_process", "execFileSync", "execFileSync").
+ecb_method("node:child_process", "execSync", "execSync").
+ecb_method("node:child_process", "fork", "fork").
+ecb_method("node:child_process", "spawn", "spawn").
+ecb_method("node:child_process", "spawnSync", "spawnSync").
+ecb_method("node:http", "get", "get").
+ecb_method("node:http", "request", "request").
+ecb_method("node:https", "request", "request").
+ecb_method("node:net", "Socket.connect", "connect").
+ecb_method("node:net", "connect", "connect").
+ecb_method("node:net", "createConnection", "createConnection").
+ecb_method("python:aiohttp", "ClientSession.delete", "delete").
+ecb_method("python:aiohttp", "ClientSession.get", "get").
+ecb_method("python:aiohttp", "ClientSession.head", "head").
+ecb_method("python:aiohttp", "ClientSession.patch", "patch").
+ecb_method("python:aiohttp", "ClientSession.post", "post").
+ecb_method("python:aiohttp", "ClientSession.put", "put").
+ecb_method("python:aiohttp", "ClientSession.request", "request").
+ecb_method("python:aiohttp", "ClientSession.ws_connect", "ws_connect").
+ecb_method("python:aiohttp", "request", "request").
+ecb_method("python:asyncio", "create_subprocess_exec", "create_subprocess_exec").
+ecb_method("python:asyncio", "create_subprocess_shell", "create_subprocess_shell").
+ecb_method("python:asyncio", "open_connection", "open_connection").
+ecb_method("python:asyncio", "open_unix_connection", "open_unix_connection").
+ecb_method("python:asyncio", "start_server", "start_server").
+ecb_method("python:asyncio", "start_unix_server", "start_unix_server").
+ecb_method("python:httpx", "AsyncClient.delete", "delete").
+ecb_method("python:httpx", "AsyncClient.get", "get").
+ecb_method("python:httpx", "AsyncClient.patch", "patch").
+ecb_method("python:httpx", "AsyncClient.post", "post").
+ecb_method("python:httpx", "AsyncClient.put", "put").
+ecb_method("python:httpx", "AsyncClient.request", "request").
+ecb_method("python:httpx", "Client.delete", "delete").
+ecb_method("python:httpx", "Client.get", "get").
+ecb_method("python:httpx", "Client.head", "head").
+ecb_method("python:httpx", "Client.patch", "patch").
+ecb_method("python:httpx", "Client.post", "post").
+ecb_method("python:httpx", "Client.put", "put").
+ecb_method("python:httpx", "Client.request", "request").
+ecb_method("python:httpx", "delete", "delete").
+ecb_method("python:httpx", "get", "get").
+ecb_method("python:httpx", "head", "head").
+ecb_method("python:httpx", "options", "options").
+ecb_method("python:httpx", "patch", "patch").
+ecb_method("python:httpx", "post", "post").
+ecb_method("python:httpx", "put", "put").
+ecb_method("python:httpx", "request", "request").
+ecb_method("python:httpx", "stream", "stream").
+ecb_method("python:os", "execl", "execl").
+ecb_method("python:os", "execle", "execle").
+ecb_method("python:os", "execlp", "execlp").
+ecb_method("python:os", "execlpe", "execlpe").
+ecb_method("python:os", "execv", "execv").
+ecb_method("python:os", "execve", "execve").
+ecb_method("python:os", "execvp", "execvp").
+ecb_method("python:os", "execvpe", "execvpe").
+ecb_method("python:os", "popen", "popen").
+ecb_method("python:os", "system", "system").
+ecb_method("python:paramiko", "SSHClient.connect", "connect").
+ecb_method("python:requests", "Session.delete", "delete").
+ecb_method("python:requests", "Session.get", "get").
+ecb_method("python:requests", "Session.head", "head").
+ecb_method("python:requests", "Session.patch", "patch").
+ecb_method("python:requests", "Session.post", "post").
+ecb_method("python:requests", "Session.put", "put").
+ecb_method("python:requests", "Session.request", "request").
+ecb_method("python:requests", "delete", "delete").
+ecb_method("python:requests", "get", "get").
+ecb_method("python:requests", "head", "head").
+ecb_method("python:requests", "options", "options").
+ecb_method("python:requests", "patch", "patch").
+ecb_method("python:requests", "post", "post").
+ecb_method("python:requests", "put", "put").
+ecb_method("python:requests", "request", "request").
+ecb_method("python:socket", "create_connection", "create_connection").
+ecb_method("python:socket", "create_server", "create_server").
+ecb_method("python:socket", "socket.bind", "bind").
+ecb_method("python:socket", "socket.connect", "connect").
+ecb_method("python:subprocess", "Popen", "Popen").
+ecb_method("python:subprocess", "call", "call").
+ecb_method("python:subprocess", "check_call", "check_call").
+ecb_method("python:subprocess", "check_output", "check_output").
+ecb_method("python:subprocess", "getoutput", "getoutput").
+ecb_method("python:subprocess", "getstatusoutput", "getstatusoutput").
+ecb_method("python:subprocess", "run", "run").
+ecb_method("python:urllib.request", "urlopen", "urlopen").
+ecb_method("vscode", "commands.registerCommand", "registerCommand").
+ecb_method("vscode", "commands.registerTextEditorCommand", "registerTextEditorCommand").
+ecb_method("vscode", "languages.registerCodeActionsProvider", "registerCodeActionsProvider").
+ecb_method("vscode", "languages.registerCodeLensProvider", "registerCodeLensProvider").
+ecb_method("vscode", "languages.registerCompletionItemProvider", "registerCompletionItemProvider").
+ecb_method("vscode", "languages.registerDefinitionProvider", "registerDefinitionProvider").
+ecb_method("vscode", "languages.registerDocumentFormattingEditProvider", "registerDocumentFormattingEditProvider").
+ecb_method("vscode", "languages.registerDocumentSymbolProvider", "registerDocumentSymbolProvider").
+ecb_method("vscode", "languages.registerHoverProvider", "registerHoverProvider").
+ecb_method("vscode", "languages.registerReferenceProvider", "registerReferenceProvider").
+ecb_method("vscode", "window.registerCustomEditorProvider", "registerCustomEditorProvider").
+ecb_method("vscode", "window.registerFileDecorationProvider", "registerFileDecorationProvider").
+ecb_method("vscode", "window.registerTreeDataProvider", "registerTreeDataProvider").
+ecb_method("vscode", "window.registerUriHandler", "registerUriHandler").
+ecb_method("vscode", "window.registerWebviewPanelSerializer", "registerWebviewPanelSerializer").
+ecb_method("vscode", "window.registerWebviewViewProvider", "registerWebviewViewProvider").
+ecb_method("vscode", "workspace.onDidChangeConfiguration", "onDidChangeConfiguration").
+ecb_method("vscode", "workspace.onDidChangeTextDocument", "onDidChangeTextDocument").
+ecb_method("vscode", "workspace.onDidCloseTextDocument", "onDidCloseTextDocument").
+ecb_method("vscode", "workspace.onDidOpenTextDocument", "onDidOpenTextDocument").
+ecb_method("vscode", "workspace.onDidSaveTextDocument", "onDidSaveTextDocument").
+ecb_arg("@koa/router", "Router.all", "0", "ROUTE_PATH").
+ecb_arg("@koa/router", "Router.all", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("@koa/router", "Router.del", "0", "ROUTE_PATH").
+ecb_arg("@koa/router", "Router.del", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("@koa/router", "Router.delete", "0", "ROUTE_PATH").
+ecb_arg("@koa/router", "Router.delete", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("@koa/router", "Router.get", "0", "ROUTE_PATH").
+ecb_arg("@koa/router", "Router.get", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("@koa/router", "Router.head", "0", "ROUTE_PATH").
+ecb_arg("@koa/router", "Router.head", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("@koa/router", "Router.options", "0", "ROUTE_PATH").
+ecb_arg("@koa/router", "Router.options", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("@koa/router", "Router.param", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("@koa/router", "Router.patch", "0", "ROUTE_PATH").
+ecb_arg("@koa/router", "Router.patch", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("@koa/router", "Router.post", "0", "ROUTE_PATH").
+ecb_arg("@koa/router", "Router.post", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("@koa/router", "Router.put", "0", "ROUTE_PATH").
+ecb_arg("@koa/router", "Router.put", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("@koa/router", "Router.use", "0", "MOUNTPOINT").
+ecb_arg("@koa/router", "Router.use", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("@modelcontextprotocol/sdk", "Server.setRequestHandler", "0", "TOOL_SCHEMA").
+ecb_arg("@modelcontextprotocol/sdk", "Server.setRequestHandler", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("commander", "Command.action", "0", "ENTRY_POINT_CALLBACK").
+ecb_arg("commander", "Command.addCommand", "0", "COMMAND_NAME").
+ecb_arg("commander", "Command.command", "0", "COMMAND_NAME").
+ecb_arg("express", "Application.all", "0", "ROUTE_PATH").
+ecb_arg("express", "Application.all", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("express", "Application.delete", "0", "ROUTE_PATH").
+ecb_arg("express", "Application.delete", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("express", "Application.get", "0", "ROUTE_PATH").
+ecb_arg("express", "Application.get", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("express", "Application.head", "0", "ROUTE_PATH").
+ecb_arg("express", "Application.head", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("express", "Application.options", "0", "ROUTE_PATH").
+ecb_arg("express", "Application.options", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("express", "Application.patch", "0", "ROUTE_PATH").
+ecb_arg("express", "Application.patch", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("express", "Application.post", "0", "ROUTE_PATH").
+ecb_arg("express", "Application.post", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("express", "Application.put", "0", "ROUTE_PATH").
+ecb_arg("express", "Application.put", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("express", "Application.use", "0", "MOUNTPOINT").
+ecb_arg("express", "Application.use", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("express", "Router.all", "0", "ROUTE_PATH").
+ecb_arg("express", "Router.all", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("express", "Router.delete", "0", "ROUTE_PATH").
+ecb_arg("express", "Router.delete", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("express", "Router.get", "0", "ROUTE_PATH").
+ecb_arg("express", "Router.get", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("express", "Router.head", "0", "ROUTE_PATH").
+ecb_arg("express", "Router.head", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("express", "Router.options", "0", "ROUTE_PATH").
+ecb_arg("express", "Router.options", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("express", "Router.patch", "0", "ROUTE_PATH").
+ecb_arg("express", "Router.patch", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("express", "Router.post", "0", "ROUTE_PATH").
+ecb_arg("express", "Router.post", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("express", "Router.put", "0", "ROUTE_PATH").
+ecb_arg("express", "Router.put", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("express", "Router.use", "0", "MOUNTPOINT").
+ecb_arg("express", "Router.use", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("fastify", "FastifyInstance.addHook", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("fastify", "FastifyInstance.all", "0", "ROUTE_PATH").
+ecb_arg("fastify", "FastifyInstance.all", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("fastify", "FastifyInstance.delete", "0", "ROUTE_PATH").
+ecb_arg("fastify", "FastifyInstance.delete", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("fastify", "FastifyInstance.get", "0", "ROUTE_PATH").
+ecb_arg("fastify", "FastifyInstance.get", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("fastify", "FastifyInstance.head", "0", "ROUTE_PATH").
+ecb_arg("fastify", "FastifyInstance.head", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("fastify", "FastifyInstance.options", "0", "ROUTE_PATH").
+ecb_arg("fastify", "FastifyInstance.options", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("fastify", "FastifyInstance.patch", "0", "ROUTE_PATH").
+ecb_arg("fastify", "FastifyInstance.patch", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("fastify", "FastifyInstance.post", "0", "ROUTE_PATH").
+ecb_arg("fastify", "FastifyInstance.post", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("fastify", "FastifyInstance.put", "0", "ROUTE_PATH").
+ecb_arg("fastify", "FastifyInstance.put", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("fastify", "FastifyInstance.register", "0", "ENTRY_POINT_CALLBACK").
+ecb_arg("fastify", "FastifyInstance.setErrorHandler", "0", "ENTRY_POINT_CALLBACK").
+ecb_arg("fastify", "FastifyInstance.setNotFoundHandler", "0", "ENTRY_POINT_CALLBACK").
+ecb_arg("hono", "Hono.all", "0", "ROUTE_PATH").
+ecb_arg("hono", "Hono.all", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("hono", "Hono.delete", "0", "ROUTE_PATH").
+ecb_arg("hono", "Hono.delete", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("hono", "Hono.get", "0", "ROUTE_PATH").
+ecb_arg("hono", "Hono.get", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("hono", "Hono.notFound", "0", "ENTRY_POINT_CALLBACK").
+ecb_arg("hono", "Hono.on", "1", "ROUTE_PATH").
+ecb_arg("hono", "Hono.on", "2", "ENTRY_POINT_CALLBACK").
+ecb_arg("hono", "Hono.onError", "0", "ENTRY_POINT_CALLBACK").
+ecb_arg("hono", "Hono.options", "0", "ROUTE_PATH").
+ecb_arg("hono", "Hono.options", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("hono", "Hono.patch", "0", "ROUTE_PATH").
+ecb_arg("hono", "Hono.patch", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("hono", "Hono.post", "0", "ROUTE_PATH").
+ecb_arg("hono", "Hono.post", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("hono", "Hono.put", "0", "ROUTE_PATH").
+ecb_arg("hono", "Hono.put", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("hono", "Hono.route", "0", "MOUNTPOINT").
+ecb_arg("hono", "Hono.use", "0", "ENTRY_POINT_CALLBACK").
+ecb_arg("koa", "Koa.on", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("koa", "Koa.use", "0", "ENTRY_POINT_CALLBACK").
+ecb_arg("koa-router", "Router.all", "0", "ROUTE_PATH").
+ecb_arg("koa-router", "Router.all", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("koa-router", "Router.del", "0", "ROUTE_PATH").
+ecb_arg("koa-router", "Router.del", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("koa-router", "Router.delete", "0", "ROUTE_PATH").
+ecb_arg("koa-router", "Router.delete", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("koa-router", "Router.get", "0", "ROUTE_PATH").
+ecb_arg("koa-router", "Router.get", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("koa-router", "Router.head", "0", "ROUTE_PATH").
+ecb_arg("koa-router", "Router.head", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("koa-router", "Router.options", "0", "ROUTE_PATH").
+ecb_arg("koa-router", "Router.options", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("koa-router", "Router.param", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("koa-router", "Router.patch", "0", "ROUTE_PATH").
+ecb_arg("koa-router", "Router.patch", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("koa-router", "Router.post", "0", "ROUTE_PATH").
+ecb_arg("koa-router", "Router.post", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("koa-router", "Router.put", "0", "ROUTE_PATH").
+ecb_arg("koa-router", "Router.put", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("koa-router", "Router.use", "0", "MOUNTPOINT").
+ecb_arg("koa-router", "Router.use", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("vscode", "commands.registerCommand", "0", "COMMAND_NAME").
+ecb_arg("vscode", "commands.registerCommand", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("vscode", "commands.registerTextEditorCommand", "0", "COMMAND_NAME").
+ecb_arg("vscode", "commands.registerTextEditorCommand", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("vscode", "languages.registerCodeActionsProvider", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("vscode", "languages.registerCodeLensProvider", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("vscode", "languages.registerCompletionItemProvider", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("vscode", "languages.registerDefinitionProvider", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("vscode", "languages.registerDocumentFormattingEditProvider", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("vscode", "languages.registerDocumentSymbolProvider", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("vscode", "languages.registerHoverProvider", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("vscode", "languages.registerReferenceProvider", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("vscode", "window.registerCustomEditorProvider", "0", "COMMAND_NAME").
+ecb_arg("vscode", "window.registerCustomEditorProvider", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("vscode", "window.registerFileDecorationProvider", "0", "ENTRY_POINT_CALLBACK").
+ecb_arg("vscode", "window.registerTreeDataProvider", "0", "COMMAND_NAME").
+ecb_arg("vscode", "window.registerTreeDataProvider", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("vscode", "window.registerUriHandler", "0", "ENTRY_POINT_CALLBACK").
+ecb_arg("vscode", "window.registerWebviewPanelSerializer", "0", "COMMAND_NAME").
+ecb_arg("vscode", "window.registerWebviewPanelSerializer", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("vscode", "window.registerWebviewViewProvider", "0", "COMMAND_NAME").
+ecb_arg("vscode", "window.registerWebviewViewProvider", "1", "ENTRY_POINT_CALLBACK").
+ecb_arg("vscode", "workspace.onDidChangeConfiguration", "0", "ENTRY_POINT_CALLBACK").
+ecb_arg("vscode", "workspace.onDidChangeTextDocument", "0", "ENTRY_POINT_CALLBACK").
+ecb_arg("vscode", "workspace.onDidCloseTextDocument", "0", "ENTRY_POINT_CALLBACK").
+ecb_arg("vscode", "workspace.onDidOpenTextDocument", "0", "ENTRY_POINT_CALLBACK").
+ecb_arg("vscode", "workspace.onDidSaveTextDocument", "0", "ENTRY_POINT_CALLBACK").
+ecb_returns("@koa/router", "Router.all", "Router").
+ecb_returns("@koa/router", "Router.del", "Router").
+ecb_returns("@koa/router", "Router.delete", "Router").
+ecb_returns("@koa/router", "Router.get", "Router").
+ecb_returns("@koa/router", "Router.head", "Router").
+ecb_returns("@koa/router", "Router.options", "Router").
+ecb_returns("@koa/router", "Router.param", "Router").
+ecb_returns("@koa/router", "Router.patch", "Router").
+ecb_returns("@koa/router", "Router.post", "Router").
+ecb_returns("@koa/router", "Router.put", "Router").
+ecb_returns("@koa/router", "Router.use", "Router").
+ecb_returns("commander", "Command.action", "Command").
+ecb_returns("commander", "Command.addCommand", "Command").
+ecb_returns("commander", "Command.command", "Command").
+ecb_returns("express", "Application.all", "Application").
+ecb_returns("express", "Application.delete", "Application").
+ecb_returns("express", "Application.get", "Application").
+ecb_returns("express", "Application.head", "Application").
+ecb_returns("express", "Application.options", "Application").
+ecb_returns("express", "Application.patch", "Application").
+ecb_returns("express", "Application.post", "Application").
+ecb_returns("express", "Application.put", "Application").
+ecb_returns("express", "Application.use", "Application").
+ecb_returns("express", "Router.all", "Router").
+ecb_returns("express", "Router.delete", "Router").
+ecb_returns("express", "Router.get", "Router").
+ecb_returns("express", "Router.head", "Router").
+ecb_returns("express", "Router.options", "Router").
+ecb_returns("express", "Router.patch", "Router").
+ecb_returns("express", "Router.post", "Router").
+ecb_returns("express", "Router.put", "Router").
+ecb_returns("express", "Router.use", "Router").
+ecb_returns("fastify", "FastifyInstance.all", "FastifyInstance").
+ecb_returns("fastify", "FastifyInstance.delete", "FastifyInstance").
+ecb_returns("fastify", "FastifyInstance.get", "FastifyInstance").
+ecb_returns("fastify", "FastifyInstance.head", "FastifyInstance").
+ecb_returns("fastify", "FastifyInstance.options", "FastifyInstance").
+ecb_returns("fastify", "FastifyInstance.patch", "FastifyInstance").
+ecb_returns("fastify", "FastifyInstance.post", "FastifyInstance").
+ecb_returns("fastify", "FastifyInstance.put", "FastifyInstance").
+ecb_returns("fastify", "FastifyInstance.register", "FastifyInstance").
+ecb_returns("hono", "Hono.all", "Hono").
+ecb_returns("hono", "Hono.delete", "Hono").
+ecb_returns("hono", "Hono.get", "Hono").
+ecb_returns("hono", "Hono.notFound", "Hono").
+ecb_returns("hono", "Hono.on", "Hono").
+ecb_returns("hono", "Hono.onError", "Hono").
+ecb_returns("hono", "Hono.options", "Hono").
+ecb_returns("hono", "Hono.patch", "Hono").
+ecb_returns("hono", "Hono.post", "Hono").
+ecb_returns("hono", "Hono.put", "Hono").
+ecb_returns("hono", "Hono.route", "Hono").
+ecb_returns("hono", "Hono.use", "Hono").
+ecb_returns("koa", "Koa.use", "Koa").
+ecb_returns("koa-router", "Router.all", "Router").
+ecb_returns("koa-router", "Router.del", "Router").
+ecb_returns("koa-router", "Router.delete", "Router").
+ecb_returns("koa-router", "Router.get", "Router").
+ecb_returns("koa-router", "Router.head", "Router").
+ecb_returns("koa-router", "Router.options", "Router").
+ecb_returns("koa-router", "Router.param", "Router").
+ecb_returns("koa-router", "Router.patch", "Router").
+ecb_returns("koa-router", "Router.post", "Router").
+ecb_returns("koa-router", "Router.put", "Router").
+ecb_returns("koa-router", "Router.use", "Router").
+ecb_channel("ecma:web", "fetch", "url", "arg[0]").
+ecb_channel("node:child_process", "exec", "binary", "arg[0]").
+ecb_channel("node:child_process", "execFile", "binary", "arg[0]").
+ecb_channel("node:child_process", "execFileSync", "binary", "arg[0]").
+ecb_channel("node:child_process", "execSync", "binary", "arg[0]").
+ecb_channel("node:child_process", "fork", "binary", "arg[0]").
+ecb_channel("node:child_process", "spawn", "binary", "arg[0]").
+ecb_channel("node:child_process", "spawnSync", "binary", "arg[0]").
+ecb_channel("node:http", "get", "url", "arg[0]").
+ecb_channel("node:http", "request", "url", "arg[0]").
+ecb_channel("node:https", "request", "url", "arg[0]").
+ecb_channel("node:net", "Socket.connect", "path", "arg[0]").
+ecb_channel("node:net", "connect", "path", "arg[0]").
+ecb_channel("node:net", "createConnection", "path", "arg[0]").
+ecb_channel("python:aiohttp", "ClientSession.delete", "url", "arg[0]").
+ecb_channel("python:aiohttp", "ClientSession.get", "url", "arg[0]").
+ecb_channel("python:aiohttp", "ClientSession.head", "url", "arg[0]").
+ecb_channel("python:aiohttp", "ClientSession.patch", "url", "arg[0]").
+ecb_channel("python:aiohttp", "ClientSession.post", "url", "arg[0]").
+ecb_channel("python:aiohttp", "ClientSession.put", "url", "arg[0]").
+ecb_channel("python:aiohttp", "ClientSession.request", "url", "arg[1]").
+ecb_channel("python:aiohttp", "ClientSession.ws_connect", "url", "arg[0]").
+ecb_channel("python:aiohttp", "request", "url", "arg[1]").
+ecb_channel("python:asyncio", "create_subprocess_exec", "binary", "arg[0]").
+ecb_channel("python:asyncio", "create_subprocess_shell", "binary", "arg[0]").
+ecb_channel("python:asyncio", "open_connection", "host", "arg[0]").
+ecb_channel("python:asyncio", "open_connection", "port", "arg[1]").
+ecb_channel("python:asyncio", "open_unix_connection", "path", "arg[0]").
+ecb_channel("python:asyncio", "start_server", "host", "arg[1]").
+ecb_channel("python:asyncio", "start_server", "port", "arg[2]").
+ecb_channel("python:asyncio", "start_unix_server", "path", "arg[1]").
+ecb_channel("python:httpx", "AsyncClient.delete", "url", "arg[0]").
+ecb_channel("python:httpx", "AsyncClient.get", "url", "arg[0]").
+ecb_channel("python:httpx", "AsyncClient.patch", "url", "arg[0]").
+ecb_channel("python:httpx", "AsyncClient.post", "url", "arg[0]").
+ecb_channel("python:httpx", "AsyncClient.put", "url", "arg[0]").
+ecb_channel("python:httpx", "AsyncClient.request", "url", "arg[1]").
+ecb_channel("python:httpx", "Client.delete", "url", "arg[0]").
+ecb_channel("python:httpx", "Client.get", "url", "arg[0]").
+ecb_channel("python:httpx", "Client.head", "url", "arg[0]").
+ecb_channel("python:httpx", "Client.patch", "url", "arg[0]").
+ecb_channel("python:httpx", "Client.post", "url", "arg[0]").
+ecb_channel("python:httpx", "Client.put", "url", "arg[0]").
+ecb_channel("python:httpx", "Client.request", "url", "arg[1]").
+ecb_channel("python:httpx", "delete", "url", "arg[0]").
+ecb_channel("python:httpx", "get", "url", "arg[0]").
+ecb_channel("python:httpx", "head", "url", "arg[0]").
+ecb_channel("python:httpx", "options", "url", "arg[0]").
+ecb_channel("python:httpx", "patch", "url", "arg[0]").
+ecb_channel("python:httpx", "post", "url", "arg[0]").
+ecb_channel("python:httpx", "put", "url", "arg[0]").
+ecb_channel("python:httpx", "request", "url", "arg[1]").
+ecb_channel("python:httpx", "stream", "url", "arg[1]").
+ecb_channel("python:os", "execl", "binary", "arg[0]").
+ecb_channel("python:os", "execle", "binary", "arg[0]").
+ecb_channel("python:os", "execlp", "binary", "arg[0]").
+ecb_channel("python:os", "execlpe", "binary", "arg[0]").
+ecb_channel("python:os", "execv", "binary", "arg[0]").
+ecb_channel("python:os", "execve", "binary", "arg[0]").
+ecb_channel("python:os", "execvp", "binary", "arg[0]").
+ecb_channel("python:os", "execvpe", "binary", "arg[0]").
+ecb_channel("python:os", "popen", "binary", "arg[0]").
+ecb_channel("python:os", "system", "binary", "arg[0]").
+ecb_channel("python:paramiko", "SSHClient.connect", "host", "arg[0]").
+ecb_channel("python:requests", "Session.delete", "url", "arg[0]").
+ecb_channel("python:requests", "Session.get", "url", "arg[0]").
+ecb_channel("python:requests", "Session.head", "url", "arg[0]").
+ecb_channel("python:requests", "Session.patch", "url", "arg[0]").
+ecb_channel("python:requests", "Session.post", "url", "arg[0]").
+ecb_channel("python:requests", "Session.put", "url", "arg[0]").
+ecb_channel("python:requests", "Session.request", "url", "arg[1]").
+ecb_channel("python:requests", "delete", "url", "arg[0]").
+ecb_channel("python:requests", "get", "url", "arg[0]").
+ecb_channel("python:requests", "head", "url", "arg[0]").
+ecb_channel("python:requests", "options", "url", "arg[0]").
+ecb_channel("python:requests", "patch", "url", "arg[0]").
+ecb_channel("python:requests", "post", "url", "arg[0]").
+ecb_channel("python:requests", "put", "url", "arg[0]").
+ecb_channel("python:requests", "request", "url", "arg[1]").
+ecb_channel("python:socket", "create_connection", "addr", "arg[0]").
+ecb_channel("python:socket", "create_server", "addr", "arg[0]").
+ecb_channel("python:socket", "socket.bind", "addr", "arg[0]").
+ecb_channel("python:socket", "socket.connect", "addr", "arg[0]").
+ecb_channel("python:subprocess", "Popen", "binary", "arg[0]").
+ecb_channel("python:subprocess", "call", "binary", "arg[0]").
+ecb_channel("python:subprocess", "check_call", "binary", "arg[0]").
+ecb_channel("python:subprocess", "check_output", "binary", "arg[0]").
+ecb_channel("python:subprocess", "getoutput", "binary", "arg[0]").
+ecb_channel("python:subprocess", "getstatusoutput", "binary", "arg[0]").
+ecb_channel("python:subprocess", "run", "binary", "arg[0]").
+ecb_channel("python:urllib.request", "urlopen", "url", "arg[0]").

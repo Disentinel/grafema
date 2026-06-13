@@ -48,7 +48,23 @@ use std::path::PathBuf;
 /// js_import_bindings → js_class_inheritance → js_cross_file_calls →
 /// js_property_access_ns → js_property_access_full → js_builtins_nodes →
 /// js_builtins_edges → js_runtime_globals_nodes → js_runtime_globals_edges →
-/// depends → method_calls → shape_verifier → axum_routes.
+/// java_imports → java_types → java_calls → java_annotations →
+/// kotlin_inheritance → go_imports → go_imports_nomod → go_calls →
+/// go_interfaces → go_types → go_context → depends → method_calls →
+/// shape_verifier → axum_routes → js_http_routes_nodes → js_http_routes_edges.
+/// The Java packs (java-resolve migration): `java_imports` PRODUCES java
+/// IMPORTS_FROM, so it runs strictly before `depends` (which consumes EVERY
+/// IMPORTS_FROM edge node-type-agnostically via the file join);
+/// `java_calls` PRODUCES CALLS, so it runs strictly before the CALLS
+/// negators `method_calls` / `shape_verifier`. `kotlin_inheritance` PRODUCES
+/// kotlin EXTENDS/IMPLEMENTS for `shape_verifier`'s inheritance closure, so it
+/// precedes the negator. The Go wave packs `go_imports`/`go_imports_nomod`
+/// PRODUCE IMPORTS_FROM before `depends`; `go_calls` PRODUCES CALLS for
+/// `go_context` and before the CALLS negators (the nomod variant is runtime-
+/// selected by the orchestrator but stays registered for the order pin). The
+/// feature-detection `js_http_routes_nodes` / `js_http_routes_edges` pair sits
+/// at the registry tail with axum_routes (analyzer-EDB-only producers nothing
+/// earlier reads).
 /// Wave 3c moved depends INTO this list, after every IMPORTS_FROM producer:
 /// with legacy import-resolution gated, the IMPORT-level edges depends
 /// consumes are produced by the packs above it (it ran separately FIRST while
@@ -94,6 +110,33 @@ const STDLIB_RULE_PACKS: &[&str] = &[
     // producer — before method_calls/shape_verifier.
     "@stdlib/js_runtime_globals_nodes",
     "@stdlib/js_runtime_globals_edges",
+    // Java packs (java-resolve migration): java_imports PRODUCES java
+    // IMPORTS_FROM — strictly before depends; java_calls PRODUCES CALLS —
+    // strictly before the negators method_calls / shape_verifier.
+    "@stdlib/java_imports",
+    "@stdlib/java_types",
+    "@stdlib/java_calls",
+    "@stdlib/java_annotations",
+    // Kotlin wave: kotlin_inheritance PRODUCES EXTENDS (for shape_verifier's
+    // EXTENDS-closed member lookup) + IMPLEMENTS from the kotlin-analyzer's
+    // CLASS metadata stamps — consumes analyzer EDB only, precedes the
+    // negators below.
+    "@stdlib/kotlin_inheritance",
+    // Go wave: go_imports / go_imports_nomod PRODUCE IMPORTS_FROM — strictly
+    // before depends (verdict C4). The nomod entry is the orchestrator-selected
+    // VARIANT (P3): a pack cannot test "the go.mod fact is absent" (§3
+    // cross-join), so `run_stdlib_rule_packs` SKIPS it unless go files exist
+    // AND go.mod did not resolve — both names stay registered so the
+    // cross-registry order pin below holds. go_calls PRODUCES CALLS for
+    // go_context (P2 producer-before-consumer) and precedes the CALLS
+    // negators (method_calls / shape_verifier — C4). go_interfaces / go_types
+    // consume analyzer EDB only.
+    "@stdlib/go_imports",
+    "@stdlib/go_imports_nomod",
+    "@stdlib/go_calls",
+    "@stdlib/go_interfaces",
+    "@stdlib/go_types",
+    "@stdlib/go_context",
     // Wave 3c: depends CONSUMES IMPORTS_FROM (every edge of the shared
     // vocabulary, module- and binding-level). Legacy import-resolution /
     // rust-imports are gated (GRAFEMA_SKIP_RESOLVE_STEPS), so depends must
@@ -105,6 +148,12 @@ const STDLIB_RULE_PACKS: &[&str] = &[
     "@stdlib/method_calls",
     "@stdlib/shape_verifier",
     "@stdlib/axum_routes",
+    // Wave 14 feature-detection vertical: the nodes pack MINTS the
+    // anchorCall-pinned http:route endpoints the edges pack joins as
+    // committed EDB (strict nodes→edges order — the js_builtins two-pack
+    // split); both consume analyzer EDB only.
+    "@stdlib/js_http_routes_nodes",
+    "@stdlib/js_http_routes_edges",
 ];
 
 
@@ -535,10 +584,23 @@ fn pack_owned_slice(pack: &str) -> &'static str {
         "@stdlib/js_builtins_edges" => "node-builtin IMPORTS_FROM + CALLS",
         "@stdlib/js_runtime_globals_nodes" => "js runtime-global GLOBAL_DEFINITION nodes",
         "@stdlib/js_runtime_globals_edges" => "js runtime-global CALLS",
+        "@stdlib/java_imports" => "java IMPORTS_FROM (IMPORT + IMPORT_BINDING → declaration)",
+        "@stdlib/java_types" => "java RETURNS/TYPE_OF/EXTENDS/IMPLEMENTS/THROWS_TYPE",
+        "@stdlib/java_calls" => "java INSTANTIATES + CALLS (ctor/same-class/static/super-this)",
+        "@stdlib/java_annotations" => "java ANNOTATION_RESOLVES_TO",
+        "@stdlib/kotlin_inheritance" => "kotlin EXTENDS + IMPLEMENTS",
+        "@stdlib/go_imports" => "go same-module IMPORT→MODULE IMPORTS_FROM",
+        "@stdlib/go_imports_nomod" => "go no-go.mod suffix-fallback IMPORTS_FROM",
+        "@stdlib/go_calls" => "go CALLS (package-qualified / same-package / method)",
+        "@stdlib/go_interfaces" => "go structural IMPLEMENTS (duck typing)",
+        "@stdlib/go_types" => "go TYPE_OF + RETURNS",
+        "@stdlib/go_context" => "go PROPAGATES/SPAWNS/DEFERS context flow",
         "@stdlib/depends" => "MODULE→MODULE DEPENDS_ON",
         "@stdlib/method_calls" => "fuzzy method-call CALLS fallback",
         "@stdlib/shape_verifier" => "shape-violation ISSUE diagnostics",
         "@stdlib/axum_routes" => "axum ROUTES_TO",
+        "@stdlib/js_http_routes_nodes" => "js http:route nodes + ROUTES_TO (express/fastify/koa/hono)",
+        "@stdlib/js_http_routes_edges" => "js http:route EXPOSES + HANDLES",
         _ => "(unregistered pack)",
     }
 }
@@ -570,13 +632,29 @@ fn pack_failure_summary(failures: &[(String, String)]) -> String {
 /// later packs depend on earlier ones only through committed edges, so a failed
 /// producer degrades but does not invalidate them), then the phase FAILS with
 /// [`pack_failure_summary`] naming every failed pack and its owned slice.
+///
+/// PACK-VARIANT SELECTION (go P3): `go_nomod_fallback` is the ONE runtime
+/// selection condition — `@stdlib/go_imports_nomod` (the legacy
+/// empty-module-path suffix fallback, GoImportResolution.hs findBySuffix) runs
+/// ONLY when go files exist and go.mod did NOT resolve. The condition lives
+/// here because a pack cannot test "the go.mod fact is absent" (a global
+/// has-fact literal is the §3 cross-join the planner refuses — and per the
+/// spec verdict C2 a filter-connected suffix spelling is equally rejected);
+/// the orchestrator, which discovered go.mod, owns the branch — the faithful
+/// translation of legacy's `T.null modulePath` global. The main `go_imports`
+/// pack always runs: without the P1 fact its module-prefix arms derive
+/// nothing (fixture-proven), so the two variants never both fire.
 async fn run_stdlib_rule_packs(
     rfdb: &mut rfdb::RfdbClient,
     prof: Option<&profiler::Profiler>,
     imports_from_hint: usize,
+    go_nomod_fallback: bool,
 ) -> Result<()> {
     let mut failed_packs: Vec<(String, String)> = Vec::new();
     for pack in STDLIB_RULE_PACKS {
+        if *pack == "@stdlib/go_imports_nomod" && !go_nomod_fallback {
+            continue;
+        }
         let pack_start = std::time::Instant::now();
         match rfdb.materialize_datalog(pack).await {
             Ok(pack_edges) => {
@@ -1989,7 +2067,9 @@ async fn main() -> Result<()> {
                     }
                 };
 
-                let plugin_results = plugin::run_plugins_dag(
+                // A plugin failure aborts the analyze run (loud-failure policy,
+                // same as derive-pack failures) — but shut the pool down first.
+                let dag_result = plugin::run_plugins_dag(
                     &user_plugins,
                     &mut rfdb,
                     &socket_path,
@@ -1997,17 +2077,13 @@ async fn main() -> Result<()> {
                     generation,
                     resolve_pool.as_ref(),
                 )
-                .await?;
+                .await;
 
                 if let Some(pool) = resolve_pool {
                     pool.shutdown().await;
                 }
 
-                for pr in &plugin_results {
-                    if let Some(ref err) = pr.error {
-                        tracing::error!(plugin = %pr.plugin_name, "{err}");
-                    }
-                }
+                dag_result?;
             }
 
             let resolve_ms = resolve_timer.elapsed().as_millis() as u64;
@@ -2032,13 +2108,45 @@ async fn main() -> Result<()> {
                 tracing::info!(count = n_ws, "WORKSPACE_PACKAGE facts committed");
             }
 
+            // 8n-go. Commit the GO module-path fact (go pack precondition P1):
+            // the go.mod module path the legacy daemon consumed over the wire
+            // (main.rs go_ws_packages above) becomes a WORKSPACE_PACKAGE node
+            // with metadata language="go" that go_imports.dl / go_calls.dl
+            // join. Must land BEFORE the pack phase below. The P3 variant
+            // selection (no-go.mod suffix fallback) keys off the same
+            // discovery — see `run_stdlib_rule_packs`.
+            let go_module_path_for_packs = if go_files.is_empty() {
+                None
+            } else {
+                config::discover_go_module_path(&cfg.root)
+            };
+            let go_nomod_fallback = !go_files.is_empty() && go_module_path_for_packs.is_none();
+            if let Some(ref go_mp) = go_module_path_for_packs {
+                let mut go_fact = analyzer::go_module_workspace_fact(
+                    go_mp,
+                    &cfg.root.display().to_string(),
+                    &authority,
+                );
+                gc::stamp_node_metadata(&mut go_fact.metadata, generation, "workspace-packages");
+                rfdb.commit_batch(&[], &[go_fact], &[], true)
+                    .await
+                    .context("Failed to commit GO module-path fact")?;
+                tracing::info!(module_path = %go_mp, "GO module-path WORKSPACE_PACKAGE fact committed");
+            }
+
             // 9. Rule-pack phase. The server's capability was asserted at
             // connect time (fail-fast above), so this phase ALWAYS runs — see
             // `run_stdlib_rule_packs` for the ordering contract and the Wave-6
             // failure policy (any failed pack fails the run at end of phase).
             let depends_on_start = std::time::Instant::now();
             profile!("depends_on_start", "imports_from_edges" => all_imports_from_edges.len());
-            run_stdlib_rule_packs(&mut rfdb, prof.as_ref(), all_imports_from_edges.len()).await?;
+            run_stdlib_rule_packs(
+                &mut rfdb,
+                prof.as_ref(),
+                all_imports_from_edges.len(),
+                go_nomod_fallback,
+            )
+            .await?;
             let depends_on_ms = depends_on_start.elapsed().as_millis() as u64;
 
             // 10. Generate unresolved diagnostics — AFTER the pack phase (Wave 3c):
@@ -2823,7 +2931,9 @@ async fn main() -> Result<()> {
                     }
                 };
 
-                let plugin_results = plugin::run_plugins_dag(
+                // A plugin failure aborts the analyze run (loud-failure policy,
+                // same as derive-pack failures) — but shut the pool down first.
+                let dag_result = plugin::run_plugins_dag(
                     &user_plugins,
                     &mut rfdb,
                     &socket_path,
@@ -2831,17 +2941,13 @@ async fn main() -> Result<()> {
                     generation,
                     resolve_pool.as_ref(),
                 )
-                .await?;
+                .await;
 
                 if let Some(pool) = resolve_pool {
                     pool.shutdown().await;
                 }
 
-                for pr in &plugin_results {
-                    if let Some(ref err) = pr.error {
-                        tracing::error!(plugin = %pr.plugin_name, "{err}");
-                    }
-                }
+                dag_result?;
             }
 
             // Rule-pack phase (Wave 6): the packs are the only producer of the
@@ -2850,7 +2956,19 @@ async fn main() -> Result<()> {
             // too — and BEFORE the unresolved diagnostics below, whose negation
             // queries would otherwise flag every pack-resolved node.
             let depends_on_start = std::time::Instant::now();
-            run_stdlib_rule_packs(&mut rfdb, None, all_imports_from_edges.len()).await?;
+            // P3 selection in the resolve-only pass: the graph already holds
+            // (or lacks) the P1 fact from the prior analyze; re-discover
+            // go.mod for the variant condition (cheap file read). Go presence
+            // comes from the detected-language scan above.
+            let go_nomod_fallback = detected_langs.contains(&config::Language::Go)
+                && config::discover_go_module_path(&cfg.root).is_none();
+            run_stdlib_rule_packs(
+                &mut rfdb,
+                None,
+                all_imports_from_edges.len(),
+                go_nomod_fallback,
+            )
+            .await?;
             let depends_on_ms = depends_on_start.elapsed().as_millis() as u64;
 
             // Unresolved diagnostics
@@ -3354,14 +3472,16 @@ mod tests {
     ) -> std::path::PathBuf {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+        // Unique per call: pid + a process-wide counter. A timestamp alone is
+        // NOT unique — concurrent tests can land in the same SystemTime tick,
+        // collide on the socket name, and the second bind panics (flaky
+        // EADDRINUSE in pack_failure_fails_the_run_with_a_loud_summary).
+        static SOCK_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let dir = std::env::temp_dir();
         let sock = dir.join(format!(
             "grafema-fake-rfdb-{}-{}.sock",
             std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            SOCK_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         let _ = std::fs::remove_file(&sock);
         let listener = std::os::unix::net::UnixListener::bind(&sock).expect("bind fake socket");
@@ -3466,7 +3586,7 @@ mod tests {
             vec!["@stdlib/js_local_refs".to_string(), "@stdlib/axum_routes".to_string()],
         );
         let mut client = rfdb::RfdbClient::connect(&sock).await.expect("connect fake server");
-        let err = run_stdlib_rule_packs(&mut client, None, 0)
+        let err = run_stdlib_rule_packs(&mut client, None, 0, false)
             .await
             .expect_err("a failed pack must fail the phase");
         let msg = format!("{err:#}");
@@ -3479,9 +3599,47 @@ mod tests {
         // All packs green → Ok.
         let sock2 = spawn_fake_rfdb_server(features, vec![]);
         let mut client2 = rfdb::RfdbClient::connect(&sock2).await.expect("connect fake server");
-        run_stdlib_rule_packs(&mut client2, None, 0)
+        run_stdlib_rule_packs(&mut client2, None, 0, false)
             .await
             .expect("green pack phase passes");
+        let _ = std::fs::remove_file(&sock2);
+    }
+
+    /// Go P3 — the pack-VARIANT selection, end-to-end through the production
+    /// pack loop: `@stdlib/go_imports_nomod` (the no-go.mod suffix fallback)
+    /// runs ONLY when `go_nomod_fallback` is true. Proven via the fake-server
+    /// failure mechanism: the variant is FORCED to fail, so its presence in
+    /// the run is observable — skipped (Ok) when go.mod resolved, run (Err
+    /// naming it) when it did not.
+    #[tokio::test]
+    async fn go_imports_nomod_variant_is_selected_by_the_go_nomod_flag() {
+        let features = vec!["datalogDerive".to_string()];
+
+        // go.mod resolved (or no go files) → the variant must be SKIPPED:
+        // even though the fake server would fail it, the phase is green.
+        let sock = spawn_fake_rfdb_server(
+            features.clone(),
+            vec!["@stdlib/go_imports_nomod".to_string()],
+        );
+        let mut client = rfdb::RfdbClient::connect(&sock).await.expect("connect fake server");
+        run_stdlib_rule_packs(&mut client, None, 0, false)
+            .await
+            .expect("variant skipped when go.mod resolved — phase green");
+        let _ = std::fs::remove_file(&sock);
+
+        // go files present + no go.mod → the variant RUNS (and here fails,
+        // proving it was selected and that its owned slice is named).
+        let sock2 = spawn_fake_rfdb_server(
+            features,
+            vec!["@stdlib/go_imports_nomod".to_string()],
+        );
+        let mut client2 = rfdb::RfdbClient::connect(&sock2).await.expect("connect fake server");
+        let err = run_stdlib_rule_packs(&mut client2, None, 0, true)
+            .await
+            .expect_err("variant selected without go.mod — forced failure surfaces");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("@stdlib/go_imports_nomod"), "variant named: {msg}");
+        assert!(msg.contains("suffix-fallback"), "owned slice named: {msg}");
         let _ = std::fs::remove_file(&sock2);
     }
 
