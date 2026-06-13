@@ -4,13 +4,23 @@
 -- Resolves type references from node metadata to produce typed edges:
 --   - RETURNS edges: function -> return type class
 --   - TYPE_OF edges: variable -> type class
---   - EXTENDS edges: class -> superclass
---   - IMPLEMENTS edges: class -> interface
 --   - THROWS_TYPE edges: function -> exception class
 --
 -- Uses class index to find targets within the project.
 -- External types (stdlib, third-party), primitives, and Kotlin built-in
 -- types are silently skipped.
+--
+-- EXTENDS / IMPLEMENTS are owned by the kotlin_inheritance.dl stdlib pack
+-- (rfdb-server derive/stdlib/kotlin_inheritance.dl), which resolves the
+-- analyzer's `extends` / `implements_0..n` CLASS stamps with file/directory
+-- scoping and an ambiguity discipline. The resolveExtends/resolveImplements
+-- arms that used to live here were retired in the same wave that introduced
+-- those stamps: they had been dead (the analyzer never stamped `extends` /
+-- `implements` before, so their production output was provably ZERO), and the
+-- new `extends` stamp would have woken resolveExtends into a second EXTENDS
+-- producer routed through the UNSCOPED project-wide last-wins simple-name
+-- index below — silent wrong cross-package edges the pack deliberately
+-- refuses.
 module TypeResolution (run, resolveAll) where
 
 import Grafema.Types (GraphNode(..), GraphEdge(..), MetaValue(..))
@@ -150,37 +160,6 @@ resolveTypeOf classIdx = concatMap go
                 Nothing      -> []
                 Just classId -> [mkEdge (gnId node) classId "TYPE_OF"]
 
--- | Resolve EXTENDS edges: CLASS nodes with extends metadata.
-resolveExtends :: ClassIndex -> [GraphNode] -> [PluginCommand]
-resolveExtends classIdx = concatMap go
-  where
-    classTypes = Set.fromList ["CLASS", "INTERFACE", "ENUM", "OBJECT"]
-
-    go node
-      | not (Set.member (gnType node) classTypes) = []
-      | otherwise =
-          case getMetaText "extends" node of
-            Nothing -> []
-            Just extendsName ->
-              case lookupType classIdx extendsName of
-                Nothing      -> []
-                Just classId -> [mkEdge (gnId node) classId "EXTENDS"]
-
--- | Resolve IMPLEMENTS edges: CLASS nodes with implements metadata (comma-separated).
-resolveImplements :: ClassIndex -> [GraphNode] -> [PluginCommand]
-resolveImplements classIdx = concatMap go
-  where
-    go node
-      | gnType node /= "CLASS" && gnType node /= "ENUM" = []
-      | otherwise =
-          case getMetaText "implements" node of
-            Nothing -> []
-            Just implStr ->
-              [ mkEdge (gnId node) ifaceId "IMPLEMENTS"
-              | typeName <- splitTypes implStr
-              , Just ifaceId <- [lookupType classIdx typeName]
-              ]
-
 -- | Resolve THROWS_TYPE edges: FUNCTION nodes with throws metadata (comma-separated).
 resolveThrows :: ClassIndex -> [GraphNode] -> [PluginCommand]
 resolveThrows classIdx = concatMap go
@@ -213,19 +192,14 @@ resolveAll nodes = do
 
   let returnsEdges    = resolveReturns classIdx nodes
       typeOfEdges     = resolveTypeOf classIdx nodes
-      extendsEdges    = resolveExtends classIdx nodes
-      implementsEdges = resolveImplements classIdx nodes
       throwsEdges     = resolveThrows classIdx nodes
 
-      allEdges = returnsEdges ++ typeOfEdges ++ extendsEdges
-              ++ implementsEdges ++ throwsEdges
+      allEdges = returnsEdges ++ typeOfEdges ++ throwsEdges
 
   hPutStrLn stderr $
     "kotlin-type-resolve: " ++ show (length allEdges) ++ " type edges"
     ++ " (RETURNS=" ++ show (length returnsEdges)
     ++ ", TYPE_OF=" ++ show (length typeOfEdges)
-    ++ ", EXTENDS=" ++ show (length extendsEdges)
-    ++ ", IMPLEMENTS=" ++ show (length implementsEdges)
     ++ ", THROWS_TYPE=" ++ show (length throwsEdges) ++ ")"
 
   return allEdges

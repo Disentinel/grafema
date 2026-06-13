@@ -26,7 +26,9 @@ module KotlinAST
   ) where
 
 import Data.Text (Text)
-import Data.Aeson (FromJSON(..), withObject, (.:), (.:?), (.!=))
+import qualified Data.Text as T
+import Data.Aeson (FromJSON(..), Value(..), withObject, (.:), (.:?), (.!=))
+import qualified Data.Aeson.KeyMap as KM
 import Data.Aeson.Types (Parser)
 
 -- Position & Span
@@ -66,17 +68,35 @@ data KotlinDecl
       , kdTypeParams       :: ![KotlinTypeParam]
       , kdPrimaryConstructor :: !(Maybe KotlinPrimaryConstructor)
       , kdSuperTypes       :: ![KotlinType]
+        -- ^ Decoded from the "superTypes" key — the live kotlin-parser never
+        -- emits that key for classes (it emits "extends"/"implements",
+        -- KotlinAstSerializer.kt:99-123), so this list is empty on real
+        -- parser output; kept for the deferred-ref path and old fixtures.
+      , kdExtendsNames     :: ![Text]
+        -- ^ Supertype names from the parser's "extends" entries
+        -- (KtSuperTypeCallEntry — the constructor-call '()' suffix marks the
+        -- class supertype). Scope-qualified when the parser provides "scope".
+      , kdImplementsNames  :: ![Text]
+        -- ^ Supertype names from the parser's "implements" entries (bare
+        -- KtSuperTypeEntry / delegated KtDelegatedSuperTypeEntry — interfaces,
+        -- plus the no-primary-constructor class supertype ambiguity; see
+        -- Rules.Declarations.inheritanceMeta).
       , kdMembers          :: ![KotlinMember]
       , kdAnnotations      :: ![KotlinAnnotation]
       , kdSpan             :: !Span
       }
   | ObjectDecl
-      { kdName        :: !Text
-      , kdModifiers   :: ![Text]
-      , kdSuperTypes  :: ![KotlinType]
-      , kdMembers     :: ![KotlinMember]
-      , kdAnnotations :: ![KotlinAnnotation]
-      , kdSpan        :: !Span
+      { kdName            :: !Text
+      , kdModifiers       :: ![Text]
+      , kdSuperTypes      :: ![KotlinType]
+      , kdExtendsNames    :: ![Text]
+        -- ^ Constructor-call entries of the parser's mixed "supertypes" array
+        -- (KotlinAstSerializer.kt:148-171).
+      , kdImplementsNames :: ![Text]
+        -- ^ Bare/delegated entries of the same array.
+      , kdMembers         :: ![KotlinMember]
+      , kdAnnotations     :: ![KotlinAnnotation]
+      , kdSpan            :: !Span
       }
   | FunDecl
       { kdName         :: !Text
@@ -495,23 +515,39 @@ instance FromJSON KotlinDecl where
   parseJSON = withObject "KotlinDecl" $ \v -> do
     ty <- v .: "type" :: Parser Text
     case ty of
-      "ClassDecl" -> ClassDecl
-        <$> v .:  "name"
-        <*> v .:? "kind" .!= "class"
-        <*> v .:? "modifiers" .!= []
-        <*> v .:? "typeParameters" .!= []
-        <*> v .:? "primaryConstructor"
-        <*> v .:? "superTypes" .!= []
-        <*> v .:? "members" .!= []
-        <*> v .:? "annotations" .!= []
-        <*> v .:  "span"
-      "ObjectDecl" -> ObjectDecl
-        <$> v .:  "name"
-        <*> v .:? "modifiers" .!= []
-        <*> v .:? "superTypes" .!= []
-        <*> v .:? "members" .!= []
-        <*> v .:? "annotations" .!= []
-        <*> v .:  "span"
+      "ClassDecl" -> do
+        -- The live parser splits the supertype list into "extends"
+        -- (constructor-call entries) and "implements" (bare/delegated);
+        -- see parseSuperTypeEntry.
+        extEntries  <- v .:? "extends"    .!= []
+        implEntries <- v .:? "implements" .!= []
+        ClassDecl
+          <$> v .:  "name"
+          <*> v .:? "kind" .!= "class"
+          <*> v .:? "modifiers" .!= []
+          <*> v .:? "typeParameters" .!= []
+          <*> v .:? "primaryConstructor"
+          <*> v .:? "superTypes" .!= []
+          <*> pure (superTypeEntryNames extEntries)
+          <*> pure (superTypeEntryNames implEntries)
+          <*> v .:? "members" .!= []
+          <*> v .:? "annotations" .!= []
+          <*> v .:  "span"
+      "ObjectDecl" -> do
+        -- The live parser emits ONE mixed "supertypes" array for objects;
+        -- constructor-call entries (wrapped, with "args") are the class
+        -- supertype, the rest are interfaces.
+        entries <- v .:? "supertypes" .!= []
+        let pairs = map parseSuperTypeEntry entries
+        ObjectDecl
+          <$> v .:  "name"
+          <*> v .:? "modifiers" .!= []
+          <*> v .:? "superTypes" .!= []
+          <*> pure [ n | (True,  n) <- pairs, not (T.null n) ]
+          <*> pure [ n | (False, n) <- pairs, not (T.null n) ]
+          <*> v .:? "members" .!= []
+          <*> v .:? "annotations" .!= []
+          <*> v .:  "span"
       "FunDecl" -> FunDecl
         <$> v .:  "name"
         <*> v .:? "modifiers" .!= []
@@ -542,6 +578,58 @@ instance FromJSON KotlinDecl where
         <*> v .:  "span"
       _ -> DeclUnknown
         <$> v .: "span"
+
+-- Supertype-list entry decoding (the live kotlin-parser vocabulary).
+--
+-- serializeClass (KotlinAstSerializer.kt:99-123) emits
+--   "extends"    = [{type: <typeref>, args, span}]            (KtSuperTypeCallEntry)
+--   "implements" = [<typeref> | {type: <typeref>, delegate, span}]
+--                                  (KtSuperTypeEntry / KtDelegatedSuperTypeEntry)
+-- and serializeObject (:148-171) one mixed "supertypes" array of the same two
+-- shapes. The typeref itself is {"type":"ClassType","name":N,"scope":Q?,...}.
+-- Both helpers are total: malformed entries yield "" and are dropped upstream.
+
+-- | One supertype-list entry → (isConstructorCall, supertype name).
+-- A wrapped entry holds the typeref under "type" (an Object, vs the String
+-- discriminator of a direct typeref); "args" marks the constructor-call form.
+parseSuperTypeEntry :: Value -> (Bool, Text)
+parseSuperTypeEntry (Object v) =
+  case KM.lookup "type" v of
+    Just inner@(Object _) -> (KM.member "args" v, superTypeRefName inner)
+    _                     -> (False, superTypeRefName (Object v))
+parseSuperTypeEntry _ = (False, "")
+
+-- | All non-empty names of a supertype-entry list (classification dropped —
+-- the ClassDecl keys are pre-classified by the parser).
+superTypeEntryNames :: [Value] -> [Text]
+superTypeEntryNames = filter (not . T.null) . map (snd . parseSuperTypeEntry)
+
+-- | The name of a supertype reference, scope-qualified when the parser
+-- provides "scope" ("java.util" + "AbstractList" → "java.util.AbstractList").
+-- Type arguments are NOT part of the name (generics stripped). Accepts the
+-- live parser tag "ClassType" and the analyzer-internal/test tag "SimpleType";
+-- nullable wrappers unwrap; anything else (function types, star projections,
+-- unknowns) yields "".
+superTypeRefName :: Value -> Text
+superTypeRefName (Object v) =
+  case KM.lookup "type" v of
+    Just (String "ClassType")  -> qualifiedName
+    Just (String "SimpleType") -> qualifiedName
+    Just (String "NullableType") ->
+      case KM.lookup "inner" v of
+        Just inner -> superTypeRefName inner
+        Nothing    -> ""
+    _ -> ""
+  where
+    qualifiedName =
+      let n = case KM.lookup "name" v of
+                Just (String t) -> t
+                _               -> ""
+          mScope = case KM.lookup "scope" v of
+                     Just (String s) -> Just s
+                     _               -> Nothing
+      in if T.null n then "" else maybe n (\s -> s <> "." <> n) mScope
+superTypeRefName _ = ""
 
 instance FromJSON KotlinMember where
   parseJSON = withObject "KotlinMember" $ \v -> do

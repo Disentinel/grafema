@@ -131,7 +131,13 @@ main = hspec $ do
 
   describe "TypeResolution" $ do
 
-    it "resolves EXTENDS metadata to CLASS node" $ do
+    -- EXTENDS / IMPLEMENTS are owned by the kotlin_inheritance.dl stdlib
+    -- pack; the retired resolveExtends/resolveImplements arms must NOT come
+    -- back — the analyzer now stamps `extends` on CLASS nodes, and a revived
+    -- arm would be a second, unscoped EXTENDS producer (last-wins
+    -- simple-name index, no ambiguity discipline). These are regression
+    -- guards: the stamps that wake the pack must leave this plugin silent.
+    it "does NOT resolve the analyzer's extends stamp (pack-owned)" $ do
       let child = mkNodeMeta
             "f1->CLASS->Child" "CLASS" "Child" "f1.kt"
             [("extends", MetaText "Parent")]
@@ -139,34 +145,22 @@ main = hspec $ do
             "f2->CLASS->Parent" "CLASS" "Parent" "f2.kt"
           nodes = [child, parent]
       cmds <- TypeResolution.resolveAll nodes
-      let extends = findEdgesOfType "EXTENDS" cmds
-      length extends `shouldBe` 1
-      geSource (head extends) `shouldBe` "f1->CLASS->Child"
-      geTarget (head extends) `shouldBe` "f2->CLASS->Parent"
+      countEdgeType "EXTENDS" cmds `shouldBe` 0
 
-    it "resolves IMPLEMENTS metadata to INTERFACE node" $ do
+    it "does NOT resolve implements metadata (pack-owned)" $ do
       let cls = mkNodeMeta
             "f1->CLASS->Impl" "CLASS" "Impl" "f1.kt"
-            [("implements", MetaText "Serializable")]
-          iface = mkNode
-            "f2->INTERFACE->Serializable" "INTERFACE" "Serializable" "f2.kt"
-          nodes = [cls, iface]
-      cmds <- TypeResolution.resolveAll nodes
-      let impls = findEdgesOfType "IMPLEMENTS" cmds
-      length impls `shouldBe` 1
-      geTarget (head impls) `shouldBe` "f2->INTERFACE->Serializable"
-
-    it "resolves multiple implements" $ do
-      let cls = mkNodeMeta
-            "f1->CLASS->Impl" "CLASS" "Impl" "f1.kt"
-            [("implements", MetaText "Serializable,Comparable")]
+            [ ("implements", MetaText "Serializable")
+            , ("implements_0", MetaText "Comparable")
+            ]
           iface1 = mkNode
             "f2->INTERFACE->Serializable" "INTERFACE" "Serializable" "f2.kt"
           iface2 = mkNode
             "f3->INTERFACE->Comparable" "INTERFACE" "Comparable" "f3.kt"
           nodes = [cls, iface1, iface2]
       cmds <- TypeResolution.resolveAll nodes
-      countEdgeType "IMPLEMENTS" cmds `shouldBe` 2
+      countEdgeType "IMPLEMENTS" cmds `shouldBe` 0
+      countEdgeType "EXTENDS" cmds `shouldBe` 0
 
     it "resolves return_type metadata to RETURNS edge" $ do
       let fn = mkNodeMeta
@@ -376,11 +370,14 @@ main = hspec $ do
   describe "Edge integrity" $ do
 
     it "never produces edges with empty source or target" $ do
-      let cls = mkNodeMeta
-            "f1->CLASS->Foo" "CLASS" "Foo" "f1.kt"
-            [("extends", MetaText "Bar")]
-          nodes = [cls]
+      let fn = mkNodeMeta
+            "f1->FUNCTION->make[in:Foo,h:x]" "FUNCTION" "make" "f1.kt"
+            [("return_type", MetaText "Bar")]
+          cls = mkNode
+            "f2->CLASS->Bar" "CLASS" "Bar" "f2.kt"
+          nodes = [fn, cls]
       cmds <- TypeResolution.resolveAll nodes
+      countEdgeType "RETURNS" cmds `shouldBe` 1
       let badEdges = [ e | EmitEdge e <- cmds
                          , geSource e == "" || geTarget e == "" ]
       badEdges `shouldBe` []

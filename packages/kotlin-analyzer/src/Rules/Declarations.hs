@@ -73,13 +73,35 @@ visibilityText mods
 isExportable :: [Text] -> Bool
 isExportable mods = not (isPrivate mods)
 
+-- | Supertype metadata stamps on CLASS nodes — the analyzer-side unblock for
+-- kotlin inheritance edges (the deferred InheritanceResolve refs are dropped
+-- by the orchestrator, so these names must live on the node itself):
+--   "extends"          = the single class supertype (the parser's
+--                        constructor-call entry; first wins if the parser
+--                        ever yields several — invalid Kotlin),
+--   "implements_0..n"  = indexed interface supertypes (the list-valued
+--                        metadata convention: node_attr-addressable today,
+--                        no split builtin needed).
+-- Kotlin nuance: a class with NO primary constructor may extend a class via a
+-- bare supertype entry (`class X : Base { constructor() : super() }`) — the
+-- parser classifies bare entries as "implements", so such a superclass lands
+-- in implements_N; the consuming kotlin_inheritance.dl pack re-classifies by
+-- the resolved declaration's own `kind` (interface → IMPLEMENTS, else
+-- EXTENDS). Names arrive pre-filtered non-empty from the KotlinAST decoder.
+-- Consumed by the kotlin_inheritance.dl stdlib pack.
+inheritanceMeta :: [Text] -> [Text] -> [(Text, MetaValue)]
+inheritanceMeta extNames implNames =
+  [ ("extends", MetaText e) | e <- take 1 extNames ]
+  ++ [ ("implements_" <> T.pack (show i), MetaText n)
+     | (i, n) <- zip [0 :: Int ..] implNames ]
+
 -- Top-level declaration walker
 
 -- | Walk a single top-level or nested declaration.
 walkDeclaration :: KotlinDecl -> Analyzer ()
 
 -- Class declaration (class, data, sealed, enum, inner, value, annotation)
-walkDeclaration (ClassDecl name kind mods _typeParams mPrimaryCtor _supers members _annots sp) = do
+walkDeclaration (ClassDecl name kind mods _typeParams mPrimaryCtor _supers extNames implNames members _annots sp) = do
   file     <- askFile
   scopeId  <- askScopeId
   parent   <- askNamedParent
@@ -110,6 +132,7 @@ walkDeclaration (ClassDecl name kind mods _typeParams mPrimaryCtor _supers membe
         , ("inner",      MetaBool (kind == "inner" || "inner" `elem` mods))
         , ("value",      MetaBool (kind == "value"))
         ]
+        ++ inheritanceMeta extNames implNames
     }
 
   emitEdge GraphEdge
@@ -138,7 +161,7 @@ walkDeclaration (ClassDecl name kind mods _typeParams mPrimaryCtor _supers membe
       mapM_ walkMember members
 
 -- Object declaration
-walkDeclaration (ObjectDecl name mods _supers members _annots sp) = do
+walkDeclaration (ObjectDecl name mods _supers extNames implNames members _annots sp) = do
   file     <- askFile
   scopeId  <- askScopeId
   parent   <- askNamedParent
@@ -159,11 +182,12 @@ walkDeclaration (ObjectDecl name mods _supers members _annots sp) = do
     , gnEndLine   = posLine (spanEnd sp)
     , gnEndColumn = posCol  (spanEnd sp)
     , gnExported  = objExported
-    , gnMetadata  = Map.fromList
+    , gnMetadata  = Map.fromList $
         [ ("kind",       MetaText "object")
         , ("visibility", MetaText (visibilityText mods))
         , ("singleton",  MetaBool True)
         ]
+        ++ inheritanceMeta extNames implNames
     }
 
   emitEdge GraphEdge
@@ -860,8 +884,8 @@ walkParam fnId param = do
 -- Helpers
 
 declName' :: KotlinDecl -> Text
-declName' (ClassDecl n _ _ _ _ _ _ _ _)       = n
-declName' (ObjectDecl n _ _ _ _ _)            = n
+declName' (ClassDecl n _ _ _ _ _ _ _ _ _ _)   = n
+declName' (ObjectDecl n _ _ _ _ _ _ _)        = n
 declName' (FunDecl n _ _ _ _ _ _ _ _)         = n
 declName' (PropertyDecl n _ _ _ _ _ _ _ _ _)  = n
 declName' (TypeAliasDecl n _ _ _ _ _)         = n

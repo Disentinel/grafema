@@ -49,15 +49,17 @@ use std::path::PathBuf;
 /// js_property_access_ns → js_property_access_full → js_builtins_nodes →
 /// js_builtins_edges → js_runtime_globals_nodes → js_runtime_globals_edges →
 /// java_imports → java_types → java_calls → java_annotations →
-/// depends → method_calls → shape_verifier → axum_routes →
+/// kotlin_inheritance → depends → method_calls → shape_verifier → axum_routes →
 /// js_http_routes_nodes → js_http_routes_edges.
 /// The Java packs (java-resolve migration): `java_imports` PRODUCES java
 /// IMPORTS_FROM, so it runs strictly before `depends` (which consumes EVERY
 /// IMPORTS_FROM edge node-type-agnostically via the file join);
 /// `java_calls` PRODUCES CALLS, so it runs strictly before the CALLS
-/// negators `method_calls` / `shape_verifier`. The feature-detection
-/// `js_http_routes_nodes` / `js_http_routes_edges` pair sits at the registry
-/// tail with axum_routes (analyzer-EDB-only producers nothing earlier reads).
+/// negators `method_calls` / `shape_verifier`. `kotlin_inheritance` PRODUCES
+/// kotlin EXTENDS/IMPLEMENTS for `shape_verifier`'s inheritance closure, so it
+/// precedes the negator. The feature-detection `js_http_routes_nodes` /
+/// `js_http_routes_edges` pair sits at the registry tail with axum_routes
+/// (analyzer-EDB-only producers nothing earlier reads).
 /// Wave 3c moved depends INTO this list, after every IMPORTS_FROM producer:
 /// with legacy import-resolution gated, the IMPORT-level edges depends
 /// consumes are produced by the packs above it (it ran separately FIRST while
@@ -110,6 +112,11 @@ const STDLIB_RULE_PACKS: &[&str] = &[
     "@stdlib/java_types",
     "@stdlib/java_calls",
     "@stdlib/java_annotations",
+    // Kotlin wave: kotlin_inheritance PRODUCES EXTENDS (for shape_verifier's
+    // EXTENDS-closed member lookup) + IMPLEMENTS from the kotlin-analyzer's
+    // CLASS metadata stamps — consumes analyzer EDB only, precedes the
+    // negators below.
+    "@stdlib/kotlin_inheritance",
     // Wave 3c: depends CONSUMES IMPORTS_FROM (every edge of the shared
     // vocabulary, module- and binding-level). Legacy import-resolution /
     // rust-imports are gated (GRAFEMA_SKIP_RESOLVE_STEPS), so depends must
@@ -561,6 +568,7 @@ fn pack_owned_slice(pack: &str) -> &'static str {
         "@stdlib/java_types" => "java RETURNS/TYPE_OF/EXTENDS/IMPLEMENTS/THROWS_TYPE",
         "@stdlib/java_calls" => "java INSTANTIATES + CALLS (ctor/same-class/static/super-this)",
         "@stdlib/java_annotations" => "java ANNOTATION_RESOLVES_TO",
+        "@stdlib/kotlin_inheritance" => "kotlin EXTENDS + IMPLEMENTS",
         "@stdlib/depends" => "MODULE→MODULE DEPENDS_ON",
         "@stdlib/method_calls" => "fuzzy method-call CALLS fallback",
         "@stdlib/shape_verifier" => "shape-violation ISSUE diagnostics",
