@@ -3342,7 +3342,7 @@ impl MultiShardStore {
         thread_count: Option<usize>,
     ) -> Result<CompactionResult> {
         use crate::storage_v2::compaction::coordinator::{
-            compact_shard, should_compact, ShardCompactionResult,
+            compact_shard_tiered, should_compact, ShardCompactionResult,
         };
         use crate::storage_v2::compaction::CompactionInfo;
         use crate::storage_v2::resource::ResourceManager;
@@ -3439,7 +3439,7 @@ impl MultiShardStore {
             // Sequential path: no thread pool overhead for single shard/thread
             shards_to_compact
                 .iter()
-                .map(|&idx| (idx, compact_shard(&self.shards[idx])))
+                .map(|&idx| (idx, compact_shard_tiered(&self.shards[idx], config)))
                 .collect()
         } else {
             let pool = rayon::ThreadPoolBuilder::new()
@@ -3450,93 +3450,227 @@ impl MultiShardStore {
             pool.install(|| {
                 shards_to_compact
                     .par_iter()
-                    .map(|&idx| (idx, compact_shard(&self.shards[idx])))
+                    .map(|&idx| (idx, compact_shard_tiered(&self.shards[idx], config)))
                     .collect()
             })
         };
 
         // ── Phase 3: Apply results (sequential) ────────────────────────
         // Write segments to disk, update shard state, build indexes.
+        //
+        // Per the size-tiered policy, each shard's result carries a `tier`:
+        //   FullMerge     — output is a new L1; old L0 dropped; tombstones purged.
+        //   L0Consolidate — output is a single new L0 run; L1 + tombstones kept.
+
+        use crate::storage_v2::compaction::coordinator::CompactionTier;
+
+        // Shards that folded into L1 (their old L0 descriptors are dropped from the
+        // manifest, their new L1 descriptor replaces any old one).
+        let mut full_merged_shard_ids: HashSet<u16> = HashSet::new();
+        // Shards that consolidated L0 only: their OLD L0 descriptors are dropped but
+        // a NEW consolidated L0 descriptor is injected, and their existing L1
+        // descriptor is preserved.
+        let mut consolidated_shard_ids: HashSet<u16> = HashSet::new();
+        let mut consolidated_l0_node_descs: Vec<SegmentDescriptor> = Vec::new();
+        let mut consolidated_l0_edge_descs: Vec<SegmentDescriptor> = Vec::new();
+        // Any L0-only consolidation means deferred tombstones must SURVIVE in the
+        // manifest (records they shadow may live in the untouched L1).
+        let mut any_l0_consolidate = false;
 
         for (shard_idx, result) in compaction_results {
             let result = result?;
             let shard_id = shard_idx as u16;
             let shard_path_owned = self.shards[shard_idx].path().map(|p| p.to_path_buf());
 
-            // Build L1 node segment (if any merged nodes)
-            let mut l1_node_seg: Option<NodeSegmentV2> = None;
-            let mut l1_node_desc: Option<SegmentDescriptor> = None;
-            let mut by_type_idx: Option<InvertedIndex> = None;
-            let mut by_file_idx: Option<InvertedIndex> = None;
-            let mut by_name_idx: Option<InvertedIndex> = None;
-            let mut token_idx: Option<TokenIndex> = None;
+            match result.tier {
+                CompactionTier::FullMerge => {
+                    // Build L1 node segment (if any merged nodes)
+                    let mut l1_node_seg: Option<NodeSegmentV2> = None;
+                    let mut l1_node_desc: Option<SegmentDescriptor> = None;
+                    let mut by_type_idx: Option<InvertedIndex> = None;
+                    let mut by_file_idx: Option<InvertedIndex> = None;
+                    let mut by_name_idx: Option<InvertedIndex> = None;
+                    let mut token_idx: Option<TokenIndex> = None;
 
-            if let (Some(bytes), Some(meta)) = (&result.node_segment_bytes, &result.node_meta) {
-                let seg_id = manifest_store.next_segment_id();
+                    if let (Some(bytes), Some(meta)) =
+                        (&result.node_segment_bytes, &result.node_meta)
+                    {
+                        let seg_id = manifest_store.next_segment_id();
 
-                let seg = if let Some(shard_path) = &shard_path_owned {
-                    let seg_path = shard_path.join(format!("seg_{:06}_nodes.seg", seg_id));
-                    std::fs::write(&seg_path, bytes)?;
-                    NodeSegmentV2::open(&seg_path)?
-                } else {
-                    NodeSegmentV2::from_bytes(bytes)?
-                };
+                        let seg = if let Some(shard_path) = &shard_path_owned {
+                            let seg_path = shard_path.join(format!("seg_{:06}_nodes.seg", seg_id));
+                            std::fs::write(&seg_path, bytes)?;
+                            NodeSegmentV2::open(&seg_path)?
+                        } else {
+                            NodeSegmentV2::from_bytes(bytes)?
+                        };
 
-                let desc = SegmentDescriptor::from_meta(
-                    seg_id, SegmentType::Nodes, Some(shard_id), meta.clone(),
-                );
+                        let desc = SegmentDescriptor::from_meta(
+                            seg_id,
+                            SegmentType::Nodes,
+                            Some(shard_id),
+                            meta.clone(),
+                        );
 
-                // Build inverted indexes from the L1 segment
-                let records: Vec<NodeRecordV2> = seg.iter().collect();
-                let built = build_inverted_indexes(&records, shard_id, seg_id)?;
-                by_type_idx = Some(InvertedIndex::from_bytes(&built.by_type)?);
-                by_file_idx = Some(InvertedIndex::from_bytes(&built.by_file)?);
-                by_name_idx = Some(InvertedIndex::from_bytes(&built.by_name)?);
-                token_idx = Some(TokenIndex::from_bytes(&built.by_token)?);
+                        // Build inverted indexes from the L1 segment
+                        let records: Vec<NodeRecordV2> = seg.iter().collect();
+                        let built = build_inverted_indexes(&records, shard_id, seg_id)?;
+                        by_type_idx = Some(InvertedIndex::from_bytes(&built.by_type)?);
+                        by_file_idx = Some(InvertedIndex::from_bytes(&built.by_file)?);
+                        by_name_idx = Some(InvertedIndex::from_bytes(&built.by_name)?);
+                        token_idx = Some(TokenIndex::from_bytes(&built.by_token)?);
 
-                // Collect entries for global index
-                for (offset, record) in records.iter().enumerate() {
-                    global_index_entries.push(IndexEntry::new(
-                        record.id, seg_id, offset as u32, shard_id,
-                    ));
+                        // Collect entries for global index
+                        for (offset, record) in records.iter().enumerate() {
+                            global_index_entries.push(IndexEntry::new(
+                                record.id,
+                                seg_id,
+                                offset as u32,
+                                shard_id,
+                            ));
+                        }
+
+                        l1_node_descs.push(desc.clone());
+                        total_nodes_merged += meta.record_count;
+                        l1_node_seg = Some(seg);
+                        l1_node_desc = Some(desc);
+                    }
+
+                    // Build L1 edge segment (if any merged edges)
+                    let mut l1_edge_seg: Option<EdgeSegmentV2> = None;
+                    let mut l1_edge_desc: Option<SegmentDescriptor> = None;
+                    if let (Some(bytes), Some(meta)) =
+                        (&result.edge_segment_bytes, &result.edge_meta)
+                    {
+                        let seg_id = manifest_store.next_segment_id();
+
+                        let seg = if let Some(shard_path) = &shard_path_owned {
+                            let seg_path = shard_path.join(format!("seg_{:06}_edges.seg", seg_id));
+                            std::fs::write(&seg_path, bytes)?;
+                            EdgeSegmentV2::open(&seg_path)?
+                        } else {
+                            EdgeSegmentV2::from_bytes(bytes)?
+                        };
+
+                        let desc = SegmentDescriptor::from_meta(
+                            seg_id,
+                            SegmentType::Edges,
+                            Some(shard_id),
+                            meta.clone(),
+                        );
+
+                        l1_edge_descs.push(desc.clone());
+                        total_edges_merged += meta.record_count;
+                        l1_edge_seg = Some(seg);
+                        l1_edge_desc = Some(desc);
+                    }
+
+                    // Set L1 segments and indexes on shard
+                    self.shards[shard_idx].set_l1_segments(
+                        l1_node_seg,
+                        l1_node_desc,
+                        l1_edge_seg,
+                        l1_edge_desc,
+                    );
+                    self.shards[shard_idx].set_l1_indexes(
+                        by_type_idx,
+                        by_file_idx,
+                        by_name_idx,
+                        token_idx,
+                    );
+
+                    full_merged_shard_ids.insert(shard_id);
                 }
 
-                l1_node_descs.push(desc.clone());
-                total_nodes_merged += meta.record_count;
-                l1_node_seg = Some(seg);
-                l1_node_desc = Some(desc);
+                CompactionTier::L0Consolidate => {
+                    any_l0_consolidate = true;
+
+                    // Build the single consolidated L0 node run (if any).
+                    let mut new_l0_node_seg: Option<NodeSegmentV2> = None;
+                    let mut new_l0_node_desc: Option<SegmentDescriptor> = None;
+                    if let (Some(bytes), Some(meta)) =
+                        (&result.node_segment_bytes, &result.node_meta)
+                    {
+                        let seg_id = manifest_store.next_segment_id();
+                        let seg = if let Some(shard_path) = &shard_path_owned {
+                            let seg_path = shard_path.join(format!("seg_{:06}_nodes.seg", seg_id));
+                            std::fs::write(&seg_path, bytes)?;
+                            NodeSegmentV2::open(&seg_path)?
+                        } else {
+                            NodeSegmentV2::from_bytes(bytes)?
+                        };
+                        let desc = SegmentDescriptor::from_meta(
+                            seg_id,
+                            SegmentType::Nodes,
+                            Some(shard_id),
+                            meta.clone(),
+                        );
+                        consolidated_l0_node_descs.push(desc.clone());
+                        new_l0_node_seg = Some(seg);
+                        new_l0_node_desc = Some(desc);
+                    }
+
+                    // Build the single consolidated L0 edge run (if any).
+                    let mut new_l0_edge_seg: Option<EdgeSegmentV2> = None;
+                    let mut new_l0_edge_desc: Option<SegmentDescriptor> = None;
+                    if let (Some(bytes), Some(meta)) =
+                        (&result.edge_segment_bytes, &result.edge_meta)
+                    {
+                        let seg_id = manifest_store.next_segment_id();
+                        let seg = if let Some(shard_path) = &shard_path_owned {
+                            let seg_path = shard_path.join(format!("seg_{:06}_edges.seg", seg_id));
+                            std::fs::write(&seg_path, bytes)?;
+                            EdgeSegmentV2::open(&seg_path)?
+                        } else {
+                            EdgeSegmentV2::from_bytes(bytes)?
+                        };
+                        let desc = SegmentDescriptor::from_meta(
+                            seg_id,
+                            SegmentType::Edges,
+                            Some(shard_id),
+                            meta.clone(),
+                        );
+                        consolidated_l0_edge_descs.push(desc.clone());
+                        new_l0_edge_seg = Some(seg);
+                        new_l0_edge_desc = Some(desc);
+                    }
+
+                    // Preserve this shard's existing L1 descriptor in the manifest
+                    // (untouched by L0-only consolidation).
+                    if let Some(desc) = self.shards[shard_idx].l1_node_descriptor() {
+                        l1_node_descs.push(desc.clone());
+                    }
+                    if let Some(desc) = self.shards[shard_idx].l1_edge_descriptor() {
+                        l1_edge_descs.push(desc.clone());
+                    }
+                    // Keep this shard's existing L1 entries in the global index
+                    // (point-lookup oracle); the L1 segment is unchanged.
+                    if let Some(l1_seg) = self.shards[shard_idx].l1_node_segment() {
+                        let l1_seg_id = self.shards[shard_idx]
+                            .l1_node_descriptor()
+                            .map_or(0, |d| d.segment_id);
+                        for i in 0..l1_seg.record_count() {
+                            global_index_entries.push(IndexEntry::new(
+                                l1_seg.get_id(i),
+                                l1_seg_id,
+                                i as u32,
+                                shard_id,
+                            ));
+                        }
+                    }
+
+                    // Install the consolidated run as the shard's sole L0; L1 and
+                    // tombstones are intentionally preserved.
+                    self.shards[shard_idx].set_consolidated_l0(
+                        new_l0_node_seg,
+                        new_l0_node_desc,
+                        new_l0_edge_seg,
+                        new_l0_edge_desc,
+                    );
+
+                    consolidated_shard_ids.insert(shard_id);
+                }
             }
-
-            // Build L1 edge segment (if any merged edges)
-            let mut l1_edge_seg: Option<EdgeSegmentV2> = None;
-            let mut l1_edge_desc: Option<SegmentDescriptor> = None;
-            if let (Some(bytes), Some(meta)) = (&result.edge_segment_bytes, &result.edge_meta) {
-                let seg_id = manifest_store.next_segment_id();
-
-                let seg = if let Some(shard_path) = &shard_path_owned {
-                    let seg_path = shard_path.join(format!("seg_{:06}_edges.seg", seg_id));
-                    std::fs::write(&seg_path, bytes)?;
-                    EdgeSegmentV2::open(&seg_path)?
-                } else {
-                    EdgeSegmentV2::from_bytes(bytes)?
-                };
-
-                let desc = SegmentDescriptor::from_meta(
-                    seg_id, SegmentType::Edges, Some(shard_id), meta.clone(),
-                );
-
-                l1_edge_descs.push(desc.clone());
-                total_edges_merged += meta.record_count;
-                l1_edge_seg = Some(seg);
-                l1_edge_desc = Some(desc);
-            }
-
-            // Set L1 segments and indexes on shard
-            self.shards[shard_idx].set_l1_segments(
-                l1_node_seg, l1_node_desc,
-                l1_edge_seg, l1_edge_desc,
-            );
-            self.shards[shard_idx].set_l1_indexes(by_type_idx, by_file_idx, by_name_idx, token_idx);
 
             total_tombstones_removed += result.tombstones_removed;
             compacted_shard_ids.insert(shard_id);
@@ -3558,27 +3692,39 @@ impl MultiShardStore {
             self.global_index = Some(GlobalIndex::build(global_index_entries));
         }
 
-        // Build new manifest: keep L0 segments for non-compacted shards only
+        // Build new manifest L0 lists:
+        //  - keep L0 of shards NOT compacted this round,
+        //  - keep L0 of FULL-MERGED shards? no — those L0 were folded into L1, drop,
+        //  - for CONSOLIDATED shards drop the OLD L0 and inject the new consolidated
+        //    L0 descriptor (added below).
         let current = manifest_store.current();
-        let remaining_node_segs: Vec<SegmentDescriptor> = current
+        let mut remaining_node_segs: Vec<SegmentDescriptor> = current
             .node_segments
             .iter()
             .filter(|d| !compacted_shard_ids.contains(&d.shard_id.unwrap_or(0)))
             .cloned()
             .collect();
-        let remaining_edge_segs: Vec<SegmentDescriptor> = current
+        let mut remaining_edge_segs: Vec<SegmentDescriptor> = current
             .edge_segments
             .iter()
             .filter(|d| !compacted_shard_ids.contains(&d.shard_id.unwrap_or(0)))
             .cloned()
             .collect();
+        // Inject the new consolidated L0 runs (these shards STAY at L0).
+        remaining_node_segs.extend(consolidated_l0_node_descs);
+        remaining_edge_segs.extend(consolidated_l0_edge_descs);
+
+        // L1 descriptor set is fully assembled at this point:
+        //   - non-compacted shards: pushed in Phase 1 (existing L1 preserved),
+        //   - FullMerge shards: pushed in the match arm (fresh L1; old L1 folded in),
+        //   - L0Consolidate shards: pushed in the match arm (existing L1 preserved).
+        // Nothing to add from `current.l1_segments` here (that would double-count the
+        // non-compacted shards Phase 1 already handled).
+        let _ = &current; // `current` still pins the version for the filters above.
 
         // Create manifest with remaining L0 segments
-        let mut manifest = manifest_store.create_manifest(
-            remaining_node_segs,
-            remaining_edge_segs,
-            None,
-        )?;
+        let mut manifest =
+            manifest_store.create_manifest(remaining_node_segs, remaining_edge_segs, None)?;
 
         // Inject L1 descriptors and compaction info (MVCC C3.b: fresh Arc).
         manifest.l1_node_segments = std::sync::Arc::new(l1_node_descs);
@@ -3592,15 +3738,24 @@ impl MultiShardStore {
             l0_segments_merged: compacted_shard_ids.len() as u32,
         });
 
-        // Clear tombstones in manifest for compacted shards
-        // (tombstones were applied during merge)
-        manifest.tombstoned_node_ids.clear();
-        manifest.tombstoned_edge_keys.clear();
+        // Tombstone purge: only when EVERY compacted shard did a FullMerge (which
+        // physically filtered the records). If ANY shard did L0-only consolidation,
+        // its deferred tombstones must survive (they shadow records still present in
+        // the untouched L1) — they remain honored at read time and are physically
+        // purged at the next full merge. This is strictly safer than the legacy
+        // unconditional clear and preserves it for the all-FullMerge case (incl. the
+        // threshold=1 barriers).
+        if !any_l0_consolidate {
+            manifest.tombstoned_node_ids.clear();
+            manifest.tombstoned_edge_keys.clear();
+        }
 
         manifest_store.commit(manifest)?;
 
-        // Clear L0 segments from compacted shards (after manifest commit)
-        for &shard_id in &compacted_shard_ids {
+        // FullMerge shards: clear L0 + tombstones (records were filtered into L1).
+        // Consolidated shards already swapped their L0 in-place above (L1 + tombstones
+        // preserved) — they must NOT be cleared here.
+        for &shard_id in &full_merged_shard_ids {
             self.shards[shard_id as usize].clear_l0_after_compaction();
         }
 
@@ -5228,7 +5383,7 @@ mod tests {
     fn test_compact_builds_indexes() {
         // Setup: ephemeral store with 1 shard, add enough data to trigger compaction
         let mut store = MultiShardStore::ephemeral(1);
-        let config = CompactionConfig { segment_threshold: 4 };
+        let config = CompactionConfig { segment_threshold: 4, l1_fanout: f64::INFINITY };
 
         let n1 = make_node("fn_a", "FUNCTION", "a", "src/lib.rs");
         let n2 = make_node("fn_b", "FUNCTION", "b", "src/lib.rs");
@@ -5290,7 +5445,7 @@ mod tests {
         // Setup: compact, then find_nodes should return correct results
         // via the inverted index path
         let mut store = MultiShardStore::ephemeral(1);
-        let config = CompactionConfig { segment_threshold: 4 };
+        let config = CompactionConfig { segment_threshold: 4, l1_fanout: f64::INFINITY };
 
         let nodes = vec![
             make_node("fn_1", "FUNCTION", "one", "src/a.rs"),
@@ -5358,7 +5513,7 @@ mod tests {
     #[test]
     fn test_global_index_point_lookup_after_compact() {
         let mut store = MultiShardStore::ephemeral(2);
-        let config = CompactionConfig { segment_threshold: 4 };
+        let config = CompactionConfig { segment_threshold: 4, l1_fanout: f64::INFINITY };
 
         // Add nodes to different shards (files in different dirs)
         let _n1 = make_node("fn_a", "FUNCTION", "a", "src/a.rs");
@@ -5893,7 +6048,7 @@ mod tests {
     fn test_parallel_compaction_correctness() {
         // Verify parallel compaction (threads=4) produces identical results
         // to sequential compaction (threads=1).
-        let config = CompactionConfig { segment_threshold: 2 };
+        let config = CompactionConfig { segment_threshold: 2, l1_fanout: f64::INFINITY };
 
         // Build identical stores for sequential and parallel runs
         let build_store = || {
@@ -7272,7 +7427,7 @@ mod tests {
 
         // Compaction orphans the old L0 files; GC tries to reclaim them. But the
         // live reader pins them ⇒ files must survive.
-        let config = CompactionConfig { segment_threshold: 1 };
+        let config = CompactionConfig { segment_threshold: 1, l1_fanout: f64::INFINITY };
         store.compact(&mut manifest, &config).unwrap();
         manifest.gc_manifests(1).unwrap();
         manifest.gc_collect().unwrap();
@@ -7326,5 +7481,256 @@ mod tests {
                 .try_into()
                 .unwrap(),
         )
+    }
+
+    // ── W7: size-tiered compaction ──────────────────────────────────────────
+
+    /// W7 acceptance — segment count stays BOUNDED under a write-heavy workload
+    /// driven through the size-tiered auto-compaction path.
+    ///
+    /// Each commit flushes ≥1 L0 segment; auto-compaction fires whenever any shard
+    /// crosses the threshold. The size-tiered policy must keep BOTH the L0 segment
+    /// count (≤ threshold per shard after each round) AND the L1 count (≤1 per
+    /// shard) bounded as the DB grows — never an unbounded segment fan.
+    #[test]
+    fn tiered_compaction_bounds_segment_count() {
+        use crate::storage_v2::compaction::coordinator::should_compact;
+
+        let mut store = MultiShardStore::ephemeral(2);
+        let mut manifest = ManifestStore::ephemeral();
+        let config = CompactionConfig {
+            segment_threshold: 4,
+            l1_fanout: 4.0,
+        };
+
+        let mut max_l0_after_compact = 0usize;
+        for c in 0..400usize {
+            let file = format!("src/m{}/f_{}.ts", c % 7, c);
+            let nodes: Vec<NodeRecordV2> = (0..20)
+                .map(|n| {
+                    make_node(
+                        &format!("FUNCTION:fn_{}_{}@{}", c, n, file),
+                        "FUNCTION",
+                        &format!("fn_{}", n),
+                        &file,
+                    )
+                })
+                .collect();
+            store
+                .commit_batch(nodes, vec![], std::slice::from_ref(&file), HashMap::new(), &mut manifest)
+                .unwrap();
+
+            // Drive the tiered policy directly (mirrors engine_v2::maybe_auto_compact).
+            let needs = (0..store.shards.len()).any(|i| should_compact(&store.shards[i], &config));
+            if needs {
+                store.compact(&mut manifest, &config).unwrap();
+                // After a compaction round, every shard's L0 must be bounded.
+                for i in 0..store.shards.len() {
+                    let l0 = store.shards[i].l0_node_segment_count()
+                        + store.shards[i].l0_edge_segment_count();
+                    max_l0_after_compact = max_l0_after_compact.max(l0);
+                    assert!(
+                        l0 <= config.segment_threshold,
+                        "shard {i} L0={l0} exceeds threshold {} after compaction",
+                        config.segment_threshold
+                    );
+                    // L1 is at most one node + one edge segment per shard.
+                    let l1n = store.shards[i].l1_node_descriptor().is_some() as usize;
+                    let l1e = store.shards[i].l1_edge_descriptor().is_some() as usize;
+                    assert!(l1n <= 1 && l1e <= 1, "shard {i} has >1 L1 run");
+                }
+            }
+        }
+
+        // Manifest segment lists must stay bounded by (shards × tiers), NOT grow
+        // with the 400 commits. With 2 shards: ≤ 2·threshold L0 + 2 L1 node descs.
+        let cur = manifest.current();
+        let l0_nodes = cur.node_segments.len();
+        let l1_nodes = cur.l1_node_segments.len();
+        assert!(
+            l0_nodes <= store.shards.len() * config.segment_threshold,
+            "manifest L0 node descs {l0_nodes} unbounded (shards={})",
+            store.shards.len()
+        );
+        assert!(
+            l1_nodes <= store.shards.len(),
+            "manifest L1 node descs {l1_nodes} exceed shard count {}",
+            store.shards.len()
+        );
+        // The tiered policy must have actually deferred at least one full rewrite,
+        // i.e. it consolidated L0 while L1 was large — otherwise it degenerated to
+        // the legacy always-full-merge and we'd see L0 collapse to 0 every round.
+        assert!(
+            max_l0_after_compact > 0,
+            "expected L0-only consolidation to leave a consolidated run (tiering active)"
+        );
+    }
+
+    /// W7 correctness — a full read-back is IDENTICAL after a tiered compaction
+    /// (including the L0-only consolidation path that leaves L1 + tombstones in
+    /// place). Builds an L1 (full merge), then drives consolidation rounds, then
+    /// compares every node and edge against a pre-compaction snapshot.
+    #[test]
+    fn tiered_read_after_compaction_identical() {
+        let mut store = MultiShardStore::ephemeral(1);
+        let mut manifest = ManifestStore::ephemeral();
+
+        // Phase A: build a large L1 via a full-merge barrier (fanout=∞).
+        let mut all_nodes: Vec<NodeRecordV2> = Vec::new();
+        for c in 0..6usize {
+            let file = format!("base/f_{}.ts", c);
+            let nodes: Vec<NodeRecordV2> = (0..50)
+                .map(|n| {
+                    make_node(
+                        &format!("FUNCTION:base_{}_{}@{}", c, n, file),
+                        "FUNCTION",
+                        &format!("b_{}", n),
+                        &file,
+                    )
+                })
+                .collect();
+            all_nodes.extend(nodes.iter().cloned());
+            store
+                .commit_batch(nodes, vec![], std::slice::from_ref(&file), HashMap::new(), &mut manifest)
+                .unwrap();
+        }
+        let full = CompactionConfig {
+            segment_threshold: 1,
+            l1_fanout: f64::INFINITY,
+        };
+        store.compact(&mut manifest, &full).unwrap();
+        assert!(store.shards[0].l1_node_descriptor().is_some(), "L1 built");
+        let l1_records = store.shards[0]
+            .l1_node_descriptor()
+            .unwrap()
+            .record_count;
+
+        // Phase B: a few small commits, then a TIERED compaction. With a big L1 and
+        // small L0, choose_tier must pick L0Consolidate (L1 untouched).
+        for c in 0..4usize {
+            let file = format!("delta/d_{}.ts", c);
+            let nodes = vec![make_node(
+                &format!("FUNCTION:delta_{}@{}", c, file),
+                "FUNCTION",
+                "d",
+                &file,
+            )];
+            all_nodes.extend(nodes.iter().cloned());
+            store
+                .commit_batch(nodes, vec![], std::slice::from_ref(&file), HashMap::new(), &mut manifest)
+                .unwrap();
+        }
+        let tiered = CompactionConfig {
+            segment_threshold: 1,
+            l1_fanout: 4.0,
+        };
+        store.compact(&mut manifest, &tiered).unwrap();
+        // L1 record count UNCHANGED ⇒ the L0-only consolidation left L1 alone.
+        assert_eq!(
+            store.shards[0].l1_node_descriptor().unwrap().record_count,
+            l1_records,
+            "tiered compaction must NOT rewrite the large L1"
+        );
+
+        // Every node ever committed must be readable with identical content.
+        let snap = store.snapshot(&manifest);
+        assert_eq!(store.node_count_at(&snap), all_nodes.len(), "node count identical");
+        for n in &all_nodes {
+            let got = store.get_node_at(&snap, n.id);
+            assert!(got.is_some(), "node {} missing after tiered compaction", n.semantic_id);
+            let got = got.unwrap();
+            assert_eq!(got.semantic_id, n.semantic_id);
+            assert_eq!(got.name, n.name);
+            assert_eq!(got.file, n.file);
+        }
+    }
+
+    /// W7 MVCC — a snapshot pinned BEFORE compaction reads consistent data
+    /// THROUGHOUT a compaction round (both FullMerge of one shard and
+    /// L0Consolidate of another), and a snapshot taken AFTER sees identical data.
+    #[test]
+    fn tiered_mvcc_snapshot_consistent_across_compaction() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("tiered_mvcc.rfdb");
+        std::fs::create_dir_all(&db_path).unwrap();
+        let mut store = MultiShardStore::create(&db_path, 1).unwrap();
+        let mut manifest = ManifestStore::create(&db_path).unwrap();
+
+        // Build a big L1, then a few small L0 commits (so tiering picks consolidate).
+        let mut expect: Vec<NodeRecordV2> = Vec::new();
+        for c in 0..6usize {
+            let file = format!("src/f_{}.ts", c);
+            let nodes: Vec<NodeRecordV2> = (0..40)
+                .map(|n| {
+                    make_node(
+                        &format!("FUNCTION:x_{}_{}@{}", c, n, file),
+                        "FUNCTION",
+                        &format!("x_{}", n),
+                        &file,
+                    )
+                })
+                .collect();
+            expect.extend(nodes.iter().cloned());
+            store
+                .commit_batch(nodes, vec![], std::slice::from_ref(&file), HashMap::new(), &mut manifest)
+                .unwrap();
+        }
+        let full = CompactionConfig {
+            segment_threshold: 1,
+            l1_fanout: f64::INFINITY,
+        };
+        store.compact(&mut manifest, &full).unwrap();
+        for c in 0..3usize {
+            let file = format!("late/l_{}.ts", c);
+            let nodes = vec![make_node(
+                &format!("FUNCTION:late_{}@{}", c, file),
+                "FUNCTION",
+                "l",
+                &file,
+            )];
+            expect.extend(nodes.iter().cloned());
+            store
+                .commit_batch(nodes, vec![], std::slice::from_ref(&file), HashMap::new(), &mut manifest)
+                .unwrap();
+        }
+
+        // Pin a snapshot BEFORE compaction.
+        let snap_before = store.snapshot(&manifest);
+        let v_before = snap_before.version;
+        let count_before = store.node_count_at(&snap_before);
+        assert_eq!(count_before, expect.len());
+
+        // Run a TIERED compaction (L0Consolidate — big L1, small L0).
+        let tiered = CompactionConfig {
+            segment_threshold: 1,
+            l1_fanout: 4.0,
+        };
+        store.compact(&mut manifest, &tiered).unwrap();
+
+        // The pinned snapshot still reads its version's data, intact, post-compaction.
+        assert_eq!(
+            store.node_count_at(&snap_before),
+            count_before,
+            "pinned snapshot count must be stable across compaction"
+        );
+        for n in &expect {
+            assert!(
+                store.get_node_at(&snap_before, n.id).is_some(),
+                "pinned snapshot lost node {} across compaction",
+                n.semantic_id
+            );
+        }
+        // The pinned version must still be retained (its segments not reclaimed).
+        assert_eq!(manifest.min_pinned_version(), Some(v_before));
+
+        // A fresh snapshot taken AFTER compaction sees identical logical data.
+        let snap_after = store.snapshot(&manifest);
+        assert!(snap_after.version >= v_before);
+        assert_eq!(store.node_count_at(&snap_after), expect.len());
+        for n in &expect {
+            let a = store.get_node_at(&snap_after, n.id);
+            assert!(a.is_some(), "fresh snapshot missing node {}", n.semantic_id);
+            assert_eq!(a.unwrap().semantic_id, n.semantic_id);
+        }
     }
 }

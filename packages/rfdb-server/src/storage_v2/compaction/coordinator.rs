@@ -19,7 +19,7 @@ use crate::storage_v2::compaction::merge::{
 use crate::storage_v2::compaction::types::CompactionConfig;
 use crate::storage_v2::manifest::SegmentDescriptor;
 use crate::storage_v2::segment::{EdgeSegmentV2, NodeSegmentV2};
-use crate::storage_v2::shard::Shard;
+use crate::storage_v2::shard::{Shard, TombstoneSet};
 use crate::storage_v2::types::{SegmentMeta, SegmentType};
 use crate::storage_v2::writer::{EdgeSegmentWriter, NodeSegmentWriter};
 
@@ -34,6 +34,82 @@ use crate::storage_v2::writer::{EdgeSegmentWriter, NodeSegmentWriter};
 pub fn should_compact(shard: &Shard, config: &CompactionConfig) -> bool {
     let total_l0 = shard.l0_node_segment_count() + shard.l0_edge_segment_count();
     total_l0 >= config.segment_threshold
+}
+
+// ── Compaction Tier ──────────────────────────────────────────────────
+
+/// Which tier the compaction output lands in.
+///
+/// Size-tiered policy (C3 gap 1 fix): a shard whose existing L1 is large relative
+/// to its accumulated L0 does NOT pay the O(|L1|) full rewrite every round. Instead
+/// it consolidates its L0 runs among themselves into a single new L0 run, leaving
+/// the L1 (and the cumulative tombstone set) untouched.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompactionTier {
+    /// Full merge: L0 + existing L1 → new L1. Tombstones are physically removed.
+    /// The classic single-tier behavior; also the forced path when `l1_fanout = ∞`.
+    FullMerge,
+    /// L0-only consolidation: merge the L0 runs into ONE new L0 run, leaving L1
+    /// in place. Tombstones are NOT physically removed (records they shadow may
+    /// live in the untouched L1) — they stay in the cumulative manifest set and
+    /// are still honored at read time, then physically purged at the next
+    /// `FullMerge`. Cost is O(|L0|), independent of DB size.
+    L0Consolidate,
+}
+
+/// Decide which tier a shard's compaction should target under the size-tiered
+/// policy.
+///
+/// Rule: fold L0 into L1 (`FullMerge`) when the accumulated L0 record count has
+/// grown to within a `l1_fanout` factor of the L1 record count —
+/// `l0_records * l1_fanout >= l1_records`. Otherwise `L0Consolidate`.
+///
+/// `FullMerge` is always chosen when:
+/// - the shard has no L1 yet (nothing to defer against), or
+/// - `l1_fanout` is non-finite / `>= ∞` (explicit-compact barriers force the
+///   complete fold — see `engine_v2::compact` / `end_bulk_load`), or
+/// - `l1_fanout <= 1.0` and L0 already meets the legacy "any L0" trigger.
+///
+/// Records (not bytes) drive the ratio: counts are exact and cheap, and L1
+/// rewrite cost scales with record count.
+pub fn choose_tier(shard: &Shard, config: &CompactionConfig) -> CompactionTier {
+    // No L1 ⇒ the "full merge" degenerates to merging L0 into a first L1; there is
+    // no large run to protect, so always FullMerge (cost is O(|L0|) anyway).
+    let l1_records: u64 = shard
+        .l1_node_descriptor()
+        .map(|d| d.record_count)
+        .unwrap_or(0)
+        + shard
+            .l1_edge_descriptor()
+            .map(|d| d.record_count)
+            .unwrap_or(0);
+    if l1_records == 0 {
+        return CompactionTier::FullMerge;
+    }
+    // Barrier / legacy: ∞ (or any non-finite) forces the complete fold.
+    if !config.l1_fanout.is_finite() {
+        return CompactionTier::FullMerge;
+    }
+
+    let l0_records: u64 = shard
+        .l0_node_descriptors()
+        .iter()
+        .map(|d| d.record_count)
+        .sum::<u64>()
+        + shard
+            .l0_edge_descriptors()
+            .iter()
+            .map(|d| d.record_count)
+            .sum::<u64>();
+
+    // Fold once L0 has caught up to within `l1_fanout` of L1; otherwise defer the
+    // big rewrite and consolidate L0 among itself. f64 mul is exact enough at these
+    // magnitudes (record counts are well under 2^53).
+    if (l0_records as f64) * config.l1_fanout >= (l1_records as f64) {
+        CompactionTier::FullMerge
+    } else {
+        CompactionTier::L0Consolidate
+    }
 }
 
 // ── Compaction Result ───────────────────────────────────────────────
@@ -53,8 +129,11 @@ pub struct ShardCompactionResult {
     pub edge_meta: Option<SegmentMeta>,
     /// Number of L0 segments that were merged
     pub l0_segments_merged: u32,
-    /// Number of tombstones that were physically removed
+    /// Number of tombstones that were physically removed (0 for `L0Consolidate`,
+    /// which defers tombstone purge to the next full merge)
     pub tombstones_removed: u64,
+    /// Which tier the output lands in (drives the caller's shard/manifest surgery).
+    pub tier: CompactionTier,
 }
 
 // ── Compact Shard ───────────────────────────────────────────────────
@@ -75,20 +154,48 @@ pub struct ShardCompactionResult {
 /// - Swapping shard state (set_l1_segments + clear_l0_after_compaction)
 ///
 /// Complexity: O(N log N + M log M) where N = total nodes, M = total edges
+///
+/// This is the unconditional full-merge entry (always `FullMerge`). For the
+/// size-tiered policy use [`compact_shard_tiered`].
 pub fn compact_shard(shard: &Shard) -> Result<ShardCompactionResult> {
+    compact_shard_with_tier(shard, CompactionTier::FullMerge)
+}
+
+/// Compact a shard under the size-tiered policy: [`choose_tier`] decides whether
+/// to fold L0 into L1 (`FullMerge`) or consolidate L0 among itself
+/// (`L0Consolidate`), then performs that merge.
+///
+/// `L0Consolidate` leaves L1 + tombstones untouched and produces a single new L0
+/// run, so the per-round cost is O(|L0|) instead of O(|L1|) (= O(DB)). Correctness
+/// is preserved because the deferred tombstones stay in the cumulative manifest
+/// set and are honored at read time (snapshot reads filter every L0/L1 hit through
+/// `snap.tombstones`); they are physically purged at the next `FullMerge`.
+pub fn compact_shard_tiered(
+    shard: &Shard,
+    config: &CompactionConfig,
+) -> Result<ShardCompactionResult> {
+    compact_shard_with_tier(shard, choose_tier(shard, config))
+}
+
+fn compact_shard_with_tier(shard: &Shard, tier: CompactionTier) -> Result<ShardCompactionResult> {
     let tombstones = shard.tombstones();
 
     let l0_segments_merged =
         (shard.l0_node_segment_count() + shard.l0_edge_segment_count()) as u32;
 
-    let tombstones_before =
-        (tombstones.node_count() + tombstones.edge_count()) as u64;
+    // A full merge physically removes tombstones (the merge filters every record
+    // through them, and the caller clears the cumulative set). An L0-only
+    // consolidation defers that purge to the next full merge, so it removes 0.
+    let tombstones_before = match tier {
+        CompactionTier::FullMerge => (tombstones.node_count() + tombstones.edge_count()) as u64,
+        CompactionTier::L0Consolidate => 0,
+    };
 
     // Merge nodes and edges in parallel — they read different segment
     // types from the same shard and produce independent results.
     let (node_result, edge_result) = rayon::join(
-        || merge_and_write_nodes(shard),
-        || merge_and_write_edges(shard),
+        || merge_and_write_nodes(shard, tier),
+        || merge_and_write_edges(shard, tier),
     );
 
     let (node_segment_bytes, node_meta) = node_result?;
@@ -101,21 +208,35 @@ pub fn compact_shard(shard: &Shard) -> Result<ShardCompactionResult> {
         edge_meta,
         l0_segments_merged,
         tombstones_removed: tombstones_before,
+        tier,
     })
 }
 
-fn merge_and_write_nodes(shard: &Shard) -> Result<(Option<Vec<u8>>, Option<SegmentMeta>)> {
-    let tombstones = shard.tombstones();
-    let l0_node_segs: Vec<&NodeSegmentV2> = shard
-        .l0_node_segments()
-        .iter()
-        .rev()
-        .collect();
+fn merge_and_write_nodes(
+    shard: &Shard,
+    tier: CompactionTier,
+) -> Result<(Option<Vec<u8>>, Option<SegmentMeta>)> {
+    let l0_node_segs: Vec<&NodeSegmentV2> = shard.l0_node_segments().iter().rev().collect();
 
+    // FullMerge folds the existing L1 in (oldest, last) and applies tombstones.
+    // L0Consolidate merges only the L0 runs and does NOT apply tombstones — the
+    // shadowed records may live in the untouched L1, so the tombstone must survive
+    // in the cumulative manifest set (still honored at read time) until a later
+    // full merge physically purges it.
     let mut all_node_segs = l0_node_segs;
-    if let Some(l1) = shard.l1_node_segment() {
-        all_node_segs.push(l1);
-    }
+    let empty_tombstones;
+    let tombstones = match tier {
+        CompactionTier::FullMerge => {
+            if let Some(l1) = shard.l1_node_segment() {
+                all_node_segs.push(l1);
+            }
+            shard.tombstones()
+        }
+        CompactionTier::L0Consolidate => {
+            empty_tombstones = TombstoneSet::new();
+            &empty_tombstones
+        }
+    };
 
     // Base fast path (the dominant analyzer workload) stays byte-identical: first-insert-
     // wins dedup, no per-record tag decode. Only when an input carries derived columns do
@@ -146,18 +267,26 @@ fn merge_and_write_nodes(shard: &Shard) -> Result<(Option<Vec<u8>>, Option<Segme
     Ok((Some(cursor.into_inner()), Some(meta)))
 }
 
-fn merge_and_write_edges(shard: &Shard) -> Result<(Option<Vec<u8>>, Option<SegmentMeta>)> {
-    let tombstones = shard.tombstones();
-    let l0_edge_segs: Vec<&EdgeSegmentV2> = shard
-        .l0_edge_segments()
-        .iter()
-        .rev()
-        .collect();
+fn merge_and_write_edges(
+    shard: &Shard,
+    tier: CompactionTier,
+) -> Result<(Option<Vec<u8>>, Option<SegmentMeta>)> {
+    let l0_edge_segs: Vec<&EdgeSegmentV2> = shard.l0_edge_segments().iter().rev().collect();
 
     let mut all_edge_segs = l0_edge_segs;
-    if let Some(l1) = shard.l1_edge_segment() {
-        all_edge_segs.push(l1);
-    }
+    let empty_tombstones;
+    let tombstones = match tier {
+        CompactionTier::FullMerge => {
+            if let Some(l1) = shard.l1_edge_segment() {
+                all_edge_segs.push(l1);
+            }
+            shard.tombstones()
+        }
+        CompactionTier::L0Consolidate => {
+            empty_tombstones = TombstoneSet::new();
+            &empty_tombstones
+        }
+    };
 
     let any_derived = all_edge_segs.iter().any(|s| s.has_derived_columns());
 
@@ -249,7 +378,7 @@ mod tests {
     #[test]
     fn test_should_compact_below_threshold() {
         let shard = Shard::ephemeral();
-        let config = CompactionConfig { segment_threshold: 4 };
+        let config = CompactionConfig { segment_threshold: 4, l1_fanout: f64::INFINITY };
         assert!(!should_compact(&shard, &config));
     }
 
@@ -262,7 +391,7 @@ mod tests {
             shard.add_nodes(vec![node]);
             shard.flush_with_ids(Some(i as u64 + 1), None).unwrap();
         }
-        let config = CompactionConfig { segment_threshold: 4 };
+        let config = CompactionConfig { segment_threshold: 4, l1_fanout: f64::INFINITY };
         assert!(should_compact(&shard, &config));
     }
 
@@ -358,5 +487,140 @@ mod tests {
         assert_eq!(desc.byte_size, 4096);
         assert_eq!(desc.shard_id, Some(0));
         assert!(desc.node_types.contains("FUNCTION"));
+    }
+
+    // ── W7: size-tiered policy ──────────────────────────────────────────────
+
+    /// Build an L1 of `l1_count` distinct nodes on `shard` (full-merge bytes
+    /// in-memory), then leave the shard with that L1 and an empty L0.
+    fn install_l1(shard: &mut Shard, l1_count: usize) {
+        for i in 0..l1_count {
+            shard.add_nodes(vec![make_node(
+                &format!("l1_{}", i),
+                "FUNCTION",
+                "f",
+                "l1.rs",
+            )]);
+        }
+        shard.flush_with_ids(Some(1000), None).unwrap();
+        let result = compact_shard(shard).unwrap();
+        let bytes = result.node_segment_bytes.unwrap();
+        let meta = result.node_meta.unwrap();
+        let seg = crate::storage_v2::segment::NodeSegmentV2::from_bytes(&bytes).unwrap();
+        let desc = build_l1_descriptor(2000, SegmentType::Nodes, None, &meta);
+        shard.set_l1_segments(Some(seg), Some(desc), None, None);
+        shard.clear_l0_after_compaction();
+        assert_eq!(
+            shard.l1_node_descriptor().unwrap().record_count,
+            l1_count as u64
+        );
+    }
+
+    #[test]
+    fn choose_tier_no_l1_is_full_merge() {
+        let mut shard = Shard::ephemeral();
+        shard.add_nodes(vec![make_node("a", "FUNCTION", "a", "f.rs")]);
+        shard.flush_with_ids(Some(1), None).unwrap();
+        let config = CompactionConfig {
+            segment_threshold: 1,
+            l1_fanout: 4.0,
+        };
+        // No L1 yet ⇒ always FullMerge.
+        assert_eq!(choose_tier(&shard, &config), CompactionTier::FullMerge);
+    }
+
+    #[test]
+    fn choose_tier_infinite_fanout_forces_full_merge() {
+        let mut shard = Shard::ephemeral();
+        install_l1(&mut shard, 1000);
+        // Tiny L0 next to a big L1, but fanout=∞ forces the full merge (barrier).
+        shard.add_nodes(vec![make_node("new", "FUNCTION", "n", "f.rs")]);
+        shard.flush_with_ids(Some(3), None).unwrap();
+        let config = CompactionConfig {
+            segment_threshold: 1,
+            l1_fanout: f64::INFINITY,
+        };
+        assert_eq!(choose_tier(&shard, &config), CompactionTier::FullMerge);
+    }
+
+    #[test]
+    fn choose_tier_small_l0_big_l1_consolidates() {
+        let mut shard = Shard::ephemeral();
+        install_l1(&mut shard, 1000);
+        // L0 = 10 records, L1 = 1000, fanout 4 ⇒ 10*4=40 < 1000 ⇒ L0Consolidate.
+        for i in 0..10 {
+            shard.add_nodes(vec![make_node(
+                &format!("new_{}", i),
+                "FUNCTION",
+                "n",
+                "f.rs",
+            )]);
+        }
+        shard.flush_with_ids(Some(3), None).unwrap();
+        let config = CompactionConfig {
+            segment_threshold: 1,
+            l1_fanout: 4.0,
+        };
+        assert_eq!(choose_tier(&shard, &config), CompactionTier::L0Consolidate);
+    }
+
+    #[test]
+    fn choose_tier_l0_caught_up_full_merges() {
+        let mut shard = Shard::ephemeral();
+        install_l1(&mut shard, 100);
+        // L0 = 30, L1 = 100, fanout 4 ⇒ 30*4=120 >= 100 ⇒ FullMerge.
+        for i in 0..30 {
+            shard.add_nodes(vec![make_node(
+                &format!("new_{}", i),
+                "FUNCTION",
+                "n",
+                "f.rs",
+            )]);
+        }
+        shard.flush_with_ids(Some(3), None).unwrap();
+        let config = CompactionConfig {
+            segment_threshold: 1,
+            l1_fanout: 4.0,
+        };
+        assert_eq!(choose_tier(&shard, &config), CompactionTier::FullMerge);
+    }
+
+    /// L0-only consolidation must NOT physically apply tombstones (they may shadow
+    /// records in the untouched L1). It dedups L0 newest-wins, leaves the count of
+    /// L0-only records intact, and reports tombstones_removed = 0.
+    #[test]
+    fn l0_consolidate_defers_tombstones() {
+        let mut shard = Shard::ephemeral();
+        install_l1(&mut shard, 200);
+        // One of the L1-resident ids gets tombstoned.
+        let l1_victim = make_node("l1_0", "FUNCTION", "f", "l1.rs");
+        // New L0 records (small relative to L1) + a tombstone on an L1 id.
+        for i in 0..5 {
+            shard.add_nodes(vec![make_node(
+                &format!("new_{}", i),
+                "FUNCTION",
+                "n",
+                "f.rs",
+            )]);
+        }
+        shard.flush_with_ids(Some(3), None).unwrap();
+        let mut ts = TombstoneSet::new();
+        ts.add_nodes(vec![l1_victim.id]);
+        shard.set_tombstones(ts);
+
+        let config = CompactionConfig {
+            segment_threshold: 1,
+            l1_fanout: 4.0,
+        };
+        assert_eq!(choose_tier(&shard, &config), CompactionTier::L0Consolidate);
+        let result = compact_shard_tiered(&shard, &config).unwrap();
+        assert_eq!(result.tier, CompactionTier::L0Consolidate);
+        // The 5 new L0 records survive as one consolidated run; tombstone deferred.
+        let meta = result.node_meta.unwrap();
+        assert_eq!(meta.record_count, 5, "only the L0 records consolidate");
+        assert_eq!(
+            result.tombstones_removed, 0,
+            "L0-only consolidation defers tombstone purge"
+        );
     }
 }

@@ -822,6 +822,39 @@ impl Shard {
         self.edge_descriptors.clear();
         self.tombstones = Arc::new(TombstoneSet::new());
     }
+
+    /// Install a size-tiered L0-only consolidation result: replace ALL existing L0
+    /// segments with the single consolidated run(s), while leaving L1 and the
+    /// cumulative tombstone set UNTOUCHED.
+    ///
+    /// Unlike [`Self::clear_l0_after_compaction`], this does NOT clear tombstones:
+    /// the consolidation did not physically remove them (records they shadow may
+    /// live in the still-present L1), so they must survive to keep being honored at
+    /// read time until the next full merge purges them (spec: deferred-tombstone
+    /// LSM semantics). Each `Some` segment becomes the sole L0 run of its type
+    /// (oldest, dedup-applied), preserving the L0-newest-wins read order: later
+    /// flushes append after it.
+    pub fn set_consolidated_l0(
+        &mut self,
+        node_segment: Option<NodeSegmentV2>,
+        node_descriptor: Option<SegmentDescriptor>,
+        edge_segment: Option<EdgeSegmentV2>,
+        edge_descriptor: Option<SegmentDescriptor>,
+    ) {
+        self.node_segments.clear();
+        self.node_descriptors.clear();
+        if let (Some(seg), Some(desc)) = (node_segment, node_descriptor) {
+            self.node_segments.push(seg);
+            self.node_descriptors.push(desc);
+        }
+        self.edge_segments.clear();
+        self.edge_descriptors.clear();
+        if let (Some(seg), Some(desc)) = (edge_segment, edge_descriptor) {
+            self.edge_segments.push(seg);
+            self.edge_descriptors.push(desc);
+        }
+        // L1 and tombstones intentionally preserved.
+    }
 }
 
 // -- Flush --------------------------------------------------------------------
