@@ -12,6 +12,19 @@ use crate::storage_v2::resource::TuningProfile;
 pub struct CompactionConfig {
     /// Minimum L0 segment count per shard to trigger compaction (default: 4)
     pub segment_threshold: usize,
+
+    /// Size-tiered fanout ratio: the L0→L1 full merge (which rewrites the entire
+    /// L1 run, cost O(|L1|)) is performed only when the accumulated L0 record
+    /// count has grown to at least `1/l1_fanout` of the L1 record count. While L0
+    /// is smaller than that, compaction instead CONSOLIDATES the L0 runs among
+    /// themselves into a single new L0 run (cost O(|L0|)), leaving the large L1
+    /// untouched. This bounds the AMORTIZED rewrite work: each L1 byte is rewritten
+    /// O(log_fanout(DB)) times over a full ingest instead of once per compaction
+    /// round (the old O(DB)-per-round full rewrite — C3 gap 1). A value of 1.0
+    /// degenerates to the legacy "always full-merge" policy.
+    ///
+    /// Default: 4.0 (fold L0 into L1 once L0 ≥ 25% of L1).
+    pub l1_fanout: f64,
 }
 
 impl CompactionConfig {
@@ -22,6 +35,7 @@ impl CompactionConfig {
     pub fn from_profile(profile: &TuningProfile) -> Self {
         Self {
             segment_threshold: profile.segment_threshold,
+            l1_fanout: 4.0,
         }
     }
 }
@@ -30,6 +44,7 @@ impl Default for CompactionConfig {
     fn default() -> Self {
         Self {
             segment_threshold: 4,
+            l1_fanout: 4.0,
         }
     }
 }
@@ -76,8 +91,10 @@ mod tests {
     fn test_compaction_config_custom_threshold() {
         let config = CompactionConfig {
             segment_threshold: 8,
+            l1_fanout: 4.0,
         };
         assert_eq!(config.segment_threshold, 8);
+        assert_eq!(config.l1_fanout, 4.0);
     }
 
     #[test]

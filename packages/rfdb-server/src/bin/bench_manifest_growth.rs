@@ -109,6 +109,9 @@ struct Args {
     edges_per_file: usize,
     sample_every: usize,
     compact_every: usize,
+    bulk_load: bool,
+    auto_threshold: usize,
+    fanout: f64,
 }
 
 impl Default for Args {
@@ -119,6 +122,9 @@ impl Default for Args {
             edges_per_file: 40,
             sample_every: 200,
             compact_every: 0,
+            bulk_load: false,
+            auto_threshold: 4,
+            fanout: 4.0,
         }
     }
 }
@@ -135,6 +141,20 @@ fn parse_args() -> Args {
             "--edges-per-file" => a.edges_per_file = v(),
             "--sample-every" => a.sample_every = v(),
             "--compact-every" => a.compact_every = v(),
+            "--auto-threshold" => a.auto_threshold = v(),
+            "--fanout" => {
+                // Accept "inf" for the legacy always-full-merge A/B baseline.
+                let raw = &argv[i + 1];
+                a.fanout = if raw.eq_ignore_ascii_case("inf") {
+                    f64::INFINITY
+                } else {
+                    raw.parse().expect("expected float for --fanout")
+                };
+            }
+            "--bulk-load" => {
+                a.bulk_load = true;
+                i -= 1; // flag has no value
+            }
             "-h" | "--help" => {
                 eprintln!(
                     "usage: bench_manifest_growth [--files N] [--nodes-per-file N] \
@@ -171,13 +191,26 @@ fn main() {
 
     println!("# RFD-71 manifest / per-commit growth probe\n");
     println!(
-        "files={}  nodes_per_file={}  edges_per_file={}  compact_every={}\n",
-        args.files, args.nodes_per_file, args.edges_per_file, args.compact_every
+        "files={}  nodes_per_file={}  edges_per_file={}  compact_every={}  bulk_load={}  auto_threshold={}  fanout={}\n",
+        args.files, args.nodes_per_file, args.edges_per_file, args.compact_every,
+        args.bulk_load, args.auto_threshold, args.fanout
     );
     println!("| commit | nodes | cur manifest B | manifests/ B | #man | segments/ B | #seg | commit ms | comp ms |");
     println!("|-------:|------:|---------------:|-------------:|-----:|------------:|-----:|----------:|--------:|");
 
+    // Bulk-load mode exercises the per-commit SIZE-TIERED auto-compaction (W7): each
+    // commit may fire `maybe_auto_compact`, whose cost the `commit ms` column then
+    // absorbs. (Without bulk-load, `--compact-every` calls the explicit FULL-MERGE
+    // barrier instead.)
+    if args.bulk_load {
+        engine.set_auto_compact_threshold(args.auto_threshold);
+        engine.set_auto_compact_fanout(args.fanout);
+        engine.begin_bulk_load().unwrap();
+    }
+
+    let wall = Instant::now();
     let mut total_nodes = 0usize;
+    let mut prev_auto = 0u64;
     for c in 0..args.files {
         let (nodes, edges, file) = make_file(c, args.nodes_per_file, args.edges_per_file);
         total_nodes += nodes.len();
@@ -186,10 +219,19 @@ fn main() {
         engine
             .commit_batch(nodes, edges, std::slice::from_ref(&file), HashMap::new())
             .unwrap();
+        // In bulk-load, commit_ms INCLUDES any auto-compaction fired this commit.
         let commit_ms = t.elapsed().as_secs_f64() * 1000.0;
 
         let mut comp_ms = 0.0;
-        if args.compact_every > 0 && (c + 1) % args.compact_every == 0 {
+        if args.bulk_load {
+            // Surface the auto-compaction cost in the comp column when it fired this
+            // commit (approximated by the slice of commit_ms above threshold-quick).
+            let now_auto = engine.auto_compactions();
+            if now_auto > prev_auto {
+                comp_ms = commit_ms; // this commit's time was dominated by the auto-compact
+                prev_auto = now_auto;
+            }
+        } else if args.compact_every > 0 && (c + 1) % args.compact_every == 0 {
             let tc = Instant::now();
             engine.compact().unwrap();
             comp_ms = tc.elapsed().as_secs_f64() * 1000.0;
@@ -214,7 +256,14 @@ fn main() {
         }
     }
 
+    let ingest_wall_ms = wall.elapsed().as_secs_f64() * 1000.0;
+    let auto_compactions = engine.auto_compactions();
+
     // Final flush so on-disk state is complete for the last reading.
+    if args.bulk_load {
+        // end_bulk_load runs the final FULL-MERGE barrier + durable barrier.
+        engine.end_bulk_load().unwrap();
+    }
     engine.flush().unwrap();
     let (man_bytes, _) = dir_stats(&manifests_dir);
     let cur_man = largest_file_bytes(&manifests_dir);
@@ -223,6 +272,12 @@ fn main() {
         "\nfinal: nodes={}  current-manifest={} B  manifests/={} B  segments/={} B",
         total_nodes, cur_man, man_bytes, seg_bytes
     );
+    if args.bulk_load {
+        println!(
+            "bulk-load: ingest_wall={:.1} ms  auto_compactions={}  (size-tiered per-commit path)",
+            ingest_wall_ms, auto_compactions
+        );
+    }
     println!(
         "note: current-manifest bytes is serialised under the engine lock on EVERY commit; \
          watch whether it (and commit ms) grow with the graph."

@@ -2,9 +2,9 @@
  * Tests for commanderExtractor (REG-1112).
  *
  * The commanderExtractor implements SpecedContractExtractor for `cli:command`
- * FEATURE nodes produced by libraryCallbackEnricher. Each test seeds a small
- * synthetic graph that mirrors what the JS analyzer + libraryCallbackEnricher
- * would produce for one of:
+ * FEATURE nodes. Each test seeds a small synthetic graph that mirrors what the
+ * JS analyzer + the `js_entrypoint_features_nodes` / `_edges` DERIVE PACKS now
+ * produce for one of:
  *
  *   const cmd = new Command('build <input>')
  *     .description('Build the project')
@@ -13,62 +13,36 @@
  *     .option('--depth <n>', 'depth', '5')
  *     .action(handler);
  *
- * We run libraryCallbackEnricher first to produce the cli:command FEATURE,
- * then invoke the extractor directly (bypassing the framework) and verify
- * the returned SpecedContractData. Going through the framework as well would
- * be redundant — the framework's own tests already cover dispatch.
+ * HISTORY: these tests used to materialise the `cli:command` FEATURE by running
+ * `libraryCallbackEnricher`. As of Loop-2 (continuing the Wave-14 HTTP
+ * precedent, PR #397) commander/`@modelcontextprotocol/sdk`/vscode were RETIRED
+ * from that enricher's LIBRARY_NODE_TYPE map — the default-on
+ * `js_entrypoint_features_nodes` / `_edges` derive packs are now the sole
+ * producer of js `cli:command` / `mcp:tool` / `vscode:command` nodes. So the
+ * enricher seeding no longer mints a FEATURE and the extractor tests had nothing
+ * to consume.
+ *
+ * `commanderExtractor` itself is NOT retired — it still transforms any
+ * `cli:command` node → SpecedContractData at runtime regardless of who minted
+ * it. These tests now seed the `cli:command` node DIRECTLY in the exact shape
+ * the derive pack emits (node `metadata.anchorCall` = the `.action`
+ * registration call id, `metadata.method` = the BARE method name `action`,
+ * `metadata.library` = `commander`), anchored on the seeded `.action` CALL of
+ * the chain. This exercises the REAL runtime input contract of the extractor —
+ * the same contract the pack's @materialize_node output satisfies in
+ * production. Going through the framework as well would be redundant.
  */
 
-import { describe, it, before, after, beforeEach } from 'node:test';
+import { describe, it, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { join } from 'node:path';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-
-import { EffectsLookup } from '@grafema/util';
-import { enrichLibraryCallbacks } from '@grafema/util/enrichers/libraryCallbackEnricher';
 import { commanderExtractor } from '@grafema/util/enrichers/extractors/commanderExtractor';
 import { createTestDatabase, cleanupAllTestDatabases } from '../helpers/TestRFDB.js';
 
-// ---------------------------------------------------------------------------
-// One effects-db with the commander entries the enricher uses.
-// ---------------------------------------------------------------------------
-
-let effectsDbDir;
-let effectsLookup;
-
-before(() => {
-  effectsDbDir = mkdtempSync(join(tmpdir(), 'effectsdb-cmd-extr-'));
-  mkdirSync(join(effectsDbDir, 'packages'), { recursive: true });
-  mkdirSync(join(effectsDbDir, 'runtimes'), { recursive: true });
-  writeFileSync(
-    join(effectsDbDir, 'packages', 'commander.yaml'),
-    [
-      'commander:',
-      '  Command.command:',
-      '    effects: [MUTATION]',
-      '    args:',
-      '      - index: 0',
-      '        role: COMMAND_NAME',
-      '    returns: { type: Command }',
-      '  Command.action:',
-      '    effects: [MUTATION]',
-      '    args:',
-      '      - index: 0',
-      '        role: ENTRY_POINT_CALLBACK',
-      '    returns: { type: Command }',
-      '  Command.description: { effects: [MUTATION], returns: { type: Command } }',
-      '  Command.argument:    { effects: [MUTATION], returns: { type: Command } }',
-      '  Command.option:      { effects: [MUTATION], returns: { type: Command } }',
-      '  Command.requiredOption: { effects: [MUTATION], returns: { type: Command } }',
-      '',
-    ].join('\n'),
-  );
-  effectsLookup = EffectsLookup.load(effectsDbDir);
-});
+// No effects-db / enricher needed any more: the cli:command FEATURE is minted
+// by the js_entrypoint_features derive pack in production, so these tests seed
+// the FEATURE node directly (the #403 httpRouteExtractor reseed precedent).
 
 after(async () => {
-  if (effectsDbDir) rmSync(effectsDbDir, { recursive: true, force: true });
   await cleanupAllTestDatabases();
 });
 
@@ -184,19 +158,49 @@ async function seed(backend, file, steps) {
   return { actionCallId };
 }
 
-/** Look up the cli:command FEATURE node (after enricher run). */
+/** Look up the cli:command FEATURE node. */
 async function getCliCommandFeature(client) {
   for await (const wn of client.queryNodes({ type: 'cli:command' })) return wn;
   return null;
 }
 
+/** Find the wire node for the `<obj>.action` CALL in the seeded chain. */
+async function findActionCallWire(client) {
+  for await (const wn of client.queryNodes({ type: 'CALL', name: '<obj>.action' })) {
+    return wn;
+  }
+  return null;
+}
+
 /**
- * Run libraryCallbackEnricher to materialise the cli:command FEATURE, then
- * invoke commanderExtractor on it. Returns the extractor's result.
+ * Seed the `cli:command` FEATURE node DIRECTLY in the derive-pack shape
+ * (node metadata: anchorCall = the `.action` CALL's wire id, method = 'action',
+ * library = 'commander') anchored on the seeded chain's `.action` call, then
+ * invoke commanderExtractor on it. Returns the extractor's result. This mirrors
+ * what js_entrypoint_features_nodes.dl mints — see the file header for the
+ * enricher→pack migration (the #403 httpRouteExtractor reseed precedent).
  */
-async function runEnricherThenExtract(client) {
-  const r = await enrichLibraryCallbacks(client, effectsLookup);
-  assert.ok(r.domainNodesCreated >= 1, 'libraryCallbackEnricher should have created cli:command');
+async function seedFeatureThenExtract(client, file) {
+  const actionWire = await findActionCallWire(client);
+  assert.ok(actionWire, 'the seeded chain must contain an <obj>.action CALL');
+  const featureId = `${file}::cli:command::analyze::${actionWire.id}`;
+  await client.addNodes([
+    {
+      id: featureId,
+      nodeType: 'cli:command',
+      name: 'analyze',
+      file,
+      exported: false,
+      metadata: JSON.stringify({
+        library: 'commander',
+        method: 'action',
+        anchorCall: actionWire.id,
+      }),
+    },
+  ]);
+  await client.addEdges([
+    { src: actionWire.id, dst: featureId, edgeType: 'EXPOSES', metadata: JSON.stringify({}) },
+  ]);
   const feature = await getCliCommandFeature(client);
   assert.ok(feature, 'cli:command FEATURE should exist');
   return commanderExtractor.extract(client, feature);
@@ -225,7 +229,7 @@ describe('commanderExtractor', () => {
       { method: 'action', args: [{ kind: 'function', name: 'analyzeAction' }] },
     ]);
 
-    const data = await runEnricherThenExtract(client);
+    const data = await seedFeatureThenExtract(client, 'cli.ts');
     assert.ok(data, 'extractor should not return null');
     assert.equal(data.source, 'commander');
     assert.equal(data.inputs.length, 0);
@@ -238,7 +242,7 @@ describe('commanderExtractor', () => {
       { method: 'action', args: [{ kind: 'function', name: 'buildAction' }] },
     ]);
 
-    const data = await runEnricherThenExtract(client);
+    const data = await seedFeatureThenExtract(client, 'cli.ts');
     assert.ok(data);
     assert.equal(data.inputs.length, 1);
     assert.equal(data.inputs[0].name, 'input');
@@ -252,7 +256,7 @@ describe('commanderExtractor', () => {
       { method: 'action', args: [{ kind: 'function' }] },
     ]);
 
-    const data = await runEnricherThenExtract(client);
+    const data = await seedFeatureThenExtract(client, 'cli.ts');
     assert.ok(data);
     assert.equal(data.inputs.length, 1);
     assert.equal(data.inputs[0].name, 'output');
@@ -265,7 +269,7 @@ describe('commanderExtractor', () => {
       { method: 'action', args: [{ kind: 'function' }] },
     ]);
 
-    const data = await runEnricherThenExtract(client);
+    const data = await seedFeatureThenExtract(client, 'cli.ts');
     assert.ok(data);
     assert.equal(data.inputs.length, 1);
     assert.equal(data.inputs[0].name, 'files');
@@ -289,7 +293,7 @@ describe('commanderExtractor', () => {
       { method: 'action', args: [{ kind: 'function' }] },
     ]);
 
-    const data = await runEnricherThenExtract(client);
+    const data = await seedFeatureThenExtract(client, 'cli.ts');
     assert.ok(data);
     assert.equal(data.inputs.length, 1);
     const opt = data.inputs[0];
@@ -313,7 +317,7 @@ describe('commanderExtractor', () => {
       { method: 'action', args: [{ kind: 'function' }] },
     ]);
 
-    const data = await runEnricherThenExtract(client);
+    const data = await seedFeatureThenExtract(client, 'cli.ts');
     assert.ok(data);
     assert.equal(data.inputs.length, 1);
     const opt = data.inputs[0];
@@ -359,7 +363,7 @@ describe('commanderExtractor', () => {
       { method: 'action', args: [{ kind: 'function' }] },
     ]);
 
-    const data = await runEnricherThenExtract(client);
+    const data = await seedFeatureThenExtract(client, 'cli.ts');
     assert.ok(data);
     assert.equal(data.name, 'build');
     assert.equal(data.description, 'Build the project');
@@ -374,16 +378,20 @@ describe('commanderExtractor', () => {
       { method: 'action', args: [{ kind: 'function' }] },
     ]);
 
-    const data = await runEnricherThenExtract(client);
+    const data = await seedFeatureThenExtract(client, 'cli.ts');
     assert.ok(data);
     assert.equal(data.description, 'Run analysis');
     assert.equal(data.outputs.length, 0);
   });
 
   it('multi-command: two independent FEATUREs each yield their own spec', async () => {
-    // Two separate command chains in the same file. libraryCallbackEnricher
-    // creates two cli:command FEATUREs; commanderExtractor must extract each
-    // independently from its own anchor call.
+    // Two separate command chains in the same file. The derive pack mints two
+    // cli:command FEATUREs (one per `.action` anchor); commanderExtractor must
+    // extract each independently from its own anchor call. We seed both chains,
+    // then mint the two FEATURE nodes DIRECTLY anchored on their `.action`
+    // calls — the pack-emitted shape — matching each action to its chain's
+    // command spec via the RECEIVER_CALL → chain-origin LITERAL (the same walk
+    // the pack uses to name a cli:command from its chain-origin arg-0 literal).
     await seed(backend, 'multi.ts', [
       { method: 'command', args: [{ kind: 'literal', value: 'build <input>' }] },
       { method: 'action', args: [{ kind: 'function', name: 'buildAction' }] },
@@ -401,9 +409,40 @@ describe('commanderExtractor', () => {
       { method: 'action', args: [{ kind: 'function', name: 'serveAction' }] },
     ]);
 
-    // Run libraryCallbackEnricher once for both; gather all features.
-    const r = await enrichLibraryCallbacks(client, effectsLookup);
-    assert.equal(r.domainNodesCreated, 2);
+    // For each seeded `.action` CALL, walk RECEIVER_CALL back to the chain
+    // origin (`new Command('<spec>')`) and read its arg-0 LITERAL as the name,
+    // then mint the FEATURE node anchored on the action call.
+    for await (const action of client.queryNodes({ type: 'CALL', name: '<obj>.action' })) {
+      let origin = action;
+      for (let i = 0; i < 32; i++) {
+        const recv = await client.getOutgoingEdges(origin.id, ['RECEIVER_CALL']);
+        if (recv.length === 0) break;
+        const inner = await client.getNode(String(recv[0].dst));
+        if (!inner) break;
+        origin = inner;
+      }
+      let name = '<unnamed-cli-command>';
+      const args = await client.getOutgoingEdges(origin.id, ['PASSES_ARGUMENT']);
+      for (const e of args) {
+        if (Number((e).index) !== 0) continue;
+        const lit = await client.getNode(String(e.dst));
+        if (lit?.name) name = lit.name;
+      }
+      const fid = `multi.ts::cli:command::${name}::${action.id}`;
+      await client.addNodes([
+        {
+          id: fid,
+          nodeType: 'cli:command',
+          name,
+          file: 'multi.ts',
+          exported: false,
+          metadata: JSON.stringify({ library: 'commander', method: 'action', anchorCall: action.id }),
+        },
+      ]);
+      await client.addEdges([
+        { src: action.id, dst: fid, edgeType: 'EXPOSES', metadata: JSON.stringify({}) },
+      ]);
+    }
 
     const features = [];
     for await (const wn of client.queryNodes({ type: 'cli:command' })) features.push(wn);
@@ -416,9 +455,9 @@ describe('commanderExtractor', () => {
       results.push({ name: feat.name, data });
     }
 
-    // libraryCallbackEnricher uses the full spec string as the FEATURE name
-    // (it doesn't split on whitespace). Match by `startsWith` to identify
-    // each command.
+    // The FEATURE name is the chain-origin arg-0 spec string (the pack's
+    // origin-arg-0 fallback; the legacy enricher didn't split on whitespace
+    // either). Match by `startsWith` to identify each command.
     const build = results.find(r => r.name.startsWith('build'));
     const serve = results.find(r => r.name === 'serve');
     assert.ok(build, 'build feature found');

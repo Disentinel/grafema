@@ -34,17 +34,33 @@ export interface EnrichResult {
  * YAML stays focused on effect annotations.
  */
 const LIBRARY_NODE_TYPE: Record<string, string> = {
-  commander: 'cli:command',
-  '@modelcontextprotocol/sdk': 'mcp:tool',
-  vscode: 'vscode:command',
-  // HTTP frameworks (REG-1115) — express/fastify/koa/koa-router/@koa/router/
-  // hono — were retired from this map in Wave 14: their `http:route` FEATURE
-  // nodes are now minted by the default-on derive packs
-  // (rfdb-server/src/derive/stdlib/js_http_routes_nodes.dl + _edges.dl).
-  // Keeping them here would make this enricher a second default producer of
-  // the same feature with byte-different node ids (wire-sid anchor vs the
-  // pack's decimal anchorCall), duplicating EXPOSES/HANDLES and the
-  // SpecedContracts httpRouteExtractor derives from them.
+  // EMPTY as of Loop-2. Every slice this enricher minted has been migrated to a
+  // default-on derive pack — the pack is the SINGLE producer (the
+  // HTTP-retirement precedent). Keeping any entry here would make this enricher
+  // a second default producer of the same FEATURE with byte-different node ids
+  // (wire-sid anchor vs the pack's decimal anchorCall), duplicating
+  // EXPOSES/HANDLES and the SpecedContracts the extractors derive from them.
+  //
+  // Retirement log:
+  //   - Wave 14 (REG-1115): the 6 HTTP frameworks
+  //     (express/fastify/koa/koa-router/@koa/router/hono) → `http:route`,
+  //     now minted by js_http_routes_nodes.dl + js_http_routes_edges.dl.
+  //   - Loop-2: the last three —
+  //       commander                 → cli:command
+  //       @modelcontextprotocol/sdk → mcp:tool
+  //       vscode                    → vscode:command
+  //     now minted by js_entrypoint_features_nodes.dl +
+  //     js_entrypoint_features_edges.dl.
+  //
+  // With the map empty, `buildMethodIndex` returns an empty index and
+  // `enrichLibraryCallbacks` returns early (the `methodIndex.size === 0`
+  // guard) — the enricher is now a NO-OP for every input. It is retained (not
+  // deleted) this wave so the generic role-driven resolution machinery survives
+  // for the next library slice that opts in via this map before its own pack
+  // exists; deleting it is a follow-up once we confirm no slice needs the
+  // bridge. The complementary mcpToolDefinitionEnricher (the ~30 per-tool
+  // mcp:tool nodes from packages/mcp/src/definitions/*-tools.ts) is a SEPARATE
+  // mechanism and is unaffected.
 };
 
 interface Rule {

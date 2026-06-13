@@ -188,6 +188,11 @@ pub struct GraphEngineV2 {
     /// MVCC C3.a: per-shard live L0 segment count that triggers auto-compaction
     /// during bulk-load. Reasonable default (8); tuning is out of scope.
     auto_compact_threshold: usize,
+    /// W7: size-tiered fanout for the per-commit auto-compaction (see
+    /// `CompactionConfig::l1_fanout`). Default 4.0 (defer the O(|L1|) full rewrite
+    /// while L0 < L1/4). `f64::INFINITY` reverts to the legacy always-full-merge.
+    /// Settable for the acceptance bench's A/B.
+    auto_compact_fanout: f64,
     /// MVCC C3.a: count of auto-compaction rounds fired during bulk-load
     /// (diagnostics / acceptance bench).
     auto_compactions: u64,
@@ -268,6 +273,7 @@ impl GraphEngineV2 {
             last_resource_check: Instant::now(),
             bulk_load_active: false,
             auto_compact_threshold: 8,
+            auto_compact_fanout: 4.0,
             auto_compactions: 0,
             derive_materialize_cache: std::collections::HashMap::new(),
             derive_stats_cache: std::sync::Mutex::new(None),
@@ -295,6 +301,7 @@ impl GraphEngineV2 {
             last_resource_check: Instant::now(),
             bulk_load_active: false,
             auto_compact_threshold: 8,
+            auto_compact_fanout: 4.0,
             auto_compactions: 0,
             derive_materialize_cache: std::collections::HashMap::new(),
             derive_stats_cache: std::sync::Mutex::new(None),
@@ -345,6 +352,7 @@ impl GraphEngineV2 {
             last_resource_check: Instant::now(),
             bulk_load_active: false,
             auto_compact_threshold: 8,
+            auto_compact_fanout: 4.0,
             auto_compactions: 0,
             derive_materialize_cache: std::collections::HashMap::new(),
             derive_stats_cache: std::sync::Mutex::new(None),
@@ -1868,7 +1876,15 @@ impl GraphStore for GraphEngineV2 {
         // the durable barrier (bounds the published live segment count).
         self.bulk_load_active = false;
         {
-            let config = CompactionConfig { segment_threshold: 1 };
+            // Barrier: force the FULL L0+L1 merge on every shard (fanout = ∞ ⇒
+            // always fold into L1), collapsing all bulk L0 into a single L1 run so
+            // the published live segment count is bounded. Size-tiered deferral is
+            // for the per-commit hot path only (see maybe_auto_compact); here we
+            // explicitly want the complete fold before the durable barrier.
+            let config = CompactionConfig {
+                segment_threshold: 1,
+                l1_fanout: f64::INFINITY,
+            };
             self.store
                 .compact(self.manifest.get_mut().unwrap(), &config)?;
         }
@@ -1896,7 +1912,12 @@ impl GraphStore for GraphEngineV2 {
         // Force-compact all shards with any L0 segments (threshold=1).
         // The default threshold (4) skips shards with few L0 segments,
         // leaving old L1 + new L0 = double-counted nodes/edges.
-        let config = CompactionConfig { segment_threshold: 1 };
+        // fanout = ∞ ⇒ always fold L0 into L1 (explicit-compact is a full barrier,
+        // never a size-tiered L0-only consolidation).
+        let config = CompactionConfig {
+            segment_threshold: 1,
+            l1_fanout: f64::INFINITY,
+        };
         self.store.compact(self.manifest.get_mut().unwrap(), &config)?;
         // Manifest GC: remove old manifest files before segment GC so
         // referenced_segments is recalculated and orphaned segments are detected.
@@ -2039,8 +2060,15 @@ impl GraphEngineV2 {
         // Compact every shard with >= threshold L0 segments. Slow L1 rewrite runs
         // here under exclusive `&mut self` — never holding the manifest mutex
         // across the rewrite (compact() publishes via a short commit at the end).
+        // Per-commit hot path: SIZE-TIERED. The default fanout (4.0) defers the
+        // O(|L1|) full rewrite while L0 is small relative to L1, consolidating L0
+        // among itself instead. This turns the old O(DB)-per-round full L1 rewrite
+        // (C3 gap 1: ms/compaction grew 160→917 over 16k→160k nodes) into amortized
+        // O(log_fanout(DB)) rewrites of each L1 byte. The end_bulk_load barrier
+        // (fanout=∞) still collapses everything into L1 at the end.
         let config = CompactionConfig {
             segment_threshold: self.auto_compact_threshold,
+            l1_fanout: self.auto_compact_fanout,
         };
         self.store
             .compact(self.manifest.get_mut().unwrap(), &config)?;
@@ -2085,6 +2113,18 @@ impl GraphEngineV2 {
     /// Tuning is out of scope (spec §8); the bench uses this to report sensitivity.
     pub fn set_auto_compact_threshold(&mut self, threshold: usize) {
         self.auto_compact_threshold = threshold.max(1);
+    }
+
+    /// W7: set the size-tiered fanout used by the per-commit auto-compaction.
+    /// `f64::INFINITY` ⇒ legacy always-full-merge (the bench's A/B baseline);
+    /// a finite value (default 4.0) defers the O(|L1|) full rewrite while L0 is
+    /// small relative to L1. Values `< 1.0` are clamped to 1.0.
+    pub fn set_auto_compact_fanout(&mut self, fanout: f64) {
+        self.auto_compact_fanout = if fanout.is_nan() || fanout < 1.0 {
+            1.0
+        } else {
+            fanout
+        };
     }
 
     /// Check if a node is an endpoint (for PathValidator).
@@ -2272,7 +2312,11 @@ impl GraphEngineV2 {
     pub fn compact_with_stats(&mut self) -> Result<CompactionResult> {
         // Flush write buffers to L0 first (same reason as compact()).
         self.flush()?;
-        let config = CompactionConfig { segment_threshold: 1 };
+        // Explicit-compact is a full barrier (fanout = ∞ ⇒ always fold into L1).
+        let config = CompactionConfig {
+            segment_threshold: 1,
+            l1_fanout: f64::INFINITY,
+        };
         let result = self.store.compact(self.manifest.get_mut().unwrap(), &config)?;
         Ok(result)
     }
