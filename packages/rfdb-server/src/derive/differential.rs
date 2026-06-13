@@ -3039,3 +3039,226 @@ fn w8_cancel_overhead_pack_probe_times() {
     }
     eprintln!("=== W8 probe times: printed ===\n");
 }
+
+// ── Java packs: shadow differential against a java-corpus graph copy ───────
+
+/// Shadow differential for the four java packs (`java_imports` / `java_types`
+/// / `java_calls` / `java_annotations`) against the LEGACY `java-resolve`
+/// slices committed in a java-corpus graph (lang-spec-java.md §8 — the wave3b
+/// harness pattern). The dogfood graph has ZERO java nodes (spec §7, config
+/// gap), so this is the CHECKED-IN acceptance procedure for the corpus run.
+///
+/// SETUP (spec §8): build the corpus DB with `grafema analyze` over a java
+/// codebase with the legacy resolver ON and the java packs OFF — legacy edges
+/// then carry `_source = "java-resolution"` (the `commit_resolve_output`
+/// stamp, orchestrator main.rs:1604), which is how the legacy slice is cut
+/// (pack-written edges carry a rule-hash `_source`; analyzer-emitted CALLS
+/// carry no java-resolution stamp — the 3-way-diff concern resolves to the
+/// stamp). Copy it to the dataset path; NEVER point this at the live store.
+///
+/// Dataset: `GRAFEMA_JAVA_DIFF_DB` (default `/tmp/wave-java.rfdb`, a
+/// caller-made copy). The store is copied again into a tempdir so a
+/// concurrently-running server on the copy cannot contend.
+///
+/// PREDICTIONS, declared BEFORE the diff (spec §8, verified D1/D2/D3):
+/// - P1: the legacy IMPORT_BINDING → decl IMPORTS_FROM slice is EXACTLY 0
+///   (D1 — `resolveBinding` reads metadata `source` that never exists).
+/// - P2: legacy plain-call CALLS rows occur ONLY inside constructors (D3 —
+///   the [in:] probe matches only where method name == class name).
+/// - P3: glob IMPORTs have no IMPORTS_FROM on EITHER side (D2).
+/// If any prediction fails, the spec §2 reading is wrong — STOP, re-derive.
+///
+/// DELTA classes that absorb PACK-EXTRA rows (spec §5; witness each row with
+/// `explain_datalog_fact` before accepting): 1 dup-name set semantics,
+/// 2 all-overloads/all-ctors vs head-pick, 3 binding edges (the P1 declared
+/// superset, bounded below), 4 non-ctor same-class calls (the D3 fix),
+/// 5 local-class ctor membership. Class 6 (multi-element implements/throws
+/// SUBSET) is CLOSED by the right-peel split (verdict C1) — the pack must
+/// never MISS a legacy row, with ONE carve-out: an EXTENDS self-loop
+/// (java_types DELTA 2, `neq(C,T)`).
+///
+///   GRAFEMA_JAVA_DIFF_DB=/tmp/wave-java.rfdb \
+///   cargo test --release --lib java_packs_shadow_differential -- --ignored --nocapture
+#[test]
+#[ignore = "manual real-data shadow differential; needs a java-corpus graph copy"]
+fn java_packs_shadow_differential() {
+    use crate::derive::evaluate_with_materialize;
+
+    let dataset = std::env::var("GRAFEMA_JAVA_DIFF_DB")
+        .unwrap_or_else(|_| "/tmp/wave-java.rfdb".to_string());
+    let dataset = PathBuf::from(dataset);
+    if !dataset.join("db_config.json").exists() {
+        panic!(
+            "dataset not found at {} — build a java-corpus graph first (legacy resolver ON, \
+             packs OFF) and copy it: cp -R <corpus>/.grafema/graph.rfdb /tmp/wave-java.rfdb",
+            dataset.display()
+        );
+    }
+
+    let tmp = tempfile::tempdir().expect("temp");
+    let work = tmp.path().join("graph.rfdb");
+    copy_dir_all(&dataset, &work).expect("copy dataset");
+    let _ = std::fs::remove_file(work.join("LOCK"));
+    let manifest = ManifestStore::open(&work).expect("manifest");
+    let store = MultiShardStore::open(&work, &manifest).expect("store");
+    let store = Arc::new(store);
+    let view = LsmStorageView::capture(store.clone(), &manifest);
+
+    let snap = store.snapshot(&manifest);
+    let all_nodes = store.find_nodes_at(&snap, None, None);
+    let mut nbt: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    for n in &all_nodes {
+        *nbt.entry(n.node_type.clone()).or_insert(0) += 1;
+    }
+    let stats = Stats {
+        total_nodes: all_nodes.len() as u64,
+        total_edges: store.iter_all_edges_at(&snap).len() as u64,
+        nodes_by_type: nbt,
+    };
+    eprintln!(
+        "\n=== java packs shadow differential (nodes={}, edges={}) ===",
+        stats.total_nodes, stats.total_edges
+    );
+
+    let pairs = |eval: &crate::derive::exec::Evaluation, pred: &str| -> BTreeSet<(u128, u128)> {
+        eval.facts(pred)
+            .iter()
+            .filter_map(|r| Some((r.first()?.as_id()?, r.get(1)?.as_id()?)))
+            .collect()
+    };
+
+    // ── The LEGACY slices: committed edges stamped by commit_resolve_output.
+    //    Every edge type except CALLS has exactly one producer step (spec §8);
+    //    CALLS partitions structurally by the source CALL node. ──
+    let legacy_src = r#"
+        leg_if_imp(I, T) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".java"),
+            edge(I, T, "IMPORTS_FROM"), edge_attr(I, T, "IMPORTS_FROM", "_source", "java-resolution").
+        leg_if_bind(B, T) :- node(B, "IMPORT_BINDING"), attr(B, "file", F), ends_with(F, ".java"),
+            edge(B, T, "IMPORTS_FROM"), edge_attr(B, T, "IMPORTS_FROM", "_source", "java-resolution").
+        leg_returns(S, D) :- edge(S, D, "RETURNS"), edge_attr(S, D, "RETURNS", "_source", "java-resolution").
+        leg_type_of(S, D) :- edge(S, D, "TYPE_OF"), edge_attr(S, D, "TYPE_OF", "_source", "java-resolution").
+        leg_extends(S, D) :- edge(S, D, "EXTENDS"), edge_attr(S, D, "EXTENDS", "_source", "java-resolution").
+        leg_implements(S, D) :- edge(S, D, "IMPLEMENTS"), edge_attr(S, D, "IMPLEMENTS", "_source", "java-resolution").
+        leg_throws(S, D) :- edge(S, D, "THROWS_TYPE"), edge_attr(S, D, "THROWS_TYPE", "_source", "java-resolution").
+        leg_inst(S, D) :- edge(S, D, "INSTANTIATES"), edge_attr(S, D, "INSTANTIATES", "_source", "java-resolution").
+        leg_ann(S, D) :- edge(S, D, "ANNOTATION_RESOLVES_TO"),
+            edge_attr(S, D, "ANNOTATION_RESOLVES_TO", "_source", "java-resolution").
+
+        leg_calls(C, M) :- edge(C, M, "CALLS"), edge_attr(C, M, "CALLS", "_source", "java-resolution").
+        is_new(C) :- leg_calls(C, M), attr(C, "name", N), starts_with(N, "new ").
+        is_st(C) :- leg_calls(C, M), attr(C, "name", "super").
+        is_st(C) :- leg_calls(C, M), attr(C, "name", "this").
+        has_rv(C) :- leg_calls(C, M), node_attr(C, "receiver", R), neq(R, ""), neq(R, "this").
+        leg_calls_ctor(C, M) :- leg_calls(C, M), is_new(C).
+        leg_calls_st(C, M) :- leg_calls(C, M), is_st(C).
+        leg_calls_static(C, M) :- leg_calls(C, M), has_rv(C), \+ is_new(C), \+ is_st(C).
+        leg_calls_plain(C, M) :- leg_calls(C, M), \+ is_new(C), \+ is_st(C), \+ has_rv(C).
+
+        % P2 probe: a legacy plain-call row whose enclosing FUNCTION is NOT a
+        % constructor falsifies the D3 reading.
+        plain_encl(C, Fn) :- leg_calls_plain(C, M), edge(Fn, C, "CONTAINS"), node(Fn, "FUNCTION").
+        ctor_encl(C) :- plain_encl(C, Fn), node_attr(Fn, "kind", "constructor").
+        p2_violation(C) :- plain_encl(C, Fn), \+ ctor_encl(C).
+
+        % P3 probe: glob imports with a resolved edge, either producer.
+        glob_imp(I) :- node(I, "IMPORT"), attr(I, "file", F), ends_with(F, ".java"),
+            attr(I, "name", N), ends_with(N, ".*").
+        p3_violation(I, T) :- glob_imp(I), edge(I, T, "IMPORTS_FROM").
+    "#;
+    let legacy_eval = evaluate(&view, legacy_src, stats.clone(), EvalLimits::none(), EventLog::discard())
+        .expect("legacy slice eval");
+
+    // PREDICTIONS first (spec §8: a failed prediction = wrong premise, STOP).
+    let leg_bind = pairs(&legacy_eval, "leg_if_bind");
+    assert!(
+        leg_bind.is_empty(),
+        "P1 FALSIFIED: legacy IMPORT_BINDING IMPORTS_FROM slice has {} rows (expected \
+         EXACTLY 0 — D1 says resolveBinding is production-dead); re-derive spec §2 before \
+         trusting any other slice",
+        leg_bind.len()
+    );
+    let p2 = legacy_eval.facts("p2_violation").len();
+    assert_eq!(
+        p2, 0,
+        "P2 FALSIFIED: {p2} legacy plain-call CALLS rows outside constructor bodies — \
+         D3 reading wrong, STOP"
+    );
+    let p3 = legacy_eval.facts("p3_violation").len();
+    assert_eq!(p3, 0, "P3 FALSIFIED: {p3} glob IMPORTs carry IMPORTS_FROM edges");
+
+    // ── The PACKS, evaluated read-only over the same pinned view. ──
+    let run = |name: &str| -> crate::derive::exec::Evaluation {
+        let src = crate::derive::stdlib::stdlib_pack(name).expect("registered pack");
+        let (eval, _s, _n) =
+            evaluate_with_materialize(&view, src, stats.clone(), EvalLimits::none(), EventLog::discard())
+                .unwrap_or_else(|e| panic!("{name} evaluates on the real graph: {e}"));
+        eval
+    };
+    let ev_imp = run("java_imports");
+    let ev_typ = run("java_types");
+    let ev_cal = run("java_calls");
+    let ev_ann = run("java_annotations");
+
+    // Non-vacuity floors: the packs genuinely saw a JAVA graph (a corpus copy
+    // with zero java nodes would pass every 0 ≡ 0 slice on a broken pack).
+    let count = |eval: &crate::derive::exec::Evaluation, pred: &str| eval.facts(pred).len();
+    eprintln!(
+        "intermediates: jdecl={} qual_class={} jimport={} jbinding={} jcall={} jattr={} jann={}",
+        count(&ev_imp, "jdecl"), count(&ev_imp, "qual_class"), count(&ev_imp, "jimport"),
+        count(&ev_imp, "jbinding"), count(&ev_cal, "jcall"), count(&ev_ann, "jattr"),
+        count(&ev_ann, "jann"),
+    );
+    assert!(count(&ev_imp, "jdecl") > 0, "non-vacuity: java declarations present");
+    assert!(count(&ev_imp, "jimport") > 0, "non-vacuity: java imports present");
+    assert!(count(&ev_cal, "jcall") > 0, "non-vacuity: java calls present");
+
+    // ── Per-slice diff: NO pack-missing rows (class 6 is closed); pack-extra
+    //    rows are reported for witnessing against delta classes 1-5. ──
+    let mut pack_calls_st = pairs(&ev_cal, "this_ctor_calls");
+    pack_calls_st.extend(pairs(&ev_cal, "super_ctor_calls"));
+    let slices: Vec<(&str, BTreeSet<(u128, u128)>, BTreeSet<(u128, u128)>, bool)> = vec![
+        // (slice, legacy, pack, self-loop-misses-allowed)
+        ("IMPORTS_FROM/import", pairs(&legacy_eval, "leg_if_imp"), pairs(&ev_imp, "import_target"), false),
+        ("IMPORTS_FROM/binding", leg_bind, pairs(&ev_imp, "binding_target"), false),
+        ("RETURNS", pairs(&legacy_eval, "leg_returns"), pairs(&ev_typ, "returns"), false),
+        ("TYPE_OF", pairs(&legacy_eval, "leg_type_of"), pairs(&ev_typ, "type_of"), false),
+        ("EXTENDS", pairs(&legacy_eval, "leg_extends"), pairs(&ev_typ, "extends"), true),
+        ("IMPLEMENTS", pairs(&legacy_eval, "leg_implements"), pairs(&ev_typ, "implements"), false),
+        ("THROWS_TYPE", pairs(&legacy_eval, "leg_throws"), pairs(&ev_typ, "throws_type"), false),
+        ("INSTANTIATES", pairs(&legacy_eval, "leg_inst"), pairs(&ev_cal, "instantiates"), false),
+        ("CALLS/ctor", pairs(&legacy_eval, "leg_calls_ctor"), pairs(&ev_cal, "ctor_calls"), false),
+        ("CALLS/plain", pairs(&legacy_eval, "leg_calls_plain"), pairs(&ev_cal, "same_class_calls"), false),
+        ("CALLS/static", pairs(&legacy_eval, "leg_calls_static"), pairs(&ev_cal, "static_calls"), false),
+        ("CALLS/super-this", pairs(&legacy_eval, "leg_calls_st"), pack_calls_st, false),
+        ("ANNOTATION_RESOLVES_TO", pairs(&legacy_eval, "leg_ann"), pairs(&ev_ann, "ann_resolves"), false),
+    ];
+    let mut bad_misses = 0usize;
+    for (name, legacy, pack, self_loop_ok) in &slices {
+        let missing: Vec<_> = legacy.difference(pack).collect();
+        let extra: Vec<_> = pack.difference(legacy).collect();
+        eprintln!(
+            "{name}: legacy={} pack={} missing={} extra={}",
+            legacy.len(), pack.len(), missing.len(), extra.len()
+        );
+        for (s, d) in missing.iter().take(20) {
+            let carved = *self_loop_ok && s == d;
+            if !carved {
+                bad_misses += 1;
+            }
+            eprintln!(
+                "  MISSING ({s}, {d}){} — pack must not lose a legacy row; witness via \
+                 the legacy stderr counters",
+                if carved { " [EXTENDS self-loop carve-out]" } else { "" }
+            );
+        }
+        for (s, d) in extra.iter().take(20) {
+            eprintln!("  EXTRA ({s}, {d}) — classify against delta classes 1-5 (explain_datalog_fact)");
+        }
+    }
+    assert_eq!(
+        bad_misses, 0,
+        "pack-missing rows outside the EXTENDS self-loop carve-out — class 6 is closed \
+         (verdict C1), so any miss is a pack bug"
+    );
+    eprintln!("=== java packs shadow differential: slices printed; witness extras before accepting ===\n");
+}
