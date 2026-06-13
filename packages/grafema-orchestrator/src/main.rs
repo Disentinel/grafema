@@ -154,6 +154,13 @@ const STDLIB_RULE_PACKS: &[&str] = &[
     // split); both consume analyzer EDB only.
     "@stdlib/js_http_routes_nodes",
     "@stdlib/js_http_routes_edges",
+    // Loop-2 feature-detection vertical (cli:command / mcp:tool /
+    // vscode:command — the libraryCallbackEnricher slices): the nodes pack MINTS
+    // the anchorCall-pinned FEATURE endpoints the edges pack joins as committed
+    // EDB (strict nodes→edges order — the js_builtins two-pack split); both
+    // consume analyzer EDB only.
+    "@stdlib/js_entrypoint_features_nodes",
+    "@stdlib/js_entrypoint_features_edges",
 ];
 
 
@@ -601,6 +608,8 @@ fn pack_owned_slice(pack: &str) -> &'static str {
         "@stdlib/axum_routes" => "axum ROUTES_TO",
         "@stdlib/js_http_routes_nodes" => "js http:route nodes + ROUTES_TO (express/fastify/koa/hono)",
         "@stdlib/js_http_routes_edges" => "js http:route EXPOSES + HANDLES",
+        "@stdlib/js_entrypoint_features_nodes" => "js cli:command/mcp:tool/vscode:command FEATURE nodes (commander/mcp-sdk/vscode)",
+        "@stdlib/js_entrypoint_features_edges" => "js cli:command/mcp:tool/vscode:command EXPOSES + HANDLES",
         _ => "(unregistered pack)",
     }
 }
