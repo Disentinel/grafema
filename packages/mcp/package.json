@@ -44,9 +44,9 @@
   },
   "dependencies": {
     "@grafema/api": "workspace:*",
-    "@grafema/util": "workspace:*",
     "@grafema/types": "workspace:*",
-    "@modelcontextprotocol/sdk": "^1.25.1",
+    "@grafema/util": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "ajv": "^8.17.1",
     "yaml": "^2.8.2"
   },
